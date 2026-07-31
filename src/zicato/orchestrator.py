@@ -4017,6 +4017,11 @@ def _assess_and_persist_loop_health(
     # round's health JSON (issue #84).
     _warn_dead_judges(epoch_id, round_n, health)
 
+    # Same discipline for the judge that could not answer at all: its zero
+    # drift is an error artifact, and it makes the round's scalar better than
+    # the truth.
+    _warn_erroring_judges(epoch_id, round_n, health)
+
     # Same discipline for the mutated-tree alarm: a generation whose units never
     # imported a mutable tree scored code the loop never changed, which is
     # indistinguishable — from the terminal — from an honest null result.
@@ -4171,6 +4176,44 @@ def _warn_dead_judges(epoch_id: str, round_n: int, health: Any) -> None:
             round_n,
             summary or "a declared judge never fired",
             f" (dead: {named})" if named else "",
+        )
+        return
+
+
+def _warn_erroring_judges(epoch_id: str, round_n: int, health: Any) -> None:
+    """Emit a prominent stderr WARNING for a board-declared judge that RAISED.
+
+    The sibling of :func:`_warn_dead_judges`, for the failure it used to be
+    confused with (issue #121). A judge whose callable raised produced no
+    verdict at all, but every layer below swallows the exception — zicato's
+    judge boundary and goldfive's steerer both catch by hard contract — and
+    goldfive emits no event for the empty verdict that results. So the round
+    scored with that judge's signal silently missing, and its zero drift
+    made the generation look BETTER than the evidence supports. That is a
+    result the operator must see on the terminal in the round it happens,
+    not in a per-round JSON read afterwards.
+
+    Tolerant of the health sibling's exact shape: it scans ``.findings`` for
+    the stable ``code == "judge_erroring"`` and reads the finding's
+    ``summary`` / ``detail`` defensively, so a schema drift never raises here.
+    """
+    for finding in getattr(health, "findings", ()) or ():
+        if str(getattr(finding, "code", "") or "") != "judge_erroring":
+            continue
+        detail = getattr(finding, "detail", None)
+        recommendation = detail.get("recommendation") if isinstance(detail, dict) else None
+        summary = str(getattr(finding, "summary", "") or "")
+        log.warning(
+            "DECLARED JUDGE RAISED — epoch %s round %d: %s %s",
+            epoch_id,
+            round_n,
+            summary or "a declared judge failed on every invocation",
+            str(recommendation)
+            or (
+                "a judge that raised did not decide anything: its silence lowered "
+                "this round's drift loss without evidence. Check the judge / "
+                "auxiliary endpoint and model config."
+            ),
         )
         return
 

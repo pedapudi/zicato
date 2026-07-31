@@ -22,6 +22,11 @@ Record shape (one line per judge ``evaluate`` call that reached the LLM)::
       "verdict": { "drift_emitted": bool, "kind": ..., "severity": ...,
                    "detail": ... } }
 
+One record per call that reached the LLM, plus one per call that RAISED
+before it could: those carry ``verdict.kind ==``
+:data:`JUDGE_IO_ERROR_KIND` and the exception text in ``verdict.detail``
+(issue #121 — a failed call is not a missed fire).
+
 Text fields clip at :data:`JUDGE_IO_CLIP_CHARS`; ``reasoning_sha256`` is
 the sha256 of the **UNCLIPPED** reasoning text, so an adjudicator can
 prove it is reading the exact bytes the judge read even when the stored
@@ -64,6 +69,15 @@ JUDGE_IO_CLIP_CHARS: int = 65536
 
 #: Marker appended to every clipped text field in ``judge_io.jsonl``.
 JUDGE_IO_CLIP_MARKER: str = " … [truncated]"
+
+#: ``verdict.kind`` on a record for a call that RAISED instead of returning a
+#: verdict. Such a record carries ``drift_emitted=False`` (the judge did not
+#: fire — it did not answer at all), an empty ``raw_response`` (there was no
+#: response to parse), and ``detail = "<ExceptionType>: <message>"``. It is
+#: what lets board reflection tell a broken judge endpoint apart from a
+#: criterion that is simply too narrow: both leave the same silence in
+#: ``events.jsonl``, and only one of them is a board-design problem.
+JUDGE_IO_ERROR_KIND: str = "error"
 
 
 def judge_io_path_for_loss(loss_path: Path) -> Path:

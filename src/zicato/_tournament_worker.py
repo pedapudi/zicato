@@ -72,6 +72,7 @@ from zicato.core import (
     validate_board_entry,
 )
 from zicato.import_path import import_dotted_path
+from zicato.judge_runtime.error_register import judge_error_snapshot
 from zicato.util import best_effort
 
 log = logging.getLogger("zicato._tournament_worker")
@@ -1005,6 +1006,20 @@ async def _run(args: dict[str, Any]) -> None:
         from dataclasses import replace as _replace  # noqa: PLC0415
 
         loss = _replace(loss, abort_cause=BUDGET_ABORT_CAUSE)
+    # Stamp per-judge CALL-FAILURE provenance (issue #121). Both judge kinds
+    # swallow their callable's exceptions by hard contract, and goldfive emits
+    # no event for the empty verdict that produces — so without this stamp a
+    # judge whose endpoint 404s on every invocation is byte-identical, in
+    # loss.json AND events.jsonl, to a judge that ran and found nothing, and
+    # loop health reports the broken one as dead weight. This worker process
+    # evaluated exactly this one board unit, so the process-wide register is
+    # this run's count. Empty tuple (the healthy case, every judge returned)
+    # leaves the written bytes unchanged.
+    judge_errors = judge_error_snapshot()
+    if judge_errors:
+        from dataclasses import replace as _replace  # noqa: PLC0415
+
+        loss = _replace(loss, judge_errors=judge_errors)
     reducer_mod.write_loss_profile(loss, loss_path)
 
     # Persist the run's user-facing RunResult as result.json beside

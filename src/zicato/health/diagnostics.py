@@ -441,24 +441,59 @@ def detect_dead_judge(
     losses_by_generation: dict[str, list[LossProfile]],
     board_entries: list[BoardEntry],
 ) -> list[HealthFinding]:
-    """Flag board-declared in-run judges that never fired across the epoch.
+    """Split silent judges into BROKEN ones and genuinely dead ones.
 
     Every board entry's :attr:`BoardEntry.judges` declares one or more
     PROCESS judges. On a violation a judge emits a goldfive ``custom``
     drift the reducer attributes back to the judge as a
     ``custom:<judge_name>`` :class:`DriftCount` on the run's
     ``loss.json``. A judge whose attributed kind never appears in ANY run
-    of the epoch fired zero times — it is either mis-wired (the events it
-    keys on are never emitted) or its criterion is unreachable. Either
-    way it contributes no discrimination and gives a false sense of
-    coverage. This is failure mode #3 in the board-audit playbook
-    (``skills/zicato-audit-board``) and the "judge that never fires"
-    smell in ``skills/zicato-design-judges``.
+    of the epoch fired zero times. That silence has two causes an operator
+    must not confuse, and this detector emits a different finding for each:
 
-    Severity is ``warning``: a 0-fire judge is dead weight, but a board
-    can still optimize on its other signals. Note the inverse is NOT a
-    finding — a judge firing on EVERY run is loud, not dead, and may be
-    perfectly correct.
+    ``judge_erroring`` (the judge RAISED — read
+        :attr:`~zicato.core.loss.LossProfile.judge_errors`)
+        Its callable threw on some or all invocations: a misconfigured
+        judge model, a revoked key, an endpoint outage. Both judge kinds
+        swallow the exception by hard contract (a judge must not crash a
+        run) and goldfive emits no event for the resulting empty verdict,
+        so before per-judge error provenance existed this case was
+        INDISTINGUISHABLE from the one below — and, being zero drift, it
+        made the generation's scalar better than the truth. The fix is at
+        the endpoint/model config, not on the board.
+
+    ``dead_judge`` (the judge ANSWERED, and always answered "no violation")
+        Zero fires with zero errors: the judge is mis-wired (the events it
+        keys on are never emitted) or its criterion is unreachable. It
+        contributes no discrimination and gives a false sense of coverage.
+        This is failure mode #3 in the board-audit playbook
+        (``skills/zicato-audit-board``) and the "judge that never fires"
+        smell in ``skills/zicato-design-judges``. The finding now says
+        explicitly that errors were ruled out, because that is what makes
+        a board audit the right next step rather than a wild goose chase.
+
+    Both are ``warning``: a 0-fire judge is dead weight and a broken judge
+    is a hole in coverage, but a board can still optimize on its other
+    signals. Note the inverse is NOT a finding — a judge firing on EVERY
+    run is loud, not dead, and may be perfectly correct.
+
+    Registered, deliberately NOT done here
+    --------------------------------------
+    * **No abort / tolerance knob.** A round in which one judge errored on
+      100% of invocations is, from the artifacts alone, indistinguishable
+      from a transient endpoint outage, and an outage never disqualifies a
+      contract. Escalating "judge_erroring" into something that can stop or
+      re-run a round is registered pending live evidence of what the error
+      rates actually look like; until then this is observability only —
+      nothing here changes a verdict, a score, or an exit code.
+    * **No zicato-side timeout wrapper.** goldfive's
+      ``DefaultSteerer.evaluate_judges`` bounds each ``evaluate`` with its
+      own 30s timeout and treats an overrun as "no signal" WITHOUT calling
+      back into zicato, so a judge that hangs (rather than raises) still
+      lands in the silent bucket and reads as ``dead_judge``. Closing that
+      gap means either a zicato-side timeout inside ``evaluate`` (a second
+      competing budget) or a goldfive change; both are registered, neither
+      is in this pass.
 
     Silent when there are no runs yet (nothing has had a chance to fire)
     or no entry declares a judge (drift-/expectation-only board).
@@ -477,6 +512,10 @@ def detect_dead_judge(
 
     total_runs = 0
     fired: set[str] = set()
+    # judge_name -> [invocations, errors, last_error_type], summed over every
+    # run of the epoch. ``getattr`` keeps the detector working against a
+    # loss-like record written before the field existed.
+    errored: dict[str, list[Any]] = {}
     for losses in losses_by_generation.values():
         for loss in losses:
             total_runs += 1
@@ -484,38 +523,94 @@ def detect_dead_judge(
                 is_custom, judge_name = split_judge_attributed_kind(count.kind)
                 if is_custom and judge_name:
                     fired.add(judge_name)
+            for je in getattr(loss, "judge_errors", ()) or ():
+                name = str(getattr(je, "judge_name", "") or "")
+                if not name or not int(getattr(je, "errors", 0) or 0):
+                    continue
+                row = errored.setdefault(name, [0, 0, ""])
+                row[0] = int(row[0]) + int(getattr(je, "invocations", 0) or 0)
+                row[1] = int(row[1]) + int(getattr(je, "errors", 0) or 0)
+                row[2] = str(getattr(je, "last_error_type", "") or "") or row[2]
 
     # No runs yet → no judge has had a chance to fire; stay silent rather
     # than flag every declared judge on an epoch with no telemetry.
     if total_runs == 0:
         return []
 
-    dead = sorted(declared - fired)
-    if not dead:
-        return []
+    findings: list[HealthFinding] = []
 
-    return [
-        HealthFinding(
-            code="dead_judge",
-            severity="warning",
-            summary=(
-                f"{len(dead)} board-declared judge(s) never fired across all "
-                f"{total_runs} runs in the epoch — dead weight, not coverage: "
-                + ", ".join(repr(name) for name in dead)
-            ),
-            detail={
-                "dead_judges": dead,
-                "declared_judges": sorted(declared),
-                "fired_judges": sorted(fired),
-                "runs_inspected": total_runs,
-                "recommendation": (
-                    "confirm each dead judge is wired to events that actually "
-                    "fire and its criterion is reachable; if it can never fire, "
-                    "remove it or sharpen its body (see zicato-design-judges)"
-                ),
-            },
+    # A judge that raised is BROKEN, not dead weight — a distinct finding
+    # with a distinct remedy (the endpoint/model config, not the board).
+    broken = sorted(name for name in errored if name in declared)
+    if broken:
+        counts = {
+            name: {
+                "invocations": errored[name][0],
+                "errors": errored[name][1],
+                "last_error_type": errored[name][2],
+            }
+            for name in broken
+        }
+        phrases = ", ".join(
+            f"{name!r} raised on {counts[name]['errors']}/{counts[name]['invocations']} "
+            f"invocations ({counts[name]['last_error_type'] or 'unknown error'})"
+            for name in broken
         )
-    ]
+        findings.append(
+            HealthFinding(
+                code="judge_erroring",
+                severity="warning",
+                summary=(
+                    f"{len(broken)} board-declared judge(s) FAILED to answer across "
+                    f"the epoch's {total_runs} runs — their zero drift is an ERROR "
+                    f"artifact, not a verdict: {phrases}"
+                ),
+                detail={
+                    "erroring_judges": broken,
+                    "judge_error_counts": counts,
+                    "declared_judges": sorted(declared),
+                    "runs_inspected": total_runs,
+                    "recommendation": (
+                        "a judge that raised did not decide anything — its silence "
+                        "lowered the generation's drift loss without evidence. Check "
+                        "the auxiliary/judge endpoint and model config (the judge role "
+                        "in the workspace models config) before reading this epoch's "
+                        "scores; a board audit is the WRONG next step here"
+                    ),
+                },
+            )
+        )
+
+    # Genuinely dead: zero fires AND zero errors — the judge answered every
+    # time, and every answer was "no violation".
+    dead = sorted(declared - fired - set(errored))
+    if dead:
+        findings.append(
+            HealthFinding(
+                code="dead_judge",
+                severity="warning",
+                summary=(
+                    f"{len(dead)} board-declared judge(s) never fired across all "
+                    f"{total_runs} runs in the epoch — dead weight, not coverage: "
+                    + ", ".join(repr(name) for name in dead)
+                ),
+                detail={
+                    "dead_judges": dead,
+                    "declared_judges": sorted(declared),
+                    "fired_judges": sorted(fired),
+                    "runs_inspected": total_runs,
+                    "recommendation": (
+                        "these judges recorded NO call failures, so the silence is a "
+                        "real verdict, not a broken endpoint: confirm each dead judge "
+                        "is wired to events that actually fire and its criterion is "
+                        "reachable; if it can never fire, remove it or sharpen its "
+                        "body (see zicato-design-judges)"
+                    ),
+                },
+            )
+        )
+
+    return findings
 
 
 def detect_stalled_loop(

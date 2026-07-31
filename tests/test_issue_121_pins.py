@@ -14,23 +14,34 @@ fired", the same words it uses for a healthy judge whose criterion was
 never met.
 
 Net: across ``loss.json``, ``events.jsonl``, the reflection capture corpus
-and the loop-health findings there is *no* persisted byte that differs
+and the loop-health findings there was *no* persisted byte that differed
 between a judge that answered "no violation" N times and a judge that
-raised N times. The only trace is a transient log line.
+raised N times. The only trace was a transient log line.
 
-Each test below is an XPASS-strict pin: it fails today and must start
-passing when the defect is fixed. They deliberately assert on BEHAVIOUR
-(is the error distinguishable, does the health finding say so) rather than
-on one particular field spelling, but they do commit to the names the
-issue proposes so the fix has a concrete target.
+The first four tests were written as XPASS-strict pins against that defect
+and are now the regression suite for its fix: a per-judge error register at
+zicato's judge boundary, an errored verdict, the failed call captured for
+reflection, :attr:`~zicato.core.loss.LossProfile.judge_errors` on the
+persisted profile, and a distinct ``judge_erroring`` health finding. The
+tests after them cover the layers BETWEEN those two ends — the loss.json
+round trip, the replicate fold, a judge that errored on only some
+invocations, and the terminal warning — because provenance that survives
+the judge but not the artifact, the fold, or the report is provenance the
+operator never sees.
+
+One deviation from the pinned spelling: :class:`JudgeError` carries
+``last_error_type`` (``"RuntimeError"``) rather than a ``last_error``
+string holding type + message. ``loss.json`` is a scored, indexed artifact
+and an endpoint's error text can carry request ids and URLs; the type is
+what routes the operator, and the verbatim message is retained where the
+detail belongs — the WARNING log and the ``judge_io.jsonl`` error entry
+(pin 2). The behaviour each test asserts is unchanged.
 """
 
 from __future__ import annotations
 
 import asyncio
 from typing import Any
-
-import pytest
 
 from zicato.core.types import BoardEntry, DriftCount, JudgeSpec, LossProfile
 from zicato.health.diagnostics import detect_dead_judge
@@ -135,11 +146,6 @@ def _loss(entry_id: str, generation_id: str, **extra: Any) -> LossProfile:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="issue #121: a raised aux call returns a bare JudgeVerdict(), "
-    "byte-identical to a healthy judge's no-violation verdict",
-)
 def test_raising_judge_verdict_is_distinguishable_from_a_silent_one() -> None:
     """An exception and a negative result must not share a representation.
 
@@ -166,11 +172,6 @@ def test_raising_judge_verdict_is_distinguishable_from_a_silent_one() -> None:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="issue #121: the except branch returns before the io_sink block, "
-    "so a failed judge call leaves no record in the reflection corpus",
-)
 def test_raising_judge_call_is_captured_for_reflection() -> None:
     """Board reflection re-reads silent verdicts as missed-fire candidates.
 
@@ -192,11 +193,6 @@ def test_raising_judge_call_is_captured_for_reflection() -> None:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="issue #121: LossProfile has no per-judge error provenance, so a "
-    "judge that raised on every invocation is unrecoverable from artifacts",
-)
 def test_loss_profile_records_per_judge_error_provenance() -> None:
     """``loss.json`` must show that a declared judge errored on this run.
 
@@ -204,7 +200,7 @@ def test_loss_profile_records_per_judge_error_provenance() -> None:
     were invoked and failed. Without this the evidence is gone the moment
     the process log rotates.
     """
-    from zicato.core.types import JudgeError  # noqa: PLC0415 — pinned future symbol
+    from zicato.core.types import JudgeError  # noqa: PLC0415 — local to the pin
 
     loss = _loss(
         "e1",
@@ -214,7 +210,7 @@ def test_loss_profile_records_per_judge_error_provenance() -> None:
                 judge_name="no_fabricated_numbers",
                 invocations=34,
                 errors=34,
-                last_error="RuntimeError: ClientError: 404 model not found",
+                last_error_type="RuntimeError",
             ),
         ),
     )
@@ -227,11 +223,6 @@ def test_loss_profile_records_per_judge_error_provenance() -> None:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="issue #121: detect_dead_judge infers 'fired' from drift counts "
-    "alone, so a judge that raised 34/34 times reports as dead weight",
-)
 def test_health_distinguishes_an_erroring_judge_from_an_unmet_criterion() -> None:
     """ "raised on 34 of 34 invocations" is actionable; "never fired" is not.
 
@@ -249,7 +240,7 @@ def test_health_distinguishes_an_erroring_judge_from_an_unmet_criterion() -> Non
     assert [f.code for f in quiet_findings] == ["dead_judge"]
     assert quiet_findings[0].detail["dead_judges"] == ["broken"]
 
-    from zicato.core.types import JudgeError  # noqa: PLC0415 — pinned future symbol
+    from zicato.core.types import JudgeError  # noqa: PLC0415 — local to the pin
 
     # Epoch B: 'broken' raised on every single invocation.
     errored = {
@@ -263,7 +254,7 @@ def test_health_distinguishes_an_erroring_judge_from_an_unmet_criterion() -> Non
                         judge_name="broken",
                         invocations=34,
                         errors=34,
-                        last_error="RuntimeError: ClientError: 404 model not found",
+                        last_error_type="RuntimeError",
                     ),
                 ),
             )
@@ -275,3 +266,151 @@ def test_health_distinguishes_an_erroring_judge_from_an_unmet_criterion() -> Non
     assert codes, "a judge that raised on every invocation must raise a finding"
     summary = " ".join(f.summary for f in errored_findings)
     assert "34" in summary and "broken" in summary
+
+
+# ---------------------------------------------------------------------------
+# The layers between the judge and the finding
+# ---------------------------------------------------------------------------
+
+
+def test_judge_errors_round_trip_through_loss_json(tmp_path: Any) -> None:
+    """The provenance has to survive the artifact, not just the process.
+
+    Also pins the back-compat half: a ``loss.json`` written before the field
+    existed carries no key and must still load.
+    """
+    import json
+
+    from zicato.core.types import JudgeError  # noqa: PLC0415 — local to the pin
+    from zicato.telemetry.reducer import read_loss_profile, write_loss_profile
+
+    path = tmp_path / "loss.json"
+    write_loss_profile(
+        _loss(
+            "e1",
+            "v0",
+            judge_errors=(
+                JudgeError(
+                    judge_name="broken",
+                    invocations=34,
+                    errors=34,
+                    last_error_type="RuntimeError",
+                ),
+            ),
+        ),
+        path,
+    )
+    reloaded = read_loss_profile(path)
+    assert reloaded.judge_errors[0].judge_name == "broken"
+    assert reloaded.judge_errors[0].errors == 34
+    assert reloaded.judge_errors[0].last_error_type == "RuntimeError"
+
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    del payload["judge_errors"]
+    legacy = tmp_path / "legacy.json"
+    legacy.write_text(json.dumps(payload), encoding="utf-8")
+    assert read_loss_profile(legacy).judge_errors == ()
+
+
+def test_replicate_fold_sums_judge_errors_rather_than_meaning_them() -> None:
+    """A broken judge must not look less broken as K grows.
+
+    Every other field in the fold is a mean; these are event counts, and
+    meaning them would report "8.5 errors" for a duel in which one replicate
+    of four failed 34 times — and would shrink toward zero with K.
+    """
+    from zicato.core.types import JudgeError  # noqa: PLC0415 — local to the pin
+    from zicato.tournament.unit_cache import _average_losses
+
+    def _replicate(errors: int) -> LossProfile:
+        return _loss(
+            "e1",
+            "v0",
+            judge_errors=(
+                JudgeError(
+                    judge_name="broken",
+                    invocations=10,
+                    errors=errors,
+                    last_error_type="TimeoutError" if errors else "",
+                ),
+            )
+            if errors
+            else (),
+        )
+
+    folded = _average_losses([{"e1": _replicate(34)}, {"e1": _replicate(0)}])
+    assert folded["e1"].judge_errors[0].errors == 34
+    assert folded["e1"].judge_errors[0].invocations == 10
+    assert folded["e1"].judge_errors[0].last_error_type == "TimeoutError"
+
+    assert _average_losses([{"e1": _replicate(0)}, {"e1": _replicate(0)}])["e1"].judge_errors == ()
+
+
+def test_a_partially_erroring_judge_is_broken_not_dead() -> None:
+    """Errors on SOME invocations still disqualify the "dead weight" reading.
+
+    A judge that fired once and raised nine times is not dead — it is a
+    signal measured on a tenth of the evidence the operator thinks it has.
+    """
+    from zicato.core.types import JudgeError  # noqa: PLC0415 — local to the pin
+
+    board = [_board_entry("e1", ["flaky", "quiet"])]
+    fired = DriftCount(kind="custom:flaky", severity="warning", count=1)
+    losses = {
+        "v0": [
+            _loss(
+                "e1",
+                "v0",
+                drift_counts=(fired,),
+                judge_errors=(
+                    JudgeError(
+                        judge_name="flaky",
+                        invocations=10,
+                        errors=9,
+                        last_error_type="TimeoutError",
+                    ),
+                ),
+            )
+        ]
+    }
+    findings = {f.code: f for f in detect_dead_judge(losses, board)}
+    assert set(findings) == {"judge_erroring", "dead_judge"}
+    assert findings["judge_erroring"].detail["erroring_judges"] == ["flaky"]
+    assert "9/10" in findings["judge_erroring"].summary
+    # 'quiet' answered every time; its silence is a real verdict, and the
+    # finding now says so rather than leaving the operator to wonder.
+    assert findings["dead_judge"].detail["dead_judges"] == ["quiet"]
+    assert "NO call failures" in findings["dead_judge"].detail["recommendation"]
+
+
+def test_orchestrator_lifts_judge_erroring_onto_the_terminal(caplog: Any) -> None:
+    """A finding the operator only sees in the round's JSON is not surfaced."""
+    import logging
+    from dataclasses import dataclass, field
+
+    from zicato.orchestrator import _warn_erroring_judges
+
+    @dataclass
+    class _Finding:
+        code: str
+        summary: str
+        detail: dict[str, Any] = field(default_factory=dict)
+
+    @dataclass
+    class _Health:
+        findings: tuple[_Finding, ...]
+
+    health = _Health(
+        findings=(
+            _Finding(
+                code="judge_erroring",
+                summary="1 board-declared judge(s) FAILED to answer: 'safety' raised on 34/34",
+                detail={"recommendation": "check the judge endpoint"},
+            ),
+        )
+    )
+    with caplog.at_level(logging.WARNING, logger="zicato.orchestrator"):
+        _warn_erroring_judges("epoch_x", 3, health)
+    assert "DECLARED JUDGE RAISED" in caplog.text
+    assert "34/34" in caplog.text
+    assert "check the judge endpoint" in caplog.text

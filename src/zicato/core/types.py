@@ -106,6 +106,7 @@ from zicato.core.loss import BUDGET_ABORT_CAUSE as BUDGET_ABORT_CAUSE
 from zicato.core.loss import (
     DriftCount,
     ExpectationResult,
+    JudgeError,
     JudgeLoss,
     LossProfile,
     MetricCount,
@@ -172,6 +173,7 @@ __all__ = [
     "MetricCount",
     "MetricSeverity",
     "JudgeLoss",
+    "JudgeError",
     "ExpectationResult",
     "LossProfile",
     # Run record / lineage

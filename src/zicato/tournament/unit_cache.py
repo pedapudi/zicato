@@ -42,6 +42,7 @@ from zicato.core import (
     BUDGET_ABORT_CAUSE,
     BoardEntry,
     Generation,
+    JudgeError,
     JudgeLoss,
     LossProfile,
     MetricCount,
@@ -534,6 +535,50 @@ def _mean_per_judge_loss(profiles: list[LossProfile]) -> tuple[JudgeLoss, ...]:
     return tuple(folded)
 
 
+def _sum_judge_errors(profiles: list[LossProfile]) -> tuple[JudgeError, ...]:
+    """Fold per-judge call-failure provenance across replicates by SUMMING.
+
+    Deliberately not a mean, unlike every other fold here. ``invocations``
+    and ``errors`` are event COUNTS of a thing that either happened or did
+    not, and the question the fold has to keep answerable is the operator's:
+    "did this judge ever fail to answer, and how often?". Meaning them would
+    divide a real failure by the replicate count — three of four replicates
+    clean and one that raised 34 times reports "8.5 errors", a number that
+    describes no run — and, worse, it would shrink toward zero as K grows,
+    so the more evidence a duel gathers the less a broken judge looks broken.
+    The sum is the honest total across the duel, and
+    :func:`~zicato.health.diagnostics.detect_dead_judge` re-aggregates over
+    every profile it is handed anyway, so both the folded and the unfolded
+    view lead to the same finding.
+
+    ``last_error_type`` comes from the LAST replicate reporting the judge —
+    a per-judge scalar, not a count; the most recent failure is the one an
+    operator would check first. Judge ORDER is first-seen across replicates.
+    Empty when no replicate recorded a failure, which is every healthy duel.
+    """
+    order: list[str] = []
+    totals: dict[str, list[int]] = {}
+    last_types: dict[str, str] = {}
+    for p in profiles:
+        for je in p.judge_errors:
+            if je.judge_name not in totals:
+                order.append(je.judge_name)
+                totals[je.judge_name] = [0, 0]
+            totals[je.judge_name][0] += int(je.invocations)
+            totals[je.judge_name][1] += int(je.errors)
+            if je.last_error_type:
+                last_types[je.judge_name] = je.last_error_type
+    return tuple(
+        JudgeError(
+            judge_name=name,
+            invocations=totals[name][0],
+            errors=totals[name][1],
+            last_error_type=last_types.get(name, ""),
+        )
+        for name in order
+    )
+
+
 def _average_losses(
     runs: list[dict[str, LossProfile]],
 ) -> dict[str, LossProfile]:
@@ -589,6 +634,13 @@ def _average_losses(
         Meaned per judge (:func:`_mean_per_judge_loss`); it is carried onto
         :class:`~zicato.scoring.api.ScalarContext`, so a scalar PLUGIN can
         read it.
+    ``judge_errors``
+        SUMMED per judge (:func:`_sum_judge_errors`), the one field here that
+        is deliberately not meaned — see that function for why a mean would
+        make a broken judge look less broken the more replicates a duel runs.
+        It is not scalar-bearing (a failed judge call contributes no drift,
+        which is exactly the defect it records); it is aggregated anyway
+        because the operator-facing finding it feeds must survive the fold.
     ``pass_fail``
         Strict-majority vote (``None`` preserved when the entry has no
         expectation). NOTE: now that ``score`` is folded, this vote no
@@ -663,6 +715,7 @@ def _average_losses(
             output_chars=round(sum(p.output_chars for p in profiles) / n),
             schema_failures=round(sum(p.schema_failures for p in profiles) / n),
             per_judge_loss=_mean_per_judge_loss(profiles),
+            judge_errors=_sum_judge_errors(profiles),
         )
     return out
 

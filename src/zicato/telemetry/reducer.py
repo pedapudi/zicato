@@ -66,6 +66,7 @@ from zicato.core import (
     BoardEntry,
     DriftCount,
     ExpectationResult,
+    JudgeError,
     JudgeLoss,
     LossProfile,
     MetricCount,
@@ -1302,7 +1303,10 @@ def read_loss_profile(path: Path) -> LossProfile:
     ``schema_failures``. The reader treats them as the dataclass
     defaults (empty tuple / 0) so old JSON loads cleanly. New consumers
     that want the merged view should call
-    :meth:`LossProfile.unified_metrics`.
+    :meth:`LossProfile.unified_metrics`. Same for ``judge_errors``: a
+    profile written before per-judge error provenance existed — and every
+    profile of a run whose judges all returned — carries no such key and
+    loads as the empty tuple.
     """
     with open(path, encoding="utf-8") as f:
         d = json.load(f)
@@ -1331,6 +1335,16 @@ def read_loss_profile(path: Path) -> LossProfile:
             weighted_loss=float(j.get("weighted_loss", 0.0) or 0.0),
         )
         for j in d.get("per_judge_loss", ())
+        if isinstance(j, dict)
+    )
+    judge_errors = tuple(
+        JudgeError(
+            judge_name=str(j.get("judge_name", "")),
+            invocations=int(j.get("invocations", 0) or 0),
+            errors=int(j.get("errors", 0) or 0),
+            last_error_type=str(j.get("last_error_type", "") or ""),
+        )
+        for j in d.get("judge_errors", ())
         if isinstance(j, dict)
     )
     exp = d.get("expectation_result")
@@ -1382,6 +1396,7 @@ def read_loss_profile(path: Path) -> LossProfile:
         adk_session_id=str(d.get("adk_session_id", "") or ""),
         match_id=str(d.get("match_id", "") or ""),
         per_judge_loss=per_judge_loss,
+        judge_errors=judge_errors,
         cached=bool(d.get("cached", False)),
         source_epoch=str(d.get("source_epoch", "") or ""),
         source_run=str(d.get("source_run", "") or ""),
