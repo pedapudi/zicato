@@ -453,9 +453,15 @@ def _build_sinks(
     except ModuleNotFoundError:
         return [], None
 
+    from zicato.telemetry.sink import archive_prior_events  # noqa: PLC0415
     from zicato.telemetry.terminal_event import SequenceTrackingSink  # noqa: PLC0415
 
     events_path.parent.mkdir(parents=True, exist_ok=True)
+    # A re-measured unit (the champion, re-run every round under
+    # ``--mode full``) would otherwise have its prior raw telemetry
+    # truncated by this ``mode="write"`` sink; retain one predecessor as
+    # ``events.prev.jsonl`` first (issue #122).
+    archive_prior_events(events_path)
     tracker = SequenceTrackingSink(JSONLPersistenceSink(path=events_path, mode="write"))
     sinks: list[Any] = [tracker]
 

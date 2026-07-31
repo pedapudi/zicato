@@ -295,6 +295,13 @@ def _persist_unit_loss(
     For replicate r>0 this is the only writer of the sibling
     ``loss.r<r>.json``. Best-effort: a write failure degrades the next
     lookup to another (correct) MISS rather than aborting the tournament.
+
+    When the slot is ALREADY occupied — the champion re-measured under
+    ``--mode full``, which re-runs it every round — the outgoing profile
+    is appended to ``loss.archive.jsonl`` in the same run directory
+    before it is overwritten (issue #122), so the per-entry evidence of
+    the earlier measurement survives. An empty slot (the common case)
+    archives nothing and costs nothing.
     """
     _, reducer_module = _telemetry_helpers()
     writer = getattr(reducer_module, "write_loss_profile", None)
@@ -305,6 +312,7 @@ def _persist_unit_loss(
         # real worker ran) is still on disk for replicate 0.
         return
     path = _unit_loss_path(workspace_root, epoch_id, generation_id, entry_id, replicate_index)
+    _archive_outgoing_unit_loss(path, replicate_index=replicate_index)
     try:
         writer(loss, path)
     except OSError as exc:  # noqa: BLE001 — cache persist is best-effort
@@ -315,6 +323,111 @@ def _persist_unit_loss(
             replicate_index,
             exc,
         )
+
+
+#: Append-only archive of the per-entry loss profiles a re-measurement
+#: overwrote, one JSON line per displaced profile, in the run directory
+#: beside the canonical ``loss.json`` / ``loss.r<n>.json`` slots.
+LOSS_ARCHIVE_FILENAME = "loss.archive.jsonl"
+
+
+def _archive_outgoing_unit_loss(path: Path, *, replicate_index: int) -> None:
+    """Append the profile currently in ``path`` to the run's loss archive.
+
+    A no-op when the slot is empty — the overwhelmingly common case, in
+    which a unit is measured once and this costs one ``exists()``. The
+    displaced profile is archived VERBATIM (the raw ``loss.json`` object
+    under ``profile``) so the archive needs no schema of its own and
+    stays readable by the same reducer that reads the canonical file;
+    the wrapper adds only the slot coordinates and a monotonic ``seq``.
+
+    Best-effort throughout: the archive rides ALONGSIDE the canonical
+    write, so an unreadable prior file or an unwritable archive must
+    never cost the caller its ``loss.json``.
+    """
+    if not path.exists():
+        return
+    try:
+        outgoing = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        log.debug("unit-loss archive skipped (unreadable %s): %s", path, exc)
+        return
+    if not isinstance(outgoing, dict):
+        return
+    archive = path.with_name(LOSS_ARCHIVE_FILENAME)
+    seq = 0
+    try:
+        with open(archive, encoding="utf-8") as fh:
+            seq = sum(1 for line in fh if line.strip())
+    except OSError:
+        seq = 0
+    record = {
+        "seq": seq,
+        "slot": path.name,
+        "replicate_index": replicate_index,
+        "profile": outgoing,
+    }
+    try:
+        with open(archive, "a", encoding="utf-8") as fh:
+            fh.write(json.dumps(record, default=str, sort_keys=True) + "\n")
+    except OSError as exc:  # pragma: no cover — unwritable workspace
+        log.debug("unit-loss archive append skipped for %s: %s", archive, exc)
+
+
+def read_unit_loss_history(
+    workspace_root: Path,
+    epoch_id: str,
+    generation_id: str,
+    entry_id: str,
+    replicate_index: int = 0,
+) -> list[LossProfile]:
+    """Every measurement of ONE board unit, oldest first.
+
+    The displaced profiles from ``loss.archive.jsonl`` (in write order)
+    followed by whatever occupies the canonical slot NOW — so the last
+    element is always the profile :func:`_resolve_cached_unit` would
+    serve, and the earlier ones are the measurements that preceded it
+    (issue #122). A unit measured exactly once yields a single-element
+    list; a unit never measured yields an empty one.
+
+    Best-effort, like every other reader on this path: an unreadable
+    archive line is skipped rather than raising, so a partially written
+    record cannot wedge an analysis.
+    """
+    from zicato.telemetry.reducer import (  # noqa: PLC0415 — avoid import cycle
+        loss_profile_from_dict,
+        read_loss_profile,
+    )
+
+    path = _unit_loss_path(workspace_root, epoch_id, generation_id, entry_id, replicate_index)
+    history: list[LossProfile] = []
+    archive = path.with_name(LOSS_ARCHIVE_FILENAME)
+    try:
+        lines = archive.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        lines = []
+    for line in lines:
+        if not line.strip():
+            continue
+        try:
+            record = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(record, dict) or record.get("slot") not in (None, path.name):
+            continue
+        profile = record.get("profile")
+        if not isinstance(profile, dict):
+            continue
+        try:
+            history.append(loss_profile_from_dict(profile))
+        except (KeyError, TypeError, ValueError):
+            continue
+    if path.exists():
+        try:
+            history.append(read_loss_profile(path))
+        except (OSError, KeyError, TypeError, ValueError, json.JSONDecodeError):
+            pass
+    return history
 
 
 @dataclass(frozen=True, slots=True)

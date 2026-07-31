@@ -98,6 +98,77 @@ def read_gen_score(layout: WorkspaceLayout, epoch_id: str, generation_id: str) -
     return score if isinstance(score, dict) else {}
 
 
+def read_gen_score_history(
+    layout: WorkspaceLayout, epoch_id: str, generation_id: str
+) -> list[dict[str, Any]]:
+    """Every aggregate ever written for one generation, oldest last.
+
+    The parsed ``gen_score.history.jsonl`` lines (issue #122): one FULL
+    aggregate per write — ``per_entry`` included — each stamped with the
+    ``round_index`` it was measured in and a monotonic ``seq``. The last
+    element is the measurement the flat ``gen_score.json`` still holds;
+    the ones before it are the measurements it overwrote, which is the
+    only way to see that an unchanged champion scored differently across
+    its defences.
+
+    Best-effort like every reader here: a missing / unreadable file
+    yields ``[]`` and a malformed line is skipped, never raised.
+    """
+    try:
+        text = layout.gen_score_history(epoch_id, generation_id).read_text(encoding="utf-8")
+    except OSError:
+        return []
+    out: list[dict[str, Any]] = []
+    for raw in text.splitlines():
+        line = raw.strip()
+        if not line:
+            continue
+        try:
+            obj = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(obj, dict):
+            out.append(obj)
+    return out
+
+
+def read_events_history(
+    layout: WorkspaceLayout, epoch_id: str, generation_id: str, entry_id: str
+) -> list[list[dict[str, Any]]]:
+    """One run's retained raw telemetry, oldest measurement first.
+
+    Returns one element per retained events file — the archived
+    predecessor (``events.prev.jsonl``, when a re-measurement displaced
+    one) followed by the current ``events.jsonl`` — each element being
+    that file's parsed JSONL records. A unit measured once yields a
+    single element; a unit never measured yields ``[]``.
+
+    Best-effort: unreadable files and malformed lines are skipped.
+    """
+    out: list[list[dict[str, Any]]] = []
+    for path in (
+        layout.events_prev(epoch_id, generation_id, entry_id),
+        layout.events(epoch_id, generation_id, entry_id),
+    ):
+        try:
+            text = path.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        records: list[dict[str, Any]] = []
+        for raw in text.splitlines():
+            line = raw.strip()
+            if not line:
+                continue
+            try:
+                obj = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if isinstance(obj, dict):
+                records.append(obj)
+        out.append(records)
+    return out
+
+
 def read_loss(
     layout: WorkspaceLayout, epoch_id: str, generation_id: str, entry_id: str
 ) -> dict[str, Any] | None:

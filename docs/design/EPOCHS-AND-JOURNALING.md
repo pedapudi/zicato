@@ -604,16 +604,16 @@ dashboard, and the deterministically-generated
 `lineage.json` lives at `.zicato/lineage.json` (one file, all epochs)
 and records the cross-cutting DAG.
 
-`zicato init` scaffolds the file as an empty-DAG placeholder:
+`zicato init` scaffolds the file as an empty DAG in the same
+epoch-keyed shape the loader reads:
 
 ```json
-{"nodes": [], "edges": []}
+{"epochs": []}
 ```
 
 Once `evolve` registers epochs and lands generations, the lineage
-mutators (`zicato.epoch.lineage`) write the populated, epoch-keyed
-form — a top-level `epochs` list, each epoch carrying its
-`generations`:
+mutators (`zicato.epoch.lineage`) populate it — a top-level `epochs`
+list, each epoch carrying its `generations`:
 
 ```json
 {
@@ -625,9 +625,16 @@ form — a top-level `epochs` list, each epoch carrying its
       "closed_at": "2026-04-08T14:30:00Z",
       "v0_parent": null,
       "generations": [
-        {"id": "v0", "parent_id": null, "promoted": true,  "created_at": "2026-04-01T10:00:00Z"},
-        {"id": "v1", "parent_id": "v0", "promoted": true,  "created_at": "2026-04-01T10:12:00Z"},
-        {"id": "v2", "parent_id": "v1", "promoted": false, "created_at": "2026-04-01T10:31:00Z"}
+        {"id": "v0", "parent_id": null, "promoted": true,  "created_at": "2026-04-01T10:00:00Z",
+         "round_index": 0, "rejection_reason": "",
+         "parent_scalar": null, "child_scalar": null, "delta_scalar": null},
+        {"id": "v1", "parent_id": "v0", "promoted": true,  "created_at": "2026-04-01T10:12:00Z",
+         "round_index": 1, "rejection_reason": "",
+         "parent_scalar": 0.7188, "child_scalar": 0.7601, "delta_scalar": 0.0413},
+        {"id": "v2", "parent_id": "v1", "promoted": false, "created_at": "2026-04-01T10:31:00Z",
+         "round_index": 2,
+         "rejection_reason": "insufficient improvement: 0.7328 vs 0.7601 (margin 0.0200)",
+         "parent_scalar": 0.7601, "child_scalar": 0.7328, "delta_scalar": -0.0273}
       ]
     },
     {
@@ -645,8 +652,15 @@ form — a top-level `epochs` list, each epoch carrying its
 ```
 
 Each generation row carries its `parent_id` (the generation it was
-forked from; `null`/cross-epoch `epoch:gen` for `v0`) and a `promoted`
-flag. The DAG is shallow because epochs are linear and the `v0` of a
+forked from; `null`/cross-epoch `epoch:gen` for `v0`), a `promoted`
+flag (`true` / `false` / `null` while the generation is still in
+flight), the `round_index` that minted it, and — from the settle-time
+write — the gate's `rejection_reason` plus the duel's `parent_scalar` /
+`child_scalar` / `delta_scalar`. The reason is non-empty **only** on a
+settled rejection: an empty reason means promoted or pending
+everywhere else in the system, and the DAG must not disagree. The
+scalars are `null` when unrecorded, never `0.0` — zero is a legal
+measurement. The DAG is shallow because epochs are linear and the `v0` of a
 new epoch points (via `v0_parent`) to the final version of its
 predecessor. Per-epoch promotion/rejection counts are derived from the
 `generations` list's `promoted` flags rather than stored as separate

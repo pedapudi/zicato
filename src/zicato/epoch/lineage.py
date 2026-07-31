@@ -17,6 +17,7 @@ rewrites is the simplest correct thing.
 File shape::
 
     {
+      "format_version": 1,
       "epochs": [
         {
           "id": "2026-04-01_initial",
@@ -25,14 +26,41 @@ File shape::
           "closed_at": "",
           "v0_parent": null,
           "generations": [
-            {"id": "v0", "parent_id": null, "promoted": true,  "created_at": "..."},
-            {"id": "v1", "parent_id": "v0", "promoted": true,  "created_at": "..."},
-            {"id": "v2", "parent_id": "v1", "promoted": false, "created_at": "..."}
+            {
+              "id": "v2",
+              "parent_id": "v1",
+              "promoted": false,
+              "created_at": "2026-04-01T11:00:00+00:00",
+              "round_index": 3,
+              "rejection_reason": "insufficient improvement: 0.7328 vs 0.7188 (margin 0.0200)",
+              "parent_scalar": 0.7188,
+              "child_scalar": 0.7328,
+              "delta_scalar": 0.014
+            },
+            ...
           ]
         },
         ...
       ]
     }
+
+Per-generation fields:
+
+``id`` / ``parent_id``
+    The generation and the one it was forked from (``null`` for ``v0``).
+``promoted``
+    TRI-STATE: ``true`` promoted, ``false`` a settled dead branch,
+    ``null`` an applied-but-unresolved in-flight challenger.
+``created_at``
+    ISO-8601 UTC birth timestamp.
+``round_index``
+    The evolve round that MINTED the generation; once set, never
+    re-stamped by a later write.
+``rejection_reason``
+    Why the gate cut it — non-empty ONLY when ``promoted`` is ``false``.
+``parent_scalar`` / ``child_scalar`` / ``delta_scalar``
+    The settling duel's two scalars and their difference; ``null`` when
+    unrecorded (never ``0.0``, which is a legal measurement).
 """
 
 from __future__ import annotations
@@ -150,6 +178,9 @@ def append_to_lineage(
     parent_id: str | None,
     *,
     pending: bool = False,
+    rejection_reason: str = "",
+    parent_scalar: float | None = None,
+    child_scalar: float | None = None,
 ) -> None:
     """Record a generation under its epoch.
 
@@ -169,6 +200,29 @@ def append_to_lineage(
     ``pending=False``, the default) upserts the same node to its resolved
     ``True`` / ``False`` state; the two writes compose because the upsert
     is an idempotent update-in-place.
+
+    ``rejection_reason`` / ``parent_scalar`` / ``child_scalar`` are the
+    SETTLE event's own facts — why the gate cut this generation and the
+    two numbers it compared (issue #124). They are recorded on the node
+    so the DAG answers "why" without a join against every generation's
+    ``experiment.json``, and they follow two rules:
+
+    * The reason is persisted ONLY on a settled REJECTION. A caller that
+      passes one for a promoted or a pending node gets ``""`` — five
+      persisted surfaces already read an empty reason as "promoted", and
+      a pending node that grew a reason would render as rejected, which
+      is the exact ambiguity ``pending`` exists to remove. The guard is
+      here rather than at the call sites so no future caller can break it.
+    * The scalars use ``None`` — never ``0.0`` — for absent. A scalar of
+      zero is a legal measurement, so a numeric default would make "this
+      record predates the field" indistinguishable from "both sides
+      scored zero" (the argument ``GateEvaluated`` already settled).
+      ``delta_scalar`` is derived (child minus parent) and is ``None``
+      whenever either side is.
+
+    All three belong to the settle-time write and, like ``round_index``,
+    are not blanked by a later upsert: a defence that re-records an
+    already-settled generation keeps the verdict that settled it.
     """
     raw = _load_raw(workspace_root)
     entry = _find_epoch(raw, epoch_id)
@@ -187,6 +241,15 @@ def append_to_lineage(
     # ``None`` (pending) for an applied-but-unresolved in-flight challenger;
     # the resolved ``True`` / ``False`` for the settle-time upsert.
     promoted: bool | None = None if pending else generation.promoted
+    # A reason belongs to a settled REJECTION and nowhere else — see the
+    # docstring. Enforced here so a caller cannot make a promoted or a
+    # pending node read as rejected.
+    reason = rejection_reason if promoted is False else ""
+    delta_scalar = (
+        child_scalar - parent_scalar
+        if child_scalar is not None and parent_scalar is not None
+        else None
+    )
     # Update-in-place if the generation already exists.
     for g in entry["generations"]:
         if g.get("id") == generation.id:
@@ -198,6 +261,21 @@ def append_to_lineage(
             # (e.g. a later defence) keeps the original value rather than
             # re-stamping it with whatever the caller passes.
             g["round_index"] = generation.round_index
+            # The settle-time facts follow the same once-set discipline:
+            # the pending write has none of them, the settle write lands
+            # them, and a later defence's upsert (which passes nothing)
+            # must not blank the verdict that settled the generation.
+            if reason:
+                g["rejection_reason"] = reason
+            g.setdefault("rejection_reason", "")
+            if parent_scalar is not None:
+                g["parent_scalar"] = parent_scalar
+            if child_scalar is not None:
+                g["child_scalar"] = child_scalar
+            if delta_scalar is not None:
+                g["delta_scalar"] = delta_scalar
+            for key in ("parent_scalar", "child_scalar", "delta_scalar"):
+                g.setdefault(key, None)
             _save_raw(workspace_root, raw)
             return
     entry["generations"].append(
@@ -207,6 +285,10 @@ def append_to_lineage(
             "promoted": promoted,
             "created_at": generation.created_at,
             "round_index": generation.round_index,
+            "rejection_reason": reason,
+            "parent_scalar": parent_scalar,
+            "child_scalar": child_scalar,
+            "delta_scalar": delta_scalar,
         }
     )
     _save_raw(workspace_root, raw)
