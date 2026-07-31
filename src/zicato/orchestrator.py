@@ -1038,9 +1038,17 @@ async def evolve_once(
     # mode compares against a cached whole-board champion aggregate and does not
     # re-derive the challenger scalar through this path, so the term applies on
     # the full A/B path (where the gate actually re-scores the challenger).
+    #
+    # The PARENT-side text of every mutation point is threaded in so the term
+    # measures the EDIT rather than the replacement (issue #120): a whole-file
+    # point hands the proposer the entire file and takes the entire file back,
+    # so without the parent text every proposal is charged for the template it
+    # was required to preserve. ``mutations`` was enumerated against the parent
+    # snapshot above, so this is content already in memory — the scoring layer
+    # stays pure and never re-reads the tree.
     from zicato.scoring.diff_complexity import diff_size as _diff_size  # noqa: PLC0415
 
-    child_diff_size = _diff_size(experiment)
+    child_diff_size = _diff_size(experiment, {m.id: m.content for m in mutations})
     if fast_mode and parent_historical is not None:
         # The contract's replication knob reaches the gauntlet fast path
         # (issue #109): the challenger board runs ``replicates`` times and
@@ -1421,6 +1429,7 @@ async def evolve_once(
         auxiliary_model=str(workspace_config.get("auxiliary_model", "")),
         meta_loop_emitter=meta_loop_emitter,
         token_clip=_token_clip_state(config),
+        attributable_regressions=_promoted_entry_regressions(tournament_result),
     )
 
     _beat(
@@ -3347,11 +3356,21 @@ def _emit_gate_evaluated(
     carrying no ``scalar``, or a non-numeric one, leaves that field absent
     rather than failing the round, matching the best-effort discipline of
     every other emission.
+
+    The gate's ``attributable_regressions`` — the entries that regressed on
+    their own evidence whatever the verdict (issue #130) — travel too, and only
+    when non-empty, so an ordinary duel's payload is byte-identical to before
+    the field existed. They are recorded ALONGSIDE ``rule_fired``, never inside
+    it: on a promotion ``rule_fired`` is empty by invariant, and that is exactly
+    the case where this list has something to say.
     """
     fields: dict[str, Any] = {
         "rule_fired": str(getattr(outcome, "reason", "") or ""),
         "decision": str(getattr(outcome, "decision", "") or ""),
     }
+    regressions = getattr(outcome, "attributable_regressions", ()) or ()
+    if regressions:
+        fields["attributable_regressions"] = tuple(str(entry_id) for entry_id in regressions)
     for key, agg in (("champion_scalar", parent_agg), ("challenger_scalar", child_agg)):
         if isinstance(agg, dict):
             raw = agg.get("scalar")
@@ -3361,6 +3380,40 @@ def _emit_gate_evaluated(
     if _is_real_number(margin):
         fields["margin_required"] = float(margin)
     round_log.emit("gate_evaluated", fields)
+
+
+def _promoted_entry_regressions(tournament_result: Any) -> dict[str, dict[str, Any]] | None:
+    """Return the per-entry regression evidence for a duel that PROMOTED (#130).
+
+    ``None`` unless the gate promoted AND named entries in its
+    ``attributable_regressions`` — a rejected challenger is discarded, so
+    nothing it regressed enters the lineage and there is nothing to warn
+    about. Otherwise the detail comes from
+    :func:`zicato.tournament.gate.attributable_regression_detail` over the
+    SAME aggregates the gate decided on, so the health finding can never name
+    an entry the outcome did not.
+
+    Best-effort like every other health input: a result shaped differently
+    than expected (a stubbed runner, a hand-built outcome) yields ``None``
+    rather than failing the round.
+    """
+    try:
+        outcome = getattr(tournament_result, "outcome", None)
+        if outcome is None or str(getattr(outcome, "decision", "")) != "promoted":
+            return None
+        if not getattr(outcome, "attributable_regressions", ()):
+            return None
+        parent_agg = tournament_result.parent_agg
+        child_agg = tournament_result.child_agg
+        if not isinstance(parent_agg, dict) or not isinstance(child_agg, dict):
+            return None
+        from zicato.tournament.gate import attributable_regression_detail  # noqa: PLC0415
+
+        detail = attributable_regression_detail(parent_agg, child_agg)
+    except Exception as exc:  # noqa: BLE001 — a health input never fails a round
+        log.debug("attributable per-entry regression detail unavailable: %s", exc)
+        return None
+    return {entry_id: dict(row) for entry_id, row in detail.items()} or None
 
 
 def _is_real_number(value: Any) -> TypeGuard[int | float]:
@@ -3908,6 +3961,7 @@ def _assess_and_persist_loop_health(
     board: list[Any],
     infra_outage: tuple[int, int] | None = None,
     token_clip: tuple[int, int] | None = None,
+    attributable_regressions: dict[str, dict[str, Any]] | None = None,
 ) -> tuple[str, bool]:
     """Run the per-round loop-health check and persist its report.
 
@@ -3918,7 +3972,9 @@ def _assess_and_persist_loop_health(
     ``(tokens_spent, max_tokens_per_round)`` pair for a round the token
     budget clipped — feeds
     :func:`~zicato.health.diagnostics.detect_token_budget_clip` the same
-    way.
+    way, and ``attributable_regressions`` — the per-entry evidence behind a
+    PROMOTED duel's ``GateOutcome.attributable_regressions`` — feeds
+    :func:`~zicato.health.diagnostics.detect_attributable_entry_regression`.
 
     Calls :func:`zicato.health.diagnostics.assess_loop_health` with the
     epoch's accumulated losses, experiments, and board, then writes the
@@ -3975,6 +4031,8 @@ def _assess_and_persist_loop_health(
             extra_kwargs["infra_outage"] = infra_outage
         if token_clip is not None:
             extra_kwargs["token_clip"] = token_clip
+        if attributable_regressions:
+            extra_kwargs["attributable_regressions"] = attributable_regressions
         tree_import_gaps = epoch_tree_import_gaps(workspace_root, epoch_id)
         if tree_import_gaps:
             extra_kwargs["tree_import_gaps"] = tree_import_gaps

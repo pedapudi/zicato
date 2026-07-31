@@ -112,6 +112,7 @@ async def _round_epilogue(
     meta_loop_emitter: Any,
     run_analyzer: bool = True,
     token_clip: tuple[int, int] | None = None,
+    attributable_regressions: dict[str, dict[str, Any]] | None = None,
 ) -> tuple[str, bool]:
     """The shared end-of-round tail: loop-health + analyzer + epoch report.
 
@@ -131,7 +132,10 @@ async def _round_epilogue(
     ``token_clip`` — the round's ``(tokens_spent, max_tokens_per_round)``
     pair when the per-round token budget clipped it
     (:func:`_token_clip_state`) — is threaded into the health assessment;
-    ``None`` (every unclipped round) is inert.
+    ``None`` (every unclipped round) is inert. ``attributable_regressions``
+    — the per-entry evidence behind a PROMOTED duel's
+    :attr:`~zicato.tournament.gate.GateOutcome.attributable_regressions` — is
+    threaded the same way and is inert on every other round.
 
     Returns ``(health_summary, health_critical)`` for the round outcome.
     """
@@ -142,7 +146,12 @@ async def _round_epilogue(
     )
 
     health_summary, health_critical = _assess_and_persist_loop_health(
-        workspace_root, epoch_id, round_n, board, token_clip=token_clip
+        workspace_root,
+        epoch_id,
+        round_n,
+        board,
+        token_clip=token_clip,
+        attributable_regressions=attributable_regressions,
     )
     if health_critical:
         _warn_loop_no_signal(epoch_id, round_n, health_summary)

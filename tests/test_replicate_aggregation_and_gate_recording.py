@@ -659,3 +659,60 @@ def test_promoted_gate_outcome_records_no_reason() -> None:
     )
     assert confirmed.decision.value == "promoted"
     assert confirmed.reason == ""
+
+
+# ---------------------------------------------------------------------------
+# Issue #130 — the per-entry regression report travels on the round log
+# ---------------------------------------------------------------------------
+
+
+def test_gate_evaluated_carries_attributable_regressions_on_a_promote() -> None:
+    """The promotion path is where it matters: ``rule_fired`` is empty by
+    invariant, so the regressed entry has nowhere else to be recorded."""
+    from zicato.tournament.gate import evaluate_gate
+
+    weights = ScoringWeights(promote_margin=0.01)
+    parent = {
+        "scalar": 0.5,
+        "pass_rate": 1.0,
+        "per_entry": {"e0": {"score": 1.0, "drift_loss": 0.10}},
+    }
+    child = {
+        "scalar": 0.4,
+        "pass_rate": 1.0,
+        "per_entry": {"e0": {"score": 1.0, "drift_loss": 0.60}},
+    }
+    outcome = evaluate_gate(parent, child, weights)
+    assert outcome.decision == "promoted"
+
+    event = _emitted_gate_event(outcome, parent, child, weights)
+    assert event.rule_fired == ""
+    assert event.attributable_regressions == ("e0",)
+
+
+def test_gate_evaluated_omits_the_field_on_an_ordinary_duel() -> None:
+    """No regressions ⇒ no key, so an ordinary duel's payload is unchanged."""
+    from zicato.epoch.round_log import GateEvaluated, _decode_event
+    from zicato.tournament.gate import evaluate_gate
+
+    weights = ScoringWeights(promote_margin=0.01)
+    parent = {"scalar": 0.5, "pass_rate": 1.0, "per_entry": {}}
+    child = {"scalar": 0.4, "pass_rate": 1.0, "per_entry": {}}
+    event = _emitted_gate_event(evaluate_gate(parent, child, weights), parent, child, weights)
+    assert event.attributable_regressions == ()
+
+    legacy = _decode_event("gate_evaluated", {"rule_fired": "", "decision": "promoted"})
+    assert isinstance(legacy, GateEvaluated)
+    assert legacy.attributable_regressions == ()
+
+
+def test_gate_evaluated_regressions_round_trip_through_json() -> None:
+    """JSON has no tuples; the decoder re-tuples the list it wrote."""
+    from zicato.epoch.round_log import GateEvaluated, _decode_event
+
+    decoded = _decode_event(
+        "gate_evaluated",
+        {"rule_fired": "", "decision": "promoted", "attributable_regressions": ["e0", "e7"]},
+    )
+    assert isinstance(decoded, GateEvaluated)
+    assert decoded.attributable_regressions == ("e0", "e7")

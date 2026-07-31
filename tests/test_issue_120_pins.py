@@ -1,17 +1,22 @@
-"""Pins for issue #120 — the parsimony term charges the file, not the edit.
+"""Pins for issue #120 — the parsimony term charged the file, not the edit.
 
-:func:`zicato.scoring.diff_complexity.diff_size` counts ``added`` as the line
-count of each patch's ``new_content`` and hard-codes ``removed`` to ``0``. For a
-``kind="span"`` mutation point the replacement really is the edit, so that is
+:func:`zicato.scoring.diff_complexity.diff_size` counted ``added`` as the line
+count of each patch's ``new_content`` and hard-coded ``removed`` to ``0``. For a
+``kind="span"`` mutation point the replacement really is the edit, so that was
 roughly right. For a ``kind="file"`` point the replacement is the WHOLE FILE:
-every proposal re-emits the template it was required to preserve and pays for
+every proposal re-emits the template it was required to preserve and paid for
 all of it, turning
 :attr:`~zicato.core.ScoringWeights.diff_complexity_weight` into a flat toll on
 proposing at all.
 
 The term is opt-in (``diff_complexity_weight`` defaults to ``0.0``), so this
-bites only contracts that turned parsimony on — but for those it can exceed
-``promote_margin`` by two orders of magnitude and reads as an honest regression.
+bit only contracts that turned parsimony on — but for those it could exceed
+``promote_margin`` by two orders of magnitude and read as an honest regression.
+
+The fix gives ``diff_size`` the parent-side CONTENT of each patched mutation
+point (the orchestrator already holds it — it enumerated the surface against
+the parent snapshot) and measures the real line delta, and makes a Rule 1
+rejection state how much of its delta was the toll rather than the board.
 
 Every experiment here is built with the real
 :class:`~zicato.core.types.Experiment` / :class:`~zicato.core.types.Patch`
@@ -21,8 +26,6 @@ the number the loop would actually charge.
 """
 
 from __future__ import annotations
-
-import pytest
 
 from zicato.core import DriftCount, LossProfile, ScoringWeights
 from zicato.core.types import Experiment, HypothesisSpec, Patch
@@ -37,6 +40,12 @@ from zicato.tournament.scoring import aggregate_generation_score
 #: including one that changes nothing.
 _TEMPLATE_LINES: tuple[str, ...] = tuple(f"template line {i}" for i in range(37))
 _TEMPLATE = "\n".join(_TEMPLATE_LINES)
+
+#: The PARENT-side content of that point, keyed by mutation id — what the
+#: orchestrator threads into ``diff_size`` from the mutation surface it
+#: enumerated against the parent snapshot. Passing it is what turns the size
+#: from "how big is the replacement" into "how big is the edit".
+_PARENT: dict[str, str] = {"whole_file_point": _TEMPLATE}
 
 #: The issue's configuration.
 _WEIGHTS = ScoringWeights(
@@ -97,63 +106,48 @@ def _loss(entry_id: str, *, passed: bool) -> LossProfile:
     )
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "issue #120: diff_size counts every line of the replacement, so a "
-        "whole-file patch that re-emits the parent verbatim is charged for the "
-        "entire file (0.76 at diff_complexity_weight=0.02) instead of for the "
-        "zero lines it actually changed"
-    ),
-)
 def test_verbatim_whole_file_reemit_costs_nothing() -> None:
     """Re-emitting the parent's file unchanged is an empty edit and must be free.
 
     This is the pure toll: the proposal alters nothing, so its description
-    length relative to the parent is zero and MDL charges zero. Today it is
-    charged ``0.02 * (37 added + 1 patch) == 0.76`` — 76x the contract's
+    length relative to the parent is zero and MDL charges zero. Before the fix
+    it was charged ``0.02 * (37 added + 1 patch) == 0.76`` — 76x the contract's
     ``promote_margin`` of 0.01 — purely for the template it was required to
     keep.
     """
-    charge = diff_complexity_component(_WEIGHTS, diff_size(_experiment(_TEMPLATE)))
+    charge = diff_complexity_component(_WEIGHTS, diff_size(_experiment(_TEMPLATE), _PARENT))
     assert charge is not None, "precondition: the parsimony term is active in this contract"
     assert charge <= _WEIGHTS.promote_margin
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "issue #120: diff_size hard-codes removed=0, so an edit that deletes "
-        "lines reports no removals and the MDL proxy cannot see deletion cost"
-    ),
-)
 def test_deleting_lines_from_a_whole_file_point_reports_removed_lines() -> None:
     """A whole-file patch that drops 20 of 37 lines has to report removals.
 
     The replacement keeps the first 17 lines and drops the rest. ``added``
-    should then be 0 and ``removed`` 20; today the size reads
+    should then be 0 and ``removed`` 20; before the fix the size read
     ``{"added": 17, "removed": 0}`` — the exact inversion, charging for the
     lines that survived and nothing for the ones destroyed.
     """
     shrunk = "\n".join(_TEMPLATE_LINES[:17])
-    assert diff_size(_experiment(shrunk))["removed"] == 20
+    size = diff_size(_experiment(shrunk), _PARENT)
+    assert size["removed"] == 20
+    assert size["added"] == 0
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "issue #120(b): the insufficient-improvement reason reports only the "
-        "total delta, so a rejection caused entirely by the parsimony toll is "
-        "worded identically to a genuine regression on the board"
-    ),
-)
 def test_rejection_reason_decomposes_the_delta_by_component() -> None:
     """The reason must name the components, so a parsimony toll is legible.
 
     A challenger that wins two entries out of twelve (``-0.1667`` on the pass
     component) but pays ``+0.76`` for re-emitting the template nets ``+0.5933``
-    and is rejected. The message says only that the loss rose — the operator
-    cannot tell from it that the board improved and the toll swamped it.
+    and is rejected. Before the fix the message said only that the loss rose —
+    the operator could not tell from it that the board improved and the toll
+    swamped it.
+
+    The ``diff_size`` call here deliberately passes NO parent content: that is
+    the legacy path, which still charges the whole 37-line re-emit, and it is
+    what keeps a 0.76 toll in the arithmetic for the decomposition to explain.
+    A toll that large is no longer reachable through the orchestrator (which
+    threads parent content), but the decomposition must work for any toll.
     """
     parent = aggregate_generation_score(
         [_loss(f"e{i}", passed=(i >= 5)) for i in range(12)], _WEIGHTS

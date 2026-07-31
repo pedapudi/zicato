@@ -733,6 +733,14 @@ class ScoringWeights:
         canonicalizer omits the field from the scoring hash at the default so
         an unset contract does not roll its epoch; setting it ``> 0`` adds the
         key and rolls the epoch like any other weight change.
+
+        CALIBRATION (issue #120): the diff size now measures the real line
+        delta against the parent's content rather than the size of the whole
+        replacement, so the same edit against a ``kind="file"`` mutation point
+        scores roughly an order of magnitude lower than it did — a re-emit that
+        changes nothing scores ``0`` instead of one unit per line of the file.
+        A weight tuned against the old numbers is now far too weak; re-tune it
+        against a measured round.
     diff_complexity_ceiling:
         The parsimony CEILING that pairs with :attr:`diff_complexity_weight`
         (OVERFITTING.md §5 / §12 #4 — the ceiling half of the diff-complexity
@@ -751,6 +759,9 @@ class ScoringWeights:
         full A/B promotion path only — the same path the challenger diff size
         is threaded on — so like the loss term it does not touch fast-mode or
         multi-challenger matchup scoring. Any value ``<= 0`` is treated as OFF.
+        Reads the SAME measure as the weight, so the issue #120 calibration
+        note above applies here too: a ceiling tuned against whole-file
+        re-emits now admits far larger edits than it used to.
     promote_margin:
         Minimum scalar-score improvement the child generation must show
         over the parent to be promoted. Acts as a regression-noise

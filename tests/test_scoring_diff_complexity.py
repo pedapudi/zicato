@@ -406,3 +406,68 @@ def test_ceiling_high_enough_promotes_the_same_diff_e2e(
         )
     )
     assert outcome.tournament_decision == "promoted"
+
+
+# ---------------------------------------------------------------------------
+# Real delta accounting against parent-side content (issue #120). Without the
+# parent text the historical whole-replacement count applies unchanged.
+# ---------------------------------------------------------------------------
+
+
+def test_parent_content_makes_a_verbatim_reemit_free() -> None:
+    """The whole-file case from the issue: the proposal changes nothing, so it
+    describes nothing and the patch itself does not count either."""
+    template = "\n".join(f"line {i}" for i in range(37))
+    exp = _experiment(_patch("whole_file", new_content=template))
+    assert diff_size(exp, {"whole_file": template}) == {"added": 0, "removed": 0, "patches": 0}
+    # ...and the same edit without the parent text still reads the old way.
+    assert diff_size(exp) == {"added": 37, "removed": 0, "patches": 1}
+
+
+def test_parent_content_measures_the_edit_not_the_file() -> None:
+    """One line changed inside a 37-line file costs one added + one removed +
+    the patch, not the 38 the whole re-emit used to cost."""
+    lines = [f"line {i}" for i in range(37)]
+    parent = "\n".join(lines)
+    lines[10] = "line 10 rewritten"
+    exp = _experiment(_patch("whole_file", new_content="\n".join(lines)))
+    assert diff_size(exp, {"whole_file": parent}) == {"added": 1, "removed": 1, "patches": 1}
+
+
+def test_deletions_are_counted_as_removed() -> None:
+    parent = "\n".join(f"line {i}" for i in range(10))
+    shrunk = "\n".join(f"line {i}" for i in range(4))
+    exp = _experiment(_patch("p", new_content=shrunk))
+    assert diff_size(exp, {"p": parent}) == {"added": 0, "removed": 6, "patches": 1}
+
+
+def test_a_patch_against_an_empty_parent_counts_only_additions() -> None:
+    exp = _experiment(_patch("p", new_content="one\ntwo"))
+    assert diff_size(exp, {"p": ""}) == {"added": 2, "removed": 0, "patches": 1}
+
+
+def test_unknown_mutation_ids_fall_back_per_patch() -> None:
+    """A mixed experiment: the point with parent text is differenced, the one
+    without keeps the legacy count. Neither policy leaks into the other."""
+    parent = "a\nb\nc"
+    exp = _experiment(
+        _patch("known", new_content=parent),  # verbatim: free
+        _patch("unknown", new_content="x\ny"),  # legacy: 2 added, 1 patch
+    )
+    assert diff_size(exp, {"known": parent}) == {"added": 2, "removed": 0, "patches": 1}
+
+
+def test_content_less_patches_still_count_as_patches() -> None:
+    """A numeric point's parent text is not comparable to the number replacing
+    it, so there is no delta to measure and its presence is all that counts."""
+    exp = _experiment(_patch("n", new_content=None, op="set_numeric"))
+    assert diff_size(exp, {"n": "0.5"}) == {"added": 0, "removed": 0, "patches": 1}
+
+
+def test_no_parent_contents_is_byte_identical_to_the_legacy_call() -> None:
+    exp = _experiment(
+        _patch("a", new_content="line1\nline2\nline3"),
+        _patch("b", new_content="solo"),
+        _patch("c", new_content=None, op="set_numeric"),
+    )
+    assert diff_size(exp, None) == diff_size(exp) == {"added": 4, "removed": 0, "patches": 3}

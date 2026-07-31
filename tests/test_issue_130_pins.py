@@ -15,10 +15,11 @@ the loss into the lineage:
   invisibly. Rule 3 cannot catch it either: it compares per-namespace MEANS, so
   an improvement elsewhere hides it.
 
-Both pins assert on a proposed ``GateOutcome.attributable_regressions`` field
-rather than on ``reason``. That is deliberate: the empty-reason-on-promote
-invariant is load-bearing for consumers that treat a non-empty reason as a
-rejection, so a warn-by-default report must not travel in ``reason``.
+Both pins assert on the ``GateOutcome.attributable_regressions`` field rather
+than on ``reason``. That is deliberate: the empty-reason-on-promote invariant
+is load-bearing for consumers that treat a non-empty reason as a rejection, so
+a warn-by-default report must not travel in ``reason`` — and the first pin
+keeps asserting that ``reason`` is still exactly empty on the promotion.
 
 Aggregates come from the real :func:`~zicato.tournament.scoring.aggregate_generation_score`
 over :class:`~zicato.core.LossProfile` rows.
@@ -60,14 +61,6 @@ def _regressions(outcome: Any) -> tuple[str, ...] | None:
     return None if reported is None else tuple(reported)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "issue #130: under aggregate scope a challenger that nets +3 entries "
-        "while breaking one promotes with an empty outcome — the broken entry "
-        "is never named, on the promotion path where it matters most"
-    ),
-)
 def test_promotion_that_breaks_an_entry_names_it_under_aggregate_scope() -> None:
     """Netting +3 while breaking e0 must still report e0.
 
@@ -108,14 +101,6 @@ def test_promotion_that_breaks_an_entry_names_it_under_aggregate_scope() -> None
     assert _regressions(outcome) == ("e0",)
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "issue #130: the per_entry rule reads only score/pass_fail, so an entry "
-        "whose drift_loss goes 0.10 -> 0.60 while it still passes regresses "
-        "invisibly, and Rule 3's namespace MEAN improves at the same time"
-    ),
-)
 def test_per_entry_quality_collapse_on_a_still_passing_entry_is_reported() -> None:
     """A 6x drift blowup on e0, masked by an improvement on e1, must be reported.
 
