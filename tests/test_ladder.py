@@ -67,6 +67,58 @@ def test_threshold_adds_noise_band() -> None:
     assert effective_threshold(cfg, _weights(promote_margin=0.1)) == pytest.approx(0.15)
 
 
+def test_threshold_ignores_the_holdout_margin() -> None:
+    """Issue #118's knob must NOT reach the Ladder's release bar.
+
+    ``query_holdout`` compares a TRAIN-measured improvement against this bar,
+    so ``promote_margin`` is the commensurable bound. ``holdout_margin`` is
+    calibrated against the holdout slice and is the larger number under the
+    documented rule of thumb; letting it govern here would raise the release
+    bar, and a WITHHELD query leaves the train promote intact — see
+    :func:`test_a_raised_release_bar_would_skip_the_holdout_veto`.
+    """
+    weights = ScoringWeights(promote_margin=0.1, holdout_margin=0.2)
+    assert effective_threshold(LadderConfig(threshold=None), weights) == pytest.approx(0.1)
+    assert effective_threshold(
+        LadderConfig(threshold=None, noise_scale=0.05), weights
+    ) == pytest.approx(0.15)
+    assert effective_threshold(LadderConfig(threshold=0.3), weights) == pytest.approx(
+        0.3
+    ), "an explicit LadderConfig.threshold still pins the bar"
+
+
+def test_a_raised_release_bar_would_skip_the_holdout_veto() -> None:
+    """WHY the holdout margin must not raise the bar: it would disarm the guard.
+
+    A challenger clearing Rule 1 by a marginal amount, whose holdout says NO.
+    At the train-calibrated bar the query RELEASES, so the non-confirmation is
+    applied and the promotion is refused. Pin the mechanism that makes a raised
+    bar dangerous: withholding does not gate, it just re-reports the previous
+    best, so the same duel would promote unconfirmed.
+    """
+    weights = ScoringWeights(promote_margin=0.01, holdout_margin=0.02)
+    state = LadderState(
+        budget_total=16, budget_remaining=16, best_holdout_scalar=None, best_confirmed=None
+    )
+    query = dict(
+        cfg=LadderConfig(),
+        weights=weights,
+        train_parent_scalar=0.5,
+        train_child_scalar=0.485,  # improvement 0.015: above 0.01, below 0.02
+        holdout_scalar=0.9,
+        holdout_confirmed=False,
+    )
+    released = query_holdout(state, **query)  # type: ignore[arg-type]
+    assert released.threshold == pytest.approx(0.01), "the bar is the TRAIN margin"
+    assert released.released, "the holdout's non-confirmation reaches the verdict"
+
+    # The same query against a bar raised to the holdout margin: withheld, and
+    # a withheld query is not a veto — the train promote would stand.
+    raised = query_holdout(state, **{**query, "cfg": LadderConfig(threshold=0.02)})  # type: ignore[arg-type]
+    assert not raised.released
+    assert raised.confirmed is None, "nothing released yet, so no veto is applied"
+
+
 # ---------------------------------------------------------------------------
 # Release rule
 # ---------------------------------------------------------------------------

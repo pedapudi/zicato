@@ -404,7 +404,7 @@ Then two idempotent, opt-in epoch-open measurements, each persisted onto
 `EpochConfig` (never hashed): `_maybe_calibrate_noise_floor`
 (config.json `"calibrate_noise_floor": K` — champion vs itself K times
 at replicate base 1000) and `_maybe_contract_preflight`
-(`"contract_preflight": K` — A/A floor plus achievable signal against a
+(`"contract_preflight": K` — A/A floor plus degradation signal against a
 degraded copy, replicate base 2000; recommend-only). On round 0 only,
 `_warn_margin_below_noise_floor` says loudly when `promote_margin` sits
 inside the measured floor.

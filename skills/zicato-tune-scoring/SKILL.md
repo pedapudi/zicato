@@ -262,27 +262,53 @@ measure the window it must sit inside — both are **live runs that spend budget
 
 `board audit` duels the champion against ITSELF and reports the A/A noise floor
 (persisted onto the epoch as `noise_floor`). `board preflight` adds the
-achievable signal — the champion versus deliberately degraded copies of itself —
-and asserts the window `noise < promote_margin < achievable`, naming the side
-that failed:
+**degradation signal** — the champion versus deliberately degraded copies of
+itself — and places `promote_margin` against the floor and that signal, naming
+the side it fell outside of. Every one of these is a WARNING; none stops a run:
 
 - `margin_below_floor` (WARN) — promotions cannot be told from re-rolls of the
   same generation. Raise the margin.
-- `margin_above_achievable` (REFUSE-recommended) — nothing can promote; the run
-  is null by construction. Note the achievable signal is a **single-point lower
-  bound** (the probe degrades one mutation point at a time), so a margin
-  deliberately set above single-point reach — because recombination unions two
-  sub-margin fixes — makes this informational rather than fatal.
-- `empty_window` (EMPTY) — the achievable signal does not clear the noise floor,
+- `margin_above_achievable` (WARN) — the margin exceeds the only movement the
+  probe demonstrated. **Read this one carefully.** The probe measures how far
+  the scalar moved when a mutation point was DESTROYED — degradation headroom,
+  how much the champion has left to LOSE — while a promotion needs movement the
+  other way. The two are unrelated in general, and a champion sitting near the
+  failing end has little left to break and plenty to gain, so improvement
+  headroom is **UNMEASURED** (issue #119). Worth checking the margin against
+  what a real fix is worth; NOT evidence the run is null. The signal is also a
+  single-point lower bound (one mutation point per probe), so a margin
+  deliberately above single-point reach — recombination unions two sub-margin
+  fixes — is expected.
+- `empty_window` (EMPTY) — the measured signal does not clear the noise floor,
   so **no** margin is defensible. Do not tune the margin; reduce evaluation
   noise (more `replicates`, steadier judges) or strengthen the board.
+- `holdout_note` (prose, when the board is split) — the HOLDOUT confirmation's
+  own bounds. See below.
 
 The recommended margin is **2.5 × `delta_std`** — the standard deviation of the
 A/A `delta_scalar`, the exact quantity the gate thresholds. Do NOT scale
 `max_abs_delta` instead: it is a *range* statistic that grows without bound in
-the draw count, so more calibration draws would inflate the recommendation and
-push it past the achievable signal (issue #112). `delta_std` sharpens with more
-draws, which is the direction a recommendation should move.
+the draw count, so more calibration draws would inflate the recommendation
+(issue #112). `delta_std` sharpens with more draws, which is the direction a
+recommendation should move.
+
+### The holdout has its own margin (issue #118)
+
+`promote_margin` is calibrated against the TRAIN slice. When the split is
+active, a promotion must also survive the holdout confirmation on a **smaller**
+slice, whose scalar moves in coarser `1/N` steps — and sharing one knob left
+real board shapes (the default 12-train / 6-holdout split with one holdout
+entry flipping) with **no promotable margin at all**. Two contract fields split
+the bounds; both default to exactly today's behaviour and neither moves the
+contract hash at its default:
+
+| Field | Default | Set it when |
+|---|---|---|
+| `holdout_margin` | `None` (= `promote_margin`) | holdout confirmations reject on movement the slice cannot avoid. Rule of thumb for commensurable bounds: `promote_margin × N_train / N_holdout`, roughly double on the default split. |
+| `holdout_entry_regression_budget` | `0` (zero tolerance) | a single holdout entry flipping pass→fail is rejecting every candidate. At `0` that rejects at EVERY margin — no `holdout_margin` can fix it, because the pass-rate rule fires before any scalar bound. Set `1` to let the confirmation absorb one entry. |
+
+The TRAIN side keeps its zero-tolerance rule either way, so neither knob
+loosens the gate's primary decision.
 
 ## Calibration workflow
 

@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import time
 from pathlib import Path
 
 import pytest
@@ -30,7 +31,12 @@ from zicato.core import DriftCount, LossProfile, ScoringWeights
 from zicato.core.types import Experiment, HypothesisSpec, Patch
 from zicato.epoch.contract import round_floats, scoring_to_canon
 from zicato.scoring.builtins import builtin_scalar, diff_complexity_component
-from zicato.scoring.diff_complexity import diff_char_size, diff_complexity, diff_size
+from zicato.scoring.diff_complexity import (
+    EXACT_DIFF_MAX_LINES,
+    diff_char_size,
+    diff_complexity,
+    diff_size,
+)
 from zicato.tournament.gate import diff_size_evidence
 from zicato.tournament.scoring import aggregate_generation_score
 
@@ -406,3 +412,120 @@ def test_ceiling_high_enough_promotes_the_same_diff_e2e(
         )
     )
     assert outcome.tournament_decision == "promoted"
+
+
+# ---------------------------------------------------------------------------
+# Real delta accounting against parent-side content (issue #120). Without the
+# parent text the historical whole-replacement count applies unchanged.
+# ---------------------------------------------------------------------------
+
+
+def test_parent_content_makes_a_verbatim_reemit_free() -> None:
+    """The whole-file case from the issue: the proposal changes nothing, so it
+    describes nothing and the patch itself does not count either."""
+    template = "\n".join(f"line {i}" for i in range(37))
+    exp = _experiment(_patch("whole_file", new_content=template))
+    assert diff_size(exp, {"whole_file": template}) == {"added": 0, "removed": 0, "patches": 0}
+    # ...and the same edit without the parent text still reads the old way.
+    assert diff_size(exp) == {"added": 37, "removed": 0, "patches": 1}
+
+
+def test_parent_content_measures_the_edit_not_the_file() -> None:
+    """One line changed inside a 37-line file costs one added + one removed +
+    the patch, not the 38 the whole re-emit used to cost."""
+    lines = [f"line {i}" for i in range(37)]
+    parent = "\n".join(lines)
+    lines[10] = "line 10 rewritten"
+    exp = _experiment(_patch("whole_file", new_content="\n".join(lines)))
+    assert diff_size(exp, {"whole_file": parent}) == {"added": 1, "removed": 1, "patches": 1}
+
+
+def test_deletions_are_counted_as_removed() -> None:
+    parent = "\n".join(f"line {i}" for i in range(10))
+    shrunk = "\n".join(f"line {i}" for i in range(4))
+    exp = _experiment(_patch("p", new_content=shrunk))
+    assert diff_size(exp, {"p": parent}) == {"added": 0, "removed": 6, "patches": 1}
+
+
+def test_a_patch_against_an_empty_parent_counts_only_additions() -> None:
+    exp = _experiment(_patch("p", new_content="one\ntwo"))
+    assert diff_size(exp, {"p": ""}) == {"added": 2, "removed": 0, "patches": 1}
+
+
+def test_unknown_mutation_ids_fall_back_per_patch() -> None:
+    """A mixed experiment: the point with parent text is differenced, the one
+    without keeps the legacy count. Neither policy leaks into the other."""
+    parent = "a\nb\nc"
+    exp = _experiment(
+        _patch("known", new_content=parent),  # verbatim: free
+        _patch("unknown", new_content="x\ny"),  # legacy: 2 added, 1 patch
+    )
+    assert diff_size(exp, {"known": parent}) == {"added": 2, "removed": 0, "patches": 1}
+
+
+def test_content_less_patches_still_count_as_patches() -> None:
+    """A numeric point's parent text is not comparable to the number replacing
+    it, so there is no delta to measure and its presence is all that counts."""
+    exp = _experiment(_patch("n", new_content=None, op="set_numeric"))
+    assert diff_size(exp, {"n": "0.5"}) == {"added": 0, "removed": 0, "patches": 1}
+
+
+def test_no_parent_contents_is_byte_identical_to_the_legacy_call() -> None:
+    exp = _experiment(
+        _patch("a", new_content="line1\nline2\nline3"),
+        _patch("b", new_content="solo"),
+        _patch("c", new_content=None, op="set_numeric"),
+    )
+    assert diff_size(exp, None) == diff_size(exp) == {"added": 4, "removed": 0, "patches": 3}
+
+
+def test_a_large_heavily_rewritten_file_is_measured_in_bounded_time() -> None:
+    """The exact diff has no time bound; the size cap is what supplies one.
+
+    ``difflib``'s ``autojunk`` heuristic is what keeps ``SequenceMatcher`` fast
+    when a line repeats often, and blank lines repeat often in every real file.
+    Disabled, a 2000-line whole-file rewrite with half its lines blank measured
+    29 s — inside per-round scoring, with no timeout above it. Pin that the cap
+    holds this under a second; the walltime assertion is deliberately loose
+    (machine-dependent), it is there to fail if the cap is ever removed.
+    """
+    n = EXACT_DIFF_MAX_LINES * 4
+    parent = "\n".join("" if i % 2 else f"    old{i} = {i}" for i in range(n))
+    child = "\n".join("" if i % 2 else f"    new{i} = {i}" for i in range(n))
+    exp = _experiment(_patch("whole_file", new_content=child))
+
+    started = time.perf_counter()
+    size = diff_size(exp, {"whole_file": parent})
+    elapsed = time.perf_counter() - started
+
+    assert elapsed < 5.0, f"differencing {n} lines took {elapsed:.1f}s — is the cap gone?"
+    assert size["patches"] == 1
+    assert size["added"] > 0 and size["removed"] > 0
+
+
+def test_a_targeted_edit_measures_the_edit_on_both_sides_of_the_cap() -> None:
+    """The cap costs nothing on the case the term exists to reward.
+
+    Above the cap ``autojunk`` returns and can overcount a near-total rewrite,
+    but a one-line change in a huge file still measures ``(1, 1)``: the popular
+    lines fall inside the matched run, so the heuristic never sees them. Pin
+    both sides so the cap can never be read as "big files stop being measured".
+    """
+    for n in (EXACT_DIFF_MAX_LINES // 2, EXACT_DIFF_MAX_LINES * 3):
+        lines = ["" if i % 5 == 0 else f"    x{i} = {i}" for i in range(n)]
+        parent = "\n".join(lines)
+        lines[n // 2] = "    CHANGED = 1"
+        exp = _experiment(_patch("whole_file", new_content="\n".join(lines)))
+        assert diff_size(exp, {"whole_file": parent}) == {
+            "added": 1,
+            "removed": 1,
+            "patches": 1,
+        }, f"a one-line edit in a {n}-line file must cost one line"
+
+
+def test_a_verbatim_re_emit_is_free_above_the_cap_too() -> None:
+    """Issue #120's headline property must not depend on the file's size."""
+    n = EXACT_DIFF_MAX_LINES * 3
+    parent = "\n".join("" if i % 5 == 0 else f"    x{i} = {i}" for i in range(n))
+    exp = _experiment(_patch("whole_file", new_content=parent))
+    assert diff_size(exp, {"whole_file": parent}) == {"added": 0, "removed": 0, "patches": 0}

@@ -373,7 +373,7 @@ distinguish a real improvement from a re-roll
 (`_warn_margin_below_noise_floor`).
 
 **preflight** — the opt-in contract pre-flight: measure the A/A floor AND
-the achievable signal (champion vs a deliberately-degraded copy) and
+the degradation signal (champion vs a deliberately-degraded copy) and
 record an `ok`/`warn`/`refuse` verdict (`src/zicato/epoch/preflight.py`).
 Recommend-only; persisted onto `EpochConfig.preflight`; never hashed.
 

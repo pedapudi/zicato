@@ -907,3 +907,81 @@ def test_cli_health_surfaces_preflight_and_tree_import_findings(tmp_path: Path) 
     assert "UNHEALTHY" in result.output
     assert "preflight_signal_below_floor" in result.output
     assert "tree_never_imported" in result.output
+
+
+# ---------------------------------------------------------------------------
+# detect_attributable_entry_regression (issue #130) — the warning a promotion
+# with an empty reason would otherwise never carry.
+# ---------------------------------------------------------------------------
+
+
+def test_attributable_entry_regression_is_silent_without_input() -> None:
+    from zicato.health.diagnostics import detect_attributable_entry_regression
+
+    assert detect_attributable_entry_regression(None) == []
+    assert detect_attributable_entry_regression({}) == []
+
+
+def test_attributable_entry_regression_names_the_entry_and_the_drift_movement() -> None:
+    from zicato.health.diagnostics import detect_attributable_entry_regression
+
+    findings = detect_attributable_entry_regression(
+        {
+            "e0": {
+                "parent_score": 1.0,
+                "child_score": 1.0,
+                "parent_drift_loss": 0.10,
+                "child_drift_loss": 0.60,
+            }
+        }
+    )
+    assert len(findings) == 1
+    finding = findings[0]
+    assert finding.code == "attributable_entry_regression"
+    assert finding.severity == "warning"
+    assert "e0" in finding.summary
+    assert "0.1 -> 0.6" in finding.summary
+    assert finding.detail["parent_drift_loss"] == 0.10
+    assert finding.detail["child_drift_loss"] == 0.60
+    # The recommendation carries all five evidence slots.
+    recommendation = finding.detail["recommendation"]
+    for slot in ("population:", "measured:", "compared against:", "remedy:", "remedy safety:"):
+        assert slot in recommendation
+
+
+def test_attributable_entry_regression_falls_back_to_the_score_movement() -> None:
+    """An entry traded away under aggregate scope has no drift movement to
+    report — the summary states the outcome movement instead."""
+    from zicato.health.diagnostics import detect_attributable_entry_regression
+
+    findings = detect_attributable_entry_regression(
+        {
+            "e0": {
+                "parent_score": 1.0,
+                "child_score": 0.0,
+                "parent_drift_loss": None,
+                "child_drift_loss": None,
+            }
+        }
+    )
+    assert "outcome score 1 -> 0" in findings[0].summary
+
+
+def test_attributable_entry_regression_makes_the_loop_unhealthy() -> None:
+    health = assess_loop_health(
+        {},
+        [],
+        [],
+        "e0",
+        attributable_regressions={
+            "e0": {
+                "parent_score": 1.0,
+                "child_score": 1.0,
+                "parent_drift_loss": 0.10,
+                "child_drift_loss": 0.60,
+            }
+        },
+    )
+    codes = [f.code for f in health.findings]
+    assert "attributable_entry_regression" in codes
+    assert health.healthy is False

@@ -514,16 +514,18 @@ async def evolve_once(
         judge_only=judge_only,
     )
 
-    # --- 2a'. Achievable-signal contract pre-flight (epoch-open step) -----
+    # --- 2a'. Contract pre-flight (epoch-open step) ----------------------
     # DEFAULT-ON (issue #84): unless runtime.preflight_gate == "off", measure
-    # the A/A floor AND the achievable signal (champion vs a deliberately-
+    # the A/A floor AND the degradation signal (champion vs a deliberately-
     # degraded ephemeral copy of itself) once per epoch and persist the
     # verdict. A below-floor / saturated / inert verdict — or a promote_margin
-    # outside the noise < margin < achievable window (issue #112) — is LOUDLY
-    # warned (inside the helper) and flows into the per-round health report.
-    # Under the opt-in HARD gate (preflight_gate == "refuse") a refuse-worthy
-    # verdict STOPS the run here — before rounds burn budget on a contract that
-    # cannot be optimized, or on a margin nothing can clear.
+    # outside the floor/signal window (issue #112) — is LOUDLY warned (inside
+    # the helper) and flows into the per-round health report. Under the opt-in
+    # HARD gate (preflight_gate == "refuse") a refuse-worthy verdict STOPS the
+    # run here, before rounds burn budget on a contract that cannot be
+    # optimized. Only the FLOOR-based verdict refuses: the window's upper
+    # comparison is against degradation headroom, which does not bound what a
+    # challenger can achieve (issue #119).
     # ``zicato board preflight`` is the manual surface.
     _preflight_verdict = await _maybe_contract_preflight(
         workspace_root=workspace_root,
@@ -547,32 +549,19 @@ async def evolve_once(
         str(getattr(config, "preflight_gate", "warn") or "warn") == "refuse"
         and _preflight_verdict == VERDICT_REFUSE
     ):
-        from zicato.health.inputs import epoch_preflight_record  # noqa: PLC0415
-
-        # Name WHICH refusal: "noise swamps the signal" and "the margin is
-        # above anything the loop can produce" are both guaranteed-null runs
-        # with entirely different fixes, so a single generic message would send
-        # half of them to the wrong one.
-        _record = epoch_preflight_record(workspace_root, resolved_epoch_id) or {}
-        _cause = (
-            "the configured promote_margin sits at or above the contract's "
-            "measured achievable signal, so barring a compound patch no "
-            "challenger could be promoted and the run would be null by "
-            "construction. Lower promote_margin inside the window "
-            "(noise < margin < achievable) — or, if the margin is deliberately "
-            "above what a SINGLE mutation point can move (e.g. recombination is "
-            "meant to union two sub-margin fixes), set "
-            "runtime.preflight_gate='warn'"
-            if str(_record.get("window_failure") or "") == "margin_above_achievable"
-            else "the contract's achievable signal is at or below its measured "
-            "A/A noise floor, so every duel would be decided by noise. "
-            "Strengthen the board / reduce evaluation noise"
-        )
+        # One cause reaches here, and it is the honestly-measured one: the
+        # contract's own measured movement does not clear its own A/A noise.
+        # The margin-window failures used to refuse too, and used to need their
+        # own sentence here; they are warnings now (issue #119) because their
+        # upper comparison is against DEGRADATION headroom, which bounds a
+        # challenger's improvement from neither side.
         raise PreflightRefusedError(
-            f"contract pre-flight REFUSE for epoch {resolved_epoch_id}: {_cause}. "
-            "Refusing the run before it spends rounds "
-            "(runtime.preflight_gate='refuse'); set runtime.preflight_gate='warn' "
-            "to proceed anyway."
+            f"contract pre-flight REFUSE for epoch {resolved_epoch_id}: the "
+            "contract's measured signal is at or below its measured A/A noise "
+            "floor, so every duel would be decided by noise. Strengthen the "
+            "board / reduce evaluation noise. Refusing the run before it spends "
+            "rounds (runtime.preflight_gate='refuse'); set "
+            "runtime.preflight_gate='warn' to proceed anyway."
         )
 
     # --- 2b. Margin-vs-noise-floor sanity check (once per invocation) -----
@@ -1049,9 +1038,17 @@ async def evolve_once(
     # mode compares against a cached whole-board champion aggregate and does not
     # re-derive the challenger scalar through this path, so the term applies on
     # the full A/B path (where the gate actually re-scores the challenger).
+    #
+    # The PARENT-side text of every mutation point is threaded in so the term
+    # measures the EDIT rather than the replacement (issue #120): a whole-file
+    # point hands the proposer the entire file and takes the entire file back,
+    # so without the parent text every proposal is charged for the template it
+    # was required to preserve. ``mutations`` was enumerated against the parent
+    # snapshot above, so this is content already in memory — the scoring layer
+    # stays pure and never re-reads the tree.
     from zicato.scoring.diff_complexity import diff_size as _diff_size  # noqa: PLC0415
 
-    child_diff_size = _diff_size(experiment)
+    child_diff_size = _diff_size(experiment, {m.id: m.content for m in mutations})
     if fast_mode and parent_historical is not None:
         # The contract's replication knob reaches the gauntlet fast path
         # (issue #109): the challenger board runs ``replicates`` times and
@@ -1432,6 +1429,7 @@ async def evolve_once(
         auxiliary_model=str(workspace_config.get("auxiliary_model", "")),
         meta_loop_emitter=meta_loop_emitter,
         token_clip=_token_clip_state(config),
+        attributable_regressions=_promoted_entry_regressions(tournament_result),
     )
 
     _beat(
@@ -3358,11 +3356,21 @@ def _emit_gate_evaluated(
     carrying no ``scalar``, or a non-numeric one, leaves that field absent
     rather than failing the round, matching the best-effort discipline of
     every other emission.
+
+    The gate's ``attributable_regressions`` — the entries that regressed on
+    their own evidence whatever the verdict (issue #130) — travel too, and only
+    when non-empty, so an ordinary duel's payload is byte-identical to before
+    the field existed. They are recorded ALONGSIDE ``rule_fired``, never inside
+    it: on a promotion ``rule_fired`` is empty by invariant, and that is exactly
+    the case where this list has something to say.
     """
     fields: dict[str, Any] = {
         "rule_fired": str(getattr(outcome, "reason", "") or ""),
         "decision": str(getattr(outcome, "decision", "") or ""),
     }
+    regressions = getattr(outcome, "attributable_regressions", ()) or ()
+    if regressions:
+        fields["attributable_regressions"] = tuple(str(entry_id) for entry_id in regressions)
     for key, agg in (("champion_scalar", parent_agg), ("challenger_scalar", child_agg)):
         if isinstance(agg, dict):
             raw = agg.get("scalar")
@@ -3372,6 +3380,40 @@ def _emit_gate_evaluated(
     if _is_real_number(margin):
         fields["margin_required"] = float(margin)
     round_log.emit("gate_evaluated", fields)
+
+
+def _promoted_entry_regressions(tournament_result: Any) -> dict[str, dict[str, Any]] | None:
+    """Return the per-entry regression evidence for a duel that PROMOTED (#130).
+
+    ``None`` unless the gate promoted AND named entries in its
+    ``attributable_regressions`` — a rejected challenger is discarded, so
+    nothing it regressed enters the lineage and there is nothing to warn
+    about. Otherwise the detail comes from
+    :func:`zicato.tournament.gate.attributable_regression_detail` over the
+    SAME aggregates the gate decided on, so the health finding can never name
+    an entry the outcome did not.
+
+    Best-effort like every other health input: a result shaped differently
+    than expected (a stubbed runner, a hand-built outcome) yields ``None``
+    rather than failing the round.
+    """
+    try:
+        outcome = getattr(tournament_result, "outcome", None)
+        if outcome is None or str(getattr(outcome, "decision", "")) != "promoted":
+            return None
+        if not getattr(outcome, "attributable_regressions", ()):
+            return None
+        parent_agg = tournament_result.parent_agg
+        child_agg = tournament_result.child_agg
+        if not isinstance(parent_agg, dict) or not isinstance(child_agg, dict):
+            return None
+        from zicato.tournament.gate import attributable_regression_detail  # noqa: PLC0415
+
+        detail = attributable_regression_detail(parent_agg, child_agg)
+    except Exception as exc:  # noqa: BLE001 — a health input never fails a round
+        log.debug("attributable per-entry regression detail unavailable: %s", exc)
+        return None
+    return {entry_id: dict(row) for entry_id, row in detail.items()} or None
 
 
 def _is_real_number(value: Any) -> TypeGuard[int | float]:
@@ -3701,7 +3743,7 @@ async def _maybe_contract_preflight(
             set_epoch_noise_floor(workspace_root, epoch_id, floor.to_json())
         if report.verdict == VERDICT_OK and report.window_failure is None:
             log.info(
-                "contract pre-flight OK for epoch %s (%s): achievable signal "
+                "contract pre-flight OK for epoch %s (%s): degradation signal "
                 "%.6g clears the measured noise floor %.6g and leaves "
                 "promote_margin %.6g inside the window (probed %d point(s))",
                 epoch_id,
@@ -3713,13 +3755,15 @@ async def _maybe_contract_preflight(
             )
         else:
             # LOUD run-level warning. The diagnosis is per-verdict on purpose:
-            # "noise swamps the signal", "the probe was inert", "the margin is
-            # unreachable" and "the margin is inside the noise" have four
-            # different fixes, and issue #106/#112 both trace operator time
-            # wasted to these being reported in the same words. Whether this
-            # also STOPS the run is the caller's decision, per ``gate_mode``.
+            # "noise swamps the signal", "the probe was inert", "the margin
+            # exceeds what we measured" and "the margin is inside the noise"
+            # have four different fixes, and issue #106/#112 both trace operator
+            # time wasted to these being reported in the same words. Whether
+            # this also STOPS the run is the caller's decision, per
+            # ``gate_mode`` — and only the floor-based verdicts can stop it
+            # (issue #119).
             log.warning(
-                "CONTRACT PRE-FLIGHT %s — epoch %s (%s): achievable signal "
+                "CONTRACT PRE-FLIGHT %s — epoch %s (%s): degradation signal "
                 "%.6g vs measured A/A noise floor %.6g vs promote_margin %.6g "
                 "(best of %d probed point(s): %s → scalar %.6g). %s %s See the "
                 "per-round health report / `zicato board preflight`.",
@@ -3771,7 +3815,7 @@ def _preflight_diagnosis(report: Any) -> str:
     if report.verdict == VERDICT_INERT:
         return (
             "Every probed mutation point left the scalar exactly at the champion "
-            "mean while the A/A draws varied, so the achievable signal is "
+            "mean while the A/A draws varied, so the signal is "
             "UNMEASURED rather than zero — the probe was inert, which is NOT "
             "evidence against the contract. Pin a point the deliverable "
             "demonstrably depends on via runtime.preflight_probe_mutation_ids "
@@ -3786,14 +3830,16 @@ def _preflight_diagnosis(report: Any) -> str:
         )
     if report.window_failure == WINDOW_MARGIN_ABOVE_ACHIEVABLE:
         return (
-            "promote_margin sits at or above the largest improvement any single "
-            "probed mutation point produces, so barring a compound patch no "
-            "challenger can be promoted and the run is null by construction. "
-            "Lower the margin inside the window (noise < margin < achievable). "
-            "The probe degrades ONE point at a time, so this bound is a lower "
-            "bound on the loop's reach — if the margin is deliberately above "
-            "single-point reach (e.g. recombination is meant to union two "
-            "sub-margin fixes) this is expected and informational."
+            "promote_margin sits at or above the measured DEGRADATION signal — "
+            "how far the scalar moved when a mutation point was destroyed, i.e. "
+            "how much this champion has left to LOSE. A promotion needs movement "
+            "the other way, and the two are unrelated in general (a champion near "
+            "the failing end has little left to break and plenty to gain), so "
+            "improvement headroom is UNMEASURED and this is NOT evidence the run "
+            "is null. Check promote_margin against what a real fix on this board "
+            "is worth; it does still need to clear the noise floor, which IS "
+            "measured honestly. The probe also degrades ONE point at a time, so "
+            "it under-reports even the movement it measures."
         )
     if report.window_failure == WINDOW_MARGIN_BELOW_FLOOR:
         return (
@@ -3804,10 +3850,10 @@ def _preflight_diagnosis(report: Any) -> str:
         )
     if report.window_failure == WINDOW_EMPTY:
         return (
-            "The achievable signal does not clear the noise floor, so the window "
-            "noise < margin < achievable is EMPTY and no promote_margin is "
-            "defensible — do not tune the margin. Reduce evaluation noise (more "
-            "replicates, steadier judges) or strengthen the board."
+            "The measured signal does not clear the noise floor, so no "
+            "promote_margin is defensible on this board — do not tune the "
+            "margin. Reduce evaluation noise (more replicates, steadier judges) "
+            "or strengthen the board."
         )
     return (
         "Under this contract every duel is decided by noise, so no challenger "
@@ -3871,10 +3917,8 @@ def _warn_margin_below_noise_floor(workspace_root: Path, epoch_id: str) -> None:
         "range does — and/or enable the evidence gate — "
         '"promote_confidence_threshold": 0.8 with an honest '
         '"promote_confidence_replicates" budget (the scaffolded contracts '
-        "use 32) — so promotions must replicate to CI separation. Check the "
-        "result against the pre-flight's achievable signal: a margin ABOVE it "
-        "promotes nothing at all. (Floor measured by `zicato board audit`; "
-        "this run continues unchanged.)",
+        "use 32) — so promotions must replicate to CI separation. (Floor "
+        "measured by `zicato board audit`; this run continues unchanged.)",
         margin,
         max_abs,
         epoch_id,
@@ -3917,6 +3961,7 @@ def _assess_and_persist_loop_health(
     board: list[Any],
     infra_outage: tuple[int, int] | None = None,
     token_clip: tuple[int, int] | None = None,
+    attributable_regressions: dict[str, dict[str, Any]] | None = None,
 ) -> tuple[str, bool]:
     """Run the per-round loop-health check and persist its report.
 
@@ -3927,7 +3972,9 @@ def _assess_and_persist_loop_health(
     ``(tokens_spent, max_tokens_per_round)`` pair for a round the token
     budget clipped — feeds
     :func:`~zicato.health.diagnostics.detect_token_budget_clip` the same
-    way.
+    way, and ``attributable_regressions`` — the per-entry evidence behind a
+    PROMOTED duel's ``GateOutcome.attributable_regressions`` — feeds
+    :func:`~zicato.health.diagnostics.detect_attributable_entry_regression`.
 
     Calls :func:`zicato.health.diagnostics.assess_loop_health` with the
     epoch's accumulated losses, experiments, and board, then writes the
@@ -3984,6 +4031,8 @@ def _assess_and_persist_loop_health(
             extra_kwargs["infra_outage"] = infra_outage
         if token_clip is not None:
             extra_kwargs["token_clip"] = token_clip
+        if attributable_regressions:
+            extra_kwargs["attributable_regressions"] = attributable_regressions
         tree_import_gaps = epoch_tree_import_gaps(workspace_root, epoch_id)
         if tree_import_gaps:
             extra_kwargs["tree_import_gaps"] = tree_import_gaps

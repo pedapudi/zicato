@@ -145,7 +145,8 @@ class HealthFinding:
         ``"preflight_margin_above_achievable"``,
         ``"preflight_margin_below_floor"``, ``"noisy_judge"``,
         ``"dead_judge"``, ``"placebo_promoted"``, ``"infra_outage"``,
-        ``"round_token_clipped"``, ``"tree_never_imported"``.
+        ``"round_token_clipped"``, ``"tree_never_imported"``,
+        ``"attributable_entry_regression"``.
     severity:
         ``"info"`` | ``"warning"`` | ``"critical"``. A loop is
         considered unhealthy when any ``"warning"`` or ``"critical"``
@@ -944,7 +945,7 @@ def detect_preflight_verdict(
     """Re-surface a non-OK contract pre-flight verdict as a health finding.
 
     The contract pre-flight (:mod:`zicato.epoch.preflight`) measures the
-    epoch's A/A noise floor AND its achievable signal (champion vs a
+    epoch's A/A noise floor AND its degradation signal (champion vs a
     deliberately-degraded copy of itself) before rounds burn budget. Its
     verdict persists onto the epoch record; this detector folds it into
     every round's health report so the operator keeps seeing it for as
@@ -957,7 +958,7 @@ def detect_preflight_verdict(
     below.
 
     * verdict ``"refuse"`` → ``preflight_signal_below_floor``: the measured
-      achievable signal is at or below the measured noise floor, so duels
+      signal is at or below the measured noise floor, so duels
       under this contract are decided by noise. ``critical`` only under
       ``preflight_gate="refuse"``; ``warning`` under ``"warn"`` (the default)
       and ``"off"``.
@@ -968,7 +969,7 @@ def detect_preflight_verdict(
     * verdict ``"inert"`` → ``warning`` ``preflight_inert_probe`` (issue
       #106): every point the pre-flight degraded moved the scalar by
       exactly nothing while the champion's own draws did vary. The
-      achievable signal is UNMEASURED, not zero, so the finding must not
+      signal is UNMEASURED, not zero, so the finding must not
       read like the noise-limited one — the fix is to pin a representative
       point, and the protection simply is not in force meanwhile.
 
@@ -977,10 +978,12 @@ def detect_preflight_verdict(
     questions are separable and a contract can fail either alone:
 
     * ``"margin_above_achievable"`` → ``warning``
-      ``preflight_margin_above_achievable``: no SINGLE-POINT change clears
-      the gate. Deliberately not critical — the achievable signal is a
-      single-point lower bound, and a compound (e.g. recombined) patch can
-      legitimately exceed it, so a hard stop would kill a viable run.
+      ``preflight_margin_above_achievable``: the margin exceeds the measured
+      DEGRADATION signal. Not critical, and after issue #119 not even strong
+      evidence: what the probe measures is how far the scalar fell when a
+      mutation point was destroyed, which does not bound how far a challenger
+      can improve (and, degrading one point per probe, under-reports even
+      that). The finding names a number worth checking, not a null run.
     * ``"margin_below_floor"`` → ``warning`` ``preflight_margin_below_floor``.
     * ``"empty_window"`` is NOT a finding of its own — it is the same fact the
       refuse/inert finding already carries — but it rewrites that finding's
@@ -1060,7 +1063,7 @@ def detect_preflight_verdict(
                 "judges) or strengthen the board so a real change out-scores a "
                 "re-roll"
                 if empty_window
-                else "refusal recommended: the contract's achievable signal does "
+                else "refusal recommended: the contract's measured signal does "
                 "not clear its own noise floor — reduce evaluation noise (more "
                 "replicates, steadier judges) or strengthen the board before "
                 "running rounds"
@@ -1076,7 +1079,7 @@ def detect_preflight_verdict(
                 # the operator's explicit choice.
                 severity="critical" if hard_gate else "warning",
                 summary=(
-                    f"contract pre-flight: achievable signal {signal:.6g} is at/below "
+                    f"contract pre-flight: measured signal {signal:.6g} is at/below "
                     f"the measured A/A noise floor {floor:.6g} — duels under this "
                     "contract are decided by noise (refusal recommended)"
                 ),
@@ -1145,31 +1148,36 @@ def detect_preflight_verdict(
         findings.append(
             HealthFinding(
                 code="preflight_margin_above_achievable",
-                # A WARNING, not a critical, and deliberately so: the pre-flight
-                # degrades ONE point per probe, so its achievable signal is a
-                # single-point LOWER BOUND on the loop's reach. A compound patch
-                # — and recombination unions two of them on purpose — can exceed
-                # it, so this is strong evidence of a mis-set margin, never proof
-                # of nullity. Critical is reserved for "no usable signal at all"
-                # and trips the loop's degenerate-health circuit breaker, which
-                # would wrongly kill a legitimate recombination run whose margin
-                # sits above single-point reach by design.
+                # A WARNING, and after issue #119 that is not a judgement call
+                # about strength of evidence — it is all the evidence there is.
+                # The probe measures DEGRADATION headroom (how far the scalar
+                # fell when a point was destroyed), which bounds a challenger's
+                # improvement from neither side. On top of that it degrades ONE
+                # point per probe, so it under-reports even the movement it does
+                # measure (a compound patch — and recombination unions two on
+                # purpose — exceeds it). Critical is reserved for the honest
+                # measurement, "no usable signal at all", and it trips the loop's
+                # degenerate-health circuit breaker.
                 severity="warning",
                 summary=(
                     f"contract pre-flight: promote_margin {margin:.6g} is at/above the "
-                    f"measured achievable signal {signal:.6g} — no single-point change "
-                    "the probe could demonstrate clears the gate, so unless the "
-                    "proposer lands compound patches this run is null by construction"
+                    f"measured degradation signal {signal:.6g} — the only movement the "
+                    "probe demonstrated (destroying a mutation point) is smaller than "
+                    "the margin. Improvement headroom is UNMEASURED, so this is a "
+                    "reason to check the margin, not evidence the run is null"
                 ),
                 detail={
                     **detail,
                     "recommendation": (
-                        "lower promote_margin below the achievable signal (it must sit "
-                        f"strictly inside noise {floor:.6g} < margin < achievable "
-                        f"{signal:.6g}), or raise the achievable signal by strengthening "
-                        "the board. If the margin is deliberately above single-point "
-                        "reach — e.g. recombination is expected to union two sub-margin "
-                        "fixes — this finding is expected and informational"
+                        "check promote_margin against what a real fix on this board is "
+                        f"worth; the measured degradation signal {signal:.6g} is a "
+                        "single-point LOWER bound on movement and says nothing about "
+                        "how much a challenger can improve — a champion sitting near "
+                        "the failing end has little left to break and plenty to gain. "
+                        f"The margin does need to clear the noise floor {floor:.6g}, "
+                        "which is measured honestly. If the margin is deliberately "
+                        "above single-point reach — e.g. recombination is expected to "
+                        "union two sub-margin fixes — this finding is informational"
                     ),
                 },
             )
@@ -1334,6 +1342,97 @@ def detect_tree_never_imported(
     return findings
 
 
+def detect_attributable_entry_regression(
+    entry_regressions: dict[str, dict[str, Any]] | None,
+) -> list[HealthFinding]:
+    """Surface entries a PROMOTED duel regressed on their own evidence (#130).
+
+    ``entry_regressions`` is ``{entry_id: {parent_score, child_score,
+    parent_drift_loss, child_drift_loss}}`` — the gate's
+    :func:`zicato.tournament.gate.attributable_regression_detail` for a round
+    whose verdict was ``promoted`` and whose
+    ``GateOutcome.attributable_regressions`` was non-empty. The orchestrator
+    threads it per round like :func:`detect_infra_outage` does its circuit
+    trip; ``None`` / empty (every round that promoted cleanly, and every
+    rejection — a rejected challenger is discarded, so nothing was baked in) is
+    silent.
+
+    A ``warning``. The gate promoted, correctly under the contract it was
+    given: an ``aggregate``-scope contract PERMITS entry trades, and no rule
+    reads per-entry drift at all. But the entry is now regressed in the
+    champion lineage and every later round measures against it, while the
+    promotion itself recorded an empty reason. This is the only place that
+    says so.
+
+    Deliberately NOT a veto, and there is no knob to make it one. Per-entry
+    evidence is a single sample per side: at the board sizes this loop runs,
+    one entry's drift moving 0.10 -> 0.60 is inside the range an A/A re-roll
+    produces, so a gate built on it would reject real winners at a rate nobody
+    has measured. The confirm-before-veto discipline (the measured noise floor
+    preceded ``promote_margin`` advice; the placebo arm preceded reading the
+    gate's discrimination) applies here too: this finding accumulates the
+    evidence, and a gated veto — opt-in, thresholded against a measured
+    per-entry floor — is registered for after that evidence exists.
+    """
+    if not entry_regressions:
+        return []
+    findings: list[HealthFinding] = []
+    for entry_id in sorted(entry_regressions):
+        row = entry_regressions[entry_id] or {}
+        parent_drift = row.get("parent_drift_loss")
+        child_drift = row.get("child_drift_loss")
+        if isinstance(parent_drift, int | float) and isinstance(child_drift, int | float):
+            movement = f"drift loss {float(parent_drift):.4g} -> {float(child_drift):.4g}"
+        else:
+            movement = (
+                f"outcome score {_format_measure(row.get('parent_score'))} -> "
+                f"{_format_measure(row.get('child_score'))}"
+            )
+        findings.append(
+            HealthFinding(
+                code="attributable_entry_regression",
+                severity="warning",
+                summary=(
+                    f"board entry {entry_id} regressed ({movement}) in a round that "
+                    "PROMOTED — the gate's rules did not read that movement, so the "
+                    "regression is now the champion's baseline and the promotion "
+                    "recorded no reason"
+                ),
+                detail={
+                    "entry_id": entry_id,
+                    "parent_score": row.get("parent_score"),
+                    "child_score": row.get("child_score"),
+                    "parent_drift_loss": parent_drift,
+                    "child_drift_loss": child_drift,
+                    "recommendation": (
+                        f"population: the one board entry {entry_id}, on this round's "
+                        "champion-vs-challenger duel. measured: its per-entry outcome "
+                        "score and drift loss on both sides, read off the same "
+                        "aggregates the gate decided on. compared against: the "
+                        "per-entry monotonicity tolerance and the drift band "
+                        "(child > 2x parent AND child > parent + 0.05). remedy: "
+                        "inspect the entry's runs on both generations before the next "
+                        "round measures against the new baseline; if entries must not "
+                        "be traded away, set pass_rate_monotonicity_scope=per_entry, "
+                        "which gates the OUTCOME axis. remedy safety: nothing here "
+                        "vetoes, and per-entry drift stays ungated in every scope — a "
+                        "single-sample per-entry movement is not yet distinguishable "
+                        "from noise, so treat one finding as a prompt to look, and a "
+                        "repeat across rounds on the same entry as a real regression"
+                    ),
+                },
+            )
+        )
+    return findings
+
+
+def _format_measure(value: Any) -> str:
+    """Render a per-entry measurement for a summary line, or ``"unmeasured"``."""
+    if isinstance(value, int | float) and not isinstance(value, bool):
+        return f"{float(value):.4g}"
+    return "unmeasured"
+
+
 def assess_loop_health(
     losses_by_generation: dict[str, list[LossProfile]],
     experiments: list[Any],
@@ -1349,6 +1448,7 @@ def assess_loop_health(
     token_clip: tuple[int, int] | None = None,
     tree_import_gaps: dict[str, tuple[str, ...]] | None = None,
     preflight_gate: str = PREFLIGHT_GATE_DEFAULT,
+    attributable_regressions: dict[str, dict[str, Any]] | None = None,
 ) -> LoopHealth:
     """Run every detector and collect the findings into a :class:`LoopHealth`.
 
@@ -1425,6 +1525,13 @@ def assess_loop_health(
         :func:`detect_tree_never_imported` can warn that a generation's
         mutations cannot have been under test (issue #110). ``None`` /
         empty (the default, and every healthy epoch) is silent.
+    attributable_regressions:
+        ``{entry_id: {parent/child score + drift}}`` for the entries THIS
+        round's PROMOTED duel regressed on their own evidence — the gate's
+        :func:`zicato.tournament.gate.attributable_regression_detail`,
+        threaded per round by the orchestrator like ``infra_outage`` (see
+        :func:`detect_attributable_entry_regression`). ``None`` / empty (the
+        default, every rejection, and every clean promotion) is silent.
 
     Returns
     -------
@@ -1458,6 +1565,7 @@ def assess_loop_health(
     findings.extend(detect_infra_outage(infra_outage))
     findings.extend(detect_token_budget_clip(token_clip))
     findings.extend(detect_tree_never_imported(tree_import_gaps))
+    findings.extend(detect_attributable_entry_regression(attributable_regressions))
 
     healthy = not any(finding.severity in ("warning", "critical") for finding in findings)
     return LoopHealth(
@@ -1478,6 +1586,7 @@ __all__ = [
     "HealthFinding",
     "LoopHealth",
     "assess_loop_health",
+    "detect_attributable_entry_regression",
     "detect_degenerate_scoring",
     "detect_non_differentiating_entry",
     "detect_flat_drift_signal",

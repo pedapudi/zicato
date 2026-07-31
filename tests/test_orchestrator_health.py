@@ -543,3 +543,67 @@ def test_evolve_n_rounds_opt_out_of_health_stop(
 
     # No early stop — all three rounds ran.
     assert len(outcomes) == 3
+
+
+# ---------------------------------------------------------------------------
+# Issue #130 — only a PROMOTED duel's per-entry regressions reach the health
+# assessment: a rejected challenger is discarded, so it baked nothing in.
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class _FakeOutcome:
+    decision: str
+    attributable_regressions: tuple[str, ...] = ()
+
+
+@dataclass
+class _FakeResult:
+    outcome: Any
+    parent_agg: Any
+    child_agg: Any
+
+
+def _duel(decision: str, regressions: tuple[str, ...]) -> _FakeResult:
+    return _FakeResult(
+        outcome=_FakeOutcome(decision=decision, attributable_regressions=regressions),
+        parent_agg={"per_entry": {"e0": {"score": 1.0, "drift_loss": 0.10}}},
+        child_agg={"per_entry": {"e0": {"score": 1.0, "drift_loss": 0.60}}},
+    )
+
+
+def test_promoted_regressions_are_threaded_with_their_evidence() -> None:
+    from zicato.orchestrator import _promoted_entry_regressions
+
+    detail = _promoted_entry_regressions(_duel("promoted", ("e0",)))
+    assert detail == {
+        "e0": {
+            "parent_score": 1.0,
+            "child_score": 1.0,
+            "parent_drift_loss": 0.10,
+            "child_drift_loss": 0.60,
+        }
+    }
+
+
+def test_a_rejected_duel_threads_nothing() -> None:
+    from zicato.orchestrator import _promoted_entry_regressions
+
+    assert _promoted_entry_regressions(_duel("rejected", ("e0",))) is None
+
+
+def test_a_clean_promotion_threads_nothing() -> None:
+    from zicato.orchestrator import _promoted_entry_regressions
+
+    assert _promoted_entry_regressions(_duel("promoted", ())) is None
+
+
+def test_an_unexpected_result_shape_is_tolerated() -> None:
+    """A health input never fails a round."""
+    from zicato.orchestrator import _promoted_entry_regressions
+
+    assert _promoted_entry_regressions(object()) is None
+    assert (
+        _promoted_entry_regressions(_FakeResult(_FakeOutcome("promoted", ("e0",)), None, None))
+        is None
+    )

@@ -172,7 +172,7 @@ knob families carry this, and the copilot should teach them honestly:
   improvement from an A/A re-roll unless the margin exceeds the measured
   `max |Δ|` of the champion duelling itself. Run the **`preflight`** tool (or
   `zicato board preflight` / `zicato board audit` on the CLI) to measure the
-  floor and the achievable signal; `validate` then flags a margin at/below the
+  floor and the degradation signal; `validate` then flags a margin at/below the
   floor at `refuse` severity whenever the evidence gate is off. Recommend-only
   — but a REFUSE verdict means "fix the noise or the board before burning
   rounds", not "click apply anyway".
@@ -231,7 +231,7 @@ copilot's tools (conceptual builder surface):
 | `edit_board_entry` / `remove_board_entry` / `add_judge` / `remove_judge` / `set_board_meta` / `set_brief` | the board + its meta header + brief (deep craft in `zicato-build-board`); all reachable from the GUI's board editor too — see the note below |
 | `estimate_cost` | (read-only) board-runs-per-round for the current draft, incl. the evidence-gate confirm budget, screen runs, best-of-N auxiliary calls, and the placebo line |
 | `validate` | (read-only) advisory warnings, incl. the statistical margin-vs-noise-floor rule (`refuse` severity when a measured floor is known and the evidence gate is off) |
-| `preflight` | (read-only, spends the small K-draw measurement budget) measures the DRAFT contract's A/A noise floor + achievable signal against the registered target; verdict `ok`/`warn` (saturated — every probe scored identically)/`inert` (the probes moved nothing while the A/A draws varied — the signal is UNMEASURED, not zero; re-probe a representative point)/`refuse`, plus a margin-window check (`noise < margin < achievable`) naming the side that failed. Recommend-only; degrades honestly when the workspace has no registered target. CLI equivalents: `zicato board preflight`, `zicato board audit` |
+| `preflight` | (read-only, spends the small K-draw measurement budget) measures the DRAFT contract's A/A noise floor + degradation signal against the registered target; verdict `ok`/`warn` (saturated — every probe scored identically)/`inert` (the probes moved nothing while the A/A draws varied — the signal is UNMEASURED, not zero; re-probe a representative point)/`refuse`, plus a WARNING-class margin-window check naming which side of the floor/signal pair the margin fell outside of (the upper comparison is degradation headroom and does not bound improvement — issue #119), plus a holdout-feasibility note when the board is split. Recommend-only; degrades honestly when the workspace has no registered target. CLI equivalents: `zicato board preflight`, `zicato board audit` |
 | `preview_apply` | (read-only) dry-run: the diff, the predicted contract hash, the cost |
 | `fork` / `switch` / `list_drafts` | NAMED draft slots — the fork/compare lifecycle. `fork name` snapshots the working draft into a slot and binds the session to it; `switch` moves between slots with their state intact. Iterating on contract variants never writes anything — only `apply` does |
 | `revert_to_live` / `undo` | the restore lifecycle. `revert_to_live` discards the session's edits and restores the running contract in place (GUI: the slot strip's two-click Reset-to-live); `undo` steps back one write op off a bounded per-session history shared by the form and the chat (GUI: the slot strip's Undo, which surfaces a "nothing to undo" note on an empty history) |

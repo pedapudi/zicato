@@ -304,8 +304,13 @@ def test_inert_is_its_own_verdict_and_saturation_still_wins_over_it() -> None:
 
 
 def test_window_lower_bound_is_reported_and_bounds_are_inclusive() -> None:
-    """A margin AT either bound fails: at achievable nothing promotes, at the
-    floor promotions are noise."""
+    """A margin AT either bound is named, and every window verdict is a warning.
+
+    Bounds are inclusive on the failing side. The upper one is a WARNING rather
+    than a refusal (issue #119): it compares the margin against DEGRADATION
+    headroom, which does not bound how far a challenger can improve, so naming
+    it is useful and enforcing it was not honest.
+    """
     assert preflight_window_verdict(0.10, 0.05, 0.50) == (
         VERDICT_WARN,
         WINDOW_MARGIN_BELOW_FLOOR,
@@ -315,9 +320,9 @@ def test_window_lower_bound_is_reported_and_bounds_are_inclusive() -> None:
         WINDOW_MARGIN_BELOW_FLOOR,
     ), "a margin exactly at the floor is indistinguishable from noise"
     assert preflight_window_verdict(0.10, 0.50, 0.50) == (
-        VERDICT_REFUSE,
+        VERDICT_WARN,
         WINDOW_MARGIN_ABOVE_ACHIEVABLE,
-    ), "a margin exactly at the achievable signal promotes nothing"
+    ), "a margin exactly at the measured signal exceeds everything the probe saw"
 
 
 def test_empty_window_warns_rather_than_double_gating_the_same_fact() -> None:
@@ -331,17 +336,21 @@ def test_empty_window_warns_rather_than_double_gating_the_same_fact() -> None:
     assert (verdict, which) == (VERDICT_WARN, WINDOW_EMPTY)
 
 
-def test_gate_verdict_collapses_both_verdicts_but_never_refuses_on_inert() -> None:
-    """The hard gate must stop a guaranteed-null run and spare an inert probe.
+def test_gate_verdict_refuses_only_on_the_honestly_measured_failure() -> None:
+    """The hard gate stops a noise-limited contract and nothing else.
 
-    The false REFUSE of #106 is exactly the case that must NOT hard-stop, and
-    the guaranteed-null margin of #112 is exactly the case that must.
+    Two cases must NOT hard-stop: the false REFUSE of #106 (an inert probe),
+    and — since #119 — a margin above the measured DEGRADATION signal, which is
+    not evidence a challenger cannot clear it. The latter includes records
+    PERSISTED before the demotion, which still carry ``window_verdict:
+    "refuse"``; honouring those would keep refusing every round on the finding
+    the fix retracted.
     """
     assert effective_gate_verdict(None) is None
     assert effective_gate_verdict({}) is None
     assert effective_gate_verdict({"verdict": "ok"}) == VERDICT_OK
     assert effective_gate_verdict({"verdict": "refuse"}) == VERDICT_REFUSE
-    # Window-only refusal: the signal cleared the floor, the margin cannot.
+    # A legacy window-only refusal no longer escalates.
     assert (
         effective_gate_verdict(
             {
@@ -349,6 +358,13 @@ def test_gate_verdict_collapses_both_verdicts_but_never_refuses_on_inert() -> No
                 "window_verdict": "refuse",
                 "window_failure": "margin_above_achievable",
             }
+        )
+        == VERDICT_OK
+    )
+    # The collapse itself is intact for any OTHER window refusal.
+    assert (
+        effective_gate_verdict(
+            {"verdict": "ok", "window_verdict": "refuse", "window_failure": "some_future_bound"}
         )
         == VERDICT_REFUSE
     )

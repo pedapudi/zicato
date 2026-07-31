@@ -300,7 +300,7 @@ Two more read-only checks automate audit items `health` does not cover:
 `board preflight` spends a small measurement budget (K A/A draws plus the
 degradation probes), so it is not free the way `health` is — but a `warn`
 (every probe scored identically: the board is saturated) or `refuse` (the
-achievable signal is at or below the floor) verdict is the mechanised form of
+measured signal is at or below the floor) verdict is the mechanised form of
 "this board cannot resolve the difference you are asking it about."
 
 What `zicato health` does **not** yet automate — do these by hand (recipes 2,
