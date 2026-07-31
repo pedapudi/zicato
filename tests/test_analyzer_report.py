@@ -1697,6 +1697,33 @@ def test_final_scalar_holds_at_the_baseline_when_nothing_promoted() -> None:
     assert data.latest_rejected_scalar == pytest.approx(-0.04)
 
 
+def test_rejected_siblings_cumulate_off_their_parent_not_off_each_other() -> None:
+    """The arithmetic the champion anchoring rests on, pinned explicitly.
+
+    ``_cumulate_scalar`` adds each generation's delta to its PARENT's
+    cumulative, so rejected challengers all hanging off the baseline are
+    siblings, not a chain: deltas +0.2 / -0.1 / +0.3 give +0.200 /
+    -0.100 / +0.300, never a running sum ending at +0.400. Each rejected
+    row is an independent "where the lineage would have landed", which
+    is exactly why none of them can be published as where it DID land.
+
+    Worth its own pin because the running-sum reading is the intuitive
+    one, and every surface that mistook a rejected row for the lineage's
+    score is downstream of it.
+    """
+    data = _cv_data(
+        _cv_gen("v0", "", "baseline"),
+        _cv_gen("v1", "v0", "rejected", +0.2),
+        _cv_gen("v2", "v0", "rejected", -0.1),
+        _cv_gen("v3", "v0", "rejected", +0.3),
+    )
+    assert [round(g.cumulative_scalar, 3) for g in data.generations] == [0.0, 0.2, -0.1, 0.3]
+    assert data.latest_rejected_scalar == pytest.approx(
+        0.3
+    ), "the LAST one, not the best or the sum"
+    assert data.final_scalar == 0.0, "and the lineage itself never moved"
+
+
 def test_trajectory_table_puts_the_decision_beside_the_scalar_it_qualifies() -> None:
     """The `scalar` column means different things on promoted and rejected rows.
 
