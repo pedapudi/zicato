@@ -601,6 +601,154 @@ def _default_experiment_memory_config() -> ExperimentMemoryConfig:
 
 
 # ---------------------------------------------------------------------------
+# Sequential probability ratio test (opt-in early-stopping for duels)
+# ---------------------------------------------------------------------------
+
+
+#: The four preset tokens ``SprtConfig.preset`` accepts. Mirrors
+#: :data:`zicato.selection.sprt.SprtPreset` — repeated here as a plain tuple
+#: so the config layer does not import the selection module at contract-load
+#: time (contract module is the load-order root; keeping the enum here
+#: preserves import direction: ``selection.sprt`` may import config types,
+#: never vice-versa).
+_SPRT_PRESET_TOKENS: tuple[str, ...] = (
+    "off",
+    "conservative",
+    "balanced",
+    "aggressive",
+)
+
+
+@dataclass(frozen=True, slots=True)
+class SprtConfig:
+    """Opt-in Wald SPRT for early duel stopping (compute-savings knob).
+
+    A frozen field of :class:`ScoringWeights` (like :class:`OverfittingConfig`
+    and :class:`ProposerQualityConfig`) so it folds into the contract hash
+    through the existing scoring canonicalizer with zero new plumbing.
+    :attr:`preset` = ``"off"`` (default) is byte-identical to the shipped
+    behaviour: the canonicalizer omits every ``SprtConfig`` field at its
+    default, so existing epochs never roll retroactively. Opting in rolls the
+    epoch — a duel decided under SPRT is decided under a different rule.
+
+    Design + math live in :mod:`zicato.selection.sprt` (the pure module the
+    orchestrator constructs :class:`SprtParams` from via
+    :meth:`resolve_params`). See ``docs/design/FUNCTIONALITY-RECOMMENDATIONS.md``
+    §13 and the design-conversation record of why the sign-only Bernoulli
+    formulation was rejected in favour of testing the gate's actual
+    magnitude threshold.
+
+    Racing incompatibility (fail-fast)
+    ----------------------------------
+    Racing is a best-arm-identification problem (LUCB / Successive Rejects),
+    not a paired sequential test. Enabling SPRT under
+    :attr:`ScoringWeights.tournament_structure` = ``"racing"`` is refused
+    at contract load in :meth:`ScoringWeights.__post_init__` — the LUCB
+    story is a separate future ticket.
+
+    Fields
+    ------
+    preset:
+        One of ``"off"`` (default; disabled), ``"conservative"``,
+        ``"balanced"``, ``"aggressive"``. Presets map to
+        ``(alpha, beta, min_replicates)`` via
+        :data:`zicato.selection.sprt.SPRT_PRESETS`. The effect size is
+        always derived from :attr:`ScoringWeights.promote_margin`.
+    alpha:
+        Optional override of the preset's type-I error rate. ``None``
+        (default) uses the preset value. Must be in ``(0, 0.5)``.
+    beta:
+        Optional override of the preset's type-II error rate. ``None``
+        (default) uses the preset value. Must be in ``(0, 0.5)``.
+    min_replicates:
+        Optional override of the preset's burn-in floor. ``None``
+        (default) uses the preset value. Must be ``>= 2``.
+    """
+
+    preset: str = field(
+        default="off",
+        metadata=_knob(omit_at_default=True),
+    )
+    alpha: float | None = field(
+        default=None,
+        metadata=_knob(omit_at_default=True),
+    )
+    beta: float | None = field(
+        default=None,
+        metadata=_knob(omit_at_default=True),
+    )
+    min_replicates: int | None = field(
+        default=None,
+        metadata=_knob(omit_at_default=True),
+    )
+
+    def __post_init__(self) -> None:
+        if self.preset not in _SPRT_PRESET_TOKENS:
+            valid = ", ".join(repr(t) for t in _SPRT_PRESET_TOKENS)
+            raise ValueError(f"sprt.preset must be one of {{{valid}}}, got {self.preset!r}")
+        if self.alpha is not None and not (0.0 < self.alpha < 0.5):
+            raise ValueError(f"sprt.alpha must be in (0, 0.5), got {self.alpha!r}")
+        if self.beta is not None and not (0.0 < self.beta < 0.5):
+            raise ValueError(f"sprt.beta must be in (0, 0.5), got {self.beta!r}")
+        if self.min_replicates is not None and self.min_replicates < 2:
+            raise ValueError(
+                f"sprt.min_replicates must be >= 2 (online sigma estimation), "
+                f"got {self.min_replicates!r}"
+            )
+
+    @property
+    def enabled(self) -> bool:
+        """Convenience: ``True`` iff :attr:`preset` != ``"off"``."""
+        return self.preset != "off"
+
+    def resolve_params(
+        self,
+        *,
+        promote_margin: float,
+        max_replicates: int,
+    ) -> Any:
+        """Resolve this config into a :class:`SprtParams` for one duel.
+
+        Imports :mod:`zicato.selection.sprt` lazily so the contract module
+        can be loaded without pulling the selection layer at import time
+        (preserves the ``selection → core.scoring_config`` import direction).
+        Returns the constructed params; the caller drives the sequence via
+        :func:`zicato.selection.sprt.advance`.
+
+        Raises :class:`ValueError` when called on an ``"off"`` config — a
+        caller reaching this method has already committed to running SPRT
+        and should have skipped construction. The type is ``Any`` (rather
+        than :class:`SprtParams`) to keep the lazy import strictly at call
+        time.
+        """
+        if not self.enabled:
+            raise ValueError(
+                "cannot resolve params on a disabled SprtConfig (preset='off'); "
+                "check .enabled before calling"
+            )
+        from zicato.selection.sprt import resolve_preset  # noqa: PLC0415
+
+        return resolve_preset(
+            self.preset,  # type: ignore[arg-type]
+            promote_margin=promote_margin,
+            max_replicates=max_replicates,
+            alpha=self.alpha,
+            beta=self.beta,
+            min_replicates=self.min_replicates,
+        )
+
+    @classmethod
+    def defaults(cls) -> SprtConfig:
+        """The fully-defaulted (disabled) config."""
+        return cls()
+
+
+def _default_sprt_config() -> SprtConfig:
+    """Default-factory for :attr:`ScoringWeights.sprt`."""
+    return SprtConfig.defaults()
+
+
+# ---------------------------------------------------------------------------
 # Scoring weights
 # ---------------------------------------------------------------------------
 
@@ -984,6 +1132,19 @@ class ScoringWeights:
         default_factory=_default_experiment_memory_config,
         metadata=_knob(omit_at_default=True),
     )
+    # Opt-in Wald SPRT for early duel stopping — the compute-savings knob
+    # for duel-based tournament structures (FUNCTIONALITY-RECOMMENDATIONS.md
+    # §13). Modelled here so it factors into the contract hash through the
+    # existing scoring canonicalizer with zero new plumbing (the
+    # canonicalizer recurses into nested frozen dataclasses): opting in — or
+    # changing any override — rolls the epoch. Default disabled; the
+    # canonicalizer omits every SprtConfig field at its default so existing
+    # epochs never roll retroactively. Racing is refused fail-fast below.
+    # See :class:`SprtConfig` and :mod:`zicato.selection.sprt`.
+    sprt: SprtConfig = field(
+        default_factory=_default_sprt_config,
+        metadata=_knob(omit_at_default=True),
+    )
     # Optional operator outcome-summarizer hook (Capability 2 of issue #18,
     # item 8). A dotted spec (``pkg.mod:fn`` / ``pkg.mod.fn``) resolved like
     # predicates / judges. The resolved callable receives the TRAIN-SLICE
@@ -1163,6 +1324,22 @@ class ScoringWeights:
             raise ValueError(
                 f"holdout_entry_regression_budget must be >= 0, got "
                 f"{self.holdout_entry_regression_budget!r}"
+            )
+        # Cross-field: SPRT + racing is a hard incompatibility, refused
+        # fail-fast at contract load so no expensive setup work runs first.
+        # Racing is a best-arm-identification problem (LUCB / Successive
+        # Rejects), not a paired sequential test — layering SPRT on top of
+        # racing's own successive-elimination logic would change the
+        # semantics in ways that need their own analysis. LUCB-for-racing is
+        # a separate future ticket (SELECTION-THEORY.md). See
+        # :class:`SprtConfig`.
+        if self.sprt.enabled and self.tournament_structure.structure == "racing":
+            raise ValueError(
+                "sprt is not compatible with tournament_structure='racing' — "
+                "racing is a best-arm-identification problem (LUCB / "
+                "Successive Rejects), not paired sequential testing. Set "
+                "sprt.preset='off' or pick a duel-based structure (gauntlet, "
+                "single_elim, double_elim, swiss)."
             )
 
     def to_json(self) -> dict[str, Any]:

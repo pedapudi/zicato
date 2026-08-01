@@ -44,6 +44,7 @@ from zicato.core.scoring_config import (
     OverfittingConfig,
     ProposerQualityConfig,
     ScoringWeights,
+    SprtConfig,
 )
 
 log = logging.getLogger("zicato.epoch.contract")
@@ -400,6 +401,7 @@ _CONTRACT_KNOB_DATACLASSES: tuple[type, ...] = (
     LadderConfig,
     ProposerQualityConfig,
     ExperimentMemoryConfig,
+    SprtConfig,
 )
 
 

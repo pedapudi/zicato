@@ -37,6 +37,7 @@ from typing import Any
 
 import pytest
 
+from zicato.core.scoring_config import SprtConfig
 from zicato.core.types import (
     ExperimentMemoryConfig,
     LadderConfig,
@@ -62,6 +63,7 @@ _CONTRACT_DATACLASSES = [
     LadderConfig,
     ProposerQualityConfig,
     ExperimentMemoryConfig,
+    SprtConfig,
 ]
 
 # A hand-curated, constraint-VALID non-default value for every field of
@@ -106,6 +108,12 @@ _NONDEFAULT_VALUES: dict[str, dict[str, Any]] = {
     "ExperimentMemoryConfig": {
         "cross_epoch": True,
     },
+    "SprtConfig": {
+        "preset": "balanced",
+        "alpha": 0.01,
+        "beta": 0.02,
+        "min_replicates": 7,
+    },
     "ScoringWeights": {
         "drift_weight": 2.5,
         "pass_weight": 3.5,
@@ -137,6 +145,10 @@ _NONDEFAULT_VALUES: dict[str, dict[str, Any]] = {
         ),
         "proposer_quality": ProposerQualityConfig(best_of_n=5, critique_enabled=False),
         "experiment_memory": ExperimentMemoryConfig(cross_epoch=True),
+        # SprtConfig: enable a preset (with overrides) so the round-trip
+        # covers the non-default. tournament_structure above pins swiss, so
+        # the racing cross-field guard does not fire.
+        "sprt": SprtConfig(preset="balanced", alpha=0.01, beta=0.02, min_replicates=7),
         "outcome_summarizer_spec": "pkg.mod:summarize_outcomes",
         "pass_transform": {"op": "pow", "exponent": 2.0},
         "drift_kind_aggregation": {

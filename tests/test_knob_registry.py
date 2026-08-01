@@ -72,6 +72,14 @@ _FROZEN_OMIT_AT_DEFAULT_FIELDS = frozenset(
         "genealogy",
         "calibration_feedback",
         "telemetry_dialect",
+        # SprtConfig — every field is omit-at-default so an unset contract is
+        # byte-identical to a pre-SPRT contract. See :class:`SprtConfig` in
+        # ``core/scoring_config.py`` and :mod:`zicato.selection.sprt`.
+        "sprt",
+        "preset",
+        "alpha",
+        "beta",
+        "min_replicates",
     }
 )
 

@@ -140,6 +140,7 @@ from zicato.core.scoring_config import (
     OverfittingConfig,
     ProposerQualityConfig,
     ScoringWeights,
+    SprtConfig,
 )
 from zicato.core.tournament import (
     VALID_TOURNAMENT_STRUCTURES,
@@ -206,6 +207,7 @@ __all__ = [
     "LadderConfig",
     "ProposerQualityConfig",
     "ExperimentMemoryConfig",
+    "SprtConfig",
     "DIALECT_GOLDFIVE",
     "DIALECT_ADK_EVENTS",
     "DIALECT_TRANSCRIPT",
