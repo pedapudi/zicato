@@ -596,6 +596,30 @@ A few things scoring does NOT do in v0:
   proposer brief's `## Forbidden` list covers the mutation-side of
   pinning; the scoring side is implicit through pass-rate
   monotonicity.
+- **The proposer does not know the declared Pareto objectives.**
+  With `ScoringWeights.pareto_objectives`, an operator names the axes of
+  the objective space and gives a label to each axis. Two components
+  read the profile: the promote gate (rule 1a) and the
+  `GET /api/score-trajectory` frontier projection. Both use the same
+  axis vocabulary, through `objective_vector`. Thus the gate treats a
+  generation on the frontier as not dominated.
+
+  But the proposer does not receive these axes. It continues to infer
+  its targets from drift patterns. Thus the search can optimize one
+  thing while the gate rewards another. The follow-up is to send the
+  same set of axes into the proposer feedback. This is intentionally not
+  part of the current change.
+
+  Note that an axis with the namespace weight `0.0` is observe-only. Its
+  aggregate is `0.0` for each generation. Thus the axis has no effect as
+  an objective: `pareto_comparison` sees it hold flat on each duel.
+  Reject such an axis, or show a warning. Do not rank on a constant
+  value.
+
+  The objective set must not change during an epoch. If it could change,
+  the gate could judge two generations of one lineage against different
+  objectives. This is why `pareto_objectives` is a contract field and
+  not a user-interface option.
 
 These are roadmap items, not contract failures. The v0 score is
 intentionally narrow.

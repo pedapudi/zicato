@@ -873,6 +873,69 @@ class ScoringWeights:
         :attr:`namespace_weights`) by more than the namespace's
         tolerance — even when the combined scalar improves. Namespaces
         whose flag is missing or ``False`` are not gated this way.
+    pareto_objectives:
+        The objective profile for the Pareto frontier. The operator
+        declares it. Two components read it: the promote gate
+        (:func:`zicato.tournament.gate.evaluate_gate`, rule 1a) and the
+        ``GET /api/score-trajectory`` endpoint. Both components use the
+        same axis vocabulary. Thus the frontier that the dashboard shows
+        agrees with the decision of the gate.
+
+        Each key is an axis key. Each value is the label that the
+        dashboard shows for that axis. These axis keys are available:
+
+        * ``"drift_loss"`` — the mean drift loss of the generation.
+        * ``"quality_loss"`` — ``1 - mean_score``. Older aggregates have
+          no ``mean_score``. For these, the projection uses the binary
+          pass-rate.
+        * ``"namespace:<ns>"`` — one namespace aggregate. Keep the colon
+          at the end of the namespace, for example ``"namespace:cost:"``.
+
+        An empty mapping is the default. It means that there is no
+        declared profile. The frontier then uses each axis in the data,
+        and each label is the axis key. This is the behavior from before
+        this field.
+
+        A mapping that is not empty limits the frontier to the declared
+        axes. An axis that is not in the mapping is not an objective.
+        Thus that axis cannot make a generation dominated.
+
+        Do not declare a direction here. All axes are already
+        lower-is-better, because each namespace aggregate includes the
+        sign of its :attr:`namespace_weights` coefficient. To change a
+        direction, change the sign of that weight. There is only one
+        mechanism. Thus two mechanisms cannot disagree. Note that a
+        namespace with the weight ``0.0`` is observe-only, for example
+        ``"output:"``. Its aggregate is ``0.0`` for each generation.
+        Thus it has no effect until you give it a weight that is not
+        zero.
+
+        A profile that is not empty changes how the gate promotes. The
+        gate then uses dominance on the declared axes as the criterion:
+
+        * The challenger worsens one or more objectives, and improves
+          none. The gate rejects it.
+        * The challenger improves one or more objectives, and worsens
+          none. The gate does not apply the scalar margin. Rules 2 and 3
+          still apply.
+        * The challenger improves some objectives and worsens others.
+          The gate uses the scalar margin to break the tie.
+
+        There are two cautions:
+
+        * **The proposer does not receive the declared axes.** The gate
+          rewards the objectives, but the proposer continues to infer
+          its targets from drift patterns. Thus the search and the gate
+          can disagree. This is a documented follow-up. It is not part
+          of this change (see SCORING.md §9).
+        * **A profile that is not empty rolls the epoch.** The canonical
+          form does not include the empty default (see
+          ``epoch/contract.py::_SCORING_OMIT_AT_DEFAULT_FIELDS``). Thus
+          no existing hash moves. But a profile that is not empty adds
+          the key again, as with each weight change. This cost is high
+          for a display option, but it is intentional. If the objective
+          set could change during an epoch, the gate could judge two
+          generations of one lineage against different objectives.
     pass_transform:
         Optional declarative transform (a single
         :data:`zicato.scoring.transforms.TransformSpec`,
@@ -949,6 +1012,15 @@ class ScoringWeights:
     namespace_weights: Mapping[str, float] = field(default_factory=_default_namespace_weights)
     namespace_monotonicity: Mapping[str, bool] = field(
         default_factory=_default_namespace_monotonicity
+    )
+    # The Pareto objective profile that the operator declared:
+    # {axis_key: display_label}. Only the score-trajectory endpoint reads it.
+    # The gate and the proposer do not read it yet (SCORING.md §9). The empty
+    # default does not change the hash. A profile that is not empty rolls the
+    # epoch. The field docstring gives both cautions.
+    pareto_objectives: Mapping[str, str] = field(
+        default_factory=dict,
+        metadata=_knob(omit_at_default=True),
     )
     # Per-epoch tournament structure (gauntlet by default). Modelled here
     # so it factors into the contract hash through the existing scoring

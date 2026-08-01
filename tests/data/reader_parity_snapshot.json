@@ -367,6 +367,9 @@
     "score_trajectory": {
       "epoch_id": "e0",
       "note": "index not built; run zicato reindex",
+      "objective_labels": {
+        "quality_loss": "quality_loss"
+      },
       "objective_names": [
         "quality_loss"
       ],
@@ -1123,6 +1126,9 @@
   "score_trajectory::e0": {
     "epoch_id": "e0",
     "note": "index not built; run zicato reindex",
+    "objective_labels": {
+      "quality_loss": "quality_loss"
+    },
     "objective_names": [
       "quality_loss"
     ],
@@ -1148,6 +1154,9 @@
   "score_trajectory::e1": {
     "epoch_id": "e1",
     "note": "index not built; run zicato reindex",
+    "objective_labels": {
+      "quality_loss": "quality_loss"
+    },
     "objective_names": [
       "quality_loss"
     ],
@@ -1187,6 +1196,7 @@
   "score_trajectory::e2": {
     "epoch_id": "e2",
     "note": "index not built; run zicato reindex",
+    "objective_labels": {},
     "objective_names": [],
     "pareto_frontier": [],
     "points": []

@@ -127,6 +127,7 @@ _NONDEFAULT_VALUES: dict[str, dict[str, Any]] = {
         "regression_timeout_s": 120,
         "namespace_weights": {"drift:": 2.0, "cost:": 0.002},
         "namespace_monotonicity": {"drift:": True, "rubric:": False},
+        "pareto_objectives": {"drift_loss": "Drift", "namespace:cost:": "Cost"},
         "tournament_structure": TournamentStructure(
             structure="swiss", params={"rounds_n": 3, "nested": {"a": [1, 2, 3]}}
         ),

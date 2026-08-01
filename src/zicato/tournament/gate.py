@@ -18,10 +18,38 @@ diff-complexity regularizer):
    full A/B promotion path, so — exactly like the loss term — fast-mode and
    multi-challenger matchup scoring never carry it and are untouched).
 
-Three rules, applied in order:
+Then the scoring rules, applied in order:
+
+1a. **Pareto dominance** (OPT-IN; active only when
+   :attr:`ScoringWeights.pareto_objectives` declares a profile — an empty
+   profile is OFF and every decision below is byte-identical to a contract
+   without the field). The child is compared to the parent on the operator's
+   declared objective axes, all lower-is-better (see
+   :func:`objective_vector`), and the verdict routes the rest of the gate:
+
+   * *dominated* (worsened ≥1 objective, improved none — including the
+     held-flat case) → REJECT outright with reason ``pareto_dominated``. No
+     weighting of these axes could turn that into a win.
+   * *dominates* (improved ≥1, worsened none) → Rule 1's scalar margin is
+     SKIPPED and the child proceeds to Rules 2/3. Re-imposing the margin
+     would veto, on a weighting the operator declined to use, exactly the
+     win they declared they wanted. Rules 2 and 3 still apply, so the
+     quality and schema guards keep their veto.
+   * *incomparable* (traded — improved some, worsened others) → fall
+     through to Rule 1, which becomes the TIEBREAKER. Dominance cannot rank
+     a trade; the scalar weights are precisely the operator's stated
+     resolution for when their objectives disagree.
+   * *unranked* (no axis comparable on both sides) → fall through to the
+     scalar rules unchanged.
+
+   This is what makes a declared frontier *pursued* rather than merely
+   observed: the axis vocabulary is shared verbatim with the score-trajectory
+   projection, so a generation the dashboard shows on the frontier is one this
+   gate treats as non-dominated.
 
 1. **Scalar margin.** The child's combined scalar must beat the parent's
-   by at least :attr:`ScoringWeights.promote_margin`. The scalar is
+   by at least :attr:`ScoringWeights.promote_margin`. Skipped when Rule 1a
+   returned *dominates*. The scalar is
    "lower-is-better", so the literal check is::
 
        child.scalar > parent.scalar - promote_margin  →  reject
@@ -87,6 +115,12 @@ Three rules, applied in order:
    namespaces to flag in ``namespace_monotonicity``. A combined-axis scope
    is a documented follow-up, not built here (see SCORING.md §5.2).
 
+   Note also: this rule is independent of Rule 1a. Rule 1a compares the
+   axes that the operator declared. This rule compares each namespace with
+   a ``True`` flag in ``namespace_monotonicity``. A namespace can be in one
+   set, or in both sets, or in neither set. Rule 1a can let a challenger
+   continue, but this rule can still reject that challenger.
+
 If no rule rejects, the gate promotes — UNLESS a holdout-confirmation
 step is supplied (OVERFITTING.md §1/§12 #1, §13). When the caller passes
 a held-out slice's parent/child aggregates, a train-measured win must
@@ -137,6 +171,7 @@ schema bump.)
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import Any
 
@@ -284,6 +319,134 @@ def _regressed_namespaces(
             regressed.append(ns)
     regressed.sort()
     return regressed
+
+
+#: Float-noise tolerance on ONE declared Pareto objective. An axis moving by
+#: less than this counts as HELD, not worsened — the same doctrine as
+#: :data:`PASS_RATE_MONOTONICITY_TOLERANCE`, applied per objective. Kept tiny:
+#: this absorbs float round-trip through ``gen_score.json``, not measurement
+#: variance. Real noise is the ``promote_margin`` tiebreaker's job.
+PARETO_OBJECTIVE_TOLERANCE: float = 1e-9
+
+
+def objective_vector(agg: dict[str, Any], axes: Iterable[str]) -> dict[str, float]:
+    """Project one aggregate onto the declared ``axes``, lower-is-better.
+
+    THE axis vocabulary — shared verbatim with the score-trajectory frontier
+    (:func:`zicato.query.gate_view._pareto_objectives`) so the gate ranks on
+    exactly the axes the dashboard draws. A generation the operator sees on
+    the frontier is one this gate would call non-dominated:
+
+    * ``"drift_loss"`` — ``drift_loss_mean``;
+    * ``"quality_loss"`` — ``1 - mean_score`` (falling back to ``pass_rate``
+      on pre-continuous aggregates, where the two are byte-identical);
+    * ``"namespace:<ns>"`` — one ``namespace_aggregates`` entry, already
+      sign-folded by its :attr:`ScoringWeights.namespace_weights` coefficient
+      and therefore already lower-is-better.
+
+    An axis the aggregate does not supply is OMITTED rather than defaulted:
+    zero is the best possible value on a lower-is-better axis, so defaulting
+    would let a generation that never measured an axis dominate one that did.
+    :func:`pareto_comparison` treats a missing axis as "not comparable", not
+    as "won".
+    """
+    out: dict[str, float] = {}
+    ns_agg: dict[str, Any] = agg.get("namespace_aggregates", {}) or {}
+    for axis in axes:
+        if axis == "drift_loss":
+            value = agg.get("drift_loss_mean")
+        elif axis == "quality_loss":
+            if "mean_score" in agg or "pass_rate" in agg:
+                value = 1.0 - _mean_score(agg)
+            else:
+                value = None
+        elif axis.startswith("namespace:"):
+            value = ns_agg.get(axis[len("namespace:") :])
+        else:
+            value = None
+        if value is None or isinstance(value, bool):
+            continue
+        try:
+            number = float(value)
+        except (TypeError, ValueError):
+            continue
+        if number != number or number in (float("inf"), float("-inf")):  # NaN / inf
+            continue
+        out[axis] = number
+    return out
+
+
+def pareto_comparison(
+    parent_agg: dict[str, Any],
+    child_agg: dict[str, Any],
+    weights: ScoringWeights,
+) -> tuple[str, list[str], list[str]]:
+    """Compare two aggregates on the operator's declared objectives.
+
+    Returns ``(verdict, improved_axes, worsened_axes)`` where ``verdict`` is:
+
+    * ``"dominates"`` — the child holds every declared objective (within
+      :data:`PARETO_OBJECTIVE_TOLERANCE`) and strictly improves at least one.
+      A promotion.
+    * ``"dominated"`` — the mirror image: the child worsens at least one
+      objective and improves none. An unambiguous reject.
+    * ``"incomparable"`` — the child trades: it improves some objectives and
+      worsens others. Neither point dominates, so BOTH sit on the frontier and
+      dominance alone cannot pick a winner. :func:`evaluate_gate` breaks this
+      tie with the scalar, which is exactly the weighting the operator already
+      declared for the case where the objectives disagree.
+    * ``"unranked"`` — no axis could be compared on both sides (an aggregate
+      predating an axis, or a profile naming axes nothing reports). The caller
+      falls back to the scalar rules entirely rather than promoting on no
+      evidence.
+
+    Every axis is lower-is-better (see :func:`objective_vector`), so
+    "improved" means the child's value FELL. Axes present on only one side are
+    skipped — see :func:`objective_vector` on why they are not defaulted.
+    """
+    axes = list(weights.pareto_objectives)
+    parent_vec = objective_vector(parent_agg, axes)
+    child_vec = objective_vector(child_agg, axes)
+    comparable = [axis for axis in axes if axis in parent_vec and axis in child_vec]
+    if not comparable:
+        return "unranked", [], []
+
+    improved: list[str] = []
+    worsened: list[str] = []
+    for axis in comparable:
+        delta = child_vec[axis] - parent_vec[axis]
+        if delta < -PARETO_OBJECTIVE_TOLERANCE:
+            improved.append(axis)
+        elif delta > PARETO_OBJECTIVE_TOLERANCE:
+            worsened.append(axis)
+    if improved and not worsened:
+        return "dominates", improved, worsened
+    if worsened and not improved:
+        return "dominated", improved, worsened
+    if not improved and not worsened:
+        # Held flat on every objective — no strict improvement, so it does not
+        # dominate. Same outcome as any other non-improving challenger.
+        return "dominated", improved, worsened
+    return "incomparable", improved, worsened
+
+
+def _pareto_axis_evidence(
+    parent_agg: dict[str, Any],
+    child_agg: dict[str, Any],
+    weights: ScoringWeights,
+    axes: list[str],
+) -> str:
+    """``axis (champion X -> challenger Y)`` for each cited axis."""
+    parent_vec = objective_vector(parent_agg, axes)
+    child_vec = objective_vector(child_agg, axes)
+    label_of = weights.pareto_objectives
+    parts = []
+    for axis in axes:
+        label = (label_of.get(axis) or "").strip() or axis
+        parts.append(
+            f"{label} (champion {parent_vec[axis]:.6f} -> challenger {child_vec[axis]:.6f})"
+        )
+    return ", ".join(parts)
 
 
 def _namespace_regression_reason(
@@ -785,6 +948,54 @@ def evaluate_gate(
                     attributable_regressions=attributable,
                 )
 
+    # Rule 1a: Pareto dominance over the operator's DECLARED objectives
+    # (opt-in; empty ``pareto_objectives`` = OFF and every line below is
+    # skipped, leaving the decision byte-identical to a contract without the
+    # field). When a profile IS declared it supersedes the scalar-margin test
+    # as the promotion criterion, because the scalar is one weighting of these
+    # same axes and the operator has said the trade-off matters more than that
+    # collapse:
+    #
+    #   * "dominated"    -> reject outright. The challenger worsened at least
+    #                       one declared objective and improved none; no
+    #                       weighting of the axes could make that a win.
+    #   * "dominates"    -> fall through to Rules 2/3. The margin test is NOT
+    #                       applied: a strict improvement on every objective
+    #                       the operator named is the win they asked for, and
+    #                       re-imposing a scalar band would veto it on a
+    #                       weighting they declined to use. Rules 2 and 3 still
+    #                       run, so quality/schema guards keep their veto.
+    #   * "incomparable" -> the challenger traded objectives. Dominance cannot
+    #                       rank a trade, so we fall through to Rule 1's scalar
+    #                       margin as the TIEBREAKER — precisely the job the
+    #                       weights were written for.
+    #   * "unranked"     -> no axis comparable on both sides. Fall through to
+    #                       the scalar rules; promoting on no evidence would be
+    #                       worse than ignoring the profile for this duel.
+    pareto_verdict = "unranked"
+    if weights.pareto_objectives:
+        pareto_verdict, improved_axes, worsened_axes = pareto_comparison(
+            parent_agg, child_agg, weights
+        )
+        if pareto_verdict == "dominated":
+            if worsened_axes:
+                evidence = _pareto_axis_evidence(parent_agg, child_agg, weights, worsened_axes)
+                detail = f"worsened {evidence}"
+            else:
+                # Held flat on every objective: no strict improvement anywhere.
+                detail = "held flat on every declared objective — no strict improvement"
+            return GateOutcome(
+                decision=TournamentDecision.REJECTED,
+                reason=(
+                    f"pareto_dominated: {detail}; a promotion needs the challenger to "
+                    f"improve at least one declared objective without worsening any "
+                    f"(tolerance {PARETO_OBJECTIVE_TOLERANCE:g})"
+                ),
+                delta_scalar=delta_scalar,
+                delta_pass_rate=delta_pass_rate,
+                attributable_regressions=attributable,
+            )
+
     # Rule 1: scalar margin. The scalar is a LOSS — lower is better — so
     # a promotion needs the child's loss to drop by at least
     # ``promote_margin``: ``child_scalar <= parent_scalar - promote_margin``.
@@ -793,7 +1004,10 @@ def evaluate_gate(
     # not as the observed gap, and (c) distinguish a child that improved
     # but not enough ("near-miss") from a child that is outright worse
     # ("regressed").
-    if child_scalar > parent_scalar - weights.promote_margin:
+    # A challenger that DOMINATES every declared objective skips this test —
+    # see Rule 1a. ``pareto_verdict`` is "unranked" whenever no profile is
+    # declared, so this condition is unchanged for every existing contract.
+    if pareto_verdict != "dominates" and child_scalar > parent_scalar - weights.promote_margin:
         # delta_scalar = child - parent. Positive => child's loss rose
         # (worse); zero/negative => child improved or tied but by less
         # than the promotion threshold.

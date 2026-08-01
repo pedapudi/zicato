@@ -1911,6 +1911,120 @@ def test_score_trajectory_exposes_tradeoff_generations_on_pareto_frontier(
     assert points["v1"]["dominated_by"] == []
 
 
+def _declare_objectives(workspace: Path, profile: dict[str, str]) -> None:
+    """Write a declared Pareto profile into the contract of the epoch."""
+    _write_json(
+        workspace / "epochs" / "2026-05-16_e0" / "scoring.json",
+        {"pareto_objectives": profile},
+    )
+
+
+def test_score_trajectory_defaults_to_every_axis_with_key_as_label(
+    client: TestClient, workspace: Path
+) -> None:
+    """If there is no declared profile, each axis is an objective.
+
+    The label of each axis is then the axis key.
+    """
+    _seed_loss_files(workspace)
+    body = client.get("/api/score-trajectory").json()
+
+    assert body["objective_names"] == ["drift_loss", "quality_loss"]
+    assert body["objective_labels"] == {
+        "drift_loss": "drift_loss",
+        "quality_loss": "quality_loss",
+    }
+
+
+def test_score_trajectory_declared_profile_restricts_and_labels_axes(
+    client: TestClient, workspace: Path
+) -> None:
+    """A declared profile selects the axes and gives their labels.
+
+    The axes come back in the sequence of their declaration, not in sorted
+    sequence. Thus the frontier keeps the priority that the operator gave.
+    """
+    _seed_loss_files(workspace)
+    _declare_objectives(workspace, {"quality_loss": "Answer quality", "drift_loss": "Drift"})
+
+    body = client.get("/api/score-trajectory").json()
+    points = {p["generation_id"]: p for p in body["points"]}
+
+    assert body["objective_names"] == ["quality_loss", "drift_loss"]
+    assert body["objective_labels"] == {
+        "quality_loss": "Answer quality",
+        "drift_loss": "Drift",
+    }
+    assert points["v0"]["objectives"] == {"drift_loss": 0.21, "quality_loss": 0.0}
+
+
+def test_score_trajectory_undeclared_axis_cannot_dominate(
+    client: TestClient, workspace: Path
+) -> None:
+    """An axis that the operator did not declare is not an objective.
+
+    v1 is better than v0 on drift, but it is worse on quality. This test
+    declares only drift. Thus v1 is better on all of the objective space,
+    which has one axis. v1 is then the only point on the frontier. The
+    operator did not select quality. Thus the decrease in quality does not
+    keep v0 on the frontier.
+    """
+    _seed_loss_files(workspace)
+    _write_json(
+        workspace / "epochs" / "2026-05-16_e0" / "generations" / "v1" / "gen_score.json",
+        {
+            "generation_id": "v1",
+            "drift_loss_mean": 0.10,
+            "pass_rate": 0.5,
+            "scalar": 0.60,
+        },
+    )
+    _declare_objectives(workspace, {"drift_loss": "Drift"})
+
+    body = client.get("/api/score-trajectory").json()
+    points = {p["generation_id"]: p for p in body["points"]}
+
+    assert body["objective_names"] == ["drift_loss"]
+    assert body["pareto_frontier"] == ["v1"]
+    assert points["v0"]["dominated_by"] == ["v1"]
+    assert points["v1"]["objectives"] == {"drift_loss": 0.10}
+
+
+def test_score_trajectory_leaves_generation_missing_an_axis_unranked(
+    client: TestClient, workspace: Path
+) -> None:
+    """A generation that did not report an axis has no rank.
+
+    In this test, v1 has no ``cost:`` aggregate. On a lower-is-better axis,
+    zero is the best value. If the code used 0.0 for the missing value, v1
+    would dominate v0, but v0 has a real cost. Thus the code must remove v1
+    from the ranking.
+    """
+    _seed_loss_files(workspace)
+    _write_json(
+        workspace / "epochs" / "2026-05-16_e0" / "generations" / "v0" / "gen_score.json",
+        {
+            "generation_id": "v0",
+            "drift_loss_mean": 0.21,
+            "pass_rate": 1.0,
+            "scalar": 0.21,
+            "namespace_aggregates": {"cost:": 0.4},
+        },
+    )
+    _declare_objectives(workspace, {"namespace:cost:": "Cost"})
+
+    body = client.get("/api/score-trajectory").json()
+    points = {p["generation_id"]: p for p in body["points"]}
+
+    assert body["objective_names"] == ["namespace:cost:"]
+    # v0 is the only comparable point, so it holds the frontier alone.
+    assert body["pareto_frontier"] == ["v0"]
+    assert points["v0"]["pareto_optimal"] is True
+    # v1 is unranked — neither optimal nor dominated.
+    assert points["v1"]["pareto_optimal"] is None
+    assert points["v1"]["dominated_by"] == []
+
+
 def test_score_trajectory_in_environment_payload(client: TestClient) -> None:
     """The consolidated /api/environment carries the score trajectory."""
     r = client.get("/api/environment")

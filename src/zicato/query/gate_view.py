@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import math
 import sqlite3
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
@@ -104,13 +105,23 @@ def _finite_number(value: Any) -> float | None:
     return number if math.isfinite(number) else None
 
 
-def _pareto_objectives(aggregate: dict[str, Any]) -> dict[str, float]:
-    """Project a persisted generation aggregate onto lower-is-better axes.
+def _pareto_objectives(
+    aggregate: dict[str, Any], profile: Mapping[str, str] | None = None
+) -> dict[str, float]:
+    """Change a stored generation aggregate into lower-is-better axes.
 
-    This deliberately does not use ``scalar``: the scalar is one operator
-    chosen weighting of these dimensions, while a Pareto frontier must retain
-    the trade-offs that weighting hides.  Namespace aggregates already fold
-    their configured sign, so every returned axis has the same direction.
+    This function does not use ``scalar``. The scalar is one weighting of
+    these dimensions that the operator selected. That weighting hides the
+    trade-offs, but a Pareto frontier must keep them. Each namespace
+    aggregate already includes its configured sign. Thus each axis that
+    this function returns has the same direction.
+
+    ``profile`` is the objective set that the operator declared
+    (:attr:`ScoringWeights.pareto_objectives`, ``{axis_key: label}``). If
+    ``profile`` is empty or ``None``, each axis is an objective. This is
+    the behavior from before the profile. If ``profile`` is not empty, the
+    function keeps only the declared axes. Thus an axis that the operator
+    did not declare cannot make a generation dominated.
     """
     objectives: dict[str, float] = {}
     drift = _finite_number(aggregate.get("drift_loss_mean"))
@@ -130,18 +141,70 @@ def _pareto_objectives(aggregate: dict[str, Any]) -> dict[str, float]:
             number = _finite_number(value)
             if number is not None:
                 objectives[f"namespace:{namespace}"] = number
+
+    if profile:
+        objectives = {axis: v for axis, v in objectives.items() if axis in profile}
     return objectives
 
 
-def _annotate_pareto_frontier(points: list[dict[str, Any]]) -> tuple[list[str], list[str]]:
-    """Annotate comparable points and return ``(axes, frontier_ids)``.
+def _frontier_axes(points: list[dict[str, Any]], profile: Mapping[str, str] | None) -> list[str]:
+    """Give the set of axes for the frontier.
 
-    Missing namespace values mean no observed contribution and are therefore
-    zero, matching tournament aggregation.  A generation without any cached
-    aggregate is left unranked rather than inventing an evaluation result.
+    If there is no declared ``profile``, the result is each axis in the
+    data, in sorted sequence. This is the behavior from before the profile.
+
+    If there is a ``profile``, the result is the declared axes, in the
+    sequence of their declaration. The function removes each axis that the
+    data does not supply. An axis that no generation reports has no data.
+    If the function kept such an axis, no point could be comparable.
     """
-    axes = sorted({axis for point in points for axis in point.get("objectives", {})})
-    comparable = [point for point in points if point.get("objectives")]
+    present = {axis for point in points for axis in point.get("objectives", {})}
+    if profile:
+        return [axis for axis in profile if axis in present]
+    return sorted(present)
+
+
+def _objective_labels(axes: list[str], profile: Mapping[str, str] | None) -> dict[str, str]:
+    """Give the label to show for each axis.
+
+    The label is the one that the operator declared. If the operator
+    declared no label, the label is the axis key.
+
+    The result includes each axis in ``axes``. Thus a client can label the
+    frontier, and it does not need to know if there is a declared profile.
+    If a declared label is empty, the result uses the axis key. Thus the
+    client does not show an empty label.
+    """
+    labels: dict[str, str] = {}
+    for axis in axes:
+        declared = (profile or {}).get(axis, "")
+        labels[axis] = declared.strip() or axis
+    return labels
+
+
+def _annotate_pareto_frontier(
+    points: list[dict[str, Any]], profile: Mapping[str, str] | None = None
+) -> tuple[list[str], list[str]]:
+    """Mark the comparable points and give ``(axes, frontier_ids)``.
+
+    A point is comparable only if it supplies each axis in the set of axes
+    of the frontier. If a point does not supply an axis, the function does
+    not rank it, and ``pareto_optimal`` is ``None``.
+
+    The function does not use zero for an axis that a point does not
+    supply. On a lower-is-better axis, zero is the best possible value.
+    Thus a generation from before an axis would incorrectly dominate each
+    generation that reports that axis.
+
+    If a generation has no stored aggregate, the function also does not
+    rank it. The function does not invent a result.
+    """
+    axes = _frontier_axes(points, profile)
+    comparable = [
+        point
+        for point in points
+        if point.get("objectives") and all(axis in point["objectives"] for axis in axes)
+    ]
     frontier: list[str] = []
     for point in comparable:
         vector = point["objectives"]
@@ -150,18 +213,17 @@ def _annotate_pareto_frontier(points: list[dict[str, Any]]) -> tuple[list[str], 
             if other is point:
                 continue
             other_vector = other["objectives"]
-            no_worse = all(other_vector.get(axis, 0.0) <= vector.get(axis, 0.0) for axis in axes)
-            strictly_better = any(
-                other_vector.get(axis, 0.0) < vector.get(axis, 0.0) for axis in axes
-            )
+            no_worse = all(other_vector[axis] <= vector[axis] for axis in axes)
+            strictly_better = any(other_vector[axis] < vector[axis] for axis in axes)
             if no_worse and strictly_better:
                 dominators.append(str(other["generation_id"]))
         point["dominated_by"] = sorted(dominators)
         point["pareto_optimal"] = not dominators
         if not dominators:
             frontier.append(str(point["generation_id"]))
+    comparable_ids = {id(point) for point in comparable}
     for point in points:
-        if not point.get("objectives"):
+        if id(point) not in comparable_ids:
             point["dominated_by"] = []
             point["pareto_optimal"] = None
     return axes, frontier
@@ -186,13 +248,30 @@ def build_score_trajectory(paths: WorkspacePaths, epoch_id: str | None = None) -
     ``scalar = None`` — still plotted as a gap rather than dropped, so
     the x-axis stays continuous across the lineage.
 
-    Each point also carries an ``objectives`` vector (all axes are lower is
-    better), ``pareto_optimal``, and ``dominated_by``.  The response-level
-    ``objective_names`` and ``pareto_frontier`` expose every non-dominated
-    generation, independent of the single weighted scalar.  Degrades to an
-    empty ``points`` list (never raises) when the index is absent.
+    Each point also has an ``objectives`` vector, a ``pareto_optimal``
+    flag, and a ``dominated_by`` list. Each axis is lower-is-better. At the
+    level of the response, ``objective_names`` and ``pareto_frontier`` give
+    each generation that is not dominated. These are independent of the
+    single weighted scalar. ``objective_labels`` gives the label to show
+    for each axis.
+
+    If the operator declared a :attr:`ScoringWeights.pareto_objectives`
+    profile for the epoch, the set of axes comes from that profile. If
+    not, the set of axes is each axis in the data. If a generation does
+    not report each axis, the function does not rank it, and
+    ``pareto_optimal`` is ``None``. The function does not assume the best
+    possible value for an axis that the generation does not report.
+
+    If the index is not available, the function gives an empty ``points``
+    list. It does not raise an exception.
     """
     epoch_id = _resolve_epoch_id(paths, epoch_id)
+    # The objective profile that the operator declared. It comes from the
+    # scoring contract of the epoch. If it is empty (the default), each axis
+    # is an objective. This is the behavior from before the profile.
+    profile: Mapping[str, str] = getattr(
+        _read_epoch_scoring_weights(paths, str(epoch_id or "")), "pareto_objectives", {}
+    )
     # Lineage order is authoritative for the x-axis — the index's
     # ``generations`` rows can carry empty ``created_at`` strings.
     lineage = build_lineage_view(paths, include_ratings=False)
@@ -217,14 +296,15 @@ def build_score_trajectory(paths: WorkspacePaths, epoch_id: str | None = None) -
                         "scalar": scalar,
                         "entry_count": entry_count,
                         "created_at": g.get("created_at"),
-                        "objectives": _pareto_objectives(aggregate),
+                        "objectives": _pareto_objectives(aggregate, profile),
                     }
                 )
-            objective_names, frontier = _annotate_pareto_frontier(points)
+            objective_names, frontier = _annotate_pareto_frontier(points, profile)
             return {
                 "epoch_id": epoch_id,
                 "points": points,
                 "objective_names": objective_names,
+                "objective_labels": _objective_labels(objective_names, profile),
                 "pareto_frontier": frontier,
             }
     except _IndexAbsent:
@@ -237,21 +317,29 @@ def build_score_trajectory(paths: WorkspacePaths, epoch_id: str | None = None) -
                 "entry_count": 0,
                 "created_at": g.get("created_at"),
                 "objectives": _pareto_objectives(
-                    _read_gen_score(paths, str(g.get("epoch_id") or ""), g["generation_id"])
+                    _read_gen_score(paths, str(g.get("epoch_id") or ""), g["generation_id"]),
+                    profile,
                 ),
             }
             for g in ordered
         ]
-        objective_names, frontier = _annotate_pareto_frontier(points)
+        objective_names, frontier = _annotate_pareto_frontier(points, profile)
         return {
             "epoch_id": epoch_id,
             "points": points,
             "objective_names": objective_names,
+            "objective_labels": _objective_labels(objective_names, profile),
             "pareto_frontier": frontier,
             "note": "index not built; run zicato reindex",
         }
     except sqlite3.Error:
-        return {"epoch_id": epoch_id, "points": [], "objective_names": [], "pareto_frontier": []}
+        return {
+            "epoch_id": epoch_id,
+            "points": [],
+            "objective_names": [],
+            "objective_labels": {},
+            "pareto_frontier": [],
+        }
 
 
 # ---------------------------------------------------------------------------
@@ -476,6 +564,9 @@ def _read_epoch_scoring_weights(paths: WorkspacePaths, epoch_id: str) -> Any:
     raw_ns_m = raw.get("namespace_monotonicity")
     if isinstance(raw_ns_m, dict):
         kwargs["namespace_monotonicity"] = {str(k): bool(v) for k, v in raw_ns_m.items()}
+    raw_objectives = raw.get("pareto_objectives")
+    if isinstance(raw_objectives, dict):
+        kwargs["pareto_objectives"] = {str(k): str(v) for k, v in raw_objectives.items()}
 
     try:
         return ScoringWeights(**kwargs)

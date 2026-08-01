@@ -72,6 +72,11 @@ _FROZEN_OMIT_AT_DEFAULT_FIELDS = frozenset(
         "genealogy",
         "calibration_feedback",
         "telemetry_dialect",
+        # The Pareto objective profile that the operator declared. Only the
+        # score-trajectory endpoint reads it. The gate does not read it. The
+        # empty default has no effect. Thus the omission of this field at its
+        # default keeps the contract hash of each existing epoch.
+        "pareto_objectives",
     }
 )
 
