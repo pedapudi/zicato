@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 import sqlite3
 from pathlib import Path
 from typing import Any
@@ -93,8 +94,81 @@ def _mean_drift_loss_per_generation(
     return sum(entry_means) / len(entry_means), len(entry_means)
 
 
+def _finite_number(value: Any) -> float | None:
+    """Return a finite numeric value, or ``None`` for an unusable one."""
+    if isinstance(value, bool):
+        return None
+    if not isinstance(value, int | float):
+        return None
+    number = float(value)
+    return number if math.isfinite(number) else None
+
+
+def _pareto_objectives(aggregate: dict[str, Any]) -> dict[str, float]:
+    """Project a persisted generation aggregate onto lower-is-better axes.
+
+    This deliberately does not use ``scalar``: the scalar is one operator
+    chosen weighting of these dimensions, while a Pareto frontier must retain
+    the trade-offs that weighting hides.  Namespace aggregates already fold
+    their configured sign, so every returned axis has the same direction.
+    """
+    objectives: dict[str, float] = {}
+    drift = _finite_number(aggregate.get("drift_loss_mean"))
+    if drift is not None:
+        objectives["drift_loss"] = drift
+
+    mean_score = _finite_number(aggregate.get("mean_score"))
+    if mean_score is None:
+        # Pre-continuous-score aggregates expose the equivalent binary axis.
+        mean_score = _finite_number(aggregate.get("pass_rate"))
+    if mean_score is not None:
+        objectives["quality_loss"] = 1.0 - mean_score
+
+    namespaces = aggregate.get("namespace_aggregates")
+    if isinstance(namespaces, dict):
+        for namespace, value in namespaces.items():
+            number = _finite_number(value)
+            if number is not None:
+                objectives[f"namespace:{namespace}"] = number
+    return objectives
+
+
+def _annotate_pareto_frontier(points: list[dict[str, Any]]) -> tuple[list[str], list[str]]:
+    """Annotate comparable points and return ``(axes, frontier_ids)``.
+
+    Missing namespace values mean no observed contribution and are therefore
+    zero, matching tournament aggregation.  A generation without any cached
+    aggregate is left unranked rather than inventing an evaluation result.
+    """
+    axes = sorted({axis for point in points for axis in point.get("objectives", {})})
+    comparable = [point for point in points if point.get("objectives")]
+    frontier: list[str] = []
+    for point in comparable:
+        vector = point["objectives"]
+        dominators: list[str] = []
+        for other in comparable:
+            if other is point:
+                continue
+            other_vector = other["objectives"]
+            no_worse = all(other_vector.get(axis, 0.0) <= vector.get(axis, 0.0) for axis in axes)
+            strictly_better = any(
+                other_vector.get(axis, 0.0) < vector.get(axis, 0.0) for axis in axes
+            )
+            if no_worse and strictly_better:
+                dominators.append(str(other["generation_id"]))
+        point["dominated_by"] = sorted(dominators)
+        point["pareto_optimal"] = not dominators
+        if not dominators:
+            frontier.append(str(point["generation_id"]))
+    for point in points:
+        if not point.get("objectives"):
+            point["dominated_by"] = []
+            point["pareto_optimal"] = None
+    return axes, frontier
+
+
 def build_score_trajectory(paths: WorkspacePaths, epoch_id: str | None = None) -> dict[str, Any]:
-    """``GET /api/score-trajectory`` — the scalar across generations.
+    """``GET /api/score-trajectory`` — scalar trajectory plus Pareto frontier.
 
     ``epoch_id`` defaults to the current epoch; a validated id scopes the
     trajectory to that epoch's generations instead.
@@ -112,9 +186,11 @@ def build_score_trajectory(paths: WorkspacePaths, epoch_id: str | None = None) -
     ``scalar = None`` — still plotted as a gap rather than dropped, so
     the x-axis stays continuous across the lineage.
 
-    Returns ``{"epoch_id", "points": [{generation_id, parent_generation_id,
-    promoted, scalar, entry_count, created_at}], "note"?}``. Degrades to
-    an empty ``points`` list (never raises) when the index is absent.
+    Each point also carries an ``objectives`` vector (all axes are lower is
+    better), ``pareto_optimal``, and ``dominated_by``.  The response-level
+    ``objective_names`` and ``pareto_frontier`` expose every non-dominated
+    generation, independent of the single weighted scalar.  Degrades to an
+    empty ``points`` list (never raises) when the index is absent.
     """
     epoch_id = _resolve_epoch_id(paths, epoch_id)
     # Lineage order is authoritative for the x-axis — the index's
@@ -132,6 +208,7 @@ def build_score_trajectory(paths: WorkspacePaths, epoch_id: str | None = None) -
             for g in ordered:
                 gid = g["generation_id"]
                 scalar, entry_count = _mean_drift_loss_per_generation(conn, g.get("epoch_id"), gid)
+                aggregate = _read_gen_score(paths, str(g.get("epoch_id") or ""), gid)
                 points.append(
                     {
                         "generation_id": gid,
@@ -140,27 +217,41 @@ def build_score_trajectory(paths: WorkspacePaths, epoch_id: str | None = None) -
                         "scalar": scalar,
                         "entry_count": entry_count,
                         "created_at": g.get("created_at"),
+                        "objectives": _pareto_objectives(aggregate),
                     }
                 )
-            return {"epoch_id": epoch_id, "points": points}
+            objective_names, frontier = _annotate_pareto_frontier(points)
+            return {
+                "epoch_id": epoch_id,
+                "points": points,
+                "objective_names": objective_names,
+                "pareto_frontier": frontier,
+            }
     except _IndexAbsent:
+        points = [
+            {
+                "generation_id": g["generation_id"],
+                "parent_generation_id": g.get("parent_generation_id"),
+                "promoted": g.get("promoted"),
+                "scalar": None,
+                "entry_count": 0,
+                "created_at": g.get("created_at"),
+                "objectives": _pareto_objectives(
+                    _read_gen_score(paths, str(g.get("epoch_id") or ""), g["generation_id"])
+                ),
+            }
+            for g in ordered
+        ]
+        objective_names, frontier = _annotate_pareto_frontier(points)
         return {
             "epoch_id": epoch_id,
-            "points": [
-                {
-                    "generation_id": g["generation_id"],
-                    "parent_generation_id": g.get("parent_generation_id"),
-                    "promoted": g.get("promoted"),
-                    "scalar": None,
-                    "entry_count": 0,
-                    "created_at": g.get("created_at"),
-                }
-                for g in ordered
-            ],
+            "points": points,
+            "objective_names": objective_names,
+            "pareto_frontier": frontier,
             "note": "index not built; run zicato reindex",
         }
     except sqlite3.Error:
-        return {"epoch_id": epoch_id, "points": []}
+        return {"epoch_id": epoch_id, "points": [], "objective_names": [], "pareto_frontier": []}
 
 
 # ---------------------------------------------------------------------------

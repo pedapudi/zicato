@@ -367,12 +367,23 @@
     "score_trajectory": {
       "epoch_id": "e0",
       "note": "index not built; run zicato reindex",
+      "objective_names": [
+        "quality_loss"
+      ],
+      "pareto_frontier": [
+        "v0"
+      ],
       "points": [
         {
           "created_at": "2026-03-01T00:00:00Z",
+          "dominated_by": [],
           "entry_count": 0,
           "generation_id": "v0",
+          "objectives": {
+            "quality_loss": 0.0
+          },
           "parent_generation_id": null,
+          "pareto_optimal": true,
           "promoted": true,
           "scalar": null
         }
@@ -1112,12 +1123,23 @@
   "score_trajectory::e0": {
     "epoch_id": "e0",
     "note": "index not built; run zicato reindex",
+    "objective_names": [
+      "quality_loss"
+    ],
+    "pareto_frontier": [
+      "v0"
+    ],
     "points": [
       {
         "created_at": "2026-03-01T00:00:00Z",
+        "dominated_by": [],
         "entry_count": 0,
         "generation_id": "v0",
+        "objectives": {
+          "quality_loss": 0.0
+        },
         "parent_generation_id": null,
+        "pareto_optimal": true,
         "promoted": true,
         "scalar": null
       }
@@ -1126,20 +1148,37 @@
   "score_trajectory::e1": {
     "epoch_id": "e1",
     "note": "index not built; run zicato reindex",
+    "objective_names": [
+      "quality_loss"
+    ],
+    "pareto_frontier": [
+      "v0",
+      "v1"
+    ],
     "points": [
       {
         "created_at": "2026-01-01T00:00:00Z",
+        "dominated_by": [],
         "entry_count": 0,
         "generation_id": "v0",
+        "objectives": {
+          "quality_loss": 0.0
+        },
         "parent_generation_id": null,
+        "pareto_optimal": true,
         "promoted": true,
         "scalar": null
       },
       {
         "created_at": "2026-01-01T00:00:00Z",
+        "dominated_by": [],
         "entry_count": 0,
         "generation_id": "v1",
+        "objectives": {
+          "quality_loss": 0.0
+        },
         "parent_generation_id": "v0",
+        "pareto_optimal": true,
         "promoted": false,
         "scalar": null
       }
@@ -1148,6 +1187,8 @@
   "score_trajectory::e2": {
     "epoch_id": "e2",
     "note": "index not built; run zicato reindex",
+    "objective_names": [],
+    "pareto_frontier": [],
     "points": []
   },
   "search_empty": {

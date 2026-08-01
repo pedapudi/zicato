@@ -1857,8 +1857,9 @@ def test_matchup_grid_one_sided(workspace: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_score_trajectory_endpoint(client: TestClient) -> None:
+def test_score_trajectory_endpoint(client: TestClient, workspace: Path) -> None:
     """``/api/score-trajectory`` plots the absolute scalar per generation."""
+    _seed_loss_files(workspace)
     r = client.get("/api/score-trajectory")
     assert r.status_code == 200
     body = r.json()
@@ -1875,6 +1876,39 @@ def test_score_trajectory_endpoint(client: TestClient) -> None:
     assert points["v0"]["promoted"] is True
     assert points["v1"]["promoted"] is False
     assert points["v0"]["entry_count"] == 1
+    # The scalar remains available, but the response also exposes the
+    # uncollapsed objective vector and the non-dominated alternatives.
+    assert body["objective_names"] == ["drift_loss", "quality_loss"]
+    assert body["pareto_frontier"] == ["v0"]
+    assert points["v0"]["objectives"] == {"drift_loss": 0.21, "quality_loss": 0.0}
+    assert points["v0"]["pareto_optimal"] is True
+    assert points["v1"]["pareto_optimal"] is False
+    assert points["v1"]["dominated_by"] == ["v0"]
+
+
+def test_score_trajectory_exposes_tradeoff_generations_on_pareto_frontier(
+    client: TestClient, workspace: Path
+) -> None:
+    """A lower-drift but lower-quality challenger remains an output option."""
+    _seed_loss_files(workspace)
+    _write_json(
+        workspace / "epochs" / "2026-05-16_e0" / "generations" / "v1" / "gen_score.json",
+        {
+            "generation_id": "v1",
+            "drift_loss_mean": 0.10,
+            "pass_rate": 0.5,
+            "scalar": 0.60,
+            "scalar_components": {"drift": 0.10, "pass": 0.50},
+        },
+    )
+
+    body = client.get("/api/score-trajectory").json()
+    points = {p["generation_id"]: p for p in body["points"]}
+    assert body["pareto_frontier"] == ["v0", "v1"]
+    assert points["v0"]["pareto_optimal"] is True
+    assert points["v1"]["pareto_optimal"] is True
+    assert points["v0"]["dominated_by"] == []
+    assert points["v1"]["dominated_by"] == []
 
 
 def test_score_trajectory_in_environment_payload(client: TestClient) -> None:
