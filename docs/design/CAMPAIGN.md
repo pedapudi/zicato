@@ -808,6 +808,51 @@ stop THAT run, log the reason, never silently continue):**
   with the abort listed in the anomalies section). Do not substitute a fresh
   seed to "top up" K; that would silently bias the arm.
 
+**Completeness check — liveness is not integrity (do this before ANY read).**
+
+The triggers above catch a run that *dies*. They do not catch a run that
+partially completes and still looks healthy, which is the failure that
+actually cost two full 144-cell datasets during the #97 sweeps.
+
+The shape: credentials for the model endpoint lapse mid-campaign. A cell that
+straddles the lapse produces a scoreable artifact from the rounds that ran
+beforehand, satisfies any "did we reach the model at all" liveness check,
+and is marked complete — while its remaining rounds died with a hard auth
+error, emitted no `gate_evaluated`, and contributed no duel. Cell-level
+accounting reported **144/144 healthy** while round-level accounting showed
+**83 of 496 rounds with no gate at all.**
+
+That is disqualifying rather than merely lossy, because the censoring is
+**arm-correlated**: it lands on whichever cells happen to be in flight when
+credentials lapse. In the affected run that was **26% of the baseline arm
+against 8% of another**, with the baseline at 11 of its 12 cells. Since the
+baseline anchors both the derived floor and every treatment comparison, an
+arm-dependent shortfall bends the ruler itself rather than just widening a
+CI. A clean earlier run of the same design had **0 of 432** rounds without a
+gate, which is what identified the pattern as contamination rather than a
+property of the loop.
+
+So, two rules:
+
+1. **Accept a cell only if it is round-complete.** Reject any cell containing
+   a round that BOTH lacks a `gate_evaluated` AND carries a hard credential or
+   transport error, and retry it. Keep this check narrow: a round where the
+   proposer *was* reached and genuinely produced an invalid patch is a real
+   measurement and must still be accepted — otherwise a legitimately degraded
+   arm is retried to exhaustion and then reported as failed. This is the same
+   distinction §6.4 already draws between an infra zero and an honest zero,
+   applied one level down.
+2. **Re-run a contaminated cell by deleting it, not resuming it.** Resuming
+   appends into the poisoned epoch; that is how a cell ends up with four
+   rounds of which three are void, contributing a mean over one duel while its
+   peers contribute three.
+
+The general point, worth carrying to any long parallel measurement: put the
+completeness check at the granularity the **endpoint** consumes — rounds here
+— not the granularity the scheduler happens to track. A run that reports 100%
+healthy at the wrong granularity is more dangerous than one that fails
+loudly. Report the excluded count per arm; never let it be silent.
+
 ### 6.5 Data collection (one record per arm×seed run; every field's SOURCE named)
 
 Emit exactly one `runs.jsonl` record (§7.1 schema) per arm×seed run. Pull each
