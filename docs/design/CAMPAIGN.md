@@ -408,6 +408,22 @@ names the action the **confirmatory** read would authorize, not a K=6 outcome �
 **The graduation bar (clearing it at K=6 → graduate to confirmation) — BOTH
 must hold:**
 
+> **Measured caveat on the K=6 screen.** Two 144-cell sweeps on `target_1`
+> put the empirical floor — derived as `2 × SE(mean d[A/A clone] − mean
+> d[BASE])`, i.e. the spread of a contrast between two configurations
+> identical by construction — at **≈ 0.038–0.040** on the per-duel endpoint,
+> with **every** arsenal arm landing at or under one floor (largest observed:
+> +0.039, and that was the best-of-1 *ablation*, not a feature). At K=6 the
+> standard errors are ≈ √2 larger, so the floor rises to ≈ 0.055 and the
+> non-overlap clause below cannot fire for any effect this arsenal actually
+> produces. In other words the screen is well specified for effects of ~1.5
+> floors, and on this board there appear to be none; a K=6 screen will return
+> "ambiguous" for everything and graduate the whole matrix. If the goal is to
+> resolve the real effect sizes rather than to triage, size the *screen* at
+> K≈12 and expect to need K≈32 to see anything near +0.02. Derive the floor
+> from the A/A contrast on the same scale being gated — an A/A arm in every
+> batch is what makes this checkable at all.
+
 1. **Signal clears its own noise:** `ΔE1(arm) ≥ +0.5·floor` **AND** the 90%
    CIs of `E1(arm)` and `E1(A0)` do **not** overlap. (+0.5×floor is the
    smallest *candidate* effect worth the confirmatory spend — it is a
@@ -548,6 +564,34 @@ critical path; 8,928 runs / 4 parallel × 4 s ≈ **2.5 h of pure board-run
 wall-clock**, plus proposer/reduce/gate overhead → budget **≈ 3.5–5.5 h total**
 if arms run serially, or ≈ 1 h if the 8 arms run in parallel workspaces. These
 are planning figures only; real latency is endpoint-dependent (§3.4).
+
+> **Measured, and the estimate above is optimistic by roughly an order of
+> magnitude.** Two full 12-arm sweeps on `target_1` (144 cells each = 12 arms
+> × 12 paired seeds, 3 rounds per cell, `holdout_fraction` 0.6, 12 cells
+> running concurrently) took **≈ 7.5 h wall-clock** for **≈ 6,000 board runs**.
+>
+> | | assumed above | measured |
+> |---|---|---|
+> | per LLM call | 0.8 s | ≈ 9–10 s |
+> | per board run (≈ 5 harness calls) | ≈ 4 s | **≈ 48 s** |
+> | per 3-round cell | — | 1,300–2,300 s (median ≈ 2,000 s) |
+>
+> The gap is almost entirely the per-call figure: 0.8 s is a fast
+> single-turn completion, while a `target_1` board run drives a coordinator
+> plus specialists whose turns are long and partly serial. Because the
+> discrepancy lives in an *assumption* rather than in the run counts, the
+> board-run arithmetic above is unaffected — only the time it maps to. Plan a
+> full 8-arm screen at **a working day, not an afternoon**, and note that
+> raising concurrency does not recover it linearly: the loop spawns a
+> heavyweight process per board unit, so beyond roughly a dozen concurrent
+> cells the box spends its time context-switching rather than generating.
+
+> **Size on seeds, not rounds.** In both sweeps the between-cell variance
+> dominated the within-cell variance by roughly 4×. Extra rounds per cell
+> therefore buy very little resolution while costing linearly; extra seeds buy
+> the power. Given a fixed budget, prefer more cells at fewer rounds — the
+> sweeps above used 3 rounds, not 12, and were limited by cell count, not by
+> round count.
 
 **Confirmatory extension (pre-registered, separate budget):** K≈24 on ≤2
 graduated arms ≈ 2 × (24/6) × ~1,200 board runs ≈ **9,600 additional board
