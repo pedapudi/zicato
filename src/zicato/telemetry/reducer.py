@@ -65,6 +65,7 @@ from zicato.core import (
     DIALECT_TRANSCRIPT,
     BoardEntry,
     DriftCount,
+    ExpectationKind,
     ExpectationResult,
     JudgeError,
     JudgeLoss,
@@ -1370,7 +1371,13 @@ def loss_profile_from_dict(d: dict[str, Any]) -> LossProfile:
             else None
         )
         expectation_result = ExpectationResult(
-            kind=exp["kind"],
+            # ``kind`` is declared :class:`ExpectationKind`; coerce so a
+            # profile read back off disk carries the same runtime type as the
+            # one the matcher produced in-process (issue #132). An invalid
+            # token raises ``ValueError``, which is what every caller of this
+            # reader already catches alongside the ``KeyError`` the direct
+            # indexing on this same line has always been able to raise.
+            kind=ExpectationKind(exp["kind"]),
             passed=bool(exp["passed"]),
             detail=exp.get("detail", ""),
             score=float(exp_score) if exp_score is not None else None,

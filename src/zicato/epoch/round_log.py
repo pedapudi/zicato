@@ -421,6 +421,11 @@ def _decode_event(type_token: str, payload: dict[str, Any]) -> RoundEvent | None
         value = payload[f.name]
         if isinstance(value, list):
             value = tuple(value)
+        # Re-tupling is the ONLY coercion, which holds because every field
+        # on every event is a str / int / bool / float / tuple[str, ...] /
+        # dict. A field declared as a StrEnum or Path would land here as
+        # its raw JSON value and read back a different runtime type than
+        # the writer emitted (issue #132); coerce it here if one is added.
         kwargs[f.name] = value
     event: RoundEvent = cls(**kwargs)
     return event
