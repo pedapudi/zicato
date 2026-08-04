@@ -39,6 +39,28 @@ errors this month's protocol considers disqualifying.
 Nothing here writes, mutates, or reaches the network. It reads
 ``epochs/{epoch}/rounds/*/round_log.jsonl`` and returns dataclasses.
 
+Known limits of what this reader can see
+----------------------------------------
+All three are properties of the LOG, not of this module, so none can be
+fixed here. They are recorded because a reader who does not know them will
+over-trust a clean report.
+
+* **Discarded slate errors.** ``proposer/best_of_n.py`` re-raises only the
+  LAST error when every slot fails, and discards every failed slot's error
+  entirely when any slot survives (the LLM-merge failure path swallows its
+  own too). So a round can lose most of its slate to a credential lapse and
+  leave no trace of it in ``proposal.errors``.
+* **Challenger granularity.** ``complete`` needs only ONE gate. A round that
+  ran several challengers and lost one to a 401 still gates on the
+  survivors, so it is consumed at full weight on a narrower field than its
+  peers — the founding failure mode of this module, one level down. The
+  evidence survives (the marker is on the record even for a ``complete``
+  round); nothing acts on it yet. Acting on it is a policy question, not a
+  reader question.
+* **Operator-skipped rounds.** A round whose directory was never created is
+  invisible, and one created but empty is void. The direction is
+  conservative, so this is left alone.
+
 The three statuses
 ------------------
 ``complete``
@@ -74,6 +96,8 @@ from typing import Any
 
 from zicato.epoch.round_log import (
     RoundLog,
+    RoundLogEnvelope,
+    RoundOpened,
     RoundRecord,
     fold_round_record,
     round_log_path,
@@ -138,16 +162,20 @@ class RoundStatus(StrEnum):
 #:   later attempt returning a real (if invalid) proposal is a real
 #:   measurement.
 #: * bare ``"forbidden"`` — zicato's OWN proposer emits forbidden-id
-#:   rejections as free-text proposal errors (``patch ... targets
-#:   forbidden mutation id ...`` in
-#:   :func:`zicato.proposer.brief.check_forbidden_ids`, and ``... is in
-#:   the forbidden set and may not be patched`` in
-#:   :mod:`zicato.mutation.validator`). Those are the CANONICAL
-#:   proposer-was-reached-and-produced-an-invalid-patch case, i.e.
-#:   precisely ``settled_degraded``. Only the unambiguous HTTP reason
-#:   phrase ``"403 forbidden"`` is matched. (Those two strings are now ALSO
-#:   ineligible structurally, being content rejections; this entry stays as
-#:   defense in depth, since ``403 forbidden`` can legitimately appear in a
+#:   rejections as free-text proposal errors:
+#:   :func:`zicato.proposer.brief.enforce_forbidden` produces ``patch ...
+#:   targets forbidden mutation id ...``, which the retry loop wraps as
+#:   ``"patches violate proposer-brief forbidden-edits list: " + ...``
+#:   before it reaches the log. (:func:`zicato.mutation.validator
+#:   .check_forbidden_ids` emits a similar ``... is in the forbidden set
+#:   and may not be patched``, but that one CANNOT reach ``proposal.errors``
+#:   at all — its only caller raises ``BadPatchSetError`` after the proposer
+#:   returned, outside the retry loop.) The wrapped form is the CANONICAL
+#:   proposer-was-reached-and-produced-an-invalid-patch case, i.e. precisely
+#:   ``settled_degraded``. Only the unambiguous HTTP reason phrase
+#:   ``"403 forbidden"`` is matched. (That string is now also ineligible
+#:   structurally, being a content rejection; this entry stays as defense in
+#:   depth, since ``403 forbidden`` can legitimately appear in a
 #:   call-boundary error.)
 #: * bare numeric status codes (``401``, ``403``, ``429``, ``503``) —
 #:   three-digit runs occur inside ids, byte offsets, and line numbers in
@@ -165,6 +193,14 @@ class RoundStatus(StrEnum):
 #: with the weaker reason. This vocabulary is a FLOOR on detection, not
 #: a proof of its absence; widen it per-caller via the ``infra_markers``
 #: parameter rather than by editing this set in place.
+#:
+#: One concrete instance of that floor, worth knowing before widening: the
+#: call-boundary templates render ``{type(exc).__name__}: {exc}``, so a
+#: transport exception whose ``str()`` is empty or uninformative leaves only
+#: its CamelCase class name — and a class name can never satisfy a
+#: multi-word marker, since ``ConnectionRefusedError`` lowercases to
+#: ``connectionrefusederror`` with no space in it. ``AuthenticationError``
+#: matches (on ``authentication``); a bare ``APIStatusError`` does not.
 HARD_INFRA_MARKERS: frozenset[str] = frozenset(
     {
         # (a) credential / authorization lapse
@@ -447,23 +483,39 @@ def classify_round(
     """
     settled = record.opened and record.closed
     gate_count = len(record.gates)
+    # A MECHANICAL recombination mint is a candidate the loop produced
+    # WITHOUT consulting the model — ``mint_recombined_experiment``
+    # (``proposer/recombine.py``) is pure, and the surviving slot emits its
+    # ``candidate_sampled`` with ``recombined=True`` exactly as an ordinary
+    # sample does. Subtracting the recombined count is what keeps a round
+    # with zero model responses from vouching for the endpoint: on a
+    # ``recombine`` arm mid-outage the LLM slots raise (and best-of-N
+    # DISCARDS their errors when any slot survives), the mint succeeds, and
+    # a plain ``> 0`` would read that as "the proposer was reached".
+    non_recombined = record.proposal.candidates_sampled - record.proposal.recombined_sampled
     proposer_reached = bool(
-        record.proposal.candidates_sampled > 0
-        or record.proposal.experiment_ids
-        or record.generation_ids
+        non_recombined > 0 or record.proposal.experiment_ids or record.generation_ids
     )
     invalid_patch = bool(record.validation_findings) or any(record.proposal.errors)
-    # Markers are scanned over CALL-BOUNDARY proposal errors only, never
-    # over ``validation_findings`` and never over a content rejection. The
-    # reasoning is one rule applied twice: a CONTENT rejection exists only
-    # because a patch existed, so the proposer was reached and the round is
-    # a real measurement — scanning one for infra tokens could only ever
-    # produce a false VOID. That covers ``validation_findings`` directly,
-    # and it covers the content rejections that arrive through
-    # ``proposal.errors`` carrying the same findings inline (see
-    # :data:`CALL_BOUNDARY_PREFIXES`), which is the subtler half. (The
-    # findings still appear in ``evidence``, where they belong — they
-    # explain the degradation.)
+    # Markers are scanned over CALL-BOUNDARY proposal errors only.
+    #
+    # Not scanning ``validation_findings`` is true but nearly vacuous, and
+    # saying otherwise would overclaim: on the canonical degraded path the
+    # SAME strings appear in BOTH channels. ``orchestrator.py`` builds
+    # ``validation_errors`` from the proposer's own attempt list and
+    # ``evolve/persist.py`` emits them as ``validation_failed``, while
+    # ``evolve/propose_apply.py`` has already written them out as proposal
+    # errors. Excluding one channel while scanning the other therefore
+    # protects nothing on its own; it is kept as defense in depth.
+    #
+    # What actually protects the round is the PREFIX ANCHOR. A content
+    # rejection exists only because a patch existed, so the proposer was
+    # reached and the round is a real measurement — scanning one for infra
+    # tokens could only ever produce a false VOID. Anchoring to the
+    # transport-shaped templates makes every content rejection ineligible in
+    # whichever channel it arrives through (see
+    # :data:`CALL_BOUNDARY_PREFIXES`). The findings still appear in
+    # ``evidence``, where they belong — they explain the degradation.
     markers = _matched_markers(tuple(record.proposal.errors), infra_markers)
 
     evidence: list[str] = []
@@ -525,7 +577,18 @@ def classify_round(
             "returned an invalid patch (a real measurement)",
         )
 
-    # Rule 5 — no measurement, no explanation.
+    # Rule 5 — no measurement, no explanation. The reason must not deny the
+    # evidence printed directly beneath it: a round CAN reach this rule with
+    # proposer activity on the record (a mint applied, then an infra failure
+    # deferred past the gate), and a blanket "no evidence the proposer was
+    # reached" would contradict the very next line of the report. Same
+    # verdict either way — VOID — but the operator is triaging from this
+    # text, so it says which of the two shapes it is.
+    if proposer_reached:
+        return _finish(
+            RoundStatus.VOID,
+            "closed without a gate and without an explanation, despite proposer activity",
+        )
     return _finish(
         RoundStatus.VOID,
         "closed without a gate and without evidence the proposer was reached",
@@ -541,6 +604,39 @@ def _relative_log_path(workspace_root: Path, epoch_id: str, round_index: int) ->
         return path.as_posix()
 
 
+def _final_attempt_span(events: list[RoundLogEnvelope]) -> list[RoundLogEnvelope]:
+    """The envelopes from the LAST ``round_opened`` onward.
+
+    One round log can hold MORE THAN ONE attempt at the same round index,
+    and the fold cannot tell them apart: ``fold_round_record`` accumulates
+    across the whole stream and reduces the lifecycle markers to two
+    booleans, so a second attempt's events land on top of the first's.
+
+    The index gets reused because ``_epoch_round_base``
+    (``evolve/loop.py``) derives the next round index from the highest
+    *persisted* ``experiment.round_index``. A round that emitted
+    ``patches_applied`` but died before ``write_experiment`` never consumes
+    its index, so the next invocation opens the same one and appends to the
+    same append-only log. (The same function returns 0 outright when the
+    workspace cannot be read, which restarts numbering over every existing
+    log.)
+
+    Classifying the union would let a prior attempt's tokens vouch for this
+    one — the earlier attempt's sampled candidate satisfying
+    ``proposer_reached`` for an attempt that only ever saw a 401. Slicing to
+    the final span is the honest read: the last attempt is the one whose
+    outcome the epoch actually carries.
+
+    A stream with no ``round_opened`` is returned whole, so a torn or empty
+    log still folds to "never opened" and voids by rule 1.
+    """
+    last_open = -1
+    for index, envelope in enumerate(events):
+        if isinstance(envelope.event, RoundOpened):
+            last_open = index
+    return events if last_open < 0 else events[last_open:]
+
+
 def round_integrity(
     workspace_root: Path,
     epoch_id: str,
@@ -553,6 +649,11 @@ def round_integrity(
     An absent log reads as an empty event stream, which folds to a
     record that neither opened nor closed — void by rule 1, which is the
     honest verdict for a round directory with nothing in it.
+
+    Only the FINAL attempt span is classified — see
+    :func:`_final_attempt_span`, and note that this is the one place the
+    reader looks at raw envelopes rather than the folded record, because
+    the fold deliberately has no attempt scope.
 
     INTERIOR corruption (:meth:`RoundLog.read` raises ``ValueError``
     when a non-tail line is unparseable) is caught and classified void
@@ -578,7 +679,7 @@ def round_integrity(
             log_path=log_path,
         )
     return classify_round(
-        fold_round_record(events),
+        fold_round_record(_final_attempt_span(events)),
         round_index=round_index,
         log_path=log_path,
         infra_markers=infra_markers,

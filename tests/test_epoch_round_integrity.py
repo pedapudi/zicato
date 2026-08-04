@@ -320,9 +320,16 @@ def test_forbidden_id_rejection_is_degraded_not_void(tmp_path: Path) -> None:
     retry budget re-measuring a result already in hand. Only the
     unambiguous HTTP reason phrase ``403 forbidden`` may match.
     """
-    brief_error = "patch 'p1' targets forbidden mutation id 'sys_prompt'"
-    validator_error = (
-        "Patch 'p2': mutation_id 'tool_choice' is in the forbidden set and may not be patched"
+    # The PRODUCTION shape: `enforce_forbidden` returns the bare strings,
+    # and the retry loop always wraps the joined list in its own prefix
+    # before it reaches the log — the unprefixed form never appears in a
+    # `proposal_attempted`. (`mutation/validator.py::check_forbidden_ids`
+    # emits a similar string, but its only caller raises BadPatchSetError
+    # after the proposer returned, so it cannot reach this channel at all.)
+    brief_error = (
+        "patches violate proposer-brief forbidden-edits list: "
+        "patch 'p1' targets forbidden mutation id 'sys_prompt'; "
+        "patch 'p2' targets forbidden mutation id 'tool_choice'"
     )
     _write(
         tmp_path,
@@ -331,7 +338,7 @@ def test_forbidden_id_rejection_is_degraded_not_void(tmp_path: Path) -> None:
             RoundOpened(contract_hash="sha256:contract-t0"),
             CandidateSampled(i=1, n=1),
             PatchesApplied(generation_id="v1"),
-            ProposalAttempted(errors=(brief_error, validator_error)),
+            ProposalAttempted(errors=(brief_error,)),
             RoundClosed(),
         ],
     )
@@ -343,50 +350,71 @@ def test_forbidden_id_rejection_is_degraded_not_void(tmp_path: Path) -> None:
     assert epoch_round_integrity(tmp_path, EPOCH).accepted
 
 
+#: The four REAL false-positive vectors, each a production template that can
+#: carry a marker substring while meaning the OPPOSITE of an outage. Every
+#: string here was traced to its emitter; none is invented.
+CONTENT_REJECTIONS_CARRYING_MARKERS = (
+    # 1. `resource_exhausted` is a BUILT-IN goldfive drift kind, and the
+    #    parse error prints the whole sorted list (`proposer/structured.py`
+    #    renders it from `core/drift_kinds.py`). Deterministic: any
+    #    `drift:`-prefixed metric name that is not a built-in kind emits it.
+    "metric_name 'drift:latency_p99' is not a declared judge. Built-in drift "
+    "kinds (use as 'drift:<kind>'): incomplete_output, resource_exhausted, "
+    "schema_violation, tool_error",
+    # 2. A LOCAL PermissionError while reading a file to validate it
+    #    (`mutation/validator.py` wraps OSError), then wrapped again by the
+    #    retry loop. File mode, root-owned scratch, NFS — nothing to do with
+    #    the endpoint, on a round that DID produce a patch set.
+    "patches failed post-apply validation: Could not read "
+    "/tmp/ztw-slate-9f2/agent/tools.py: [Errno 13] Permission denied: "
+    "'/tmp/ztw-slate-9f2/agent/tools.py'",
+    # 3. Mutation ids are arbitrary OPERATOR strings off `# zicato:mutable
+    #    id="..."`, echoed verbatim (`proposer/brief.py::enforce_forbidden`,
+    #    then wrapped). `api_key_env` is an entirely ordinary id.
+    "patches violate proposer-brief forbidden-edits list: patch 'p1' targets "
+    "forbidden mutation id 'client.api_key_env'",
+    # 4. jsonschema echoes the MODEL'S OWN instance, and `new_content` is a
+    #    plain string schema — so a mistyped patch renders the proposer's
+    #    replacement source code into the error (`proposer/structured.py`).
+    "schema violation at patches.0.new_content: 42 is not of type 'string' "
+    "(instance: headers['authorization'] = f'Bearer {self.api_key}')",
+)
+
+
 def test_a_content_rejection_is_never_read_as_an_outage(tmp_path: Path) -> None:
     """Regression pin. Content rejections quote text zicato does not control.
 
-    The three templates below are the REAL ones the proposer appends to
-    ``ProposerError.attempts``, which `evolve/propose_apply.py` then
-    writes out as `proposal_attempted` events — so they are exactly what
-    the fold sees:
+    Each string in `CONTENT_REJECTIONS_CARRYING_MARKERS` is a production
+    template that reaches `proposal.errors` (via `ProposerError.attempts`,
+    which `evolve/propose_apply.py` writes out as `proposal_attempted`)
+    carrying a `HARD_INFRA_MARKERS` substring — while meaning the precise
+    opposite of an outage: the endpoint answered, and what came back was
+    bad. Two of the four are not even about the model (a built-in drift-kind
+    list; a local `PermissionError`), and two quote strings the OPERATOR or
+    the MODEL authored.
 
-    * post-apply validation quotes findings over the CHILD AGENT'S OWN
-      SOURCE (`proposer/proposer.py`, `proposer/adk_agent.py`);
-    * the forbidden-edits list quotes MUTATION IDS
-      (`proposer/brief.py::enforce_forbidden`);
-    * a parse failure quotes the model's own offending values and the
-      declared enum domain (`proposer/structured.py`).
+    Voiding these would retry a legitimately-degraded arm to exhaustion —
+    and, because arms differ in how often they emit invalid patches, it
+    would delete rounds in an ARM-CORRELATED pattern, manufacturing the
+    exact contamination shape this module exists to detect.
 
-    Each can therefore contain a marker substring while meaning the
-    precise opposite of an outage: the endpoint answered, and what came
-    back was bad. Voiding these would retry a legitimately-degraded arm
-    to exhaustion — and, because arms differ in how often they emit
-    invalid patches, it would delete rounds in an ARM-CORRELATED pattern,
-    manufacturing the exact contamination shape this module exists to
-    detect.
-
-    Only the call-boundary prefixes are eligible for marker matching.
+    The prefix anchor is what makes them ineligible. Note that two of the
+    four carry NO call-boundary prefix at all and two carry a *content*
+    prefix — the anchor covers both shapes, which is why it is the
+    mechanism and the vocabulary is only a floor on top of it.
     """
+    # Each really does contain a marker — otherwise this pin proves nothing.
+    for text in CONTENT_REJECTIONS_CARRYING_MARKERS:
+        lowered = text.lower()
+        assert any(marker in lowered for marker in HARD_INFRA_MARKERS), text
+
     _write(
         tmp_path,
         1,
         [
             RoundOpened(contract_hash="sha256:contract-t0"),
             CandidateSampled(i=1, n=1),
-            ProposalAttempted(
-                errors=(
-                    # The child's own source mentions an api key.
-                    "patches failed post-apply validation: "
-                    "agent/auth.py:41: undefined name 'api_key'",
-                    # A mutation point named after the thing it configures.
-                    "patches violate proposer-brief forbidden-edits list: "
-                    "patch 'p2' targets forbidden mutation id 'api_key_header'",
-                    # A declared enum domain of endpoint failure messages.
-                    "patch[0]: new_enum='retry' not in declared enum domain "
-                    "['connection refused', 'service unavailable'] for mutation 'fallback_mode'",
-                ),
-            ),
+            ProposalAttempted(errors=CONTENT_REJECTIONS_CARRYING_MARKERS),
             RoundClosed(),
         ],
     )
@@ -397,6 +425,30 @@ def test_a_content_rejection_is_never_read_as_an_outage(tmp_path: Path) -> None:
     assert epoch_round_integrity(tmp_path, EPOCH).accepted
     # The errors are still rendered — they explain the degradation.
     assert any("proposal error" in line for line in verdict.evidence)
+
+
+def test_a_content_rejection_never_voids_a_round_that_gated(tmp_path: Path) -> None:
+    """The same four strings on a round that DID duel stay `complete`.
+
+    Rule 2 already outranks rule 3, so this cannot regress through the
+    marker path — but a future rule inserted ahead of the gate check
+    could, and a `complete` round wrongly voided is a deleted duel.
+    """
+    events = [
+        RoundOpened(contract_hash="sha256:contract-t0"),
+        ProposalAttempted(errors=CONTENT_REJECTIONS_CARRYING_MARKERS),
+        ProposalAttempted(errors=()),
+        CandidateSampled(i=1, n=1),
+        ExperimentMinted(experiment_id="exp-v1"),
+        PatchesApplied(generation_id="v1"),
+        GateEvaluated(rule_fired="", decision="rejected"),
+        RoundClosed(),
+    ]
+    _write(tmp_path, 1, events)
+    verdict = round_integrity(tmp_path, EPOCH, 1)
+
+    assert verdict.status == RoundStatus.COMPLETE
+    assert verdict.infra_markers == ()
 
 
 def test_call_boundary_prefixes_match_the_real_emitters(tmp_path: Path) -> None:
@@ -497,37 +549,128 @@ def test_bare_numeric_status_codes_do_not_match(tmp_path: Path) -> None:
     assert verdict.infra_markers == ()
 
 
-def test_a_mechanically_recombined_candidate_does_not_vouch_for_the_endpoint(
+def test_a_mechanical_recombination_mint_is_not_evidence_of_reach(
     tmp_path: Path,
 ) -> None:
-    """Rule 3 is what protects the `recombine` arms, and this pins it.
+    """Misclassification A: a round with ZERO model responses, accepted.
 
     A mechanical recombination mint emits ``candidate_sampled`` having
     made NO model call — ``mint_recombined_experiment`` is pure
-    (``proposer/recombine.py``), and the surviving slot's event is
-    emitted the same way an ordinary sample's is
-    (``proposer/best_of_n.py``). So on an A3/A7 cell
-    ``candidates_sampled > 0`` can be true across a credential outage,
-    and `proposer_reached` alone would wave the round through as a real
-    degraded measurement.
+    (``proposer/recombine.py``) — and best-of-N DISCARDS the failed slots'
+    errors whenever any slot survives (``proposer/best_of_n.py``). So on an
+    A3/A7 cell mid-outage: the LLM slots raise 401s that never reach the
+    log, the mint survives, its mount then fails, and the round closes
+    with ``candidates_sampled=1``, ``proposal.errors=()``, and no gate.
 
-    It does not, because rule 3 outranks rule 4: the matched marker
-    voids the round despite the candidate. That ordering is the whole
-    protection here, so a change that let rule 4 run first would silently
-    re-admit outage rounds on exactly the arms that mint locally.
+    Under a plain ``candidates_sampled > 0`` that reads as
+    `settled_degraded` — an ACCEPTED cell whose mean is built without the
+    endpoint ever having answered. The recombined count is folded already
+    (``round_log.py``), so the predicate subtracts it and the round lands
+    void by rule 5, on the honest reason.
     """
     events = [
         RoundOpened(contract_hash="sha256:contract-t0"),
-        CandidateSampled(i=1, n=3),  # the mint — no model call behind it
-        ProposalAttempted(errors=(CREDENTIAL_ERROR,)),
+        CandidateSampled(i=2, n=3, recombined=True),  # no model call behind it
+        ValidationFailed(findings=("mount failed: derived tree is not importable",)),
         RoundClosed(),
     ]
     _write(tmp_path, 1, events)
     verdict = round_integrity(tmp_path, EPOCH, 1)
 
-    assert verdict.proposer_reached  # the flag is set ...
-    assert verdict.status == RoundStatus.VOID  # ... and does not decide it
+    assert not verdict.proposer_reached
+    assert verdict.status == RoundStatus.VOID
+    assert verdict.infra_markers == ()
+    assert any("without evidence the proposer was reached" in v for v in verdict.evidence)
+    assert not epoch_round_integrity(tmp_path, EPOCH).accepted
+
+
+def test_rule_five_never_denies_the_evidence_printed_beside_it(tmp_path: Path) -> None:
+    """Misclassification B: the verdict was right, the reason was a lie.
+
+    A recombination mint that DOES apply emits `experiment_minted` and
+    `patches_applied`, so `proposer_reached` is satisfied on those tokens
+    however the candidate was produced. If the round then dies on infra
+    deferred past the gate, it reaches rule 5 — correctly void — but the
+    blanket reason "without evidence the proposer was reached" printed
+    directly above an evidence line reading "proposer reached: ..." makes
+    the report argue with itself, and the operator triages from that text.
+    """
+    events = [
+        RoundOpened(contract_hash="sha256:contract-t0"),
+        CandidateSampled(i=2, n=3, recombined=True),
+        ExperimentMinted(experiment_id="exp-v1"),
+        PatchesApplied(generation_id="v1"),
+        RoundClosed(),
+    ]
+    _write(tmp_path, 1, events)
+    verdict = round_integrity(tmp_path, EPOCH, 1)
+
+    assert verdict.status == RoundStatus.VOID  # verdict unchanged
+    assert verdict.proposer_reached
+    assert any("despite proposer activity" in v for v in verdict.evidence)
+    assert not any("without evidence the proposer was reached" in v for v in verdict.evidence)
+    # The two lines now agree with each other.
+    assert any("proposer reached:" in v for v in verdict.evidence)
+
+
+def test_only_the_final_attempt_span_is_classified(tmp_path: Path) -> None:
+    """Misclassification C: a prior attempt vouching for a later one.
+
+    The log is append-only and a round INDEX can be reused: `evolve/loop.py`
+    derives the next index from the highest *persisted*
+    `experiment.round_index`, so an attempt that applied patches but died
+    before its experiment was written never consumes its index, and the
+    next invocation opens the same round and appends to the same file.
+    `fold_round_record` has no attempt scope — it accumulates across the
+    whole stream and reduces the lifecycle markers to two booleans — so the
+    first attempt's `candidate_sampled` / `patches_applied` would satisfy
+    `proposer_reached` for a second attempt that only ever saw a 401.
+    """
+    _write(
+        tmp_path,
+        1,
+        [
+            # Attempt 1 — reached the model, applied patches, then died.
+            RoundOpened(contract_hash="sha256:contract-t0"),
+            ProposalAttempted(errors=()),
+            CandidateSampled(i=1, n=1),
+            ExperimentMinted(experiment_id="exp-v1"),
+            PatchesApplied(generation_id="v1"),
+            # Attempt 2 — same index, endpoint now refusing.
+            RoundOpened(contract_hash="sha256:contract-t0"),
+            ProposalAttempted(errors=(CREDENTIAL_ERROR,)),
+            RoundClosed(),
+        ],
+    )
+    verdict = round_integrity(tmp_path, EPOCH, 1)
+
+    assert not verdict.proposer_reached  # attempt 1's tokens do not carry over
+    assert verdict.status == RoundStatus.VOID
     assert verdict.infra_markers == (CREDENTIAL_ERROR,)
+    assert any("hard infra error" in v for v in verdict.evidence)
+
+
+def test_a_reused_round_index_does_not_inherit_a_prior_gate(tmp_path: Path) -> None:
+    """The same span rule, in the direction that would manufacture a duel.
+
+    A first attempt that gated and closed, followed by a second attempt at
+    the same index that produced nothing, must not read as `complete` on
+    the first attempt's gate — the epoch carries the LAST attempt.
+    """
+    _write(tmp_path, 1, _complete_events())
+    _write(
+        tmp_path,
+        1,
+        [
+            RoundOpened(contract_hash="sha256:contract-t0"),
+            ProposalAttempted(errors=(CREDENTIAL_ERROR,)),
+            RoundClosed(),
+        ],
+    )
+    verdict = round_integrity(tmp_path, EPOCH, 1)
+
+    assert verdict.gate_count == 0
+    assert verdict.status == RoundStatus.VOID
 
 
 def test_infra_marker_vocabulary_is_an_explicit_parameter(tmp_path: Path) -> None:
