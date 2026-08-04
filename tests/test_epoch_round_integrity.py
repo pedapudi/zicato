@@ -673,31 +673,147 @@ def test_a_reused_round_index_does_not_inherit_a_prior_gate(tmp_path: Path) -> N
     assert verdict.status == RoundStatus.VOID
 
 
+#: A CALL-BOUNDARY error whose prose matches no default marker — the
+#: vocabulary MISS the whole floor/anchor argument turns on.
+QUIET_OUTAGE = "auxiliary LLM call raised UpstreamError: upstream said no (code ZX-9)"
+
+
 def test_infra_marker_vocabulary_is_an_explicit_parameter(tmp_path: Path) -> None:
     """A caller can widen the vocabulary without editing the module.
 
     The default set is a FLOOR on detection, not a proof: an endpoint
-    whose error prose uses none of its tokens reads back as a plain
-    proposer failure. This pins the widening seam that makes that
-    false-negative recoverable per-caller.
+    whose error prose uses none of its tokens goes unmatched. This pins the
+    widening seam that makes that false-negative recoverable per-caller.
+
+    The round is built to be a GENUINELY degraded one — a content rejection
+    the proposer really did produce — so that the default verdict is
+    ``settled_degraded`` on its own merits and the widening is the only
+    thing that changes it. Pinning the seam on a transport-error-only round
+    would be pinning the wrong thing: such a round is void either way (see
+    :func:`test_unmatched_call_boundary_error_alone_never_buys_acceptance`).
     """
-    quiet_outage = "auxiliary LLM call raised UpstreamError: upstream said no (code ZX-9)"
+    real_rejection = "patches failed post-apply validation: agent/agent.py: undefined name 'json'"
     _write(
         tmp_path,
         1,
         [
             RoundOpened(contract_hash="sha256:contract-t0"),
             CandidateSampled(i=1, n=1),
-            ProposalAttempted(errors=(quiet_outage,)),
+            ProposalAttempted(errors=(real_rejection,)),
+            CandidateSampled(i=2, n=2),
+            ProposalAttempted(errors=(QUIET_OUTAGE,)),
             RoundClosed(),
         ],
     )
-    # With the default vocabulary it is a degraded-but-real measurement.
-    assert round_integrity(tmp_path, EPOCH, 1).status == RoundStatus.SETTLED_DEGRADED
-    # Widened, the same log is a void infra failure.
+    # With the default vocabulary the outage goes unmatched, and what is left
+    # on the record is a real measurement of a degraded arm.
+    default = round_integrity(tmp_path, EPOCH, 1)
+    assert default.status == RoundStatus.SETTLED_DEGRADED
+    assert default.infra_markers == ()
+    # Widened, the same log is a void infra failure — rule 3 outranks rule 4.
     widened = round_integrity(tmp_path, EPOCH, 1, infra_markers=HARD_INFRA_MARKERS | {"zx-9"})
     assert widened.status == RoundStatus.VOID
-    assert widened.infra_markers == (quiet_outage,)
+    assert widened.infra_markers == (QUIET_OUTAGE,)
+
+
+def test_unmatched_call_boundary_error_alone_never_buys_acceptance(tmp_path: Path) -> None:
+    """A transport failure is the ABSENCE of a patch, not an invalid one.
+
+    The round issue #141 made reachable: a best-of-N slate where one slot
+    survives — minting the reach token — while a sibling slot dies at the
+    call boundary in prose the default vocabulary does not know. Before
+    #141 the sibling's error was discarded and the round voided by rule 5.
+    Emitting it must not be what PROMOTES the round to ``settled_degraded``:
+    reporting more evidence can only ever move a verdict toward void.
+
+    This is also what makes a vocabulary miss survivable at all. Rule 3's
+    marker set is a floor, and the fallthrough that catches everything it
+    misses is rule 5 — which only holds if an unmatched transport error
+    cannot satisfy rule 4 by itself.
+    """
+    _write(
+        tmp_path,
+        1,
+        [
+            RoundOpened(contract_hash="sha256:contract-t0"),
+            # The surviving slot: a real reach token, no error of its own.
+            CandidateSampled(i=0, n=2),
+            # The dead sibling, reported for the first time since #141.
+            ProposalAttempted(errors=(QUIET_OUTAGE,), slot_index=1),
+            RoundClosed(),
+        ],
+    )
+    verdict = round_integrity(tmp_path, EPOCH, 1)
+
+    assert verdict.status == RoundStatus.VOID
+    assert verdict.proposer_reached
+    assert not verdict.invalid_patch
+    assert verdict.infra_markers == ()
+    # The void is ACTIONABLE: it names the error and the remedy.
+    assert any("matched no infra marker" in line for line in verdict.evidence)
+    assert any("widening `infra_markers`" in line for line in verdict.evidence)
+    assert not epoch_round_integrity(tmp_path, EPOCH).accepted
+
+
+def test_call_boundary_error_beside_a_content_rejection_still_accepts(tmp_path: Path) -> None:
+    """The tightening excludes transport errors; it does not suppress evidence.
+
+    A round holding BOTH is still a real measurement — the content rejection
+    proves a patch existed and was rejected — so rule 4 accepts it exactly as
+    before. Only the transport error alone was ever doing illegitimate work.
+    """
+    _write(
+        tmp_path,
+        1,
+        [
+            RoundOpened(contract_hash="sha256:contract-t0"),
+            CandidateSampled(i=0, n=2),
+            ProposalAttempted(errors=(QUIET_OUTAGE,), slot_index=1),
+            ProposalAttempted(
+                errors=("schema violation at patches[0]: 'op' is a required property",)
+            ),
+            RoundClosed(),
+        ],
+    )
+    verdict = round_integrity(tmp_path, EPOCH, 1)
+
+    assert verdict.status == RoundStatus.SETTLED_DEGRADED
+    assert verdict.invalid_patch
+    # Both errors stay on the report; only the PREDICATE changed.
+    assert any(QUIET_OUTAGE in line for line in verdict.evidence)
+    assert any("schema violation" in line for line in verdict.evidence)
+
+
+def test_slot_tagged_content_rejection_is_not_invalid_patch_laundering(tmp_path: Path) -> None:
+    """The slot tag must not turn a transport error into patch evidence.
+
+    An all-failed slate raises one error carrying every slot's attempts,
+    each prefixed ``slot N: `` (``proposer/best_of_n.py``), and
+    ``evolve/propose_apply.py`` writes them out one event per attempt. The
+    prefix is stripped before BOTH predicates — marker eligibility and
+    invalid-patch evidence — so a slot-tagged transport error stays a
+    transport error and a slot-tagged content rejection stays a rejection.
+    Testing either predicate against the prefixed string would silently
+    invert them on exactly the round that matters most.
+    """
+    _write(
+        tmp_path,
+        1,
+        [
+            RoundOpened(contract_hash="sha256:contract-t0"),
+            CandidateSampled(i=0, n=2),
+            ProposalAttempted(errors=(f"slot 0: {QUIET_OUTAGE}",)),
+            ProposalAttempted(errors=(f"slot 1: {CREDENTIAL_ERROR}",)),
+            RoundClosed(),
+        ],
+    )
+    verdict = round_integrity(tmp_path, EPOCH, 1)
+
+    # Slot 1's credential lapse is matched THROUGH the tag: rule 3, void.
+    assert verdict.status == RoundStatus.VOID
+    assert verdict.infra_markers == (f"slot 1: {CREDENTIAL_ERROR}",)
+    # ... and neither slot-tagged transport error counted as an invalid patch.
+    assert not verdict.invalid_patch
 
 
 # ---------------------------------------------------------------------------

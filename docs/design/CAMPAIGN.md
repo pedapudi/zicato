@@ -1328,7 +1328,7 @@ The reader (`src/zicato/epoch/round_integrity.py`) walks
 |---|---|---|---|
 | **COMPLETE** | `complete` | opened **and** closed, with **≥ 1 `gate_evaluated`** | contributes a duel to `cell_mean_d` |
 | **SETTLED-DEGRADED** | `settled_degraded` | closed with a **real measurement** but no gate — the proposer *was* reached and genuinely produced an invalid patch | **accepted**; contributes no duel |
-| **VOID** | `void` | everything else — a torn/partial log without its completion marker; no `gate_evaluated` plus evidence of hard infra/credential failure; **or** a round that closed with no gate and no evidence the proposer was reached at all | **the whole cell is rejected** |
+| **VOID** | `void` | everything else — a torn/partial log without its completion marker; no `gate_evaluated` plus evidence of hard infra/credential failure; **or** a round that closed with no gate and no evidence a patch was produced and rejected (a transport error does not count — see below) | **the whole cell is rejected** |
 
 The wire tokens are the ones `--json` emits; §7's artifacts use them verbatim.
 
@@ -1400,8 +1400,9 @@ error came from.) Three consequences the executor must understand:
   burns the arm's retry budget, and — because arms differ in how often they emit
   invalid patches — deletes rounds in an **arm-correlated** pattern, which is
   precisely the contamination shape R.5 describes. A false negative merely falls
-  through to rule 5, **which still voids a genuine credential lapse**: when the
-  endpoint refuses the request, nothing mints a reach token.
+  through to rule 5, **which still voids a genuine credential lapse** — see the
+  next paragraph for what that fallthrough actually rests on, because the
+  obvious reason ("nothing mints a reach token") is *not* the one that holds.
 - **The excluded tokens stay excluded, as defense in depth.** Bare `timeout`
   (one attempt timing out while a later one returns a real, if invalid, proposal
   is a real measurement), bare `forbidden` (the proposer's own forbidden-id
@@ -1417,6 +1418,34 @@ error came from.) Three consequences the executor must understand:
   in the report, not buried in a config. Widening is safe *because* of the
   anchor: a broader token can only ever be tested against transport-shaped
   errors.
+
+**What the rule-5 fallthrough actually rests on: a transport error is never
+patch evidence.** The reason a vocabulary miss is survivable is *not* that an
+outage leaves no reach token — issue #141 made that reasoning obsolete. A
+best-of-N slate can have one slot survive (minting `candidate_sampled`, a
+perfectly good reach token) while a sibling slot dies at the call boundary, and
+since #141 the sibling's error is *written to the log* rather than discarded.
+So the round arrives at the reader with reach asserted AND an error on the
+record. What keeps it from being accepted is that `invalid_patch` counts
+**content rejections only**: a request that failed before a response came back
+produced no patch, so it cannot be an invalid one, and it cannot satisfy rule
+4's "the proposer was reached and genuinely produced an invalid patch". Without
+that exclusion, a vocabulary miss would flip such a round from VOID to
+`settled_degraded` — the fix for a *reporting* gap would have quietly loosened
+the *acceptance* rule, which is the exact inversion this section exists to
+prevent. The governing invariant, worth memorising:
+
+> **Reporting more evidence can only ever move a verdict toward VOID, never away
+> from it.**
+
+The executor's practical consequence: a round whose only errors are
+transport-shaped and unmatched is VOID, and its evidence line says so by name —
+`closed without a gate, carrying a call-boundary error that matched no infra
+marker (…) — consider widening \`infra_markers\``. **Treat that line as the
+signal to widen for this endpoint** (per the bullet above, and record the
+widening in the run log), then re-read. The verdict does not change with the
+widening — VOID either way — but the *reason* does, and the anomaly belongs in
+§7 as an endpoint-prose finding rather than an unexplained void.
 
 **Cell acceptance rule:** a cell is **ACCEPTED iff it contains zero VOID
 rounds** — **and has at least one round.** Zero rounds is vacuously free of
