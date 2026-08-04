@@ -1120,6 +1120,75 @@ def _ingest_reflection_into(
     return True
 
 
+def _ingest_pareto_frontier_into(
+    conn: sqlite3.Connection,
+    workspace_root: Path,
+    epoch_id: str,
+) -> bool:
+    """Project one epoch's Pareto frontier record into ``pareto_frontier`` (v13).
+
+    Returns ``True`` when a record existed and its rows were written. The
+    canonical file is ``epochs/{epoch}/pareto_frontier.json``; this table is a
+    pure projection of it, so an epoch with no record (every epoch that never
+    admitted a candidate, and every workspace older than the feature) simply
+    contributes no rows and is not an error.
+
+    Delete-then-insert keyed on ``epoch_id`` rather than a per-row upsert: a
+    generation can MOVE from ``member`` to ``retired``, and an upsert alone
+    would leave a stale member row behind if the record ever shrank. The
+    frontier is small (a handful of rows per epoch), so the rewrite is cheap
+    and exactly reproduces the file.
+    """
+    from zicato.epoch.pareto import load_frontier  # noqa: PLC0415
+
+    frontier = load_frontier(workspace_root, epoch_id)
+    if not frontier.members and not frontier.retired:
+        conn.execute("DELETE FROM pareto_frontier WHERE epoch_id = ?", (epoch_id,))
+        return False
+
+    conn.execute("DELETE FROM pareto_frontier WHERE epoch_id = ?", (epoch_id,))
+    rows: list[tuple[Any, ...]] = []
+    for member in frontier.members:
+        rows.append(
+            (
+                epoch_id,
+                member.generation_id,
+                "member",
+                int(member.round_admitted),
+                None,
+                None,
+                member.champion_generation_id,
+                member.scalar,
+                json.dumps(dict(member.axis_values), sort_keys=True),
+                json.dumps(list(member.beats_champion_on)),
+            )
+        )
+    for entry in frontier.retired:
+        member = entry.member
+        rows.append(
+            (
+                epoch_id,
+                member.generation_id,
+                "retired",
+                int(member.round_admitted),
+                int(entry.round_retired),
+                entry.reason,
+                member.champion_generation_id,
+                member.scalar,
+                json.dumps(dict(member.axis_values), sort_keys=True),
+                json.dumps(list(member.beats_champion_on)),
+            )
+        )
+    conn.executemany(
+        "INSERT OR REPLACE INTO pareto_frontier("
+        "epoch_id, generation_id, status, round_admitted, round_retired, "
+        "retired_reason, champion_generation_id, scalar, axis_values_json, "
+        "beats_champion_on_json) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        rows,
+    )
+    return True
+
+
 def _iter_reflection_dirs(workspace_root: Path, epoch_id: str) -> list[str]:
     """Yield reflection ids that have a directory on disk under ``epoch_id``."""
     from zicato.core.workspace import reflections_dir  # noqa: PLC0415
@@ -1390,6 +1459,12 @@ def _rebuild_epoch(
     for reflection_id in _iter_reflection_dirs(workspace_root, epoch_id):
         _ingest_reflection_into(conn, workspace_root, epoch_id, reflection_id)
 
+    # Pareto-frontier projection (schema v13): re-derive the epoch's frontier
+    # members + retirements from its canonical ``pareto_frontier.json``. Files
+    # are canonical; the table is a projection, so the record is fully readable
+    # with no index at all (docs/design/PARETO-FRONTIER.md §7).
+    _ingest_pareto_frontier_into(conn, workspace_root, epoch_id)
+
 
 def _open_for_write(workspace_root: Path, db_path: Path | None) -> tuple[sqlite3.Connection, Path]:
     """Open (creating + schema-applying if needed) the index for a write.
@@ -1535,6 +1610,27 @@ def ingest_reflection(
     conn, _ = _open_for_write(workspace_root, db_path)
     try:
         _ingest_reflection_into(conn, workspace_root, epoch_id, reflection_id)
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def ingest_pareto_frontier(
+    workspace_root: Path,
+    db_path: Path | None,
+    epoch_id: str,
+) -> None:
+    """Incrementally re-project one epoch's Pareto frontier record.
+
+    The live dual-write companion for the frontier: the evolve loop calls it
+    at settle, the moment ``pareto_frontier.json`` changes, so a live index
+    does not go stale between rebuilds. Idempotent — the epoch's rows are
+    rewritten wholesale from the file. When the database does not exist yet it
+    is created with the schema applied.
+    """
+    conn, _ = _open_for_write(workspace_root, db_path)
+    try:
+        _ingest_pareto_frontier_into(conn, workspace_root, epoch_id)
         conn.commit()
     finally:
         conn.close()

@@ -418,6 +418,20 @@ weight namespaces are skipped. The shipped defaults guard `rubric:` and
 
 If no rule rejects, the gate returns `decision="promoted"`.
 
+Rule 3's "did this namespace move the wrong way" test is
+`tournament.gate.regressed_namespaces`, and it is public because it is
+asked outside the gate too: the gate-rule view renders it, and the Pareto
+frontier record ([`PARETO-FRONTIER.md`](PARETO-FRONTIER.md)) uses it as
+admission control. There is exactly one implementation, so the record and
+the gate cannot disagree about what a regression is.
+
+A weighted sum is a projection, so a challenger that wins on an
+under-weighted axis loses the scalar and is dropped. That candidate is now
+*recorded* — never re-decided — beside the champion lineage; see
+[`PARETO-FRONTIER.md`](PARETO-FRONTIER.md). The record reads the same
+axes, signs, units, and `promote_margin` this document defines, and adds
+no knob of its own.
+
 ### 5.1 Why strict monotonicity on pass-rate
 
 Pass-rate regressions are *categorical* failures: an entry that

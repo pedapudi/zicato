@@ -95,6 +95,7 @@ from zicato.evolve.lifecycle_services import (
     _resolve_harmonograf_url,
     _resolve_or_launch_harmonograf,
 )
+from zicato.evolve.pareto import record_round_frontier
 from zicato.evolve.persist import (
     _finalize_generation,
     _persist_rejected_round,
@@ -102,6 +103,7 @@ from zicato.evolve.persist import (
     _round_epilogue,
     _skipped_round_outcome,
 )
+from zicato.evolve.placebo import is_placebo_experiment
 from zicato.evolve.promote_hook import fire_on_promote
 from zicato.evolve.propose_apply import (
     _AppliedChallenger,
@@ -1426,6 +1428,27 @@ async def evolve_once(
         },
     )
 
+    # --- 13a'. Pareto frontier RECORD (docs/design/PARETO-FRONTIER.md) ----
+    # The scalar kept one generation; this records the one it discarded when
+    # that generation beat the champion on an axis the weighted sum outvoted.
+    # Placed here so the champion it evaluates against is the champion the
+    # round actually ENDED with (post holdout confirmation, post integrity
+    # block, post operator override). Record-only: it never touches the gate,
+    # selection, the proposer, or the champion pointer, and it can never fail
+    # a round.
+    record_round_frontier(
+        workspace_root=workspace_root,
+        epoch_id=resolved_epoch_id,
+        round_index=round_index,
+        weights=weights,
+        champion_generation_id=(next_id if bookkeeping_decision == "promoted" else parent_id),
+        aggregates={
+            parent_id: tournament_result.parent_agg,
+            next_id: tournament_result.child_agg,
+        },
+        round_log=round_log,
+    )
+
     # --- 13b. Optional random-baseline placebo arm (OVERFITTING.md #7) ---
     # One EXTRA scheduled duel after the settled round, on the opt-in
     # cadence ``overfitting.random_baseline_every_n``: champion vs a
@@ -2062,6 +2085,13 @@ async def _evolve_multi_challenger(
     champion_cached_units = 0
     champion_fresh_units = 0
 
+    # --- Per-generation aggregates for the Pareto frontier record. Filled
+    # from the SAME dicts ``_cache_gen_score`` persists and only when
+    # ``cache_scores`` is set, so an evidence-gate replicate duel's single
+    # draw can never overwrite the round-scored aggregate the record reads
+    # (docs/design/PARETO-FRONTIER.md §6).
+    field_aggregates: dict[str, dict[str, Any]] = {}
+
     # --- Cross-matchup concurrency cap. A non-gauntlet structure schedules
     # SEVERAL matchups of a round concurrently (the driver fans the batch out
     # under one ``asyncio.gather``). Without a shared gate each matchup would
@@ -2153,6 +2183,8 @@ async def _evolve_multi_challenger(
                 result.child_agg,
                 round_index=round_index,
             )
+            field_aggregates[m.left.generation_id] = result.parent_agg
+            field_aggregates[m.right.generation_id] = result.child_agg
         # WS8: this matchup's board units + gate verdict onto the round log.
         _emit_tournament_units(round_log, result)
         _emit_harness_loaded(round_log, workspace_root, epoch_id, result)
@@ -2487,6 +2519,25 @@ async def _evolve_multi_challenger(
                 "overrides": override_provenance,
             },
         },
+    )
+
+    # --- Pareto frontier RECORD (docs/design/PARETO-FRONTIER.md). Same seam
+    # as the gauntlet's, on the post-holdout / post-override truth: the
+    # champion is the crowned generation when the field crowned one, else the
+    # incumbent. A field round can carry the random-baseline placebo INSIDE
+    # the slate, so its ids are named explicitly — a no-op re-emission of the
+    # champion must never land on the record. Record-only; never fails a round.
+    record_round_frontier(
+        workspace_root=workspace_root,
+        epoch_id=epoch_id,
+        round_index=round_index,
+        weights=weights,
+        champion_generation_id=promoted_id or parent_id,
+        aggregates=field_aggregates,
+        placebo_generation_ids=[
+            c.generation_id for c in applied if is_placebo_experiment(c.experiment)
+        ],
+        round_log=round_log,
     )
 
     # Settle the live envelope with the resolved rounds + standings so the

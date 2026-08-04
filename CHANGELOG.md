@@ -1,5 +1,43 @@
 # Changelog
 
+### The scalar's discards get a record: the Pareto frontier (issue #139)
+
+The promote gate keeps one generation per round and picks it by a weighted
+sum. A weighted sum is a projection, so a challenger that halves cost for a
+sliver of rubric loses the scalar, is rejected, and is never mentioned
+again. Each epoch now carries `epochs/{epoch}/pareto_frontier.json`: the
+settled candidates that beat the reigning champion by at least
+`promote_margin` on at least one scoring axis and that nothing else on the
+record dominates.
+
+**Record only, and default on.** It never enters the gate, selection, the
+proposer's prompt, or the champion pointer — the same posture as the Elo
+fold and the RoundLog, which is why it needs no knob to be safe. It also
+adds no knob to work: the axes are the non-zero
+`ScoringWeights.namespace_weights` keys, the direction is each weight's
+sign, the units are the already weight-multiplied `namespace_aggregates`
+(so one threshold serves axes whose raw units differ by orders of
+magnitude), the threshold is `promote_margin`, and the epoch is the key —
+a promotion keeps the frontier, an epoch roll starts it empty.
+
+Admission reuses the gate's own `namespace_monotonicity` rule (promoted to
+the public `tournament.gate.regressed_namespaces`, one implementation for
+both callers), so a candidate that guts rubric or introduces schema
+failures cannot buy its way onto the record with a cost win. Placebo arms
+are refused; the multi-challenger path fields them inside the slate, so
+that check is load-bearing. On a promotion, members the new champion
+dominates or that regress against it are MOVED to a `retired` list with the
+round and the reason — never deleted.
+
+Surfaces: one INFO line and one additive `frontier_updated` round-log
+event, both only when membership moved, plus an additive `pareto_frontier`
+table in the analytical index (schema v13; the workspace file stays
+canonical and `zicato reindex` re-derives every row). No UI and no new CLI
+command yet. Proposer exposure, frontier recombination, and slate steering
+are registered as deferred generator-arsenal work in
+`docs/design/PARETO-FRONTIER.md` §8 — they are what turn a record into a
+decision, and they ship on their own evidence.
+
 ### The holdout confirmation gets its own bounds (issue #118)
 
 `promote_margin` served as both the Rule 1 train threshold and the

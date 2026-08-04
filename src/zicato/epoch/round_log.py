@@ -40,7 +40,7 @@ One frozen dataclass per event type (see :data:`EVENT_TYPES`), covering
 the round's full arc: open (contract hash) → proposal session (attempts,
 sampled candidates, critique selection, minted experiment) → apply/
 validate → harness load provenance → tournament units → gate/holdout/
-evidence → recorded decision → close. Unknown event types read back as
+evidence → frontier record → recorded decision → close. Unknown event types read back as
 raw envelopes (typed payload ``None``) so a newer writer's log still
 folds on an older reader.
 """
@@ -317,6 +317,23 @@ class DecisionRecorded:
 
 
 @dataclass(frozen=True, slots=True)
+class FrontierUpdated:
+    """The epoch's Pareto frontier record changed membership this round.
+
+    Emitted ONLY when something moved — a round that admits and retires
+    nothing is silent, so the presence of this event means the record has
+    news. ``size`` is the member count AFTER the update. Purely a record of
+    an observation: the frontier never touches promotion, selection, or the
+    proposer (``docs/design/PARETO-FRONTIER.md``).
+    """
+
+    TYPE: ClassVar[str] = "frontier_updated"
+    admitted: tuple[str, ...] = ()
+    retired: tuple[str, ...] = ()
+    size: int = 0
+
+
+@dataclass(frozen=True, slots=True)
 class RoundClosed:
     """The round closed; the log is complete."""
 
@@ -343,6 +360,7 @@ EVENT_TYPES: dict[str, type] = {
         HoldoutReleased,
         EvidenceReplicated,
         DecisionRecorded,
+        FrontierUpdated,
         RoundClosed,
     )
 }
@@ -363,6 +381,7 @@ RoundEvent = (
     | HoldoutReleased
     | EvidenceReplicated
     | DecisionRecorded
+    | FrontierUpdated
     | RoundClosed
 )
 
@@ -595,6 +614,11 @@ class RoundRecord:
     gates: tuple[GateEvaluated, ...] = ()
     holdout: HoldoutReleased | None = None
     evidence_trail: tuple[dict[str, Any], ...] = ()
+    #: The rounds' Pareto-frontier movements, in emission order. Empty for
+    #: every round that moved nothing and for every log written before the
+    #: event existed — the record is an observation, never a decision, so a
+    #: reader that ignores this field reads the round exactly as before.
+    frontier_updates: tuple[FrontierUpdated, ...] = ()
     decision: str = ""
     decision_provenance: dict[str, Any] = field(default_factory=dict)
     last_seq: int = 0
@@ -635,6 +659,7 @@ def fold_round_record(events: list[RoundLogEnvelope]) -> RoundRecord:
     gates: list[GateEvaluated] = []
     holdout: HoldoutReleased | None = None
     evidence_trail: list[dict[str, Any]] = []
+    frontier_updates: list[FrontierUpdated] = []
     decision = ""
     provenance: dict[str, Any] = {}
     last_seq = 0
@@ -684,6 +709,8 @@ def fold_round_record(events: list[RoundLogEnvelope]) -> RoundRecord:
             holdout = event
         elif isinstance(event, EvidenceReplicated):
             evidence_trail.append(dict(event.ci_state))
+        elif isinstance(event, FrontierUpdated):
+            frontier_updates.append(event)
         elif isinstance(event, DecisionRecorded):
             decision = event.decision
             provenance = dict(event.provenance)
@@ -713,6 +740,7 @@ def fold_round_record(events: list[RoundLogEnvelope]) -> RoundRecord:
         gates=tuple(gates),
         holdout=holdout,
         evidence_trail=tuple(evidence_trail),
+        frontier_updates=tuple(frontier_updates),
         decision=decision,
         decision_provenance=provenance,
         last_seq=last_seq,
@@ -737,6 +765,7 @@ __all__ = [
     "GateEvaluated",
     "HoldoutReleased",
     "EvidenceReplicated",
+    "FrontierUpdated",
     "DecisionRecorded",
     "RoundClosed",
     "EVENT_TYPES",
