@@ -22,6 +22,27 @@ zero VOID rounds. `zicato epoch rounds` renders the per-round evidence —
 matched error strings verbatim, never a bare boolean — with `--verify` for
 the exit code and `--json` for a harness.
 
+### The campaign doc records its results and its resolution limit (issue #97)
+
+`docs/design/CAMPAIGN.md` was a pre-registration with no results and a cost
+model roughly an order of magnitude optimistic (it projected ~2.5 h of
+parallel board-run wall-clock; a 144-cell run measured 7 h 23 m). It now
+opens with the standing record: every pre-#110-fix run withdrawn, two valid
+144-cell runs on deliberately identical designs, both validity gates
+passing on both, zero of nine features graduating either time, and the
+recommendation that the generator arsenal stays default-off. The design
+sections are re-scoped to what the measurements support — the endpoint is
+per-duel challenger improvement aggregated to cell means with the CELL as
+the unit of analysis (duels within a cell share an evolving champion;
+treating them as independent understated every standard error ~2x and
+flipped a validity gate), the resolution floor is DERIVED from an in-batch
+A/A contrast rather than asserted, both controls (A/A duplicate and
+planted-defect arm) are mandatory members of the same batch with the
+planted-defect check additionally a cheap pre-gate, and sizing is stated in
+cells rather than duels because between-cell variance dominates within-cell
+by roughly 4x. The K=6 screen premise is withdrawn; the two-sample MDE
+arithmetic the live MDE ladder pins is retained unchanged.
+
 ### The holdout confirmation gets its own bounds (issue #118)
 
 `promote_margin` served as both the Rule 1 train threshold and the

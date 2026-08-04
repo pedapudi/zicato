@@ -1,15 +1,288 @@
 # The live measurement campaign — deciding the scaffold defaults with evidence
 
-> **STATUS — DESIGNED / EXECUTION GATED ON EXPLICIT OPERATOR GO-AHEAD.**
-> Nothing in this document authorizes a run. Every command in §6 is a
-> *plan*; a live `zicato evolve` invocation against a real model endpoint
-> may be started only after the operator gives an explicit go-ahead for
-> that specific arm (the G3 live-run gate). This doc pre-registers the
-> arms, the metrics, the power math, and the decision rules **before** any
-> data exists — the same discipline `tools/cascade_oc.py` and
-> `tests/test_decision_procedure_power.py` apply to every statistical claim
-> in the repository (dev-guide `04-evaluation-statistics.md` §13: operating
-> characteristics are *measured, not asserted by hope*).
+> **STATUS — EXECUTED TWICE; THE STANDING ANSWER IS RECORDED BELOW.
+> ANY FURTHER EXECUTION IS GATED ON EXPLICIT OPERATOR GO-AHEAD.**
+> Two valid campaigns have run (see **Results**). Nothing in this document
+> authorizes a third. Every command in §6 is a *plan*; a live `zicato evolve`
+> invocation against a real model endpoint may be started only after the
+> operator gives an explicit go-ahead for that specific arm (the G3 live-run
+> gate). The design sections below pre-register the arms, the metrics, the
+> power math, and the decision rules **before** any new data exists — the same
+> discipline `tools/cascade_oc.py` and `tests/test_decision_procedure_power.py`
+> apply to every statistical claim in the repository (dev-guide
+> `04-evaluation-statistics.md` §13: operating characteristics are *measured,
+> not asserted by hope*).
+
+**Reading convention for every number in this document.** A figure marked
+**measured** was produced by one of the two valid runs and is quoted from its
+run report. A figure marked **derived** is arithmetic on a measured figure,
+computed here. A figure marked **planning** is an assumption for a run that has
+not happened. The original version of this document mixed all three without
+labelling them, and that is how a ~10×-optimistic cost estimate survived to
+execution.
+
+---
+
+## Results — the standing record
+
+### R.1 Every pre-#110-fix run is void
+
+`ADKHarnessAdapter.load()` put the generation snapshot on `sys.path` and
+re-imported the entrypoint, but never verified that the module actually came
+from there. With an absolute, already-importable entrypoint module path it
+cannot — so **champion and challenger ran byte-identical code**. Filed and
+fixed as **#110**.
+
+Every campaign run predating that fix is **withdrawn, not merely downgraded**:
+
+- An earlier run flagged the **ensemble-roles arm as a lead candidate (3/3
+  seeds vs 0/3 for BASE)**. Withdrawn.
+- Another had the **screening arm graduate a K=6 screen and then fail to
+  confirm**. Withdrawn.
+
+Both were noise with arm labels attached.
+
+**This document's own validity principle, and the reason the controls in §2 are
+mandatory rather than advisory:**
+
+> **Without a planted-defect control, a dead instrument is indistinguishable
+> from a null result.**
+
+Nothing in the pre-fix output distinguished the two. Every symptom read as an
+ordinary negative result: a deliberately crippled control arm scoring *best*, a
+best-observed improvement of **+0.041** against a noise floor of
+**0.080–0.106**, **71 of 72 duels rejected** (all **measured**, all void). That
+is exactly what identical code on both sides produces. The null would have been
+written up.
+
+Post-fix — registering an entrypoint that resolves *inside* the snapshot root —
+the loop demonstrably works, verified on three independent channels in a 16-cell
+run (**measured**):
+
+| Channel | before fix | after fix |
+|---|---|---|
+| crippled control, champion score | 0.4528 (**highest** of all arms) | **0.3460 (lowest)**, baseline 0.4674 |
+| crippled control, mean per-duel improvement | +0.0029 vs baseline | **+0.0690** vs baseline −0.0416 |
+| crippled control, promotions | 0 | **4** of the run's 5 |
+
+and directly: the crippled arm starts at score **0.0000** and climbs to
+**0.28–0.46** after its challenger is promoted, which is only possible if the
+patched generation actually executes.
+
+That 16-cell run is itself **INVALID for ranking**: it failed its own
+pre-registered sensitivity bar, because the bar had been specified on the wrong
+scale (a per-run sd gating a difference of arm means). It was **not** rescored
+on that basis — the threshold was fixed in advance precisely so it could not be
+renegotiated after seeing the numbers. §4 fixes the underlying defect: a
+threshold is pre-registered **on the same scale as the quantity it gates**.
+
+Also filed from that effort: **#106** pre-flight probes only the first mutation
+point · **#107** goal truncation · **#108** replicate averaging takes replicate
+0 · **#109** `--mode fast` ignores `replicates` · **#111** gate records scalars
+only on reject · **#112** pre-flight never checks margin achievability. Note
+**#106** and **#112** together mean **pre-flight would have passed every invalid
+run** — a pre-flight that cannot fail on a dead instrument is not a gate.
+
+### R.2 Two valid runs, identical design by construction
+
+| | **Run 1** | **Run 2** |
+|---|---|---|
+| Date | 2026-07-31 | 2026-08-02 |
+| Instrument | post-#110 fix | post-#118–#130 fix wave |
+| Design | 12 arms × K=12 paired seeds = **144 cells** | **identical, deliberately** |
+
+Run 2's design was held **identical on purpose**, so that any movement between
+the two is attributable to the *instrument* rather than to a redesign. Shared
+design (**measured**, both runs):
+
+- **12 arms × K=12 paired seeds = 144 cells**, **3 rounds per cell**.
+- Board: **single-turn, 5 entries**. `promote_margin` **0.20**.
+- Ten arms are the ones §§1–2 name — BASE, genealogy, screening, mechanical
+  recombination, LLM-merge recombination, breadth/depth proposer roles,
+  genealogy + calibration feedback, screening + recombination, a best-of-1
+  ablation, process exemplars — **plus both controls in the same batch**: an
+  **A/A duplicate of BASE** and a **planted-defect arm**.
+- **Endpoint:** per-duel challenger improvement
+  `d = loss(champion) − loss(challenger)`, averaged to a **cell mean**, compared
+  with the **cell** as the unit of analysis (§3.1).
+- **Floor, derived not asserted:** `2 × SE(mean d[A/A clone] − mean d[BASE])`
+  (§3.2).
+
+Run 2 additionally reports **144/144 cells, 432 rounds, zero missing gates** —
+a statistic that exists only because of the integrity check in R.5.
+
+### R.3 Both validity gates pass, on both runs
+
+```
+Run 1                                                        (measured)
+  floor (derived)  2 × SE(A/A clone − BASE)  = 0.0378
+  sensitivity      planted-defect − BASE     = +0.1086  90% CI [+0.0760, +0.1411]  PASS  (2.9× floor)
+  specificity      A/A clone      − BASE     = −0.0144  90% CI [−0.0469, +0.0182]  PASS
+
+Run 2                                                        (measured)
+  floor (derived)  2 × SE(A/A clone − BASE)  = 0.0400
+  sensitivity      planted-defect − BASE     = +0.1526  90% CI [+0.1264, +0.1787]  PASS  (3.8× floor)
+  specificity      A/A clone      − BASE     = +0.0013  90% CI [−0.0334, +0.0360]  PASS
+```
+
+The A/A duplicate is two configurations **identical by construction**; that it
+separates by essentially nothing is what makes the null below *informative*
+rather than an absence of evidence. The planted defect registering at 2.9× and
+then 3.8× the floor is what makes the instrument *alive*.
+
+### R.4 Zero of nine features graduate — twice
+
+**Run 1** (Holm-adjusted across the nine treatments; every call **inconclusive**):
+
+| arm | feature | diff vs BASE | 90% CI | Holm p |
+|---|---|---|---|---|
+| A4 | LLM-merge recombination | **+0.0195** | [−0.0162, +0.0552] | 1.000 |
+| A6 | genealogy + calibration feedback | −0.0038 | [−0.0339, +0.0264] | 1.000 |
+| A2 | screening | −0.0060 | [−0.0399, +0.0279] | 1.000 |
+| ablation | best-of-1 | −0.0069 | [−0.0398, +0.0260] | 1.000 |
+| A3 | mechanical recombination | −0.0128 | [−0.0428, +0.0171] | 1.000 |
+| A1 | genealogy | −0.0129 | [−0.0495, +0.0237] | 1.000 |
+| PEXEMPLAR | process exemplars | −0.0136 | [−0.0509, +0.0237] | 1.000 |
+| A5 | breadth/depth roles | −0.0148 | [−0.0518, +0.0223] | 1.000 |
+| A7 | screening + recombination | −0.0162 | [−0.0507, +0.0183] | 1.000 |
+
+Six of nine arms point below baseline **and the A/A clone (−0.0144) sits among
+them**. The negative signs are noise, not evidence the arsenal hurts. The clone
+is the ruler.
+
+**Run 2** (same adjustment):
+
+| arm | feature | diff vs BASE | 90% CI | Holm p |
+|---|---|---|---|---|
+| ablation | best-of-1 (**arsenal OFF**) | **+0.0392** | [+0.0130, +0.0654] | 0.537 |
+| A1 | genealogy | +0.0244 | [−0.0022, +0.0510] | 0.842 |
+| A7 | screening + recombination | +0.0195 | [−0.0062, +0.0452] | 1.000 |
+| A5 | breadth/depth roles | +0.0155 | [−0.0085, +0.0394] | 1.000 |
+| A4 | LLM-merge recombination | +0.0098 | [−0.0192, +0.0387] | 1.000 |
+| A6 | genealogy + calibration | +0.0044 | [−0.0216, +0.0303] | 1.000 |
+| PEXEMPLAR | process exemplars | +0.0047 | [−0.0317, +0.0411] | 1.000 |
+| A2 | screening | +0.0028 | [−0.0214, +0.0270] | 1.000 |
+| A3 | mechanical recombination | −0.0027 | [−0.0258, +0.0204] | 1.000 |
+
+**The highest arm in run 2 is the ablation — the arsenal turned further off —
+sitting just under the floor. No arsenal feature beats doing less.**
+
+Holm adjustment is not optional bookkeeping: nine arms sharing one baseline at
+an uncorrected 10% would expect **roughly one spurious graduate**.
+
+**Run-over-run comparison** (**measured**):
+
+| | Run 1 | Run 2 |
+|---|---|---|
+| derived floor | 0.0378 | **0.0400** |
+| sensitivity | +0.1086 (2.9× floor) | **+0.1526 (3.8× floor)** |
+| specificity (A/A) | −0.0144 | **+0.0013** |
+| promotions | **10 / 432**, all planted-defect | **6 / 432**, all planted-defect |
+| graduates | 0 of 9 | **0 of 9** |
+| largest arm | A4 +0.0195 | ablation +0.0392 (A4 now +0.0098) |
+
+Readings that survive both runs:
+
+- **The fix wave did not move the floor.** The noise is a property of the
+  target, not of the gate arithmetic. What the wave did move: it tightened the
+  sensitivity contrast and halved the promotion rate — consistent with a
+  stricter, better-calibrated gate. **No arm changed status.**
+- **Only the planted-defect arm ever promoted**, in either run — 10 of 12 cells
+  in run 1, every other arm 0 of 12. With a healthy champion at
+  `promote_margin` 0.20, no arsenal variant produced a challenger that cleared
+  the bar. That is consistent with the null on `d`.
+- **The planted-defect arm starts from a generation scoring ~0 and climbs back
+  toward baseline.** The loop **repairs a maximal planted defect**; what it does
+  not do is measurably benefit from any arsenal knob.
+- **The per-arm ordering reshuffled, with A4 falling from first to fifth.** That
+  is exactly what re-running a set of effects drawn from the same null looks
+  like, and it is independent evidence that A4's run-1 lead was noise.
+
+### R.5 The integrity failure this campaign found the hard way
+
+Run 2 reached **"144/144 cells, 12 per arm, both gates PASS" twice on data that
+turned out unusable.** The mechanism generalises to anyone running long parallel
+evolve sweeps, and it is why §6.6 exists.
+
+When credentials for the model endpoint lapse mid-run, **a cell does not fail
+cleanly.** A cell straddling the outage produces a deck from the rounds that ran
+beforehand, satisfies a "did we reach the model" liveness check, gets marked
+complete, and silently contributes a cell mean built from **fewer duels than its
+peers**.
+
+Cell-level accounting reported 144/144 healthy while (**measured**):
+
+- **83 of 496 rounds had no `gate_evaluated` at all**;
+- the loss was **arm-correlated** — **26% of the baseline arm versus 8% of
+  another**, **73 of 144 cells affected**, **baseline at 11 of 12**.
+
+Because the baseline anchors both the derived floor and every comparison, that
+**distorts the ruler itself**. The arm pattern carried no signal — it recorded
+which cells happened to be in flight at the moment credentials lapsed. Run 1's
+**0 of 432** on the same statistic is what identified this as contamination
+rather than a property of the loop.
+
+Two fixes, both verified against the known-bad set, now normative in §6.6:
+
+1. **Cell acceptance requires round completeness.** Reject any cell containing a
+   round that **both** lacks a `gate_evaluated` **and** carries a hard
+   credential error. **Deliberately narrow:** a round where the proposer *was*
+   reached and genuinely produced an invalid patch is a **real measurement** and
+   must still be accepted — otherwise a legitimately-degraded arm gets retried
+   to exhaustion.
+2. **Analysis requires the completion marker.** Partial round logs must not
+   contribute truncated cell means; survivors of an infrastructure failure are
+   **not a random subset** of a cell's duels.
+
+When credentials lapsed a second time the hardened check caught it
+automatically: **12 cells contaminated, zero marked complete.** Those were
+**deleted and re-run — deleted rather than resumed**, since resuming appends
+into the poisoned epoch, which is how a cell ended up with four rounds of which
+three were void.
+
+> **The general lesson: liveness is not integrity.** A long parallel measurement
+> needs its completeness check at the granularity the **endpoint** consumes —
+> rounds here — not at the granularity the scheduler tracks. A run reporting
+> 100% healthy at the wrong granularity is more dangerous than one that fails
+> loudly.
+
+### R.6 The resolution limit, stated plainly
+
+This campaign **resolves effects ≥ 0.040** on the per-duel `d` scale — roughly
+**26% of the planted-defect signal** (**measured**, run 2; run 1's floor of
+0.0378 is ~35% of its weaker planted-defect signal).
+
+- **Every "inconclusive" above means *no effect larger than the floor*, never
+  *no effect*.** A feature worth +0.02 would be invisible here.
+- Resolving **~0.023** needs **K ≈ 32** cells per arm (**measured** as the
+  operator's sizing anchor; consistent with the derived `floor ∝ 1/√K` scaling
+  from 0.0400 at K=12).
+- **Below ~0.013 the cost stops being affordable** at any K this target can
+  support (**derived** from the same scaling: ≈ 114 cells per arm).
+- Scope bounds, all binding: **one board, one model, three rounds per cell,
+  single-turn only.** This says nothing about multi-turn revision robustness,
+  nor about interactions beyond the two combined arms actually run.
+
+### R.7 The standing recommendation
+
+> **Keep the arsenal default-off.** This is now the conclusion of **two
+> independent 144-cell runs** whose sensitivity and specificity both pass on the
+> same data.
+
+What this **settles**: no arsenal feature delivers more than **0.040** in
+per-duel proposal quality on this target. The sweep is *not* underpowered
+against effects that matter — the floor is about a quarter of the
+planted-defect signal.
+
+What this **does not settle**: anything below 0.040, and anything outside the
+R.6 scope bounds.
+
+If more compute goes here, the pre-registered spend is **A4 alone at K ≈ 32**
+(floor ≈ 0.023) — **not** a re-run of the sweep. Note honestly that run 2
+demoted A4 from first to fifth, so even this is a coin the campaign is buying
+another look at, not a lead.
+
+---
 
 ## 0. Why this campaign exists
 
@@ -36,9 +309,11 @@ The scaffold (`recommended_scaffold_weights()` in `core/scoring_config.py`)
 already makes two of these choices *by taste*: it writes `screen_entries=2`
 and leans on the in-code `best_of_n=3` default, while leaving `genealogy`,
 `recombine`, `recombine_merge`, `calibration_feedback`,
-`process_exemplars`, and the ensemble roles off. None of those six choices
-has ever been measured against promotion-rate-per-cost on a **live** target.
-This campaign replaces taste with a pre-registered knob sweep.
+`process_exemplars`, and the ensemble roles off. This campaign replaced taste
+with a pre-registered knob sweep — **and the answer, twice, was that none of the
+six unmeasured choices earns a flip** (Results R.4). The document remains live
+because the *question* recurs: a new knob, a new target, or a new board reopens
+it, and the protocol below is what a reopening must follow.
 
 > **The roles caveat (grounded, load-bearing).** The breadth/depth roles are
 > *proposer infrastructure*, resolved by `wrap_with_proposer_quality` from
@@ -52,75 +327,119 @@ This campaign replaces taste with a pre-registered knob sweep.
 
 ## 1. The question set, ranked
 
-Ranked by *plausible lift in promotion-rate-per-cost* — the campaign's one
-headline quantity. "Per cost" is decisive: a read-side channel that the cost
-meter never charges (`genealogy`, `calibration_feedback`) earns its keep on a
-far lower bar than a board-run-bearing one (`screen`).
+Ranked by *plausible lift in proposal quality per cost* — a **prior**, written
+before any data. It is retained as the pre-registration record. **All nine
+priors were tested and none survived** (R.4); the ranking below is therefore a
+record of what was expected, not of what is true.
 
-| Rank | Knob (arm) | Why it plausibly raises promotion-rate-per-cost | What result flips its default |
+| Rank | Knob (arm) | Why it plausibly raises proposal-quality-per-cost | What result flips its default |
 |---|---|---|---|
-| 1 | **`recombine` (mechanical)** | The only knob with a mechanism *proven in the known-answer oracle* to capture a promotion the gate would otherwise reject: dev-guide §1.8's two-marker world plants two disjoint single-fixes each worth Δ 1.2 that **each reject** at `promote_margin=1.5`, while the mechanical union of their patches (Δ 2.4) **promotes** (`tests/test_recombination_known_answer.py`). It raises promotions-per-round at **zero** extra board-run cost (the mint replaces a slot's propose call). Best per-cost candidate on the board. | Flip `recombine` → default-`True` if the arm clears the §4 bar. |
-| 2 | **`genealogy`** | In-context lineage evolution reaches even the pure-drift-side rejected pairs the mechanical slot cannot see (`ProposerQualityConfig.genealogy` docstring). **Read-side only — the cost meter is untouched** — so any promotion-rate lift is free on the board-run axis. | Flip `genealogy` → a non-zero scaffold default if it clears the (low, read-side) §4 bar. |
-| 3 | **`best_of_n` (held at 3 in BASE)** | The top proposal-quality lever per `FUNCTIONALITY-RECOMMENDATIONS.md` §4.1 — a valid-but-mediocre single sample was never reconsidered. Already ON; BASE validates it still earns its `× best_of_n` aux-call cost. A `best_of_n=1` ablation is the pre-registered follow-on (§4) if BASE underperforms. | Keep `best_of_n=3` if BASE beats the ablation; revert toward `1` otherwise. |
-| 4 | **`screen_entries` (currently scaffold-ON=2)** | Vetoes catastrophic candidates *before* the tournament spends on them — but **adds** board runs (`proposes × best_of_n × panel`, §5). Its per-cost effect is genuinely ambiguous, which is exactly why it is the scaffold choice most in need of audit. Screen false-veto ≈ flip-rate² under confirm-before-veto (dev-guide §3.1 fact #7) means the veto is *sound*; the open question is whether the extra panel runs buy net throughput. | **Reverse null**: `screen_entries` stays scaffold-`2` only if it clears §4; otherwise the pre-registered action is to **remove it** from `recommended_scaffold_weights` (scaffold default → `0`). |
-| 5 | **breadth/depth roles** | If breadth explores a wider slate and depth refines the critique/merge, slate quality rises with **no** board-run cost. Second-order: it reshapes *which* candidate wins, not how many board units run. | Flip to a scaffolded two-role `models` block if it clears §4 and the per-call cost delta is acceptable. |
-| 6 | **`calibration_feedback`** | Showing the proposer its own hit/miss pattern (`/api/hypothesis-accuracy` grader, `proposer/calibration.py`) plausibly improves **hypothesis calibration** more than raw promotion rate; read-side/free. | Flip on if it clears §4 on either the promotion endpoint **or** the calibration-fraction endpoint (§3) at no board-run cost. |
-| 7 | **`recombine_merge="llm"`** | Conditional on `recombine`: relaxes disjointness so two *overlapping* rejected fixes can be merged by one aux call. Incremental reach beyond mechanical, at +1 aux call on merge rounds. | Flip `recombine_merge` → `"llm"` only if the llm arm beats the mechanical arm (§4), given `recombine` already flipped on. |
-| 8 | **`process_exemplars`** | Highest-risk: it **widens the proposer-visibility channel** (OVERFITTING.md §11), so its default-flip bar is not just promotion rate but a **clean generalization-gap + placebo record** (dev-guide §12). Opt-in-deliberate under the PROCESS-EXEMPLARS.md §5 harm runbook; NOT scaffold-set. | Ranked last for a default flip; evaluated as a **pre-registered extension arm** (§4), never graduated on promotion rate alone. |
+| 1 | **`recombine` (mechanical)** | The only knob with a mechanism *proven in the known-answer oracle* to capture a promotion the gate would otherwise reject: dev-guide §1.8's two-marker world plants two disjoint single-fixes each worth Δ 1.2 that **each reject** at `promote_margin=1.5`, while the mechanical union of their patches (Δ 2.4) **promotes** (`tests/test_recombination_known_answer.py`). It raises promotions-per-round at **zero** extra board-run cost (the mint replaces a slot's propose call). Best per-cost candidate on the board. **Measured: A3 = −0.0128 then −0.0027. The oracle mechanism is real; it does not show up on a live target at this resolution.** | Flip `recombine` → default-`True` if the arm clears the §4 bar. |
+| 2 | **`genealogy`** | In-context lineage evolution reaches even the pure-drift-side rejected pairs the mechanical slot cannot see (`ProposerQualityConfig.genealogy` docstring). **Read-side only — the cost meter is untouched** — so any lift is free on the board-run axis. **Measured: A1 = −0.0129 then +0.0244 (largest single-knob arm in run 2, still under the floor and Holm p 0.842).** | Flip `genealogy` → a non-zero scaffold default if it clears the (low, read-side) §4 bar. |
+| 3 | **`best_of_n` (held at 3 in BASE)** | The top proposal-quality lever per `FUNCTIONALITY-RECOMMENDATIONS.md` §4.1 — a valid-but-mediocre single sample was never reconsidered. Already ON; BASE validates it still earns its `× best_of_n` aux-call cost. **Measured: the `best_of_n=1` ablation was the HIGHEST arm in run 2 (+0.0392) and mid-pack in run 1 (−0.0069). Doing less did not measurably hurt.** | Keep `best_of_n=3` if BASE beats the ablation; revert toward `1` otherwise. |
+| 4 | **`screen_entries` (currently scaffold-ON=2)** | Vetoes catastrophic candidates *before* the tournament spends on them — but **adds** board runs (`proposes × best_of_n × panel`, §5). Its per-cost effect is genuinely ambiguous, which is exactly why it is the scaffold choice most in need of audit. Screen false-veto ≈ flip-rate² under confirm-before-veto (dev-guide §3.1 fact #7) means the veto is *sound*; the open question is whether the extra panel runs buy net throughput. **Measured: A2 = −0.0060 then +0.0028 — no signal either way, at a real cost premium.** | **Reverse null**: `screen_entries` stays scaffold-`2` only if it clears §4; otherwise the pre-registered action is to **remove it** from `recommended_scaffold_weights` (scaffold default → `0`). |
+| 5 | **breadth/depth roles** | If breadth explores a wider slate and depth refines the critique/merge, slate quality rises with **no** board-run cost. Second-order: it reshapes *which* candidate wins, not how many board units run. **Measured: A5 = −0.0148 then +0.0155. The pre-#110 "3/3 seeds vs 0/3" lead for this arm is WITHDRAWN (R.1).** | Flip to a scaffolded two-role `models` block if it clears §4 and the per-call cost delta is acceptable. |
+| 6 | **`calibration_feedback`** | Showing the proposer its own hit/miss pattern (`/api/hypothesis-accuracy` grader, `proposer/calibration.py`) plausibly improves **hypothesis calibration** more than raw proposal quality; read-side/free. **Measured only inside A6 (genealogy + calibration) = −0.0038 then +0.0044; A6 did not beat A1 alone.** | Flip on if it clears §4 on either the primary endpoint **or** the calibration-fraction endpoint (§3) at no board-run cost. |
+| 7 | **`recombine_merge="llm"`** | Conditional on `recombine`: relaxes disjointness so two *overlapping* rejected fixes can be merged by one aux call. Incremental reach beyond mechanical, at +1 aux call on merge rounds. **Measured: A4 = +0.0195 (run 1's largest arm) then +0.0098 (fifth). The reshuffle is the evidence that the run-1 lead was noise.** | Flip `recombine_merge` → `"llm"` only if the llm arm beats the mechanical arm (§4), given `recombine` already flipped on. |
+| 8 | **`process_exemplars`** | Highest-risk: it **widens the proposer-visibility channel** (OVERFITTING.md §11), so its default-flip bar is not just proposal quality but a **clean generalization-gap + placebo record** (dev-guide §12). Opt-in-deliberate under the PROCESS-EXEMPLARS.md §5 harm runbook; NOT scaffold-set. **Measured: PEXEMPLAR = −0.0136 then +0.0047.** | Ranked last for a default flip; evaluated as a **pre-registered extension arm** (§4), never graduated on proposal quality alone. |
 
-## 2. The arm matrix (fractional, not full factorial)
+## 2. The arm matrix — treatments plus two mandatory controls
 
 Eight generator knobs would be 2⁸ = 256 full-factorial cells. That is
 infeasible on a live target and mostly wasted — the knobs are not
 independent (recombine's merge mode is meaningless without recombine;
 genealogy and calibration are both read-side in-context channels). The
-campaign runs a **justified 8-arm fractional design**: one baseline, six
-single-knob arms isolating each required lever, and two principled
-combinations that probe the two natural knob *families* (read-side
-in-context vs. board-run mechanical).
+campaign runs a **justified fractional design**: one baseline, single-knob arms
+isolating each required lever, two principled combinations probing the two
+natural knob *families* (read-side in-context vs. board-run mechanical), a
+`best_of_n=1` ablation, the `process_exemplars` extension arm — **and two
+controls that are not optional.**
 
-**Shared campaign controls (identical on every arm — held constant so the
-only thing that varies is the named knob):**
+### 2.1 The two mandatory controls (run IN THE SAME BATCH)
 
-- **Target:** `target_1_presentation` (the v0 dogfood — DOGFOOD-TARGETS.md
-  §1; real coordinator+specialist agent, 7-entry board, real drift). A
-  **live** proposer is mandatory: the generator arsenal (`best_of_n>1`,
-  `screen`, `genealogy`, `recombine`, roles) only does anything with a real
-  model sampling the slate; `target_0`'s scripted proposer would leave every
-  arm byte-identical. `target_0_convergence` is used only as the
-  **deterministic instrument dry-run** (§6.2), never as a measurement arm.
-- **Tournament structure:** `gauntlet`, `replicates: 2` (buy a little
-  per-duel power without the evidence gate's ~37-duel crowning budget —
-  dev-guide §3.1 fact #3), with `field_size` pinned to **1**. The gauntlet's
-  `GauntletStrategy.field_size()` hard-returns `1`
-  (`selection/strategies/gauntlet.py`), but `estimate_cost` defaults an
-  unset `field_size` to `2`; pinning `field_size: 1` in the shared control
-  makes the a-priori cost meter (§5) read the *true* runtime board-run count
-  instead of double-counting a challenger the gauntlet never runs. The
-  evidence gate is deliberately **off** for the
-  campaign: its honest cost would dominate the meter and it is a *soundness*
-  device, orthogonal to the *proposal-generation* questions under test
-  (dev-guide invariant #10). Holding structure fixed keeps the board-run
-  denominator comparable across arms.
-- **Overfitting controls:** `rotate_holdout: false`, `holdout_fraction: 0.6`
-  set **explicitly and identically** on every arm, so all arms (each a
+R.1 is the whole argument for this subsection: a campaign without them cannot
+tell a dead instrument from a null. Both controls are **arms of the same
+batch**, not a separate validation exercise — they must be measured on the same
+endpoint, in the same wall-clock window, against the same baseline.
+
+- **The A/A duplicate (specificity control).** A second arm whose contract is
+  **identical to BASE by construction**. Its contrast against BASE is the
+  empirical null on exactly the scale being tested, and it is the source of the
+  derived floor (§3.2). Passing means the instrument does not manufacture
+  differences.
+- **The planted-defect arm (sensitivity control).** A deliberately crippled
+  generation — the arm whose seed scores ~0 and which the loop must repair.
+  Passing means the instrument can see a difference that is genuinely there.
+  **Measured at 2.9× and 3.8× the floor** (R.3).
+
+**A run whose planted-defect arm does not clear the floor is void, whatever
+else it reports.** A run whose A/A duplicate clears the floor is void for the
+opposite reason. Neither verdict is negotiable after seeing the treatment arms.
+
+### 2.2 The planted-defect check is ALSO a pre-gate, not only an arm
+
+The single most expensive lesson in R.1: **a positive control discovered *post
+hoc* costs a full campaign.** As an arm, the planted defect only tells you the
+instrument was alive *after* the money is spent. So it runs **twice**, and the
+cheap half runs first:
+
+1. **A static wiring assertion** — does the challenger's code actually come
+   from the challenger's snapshot? This is now structural in the tree: the
+   `harness_loaded` round-log event records the snapshot-relative
+   `entrypoint_file` plus `trees_verified` / `trees_never_imported` per
+   generation (`epoch/round_log.py`), and the loop-health check turns a
+   never-imported mutable tree into a finding. **This caught #110 in
+   milliseconds.**
+2. **A short live probe** — a handful of rounds on the planted-defect arm only,
+   read for the one question "does the crippled arm score *worse*?".
+   **This caught #110 in ~30 minutes.**
+
+Both are §6.1 preconditions. **Neither is an acceptable substitute for the
+planted-defect arm in the batch** — they gate the spend; the arm calibrates the
+ruler.
+
+### 2.3 Shared campaign controls (identical on every arm)
+
+- **Target:** a **live** proposer is mandatory — the generator arsenal
+  (`best_of_n>1`, `screen`, `genealogy`, `recombine`, roles) only does anything
+  with a real model sampling the slate; `target_0`'s scripted proposer would
+  leave every arm byte-identical. `target_0_convergence` is used only as the
+  **deterministic instrument dry-run** (§6.2), never as a measurement arm. The
+  two executed runs used a **single-turn board of 5 entries** at
+  `promote_margin` **0.20** (R.2); `target_1_presentation` (the v0 dogfood —
+  DOGFOOD-TARGETS.md §1) remains the planned target for a multi-turn campaign,
+  whose cost math is §5.
+- **Tournament structure:** `gauntlet`, with `field_size` pinned to **1**. The
+  gauntlet's `GauntletStrategy.field_size()` hard-returns `1`
+  (`selection/strategies/gauntlet.py`), but `estimate_cost` defaults an unset
+  `field_size` to `2`; pinning `field_size: 1` in the shared control makes the
+  a-priori cost meter (§5) read the *true* runtime board-run count instead of
+  double-counting a challenger the gauntlet never runs. The evidence gate is
+  deliberately **off**: its honest cost would dominate the meter and it is a
+  *soundness* device, orthogonal to the *proposal-generation* questions under
+  test (dev-guide invariant #10).
+- **Replication is bought in CELLS, not in rounds or replicates.** §3.4 is the
+  argument. Note also that the `replicates` lever was **broken two ways**
+  (#108 replicate averaging took replicate 0; #109 `--mode fast` ignored
+  `replicates`) throughout the pre-fix era, so the original design's
+  variance-reduction plan did not exist. Both are fixed; neither is the sizing
+  lever.
+- **Overfitting controls:** `rotate_holdout: false` and an explicit
+  `holdout_fraction` set **identically** on every arm, so all arms (each a
   distinct epoch) see the **same** train/holdout split of the fixed board —
-  removing the cross-epoch holdout-rotation confounder (§3.4). Everything
-  else in `OverfittingConfig` stays default-on. The fraction is 0.6, NOT
-  the 0.3 default, and this is load-bearing: the hash-based split at 0.3
-  puts **zero** of this 7-entry board's ids into the holdout (verified by
-  running `split_board` — every id hashes above the 0.3 threshold), which
-  would leave the generalization-gap and holdout-confirm metrics silently
-  inert for the whole campaign. At 0.6 the split is **train = 5, holdout =
-  2** (`q3_metrics_outline`, `every_expectation_kind_demo`), and the cost
-  meter still reads the same 14/20 board-runs per round (the smaller train
-  is offset by the 2 × replicates holdout-confirm runs — re-verified with
-  `estimate_cost`).
-- **Seed v0:** every arm starts from the **same** registered champion (the
-  vendored `target_1` agent), so the headroom to the floor is identical at
-  round 0.
-- **Round budget:** `--rounds 12` per run. **Replication:** `K = 6`
-  independent runs per arm (each a fresh workspace clone — §3.2).
+  removing the cross-epoch holdout-rotation confounder (§3.5). Everything else
+  in `OverfittingConfig` stays default-on. On a 7-entry board the fraction must
+  be **0.6, NOT the 0.3 default**, and this is load-bearing: the hash-based
+  split at 0.3 puts **zero** of that board's ids into the holdout (verified by
+  running `split_board`), which would leave the generalization-gap and
+  holdout-confirm metrics silently inert for the whole campaign. At 0.6 the
+  split is **train = 5, holdout = 2**.
+- **Seed v0:** every treatment arm starts from the **same** registered champion,
+  so the headroom to the floor is identical at round 0. The planted-defect arm
+  deliberately does not.
+- **Round + seed budget:** **3 rounds per cell**, **K = 12 paired seeds per
+  arm** — the design both valid runs used (R.2). §3.4 is why the seeds and not
+  the rounds carry the power.
 
 Each arm's `scoring.json` delta is written verbatim below. Recall the
 on-disk key rename: `ScoringWeights.tournament_structure` serialises under
@@ -135,7 +454,7 @@ effective contract.
 {
   "tournament": {
     "structure": "gauntlet",
-    "params": { "replicates": 2, "field_size": 1 }
+    "params": { "field_size": 1 }
   },
   "overfitting": { "rotate_holdout": false, "holdout_fraction": 0.6 }
 }
@@ -147,6 +466,26 @@ The reference cell: `best_of_n=3` + critique on, **every** generator-arsenal
 knob off. This is what an operator gets from the in-code defaults with
 `screen_entries` forced back to 0 (so BASE isolates the *proposer defaults*
 from the *scaffold's* screen choice, which arm A2 tests).
+
+```json
+{ "proposer_quality": { "best_of_n": 3, "critique_enabled": true } }
+```
+
+### Arm AA — A/A DUPLICATE (specificity control, §2.1)
+
+**Byte-identical to A0's contract**, run as a separate arm with its own K seeds.
+It is not a copy of A0's *results*; it is an independent draw from the same
+configuration. Its contrast with A0 **is** the floor (§3.2).
+
+```json
+{ "proposer_quality": { "best_of_n": 3, "critique_enabled": true } }
+```
+
+### Arm PD — PLANTED DEFECT (sensitivity control, §2.1)
+
+A0's contract, seeded from a **deliberately crippled generation** (scoring ~0 at
+v0). Not a knob arm: it measures whether the loop can see and repair a maximal
+defect. Its contrast with BASE is the sensitivity gate (§3.3).
 
 ```json
 { "proposer_quality": { "best_of_n": 3, "critique_enabled": true } }
@@ -224,334 +563,395 @@ proposer-visibility:
                         "recombine": true, "recombine_merge": "mechanical" } }
 ```
 
+### Arm ABLATION — `best_of_n = 1` (the arsenal turned FURTHER off)
+
+```json
+{ "proposer_quality": { "best_of_n": 1, "critique_enabled": false } }
+```
+
+Not a knob arm and not a control — a **direction check**. It was the highest
+arm in run 2 (R.4), which is the single most important thing the campaign
+found about the arsenal's direction of effect.
+
+### Arm PEXEMPLAR — `process_exemplars` (extension arm)
+
+```json
+{ "proposer_quality": { "best_of_n": 3, "critique_enabled": true,
+                        "process_exemplars": 4 } }
+```
+
 **Coverage check.** Every required knob appears at least once as the *sole*
 delta from BASE (A1 genealogy, A2 screen, A3 recombine-mech, A4
 recombine-llm, A5 roles) — so each single-knob effect is identified — and
 `calibration_feedback` + the two families appear in the two combos. `best_of_n`
-is validated by BASE against its pre-registered `best_of_n=1` ablation (§4).
-`process_exemplars` is the extension arm (§4), off the main matrix by design.
+is validated by BASE against the ABLATION arm. `process_exemplars` is the
+extension arm, off the main matrix by design. **AA and PD are not coverage —
+they are the ruler and the alive-check.** Ten treatment/reference arms + 2
+controls = the **12-arm** design both valid runs executed.
 
 ## 3. Measurement plan
 
-### 3.1 The endpoints and exactly where each number comes from
+### 3.1 The primary endpoint, and the unit of analysis
+
+**E1 (primary) — per-duel challenger improvement**
+
+```
+d = loss(champion) − loss(challenger)          # one duel
+E1(cell) = mean of d over the cell's duels     # the CELL MEAN
+E1(arm)  = mean of E1(cell) over the arm's K cells
+```
+
+Two changes from this document's original design, both forced by measurement:
+
+**(a) The endpoint is `d`, not the final champion scalar and not the promotion
+outcome.** Promotion is a *thresholded* read of a quantity noisier than the
+effect: it yields **~4 observations per arm where the continuous read yields
+~24 for the same compute** (**measured**). The final champion scalar has the
+same problem one level up — it is a single number per run. `d` is the finest
+continuous read the loop emits, and every duel produces one.
+
+Sourcing: `GateEvaluated` now records `champion_scalar` / `challenger_scalar` /
+`margin_required` on **both** decisions (`epoch/round_log.py`), so `d` is
+reconstructable from the round log alone. Before issue **#111** those numbers
+survived only inside the human-readable REJECT text — meaning a sample
+recovered from the log was **missing exactly its promotions**, which are by
+definition the largest improvements. That gap was *correlated with the quantity
+being measured*; any configuration comparison built on it was biased toward
+whichever arm promoted least.
+
+**(b) The CELL is the unit of analysis, not the duel.** Duels within a cell
+share an evolving champion, so they are **correlated**. An earlier run treated
+them as independent, which **understated every standard error by about 2×** and
+**turned a failing sensitivity gate into a passing one** (**measured**). Cluster
+on the cell: reduce each cell to its mean `d`, then do all inference on the K
+cell means. Nothing downstream of this section ever consumes a duel-level SE.
+
+**Secondary endpoints** (context only, never a decision):
 
 | # | Metric | Source (verified in tree) |
 |---|---|---|
-| **E1 (primary)** | **Final champion Δscalar** (seed v0 → final promoted head), in A/A-floor units | `EpochReportData.final_scalar` minus the seed scalar (analyzer / PUBLICATION §1); floor = `noise_floor.max_abs_delta` on the epoch record (`epoch/lifecycle.set_epoch_noise_floor`, dev-guide §4) |
-| E2 (secondary) | **Promotion count** and **promotion_rate** = promoted / challengers | `tournament/detail.py::tournament_summary` → `promotion_rate` (line ~1256): `promoted_count / challenger_count` |
-| E3 (secondary) | **cost_per_promotion** (wall-clock) = total_runtime_ms / promoted | `tournament/detail.py::tournament_cost` → `cost_per_promotion_ms` (line ~1436) |
-| E4 (secondary) | **Board-runs cost** (a priori, deterministic) | `builder/operations.py::estimate_cost` → `board_runs_per_round`; this is the campaign's *primary* cost unit (§5) because it is exact given the structure, unlike wall-clock |
-| E5 | **Gate margin vs A/A floor** per promotion | `RoundRecord` fold: `GateEvaluated` (`delta_scalar`, `margin`) vs the persisted `noise_floor` (PUBLICATION §5, "Statistical integrity"); the `margin_below_noise_floor` health finding (dev-guide §4) is the guardrail |
-| E6 | **Hypothesis-calibration fraction** (predicted Δ vs measured Δ) | `tournament/detail.py::hypothesis_ledger` / `/api/hypothesis-accuracy` feed; `proposer/calibration.py`; PUBLICATION §6 |
-| E7 | **BT / Elo ratings** ± SE at crowning | the `elo` column (ANALYTICAL-INDEX schema v10: `1500 + θ·400/ln 10`, re-fit at reindex); `selection/rating.py`, PUBLICATION §4 |
-| E8 | **Statistical-integrity record** (placebo, ladder budget, screen veto/confirm, generalization gap) | `RoundRecord` fold — `CandidateScreened`, `HoldoutReleased`, `decision_provenance`; `health/diagnostics.py` `placebo_promoted` / `generalization_gap` (PUBLICATION §5, dev-guide §12) |
+| E2 | **Promotion count / rate** = promoted / challengers | `tournament/detail.py::tournament_summary` → `promotion_rate` |
+| E3 | **cost_per_promotion** (wall-clock) = total_runtime_ms / promoted | `tournament/detail.py::tournament_cost` → `cost_per_promotion_ms` |
+| E4 | **Board-runs cost** (a priori, deterministic) | `builder/operations.py::estimate_cost` → `board_runs_per_round`; the campaign's *primary cost unit* (§5) because it is exact given the structure, unlike wall-clock |
+| E5 | **Gate margin vs derived floor** per promotion | `RoundRecord` fold: `GateEvaluated` (`champion_scalar`, `challenger_scalar`, `margin_required`) vs the derived floor; the `margin_below_noise_floor` health finding (dev-guide §4) is the guardrail |
+| E6 | **Hypothesis-calibration fraction** (predicted Δ vs measured Δ) | `tournament/detail.py::hypothesis_ledger` / `/api/hypothesis-accuracy`; `proposer/calibration.py`; PUBLICATION §6 |
+| E7 | **BT / Elo ratings** ± SE at crowning | the `elo` column (ANALYTICAL-INDEX schema v10); `selection/rating.py`, PUBLICATION §4 |
+| E8 | **Statistical-integrity record** (placebo, ladder budget, screen veto/confirm, generalization gap) | `RoundRecord` fold — `CandidateScreened`, `HoldoutReleased`, `decision_provenance`; `health/diagnostics.py` |
 
-E1 is the **primary** endpoint deliberately. Promotion (E2) is a *rare,
-binary, high-variance* event; the champion scalar is the **uniform continuous
-outcome axis** (`aggregate_generation_score` `mean_score`, dev-guide §1.4)
-with no threshold cliff, so it carries far more information per round than the
-promote/no-promote bit. Stating the effect in floor units (dev-guide §13.4
-"planted deltas in floor units") makes it comparable across arms whose
-absolute scalars differ.
+E2 in particular is **not** a decision endpoint on this target: across both
+valid runs, **only the planted-defect arm ever promoted at all** (R.4). A
+promotion count of zero for every treatment arm carries no ranking information.
 
-### 3.2 Replication and the rare-event power math (why K=6 screening, K≈24 confirmatory)
-
-Promotions are rare events, so a **decision-grade CI on the binary promotion
-rate is prohibitively expensive on a live target** — this is the honest
-headline, and it drives the whole plan. The math, following the dev-guide §13
-methodology (measure the null, state effects in floor units, pin operating
-characteristics):
-
-**A "replicate run" for a live target** = one fresh workspace clone of
-`target_1`, same arm contract, run independently for R rounds. Unlike the
-deterministic power harness (`stable_noise_seed` from
-`(workspace_seed, generation_id, entry_id, replicate_index)`, dev-guide
-§13.1), a live model exposes **no seed we control** — the endpoint's own
-sampling variance is the noise source. Consequence, stated plainly: live
-runs are **not** byte-reproducible, and the CIs are genuine sampling CIs over
-model nondeterminism, not the calibrated-documentation determinism the Tier-2
-harness enjoys.
-
-**Binary-endpoint power (the infeasible instrument).** Treat each of the
-`n = K·R` round-decisions as an approximately-Bernoulli promote event (Wilson
-CI, matching `cascade_oc.py::_wilson_ci`). To detect a promotion-rate lift
-from a plausible live baseline `p0 ≈ 0.20` to `p1 ≈ 0.30` (a relative +50%,
-the smallest lift worth flipping a default for) at α=0.05 two-sided, power
-0.80:
+### 3.2 The floor is DERIVED, never asserted
 
 ```
-n_per_arm ≈ (z_{α/2} + z_β)² · [p0(1−p0) + p1(1−p1)] / (p1 − p0)²
-          = (1.96 + 0.84)² · [0.16 + 0.21] / (0.10)²
-          = 7.84 · 0.37 / 0.01  ≈  290 round-decisions per arm.
+floor = 2 × SE( mean d[A/A clone] − mean d[BASE] )
 ```
 
-At R=12 that is **K ≈ 24 runs per arm** — 8 × 24 × 12 = 2,304 live rounds
-just for the binary endpoint. **Rejected as the primary instrument**, for the
-same reason the evidence gate is opt-in rather than default-on (dev-guide
-§3.2: an honest cost that would freeze a real budget).
+where the SE is computed on **cell means** (§3.1b). The A/A arm is two
+configurations **identical by construction**, so the spread of that difference
+is the empirical null **on exactly the scale being tested**. Anything smaller is
+indistinguishable from running BASE twice.
 
-**Continuous-endpoint power (the feasible instrument).** E1 (final Δscalar in
-floor units) is continuous, so K independent runs give a t-CI on the arm mean
-with K−1 df. Power is bought with replication as dev-guide §3.1 fact #3
-describes (averaging shrinks the per-run sd). The quantity a screen turns on is
-not the WITHIN-arm precision but the resolvable INTER-arm gap, and these are
-different numbers. At **K=6** the within-arm 90% mean-CI half-width is
-≈ `2.02 · sd/√6 ≈ 0.82·sd` — but resolving a gap *between* two arms is a
-**two-sample** question. Recomputed for `sd ≈ floor` (n=6/arm, df=10):
+**Measured: 0.0378 (run 1), 0.0400 (run 2).** The two agree to within their own
+resolution, across a fix wave that changed the gate arithmetic — which is the
+evidence that **the noise is a property of the target, not of the instrument**
+(R.4).
 
-- the minimum detectable effect at 80% power is **≈ 1.79·floor** at α=.05
-  (**≈ 1.55·floor** at α=.10), and
-- the §4 non-overlap clause (two non-overlapping 90% t-CIs) needs an observed
-  gap **> ≈ 1.48·floor**.
+This replaces the original design's asserted floor. The rule generalises:
 
-So the K=6 screen cleanly resolves **~1.5-floor** effects — **not** the
-0.5–1.0 band an earlier draft claimed (that draft conflated the 0.82·sd
-single-arm mean-CI half-width with the inter-arm gap). Arms whose *true* effect
-sits in the 0.5–1.0 band will therefore **mostly land "ambiguous → graduate to
-K≈24"** rather than resolve at K=6; that is the accepted screen/confirm trade,
-and it is safe — the per-arm false-flip probability under it is ≈1%. (The
-0.5×/1×/3× floor ladder and the "0.5-floor is catchable" claim are dev-guide
-§13.4 / §3.1-fact-#5 properties of the **32-replicate evidence gate**, which
-this campaign deliberately turns OFF — §2. That borrowed guarantee does not
-transfer to a K=6 screen, so it is dropped here.) K=6 is therefore
-**screening-grade for E1** (it graduates arms, it never flips a default — §4,
-§5), with the K≈24 confirmatory run the only decision-grade instrument;
-E2/E3 stay screening-grade context only.
+> **A campaign may not state its own resolution. It must measure it, in the same
+> batch, on the same endpoint, from a contrast that is null by construction.**
 
-**Grounding the flip bar's sd assumption (pre-registered).** The "~1.5-floor
-resolution" and the §4 non-overlap bar assume the cross-run sd of E1 is on the
-order of the A/A floor — an assumption that is **ungrounded** for a live
-endpoint until measured. Before any arm's read is trusted against the bar,
-**estimate the actual cross-run sd of E1 from BASE's first K runs** and compare
-it to the floor. **Adjustment rule:** the resolvable gap scales linearly with
-sd (MDE ∝ sd), so if the measured sd exceeds the floor by a factor `f`, every
-resolvable-gap and non-overlap threshold above multiplies by `f` (and holding a
-~1.5-floor resolution would require raising K by ≈ `f²`); if sd is materially
-below the floor, the screen resolves proportionally finer. This estimate is
-made and recorded **before** any graduate/ambiguous verdict is read.
+An A/A contrast borrowed from another run, another board, or another epoch is
+not this quantity. Neither is `noise_floor.max_abs_delta` from
+`zicato board preflight` — that is a *board-entry* A/A floor (`epoch/preflight.py`,
+persisted by `epoch/lifecycle.set_epoch_noise_floor`) and it remains the right
+instrument for the pre-flight go/no-go and for the per-entry MDE ladder below,
+but it is not the arm-contrast scale the decision rules gate on. **Two different
+floors, two different jobs; never substitute one for the other.**
 
-**The two-tier plan that follows:**
+### 3.3 The two validity gates, pre-registered
 
-1. **Screening campaign (this doc's budget): K=6 × R=12 × 8 arms = 576 live
-   evolve rounds.** Primary read on E1 (**screening-grade — graduates arms to
-   confirmation, never flips a scaffold default**); E2/E3/E6 pooled across the
-   6 runs as screening-grade context.
-2. **Confirmatory extension (separate go-ahead): K≈24 × R=12 on the ≤2 arms
-   that graduate** from screening (§4). This is where the binary
-   promotion-rate CI becomes decision-grade, at ~4× the per-arm screening
-   cost. Pre-registering it now is the whole point — no arm is promoted to a
-   scaffold default on a screening-grade read alone.
+Both are computed on the same cell-level scale as everything else, and both are
+read **before** any treatment arm is looked at:
 
-### 3.3 The metrics table the analytics will actually populate
+```
+sensitivity:  mean d[planted-defect] − mean d[BASE]  must exceed the floor by a
+              stated multiple, with its 90% CI excluding the floor
+specificity:  mean d[A/A clone]      − mean d[BASE]  must sit INSIDE the floor,
+              with its 90% CI containing 0
+```
 
-All of E1–E8 are already produced by shipped surfaces — the campaign adds no
-new instrumentation, it *consumes* the analytics the publication and the
-analytical index emit (PUBLICATION §§1,3,4,5,6; ANALYTICAL-INDEX). Each arm's
-run closes its epoch (`zicato epoch close`) → `analysis.md` / `analysis.html`
-carry E1 (Abstract), E5+E8 (§5 Statistical integrity), E6 (§6 Proposer
-analytics), E7 (§4 Ratings). The cross-run roll-up (mean E1 ± CI per arm) is a
-read over the K closed epochs' `EpochReportData` — no ad-hoc file walks
-(ANALYTICAL-INDEX is the cross-run query layer).
+**Measured** (R.3): sensitivity +0.1086 (2.9× floor) then +0.1526 (3.8× floor),
+both PASS; specificity −0.0144 then +0.0013, both PASS.
 
-### 3.4 The honest confounders
+**Failing either gate voids the run for ranking.** R.1 records what happens when
+this rule is applied to a run that fails it: the run is not rescored on a
+renegotiated threshold. The threshold is fixed in advance precisely so that it
+cannot be.
 
+### 3.4 Sizing: cells buy power, rounds do not
+
+**The finding that drives all sizing (measured): between-cell variance dominates
+within-cell variance by roughly 4×.** Consequences, and they are not
+negotiable:
+
+- **Extra rounds per cell buy very little.** Averaging more duels inside a cell
+  shrinks the smaller variance component.
+- **Extra seeds (cells) buy the power.** They shrink the dominant one.
+- **`replicates` is not the lever either** — and for the whole pre-fix era it
+  was broken two ways (#108, #109), so the original design's variance-reduction
+  plan never existed even in principle.
+
+**The measured noise scales.** Intrinsic run-to-run sd is **~0.19** at
+temperature 0 — a multi-agent pipeline diverges regardless — against an
+achievable per-round improvement of **~0.10**. **Duel-level reads are
+noise-dominated**; only the cell-mean aggregate is usable. Per-duel sd for
+non-degraded arms is **~0.12** (**measured**).
+
+**What is answerable, at what price** (**measured**, from the ~0.12 per-duel sd):
+
+| arsenal effect size | duels/arm | cells/arm | 8 arms |
+|---|---|---|---|
+| **0.05** | ~33 | **~6** | ~48 cells, ~15 h |
+| **0.02** | ~208 | ~35 | **infeasible** |
+
+(The ~15 h is anchored on the 6-rounds-per-cell run; §5 explains why that rate
+does not transfer to a 3-round design without re-anchoring.)
+
+> **The campaign is tractable iff arsenal features move proposal quality by
+> ≳ 0.05 on the `d` scale.** Below that, this target cannot resolve them at any
+> affordable cost, and the honest move is to **change the target or the
+> question** — not to buy more seeds.
+
+The executed runs went to **K=12** and achieved a derived floor of **0.040**.
+Scaling (**derived**, `floor ∝ 1/√K`, anchored on the operator's own K≈32 →
+floor ≈ 0.023 figure): K=6 → ≈0.055, K=12 → 0.040, K=32 → ≈0.023, and the
+~0.013 the operator names as the affordability wall would need ≈114 cells/arm.
+
+**Why the original K=6 screen is withdrawn.** The old design justified K=6 by
+assuming the cross-run sd of the endpoint was *on the order of the derived
+floor*. **The measured between-cell variance does not support that assumption**,
+so the "K=6 resolves ~1.5-floor effects" claim is not a property of this target.
+K=6 remains a defensible *screen* size for a ~0.055 floor (the table above),
+but it is now justified by the **measured** sd, not by the assumption — and it
+graduates arms, it never flips a default.
+
+**The two-sample MDE arithmetic itself is retained and unchanged**, because it
+is arithmetic and other surfaces pin it. For a two-sample comparison at
+α=.05 / power .80, with `n` per arm and `df = 2·(n−1)`:
+
+```
+MDE = (t_{α/2,df} + t_{β,df}) · sd · √(2/n)
+```
+
+At **n=6, df=10** this is **≈ 1.79·sd** (α=.05) and **≈ 1.55·sd** (α=.10), and
+the non-overlap of two 90% t-CIs needs an observed gap **> ≈ 1.48·sd**. These
+are the numbers `docs/design/EVAL-VIEW.md` §4.3 and
+`src/zicato/query/eval_view.py`'s live MDE ladder cite as "the numbers
+CAMPAIGN.md §3 pins", and they are unchanged. **What changed is the substitution
+`sd ≈ floor`:** for the live MDE ladder's per-entry job that substitution stands
+(it uses the board-entry A/A floor, §3.2); for *this campaign's arm contrasts*
+it does not, and sizing here uses the measured between-cell sd instead.
+
+### 3.5 The honest confounders
+
+- **Clustering (the one that actually bit).** Duels within a cell are not
+  independent — §3.1b. Treating them as independent understated SEs ~2× and
+  flipped a gate. **Mitigated** by making the cell the unit of analysis.
+- **Instrument death (the one that cost six runs).** #110 — see R.1.
+  **Mitigated** by §2.1's planted-defect arm and §2.2's pre-gate, plus the
+  structural `harness_loaded` provenance in the round log.
+- **Silent truncation (the one that cost two "successful" runs).** Credential
+  lapse mid-run producing partial cells that pass a liveness check — R.5.
+  **Mitigated** by §6.6's round-completeness check.
 - **Target-difficulty drift across epochs.** Each arm is a distinct epoch;
   naively the holdout slice would *rotate* by epoch id (`rotate_holdout`
-  default `True`, `board/split.py` `rotation_seed`), so different arms would
-  be scored on different holdout slices. **Mitigated** by pinning
-  `rotate_holdout: false` on every arm (§2) — all arms share one split. The
-  residual drift is that a promoted champion changes the *remaining headroom*,
-  so late-round promotion rate is **not exchangeable** across arms with
-  different early trajectories; this is exactly why E1 (final Δ over a fixed
-  round budget from a fixed v0) is primary and per-round E2 is only secondary.
-- **LLM nondeterminism.** No controllable seed on a live endpoint (§3.2). The
-  model's sampling variance is the noise the K=6 replication is designed to
-  average over; report every arm as mean ± CI, never a point estimate.
+  default `True`, `board/split.py` `rotation_seed`). **Mitigated** by pinning
+  `rotate_holdout: false` on every arm (§2.3). The residual drift is that a
+  promoted champion changes the *remaining headroom*, so per-round promotion
+  rate is **not exchangeable** across arms with different early trajectories —
+  another reason E2 is context-only.
+- **Model nondeterminism.** No controllable seed on a live endpoint. Unlike the
+  deterministic power harness (`stable_noise_seed` from
+  `(workspace_seed, generation_id, entry_id, replicate_index)`, dev-guide
+  §13.1), a live endpoint's own sampling variance **is** the noise source. Live
+  runs are **not** byte-reproducible; the CIs are genuine sampling CIs over
+  model nondeterminism. Measured at ~0.19 run-to-run sd even at temperature 0.
 - **Temporal endpoint drift (across-arm).** A hosted model can change version
-  mid-campaign; over a multi-hour run, arms measured early and arms measured
-  late may be scored against a **different underlying endpoint** — a confounder
-  that aliases with the knob effect *across the arm axis* (distinct from the
-  within-arm sampling nondeterminism above, which averages out per arm).
-  **Mitigated** by running the 8 arms in **parallel workspaces** over the same
-  wall-clock window (§5), so any version shift hits every arm together rather
-  than confounding the arm contrast; residual drift is folded into the
-  cross-run sd the §3.2 pre-registered estimate captures.
-- **Cost variance.** Board runs (E4) are **deterministic** given the structure
-  — the campaign's cost is reported in board runs, not wall-clock. Wall-clock
-  (E3) varies with endpoint latency and parallelism and is reported only as
-  secondary color, with the caveat that a budget-clipped duel biases scalars
+  mid-campaign; arms measured early and late may be scored against a
+  **different underlying endpoint**, a confounder that aliases with the knob
+  effect *across the arm axis*. **Mitigated** by running the arms in parallel
+  workspaces over the same wall-clock window (§5), so any version shift hits
+  every arm together. The A/A control also detects it: a drifting endpoint
+  inflates the A/A contrast, which is exactly what the specificity gate reads.
+- **Cost variance.** Board runs (E4) are **deterministic** given the structure.
+  Wall-clock (E3) varies with endpoint latency and parallelism and is secondary
+  color only, with the caveat that a budget-clipped duel biases scalars
   pessimistically for the clipped side (dev-guide §1.6).
-- **Multiplicity.** Eight arms × several endpoints invites false positives.
-  Pre-registration (§4) is the defense: E1 is the single primary endpoint,
-  the flip bar is fixed before data, and ambiguous reads graduate to
-  confirmation rather than being declared wins.
+- **Multiplicity.** Nine treatments sharing one baseline at an uncorrected 10%
+  would expect **roughly one spurious graduate**. **Mitigated** by Holm
+  correction across the treatments (§4), pre-registration of the single primary
+  endpoint, and a fixed bar.
 
 ## 4. Decision rules — pre-registered (written before the data)
 
-For every arm, define on the primary endpoint:
+For every arm, on the primary endpoint:
 
 ```
-E1(arm)  = mean over K runs of (final champion Δscalar), in A/A-floor units
-ΔE1(arm) = E1(arm) − E1(A0_BASE)
-CI90     = the 90% t-CI (K−1 df) on each arm's mean E1
-CPP(arm) = pooled cost_per_promotion (E3), board-run form: total board runs / promotions
+E1(arm)   = mean over the arm's K CELL MEANS of per-duel d          (§3.1)
+ΔE1(arm)  = E1(arm) − E1(BASE)
+CI90      = the 90% t-CI on ΔE1, computed on CELL means (K−1 df per arm)
+floor     = 2 × SE(E1(A/A clone) − E1(BASE))                        (§3.2)
+p_holm    = the Holm-adjusted p across ALL treatment arms           (§3.5)
+CPP(arm)  = board-run cost per promotion (E4/E2), context only
 ```
 
-**The one authority rule — which read edits a scaffold.** **No K=6 screening
-read ever flips a scaffold default.** Clearing the graduation bar below at K=6
-**GRADUATES** an arm to the K≈24 confirmatory run (§3.2); a scaffold default is
-flipped **only** by that confirmatory read. "Recommend" is the strongest verdict
-a K=6 screen can return. Every "flip" in the per-knob rules below therefore
-names the action the **confirmatory** read would authorize, not a K=6 outcome —
-§3.2 and this section are reconciled to that single rule.
+**Rule 0 — the validity gates come first, and they are read blind.** Compute
+the §3.3 sensitivity and specificity contrasts and the derived floor **before
+looking at any treatment arm**. Either gate failing ⇒ **the run is void for
+ranking**; report it as void, do not rescore it against a renegotiated
+threshold. R.1 is the precedent.
 
-**The graduation bar (clearing it at K=6 → graduate to confirmation) — BOTH
-must hold:**
+**Rule 1 — thresholds live on the scale of the quantity they gate.** Every
+threshold below is stated in units of `d` (or as a multiple of the derived
+floor, which is also in units of `d`). **A threshold expressed on a different
+scale than the statistic it gates is a defect, not a conservative choice** — it
+is how a per-run sd came to gate a difference of arm means (R.1), and the
+resulting failure was uninterpretable rather than strict.
 
-1. **Signal clears its own noise:** `ΔE1(arm) ≥ +0.5·floor` **AND** the 90%
-   CIs of `E1(arm)` and `E1(A0)` do **not** overlap. (+0.5×floor is the
-   smallest *candidate* effect worth the confirmatory spend — it is a
-   graduation trigger, not a decision-grade catch; recall the K=6 screen only
-   cleanly resolves ~1.5-floor effects, §3.2, so a true 0.5–1.0 effect usually
-   fails the non-overlap clause and lands "ambiguous", which graduates it too.)
-2. **It does not cost more than it delivers:** `CPP(arm) ≤ 1.10 · CPP(A0)`
-   (board-run cost per real promotion rises by at most 10%). A read-side knob
-   (`genealogy`, `calibration_feedback`, roles) trivially satisfies this —
-   the cost meter is untouched — so its graduation reduces to rule 1 alone.
+**Rule 2 — the authority rule.** A screening read **GRADUATES** an arm to a
+confirmatory run; it never flips a scaffold default. "Recommend" is the
+strongest verdict a screen can return. Every "flip" in §1's table names the
+action a **confirmatory** read would authorize.
 
-**Does not graduate** iff `ΔE1(arm) < +0.5·floor` **OR** `CPP(arm) > 1.10 ·
-CPP(A0)`.
+**The graduation bar — ALL THREE must hold:**
 
-**Ambiguous → also graduates, do not decide:** `ΔE1(arm) ≥ +0.5·floor` but the
-CIs overlap (or CPP lands in `(1.0, 1.10]·CPP(A0)`) → the arm advances to the
-**K≈24 confirmatory run** (§3.2). Because the K=6 screen resolves ~1.5 floor,
-most true 0.5–1.0 effects land here by design. No scaffold default changes on a
-screening read alone.
+1. **Above the ruler:** `ΔE1(arm) ≥ floor`, with the 90% CI on `ΔE1` excluding
+   0.
+2. **Survives multiplicity:** `p_holm < 0.10` across the treatment arms.
+3. **Does not cost more than it delivers:** `CPP(arm) ≤ 1.10 · CPP(BASE)`. A
+   read-side knob (`genealogy`, `calibration_feedback`, roles) satisfies this
+   trivially — the cost meter is untouched — so its graduation reduces to rules
+   1–2. **On a target where only the planted-defect arm promotes, CPP is
+   undefined for every treatment arm and this rule is reported as
+   `not applicable`, never silently passed.**
 
-**Per-knob specialization of the bar (each states the graduation trigger and
-the flip direction the confirmatory read would then authorize):**
+**Does not graduate** iff any of the three fails.
 
-- **`recombine` (A3):** graduates on the bar; the confirmatory read then flips
-  it to default-`True`. Because A3 is
-  cost-neutral (mint replaces a propose call — `estimate_cost` charges it as
-  `best_of_n − 1` propose calls, no extra board run), rule 2 is automatic;
-  the decision is rule 1 on E1, with E2 (promotions A3 caught that A0 didn't)
-  as the mechanistic confirmation the oracle predicts (dev-guide §1.8).
-- **`recombine_merge="llm"` (A4):** evaluated **relative to A3**, not A0.
-  Graduates (and the confirmatory read flips to `"llm"`) iff `E1(A4) − E1(A3)
-  ≥ +0.5·floor` with non-overlapping CIs, and the +1-aux-merge-call cost keeps
-  `CPP(A4) ≤ 1.10·CPP(A3)`. If A3 itself does not graduate, A4 is moot (llm
-  merge requires recombine on). **The A4-vs-A3 contrast is bundled:** `"llm"`
-  merge changes both the merge *method* (one aux merge call vs. mechanical
+**"Inconclusive" is a specific claim and must be reported as one:** *no effect
+larger than the floor* — **never** *no effect*. Run 1 called all nine treatments
+inconclusive in exactly this sense; run 2's nine likewise all fail the bar, the
+closest (the ablation at +0.0392, CI excluding 0) failing on rule 1 by sitting
+just **under** the derived floor of 0.0400 and on rule 2 at Holm p 0.537. A
+report that writes "no effect" where the data says "nothing above 0.040" has
+overclaimed.
+
+**Per-knob specialization (each states the graduation trigger and the flip
+direction a confirmatory read would then authorize):**
+
+- **`recombine` (A3):** graduates on the bar; a confirmatory read then flips it
+  to default-`True`. A3 is cost-neutral (the mint replaces a propose call —
+  `estimate_cost` charges it as `best_of_n − 1` propose calls, no extra board
+  run), so rule 3 is automatic. The mechanistic confirmation the oracle predicts
+  (dev-guide §1.8) is E2 — promotions A3 caught that BASE did not — which on
+  this target was **zero for both**, so the oracle's mechanism is unobservable
+  here rather than refuted.
+- **`recombine_merge="llm"` (A4):** evaluated **relative to A3**, not BASE.
+  Graduates iff `E1(A4) − E1(A3) ≥ floor` with the CI excluding 0 and the
+  +1-aux-merge-call cost keeping `CPP(A4) ≤ 1.10·CPP(A3)`. If A3 itself does
+  not graduate, A4 is moot. **The A4-vs-A3 contrast is bundled:** `"llm"` merge
+  changes both the merge *method* (one aux merge call vs. mechanical
   concatenation) **and** the candidate-pair eligibility — it reaches
   OVERLAPPING rejected pairs the mechanical mint's disjointness predicate
-  rejects (`proposer/best_of_n.py` §2.6.1). The decision rule therefore reads
-  the *bundle* (merge method + disjointness relaxation), not the pure merge
-  effect.
+  rejects (`proposer/best_of_n.py` §2.6.1). The rule reads the *bundle*.
 - **`screen_entries` (A2) — REVERSED NULL.** The scaffold *currently* writes
-  `screen_entries=2`, so the pre-registered action is to **keep** it only if
-  A2 clears the graduation bar over A0. If A2 fails the bar (its ~+43%
-  board-run cost, §5, is not repaid in E1), the pre-registered action is to
-  **remove
-  `screen_entries` from `recommended_scaffold_weights()`** — scaffold default
-  → `0`. (The in-code default is already `0`; this only touches the scaffold.)
+  `screen_entries=2`, so the pre-registered action is to **keep** it only if A2
+  clears the bar over BASE. If A2 fails the bar (its board-run premium, §5, is
+  not repaid in E1), the pre-registered action is to **remove `screen_entries`
+  from `recommended_scaffold_weights()`** — scaffold default → `0`. (The
+  in-code default is already `0`; this only touches the scaffold.) **A2 failed
+  the bar in both runs**; that action is now live and unexecuted.
 - **`genealogy` (A1), `calibration_feedback` (A6-contribution), roles (A5):**
-  read-side / cost-neutral → rule 1 alone. `calibration_feedback` may flip on
+  read-side / cost-neutral → rules 1–2 alone. `calibration_feedback` may flip on
   either E1 **or** a `≥ +0.10` absolute lift in the hypothesis-calibration
-  fraction E6 (its designed effect is honesty, not raw promotion — §1 rank 6),
-  provided E1 does not regress below A0's lower CI.
-- **`best_of_n` (BASE):** pre-registered ablation — one K=6 run of A0 with
-  `best_of_n: 1` (single sample, no critique). Keep the `best_of_n=3` default
-  iff `E1(A0) − E1(A0-ablation) ≥ +0.5·floor`; otherwise flag `best_of_n=3`'s
-  aux-call cost as unearned and revert the recommendation toward `1`.
-- **`process_exemplars` — extension arm, higher bar.** Evaluated only as a
-  separate K=6 arm under the PROCESS-EXEMPLARS.md §5 harm runbook. Graduates
-  (and the confirmatory read may flip it on) **only if** it clears the E1
-  graduation bar **AND** its `generalization_gap`
-  detector stays quiet **AND** its placebo arm never promotes (dev-guide §12
-  boundary rules). A promotion-rate lift bought with a widening
-  generalization gap is a *reject*, not a win — the whole point of ranking it
-  last.
+  fraction E6 (its designed effect is honesty, not raw proposal quality — §1
+  rank 6), provided E1 does not regress below BASE's lower CI.
+- **`best_of_n` (BASE vs ABLATION):** keep the `best_of_n=3` default iff
+  `E1(BASE) − E1(ABLATION) ≥ floor`. Otherwise flag `best_of_n=3`'s aux-call
+  cost as **unearned** and revert the recommendation toward `1`. **Measured: the
+  ablation was the highest arm in run 2 (+0.0392 vs BASE), so this test's
+  precondition is not merely unmet — it points the other way, within the
+  floor.**
+- **`process_exemplars` — extension arm, higher bar.** Graduates **only if** it
+  clears the E1 bar **AND** its `generalization_gap` detector stays quiet **AND**
+  its placebo arm never promotes (dev-guide §12 boundary rules). A
+  proposal-quality lift bought with a widening generalization gap is a *reject*,
+  not a win — the whole point of ranking it last.
 
 **Combos (A6, A7):** report interaction as
 `ΔE1(combo) − [ΔE1(single_1) + ΔE1(single_2)]`. A positive interaction beyond
-the CI is evidence the family compounds (scaffold both); a negative
-interaction beyond the CI is evidence they interfere (scaffold at most one).
-Combos never override a single-knob decision — they inform the *joint*
-recommendation only.
+the CI is evidence the family compounds (scaffold both); a negative interaction
+beyond the CI is evidence they interfere (scaffold at most one). Combos never
+override a single-knob decision.
 
-## 5. Cost and wall-clock estimate
+## 5. Cost and wall-clock — the measured model
+
+**The original estimate in this document was wrong by roughly an order of
+magnitude, and it was wrong in the optimistic direction.** It projected ≈ 8,928
+board runs at **≈ 2.5 h** of parallel board-run wall-clock. Against measurement:
+
+| | original estimate | measured |
+|---|---|---|
+| a 16-cell × 6-round run | — | **4 h 56 m** |
+| a 144-cell × 3-round run | — | **7 h 23 m** |
+| the 8-arm screening design | ≈ 2.5 h parallel board-run wall-clock | **several times a 16-cell run again** |
+
+**Use the measured figures for every future budget.** The failure mode of the
+original was assuming ≈0.8 s per model call and ≈5 serial-ish calls per board
+run, then dividing by parallelism — a chain of planning assumptions with no
+measured anchor. The two anchors now available are the two runs above; a new
+campaign's estimate should be **interpolated from them**, in cells × rounds, and
+labelled **planning** until it too is measured.
+
+**Sizing tables (measured, §3.4) — this replaces the K=6-screen premise:**
+
+| arsenal effect size on `d` | cells/arm | whole batch | verdict |
+|---|---|---|---|
+| **0.05** | ~6 | 8 arms ⇒ ~48 cells, **~15 h at 6 rounds/cell** | feasible |
+| **0.040** | 12 | 12 arms ⇒ **144 cells, 7 h 23 m at 3 rounds/cell** | **what was actually run** |
+| **~0.023** | ~32 | — | affordable only for a **single** arm |
+| **0.02** | ~35 | — | **infeasible** |
+| **~0.013** | ≈114 *(derived)* | — | **unaffordable at any K this target supports** |
+
+**The two wall-clock anchors do not agree on a per-cell-round rate, and that
+matters.** 16 cells × 6 rounds in 4 h 56 m is ≈3.1 min per cell-round; 144 cells
+× 3 rounds in 7 h 23 m is ≈1.0 min per cell-round. Different board, different
+concurrency, different endpoint latency. **Do not extrapolate wall-clock from
+one anchor as though the rate were a constant** — that is a smaller version of
+exactly the error the original ≈2.5 h estimate made. Quote the anchor you are
+interpolating from, and label the result **planning**.
 
 **Cost-meter semantics (grounded in `builder/operations.py::estimate_cost`).**
 The meter reports **board runs per round** (each = one agent execution on one
-board entry). Auxiliary LLM calls (`best-of-N propose calls`) are labelled and
-**excluded from the board-run headline** but are real spend. Assumptions,
-stated so the estimate is auditable:
+board entry). Auxiliary model calls (`best-of-N propose calls`) are labelled and
+**excluded from the board-run headline** but are real spend. The meter is exact
+given the structure — it is the campaign's primary *cost* unit precisely because
+wall-clock is not. For the **planning** 7-entry `target_1` shape — `field_size`
+pinned to 1 **and `replicates: 2` explicitly set** (the shared-control block in
+§2.3 leaves `replicates` at its default, because §3.4 shows it is not the
+sizing lever; set it only if you want the per-round board-run count below):
+`duel runs = field_size·replicates·train = 1·2·5 = 10`;
+`holdout-confirm = holdout·replicates = 2·2 = 4` ⇒ **14 board runs/round**;
+screen arms add `proposes·best_of_n·panel = 1·3·min(2,7) = 6` ⇒ **20/round**, a
+**+42.9%** premium — the exact quantity A2's decision rule prices. `recombine`
+arms are cost-neutral; `genealogy` / `calibration_feedback` / roles /
+`process_exemplars` are read-side, cost meter untouched.
 
-- `target_1` board = **7 entries**. At the default `holdout_fraction=0.3`
-  the hash-based split puts **zero** ids into the holdout (all 7 hash above
-  the threshold) — which is exactly why the shared control pins
-  `holdout_fraction: 0.6` (§2): the split becomes **train = 5, holdout = 2**
-  (`q3_metrics_outline`, `every_expectation_kind_demo`), so the
-  generalization-gap and holdout-confirm mechanics are live for the
-  campaign instead of silently inert. (Verified by running `split_board`
-  and `estimate_cost` on the arm contracts, §6.2.)
-- Structure `gauntlet`, `field_size` pinned to **1** in the shared control
-  (§2 — the meter defaults an unset `field_size` to `2`, but
-  `GauntletStrategy.field_size()` hard-returns `1`, so pinning it makes the
-  meter read the true runtime board-run count), `replicates` = 2. Per
-  `estimate_cost`: `duel runs = field_size·replicates·train = 1·2·5 = 10`;
-  `holdout-confirm = holdout·replicates = 2·2 = 4`. **BASE board
-  runs/round = 14** — unchanged from the zero-holdout figure, so every
-  downstream total in this section stands.
-- Screen arms add `candidate-screen runs = proposes·best_of_n·panel =
-  1·3·min(2,7) = 6` → **20 runs/round** (a +42.9% board-run premium — the
-  exact quantity A2's decision rule prices).
-- `recombine` arms: cost-neutral (no board-run change; propose calls drop to
-  `best_of_n−1` on recombining rounds). `genealogy` / `calibration_feedback` /
-  roles / `process_exemplars`: read-side → **cost meter untouched**, 14
-  runs/round. `recombine_merge="llm"` adds ~1 aux merge call on merge rounds
-  (not a board run).
-- Auxiliary `best-of-N propose calls` = `proposes·best_of_n = 1·3 = 3` per
-  round on every arm (aux LLM, not board runs).
-
-**Per-arm board-run totals (× R=12 rounds × K=6 runs):**
-
-| Arm | Runs/round | Board runs (× 12 × 6) | Aux propose calls (× 12 × 6) |
-|---|---|---|---|
-| A0 BASE | 14 | 1,008 | 216 |
-| A1 +genealogy | 14 | 1,008 | 216 |
-| A2 +screen | 20 | 1,440 | 216 |
-| A3 +recombine(mech) | 14 | 1,008 | ≈180 (−1 on mint rounds) |
-| A4 +recombine(llm) | 14 | 1,008 | ≈216 (+merge calls) |
-| A5 +roles | 14 | 1,008 | 216 |
-| A6 combo-R (gene+cal) | 14 | 1,008 | 216 |
-| A7 combo-M (screen+recomb) | 20 | 1,440 | ≈180 |
-| **Screening total** | — | **≈ 8,928 board runs** | **≈ 1,656 aux propose calls** |
-
-**LLM-call envelope (assumption-driven).** Each `target_1` board run drives
-the presentation agent's coordinator + 4 specialists ≈ **5 harness LLM
-calls/run** (DOGFOOD-TARGETS.md §1.3 surface), plus ≈ 1–2 aux judge calls/run.
-So the screening campaign's order-of-magnitude LLM spend:
-
-```
-harness calls ≈ 8,928 runs × 5   ≈ 44,640
-aux judge     ≈ 8,928 runs × 1.5 ≈ 13,392
-aux propose   ≈ 1,656 (slate)  + ~660 critique/merge ≈ 2,300
-─────────────────────────────────────────────────────────
-TOTAL         ≈ 60,000 LLM calls for the whole 8-arm screening campaign
-```
-
-**Wall-clock (secondary, high-variance).** At an assumed ≈ 0.8 s/LLM-call and
-`--parallelism 4`, one board run (≈ 5 serial-ish harness calls) ≈ 4 s of
-critical path; 8,928 runs / 4 parallel × 4 s ≈ **2.5 h of pure board-run
-wall-clock**, plus proposer/reduce/gate overhead → budget **≈ 3.5–5.5 h total**
-if arms run serially, or ≈ 1 h if the 8 arms run in parallel workspaces. These
-are planning figures only; real latency is endpoint-dependent (§3.4).
-
-**Confirmatory extension (pre-registered, separate budget):** K≈24 on ≤2
-graduated arms ≈ 2 × (24/6) × ~1,200 board runs ≈ **9,600 additional board
-runs** (~55k LLM calls again). Not part of this doc's authorization.
+**These per-round figures remain correct and are still the §6.1 reconciliation
+target. What is NOT correct is any wall-clock projection built on them** without
+a measured seconds-per-round anchor.
 
 ## 6. Execution protocol — the executor agent's runbook (GATED)
 
@@ -559,17 +959,16 @@ runs** (~55k LLM calls again). Not part of this doc's authorization.
 campaign from this document and report back to the coordinator in the §7
 format. You do **not** decide anything: you produce the pre-registered
 statistics; the §4 decision rules are the coordinator's to apply. Work the
-subsections in order — §6.0 authorization → §6.1 preconditions → §6.2 dry-run
-→ §6.3 execution (BASE first) → §6.4 monitoring/failure → §6.5 data
-collection — then emit §7.
+subsections in order — §6.0 authorization → §6.1 preconditions → §6.2 dry-run →
+§6.3 execution → §6.4 monitoring/failure → §6.5 data collection → §6.6
+integrity verification — then emit §7.
 
 Every arm follows the same shape: fresh workspace → publish the arm's
 contract → `zicato evolve` **with the dashboard** (house rule: `evolve`
 launches the dashboard on `127.0.0.1:7892` by default; do **not** pass
 `--no-dashboard`, do not pass a bind flag — `cli/commands/evolve.py`
-`--dashboard-port` default `7892`, bound on loopback) → `epoch close` →
-`reflect run`. The `target_1` registration mirrors the vendored example's
-adapter/mutable-tree wiring.
+`--dashboard-port` default `7892`, bound on loopback) → **§6.6 integrity
+verification** → `epoch close` → `reflect run`.
 
 ### 6.0 Authorization check (first, blocking — the G3 gate)
 
@@ -581,27 +980,42 @@ the operator's own words authorizing live spend is **not** sufficient.
 
 - **Go-ahead absent or ambiguous → STOP. Run nothing.** Complete §6.1's
   non-endpoint preconditions and §6.2's deterministic dry-run only (neither
-  spends on the endpoint), then report back to the coordinator: "authorization
-  not present in dispatch; dry-run + preconditions only; awaiting explicit
-  operator go-ahead." Do not proceed to §6.3.
+  spends on the endpoint), then report back: "authorization not present in
+  dispatch; dry-run + preconditions only; awaiting explicit operator
+  go-ahead." Do not proceed to §6.3.
 - **Go-ahead present → record its verbatim wording in the run log** and
-  proceed. The authorization covers the **screening** campaign only (K=6 ×
-  8 arms); the K≈24 confirmatory extension (§3.2, §4) requires a **separate**
-  go-ahead and is out of scope for this dispatch.
+  proceed. The authorization covers the **screening** campaign only; a
+  confirmatory extension requires a **separate** go-ahead.
 
 ### 6.1 Preconditions checklist (record each as PASS / FAIL before any spend)
 
-Each item is a recorded pass/fail. **Any FAIL halts the campaign** — report
-the failing item to the coordinator and stop; do not work around it.
+Each item is a recorded pass/fail. **Any FAIL halts the campaign** — report the
+failing item to the coordinator and stop; do not work around it.
 
 1. **Toolchain — `uv sync --all-extras`.** Run it (NEVER bare `uv sync`, which
    strips dev tooling — MEMORY "uv sync --all-extras always"). PASS iff it
    exits 0 and `uv run zicato --help` resolves.
-2. **Auxiliary + harness endpoints configured and responding — cheap house
-   smoke-test.** The house way to prove both endpoints resolve and answer
-   *without* launching an evolve loop is `zicato board preflight` with the
-   minimum draw count. On BASE's first workspace, immediately after
-   `epoch new` (§6.3), run:
+2. **PLANTED-DEFECT PRE-GATE, part 1 — the static wiring assertion (§2.2).**
+   Before any spend, assert that a challenger's code comes from the
+   challenger's snapshot. Run one round on any cheap target and read the
+   round log's `harness_loaded` events (`epoch/round_log.py`): every
+   generation must report a snapshot-relative `entrypoint_file`, and
+   `trees_never_imported` must be **empty** for every generation. **A
+   non-empty `trees_never_imported` means that generation's mutations cannot
+   have been under test — this is issue #110's exact shape, and it is
+   detectable in milliseconds.** PASS iff every generation reports a verified
+   entrypoint and no never-imported tree.
+3. **PLANTED-DEFECT PRE-GATE, part 2 — the short live probe (§2.2).** Run the
+   planted-defect arm ONLY, for a handful of rounds, and read one question:
+   **does the crippled arm score worse than baseline?** It must. **This is the
+   ~30-minute version of the check that a post-hoc positive control costs a
+   full campaign to learn.** PASS iff the crippled arm's champion score is
+   below baseline and its per-duel `d` contrast is positive (the arm has
+   headroom to repair). A crippled arm scoring *best* is the #110 signature —
+   **halt.**
+4. **Auxiliary + harness endpoints configured and responding.**
+   `zicato board preflight` with the minimum draw count, on the first
+   workspace immediately after `epoch new` (§6.3):
    ```bash
    zicato board preflight --workspace .zicato --runs 2 \
        --harness-call-llm   <operator harness endpoint dotted path> \
@@ -611,59 +1025,64 @@ the failing item to the coordinator and stop; do not work around it.
    `preflight_cmd`, both `required=True`) and takes as few as **2** A/A draws
    (`--runs` `IntRange(min=2)`; default 5 = `DEFAULT_CALIBRATION_RUNS`). It is
    cache-idempotent with `zicato board audit`, so it is the cheapest genuine
-   endpoint probe in the tree, and it does double duty: its A/A measurement
-   **is** the measured floor the whole campaign reads (`epoch/preflight.py`
-   `noise_floor_max_abs_delta`, persisted onto the epoch via
-   `epoch/lifecycle.set_epoch_noise_floor`). PASS iff it returns a verdict
-   (OK / WARN / REFUSE) rather than an import/connection error. A `REFUSE`
-   verdict is a §6.4 abort condition, not a precondition failure — note it and
-   surface it, but the *endpoint* is "responding" either way.
-3. **Disk headroom.** Confirm free space on the volume holding
-   `campaign-<ts>/` is comfortably above the run footprint (per-run workspace =
-   a `target_1` clone + telemetry JSONL; budget on the order of a few hundred
-   MB per run, 8 arms × 6 runs). PASS iff `df -h <campaign root>` shows
-   headroom > 3× the projected footprint.
-4. **The §6.2 deterministic dry-run is green.** The `target_0` end-to-end
-   demo reaches its known answer with the cost-meter/analytics chain intact
-   (§6.2). PASS iff the dry-run converges (v0 3.6 → v3 1.2) and `epoch close`
-   emits `analysis.md`.
-5. **Cost-meter reconciliation.** Run `zicato builder`'s cost meter (or
-   `estimate_cost`, `builder/operations.py`) on each arm's `scoring.json` and
-   confirm it reads the **§5 numbers**: **14** board-runs/round for the
-   non-screen arms and **20** for the screen arms (A2, A7). PASS iff the meter
-   reads 14/20 exactly. **A mismatch here means a contract or `field_size`
-   pin is wrong — halt before spending; the whole §5 budget rests on 14/20.**
+   endpoint probe in the tree. Its A/A measurement is the **board-entry** noise
+   floor (`epoch/preflight.py` `noise_floor_max_abs_delta`, persisted via
+   `epoch/lifecycle.set_epoch_noise_floor`) — **not** the campaign's derived
+   arm-contrast floor, which comes from the A/A arm (§3.2). PASS iff it returns
+   a verdict (OK / WARN / REFUSE) rather than an import/connection error. A
+   `REFUSE` verdict is a §6.4 abort condition, not a precondition failure.
+   **Note the honest limit: #106 (probes only the first mutation point) and
+   #112 (never checks margin achievability) meant pre-flight would have passed
+   every invalid pre-fix run. Both are fixed; neither makes pre-flight a
+   substitute for items 2 and 3.**
+5. **Disk headroom.** Confirm free space on the volume holding
+   `campaign-<ts>/` is comfortably above the run footprint. PASS iff
+   `df -h <campaign root>` shows headroom > 3× the projected footprint.
+6. **The §6.2 deterministic dry-run is green.** PASS iff the dry-run converges
+   (v0 3.6 → v3 1.2) and `epoch close` emits `analysis.md`.
+7. **Cost-meter reconciliation.** Run the cost meter
+   (`builder/operations.py::estimate_cost`) on each arm's `scoring.json` and
+   confirm it reads the **§5 numbers** for the chosen board shape (on the
+   7-entry `target_1` shape: **14** board-runs/round for the non-screen arms,
+   **20** for the screen arms). PASS iff the meter reads them exactly. **A
+   mismatch means a contract or `field_size` pin is wrong — halt before
+   spending.**
+8. **Both controls are IN the arm matrix.** Confirm the batch contains an A/A
+   duplicate arm and a planted-defect arm with the same K as every treatment
+   arm (§2.1). PASS iff both are present. **A batch missing either cannot
+   produce a valid result and must not be started** — R.1.
 
 ### 6.2 Instrument dry-run (deterministic, zero endpoint — not gated)
 
 Before any live arm, prove the harness/cost-meter/analytics chain end-to-end
-on the **deterministic** `target_0` (its scripted proposer needs no
-endpoint), exactly as `examples/zicato_examples/target_0_convergence/RUN.md`
-§"End-to-end demo". This validates wiring under a known answer (dev-guide
-§1.8: v0 3.6 → v3 1.2) with **no** live-run gate, the same way `cascade_oc.py`
+on the **deterministic** `target_0` (its scripted proposer needs no endpoint),
+exactly as `examples/zicato_examples/target_0_convergence/RUN.md`
+§"End-to-end demo". This validates wiring under a known answer (dev-guide §1.8:
+v0 3.6 → v3 1.2) with **no** live-run gate, the same way `cascade_oc.py`
 validates the statistics offline before any real spend. This is precondition
-§6.1 item 4; it runs regardless of the §6.0 authorization outcome.
+§6.1 item 6; it runs regardless of the §6.0 authorization outcome.
 
-### 6.3 Execution recipe (BASE first; then the remaining arms)
+### 6.3 Execution recipe
 
-**Workspace layout.** One timestamped campaign root; arms in separate
-workspace trees (never share a `.zicato`); one dir per arm×seed:
+**Workspace layout.** One timestamped campaign root; arms in separate workspace
+trees (never share a `.zicato`); one dir per arm×seed:
 
 ```
-campaign-<ts>/<arm>/k<seed_index>        # e.g. campaign-20260712T0900/A0/k1
+campaign-<ts>/<arm>/k<seed_index>        # e.g. campaign-20260802T0900/A0/k1
 campaign-<ts>/results/                    # the §7 artifacts land here
 ```
 
-`<arm>` ∈ {A0…A7} (plus `A0-ablation`, `PEXEMPLAR` for the extension arm);
-`<seed_index>` ∈ {1…6} for the screening campaign. Each `k<seed_index>` is a
-**fresh clone** — the live endpoint exposes no seed we control, so the seed
-index names an independent replicate run, not a reproducible seed (§3.2).
+`<arm>` ∈ {A0, AA, PD, A1…A7, ABLATION, PEXEMPLAR}; `<seed_index>` ∈ {1…K}.
+Each `k<seed_index>` is a **fresh clone** — the live endpoint exposes no seed we
+control, so the seed index names an independent replicate run, not a
+reproducible seed (§3.5). **Seeds are paired across arms**: seed index `k` means
+the same starting condition for every arm, which is what makes the cell-level
+contrast a paired comparison.
 
-**Per-run command sequence (one block per arm×seed; A0/k shown — the reviewed
-per-arm commands, unchanged except the workspace path):**
+**Per-run command sequence (one block per arm×seed; A0/k shown):**
 
 ```bash
-# --- Arm A0 BASE, replicate run k (repeat k = 1..6, fresh dir each) ---
+# --- Arm A0 BASE, replicate run k (repeat k = 1..K, fresh dir each) ---
 TS=<campaign timestamp>          # one value for the whole campaign
 WS=campaign-${TS}/A0/k${k}
 rm -rf "$WS" && mkdir -p "$WS" && cd "$WS"
@@ -692,8 +1111,7 @@ zicato epoch new campaign_A0_k${k} --workspace .zicato \
     --brief   "$EX/rubric.md" \
     --scoring ./arm_A0.scoring.json      # the §2 A0 contract (full effective form)
 
-# ENDPOINT SMOKE-TEST (§6.1 item 2) — run ONCE, on this first BASE workspace.
-# Its A/A measurement is also the campaign's measured floor:
+# ENDPOINT SMOKE-TEST (§6.1 item 4) — run ONCE, on this first workspace.
 zicato board preflight --workspace .zicato --runs 2 \
     --harness-call-llm   <operator harness endpoint dotted path> \
     --auxiliary-call-llm <operator auxiliary endpoint dotted path>
@@ -701,221 +1119,314 @@ zicato board preflight --workspace .zicato --runs 2 \
 # With the epoch open, inspect the mutation surface + eyeball the cost
 # meter BEFORE spending (no run yet):
 zicato mutations --workspace .zicato
-# (optional) open the builder to eyeball the cost meter for this scoring.json
 
 # GATED: only after §6.0 explicit operator go-ahead -----------------------
-zicato evolve --workspace .zicato --rounds 12 \
+zicato evolve --workspace .zicato --rounds 3 \
     --harness-call-llm   <operator harness endpoint dotted path> \
     --auxiliary-call-llm <operator auxiliary endpoint dotted path>
 # evolve prints:  Dashboard: http://127.0.0.1:7892   (RECORD this exact URL
 # into the run record's dashboard_url; watch the bracket live)
 
-# After the loop settles:
+# INTEGRITY VERIFICATION (§6.6) — BEFORE the cell counts as done:
+zicato epoch rounds --workspace .zicato --verify
+
+# After the loop settles AND the cell is accepted:
 zicato epoch close   --workspace .zicato          # → analysis.md / analysis.html
 zicato reflect run   --workspace .zicato          # MSA pass over the eval contract
 ```
 
-- **A1–A4, A6, A7** are identical except the `--scoring` file is the arm's §2
-  delta (the `board preflight` smoke-test is NOT repeated — it runs once on
-  BASE/k1).
+- **A1–A4, A6, A7, ABLATION, PEXEMPLAR** are identical except the `--scoring`
+  file is the arm's §2 delta (the `board preflight` smoke-test is NOT repeated).
+- **AA (A/A duplicate)** uses A0's contract verbatim, in its own workspace tree.
+- **PD (planted defect)** uses A0's contract with the crippled seed generation.
 - **A5 (roles)** additionally writes the `models.proposer_breadth` /
   `models.proposer_depth` block into the workspace `config.json` before
   `evolve` (its `scoring.json` == A0's).
-- **A0-ablation** (`best_of_n=1`) and the **process_exemplars** extension arm
-  reuse the A0 block with the one-field change.
 
 **Parallelism (recommend ≤ 4 concurrent `evolve` processes).** Arms run in
 separate workspaces, so they *can* run concurrently, but bound concurrency at
 **≤ 4** for two grounded reasons:
 
 1. **Shared endpoint rate limits.** Every arm hits the same operator harness +
-   auxiliary endpoints; the §5 wall-clock math already assumes `--parallelism
-   4` *within* a run, so N concurrent arms multiply the offered load N× against
-   one rate limit. Beyond ~4 concurrent arms the endpoint throttles and
-   wall-clock (E3) inflates with ret/latency — polluting the only
-   latency-sensitive metric.
+   auxiliary endpoints; N concurrent arms multiply the offered load N× against
+   one rate limit. Beyond ~4, the endpoint throttles and wall-clock inflates.
 2. **One dashboard port each.** `zicato evolve` binds the dashboard on
-   `--dashboard-port` (default **7892**, `cli/commands/evolve.py:764`). Two
-   concurrent evolves on the default collide on 7892. The house rule forbids a
+   `--dashboard-port` (default **7892**, `cli/commands/evolve.py`). Two
+   concurrent evolves on the default collide. The house rule forbids a
    `--dashboard-bind` flag but says nothing about the port, so give each
-   concurrent run a **distinct** port — first run keeps the 7892 default,
-   additional concurrent runs pass `--dashboard-port 7893`, `7894`, `7895` —
-   and **record each run's actual printed URL** into its `dashboard_url`
-   field. Four ports (7892–7895) is a clean, memorable band and matches the
-   ≤ 4 concurrency bound.
+   concurrent run a **distinct** port — 7892, 7893, 7894, 7895 — and **record
+   each run's actual printed URL**.
 
-**Run ordering — BASE's K runs FIRST (blocking gate on the flip bar's
-trustworthiness).** Launch all **K=6 BASE (A0)** runs before any other arm.
-The entire §4 non-overlap / ~1.5-floor resolution rests on the §3.2
-pre-registered assumption that the cross-run sd of E1 is on the order of the
-A/A floor — **an assumption that is ungrounded until BASE measures it.** After
-BASE's 6 runs close:
+**Run ordering — the CONTROLS first, then BASE, then the treatments.** The
+pre-gates (§6.1 items 2–3) come before any spend. Then launch the **A/A** and
+**BASE** arms together: their contrast is the floor, and **no treatment arm's
+read means anything until the floor exists**. Only once the floor is derived and
+the specificity gate passes do the treatment arms launch. The planted-defect arm
+runs alongside them (its contrast is the sensitivity gate, read at analysis
+time).
 
-1. Compute the **cross-run sd of E1** (final champion Δscalar in floor units)
-   over the 6 BASE runs, and the ratio `f = sd / measured_floor`.
-2. **Record `f`** into `floor.json` (§7) with its K.
-3. **If `f > 1.5`**: the flip bar is not trustworthy as written (§3.2:
-   thresholds scale linearly with sd; holding ~1.5-floor resolution would need
-   K raised by ≈ `f²`). **PAUSE and report the sd finding to the coordinator
-   for confirmation before launching the remaining arms.** Do not proceed on
-   your own judgment.
-4. **If `f ≤ 1.5`**: proceed to launch A1–A7 (respecting the ≤ 4 concurrency
-   bound), noting `f` in the per-arm records.
+**Do NOT re-derive the floor after seeing a treatment arm.** The floor is a
+property of the batch, computed once, from the A/A contrast, before any
+treatment read. Re-deriving it later is threshold renegotiation by another name.
 
 ### 6.4 Monitoring + failure policy (per arm, per run)
 
 **Per-run signals to watch (log stream + dashboard):**
 
-- **Log stream:** watch for `preflight_signal_below_floor` /
-  `preflight_saturated_contract` at evolve start (dev-guide §9 — a saturated
-  contract means the arm cannot resolve any improvement). Watch
-  `margin_below_noise_floor` (E5), `stalled_loop`, `placebo_promoted`
-  (CRITICAL — `health/diagnostics.detect_placebo_promoted`; the decision
-  procedure is broken and every recent "win" is suspect; dev-guide §11).
-- **Publication LIVING DRAFT:** the dashboard's publication tab regenerates
-  its deterministic sections every settled round (PUBLICATION freshness
-  model). Eyeball §5 Statistical integrity and §3 Reign narrative as they
-  fill in — a promotion whose gate margin sits below the A/A floor is a
-  suspect promotion.
-- **Board-status surface:** watch the `generalization_gap`
-  (`health/diagnostics.detect_generalization_gap`) and holdout budget panels
-  (dev-guide §12 #5, §5) — a widening gap on a read-side arm (genealogy,
-  calibration, exemplars) is the overfitting alarm those arms exist to be
-  checked against.
+- **Log stream:** `preflight_signal_below_floor` / `preflight_saturated_contract`
+  at evolve start (dev-guide §9); `margin_below_noise_floor` (E5);
+  `stalled_loop`; `placebo_promoted` (CRITICAL —
+  `health/diagnostics.detect_placebo_promoted`; the decision procedure is broken
+  and every recent "win" is suspect; dev-guide §11).
+- **Publication LIVING DRAFT:** the dashboard's publication tab regenerates its
+  deterministic sections every settled round. A promotion whose gate margin sits
+  below the floor is a suspect promotion.
+- **Board-status surface:** the `generalization_gap`
+  (`health/diagnostics.detect_generalization_gap`) and holdout budget panels — a
+  widening gap on a read-side arm (genealogy, calibration, exemplars) is the
+  overfitting alarm those arms exist to be checked against.
+- **Credential/endpoint health.** R.5 is the reason this is now a watch item and
+  not an assumption. Do **not** rely on the loop noticing: §6.6 is the check.
 
-**Abort triggers (each stated as signal → threshold → action; any one fires →
-stop THAT run, log the reason, never silently continue):**
+**Abort triggers (signal → threshold → action; any one fires → stop THAT run,
+log the reason, never silently continue):**
 
 | # | Signal | Threshold | Action |
 |---|---|---|---|
-| 1 | `placebo_promoted` CRITICAL (`detect_placebo_promoted`) | fires once | Abort the run AND freeze that arm — its evidence is void until the coordinator explains it. |
-| 2 | Pre-flight verdict `REFUSE` (signal ≤ floor) at evolve start | verdict == `VERDICT_REFUSE` | Abort the run — the arm's contract cannot out-signal its own noise; surface to coordinator, do not spend rounds. |
-| 3 | `stalled_loop` / zero promotions **on BASE (A0)** across the full 12-round budget (or a stream of gate `inconclusive` dead-letters if the gate were ever enabled) | whole round budget, BASE only | **Halt the WHOLE campaign** — this is a target/endpoint problem, not a knob effect. |
-| 4 | Wall-clock or spend for the arm | > 1.5× the §5 planning estimate | Stop and re-price with the coordinator before continuing (cost variance, §3.4). |
-| 5 | Infra-abort rate (`core/loss.is_infra_abort_cause`, dev-guide §1.6) | dominates real measurements in the run | The run is **void** — re-run it (this counts as the one permitted restart, #below), never average it in. |
+| 1 | `placebo_promoted` CRITICAL | fires once | Abort the run AND freeze that arm — its evidence is void until the coordinator explains it. |
+| 2 | Pre-flight verdict `REFUSE` (signal ≤ floor) at evolve start | verdict == `VERDICT_REFUSE` | Abort the run — the arm's contract cannot out-signal its own noise. |
+| 3 | `stalled_loop` / zero promotions **on the PLANTED-DEFECT arm** | whole round budget | **Halt the WHOLE campaign.** The instrument is dead — R.1. (Zero promotions on a *treatment* arm is an ordinary result on this target and is **not** an abort trigger; R.4.) |
+| 4 | Wall-clock or spend for the arm | > 1.5× the §5 **measured** estimate | Stop and re-price with the coordinator before continuing. |
+| 5 | Infra-abort rate (`core/loss.is_infra_abort_cause`, dev-guide §1.6) | dominates real measurements in the run | The run is **void** — re-run it, never average it in. |
+| 6 | **§6.6 integrity verification fails for a cell** | any VOID round | The **cell** is void. **DELETE and re-run it — never resume.** R.5: resuming appends into the poisoned epoch, which is how a cell ended up with four rounds of which three were void. |
 
 **Crash / restart policy:**
 
-- A run that **crashes** (process death, infra outage, an abort-trigger #5
-  void) is **restarted ONCE** from its own `campaign-<ts>/<arm>/k<seed_index>`
-  workspace (fresh clone, same arm contract).
+- A run that **crashes** (process death, infra outage, an abort-trigger #5 void)
+  is **restarted ONCE** from a **fresh clone** of its
+  `campaign-<ts>/<arm>/k<seed_index>` workspace.
 - **Twice-crashed → record the run as `aborted`** in `runs.jsonl`
-  (`"aborted": true`, `"abort_reason": "<one line>"`). **Never silently drop
-  it.**
-- An **aborted run does NOT get re-seeded** — K shrinks for that arm (e.g. an
-  arm with one abort completes at K=5), and the §7 report **says so
-  explicitly** (the arm's K in the headline table is the *completed* count,
-  with the abort listed in the anomalies section). Do not substitute a fresh
-  seed to "top up" K; that would silently bias the arm.
+  (`"aborted": true, "abort_reason": "<one line>"`). **Never silently drop it.**
+- An **aborted run does NOT get re-seeded** — K shrinks for that arm, and the §7
+  report **says so explicitly**. Do not substitute a fresh seed to "top up" K;
+  that would silently bias the arm. **Note the tension with paired seeds: a
+  shrunk K breaks the pairing for that seed index, so the paired contrast must
+  drop that seed from EVERY arm, not just the aborted one.** Report both counts.
 
 ### 6.5 Data collection (one record per arm×seed run; every field's SOURCE named)
 
 Emit exactly one `runs.jsonl` record (§7.1 schema) per arm×seed run. Pull each
-field from the shipped surface below — no ad-hoc file walks; every source is
-verified present in the tree:
+field from the shipped surface below — no ad-hoc file walks:
 
 | Field | Source (verified in tree) |
 |---|---|
 | `arm`, `seed_index`, `workspace` | executor bookkeeping (the §6.3 workspace path) |
 | `epoch_id` | the epoch opened by `epoch new` (`epoch/lifecycle.current_epoch_id`) |
-| `rounds_completed` | RoundLog fold — count of settled `RoundRecord`s (`epoch/round_log.py:473`) |
-| `promotions` | `tournament/detail.tournament_summary` → `promoted_count` (`detail.py:1256`) |
-| `final_champion_delta_scalar` | `analyzer/report_data.EpochReportData.final_scalar` (`report_data.py:183`) minus the seed scalar |
-| `measured_floor` | `zicato board preflight` A/A floor → `epoch/preflight.noise_floor_max_abs_delta`, persisted via `epoch/lifecycle.set_epoch_noise_floor` (`lifecycle.py:697`) |
-| `delta_in_floor_units` | `final_champion_delta_scalar / measured_floor` (the §3.1 floor-unit statement) |
-| `board_runs` | `builder/operations.estimate_cost.board_runs_per_round` (`operations.py:1232`) × `rounds_completed` — deterministic given the structure (E4, §5) |
-| `llm_calls_estimate` | the §5 envelope (harness ≈ 5/run + aux judge ≈ 1.5/run + aux propose/critique) applied to `board_runs` |
-| `wall_clock_s` | `tournament/detail.tournament_cost` → `total_runtime` (`detail.py:1436`), seconds |
-| `calibration_fraction` | `proposer/calibration.sample_calibration.calibration_fraction` (`calibration.py:122,248`) / `tournament/detail.proposer_calibration_rate` (`detail.py:1013`) |
-| `holdout_confirms`, `holdout_rejects` | RoundLog fold — `HoldoutReleased` events (`epoch/round_log.py:205`) |
-| `placebo_events` | `health/diagnostics.detect_placebo_promoted` count (`diagnostics.py:885`) |
-| `gate_margin_summary` | RoundLog fold — `GateEvaluated.margin` over settled rounds (`epoch/round_log.py:196`), reduced to `{median, max}` |
-| `dashboard_url` | the exact URL `evolve` printed (§6.3), default `http://127.0.0.1:7892` or the run's assigned port |
+| `rounds_completed` | RoundLog fold — count of settled `RoundRecord`s (`epoch/round_log.py`) |
+| **`round_integrity`** | **`zicato epoch rounds --json` (§6.6) — the per-round classification and the cell-acceptance verdict** |
+| `duels` | one per `GateEvaluated` in the epoch's round logs (`epoch/round_log.py`) |
+| **`cell_mean_d`** | **mean over the cell's duels of `champion_scalar − challenger_scalar` off `GateEvaluated` (§3.1) — the PRIMARY endpoint** |
+| `promotions` | `tournament/detail.tournament_summary` → `promoted_count` |
+| `board_runs` | `builder/operations.estimate_cost.board_runs_per_round` × `rounds_completed` — deterministic given the structure (E4, §5) |
+| `wall_clock_s` | `tournament/detail.tournament_cost` → `total_runtime`, seconds |
+| `calibration_fraction` | `proposer/calibration.sample_calibration.calibration_fraction` / `tournament/detail.proposer_calibration_rate` |
+| `holdout_confirms`, `holdout_rejects` | RoundLog fold — `HoldoutReleased` events |
+| `placebo_events` | `health/diagnostics.detect_placebo_promoted` count |
+| `gate_margin_summary` | RoundLog fold — `GateEvaluated.margin_required` over settled rounds, reduced to `{median, max}` |
+| `dashboard_url` | the exact URL `evolve` printed (§6.3) |
 | `aborted`, `abort_reason`, `notes` | executor bookkeeping (§6.4 policy) |
 
-The cross-run roll-up (mean E1 ± CI per arm) is a read over the K closed
-epochs' `EpochReportData` via the ANALYTICAL-INDEX cross-run query layer
-(§3.3) — not a re-derivation from raw telemetry.
+**Do not compute the arm-level statistic from a pooled list of duels.** Reduce
+each cell to `cell_mean_d` first; every arm-level number in §7 is a statistic
+over **cell means** (§3.1b). This is the step whose omission understated every
+SE by ~2×.
+
+### 6.6 Round-completeness verification (integrity, not liveness) — MANDATORY
+
+R.5 is the whole justification: **a cell that reports healthy at the scheduler's
+granularity can be built from truncated data at the endpoint's granularity.**
+Verify every cell at the **round** level before it counts, and again before
+analysis.
+
+zicato ships the reader:
+
+```bash
+# Render the per-round classification with its evidence (human read):
+zicato epoch rounds --workspace .zicato --epoch <epoch_id>
+
+# Gate on it — exit 1 when any round is VOID (the campaign's cell-acceptance rule):
+zicato epoch rounds --workspace .zicato --epoch <epoch_id> --verify
+
+# Machine-readable, for the §7 artifacts:
+zicato epoch rounds --workspace .zicato --epoch <epoch_id> --json
+```
+
+The reader (`src/zicato/epoch/round_integrity.py`) walks
+`epochs/{epoch}/rounds/*/round_log.jsonl` and classifies **every round**:
+
+| Class | Wire token | Meaning | Effect on the cell |
+|---|---|---|---|
+| **COMPLETE** | `complete` | opened **and** closed, with **≥ 1 `gate_evaluated`** | contributes a duel to `cell_mean_d` |
+| **SETTLED-DEGRADED** | `settled_degraded` | closed with a **real measurement** but no gate — the proposer *was* reached and genuinely produced an invalid patch | **accepted**; contributes no duel |
+| **VOID** | `void` | no `gate_evaluated` **and** evidence of hard infra/credential failure — **or** a torn/partial log without its completion marker | **the whole cell is rejected** |
+
+The wire tokens are the ones `--json` emits; §7's artifacts use them verbatim.
+
+**The SETTLED-DEGRADED class is deliberately narrow, and the narrowness is the
+governing rule, quoted here in the form the run report states it:**
+
+> Reject any cell containing a round that both lacks a `gate_evaluated` and
+> carries a hard credential error. **Deliberately narrow:** a round where the
+> proposer *was* reached and genuinely produced an invalid patch is a real
+> measurement and must still be accepted — otherwise a legitimately-degraded arm
+> gets retried to exhaustion.
+
+That is the whole reason the class exists. The loop did its job and the answer
+was "this candidate is no good"; voiding it would spend the arm's retry budget
+re-measuring a result already in hand, which is a different way to bias the same
+comparison. **Only a round that lacks a gate AND carries hard infra evidence is
+void.**
+
+**On the hard-infra vocabulary — it is a FLOOR, not a proof.** The reader
+matches free-text proposer-error strings against a documented marker set
+(`HARD_INFRA_MARKERS`), which is a heuristic over prose the endpoint chooses,
+not a structural fact. Two consequences the executor must understand:
+
+- **It is biased hard against false positives, deliberately.** A false positive
+  voids a *real* measurement and burns the arm's retry budget; a false negative
+  merely falls through to the "closed without a gate and without evidence the
+  proposer was reached" rule, **which still voids a genuine credential lapse** —
+  when the endpoint refuses the request the proposer is never reached at all. So
+  the marker rule mostly buys a **better reason**, not extra coverage. Tokens
+  that could collide with zicato's own vocabulary are excluded on purpose: bare
+  `timeout` (one attempt timing out while a later one returns a real, if
+  invalid, proposal is a real measurement), bare `forbidden` (the proposer's own
+  forbidden-id rejections use that word), and bare numeric status codes (a
+  three-digit run occurs inside ids and offsets). **Do not widen the set in the
+  doc or by editing it in place.**
+- **Widen it per-call instead.** `round_integrity()`, `epoch_round_integrity()`
+  and `classify_round()` each take an `infra_markers` argument; `zicato epoch
+  rounds` runs the default set, so a widened vocabulary means calling the reader
+  directly. If a campaign's endpoint reports outages in prose the default set
+  does not cover, pass a widened set for that campaign and **record the widening
+  in the run log** — it is a change to the acceptance rule and must be visible
+  in the report, not buried in a config.
+
+**Cell acceptance rule:** a cell is **ACCEPTED iff it contains zero VOID
+rounds**. A rejected cell is **deleted and re-run — never resumed** (§6.4
+trigger 6).
+
+**Two properties of this check that are not optional:**
+
+1. **It renders its evidence.** The default output shows, per round, why the
+   classification was made — including the matched infra-error string verbatim.
+   A boolean "healthy" is exactly the surface that reported 144/144 on unusable
+   data.
+2. **It runs at the endpoint's granularity.** Cell-level accounting cannot see
+   83 missing gates across 496 rounds. If a future campaign's endpoint consumes
+   something finer than a round, the check moves with it.
+
+**Report the round-level statistic in §7, always** — "N rounds, of which C
+complete / D settled-degraded / V void", per arm. Run 2's headline
+**"144/144 cells, 432 rounds, zero missing gates"** is the shape of an honest
+completeness claim; **"144/144 cells healthy"** is the shape of the claim that
+was wrong twice.
 
 ## 7. The reporting contract (the coordinator's required output format)
 
 **This is what you deliver. Produce every artifact below; make no decisions.**
 You compute the pre-registered statistics; the §4 decision rules are applied by
-the **coordinator**, not you. Do not declare wins, do not flip defaults, do not
-graduate arms — those verdicts are the coordinator's.
+the **coordinator**. Do not declare wins, do not flip defaults, do not graduate
+arms.
 
 ### 7.1 Artifacts (all under `campaign-<ts>/results/`)
 
-**`runs.jsonl`** — one JSON object per arm×seed run, this exact schema
-(fields sourced per §6.5):
+**`runs.jsonl`** — one JSON object per arm×seed run (fields sourced per §6.5):
 
 ```json
-{"arm": "A2", "seed_index": 3, "workspace": "campaign-20260712T0900/A2/k3",
- "epoch_id": "campaign_A2_k3", "rounds_completed": 12, "promotions": 2,
- "final_champion_delta_scalar": 0.83, "delta_in_floor_units": 1.3,
- "measured_floor": 0.64, "board_runs": 240, "llm_calls_estimate": 1180,
- "wall_clock_s": 1042, "calibration_fraction": 0.5, "holdout_confirms": 2,
- "holdout_rejects": 0, "placebo_events": 0,
- "gate_margin_summary": {"median": 0.4, "max": 1.1},
+{"arm": "A2", "seed_index": 3, "workspace": "campaign-20260802T0900/A2/k3",
+ "epoch_id": "campaign_A2_k3", "rounds_completed": 3, "duels": 3,
+ "cell_mean_d": -0.0061,
+ "round_integrity": {"complete": 3, "settled_degraded": 0, "void": 0,
+                     "accepted": true},
+ "promotions": 0, "board_runs": 42, "wall_clock_s": 1042,
+ "calibration_fraction": 0.5, "holdout_confirms": 2, "holdout_rejects": 0,
+ "placebo_events": 0, "gate_margin_summary": {"median": 0.2, "max": 0.2},
  "dashboard_url": "http://127.0.0.1:7892", "aborted": false,
  "abort_reason": null, "notes": ""}
 ```
 
-**`floor.json`** — the per-arm measured A/A floor and the **BASE cross-run sd**
-estimate with its K (the §6.3 run-ordering gate):
+**`floor.json`** — the **derived** floor and the two validity gates. Note the
+shape: the floor is a *contrast*, not a per-arm constant.
 
 ```json
 {
-  "per_arm_floor": { "A0": 0.64, "A1": 0.64, "A2": 0.64, "...": "..." },
-  "base_cross_run_sd": { "value": 0.71, "K": 6, "floor": 0.64,
-                         "ratio_f": 1.11, "exceeds_1_5x": false }
+  "derived_floor": {
+    "formula": "2 * SE(mean d[AA] - mean d[BASE]), cell-clustered",
+    "value": 0.0400, "K_per_arm": 12, "unit": "per-duel d"
+  },
+  "sensitivity": { "contrast": "PD - BASE", "value": 0.1526,
+                   "ci90": [0.1264, 0.1787], "floor_multiple": 3.8,
+                   "verdict": "PASS" },
+  "specificity": { "contrast": "AA - BASE", "value": 0.0013,
+                   "ci90": [-0.0334, 0.0360], "verdict": "PASS" },
+  "board_entry_noise_floor": { "value": 0.64, "source": "board preflight",
+                               "note": "NOT the arm-contrast floor; see §3.2" }
 }
 ```
 
-**`campaign_summary.json`** — per-arm aggregates. The pre-registered statistic
-is **mean `delta_in_floor_units` ± the 90% CI** (§4):
+**`campaign_summary.json`** — per-arm aggregates over **cell means** (§3.1b).
+The pre-registered statistic is **mean `cell_mean_d` vs BASE, with its 90% CI
+and its Holm-adjusted p**:
 
 ```json
 {
-  "A0": { "K_completed": 6, "mean_delta_floor_units": 0.00,
-          "ci90": [-0.40, 0.40], "promotions_total": 5, "rounds_total": 72,
-          "board_runs_total": 1008, "cost_per_promotion_board_runs": 201.6,
-          "mean_calibration_fraction": 0.48, "flags": [] },
-  "A2": { "K_completed": 5, "mean_delta_floor_units": 0.30,
-          "ci90": [-0.15, 0.75], "promotions_total": 4, "rounds_total": 60,
-          "board_runs_total": 1200, "cost_per_promotion_board_runs": 300.0,
-          "mean_calibration_fraction": 0.51,
-          "flags": ["K_shrank_from_abort", "screen_cost_premium"] }
+  "A0":  { "K_completed": 12, "mean_d": 0.0000, "role": "baseline" },
+  "AA":  { "K_completed": 12, "mean_d": 0.0013, "diff_vs_base": 0.0013,
+           "ci90": [-0.0334, 0.0360], "role": "specificity control" },
+  "PD":  { "K_completed": 12, "diff_vs_base": 0.1526,
+           "ci90": [0.1264, 0.1787], "role": "sensitivity control" },
+  "A2":  { "K_completed": 12, "diff_vs_base": 0.0028,
+           "ci90": [-0.0214, 0.0270], "holm_p": 1.000,
+           "promotions_total": 0, "rounds_total": 36, "board_runs_total": 720,
+           "cost_per_promotion_board_runs": null,
+           "round_integrity": {"complete": 36, "settled_degraded": 0, "void": 0},
+           "flags": ["cpp_not_applicable_zero_promotions"] }
 }
 ```
 
-**`CAMPAIGN-REPORT.md`** — the human summary, on this **fixed template** (fill
-the brackets; keep the section order):
+`cost_per_promotion_board_runs` is `null` — **not** a large number and **not**
+omitted — when the arm never promoted (§4 rule 3).
+
+**`CAMPAIGN-REPORT.md`** — the human summary, on this **fixed template**:
 
 ```markdown
-# Campaign <ts> — screening results (K=6 × R=12 × 8 arms)
+# Campaign <ts> — results (K=<K> cells/arm × R=<R> rounds × <n> arms)
 
 Authorization: <verbatim operator go-ahead wording, §6.0>.
-Measured floor: <value> (BASE A/A, board preflight, K=<n> draws).
+Derived floor: <value> = 2 x SE(AA - BASE), cell-clustered, K=<K>.
 
-## Headline table
-| Arm | K | mean Δ (floor units) ± 90% CI | promotions / rounds | board-runs | cost / promotion (board-runs) | calibration frac | flags |
-|-----|---|-------------------------------|---------------------|-----------|-------------------------------|------------------|-------|
-| A0 BASE | 6 | 0.00 ± 0.40 | 5 / 72 | 1008 | 201.6 | 0.48 | — |
-| ...     |   |             |       |      |       |                  |       |
+## Validity gates (READ FIRST — a failure here voids the ranking)
+| gate | contrast | value | 90% CI | floor multiple | verdict |
+|------|----------|-------|--------|----------------|---------|
+| sensitivity | PD - BASE  | | | | |
+| specificity | AA - BASE  | | | | |
 
-## The sd-vs-floor finding (§3.2 / §6.3 gate)
-BASE cross-run sd = <value> over K=6; floor = <value>; ratio f = <value>.
-<"f ≤ 1.5 → flip bar trustworthy as written" | "f > 1.5 → PAUSED, coordinator
-confirmed <how> before remaining arms launched">.
+## Round integrity (§6.6)
+<total rounds>, of which <complete> complete / <degraded> settled-degraded /
+<void> void. Cells accepted: <n>/<N>. Cells deleted-and-re-run: <n>.
 
-## Per-arm narratives (one paragraph each, A0…A7 + extension arms)
-<arm>: <what the numbers show — Δ in floor units, CI overlap with A0,
-promotions, cost, any calibration/holdout/placebo notes. No verdict.>
+## Headline table (cell-clustered; every number is a statistic over CELL MEANS)
+| Arm | K | mean d vs BASE | 90% CI | Holm p | promotions / rounds | board-runs | cost/promotion | flags |
+|-----|---|----------------|--------|--------|---------------------|-----------|----------------|-------|
+
+## Per-arm narratives (one paragraph each)
+<arm>: <what the numbers show — diff vs BASE, CI, Holm p, promotions, cost,
+any calibration/holdout/placebo notes. No verdict.>
 
 ## Anomalies
-<aborts (arm, seed, reason, resulting K), abort-trigger fires, sd pause,
-endpoint throttling, anything that departed from the plan.>
+<aborts (arm, seed, reason, resulting K), abort-trigger fires, void cells and
+their re-runs, endpoint throttling, anything that departed from the plan.>
 
 ## Artifact inventory
 - runs.jsonl (<n> records)
@@ -928,21 +1439,25 @@ endpoint throttling, anything that departed from the plan.>
 
 Send the coordinator, in one message:
 
-1. **The headline table** (the §7.1 `CAMPAIGN-REPORT.md` table, inline).
-2. **The BASE sd finding** — one line: sd, floor, ratio `f`, and whether the
-   §6.3 pause fired.
-3. **Aborts / anomalies** — each with a **one-line cause** (arm, seed,
-   trigger, resulting K).
-4. **The artifact paths** (`campaign-<ts>/results/…`).
-5. **Explicitly: NO decision-making and NO raw dumps.** You computed the
-   pre-registered statistics; the **§4 decision rules are the coordinator's to
-   apply**. Do not paste raw `runs.jsonl` into the message — reference the file.
+1. **The validity-gate table first.** If either gate fails, say so before
+   anything else and label the ranking VOID.
+2. **The round-integrity line** (§6.6) — total rounds, the three counts, cells
+   accepted, cells deleted-and-re-run. **Never report cell health alone.**
+3. **The headline table**, stated as statistics over cell means.
+4. **Aborts / anomalies** — each with a one-line cause (arm, seed, trigger,
+   resulting K, and the paired-seed consequence per §6.4).
+5. **The artifact paths** (`campaign-<ts>/results/…`).
+6. **Explicitly: NO decision-making and NO raw dumps.** The §4 decision rules
+   are the coordinator's to apply. Do not paste raw `runs.jsonl` — reference it.
 
-**Progress cadence:** send **one status report per completed ARM** (its
-per-arm row + any anomaly), **not per round**. The BASE-arm status report
-additionally carries the §6.3 sd-vs-floor gate result (and, if `f > 1.5`, is
-the message that PAUSES for coordinator confirmation before the remaining
-arms).
+**Language discipline for every inconclusive arm:** write *"no effect larger
+than <floor>"*, never *"no effect"* (§4). The distinction is the difference
+between a result and an overclaim.
+
+**Progress cadence:** send **one status report per completed ARM** (its per-arm
+row + any anomaly), **not per round**. The A/A + BASE status report additionally
+carries the **derived floor and the specificity gate** — and it is the message
+that PAUSES the campaign if specificity fails, before any treatment arm is read.
 
 ## 8. Cross-references
 
@@ -950,11 +1465,14 @@ arms).
 |---|---|
 | The knob defaults + validation + omit-at-default | `src/zicato/core/scoring_config.py` (`ProposerQualityConfig`, `recommended_scaffold_weights`) |
 | Cost-meter semantics (board runs, aux calls, screen/recombine terms) | `src/zicato/builder/operations.py::estimate_cost` |
+| The round event log + the `d` endpoint's source events | `src/zicato/epoch/round_log.py` (`GateEvaluated`, `HarnessLoaded`) |
+| **Round-completeness verification (§6.6)** | `src/zicato/epoch/round_integrity.py`, `zicato epoch rounds` |
 | Breadth/depth role wiring (why roles are runtime, not contract) | `src/zicato/proposer/best_of_n.py`, `src/zicato/models_config.py` |
 | Noise doctrine, A/A floor, replication power, planted-delta method | dev-guide `04-evaluation-statistics.md` §§3,4,13 |
+| The live MDE ladder that pins §3's two-sample numbers | `docs/design/EVAL-VIEW.md` §4.3, `src/zicato/query/eval_view.py` |
 | Offline power-harness precedent + report style | `tests/test_decision_procedure_power.py`, `tools/cascade_oc.py` |
 | The dogfood ladder (target_0 dry-run → target_1 live) | `docs/design/DOGFOOD-TARGETS.md` §1 |
 | The analytics that consume the results | `docs/design/PUBLICATION.md`, `docs/design/ANALYTICAL-INDEX.md`, `tournament/detail.py` |
-| Recombination known-answer oracle (why recombine ranks #1) | dev-guide `04` §1.8, `tests/test_recombination_known_answer.py` |
+| Recombination known-answer oracle (why recombine ranked #1 a priori) | dev-guide `04` §1.8, `tests/test_recombination_known_answer.py` |
 | Overfitting boundary rules (why process_exemplars ranks last) | `docs/design/OVERFITTING.md`, dev-guide `04` §12 |
 | The live-run gate | dev-guide `14-goals-and-roadmap.md` §"Endpoint-gated backlog"; the G3 gate above |
