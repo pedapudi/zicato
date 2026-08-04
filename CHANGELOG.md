@@ -1,5 +1,27 @@
 # Changelog
 
+### Round-completeness verification: liveness is not integrity (issue #97)
+
+A long parallel measurement sweep lost its model-endpoint credentials
+mid-run. The cell straddling the outage did not fail cleanly: it kept the
+rounds that had already run, satisfied a "did we reach the model?"
+liveness probe, was marked complete, and contributed a mean built from
+fewer duels than its peers. Cell-level accounting reported every cell
+healthy while 83 of 496 rounds had emitted no `gate_evaluated` at all —
+and the loss was correlated with the arm being measured, so it biased the
+baseline the whole comparison was anchored to. `zicato.epoch.round_integrity`
+is the check at the granularity the ENDPOINT consumes: a pure reader over
+`epochs/{epoch}/rounds/*/round_log.jsonl` that classifies every round
+COMPLETE (settled with a gate), SETTLED-DEGRADED (settled without a gate,
+but the proposer was reached and returned an invalid patch — a real
+measurement of a degraded arm), or VOID (a torn or partial log, or a
+gateless round carrying a hard infra error). The degraded class is
+deliberately narrow: voiding it would send a legitimately-degraded arm
+around the retry loop to exhaustion. A cell is accepted iff it contains
+zero VOID rounds. `zicato epoch rounds` renders the per-round evidence —
+matched error strings verbatim, never a bare boolean — with `--verify` for
+the exit code and `--json` for a harness.
+
 ### The holdout confirmation gets its own bounds (issue #118)
 
 `promote_margin` served as both the Rule 1 train threshold and the

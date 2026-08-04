@@ -358,6 +358,7 @@ Commands:
   gc        Prune settled-rejected generation source trees (dry-run by default).
   list      List every epoch in the workspace.
   new       Create a new epoch and make it current.
+  rounds    Verify every round of an epoch actually produced a measurement.
   set-goal  Set or overwrite the goal field on an existing epoch.
   switch    Point the current-epoch marker at EPOCH_ID.
 
@@ -450,6 +451,38 @@ Options:
                           is prompted for one line; in non-TTY contexts the goal
                           defaults to the empty string.
   --help                  Show this message and exit.
+
+===== zicato epoch rounds --help =====
+Usage: zicato epoch rounds [OPTIONS]
+
+  Check ROUND-BY-ROUND that an epoch measured what it claims to have.
+
+  Liveness is not integrity. A loop that exits cleanly, and even one that
+  demonstrably reached the model, can still have settled rounds that produced no
+  duel — an endpoint outage mid-run leaves earlier rounds intact and later ones
+  empty, and a mean built from the survivors is not a smaller measurement, it is
+  a different one. This reads the durable per-round event logs
+  (`epochs/{epoch}/rounds/{round}/round_log.jsonl`) and classifies every round
+  as `complete` (settled with a gate evaluation), `settled_degraded` (settled
+  with no gate, but the proposer was reached and returned an invalid patch — a
+  real measurement), or `void` (a torn log, a hard credential/transport failure,
+  or a round that closed with neither a measurement nor an explanation).
+
+  The cell-acceptance rule: an epoch is ACCEPTED iff it contains zero void
+  rounds. Pass --verify to make that verdict the exit code.
+
+  Read-only — it opens no network connection and writes nothing.
+
+Options:
+  --workspace TEXT  Path to the zicato workspace directory.  [default: .zicato]
+  --epoch TEXT      The epoch to verify. Defaults to the workspace's current
+                    epoch.
+  --verify          Make the verdict load-bearing: exit 1 when the epoch is NOT
+                    accepted (any void round). Without this flag the command is
+                    pure inspection and always exits 0.
+  --json            Emit the report as JSON (rounds, per-status counts, and the
+                    acceptance verdict) for a measurement protocol to consume.
+  --help            Show this message and exit.
 
 ===== zicato epoch set-goal --help =====
 Usage: zicato epoch set-goal [OPTIONS]

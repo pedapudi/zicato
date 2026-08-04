@@ -12,6 +12,7 @@ Surface:
   zicato epoch list
   zicato epoch switch <epoch_id>
   zicato epoch gc [<epoch_id>] (--keep-last <n> | --keep-promoted-only) [--apply]
+  zicato epoch rounds [--epoch <id>] [--verify] [--json]
 
 This module is thin — every command is one Click handler that calls
 into :mod:`zicato.epoch.lifecycle`. There is no business logic here;
@@ -511,6 +512,77 @@ def set_goal_cmd(epoch_id: str, goal: str, workspace: str) -> None:
     # writes are keyed upserts so the other rows are no-ops.
     repair_epoch_goals(ws)
     click.echo(f"Set goal for epoch {cfg.id}.")
+
+
+@epoch_grp.command(
+    "rounds",
+    short_help="Verify every round of an epoch actually produced a measurement.",
+)
+@click.option(
+    "--workspace",
+    default=".zicato",
+    show_default=True,
+    help="Path to the zicato workspace directory.",
+)
+@click.option(
+    "--epoch",
+    "epoch_id",
+    default=None,
+    help="The epoch to verify. Defaults to the workspace's current epoch.",
+)
+@click.option(
+    "--verify",
+    is_flag=True,
+    default=False,
+    help="Make the verdict load-bearing: exit 1 when the epoch is NOT "
+    "accepted (any void round). Without this flag the command is pure "
+    "inspection and always exits 0.",
+)
+@click.option(
+    "--json",
+    "as_json",
+    is_flag=True,
+    default=False,
+    help="Emit the report as JSON (rounds, per-status counts, and the "
+    "acceptance verdict) for a measurement protocol to consume.",
+)
+def rounds_cmd(workspace: str, epoch_id: str | None, verify: bool, as_json: bool) -> None:
+    """Check ROUND-BY-ROUND that an epoch measured what it claims to have.
+
+    Liveness is not integrity. A loop that exits cleanly, and even one
+    that demonstrably reached the model, can still have settled rounds
+    that produced no duel — an endpoint outage mid-run leaves earlier
+    rounds intact and later ones empty, and a mean built from the
+    survivors is not a smaller measurement, it is a different one. This
+    reads the durable per-round event logs
+    (`epochs/{epoch}/rounds/{round}/round_log.jsonl`) and classifies
+    every round as `complete` (settled with a gate evaluation),
+    `settled_degraded` (settled with no gate, but the proposer was
+    reached and returned an invalid patch — a real measurement), or
+    `void` (a torn log, a hard credential/transport failure, or a round
+    that closed with neither a measurement nor an explanation).
+
+    The cell-acceptance rule: an epoch is ACCEPTED iff it contains zero
+    void rounds. Pass --verify to make that verdict the exit code.
+
+    Read-only — it opens no network connection and writes nothing.
+    """
+    from zicato.epoch.round_integrity import epoch_round_integrity, render_round_integrity
+
+    ws = _resolve_workspace(workspace)
+    if epoch_id is None:
+        epoch_id = lifecycle.current_epoch_id(ws)
+        if epoch_id is None:
+            raise click.UsageError("no --epoch supplied and no current_epoch marker")
+
+    report = epoch_round_integrity(ws, epoch_id)
+    if as_json:
+        click.echo(json.dumps(report.as_dict(), indent=2, sort_keys=True))
+    else:
+        click.echo(render_round_integrity(report))
+
+    if verify and not report.accepted:
+        raise SystemExit(1)
 
 
 @click.command(
