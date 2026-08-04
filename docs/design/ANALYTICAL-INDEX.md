@@ -921,9 +921,15 @@ the explicit command:
   raises `IndexSchemaNewerError`; auto-deleting it is forbidden, so
   the operator deletes it and rebuilds deliberately.
 - **Post-surgery rebuilds.** After hand-editing canonical files in
-  a way the cheap cursor signals cannot see — correcting a value
-  *inside* an `experiment.json` without changing any file count —
-  a full rebuild is what re-derives the changed cells.
+  a way the cheap cursor signals cannot see. Every signal is a
+  **count**, so the blind spot is precisely *content change at
+  constant cardinality*, and it has two shapes, not one: correcting
+  a value **inside** an `experiment.json`, and **removing one file
+  while adding another** in the same epoch — a generation deleted
+  and a different one created leaves `experiments_count` exactly
+  where it was. Neither is reachable from the loop, which only ever
+  appends; both are reachable from a human with an editor. A full
+  rebuild is what re-derives the changed cells.
 - **Determinism assertion.** Proving the index equals a pure
   re-projection of the files (what the REINDEX-DUMP parity gate
   does) requires the from-scratch path by definition.
