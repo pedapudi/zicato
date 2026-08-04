@@ -54,11 +54,13 @@ independently re-tallies a run's events JSONL.
 
 from __future__ import annotations
 
+import contextlib
 import datetime as _dt
 import json
 import logging
 import os
 import sqlite3
+import uuid
 from collections.abc import Iterable
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -1730,14 +1732,83 @@ def _unlink_db(path: Path) -> None:
         path.with_name(path.name + suffix).unlink(missing_ok=True)
 
 
+def _build_tmp_path(target: Path) -> Path:
+    """A scratch path for ONE build, unique to this process and call.
+
+    Unique rather than a fixed ``{target}.tmp`` because builders are NOT
+    serialised against each other. Evolve's build runs under the workspace
+    lock, but the dashboard's (``dashboard/server.py::_ensure_index_at_startup``)
+    only SKIPS when it observes a held lock — two dashboards racing, or one
+    whose lock read lost the window to a starting evolve, both build.
+
+    A shared scratch path makes that race destructive rather than merely
+    wasteful, because a build is not a moment: the second builder's
+    :func:`_unlink_db` removes the inode the first is still writing into,
+    the first's :func:`os.replace` then renames whatever now sits at the
+    path — the second's HALF-BUILT database — onto the live index, and the
+    sidecar unlink that follows deletes the WAL holding the rest of it.
+    The observed result is a valid, EMPTY ``index.db`` (``user_version=0``,
+    zero tables) installed by the self-healing path itself, with no
+    exception raised anywhere. A partial build lands the worse shape: a
+    correct ``user_version`` over missing rows, which :func:`_rebuild_reason`
+    has no reason to rebuild.
+
+    With a unique path the race costs duplicated work and nothing else:
+    each builder derives a COMPLETE database into its own file and
+    ``os.replace`` publishes one of them whole. Last writer wins, and every
+    possible winner is valid.
+    """
+    return target.with_name(f"{target.name}.{os.getpid()}.{uuid.uuid4().hex[:8]}.tmp")
+
+
+def _sweep_stale_build_tmps(target: Path) -> None:
+    """Remove build scratch abandoned by builders that are no longer alive.
+
+    Unique scratch names (:func:`_build_tmp_path`) give up the one virtue of
+    a fixed name: a build killed outright — SIGKILL, an OOM, a pulled plug —
+    used to have its leftovers unlinked by the next build reusing the path.
+    Now nothing reclaims them, and the leftovers are database-sized.
+
+    Liveness is decided by the PID stamped into the name, the same
+    stale-owner test the workspace lock uses (:func:`is_pid_alive`), so a
+    CONCURRENT builder's scratch is never touched — the whole point of the
+    unique name would be lost if the sweep could delete a live build. A name
+    this cannot parse is left alone: unlinking unrecognised files next to the
+    index is not this function's business.
+
+    Best-effort throughout. Reclaiming disk must never be why a build fails.
+    """
+    from zicato.runtime.lock import is_pid_alive  # noqa: PLC0415
+
+    # The pre-unique fixed name, from an index built before this seam
+    # existed. Nothing writes there any more, so it is pure leftover.
+    with contextlib.suppress(OSError):
+        _unlink_db(target.with_name(target.name + ".tmp"))
+    try:
+        candidates = list(target.parent.glob(f"{target.name}.*.tmp"))
+    except OSError:
+        return
+    for entry in candidates:
+        stem = entry.name[len(target.name) + 1 : -len(".tmp")]
+        pid_text = stem.split(".", 1)[0]
+        try:
+            pid = int(pid_text)
+        except ValueError:
+            continue
+        if is_pid_alive(pid):
+            continue
+        with contextlib.suppress(OSError):
+            _unlink_db(entry)
+
+
 def _build_index_atomically(workspace_root: Path, target: Path) -> None:
     """Build the full index beside ``target``, then rename it into place.
 
     The single build path — :func:`rebuild_index` and :func:`ensure_index`
-    both route through it. The whole database is derived into
-    ``{target}.tmp`` and only then :func:`os.replace`\\ d onto ``target``,
-    so a failure at any point during the build leaves the existing index
-    byte-untouched.
+    both route through it. The whole database is derived into a private
+    scratch file (:func:`_build_tmp_path`) and only then
+    :func:`os.replace`\\ d onto ``target``, so a failure at any point during
+    the build leaves the existing index byte-untouched.
 
     That ordering retires a defect class rather than a defect. The previous
     shape unlinked ``index.db`` FIRST and built in place, so any failure
@@ -1746,12 +1817,31 @@ def _build_index_atomically(workspace_root: Path, target: Path) -> None:
     operator runs to RECOVER a bad index. Here the worst case is that the
     old index survives unchanged and the caller sees the exception.
 
-    The replaced file's WAL / SHM sidecars are removed afterwards: they
-    describe the inode that was just swapped out, and leaving them beside a
-    different database is at best meaningless and at worst confusing to a
-    reader that opens the pair.
+    The scratch path is per-build because concurrent builders are possible
+    and are not serialised — see :func:`_build_tmp_path` for what a shared
+    one does to them.
+
+    The outgoing file's WAL / SHM sidecars are removed **before** the
+    rename, and the order is the whole point. They describe the inode that
+    is about to be swapped out, and a WAL is not merely "confusing" beside a
+    different database — SQLite REPLAYS it. Its frames are validated by an
+    internal checksum chain seeded from the WAL header's own salts, with no
+    tie to the main file, so a complete foreign WAL is accepted and its
+    pages — page 1 included, carrying ``user_version`` and the whole schema
+    — are recovered over the file that was just published. Removing the
+    sidecars afterwards leaves a window in which exactly that is on disk: a
+    crash inside it (or a reader opening the pair, which may then CHECKPOINT
+    the foreign frames into the new file and make it permanent) resurrects
+    the OLD index in place of the new one, ``PRAGMA integrity_check`` says
+    ``ok``, and nothing anywhere raises. Clearing them first means the new
+    inode never coexists with a sidecar that is not its own.
+
+    (The SCRATCH file needs no such care — closing the last connection
+    checkpoints its WAL back into the main file and removes the sidecars,
+    which is what makes the renamed file whole.)
     """
-    tmp = target.with_name(target.name + ".tmp")
+    _sweep_stale_build_tmps(target)
+    tmp = _build_tmp_path(target)
     _unlink_db(tmp)
     try:
         conn = sqlite3.connect(str(tmp))
@@ -1780,9 +1870,11 @@ def _build_index_atomically(workspace_root: Path, target: Path) -> None:
         # inherit. The real index is untouched either way.
         _unlink_db(tmp)
         raise
-    os.replace(tmp, target)
+    # BEFORE the rename — see the docstring. A foreign WAL left beside the
+    # published file is replayed over it, not ignored.
     for suffix in ("-wal", "-shm"):
         target.with_name(target.name + suffix).unlink(missing_ok=True)
+    os.replace(tmp, target)
 
 
 def _rebuild_reason(target: Path) -> str | None:

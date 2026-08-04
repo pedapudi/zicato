@@ -290,7 +290,182 @@ def test_a_failed_ensure_build_leaves_no_index_and_no_scratch(
         ensure_index(ws)
 
     assert not (ws / "index.db").exists()
-    assert not (ws / "index.db.tmp").exists()
+    # No scratch of ANY name — the path is per-build, so naming the old fixed
+    # one here would pass without checking anything.
+    assert list(ws.glob("index.db*.tmp")) == []
+
+
+def test_concurrent_builders_cannot_publish_each_others_half_built_database(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Two unserialised builders must not corrupt the index they repair.
+
+    Evolve builds under the workspace lock, but the dashboard's build only
+    SKIPS when it OBSERVES a held lock — two dashboards, or one that lost the
+    read/build window to a starting evolve, both build with nothing between
+    them. On a shared scratch path that is destructive rather than merely
+    wasteful: the second builder's unlink removes the inode the first is
+    still writing into, the first's rename then publishes whatever now sits
+    at the path, and the sidecar unlink that follows deletes the WAL holding
+    the rest of it. The observed result was a valid, EMPTY ``index.db``
+    (``user_version=0``, zero tables) installed by the healing path itself,
+    no exception raised anywhere.
+
+    The barrier guarantees the two builds are genuinely inside their build
+    windows at the same time, which is the only condition the defect needs.
+    """
+    import threading
+
+    import zicato.index.ingest as ingest_mod
+
+    ws = _make_workspace(tmp_path, epoch_ids=("e1", "e2"))
+    real_rebuild_all = ingest_mod._rebuild_all
+    # Both builders have created their scratch file and are inside the walk
+    # before either is allowed to finish.
+    barrier = threading.Barrier(2, timeout=60)
+
+    def _synchronised(conn: object, workspace_root: Path) -> None:
+        barrier.wait()
+        real_rebuild_all(conn, workspace_root)
+
+    monkeypatch.setattr(ingest_mod, "_rebuild_all", _synchronised)
+
+    failures: list[BaseException] = []
+
+    def _build() -> None:
+        try:
+            ensure_index(ws)
+        except BaseException as exc:  # noqa: BLE001 — reported, not swallowed
+            failures.append(exc)
+
+    threads = [threading.Thread(target=_build) for _ in range(2)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=60)
+
+    assert failures == []
+    # Whichever build won the rename, it published a COMPLETE database.
+    conn = sqlite3.connect(str(ws / "index.db"))
+    try:
+        assert conn.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION
+        epochs = {row[0] for row in conn.execute("SELECT epoch_id FROM epochs").fetchall()}
+    finally:
+        conn.close()
+    assert epochs == {"e1", "e2"}
+    assert list(ws.glob("index.db*.tmp")) == []
+
+
+def test_the_outgoing_wal_is_cleared_before_the_rename_not_after(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A foreign WAL beside the published index is REPLAYED, not ignored.
+
+    SQLite validates WAL frames with an internal checksum chain seeded from
+    the WAL header's own salts — nothing ties them to the main file — so a
+    complete WAL from the database that used to be at this path is accepted
+    and recovered over the one that just replaced it, page 1 included. The
+    published index silently becomes the OLD index again: right
+    ``integrity_check``, wrong ``user_version``, wrong tables, and no
+    exception raised anywhere.
+
+    Clearing the sidecars AFTER the rename leaves a WINDOW holding exactly
+    that pair on disk, so this has to be observed from INSIDE the window —
+    asserting on the finished call would pass either way, since the cleanup
+    does happen, just too late. ``os.replace`` is made to die the instant it
+    returns, which is the crash (SIGKILL, OOM, power loss) the ordering has
+    to survive; a reader arriving in the window and CHECKPOINTING the
+    foreign frames makes the same damage permanent without any crash.
+    """
+    import zicato.index.ingest as ingest_mod
+
+    ws = _make_workspace(tmp_path)
+    target = ws / "index.db"
+    target.parent.mkdir(parents=True, exist_ok=True)
+
+    # An OLD index at the target path with a live, un-checkpointed WAL. The
+    # sidecars are captured WHILE the connection is open, because ``close``
+    # checkpoints them away — a crash does not, which is the state being
+    # reconstructed. An empty WAL would prove nothing: it is the populated
+    # frames that get replayed.
+    wal_path = target.with_name("index.db-wal")
+    shm_path = target.with_name("index.db-shm")
+    stale = sqlite3.connect(str(target))
+    stale.execute("PRAGMA journal_mode=WAL")
+    stale.execute("PRAGMA user_version=1")
+    stale.execute("CREATE TABLE stale_marker (x TEXT)")
+    stale.executemany("INSERT INTO stale_marker VALUES (?)", [(f"s{i}",) for i in range(400)])
+    stale.commit()
+    assert wal_path.exists() and wal_path.stat().st_size > 0, "fixture needs a populated WAL"
+    live_wal = wal_path.read_bytes()
+    live_shm = shm_path.read_bytes() if shm_path.exists() else b""
+    stale.close()
+    wal_path.write_bytes(live_wal)
+    if live_shm:
+        shm_path.write_bytes(live_shm)
+
+    # Crash the instant the rename lands — the window, reproduced exactly.
+    real_replace = ingest_mod.os.replace
+
+    def _replace_then_die(src: object, dst: object) -> None:
+        real_replace(src, dst)
+        raise KeyboardInterrupt("killed between the rename and the cleanup")
+
+    monkeypatch.setattr(ingest_mod.os, "replace", _replace_then_die)
+    with pytest.raises(KeyboardInterrupt):
+        rebuild_index(ws)
+    monkeypatch.undo()
+
+    # The published database is the NEW one, and no foreign sidecar survives.
+    assert not target.with_name("index.db-wal").exists()
+    assert not target.with_name("index.db-shm").exists()
+    conn = sqlite3.connect(str(target))
+    try:
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION
+        names = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+    finally:
+        conn.close()
+    assert "stale_marker" not in names, "the outgoing database was recovered over the new one"
+    assert "epochs" in names
+
+
+def test_the_scratch_sweep_reclaims_dead_builds_and_spares_live_ones(
+    tmp_path: Path,
+) -> None:
+    """Unique scratch names give up self-cleaning; the sweep buys it back.
+
+    A build killed outright leaves a database-sized file that no later build
+    will reuse the name of. Liveness is decided by the PID in the name — the
+    same stale-owner test the workspace lock uses — because a sweep that
+    could delete a CONCURRENT builder's scratch would reintroduce exactly the
+    race the unique name exists to prevent.
+    """
+    import os
+
+    from zicato.index.ingest import _sweep_stale_build_tmps
+
+    ws = _make_workspace(tmp_path)
+    target = ws / "index.db"
+
+    dead = target.with_name("index.db.999999.aaaaaaaa.tmp")
+    live = target.with_name(f"index.db.{os.getpid()}.bbbbbbbb.tmp")
+    legacy = target.with_name("index.db.tmp")
+    unrelated = target.with_name("index.db.notes.txt")
+    unparseable = target.with_name("index.db.someone-elses.tmp")
+    for path in (dead, live, legacy, unrelated, unparseable):
+        path.write_bytes(b"scratch")
+    # A dead build's WAL sidecars go with it.
+    dead.with_name(dead.name + "-wal").write_bytes(b"wal")
+
+    _sweep_stale_build_tmps(target)
+
+    assert not dead.exists(), "a dead builder's scratch must be reclaimed"
+    assert not dead.with_name(dead.name + "-wal").exists()
+    assert not legacy.exists(), "the pre-unique fixed name is pure leftover"
+    assert live.exists(), "a LIVE builder's scratch must never be touched"
+    assert unrelated.exists(), "only scratch files are this sweep's business"
+    assert unparseable.exists(), "an unrecognised name is left alone"
 
 
 def test_rebuild_index_still_produces_a_from_scratch_database(tmp_path: Path) -> None:

@@ -665,11 +665,50 @@ silently empty tables.
 
 ```python
 def _build_index_atomically(workspace_root: Path, target: Path) -> None:
-    # 1. clear any leftover {target}.tmp + its -wal/-shm sidecars
-    # 2. build the FULL index into {target}.tmp
-    # 3. os.replace({target}.tmp, target)
-    # 4. unlink the replaced file's stale {target}-wal / {target}-shm
+    # 1. sweep scratch left by builders that are no longer alive
+    # 2. build the FULL index into {target}.{pid}.{uniq}.tmp
+    # 3. unlink the OUTGOING file's {target}-wal / {target}-shm
+    # 4. os.replace({target}.{pid}.{uniq}.tmp, target)
 ```
+
+**Two properties of that sequence are load-bearing, and both were
+learned the hard way.**
+
+*The scratch path is per-build, not `{target}.tmp`.* Builders are not
+serialised against each other: evolve builds under the workspace lock,
+but the dashboard's build (§5.3) only *skips when it observes* a held
+lock, so two dashboards — or one that lost the read/build window to a
+starting evolve — both build. A build is not a moment, and on a shared
+scratch path the overlap is destructive rather than merely wasteful:
+the second builder's cleanup unlinks the inode the first is still
+writing into, the first's `os.replace` then publishes whatever now sits
+at the path (the second's *half-built* database), and the sidecar
+cleanup deletes the WAL holding the rest of it. The observed result was
+a valid, **empty** `index.db` — `user_version=0`, zero tables —
+installed by the self-healing path itself, with no exception raised
+anywhere. A partial rather than empty build lands the worse shape: a
+correct `user_version` over missing rows, which nothing has any reason
+to rebuild. With a per-build path the race costs duplicated work and
+nothing else — each builder derives a complete database into its own
+file and the rename publishes one of them whole. Unique names give up
+the fixed name's accidental self-cleaning, so a sweep reclaims scratch
+whose stamped PID is no longer alive; a *live* builder's scratch is
+never touched, or the race would be back.
+
+*The outgoing sidecars are cleared BEFORE the rename, not after.* A WAL
+left beside a database it does not belong to is **replayed, not
+ignored**. SQLite validates WAL frames with an internal checksum chain
+seeded from the WAL header's own salts, with nothing tying them to the
+main file, so a complete WAL from the database that used to be at this
+path is accepted and recovered over the one that just replaced it —
+page 1 included, carrying `user_version` and the whole schema. Clearing
+the sidecars afterwards leaves a window in which exactly that pair is
+on disk: a crash inside it, or a reader that opens the pair and
+*checkpoints* the foreign frames into the new file, silently resurrects
+the **old** index in place of the new one. `PRAGMA integrity_check`
+returns `ok` — it is a perfectly valid database, just the wrong one.
+Clearing first means the new inode never coexists with a sidecar that
+is not its own.
 
 This structurally retires a whole defect class. The previous shape
 unlinked `index.db` *first* and then built in place, so any failure
