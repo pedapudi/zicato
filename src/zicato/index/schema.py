@@ -36,6 +36,12 @@ The tables are all derived from canonical workspace files:
 * ``pareto_frontier`` — from each epoch's ``pareto_frontier.json``
   (``docs/design/PARETO-FRONTIER.md``). Derived, read-only, and never
   consulted by the loop.
+
+The single exception to "every table is derived from a canonical file" is
+``ingest_cursors`` (v14): it records what the WORKSPACE looked like when each
+epoch was last projected, which is the one fact the workspace itself does not
+carry. It exists so the index can notice its own staleness cheaply — see
+``docs/design/ANALYTICAL-INDEX.md`` §5.
 """
 
 from __future__ import annotations
@@ -45,7 +51,7 @@ import sqlite3
 #: Bump this whenever the table/column shape below changes. Stamped
 #: into ``PRAGMA user_version`` and the ``schema_meta`` table by
 #: :func:`apply_schema`.
-SCHEMA_VERSION = 13
+SCHEMA_VERSION = 14
 
 
 class IndexSchemaNewerError(RuntimeError):
@@ -248,6 +254,22 @@ _TABLE_STATEMENTS: tuple[str, ...] = (
       PRIMARY KEY (reflection_id, judge_name)
     )
     """,
+    # The one table that is NOT a projection of a canonical file: it records
+    # what the WORKSPACE looked like when each epoch was last projected, so
+    # ``validate_index`` can spot a diverged epoch from four cheap directory
+    # counts instead of re-deriving every row. Appended LAST so its arrival
+    # leaves every earlier table's position in ``sqlite_master`` — and hence
+    # in the REINDEX-DUMP golden — unmoved. See ANALYTICAL-INDEX.md §5.2.
+    """
+    CREATE TABLE IF NOT EXISTS ingest_cursors (
+      epoch_id TEXT PRIMARY KEY,
+      experiments_count INTEGER,
+      round_dirs_count INTEGER,
+      reflections_count INTEGER,
+      lineage_generations_count INTEGER,
+      last_ingested_at TEXT
+    )
+    """,
 )
 
 
@@ -447,6 +469,25 @@ _V11_ADDED_TABLES: tuple[str, ...] = ("reflections", "judge_scorecards")
 _V12_ADDED_COLUMNS: tuple[tuple[str, str, str], ...] = (("generations", "elo_se", "REAL"),)
 
 
+#: The table added in v14 (the self-healing index; ANALYTICAL-INDEX.md §5.2).
+#: ``ingest_cursors`` records, per epoch, the cheap workspace signals that were
+#: true when that epoch was last projected, so :func:`zicato.index.ingest
+#: .validate_index` can detect a diverged epoch from four directory counts
+#: rather than re-deriving every row. Like the v11 and v13 waves this is a
+#: WHOLE NEW TABLE, so the ``CREATE TABLE IF NOT EXISTS`` pass in
+#: :func:`apply_schema` materialises it on any open and no column ALTER is
+#: needed — an existing v13 database simply gains the empty table.
+#:
+#: An empty cursor table reads as "every epoch diverged", which is the correct
+#: conservative answer for a database that predates the feature: the first
+#: heal re-projects each epoch once and writes its cursor, and every heal after
+#: that is a no-op. That is also why a v13 → v14 in-place open is safe even
+#: though :func:`zicato.index.ingest.ensure_index` would otherwise rebuild an
+#: older-version file wholesale — the incremental ``ingest_*`` writers still
+#: migrate in place, exactly as they have since v2.
+_V14_ADDED_TABLES: tuple[str, ...] = ("ingest_cursors",)
+
+
 def apply_schema(conn: sqlite3.Connection) -> None:
     """Create every table + index + stamp the schema version.
 
@@ -472,13 +513,7 @@ def apply_schema(conn: sqlite3.Connection) -> None:
     OLDER database forward.)
     """
     current = read_schema_version(conn)
-    if current > SCHEMA_VERSION:
-        raise IndexSchemaNewerError(
-            f"index database schema is v{current}, newer than this build's "
-            f"v{SCHEMA_VERSION}; refusing to re-stamp it down. Upgrade "
-            "zicato, or delete the index database and run `zicato reindex` "
-            "(the index is derived — a rebuild loses nothing)."
-        )
+    raise_if_newer(current)
     # Step the v1 -> v2 migration first so an older file's CREATE TABLE
     # statement (a no-op because the table already exists) does not skip
     # adding the new columns. Then the IF-NOT-EXISTS statements below
@@ -504,6 +539,24 @@ def apply_schema(conn: sqlite3.Connection) -> None:
         ("zicato analytical index — derived, rebuildable from .zicato/ files",),
     )
     conn.commit()
+
+
+def raise_if_newer(current: int) -> None:
+    """Raise :class:`IndexSchemaNewerError` when ``current`` outranks this build.
+
+    The one place the downgrade refusal is worded. :func:`apply_schema` calls
+    it before touching a byte, and :func:`zicato.index.ingest.ensure_index`
+    calls it on the version it reads through a read-only handle — so the
+    auto-build path refuses a newer database with exactly the message the
+    write path has always used, rather than a second paraphrase of it.
+    """
+    if current > SCHEMA_VERSION:
+        raise IndexSchemaNewerError(
+            f"index database schema is v{current}, newer than this build's "
+            f"v{SCHEMA_VERSION}; refusing to re-stamp it down. Upgrade "
+            "zicato, or delete the index database and run `zicato reindex` "
+            "(the index is derived — a rebuild loses nothing)."
+        )
 
 
 def _table_exists(conn: sqlite3.Connection, table: str) -> bool:
@@ -626,7 +679,10 @@ def _migrate_inplace(conn: sqlite3.Connection) -> None:
     # adds the ``generations.elo_se`` rating-uncertainty column. v13 adds
     # another WHOLE table (``pareto_frontier``), so it needs no ALTER either —
     # an existing v12 file gains the empty table on open, and the next
-    # ``zicato reindex`` fills it from each epoch's canonical record.
+    # ``zicato reindex`` fills it from each epoch's canonical record. v14 adds
+    # a third WHOLE table (``ingest_cursors``); an existing v13 file gains it
+    # empty, which reads as "every epoch diverged" and so heals itself on the
+    # first ``heal_index`` pass.
     if current < 12:
         for table, column, ddl_type in _V12_ADDED_COLUMNS:
             if not _table_exists(conn, table):
@@ -654,5 +710,6 @@ __all__ = [
     "SCHEMA_VERSION",
     "IndexSchemaNewerError",
     "apply_schema",
+    "raise_if_newer",
     "read_schema_version",
 ]

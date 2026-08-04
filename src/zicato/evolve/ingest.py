@@ -127,6 +127,41 @@ def _index_db_path(workspace_root: Path) -> Path:
     return workspace_root / _INDEX_DB_RELPATH
 
 
+def index_preflight(workspace_root: Path) -> str:
+    """Build an absent/stale index, heal a diverged one; report what happened.
+
+    The ``evolve``-start half of the self-healing index (M3(a);
+    ``docs/design/ANALYTICAL-INDEX.md`` §5.3). Returns ONE operator-facing
+    line naming the action taken — never merely that the preflight ran.
+
+    This is a loop-QUALITY fix, not a convenience. Both index reads in this
+    module — :func:`_load_prior_experiments` (the proposer's experiment
+    memory) and :func:`_load_mutation_track_records` — happen later in the
+    same invocation and are best-effort by design: a stale index does not
+    fail, it silently returns FEWER prior experiments and a thinner track
+    record, and the loop degrades with no error anywhere. Running the heal
+    before the first round is what keeps those reads honest.
+
+    A fresh build makes the heal redundant — the build writes every epoch's
+    cursor as it goes — so the two are reported as alternatives rather than
+    run in sequence.
+
+    Caller wraps this in ``best_effort``: the index is derived, so a
+    preflight failure must never abort a run.
+    """
+    from zicato.index.ingest import ensure_index, heal_index  # noqa: PLC0415
+
+    actions: list[str] = []
+    ensure_index(workspace_root, action_out=actions)
+    built = actions[0] if actions else "present"
+    if built.startswith("built:"):
+        return f"index: built fresh ({built.split(':', 1)[1]})"
+    healed = heal_index(workspace_root)
+    if healed:
+        return "index: healed epochs " + ", ".join(healed)
+    return "index: fresh"
+
+
 def _load_prior_experiments(
     workspace_root: Path,
     epoch_id: str,

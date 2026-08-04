@@ -1,22 +1,30 @@
 """``zicato reindex`` — full rebuild of the SQLite analytical index.
 
-ADVANCED / DEBUGGING — off the happy path. ``zicato evolve`` keeps the
-index up to date as it runs. Run ``zicato reindex`` by hand only to
-rebuild a stale or drifted index.
+ADVANCED / FORENSIC — off the happy path, and no longer part of routine
+operation. Reindexing is automatic: ``zicato evolve`` builds an absent or
+wrong-schema index and re-projects any diverged epoch at its own start, and
+the dashboard builds an absent one when it boots
+(``docs/design/ANALYTICAL-INDEX.md`` §5).
 
-The index (``.zicato/index.db``) is derived data: a queryable
-projection of the canonical workspace files. ``zicato reindex`` drops
-it and rebuilds it from scratch by walking every epoch / generation /
-run under the workspace.
+The index (``.zicato/index.db``) is derived data: a queryable projection of
+the canonical workspace files. ``zicato reindex`` re-derives every row by
+walking every epoch / generation / run under the workspace, into a scratch
+file that is renamed into place on success — so a rebuild that FAILS leaves
+the existing index untouched rather than destroying it.
 
-Operators run this when:
+What still calls for running it by hand (§5.4):
 
-* they want to query the index for the first time on an existing
-  workspace,
-* the index drifted from the files (a manual file edit, a crash mid-
-  dual-write), or
-* :data:`zicato.index.schema.SCHEMA_VERSION` was bumped and the old
-  database is stale.
+* **Downgrade recovery** — an index written by a NEWER zicato raises
+  ``IndexSchemaNewerError`` and is never auto-deleted; the operator deletes
+  it and rebuilds deliberately.
+* **Post-surgery rebuilds** — after hand-editing a value INSIDE a canonical
+  file without changing any file count, which the cheap per-epoch cursors
+  cannot see.
+* **Determinism assertion** — proving the index equals a pure re-projection
+  of the files (what the REINDEX-DUMP parity gate does) needs the
+  from-scratch path by definition.
+* **Anything broader than one epoch** — the automatic heal's unit is the
+  epoch.
 
 The command is thin — it resolves the workspace path, calls
 :func:`zicato.index.ingest.rebuild_index`, and prints a row-count
@@ -50,9 +58,16 @@ from zicato.index.query import index_counts
 def reindex_cmd(workspace: str) -> None:
     """Advanced: rebuild the SQLite analytical index from workspace files.
 
-    Off the happy path — `zicato evolve` keeps the index current.
-    Drops index.db and re-derives every row from the canonical files
-    under the workspace. Prints a summary of how many epochs,
+    Off the happy path. Routine reindexing is AUTOMATIC — `zicato evolve`
+    builds an absent or wrong-schema index and re-projects any diverged
+    epoch at its own start, and the dashboard builds an absent one when it
+    boots. Reach for this command for downgrade recovery, after hand-editing
+    a value inside a canonical file, or to assert the index is a pure
+    re-projection of the files.
+
+    Re-derives every row from the canonical files under the workspace, into
+    a scratch file renamed into place on success — a failed rebuild leaves
+    the existing index untouched. Prints a summary of how many epochs,
     generations, and runs were indexed.
     """
     ws = Path(workspace).resolve()

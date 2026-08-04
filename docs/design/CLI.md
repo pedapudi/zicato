@@ -735,9 +735,16 @@ the gated step that rolls the epoch. Both accept `--workspace` and `--epoch`.
 
 ### `zicato reindex`
 
-Advanced: rebuild the SQLite analytical index from workspace files. `evolve`
-keeps the index current. Drops `index.db` and re-derives every row from the
-canonical files under the workspace, then prints a summary of how many epochs,
+Advanced: rebuild the SQLite analytical index from workspace files. Routine
+reindexing is **automatic** — `evolve` builds an absent or wrong-schema index
+and re-projects any diverged epoch at its own start, and the dashboard builds
+an absent one when it boots (see
+[ANALYTICAL-INDEX.md §5](ANALYTICAL-INDEX.md#5-self-healing-the-index-maintains-itself)).
+Reach for this command for downgrade recovery, after hand-editing a value
+inside a canonical file, or to assert the index is a pure re-projection of the
+files. Re-derives every row from the canonical files under the workspace, into
+a scratch file renamed into place on success — so a failed rebuild leaves the
+existing index untouched — then prints a summary of how many epochs,
 generations, and runs were indexed.
 
 ```

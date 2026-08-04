@@ -1,11 +1,20 @@
 """Build and incrementally update the zicato analytical index.
 
-Three public entry points:
+Public entry points:
 
 * :func:`rebuild_index` — the canonical "rebuild from files" path.
-  Drops ``index.db`` and walks every epoch / generation / run under
-  ``.zicato/``, re-deriving every row from the workspace files. Backs
-  ``zicato reindex``.
+  Re-derives every row by walking every epoch / generation / run under
+  ``.zicato/``, into a scratch file that is renamed over ``index.db``
+  on success. Backs ``zicato reindex``.
+* :func:`ensure_index` — builds the index when it is absent, older than
+  :data:`~zicato.index.schema.SCHEMA_VERSION`, or unreadable, and does
+  nothing otherwise. Runs at ``evolve`` start and at dashboard start.
+* :func:`validate_index` / :func:`heal_index` — compare each epoch's
+  persisted cursor against cheap workspace signals and re-project only
+  the epochs that diverged. Runs at ``evolve`` start. Together with
+  ``ensure_index`` these are why routine ``zicato reindex`` is not a
+  thing an operator should ever have to do
+  (``docs/design/ANALYTICAL-INDEX.md`` §5).
 * :func:`ingest_run` — incrementally upserts one run's ``runs`` /
   ``loss_profiles`` / ``metric_counts`` rows. The orchestrator calls
   this for live dual-write the moment a run's ``loss.json`` lands
@@ -45,19 +54,31 @@ independently re-tallies a run's events JSONL.
 
 from __future__ import annotations
 
+import datetime as _dt
 import json
 import logging
+import os
 import sqlite3
 from collections.abc import Iterable
-from dataclasses import asdict
+from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
 
 from zicato.core.types import Experiment, LossProfile
 from zicato.core.workspace import loss_profile_path
-from zicato.index.schema import apply_schema
+from zicato.index.schema import (
+    SCHEMA_VERSION,
+    apply_schema,
+    raise_if_newer,
+    read_schema_version,
+)
 
 log = logging.getLogger("zicato.index")
+
+
+def _now_iso() -> str:
+    """UTC now as ``YYYY-MM-DDTHH:MM:SSZ`` — the workspace timestamp shape."""
+    return _dt.datetime.now(_dt.UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
 
 def _default_db_path(workspace_root: Path) -> Path:
@@ -1296,9 +1317,12 @@ def rebuild_index(workspace_root: Path, db_path: Path | None = None) -> Path:
     the canonical "rebuild from files" path and backs ``zicato
     reindex``.
 
-    The database file (and its WAL / SHM sidecars) is deleted first so
-    the rebuild starts from an empty schema — the index carries no
-    state that is not in the files, so dropping it loses nothing.
+    The whole database is derived into a scratch file beside the target
+    and renamed into place on success (:func:`_build_index_atomically`),
+    so the result is a from-scratch rebuild — the index carries no state
+    that is not in the files, so dropping the old one loses nothing — but
+    a FAILED rebuild leaves the existing index byte-untouched instead of
+    destroying it.
 
     Idempotent: running it twice produces an identical database.
 
@@ -1318,34 +1342,7 @@ def rebuild_index(workspace_root: Path, db_path: Path | None = None) -> Path:
     """
     target = db_path if db_path is not None else _default_db_path(workspace_root)
     target.parent.mkdir(parents=True, exist_ok=True)
-
-    # Drop the database + WAL/SHM sidecars so the rebuild is from scratch.
-    for suffix in ("", "-wal", "-shm"):
-        sidecar = target.with_name(target.name + suffix)
-        if sidecar.exists():
-            sidecar.unlink()
-
-    conn = sqlite3.connect(str(target))
-    try:
-        conn.execute("PRAGMA journal_mode=WAL")
-        # Same short lock wait every other index connection sets: a rebuild
-        # racing a live reader (dashboard / supervisor) should queue behind
-        # the lock briefly rather than fail immediately with
-        # "database is locked".
-        conn.execute("PRAGMA busy_timeout=5000")
-        apply_schema(conn)
-        _rebuild_all(conn, workspace_root)
-        # The read-only Elo analytics fold runs AFTER every tournament has
-        # been ingested (it reads the full match ledger off the
-        # ``tournaments`` rows). It only ever writes the additive
-        # ``generations.elo`` / ``generations.elo_games`` columns — Elo is
-        # for visibility, never for the gate — and never touches a
-        # decision/loss. A best-effort guard keeps a fold failure from
-        # aborting an otherwise-complete rebuild.
-        _fold_elo(conn)
-        conn.commit()
-    finally:
-        conn.close()
+    _build_index_atomically(workspace_root, target)
     return target
 
 
@@ -1365,8 +1362,39 @@ def _fold_elo(conn: sqlite3.Connection) -> None:
         return
 
 
-def _rebuild_all(conn: sqlite3.Connection, workspace_root: Path) -> None:
-    """Walk the whole workspace, populating every table.
+@dataclass(frozen=True, slots=True)
+class _EpochWalkItem:
+    """One epoch as the canonical rebuild sees it.
+
+    ``config`` is the typed :class:`zicato.core.types.EpochConfig` when the
+    epoch has a readable ``config.json``, and ``None`` for a thin epoch known
+    only to ``lineage.json``. ``lineage_entry`` is that epoch's raw lineage
+    dict, or ``None`` when the epoch has a directory but no lineage row yet.
+    """
+
+    epoch_id: str
+    lineage_entry: dict[str, Any] | None
+    config: Any | None
+
+
+def _lineage_by_epoch(workspace_root: Path) -> dict[str, dict[str, Any]]:
+    """Index ``lineage.json``'s epoch entries by id; ``{}`` when unreadable."""
+    from zicato.epoch.lineage import load_lineage  # noqa: PLC0415
+
+    try:
+        lineage = load_lineage(workspace_root)
+    except (OSError, json.JSONDecodeError):
+        return {}
+    out: dict[str, dict[str, Any]] = {}
+    for entry in lineage.get("epochs", []):
+        eid = entry.get("id")
+        if isinstance(eid, str):
+            out[eid] = entry
+    return out
+
+
+def _walk_epochs(workspace_root: Path) -> list[_EpochWalkItem]:
+    """Enumerate every epoch, in the canonical rebuild's order.
 
     Epoch enumeration + ordering come from the canonical workspace-read
     layer (:func:`zicato.workspace.iter_epochs`), whose timestamp-first /
@@ -1374,39 +1402,45 @@ def _rebuild_all(conn: sqlite3.Connection, workspace_root: Path) -> None:
     same one the dashboard uses — so the index never disagrees with the
     rest of the system about which epoch precedes which. Each epoch's
     typed ``config.json`` is then read via
-    :func:`zicato.epoch.lifecycle.load_epoch`. Generation lineage comes
-    from :func:`zicato.epoch.lineage.load_lineage`. Generation directories
-    and run directories are additionally walked so a generation / run
-    whose telemetry landed before lineage was updated is still indexed.
+    :func:`zicato.epoch.lifecycle.load_epoch`; a directory whose config is
+    missing / unreadable falls through to the lineage-only pass (it is a
+    thin auto-created entry), preserving the exact set of epochs the prior
+    ``list_epochs``-driven walk indexed.
+
+    Shared by the full rebuild, :func:`validate_index`, and
+    :func:`heal_index` so all three agree on what "the epochs" are — a heal
+    that walked a different set than the rebuild could not converge with it.
     """
     from zicato.epoch.lifecycle import load_epoch  # noqa: PLC0415
-    from zicato.epoch.lineage import load_lineage  # noqa: PLC0415
     from zicato.workspace import WorkspaceLayout, iter_epochs  # noqa: PLC0415
 
-    lineage = load_lineage(workspace_root)
-    lineage_by_epoch: dict[str, dict[str, Any]] = {}
-    for entry in lineage.get("epochs", []):
-        eid = entry.get("id")
-        if isinstance(eid, str):
-            lineage_by_epoch[eid] = entry
-
-    # Enumerate the ``epochs/`` directory through the canonical layer so the
-    # walk order is the workspace's one timestamp-first authority. Each
-    # directory-bearing epoch with a readable ``config.json`` is indexed
-    # here; a directory whose config is missing / unreadable is left to the
-    # lineage-only pass below (it is a thin auto-created entry), preserving
-    # the exact set of epochs the prior ``list_epochs``-driven walk indexed.
+    lineage_by_epoch = _lineage_by_epoch(workspace_root)
     layout = WorkspaceLayout.from_root(workspace_root)
+    items: list[_EpochWalkItem] = []
     seen_epochs: set[str] = set()
     for epoch in iter_epochs(layout):
         try:
             cfg = load_epoch(workspace_root, epoch.id)
         except (OSError, json.JSONDecodeError, KeyError, TypeError):
-            # No readable config.json — defer to the lineage-only pass so a
-            # thin epoch still gets a row (matching the prior behaviour, where
-            # ``list_epochs`` skipped unreadable configs the same way).
             continue
         seen_epochs.add(epoch.id)
+        items.append(_EpochWalkItem(cfg.id, lineage_by_epoch.get(cfg.id), cfg))
+    for eid, entry in lineage_by_epoch.items():
+        if eid not in seen_epochs:
+            items.append(_EpochWalkItem(eid, entry, None))
+    return items
+
+
+def _upsert_epoch_from_walk(conn: sqlite3.Connection, item: _EpochWalkItem) -> None:
+    """Write the ``epochs`` row for one walked epoch.
+
+    A config-bearing epoch takes every column from its typed
+    ``config.json``. A thin epoch known only to ``lineage.json`` takes what
+    the lineage entry carries and leaves ``goal`` empty — there is no
+    ``config.json`` to read it from.
+    """
+    cfg = item.config
+    if cfg is not None:
         _upsert_epoch(
             conn,
             epoch_id=cfg.id,
@@ -1414,26 +1448,32 @@ def _rebuild_all(conn: sqlite3.Connection, workspace_root: Path) -> None:
             created_at=cfg.created_at,
             closed=cfg.closed,
             goal=cfg.goal,
-            parent_epoch_id=_parent_epoch_id_from_lineage_entry(lineage_by_epoch.get(cfg.id)),
+            parent_epoch_id=_parent_epoch_id_from_lineage_entry(item.lineage_entry),
         )
-        _rebuild_epoch(conn, workspace_root, cfg.id, lineage_by_epoch.get(cfg.id))
+        return
+    entry = item.lineage_entry or {}
+    _upsert_epoch(
+        conn,
+        epoch_id=item.epoch_id,
+        contract_hash="",
+        created_at=str(entry.get("started_at", "")),
+        closed=bool(entry.get("closed_at")),
+        goal="",
+        parent_epoch_id=_parent_epoch_id_from_lineage_entry(item.lineage_entry),
+    )
 
-    for eid, entry in lineage_by_epoch.items():
-        if eid in seen_epochs:
-            continue
-        # Epoch known only to lineage — no config.json. Index a thin
-        # epoch row and still walk its generations / runs. ``goal`` is
-        # left empty because there is no config.json to read it from.
-        _upsert_epoch(
-            conn,
-            epoch_id=eid,
-            contract_hash="",
-            created_at=str(entry.get("started_at", "")),
-            closed=bool(entry.get("closed_at")),
-            goal="",
-            parent_epoch_id=_parent_epoch_id_from_lineage_entry(entry),
-        )
-        _rebuild_epoch(conn, workspace_root, eid, entry)
+
+def _rebuild_all(conn: sqlite3.Connection, workspace_root: Path) -> None:
+    """Walk the whole workspace, populating every table.
+
+    Generation lineage comes from :func:`zicato.epoch.lineage.load_lineage`
+    (via :func:`_walk_epochs`). Generation directories and run directories
+    are additionally walked so a generation / run whose telemetry landed
+    before lineage was updated is still indexed.
+    """
+    for item in _walk_epochs(workspace_root):
+        _upsert_epoch_from_walk(conn, item)
+        _rebuild_epoch(conn, workspace_root, item.epoch_id, item.lineage_entry)
 
 
 def _rebuild_epoch(
@@ -1489,6 +1529,419 @@ def _rebuild_epoch(
     # are canonical; the table is a projection, so the record is fully readable
     # with no index at all (docs/design/PARETO-FRONTIER.md §7).
     _ingest_pareto_frontier_into(conn, workspace_root, epoch_id)
+
+    # Ingest cursor (schema v14): record what the WORKSPACE looked like at the
+    # moment this projection was taken, so a later ``validate_index`` can spot
+    # divergence from four directory counts rather than re-deriving every row.
+    # Written here — the one place both the full rebuild and the incremental
+    # heal converge — so the two paths can never disagree about the cursor.
+    _write_cursor(conn, workspace_root, epoch_id, lineage_entry)
+
+
+# ---------------------------------------------------------------------------
+# Ingest cursors — the per-epoch staleness signal (schema v14)
+# ---------------------------------------------------------------------------
+
+#: The four cheap workspace signals a cursor records, in column order:
+#: ``(experiments, round_dirs, reflections, lineage_generations)``.
+_CursorSignals = tuple[int, int, int, int]
+
+
+def _count_dirs(root: Path) -> int:
+    """Count child DIRECTORIES of ``root``; ``0`` when it is absent/unreadable."""
+    try:
+        return sum(1 for child in root.iterdir() if child.is_dir())
+    except OSError:
+        return 0
+
+
+def _epoch_signals(
+    workspace_root: Path,
+    epoch_id: str,
+    lineage_entry: dict[str, Any] | None,
+) -> _CursorSignals:
+    """Compute one epoch's cheap staleness signals from the workspace.
+
+    Directory-entry counts and stats only — never a file parse. Validation
+    runs at every ``evolve`` start on a workspace that may hold hundreds of
+    generations, so it has to be affordable enough that nobody is tempted to
+    turn it off; re-deriving row content to compare it would not be.
+
+    ``round_dirs_count`` is a signal the index has no table for — nothing
+    projects ``epochs/{e}/rounds/``. It is carried anyway because it is the
+    cheapest proxy for "this epoch advanced": a round directory appears at
+    round start, before the experiment that will eventually land. Healing on
+    it is idempotent, so an eager heal costs a walk and nothing else.
+    """
+    from zicato.core.workspace import (  # noqa: PLC0415
+        experiment_json_path,
+        generations_dir,
+        reflections_dir,
+    )
+    from zicato.epoch.round_log import rounds_dir  # noqa: PLC0415
+
+    experiments = 0
+    gens_root = generations_dir(workspace_root, epoch_id)
+    try:
+        gen_children = sorted(gens_root.iterdir())
+    except OSError:
+        gen_children = []
+    for child in gen_children:
+        if child.is_dir() and experiment_json_path(workspace_root, epoch_id, child.name).is_file():
+            experiments += 1
+
+    lineage_generations = 0
+    for gen in (lineage_entry or {}).get("generations", []):
+        if isinstance(gen, dict) and isinstance(gen.get("id"), str):
+            lineage_generations += 1
+
+    return (
+        experiments,
+        _count_dirs(rounds_dir(workspace_root, epoch_id)),
+        _count_dirs(reflections_dir(workspace_root, epoch_id)),
+        lineage_generations,
+    )
+
+
+def _write_cursor(
+    conn: sqlite3.Connection,
+    workspace_root: Path,
+    epoch_id: str,
+    lineage_entry: dict[str, Any] | None,
+) -> None:
+    """Upsert one epoch's ``ingest_cursors`` row from the current workspace."""
+    signals = _epoch_signals(workspace_root, epoch_id, lineage_entry)
+    conn.execute(
+        "INSERT INTO ingest_cursors("
+        "epoch_id, experiments_count, round_dirs_count, reflections_count, "
+        "lineage_generations_count, last_ingested_at) "
+        "VALUES(?, ?, ?, ?, ?, ?) "
+        "ON CONFLICT(epoch_id) DO UPDATE SET "
+        "experiments_count = excluded.experiments_count, "
+        "round_dirs_count = excluded.round_dirs_count, "
+        "reflections_count = excluded.reflections_count, "
+        "lineage_generations_count = excluded.lineage_generations_count, "
+        "last_ingested_at = excluded.last_ingested_at",
+        (epoch_id, *signals, _now_iso()),
+    )
+
+
+def _refresh_cursor(conn: sqlite3.Connection, workspace_root: Path, epoch_id: str) -> None:
+    """Dual-write companion: bring one epoch's cursor up to date.
+
+    Called from every incremental ``ingest_*`` entry point so a live evolve's
+    cursors track its writes. Without this the cursor would only ever be
+    written by a rebuild or a heal, and every dual-written round would read as
+    divergence at the next validation — turning the cheap incremental heal
+    into a full re-projection of the active epoch on every ``evolve`` start.
+    """
+    _write_cursor(conn, workspace_root, epoch_id, _lineage_by_epoch(workspace_root).get(epoch_id))
+
+
+def _read_cursors(conn: sqlite3.Connection) -> dict[str, _CursorSignals]:
+    """Read every persisted cursor; ``{}`` when the table is absent.
+
+    An absent (or empty) table reads as "every epoch diverged", which is the
+    correct conservative answer for a database written before v14: the first
+    heal re-projects each epoch once and writes its cursor, and every heal
+    after that is a no-op.
+    """
+    try:
+        rows = conn.execute(
+            "SELECT epoch_id, experiments_count, round_dirs_count, "
+            "reflections_count, lineage_generations_count FROM ingest_cursors"
+        ).fetchall()
+    except sqlite3.Error:
+        return {}
+    out: dict[str, _CursorSignals] = {}
+    for row in rows:
+        if isinstance(row[0], str):
+            out[row[0]] = (int(row[1] or 0), int(row[2] or 0), int(row[3] or 0), int(row[4] or 0))
+    return out
+
+
+def _diverged_epochs(
+    workspace_root: Path,
+    cursors: dict[str, _CursorSignals],
+    walk: list[_EpochWalkItem],
+) -> tuple[str, ...]:
+    """Return the sorted ids of epochs whose index rows no longer match disk.
+
+    Three things count as divergence: an epoch on disk with no cursor row, an
+    epoch whose cursor disagrees with any workspace signal, and an epoch that
+    has a cursor row but is GONE from the workspace (the index is holding rows
+    for something that no longer exists).
+    """
+    stale: set[str] = set()
+    on_disk: set[str] = set()
+    for item in walk:
+        on_disk.add(item.epoch_id)
+        recorded = cursors.get(item.epoch_id)
+        if recorded != _epoch_signals(workspace_root, item.epoch_id, item.lineage_entry):
+            stale.add(item.epoch_id)
+    stale.update(set(cursors) - on_disk)
+    return tuple(sorted(stale))
+
+
+#: Every epoch-scoped delete, in dependency order. The three tables that carry
+#: no ``epoch_id`` of their own are reached through their lookup table, and
+#: therefore must be deleted BEFORE that table's own rows are stripped — a
+#: ``metric_counts`` delete that runs after the ``runs`` delete matches nothing
+#: and silently orphans every metric row of the epoch.
+_EPOCH_DELETE_STATEMENTS: tuple[str, ...] = (
+    "DELETE FROM metric_counts WHERE run_id IN (SELECT run_id FROM runs WHERE epoch_id = ?)",
+    "DELETE FROM judge_losses WHERE run_id IN (SELECT run_id FROM runs WHERE epoch_id = ?)",
+    "DELETE FROM judge_scorecards WHERE reflection_id IN "
+    "(SELECT reflection_id FROM reflections WHERE epoch_id = ?)",
+    "DELETE FROM runs WHERE epoch_id = ?",
+    "DELETE FROM loss_profiles WHERE epoch_id = ?",
+    "DELETE FROM reflections WHERE epoch_id = ?",
+    "DELETE FROM patches WHERE epoch_id = ?",
+    "DELETE FROM experiments WHERE epoch_id = ?",
+    "DELETE FROM tournaments WHERE epoch_id = ?",
+    "DELETE FROM pareto_frontier WHERE epoch_id = ?",
+    "DELETE FROM generations WHERE epoch_id = ?",
+    "DELETE FROM epochs WHERE epoch_id = ?",
+    "DELETE FROM ingest_cursors WHERE epoch_id = ?",
+)
+
+
+def _delete_epoch_rows(conn: sqlite3.Connection, epoch_id: str) -> None:
+    """Remove every index row belonging to one epoch, across every table.
+
+    The heal's unit of work. Deleting the ``epochs`` row too (rather than
+    letting the re-projection's upsert overwrite it) is what makes heal and
+    rebuild converge: ``_upsert_epoch`` preserves ``parent_epoch_id`` through
+    ``COALESCE``, so an in-place upsert could keep a parent the workspace no
+    longer claims while a from-scratch rebuild wrote NULL.
+    """
+    for statement in _EPOCH_DELETE_STATEMENTS:
+        conn.execute(statement, (epoch_id,))
+
+
+# ---------------------------------------------------------------------------
+# Self-healing (docs/design/ANALYTICAL-INDEX.md §5)
+# ---------------------------------------------------------------------------
+
+
+def _unlink_db(path: Path) -> None:
+    """Remove a SQLite file and its WAL / SHM sidecars, if present."""
+    for suffix in ("", "-wal", "-shm"):
+        path.with_name(path.name + suffix).unlink(missing_ok=True)
+
+
+def _build_index_atomically(workspace_root: Path, target: Path) -> None:
+    """Build the full index beside ``target``, then rename it into place.
+
+    The single build path — :func:`rebuild_index` and :func:`ensure_index`
+    both route through it. The whole database is derived into
+    ``{target}.tmp`` and only then :func:`os.replace`\\ d onto ``target``,
+    so a failure at any point during the build leaves the existing index
+    byte-untouched.
+
+    That ordering retires a defect class rather than a defect. The previous
+    shape unlinked ``index.db`` FIRST and built in place, so any failure
+    mid-build — an unreadable canonical record, a full disk, a Ctrl-C — left
+    a schema-only file with every table empty, along the very path an
+    operator runs to RECOVER a bad index. Here the worst case is that the
+    old index survives unchanged and the caller sees the exception.
+
+    The replaced file's WAL / SHM sidecars are removed afterwards: they
+    describe the inode that was just swapped out, and leaving them beside a
+    different database is at best meaningless and at worst confusing to a
+    reader that opens the pair.
+    """
+    tmp = target.with_name(target.name + ".tmp")
+    _unlink_db(tmp)
+    try:
+        conn = sqlite3.connect(str(tmp))
+        try:
+            conn.execute("PRAGMA journal_mode=WAL")
+            # Same short lock wait every other index connection sets: a build
+            # racing a live reader (dashboard / supervisor) should queue
+            # behind the lock briefly rather than fail immediately with
+            # "database is locked".
+            conn.execute("PRAGMA busy_timeout=5000")
+            apply_schema(conn)
+            _rebuild_all(conn, workspace_root)
+            # The read-only Elo analytics fold runs AFTER every tournament has
+            # been ingested (it reads the full match ledger off the
+            # ``tournaments`` rows). It only ever writes the additive
+            # ``generations.elo`` / ``generations.elo_games`` columns — Elo is
+            # for visibility, never for the gate — and never touches a
+            # decision/loss. A best-effort guard keeps a fold failure from
+            # aborting an otherwise-complete build.
+            _fold_elo(conn)
+            conn.commit()
+        finally:
+            conn.close()
+    except BaseException:
+        # Leave no half-built scratch file behind for the next build to
+        # inherit. The real index is untouched either way.
+        _unlink_db(tmp)
+        raise
+    os.replace(tmp, target)
+    for suffix in ("-wal", "-shm"):
+        target.with_name(target.name + suffix).unlink(missing_ok=True)
+
+
+def _rebuild_reason(target: Path) -> str | None:
+    """Why ``target`` needs a full build, or ``None`` when it does not.
+
+    One of ``"absent"``, ``"stale-schema"``, ``"unreadable"``. An
+    EQUAL-version database is never a reason: detecting that its *contents*
+    drifted from the workspace is :func:`heal_index`'s job, not this one's.
+
+    Raises :class:`~zicato.index.schema.IndexSchemaNewerError` for a database
+    written by a NEWER build. Auto-deleting it is forbidden — its columns and
+    semantics are unknown here, so the recovery belongs to the operator.
+    """
+    if not target.exists():
+        return "absent"
+    try:
+        conn = sqlite3.connect(f"file:{target}?mode=ro", uri=True)
+    except sqlite3.Error:
+        return "unreadable"
+    try:
+        version = read_schema_version(conn)
+    except sqlite3.DatabaseError:
+        # Not a SQLite database at all (truncated, or some other file that
+        # ended up at this path). A rebuild is the recovery.
+        return "unreadable"
+    finally:
+        conn.close()
+    raise_if_newer(version)
+    return "stale-schema" if version < SCHEMA_VERSION else None
+
+
+def _record_action(action_out: list[str] | None, action: str) -> None:
+    if action_out is not None:
+        action_out.append(action)
+
+
+def ensure_index(
+    workspace_root: Path,
+    db_path: Path | None = None,
+    *,
+    action_out: list[str] | None = None,
+) -> Path:
+    """Guarantee an index of the CURRENT schema exists, building it if not.
+
+    The structural half of the self-healing index (M1;
+    ``docs/design/ANALYTICAL-INDEX.md`` §5.1). On return ``index.db`` exists
+    and carries :data:`~zicato.index.schema.SCHEMA_VERSION`. It builds when —
+    and only when — the file is absent, stamped with an OLDER version, or not
+    a readable SQLite database. An equal-version database is left alone:
+    content drift is :func:`heal_index`'s business.
+
+    An older-version file is REBUILT rather than migrated in place because
+    whole-table additions need a backfill that ``ALTER TABLE`` cannot
+    provide. The v11 reflection tables and the v13 ``pareto_frontier`` table
+    both land empty on an in-place open and stay empty until something walks
+    the files again; a rebuild is the only shape that fills them.
+
+    Parameters
+    ----------
+    workspace_root:
+        The ``.zicato/`` directory to index.
+    db_path:
+        Where the index lives. Defaults to ``{workspace_root}/index.db``.
+    action_out:
+        Optional caller-supplied list this appends exactly one symbolic
+        action to, so a caller can report what happened without re-deriving
+        it: ``"present"``, ``"built:absent"``, ``"built:stale-schema"``, or
+        ``"built:unreadable"``.
+
+    Returns
+    -------
+    Path
+        The path the index lives at.
+
+    Raises
+    ------
+    zicato.index.schema.IndexSchemaNewerError
+        When the existing database was written by a newer zicato.
+    """
+    target = db_path if db_path is not None else _default_db_path(workspace_root)
+    reason = _rebuild_reason(target)
+    if reason is None:
+        _record_action(action_out, "present")
+        return target
+    target.parent.mkdir(parents=True, exist_ok=True)
+    _build_index_atomically(workspace_root, target)
+    _record_action(action_out, f"built:{reason}")
+    return target
+
+
+def validate_index(workspace_root: Path, db_path: Path | None = None) -> tuple[str, ...]:
+    """Return the sorted ids of epochs whose index rows diverged from disk.
+
+    Read-only, and cheap by construction: every epoch's persisted cursor
+    (schema v14) is compared against four directory-entry counts, never
+    against re-derived row content. An empty result means the index agrees
+    with the workspace at cursor granularity.
+
+    A missing database yields ``()`` — there is nothing to validate, and
+    building one is :func:`ensure_index`'s job. A database predating v14 has
+    no cursors, so every epoch reads as diverged; the first
+    :func:`heal_index` re-projects each once and every pass after is a no-op.
+    """
+    target = db_path if db_path is not None else _default_db_path(workspace_root)
+    if not target.exists():
+        return ()
+    try:
+        conn = sqlite3.connect(f"file:{target}?mode=ro", uri=True)
+    except sqlite3.Error:
+        return ()
+    try:
+        conn.execute("PRAGMA busy_timeout=5000")
+        cursors = _read_cursors(conn)
+    except sqlite3.DatabaseError:
+        return ()
+    finally:
+        conn.close()
+    return _diverged_epochs(workspace_root, cursors, _walk_epochs(workspace_root))
+
+
+def heal_index(workspace_root: Path, db_path: Path | None = None) -> tuple[str, ...]:
+    """Re-ingest ONLY the epochs whose index rows diverged from the workspace.
+
+    The incremental half of the self-healing index (M2;
+    ``docs/design/ANALYTICAL-INDEX.md`` §5.2). Each diverged epoch has every
+    one of its rows deleted and is then re-projected through the same
+    :func:`_rebuild_epoch` machinery the full rebuild uses. An epoch that is
+    in the index but gone from the workspace is deleted and not re-projected.
+
+    The Elo fold is re-run over the WHOLE database afterwards: the
+    ``generations.elo*`` columns are a cross-epoch analytics fold, so
+    deleting and re-inserting one epoch's generations nulls them, and only a
+    whole-ledger re-fold restores what a from-scratch rebuild would have
+    produced. Skipping it is how a heal would quietly fail to converge.
+
+    Returns the ids it healed (``()`` when nothing diverged). Idempotent: a
+    second call immediately after the first finds nothing to do.
+    """
+    conn, _ = _open_for_write(workspace_root, db_path)
+    try:
+        walk = _walk_epochs(workspace_root)
+        stale = _diverged_epochs(workspace_root, _read_cursors(conn), walk)
+        if not stale:
+            return ()
+        by_id = {item.epoch_id: item for item in walk}
+        for epoch_id in stale:
+            _delete_epoch_rows(conn, epoch_id)
+            item = by_id.get(epoch_id)
+            if item is None:
+                # Gone from the workspace: the rows are removed, and there is
+                # nothing left on disk to re-project them from.
+                continue
+            _upsert_epoch_from_walk(conn, item)
+            _rebuild_epoch(conn, workspace_root, epoch_id, item.lineage_entry)
+        _fold_elo(conn)
+        conn.commit()
+    finally:
+        conn.close()
+    return stale
 
 
 def _open_for_write(workspace_root: Path, db_path: Path | None) -> tuple[sqlite3.Connection, Path]:
@@ -1549,6 +2002,7 @@ def ingest_run(
     try:
         _upsert_owning_epoch_generation(conn, workspace_root, epoch_id, generation_id)
         _ingest_run_into(conn, workspace_root, epoch_id, generation_id, entry_id)
+        _refresh_cursor(conn, workspace_root, epoch_id)
         conn.commit()
     finally:
         conn.close()
@@ -1580,6 +2034,7 @@ def ingest_experiment(
     try:
         _upsert_owning_epoch_generation(conn, workspace_root, epoch_id, generation_id)
         _ingest_experiment_into(conn, workspace_root, epoch_id, generation_id)
+        _refresh_cursor(conn, workspace_root, epoch_id)
         conn.commit()
     finally:
         conn.close()
@@ -1608,6 +2063,9 @@ def ingest_field_tournament(
     conn, _ = _open_for_write(workspace_root, db_path)
     try:
         _upsert_field_tournament(conn, record)
+        epoch_id = record.get("epoch_id")
+        if isinstance(epoch_id, str) and epoch_id:
+            _refresh_cursor(conn, workspace_root, epoch_id)
         conn.commit()
     finally:
         conn.close()
@@ -1635,6 +2093,7 @@ def ingest_reflection(
     conn, _ = _open_for_write(workspace_root, db_path)
     try:
         _ingest_reflection_into(conn, workspace_root, epoch_id, reflection_id)
+        _refresh_cursor(conn, workspace_root, epoch_id)
         conn.commit()
     finally:
         conn.close()
@@ -1656,6 +2115,7 @@ def ingest_pareto_frontier(
     conn, _ = _open_for_write(workspace_root, db_path)
     try:
         _ingest_pareto_frontier_into(conn, workspace_root, epoch_id)
+        _refresh_cursor(conn, workspace_root, epoch_id)
         conn.commit()
     finally:
         conn.close()
@@ -2089,10 +2549,14 @@ def backfill_tournament_fk(
 
 __all__ = [
     "rebuild_index",
+    "ensure_index",
+    "validate_index",
+    "heal_index",
     "ingest_run",
     "ingest_experiment",
     "ingest_field_tournament",
     "ingest_reflection",
+    "ingest_pareto_frontier",
     "backfill_generations",
     "repair_epoch_goals",
     "backfill_tournament_fk",

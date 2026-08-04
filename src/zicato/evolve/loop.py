@@ -560,6 +560,20 @@ async def evolve_n_rounds(
     # orchestrators from corrupting the same workspace; the beater writes
     # ``heartbeat.json`` so the supervisor binary can detect a wedge.
     lock = acquire_workspace_lock(workspace_root, instance_id)
+    # Analytical-index preflight (ANALYTICAL-INDEX.md §5.3): build an absent
+    # or wrong-schema index, then re-project only the epochs whose cursors
+    # disagree with the workspace. Placed HERE, inside the lock, rather than
+    # beside the other preflights above: §5.3's concurrency rule is that a
+    # build or heal runs only under the workspace-lock discipline, and the
+    # preflights above run before the lock is held. The proposer's experiment
+    # memory and mutation track record read this index later in the same
+    # invocation, so a stale one silently thins them. Best-effort — the index
+    # is derived, so a preflight failure must never abort a run.
+    with best_effort(
+        "index self-heal preflight",
+        on_error=lambda exc: log.debug("index self-heal preflight skipped: %s", exc),
+    ):
+        log.info("%s", _orch.index_preflight(workspace_root))
     # Conservative crash-resume reconciliation (RUNTIME.md §4, ROBUSTNESS.md
     # §2.6) — runs ONCE, right after the lock is held and before any new
     # work. It clears the stale runtime/ state of a prior dead evolve and,

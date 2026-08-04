@@ -218,3 +218,204 @@ def test_evolve_once_runs_without_index_sibling(
     )
 
     assert outcome.tournament_decision == "promoted"
+
+
+# ---------------------------------------------------------------------------
+# The evolve-start index preflight (ANALYTICAL-INDEX.md §5.3 M3(a))
+# ---------------------------------------------------------------------------
+
+
+def test_evolve_n_rounds_builds_and_heals_the_index_at_start(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A real invocation runs the preflight and names what it did.
+
+    Not a monkeypatch pin: this drives ``evolve_n_rounds`` end to end against
+    a workspace whose index is ABSENT, and asserts the index exists and agrees
+    with the workspace when the loop returns. It also pins the placement — the
+    preflight has to sit INSIDE the workspace lock (§5.3's concurrency rule),
+    which is only observable by running the real thing.
+    """
+    import logging
+
+    from zicato.index.ingest import validate_index
+
+    workspace, epoch_id = _bootstrap_workspace(tmp_path)
+    _install_stub_adapter_factory(monkeypatch)
+    _install_telemetry_stubs(
+        monkeypatch,
+        canned_loss_by_gen={"v0": 2.0, "v1": 1.0},
+        canned_pass_by_gen={"v0": True, "v1": True},
+    )
+    assert not (workspace / "index.db").exists()
+
+    from zicato.orchestrator import evolve_n_rounds
+
+    with caplog.at_level(logging.INFO, logger="zicato.evolve.loop"):
+        asyncio.run(
+            evolve_n_rounds(
+                rounds=1,
+                workspace_root=workspace,
+                epoch_id=epoch_id,
+                harness_call_llm=_harness_call_llm,
+                auxiliary_call_llm=_make_aux_responder([_valid_proposer_response()]),
+                instance_id="preflight-test",
+            )
+        )
+
+    assert (workspace / "index.db").exists()
+    assert any(m.startswith("index: built fresh") for m in caplog.messages)
+    # The epoch reads as diverged at END of run, and that is not a defect in
+    # the cursor — it is the dual-write ordering showing through. The
+    # orchestrator appends to ``lineage.json`` AFTER the last ``ingest_*``
+    # call, so at the moment the loop returns the index genuinely is one step
+    # behind lineage. The next invocation's preflight is what closes it; see
+    # ``test_the_preflight_fills_in_the_lineage_derived_columns``.
+    assert validate_index(workspace) == (epoch_id,)
+
+
+def test_evolve_n_rounds_heals_a_diverged_index_before_the_first_round(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """The loop-quality fix: the proposer's memory reads a healed index.
+
+    A crashed dual-write leaves the index BEHIND the files. Nothing fails —
+    ``prior_experiments_for_epoch`` just returns fewer rows and the proposer
+    silently loses its memory. The preflight is what closes that.
+    """
+    import logging
+    import sqlite3
+
+    from zicato.index.ingest import rebuild_index, validate_index
+
+    workspace, epoch_id = _bootstrap_workspace(tmp_path)
+    _install_stub_adapter_factory(monkeypatch)
+    _install_telemetry_stubs(
+        monkeypatch,
+        canned_loss_by_gen={"v0": 2.0, "v1": 1.0},
+        canned_pass_by_gen={"v0": True, "v1": True},
+    )
+    db = rebuild_index(workspace)
+    conn = sqlite3.connect(str(db))
+    conn.execute("DELETE FROM generations")
+    conn.execute("UPDATE ingest_cursors SET lineage_generations_count = 999")
+    conn.commit()
+    conn.close()
+    assert validate_index(workspace) == (epoch_id,)
+
+    from zicato.orchestrator import evolve_n_rounds
+
+    with caplog.at_level(logging.INFO, logger="zicato.evolve.loop"):
+        asyncio.run(
+            evolve_n_rounds(
+                rounds=1,
+                workspace_root=workspace,
+                epoch_id=epoch_id,
+                harness_call_llm=_harness_call_llm,
+                auxiliary_call_llm=_make_aux_responder([_valid_proposer_response()]),
+                instance_id="heal-test",
+            )
+        )
+
+    assert any(m == f"index: healed epochs {epoch_id}" for m in caplog.messages)
+    # The rows the corruption removed are back. (The epoch reads as diverged
+    # again once the round completes — the dual-write ordering, not a failed
+    # heal; see ``test_evolve_n_rounds_builds_and_heals_the_index_at_start``.)
+    conn = sqlite3.connect(str(db))
+    try:
+        assert (
+            conn.execute(
+                "SELECT COUNT(*) FROM generations WHERE epoch_id = ?", (epoch_id,)
+            ).fetchone()[0]
+            > 0
+        )
+    finally:
+        conn.close()
+
+
+def test_the_index_preflight_never_aborts_a_run(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Best-effort: the index is derived, so a preflight failure is not fatal."""
+    workspace, epoch_id = _bootstrap_workspace(tmp_path)
+    _install_stub_adapter_factory(monkeypatch)
+    _install_telemetry_stubs(
+        monkeypatch,
+        canned_loss_by_gen={"v0": 2.0, "v1": 1.0},
+        canned_pass_by_gen={"v0": True, "v1": True},
+    )
+
+    import zicato.orchestrator as orch
+
+    def _boom(_workspace_root: Path) -> str:
+        raise RuntimeError("index preflight exploded")
+
+    monkeypatch.setattr(orch, "index_preflight", _boom)
+
+    outcomes = asyncio.run(
+        orch.evolve_n_rounds(
+            rounds=1,
+            workspace_root=workspace,
+            epoch_id=epoch_id,
+            harness_call_llm=_harness_call_llm,
+            auxiliary_call_llm=_make_aux_responder([_valid_proposer_response()]),
+            instance_id="boom-test",
+        )
+    )
+
+    assert [o.tournament_decision for o in outcomes] == ["promoted"]
+
+
+def test_the_preflight_fills_in_the_lineage_derived_columns(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The staleness the self-heal actually retires, end to end.
+
+    ``experiment.json`` is written (and dual-written to the index) BEFORE
+    ``lineage.json`` is appended, so the columns the index takes from lineage
+    — ``generations.created_at`` and ``generations.round_index`` — land empty
+    on the live write and stay that way until something walks the files again.
+    Before this feature that meant "until an operator happened to run
+    ``zicato reindex``". Now the next round's preflight fills them in.
+    """
+    import sqlite3
+
+    workspace, epoch_id = _bootstrap_workspace(tmp_path)
+    _install_stub_adapter_factory(monkeypatch)
+    _install_telemetry_stubs(
+        monkeypatch,
+        canned_loss_by_gen={"v0": 2.0, "v1": 1.0},
+        canned_pass_by_gen={"v0": True, "v1": True},
+    )
+
+    from zicato.orchestrator import evolve_n_rounds
+
+    def _one_round(instance_id: str) -> None:
+        asyncio.run(
+            evolve_n_rounds(
+                rounds=1,
+                workspace_root=workspace,
+                epoch_id=epoch_id,
+                harness_call_llm=_harness_call_llm,
+                auxiliary_call_llm=_make_aux_responder([_valid_proposer_response()]),
+                instance_id=instance_id,
+            )
+        )
+
+    def _v1_lineage_columns() -> tuple[str, int | None]:
+        conn = sqlite3.connect(str(workspace / "index.db"))
+        try:
+            return conn.execute(
+                "SELECT created_at, round_index FROM generations WHERE generation_id = 'v1'"
+            ).fetchone()
+        finally:
+            conn.close()
+
+    _one_round("round-one")
+    # The live dual-write could not know either value yet.
+    assert _v1_lineage_columns() == ("", None)
+
+    _one_round("round-two")
+    created_at, round_index = _v1_lineage_columns()
+    assert created_at != ""
+    assert round_index is not None

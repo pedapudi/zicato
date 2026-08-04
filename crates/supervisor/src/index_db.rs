@@ -24,7 +24,7 @@ use std::path::Path;
 /// schema generation. Opening a database whose `user_version` does not
 /// match this constant returns [`IndexError::StaleSchema`] rather than
 /// risking a row decoded against the wrong schema.
-pub const EXPECTED_SCHEMA_VERSION: i64 = 13;
+pub const EXPECTED_SCHEMA_VERSION: i64 = 14;
 
 /// A row of the `tournaments` table joined against `experiments` for the
 /// matchup's hypothesis idea.
