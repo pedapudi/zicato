@@ -1309,7 +1309,15 @@ async def evolve_once(
             decision,
             gate_override.reason,
         )
-        decision = gate_override.decision
+        # ``GateOverride.decision`` is a control-protocol WIRE token, and this
+        # is the boundary where it enters a typed record: ``OutcomeRecord``
+        # declares the enum, so an override round must not be the one round
+        # that writes a bare str into it (issue #132 — the coercion is what
+        # keeps a live record ``isinstance``-indistinguishable from the same
+        # record read back off disk, which the journal hydrator already
+        # coerces). The consumer builds the token from its own two command
+        # constants, so the coercion is total.
+        decision = TournamentDecision(gate_override.decision)
         operator_override = True
         operator_override_reason = gate_override.reason
         # The rejection_reason field carries the override note on a forced

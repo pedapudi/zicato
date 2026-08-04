@@ -282,3 +282,53 @@ def test_loss_profile_from_dict_unknown_kind_raises_valueerror() -> None:
     payload["expectation_result"]["kind"] = "not_a_kind"
     with pytest.raises(ValueError):
         loss_profile_from_dict(payload)
+
+
+def test_an_operator_override_round_records_the_enum_not_the_wire_token(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The WRITE side of the same defect, on the gauntlet's override path.
+
+    ``GateOverride.decision`` is a control-protocol wire token (``str``), and
+    ``evolve_once`` assigns it straight onto the outcome the round persists.
+    Every other gauntlet round builds ``tournament_decision`` from the
+    strategy's enum, so an operator force-promote/force-reject was the one
+    round whose LIVE record carried a bare str -- while the same record read
+    back through the journal hydrator carried the member, inverting the
+    invariant the rest of this file pins.
+
+    Driven through the real round rather than the helper, because the helper
+    is not where the token enters the record.
+    """
+    import zicato.orchestrator as orch
+    import zicato.runtime.control_consumer as cc
+    from tests.test_pareto_frontier import _drive_round
+
+    recorded: list[OutcomeRecord] = []
+    real_outcome_record = orch.OutcomeRecord
+
+    def _spy(*args: Any, **kwargs: Any) -> OutcomeRecord:
+        record = real_outcome_record(*args, **kwargs)
+        recorded.append(record)
+        return record
+
+    def _force_promote(workspace_root: Path, generation_id: str) -> cc.GateOverride:
+        return cc.GateOverride(
+            decision="promoted", generation_id=generation_id, reason="operator says so"
+        )
+
+    monkeypatch.setattr(orch, "OutcomeRecord", _spy)
+    monkeypatch.setattr(orch, "claim_gate_override", _force_promote)
+
+    _workspace, _epoch_id, outcome = _drive_round(
+        monkeypatch,
+        tmp_path,
+        drift_by_gen={"v0": 1.0, "v1": 3.0},
+        tokens_by_gen={"v0": 1000, "v1": 500},
+    )
+    # The override really did flip the verdict (the round rejects on merit).
+    assert outcome.tournament_decision == "promoted"
+    assert recorded, "the round persisted no OutcomeRecord"
+    decision = recorded[0].tournament_decision
+    assert isinstance(decision, TournamentDecision)
+    assert decision is TournamentDecision.PROMOTED
