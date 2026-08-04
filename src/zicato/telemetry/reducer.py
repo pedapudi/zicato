@@ -1377,6 +1377,20 @@ def loss_profile_from_dict(d: dict[str, Any]) -> LossProfile:
             # token raises ``ValueError``, which is what every caller of this
             # reader already catches alongside the ``KeyError`` the direct
             # indexing on this same line has always been able to raise.
+            #
+            # "Every caller catches it" is NOT "every caller degrades
+            # harmlessly". The sharp one is
+            # ``unit_cache._resolve_cached_unit``: it catches and returns
+            # ``None``, i.e. a cache MISS, so an undecodable token re-runs the
+            # unit instead of reusing a profile whose kind is meaningless.
+            # That is the right trade — but on a round whose token or
+            # wall-clock budget is already spent the unit is not re-run:
+            # ``scheduling._skip_unit_side`` synthesises a
+            # ``wall_clock_budget_exceeded`` profile and overwrites the real
+            # measurement with it. Unreachable today (the enum's five members
+            # have never changed and only ``write_loss_profile`` writes the
+            # field), and the guard against making it reachable is the
+            # forward-compat note on :class:`ExpectationKind` itself.
             kind=ExpectationKind(exp["kind"]),
             passed=bool(exp["passed"]),
             detail=exp.get("detail", ""),

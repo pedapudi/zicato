@@ -38,6 +38,13 @@ are registered as deferred generator-arsenal work in
 `docs/design/PARETO-FRONTIER.md` §8 — they are what turn a record into a
 decision, and they ship on their own evidence.
 
+Also, a forward-compat note recorded on `ExpectationKind` while hardening
+the hydration boundary below: adding a member to that enum is now a
+cache-invalidating change for older readers, because `loss.json` stores the
+bare token and the reader coerces it back. `BoardEntryKind` reserves slots
+for exactly this; `ExpectationKind` has none, so a sixth member needs a
+reserved slot landed a release ahead.
+
 ### The holdout confirmation gets its own bounds (issue #118)
 
 `promote_margin` served as both the Rule 1 train threshold and the
