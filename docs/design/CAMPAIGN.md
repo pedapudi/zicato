@@ -1367,6 +1367,17 @@ lines rather than trusting the count**, and if the endpoint's error prose is
 unusual, widen the vocabulary (`infra_markers=`) before the sweep rather than
 after.
 
+**Why widening is safe.** The infra vocabulary is matched only against errors
+raised at the **call boundary** — the templates the proposer emits when a
+request failed before a response came back. Everything else in a round's error
+trail is a *post-response content rejection* that quotes text zicato does not
+control: validator findings over the child agent's own source, mutation ids,
+the model's own offending values. A challenger that breaks a file named
+`auth.py` must not read as a credential outage — and, because arms differ in
+how often they emit invalid patches, such a false void would delete rounds in
+an **arm-correlated** pattern, manufacturing precisely the contamination shape
+R.5 describes.
+
 **Two properties of this check that are not optional:**
 
 1. **It renders its evidence.** The default output shows, per round, why the

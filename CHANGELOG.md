@@ -22,7 +22,14 @@ around the retry loop to exhaustion — so VOID is the default and acceptance
 needs positive evidence. A cell is accepted iff it contains zero VOID rounds
 AND at least one round: zero rounds is vacuously free of void rounds, so
 `--verify` fails an empty epoch too rather than letting a cell that never
-ran read as healthy. `zicato epoch rounds` renders the per-round evidence —
+ran read as healthy. The infra-error vocabulary is matched only against
+errors raised at the CALL BOUNDARY: every other string in a round's error
+trail is a post-response content rejection quoting text zicato does not
+control — validator findings over the child agent's own source, mutation
+ids, the model's own offending values — so a challenger that breaks a file
+named `auth.py` would otherwise read as a credential outage, and would do
+it in an arm-correlated pattern, manufacturing the contamination shape the
+check exists to detect. `zicato epoch rounds` renders the per-round evidence —
 matched error strings verbatim, never a bare boolean — with `--verify` for
 the exit code and `--json` for a harness.
 

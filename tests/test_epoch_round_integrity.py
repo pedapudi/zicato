@@ -23,6 +23,7 @@ from pathlib import Path
 from click.testing import CliRunner
 
 from zicato.epoch.round_integrity import (
+    CALL_BOUNDARY_PREFIXES,
     HARD_INFRA_MARKERS,
     EpochRoundIntegrity,
     RoundStatus,
@@ -91,7 +92,14 @@ def _complete_events() -> list[RoundEvent]:
     return events
 
 
-CREDENTIAL_ERROR = "AuthenticationError: 401 Unauthorized — API key expired or revoked"
+#: The REAL emitted shape: `proposer.py`'s call-boundary template
+#: (`f"auxiliary LLM call raised {type(exc).__name__}: {exc}"`) wrapping an
+#: SDK credential error. The prefix is load-bearing, not decoration — see
+#: `test_a_content_rejection_is_never_read_as_an_outage`.
+CREDENTIAL_ERROR = (
+    "auxiliary LLM call raised AuthenticationError: "
+    "401 Unauthorized — API key expired or revoked"
+)
 
 
 def _degraded_events() -> list[RoundEvent]:
@@ -335,6 +343,107 @@ def test_forbidden_id_rejection_is_degraded_not_void(tmp_path: Path) -> None:
     assert epoch_round_integrity(tmp_path, EPOCH).accepted
 
 
+def test_a_content_rejection_is_never_read_as_an_outage(tmp_path: Path) -> None:
+    """Regression pin. Content rejections quote text zicato does not control.
+
+    The three templates below are the REAL ones the proposer appends to
+    ``ProposerError.attempts``, which `evolve/propose_apply.py` then
+    writes out as `proposal_attempted` events — so they are exactly what
+    the fold sees:
+
+    * post-apply validation quotes findings over the CHILD AGENT'S OWN
+      SOURCE (`proposer/proposer.py`, `proposer/adk_agent.py`);
+    * the forbidden-edits list quotes MUTATION IDS
+      (`proposer/brief.py::enforce_forbidden`);
+    * a parse failure quotes the model's own offending values and the
+      declared enum domain (`proposer/structured.py`).
+
+    Each can therefore contain a marker substring while meaning the
+    precise opposite of an outage: the endpoint answered, and what came
+    back was bad. Voiding these would retry a legitimately-degraded arm
+    to exhaustion — and, because arms differ in how often they emit
+    invalid patches, it would delete rounds in an ARM-CORRELATED pattern,
+    manufacturing the exact contamination shape this module exists to
+    detect.
+
+    Only the call-boundary prefixes are eligible for marker matching.
+    """
+    _write(
+        tmp_path,
+        1,
+        [
+            RoundOpened(contract_hash="sha256:contract-t0"),
+            CandidateSampled(i=1, n=1),
+            ProposalAttempted(
+                errors=(
+                    # The child's own source mentions an api key.
+                    "patches failed post-apply validation: "
+                    "agent/auth.py:41: undefined name 'api_key'",
+                    # A mutation point named after the thing it configures.
+                    "patches violate proposer-brief forbidden-edits list: "
+                    "patch 'p2' targets forbidden mutation id 'api_key_header'",
+                    # A declared enum domain of endpoint failure messages.
+                    "patch[0]: new_enum='retry' not in declared enum domain "
+                    "['connection refused', 'service unavailable'] for mutation 'fallback_mode'",
+                ),
+            ),
+            RoundClosed(),
+        ],
+    )
+    verdict = round_integrity(tmp_path, EPOCH, 1)
+
+    assert verdict.status == RoundStatus.SETTLED_DEGRADED
+    assert verdict.infra_markers == ()
+    assert epoch_round_integrity(tmp_path, EPOCH).accepted
+    # The errors are still rendered — they explain the degradation.
+    assert any("proposal error" in line for line in verdict.evidence)
+
+
+def test_call_boundary_prefixes_match_the_real_emitters(tmp_path: Path) -> None:
+    """The eligibility prefixes are pinned to the templates that emit them.
+
+    If a proposer refactor renames one of these, this test fails rather
+    than the check silently going quiet. The failure direction is safe —
+    an unmatched outage still voids by rule 5 — but it costs the operator
+    the reason, which on a credential lapse is the whole triage.
+    """
+    real_templates = (
+        # proposer.py — the aux-call boundary, both exception paths.
+        f"auxiliary LLM call raised {ConnectionError.__name__}: connection refused",
+        "auxiliary LLM call timed out after 120.0s",
+        # adk_agent.py — the ADK agent-run boundary.
+        "proposer agent run raised PermissionDenied: 403 Forbidden",
+    )
+    for template in real_templates:
+        assert template.lower().startswith(CALL_BOUNDARY_PREFIXES), template
+
+    # And the eligible ones that name hard infra really do classify void.
+    for index, template in enumerate((real_templates[0], real_templates[2]), start=1):
+        _write(
+            tmp_path,
+            index,
+            [
+                RoundOpened(contract_hash="sha256:contract-t0"),
+                ProposalAttempted(errors=(template,)),
+                RoundClosed(),
+            ],
+        )
+        assert round_integrity(tmp_path, EPOCH, index).status == RoundStatus.VOID
+
+    # The timeout template is eligible but deliberately carries no marker:
+    # one attempt timing out is not proof the endpoint was never reached.
+    _write(
+        tmp_path,
+        3,
+        [
+            RoundOpened(contract_hash="sha256:contract-t0"),
+            ProposalAttempted(errors=(real_templates[1],)),
+            RoundClosed(),
+        ],
+    )
+    assert round_integrity(tmp_path, EPOCH, 3).infra_markers == ()
+
+
 def test_infra_tokens_in_a_validation_finding_never_void_a_round(tmp_path: Path) -> None:
     """Markers are scanned over proposal errors ONLY.
 
@@ -429,7 +538,7 @@ def test_infra_marker_vocabulary_is_an_explicit_parameter(tmp_path: Path) -> Non
     proposer failure. This pins the widening seam that makes that
     false-negative recoverable per-caller.
     """
-    quiet_outage = "upstream said no (code ZX-9)"
+    quiet_outage = "auxiliary LLM call raised UpstreamError: upstream said no (code ZX-9)"
     _write(
         tmp_path,
         1,

@@ -96,8 +96,10 @@ class RoundStatus(StrEnum):
 
 
 #: Lowercase substrings that mark a HARD infrastructure failure in a
-#: proposer attempt's free-text error. Scanned over ``proposal.errors``
-#: ONLY — see the note in :func:`classify_round`.
+#: proposer attempt's free-text error. Scanned over the CALL-BOUNDARY
+#: subset of ``proposal.errors`` only — :data:`CALL_BOUNDARY_PREFIXES` is
+#: what makes this vocabulary safe to widen, because it keeps every token
+#: below away from text the proposer or the child snapshot authored.
 #:
 #: Three classes, and each is here for the same reason: an error of this
 #: shape means the request was refused or never arrived, so the round
@@ -143,7 +145,10 @@ class RoundStatus(StrEnum):
 #:   :mod:`zicato.mutation.validator`). Those are the CANONICAL
 #:   proposer-was-reached-and-produced-an-invalid-patch case, i.e.
 #:   precisely ``settled_degraded``. Only the unambiguous HTTP reason
-#:   phrase ``"403 forbidden"`` is matched.
+#:   phrase ``"403 forbidden"`` is matched. (Those two strings are now ALSO
+#:   ineligible structurally, being content rejections; this entry stays as
+#:   defense in depth, since ``403 forbidden`` can legitimately appear in a
+#:   call-boundary error.)
 #: * bare numeric status codes (``401``, ``403``, ``429``, ``503``) —
 #:   three-digit runs occur inside ids, byte offsets, and line numbers in
 #:   proposal-error prose. The reason phrases are matched instead; SDK
@@ -194,6 +199,47 @@ HARD_INFRA_MARKERS: frozenset[str] = frozenset(
         "service unavailable",
         "503 service unavailable",
     }
+)
+
+
+#: Lowercase prefixes of the proposal-error templates that are raised at the
+#: CALL BOUNDARY — the request left zicato and something went wrong before a
+#: response came back. Marker matching is restricted to errors starting with
+#: one of these, and that restriction is what keeps the vocabulary honest.
+#:
+#: Every other string that reaches ``ProposalAttempted.errors`` is a
+#: POST-RESPONSE CONTENT REJECTION, and each one quotes text zicato does not
+#: control straight into the error:
+#:
+#: * ``str(ExperimentParseError)`` — embeds mutation ids, declared enum
+#:   domains, and jsonschema messages carrying the model's own offending
+#:   values (``proposer/structured.py``).
+#: * ``"patches violate proposer-brief forbidden-edits list: ..."`` — embeds
+#:   mutation ids (``proposer/brief.py::enforce_forbidden``).
+#: * ``"patches failed post-apply validation: ..."`` — embeds validator
+#:   findings over the CHILD AGENT'S OWN SOURCE (``proposer/proposer.py``,
+#:   ``proposer/adk_agent.py``).
+#:
+#: A challenger that breaks a file named ``auth.py``, a mutation point called
+#: ``api_key_header``, or an enum domain listing ``"service unavailable"``
+#: would otherwise put a marker substring into a proposal error and get its
+#: round voided as an outage. That is the false positive this module is most
+#: exposed to — it fires on *real measurements of degraded arms*, it sends
+#: them around the retry loop to exhaustion, and it is ARM-CORRELATED, since
+#: arms that emit more invalid patches would absorb more false voids. An
+#: arm-correlated loss of rounds is precisely the contamination shape this
+#: module was written to catch, so manufacturing one here would be perverse.
+#:
+#: Restricting to the call boundary makes that class structurally impossible
+#: rather than enumerable. The cost is a false NEGATIVE if an emitter is ever
+#: renamed without updating this tuple — and that direction is safe: an
+#: unmatched genuine outage falls through to rule 5, which still lands VOID
+#: because nothing set ``proposer_reached``. Safe direction, and pinned by
+#: ``test_epoch_round_integrity.py`` against the real templates.
+CALL_BOUNDARY_PREFIXES: tuple[str, ...] = (
+    "auxiliary llm call raised ",
+    "auxiliary llm call timed out ",
+    "proposer agent run raised ",
 )
 
 
@@ -318,13 +364,22 @@ def _matched_markers(
 ) -> tuple[str, ...]:
     """Return, verbatim and de-duplicated, the ``texts`` naming hard infra.
 
-    Matching is case-insensitive substring containment; the ORIGINAL
-    string is what comes back, because the operator needs the
-    endpoint's own words, not the token that happened to match.
+    Only CALL-BOUNDARY errors are eligible — see
+    :data:`CALL_BOUNDARY_PREFIXES`. A post-response content rejection
+    quotes model output, mutation ids, and child-snapshot validator
+    findings into its text, so scanning it for infra tokens reports the
+    challenger's own words back as an endpoint outage.
+
+    Among eligible errors, matching is case-insensitive substring
+    containment; the ORIGINAL string is what comes back, because the
+    operator needs the endpoint's own words, not the token that happened
+    to match.
     """
     out: list[str] = []
     for text in texts:
         lowered = text.lower()
+        if not lowered.startswith(CALL_BOUNDARY_PREFIXES):
+            continue
         if any(marker in lowered for marker in infra_markers) and text not in out:
             out.append(text)
     return tuple(out)
@@ -398,13 +453,17 @@ def classify_round(
         or record.generation_ids
     )
     invalid_patch = bool(record.validation_findings) or any(record.proposal.errors)
-    # Markers are scanned over the PROPOSAL ERRORS ONLY, never over
-    # ``validation_findings``. A validation finding is by construction a
-    # CONTENT rejection: for it to exist a patch had to exist, so the
-    # proposer was reached and the round is a real measurement. Scanning
-    # findings for infra tokens could therefore only ever produce a false
-    # VOID, never a true one. (The findings still appear in ``evidence``,
-    # where they belong — they explain the degradation.)
+    # Markers are scanned over CALL-BOUNDARY proposal errors only, never
+    # over ``validation_findings`` and never over a content rejection. The
+    # reasoning is one rule applied twice: a CONTENT rejection exists only
+    # because a patch existed, so the proposer was reached and the round is
+    # a real measurement — scanning one for infra tokens could only ever
+    # produce a false VOID. That covers ``validation_findings`` directly,
+    # and it covers the content rejections that arrive through
+    # ``proposal.errors`` carrying the same findings inline (see
+    # :data:`CALL_BOUNDARY_PREFIXES`), which is the subtler half. (The
+    # findings still appear in ``evidence``, where they belong — they
+    # explain the degradation.)
     markers = _matched_markers(tuple(record.proposal.errors), infra_markers)
 
     evidence: list[str] = []
@@ -623,6 +682,7 @@ def render_round_integrity(report: EpochRoundIntegrity) -> str:
 
 
 __all__ = [
+    "CALL_BOUNDARY_PREFIXES",
     "HARD_INFRA_MARKERS",
     "RoundStatus",
     "RoundIntegrity",
