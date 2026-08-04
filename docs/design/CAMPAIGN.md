@@ -1358,7 +1358,12 @@ tokens: a **non-recombined** candidate sampled, an experiment minted, or patches
 applied. The exclusion is load-bearing — a *mechanical* recombination mint
 (`proposer/recombine.py`, pure, no IO) produces a candidate with no model call
 at all, so on A3/A7 counting it as reach would let a round with zero model
-responses read as a real degraded measurement. Reach is also read over the
+responses read as a real degraded measurement. **And the marker rule would not
+catch it**, which is the part worth internalising: best-of-N *discards* the
+failed slots' errors whenever any slot survives (`proposer/best_of_n.py`), so
+the round closes with an EMPTY error list — nothing for a marker to match
+against, no matter how wide the vocabulary. The reach predicate is the only
+thing standing between that round and an accepted cell. Reach is also read over the
 **final attempt span only** (the events after the last `round_opened`), because
 the round log is append-only and a round index can be reused after an attempt
 died before its experiment was persisted; without the span, a prior attempt's
