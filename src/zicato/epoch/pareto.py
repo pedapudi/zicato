@@ -360,8 +360,21 @@ def update_frontier(
     The champion is the REFERENCE, never a member: the record's claim is
     "here is what beat the champion somewhere", which needs the champion
     outside the set being compared.
+
+    A PLACEBO champion is refused outright and the round records nothing. A
+    placebo is a semantics-preserving no-op copy of the champion, so it is
+    numerically the champion wearing a different generation id: measuring
+    against it would stamp every admission's ``champion_generation_id`` with
+    a generation that only exists to test the gate. The field path fields the
+    placebo inside the slate and the gate CAN crown it — that is what the
+    ``placebo_promoted`` CRITICAL finding is for — so this is reachable, and
+    when it happens the loop is already in an alarm state where the last
+    thing wanted is provenance pointing at the alarm.
     """
     from zicato.tournament.gate import regressed_namespaces  # noqa: PLC0415
+
+    if champion.is_placebo:
+        return FrontierUpdate(frontier=frontier)
 
     axes = frontier_axes(weights)
     margin = float(weights.promote_margin)

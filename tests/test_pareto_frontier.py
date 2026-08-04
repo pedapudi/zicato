@@ -364,6 +364,129 @@ def test_a_placebo_arm_is_refused() -> None:
     assert update.admitted == ()
 
 
+def test_a_placebo_CHAMPION_makes_the_whole_round_a_no_op() -> None:
+    """The other half of the placebo rule: it must not be the REFERENCE either.
+
+    The field path fields the placebo inside the slate and the gate CAN crown
+    it — that is precisely what the ``placebo_promoted`` CRITICAL finding
+    exists to catch. A placebo is a no-op copy of the champion, so recording
+    against it would stamp every admission's provenance with a generation
+    that only exists to test the gate, and would retire real members against
+    a reference the loop is already alarming about.
+    """
+    seeded = update_frontier(
+        _empty(),
+        champion=_candidate("v0", drift=1.0, cost=1.0),
+        candidates=[_candidate("v1", drift=1.0, cost=0.5)],
+        weights=_weights(),
+        round_index=1,
+    ).frontier
+    assert [m.generation_id for m in seeded.members] == ["v1"]
+
+    update = update_frontier(
+        seeded,
+        champion=_candidate("v9", drift=1.0, cost=1.0, is_placebo=True),
+        candidates=[_candidate("v2", drift=1.0, cost=0.2)],
+        weights=_weights(),
+        round_index=2,
+    )
+    # Nothing admitted, nothing retired, and the record is returned untouched.
+    assert update.admitted == ()
+    assert update.retired == ()
+    assert not update.changed
+    assert update.frontier == seeded
+
+
+def test_a_crowned_placebo_leaves_the_record_file_untouched(tmp_path: Path) -> None:
+    """The wiring half, through ``record_round_frontier``."""
+    from zicato.evolve.pareto import record_round_frontier
+
+    weights = _weights()
+    record_frontier(
+        tmp_path,
+        "e0",
+        champion=_candidate("v0", drift=1.0, cost=1.0),
+        candidates=[_candidate("v1", drift=1.0, cost=0.5)],
+        weights=weights,
+        round_index=1,
+    )
+    before = frontier_path(tmp_path, "e0").read_bytes()
+
+    record_round_frontier(
+        workspace_root=tmp_path,
+        epoch_id="e0",
+        round_index=2,
+        weights=weights,
+        champion_generation_id="v9",
+        aggregates={
+            "v9": _agg(drift=1.0, cost=1.0),
+            "v2": _agg(drift=1.0, cost=0.2),
+        },
+        placebo_generation_ids=["v9"],
+    )
+    assert frontier_path(tmp_path, "e0").read_bytes() == before
+
+
+def test_an_unreadable_record_warns_once_per_epoch(
+    caplog: pytest.LogCaptureFixture, tmp_path: Path
+) -> None:
+    """A dead canonical record must not fail a round -- nor die silently.
+
+    The dual-write and RoundLog precedents swallow at ``debug`` because what
+    they write is a projection the next rebuild re-derives. This file has no
+    rebuild path, so a silent skip means the epoch stops recording and
+    nothing says so. Once per epoch: a malformed file does not heal itself,
+    and a warning on every remaining round trains the operator to ignore it.
+    """
+    import logging
+
+    from zicato.evolve.pareto import _WARNED_EPOCHS, record_round_frontier
+
+    _WARNED_EPOCHS.discard("e0")
+    frontier_path(tmp_path, "e0").parent.mkdir(parents=True, exist_ok=True)
+    frontier_path(tmp_path, "e0").write_text('{"format_version": 1, "members": [ TRUNC')
+
+    def _record(round_index: int) -> None:
+        record_round_frontier(
+            workspace_root=tmp_path,
+            epoch_id="e0",
+            round_index=round_index,
+            weights=_weights(),
+            champion_generation_id="v0",
+            aggregates={"v0": _agg(drift=1.0, cost=1.0), "v1": _agg(drift=1.0, cost=0.5)},
+        )
+
+    with caplog.at_level(logging.DEBUG, logger="zicato.orchestrator"):
+        _record(1)
+        _record(2)
+        _record(3)
+
+    warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
+    assert len(warnings) == 1, [r.getMessage() for r in warnings]
+    assert "e0" in warnings[0].getMessage()
+
+    # A TRANSIENT failure stays at debug -- the precedent this module follows.
+    caplog.clear()
+    _WARNED_EPOCHS.discard("e1")
+
+    class _BoomLog:
+        def emit(self, *_args: Any, **_kwargs: Any) -> None:
+            raise RuntimeError("round log exploded")
+
+    with caplog.at_level(logging.DEBUG, logger="zicato.orchestrator"):
+        record_round_frontier(
+            workspace_root=tmp_path,
+            epoch_id="e1",
+            round_index=1,
+            weights=_weights(),
+            champion_generation_id="v0",
+            aggregates={"v0": _agg(drift=1.0, cost=1.0), "v1": _agg(drift=1.0, cost=0.5)},
+            round_log=_BoomLog(),
+        )
+    assert [r for r in caplog.records if r.levelno == logging.WARNING] == []
+    assert any(r.levelno == logging.DEBUG for r in caplog.records)
+
+
 def test_an_unmeasured_candidate_is_refused() -> None:
     """No finite axis value means nothing settled — nothing to record."""
     update = update_frontier(

@@ -8,8 +8,11 @@ champion the round actually ended with.
 
 **Best-effort by contract.** Recording an observation must never fail a
 round: the canonical stores stay authoritative and every exception here is
-logged at ``debug`` and swallowed, exactly the discipline the live index
-dual-write and the RoundLog emitter established.
+swallowed, exactly the discipline the live index dual-write and the RoundLog
+emitter established. Swallowed is not the same as silent — see
+:func:`_log_skip`: a transient defect is ``debug`` like those precedents,
+but an unreadable canonical record is warned once per epoch, because unlike
+a projection it has no rebuild path to quietly fix it.
 
 The record itself changes nothing about the loop — see
 ``docs/design/PARETO-FRONTIER.md``.
@@ -82,6 +85,22 @@ def record_round_frontier(
             # a record with no reference point would be meaningless.
             return
         placebos = set(placebo_generation_ids)
+        if champion_generation_id in placebos:
+            # The gate crowned the random-baseline arm. A placebo is a no-op
+            # copy of the champion, so it is numerically the champion under a
+            # different id: every admission this round would attribute its
+            # provenance to a generation that exists only to test the gate.
+            # The round is already raising the CRITICAL ``placebo_promoted``
+            # health finding; the record stays out of it (``update_frontier``
+            # refuses the same case, so this is the legible half of one rule).
+            log.debug(
+                "frontier: epoch %s round %d — skipped, the crowned champion "
+                "%s is the random-baseline placebo arm",
+                epoch_id,
+                round_index,
+                champion_generation_id,
+            )
+            return
         champion = FrontierCandidate(
             generation_id=champion_generation_id,
             aggregate=champion_agg,
@@ -124,7 +143,46 @@ def record_round_frontier(
             )
         _ingest_frontier_into_index(workspace_root, epoch_id)
     except Exception as exc:  # noqa: BLE001 — a record must never fail a round
-        log.debug("pareto frontier record skipped: %s", exc)
+        _log_skip(epoch_id, exc)
+
+
+#: Epochs already warned about an unreadable record. A malformed file does not
+#: heal itself, so without this the same warning fires every remaining round of
+#: the epoch and trains the operator to ignore it.
+_WARNED_EPOCHS: set[str] = set()
+
+
+def _log_skip(epoch_id: str, exc: Exception) -> None:
+    """Log a swallowed recorder failure at the level its cause deserves.
+
+    A transient defect — a busy index, a failed round-log emit — is noise at
+    ``debug``, exactly like the dual-write and RoundLog precedents this
+    module follows.
+
+    A MALFORMED CANONICAL RECORD is not. The precedents swallow silently
+    because what they write is a projection that the next rebuild re-derives;
+    ``pareto_frontier.json`` IS the canonical copy and has no rebuild path, so
+    a silent skip means the epoch quietly stops recording and nothing ever
+    says so. Warned once per epoch, naming the epoch, so the operator can
+    delete or repair the file.
+    """
+    import json  # noqa: PLC0415
+
+    from zicato.epoch._storage import RecordFormatError  # noqa: PLC0415
+
+    if isinstance(exc, json.JSONDecodeError | RecordFormatError):
+        if epoch_id not in _WARNED_EPOCHS:
+            _WARNED_EPOCHS.add(epoch_id)
+            log.warning(
+                "frontier: epoch %s — the record is unreadable, so this epoch "
+                "records no further frontier movement until it is repaired or "
+                "removed (%s). The loop is unaffected: the record is an "
+                "observation, never a decision.",
+                epoch_id,
+                exc,
+            )
+        return
+    log.debug("pareto frontier record skipped: %s", exc)
 
 
 def _ingest_frontier_into_index(workspace_root: Path, epoch_id: str) -> None:

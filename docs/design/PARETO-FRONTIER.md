@@ -232,6 +232,15 @@ record. A candidate is admitted only when **all** of the following hold:
    contaminate exactly the record whose job is to hold interesting
    candidates. The multi-challenger path fields the placebo *inside* the
    slate, so this check is load-bearing, not theoretical.
+
+   The rule has a second half on the REFERENCE side: a placebo may not be
+   the *champion* either. The gate can crown the arm — that is exactly what
+   the CRITICAL `placebo_promoted` health finding exists to catch — and when
+   it does, `update_frontier` refuses the whole round rather than measuring
+   against a no-op copy of the champion. Otherwise every admission that
+   round would attribute its `champion_generation_id` to a generation that
+   exists only to test the gate, and real members would be retired against
+   a reference the loop is already alarming about.
 3. **No namespace regression against the champion.** Evaluated by the gate's
    own logic on the default-on namespaces (`rubric:`, `schema:` per
    `_default_namespace_monotonicity`). A candidate whose rubric collapsed or
