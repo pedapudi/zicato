@@ -480,7 +480,10 @@ real measurement), or `void` (a torn log, a hard credential/transport failure,
 or a round that closed with neither a measurement nor an explanation).
 
 The cell-acceptance rule: an epoch is ACCEPTED iff it contains zero `void`
-rounds. Read-only — opens no network connection and writes nothing.
+rounds. `--verify` also fails an epoch with no rounds at all: zero rounds is
+vacuously free of void rounds, and letting emptiness read as health is how an
+unmeasured cell sneaks through a sweep. Read-only — opens no network
+connection and writes nothing.
 
 ```
 zicato epoch rounds [OPTIONS]
@@ -490,7 +493,7 @@ zicato epoch rounds [OPTIONS]
 |---|---|---|
 | `--workspace TEXT` | `.zicato` | Path to the zicato workspace directory. |
 | `--epoch TEXT` | the workspace's current epoch | The epoch to verify. |
-| `--verify` | off | Make the verdict load-bearing: exit 1 when the epoch is NOT accepted (any `void` round). Without this flag the command is pure inspection and always exits 0. |
+| `--verify` | off | Make the verdict load-bearing: exit 1 when the epoch is NOT accepted (any `void` round) OR has no rounds at all. Without this flag the command is pure inspection and always exits 0. |
 | `--json` | off | Emit the report as JSON (rounds, per-status counts, and the acceptance verdict) for a measurement protocol to consume. |
 
 #### `zicato epoch set-goal`

@@ -116,12 +116,19 @@ class RoundStatus(StrEnum):
 #: that arm back around the retry loop to exhaustion — rule 3 outranks
 #: rule 4, so a stray match defeats the narrow acceptance the module
 #: exists to protect. A false negative merely falls through to rule 5,
-#: which still lands VOID for a genuine credential lapse: when the
-#: endpoint refused the request the proposer was never reached, so
-#: ``proposer_reached`` is False and rule 4 cannot fire either way. In
-#: other words this vocabulary mostly buys a BETTER REASON, not extra
-#: coverage — which is exactly why it should never reach for a token it
-#: is not sure about.
+#: which still lands VOID for a genuine credential lapse **on a
+#: single-challenger round**: the endpoint refused the request, so nothing
+#: set ``proposer_reached`` and rule 4 cannot fire either way.
+#:
+#: On a MULTI-CHALLENGER round the vocabulary carries real coverage, not
+#: just a better reason: both classifier flags are round-level aggregates
+#: (see :func:`classify_round`), so one challenger reaching the model can
+#: satisfy ``proposer_reached`` for a round in which a later challenger
+#: died on infra. Rule 3 outranking rule 4 is what still voids it — but
+#: only if a token matches. That asymmetry cuts both ways, which is why
+#: this set must be neither timid nor greedy: it should never reach for a
+#: token it is not sure about, and a caller who knows their endpoint's
+#: prose should widen it.
 #:
 #: Deliberately EXCLUDED for that reason:
 #:
@@ -257,8 +264,10 @@ class EpochRoundIntegrity:
         Kept separate from :attr:`accepted` on purpose. An epoch with
         zero rounds is vacuously free of void rounds, and letting that
         render as plain health is how an empty cell sneaks through a
-        sweep. Callers must surface this loudly; the CLI prints the
-        round count on every run for the same reason.
+        sweep. **Every gating caller must test this alongside
+        :attr:`accepted`** — `zicato epoch rounds --verify` exits 1 on it,
+        and :func:`render_round_integrity` withholds the ACCEPTED verdict
+        line for it.
         """
         return not self.rounds
 
@@ -353,15 +362,33 @@ def classify_round(
     5. **Settled, no gate, anything else** → ``void``: no measurement
        and no explanation for its absence.
 
-    ``proposer_reached`` is asserted from tokens that can only exist
-    *after* the proposer model returned something — candidates sampled,
-    an experiment minted, patches applied. ``invalid_patch`` is
-    asserted from snapshot-validation findings or from a proposal
-    attempt the loop rejected on content/schema grounds
-    (``RoundRecord.proposal.errors`` accumulates every attempt's error
-    strings). ``infra_markers`` is matched against ``proposal.errors``
-    ALONE — a validation finding proves a patch existed, so it can only
-    ever generate a false void.
+    ``proposer_reached`` is asserted from tokens that normally exist only
+    *after* the proposer model returned something — candidates sampled, an
+    experiment minted, patches applied. ``invalid_patch`` is asserted from
+    snapshot-validation findings or from a proposal attempt the loop
+    rejected on content/schema grounds (``RoundRecord.proposal.errors``
+    accumulates every attempt's error strings). ``infra_markers`` is
+    matched against ``proposal.errors`` ALONE — a validation finding
+    proves a patch existed, so it can only ever generate a false void.
+
+    **Two honest limits on that "normally", both from how the loop emits.**
+
+    *Mechanical recombination mints without a model call.*
+    :meth:`zicato.proposer.best_of_n.BestOfNProposer._mint_recombined`
+    concatenates two parents' patch sets through
+    :func:`zicato.proposer.recombine.mint_recombined_experiment` — pure, no
+    IO — and a surviving mint emits its own ``candidate_sampled``. So on a
+    ``recombine`` arm ``candidates_sampled > 0`` does NOT by itself prove
+    the endpoint answered; it proves a slot produced a candidate.
+
+    *Both flags are ROUND-level, not per-attempt.* A round with several
+    challengers folds all of their events into one record, so
+    ``proposer_reached`` can come from one challenger and ``invalid_patch``
+    from another. Rule 4 can therefore accept a round in which a LATER
+    challenger never reached the model — but only if that challenger's
+    error prose matches no marker, since rule 3 outranks rule 4. That is
+    the case the ``HARD_INFRA_MARKERS`` vocabulary is actually load-bearing
+    for; widen it via ``infra_markers`` when an endpoint's prose is unusual.
     """
     settled = record.opened and record.closed
     gate_count = len(record.gates)
@@ -573,7 +600,19 @@ def render_round_integrity(report: EpochRoundIntegrity) -> str:
         + "  ".join(f"{token}={counts[token]}" for token in sorted(counts))
         + f"  (total {report.round_count})"
     )
-    if report.accepted:
+    if report.no_rounds:
+        # Deliberately NOT the plain ACCEPTED line. The report *is*
+        # vacuously free of void rounds, so :attr:`accepted` stays true and
+        # the JSON does not lie — but an epoch that measured nothing is not
+        # a healthy cell, and a verdict line reading "ACCEPTED" under a
+        # "NO ROUNDS" banner is exactly the surface that reported 144/144
+        # on unusable data. Gating callers must read ``no_rounds``; the CLI
+        # ``--verify`` flag fails on it.
+        lines.append(
+            "  VERDICT: NO MEASUREMENT — vacuously free of void rounds, but "
+            "nothing was measured; --verify fails this epoch."
+        )
+    elif report.accepted:
         lines.append("  VERDICT: ACCEPTED — no void round; every round is accountable.")
     else:
         lines.append(

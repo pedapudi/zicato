@@ -469,7 +469,10 @@ Usage: zicato epoch rounds [OPTIONS]
   or a round that closed with neither a measurement nor an explanation).
 
   The cell-acceptance rule: an epoch is ACCEPTED iff it contains zero void
-  rounds. Pass --verify to make that verdict the exit code.
+  rounds. Pass --verify to make that verdict the exit code. --verify ALSO fails
+  an epoch with no rounds at all: zero rounds is vacuously free of void rounds,
+  and letting emptiness read as health is how an unmeasured cell sneaks through
+  a sweep.
 
   Read-only — it opens no network connection and writes nothing.
 
@@ -478,8 +481,8 @@ Options:
   --epoch TEXT      The epoch to verify. Defaults to the workspace's current
                     epoch.
   --verify          Make the verdict load-bearing: exit 1 when the epoch is NOT
-                    accepted (any void round). Without this flag the command is
-                    pure inspection and always exits 0.
+                    accepted (any void round) OR has no rounds at all. Without
+                    this flag the command is pure inspection and always exits 0.
   --json            Emit the report as JSON (rounds, per-status counts, and the
                     acceptance verdict) for a measurement protocol to consume.
   --help            Show this message and exit.

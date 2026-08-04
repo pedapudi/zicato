@@ -14,11 +14,15 @@ is the check at the granularity the ENDPOINT consumes: a pure reader over
 `epochs/{epoch}/rounds/*/round_log.jsonl` that classifies every round
 COMPLETE (settled with a gate), SETTLED-DEGRADED (settled without a gate,
 but the proposer was reached and returned an invalid patch — a real
-measurement of a degraded arm), or VOID (a torn or partial log, or a
-gateless round carrying a hard infra error). The degraded class is
-deliberately narrow: voiding it would send a legitimately-degraded arm
-around the retry loop to exhaustion. A cell is accepted iff it contains
-zero VOID rounds. `zicato epoch rounds` renders the per-round evidence —
+measurement of a degraded arm), or VOID (everything else: a torn or partial
+log, a gateless round carrying a hard infra error, or one that closed with
+neither a measurement nor an explanation). The degraded class is
+deliberately narrow — voiding it would send a legitimately-degraded arm
+around the retry loop to exhaustion — so VOID is the default and acceptance
+needs positive evidence. A cell is accepted iff it contains zero VOID rounds
+AND at least one round: zero rounds is vacuously free of void rounds, so
+`--verify` fails an empty epoch too rather than letting a cell that never
+ran read as healthy. `zicato epoch rounds` renders the per-round evidence —
 matched error strings verbatim, never a bare boolean — with `--verify` for
 the exit code and `--json` for a harness.
 

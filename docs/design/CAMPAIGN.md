@@ -255,10 +255,11 @@ This campaign **resolves effects ≥ 0.040** on the per-duel `d` scale — rough
 - **Every "inconclusive" above means *no effect larger than the floor*, never
   *no effect*.** A feature worth +0.02 would be invisible here.
 - Resolving **~0.023** needs **K ≈ 32** cells per arm (**measured** as the
-  operator's sizing anchor; consistent with the derived `floor ∝ 1/√K` scaling
-  from 0.0400 at K=12).
+  operator's sizing anchor, off run 1's 0.0378 floor). Scaling run 2's 0.0400
+  the same way puts K=32 at **≈0.025** (**derived**) — the two floors bracket
+  it; §3.4 states the arithmetic.
 - **Below ~0.013 the cost stops being affordable** at any K this target can
-  support (**derived** from the same scaling: ≈ 114 cells per arm).
+  support (**derived**, `0.0400 · √(12/K) = 0.013` ⇒ ≈ 114 cells per arm).
 - Scope bounds, all binding: **one board, one model, three rounds per cell,
   single-turn only.** This says nothing about multi-turn revision robustness,
   nor about interactions beyond the two combined arms actually run.
@@ -339,7 +340,7 @@ record of what was expected, not of what is true.
 | 3 | **`best_of_n` (held at 3 in BASE)** | The top proposal-quality lever per `FUNCTIONALITY-RECOMMENDATIONS.md` §4.1 — a valid-but-mediocre single sample was never reconsidered. Already ON; BASE validates it still earns its `× best_of_n` aux-call cost. **Measured: the `best_of_n=1` ablation was the HIGHEST arm in run 2 (+0.0392) and mid-pack in run 1 (−0.0069). Doing less did not measurably hurt.** | Keep `best_of_n=3` if BASE beats the ablation; revert toward `1` otherwise. |
 | 4 | **`screen_entries` (currently scaffold-ON=2)** | Vetoes catastrophic candidates *before* the tournament spends on them — but **adds** board runs (`proposes × best_of_n × panel`, §5). Its per-cost effect is genuinely ambiguous, which is exactly why it is the scaffold choice most in need of audit. Screen false-veto ≈ flip-rate² under confirm-before-veto (dev-guide §3.1 fact #7) means the veto is *sound*; the open question is whether the extra panel runs buy net throughput. **Measured: A2 = −0.0060 then +0.0028 — no signal either way, at a real cost premium.** | **Reverse null**: `screen_entries` stays scaffold-`2` only if it clears §4; otherwise the pre-registered action is to **remove it** from `recommended_scaffold_weights` (scaffold default → `0`). |
 | 5 | **breadth/depth roles** | If breadth explores a wider slate and depth refines the critique/merge, slate quality rises with **no** board-run cost. Second-order: it reshapes *which* candidate wins, not how many board units run. **Measured: A5 = −0.0148 then +0.0155. The pre-#110 "3/3 seeds vs 0/3" lead for this arm is WITHDRAWN (R.1).** | Flip to a scaffolded two-role `models` block if it clears §4 and the per-call cost delta is acceptable. |
-| 6 | **`calibration_feedback`** | Showing the proposer its own hit/miss pattern (`/api/hypothesis-accuracy` grader, `proposer/calibration.py`) plausibly improves **hypothesis calibration** more than raw proposal quality; read-side/free. **Measured only inside A6 (genealogy + calibration) = −0.0038 then +0.0044; A6 did not beat A1 alone.** | Flip on if it clears §4 on either the primary endpoint **or** the calibration-fraction endpoint (§3) at no board-run cost. |
+| 6 | **`calibration_feedback`** | Showing the proposer its own hit/miss pattern (`/api/hypothesis-accuracy` grader, `proposer/calibration.py`) plausibly improves **hypothesis calibration** more than raw proposal quality; read-side/free. **Measured only inside A6 (genealogy + calibration) = −0.0038 then +0.0044. A6 beat A1 alone in run 1 (−0.0038 vs −0.0129) and lost to it in run 2 (+0.0044 vs +0.0244) — a sign flip well inside the floor, i.e. no evidence either way about the calibration contribution.** | Flip on if it clears §4 on either the primary endpoint **or** the calibration-fraction endpoint (§3) at no board-run cost. |
 | 7 | **`recombine_merge="llm"`** | Conditional on `recombine`: relaxes disjointness so two *overlapping* rejected fixes can be merged by one aux call. Incremental reach beyond mechanical, at +1 aux call on merge rounds. **Measured: A4 = +0.0195 (run 1's largest arm) then +0.0098 (fifth). The reshuffle is the evidence that the run-1 lead was noise.** | Flip `recombine_merge` → `"llm"` only if the llm arm beats the mechanical arm (§4), given `recombine` already flipped on. |
 | 8 | **`process_exemplars`** | Highest-risk: it **widens the proposer-visibility channel** (OVERFITTING.md §11), so its default-flip bar is not just proposal quality but a **clean generalization-gap + placebo record** (dev-guide §12). Opt-in-deliberate under the PROCESS-EXEMPLARS.md §5 harm runbook; NOT scaffold-set. **Measured: PEXEMPLAR = −0.0136 then +0.0047.** | Ranked last for a default flip; evaluated as a **pre-registered extension arm** (§4), never graduated on proposal quality alone. |
 
@@ -718,17 +719,25 @@ non-degraded arms is **~0.12** (**measured**).
 | **0.02** | ~208 | ~35 | **infeasible** |
 
 (The ~15 h is anchored on the 6-rounds-per-cell run; §5 explains why that rate
-does not transfer to a 3-round design without re-anchoring.)
+does not transfer to a 3-round design without re-anchoring. **The "8 arms"
+column is the ORIGINAL 8-arm screening design's count, not §2's matrix** — the
+executed matrix is **12** arms (9 treatments + BASE + 2 controls), so the same
+0.05 sizing against §2 is 12 × ~6 ≈ **72** cells, not 48. Re-multiply for
+whatever matrix you actually run.)
 
 > **The campaign is tractable iff arsenal features move proposal quality by
 > ≳ 0.05 on the `d` scale.** Below that, this target cannot resolve them at any
 > affordable cost, and the honest move is to **change the target or the
 > question** — not to buy more seeds.
 
-The executed runs went to **K=12** and achieved a derived floor of **0.040**.
-Scaling (**derived**, `floor ∝ 1/√K`, anchored on the operator's own K≈32 →
-floor ≈ 0.023 figure): K=6 → ≈0.055, K=12 → 0.040, K=32 → ≈0.023, and the
-~0.013 the operator names as the affordability wall would need ≈114 cells/arm.
+The executed runs went to **K=12** and achieved a derived floor of **0.040**
+(**measured**, run 2). Scaling that single anchor by `floor ∝ 1/√K`
+(**derived**, and every figure below recomputes from `0.0400 · √(12/K)`):
+K=6 → ≈0.057, K=32 → ≈0.025, and the **~0.013** affordability wall the operator
+names would need **≈114 cells/arm**. Run 1's floor of 0.0378 gives the same
+curve one notch tighter — K=32 → ≈0.023, which is the operator's own sizing
+figure; **quote the anchor with the number**, because the two differ by more
+than the third decimal the sizing table is read to.
 
 **Why the original K=6 screen is withdrawn.** The old design justified K=6 by
 assuming the cross-run sd of the endpoint was *on the order of the derived
@@ -921,7 +930,7 @@ labelled **planning** until it too is measured.
 |---|---|---|---|
 | **0.05** | ~6 | 8 arms ⇒ ~48 cells, **~15 h at 6 rounds/cell** | feasible |
 | **0.040** | 12 | 12 arms ⇒ **144 cells, 7 h 23 m at 3 rounds/cell** | **what was actually run** |
-| **~0.023** | ~32 | — | affordable only for a **single** arm |
+| **~0.023** | ~32 *(run-1 floor anchor; run 2's 0.0400 puts K=32 at ≈0.025 — §3.4)* | — | affordable only for a **single** arm |
 | **0.02** | ~35 | — | **infeasible** |
 | **~0.013** | ≈114 *(derived)* | — | **unaffordable at any K this target supports** |
 
@@ -1198,7 +1207,7 @@ log the reason, never silently continue):**
 | 3 | `stalled_loop` / zero promotions **on the PLANTED-DEFECT arm** | whole round budget | **Halt the WHOLE campaign.** The instrument is dead — R.1. (Zero promotions on a *treatment* arm is an ordinary result on this target and is **not** an abort trigger; R.4.) |
 | 4 | Wall-clock or spend for the arm | > 1.5× the §5 **measured** estimate | Stop and re-price with the coordinator before continuing. |
 | 5 | Infra-abort rate (`core/loss.is_infra_abort_cause`, dev-guide §1.6) | dominates real measurements in the run | The run is **void** — re-run it, never average it in. |
-| 6 | **§6.6 integrity verification fails for a cell** | any VOID round | The **cell** is void. **DELETE and re-run it — never resume.** R.5: resuming appends into the poisoned epoch, which is how a cell ended up with four rounds of which three were void. |
+| 6 | **§6.6 integrity verification fails for a cell** | `zicato epoch rounds --verify` exits non-zero — any VOID round, **or zero rounds** | The **cell** is void. **DELETE and re-run it — never resume.** R.5: resuming appends into the poisoned epoch, which is how a cell ended up with four rounds of which three were void. |
 
 **Crash / restart policy:**
 
@@ -1268,7 +1277,7 @@ The reader (`src/zicato/epoch/round_integrity.py`) walks
 |---|---|---|---|
 | **COMPLETE** | `complete` | opened **and** closed, with **≥ 1 `gate_evaluated`** | contributes a duel to `cell_mean_d` |
 | **SETTLED-DEGRADED** | `settled_degraded` | closed with a **real measurement** but no gate — the proposer *was* reached and genuinely produced an invalid patch | **accepted**; contributes no duel |
-| **VOID** | `void` | no `gate_evaluated` **and** evidence of hard infra/credential failure — **or** a torn/partial log without its completion marker | **the whole cell is rejected** |
+| **VOID** | `void` | everything else — a torn/partial log without its completion marker; no `gate_evaluated` plus evidence of hard infra/credential failure; **or** a round that closed with no gate and no evidence the proposer was reached at all | **the whole cell is rejected** |
 
 The wire tokens are the ones `--json` emits; §7's artifacts use them verbatim.
 
@@ -1284,37 +1293,79 @@ governing rule, quoted here in the form the run report states it:**
 That is the whole reason the class exists. The loop did its job and the answer
 was "this candidate is no good"; voiding it would spend the arm's retry budget
 re-measuring a result already in hand, which is a different way to bias the same
-comparison. **Only a round that lacks a gate AND carries hard infra evidence is
-void.**
+comparison. **The reader is strictly stricter than that rule in one direction,
+and the executor must know it: VOID is the default, not the special case.**
+Acceptance of a gateless round requires the positive evidence above, so a
+gateless round carrying neither a measurement nor an explanation is void with no
+infra marker anywhere in sight (`round_integrity.py` rule 5). The operator's
+rule says which rounds must *never* be accepted; the reader additionally
+declines to accept rounds that can show nothing at all.
 
-**On the hard-infra vocabulary — it is a FLOOR, not a proof.** The reader
-matches free-text proposer-error strings against a documented marker set
-(`HARD_INFRA_MARKERS`), which is a heuristic over prose the endpoint chooses,
-not a structural fact. Two consequences the executor must understand:
+**What "the proposer was reached" is actually asserted from.** The reader has no
+direct record of a model response, so it infers reach from three round-log
+tokens: a **non-recombined** candidate sampled, an experiment minted, or patches
+applied. The exclusion is load-bearing — a *mechanical* recombination mint
+(`proposer/recombine.py`, pure, no IO) produces a candidate with no model call
+at all, so on A3/A7 counting it as reach would let a round with zero model
+responses read as a real degraded measurement. Reach is also read over the
+**final attempt span only** (the events after the last `round_opened`), because
+the round log is append-only and a round index can be reused after an attempt
+died before its experiment was persisted; without the span, a prior attempt's
+tokens would vouch for this one.
 
-- **It is biased hard against false positives, deliberately.** A false positive
-  voids a *real* measurement and burns the arm's retry budget; a false negative
-  merely falls through to the "closed without a gate and without evidence the
-  proposer was reached" rule, **which still voids a genuine credential lapse** —
-  when the endpoint refuses the request the proposer is never reached at all. So
-  the marker rule mostly buys a **better reason**, not extra coverage. Tokens
-  that could collide with zicato's own vocabulary are excluded on purpose: bare
-  `timeout` (one attempt timing out while a later one returns a real, if
-  invalid, proposal is a real measurement), bare `forbidden` (the proposer's own
-  forbidden-id rejections use that word), and bare numeric status codes (a
-  three-digit run occurs inside ids and offsets). **Do not widen the set in the
-  doc or by editing it in place.**
+**On the hard-infra vocabulary — the PREFIX ANCHOR is the mechanism; the marker
+set is a floor on top of it.** Marker matching is restricted to proposal-error
+strings that begin with a **transport-shaped prefix** — the templates the
+proposer emits when a request failed before a response came back (`auxiliary LLM
+call raised …`, `auxiliary LLM call timed out after …`, `proposer agent run
+raised …`). Every other string in a round's error trail is a *post-response
+content rejection* that quotes text zicato does not control: validator findings
+over the child agent's own source, mutation ids taken from the operator's own
+`# zicato:mutable` markers and brief, the built-in drift-kind list, and the
+model's own offending values echoed back by a schema violation. Anchoring is
+what makes those structurally ineligible rather than merely unlikely. Three
+consequences the executor must understand:
+
+- **A false positive is far worse than a false negative here, and the asymmetry
+  governs every choice below.** A false positive voids a *real* measurement,
+  burns the arm's retry budget, and — because arms differ in how often they emit
+  invalid patches — deletes rounds in an **arm-correlated** pattern, which is
+  precisely the contamination shape R.5 describes. A false negative merely falls
+  through to rule 5, **which still voids a genuine credential lapse**: when the
+  endpoint refuses the request, nothing mints a reach token.
+- **The excluded tokens stay excluded, as defense in depth.** Bare `timeout`
+  (one attempt timing out while a later one returns a real, if invalid, proposal
+  is a real measurement), bare `forbidden` (the proposer's own forbidden-id
+  rejections use that word), and bare numeric status codes (a three-digit run
+  occurs inside ids and offsets). **Do not widen the set in the doc or by
+  editing it in place.**
 - **Widen it per-call instead.** `round_integrity()`, `epoch_round_integrity()`
   and `classify_round()` each take an `infra_markers` argument; `zicato epoch
   rounds` runs the default set, so a widened vocabulary means calling the reader
   directly. If a campaign's endpoint reports outages in prose the default set
   does not cover, pass a widened set for that campaign and **record the widening
   in the run log** — it is a change to the acceptance rule and must be visible
-  in the report, not buried in a config.
+  in the report, not buried in a config. Widening is safe *because* of the
+  anchor: a broader token can only ever be tested against transport-shaped
+  errors.
 
 **Cell acceptance rule:** a cell is **ACCEPTED iff it contains zero VOID
-rounds**. A rejected cell is **deleted and re-run — never resumed** (§6.4
-trigger 6).
+rounds** — **and has at least one round.** Zero rounds is vacuously free of
+void rounds, so `--verify` fails an empty epoch too; a cell whose `evolve` died
+before its first round log measured nothing, and nothing is not health. A
+rejected cell is **deleted and re-run — never resumed** (§6.4 trigger 6).
+
+**One caveat the executor must know, and it lands on the `recombine` arms.**
+The reader infers "the proposer was reached" from candidates sampled /
+experiments minted / patches applied. On **A3 and A7** a *mechanical*
+recombination mint produces a candidate with **no model call at all**
+(`proposer/recombine.py` is pure), so on those arms that inference is weaker
+than on the rest. What still holds the line is the rule ordering — a matched
+infra marker voids the round *before* the degraded-acceptance rule is
+consulted. **Consequence: on a recombine arm, spot-check the `void` evidence
+lines rather than trusting the count**, and if the endpoint's error prose is
+unusual, widen the vocabulary (`infra_markers=`) before the sweep rather than
+after.
 
 **Two properties of this check that are not optional:**
 
@@ -1348,13 +1399,19 @@ arms.
  "epoch_id": "campaign_A2_k3", "rounds_completed": 3, "duels": 3,
  "cell_mean_d": -0.0061,
  "round_integrity": {"complete": 3, "settled_degraded": 0, "void": 0,
-                     "accepted": true},
+                     "accepted": true, "round_count": 3, "no_rounds": false},
  "promotions": 0, "board_runs": 42, "wall_clock_s": 1042,
  "calibration_fraction": 0.5, "holdout_confirms": 2, "holdout_rejects": 0,
  "placebo_events": 0, "gate_margin_summary": {"median": 0.2, "max": 0.2},
  "dashboard_url": "http://127.0.0.1:7892", "aborted": false,
  "abort_reason": null, "notes": ""}
 ```
+
+`round_integrity` is a **reduction** of `zicato epoch rounds --json`, not its
+raw payload: flatten that payload's `counts` object and carry `accepted`,
+`round_count`, and `no_rounds` across. **Carry `no_rounds` even though it is
+almost always `false`** — it is the field that distinguishes a clean cell from
+one that never ran, and `accepted` is `true` for both (§6.6).
 
 **`floor.json`** — the **derived** floor and the two validity gates. Note the
 shape: the floor is a *contrast*, not a per-arm constant.

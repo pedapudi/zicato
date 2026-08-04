@@ -250,6 +250,52 @@ def test_void_on_credential_outage_surfaces_the_marker_verbatim(tmp_path: Path) 
     assert any("hard infra error" in line for line in verdict.evidence)
 
 
+def test_a_gate_outranks_another_challenger_s_infra_error(tmp_path: Path) -> None:
+    """Rule 2 beats rule 3: a gated round is complete, whatever else died in it.
+
+    The shape is the real one. `_propose_and_apply` emits an errored
+    ``proposal_attempted`` per failed attempt ONLY on the raising path,
+    and an empty one plus ``experiment_minted`` / ``patches_applied`` on
+    success (``evolve/propose_apply.py``) — so errors and a gate coexist
+    in one record when the round ran SEVERAL challengers and an earlier
+    one died on a credential blip while a later one was served and
+    duelled. ``proposal.errors`` is a round-level accumulation, so that
+    stale marker is still in the fold.
+
+    That round measured what it claims to have measured. Voiding it on
+    the stale marker would discard a good duel and, in a sweep, retry an
+    arm with nothing wrong with it.
+    """
+    events = [
+        RoundOpened(contract_hash="sha256:contract-t0"),
+        # Challenger 1 — propose raised; one event per failed attempt.
+        ProposalAttempted(errors=(CREDENTIAL_ERROR,)),
+        ProposalAttempted(errors=(CREDENTIAL_ERROR,)),
+        # Challenger 2 — served, applied, duelled.
+        ProposalAttempted(errors=()),
+        CandidateSampled(i=1, n=1),
+        ExperimentMinted(experiment_id="exp-v1"),
+        PatchesApplied(generation_id="v1"),
+        GateEvaluated(
+            rule_fired="",
+            decision="rejected",
+            champion_scalar=0.42,
+            challenger_scalar=0.44,
+            margin_required=0.05,
+        ),
+        RoundClosed(),
+    ]
+    _write(tmp_path, 1, events)
+    verdict = round_integrity(tmp_path, EPOCH, 1)
+
+    assert verdict.status == RoundStatus.COMPLETE
+    assert verdict.gate_count == 1
+    # The marker is still REPORTED — it just does not decide the verdict.
+    assert verdict.infra_markers == (CREDENTIAL_ERROR,)
+    assert any("settled with 1 gate evaluation(s)" in line for line in verdict.evidence)
+    assert epoch_round_integrity(tmp_path, EPOCH).accepted
+
+
 def test_forbidden_id_rejection_is_degraded_not_void(tmp_path: Path) -> None:
     """A forbidden-id rejection is a MEASUREMENT, not an infra failure.
 
@@ -342,6 +388,39 @@ def test_bare_numeric_status_codes_do_not_match(tmp_path: Path) -> None:
     assert verdict.infra_markers == ()
 
 
+def test_a_mechanically_recombined_candidate_does_not_vouch_for_the_endpoint(
+    tmp_path: Path,
+) -> None:
+    """Rule 3 is what protects the `recombine` arms, and this pins it.
+
+    A mechanical recombination mint emits ``candidate_sampled`` having
+    made NO model call — ``mint_recombined_experiment`` is pure
+    (``proposer/recombine.py``), and the surviving slot's event is
+    emitted the same way an ordinary sample's is
+    (``proposer/best_of_n.py``). So on an A3/A7 cell
+    ``candidates_sampled > 0`` can be true across a credential outage,
+    and `proposer_reached` alone would wave the round through as a real
+    degraded measurement.
+
+    It does not, because rule 3 outranks rule 4: the matched marker
+    voids the round despite the candidate. That ordering is the whole
+    protection here, so a change that let rule 4 run first would silently
+    re-admit outage rounds on exactly the arms that mint locally.
+    """
+    events = [
+        RoundOpened(contract_hash="sha256:contract-t0"),
+        CandidateSampled(i=1, n=3),  # the mint — no model call behind it
+        ProposalAttempted(errors=(CREDENTIAL_ERROR,)),
+        RoundClosed(),
+    ]
+    _write(tmp_path, 1, events)
+    verdict = round_integrity(tmp_path, EPOCH, 1)
+
+    assert verdict.proposer_reached  # the flag is set ...
+    assert verdict.status == RoundStatus.VOID  # ... and does not decide it
+    assert verdict.infra_markers == (CREDENTIAL_ERROR,)
+
+
 def test_infra_marker_vocabulary_is_an_explicit_parameter(tmp_path: Path) -> None:
     """A caller can widen the vocabulary without editing the module.
 
@@ -425,6 +504,8 @@ def test_missing_rounds_tree_is_empty_but_visibly_so(tmp_path: Path) -> None:
     report = epoch_round_integrity(tmp_path, "never-ran")
     assert report.rounds == ()
     assert report.no_rounds
+    # Vacuously true — which is precisely why no gating caller may read it
+    # alone. See `test_cli_verify_fails_an_epoch_that_measured_nothing`.
     assert report.accepted
 
 
@@ -541,6 +622,37 @@ def test_cli_verify_exit_codes(tmp_path: Path) -> None:
     result = runner.invoke(epoch_grp, clean_args)
     assert result.exit_code == 0, result.output
     assert "ACCEPTED" in result.output
+
+
+def test_cli_verify_fails_an_epoch_that_measured_nothing(tmp_path: Path) -> None:
+    """An empty epoch is vacuously accepted — and --verify must still fail it.
+
+    The campaign protocol gates a cell on this exit code, so an `evolve`
+    that died before writing its first round log would otherwise clear
+    the integrity check having measured nothing at all: the same
+    "healthy at the wrong granularity" failure the command exists to
+    catch, one level up. `accepted` stays true (the JSON must not lie
+    about an empty set containing no void round); the GATE reads
+    `no_rounds` too.
+    """
+    from zicato.cli.commands.epoch import epoch_grp
+
+    runner = CliRunner()
+    args = ["rounds", "--workspace", str(tmp_path), "--epoch", "never-ran"]
+
+    inspection = runner.invoke(epoch_grp, args)
+    assert inspection.exit_code == 0
+    assert "NO ROUNDS" in inspection.output
+    # The verdict line withholds "ACCEPTED" rather than contradicting it.
+    assert "NO MEASUREMENT" in inspection.output
+    assert "VERDICT: ACCEPTED" not in inspection.output
+
+    assert runner.invoke(epoch_grp, [*args, "--verify"]).exit_code == 1
+
+    payload = json.loads(runner.invoke(epoch_grp, [*args, "--json"]).output)
+    assert payload["no_rounds"] is True
+    assert payload["accepted"] is True  # vacuous, and reported as such
+    assert payload["round_count"] == 0
 
 
 def test_cli_json_is_machine_readable(tmp_path: Path) -> None:

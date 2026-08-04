@@ -535,8 +535,8 @@ def set_goal_cmd(epoch_id: str, goal: str, workspace: str) -> None:
     is_flag=True,
     default=False,
     help="Make the verdict load-bearing: exit 1 when the epoch is NOT "
-    "accepted (any void round). Without this flag the command is pure "
-    "inspection and always exits 0.",
+    "accepted (any void round) OR has no rounds at all. Without this flag "
+    "the command is pure inspection and always exits 0.",
 )
 @click.option(
     "--json",
@@ -564,6 +564,9 @@ def rounds_cmd(workspace: str, epoch_id: str | None, verify: bool, as_json: bool
 
     The cell-acceptance rule: an epoch is ACCEPTED iff it contains zero
     void rounds. Pass --verify to make that verdict the exit code.
+    --verify ALSO fails an epoch with no rounds at all: zero rounds is
+    vacuously free of void rounds, and letting emptiness read as health
+    is how an unmeasured cell sneaks through a sweep.
 
     Read-only — it opens no network connection and writes nothing.
     """
@@ -581,7 +584,11 @@ def rounds_cmd(workspace: str, epoch_id: str | None, verify: bool, as_json: bool
     else:
         click.echo(render_round_integrity(report))
 
-    if verify and not report.accepted:
+    # An epoch with zero rounds is vacuously "accepted" (there is no void
+    # round in an empty set), so gating on `accepted` alone would pass a
+    # cell whose evolve died before it ever wrote a round log — the exact
+    # shape of the failure this command exists to catch, one level up.
+    if verify and (report.no_rounds or not report.accepted):
         raise SystemExit(1)
 
 
