@@ -48,6 +48,7 @@ from zicato.core.types import (
     MatchOutcome,
     OutcomeRecord,
     Patch,
+    TournamentDecision,
 )
 from zicato.core.workspace import epoch_dir
 from zicato.epoch._storage import (
@@ -278,6 +279,27 @@ def _opt_float(value: Any) -> float | None:
         return None
 
 
+def _as_decision(value: Any) -> Any:
+    """Coerce a wire token to :class:`TournamentDecision`, or keep it as-is.
+
+    ``OutcomeRecord.tournament_decision`` declares the enum, and every
+    in-process construction site passes a member; a record rebuilt from
+    JSON must carry the same runtime type or ``isinstance`` / ``match``
+    silently disagree with an identical in-memory record (issue #132).
+
+    Unlike the analysis-side hydrator, this read path has no guard that
+    narrows the token first, so an unrecognised value — a hand-edited
+    record, or one written by a future format — is returned UNCHANGED
+    rather than raising or being rewritten to a verdict the record does
+    not carry. It still compares unequal to all three members, which is
+    exactly how it read before the coercion existed.
+    """
+    try:
+        return TournamentDecision(value)
+    except ValueError:
+        return value
+
+
 def _outcome_from_dict(d: dict[str, Any] | None) -> OutcomeRecord | None:
     if d is None:
         return None
@@ -311,7 +333,7 @@ def _outcome_from_dict(d: dict[str, Any] | None) -> OutcomeRecord | None:
         pass_rate_delta=float(d.get("pass_rate_delta", 0.0)),
         drift_loss_delta=float(d.get("drift_loss_delta", 0.0)),
         scalar_score_delta=float(d.get("scalar_score_delta", 0.0)),
-        tournament_decision=d.get("tournament_decision", "rejected"),
+        tournament_decision=_as_decision(d.get("tournament_decision", "rejected")),
         rejection_reason=str(d.get("rejection_reason", "")),
         structure=str(d.get("structure", "gauntlet")),
         final_rank=int(raw_rank) if raw_rank is not None else None,

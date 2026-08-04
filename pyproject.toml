@@ -184,6 +184,7 @@ select = [
 "zicato.orchestrator._epoch_tree_import_gaps".msg = "moved: use zicato.health.inputs.epoch_tree_import_gaps"
 "zicato.orchestrator._workspace_preflight_gate".msg = "moved: use zicato.health.inputs.workspace_preflight_gate"
 "zicato.orchestrator._str_tuple".msg = "moved: use zicato.health.inputs.str_tuple"
+"zicato.tournament.gate._regressed_namespaces".msg = "promoted: use zicato.tournament.gate.regressed_namespaces"
 
 [tool.ruff.lint.per-file-ignores]
 # The storage package owns its private _atomic module; its own modules

@@ -33,6 +33,9 @@ The tables are all derived from canonical workspace files:
 * ``runs`` / ``loss_profiles`` / ``metric_counts`` — from each run's
   ``loss.json`` and ``events.jsonl``.
 * ``tournaments`` — from the resolved outcome on each experiment.
+* ``pareto_frontier`` — from each epoch's ``pareto_frontier.json``
+  (``docs/design/PARETO-FRONTIER.md``). Derived, read-only, and never
+  consulted by the loop.
 """
 
 from __future__ import annotations
@@ -42,7 +45,7 @@ import sqlite3
 #: Bump this whenever the table/column shape below changes. Stamped
 #: into ``PRAGMA user_version`` and the ``schema_meta`` table by
 #: :func:`apply_schema`.
-SCHEMA_VERSION = 12
+SCHEMA_VERSION = 13
 
 
 class IndexSchemaNewerError(RuntimeError):
@@ -202,6 +205,29 @@ _TABLE_STATEMENTS: tuple[str, ...] = (
       verdict_counts_json TEXT
     )
     """,
+    # The frontier key is (epoch, generation, status, round_retired), not
+    # (epoch, generation): a generation is NOT unique per epoch. It can be
+    # admitted, retired as ``promoted`` when it is crowned, then re-admitted
+    # once it is dethroned — so the same id appears in BOTH ``members`` and
+    # ``retired`` of the same file, and once in ``retired`` per round it left.
+    # ``round_retired`` is NULL on a member row, which is already unique on
+    # the three columns before it. A narrower key let the retired row (written
+    # second) silently REPLACE the live member row.
+    """
+    CREATE TABLE IF NOT EXISTS pareto_frontier (
+      epoch_id TEXT,
+      generation_id TEXT,
+      status TEXT,
+      round_admitted INTEGER,
+      round_retired INTEGER,
+      retired_reason TEXT,
+      champion_generation_id TEXT,
+      scalar REAL,
+      axis_values_json TEXT,
+      beats_champion_on_json TEXT,
+      PRIMARY KEY (epoch_id, generation_id, status, round_retired)
+    )
+    """,
     """
     CREATE TABLE IF NOT EXISTS judge_scorecards (
       reflection_id TEXT,
@@ -236,6 +262,7 @@ _INDEX_STATEMENTS: tuple[str, ...] = (
     "CREATE INDEX IF NOT EXISTS idx_epochs_parent ON epochs(parent_epoch_id)",
     "CREATE INDEX IF NOT EXISTS idx_reflections_epoch ON reflections(epoch_id)",
     "CREATE INDEX IF NOT EXISTS idx_judge_scorecards_refl ON judge_scorecards(reflection_id)",
+    "CREATE INDEX IF NOT EXISTS idx_pareto_frontier_epoch ON pareto_frontier(epoch_id)",
 )
 
 
@@ -596,7 +623,10 @@ def _migrate_inplace(conn: sqlite3.Connection) -> None:
 
     # v11 added WHOLE tables (reflections / judge_scorecards), materialised by
     # the CREATE TABLE IF NOT EXISTS pass — no column ALTER needed here. v12
-    # adds the ``generations.elo_se`` rating-uncertainty column.
+    # adds the ``generations.elo_se`` rating-uncertainty column. v13 adds
+    # another WHOLE table (``pareto_frontier``), so it needs no ALTER either —
+    # an existing v12 file gains the empty table on open, and the next
+    # ``zicato reindex`` fills it from each epoch's canonical record.
     if current < 12:
         for table, column, ddl_type in _V12_ADDED_COLUMNS:
             if not _table_exists(conn, table):

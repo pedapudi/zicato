@@ -736,8 +736,8 @@ def build_gate_breakdown(
     from zicato.tournament.gate import (  # noqa: PLC0415
         PASS_RATE_MONOTONICITY_TOLERANCE,
         _regressed_entries,
-        _regressed_namespaces,
         evaluate_gate,
+        regressed_namespaces,
     )
 
     weights = _read_epoch_scoring_weights(paths, epoch_id)
@@ -929,7 +929,7 @@ def build_gate_breakdown(
     # the same predicate evaluate_gate uses.
     scalar_failed = child_scalar > parent_scalar - promote_margin
     regressed_entries = _regressed_entries(parent_agg, child_agg) if pass_mono_enabled else []
-    regressed_ns = _regressed_namespaces(parent_agg, child_agg, weights) if ns_mono_enabled else []
+    regressed_ns = regressed_namespaces(parent_agg, child_agg, weights) if ns_mono_enabled else []
 
     # The pass-rate monotonicity rule's granularity is operator-selected.
     # Under "aggregate" the rule fires on an overall pass-rate drop rather

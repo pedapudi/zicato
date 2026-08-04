@@ -93,6 +93,19 @@ CREATE TABLE metric_counts (
       severity TEXT,
       count REAL
     );
+CREATE TABLE pareto_frontier (
+      epoch_id TEXT,
+      generation_id TEXT,
+      status TEXT,
+      round_admitted INTEGER,
+      round_retired INTEGER,
+      retired_reason TEXT,
+      champion_generation_id TEXT,
+      scalar REAL,
+      axis_values_json TEXT,
+      beats_champion_on_json TEXT,
+      PRIMARY KEY (epoch_id, generation_id, status, round_retired)
+    );
 CREATE TABLE patches (
       patch_id TEXT PRIMARY KEY,
       epoch_id TEXT,
@@ -133,7 +146,7 @@ CREATE TABLE schema_meta (
   key TEXT PRIMARY KEY,
   value TEXT
 );
-INSERT INTO "schema_meta" VALUES('schema_version','12');
+INSERT INTO "schema_meta" VALUES('schema_version','13');
 INSERT INTO "schema_meta" VALUES('description','zicato analytical index — derived, rebuildable from .zicato/ files');
 CREATE TABLE tournaments (
       tournament_id TEXT PRIMARY KEY,
@@ -169,4 +182,5 @@ CREATE INDEX idx_loss_tournament ON loss_profiles(tournament_id);
 CREATE INDEX idx_epochs_parent ON epochs(parent_epoch_id);
 CREATE INDEX idx_reflections_epoch ON reflections(epoch_id);
 CREATE INDEX idx_judge_scorecards_refl ON judge_scorecards(reflection_id);
+CREATE INDEX idx_pareto_frontier_epoch ON pareto_frontier(epoch_id);
 COMMIT;

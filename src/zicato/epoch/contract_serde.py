@@ -189,6 +189,14 @@ def _value_from_jsonable(field_type: Any, raw: Any) -> Any:
         return int(raw)
     if resolved is str:
         return str(raw)
+    # Everything else passes through as the raw JSON value. Correct for
+    # ``Literal`` and ``Any``; a TRAP for ``Enum`` and ``Path``, which have
+    # no branch above — a contract dataclass that grows a StrEnum or Path
+    # field would hydrate it as a bare str while the in-process value
+    # carries the declared type (issue #132). The three dataclasses routed
+    # through here — ScoringWeights, OverfittingConfig, LadderConfig — are
+    # enum-free and Path-free to their leaves today; add the branch when
+    # that changes.
     return raw
 
 

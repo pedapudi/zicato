@@ -385,7 +385,7 @@ epoch boundary by hand.
 zicato epoch COMMAND [ARGS]...
 ```
 
-Commands: `close`, `gc`, `list`, `new`, `set-goal`, `switch`.
+Commands: `close`, `gc`, `list`, `new`, `rounds`, `set-goal`, `switch`.
 
 #### `zicato epoch new`
 
@@ -464,6 +464,37 @@ zicato epoch switch [OPTIONS] EPOCH_ID
 | Option | Default | Meaning |
 |---|---|---|
 | `--workspace TEXT` | `.zicato` | Path to the zicato workspace directory. |
+
+#### `zicato epoch rounds`
+
+Check ROUND-BY-ROUND that an epoch measured what it claims to have. Liveness
+is not integrity: a loop that exits cleanly, and even one that demonstrably
+reached the model, can still have settled rounds that produced no duel — an
+endpoint outage mid-run leaves earlier rounds intact and later ones empty, and
+a mean built from the survivors is not a smaller measurement, it is a
+different one. Reads the durable per-round event logs
+(`epochs/{epoch}/rounds/{round}/round_log.jsonl`) and classifies every round
+as `complete` (settled with a gate evaluation), `settled_degraded` (settled
+with no gate, but the proposer was reached and returned an invalid patch — a
+real measurement), or `void` (a torn log, a hard credential/transport failure,
+or a round that closed with neither a measurement nor an explanation).
+
+The cell-acceptance rule: an epoch is ACCEPTED iff it contains zero `void`
+rounds. `--verify` also fails an epoch with no rounds at all: zero rounds is
+vacuously free of void rounds, and letting emptiness read as health is how an
+unmeasured cell sneaks through a sweep. Read-only — opens no network
+connection and writes nothing.
+
+```
+zicato epoch rounds [OPTIONS]
+```
+
+| Option | Default | Meaning |
+|---|---|---|
+| `--workspace TEXT` | `.zicato` | Path to the zicato workspace directory. |
+| `--epoch TEXT` | the workspace's current epoch | The epoch to verify. |
+| `--verify` | off | Make the verdict load-bearing: exit 1 when the epoch is NOT accepted (any `void` round) OR has no rounds at all. Without this flag the command is pure inspection and always exits 0. |
+| `--json` | off | Emit the report as JSON (rounds, per-status counts, and the acceptance verdict) for a measurement protocol to consume. |
 
 #### `zicato epoch set-goal`
 

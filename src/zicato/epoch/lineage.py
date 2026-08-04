@@ -225,7 +225,11 @@ def append_to_lineage(
     already-settled generation keeps the verdict that settled it.
     """
     raw = _load_raw(workspace_root)
-    entry = _find_epoch(raw, epoch_id)
+    # Annotated at the FIRST binding, not on the fallback literal below: the
+    # declared type then governs both branches. Annotating the literal instead
+    # narrows the type to the literal's own value union (``str | list | None``)
+    # and every downstream ``entry[...]`` stops checking (issue #133).
+    entry: dict[str, Any] | None = _find_epoch(raw, epoch_id)
     if entry is None:
         # Auto-create a thin entry — the runner sometimes lands a
         # generation before lineage knows about its epoch (tests).

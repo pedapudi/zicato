@@ -1,5 +1,103 @@
 # Changelog
 
+### The scalar's discards get a record: the Pareto frontier (issue #139)
+
+The promote gate keeps one generation per round and picks it by a weighted
+sum. A weighted sum is a projection, so a challenger that halves cost for a
+sliver of rubric loses the scalar, is rejected, and is never mentioned
+again. Each epoch now carries `epochs/{epoch}/pareto_frontier.json`: the
+settled candidates that beat the reigning champion by at least
+`promote_margin` on at least one scoring axis and that nothing else on the
+record dominates.
+
+**Record only, and default on.** It never enters the gate, selection, the
+proposer's prompt, or the champion pointer — the same posture as the Elo
+fold and the RoundLog, which is why it needs no knob to be safe. It also
+adds no knob to work: the axes are the non-zero
+`ScoringWeights.namespace_weights` keys, the direction is each weight's
+sign, the units are the already weight-multiplied `namespace_aggregates`
+(so one threshold serves axes whose raw units differ by orders of
+magnitude), the threshold is `promote_margin`, and the epoch is the key —
+a promotion keeps the frontier, an epoch roll starts it empty.
+
+Admission reuses the gate's own `namespace_monotonicity` rule (promoted to
+the public `tournament.gate.regressed_namespaces`, one implementation for
+both callers), so a candidate that guts rubric or introduces schema
+failures cannot buy its way onto the record with a cost win. Placebo arms
+are refused; the multi-challenger path fields them inside the slate, so
+that check is load-bearing. On a promotion, members the new champion
+dominates or that regress against it are MOVED to a `retired` list with the
+round and the reason — never deleted.
+
+Surfaces: one INFO line and one additive `frontier_updated` round-log
+event, both only when membership moved, plus an additive `pareto_frontier`
+table in the analytical index (schema v13; the workspace file stays
+canonical and `zicato reindex` re-derives every row). No UI and no new CLI
+command yet. Proposer exposure, frontier recombination, and slate steering
+are registered as deferred generator-arsenal work in
+`docs/design/PARETO-FRONTIER.md` §8 — they are what turn a record into a
+decision, and they ship on their own evidence.
+
+Also, a forward-compat note recorded on `ExpectationKind` while hardening
+the hydration boundary below: adding a member to that enum is now a
+cache-invalidating change for older readers, because `loss.json` stores the
+bare token and the reader coerces it back. `BoardEntryKind` reserves slots
+for exactly this; `ExpectationKind` has none, so a sixth member needs a
+reserved slot landed a release ahead.
+### Round-completeness verification: liveness is not integrity (issue #97)
+
+A long parallel measurement sweep lost its model-endpoint credentials
+mid-run. The cell straddling the outage did not fail cleanly: it kept the
+rounds that had already run, satisfied a "did we reach the model?"
+liveness probe, was marked complete, and contributed a mean built from
+fewer duels than its peers. Cell-level accounting reported every cell
+healthy while 83 of 496 rounds had emitted no `gate_evaluated` at all —
+and the loss was correlated with the arm being measured, so it biased the
+baseline the whole comparison was anchored to. `zicato.epoch.round_integrity`
+is the check at the granularity the ENDPOINT consumes: a pure reader over
+`epochs/{epoch}/rounds/*/round_log.jsonl` that classifies every round
+COMPLETE (settled with a gate), SETTLED-DEGRADED (settled without a gate,
+but the proposer was reached and returned an invalid patch — a real
+measurement of a degraded arm), or VOID (everything else: a torn or partial
+log, a gateless round carrying a hard infra error, or one that closed with
+neither a measurement nor an explanation). The degraded class is
+deliberately narrow — voiding it would send a legitimately-degraded arm
+around the retry loop to exhaustion — so VOID is the default and acceptance
+needs positive evidence. A cell is accepted iff it contains zero VOID rounds
+AND at least one round: zero rounds is vacuously free of void rounds, so
+`--verify` fails an empty epoch too rather than letting a cell that never
+ran read as healthy. The infra-error vocabulary is matched only against
+errors raised at the CALL BOUNDARY: every other string in a round's error
+trail is a post-response content rejection quoting text zicato does not
+control — validator findings over the child agent's own source, mutation
+ids, the model's own offending values — so a challenger that breaks a file
+named `auth.py` would otherwise read as a credential outage, and would do
+it in an arm-correlated pattern, manufacturing the contamination shape the
+check exists to detect. `zicato epoch rounds` renders the per-round evidence —
+matched error strings verbatim, never a bare boolean — with `--verify` for
+the exit code and `--json` for a harness.
+
+### The campaign doc records its results and its resolution limit (issue #97)
+
+`docs/design/CAMPAIGN.md` was a pre-registration with no results and a cost
+model roughly an order of magnitude optimistic (it projected ~2.5 h of
+parallel board-run wall-clock; a 144-cell run measured 7 h 23 m). It now
+opens with the standing record: every pre-#110-fix run withdrawn, two valid
+144-cell runs on deliberately identical designs, both validity gates
+passing on both, zero of nine features graduating either time, and the
+recommendation that the generator arsenal stays default-off. The design
+sections are re-scoped to what the measurements support — the endpoint is
+per-duel challenger improvement aggregated to cell means with the CELL as
+the unit of analysis (duels within a cell share an evolving champion;
+treating them as independent understated every standard error ~2x and
+flipped a validity gate), the resolution floor is DERIVED from an in-batch
+A/A contrast rather than asserted, both controls (A/A duplicate and
+planted-defect arm) are mandatory members of the same batch with the
+planted-defect check additionally a cheap pre-gate, and sizing is stated in
+cells rather than duels because between-cell variance dominates within-cell
+by roughly 4x. The K=6 screen premise is withdrawn; the two-sample MDE
+arithmetic the live MDE ladder pins is retained unchanged.
+
 ### The holdout confirmation gets its own bounds (issue #118)
 
 `promote_margin` served as both the Rule 1 train threshold and the

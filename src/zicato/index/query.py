@@ -1073,6 +1073,7 @@ def index_counts(db_path: Path) -> dict[str, int]:
         "metric_counts",
         "tournaments",
         "judge_losses",
+        "pareto_frontier",
     )
     out: dict[str, int] = dict.fromkeys(tables, 0)
     try:

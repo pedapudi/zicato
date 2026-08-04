@@ -60,6 +60,21 @@ class ExpectationKind(StrEnum):
     and serialises through ``json.dumps`` with no converter. The board
     JSONL writer emits the bare token; the loader rejects any token not
     in this enum with a message listing the valid values.
+
+    .. warning::
+
+       Adding a SIXTH member is a cache-invalidating change for OLDER
+       readers, and it is not symmetric with adding one to
+       :data:`BoardEntryKind` (which reserves forward-compat slots above
+       for exactly this reason; this enum has none). ``loss.json`` stores
+       the bare token, and
+       :func:`~zicato.telemetry.reducer.loss_profile_from_dict` coerces it
+       back to a member — so a build that does not know the new token reads
+       every affected unit as a cache MISS, and on a budget-capped round
+       ``scheduling._skip_unit_side`` then OVERWRITES the real measurement
+       with a synthetic skip. A new member therefore needs either a
+       reserved slot landed one release ahead, or an explicit decision that
+       rolling back past it discards those units' evidence.
     """
 
     EXPECTED_TEXT = "expected_text"

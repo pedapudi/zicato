@@ -243,7 +243,7 @@ class GateOutcome:
     attributable_regressions: tuple[str, ...] = ()
 
 
-def _regressed_namespaces(
+def regressed_namespaces(
     parent_agg: dict[str, Any],
     child_agg: dict[str, Any],
     weights: ScoringWeights,
@@ -266,6 +266,14 @@ def _regressed_namespaces(
     Namespaces named in :attr:`ScoringWeights.namespace_monotonicity`
     but missing from the parent or child aggregates are silently
     skipped — we cannot judge regression without two points to compare.
+
+    Public because Rule 3's question — "did a monotonicity-tracked
+    namespace move the wrong way between these two aggregates?" — is asked
+    outside the gate too: the gate-rule view renders it, and the Pareto
+    frontier record uses it as its admission control (see
+    ``docs/design/PARETO-FRONTIER.md`` §4). A second implementation would
+    let the record and the gate disagree about what a regression is, so
+    there is exactly one.
     """
     parent_ns: dict[str, Any] = parent_agg.get("namespace_aggregates", {}) or {}
     child_ns: dict[str, Any] = child_agg.get("namespace_aggregates", {}) or {}
@@ -844,7 +852,7 @@ def evaluate_gate(
     # margin and the entry-pass-rate guard fire first when they apply;
     # we still cite EVERY regressing namespace in the reason so the
     # journal records the full picture (not just the first one).
-    regressed_ns = _regressed_namespaces(parent_agg, child_agg, weights)
+    regressed_ns = regressed_namespaces(parent_agg, child_agg, weights)
     if regressed_ns:
         reason = _namespace_regression_reason(parent_agg, child_agg, regressed_ns)
         return GateOutcome(
@@ -925,4 +933,5 @@ __all__ = [
     "effective_holdout_margin",
     "evaluate_gate",
     "holdout_confirms",
+    "regressed_namespaces",
 ]

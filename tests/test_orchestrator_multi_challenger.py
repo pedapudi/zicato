@@ -24,6 +24,7 @@ import asyncio
 import json
 import sqlite3
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -88,7 +89,11 @@ def _distinct_field_responses(n: int) -> list[str]:
 
 
 def _bootstrap_swiss_workspace(
-    tmp_path: Path, *, field_size: int, rounds_n: int = 1
+    tmp_path: Path,
+    *,
+    field_size: int,
+    rounds_n: int = 1,
+    overfitting: Any | None = None,
 ) -> tuple[Path, str]:
     """Create a workspace + a Swiss epoch + a v0 baseline snapshot.
 
@@ -149,6 +154,9 @@ def _bootstrap_swiss_workspace(
                     structure="swiss",
                     params={"field_size": field_size, "rounds_n": rounds_n, "replicates": 1},
                 ),
+                # ``None`` keeps the dataclass default, so every existing
+                # caller's contract hash is unchanged.
+                **({"overfitting": overfitting} if overfitting is not None else {}),
             )
         ),
         auto_close_previous=False,
