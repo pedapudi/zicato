@@ -148,11 +148,31 @@ def index_preflight(workspace_root: Path) -> str:
 
     Caller wraps this in ``best_effort``: the index is derived, so a
     preflight failure must never abort a run.
+
+    ``IndexSchemaNewerError`` is the one failure that must not ride that
+    wrapper down to ``debug``. It means the workspace was last opened by a
+    NEWER zicato and this build refuses to touch the file (deleting a
+    database whose columns it cannot interpret is forbidden — §5.4's
+    downgrade-recovery case). The consequence is silent and lasting: no
+    build, no heal for the rest of the run, and the proposer's experiment
+    memory quietly thins for every round. It is also the one failure with an
+    action attached, so it is logged at WARNING and named. The run still
+    continues — a stale index is a degraded read, never a reason to stop.
     """
     from zicato.index.ingest import ensure_index, heal_index  # noqa: PLC0415
+    from zicato.index.schema import IndexSchemaNewerError  # noqa: PLC0415
 
     actions: list[str] = []
-    ensure_index(workspace_root, action_out=actions)
+    try:
+        ensure_index(workspace_root, action_out=actions)
+    except IndexSchemaNewerError as exc:
+        log.warning(
+            "index: %s — this run reads a stale index (no build, no heal). "
+            "Recover with: delete the workspace index.db and run `zicato reindex`, "
+            "or run this workspace with the newer zicato that wrote it.",
+            exc,
+        )
+        return "index: SKIPPED — index.db was written by a newer zicato"
     built = actions[0] if actions else "present"
     if built.startswith("built:"):
         return f"index: built fresh ({built.split(':', 1)[1]})"

@@ -1544,9 +1544,9 @@ def _rebuild_epoch(
 # Ingest cursors — the per-epoch staleness signal (schema v14)
 # ---------------------------------------------------------------------------
 
-#: The four cheap workspace signals a cursor records, in column order:
-#: ``(experiments, round_dirs, reflections, lineage_generations)``.
-_CursorSignals = tuple[int, int, int, int]
+#: The five cheap signals a cursor records, in column order:
+#: ``(experiments, runs, round_dirs, reflections, lineage_generations)``.
+_CursorSignals = tuple[int, int, int, int, int]
 
 
 def _count_dirs(root: Path) -> int:
@@ -1569,6 +1569,16 @@ def _epoch_signals(
     generations, so it has to be affordable enough that nobody is tempted to
     turn it off; re-deriving row content to compare it would not be.
 
+    ``runs_count`` counts ``loss.json`` files under
+    ``generations/*/runs/*/``, and it is the signal that makes a CRASHED
+    DUAL-WRITE visible. Everything else an epoch accumulates is bracketed by
+    an experiment: if a round's runs reduced but the process died before
+    :func:`ingest_run` projected them, no other count here moves, and until
+    this signal existed such an epoch validated clean forever while the index
+    silently held no rows for those runs. It is one ``iterdir`` per generation
+    plus one ``is_file`` per run — the same order of cost as the experiment
+    count directly above it, and no file is parsed.
+
     ``round_dirs_count`` is a signal the index has no table for — nothing
     projects ``epochs/{e}/rounds/``. It is carried anyway because it is the
     cheapest proxy for "this epoch advanced": a round directory appears at
@@ -1578,19 +1588,26 @@ def _epoch_signals(
     from zicato.core.workspace import (  # noqa: PLC0415
         experiment_json_path,
         generations_dir,
+        loss_profile_path,
         reflections_dir,
     )
     from zicato.epoch.round_log import rounds_dir  # noqa: PLC0415
 
     experiments = 0
+    runs = 0
     gens_root = generations_dir(workspace_root, epoch_id)
     try:
         gen_children = sorted(gens_root.iterdir())
     except OSError:
         gen_children = []
     for child in gen_children:
-        if child.is_dir() and experiment_json_path(workspace_root, epoch_id, child.name).is_file():
+        if not child.is_dir():
+            continue
+        if experiment_json_path(workspace_root, epoch_id, child.name).is_file():
             experiments += 1
+        for entry_id in _iter_run_entry_ids(workspace_root, epoch_id, child.name):
+            if loss_profile_path(workspace_root, epoch_id, child.name, entry_id).is_file():
+                runs += 1
 
     lineage_generations = 0
     for gen in (lineage_entry or {}).get("generations", []):
@@ -1599,10 +1616,37 @@ def _epoch_signals(
 
     return (
         experiments,
+        runs,
         _count_dirs(rounds_dir(workspace_root, epoch_id)),
         _count_dirs(reflections_dir(workspace_root, epoch_id)),
         lineage_generations,
     )
+
+
+def _index_side_counts(conn: sqlite3.Connection, epoch_id: str) -> tuple[int, int]:
+    """``(experiments, runs)`` as they exist IN THE INDEX for one epoch.
+
+    Both are 1:1 with the workspace files the matching signal counts, which
+    is what lets :func:`_diverged_epochs` compare them directly against
+    :func:`_epoch_signals`.
+
+    Runs are counted by DISTINCT ``(generation_id, entry_id)`` rather than by
+    row, because that pair — not ``run_id`` — is what the workspace signal
+    counts: a ``loss.json`` lives at exactly one
+    ``generations/{gen}/runs/{entry}/`` path. ``runs`` is keyed by ``run_id``,
+    so two profiles carrying the same id collapse to one row; counting rows
+    would then under-report against a file count that cannot collide, and
+    make the epoch diverge on a difference that is about the KEY rather than
+    about the projection being incomplete.
+    """
+    experiments = conn.execute(
+        "SELECT COUNT(*) FROM experiments WHERE epoch_id = ?", (epoch_id,)
+    ).fetchone()[0]
+    runs = conn.execute(
+        "SELECT COUNT(DISTINCT generation_id || '/' || entry_id) FROM runs WHERE epoch_id = ?",
+        (epoch_id,),
+    ).fetchone()[0]
+    return int(experiments or 0), int(runs or 0)
 
 
 def _write_cursor(
@@ -1611,20 +1655,66 @@ def _write_cursor(
     epoch_id: str,
     lineage_entry: dict[str, Any] | None,
 ) -> None:
-    """Upsert one epoch's ``ingest_cursors`` row from the current workspace."""
-    signals = _epoch_signals(workspace_root, epoch_id, lineage_entry)
+    """Upsert one epoch's ``ingest_cursors`` row.
+
+    **The two column families, and why they are not interchangeable.** A
+    cursor exists to be compared against the workspace, so a column is only
+    useful if it says something the workspace does not already say.
+
+    * ``experiments_count`` / ``runs_count`` are stamped from the INDEX
+      (:func:`_index_side_counts`) — *what this index actually holds*.
+    * ``round_dirs_count`` / ``reflections_count`` /
+      ``lineage_generations_count`` are stamped from the WORKSPACE, because
+      the index has no 1:1 counterpart to count: nothing projects
+      ``rounds/`` at all, a reflection DIRECTORY need not yield a row, and
+      the ``generations`` table is the union of lineage ids and on-disk
+      directories rather than the lineage list this signal counts. For these
+      three the cursor means "what the workspace looked like when this epoch
+      was last projected", and a change since then is the divergence.
+
+    Stamping the first two from the workspace is what made a crashed
+    dual-write invisible. :func:`_refresh_cursor` runs after every
+    incremental ``ingest_*``, so a workspace-stamped ``runs_count`` recorded
+    the loss profiles that were ON DISK — including any the crashed write
+    never projected — and the epoch then validated clean forever against an
+    index that did not hold them. A self-consistent lie, which is the one
+    failure mode a staleness signal must not have. Index-stamped, the same
+    epoch reports fewer rows than the workspace has files, every time it is
+    asked, until a heal actually projects them.
+
+    The honest cost of that choice: a canonical file the projection cannot
+    read (:func:`_load_loss_profile` returns ``None`` on a malformed
+    ``loss.json``) is counted by the workspace signal and yields no row, so
+    the epoch stays divergent and is re-projected at every ``evolve`` start.
+    Bounded, once-per-run, and correct in the sense that matters — the index
+    genuinely cannot represent that file, and saying so repeatedly is better
+    than recording that it can.
+    """
+    _experiments, _runs, round_dirs, reflections, lineage_generations = _epoch_signals(
+        workspace_root, epoch_id, lineage_entry
+    )
+    indexed_experiments, indexed_runs = _index_side_counts(conn, epoch_id)
     conn.execute(
         "INSERT INTO ingest_cursors("
-        "epoch_id, experiments_count, round_dirs_count, reflections_count, "
+        "epoch_id, experiments_count, runs_count, round_dirs_count, reflections_count, "
         "lineage_generations_count, last_ingested_at) "
-        "VALUES(?, ?, ?, ?, ?, ?) "
+        "VALUES(?, ?, ?, ?, ?, ?, ?) "
         "ON CONFLICT(epoch_id) DO UPDATE SET "
         "experiments_count = excluded.experiments_count, "
+        "runs_count = excluded.runs_count, "
         "round_dirs_count = excluded.round_dirs_count, "
         "reflections_count = excluded.reflections_count, "
         "lineage_generations_count = excluded.lineage_generations_count, "
         "last_ingested_at = excluded.last_ingested_at",
-        (epoch_id, *signals, _now_iso()),
+        (
+            epoch_id,
+            indexed_experiments,
+            indexed_runs,
+            round_dirs,
+            reflections,
+            lineage_generations,
+            _now_iso(),
+        ),
     )
 
 
@@ -1636,6 +1726,11 @@ def _refresh_cursor(conn: sqlite3.Connection, workspace_root: Path, epoch_id: st
     written by a rebuild or a heal, and every dual-written round would read as
     divergence at the next validation — turning the cheap incremental heal
     into a full re-projection of the active epoch on every ``evolve`` start.
+
+    It records what the index NOW HOLDS, including the row the caller just
+    wrote — never a fresh reading of the workspace for the index-backed
+    columns. See :func:`_write_cursor` for why that distinction is the whole
+    point of this function rather than a detail of it.
     """
     _write_cursor(conn, workspace_root, epoch_id, _lineage_by_epoch(workspace_root).get(epoch_id))
 
@@ -1650,7 +1745,7 @@ def _read_cursors(conn: sqlite3.Connection) -> dict[str, _CursorSignals]:
     """
     try:
         rows = conn.execute(
-            "SELECT epoch_id, experiments_count, round_dirs_count, "
+            "SELECT epoch_id, experiments_count, runs_count, round_dirs_count, "
             "reflections_count, lineage_generations_count FROM ingest_cursors"
         ).fetchall()
     except sqlite3.Error:
@@ -1658,21 +1753,46 @@ def _read_cursors(conn: sqlite3.Connection) -> dict[str, _CursorSignals]:
     out: dict[str, _CursorSignals] = {}
     for row in rows:
         if isinstance(row[0], str):
-            out[row[0]] = (int(row[1] or 0), int(row[2] or 0), int(row[3] or 0), int(row[4] or 0))
+            out[row[0]] = (
+                int(row[1] or 0),
+                int(row[2] or 0),
+                int(row[3] or 0),
+                int(row[4] or 0),
+                int(row[5] or 0),
+            )
     return out
+
+
+def _indexed_epoch_ids(conn: sqlite3.Connection) -> set[str]:
+    """Every epoch id the index holds a row for, cursor or not."""
+    try:
+        rows = conn.execute("SELECT DISTINCT epoch_id FROM epochs").fetchall()
+    except sqlite3.Error:
+        return set()
+    return {row[0] for row in rows if isinstance(row[0], str)}
 
 
 def _diverged_epochs(
     workspace_root: Path,
     cursors: dict[str, _CursorSignals],
     walk: list[_EpochWalkItem],
+    indexed: set[str],
 ) -> tuple[str, ...]:
     """Return the sorted ids of epochs whose index rows no longer match disk.
 
     Three things count as divergence: an epoch on disk with no cursor row, an
-    epoch whose cursor disagrees with any workspace signal, and an epoch that
-    has a cursor row but is GONE from the workspace (the index is holding rows
-    for something that no longer exists).
+    epoch whose cursor disagrees with any signal, and an epoch the INDEX still
+    holds rows for that is GONE from the workspace.
+
+    That last set is the union of the cursor table and ``indexed`` (the epoch
+    ids actually present in ``epochs``) — not the cursor table alone. A
+    cursor-driven test can only ever find epochs some cursor-writing path
+    already visited, so rows written before v14 existed are invisible to it:
+    a v13 database migrated IN PLACE by the incremental writers arrives with
+    populated tables and ZERO cursors, and any of its epochs since deleted
+    from the workspace would be orphaned in the index permanently, with
+    ``heal_index`` reporting nothing to do. Reading the epoch ids straight
+    off the index closes that, and costs one ``SELECT DISTINCT``.
     """
     stale: set[str] = set()
     on_disk: set[str] = set()
@@ -1681,7 +1801,7 @@ def _diverged_epochs(
         recorded = cursors.get(item.epoch_id)
         if recorded != _epoch_signals(workspace_root, item.epoch_id, item.lineage_entry):
             stale.add(item.epoch_id)
-    stale.update(set(cursors) - on_disk)
+    stale.update((set(cursors) | set(indexed)) - on_disk)
     return tuple(sorted(stale))
 
 
@@ -1758,7 +1878,7 @@ def _build_tmp_path(target: Path) -> Path:
     ``os.replace`` publishes one of them whole. Last writer wins, and every
     possible winner is valid.
     """
-    return target.with_name(f"{target.name}.{os.getpid()}.{uuid.uuid4().hex[:8]}.tmp")
+    return target.with_name(f"{target.name}.{os.getpid()}.{uuid.uuid4().hex}.tmp")
 
 
 def _sweep_stale_build_tmps(target: Path) -> None:
@@ -1870,6 +1990,23 @@ def _build_index_atomically(workspace_root: Path, target: Path) -> None:
         # inherit. The real index is untouched either way.
         _unlink_db(tmp)
         raise
+    # The clean close above checkpointed the scratch WAL back into the scratch
+    # file and removed its sidecars; that is precisely what makes the renamed
+    # file whole. If they are somehow still here, the rename would publish a
+    # database whose tail is in a file we are about to orphan — refuse, and
+    # leave the existing index alone, which is this function's entire promise.
+    orphans = [
+        sidecar
+        for sidecar in (tmp.with_name(tmp.name + suffix) for suffix in ("-wal", "-shm"))
+        if sidecar.exists()
+    ]
+    if orphans:
+        _unlink_db(tmp)
+        raise RuntimeError(
+            "refusing to publish an index whose scratch file still has sidecars "
+            f"({', '.join(p.name for p in orphans)}); its contents are not all in the "
+            "file being renamed"
+        )
     # BEFORE the rename — see the docstring. A foreign WAL left beside the
     # published file is replayed over it, not ignored.
     for suffix in ("-wal", "-shm"):
@@ -1988,11 +2125,12 @@ def validate_index(workspace_root: Path, db_path: Path | None = None) -> tuple[s
     try:
         conn.execute("PRAGMA busy_timeout=5000")
         cursors = _read_cursors(conn)
+        indexed = _indexed_epoch_ids(conn)
     except sqlite3.DatabaseError:
         return ()
     finally:
         conn.close()
-    return _diverged_epochs(workspace_root, cursors, _walk_epochs(workspace_root))
+    return _diverged_epochs(workspace_root, cursors, _walk_epochs(workspace_root), indexed)
 
 
 def heal_index(workspace_root: Path, db_path: Path | None = None) -> tuple[str, ...]:
@@ -2016,7 +2154,9 @@ def heal_index(workspace_root: Path, db_path: Path | None = None) -> tuple[str, 
     conn, _ = _open_for_write(workspace_root, db_path)
     try:
         walk = _walk_epochs(workspace_root)
-        stale = _diverged_epochs(workspace_root, _read_cursors(conn), walk)
+        stale = _diverged_epochs(
+            workspace_root, _read_cursors(conn), walk, _indexed_epoch_ids(conn)
+        )
         if not stale:
             return ()
         by_id = {item.epoch_id: item for item in walk}

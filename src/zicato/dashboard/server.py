@@ -110,31 +110,51 @@ def _ensure_index_at_startup(paths: WorkspacePaths) -> None:
       valid-but-empty ``index.db`` that flips every reader's degrade
       branch.
 
+    There is deliberately NO schema-version pre-check in front of
+    ``ensure_index``. An earlier shape asked ``index_schema_version(...) ==
+    SCHEMA_VERSION`` first and returned when it matched — cheap, but it
+    decided the question ``ensure_index`` exists to decide, and it decided it
+    differently: on a file that is not a SQLite database at all the pre-check
+    RAISES, the blanket guard below swallows it at ``debug``, and the
+    dashboard never repairs it. ``_rebuild_reason`` classifies that same file
+    as ``unreadable`` and rebuilds. So the ``built:unreadable`` outcome §5.1
+    documents was unreachable from this path precisely because the pre-check
+    ran first. ``ensure_index`` returns without writing when the index is
+    current, which is all the pre-check bought.
+
     Never raises: the dashboard renders a degraded analytical surface far
     more gracefully than it survives a failed startup.
     """
     from zicato.index.ingest import ensure_index  # noqa: PLC0415
-    from zicato.index.query import index_schema_version  # noqa: PLC0415
-    from zicato.index.schema import SCHEMA_VERSION  # noqa: PLC0415
+    from zicato.index.schema import IndexSchemaNewerError  # noqa: PLC0415
     from zicato.runtime.lock import read_workspace_lock  # noqa: PLC0415
 
     try:
-        if index_schema_version(paths.index_db) == SCHEMA_VERSION:
-            return
         epochs_root = paths.root / "epochs"
         if not epochs_root.is_dir() or not any(c.is_dir() for c in epochs_root.iterdir()):
             return
         holder = read_workspace_lock(paths.root)
         if holder is not None:
-            log.info(
-                "index: build skipped, workspace locked by live pid %d "
+            log.debug(
+                "index: build/refresh skipped, workspace locked by live pid %d "
                 "(the running evolve owns the index)",
                 holder.pid,
             )
             return
         actions: list[str] = []
         ensure_index(paths.root, action_out=actions)
-        log.info("index: %s", actions[0] if actions else "present")
+        # Only report a BUILD. Without the pre-check this runs on every
+        # start, and announcing "present" each time would train the operator
+        # to ignore the one line that means something happened.
+        if actions:
+            log.info("index: %s", actions[0])
+    except IndexSchemaNewerError as exc:
+        log.warning(
+            "index: %s — the analytical views render from a stale index. "
+            "Recover with: delete the workspace index.db and run `zicato reindex`, "
+            "or serve this workspace with the newer zicato that wrote it.",
+            exc,
+        )
     except Exception as exc:  # noqa: BLE001 — startup index build is best-effort
         log.debug("index: startup build skipped: %s", exc)
 

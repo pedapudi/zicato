@@ -735,6 +735,7 @@ Schema **v14** adds one additive table.
 CREATE TABLE IF NOT EXISTS ingest_cursors (
   epoch_id                  TEXT PRIMARY KEY,
   experiments_count         INTEGER,
+  runs_count                INTEGER,
   round_dirs_count          INTEGER,
   reflections_count         INTEGER,
   lineage_generations_count INTEGER,
@@ -742,19 +743,62 @@ CREATE TABLE IF NOT EXISTS ingest_cursors (
 )
 ```
 
-| Column | Workspace signal it records |
-|---|---|
-| `experiments_count` | generation directories under `epochs/{e}/generations/` that contain an `experiment.json` |
-| `round_dirs_count` | entries under `epochs/{e}/rounds/` |
-| `reflections_count` | directories under `epochs/{e}/reflections/` |
-| `lineage_generations_count` | generation entries for this epoch in `lineage.json` |
-| `last_ingested_at` | when this epoch was last projected (observational) |
+| Column | Stamped from | What it records |
+|---|---|---|
+| `experiments_count` | **index** | `experiments` rows for this epoch |
+| `runs_count` | **index** | distinct `(generation_id, entry_id)` in `runs` for this epoch |
+| `round_dirs_count` | workspace | entries under `epochs/{e}/rounds/` |
+| `reflections_count` | workspace | directories under `epochs/{e}/reflections/` |
+| `lineage_generations_count` | workspace | generation entries for this epoch in `lineage.json` |
+| `last_ingested_at` | — | when this epoch was last projected (observational) |
 
-The four counts are deliberately **cheap**: directory-entry counts
-and stats, never a file parse. `lineage.json` is read once for the
-whole workspace, not once per epoch. Validation must be affordable
-enough to run at every `evolve` start on a large workspace, which
-rules out re-deriving row content to compare it.
+Each is compared against the matching **workspace** signal:
+`experiments_count` against generation directories holding an
+`experiment.json`, `runs_count` against `loss.json` files under
+`generations/*/runs/*/`, and the other three against themselves as
+they were at the last projection.
+
+**The `Stamped from` column is the load-bearing one, and the split is
+not arbitrary.** A cursor is only useful if it says something the
+workspace does not already say.
+
+*Index-stamped, where a 1:1 counterpart exists.* `experiments_count`
+and `runs_count` record what this index actually **holds**, so a
+comparison against the workspace detects rows that were never
+projected. Stamping them from the workspace instead is what made a
+crashed dual-write invisible: `_refresh_cursor` runs after every
+incremental `ingest_*`, so a workspace-stamped count recorded the
+files that were *on disk* — including any the crashed write never
+projected — and the epoch then validated clean **forever** against an
+index that did not hold them. A self-consistent lie, which is the one
+failure mode a staleness signal must not have.
+
+*Workspace-stamped, where no counterpart exists.* The index has
+nothing to count for the other three: nothing projects `rounds/` at
+all, a reflection *directory* need not yield a row, and the
+`generations` table is the union of lineage ids and on-disk
+directories rather than the lineage list this signal counts. For these
+the cursor means "what the workspace looked like when this epoch was
+last projected", and a change since then is the divergence.
+
+`runs_count` is also the signal that makes a crashed dual-write
+*detectable at all*. Everything else an epoch accumulates is bracketed
+by an experiment; if a round's runs reduced but the process died before
+`ingest_run` projected them, no other count moves.
+
+The counts are deliberately **cheap**: directory-entry counts and
+stats, never a file parse. `lineage.json` is read once for the whole
+workspace, not once per epoch. Validation must be affordable enough to
+run at every `evolve` start on a large workspace, which rules out
+re-deriving row content to compare it.
+
+The honest cost of index-stamping: a canonical file the projection
+cannot read — `_load_loss_profile` returns `None` on a malformed
+`loss.json` — is counted by the workspace signal and yields no row, so
+the epoch stays divergent and is re-projected once per `evolve` start.
+Bounded, and correct in the sense that matters: the index genuinely
+cannot represent that file, and saying so repeatedly beats recording
+that it can.
 
 `round_dirs_count` is a signal the index has no table for — nothing
 projects `epochs/{e}/rounds/`. It is carried anyway because it is
@@ -778,10 +822,16 @@ Three things count as divergence:
 
 1. an epoch on disk with no cursor row (never ingested, or ingested
    by a build that predates v14),
-2. an epoch whose cursor row disagrees with any of the four
-   workspace signals,
-3. an epoch with a cursor row that is **gone from the workspace** —
-   the index is holding rows for something that no longer exists.
+2. an epoch whose cursor row disagrees with any of the five
+   signals,
+3. an epoch the **index still holds rows for** that is gone from the
+   workspace. This set is the union of the cursor table and
+   `SELECT DISTINCT epoch_id FROM epochs`, not the cursor table alone:
+   a cursor-driven test can only find epochs some cursor-writing path
+   already visited, so a v13 database migrated *in place* by the
+   incremental writers — populated tables, zero cursors — would orphan
+   any of its since-deleted epochs permanently, with `heal_index`
+   reporting nothing to do.
 
 `heal_index` re-ingests exactly those epochs and returns the ids it
 healed. For each one it deletes that epoch's rows and re-projects
@@ -868,9 +918,24 @@ epoch reads as diverged at the *end* of a run: that is the dual-write
 ordering showing through, not a defect in the cursor, and the heal
 that follows is a genuine correction rather than redundant work.
 
-**(b) The dashboard / query read path.** `create_app` calls
-`ensure_index` **only** — the absence/version check, at server
-start, never per request.
+**(b) The dashboard / query read path.** `run()` calls `ensure_index`
+**only**, once at server start, never per request. The seam is `run`
+rather than `create_app` because `run` is the process-start path both
+real launches come through, and building an ASGI app must not have
+filesystem side effects.
+
+There is deliberately **no schema-version pre-check** in front of that
+call. An earlier shape asked `index_schema_version(...) ==
+SCHEMA_VERSION` first and returned when it matched — cheap, but it
+decided the question `ensure_index` exists to decide, and decided it
+differently: on a file that is not a SQLite database at all the
+pre-check *raises*, the best-effort guard swallows it, and the
+dashboard never repairs it. `_rebuild_reason` classifies that same file
+as `unreadable` and rebuilds, so the `built:unreadable` outcome §5.1
+documents was unreachable from this path precisely because the cheap
+check ran in front of the one that classifies it. `ensure_index`
+returns without writing when the index is current, which is all the
+pre-check bought.
 
 A full heal is deliberately *not* on the read path. Healing writes;
 a reader that heals while an orchestrator dual-writes is the
@@ -920,16 +985,27 @@ the explicit command:
 - **Downgrade recovery.** A database written by a newer zicato
   raises `IndexSchemaNewerError`; auto-deleting it is forbidden, so
   the operator deletes it and rebuilds deliberately.
-- **Post-surgery rebuilds.** After hand-editing canonical files in
-  a way the cheap cursor signals cannot see. Every signal is a
-  **count**, so the blind spot is precisely *content change at
-  constant cardinality*, and it has two shapes, not one: correcting
-  a value **inside** an `experiment.json`, and **removing one file
-  while adding another** in the same epoch — a generation deleted
-  and a different one created leaves `experiments_count` exactly
-  where it was. Neither is reachable from the loop, which only ever
-  appends; both are reachable from a human with an editor. A full
-  rebuild is what re-derives the changed cells.
+- **Post-surgery rebuilds — the content-hash residual.** After
+  hand-editing canonical files in a way the cheap signals cannot see.
+  Every signal is a **count**, so the residual is exactly *content
+  change at constant cardinality*, and it has two shapes:
+
+  1. **Value edits.** Correcting a field **inside** an
+     `experiment.json` or a `loss.json`. No count moves.
+  2. **Set swaps.** Removing one file while adding another —
+     deleting generation `v2` and creating `v9`, with its run,
+     leaves `experiments_count`, `runs_count` and the lineage count
+     all exactly where they were.
+
+  Adding `runs_count` did **not** close shape 2, and it was not
+  expected to: a swap is symmetric in every count by construction.
+  Closing it needs content hashing (an mtime/size digest per epoch,
+  or a per-file hash), which is the one thing §5.2's cost rule rules
+  out — validation runs at every `evolve` start. Neither shape is
+  reachable from the loop, which only ever appends; both are
+  reachable from a human with an editor, which is exactly when the
+  operator knows to reach for this command. A full rebuild
+  re-derives the changed cells.
 - **Determinism assertion.** Proving the index equals a pure
   re-projection of the files (what the REINDEX-DUMP parity gate
   does) requires the from-scratch path by definition.

@@ -46,12 +46,13 @@ INSERT INTO "generations" VALUES('<DATE>_t1_racing','v4','v0',0,'<TS>',0,1.47793
 CREATE TABLE ingest_cursors (
       epoch_id TEXT PRIMARY KEY,
       experiments_count INTEGER,
+      runs_count INTEGER,
       round_dirs_count INTEGER,
       reflections_count INTEGER,
       lineage_generations_count INTEGER,
       last_ingested_at TEXT
     );
-INSERT INTO "ingest_cursors" VALUES('<DATE>_t1_racing',4,1,0,4,'<TS>');
+INSERT INTO "ingest_cursors" VALUES('<DATE>_t1_racing',4,0,1,0,4,'<TS>');
 CREATE TABLE judge_losses (
       run_id TEXT,
       judge_name TEXT,

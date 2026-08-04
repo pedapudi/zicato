@@ -20,12 +20,14 @@ from __future__ import annotations
 
 import json
 import re
+import shutil
 import sqlite3
 from pathlib import Path
 from typing import Any
 
 import pytest
 
+from zicato.core.workspace import loss_profile_path
 from zicato.index.ingest import (
     _epoch_signals,
     _walk_epochs,
@@ -490,10 +492,10 @@ def test_rebuild_index_still_produces_a_from_scratch_database(tmp_path: Path) ->
 def test_a_rebuild_writes_one_cursor_per_epoch(tmp_path: Path) -> None:
     ws = _make_workspace(tmp_path, ("e1", "e2"))
     db = rebuild_index(ws)
-    rows = {r[0]: r[1:5] for r in _table_rows(db, "ingest_cursors")}
+    rows = {r[0]: r[1:6] for r in _table_rows(db, "ingest_cursors")}
     assert set(rows) == {"e1", "e2"}
-    # (experiments, round_dirs, reflections, lineage_generations)
-    assert rows["e1"] == (1, 0, 0, 2)
+    # (experiments, runs, round_dirs, reflections, lineage_generations)
+    assert rows["e1"] == (1, 0, 0, 0, 2)
 
 
 def test_a_fresh_index_reports_no_divergence(tmp_path: Path) -> None:
@@ -657,14 +659,101 @@ def test_the_dual_write_seams_advance_the_cursor(tmp_path: Path) -> None:
     assert validate_index(ws) == ()
 
 
+def _write_loss_profile(ws: Path, epoch: str, gen: str, entry: str) -> None:
+    """A REAL loss.json, written through the reducer's own writer.
+
+    Hand-rolling the JSON would test this file's idea of the format; the
+    reducer owns both ends, and the index reads it back through
+    ``read_loss_profile``.
+    """
+    from zicato.telemetry.reducer import write_loss_profile
+    from zicato.testing.fixtures import make_loss_profile
+
+    path = loss_profile_path(ws, epoch, gen, entry)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    write_loss_profile(make_loss_profile(epoch_id=epoch, generation_id=gen, entry_id=entry), path)
+
+
+def test_a_crashed_dual_write_stays_visible_however_many_writes_follow(
+    tmp_path: Path,
+) -> None:
+    """The self-consistent lie: the bug ``runs_count`` exists to make impossible.
+
+    A run's ``loss.json`` lands and the process dies before ``ingest_run``
+    projects it. Nothing else about the epoch moves — no experiment, no
+    reflection, no lineage entry — so before this signal existed the epoch
+    validated CLEAN while the index held no rows for those runs.
+
+    Worse, and the reason the fix is about WHERE the cursor is stamped rather
+    than only about adding a count: the next successful dual-write used to
+    re-stamp every signal from the CURRENT workspace, retroactively declaring
+    the unprojected run projected. The epoch then validated clean forever.
+    Stamped from the index, the cursor keeps reporting fewer rows than the
+    workspace has files, no matter how many later writes succeed, until a
+    heal actually projects them.
+    """
+    ws = _make_workspace(tmp_path)
+    db = rebuild_index(ws)
+    assert validate_index(ws) == ()
+
+    # The reduced run lands; the dual-write never happens.
+    _write_loss_profile(ws, "e1", "v1", "conv_body")
+    assert validate_index(ws) == ("e1",), "an unprojected run must be visible"
+
+    # A LATER, unrelated dual-write succeeds. This is what used to bury it.
+    (ws / "epochs" / "e1" / "generations" / "v2").mkdir(parents=True)
+    _write_json(
+        ws / "epochs" / "e1" / "generations" / "v2" / "experiment.json",
+        _experiment("e1", "v2", "v1"),
+    )
+    ingest_experiment(ws, db, "e1", "v2")
+
+    assert validate_index(ws) == ("e1",), "a later write must not bury the crashed one"
+    assert _table_rows(db, "runs") == []
+
+    # And the heal converges: the run is projected, the epoch goes quiet.
+    assert heal_index(ws) == ("e1",)
+    assert len(_table_rows(db, "runs")) == 1
+    assert validate_index(ws) == ()
+
+
+def test_an_indexed_epoch_with_no_cursor_and_no_directory_is_still_healed(
+    tmp_path: Path,
+) -> None:
+    """Orphan rows must not depend on a cursor existing to be found.
+
+    A cursor-driven scan can only find epochs some cursor-writing path
+    already visited. A v13 database migrated IN PLACE by the incremental
+    writers arrives with populated tables and ZERO cursors, so an epoch of
+    its that has since been deleted from the workspace would be orphaned in
+    the index permanently, with ``heal_index`` reporting nothing to do.
+    """
+    ws = _make_workspace(tmp_path, ("e1", "e2"))
+    db = rebuild_index(ws)
+
+    # Exactly the pre-v14 shape: rows present, cursors absent.
+    conn = sqlite3.connect(str(db))
+    conn.execute("DELETE FROM ingest_cursors")
+    conn.commit()
+    conn.close()
+    # ... and e2 is gone from the workspace.
+    shutil.rmtree(ws / "epochs" / "e2")
+    _write_json(ws / "lineage.json", {"epochs": [{"id": "e1", "generations": []}]})
+
+    assert "e2" in validate_index(ws)
+    assert "e2" in heal_index(ws)
+    assert [r for r in _table_rows(db, "epochs") if r[0] == "e2"] == []
+    assert [r for r in _table_rows(db, "generations") if r[0] == "e2"] == []
+
+
 def test_the_signals_are_directory_counts_not_parses(tmp_path: Path) -> None:
     """A generation directory with no experiment.json does not count as one."""
     ws = _make_workspace(tmp_path)
     walk = {item.epoch_id: item for item in _walk_epochs(ws)}
-    assert _epoch_signals(ws, "e1", walk["e1"].lineage_entry) == (1, 0, 0, 2)
+    assert _epoch_signals(ws, "e1", walk["e1"].lineage_entry) == (1, 0, 0, 0, 2)
 
     (ws / "epochs" / "e1" / "generations" / "v9").mkdir(parents=True)
-    assert _epoch_signals(ws, "e1", walk["e1"].lineage_entry) == (1, 0, 0, 2)
+    assert _epoch_signals(ws, "e1", walk["e1"].lineage_entry) == (1, 0, 0, 0, 2)
 
 
 # ---------------------------------------------------------------------------
@@ -819,6 +908,62 @@ def test_the_dashboard_startup_builds_an_absent_index(tmp_path: Path) -> None:
     ws = _make_workspace(tmp_path)
     _ensure_index_at_startup(_resolve_workspace(ws))
     assert (ws / "index.db").exists()
+
+
+def test_the_dashboard_startup_repairs_an_unreadable_index(tmp_path: Path) -> None:
+    """``built:unreadable`` must be reachable from the READ path too.
+
+    An earlier shape asked ``index_schema_version(...) == SCHEMA_VERSION``
+    before calling ``ensure_index``. On a file that is not a SQLite database
+    at all that pre-check RAISES, the blanket best-effort guard swallowed it
+    at ``debug``, and the dashboard never repaired the file — so the outcome
+    §5.1 documents was unreachable here precisely because the cheap check ran
+    in front of the one that classifies ``unreadable``.
+    """
+    from zicato.dashboard.server import _ensure_index_at_startup, _resolve_workspace
+
+    ws = _make_workspace(tmp_path)
+    (ws / "index.db").write_bytes(b"this is not a sqlite database, not even close")
+
+    _ensure_index_at_startup(_resolve_workspace(ws))
+
+    conn = sqlite3.connect(str(ws / "index.db"))
+    try:
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION
+        assert {r[0] for r in conn.execute("SELECT epoch_id FROM epochs")} == {"e1"}
+    finally:
+        conn.close()
+
+
+def test_a_newer_index_is_reported_at_warning_not_buried(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """The one index failure with an action attached must reach the operator.
+
+    A downgrade means no build and no heal for the whole run, and the
+    proposer's experiment memory thins silently every round. The evolve
+    preflight is wrapped in ``best_effort``, which logs at DEBUG — so without
+    a specific catch this produces zero output at INFO. The run still
+    continues: a stale index is a degraded read, never a reason to stop.
+    """
+    import logging
+
+    from zicato.evolve.ingest import index_preflight
+
+    ws = _make_workspace(tmp_path)
+    db = rebuild_index(ws)
+    conn = sqlite3.connect(str(db))
+    conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION + 1}")
+    conn.commit()
+    conn.close()
+
+    with caplog.at_level(logging.WARNING, logger="zicato.orchestrator"):
+        line = index_preflight(ws)
+
+    assert "SKIPPED" in line and "newer zicato" in line
+    warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
+    assert warnings, "a downgrade must not be silent at WARNING"
+    assert "reindex" in warnings[0].getMessage(), "the message must name the recovery"
 
 
 def test_the_dashboard_startup_skips_while_an_evolve_holds_the_lock(

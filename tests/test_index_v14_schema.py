@@ -49,12 +49,18 @@ def test_fresh_build_carries_the_cursor_table() -> None:
 
 
 def test_the_cursor_columns_are_the_documented_shape() -> None:
-    """The four signals plus the observational timestamp, in column order."""
+    """The five signals plus the observational timestamp, in column order.
+
+    ``runs_count`` sits beside ``experiments_count`` because the two share a
+    property the other three do not: they are stamped from the INDEX, not the
+    workspace, so a crashed dual-write cannot declare itself projected.
+    """
     conn = sqlite3.connect(":memory:")
     apply_schema(conn)
     assert _cursor_cols(conn) == [
         "epoch_id",
         "experiments_count",
+        "runs_count",
         "round_dirs_count",
         "reflections_count",
         "lineage_generations_count",

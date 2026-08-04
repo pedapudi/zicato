@@ -264,6 +264,7 @@ _TABLE_STATEMENTS: tuple[str, ...] = (
     CREATE TABLE IF NOT EXISTS ingest_cursors (
       epoch_id TEXT PRIMARY KEY,
       experiments_count INTEGER,
+      runs_count INTEGER,
       round_dirs_count INTEGER,
       reflections_count INTEGER,
       lineage_generations_count INTEGER,
@@ -470,10 +471,15 @@ _V12_ADDED_COLUMNS: tuple[tuple[str, str, str], ...] = (("generations", "elo_se"
 
 
 #: The table added in v14 (the self-healing index; ANALYTICAL-INDEX.md §5.2).
-#: ``ingest_cursors`` records, per epoch, the cheap workspace signals that were
-#: true when that epoch was last projected, so :func:`zicato.index.ingest
-#: .validate_index` can detect a diverged epoch from four directory counts
-#: rather than re-deriving every row. Like the v11 and v13 waves this is a
+#: ``ingest_cursors`` records, per epoch, what the last projection LEFT IN THE
+#: INDEX plus the workspace observations that have no index counterpart, so
+#: :func:`zicato.index.ingest.validate_index` can detect a diverged epoch from
+#: five cheap counts rather than re-deriving every row. The two families are
+#: not interchangeable and :func:`zicato.index.ingest._write_cursor` explains
+#: which column is which; the short version is that a column stamped from the
+#: WORKSPACE after a partial write declares unprojected data projected, which
+#: is the bug ``runs_count`` exists to make impossible. Like the v11 and v13
+#: waves this is a
 #: WHOLE NEW TABLE, so the ``CREATE TABLE IF NOT EXISTS`` pass in
 #: :func:`apply_schema` materialises it on any open and no column ALTER is
 #: needed — an existing v13 database simply gains the empty table.
