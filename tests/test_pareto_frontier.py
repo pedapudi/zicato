@@ -20,6 +20,7 @@ Four layers:
 
 from __future__ import annotations
 
+import ast
 import asyncio
 import json
 import sqlite3
@@ -207,6 +208,56 @@ def test_a_trade_off_pair_dominates_neither_way() -> None:
 def test_identical_candidates_dominate_neither_way() -> None:
     same = {"drift:": 1.0, "cost:": 1.0}
     assert not dominates(same, dict(same), margin=_MARGIN)
+
+
+def test_a_zero_margin_degrades_to_strict_pareto_dominance() -> None:
+    """``promote_margin`` is not validated positive, so zero must still work.
+
+    At ``margin == 0`` a bare ``>= margin`` is satisfied by an exact tie,
+    which would make the relation reflexive (every candidate dominating
+    itself) and symmetric on identical points — neither of which a partial
+    order may be — while a tie on the WORSE limb would veto the textbook
+    dominant case. Zero must mean strict Pareto dominance, nothing else.
+    """
+    same = {"drift:": 1.0, "cost:": 1.0}
+    assert not dominates(same, dict(same), margin=0.0)
+    assert not dominates(dict(same), same, margin=0.0)
+    assert beats_on(same, dict(same), margin=0.0) == ()
+
+    # Strictly better on one axis, exactly tied on the other: dominant.
+    better = {"drift:": 0.5, "cost:": 1.0}
+    assert dominates(better, same, margin=0.0)
+    assert not dominates(same, better, margin=0.0)
+    assert beats_on(better, same, margin=0.0) == ("drift:",)
+
+
+def test_a_zero_margin_keeps_no_information_ties_off_the_record() -> None:
+    """The admission rule at ``margin == 0``, end to end.
+
+    A candidate identical to the champion carries nothing the champion does
+    not already carry, which is admission rule 5 — and it must hold at every
+    margin, not only the default.
+    """
+    weights = ScoringWeights(promote_margin=0.0)
+    champion = _candidate("v0", drift=1.0, cost=1.0)
+    update = update_frontier(
+        ParetoFrontier(epoch_id="e0"),
+        champion=champion,
+        candidates=[_candidate("v1", drift=1.0, cost=1.0)],
+        weights=weights,
+        round_index=1,
+    )
+    assert update.admitted == ()
+    assert update.frontier.members == ()
+    # A genuine strict win on one axis still lands.
+    real = update_frontier(
+        ParetoFrontier(epoch_id="e0"),
+        champion=champion,
+        candidates=[_candidate("v2", drift=1.0, cost=0.5)],
+        weights=weights,
+        round_index=1,
+    )
+    assert real.admitted == ("v2",)
 
 
 def test_no_shared_axis_is_incomparable_not_dominant() -> None:
@@ -939,23 +990,38 @@ def test_the_record_module_never_reaches_into_the_gate_decision() -> None:
     """A structural pin on "record-only".
 
     The frontier reads the gate's namespace-monotonicity helper; nothing in
-    the gate, the selection strategy, or the proposer may read the frontier
-    back. A dependency in that direction is what turns the record into a
-    decision, which is registered as separate, gated work
+    the decision path — the whole tournament, selection, and proposer trees —
+    may read the frontier back. A dependency in that direction is what turns
+    the record into a decision, which is registered as separate, gated work
     (PARETO-FRONTIER.md §8).
+
+    Asserted on the parsed IMPORT GRAPH of every module in those trees, not
+    on a substring of the source. A substring scan is wrong in both
+    directions: it misses a module the enumeration forgot (both trees keep
+    growing, and ``selection/strategies/`` is a whole subpackage), and it
+    fires on PROSE — ``tournament/gate.py`` now names the record in a
+    docstring, and passes a lowercase ``"pareto"`` scan only by the accident
+    of a capital P.
     """
     roots = Path(__file__).resolve().parents[1] / "src" / "zicato"
-    consumers = [
-        roots / "tournament" / "gate.py",
-        roots / "tournament" / "runner.py",
-        roots / "selection" / "strategy.py",
-        roots / "selection" / "driver.py",
-    ]
-    for path in consumers:
-        assert "pareto" not in path.read_text(), f"{path} reads the frontier record"
-    proposer = roots / "proposer"
-    for path in sorted(proposer.rglob("*.py")):
-        assert "pareto" not in path.read_text(), f"{path} reads the frontier record"
+    forbidden = {"zicato.epoch.pareto", "zicato.evolve.pareto"}
+    scanned = 0
+    for tree in ("tournament", "selection", "proposer"):
+        for path in sorted((roots / tree).rglob("*.py")):
+            scanned += 1
+            for node in ast.walk(ast.parse(path.read_text(), filename=str(path))):
+                if isinstance(node, ast.Import):
+                    names = {alias.name for alias in node.names}
+                elif isinstance(node, ast.ImportFrom):
+                    # ``level`` > 0 is a relative import, which cannot reach
+                    # another top-level package from inside these trees.
+                    names = {node.module or ""} if not node.level else set()
+                else:
+                    continue
+                leaked = names & forbidden
+                assert not leaked, f"{path} imports the frontier record: {sorted(leaked)}"
+    # A guard against the enumeration silently matching nothing.
+    assert scanned > 25, f"only {scanned} modules scanned — the trees moved"
 
 
 def _drive_swiss_round(

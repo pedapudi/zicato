@@ -113,10 +113,20 @@ one axis** and **not `margin`-or-more worse on any**. In the uniform
 lower-is-better view:
 
 ```
-better_any = any(right[ns] - left[ns] >= margin  for ns in shared)
-worse_any  = any(left[ns] - right[ns] >= margin  for ns in shared)
+better_any = any(right[ns] - left[ns] >= margin and left[ns] < right[ns]  for ns in shared)
+worse_any  = any(left[ns] - right[ns] >= margin and right[ns] < left[ns]  for ns in shared)
 dominates  = better_any and not worse_any
 ```
+
+Each limb requires a *strict* difference on top of clearing the margin. For
+every `margin > 0` that conjunct is implied by the inequality beside it and
+changes nothing; it exists because `promote_margin` is not validated
+positive, and at `margin == 0` a bare `>= margin` is satisfied by an exact
+tie. That would make the relation reflexive and symmetric on identical
+points — neither of which a partial order may be — and would let a tie on
+the worse limb veto a candidate that is strictly better somewhere and equal
+everywhere else. With the conjuncts, `margin == 0` degrades cleanly to
+strict Pareto dominance.
 
 `shared` is the axes both sides carry a finite value for; an axis only one
 side has is skipped, so it neither creates nor blocks a dominance relation.
@@ -266,14 +276,24 @@ Total, deterministic, no I/O. Two passes:
 **Retire pass** (against the champion as it stands *after* the round's
 decision):
 
-| condition | reason recorded |
-|---|---|
-| the member IS now the champion | `promoted` |
-| the champion dominates the member | `dominated_by_champion` |
-| the member regresses a monotonicity namespace vs the champion | `monotonicity_regression` |
+Tested in this order, first match wins — which matters, because a champion
+that improved on every axis both dominates the member *and* out-runs it on
+a monotonicity namespace, and only one reason is recorded:
+
+| # | condition | reason recorded |
+|---|---|---|
+| 1 | the member IS now the champion | `promoted` |
+| 2 | the member regresses a monotonicity namespace vs the champion | `monotonicity_regression` |
+| 3 | the champion dominates the member | `dominated_by_champion` |
 
 **Admit pass**, over the round's candidates in `generation_id` order, applying
 §4. Each admission may retire members with reason `dominated_by:{gid}`.
+
+`dominated_by:{gid}` names a MEMBER, and a member can itself retire later, so
+a reason can end up pointing at a generation that is no longer on the
+frontier. That is intended: `retired` is an append-only evidence trail, not
+an index, and the referent is always still findable in the same file (nothing
+is ever deleted) or in the epoch's lineage.
 
 Nothing is ever deleted. A member that leaves the frontier moves to `retired`
 with the round and the reason, because the interesting question later is not

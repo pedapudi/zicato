@@ -128,12 +128,21 @@ def beats_on(
     on a member: "this is where it won". Lower is better on every axis, so
     "better by margin" is ``reference - candidate >= margin``. Axes only one
     side carries are skipped.
+
+    The second conjunct is what keeps the test meaningful at ``margin == 0``,
+    which :class:`ScoringWeights` accepts (nothing validates the field to a
+    positive number). Without it a zero margin makes ``>= margin`` true for
+    an exact TIE, and every candidate would "beat" the champion everywhere it
+    merely equals it — admitting no-information copies onto a record whose
+    stated admission rule is that a tie carries nothing the champion does not
+    already carry. For every ``margin > 0`` the conjunct is implied by the
+    first and changes nothing.
     """
     return tuple(
         sorted(
             ns
             for ns, value in candidate.items()
-            if ns in reference and reference[ns] - value >= margin
+            if ns in reference and reference[ns] - value >= margin and value < reference[ns]
         )
     )
 
@@ -161,15 +170,27 @@ def dominates(
     Axes only one side carries are skipped — they neither create nor block a
     relation. With NO shared axes the answer is ``False`` in both directions:
     two candidates with nothing in common are incomparable, not dominant.
+
+    BOTH limbs require a strict difference on top of clearing the margin,
+    which is what keeps the relation well-formed at ``margin == 0`` — a value
+    :class:`ScoringWeights` accepts, since nothing validates the field to a
+    positive number. At a zero margin ``>= margin`` is true for an exact TIE,
+    which would make every candidate dominate itself and any two identical
+    candidates dominate each other (no partial order may do either), while a
+    tie on the worse limb would veto a candidate that is strictly better
+    somewhere and equal everywhere else — the textbook dominant case. With
+    the conjuncts, ``margin == 0`` degrades to exactly strict Pareto
+    dominance. For every ``margin > 0`` both conjuncts are implied by the
+    inequality beside them and nothing changes.
     """
     better_any = False
     for ns, value in left.items():
         if ns not in right:
             continue
         other = right[ns]
-        if other - value >= margin:
+        if other - value >= margin and value < other:
             better_any = True
-        elif value - other >= margin:
+        elif value - other >= margin and other < value:
             return False
     return better_any
 
