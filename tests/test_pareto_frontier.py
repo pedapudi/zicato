@@ -397,6 +397,104 @@ def test_a_placebo_CHAMPION_makes_the_whole_round_a_no_op() -> None:
     assert update.frontier == seeded
 
 
+def test_a_FIELD_round_that_crowns_the_placebo_leaves_the_record_untouched(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The reachable case, driven through the real multi-challenger seam.
+
+    The random-baseline arm rides INSIDE the slate, so the gate can crown it
+    — and here it does: the round settles ``promoted`` on the placebo's own
+    generation id. That is the CRITICAL ``placebo_promoted`` alarm state, and
+    the record must sit it out rather than re-anchor every member's
+    provenance to a no-op copy of the champion.
+
+    Asserted on a PRE-SEEDED record so the pin distinguishes "correctly
+    skipped" from "never got that far".
+    """
+    from tests.test_orchestrator_multi_challenger import (
+        _bootstrap_swiss_workspace,
+        _distinct_field_responses,
+    )
+    from zicato.core.scoring_config import OverfittingConfig
+    from zicato.evolve.placebo import PLACEBO_HYPOTHESIS_MARKER
+
+    workspace, epoch_id = _bootstrap_swiss_workspace(
+        tmp_path,
+        field_size=2,
+        rounds_n=1,
+        overfitting=OverfittingConfig(random_baseline_every_n=1),
+    )
+    # A record already on disk, so "untouched" is observable rather than
+    # indistinguishable from "never written". The seeded member is
+    # deliberately INCOMPARABLE to the field below — best on drift, far worst
+    # on cost — so it neither dominates the round's candidates nor is
+    # dominated by the crowned placebo. A member that dominated the field
+    # would suppress every admission on its own and the pin would pass with
+    # or without the refusal under test.
+    seeded = ParetoFrontier(
+        epoch_id=epoch_id,
+        axes=frontier_axes(_weights()),
+        margin=_MARGIN,
+        champion_generation_id="v0",
+        updated_round=0,
+        members=(
+            FrontierMember(
+                generation_id="vX",
+                round_admitted=0,
+                champion_generation_id="v0",
+                axis_values={"drift:": 0.05, "cost:": 5.0},
+                beats_champion_on=("drift:",),
+            ),
+        ),
+    )
+    save_frontier(workspace, epoch_id, seeded)
+    before = frontier_path(workspace, epoch_id).read_bytes()
+
+    _install_stub_adapter_factory(monkeypatch)
+    # The placebo (v3, minted last into the slate) has much the best drift, so
+    # the crowning duel hands it the championship on the scalar. It is also
+    # the most EXPENSIVE, which is what makes this pin discriminating: v2
+    # beats it on ``cost:`` by well over the margin, so without the refusal
+    # the round admits v2 and stamps its provenance with the placebo. (With
+    # every generation costing the same, the crowned placebo dominates the
+    # whole field, nothing is admissible, and the pin would pass on a
+    # technicality whether or not the guard existed.)
+    drift_by_gen = {"v0": 2.0, "v1": 1.9, "v2": 1.8, "v3": 0.1}
+    _install_telemetry_stubs(
+        monkeypatch,
+        canned_loss_by_gen=drift_by_gen,
+        canned_pass_by_gen=dict.fromkeys(drift_by_gen, True),
+    )
+    _install_costed_run_single(
+        monkeypatch,
+        drift_by_gen=drift_by_gen,
+        tokens_by_gen={"v0": 1000, "v1": 1000, "v2": 1000, "v3": 1100},
+    )
+
+    from zicato.orchestrator import evolve_once
+
+    outcome = asyncio.run(
+        evolve_once(
+            workspace_root=workspace,
+            epoch_id=epoch_id,
+            harness_call_llm=_harness_call_llm,
+            auxiliary_call_llm=_make_aux_responder(_distinct_field_responses(6)),
+        )
+    )
+
+    # The round really did crown the placebo — otherwise this pins nothing.
+    assert outcome.tournament_decision == "promoted"
+    crowned = outcome.proposed_generation_id
+    experiment = json.loads(
+        (workspace / "epochs" / epoch_id / "generations" / crowned / "experiment.json").read_text()
+    )
+    assert experiment["hypothesis"]["core_idea"].startswith(PLACEBO_HYPOTHESIS_MARKER)
+
+    # ...and the record did not move.
+    assert frontier_path(workspace, epoch_id).read_bytes() == before
+    assert load_frontier(workspace, epoch_id) == seeded
+
+
 def test_a_crowned_placebo_leaves_the_record_file_untouched(tmp_path: Path) -> None:
     """The wiring half, through ``record_round_frontier``."""
     from zicato.evolve.pareto import record_round_frontier
