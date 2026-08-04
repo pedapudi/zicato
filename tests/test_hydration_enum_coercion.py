@@ -200,3 +200,21 @@ def test_journal_outcome_from_dict_keeps_unrecognised_token(token: str) -> None:
     assert hydrated.tournament_decision != TournamentDecision.PROMOTED
     assert hydrated.tournament_decision != TournamentDecision.REJECTED
     assert hydrated.tournament_decision != TournamentDecision.DEFERRED
+
+
+@pytest.mark.parametrize(
+    "value",
+    [None, 3, 1.5, ["promoted"], {"a": 1}, b"promoted"],
+    ids=["null", "int", "float", "list", "dict", "bytes"],
+)
+def test_journal_outcome_from_dict_non_string_decision_does_not_raise(value: Any) -> None:
+    """A structurally wrong value reads exactly as it did before the coercion.
+
+    The unhashable cases are the ones worth pinning: the enum lookup must
+    surface them as ``ValueError`` (which the fallback catches) and never as
+    an uncaught ``TypeError`` out of a read path that previously could not
+    fail at all.
+    """
+    hydrated = _outcome_from_dict({"tournament_decision": value})
+    assert hydrated is not None
+    assert hydrated.tournament_decision == value
