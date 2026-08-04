@@ -26,6 +26,8 @@ from typing import Any
 
 import pytest
 
+from zicato.core.board import ExpectationKind
+from zicato.core.loss import ExpectationResult, LossProfile
 from zicato.core.tournament import TournamentDecision
 from zicato.core.types import (
     DriftMovementActual,
@@ -36,6 +38,12 @@ from zicato.core.types import (
 from zicato.core.workspace import experiment_json_path
 from zicato.epoch.analysis import _hydrate_experiment, _hydrate_outcome
 from zicato.epoch.journal import _outcome_from_dict, read_experiment, write_experiment
+from zicato.telemetry.reducer import (
+    _profile_to_dict,
+    loss_profile_from_dict,
+    read_loss_profile,
+    write_loss_profile,
+)
 
 ALL_TOKENS = ("promoted", "rejected", "deferred")
 
@@ -218,3 +226,59 @@ def test_journal_outcome_from_dict_non_string_decision_does_not_raise(value: Any
     hydrated = _outcome_from_dict({"tournament_decision": value})
     assert hydrated is not None
     assert hydrated.tournament_decision == value
+
+
+# ---------------------------------------------------------------------------
+# telemetry.reducer.loss_profile_from_dict
+# ---------------------------------------------------------------------------
+
+
+def _loss_profile(kind: ExpectationKind) -> LossProfile:
+    return LossProfile(
+        run_id="run-1",
+        entry_id="e1",
+        generation_id="v1",
+        epoch_id="2026-04-08_test",
+        drift_counts=(),
+        plan_revisions=0,
+        task_failure_ratio=0.0,
+        runtime_ms=1200,
+        wall_clock_budget_exceeded=False,
+        expectation_result=ExpectationResult(kind=kind, passed=True, detail="ok"),
+        drift_loss=0.25,
+        pass_fail=True,
+    )
+
+
+@pytest.mark.parametrize("kind", list(ExpectationKind))
+def test_loss_profile_round_trip_yields_expectation_kind_member(
+    tmp_path: Path, kind: ExpectationKind
+) -> None:
+    """The same defect one layer over: ``ExpectationResult.kind`` off disk.
+
+    ``board/matchers.py`` already re-coerces this field defensively before
+    dispatching on it, which is the tell that the raw token was reaching
+    consumers.
+    """
+    in_process = _loss_profile(kind)
+    path = tmp_path / "loss.json"
+    write_loss_profile(in_process, path)
+
+    loaded = read_loss_profile(path)
+    assert loaded.expectation_result is not None
+    assert isinstance(loaded.expectation_result.kind, ExpectationKind)
+    assert loaded.expectation_result.kind is kind
+    assert loaded == in_process
+
+
+def test_loss_profile_from_dict_unknown_kind_raises_valueerror() -> None:
+    """Every caller of this reader already catches ``ValueError``.
+
+    Pinned as ValueError specifically: the callers' degrade paths (skip the
+    file / treat the slot as a predecessor) name that exception, so a token
+    that fails to coerce must not surface as anything else.
+    """
+    payload = _profile_to_dict(_loss_profile(ExpectationKind.PREDICATE))
+    payload["expectation_result"]["kind"] = "not_a_kind"
+    with pytest.raises(ValueError):
+        loss_profile_from_dict(payload)
