@@ -207,9 +207,11 @@ class RoundStatus(StrEnum):
 #: and is the reason a miss here is survivable: it does not depend on the
 #: round having minted no reach token, because a call-boundary error is
 #: excluded from ``invalid_patch`` and so can never satisfy rule 4's
-#: acceptance on its own (see :func:`classify_round`). This vocabulary is a FLOOR on detection, not
-#: a proof of its absence; widen it per-caller via the ``infra_markers``
-#: parameter rather than by editing this set in place.
+#: acceptance on its own (see :func:`classify_round`).
+#:
+#: This vocabulary is a FLOOR on detection, not a proof of its absence;
+#: widen it per-caller via the ``infra_markers`` parameter rather than by
+#: editing this set in place.
 #:
 #: One concrete instance of that floor, worth knowing before widening: the
 #: call-boundary templates render ``{type(exc).__name__}: {exc}``, so a
@@ -319,6 +321,15 @@ CALL_BOUNDARY_PREFIXES: tuple[str, ...] = (
 #: post-apply validation: ...``) or with ``ExperimentParseError``'s, none of
 #: which is ``slot``. So this widens the anchor by exactly one zicato prefix
 #: and admits no model-authored text.
+#:
+#: ONE tag, not N: the strip runs ``count=1``, which is exact only because
+#: best-of-N is never nested. ``wrap_with_proposer_quality`` has a single
+#: caller (``orchestrator.py``) and wraps the epoch's resolved proposer, so a
+#: slate slot's inner agent is never itself a slate. Were that ever to change,
+#: an inner all-failed slate's ``slot 0: `` would arrive under an outer
+#: ``slot 1: `` and one strip would leave the anchor unreachable — a silent
+#: false NEGATIVE on the marker scan. Strip in a loop if nesting is ever
+#: introduced.
 _SLOT_PREFIX = re.compile(r"^slot \d+: ")
 
 
@@ -582,10 +593,9 @@ def classify_round(
     # patch, not an invalid one. See the docstring: this exclusion is what
     # keeps a vocabulary MISS falling through to rule 5 instead of being
     # promoted to ``settled_degraded`` by the very evidence issue #141 added.
-    content_rejections = tuple(
-        text for text in record.proposal.errors if text and not _is_call_boundary(text)
+    invalid_patch = bool(record.validation_findings) or any(
+        text and not _is_call_boundary(text) for text in record.proposal.errors
     )
-    invalid_patch = bool(record.validation_findings) or bool(content_rejections)
     # Markers are scanned over CALL-BOUNDARY proposal errors only.
     #
     # Not scanning ``validation_findings`` is true but nearly vacuous, and
