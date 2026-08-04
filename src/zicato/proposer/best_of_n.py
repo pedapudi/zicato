@@ -258,15 +258,24 @@ class _SlotOutcome:
     post-gather pass reads them in SLOT order (``sample``) to emit the
     ``candidate_sampled`` events and append candidates, so the observable
     outcome never depends on completion order. A failed slot carries its
-    :class:`~zicato.proposer.proposer.ProposerError` (the slate narrows; the
-    caller remembers the last error so an all-failed slate re-raises the real
-    failure), never losing the slots that did succeed.
+    :class:`~zicato.proposer.proposer.ProposerError` (the slate narrows, but
+    the error is now REPORTED — see :meth:`BestOfNProposerAgent.propose`),
+    never losing the slots that did succeed.
+
+    ``degraded_errors`` is the SURVIVED-BUT-FAILED channel: a call that was
+    swallowed to a degrade rather than failing the slot, so the slot can
+    still carry a candidate alongside it. Today that is the LLM
+    recombination merge (:meth:`BestOfNProposerAgent._merge_recombined`),
+    whose call exception degrades the slot to a fresh sample; before issue
+    #141 that exception reached nothing but a ``debug`` log, which made an
+    outage-driven degrade indistinguishable from a clean mechanical mint.
     """
 
     sample: int
     candidate: Experiment | None
     error: Any | None
     recombined: bool
+    degraded_errors: tuple[str, ...] = ()
 
 
 #: The recent-lineage hypothesis prediction-accuracy bar above which the
@@ -525,6 +534,30 @@ def _emit_round_event(ctx: ProposerContext, type_token: str, fields: dict[str, A
         log.debug("round-log %s emission skipped: %s", type_token, exc)
 
 
+def _slot_error_texts(outcome: _SlotOutcome) -> tuple[str, ...]:
+    """Every error string ONE slate slot produced, in the order it produced it.
+
+    The slot's own failure trail is its :class:`ProposerError`'s ``attempts``
+    — the per-attempt strings VERBATIM, never the joined ``str(exc)`` — so the
+    call-boundary templates the errors were raised with survive into the round
+    log intact. That fidelity is load-bearing downstream:
+    :mod:`zicato.epoch.round_integrity` anchors its infra-marker scan to those
+    exact prefixes, and an error re-wrapped in the "proposer failed after N
+    attempt(s)" envelope would no longer match one. An ``attempts``-less error
+    (nothing raises one today) falls back to its own text so the slot is never
+    silently error-free.
+
+    ``degraded_errors`` comes FIRST because the degrade happened before the
+    replacement sample that may follow it in the same slot.
+    """
+    texts: list[str] = list(outcome.degraded_errors)
+    error = outcome.error
+    if error is not None:
+        attempts = [str(attempt) for attempt in getattr(error, "attempts", ())]
+        texts.extend(attempts or [str(error)])
+    return tuple(texts)
+
+
 def _parse_critic_choice(response: str, n: int) -> int | None:
     """Parse the critic's chosen index out of its raw response.
 
@@ -655,32 +688,65 @@ class BestOfNProposerAgent:
         # for the chosen candidate, in :meth:`_mount_chosen` after selection.
         outcomes = await self._gather_slate(ctx, n)
 
-        # Deterministic post-gather pass — SLOT order. Emit each surviving
-        # slot's ``candidate_sampled`` event and append its candidate in slot
-        # order; a failed slot narrows the slate and its error is remembered so
-        # an all-failed slate re-raises the real inner failure.
+        # Deterministic post-gather pass — SLOT order. Build the round-log
+        # trail and the candidate list in one walk: every slot that produced
+        # ERROR EVIDENCE contributes a ``proposal_attempted``, every slot that
+        # produced a CANDIDATE contributes a ``candidate_sampled``, and a slot
+        # that did both (a degraded merge whose fresh sample then landed)
+        # contributes both, in that order.
+        #
+        # Emitting the failures is issue #141. A failed slot still narrows the
+        # slate exactly as before — the DEGRADE BEHAVIOUR is unchanged — but
+        # its error is no longer discarded just because a sibling survived.
+        # That discard is what let a credential-lapsed round reach the
+        # integrity reader as ``candidates_sampled=1, errors=()``: zero model
+        # responses and no recorded evidence of the outage.
+        #
+        # The events are STAGED rather than emitted inline because the
+        # all-failed path must not double-report: it raises a
+        # :class:`ProposerError` aggregating every slot's attempts, and
+        # ``evolve/propose_apply.py`` already emits one ``proposal_attempted``
+        # per attempt of an escaping error. Staging lets this pass emit only
+        # when the slate survived, while keeping the emission order the
+        # inline version would have produced.
         candidates: list[Experiment] = []
-        last_error: ProposerError | None = None
+        staged: list[tuple[str, dict[str, Any]]] = []
+        slot_attempts: list[str] = []
         recombined_index: int | None = None
         for outcome in outcomes:
+            errors = _slot_error_texts(outcome)
+            if errors:
+                staged.append(
+                    ("proposal_attempted", {"errors": errors, "slot_index": outcome.sample})
+                )
+                slot_attempts.extend(f"slot {outcome.sample}: {text}" for text in errors)
             if outcome.candidate is None:
-                if outcome.error is not None:
-                    last_error = outcome.error
                 continue
             candidates.append(outcome.candidate)
             fields: dict[str, Any] = {"i": outcome.sample, "n": n}
             if outcome.recombined:
                 recombined_index = len(candidates) - 1
                 fields["recombined"] = True
-            _emit_round_event(ctx, "candidate_sampled", fields)
+            staged.append(("candidate_sampled", fields))
 
         if not candidates:
             # The whole slate failed — surface the inner failure exactly as a
             # single propose would (the caller's rejected-outcome path handles
-            # it). ``last_error`` is set because n >= 2 means the loop ran.
-            if last_error is not None:
-                raise last_error
+            # it), but carrying EVERY slot's attempts rather than only the last
+            # slot's. Re-raising the last error alone lost slots 0..n-2
+            # entirely, so a slate whose earlier slots hit a credential lapse
+            # and whose final slot hit a parse error reported only the parse
+            # error — the infra evidence was gone from the one channel that
+            # outlives the run. Each attempt is prefixed with its slot so the
+            # aggregate stays readable; the integrity reader strips that prefix
+            # before anchoring its marker scan (``epoch/round_integrity.py``).
+            # ``slot_attempts`` is non-empty because n >= 2 means the loop ran.
+            if slot_attempts:
+                raise ProposerError(slot_attempts)
             raise ProposerError(["best-of-N produced no candidates"])  # pragma: no cover
+
+        for type_token, event_fields in staged:
+            _emit_round_event(ctx, type_token, event_fields)
 
         if len(candidates) == 1:
             # Even a sole survivor is mounted into the real ``next_id`` — its
@@ -818,11 +884,16 @@ class BestOfNProposerAgent:
         sample VERBATIM), and ALWAYS releases the scratch tree in ``finally`` —
         including on propose failure or a recombination degrade. Emits NO
         events: the deterministic post-gather pass owns emission in slot order.
+
+        A merge-call exception the degrade swallowed rides out on the returned
+        outcome's ``degraded_errors`` so that pass can report it (issue #141);
+        the degrade decision itself is unchanged.
         """
         from zicato.telemetry.meta_loop import SPAN_SLOT, meta_span  # noqa: PLC0415
 
         validate, cleanup = self._slot_validate_lease(ctx)
         slot_ctx = replace(ctx, validate_experiment=validate)
+        degraded_errors: tuple[str, ...] = ()
         try:
             # Slate-slot span: the N slots gather concurrently, so these render
             # as overlapping lifelines under the propose phase (HARMONOGRAF.md §7).
@@ -836,14 +907,21 @@ class BestOfNProposerAgent:
                     # with the slot's normal exploratory hint (a recombination
                     # failure must never narrow the slate).
                     if self.config.recombine_merge == "llm":
-                        minted = await self._merge_recombined(slot_ctx)
+                        minted, degraded_errors = await self._merge_recombined(slot_ctx)
                     else:
                         minted = await self._mint_recombined(slot_ctx)
                     if minted is not None:
                         return _SlotOutcome(
                             sample=sample, candidate=minted, error=None, recombined=True
                         )
-                return await self._sample_slot(slot_ctx, sample, n)
+                outcome = await self._sample_slot(slot_ctx, sample, n)
+                # A merge call that was swallowed to a degrade rides out on the
+                # slot's own outcome (issue #141) — the fresh sample below may
+                # well succeed, so the round would otherwise close with no trace
+                # that the merge endpoint was refusing.
+                if degraded_errors:
+                    outcome = replace(outcome, degraded_errors=degraded_errors)
+                return outcome
         finally:
             cleanup()
 
@@ -924,8 +1002,8 @@ class BestOfNProposerAgent:
         its OWN tree. Returns a :class:`_SlotOutcome` carrying the sampled
         candidate on success, or the :class:`ProposerError` when the inner
         proposer could not produce one (the slate simply narrows; the ordered
-        pass remembers the error so an all-failed slate re-raises the real
-        failure). Emits NO event — the deterministic post-gather pass owns
+        pass reports the error either way, and an all-failed slate re-raises
+        every slot's). Emits NO event — the deterministic post-gather pass owns
         emission in slot order. The recombination slot's degrade path reuses
         this body VERBATIM.
         """
@@ -1004,7 +1082,9 @@ class BestOfNProposerAgent:
             return None
         return minted
 
-    async def _merge_recombined(self, ctx: ProposerContext) -> Experiment | None:
+    async def _merge_recombined(
+        self, ctx: ProposerContext
+    ) -> tuple[Experiment | None, tuple[str, ...]]:
         """LLM-guided merge of the round's recombination pair (WS-MERGE). GUARDED.
 
         The ``recombine_merge = "llm"`` counterpart to :meth:`_mint_recombined`
@@ -1031,6 +1111,13 @@ class BestOfNProposerAgent:
         mechanical-mint degrade; a merge failure must never narrow the slate,
         let alone fail a propose). A successful merge emits its
         ``candidate_sampled`` event with the ``recombined`` marker.
+
+        Returns ``(merged_or_None, degrade_evidence)``. The second element is
+        the round-log channel issue #141 added: the swallowed CALL exception,
+        rendered as a call-boundary error string for the slot's
+        ``proposal_attempted``. It is EVIDENCE ONLY — every degrade decision
+        above is unchanged, and a caller that ignores it behaves exactly as
+        before. Empty on success and on every post-response degrade.
         """
         import dataclasses  # noqa: PLC0415
 
@@ -1059,7 +1146,20 @@ class BestOfNProposerAgent:
                 pair.b_generation_id,
                 exc,
             )
-            return None
+            # Issue #141: the swallowed CALL exception is the one degrade the
+            # round log must not lose. It is rendered with the SAME
+            # call-boundary template the retry loop uses for an auxiliary call
+            # (``proposer/proposer.py``) so the integrity reader's marker scan,
+            # which anchors on that prefix, sees a merge-call outage exactly as
+            # it sees a sample-call outage. The suffix is zicato-authored and
+            # stays BEHIND the prefix so the anchor is untouched. The parse /
+            # forbidden / validation degrades below are content rejections
+            # about a response that DID come back — they carry no infra
+            # evidence, so they stay a debug line.
+            return None, (
+                f"auxiliary LLM call raised {type(exc).__name__}: {exc}"
+                " (recombination merge; degraded to a fresh sample)",
+            )
         try:
             merged = parse_experiment_json(
                 response or "",
@@ -1077,7 +1177,7 @@ class BestOfNProposerAgent:
                 pair.b_generation_id,
                 exc,
             )
-            return None
+            return None, ()
         # Stamp the same provenance the mechanical mint carries so the merge is
         # indistinguishable downstream — the gate/journal consumers key on
         # ``recombined_from`` + ``selection_mode="recombined"``.
@@ -1096,8 +1196,8 @@ class BestOfNProposerAgent:
                 pair.b_generation_id,
                 "; ".join(findings),
             )
-            return None
-        return merged
+            return None, ()
+        return merged, ()
 
     async def _screen_slate(
         self, candidates: list[Experiment], ctx: ProposerContext

@@ -955,3 +955,179 @@ def test_cli_errors_without_an_epoch(tmp_path: Path) -> None:
     result = CliRunner().invoke(epoch_grp, ["rounds", "--workspace", str(tmp_path)])
     assert result.exit_code != 0
     assert "no current_epoch marker" in result.output
+
+
+# ---------------------------------------------------------------------------
+# 7. Issue #141 — the reader now has the slate evidence it used to lack
+#
+# The writer-side half of this fix (``proposer/best_of_n.py``) puts every
+# failed slate slot's error into the log. These pin what that buys the reader,
+# and what must NOT change now that it has it.
+# ---------------------------------------------------------------------------
+
+
+def test_misclassification_a_is_caught_by_evidence_not_only_by_the_predicate(
+    tmp_path: Path,
+) -> None:
+    """Defense in depth, PROVEN: the marker evidence alone voids the round.
+
+    The Misclassification-A shape — every LLM slot dies on a credential lapse,
+    the LAST slot mints mechanically, and the mint's mount then fails, so the
+    round closes with one candidate and no gate. It used to reach here with
+    ``proposal.errors=()``, and the ``recombined_sampled`` discriminator was
+    the only thing standing between it and an accepted cell.
+
+    So the discriminator is NEUTRALISED here — the mint is written as an
+    ORDINARY ``candidate_sampled``, exactly as a real model response would
+    be, which forces ``proposer_reached`` true and puts the round on rule 4's
+    doorstep. It still lands VOID, because rule 3 outranks rule 4 and the
+    failed slots' errors are now IN THE LOG. Two independent mechanisms, and
+    this pins that neither is load-bearing alone.
+    """
+    events: list[RoundEvent] = [
+        RoundOpened(contract_hash="sha256:contract-t0"),
+        # The two LLM slots, dead on a 401 — the events the fix added.
+        ProposalAttempted(errors=(CREDENTIAL_ERROR,), slot_index=0),
+        ProposalAttempted(errors=(CREDENTIAL_ERROR,), slot_index=1),
+        # The mechanical mint, deliberately NOT marked `recombined`.
+        CandidateSampled(i=2, n=3),
+        ValidationFailed(findings=("mount failed: derived tree is not importable",)),
+        RoundClosed(),
+    ]
+    _write(tmp_path, 1, events)
+    verdict = round_integrity(tmp_path, EPOCH, 1)
+
+    # The discriminator is off: the round DOES look like the proposer answered.
+    assert verdict.proposer_reached
+    # And it is void anyway, on the evidence, naming the outage.
+    assert verdict.status == RoundStatus.VOID
+    assert verdict.infra_markers == (CREDENTIAL_ERROR,)
+    assert any("carrying a hard infra error" in v for v in verdict.evidence)
+    assert not epoch_round_integrity(tmp_path, EPOCH).accepted
+
+
+def test_a_gated_round_with_failed_siblings_is_still_complete(tmp_path: Path) -> None:
+    """Rule 2 still outranks rule 3 now that siblings write their errors.
+
+    A slate of three where two slots died and the third gated IS a round the
+    endpoint consumed — a duel happened and a decision came out of it. The new
+    per-slot events must not turn it into an outage: voiding it would send a
+    round that produced a real measurement back around the retry loop, which
+    is the false positive the whole marker vocabulary is biased against.
+
+    The marker is still REPORTED (the challenger-granularity limit in this
+    module's docstring is exactly this evidence, waiting for a policy that
+    acts on it) — it just does not decide the verdict.
+    """
+    events: list[RoundEvent] = [
+        RoundOpened(contract_hash="sha256:contract-t0"),
+        ProposalAttempted(errors=(CREDENTIAL_ERROR,), slot_index=0),
+        ProposalAttempted(errors=(CREDENTIAL_ERROR,), slot_index=1),
+        CandidateSampled(i=2, n=3),
+        ExperimentMinted(experiment_id="exp-v1"),
+        PatchesApplied(generation_id="v1"),
+        GateEvaluated(rule_fired="", decision="rejected"),
+        DecisionRecorded(decision="rejected", provenance={}),
+        RoundClosed(),
+    ]
+    _write(tmp_path, 1, events)
+    verdict = round_integrity(tmp_path, EPOCH, 1)
+
+    assert verdict.status == RoundStatus.COMPLETE
+    assert verdict.gate_count == 1
+    assert verdict.infra_markers == (CREDENTIAL_ERROR,)
+    assert any("settled with 1 gate evaluation(s)" in v for v in verdict.evidence)
+    assert epoch_round_integrity(tmp_path, EPOCH).accepted
+
+
+def test_the_slot_tag_does_not_blind_the_marker_anchor(tmp_path: Path) -> None:
+    """An all-failed slate's slot-prefixed attempts still match.
+
+    When every slot fails, ``best_of_n`` aggregates them into one error and
+    tags each attempt with its slot, so the operator can tell three slots
+    failing one way from one slot failing three ways. The tag sits in FRONT of
+    the call-boundary template the marker scan anchors on — so an anchor
+    tested against the raw string would go blind on precisely the round this
+    module exists for: a whole slate lost to a credential lapse.
+
+    The matched string comes back WITH its tag: the slot is part of what the
+    operator needs to read.
+    """
+    tagged = f"slot 0: {CREDENTIAL_ERROR}"
+    _write(
+        tmp_path,
+        1,
+        [
+            RoundOpened(contract_hash="sha256:contract-t0"),
+            ProposalAttempted(errors=(tagged, f"slot 1: {CREDENTIAL_ERROR}")),
+            RoundClosed(),
+        ],
+    )
+    verdict = round_integrity(tmp_path, EPOCH, 1)
+
+    assert verdict.status == RoundStatus.VOID
+    assert verdict.infra_markers == (tagged, f"slot 1: {CREDENTIAL_ERROR}")
+    assert any("carrying a hard infra error" in v for v in verdict.evidence)
+
+
+def test_the_slot_tag_admits_no_model_authored_text(tmp_path: Path) -> None:
+    """The stripped tag is one FIXED zicato prefix, not a general escape.
+
+    Stripping a prefix before the anchor test is exactly the move that would
+    re-open the false-positive hole ``CALL_BOUNDARY_PREFIXES`` closed, if the
+    strip were loose. It is not: only a literal ``slot <digits>: `` comes off,
+    and a content rejection that merely CONTAINS a call-boundary phrase — the
+    challenger quoting an error string into its own patch — stays ineligible.
+    """
+    quoting_challenger = (
+        "patches failed post-apply validation: agent/agent.py:31 raises "
+        "RuntimeError('auxiliary LLM call raised AuthenticationError: api key')"
+    )
+    _write(
+        tmp_path,
+        1,
+        [
+            RoundOpened(contract_hash="sha256:contract-t0"),
+            CandidateSampled(i=1, n=1),
+            ProposalAttempted(errors=(quoting_challenger,), slot_index=0),
+            RoundClosed(),
+        ],
+    )
+    verdict = round_integrity(tmp_path, EPOCH, 1)
+
+    assert verdict.infra_markers == ()
+    assert verdict.status == RoundStatus.SETTLED_DEGRADED
+
+
+def test_slot_index_is_additive_on_the_wire(tmp_path: Path) -> None:
+    """A pre-#141 log decodes unchanged; a tagged one round-trips its slot.
+
+    ``proposal_attempted`` is the oldest event in the vocabulary and every
+    log ever written carries some. The new field must therefore be inert on
+    read: absent ⇒ ``None`` (the non-slate attempt ``evolve/propose_apply.py``
+    emits), present ⇒ the slot, and neither changes the fold.
+    """
+    log = _write(
+        tmp_path,
+        1,
+        [
+            RoundOpened(contract_hash="sha256:contract-t0"),
+            ProposalAttempted(errors=("boom",), slot_index=2),
+            RoundClosed(),
+        ],
+    )
+    # A log line written BEFORE the field existed — no `slot_index` key at all.
+    path = round_dir(tmp_path, EPOCH, 1) / "round_log.jsonl"
+    lines = path.read_text(encoding="utf-8").splitlines()
+    legacy = json.loads(lines[1])
+    del legacy["payload"]["slot_index"]
+    legacy["seq"] = 4
+    path.write_text(
+        "\n".join([*lines, json.dumps(legacy, separators=(",", ":"))]) + "\n",
+        encoding="utf-8",
+    )
+
+    events = log.read()
+    tagged = [e.event for e in events if isinstance(e.event, ProposalAttempted)]
+    assert [a.slot_index for a in tagged] == [2, None]
+    assert [a.errors for a in tagged] == [("boom",), ("boom",)]

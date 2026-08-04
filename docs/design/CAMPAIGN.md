@@ -1358,12 +1358,22 @@ tokens: a **non-recombined** candidate sampled, an experiment minted, or patches
 applied. The exclusion is load-bearing — a *mechanical* recombination mint
 (`proposer/recombine.py`, pure, no IO) produces a candidate with no model call
 at all, so on A3/A7 counting it as reach would let a round with zero model
-responses read as a real degraded measurement. **And the marker rule would not
-catch it**, which is the part worth internalising: best-of-N *discards* the
-failed slots' errors whenever any slot survives (`proposer/best_of_n.py`), so
-the round closes with an EMPTY error list — nothing for a marker to match
-against, no matter how wide the vocabulary. The reach predicate is the only
-thing standing between that round and an accepted cell. Reach is also read over the
+responses read as a real degraded measurement.
+
+**The marker rule now catches that round too, and the two mechanisms are
+independent — which is the part worth internalising.** Until issue #141,
+best-of-N *discarded* the failed slots' errors whenever any slot survived
+(`proposer/best_of_n.py`), so such a round closed with an EMPTY error list and
+the reach predicate was the only thing standing between it and an accepted
+cell. The wrapper now emits one `proposal_attempted` per failed slot, carrying
+that slot's attempts verbatim, so a credential-lapsed slate leaves its evidence
+in the log and voids by **rule 3** on the matched marker — with the endpoint's
+own words in the report, which the reach predicate alone could never give the
+operator. **The reach predicate remains, as the backstop.** It needs no
+evidence to have been written, so it still holds if a future proposer path
+forgets to emit or an endpoint's prose matches no marker; the marker scan, in
+turn, holds when a mint is not flagged as recombined. Do not treat either as
+redundant. Reach is also read over the
 **final attempt span only** (the events after the last `round_opened`), because
 the round log is append-only and a round index can be reused after an attempt
 died before its experiment was persisted; without the span, a prior attempt's
@@ -1379,8 +1389,11 @@ content rejection* that quotes text zicato does not control: validator findings
 over the child agent's own source, mutation ids taken from the operator's own
 `# zicato:mutable` markers and brief, the built-in drift-kind list, and the
 model's own offending values echoed back by a schema violation. Anchoring is
-what makes those structurally ineligible rather than merely unlikely. Three
-consequences the executor must understand:
+what makes those structurally ineligible rather than merely unlikely. (One
+zicato-authored tag may sit in front of the prefix and is stripped before the
+anchor is tested: `slot 0: `, which an all-failed best-of-N slate puts on each
+aggregated attempt. Expect to see it in the report; it names the slate slot the
+error came from.) Three consequences the executor must understand:
 
 - **A false positive is far worse than a false negative here, and the asymmetry
   governs every choice below.** A false positive voids a *real* measurement,
