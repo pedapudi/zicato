@@ -973,9 +973,16 @@ Usage: zicato reindex [OPTIONS]
 
   Advanced: rebuild the SQLite analytical index from workspace files.
 
-  Off the happy path — `zicato evolve` keeps the index current. Drops index.db
-  and re-derives every row from the canonical files under the workspace. Prints
-  a summary of how many epochs, generations, and runs were indexed.
+  Off the happy path. Routine reindexing is AUTOMATIC — `zicato evolve` builds
+  an absent or wrong-schema index and re-projects any diverged epoch at its own
+  start, and the dashboard builds an absent one when it boots. Reach for this
+  command for downgrade recovery, after hand-editing a value inside a canonical
+  file, or to assert the index is a pure re-projection of the files.
+
+  Re-derives every row from the canonical files under the workspace, into a
+  scratch file renamed into place on success — a failed rebuild leaves the
+  existing index untouched. Prints a summary of how many epochs, generations,
+  and runs were indexed.
 
 Options:
   --workspace TEXT  Path to the zicato workspace directory.  [default: .zicato]

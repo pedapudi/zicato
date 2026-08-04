@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import contextlib
 import json
+import logging
 import socket
 import time
 from collections.abc import AsyncIterator
@@ -43,6 +44,8 @@ from starlette.routing import Route
 from zicato.dashboard.endpoints import make_endpoints
 from zicato.dashboard.sse import ChangeBroker, sse_event_stream
 from zicato.query import WorkspacePaths
+
+log = logging.getLogger("zicato.dashboard")
 
 # Index-fallback when the static bundle is missing entirely, so an
 # operator still sees something useful at the document root.
@@ -76,6 +79,84 @@ def _resolve_workspace(workspace_root: Path, *, harmonograf_url: str = "") -> Wo
     if root.name != ".zicato" and (root / ".zicato").is_dir():
         root = root / ".zicato"
     return WorkspacePaths(root, harmonograf_url=harmonograf_url)
+
+
+def _ensure_index_at_startup(paths: WorkspacePaths) -> None:
+    """Build an absent / wrong-schema index once, at server start.
+
+    The read-path half of the self-healing index (M3(b);
+    ``docs/design/ANALYTICAL-INDEX.md`` §5.3). Deliberately narrow:
+
+    * **``ensure_index`` only, never ``heal_index``.** Healing writes. A
+      reader healing while an orchestrator dual-writes is exactly the
+      contention the single-writer rule (§2.4) exists to prevent, and it
+      would put a full workspace walk in front of the first HTTP response.
+      Noticing that the index CONTENTS drifted is the writer's job, and the
+      writer runs the heal at the top of every ``evolve``.
+    * **Once per PROCESS, never per request.** The absence/version check is
+      cheap, but it is still a stat plus a pragma read; the SSE-driven
+      dashboard would pay it thousands of times. Called from :func:`run`
+      rather than :func:`create_app`: ``run`` is the process-start seam both
+      real dashboard launches come through, and building an ASGI app must
+      not have filesystem side effects.
+    * **Skipped when a live evolve holds the workspace lock**, with a log
+      line and no retry (§5.3's concurrency rule). The lock holder is
+      already building or healing the index at its own start, so the work
+      is being done by the process that owns the writes. Waiting would
+      block startup for the length of an entire evolve run.
+    * **Skipped on a workspace with no epochs at all.** A fresh,
+      never-run workspace keeps rendering its "not yet indexed" empty
+      state (§7's graceful-absence property) rather than gaining a
+      valid-but-empty ``index.db`` that flips every reader's degrade
+      branch.
+
+    There is deliberately NO schema-version pre-check in front of
+    ``ensure_index``. An earlier shape asked ``index_schema_version(...) ==
+    SCHEMA_VERSION`` first and returned when it matched — cheap, but it
+    decided the question ``ensure_index`` exists to decide, and it decided it
+    differently: on a file that is not a SQLite database at all the pre-check
+    RAISES, the blanket guard below swallows it at ``debug``, and the
+    dashboard never repairs it. ``_rebuild_reason`` classifies that same file
+    as ``unreadable`` and rebuilds. So the ``built:unreadable`` outcome §5.1
+    documents was unreachable from this path precisely because the pre-check
+    ran first. ``ensure_index`` returns without writing when the index is
+    current, which is all the pre-check bought.
+
+    Never raises: the dashboard renders a degraded analytical surface far
+    more gracefully than it survives a failed startup.
+    """
+    from zicato.index.ingest import ensure_index  # noqa: PLC0415
+    from zicato.index.schema import IndexSchemaNewerError  # noqa: PLC0415
+    from zicato.runtime.lock import read_workspace_lock  # noqa: PLC0415
+
+    try:
+        epochs_root = paths.root / "epochs"
+        if not epochs_root.is_dir() or not any(c.is_dir() for c in epochs_root.iterdir()):
+            return
+        holder = read_workspace_lock(paths.root)
+        if holder is not None:
+            log.debug(
+                "index: build/refresh skipped, workspace locked by live pid %d "
+                "(the running evolve owns the index)",
+                holder.pid,
+            )
+            return
+        actions: list[str] = []
+        ensure_index(paths.root, action_out=actions)
+        # Only report a BUILD. Without the pre-check this runs on every
+        # start, and announcing "present" each time would train the operator
+        # to ignore the one line that means something happened.
+        if actions:
+            log.info("index: %s", actions[0])
+    except IndexSchemaNewerError as exc:
+        log.warning(
+            "index: %s — the analytical views render from a stale index. "
+            "Recover with: delete the workspace index.db and run `zicato reindex`, "
+            "or serve this workspace with the newer zicato that wrote it.",
+            exc,
+        )
+    except Exception as exc:  # noqa: BLE001 — startup index build is best-effort
+        log.debug("index: startup build skipped: %s", exc)
 
 
 def _if_none_match(inm: str | None, etag: str) -> bool:
@@ -585,6 +666,15 @@ def run(
     running.
     """
     import uvicorn
+
+    # Self-healing index, read-path half (ANALYTICAL-INDEX.md §5.3): build an
+    # absent / wrong-schema index ONCE per PROCESS, never per request, and
+    # never heal. Seated in ``run`` rather than ``create_app`` because this is
+    # the process-start seam — both real dashboard launches (the ``zicato
+    # dashboard`` command and evolve's ``python -m zicato.dashboard`` spawn)
+    # come through here, and building an ASGI app must not have filesystem
+    # side effects.
+    _ensure_index_at_startup(_resolve_workspace(workspace_root))
 
     hg = _ensure_workspace_harmonograf(workspace_root)
     _echo_harmonograf_status(hg)

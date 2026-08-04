@@ -233,6 +233,32 @@ def is_same_process(pid: int, expected_start_time: float | None) -> bool:
     return current == expected_start_time
 
 
+def read_workspace_lock(workspace_root: Path) -> WorkspaceLock | None:
+    """Return the workspace lock IF a live process still holds it.
+
+    A pure read — it never writes, steals, or clears anything. ``None`` means
+    no lock file, an unreadable one, or one whose recorded owner is gone
+    (a stale lock left by a crashed evolve, which
+    :func:`acquire_workspace_lock` would steal).
+
+    Lets a non-orchestrator process ask "is an evolve running here?" before
+    doing work the single-writer rule reserves for the lock holder — the
+    dashboard's index build defers on exactly this signal (see
+    ``docs/design/ANALYTICAL-INDEX.md`` §5.3).
+    """
+    backend = backend_for(workspace_root)
+    try:
+        existing = backend.read_json(lock_key())
+    except OSError:
+        return None
+    if existing is None:
+        return None
+    prior = WorkspaceLock.from_dict(existing)
+    if not is_same_process(prior.pid, prior.start_time):
+        return None
+    return prior
+
+
 def acquire_workspace_lock(
     workspace_root: Path,
     instance_id: str,
@@ -330,6 +356,7 @@ def release_workspace_lock(lock: WorkspaceLock) -> None:
 __all__ = [
     "WorkspaceLockHeld",
     "WorkspaceLock",
+    "read_workspace_lock",
     "is_pid_alive",
     "pid_start_time",
     "is_same_process",

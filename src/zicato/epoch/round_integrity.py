@@ -41,15 +41,28 @@ Nothing here writes, mutates, or reaches the network. It reads
 
 Known limits of what this reader can see
 ----------------------------------------
-All three are properties of the LOG, not of this module, so none can be
+Both are properties of the LOG, not of this module, so neither can be
 fixed here. They are recorded because a reader who does not know them will
 over-trust a clean report.
 
-* **Discarded slate errors.** ``proposer/best_of_n.py`` re-raises only the
-  LAST error when every slot fails, and discards every failed slot's error
-  entirely when any slot survives (the LLM-merge failure path swallows its
-  own too). So a round can lose most of its slate to a credential lapse and
-  leave no trace of it in ``proposal.errors``.
+(A third limit — **discarded slate errors** — was the largest of them and is
+now CLOSED at the writer, issue #141. ``proposer/best_of_n.py`` used to
+discard every failed slate slot's error whenever a sibling survived, re-raise
+only the LAST one when none did, and swallow the LLM-merge call's exception
+outright, so a round could lose most of its slate to a credential lapse and
+leave ``proposal.errors`` empty. It now emits one ``proposal_attempted`` per
+failed slot, carrying that slot's attempts verbatim. This module reads that
+evidence like any other: the lapse lands as a matched marker and voids by
+rule 3. The ``recombined_sampled`` discriminator in :func:`classify_round`
+stays as defense in depth — it does not need the evidence to be present, so
+it still holds when a future writer path forgets to emit.
+
+Closing it moved work onto THIS side too. Once failed-slot errors reach the
+log, ``invalid_patch`` can no longer be "the round has any error at all": a
+transport failure is not an invalid patch, and treating it as one hands rule
+4 an acceptance the evidence does not support. The predicate now counts
+CONTENT REJECTIONS only — see :func:`_is_call_boundary`.)
+
 * **Challenger granularity.** ``complete`` needs only ONE gate. A round that
   ran several challengers and lost one to a 401 still gates on the
   survivors, so it is consumed at full weight on a narrower field than its
@@ -89,6 +102,7 @@ so they neither contribute to the mean nor disqualify the cell. See
 
 from __future__ import annotations
 
+import re
 from dataclasses import asdict, dataclass
 from enum import StrEnum
 from pathlib import Path
@@ -188,11 +202,16 @@ class RoundStatus(StrEnum):
 #: **False-negative caveat.** ``ProposalAttempted.errors`` is free text
 #: off the proposer's exception, so this match is a heuristic, not a
 #: structural fact. An endpoint whose error prose uses none of these
-#: tokens reads back as a plain proposer failure — which, absent
-#: evidence the proposer was reached, still lands as VOID by rule 5, but
-#: with the weaker reason. This vocabulary is a FLOOR on detection, not
-#: a proof of its absence; widen it per-caller via the ``infra_markers``
-#: parameter rather than by editing this set in place.
+#: tokens reads back as a plain proposer failure — which still lands as VOID
+#: by rule 5, but with the weaker reason. That fallthrough is UNCONDITIONAL
+#: and is the reason a miss here is survivable: it does not depend on the
+#: round having minted no reach token, because a call-boundary error is
+#: excluded from ``invalid_patch`` and so can never satisfy rule 4's
+#: acceptance on its own (see :func:`classify_round`).
+#:
+#: This vocabulary is a FLOOR on detection, not a proof of its absence;
+#: widen it per-caller via the ``infra_markers`` parameter rather than by
+#: editing this set in place.
 #:
 #: One concrete instance of that floor, worth knowing before widening: the
 #: call-boundary templates render ``{type(exc).__name__}: {exc}``, so a
@@ -268,15 +287,50 @@ HARD_INFRA_MARKERS: frozenset[str] = frozenset(
 #:
 #: Restricting to the call boundary makes that class structurally impossible
 #: rather than enumerable. The cost is a false NEGATIVE if an emitter is ever
-#: renamed without updating this tuple — and that direction is safe: an
-#: unmatched genuine outage falls through to rule 5, which still lands VOID
-#: because nothing set ``proposer_reached``. Safe direction, and pinned by
-#: ``test_epoch_round_integrity.py`` against the real templates.
+#: renamed without updating this tuple — and that direction is safe, but note
+#: WHICH way it is safe, because the obvious reason is the wrong one. A
+#: renamed template stops being call-boundary-shaped to this module, so it
+#: reads as a CONTENT rejection: it becomes ineligible for the marker scan
+#: AND eligible as ``invalid_patch``. A gateless round carrying only that
+#: error therefore lands ``settled_degraded`` rather than VOID if the
+#: proposer was reached. Safe in that it cannot manufacture a false void, but
+#: it is an acceptance, not a void — so keep this tuple in lockstep with the
+#: emitters. Pinned by ``test_epoch_round_integrity.py`` against the real
+#: templates, which is the check that actually catches a rename.
 CALL_BOUNDARY_PREFIXES: tuple[str, ...] = (
     "auxiliary llm call raised ",
     "auxiliary llm call timed out ",
     "proposer agent run raised ",
 )
+
+#: The best-of-N SLATE-SLOT tag that can sit in front of a call-boundary
+#: template, stripped before the anchor above is tested.
+#:
+#: When every slot of a slate fails, ``proposer/best_of_n.py`` raises one
+#: error aggregating all of them and prefixes each attempt with its slot
+#: (``slot 0: auxiliary LLM call raised ...``) so the operator can tell three
+#: slots failing one way from one slot failing three ways. Testing the anchor
+#: against the prefixed string would silently blind the marker scan on exactly
+#: the round it matters most for — an all-slate credential lapse — so the tag
+#: is stripped first.
+#:
+#: Safe to strip because the tag is ZICATO-AUTHORED and structurally fixed: a
+#: literal ``slot``, decimal digits, ``": "``. Nothing downstream of a model
+#: response begins that way — every content-rejection template starts with its
+#: own zicato-authored preamble (``patches violate ...``, ``patches failed
+#: post-apply validation: ...``) or with ``ExperimentParseError``'s, none of
+#: which is ``slot``. So this widens the anchor by exactly one zicato prefix
+#: and admits no model-authored text.
+#:
+#: ONE tag, not N: the strip runs ``count=1``, which is exact only because
+#: best-of-N is never nested. ``wrap_with_proposer_quality`` has a single
+#: caller (``orchestrator.py``) and wraps the epoch's resolved proposer, so a
+#: slate slot's inner agent is never itself a slate. Were that ever to change,
+#: an inner all-failed slate's ``slot 0: `` would arrive under an outer
+#: ``slot 1: `` and one strip would leave the anchor unreachable — a silent
+#: false NEGATIVE on the marker scan. Strip in a loop if nesting is ever
+#: introduced.
+_SLOT_PREFIX = re.compile(r"^slot \d+: ")
 
 
 @dataclass(frozen=True, slots=True)
@@ -394,6 +448,20 @@ class EpochRoundIntegrity:
         return payload
 
 
+def _is_call_boundary(text: str) -> bool:
+    """True when ``text`` is a CALL-BOUNDARY error, not a content rejection.
+
+    The one place the transport/content distinction is decided, so the two
+    predicates that need it — marker eligibility (:func:`_matched_markers`)
+    and invalid-patch evidence (:func:`classify_round`) — cannot drift apart
+    into disagreeing about what a given error string is.
+
+    Case-insensitive, and the zicato-authored slate-slot tag is stripped
+    first (see :data:`_SLOT_PREFIX`).
+    """
+    return _SLOT_PREFIX.sub("", text.lower(), count=1).startswith(CALL_BOUNDARY_PREFIXES)
+
+
 def _matched_markers(
     texts: tuple[str, ...],
     infra_markers: frozenset[str],
@@ -401,21 +469,22 @@ def _matched_markers(
     """Return, verbatim and de-duplicated, the ``texts`` naming hard infra.
 
     Only CALL-BOUNDARY errors are eligible — see
-    :data:`CALL_BOUNDARY_PREFIXES`. A post-response content rejection
-    quotes model output, mutation ids, and child-snapshot validator
+    :data:`CALL_BOUNDARY_PREFIXES`, and :data:`_SLOT_PREFIX` for the one
+    zicato-authored tag that may precede one. A post-response content
+    rejection quotes model output, mutation ids, and child-snapshot validator
     findings into its text, so scanning it for infra tokens reports the
     challenger's own words back as an endpoint outage.
 
     Among eligible errors, matching is case-insensitive substring
-    containment; the ORIGINAL string is what comes back, because the
-    operator needs the endpoint's own words, not the token that happened
-    to match.
+    containment; the ORIGINAL string is what comes back — slot tag and all —
+    because the operator needs the endpoint's own words and the slot they came
+    from, not the token that happened to match.
     """
     out: list[str] = []
     for text in texts:
-        lowered = text.lower()
-        if not lowered.startswith(CALL_BOUNDARY_PREFIXES):
+        if not _is_call_boundary(text):
             continue
+        lowered = _SLOT_PREFIX.sub("", text.lower(), count=1)
         if any(marker in lowered for marker in infra_markers) and text not in out:
             out.append(text)
     return tuple(out)
@@ -457,10 +526,29 @@ def classify_round(
     *after* the proposer model returned something — candidates sampled, an
     experiment minted, patches applied. ``invalid_patch`` is asserted from
     snapshot-validation findings or from a proposal attempt the loop
-    rejected on content/schema grounds (``RoundRecord.proposal.errors``
-    accumulates every attempt's error strings). ``infra_markers`` is
-    matched against ``proposal.errors`` ALONE — a validation finding
-    proves a patch existed, so it can only ever generate a false void.
+    rejected on CONTENT/SCHEMA grounds — a CALL-BOUNDARY error in
+    ``RoundRecord.proposal.errors`` does not qualify, because a request that
+    failed before a response came back produced no patch to be invalid. See
+    below for why that exclusion is load-bearing rather than pedantic.
+    ``infra_markers`` is matched against ``proposal.errors`` ALONE — a
+    validation finding proves a patch existed, so it can only ever generate
+    a false void.
+
+    **Why ``invalid_patch`` excludes call-boundary errors.** Rule 4 accepts a
+    gateless round on the claim that the arm was measured and failed. A
+    transport error is not that claim's evidence — it is the absence of it —
+    and the two must not be conflated, because the whole safety argument for
+    the ``HARD_INFRA_MARKERS`` vocabulary rests on the failure direction of a
+    vocabulary MISS: an outage whose prose matches no marker is supposed to
+    fall through rule 3 to rule 5 and VOID anyway. That fallthrough only
+    holds if the unmatched transport error cannot itself satisfy rule 4. It
+    could, while ``invalid_patch`` was "any error at all", on precisely the
+    round issue #141 made reachable: a best-of-N slate where one slot
+    survives (minting the reach token) and a sibling slot dies at the call
+    boundary in prose the vocabulary does not know. Before #141 the sibling's
+    error was discarded and the round voided by rule 5; emitting it must not
+    be what promotes the round to ``settled_degraded``. Reporting more
+    evidence can only ever move a verdict toward VOID, never away from it.
 
     **Two honest limits on that "normally", both from how the loop emits.**
 
@@ -489,14 +577,25 @@ def classify_round(
     # ``candidate_sampled`` with ``recombined=True`` exactly as an ordinary
     # sample does. Subtracting the recombined count is what keeps a round
     # with zero model responses from vouching for the endpoint: on a
-    # ``recombine`` arm mid-outage the LLM slots raise (and best-of-N
-    # DISCARDS their errors when any slot survives), the mint succeeds, and
+    # ``recombine`` arm mid-outage the LLM slots raise, the mint succeeds, and
     # a plain ``> 0`` would read that as "the proposer was reached".
+    #
+    # Since issue #141 those raising slots also write their errors to the log,
+    # so such a round is caught by MARKER EVIDENCE (rule 3) as well. This
+    # subtraction is kept as DEFENSE IN DEPTH, and the two are independent on
+    # purpose: the marker scan needs the endpoint's prose to be recognisable
+    # and the emission to have happened, while this predicate needs neither.
     non_recombined = record.proposal.candidates_sampled - record.proposal.recombined_sampled
     proposer_reached = bool(
         non_recombined > 0 or record.proposal.experiment_ids or record.generation_ids
     )
-    invalid_patch = bool(record.validation_findings) or any(record.proposal.errors)
+    # CONTENT REJECTIONS only — a call-boundary error is the absence of a
+    # patch, not an invalid one. See the docstring: this exclusion is what
+    # keeps a vocabulary MISS falling through to rule 5 instead of being
+    # promoted to ``settled_degraded`` by the very evidence issue #141 added.
+    invalid_patch = bool(record.validation_findings) or any(
+        text and not _is_call_boundary(text) for text in record.proposal.errors
+    )
     # Markers are scanned over CALL-BOUNDARY proposal errors only.
     #
     # Not scanning ``validation_findings`` is true but nearly vacuous, and
@@ -584,6 +683,20 @@ def classify_round(
     # reached" would contradict the very next line of the report. Same
     # verdict either way — VOID — but the operator is triaging from this
     # text, so it says which of the two shapes it is.
+    #
+    # The unmatched-call-boundary shape is called out by name because it is
+    # the ONE void the operator can act on: the round names a transport
+    # failure the vocabulary did not recognise, which is the signal to widen
+    # ``infra_markers`` for this endpoint (CAMPAIGN.md §6.6) and re-read. The
+    # verdict does not depend on the widening — it is VOID either way — but a
+    # generic "without an explanation" would hide that the log holds one.
+    unmatched = tuple(text for text in record.proposal.errors if _is_call_boundary(text))
+    if unmatched:
+        return _finish(
+            RoundStatus.VOID,
+            "closed without a gate, carrying a call-boundary error that matched no "
+            f"infra marker ({unmatched[0]}) — consider widening `infra_markers`",
+        )
     if proposer_reached:
         return _finish(
             RoundStatus.VOID,

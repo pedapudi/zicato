@@ -43,6 +43,16 @@ INSERT INTO "generations" VALUES('<DATE>_t1_racing','v1','v0',1,'<TS>',0,1.67838
 INSERT INTO "generations" VALUES('<DATE>_t1_racing','v2','v0',0,'<TS>',0,1.576322983622206038e+03,1.355277100712780794e+02,4);
 INSERT INTO "generations" VALUES('<DATE>_t1_racing','v3','v0',0,'<TS>',0,1.477932057036904552e+03,1.450844923048295243e+02,2);
 INSERT INTO "generations" VALUES('<DATE>_t1_racing','v4','v0',0,'<TS>',0,1.477932057036904552e+03,1.450844923048295243e+02,2);
+CREATE TABLE ingest_cursors (
+      epoch_id TEXT PRIMARY KEY,
+      experiments_count INTEGER,
+      runs_count INTEGER,
+      round_dirs_count INTEGER,
+      reflections_count INTEGER,
+      lineage_generations_count INTEGER,
+      last_ingested_at TEXT
+    );
+INSERT INTO "ingest_cursors" VALUES('<DATE>_t1_racing',4,0,1,0,4,'<TS>');
 CREATE TABLE judge_losses (
       run_id TEXT,
       judge_name TEXT,
@@ -146,7 +156,7 @@ CREATE TABLE schema_meta (
   key TEXT PRIMARY KEY,
   value TEXT
 );
-INSERT INTO "schema_meta" VALUES('schema_version','13');
+INSERT INTO "schema_meta" VALUES('schema_version','14');
 INSERT INTO "schema_meta" VALUES('description','zicato analytical index — derived, rebuildable from .zicato/ files');
 CREATE TABLE tournaments (
       tournament_id TEXT PRIMARY KEY,

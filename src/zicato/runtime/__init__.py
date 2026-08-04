@@ -46,6 +46,7 @@ from zicato.runtime.lock import (
     is_pid_alive,
     is_same_process,
     pid_start_time,
+    read_workspace_lock,
     release_workspace_lock,
 )
 from zicato.runtime.paths import (
@@ -127,6 +128,7 @@ __all__ = [
     # lock
     "WorkspaceLockHeld",
     "WorkspaceLock",
+    "read_workspace_lock",
     "is_pid_alive",
     "pid_start_time",
     "is_same_process",

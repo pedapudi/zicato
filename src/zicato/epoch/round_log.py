@@ -97,10 +97,22 @@ class RoundOpened:
 
 @dataclass(frozen=True, slots=True)
 class ProposalAttempted:
-    """One proposer attempt settled; ``errors`` is empty on success."""
+    """One proposer attempt settled; ``errors`` is empty on success.
+
+    ``slot_index`` names the best-of-N SLATE SLOT the attempt belongs to,
+    and exists because a slate slot that fails while a sibling survives is
+    an attempt the round log never used to record at all (issue #141): the
+    wrapper narrowed the slate and dropped the error, so a round could lose
+    most of its slate to a credential lapse and leave ``proposal.errors``
+    empty. ``None`` is the NON-SLATE attempt — the single-propose retry
+    trail :mod:`zicato.evolve.propose_apply` emits, which has no slot to
+    name. Additive with a default so every pre-slot log decodes identically
+    (the ``CandidateSampled.revise`` precedent).
+    """
 
     TYPE: ClassVar[str] = "proposal_attempted"
     errors: tuple[str, ...] = ()
+    slot_index: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -423,7 +435,9 @@ def _decode_event(type_token: str, payload: dict[str, Any]) -> RoundEvent | None
             value = tuple(value)
         # Re-tupling is the ONLY coercion, which holds because every field
         # on every event is a str / int / bool / float / tuple[str, ...] /
-        # dict. A field declared as a StrEnum or Path would land here as
+        # dict, or an OPTIONAL one of those (JSON ``null`` round-trips to
+        # ``None``, which is the declared type — no coercion to do). A field
+        # declared as a StrEnum or Path would land here as
         # its raw JSON value and read back a different runtime type than
         # the writer emitted (issue #132); coerce it here if one is added.
         kwargs[f.name] = value

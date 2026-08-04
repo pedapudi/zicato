@@ -1328,7 +1328,7 @@ The reader (`src/zicato/epoch/round_integrity.py`) walks
 |---|---|---|---|
 | **COMPLETE** | `complete` | opened **and** closed, with **≥ 1 `gate_evaluated`** | contributes a duel to `cell_mean_d` |
 | **SETTLED-DEGRADED** | `settled_degraded` | closed with a **real measurement** but no gate — the proposer *was* reached and genuinely produced an invalid patch | **accepted**; contributes no duel |
-| **VOID** | `void` | everything else — a torn/partial log without its completion marker; no `gate_evaluated` plus evidence of hard infra/credential failure; **or** a round that closed with no gate and no evidence the proposer was reached at all | **the whole cell is rejected** |
+| **VOID** | `void` | everything else — a torn/partial log without its completion marker; no `gate_evaluated` plus evidence of hard infra/credential failure; **or** a round that closed with no gate and no evidence a patch was produced and rejected (a transport error does not count — see below) | **the whole cell is rejected** |
 
 The wire tokens are the ones `--json` emits; §7's artifacts use them verbatim.
 
@@ -1358,12 +1358,22 @@ tokens: a **non-recombined** candidate sampled, an experiment minted, or patches
 applied. The exclusion is load-bearing — a *mechanical* recombination mint
 (`proposer/recombine.py`, pure, no IO) produces a candidate with no model call
 at all, so on A3/A7 counting it as reach would let a round with zero model
-responses read as a real degraded measurement. **And the marker rule would not
-catch it**, which is the part worth internalising: best-of-N *discards* the
-failed slots' errors whenever any slot survives (`proposer/best_of_n.py`), so
-the round closes with an EMPTY error list — nothing for a marker to match
-against, no matter how wide the vocabulary. The reach predicate is the only
-thing standing between that round and an accepted cell. Reach is also read over the
+responses read as a real degraded measurement.
+
+**The marker rule now catches that round too, and the two mechanisms are
+independent — which is the part worth internalising.** Until issue #141,
+best-of-N *discarded* the failed slots' errors whenever any slot survived
+(`proposer/best_of_n.py`), so such a round closed with an EMPTY error list and
+the reach predicate was the only thing standing between it and an accepted
+cell. The wrapper now emits one `proposal_attempted` per failed slot, carrying
+that slot's attempts verbatim, so a credential-lapsed slate leaves its evidence
+in the log and voids by **rule 3** on the matched marker — with the endpoint's
+own words in the report, which the reach predicate alone could never give the
+operator. **The reach predicate remains, as the backstop.** It needs no
+evidence to have been written, so it still holds if a future proposer path
+forgets to emit or an endpoint's prose matches no marker; the marker scan, in
+turn, holds when a mint is not flagged as recombined. Do not treat either as
+redundant. Reach is also read over the
 **final attempt span only** (the events after the last `round_opened`), because
 the round log is append-only and a round index can be reused after an attempt
 died before its experiment was persisted; without the span, a prior attempt's
@@ -1379,16 +1389,20 @@ content rejection* that quotes text zicato does not control: validator findings
 over the child agent's own source, mutation ids taken from the operator's own
 `# zicato:mutable` markers and brief, the built-in drift-kind list, and the
 model's own offending values echoed back by a schema violation. Anchoring is
-what makes those structurally ineligible rather than merely unlikely. Three
-consequences the executor must understand:
+what makes those structurally ineligible rather than merely unlikely. (One
+zicato-authored tag may sit in front of the prefix and is stripped before the
+anchor is tested: `slot 0: `, which an all-failed best-of-N slate puts on each
+aggregated attempt. Expect to see it in the report; it names the slate slot the
+error came from.) Three consequences the executor must understand:
 
 - **A false positive is far worse than a false negative here, and the asymmetry
   governs every choice below.** A false positive voids a *real* measurement,
   burns the arm's retry budget, and — because arms differ in how often they emit
   invalid patches — deletes rounds in an **arm-correlated** pattern, which is
   precisely the contamination shape R.5 describes. A false negative merely falls
-  through to rule 5, **which still voids a genuine credential lapse**: when the
-  endpoint refuses the request, nothing mints a reach token.
+  through to rule 5, **which still voids a genuine credential lapse** — see the
+  next paragraph for what that fallthrough actually rests on, because the
+  obvious reason ("nothing mints a reach token") is *not* the one that holds.
 - **The excluded tokens stay excluded, as defense in depth.** Bare `timeout`
   (one attempt timing out while a later one returns a real, if invalid, proposal
   is a real measurement), bare `forbidden` (the proposer's own forbidden-id
@@ -1404,6 +1418,34 @@ consequences the executor must understand:
   in the report, not buried in a config. Widening is safe *because* of the
   anchor: a broader token can only ever be tested against transport-shaped
   errors.
+
+**What the rule-5 fallthrough actually rests on: a transport error is never
+patch evidence.** The reason a vocabulary miss is survivable is *not* that an
+outage leaves no reach token — issue #141 made that reasoning obsolete. A
+best-of-N slate can have one slot survive (minting `candidate_sampled`, a
+perfectly good reach token) while a sibling slot dies at the call boundary, and
+since #141 the sibling's error is *written to the log* rather than discarded.
+So the round arrives at the reader with reach asserted AND an error on the
+record. What keeps it from being accepted is that `invalid_patch` counts
+**content rejections only**: a request that failed before a response came back
+produced no patch, so it cannot be an invalid one, and it cannot satisfy rule
+4's "the proposer was reached and genuinely produced an invalid patch". Without
+that exclusion, a vocabulary miss would flip such a round from VOID to
+`settled_degraded` — the fix for a *reporting* gap would have quietly loosened
+the *acceptance* rule, which is the exact inversion this section exists to
+prevent. The governing invariant, worth memorising:
+
+> **Reporting more evidence can only ever move a verdict toward VOID, never away
+> from it.**
+
+The executor's practical consequence: a round whose only errors are
+transport-shaped and unmatched is VOID, and its evidence line says so by name —
+`closed without a gate, carrying a call-boundary error that matched no infra
+marker (…) — consider widening \`infra_markers\``. **Treat that line as the
+signal to widen for this endpoint** (per the bullet above, and record the
+widening in the run log), then re-read. The verdict does not change with the
+widening — VOID either way — but the *reason* does, and the anomaly belongs in
+§7 as an endpoint-prose finding rather than an unexplained void.
 
 **Cell acceptance rule:** a cell is **ACCEPTED iff it contains zero VOID
 rounds** — **and has at least one round.** Zero rounds is vacuously free of

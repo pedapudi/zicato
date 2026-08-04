@@ -379,3 +379,99 @@ class TestBestOfNEmission:
         agent = BestOfNProposerAgent(inner=_Inner(), config=ProposerQualityConfig(best_of_n=1))
         asyncio.run(agent.propose(_ctx(lambda t, f: emitted.append(t))))
         assert emitted == []
+
+
+class TestSlateEvidenceReachesTheReader:
+    """The COMPOSED #141 seam: real wrapper → real log → real classifier.
+
+    Both halves of issue #141 are pinned in isolation elsewhere — the
+    wrapper's emission in ``tests/test_proposer_best_of_n.py``, the reader's
+    classification in ``tests/test_epoch_round_integrity.py`` — and each
+    half hand-builds the other's side. That leaves the one thing neither can
+    check: whether the strings the wrapper actually writes are the strings
+    the reader actually matches, through a real JSONL round-trip. A writer
+    that re-wrapped its errors, or a reader whose anchor drifted off the
+    emitted template, would pass both halves and fail here.
+    """
+
+    #: The REAL shape ``proposer/proposer.py`` raises a transport failure in.
+    CREDENTIAL_ERROR = (
+        "auxiliary LLM call raised AuthenticationError: "
+        "401 Unauthorized — API key expired or revoked"
+    )
+
+    @staticmethod
+    def _run_slate(tmp_path: Path, *, survivors: int, n: int) -> None:
+        """Drive a real slate through a real emitter into a real round log."""
+        from zicato.proposer.proposer import ProposerError
+
+        emitter = _RoundLogEmitter(tmp_path, "e1", 1)
+        emitter.emit("round_opened", {"contract_hash": "sha256:c"})
+
+        class _MostlyDead:
+            def __init__(self) -> None:
+                self.calls = 0
+
+            async def propose(self, ctx: ProposerContext) -> Experiment:
+                self.calls += 1
+                if self.calls > n - survivors:
+                    return _experiment(f"v{self.calls}", f"idea {self.calls}")
+                raise ProposerError([TestSlateEvidenceReachesTheReader.CREDENTIAL_ERROR])
+
+        agent = BestOfNProposerAgent(
+            inner=_MostlyDead(),
+            config=ProposerQualityConfig(best_of_n=n, critique_enabled=False),
+        )
+        try:
+            asyncio.run(agent.propose(_ctx(emitter.emit)))
+        except ProposerError as exc:
+            # VERBATIM the all-failed emission in
+            # ``evolve/propose_apply.py::_propose_child`` — one event per
+            # attempt of the escaping error, which is what puts the
+            # ``slot N: `` tag in front of a call-boundary template.
+            for attempt_error in exc.attempts:
+                emitter.emit("proposal_attempted", {"errors": (str(attempt_error),)})
+        emitter.emit("round_closed")
+
+    def test_a_surviving_slate_still_voids_on_its_dead_siblings(self, tmp_path: Path) -> None:
+        """Two slots die on a 401, one survives, the round never gates.
+
+        The founding failure: before #141 this log read
+        ``candidates_sampled=1, errors=()`` — a round that looks clean while
+        its arm was sampled once instead of three times, mid-outage.
+        """
+        from zicato.epoch.round_integrity import RoundStatus, round_integrity
+
+        self._run_slate(tmp_path, survivors=1, n=3)
+        verdict = round_integrity(tmp_path, "e1", 1)
+
+        assert verdict.status == RoundStatus.VOID
+        assert verdict.proposer_reached  # the survivor's own candidate_sampled
+        # Both dead slots raised the SAME string, and the reader de-duplicates
+        # verbatim matches — one outage, reported once.
+        assert verdict.infra_markers == (self.CREDENTIAL_ERROR,)
+        assert any("hard infra error" in line for line in verdict.evidence)
+
+    def test_an_all_dead_slate_voids_through_the_slot_tag(self, tmp_path: Path) -> None:
+        """Every slot dies: the errors arrive slot-TAGGED, and still match.
+
+        This is the round the tag exists for and the round it could most
+        easily have blinded — the reader strips ``slot N: `` before testing
+        the call-boundary anchor, so an all-slate credential lapse is
+        matched rather than silently dropped to an unexplained void.
+        """
+        from zicato.epoch.round_integrity import RoundStatus, round_integrity
+
+        self._run_slate(tmp_path, survivors=0, n=3)
+        verdict = round_integrity(tmp_path, "e1", 1)
+
+        assert verdict.status == RoundStatus.VOID
+        assert not verdict.proposer_reached
+        # One matched marker per slot, each carrying its slot tag VERBATIM so
+        # the operator can tell three slots failing once from one failing
+        # three times — the whole point of aggregating rather than re-raising.
+        assert verdict.infra_markers == tuple(
+            f"slot {i}: {self.CREDENTIAL_ERROR}" for i in range(3)
+        )
+        # ... and no slot-tagged transport error was mistaken for a patch.
+        assert not verdict.invalid_patch

@@ -84,6 +84,7 @@ from zicato.evolve.ingest import (
     _index_db_path,
     _ingest_experiment_into_index,
     _load_prior_experiments,
+    index_preflight,
 )
 from zicato.evolve.lifecycle_services import (
     _beat,
@@ -4940,6 +4941,11 @@ __all__ = [
     # (the dashboard projection) keep resolving under mypy's no-implicit-reexport.
     "_index_db_path",
     "_load_prior_experiments",
+    # The evolve-start index build/heal preflight (ANALYTICAL-INDEX.md §5.3).
+    # Reached through this module by ``evolve_n_rounds`` so the loop's tests
+    # can monkeypatch it the same way they do every other orchestrator-resident
+    # collaborator.
+    "index_preflight",
     # Re-export shims for lifecycle services moved to
     # ``zicato.evolve.lifecycle_services`` — listed here so the import is
     # recognised as a re-export (and so callers' ``from zicato.orchestrator
