@@ -46,6 +46,7 @@ independently re-tallies a run's events JSONL.
 from __future__ import annotations
 
 import json
+import logging
 import sqlite3
 from collections.abc import Iterable
 from dataclasses import asdict
@@ -55,6 +56,8 @@ from typing import Any
 from zicato.core.types import Experiment, LossProfile
 from zicato.core.workspace import loss_profile_path
 from zicato.index.schema import apply_schema
+
+log = logging.getLogger("zicato.index")
 
 
 def _default_db_path(workspace_root: Path) -> Path:
@@ -1138,10 +1141,32 @@ def _ingest_pareto_frontier_into(
     would leave a stale member row behind if the record ever shrank. The
     frontier is small (a handful of rows per epoch), so the rewrite is cheap
     and exactly reproduces the file.
-    """
-    from zicato.epoch.pareto import load_frontier  # noqa: PLC0415
 
-    frontier = load_frontier(workspace_root, epoch_id)
+    An UNREADABLE record — truncated JSON, a hand-edit, a ``format_version``
+    from a newer build — skips the projection and leaves the epoch's existing
+    rows alone. It must not raise: this function is called from BOTH the
+    guarded incremental dual-write and the UNGUARDED full rebuild, and
+    ``rebuild_index`` unlinks the database before repopulating it, so a raise
+    here would leave a schema-only file with every other table empty. That
+    turns one corrupt record into total index loss, repeatably, along the very
+    path an operator runs to recover a bad index. Reading before the DELETE
+    below is what makes "leave the existing rows alone" true.
+    """
+    from zicato.epoch._storage import RecordFormatError  # noqa: PLC0415
+    from zicato.epoch.pareto import frontier_path, load_frontier  # noqa: PLC0415
+
+    try:
+        frontier = load_frontier(workspace_root, epoch_id)
+    except (OSError, ValueError, json.JSONDecodeError, RecordFormatError) as exc:
+        # Warned, not silent: unlike the derived rows around it, the file this
+        # projects IS canonical, so a defect in it is the operator's to fix.
+        log.warning(
+            "index: pareto frontier projection skipped for epoch %s (%s): %s",
+            epoch_id,
+            frontier_path(workspace_root, epoch_id),
+            exc,
+        )
+        return False
     if not frontier.members and not frontier.retired:
         conn.execute("DELETE FROM pareto_frontier WHERE epoch_id = ?", (epoch_id,))
         return False

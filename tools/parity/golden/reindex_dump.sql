@@ -104,7 +104,7 @@ CREATE TABLE pareto_frontier (
       scalar REAL,
       axis_values_json TEXT,
       beats_champion_on_json TEXT,
-      PRIMARY KEY (epoch_id, generation_id)
+      PRIMARY KEY (epoch_id, generation_id, status, round_retired)
     );
 CREATE TABLE patches (
       patch_id TEXT PRIMARY KEY,

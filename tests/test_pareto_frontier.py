@@ -734,6 +734,128 @@ def test_an_epoch_with_no_record_projects_no_rows(tmp_path: Path) -> None:
     conn.close()
 
 
+def test_a_readmitted_generation_keeps_both_its_member_and_retired_rows(
+    tmp_path: Path,
+) -> None:
+    """A generation is NOT unique per epoch, and the table must not pretend it is.
+
+    Admit → crowned (retired ``promoted``) → dethroned → re-admitted is
+    reachable with stock weights, and it leaves the same id in BOTH
+    ``members`` and ``retired``. A key of ``(epoch_id, generation_id)`` made
+    the retired row -- inserted second -- silently REPLACE the live member
+    row, so the table claimed a current frontier member was retired, with the
+    wrong ``round_admitted`` attached.
+    """
+    from zicato.index.ingest import ingest_pareto_frontier
+
+    weights = _weights()
+    # r1: v1 beats the champion on cost and is admitted.
+    frontier = update_frontier(
+        _empty(),
+        champion=_candidate("v0", drift=1.0, cost=1.0),
+        candidates=[_candidate("v1", drift=1.0, cost=0.5)],
+        weights=weights,
+        round_index=1,
+    ).frontier
+    # r2: v1 is crowned, so it leaves the record as ``promoted``.
+    frontier = update_frontier(
+        frontier,
+        champion=_candidate("v1", drift=1.0, cost=0.5),
+        candidates=[_candidate("v0", drift=1.0, cost=1.0)],
+        weights=weights,
+        round_index=2,
+    ).frontier
+    assert [r.member.generation_id for r in frontier.retired] == ["v1"]
+    # r3: v2 dethrones v1. v1 is still scored, so it is offered again -- and
+    # it still beats the NEW champion on cost, so it is re-admitted.
+    update = update_frontier(
+        frontier,
+        champion=_candidate("v2", drift=0.2, cost=1.0),
+        candidates=[_candidate("v1", drift=1.0, cost=0.5), _candidate("v0", drift=1.0, cost=1.0)],
+        weights=weights,
+        round_index=3,
+    )
+    frontier = update.frontier
+    assert update.admitted == ("v1",)
+    assert [m.generation_id for m in frontier.members] == ["v1"]
+    assert [r.member.generation_id for r in frontier.retired] == ["v1"]
+    save_frontier(tmp_path, "e0", frontier)
+
+    db_path = tmp_path / "index.db"
+    ingest_pareto_frontier(tmp_path, db_path, "e0")
+    conn = sqlite3.connect(db_path)
+    rows = sorted(
+        conn.execute(
+            "SELECT generation_id, status, round_admitted, round_retired, retired_reason "
+            "FROM pareto_frontier WHERE epoch_id = 'e0'"
+        )
+    )
+    conn.close()
+    # The projection reproduces the file: BOTH entries, each with its own round.
+    assert rows == [
+        ("v1", "member", 3, None, None),
+        ("v1", "retired", 1, 2, "promoted"),
+    ]
+
+
+def test_an_unreadable_record_never_costs_a_rebuild_its_other_tables(
+    tmp_path: Path,
+) -> None:
+    """One corrupt canonical file must not destroy the whole index.
+
+    ``rebuild_index`` unlinks the database before repopulating it, so a raise
+    anywhere inside the walk leaves a schema-only file — every table empty.
+    The frontier projection is called from that walk WITHOUT the best-effort
+    wrapper the incremental dual-write has, so a truncated or future-format
+    ``pareto_frontier.json`` turned the operator's recovery path into total
+    index loss, repeatably.
+    """
+    from tests.test_index_elo_reindex import _build_chain_workspace
+    from zicato.index.ingest import rebuild_index
+
+    workspace, epoch_id = _build_chain_workspace(tmp_path)
+    save_frontier(
+        workspace,
+        epoch_id,
+        update_frontier(
+            _empty(),
+            champion=_candidate("v0", drift=1.0, cost=1.0),
+            candidates=[_candidate("v1", drift=1.0, cost=0.5)],
+            weights=_weights(),
+            round_index=1,
+        ).frontier,
+    )
+    db_path = rebuild_index(workspace)
+
+    def _counts() -> dict[str, int]:
+        conn = sqlite3.connect(db_path)
+        try:
+            return {
+                table: conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]  # noqa: S608
+                for table in ("epochs", "generations", "experiments", "pareto_frontier")
+            }
+        finally:
+            conn.close()
+
+    healthy = _counts()
+    assert healthy["epochs"] == 1
+    assert healthy["generations"] == 4
+    assert healthy["pareto_frontier"] == 1
+
+    for body in (
+        '{"format_version": 1, "members": [ TRUNCATED',  # unparseable
+        json.dumps({"format_version": 99, "members": []}),  # newer writer
+    ):
+        frontier_path(workspace, epoch_id).write_text(body, encoding="utf-8")
+        rebuild_index(workspace)  # must NOT raise
+        after = _counts()
+        # Every other table survives; only the unreadable projection is empty.
+        assert after["epochs"] == healthy["epochs"]
+        assert after["generations"] == healthy["generations"]
+        assert after["experiments"] == healthy["experiments"]
+        assert after["pareto_frontier"] == 0
+
+
 # ---------------------------------------------------------------------------
 # The real settle path
 # ---------------------------------------------------------------------------

@@ -205,6 +205,14 @@ _TABLE_STATEMENTS: tuple[str, ...] = (
       verdict_counts_json TEXT
     )
     """,
+    # The frontier key is (epoch, generation, status, round_retired), not
+    # (epoch, generation): a generation is NOT unique per epoch. It can be
+    # admitted, retired as ``promoted`` when it is crowned, then re-admitted
+    # once it is dethroned — so the same id appears in BOTH ``members`` and
+    # ``retired`` of the same file, and once in ``retired`` per round it left.
+    # ``round_retired`` is NULL on a member row, which is already unique on
+    # the three columns before it. A narrower key let the retired row (written
+    # second) silently REPLACE the live member row.
     """
     CREATE TABLE IF NOT EXISTS pareto_frontier (
       epoch_id TEXT,
@@ -217,7 +225,7 @@ _TABLE_STATEMENTS: tuple[str, ...] = (
       scalar REAL,
       axis_values_json TEXT,
       beats_champion_on_json TEXT,
-      PRIMARY KEY (epoch_id, generation_id)
+      PRIMARY KEY (epoch_id, generation_id, status, round_retired)
     )
     """,
     """
