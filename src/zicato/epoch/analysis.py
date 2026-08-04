@@ -40,6 +40,7 @@ from zicato.core.types import (
     HypothesisSpec,
     MetricMovementActual,
     OutcomeRecord,
+    TournamentDecision,
 )
 from zicato.core.workspace import (
     analysis_path,
@@ -861,6 +862,12 @@ def _hydrate_outcome(d: Mapping[str, Any] | None) -> OutcomeRecord | None:
         # An outcome dict without a recognisable decision is treated as
         # "no outcome" so we don't fabricate a state machine entry.
         return None
+    # The guard above has narrowed the raw wire token to the three members,
+    # so the coercion cannot raise. It is what makes the record's runtime
+    # type match the type the dataclass declares — a hydrated record is
+    # otherwise indistinguishable from an in-process one under ``==`` but
+    # not under ``isinstance`` / ``match`` / ``.name``.
+    decision = TournamentDecision(decision)
     try:
         return OutcomeRecord(
             ran_at=str(d.get("ran_at", "")),

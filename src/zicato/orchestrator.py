@@ -2590,7 +2590,7 @@ async def _evolve_multi_challenger(
         # single-promotion invariant (the set is exactly ``{promoted_id}``).
         is_crowned = gid in promoted_ids
         gid_override = field_overrides.get(gid)
-        gen_decision = "promoted" if is_crowned else "rejected"
+        gen_decision = TournamentDecision.PROMOTED if is_crowned else TournamentDecision.REJECTED
         agg = _first_aggregate_for(gid, decision)
         gen_scalar = float(agg.get("scalar", 0.0)) if agg else 0.0
         if gid == promoted_id:
@@ -2638,7 +2638,7 @@ async def _evolve_multi_challenger(
             pass_rate_delta=0.0,
             drift_loss_delta=0.0,
             scalar_score_delta=gen_scalar - parent_scalar,
-            tournament_decision=gen_decision,  # type: ignore[arg-type]
+            tournament_decision=gen_decision,
             rejection_reason=rejection_reason,
             operator_override=operator_override,
             operator_override_reason=operator_override_reason,
