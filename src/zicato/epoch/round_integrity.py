@@ -41,15 +41,22 @@ Nothing here writes, mutates, or reaches the network. It reads
 
 Known limits of what this reader can see
 ----------------------------------------
-All three are properties of the LOG, not of this module, so none can be
+Both are properties of the LOG, not of this module, so neither can be
 fixed here. They are recorded because a reader who does not know them will
 over-trust a clean report.
 
-* **Discarded slate errors.** ``proposer/best_of_n.py`` re-raises only the
-  LAST error when every slot fails, and discards every failed slot's error
-  entirely when any slot survives (the LLM-merge failure path swallows its
-  own too). So a round can lose most of its slate to a credential lapse and
-  leave no trace of it in ``proposal.errors``.
+(A third limit — **discarded slate errors** — was the largest of them and is
+now CLOSED at the writer, issue #141. ``proposer/best_of_n.py`` used to
+discard every failed slate slot's error whenever a sibling survived, re-raise
+only the LAST one when none did, and swallow the LLM-merge call's exception
+outright, so a round could lose most of its slate to a credential lapse and
+leave ``proposal.errors`` empty. It now emits one ``proposal_attempted`` per
+failed slot, carrying that slot's attempts verbatim. This module reads that
+evidence like any other: the lapse lands as a matched marker and voids by
+rule 3. The ``recombined_sampled`` discriminator in :func:`classify_round`
+stays as defense in depth — it does not need the evidence to be present, so
+it still holds when a future writer path forgets to emit.)
+
 * **Challenger granularity.** ``complete`` needs only ONE gate. A round that
   ran several challengers and lost one to a 401 still gates on the
   survivors, so it is consumed at full weight on a narrower field than its
@@ -89,6 +96,7 @@ so they neither contribute to the mean nor disqualify the cell. See
 
 from __future__ import annotations
 
+import re
 from dataclasses import asdict, dataclass
 from enum import StrEnum
 from pathlib import Path
@@ -278,6 +286,26 @@ CALL_BOUNDARY_PREFIXES: tuple[str, ...] = (
     "proposer agent run raised ",
 )
 
+#: The best-of-N SLATE-SLOT tag that can sit in front of a call-boundary
+#: template, stripped before the anchor above is tested.
+#:
+#: When every slot of a slate fails, ``proposer/best_of_n.py`` raises one
+#: error aggregating all of them and prefixes each attempt with its slot
+#: (``slot 0: auxiliary LLM call raised ...``) so the operator can tell three
+#: slots failing one way from one slot failing three ways. Testing the anchor
+#: against the prefixed string would silently blind the marker scan on exactly
+#: the round it matters most for — an all-slate credential lapse — so the tag
+#: is stripped first.
+#:
+#: Safe to strip because the tag is ZICATO-AUTHORED and structurally fixed: a
+#: literal ``slot``, decimal digits, ``": "``. Nothing downstream of a model
+#: response begins that way — every content-rejection template starts with its
+#: own zicato-authored preamble (``patches violate ...``, ``patches failed
+#: post-apply validation: ...``) or with ``ExperimentParseError``'s, none of
+#: which is ``slot``. So this widens the anchor by exactly one zicato prefix
+#: and admits no model-authored text.
+_SLOT_PREFIX = re.compile(r"^slot \d+: ")
+
 
 @dataclass(frozen=True, slots=True)
 class RoundIntegrity:
@@ -401,19 +429,20 @@ def _matched_markers(
     """Return, verbatim and de-duplicated, the ``texts`` naming hard infra.
 
     Only CALL-BOUNDARY errors are eligible — see
-    :data:`CALL_BOUNDARY_PREFIXES`. A post-response content rejection
-    quotes model output, mutation ids, and child-snapshot validator
+    :data:`CALL_BOUNDARY_PREFIXES`, and :data:`_SLOT_PREFIX` for the one
+    zicato-authored tag that may precede one. A post-response content
+    rejection quotes model output, mutation ids, and child-snapshot validator
     findings into its text, so scanning it for infra tokens reports the
     challenger's own words back as an endpoint outage.
 
     Among eligible errors, matching is case-insensitive substring
-    containment; the ORIGINAL string is what comes back, because the
-    operator needs the endpoint's own words, not the token that happened
-    to match.
+    containment; the ORIGINAL string is what comes back — slot tag and all —
+    because the operator needs the endpoint's own words and the slot they came
+    from, not the token that happened to match.
     """
     out: list[str] = []
     for text in texts:
-        lowered = text.lower()
+        lowered = _SLOT_PREFIX.sub("", text.lower(), count=1)
         if not lowered.startswith(CALL_BOUNDARY_PREFIXES):
             continue
         if any(marker in lowered for marker in infra_markers) and text not in out:
@@ -489,9 +518,14 @@ def classify_round(
     # ``candidate_sampled`` with ``recombined=True`` exactly as an ordinary
     # sample does. Subtracting the recombined count is what keeps a round
     # with zero model responses from vouching for the endpoint: on a
-    # ``recombine`` arm mid-outage the LLM slots raise (and best-of-N
-    # DISCARDS their errors when any slot survives), the mint succeeds, and
+    # ``recombine`` arm mid-outage the LLM slots raise, the mint succeeds, and
     # a plain ``> 0`` would read that as "the proposer was reached".
+    #
+    # Since issue #141 those raising slots also write their errors to the log,
+    # so such a round is caught by MARKER EVIDENCE (rule 3) as well. This
+    # subtraction is kept as DEFENSE IN DEPTH, and the two are independent on
+    # purpose: the marker scan needs the endpoint's prose to be recognisable
+    # and the emission to have happened, while this predicate needs neither.
     non_recombined = record.proposal.candidates_sampled - record.proposal.recombined_sampled
     proposer_reached = bool(
         non_recombined > 0 or record.proposal.experiment_ids or record.generation_ids

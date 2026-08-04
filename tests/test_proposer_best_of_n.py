@@ -1783,3 +1783,235 @@ async def test_ens_absent_roles_leave_ctx_model_byte_identical() -> None:
     await agent.propose(_context(_CapturingCriticLLM("0")))
 
     assert all(c.model == "test-model" for c in inner.contexts)
+
+
+# --------------------------------------------------------------------------
+# Issue #141 — a failed slate slot's error is EVIDENCE, not a discard
+#
+# The round log is the durable record of what a round actually did, and the
+# integrity reader (``zicato epoch rounds``) is built entirely on top of it.
+# Before this, best-of-N dropped every failed slot's error the moment any
+# sibling survived, so a round that lost most of its slate to a credential
+# lapse reached that reader as a clean, quiet success. The DEGRADE BEHAVIOUR
+# below is unchanged in every one of these tests — a surviving slot is still
+# used, a failed mint/merge still degrades to a fresh sample — only the
+# evidence trail is new.
+# --------------------------------------------------------------------------
+
+
+#: The production call-boundary shape of a credential lapse, as
+#: ``proposer/proposer.py`` renders it. The literal prefix matters: it is what
+#: ``epoch/round_integrity.py`` anchors its infra-marker scan to, so an error
+#: that reaches the log re-wrapped or re-worded is an error that reader cannot
+#: classify as an outage.
+_CREDENTIAL_ERROR = (
+    "auxiliary LLM call raised AuthenticationError: Error code: 401 - "
+    "{'error': {'message': 'invalid x-api-key', 'type': 'authentication_error'}}"
+)
+
+
+@pytest.mark.asyncio
+async def test_failed_slot_errors_are_logged_even_when_a_sibling_survives() -> None:
+    """Pin (a): a surviving slate does NOT silence the slots that died.
+
+    The founding failure mode of ``epoch/round_integrity.py``, one level
+    down: two slots die on a 401, the third returns a candidate, the round
+    gates and closes, and the log used to carry nothing but
+    ``candidates_sampled=1``. An operator auditing that epoch would see a
+    clean round, and the mean behind it would be built from an arm that was
+    sampled once instead of three times, mid-outage.
+    """
+    from dataclasses import replace as _replace
+
+    from zicato.proposer.proposer import ProposerError
+
+    survivor = _experiment(core_idea="survivor", mutation_id="router__sp", new_content="x")
+
+    class _TwoDieOneSurvives:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        async def propose(self, ctx: ProposerContext) -> Experiment:
+            self.calls += 1
+            if self.calls == 3:
+                return survivor
+            raise ProposerError([_CREDENTIAL_ERROR])
+
+    events: list[tuple[str, dict]] = []
+    ctx = _replace(
+        _context(_CapturingCriticLLM("0")),
+        round_event_emitter=lambda t, f: events.append((t, f)),
+    )
+    inner = _TwoDieOneSurvives()
+    agent = BestOfNProposerAgent(inner=inner, config=ProposerQualityConfig(best_of_n=3))
+
+    out = await agent.propose(ctx)
+
+    # DEGRADE BEHAVIOUR — unchanged: the survivor is still the proposal.
+    assert out is survivor
+    # EVIDENCE — new: one attempt event per failed slot, tagged with its slot.
+    attempts = [f for t, f in events if t == "proposal_attempted"]
+    assert attempts == [
+        {"errors": (_CREDENTIAL_ERROR,), "slot_index": 0},
+        {"errors": (_CREDENTIAL_ERROR,), "slot_index": 1},
+    ]
+    # Emitted in SLOT order, and interleaved with the survivor's own event —
+    # the trail reads as the slate ran, not as two lists stapled together.
+    assert [t for t, _ in events] == [
+        "proposal_attempted",
+        "proposal_attempted",
+        "candidate_sampled",
+    ]
+    # The error text is VERBATIM: the reader's marker scan anchors on the
+    # call-boundary prefix, so a re-wrapped error would be unclassifiable.
+    assert attempts[0]["errors"][0].startswith("auxiliary LLM call raised ")
+
+
+@pytest.mark.asyncio
+async def test_every_slots_attempts_survive_an_all_failed_slate() -> None:
+    """Pin (b): the all-failed raise carries ALL slots, not just the last.
+
+    Re-raising ``last_error`` alone lost slots 0..n-2 even in the one case
+    where the round had nothing else to report. The shape that mattered: the
+    earlier slots hit a credential lapse and the LAST slot hit a parse error,
+    so the round reported a content rejection — a REAL measurement of a
+    degraded arm — for what was actually an outage. The aggregate keeps both,
+    and ``evolve/propose_apply.py`` turns each attempt into its own
+    ``proposal_attempted``.
+    """
+    from zicato.proposer.proposer import ProposerError
+
+    parse_error = "experiment JSON failed to parse: unexpected token at line 3"
+
+    class _AllFail:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        async def propose(self, ctx: ProposerContext) -> Experiment:
+            self.calls += 1
+            if self.calls == 3:
+                raise ProposerError([parse_error])
+            raise ProposerError([_CREDENTIAL_ERROR])
+
+    agent = BestOfNProposerAgent(inner=_AllFail(), config=ProposerQualityConfig(best_of_n=3))
+    with pytest.raises(ProposerError) as exc_info:
+        await agent.propose(_context(_CapturingCriticLLM("0")))
+
+    assert exc_info.value.attempts == [
+        f"slot 0: {_CREDENTIAL_ERROR}",
+        f"slot 1: {_CREDENTIAL_ERROR}",
+        f"slot 2: {parse_error}",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_all_failed_slate_does_not_double_report_its_attempts() -> None:
+    """The staging rule: the losing path reports through the RAISE only.
+
+    ``evolve/propose_apply.py`` already emits one ``proposal_attempted`` per
+    attempt of an escaping ``ProposerError``, so a slate that emitted its own
+    events AND raised the aggregate would put every error in the log twice —
+    doubling the evidence the operator triages from, in the one path where
+    that evidence is all they have.
+    """
+    from zicato.proposer.proposer import ProposerError
+
+    class _AllFail:
+        async def propose(self, ctx: ProposerContext) -> Experiment:
+            raise ProposerError([_CREDENTIAL_ERROR])
+
+    events: list[tuple[str, dict]] = []
+    from dataclasses import replace as _replace
+
+    ctx = _replace(
+        _context(_CapturingCriticLLM("0")),
+        round_event_emitter=lambda t, f: events.append((t, f)),
+    )
+    agent = BestOfNProposerAgent(inner=_AllFail(), config=ProposerQualityConfig(best_of_n=3))
+    with pytest.raises(ProposerError):
+        await agent.propose(ctx)
+
+    assert events == []
+
+
+@pytest.mark.asyncio
+async def test_swallowed_merge_call_error_reaches_the_log() -> None:
+    """Pin (d): the LLM-merge degrade stops being invisible.
+
+    ``recombine_merge="llm"`` issues ONE auxiliary call for the last slot. Its
+    exception is swallowed to a fresh sample, which is right — a merge failure
+    must never narrow the slate — but it was swallowed to a ``debug`` line, so
+    a round whose merge endpoint was refusing looked exactly like a round that
+    never had a pair. Third of the three places issue #141 names.
+    """
+    from dataclasses import replace as _replace
+
+    class _MergeRefuses:
+        """Raises on the MERGE call, answers the critic normally."""
+
+        def __init__(self) -> None:
+            self.user_prompts: list[str] = []
+
+        async def __call__(self, system: str, user: str, model: str) -> str:
+            self.user_prompts.append(user)
+            if user.startswith("You are MERGING two rejected"):
+                raise RuntimeError("Error code: 401 - invalid x-api-key")
+            return "0"
+
+    candidates = _slate3()
+    inner = _ScriptedInnerAgent(candidates)
+    aux = _MergeRefuses()
+    events: list[tuple[str, dict]] = []
+    ctx = _replace(
+        _context(aux),
+        recombine_pair=_rec_pair(),
+        round_event_emitter=lambda t, f: events.append((t, f)),
+    )
+    agent = BestOfNProposerAgent(
+        inner=inner,
+        config=ProposerQualityConfig(best_of_n=3, recombine_merge="llm"),
+    )
+    out = await agent.propose(ctx)
+
+    # DEGRADE BEHAVIOUR — unchanged: the slot sampled fresh, the slate is full,
+    # and nothing carries recombination provenance.
+    assert inner.calls == 3
+    assert out.recombined_from == ()
+    # EVIDENCE — new: the swallowed CALL error, on the merge slot, rendered
+    # with the call-boundary prefix the integrity reader anchors on.
+    attempts = [f for t, f in events if t == "proposal_attempted"]
+    assert len(attempts) == 1
+    assert attempts[0]["slot_index"] == 2
+    (text,) = attempts[0]["errors"]
+    assert text.startswith("auxiliary LLM call raised RuntimeError: ")
+    assert "invalid x-api-key" in text
+    assert "recombination merge" in text
+    # It precedes the slot's own candidate — the degrade happened first.
+    assert [t for t, _ in events].index("proposal_attempted") < len(events) - 1
+
+
+@pytest.mark.asyncio
+async def test_a_clean_slate_emits_no_attempt_events() -> None:
+    """The quiet default: a slate where every slot succeeds is unchanged.
+
+    ``proposal_attempted`` events from this seam mean something WENT WRONG, so
+    a healthy round must not start carrying them — the reader counts attempts
+    and accumulates their errors.
+    """
+    from dataclasses import replace as _replace
+
+    inner = _ScriptedInnerAgent(_slate3())
+    events: list[tuple[str, dict]] = []
+    ctx = _replace(
+        _context(_CapturingCriticLLM("0")),
+        round_event_emitter=lambda t, f: events.append((t, f)),
+    )
+    agent = BestOfNProposerAgent(inner=inner, config=ProposerQualityConfig(best_of_n=3))
+    await agent.propose(ctx)
+
+    assert [t for t, _ in events] == [
+        "candidate_sampled",
+        "candidate_sampled",
+        "candidate_sampled",
+        "critique_selected",
+    ]
