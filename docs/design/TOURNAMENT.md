@@ -438,6 +438,14 @@ that loop-health diagnostics
 escalates. The Tournament view and the loop-health panel read
 the same underlying table from two angles.
 
+Entries can also carry diagnostic facet tags using the `facet:` prefix
+(`facet:data_quality`, `facet:schema_validation`, etc.). The
+matchup-grid reader folds those tags into per-facet scorecards:
+coverage, parent/child mean outcome score, pass rate, and deltas for
+the entries in that slice. A multi-tag entry contributes once to each
+facet it carries. These scorecards are explanatory only; they do not
+change the scalar, the gate, scheduling, or Pareto admission.
+
 ### 4.3 Hypothesis ledger
 
 The proposer's **calibration** — across the epoch, how often did

@@ -44,7 +44,7 @@ Every board entry carries the same envelope:
 | `kind` | `string` | yes | Discriminator. v0 set: `"single_turn"`, `"multi_turn_scripted"`, `"multi_turn_emulated"`. Open-ended — see §6. |
 | `wall_clock_budget_seconds` | `number` | yes | Hard ceiling for the WHOLE entry. Exceeded → run aborts and scores as worst-case. |
 | `weight` | `number` | no (default `1.0`) | Relative importance in scoring aggregation. |
-| `tags` | `list[string]` | no (default `[]`) | Operator labels; pattern detectors can slice by tag. |
+| `tags` | `list[string]` | no (default `[]`) | Operator labels; pattern detectors and diagnostic scorecards can slice by tag. |
 | `expectation` | `Expectation` | no (default absent) | A single **outcome** check — a `Predicate` / `Rubric` matcher run post-hoc on the run's output or transcript. Absent → drift-loss-only scoring for this entry. An entry carries **at most one** expectation. See §3. |
 | `judges` | `list[Judge]` | no (default `[]`) | **Process** checks — goldfive judges that watch the reasoning stream in-run. Empty → only goldfive's ambient built-in judges run. See §4. |
 | `context` | `object` | no | Opaque adapter-specific metadata. ADK adapters might use `{"attachments": [...], "session_state": {...}}`. Zicato never interprets the contents. |
@@ -131,12 +131,22 @@ weight of `2.0` raises a entry to "count twice" for.
 
 Operator labels. The pattern detectors slice by tag (e.g. "show me the
 drift counts on `[hard, multi-turn]` entries only"). Tags also let the
-rubric steer the proposer toward or away from certain slices. Tags
-have no semantic meaning to zicato — they are operator strings.
+rubric steer the proposer toward or away from certain slices. Most tags
+have no semantic meaning to zicato - they are operator strings.
+
+The reserved diagnostic prefix is `facet:`. A tag like
+`facet:data_quality` or `facet:schema_validation` marks the entry as
+belonging to that semantic scorecard slice. Matchup-grid readers expose
+best-effort per-facet aggregates for those tags: entry coverage,
+parent/child mean outcome score, pass rate, and deltas. This is
+read-model-only metadata; facet tags do not change scalar scoring,
+promotion gates, tournament scheduling, or Pareto admission.
 
 Conventional tags worth adopting:
 
 - `easy` / `medium` / `hard` — operator difficulty estimate
+- `facet:{name}` — diagnostic scorecard dimension surfaced by the
+  matchup grid
 - `regression:{name}` — pinned regression tests
 - `adversarial` — designed to provoke a specific failure mode
 

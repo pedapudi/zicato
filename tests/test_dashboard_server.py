@@ -1681,6 +1681,75 @@ def test_matchup_grid_scalar_carries_mean_score(workspace: Path) -> None:
     assert ms["delta"] == pytest.approx(0.19)
 
 
+def test_matchup_grid_surfaces_facet_tag_aggregates(workspace: Path) -> None:
+    """``facet:`` board tags produce semantic scorecard rows.
+
+    Ordinary metadata tags (``smoke``) and the reserved holdout tag do not
+    become dimensions. A multi-tag entry contributes to each facet it carries.
+    """
+    from zicato.query import WorkspacePaths, build_matchup_grid
+
+    _seed_scored_loss_files(workspace)
+    epoch_id = "2026-05-16_e0"
+    _write(
+        workspace / "epochs" / epoch_id / "board.jsonl",
+        "\n".join(
+            [
+                json.dumps(
+                    {
+                        "id": "extract_invoice",
+                        "kind": "single_turn",
+                        "wall_clock_budget_seconds": 60,
+                        "tags": ["facet:data_quality", "facet:extraction", "smoke"],
+                        "input": "Extract the invoice fields.",
+                    }
+                ),
+                json.dumps(
+                    {
+                        "id": "schema_response",
+                        "kind": "single_turn",
+                        "wall_clock_budget_seconds": 60,
+                        "tags": ["facet:data_quality", "facet:schema_validation", "holdout"],
+                        "input": "Return a valid schema response.",
+                    }
+                ),
+            ]
+        )
+        + "\n",
+    )
+
+    grid = build_matchup_grid(WorkspacePaths(workspace), epoch_id, "v0", "v1")
+
+    facets = grid["tag_aggregates"]
+    assert set(facets) == {
+        "facet:data_quality",
+        "facet:extraction",
+        "facet:schema_validation",
+    }
+    assert "smoke" not in facets
+    assert "holdout" not in facets
+
+    data_quality = facets["facet:data_quality"]
+    assert data_quality["label"] == "data_quality"
+    assert data_quality["entry_ids"] == ["extract_invoice", "schema_response"]
+    assert data_quality["n_entries"] == 2
+    assert data_quality["parent_scored"] == 2
+    assert data_quality["child_scored"] == 2
+    # Parent: continuous 0.62 + bool pass 1.0. Child: continuous 0.81 + bool fail 0.0.
+    assert data_quality["mean_score"]["parent"] == pytest.approx(0.81)
+    assert data_quality["mean_score"]["child"] == pytest.approx(0.405)
+    assert data_quality["mean_score"]["delta"] == pytest.approx(-0.405)
+    assert data_quality["pass_rate"]["parent"] == pytest.approx(1.0)
+    assert data_quality["pass_rate"]["child"] == pytest.approx(0.5)
+    assert data_quality["pass_rate"]["delta"] == pytest.approx(-0.5)
+    assert data_quality["underpowered"] is True
+
+    extraction = facets["facet:extraction"]
+    assert extraction["mean_score"]["parent"] == pytest.approx(0.62)
+    assert extraction["mean_score"]["child"] == pytest.approx(0.81)
+    assert extraction["mean_score"]["delta"] == pytest.approx(0.19)
+
+
 def test_matchup_grid_no_mean_score_when_absent(workspace: Path) -> None:
     """Back-compat: a gen_score.json without ``mean_score`` yields a
     scalar block with no ``mean_score`` key (degrades to today's view)."""

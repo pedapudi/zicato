@@ -484,7 +484,11 @@ the chart should see a feasibility-killing flip without reading the
 ladder. This is the per-entry detail behind the gate's aggregate
 verdict; it reads from the same paired per-entry deltas the gate
 consumes (`/api/matchup-grid/...` for the grid,
-`/api/round/.../gate` for the gate-aligned breakdown).
+`/api/round/.../gate` for the gate-aligned breakdown). When board
+entries carry tags prefixed with `facet:`, the matchup-grid payload
+also includes diagnostic `tag_aggregates` scorecards over those same
+paired cells. These facets are explanatory slices only; they do not
+feed the gate.
 
 **④ Scalar waterfall.** The scalar is a weighted sum of drift-derived
 components (see [SCORING.md](SCORING.md) — the per-`judge_name`
@@ -822,7 +826,7 @@ The route table:
 | `GET /api/run-log?limit=N` | Tail of the active run's `events.jsonl`. |
 | `GET /api/tournaments` | Resolved decisions (index). |
 | `GET /api/tournaments/{generation_id}` | One resolved decision's matchup detail. |
-| `GET /api/matchup-grid/{epoch_id}/{champion_id}/{challenger_id}` | Per-entry A/B grid (feeds the L3 diverging A/B chart). |
+| `GET /api/matchup-grid/{epoch_id}/{champion_id}/{challenger_id}` | Per-entry A/B grid (feeds the L3 diverging A/B chart) plus read-only `tag_aggregates` for `facet:*` board tags. |
 | `GET /api/round/{epoch_id}/{champion_id}/{challenger_id}/gate` | **NEW (planned).** Structured gate breakdown for the L3 decision view — the ladder (per-rule status, numbers, fired flag), per-entry deltas with pass→fail flags, the scalar-component waterfall, the margin-band geometry, and the primary-driver judge. |
 | `GET /api/round/{epoch_id}/{champion_id}/{challenger_id}/per-judge-comparison` | Per-judge A/B comparison + `primary_driver` for a decision. |
 | `GET /api/score-trajectory` | Gen-score trajectory — the lineage ribbon's y-positions. |

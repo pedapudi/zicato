@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import sqlite3
 from typing import Any
 
@@ -28,6 +29,9 @@ from zicato.query.paths import (
 from zicato.query.ratings import RATING_FIELDS, rating_by_generation
 from zicato.query.runtime_view import read_active_tournament_dict
 from zicato.workspace import read_gen_score
+
+FACET_TAG_PREFIX = "facet:"
+FACET_MIN_ENTRIES = 3
 
 
 def _champion_lineage(generations: list[dict[str, Any]]) -> list[str]:
@@ -601,6 +605,156 @@ def _read_gen_score(paths: WorkspacePaths, epoch_id: str, generation_id: str) ->
     return read_gen_score(layout_of(paths), epoch_id, generation_id)
 
 
+def _facet_label(tag: str) -> str:
+    """Human label for a facet tag, preserving the raw tag as the key."""
+    if tag.startswith(FACET_TAG_PREFIX):
+        return tag[len(FACET_TAG_PREFIX) :]
+    return tag
+
+
+def _read_board_facets(paths: WorkspacePaths, epoch_id: str) -> dict[str, tuple[str, ...]]:
+    """Read ``facet:`` tags from the frozen board, best-effort.
+
+    The board schema already carries free-form ``tags``. Phase 1 treats only
+    tags with the explicit ``facet:`` prefix as scorecard dimensions; metadata
+    tags such as ``smoke`` / ``single_turn`` and the reserved ``holdout`` tag
+    remain ordinary labels. The reader parses JSONL directly rather than
+    validating the full board so an unrelated stale expectation spec cannot
+    blank this diagnostic payload.
+    """
+    path = layout_of(paths).board(epoch_id)
+    out: dict[str, tuple[str, ...]] = {}
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return out
+    for raw in lines:
+        raw = raw.strip()
+        if not raw:
+            continue
+        try:
+            row = json.loads(raw)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(row, dict) or row.get("board_meta") is True:
+            continue
+        entry_id = row.get("id")
+        tags = row.get("tags")
+        if not isinstance(entry_id, str) or not isinstance(tags, list):
+            continue
+        facets = sorted(
+            {
+                t
+                for t in tags
+                if isinstance(t, str)
+                and t.startswith(FACET_TAG_PREFIX)
+                and len(t) > len(FACET_TAG_PREFIX)
+            }
+        )
+        if facets:
+            out[entry_id] = tuple(facets)
+    return out
+
+
+def _quality_score(cell: dict[str, Any] | None) -> float | None:
+    """The per-entry outcome quality for facet scorecards.
+
+    Mirrors the tournament's uniform outcome axis: an explicit continuous
+    ``score`` wins; otherwise the bool pass/fail bit maps to 1.0/0.0; an
+    unscored entry contributes to the facet's denominator only as coverage,
+    not to its mean.
+    """
+    if not cell:
+        return None
+    score = cell.get("score")
+    if isinstance(score, int | float) and not isinstance(score, bool):
+        return float(score)
+    passed = cell.get("pass_fail")
+    if isinstance(passed, bool):
+        return 1.0 if passed else 0.0
+    return None
+
+
+def _pass_bit(cell: dict[str, Any] | None) -> bool | None:
+    if not cell:
+        return None
+    passed = cell.get("pass_fail")
+    return passed if isinstance(passed, bool) else None
+
+
+def _mean(values: list[float]) -> float | None:
+    return sum(values) / len(values) if values else None
+
+
+def _delta(child: float | None, parent: float | None) -> float | None:
+    return child - parent if child is not None and parent is not None else None
+
+
+def _facet_aggregates(
+    facets_by_entry: dict[str, tuple[str, ...]],
+    parent_losses: dict[str, dict[str, Any]],
+    child_losses: dict[str, dict[str, Any]],
+) -> dict[str, dict[str, Any]]:
+    """Aggregate matchup quality by ``facet:`` tag.
+
+    Returns an additive, diagnostic-only payload. Facet rows are independent
+    views: a multi-tag entry contributes once to each facet it carries, and no
+    facet contributes back into scalar, gate, or Pareto admission.
+    """
+    by_tag: dict[str, list[str]] = {}
+    for entry_id, tags in facets_by_entry.items():
+        for tag in tags:
+            by_tag.setdefault(tag, []).append(entry_id)
+
+    out: dict[str, dict[str, Any]] = {}
+    for tag in sorted(by_tag):
+        entry_ids = sorted(set(by_tag[tag]))
+        parent_scores: list[float] = []
+        child_scores: list[float] = []
+        parent_passes: list[float] = []
+        child_passes: list[float] = []
+        for entry_id in entry_ids:
+            p = parent_losses.get(entry_id)
+            c = child_losses.get(entry_id)
+            ps = _quality_score(p)
+            cs = _quality_score(c)
+            if ps is not None:
+                parent_scores.append(ps)
+            if cs is not None:
+                child_scores.append(cs)
+            pp = _pass_bit(p)
+            cp = _pass_bit(c)
+            if pp is not None:
+                parent_passes.append(1.0 if pp else 0.0)
+            if cp is not None:
+                child_passes.append(1.0 if cp else 0.0)
+
+        parent_mean = _mean(parent_scores)
+        child_mean = _mean(child_scores)
+        parent_pass_rate = _mean(parent_passes)
+        child_pass_rate = _mean(child_passes)
+        out[tag] = {
+            "tag": tag,
+            "label": _facet_label(tag),
+            "entry_ids": entry_ids,
+            "n_entries": len(entry_ids),
+            "parent_scored": len(parent_scores),
+            "child_scored": len(child_scores),
+            "mean_score": {
+                "parent": parent_mean,
+                "child": child_mean,
+                "delta": _delta(child_mean, parent_mean),
+            },
+            "pass_rate": {
+                "parent": parent_pass_rate,
+                "child": child_pass_rate,
+                "delta": _delta(child_pass_rate, parent_pass_rate),
+            },
+            "underpowered": len(entry_ids) < FACET_MIN_ENTRIES,
+        }
+    return out
+
+
 def _grid_won_by(
     parent: float | None, child: float | None, champion: str, challenger: str
 ) -> str | None:
@@ -664,6 +818,11 @@ def build_matchup_grid(
 
     parent_losses = _read_run_loss_files(paths, epoch_id, champion_id) if champion_id else {}
     child_losses = _read_run_loss_files(paths, epoch_id, challenger_id)
+    tag_aggregates = _facet_aggregates(
+        _read_board_facets(paths, epoch_id), parent_losses, child_losses
+    )
+    if tag_aggregates:
+        base["tag_aggregates"] = tag_aggregates
 
     entry_grid: list[dict[str, Any]] = []
     for entry_id in sorted(set(parent_losses) | set(child_losses)):

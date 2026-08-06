@@ -58,7 +58,7 @@ server + the JS). Nothing in the library knows the driver exists.
 | `src/zicato/query/reflection_view.py` | `list_reflections`, `build_reflection_summary` (four-pillar bill of health), `build_judge_scorecards`, `build_adjudication_xray` (transcript + judge verdict + meta-judge record), `entry_candidate_matrix` (reflection-independent, off the index loss tables) — the Instrument-lens feed (BOARD-REFLECTION.md R4). Index-first, file-fallback; stays dashboard-free by reading `result.json` / `judge_io` for the x-ray rather than the events-preview reconstructor | ~430 lines |
 | `src/zicato/query/epoch_view.py` | `build_epoch_view`, `build_environment`'s epoch slice, `_current_champion` (reigning spine end), `build_workspace_view`, `compute_board_split` | 35 KB |
 | `src/zicato/query/gate_view.py` | `build_gate_breakdown` (+ `deciding_rule`), `build_score_trajectory`, `build_health_report`, `build_rating_view`, `build_drift_movements` | 56 KB |
-| `src/zicato/query/tournament_view.py` | `build_bracket`, `build_tournament_structure`, `build_matchup_detail`, `build_matchup_grid` | 51 KB |
+| `src/zicato/query/tournament_view.py` | `build_bracket`, `build_tournament_structure`, `build_matchup_detail`, `build_matchup_grid` (per-entry A/B cells plus diagnostic `tag_aggregates` for `facet:*` board tags) | 51 KB |
 | `src/zicato/query/{judge,hypothesis,lineage,events_index,run_log}_view.py` | per-judge matrices, hypothesis/calibration accuracy, lineage feed, `/api/environment` coalescer + meta-loop ledger, the run-log tail | — |
 | `src/zicato/dashboard/server.py` | `create_app` (routes + `read_only`), `run` (port walk + harmonograf), static serving with ETag revalidation | 575 lines |
 | `src/zicato/dashboard/endpoints.py` | `make_endpoints` (the per-surface factories), `_is_safe_id` / `_is_safe_tournament_id`, the control POST handlers | 62 KB |
@@ -723,6 +723,7 @@ chapter leans on:
 | `build_round_pipeline` | `/api/live/pipeline` | `{running, stale, phase, steps[], active_step, decision, in_flight}` | every input degrades independently (§9.11) |
 | `build_racing_field` | `/api/epoch/{id}/racing-field` | `{present, structure, rounds[], standings, champion_lineage}` | `{present: false}` (§9.2.5) |
 | `build_round_timeline` | `/api/epoch/{id}/round-timeline` | `{rounds[], waterfall[]}` | empty rounds list |
+| `build_matchup_grid` | `/api/matchup-grid/{epoch}/{champion}/{challenger}` | `{entry_grid[], scalar, tag_aggregates?}` where `tag_aggregates` is keyed by raw `facet:*` board tag and carries coverage, parent/child score means, pass rates, deltas, and `underpowered` | empty grid/scalar shape; facet read is best-effort |
 | `build_snapshot` | `/api/state`, SSE `snapshot` | see above | each field independently `None` |
 | `read_active_runs_view` | `/api/active-runs` | `[{run_id, progress, elapsed_seconds, budget_seconds, …}]` | `[]` |
 | `list_reflections` (`query/reflection_view.py`) | `/api/reflections[?epoch=]` | `{reflections:[{reflection_id, epoch_id, created_at, mode, executed, noise_floor_max_abs_delta, decision_flip_p, n_findings, n_judges}]}` | `{reflections: []}` |
