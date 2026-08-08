@@ -1874,6 +1874,25 @@ def _facets(ws: Path) -> dict[str, object]:
     return build_per_entry_for_generation(WorkspacePaths(ws), "2026-05-16_e0", "v1")["facet_scores"]
 
 
+def test_facet_prefix_is_reserved_as_a_whole_tag_prefix(tmp_path: Path) -> None:
+    """``facet:`` matches a WHOLE tag prefix, never a substring.
+
+    The prefix is reserved vocabulary (BOARD-FORMAT.md §1.4), so the rule an
+    operator is told has to hold: only a tag literally starting ``facet:``
+    with something after it names a slice. A bare ``facet:`` names nothing,
+    and a tag that merely CONTAINS the word stays an ordinary label.
+    """
+    ws = tmp_path / ".zicato"
+    ws.mkdir()
+    _build_facet_workspace(
+        ws,
+        [("a", True, 0.5, 0.2)],
+        {"a": ["facet:real", "my_facet:x", "facet:", "facets:x", "FACET:x"]},
+    )
+
+    assert set(_facets(ws)["facets"]) == {"real"}
+
+
 def test_per_entry_rows_name_the_facets_the_entry_feeds(tmp_path: Path) -> None:
     """Each entry row carries its own facet names, sorted.
 

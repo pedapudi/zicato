@@ -134,9 +134,25 @@ drift counts on `[hard, multi-turn]` entries only"). Tags also let the
 rubric steer the proposer toward or away from certain slices. Most tags
 have no semantic meaning to zicato — they are operator strings.
 
-The reserved diagnostic prefix is `facet:`. A tag like
-`facet:data_quality` or `facet:schema_validation` puts the entry in that
-named slice; everything after the prefix is the facet name.
+Two tags ARE reserved, and an operator must not use either for an
+ordinary label:
+
+| Tag | Meaning | Owner |
+|---|---|---|
+| `holdout` | Puts the entry in the confirm-only holdout slice. Selection never runs on it. | `zicato.board.split.HOLDOUT_TAG` |
+| `facet:{name}` | Puts the entry in the named diagnostic slice `{name}`. Display only. | `query.eval_view.FACET_TAG_PREFIX` |
+
+They differ in consequence, and the difference is the important part:
+`holdout` changes what the loop DOES — a held-out entry is withheld from
+selection and spent only to confirm a promotion (OVERFITTING.md §3).
+`facet:` changes only what the dashboard SHOWS. Tagging an entry
+`facet:data_quality` cannot alter a score, a gate verdict, a schedule, or
+a Pareto admission.
+
+A tag like `facet:data_quality` or `facet:schema_validation` puts the
+entry in that named slice; everything after the prefix is the facet name.
+The prefix is a whole tag prefix, not a substring: `my_facet:x` is an
+ordinary label, and a bare `facet:` names nothing and is ignored.
 
 The candidate dossier shows a small table: one row per facet, plus the
 candidate's own aggregate as the last row to read against. Each row

@@ -235,7 +235,10 @@ the wire — `_opt_bool` / `coerce_float` from `zicato.query.paths`).
 ### 3.4 `facet_scores_for_generation(paths, epoch_id, generation_id) -> dict`
 
 The FACET slice: one candidate re-aggregated per `facet:` board tag
-(BOARD-FORMAT.md §1.4), for the candidate dossier's facet table.
+(BOARD-FORMAT.md §1.4). Feeds both facet surfaces — the candidate
+dossier's table (one candidate × every facet) and the per-board page's
+(one entry's facets × every candidate). They share one vocabulary in
+`static/js/facets.js` and differ only in orientation.
 
 Returns `{facets: {name: {scalar, mean_score, scored_count,
 entry_count}}, overall: {...} | None}`. Each block is
