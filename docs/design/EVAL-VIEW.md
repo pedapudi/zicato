@@ -232,34 +232,6 @@ view renders, never computes domain math); **DQ2** snake_case payloads;
 *same-shape* payload with `found: False` (never raise, never a bare int on
 the wire — `_opt_bool` / `coerce_float` from `zicato.query.paths`).
 
-### 3.4 `facet_scores_for_generation(paths, epoch_id, generation_id) -> dict`
-
-The FACET slice: one candidate re-aggregated per `facet:` board tag
-(BOARD-FORMAT.md §1.4). Feeds both facet surfaces — the candidate
-dossier's table (one candidate × every facet) and the per-board page's
-(one entry's facets × every candidate). They share one vocabulary in
-`static/js/facets.js` and differ only in orientation.
-
-Returns `{facets: {name: {scalar, mean_score, scored_count,
-entry_count}}, overall: {...} | None}`. Each block is
-`tournament.scoring.aggregate_generation_score` run over just that
-slice's loss profiles at the epoch's FROZEN weights, so a facet's
-`scalar` is the same quantity, in the same units and direction, as the
-`overall` row — that comparability is the reader's whole purpose. It
-belongs in this module because a facet is this module's own transpose:
-rows are board entries grouped by the operator's ontology, the column is
-one candidate.
-
-Reads the persisted `loss.json` files rather than the index (the files
-are canonical, so a completed generation is readable with no index) and
-the epoch's `scoring.json`. Per DQ3, an unreadable board, absent run
-files, or a malformed `scoring.json` degrade to `{facets: {}, overall:
-None}` / the default weights — never a raise. Per DQ2, a slice nothing
-scored reports `mean_score: null`, never a fabricated `0.0`.
-
-DIAGNOSTIC ONLY: nothing here feeds the scalar the gate reads, the gate,
-scheduling, or Pareto admission.
-
 ### 3.1 `build_eval_matrix(paths, epoch_id) -> dict`
 The OUTCOMES lens payload.
 
@@ -362,6 +334,34 @@ In `eval_view.py`, pure and independently tested:
   `loss_profiles`; the fold itself is unchanged and independently tested.)
 - `runtime_aggregates(values) -> {mean, p50, max}` — over non-`None` ms.
 - `pass_ratio(bits) -> float | None`, `evidence_of(n) -> str`.
+
+### 3.4 `facet_scores_for_generation(paths, epoch_id, generation_id) -> dict`
+
+The FACET slice: one candidate re-aggregated per `facet:` board tag
+(BOARD-FORMAT.md §1.4). Feeds both facet surfaces — the candidate
+dossier's table (one candidate × every facet) and the per-board page's
+(one entry's facets × every candidate). They share one vocabulary in
+`static/js/facets.js` and differ only in orientation.
+
+Returns `{facets: {name: {scalar, mean_score, scored_count,
+entry_count}}, overall: {...} | None}`. Each block is
+`tournament.scoring.aggregate_generation_score` run over just that
+slice's loss profiles at the epoch's FROZEN weights, so a facet's
+`scalar` is the same quantity, in the same units and direction, as the
+`overall` row — that comparability is the reader's whole purpose. It
+belongs in this module because a facet is this module's own transpose:
+rows are board entries grouped by the operator's ontology, the column is
+one candidate.
+
+Reads the persisted `loss.json` files rather than the index (the files
+are canonical, so a completed generation is readable with no index) and
+the epoch's `scoring.json`. Per DQ3, an unreadable board, absent run
+files, or a malformed `scoring.json` degrade to `{facets: {}, overall:
+None}` / the default weights — never a raise. Per DQ2, a slice nothing
+scored reports `mean_score: null`, never a fabricated `0.0`.
+
+DIAGNOSTIC ONLY: nothing here feeds the scalar the gate reads, the gate,
+scheduling, or Pareto admission.
 
 ## 4. Statistical-honesty rules (the views MUST obey)
 

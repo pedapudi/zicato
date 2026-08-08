@@ -433,16 +433,11 @@ device — see the measured ~37-consecutive-wins fact in
 `tests/test_decision_procedure_power.py` and 06-tournament-and-selection.md.
 
 **facet** — a named diagnostic slice of the board, declared by tagging
-entries `facet:{name}` (`FACET_TAG_PREFIX`, the second reserved tag after
-`holdout`). Aggregation per slice lives in
-`query.eval_view.facet_scores_for_generation`, which re-runs
-`aggregate_generation_score` over just that slice at the epoch's frozen
-weights — so a facet's `scalar` is the same quantity, in the same units,
-as the candidate's own, and reads directly against it. DISPLAY ONLY: the
-candidate dossier and the per-board page render it and nothing else does.
-A facet number carries no noise threshold, so promoting one into any
-decision needs a measured operating characteristic first (§3.2 of
-04-evaluation-statistics.md). Nothing about a facet is persisted.
+entries `facet:{name}` (the second reserved tag after `holdout`).
+`query.eval_view.facet_scores_for_generation` re-aggregates a candidate
+over each slice at the epoch's frozen weights, so a facet's `scalar` is
+comparable to the candidate's own. DISPLAY ONLY — nothing is persisted
+and no decision reads it (EVAL-VIEW.md §3.4, BOARD-FORMAT.md §1.4).
 
 **holdout / train split** — the anti-overfitting board partition
 (`split_board`, `rotation_seed` in `src/zicato/board/split.py`).
