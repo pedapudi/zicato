@@ -134,77 +134,31 @@ drift counts on `[hard, multi-turn]` entries only"). Tags also let the
 rubric steer the proposer toward or away from certain slices. Most tags
 have no semantic meaning to zicato — they are operator strings.
 
-Two tags ARE reserved, and an operator must not use either for an
+Two tags ARE reserved, and an operator must not use either as an
 ordinary label:
 
 | Tag | Meaning | Owner |
 |---|---|---|
-| `holdout` | Puts the entry in the confirm-only holdout slice. Selection never runs on it. | `zicato.board.split.HOLDOUT_TAG` |
-| `facet:{name}` | Puts the entry in the named diagnostic slice `{name}`. Display only. | `query.eval_view.FACET_TAG_PREFIX` |
+| `holdout` | Puts the entry in the confirm-only holdout slice. | `zicato.board.split.HOLDOUT_TAG` |
+| `facet:{name}` | Puts the entry in the named diagnostic slice `{name}`. | `query.eval_view.FACET_TAG_PREFIX` |
 
-They differ in consequence, and the difference is the important part:
-`holdout` changes what the loop DOES — a held-out entry is withheld from
-selection and spent only to confirm a promotion (OVERFITTING.md §3).
-`facet:` changes only what the dashboard SHOWS. Tagging an entry
-`facet:data_quality` cannot alter a score, a gate verdict, a schedule, or
-a Pareto admission.
+The difference in consequence is the part to remember. `holdout` changes
+what the loop DOES: the entry is withheld from selection and spent only
+to confirm a promotion (OVERFITTING.md §3). `facet:` changes only what
+the dashboard SHOWS — it can alter no score, gate verdict, schedule, or
+Pareto admission, and nothing about it is persisted.
 
-A tag like `facet:data_quality` or `facet:schema_validation` puts the
-entry in that named slice; everything after the prefix is the facet name.
-The prefix is a whole tag prefix, not a substring: `my_facet:x` is an
-ordinary label, and a bare `facet:` names nothing and is ignored.
+`facet:` matches a WHOLE tag prefix, case-sensitively: `facet:data_quality`
+names the slice `data_quality`, while `my_facet:x`, `FACET:x`, and a bare
+`facet:` are all ordinary labels.
 
-The candidate dossier shows a small table: one row per facet, plus the
-candidate's own aggregate as the last row to read against. Each row
-carries the same two quantities the candidate's own aggregate carries,
-recomputed over just that slice at the epoch's FROZEN weights:
-
-- **`scalar`** — the same loss the gate's number is (lower is better):
-  the drift term, including every custom judge's weighted contribution,
-  plus the outcome miss and the namespace terms. Because it is the same
-  formula at the same weights, a facet's scalar can be read directly
-  against the overall row. That comparability is the point.
-- **`mean score`** — the outcome axis (higher is better, `[0, 1]`), the
-  same field the generation's own aggregate carries. `null` when nothing
-  in the slice produced an outcome — an absent measurement is not a
-  failing one, so it must never render as `0.00`. The row's `scalar` is
-  still real in that case: an unscored entry still produced drift.
-
-The two columns run in OPPOSITE directions, because one counts problems
-and the other counts quality. The table's header states each direction
-rather than relying on the reader to know.
-
-`scored_count` is `mean score`'s denominator and `entry_count` the
-slice's size. Both travel because a facet is a SLICE: a racing rung that
-ran a board subset can thin one to a single entry, and a scalar over one
-entry must not read like a scalar over twenty. The weights were
-calibrated board-wide, so a thin facet's scalar is noisier — the counts
-are what make that visible.
-
-The grouping is computed server-side in
-`query.eval_view.facet_scores_for_generation` and returned on the
-candidate feed (`GET /api/generation/{epoch}/{gen}/per-entry`). It lives
-in `eval_view` because that module is the board-as-instrument surface,
-whose rows are board entries and whose columns are candidates — which is
-what a facet is. The client does no grouping (DQ1: the server computes,
-the client renders, and a group-by is a join).
-
-Nothing about facets is stored: no field on `LossProfile`, nothing on
-`gen_score.json`, no scoring-contract knob, no index table. Tagging
-entries changes only what the dashboard can show you.
-
-Facets are DIAGNOSTIC and un-thresholded. Nothing reads them except the
-dossier: they are never summed into the scalar the gate reads, read by
-the gate, used for tournament scheduling, or admitted as a Pareto axis.
-A facet number carries no noise model, so the table has no verdict
-colour, no bars, and no ordering by value. Making one drive a decision
-means first measuring that decision's error rates the way
-`04-evaluation-statistics.md` §3.2 requires.
+What the facet surfaces render is in [DASHBOARD.md](DASHBOARD.md) §4;
+what the reader returns is in [EVAL-VIEW.md](EVAL-VIEW.md) §3.4.
 
 Conventional tags worth adopting:
 
 - `easy` / `medium` / `hard` — operator difficulty estimate
-- `facet:{name}` — diagnostic slice shown on the candidate dossier
+- `facet:{name}` — diagnostic slice shown on the candidate + board views
 - `regression:{name}` — pinned regression tests
 - `adversarial` — designed to provoke a specific failure mode
 
