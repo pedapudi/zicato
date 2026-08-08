@@ -16,11 +16,13 @@ from zicato.query._sqlite import (
     open_index_ro,
     open_index_ro_or_none,
 )
+from zicato.query.board_scan import iter_board_rows
 from zicato.query.epoch_view import (
     _parse_board,
     build_epoch_view,
     build_epochs_summary,
 )
+from zicato.query.eval_view import facet_scores_for_generation
 from zicato.query.lineage_view import build_lineage_view
 from zicato.query.paths import (
     WorkspacePaths,
@@ -184,9 +186,18 @@ def build_per_entry_for_generation(
 ) -> dict[str, Any]:
     """Per-entry breakdown of one generation, scoped via tournament_id FK.
 
-    Returns ``{epoch_id, generation_id, tournament_id, entries:
-    [{entry_id, run_id, drift_loss, pass_fail, runtime_ms,
-    wall_clock_budget_exceeded, match_id, rung}]}``. The tournament id is
+    Returns ``{epoch_id, generation_id, tournament_id, mean_score,
+    facet_scores, entries: [{entry_id, run_id, drift_loss, pass_fail,
+    runtime_ms, wall_clock_budget_exceeded, match_id, rung}]}``.
+
+    ``mean_score`` is the generation's cached board-level mean, read off
+    ``gen_score.json``. ``facet_scores`` groups the SAME per-entry outcomes
+    by ``facet:`` board tag — ``{facet: {mean_score, scored_count,
+    entry_count}}``, ``{}`` when the board declares no facet tag (see
+    :func:`zicato.query.eval_view.facet_scores_for_generation`). The
+    candidate dossier reads both from here.
+
+    The tournament id is
     composed via :func:`_tournament_id_for` from the child generation's
     ``parent_generation_id`` field (its ``experiment.json``); a v0 seed
     with no parent yields ``tournament_id: None`` and the fallback walks
@@ -314,6 +325,12 @@ def build_per_entry_for_generation(
         "generation_id": generation_id,
         "tournament_id": tournament_id,
         "mean_score": gen_mean_score,
+        # This candidate's outcomes grouped by ``facet:`` board tag
+        # (BOARD-FORMAT.md §1.4) — the server-side join the dossier's facet
+        # strip renders. ``{}`` when the board declares no facet tag, so the
+        # payload keeps ONE shape and the strip simply does not paint.
+        # Diagnostic: nothing downstream of this key feeds a decision.
+        "facet_scores": facet_scores_for_generation(paths, epoch_id, entries),
         "entries": entries,
     }
 
@@ -822,24 +839,14 @@ def _empty_search_result() -> dict[str, Any]:
 
 
 def _collect_judge_names_from_board_file(path: Path) -> set[str]:
-    """Walk a raw ``board.jsonl`` and union every judge name."""
+    """Walk a raw ``board.jsonl`` and union every judge name.
+
+    The tolerant row walk lives in :mod:`zicato.query.board_scan` — shared
+    with the matchup grid's facet-tag read so both readers degrade the same
+    way on a torn or non-UTF-8 board.
+    """
     names: set[str] = set()
-    try:
-        text = path.read_text(encoding="utf-8")
-    except (FileNotFoundError, OSError):
-        return names
-    for line in text.splitlines():
-        line = line.strip()
-        if not line:
-            continue
-        try:
-            obj = json.loads(line)
-        except json.JSONDecodeError:
-            continue
-        if not isinstance(obj, dict):
-            continue
-        if obj.get("board_meta") is True:
-            continue
+    for obj in iter_board_rows(path):
         judges = obj.get("judges")
         if not isinstance(judges, list):
             continue

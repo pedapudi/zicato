@@ -44,7 +44,7 @@ Every board entry carries the same envelope:
 | `kind` | `string` | yes | Discriminator. v0 set: `"single_turn"`, `"multi_turn_scripted"`, `"multi_turn_emulated"`. Open-ended — see §6. |
 | `wall_clock_budget_seconds` | `number` | yes | Hard ceiling for the WHOLE entry. Exceeded → run aborts and scores as worst-case. |
 | `weight` | `number` | no (default `1.0`) | Relative importance in scoring aggregation. |
-| `tags` | `list[string]` | no (default `[]`) | Operator labels; pattern detectors can slice by tag. |
+| `tags` | `list[string]` | no (default `[]`) | Operator labels; pattern detectors and diagnostic scorecards can slice by tag. |
 | `expectation` | `Expectation` | no (default absent) | A single **outcome** check — a `Predicate` / `Rubric` matcher run post-hoc on the run's output or transcript. Absent → drift-loss-only scoring for this entry. An entry carries **at most one** expectation. See §3. |
 | `judges` | `list[Judge]` | no (default `[]`) | **Process** checks — goldfive judges that watch the reasoning stream in-run. Empty → only goldfive's ambient built-in judges run. See §4. |
 | `context` | `object` | no | Opaque adapter-specific metadata. ADK adapters might use `{"attachments": [...], "session_state": {...}}`. Zicato never interprets the contents. |
@@ -131,12 +131,48 @@ weight of `2.0` raises a entry to "count twice" for.
 
 Operator labels. The pattern detectors slice by tag (e.g. "show me the
 drift counts on `[hard, multi-turn]` entries only"). Tags also let the
-rubric steer the proposer toward or away from certain slices. Tags
+rubric steer the proposer toward or away from certain slices. Most tags
 have no semantic meaning to zicato — they are operator strings.
+
+The reserved diagnostic prefix is `facet:`. A tag like
+`facet:data_quality` or `facet:schema_validation` puts the entry in that
+named slice; everything after the prefix is the facet name.
+
+The candidate dossier shows a mean outcome per facet. That grouping is a
+read-model join computed server-side in
+`query.judge_view._facet_scores`, which the candidate feed
+(`GET /api/generation/{epoch}/{gen}/per-entry`) returns as
+`{facet: {mean_score, scored_count, entry_count}}`. Nothing about facets
+is stored: no field on `LossProfile`, nothing on `gen_score.json`, no
+contract knob, no index table. Tagging entries changes only what the
+dashboard can show you.
+
+Two properties make a facet number readable, and a future consumer must
+preserve both:
+
+- **Same axis as the headline.** The mean runs the same `entry_score`
+  axis, over the same denominator rule, as the generation's own
+  `mean_score`. A facet covering the whole board therefore reports
+  exactly that `mean_score`. A facet number means what the headline
+  number means, measured over fewer entries.
+- **The denominator travels with it.** A facet is a SLICE of the board,
+  so a racing rung that ran a board subset can thin it to one entry — or
+  none, in which case `mean_score` is `null` rather than a fabricated
+  `0.0`. `scored_count` is reported for the same reason
+  `expectation_count` is reported beside the generation's mean.
+
+Facets are DIAGNOSTIC and un-thresholded. Nothing reads them except the
+dossier: they are never summed into the scalar, read by the promote gate,
+used for tournament scheduling, or admitted as a Pareto axis. A facet
+number carries no noise model, and on a thin slice it is mostly noise —
+so the UI gives it no verdict colour and no ranking. Making one drive a
+decision means first measuring that decision's error rates the way
+`04-evaluation-statistics.md` §3.2 requires.
 
 Conventional tags worth adopting:
 
 - `easy` / `medium` / `hard` — operator difficulty estimate
+- `facet:{name}` — diagnostic slice shown on the candidate dossier
 - `regression:{name}` — pinned regression tests
 - `adversarial` — designed to provoke a specific failure mode
 

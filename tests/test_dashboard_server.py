@@ -1780,6 +1780,184 @@ def test_per_entry_for_generation_back_compat_no_score(tmp_path: Path) -> None:
     assert entry["metrics"] is None
 
 
+def _build_facet_workspace(
+    ws: Path, rows: list[tuple[str, str | None, float | None]], tags_by_entry: dict[str, list[str]]
+) -> None:
+    """A workspace whose index holds ``rows`` and whose board carries tags.
+
+    ``rows`` is ``(entry_id, pass_fail, score)`` — the two signals the facet
+    mean runs on. ``tags_by_entry`` writes the board.jsonl the grouping joins
+    against.
+    """
+    import json as _json
+
+    conn = sqlite3.connect(ws / "index.db")
+    conn.execute(
+        "CREATE TABLE loss_profiles(run_id TEXT, epoch_id TEXT, generation_id TEXT, "
+        "entry_id TEXT, drift_loss REAL, pass_fail TEXT, runtime_ms INTEGER, "
+        "wall_clock_budget_exceeded INTEGER, loss_json TEXT, tournament_id TEXT)"
+    )
+    conn.executemany(
+        "INSERT INTO loss_profiles VALUES(?,?,?,?,?,?,?,?,?,?)",
+        [
+            (
+                f"run_{entry_id}",
+                "2026-05-16_e0",
+                "v1",
+                entry_id,
+                0.2,
+                pass_fail,
+                100,
+                0,
+                _json.dumps({} if score is None else {"score": score}),
+                None,
+            )
+            for entry_id, pass_fail, score in rows
+        ],
+    )
+    conn.commit()
+    conn.close()
+    _write(
+        ws / "epochs" / "2026-05-16_e0" / "board.jsonl",
+        "\n".join(
+            _json.dumps(
+                {
+                    "id": entry_id,
+                    "kind": "single_turn",
+                    "wall_clock_budget_seconds": 60,
+                    "input": "go",
+                    "tags": tags,
+                }
+            )
+            for entry_id, tags in tags_by_entry.items()
+        )
+        + "\n",
+    )
+
+
+def test_per_entry_groups_outcomes_by_facet_tag(tmp_path: Path) -> None:
+    """``facet:`` board tags group this candidate's outcomes, server-side.
+
+    An entry carrying two facet tags counts once in each. Ordinary metadata
+    tags and the reserved holdout tag are not facets.
+    """
+    from zicato.query import WorkspacePaths, build_per_entry_for_generation
+
+    ws = tmp_path / ".zicato"
+    ws.mkdir()
+    _build_facet_workspace(
+        ws,
+        [("clean_csv", "pass", 0.60), ("dedupe_rows", "pass", None)],
+        {
+            "clean_csv": ["facet:data_cleaning", "facet:extraction", "smoke"],
+            "dedupe_rows": ["facet:data_cleaning", "holdout"],
+        },
+    )
+
+    facets = build_per_entry_for_generation(WorkspacePaths(ws), "2026-05-16_e0", "v1")[
+        "facet_scores"
+    ]
+
+    assert set(facets) == {"data_cleaning", "extraction"}
+    # data_cleaning: the 0.60 continuous score and the bare pass bit (1.0).
+    assert facets["data_cleaning"]["mean_score"] == pytest.approx(0.80)
+    assert facets["data_cleaning"]["scored_count"] == 2
+    assert facets["data_cleaning"]["entry_count"] == 2
+    assert facets["extraction"]["mean_score"] == pytest.approx(0.60)
+    assert facets["extraction"]["entry_count"] == 1
+
+
+def test_per_entry_facet_mean_matches_the_generation_mean_on_a_full_board_facet(
+    tmp_path: Path,
+) -> None:
+    """A facet covering every entry reports the generation's own mean.
+
+    This is what makes a facet number readable: it means the same thing as
+    the headline number, measured over fewer entries.
+    """
+    from zicato.query import WorkspacePaths, build_per_entry_for_generation
+
+    ws = tmp_path / ".zicato"
+    ws.mkdir()
+    _build_facet_workspace(
+        ws,
+        [("a", "pass", 0.40), ("b", "fail", 0.90)],
+        {"a": ["facet:all"], "b": ["facet:all"]},
+    )
+    _write_json(
+        ws / "epochs" / "2026-05-16_e0" / "generations" / "v1" / "gen_score.json",
+        {"generation_id": "v1", "mean_score": 0.65},
+    )
+
+    pe = build_per_entry_for_generation(WorkspacePaths(ws), "2026-05-16_e0", "v1")
+
+    assert pe["facet_scores"]["all"]["mean_score"] == pytest.approx(pe["mean_score"])
+
+
+def test_per_entry_facet_excludes_unscored_entries_from_the_mean(tmp_path: Path) -> None:
+    """An entry with no outcome is coverage, not a zero.
+
+    It raises ``entry_count`` and leaves ``scored_count`` and the mean
+    alone — the rule the generation's own ``mean_score`` already applies.
+    """
+    from zicato.query import WorkspacePaths, build_per_entry_for_generation
+
+    ws = tmp_path / ".zicato"
+    ws.mkdir()
+    _build_facet_workspace(
+        ws,
+        [("scored", "pass", None), ("unscored", None, None)],
+        {"scored": ["facet:x"], "unscored": ["facet:x"]},
+    )
+
+    facets = build_per_entry_for_generation(WorkspacePaths(ws), "2026-05-16_e0", "v1")[
+        "facet_scores"
+    ]
+
+    assert facets["x"]["mean_score"] == pytest.approx(1.0)
+    assert facets["x"]["scored_count"] == 1
+    assert facets["x"]["entry_count"] == 2
+
+
+def test_per_entry_facet_with_nothing_scored_reports_none_not_zero(tmp_path: Path) -> None:
+    """A facet nobody scored is an absent measurement, not a failing one."""
+    from zicato.query import WorkspacePaths, build_per_entry_for_generation
+
+    ws = tmp_path / ".zicato"
+    ws.mkdir()
+    _build_facet_workspace(ws, [("a", None, None)], {"a": ["facet:x"]})
+
+    facets = build_per_entry_for_generation(WorkspacePaths(ws), "2026-05-16_e0", "v1")[
+        "facet_scores"
+    ]
+
+    assert facets["x"]["mean_score"] is None
+    assert facets["x"]["scored_count"] == 0
+    assert facets["x"]["entry_count"] == 1
+
+
+def test_per_entry_facet_scores_empty_without_facet_tags_or_board(tmp_path: Path) -> None:
+    """``facet_scores`` keeps ONE shape: ``{}`` when there is nothing to group.
+
+    A board with only ordinary tags, and an unreadable board, both degrade
+    to the same empty map rather than omitting the key (DQ3).
+    """
+    from zicato.query import WorkspacePaths, build_per_entry_for_generation
+
+    ws = tmp_path / ".zicato"
+    ws.mkdir()
+    _build_facet_workspace(ws, [("a", "pass", None)], {"a": ["smoke", "holdout"]})
+    paths = WorkspacePaths(ws)
+    assert build_per_entry_for_generation(paths, "2026-05-16_e0", "v1")["facet_scores"] == {}
+
+    board = ws / "epochs" / "2026-05-16_e0" / "board.jsonl"
+    board.write_bytes(b"\xff\xfe not utf-8 at all\n")
+    assert build_per_entry_for_generation(paths, "2026-05-16_e0", "v1")["facet_scores"] == {}
+
+    board.unlink()
+    assert build_per_entry_for_generation(paths, "2026-05-16_e0", "v1")["facet_scores"] == {}
+
+
 def test_matchup_grid_endpoint(client: TestClient, workspace: Path) -> None:
     """The ``/api/matchup-grid/{epoch}/{champion}/{challenger}`` route
     serves the persisted-loss-file grid as JSON."""

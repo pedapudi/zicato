@@ -221,6 +221,12 @@ async function resolveCandidate(epochId, genId, genList, experiments, scalarByGe
   const entries = (pe && Array.isArray(pe.entries)) ? pe.entries : [];
   // per-generation mean continuous outcome (#18); null on the pre-score path.
   const meanScore = pe && svg.isNum(pe.mean_score) ? pe.mean_score : null;
+  // The per-facet means this candidate RECORDED when it was scored
+  // (BOARD-FORMAT.md §1.4) — read, never derived here. `[]` when the board
+  // carries no `facet:` tag, so the facet strip simply does not paint.
+  // DIAGNOSTIC: a facet number is a place to look, never a verdict, so it
+  // gets no verdict colour and no Δ-vs-champion treatment.
+  const facetScores = facetRows(pe && pe.facet_scores);
 
   // The CHAMPION's per-board loss on the SAME boards/slice — so each lifecycle
   // circle, and the Σ node, can show candidate-vs-champion · Δ (the comparison
@@ -344,7 +350,7 @@ async function resolveCandidate(epochId, genId, genList, experiments, scalarByGe
   const generalization = buildGeneralizationModel(exp);
 
   return {
-    node, baseline, decision, mpts, entries, meanScore, mine, gateSpecs, gates,
+    node, baseline, decision, mpts, entries, meanScore, facetScores, mine, gateSpecs, gates,
     primaryDelta, championId, championScalar, scalarByGen, progression,
     championLoss, championSigma, candidateSigma, deltaSigma, gateExplain,
     entryParam, exps, judges, drillRow, drillHeader, inflight, cached, cachedProvenance,
@@ -588,6 +594,11 @@ function candidateDigest(s) {
     entries: s.entries.map((e) => [e.entry_id, svg.isNum(e.drift_loss) ? e.drift_loss.toFixed(3) : null, e.pass_fail, !!e.wall_clock_budget_exceeded, e.rung || null, e.match_id || null, !!e.cached, svg.isNum(e.score) ? e.score.toFixed(3) : null, metricsDigest(e.metrics)]),
     // per-generation mean continuous outcome (#18); null on the pre-score path.
     meanScore: svg.isNum(s.meanScore) ? s.meanScore.toFixed(3) : null,
+    // Facet means fold at their RENDERED precision so a no-op heartbeat
+    // leaves the digest byte-identical and the strip's DOM nodes survive
+    // (G10). A board with no facet tag contributes an empty array —
+    // unchanged digest vs the pre-facet path.
+    facets: s.facetScores.map((f) => [f.name, svg.isNum(f.mean) ? f.mean.toFixed(2) : null, f.scored, f.total]),
     cached: s.cached ? [s.cachedProvenance && s.cachedProvenance.sourceEpoch, s.cachedProvenance && s.cachedProvenance.sourceRun] : null,
     progression: s.progression && Array.isArray(s.progression.stages)
       ? s.progression.stages.map((st) => [st.label, st.kind, svg.isNum(st.delta) ? st.delta.toFixed(2) : null, st.verdict]) : null,
@@ -899,6 +910,7 @@ function paintCandidate(host, ctx, epochId, s, cmpId, isPrimary, narrow, structu
         el('span', { text: ' · per-entry continuous outcome, higher is better' }),
       ]));
     }
+    if (s.facetScores.length) scoreCard.appendChild(facetStrip(s.facetScores));
   } else if (s.radar && s.radar.projectedOnly) {
     // RACING / IN-FLIGHT with no SETTLED per-board rows yet: don't read "no
     // entries" — surface the racing affordance so the column isn't bare.
@@ -1064,6 +1076,48 @@ export function generalizationPanel(g) {
     ? 'holdout gap exceeds tolerance — possible memorization'
     : 'small gap — generalizes (no memorization)' }));
   return card;
+}
+
+// Normalize the dossier feed's `facet_scores` map into sorted render rows.
+// Reads `{facet: {mean_score, scored_count, entry_count}}` defensively — a
+// missing/torn block yields `[]` and the strip does not paint. Sorted by name
+// so the strip's node order is stable across repaints (G10).
+function facetRows(raw) {
+  if (!raw || typeof raw !== 'object') return [];
+  return Object.keys(raw).sort().map((name) => {
+    const row = raw[name] || {};
+    return {
+      name,
+      mean: svg.isNum(row.mean_score) ? row.mean_score : null,
+      scored: Number.isInteger(row.scored_count) ? row.scored_count : 0,
+      total: Number.isInteger(row.entry_count) ? row.entry_count : 0,
+    };
+  });
+}
+
+// The FACET strip — one chip per `facet:` board tag this candidate carries,
+// showing the mean outcome over that slice and the slice's size.
+//
+// Deliberately plain: no verdict colour, no champion Δ, no bar length that
+// invites ranking. A facet mean carries NO noise threshold (BOARD-FORMAT.md
+// §1.4), and on a thin slice it is mostly noise — so the strip is built to be
+// read as "where to look next", not as a scoreboard. The denominator is shown
+// beside every number for the same reason: a mean over one entry must not read
+// like a mean over twenty.
+//
+// A facet nobody scored shows an em dash rather than 0.00 — an absent
+// measurement is not a failing one.
+function facetStrip(rows) {
+  const wrap = el('div', { class: 'dn-facets' }, [
+    el('div', { class: 'dn-faint dn-facets-head', text: 'facets · outcome per board tag · higher is better · diagnostic, not gated' }),
+  ]);
+  const chips = el('div', { class: 'dn-facet-chips' }, rows.map((f) => el('span', { class: 'dn-facet-chip' }, [
+    el('span', { class: 'dn-facet-name', text: f.name }),
+    el('span', { class: 'dn-facet-val', text: f.mean === null ? '—' : svg.fmt(f.mean, 2) }),
+    el('span', { class: 'dn-faint dn-facet-n', text: `n=${f.scored}${f.scored === f.total ? '' : `/${f.total}`}` }),
+  ])));
+  wrap.appendChild(chips);
+  return wrap;
 }
 
 // A small, clearly-marked "racing — settled comparisons appear once boards

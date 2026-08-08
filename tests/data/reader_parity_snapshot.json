@@ -1049,6 +1049,7 @@
   "per_entry_for_generation::e0::v0": {
     "entries": [],
     "epoch_id": "e0",
+    "facet_scores": {},
     "generation_id": "v0",
     "mean_score": null,
     "tournament_id": null
@@ -1056,6 +1057,7 @@
   "per_entry_for_generation::e1::v0": {
     "entries": [],
     "epoch_id": "e1",
+    "facet_scores": {},
     "generation_id": "v0",
     "mean_score": null,
     "tournament_id": null
@@ -1063,6 +1065,7 @@
   "per_entry_for_generation::e1::v1": {
     "entries": [],
     "epoch_id": "e1",
+    "facet_scores": {},
     "generation_id": "v1",
     "mean_score": null,
     "tournament_id": "e1:v0->v1"

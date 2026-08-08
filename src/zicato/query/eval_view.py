@@ -1311,3 +1311,117 @@ __all__ = [
     "runtime_aggregates",
     "students_t_upper_quantile",
 ]
+
+
+# ---------------------------------------------------------------------------
+# Facet slices — board entries grouped by their `facet:` tag
+# ---------------------------------------------------------------------------
+
+#: The reserved ``BoardEntry.tags`` prefix that puts an entry in a named
+#: diagnostic slice. ``facet:data_cleaning`` names the ``data_cleaning``
+#: facet. Metadata tags (``smoke``, ``single_turn``) and the reserved
+#: ``holdout`` tag are NOT facets — see BOARD-FORMAT.md §1.4.
+FACET_TAG_PREFIX = "facet:"
+
+
+def _facet_entry_outcome(row: dict[str, Any]) -> float | None:
+    """One per-entry row's outcome on the canonical ``[0, 1]`` axis.
+
+    Delegates to :func:`zicato.tournament.scoring.entry_score` through the
+    duck-typed stand-in that function documents, so a facet mean sits on
+    exactly the axis the generation's own ``mean_score`` sits on: an explicit
+    continuous ``score`` wins, else the bool bit maps to 1.0/0.0, else the
+    entry produced no outcome and is excluded from the mean.
+
+    Reusing it also inherits the ``[0, 1]`` clamp and the non-finite guard, so
+    a rogue score cannot poison a facet mean any more than it can the scalar.
+    """
+    from types import SimpleNamespace  # noqa: PLC0415
+    from typing import cast  # noqa: PLC0415
+
+    from zicato.core import LossProfile  # noqa: PLC0415
+    from zicato.tournament.scoring import entry_score  # noqa: PLC0415
+
+    stand_in = SimpleNamespace(score=row.get("score"), pass_fail=row.get("pass_fail"))
+    return entry_score(cast(LossProfile, stand_in))
+
+
+def facet_scores_for_generation(
+    paths: WorkspacePaths, epoch_id: str, entries: list[dict[str, Any]]
+) -> dict[str, dict[str, Any]]:
+    """Group one generation's per-entry outcomes by ``facet:`` board tag.
+
+    Returns ``{facet_name: {mean_score, scored_count, entry_count}}``. An
+    entry carrying several facet tags contributes once to each.
+
+    This is the board-as-instrument transpose applied to ONE candidate: the
+    rows are board entries grouped by the operator's own ontology, the column
+    is the candidate that ran them. It lives in this module for that reason,
+    and it runs server-side because DQ1 forbids the client re-deriving a join
+    the server owns.
+
+    ``mean_score`` runs the canonical outcome axis over the canonical
+    denominator rule (see :func:`_facet_entry_outcome`), so a facet covering
+    the whole board reports the generation's own ``mean_score`` and a facet
+    number means what the headline number means, measured over fewer entries.
+    It is ``None`` when nothing in the slice was scored — an absent
+    measurement, never a fabricated ``0.0`` (EVAL-VIEW.md §3 DQ2).
+
+    ``scored_count`` is that mean's denominator and ``entry_count`` the
+    slice's size. Both travel because a facet is a SLICE: a racing rung that
+    ran a board subset can thin one to a single entry, and a mean over one
+    entry must not read like a mean over twenty.
+
+    DIAGNOSTIC ONLY, and un-thresholded: a facet number carries no noise
+    model (04-evaluation-statistics.md §3), so nothing here feeds the scalar,
+    the gate, scheduling, or Pareto admission.
+
+    Best-effort (DQ3): an unreadable board yields ``{}`` and the dossier's
+    facet strip simply does not paint.
+    """
+    from zicato.query.board_scan import (  # noqa: PLC0415
+        board_entry_id,
+        board_entry_tags,
+        iter_board_rows,
+    )
+
+    facets_by_entry: dict[str, tuple[str, ...]] = {}
+    for row in iter_board_rows(layout_of(paths).board(epoch_id)):
+        entry_id = board_entry_id(row)
+        if entry_id is None:
+            continue
+        names = sorted(
+            {
+                t[len(FACET_TAG_PREFIX) :]
+                for t in board_entry_tags(row)
+                if t.startswith(FACET_TAG_PREFIX) and len(t) > len(FACET_TAG_PREFIX)
+            }
+        )
+        if names:
+            facets_by_entry[entry_id] = tuple(names)
+    if not facets_by_entry:
+        return {}
+
+    totals: dict[str, float] = {}
+    scored: dict[str, int] = {}
+    seen: dict[str, int] = {}
+    for row in entries:
+        entry_id = row.get("entry_id")
+        if not isinstance(entry_id, str):
+            continue
+        outcome = _facet_entry_outcome(row)
+        for name in facets_by_entry.get(entry_id, ()):
+            seen[name] = seen.get(name, 0) + 1
+            if outcome is not None:
+                totals[name] = totals.get(name, 0.0) + outcome
+                scored[name] = scored.get(name, 0) + 1
+
+    out: dict[str, dict[str, Any]] = {}
+    for name in sorted(seen):
+        n = scored.get(name, 0)
+        out[name] = {
+            "mean_score": (totals[name] / n) if n > 0 else None,
+            "scored_count": n,
+            "entry_count": seen[name],
+        }
+    return out
