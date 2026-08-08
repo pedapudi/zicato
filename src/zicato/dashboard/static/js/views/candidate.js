@@ -35,6 +35,7 @@ import { candidateProgression, inflightForActiveEpoch, inflightForEntryGen, runP
 import { roundsFromTimeline, reignModel } from '../rounds.js';
 import { deriveLiveStatus } from '../livestatus.js';
 import { harmonografIsLive, harmonografLink, harmonografMini } from '../core/harmonograf.js';
+import * as facets from '../facets.js';
 
 export async function render(host, ctx, params, route) {
   params = params || {};
@@ -1132,13 +1133,11 @@ function facetRows(raw) {
 // an absent measurement is not a failing one. Its `scalar` is still real: an
 // unscored entry still contributes drift.
 function facetTable(model) {
-  const fmt = (v) => (v === null ? '—' : svg.fmt(v, 2));
-  const count = (r) => (r.scored === r.total ? String(r.scored) : `${r.scored}/${r.total}`);
   const body = (model.rows || []).map((f) => [
     { text: f.name },
-    { text: fmt(f.scalar), class: 'dn-num' },
-    { text: fmt(f.mean), class: 'dn-num' },
-    { text: count(f), class: 'dn-num dn-faint' },
+    { text: facets.facetNum(f.scalar), class: 'dn-num' },
+    { text: facets.facetNum(f.mean), class: 'dn-num' },
+    { text: facets.facetCount(f.scored, f.total), class: 'dn-num dn-faint' },
   ]);
   if (model.overall) {
     const o = model.overall;
@@ -1146,9 +1145,9 @@ function facetTable(model) {
       class: 'dn-facet-overall',
       cells: [
         { text: o.name },
-        { text: fmt(o.scalar), class: 'dn-num' },
-        { text: fmt(o.mean), class: 'dn-num' },
-        { text: count(o), class: 'dn-num dn-faint' },
+        { text: facets.facetNum(o.scalar), class: 'dn-num' },
+        { text: facets.facetNum(o.mean), class: 'dn-num' },
+        { text: facets.facetCount(o.scored, o.total), class: 'dn-num dn-faint' },
       ],
     });
   }
@@ -1156,35 +1155,17 @@ function facetTable(model) {
     class: 'dn-facet-table',
     columns: [
       { label: 'facet' },
-      { label: 'scalar ↓', class: 'dn-num' },
-      { label: 'mean score ↑', class: 'dn-num' },
+      { label: facets.SCALAR_LABEL, class: 'dn-num' },
+      { label: facets.MEAN_SCORE_LABEL, class: 'dn-num' },
       { label: 'scored', class: 'dn-num' },
     ],
     rows: body,
   });
-  // Explain the two columns on the header cells. They are the numbers an
-  // operator is most likely to misread — they run OPPOSITE directions, and
-  // `mean score` is NOT a pass percentage unless every entry is bool. The
-  // hovercard is keyboard-reachable (attachHovercard sets tabindex +
-  // aria-describedby), so the explanation is not mouse-only.
-  const heads = (table.children[0] && table.children[0].children[0])
-    ? table.children[0].children[0].children : [];
-  if (heads[1]) {
-    attachHovercard(heads[1], () => hovercardBody([
-      el('div', { class: 'dn-hc-title', text: 'scalar · lower is better' }),
-      el('p', { text: 'The same loss the promote gate compares, computed over just this slice at this epoch\u2019s frozen weights: the drift term (every judge\u2019s weighted contribution included), the missed outcome, and the namespace terms.' }),
-      el('p', { text: 'Same units as the candidate overall row, so the two can be read against each other. Diagnostic only \u2014 no facet feeds the gate.' }),
-    ]));
-  }
-  if (heads[2]) {
-    attachHovercard(heads[2], () => hovercardBody([
-      el('div', { class: 'dn-hc-title', text: 'mean score · higher is better' }),
-      el('p', { text: 'The average outcome over this slice: an entry\u2019s continuous score when it has one, otherwise 1.0 for a pass and 0.0 for a fail.' }),
-      el('p', { text: 'NOT a pass percentage \u2014 the two coincide only when every entry is plain pass/fail. An entry with no outcome check is left out of the average and shows in \u201cscored\u201d.' }),
-    ]));
-  }
+  const heads = facets.tableHeaderCells(table);
+  facets.attachFacetHover(heads[1], 'scalar');
+  facets.attachFacetHover(heads[2], 'mean_score');
   return el('div', { class: 'dn-facets' }, [
-    el('div', { class: 'dn-faint dn-facets-head', text: 'facets · this candidate re-scored per board tag · diagnostic, not gated' }),
+    facets.facetCaption('this candidate re-scored per board tag'),
     table,
   ]);
 }
