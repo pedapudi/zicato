@@ -22,6 +22,23 @@ from zicato.storage._atomic import (
 )
 
 
+def _fd_path(fd: int) -> Path:
+    """Best-effort path for an open fd, used only by fsync spy tests."""
+    proc_path = Path(f"/proc/self/fd/{fd}")
+    if proc_path.exists():
+        return Path(os.readlink(proc_path))
+
+    if hasattr(os, "uname") and os.uname().sysname == "Darwin":
+        import fcntl
+
+        raw = fcntl.fcntl(fd, 50, bytes(1024))
+        path = raw.split(b"\0", 1)[0].decode()
+        if path:
+            return Path(path)
+
+    raise OSError(f"cannot resolve path for fd {fd}")
+
+
 def test_atomic_write_text_roundtrip(tmp_path: Path) -> None:
     target = tmp_path / "deep" / "nested" / "state.json"
     atomic_write_text(target, '{"v": 1}')
@@ -52,7 +69,7 @@ def test_atomic_write_fsyncs_the_parent_directory(
         import stat
 
         if stat.S_ISDIR(os.fstat(fd).st_mode):
-            synced_dirs.append(Path(os.readlink(f"/proc/self/fd/{fd}")))
+            synced_dirs.append(_fd_path(fd))
         real_fsync(fd)
 
     monkeypatch.setattr(os, "fsync", spying_fsync)
@@ -103,7 +120,7 @@ def test_atomic_claim_fsyncs_both_parents(tmp_path: Path, monkeypatch: pytest.Mo
 
     def spying_fsync(fd: int) -> None:
         if stat.S_ISDIR(os.fstat(fd).st_mode):
-            synced_dirs.append(Path(os.readlink(f"/proc/self/fd/{fd}")).resolve())
+            synced_dirs.append(_fd_path(fd).resolve())
         real_fsync(fd)
 
     monkeypatch.setattr(os, "fsync", spying_fsync)
