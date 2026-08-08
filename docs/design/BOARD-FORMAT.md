@@ -138,35 +138,51 @@ The reserved diagnostic prefix is `facet:`. A tag like
 `facet:data_quality` or `facet:schema_validation` puts the entry in that
 named slice; everything after the prefix is the facet name.
 
-The candidate dossier shows a mean outcome per facet. That grouping is a
-read-model join computed server-side in
-`query.judge_view._facet_scores`, which the candidate feed
-(`GET /api/generation/{epoch}/{gen}/per-entry`) returns as
-`{facet: {mean_score, scored_count, entry_count}}`. Nothing about facets
-is stored: no field on `LossProfile`, nothing on `gen_score.json`, no
-contract knob, no index table. Tagging entries changes only what the
-dashboard can show you.
+The candidate dossier shows a small table: one row per facet, plus the
+candidate's own aggregate as the last row to read against. Each row
+carries the same two quantities the candidate's own aggregate carries,
+recomputed over just that slice at the epoch's FROZEN weights:
 
-Two properties make a facet number readable, and a future consumer must
-preserve both:
+- **`scalar`** — the same loss the gate's number is (lower is better):
+  the drift term, including every custom judge's weighted contribution,
+  plus the outcome miss and the namespace terms. Because it is the same
+  formula at the same weights, a facet's scalar can be read directly
+  against the overall row. That comparability is the point.
+- **`mean score`** — the outcome axis (higher is better, `[0, 1]`), the
+  same field the generation's own aggregate carries. `null` when nothing
+  in the slice produced an outcome — an absent measurement is not a
+  failing one, so it must never render as `0.00`. The row's `scalar` is
+  still real in that case: an unscored entry still produced drift.
 
-- **Same axis as the headline.** The mean runs the same `entry_score`
-  axis, over the same denominator rule, as the generation's own
-  `mean_score`. A facet covering the whole board therefore reports
-  exactly that `mean_score`. A facet number means what the headline
-  number means, measured over fewer entries.
-- **The denominator travels with it.** A facet is a SLICE of the board,
-  so a racing rung that ran a board subset can thin it to one entry — or
-  none, in which case `mean_score` is `null` rather than a fabricated
-  `0.0`. `scored_count` is reported for the same reason
-  `expectation_count` is reported beside the generation's mean.
+The two columns run in OPPOSITE directions, because one counts problems
+and the other counts quality. The table's header states each direction
+rather than relying on the reader to know.
+
+`scored_count` is `mean score`'s denominator and `entry_count` the
+slice's size. Both travel because a facet is a SLICE: a racing rung that
+ran a board subset can thin one to a single entry, and a scalar over one
+entry must not read like a scalar over twenty. The weights were
+calibrated board-wide, so a thin facet's scalar is noisier — the counts
+are what make that visible.
+
+The grouping is computed server-side in
+`query.eval_view.facet_scores_for_generation` and returned on the
+candidate feed (`GET /api/generation/{epoch}/{gen}/per-entry`). It lives
+in `eval_view` because that module is the board-as-instrument surface,
+whose rows are board entries and whose columns are candidates — which is
+what a facet is. The client does no grouping (DQ1: the server computes,
+the client renders, and a group-by is a join).
+
+Nothing about facets is stored: no field on `LossProfile`, nothing on
+`gen_score.json`, no scoring-contract knob, no index table. Tagging
+entries changes only what the dashboard can show you.
 
 Facets are DIAGNOSTIC and un-thresholded. Nothing reads them except the
-dossier: they are never summed into the scalar, read by the promote gate,
-used for tournament scheduling, or admitted as a Pareto axis. A facet
-number carries no noise model, and on a thin slice it is mostly noise —
-so the UI gives it no verdict colour and no ranking. Making one drive a
-decision means first measuring that decision's error rates the way
+dossier: they are never summed into the scalar the gate reads, read by
+the gate, used for tournament scheduling, or admitted as a Pareto axis.
+A facet number carries no noise model, so the table has no verdict
+colour, no bars, and no ordering by value. Making one drive a decision
+means first measuring that decision's error rates the way
 `04-evaluation-statistics.md` §3.2 requires.
 
 Conventional tags worth adopting:

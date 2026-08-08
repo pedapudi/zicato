@@ -1324,60 +1324,11 @@ __all__ = [
 FACET_TAG_PREFIX = "facet:"
 
 
-def _facet_entry_outcome(row: dict[str, Any]) -> float | None:
-    """One per-entry row's outcome on the canonical ``[0, 1]`` axis.
+def facets_by_entry(paths: WorkspacePaths, epoch_id: str) -> dict[str, tuple[str, ...]]:
+    """``{entry_id: (facet_name, ...)}`` off the frozen board, best-effort.
 
-    Delegates to :func:`zicato.tournament.scoring.entry_score` through the
-    duck-typed stand-in that function documents, so a facet mean sits on
-    exactly the axis the generation's own ``mean_score`` sits on: an explicit
-    continuous ``score`` wins, else the bool bit maps to 1.0/0.0, else the
-    entry produced no outcome and is excluded from the mean.
-
-    Reusing it also inherits the ``[0, 1]`` clamp and the non-finite guard, so
-    a rogue score cannot poison a facet mean any more than it can the scalar.
-    """
-    from types import SimpleNamespace  # noqa: PLC0415
-    from typing import cast  # noqa: PLC0415
-
-    from zicato.core import LossProfile  # noqa: PLC0415
-    from zicato.tournament.scoring import entry_score  # noqa: PLC0415
-
-    stand_in = SimpleNamespace(score=row.get("score"), pass_fail=row.get("pass_fail"))
-    return entry_score(cast(LossProfile, stand_in))
-
-
-def facet_scores_for_generation(
-    paths: WorkspacePaths, epoch_id: str, entries: list[dict[str, Any]]
-) -> dict[str, dict[str, Any]]:
-    """Group one generation's per-entry outcomes by ``facet:`` board tag.
-
-    Returns ``{facet_name: {mean_score, scored_count, entry_count}}``. An
-    entry carrying several facet tags contributes once to each.
-
-    This is the board-as-instrument transpose applied to ONE candidate: the
-    rows are board entries grouped by the operator's own ontology, the column
-    is the candidate that ran them. It lives in this module for that reason,
-    and it runs server-side because DQ1 forbids the client re-deriving a join
-    the server owns.
-
-    ``mean_score`` runs the canonical outcome axis over the canonical
-    denominator rule (see :func:`_facet_entry_outcome`), so a facet covering
-    the whole board reports the generation's own ``mean_score`` and a facet
-    number means what the headline number means, measured over fewer entries.
-    It is ``None`` when nothing in the slice was scored — an absent
-    measurement, never a fabricated ``0.0`` (EVAL-VIEW.md §3 DQ2).
-
-    ``scored_count`` is that mean's denominator and ``entry_count`` the
-    slice's size. Both travel because a facet is a SLICE: a racing rung that
-    ran a board subset can thin one to a single entry, and a mean over one
-    entry must not read like a mean over twenty.
-
-    DIAGNOSTIC ONLY, and un-thresholded: a facet number carries no noise
-    model (04-evaluation-statistics.md §3), so nothing here feeds the scalar,
-    the gate, scheduling, or Pareto admission.
-
-    Best-effort (DQ3): an unreadable board yields ``{}`` and the dossier's
-    facet strip simply does not paint.
+    Reads through the tolerant raw scan, so one stale entry costs its own
+    row rather than the whole payload.
     """
     from zicato.query.board_scan import (  # noqa: PLC0415
         board_entry_id,
@@ -1385,7 +1336,7 @@ def facet_scores_for_generation(
         iter_board_rows,
     )
 
-    facets_by_entry: dict[str, tuple[str, ...]] = {}
+    out: dict[str, tuple[str, ...]] = {}
     for row in iter_board_rows(layout_of(paths).board(epoch_id)):
         entry_id = board_entry_id(row)
         if entry_id is None:
@@ -1398,30 +1349,141 @@ def facet_scores_for_generation(
             }
         )
         if names:
-            facets_by_entry[entry_id] = tuple(names)
-    if not facets_by_entry:
-        return {}
-
-    totals: dict[str, float] = {}
-    scored: dict[str, int] = {}
-    seen: dict[str, int] = {}
-    for row in entries:
-        entry_id = row.get("entry_id")
-        if not isinstance(entry_id, str):
-            continue
-        outcome = _facet_entry_outcome(row)
-        for name in facets_by_entry.get(entry_id, ()):
-            seen[name] = seen.get(name, 0) + 1
-            if outcome is not None:
-                totals[name] = totals.get(name, 0.0) + outcome
-                scored[name] = scored.get(name, 0) + 1
-
-    out: dict[str, dict[str, Any]] = {}
-    for name in sorted(seen):
-        n = scored.get(name, 0)
-        out[name] = {
-            "mean_score": (totals[name] / n) if n > 0 else None,
-            "scored_count": n,
-            "entry_count": seen[name],
-        }
+            out[entry_id] = tuple(names)
     return out
+
+
+def _generation_loss_profiles(
+    paths: WorkspacePaths, epoch_id: str, generation_id: str
+) -> list[Any]:
+    """Hydrate one generation's persisted ``loss.json`` files, best-effort.
+
+    Reads the run directories rather than the index, for the same reason
+    :func:`zicato.query.tournament_view.build_matchup_grid` does: the files
+    are canonical, so a completed generation's per-entry losses are
+    recoverable even when the index was never built. A missing or malformed
+    profile is skipped; nothing raises.
+    """
+    from zicato.telemetry.reducer import loss_profile_from_dict  # noqa: PLC0415
+
+    runs_dir = layout_of(paths).runs_dir(epoch_id, generation_id)
+    if not runs_dir.is_dir():
+        return []
+    out: list[Any] = []
+    for run_dir in sorted(runs_dir.iterdir()):
+        if not run_dir.is_dir():
+            continue
+        raw = _read_json_value(run_dir / "loss.json")
+        if not isinstance(raw, dict):
+            continue
+        try:
+            out.append(loss_profile_from_dict(raw))
+        except Exception:  # noqa: BLE001 — best-effort; a torn profile is skipped
+            continue
+    return out
+
+
+def _epoch_scoring_weights(paths: WorkspacePaths, epoch_id: str) -> Any:
+    """The epoch's FROZEN ``ScoringWeights``, or the defaults.
+
+    The facet scalar must be computed at the same weights the candidate's
+    own scalar was, or the two are not comparable — which is the whole
+    point of reporting them side by side. A missing / malformed
+    ``scoring.json`` degrades to the dataclass defaults rather than
+    raising, and the payload says so via ``weights_source``.
+    """
+    from zicato.core import ScoringWeights  # noqa: PLC0415
+    from zicato.workspace_loader import scoring_weights_from_dict  # noqa: PLC0415
+
+    raw = _read_json_value(layout_of(paths).scoring(epoch_id))
+    if not isinstance(raw, dict):
+        return ScoringWeights()
+    try:
+        return scoring_weights_from_dict(raw)
+    except Exception:  # noqa: BLE001 — best-effort; defaults keep the read alive
+        return ScoringWeights()
+
+
+def facet_scores_for_generation(
+    paths: WorkspacePaths, epoch_id: str, generation_id: str
+) -> dict[str, Any]:
+    """Per-``facet:`` aggregates for one candidate, on the SAME terms as its own.
+
+    Returns::
+
+        {"facets": {name: {scalar, mean_score, scored_count, entry_count}},
+         "overall": {scalar, mean_score, scored_count, entry_count} | None}
+
+    Each facet runs :func:`~zicato.tournament.scoring.aggregate_generation_score`
+    over just the entries carrying that tag, at the epoch's FROZEN weights.
+    So a facet's ``scalar`` is the same quantity, in the same units and the
+    same direction (a loss — lower is better), as the candidate's overall
+    ``scalar``: it folds the drift term (including every custom judge's
+    weighted contribution), the outcome miss, and the namespace terms. That
+    comparability is the point — a facet scalar can be read directly against
+    the ``overall`` row, which is the same aggregate over every entry.
+
+    ``mean_score`` is the outcome axis (higher is better, ``[0, 1]``), the
+    same field the generation's own aggregate carries. ``None`` when nothing
+    in the slice produced an outcome — an absent measurement, never a
+    fabricated ``0.0`` (EVAL-VIEW.md §3 DQ2).
+
+    ``scored_count`` is ``mean_score``'s denominator and ``entry_count`` the
+    slice's size. Both travel because a facet is a SLICE: a racing rung that
+    ran a board subset can thin one to a single entry, and a scalar over one
+    entry must not read like a scalar over twenty. The weights were
+    calibrated board-wide, so a thin facet's scalar is noisy — the counts are
+    what make that visible.
+
+    DIAGNOSTIC ONLY. Nothing here feeds the scalar the gate reads, the gate
+    itself, scheduling, or Pareto admission. A facet number carries no noise
+    threshold; making one drive a decision means first measuring that
+    decision's error rates (04-evaluation-statistics.md §3.2).
+
+    Best-effort (DQ3): an unreadable board or absent run files yield
+    ``{"facets": {}, "overall": None}`` and the dossier's facet table simply
+    does not paint.
+    """
+    from zicato.tournament.scoring import aggregate_generation_score  # noqa: PLC0415
+
+    empty: dict[str, Any] = {"facets": {}, "overall": None}
+    facets_by_entry_map = facets_by_entry(paths, epoch_id)
+    if not facets_by_entry_map:
+        return empty
+    losses = _generation_loss_profiles(paths, epoch_id, generation_id)
+    if not losses:
+        return empty
+    weights = _epoch_scoring_weights(paths, epoch_id)
+
+    def _block(subset: list[Any]) -> dict[str, Any] | None:
+        if not subset:
+            return None
+        try:
+            agg = aggregate_generation_score(subset, weights)
+        except Exception:  # noqa: BLE001 — best-effort; a bad slice drops out
+            return None
+        scored = int(agg.get("expectation_count") or 0)
+        return {
+            "scalar": _opt_score_val(agg.get("scalar")),
+            # ``mean_score`` reports 1.0 by convention when NOTHING was
+            # scored (so the (1 - mean) term contributes zero). That is the
+            # right default for the scalar and the wrong one to display, so
+            # the honest ``None`` replaces it here.
+            "mean_score": _opt_score_val(agg.get("mean_score")) if scored else None,
+            "scored_count": scored,
+            "entry_count": len(subset),
+        }
+
+    by_facet: dict[str, list[Any]] = {}
+    for loss in losses:
+        for name in facets_by_entry_map.get(getattr(loss, "entry_id", ""), ()):
+            by_facet.setdefault(name, []).append(loss)
+
+    facets: dict[str, Any] = {}
+    for name in sorted(by_facet):
+        block = _block(by_facet[name])
+        if block is not None:
+            facets[name] = block
+    if not facets:
+        return empty
+    return {"facets": facets, "overall": _block(losses)}

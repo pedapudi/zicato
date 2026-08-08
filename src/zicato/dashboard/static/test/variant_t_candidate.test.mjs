@@ -1683,73 +1683,109 @@ test('under-render: a NEW candidate folded into AppState repaints the tree (no h
 
 await run();
 
-// ---- the FACET strip: per-tag means recorded on the candidate ------------
-// The dossier READS `facet_scores` off the per-entry feed (which lifts it from
-// the candidate's cached aggregate). The view never computes a facet.
+// ---- the FACET table: this candidate re-scored per board tag -------------
+// The dossier READS `facet_scores` off the per-entry feed; the view never
+// computes a facet. Each row carries the SAME two quantities the candidate's
+// own aggregate carries, so a facet row is comparable to the overall row.
 
-// The base fixture carries no facet_scores; this map adds them to v1.
-function withFacets(facets) {
+// The base fixture carries no facet_scores; this adds them to v1.
+function withFacets(facets, overall) {
   const F = { ...FIXTURE };
   F[`/api/generation/${EPOCH_ID}/v1/per-entry`] = {
     ...FIXTURE[`/api/generation/${EPOCH_ID}/v1/per-entry`],
-    facet_scores: facets,
+    facet_scores: { facets, overall: overall === undefined ? null : overall },
   };
   return F;
 }
 
-test('candidate view: the facet strip paints one chip per recorded facet, with its denominator', async () => {
+const OVERALL = { scalar: 0.69, mean_score: 0.61, scored_count: 3, entry_count: 4 };
+
+// The harness DOM only implements ATTRIBUTE selectors, so walk the table's
+// children (thead > tr, tbody > tr) rather than querying by tag name.
+function facetCells(host) {
+  const tables = allByClass(host, 'dn-facet-table');
+  if (!tables.length) return [];
+  const out = [];
+  for (const part of tables[0].children) {
+    for (const tr of part.children) {
+      out.push([...tr.children].map((c) => (c.textContent || '').trim()));
+    }
+  }
+  return out;
+}
+
+test('candidate view: the facet table reports scalar + mean score per tag, against the overall row', async () => {
   freshState();
   installFixtureMap(withFacets({
-    data_cleaning: { mean_score: 0.8, scored_count: 3, entry_count: 3 },
-    extraction: { mean_score: 0.25, scored_count: 1, entry_count: 4 },
-  }));
+    data_cleaning: { scalar: 0.89, mean_score: 0.41, scored_count: 2, entry_count: 2 },
+    extraction: { scalar: 0.49, mean_score: 0.81, scored_count: 1, entry_count: 4 },
+  }, OVERALL));
   const candidate = await import('../js/views/candidate.js');
   const host = document.createElement('div');
   await candidate.render(host, { navigate() {}, href: router.href }, { epochId: EPOCH_ID, gen: 'v1' });
 
-  // The caption must state the DIRECTION. A facet runs the outcome axis
-  // (higher is better) while the headline scalar is a LOSS (lower is
-  // better), so a strip that omits the direction is unreadable beside it.
-  const head = allByClass(host, 'dn-facets-head')[0];
-  assert(head, 'the facet strip carries a caption');
-  assert(/higher is better/.test(head.textContent), 'the caption states which direction is good');
-
-  const chips = allByClass(host, 'dn-facet-chip');
-  assertEqual(chips.length, 2, 'one chip per recorded facet');
-  // sorted by name, so chip order is stable across repaints.
-  const names = allByClass(host, 'dn-facet-name').map((n) => (n.textContent || '').trim());
-  assertDeep(names, ['data_cleaning', 'extraction'], 'facet chips are sorted by name');
-  const vals = allByClass(host, 'dn-facet-val').map((n) => (n.textContent || '').trim());
-  assertDeep(vals, ['0.80', '0.25'], 'each chip shows its recorded mean');
-  const ns = allByClass(host, 'dn-facet-n').map((n) => (n.textContent || '').trim());
-  // a full slice hides the denominator; a PARTIAL one shows scored/total so a
-  // mean over one entry cannot read like a mean over four.
-  assertDeep(ns, ['n=3', 'n=1/4'], 'a partial slice exposes its denominator');
+  const cells = facetCells(host);
+  // Header names BOTH directions: the two columns run opposite ways, so the
+  // reader must not have to know which is which.
+  assertDeep(cells[0], ['facet', 'scalar ↓', 'mean score ↑', 'scored'], 'header states each direction');
+  // Facet rows, sorted by name, then the candidate's own aggregate LAST so
+  // every facet can be read against it.
+  assertDeep(cells[1], ['data_cleaning', '0.89', '0.41', '2'], 'a full slice hides the denominator');
+  assertDeep(cells[2], ['extraction', '0.49', '0.81', '1/4'], 'a partial slice exposes its denominator');
+  assertDeep(cells[3], ['candidate overall', '0.69', '0.61', '3/4'], 'the overall row is the comparison');
+  assertEqual(allByClass(host, 'dn-facet-overall').length, 1, 'the overall row is marked as the reference');
 });
 
-test('candidate view: a facet nobody scored reads as an em dash, never 0.00', async () => {
+test('candidate view: the scalar + mean score headers explain themselves on hover', async () => {
   freshState();
-  installFixtureMap(withFacets({ data_cleaning: { mean_score: null, scored_count: 0, entry_count: 2 } }));
+  installFixtureMap(withFacets(
+    { data_cleaning: { scalar: 0.89, mean_score: 0.41, scored_count: 2, entry_count: 2 } },
+    OVERALL));
   const candidate = await import('../js/views/candidate.js');
   const host = document.createElement('div');
   await candidate.render(host, { navigate() {}, href: router.href }, { epochId: EPOCH_ID, gen: 'v1' });
 
-  const val = allByClass(host, 'dn-facet-val')[0];
-  assertEqual((val.textContent || '').trim(), '—', 'an absent measurement is not a failing one');
+  const table = allByClass(host, 'dn-facet-table')[0];
+  const heads = table.children[0].children[0].children;
+  // Both number columns carry a hovercard; the facet-name column does not.
+  assertEqual(heads[0].getAttribute('data-hovercard'), null, 'the name column needs no explanation');
+  assertEqual(heads[1].getAttribute('data-hovercard'), '1', 'scalar explains itself');
+  assertEqual(heads[2].getAttribute('data-hovercard'), '1', 'mean score explains itself');
+  // attachHovercard makes them keyboard-reachable, so the explanation is not
+  // mouse-only.
+  assertEqual(heads[1].getAttribute('tabindex'), '0', 'the scalar header is focusable');
+  assertEqual(heads[2].getAttribute('tabindex'), '0', 'the mean-score header is focusable');
 });
 
-test('candidate view: no facet strip when the board declares no facet tags', async () => {
+test('candidate view: a facet nobody scored reads as an em dash, and keeps its scalar', async () => {
+  freshState();
+  // An unscored entry still produced drift, so the scalar is real even though
+  // there is no outcome to average.
+  installFixtureMap(withFacets(
+    { schema_validation: { scalar: 0.30, mean_score: null, scored_count: 0, entry_count: 1 } },
+    OVERALL));
+  const candidate = await import('../js/views/candidate.js');
+  const host = document.createElement('div');
+  await candidate.render(host, { navigate() {}, href: router.href }, { epochId: EPOCH_ID, gen: 'v1' });
+
+  const row = facetCells(host)[1];
+  assertDeep(row, ['schema_validation', '0.30', '—', '0/1'], 'an absent outcome is not a failing one');
+});
+
+test('candidate view: no facet table when the board declares no facet tags', async () => {
   freshState(); installFetch();   // the BASE fixture carries no facet_scores.
   const candidate = await import('../js/views/candidate.js');
   const host = document.createElement('div');
   await candidate.render(host, { navigate() {}, href: router.href }, { epochId: EPOCH_ID, gen: 'v1' });
 
-  assertEqual(allByClass(host, 'dn-facets').length, 0, 'the strip does not paint on a facet-less board');
+  assertEqual(allByClass(host, 'dn-facets').length, 0, 'the table does not paint on a facet-less board');
 });
 
 test('candidate digest: a no-op heartbeat over a facet-bearing dossier churns NO DOM', async () => {
   freshState();
-  installFixtureMap(withFacets({ data_cleaning: { mean_score: 0.8, scored_count: 3, entry_count: 3 } }));
+  installFixtureMap(withFacets(
+    { data_cleaning: { scalar: 0.89, mean_score: 0.41, scored_count: 2, entry_count: 2 } },
+    OVERALL));
   const candidate = await import('../js/views/candidate.js');
   const host = document.createElement('div');
   const ctx = { navigate() {}, href: router.href };
@@ -1763,9 +1799,11 @@ test('candidate digest: a no-op heartbeat over a facet-bearing dossier churns NO
   assertEqual(host.innerHTMLWriteCount(), writes1, 'no innerHTML writes on the no-op beat (facets folded, not churned)');
 });
 
-test('candidate digest: a MOVED facet mean repaints the dossier', async () => {
+test('candidate digest: a MOVED facet scalar repaints the dossier', async () => {
   freshState();
-  installFixtureMap(withFacets({ data_cleaning: { mean_score: 0.8, scored_count: 3, entry_count: 3 } }));
+  installFixtureMap(withFacets(
+    { data_cleaning: { scalar: 0.89, mean_score: 0.41, scored_count: 2, entry_count: 2 } },
+    OVERALL));
   const candidate = await import('../js/views/candidate.js');
   const host = document.createElement('div');
   const ctx = { navigate() {}, href: router.href };
@@ -1774,10 +1812,12 @@ test('candidate digest: a MOVED facet mean repaints the dossier', async () => {
 
   // The data layer caches by path, so the new payload only reaches the view
   // once the cache is invalidated — exactly what a live round does when it
-  // writes a fresh aggregate.
+  // writes fresh run files.
   freshState();
-  installFixtureMap(withFacets({ data_cleaning: { mean_score: 0.4, scored_count: 3, entry_count: 3 } }));
+  installFixtureMap(withFacets(
+    { data_cleaning: { scalar: 1.40, mean_score: 0.41, scored_count: 2, entry_count: 2 } },
+    OVERALL));
   await candidate.render(host, ctx, { epochId: EPOCH_ID, gen: 'v1' });
   assert(host.getAttribute('data-t-digest') !== digest1, 'a real facet move changes the digest');
-  assertEqual((allByClass(host, 'dn-facet-val')[0].textContent || '').trim(), '0.40', 'the strip shows the new mean');
+  assertDeep(facetCells(host)[1], ['data_cleaning', '1.40', '0.41', '2'], 'the table shows the new scalar');
 });

@@ -223,7 +223,7 @@ async function resolveCandidate(epochId, genId, genList, experiments, scalarByGe
   const meanScore = pe && svg.isNum(pe.mean_score) ? pe.mean_score : null;
   // The per-facet means this candidate RECORDED when it was scored
   // (BOARD-FORMAT.md §1.4) — read, never derived here. `[]` when the board
-  // carries no `facet:` tag, so the facet strip simply does not paint.
+  // carries no `facet:` tag, so the facet table simply does not paint.
   // DIAGNOSTIC: a facet number is a place to look, never a verdict, so it
   // gets no verdict colour and no Δ-vs-champion treatment.
   const facetScores = facetRows(pe && pe.facet_scores);
@@ -598,7 +598,16 @@ function candidateDigest(s) {
     // leaves the digest byte-identical and the strip's DOM nodes survive
     // (G10). A board with no facet tag contributes an empty array —
     // unchanged digest vs the pre-facet path.
-    facets: s.facetScores.map((f) => [f.name, svg.isNum(f.mean) ? f.mean.toFixed(2) : null, f.scored, f.total]),
+    // Facet numbers fold at their RENDERED precision so a no-op heartbeat
+    // leaves the digest byte-identical and the table's DOM nodes survive
+    // (G10). A board with no facet tag contributes empty — unchanged digest
+    // vs the pre-facet path.
+    facets: [...s.facetScores.rows, s.facetScores.overall].filter(Boolean).map((f) => [
+      f.name,
+      svg.isNum(f.scalar) ? f.scalar.toFixed(2) : null,
+      svg.isNum(f.mean) ? f.mean.toFixed(2) : null,
+      f.scored, f.total,
+    ]),
     cached: s.cached ? [s.cachedProvenance && s.cachedProvenance.sourceEpoch, s.cachedProvenance && s.cachedProvenance.sourceRun] : null,
     progression: s.progression && Array.isArray(s.progression.stages)
       ? s.progression.stages.map((st) => [st.label, st.kind, svg.isNum(st.delta) ? st.delta.toFixed(2) : null, st.verdict]) : null,
@@ -910,7 +919,7 @@ function paintCandidate(host, ctx, epochId, s, cmpId, isPrimary, narrow, structu
         el('span', { text: ' · per-entry continuous outcome, higher is better' }),
       ]));
     }
-    if (s.facetScores.length) scoreCard.appendChild(facetStrip(s.facetScores));
+    if (s.facetScores.rows.length) scoreCard.appendChild(facetTable(s.facetScores));
   } else if (s.radar && s.radar.projectedOnly) {
     // RACING / IN-FLIGHT with no SETTLED per-board rows yet: don't read "no
     // entries" — surface the racing affordance so the column isn't bare.
@@ -1078,46 +1087,106 @@ export function generalizationPanel(g) {
   return card;
 }
 
-// Normalize the dossier feed's `facet_scores` map into sorted render rows.
-// Reads `{facet: {mean_score, scored_count, entry_count}}` defensively — a
-// missing/torn block yields `[]` and the strip does not paint. Sorted by name
-// so the strip's node order is stable across repaints (G10).
+// Normalize the dossier feed's `facet_scores` block for render.
+// Reads `{facets: {name: {scalar, mean_score, scored_count, entry_count}},
+// overall: {...}}` defensively — a missing/torn block yields `[]` rows and the
+// table does not paint. Sorted by name so row order is stable across repaints
+// (G10).
 function facetRows(raw) {
-  if (!raw || typeof raw !== 'object') return [];
-  return Object.keys(raw).sort().map((name) => {
-    const row = raw[name] || {};
-    return {
-      name,
-      mean: svg.isNum(row.mean_score) ? row.mean_score : null,
-      scored: Number.isInteger(row.scored_count) ? row.scored_count : 0,
-      total: Number.isInteger(row.entry_count) ? row.entry_count : 0,
-    };
+  const block = (raw && typeof raw === 'object') ? raw : {};
+  const facets = (block.facets && typeof block.facets === 'object') ? block.facets : {};
+  const norm = (row, name) => ({
+    name,
+    scalar: svg.isNum(row.scalar) ? row.scalar : null,
+    mean: svg.isNum(row.mean_score) ? row.mean_score : null,
+    scored: Number.isInteger(row.scored_count) ? row.scored_count : 0,
+    total: Number.isInteger(row.entry_count) ? row.entry_count : 0,
   });
+  const rows = Object.keys(facets).sort().map((n) => norm(facets[n] || {}, n));
+  const overall = (block.overall && typeof block.overall === 'object')
+    ? norm(block.overall, 'candidate overall') : null;
+  return { rows, overall };
 }
 
-// The FACET strip — one chip per `facet:` board tag this candidate carries,
-// showing the mean outcome over that slice and the slice's size.
+// The FACET table — one row per `facet:` board tag this candidate carries,
+// plus the candidate's OWN aggregate as the last row to read against.
 //
-// Deliberately plain: no verdict colour, no champion Δ, no bar length that
-// invites ranking. A facet mean carries NO noise threshold (BOARD-FORMAT.md
-// §1.4), and on a thin slice it is mostly noise — so the strip is built to be
-// read as "where to look next", not as a scoreboard. The denominator is shown
-// beside every number for the same reason: a mean over one entry must not read
-// like a mean over twenty.
+// Both numbers are the candidate's own quantities recomputed over the slice at
+// the epoch's frozen weights, so a facet row is directly comparable to the
+// overall row beneath it — that comparison is the point of the table.
+//   * `scalar`     — the SAME loss the gate's number is (lower is better):
+//                    drift (every judge's weighted contribution included),
+//                    the outcome miss, and the namespace terms.
+//   * `mean score` — the outcome axis (higher is better).
+// The two run OPPOSITE directions because one counts problems and the other
+// counts quality, so the header states each direction rather than relying on
+// the reader to know.
 //
-// A facet nobody scored shows an em dash rather than 0.00 — an absent
-// measurement is not a failing one.
-function facetStrip(rows) {
-  const wrap = el('div', { class: 'dn-facets' }, [
-    el('div', { class: 'dn-faint dn-facets-head', text: 'facets · outcome per board tag · higher is better · diagnostic, not gated' }),
+// Deliberately plain: no verdict colour, no bars, no ordering by value. These
+// numbers carry NO noise threshold (BOARD-FORMAT.md §1.4) and a thin slice is
+// mostly noise, so the table must not read as a scoreboard. `scored` is shown
+// for the same reason — a scalar over one entry must not read like a scalar
+// over twenty.
+//
+// A facet nobody scored shows an em dash for `mean score` rather than 0.00 —
+// an absent measurement is not a failing one. Its `scalar` is still real: an
+// unscored entry still contributes drift.
+function facetTable(model) {
+  const fmt = (v) => (v === null ? '—' : svg.fmt(v, 2));
+  const count = (r) => (r.scored === r.total ? String(r.scored) : `${r.scored}/${r.total}`);
+  const body = (model.rows || []).map((f) => [
+    { text: f.name },
+    { text: fmt(f.scalar), class: 'dn-num' },
+    { text: fmt(f.mean), class: 'dn-num' },
+    { text: count(f), class: 'dn-num dn-faint' },
   ]);
-  const chips = el('div', { class: 'dn-facet-chips' }, rows.map((f) => el('span', { class: 'dn-facet-chip' }, [
-    el('span', { class: 'dn-facet-name', text: f.name }),
-    el('span', { class: 'dn-facet-val', text: f.mean === null ? '—' : svg.fmt(f.mean, 2) }),
-    el('span', { class: 'dn-faint dn-facet-n', text: `n=${f.scored}${f.scored === f.total ? '' : `/${f.total}`}` }),
-  ])));
-  wrap.appendChild(chips);
-  return wrap;
+  if (model.overall) {
+    const o = model.overall;
+    body.push({
+      class: 'dn-facet-overall',
+      cells: [
+        { text: o.name },
+        { text: fmt(o.scalar), class: 'dn-num' },
+        { text: fmt(o.mean), class: 'dn-num' },
+        { text: count(o), class: 'dn-num dn-faint' },
+      ],
+    });
+  }
+  const table = dataTable({
+    class: 'dn-facet-table',
+    columns: [
+      { label: 'facet' },
+      { label: 'scalar ↓', class: 'dn-num' },
+      { label: 'mean score ↑', class: 'dn-num' },
+      { label: 'scored', class: 'dn-num' },
+    ],
+    rows: body,
+  });
+  // Explain the two columns on the header cells. They are the numbers an
+  // operator is most likely to misread — they run OPPOSITE directions, and
+  // `mean score` is NOT a pass percentage unless every entry is bool. The
+  // hovercard is keyboard-reachable (attachHovercard sets tabindex +
+  // aria-describedby), so the explanation is not mouse-only.
+  const heads = (table.children[0] && table.children[0].children[0])
+    ? table.children[0].children[0].children : [];
+  if (heads[1]) {
+    attachHovercard(heads[1], () => hovercardBody([
+      el('div', { class: 'dn-hc-title', text: 'scalar · lower is better' }),
+      el('p', { text: 'The same loss the promote gate compares, computed over just this slice at this epoch\u2019s frozen weights: the drift term (every judge\u2019s weighted contribution included), the missed outcome, and the namespace terms.' }),
+      el('p', { text: 'Same units as the candidate overall row, so the two can be read against each other. Diagnostic only \u2014 no facet feeds the gate.' }),
+    ]));
+  }
+  if (heads[2]) {
+    attachHovercard(heads[2], () => hovercardBody([
+      el('div', { class: 'dn-hc-title', text: 'mean score · higher is better' }),
+      el('p', { text: 'The average outcome over this slice: an entry\u2019s continuous score when it has one, otherwise 1.0 for a pass and 0.0 for a fail.' }),
+      el('p', { text: 'NOT a pass percentage \u2014 the two coincide only when every entry is plain pass/fail. An entry with no outcome check is left out of the average and shows in \u201cscored\u201d.' }),
+    ]));
+  }
+  return el('div', { class: 'dn-facets' }, [
+    el('div', { class: 'dn-faint dn-facets-head', text: 'facets · this candidate re-scored per board tag · diagnostic, not gated' }),
+    table,
+  ]);
 }
 
 // A small, clearly-marked "racing — settled comparisons appear once boards

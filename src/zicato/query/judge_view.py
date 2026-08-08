@@ -22,7 +22,7 @@ from zicato.query.epoch_view import (
     build_epoch_view,
     build_epochs_summary,
 )
-from zicato.query.eval_view import facet_scores_for_generation
+from zicato.query.eval_view import facet_scores_for_generation, facets_by_entry
 from zicato.query.lineage_view import build_lineage_view
 from zicato.query.paths import (
     WorkspacePaths,
@@ -191,11 +191,16 @@ def build_per_entry_for_generation(
     runtime_ms, wall_clock_budget_exceeded, match_id, rung}]}``.
 
     ``mean_score`` is the generation's cached board-level mean, read off
-    ``gen_score.json``. ``facet_scores`` groups the SAME per-entry outcomes
-    by ``facet:`` board tag — ``{facet: {mean_score, scored_count,
-    entry_count}}``, ``{}`` when the board declares no facet tag (see
-    :func:`zicato.query.eval_view.facet_scores_for_generation`). The
-    candidate dossier reads both from here.
+    ``gen_score.json``.
+
+    ``facet_scores`` is ``{facets: {name: {scalar, mean_score,
+    scored_count, entry_count}}, overall: {...} | None}`` — this candidate
+    re-aggregated over each ``facet:`` board tag at the epoch's frozen
+    weights, so a facet's ``scalar`` is directly comparable to the
+    ``overall`` row beside it (see
+    :func:`zicato.query.eval_view.facet_scores_for_generation`). Empty
+    facets when the board declares no facet tag. The candidate dossier
+    reads both from here.
 
     The tournament id is
     composed via :func:`_tournament_id_for` from the child generation's
@@ -277,6 +282,7 @@ def build_per_entry_for_generation(
             return None, None
         return _opt_score(lj.get("score")), _opt_metrics(lj.get("metrics"))
 
+    entry_facets = facets_by_entry(paths, epoch_id)
     entries = []
     for r in rows:
         match_id = _match_id_of(r)
@@ -310,6 +316,12 @@ def build_per_entry_for_generation(
                 "cached": _row_bool(r, "cached"),
                 "source_epoch": _opt_str(r, "source_epoch"),
                 "source_run": _opt_str(r, "source_run"),
+                # The ``facet:`` slices this entry belongs to (BOARD-FORMAT.md
+                # §1.4), sorted. Carried on the ROW because it is a property of
+                # the entry, not of the run: the per-board drill-down reads it
+                # to name the slices the entry feeds without re-reading the
+                # board. ``[]`` for an untagged entry.
+                "facets": list(entry_facets.get(r["entry_id"], ())),
             }
         )
 
@@ -325,12 +337,12 @@ def build_per_entry_for_generation(
         "generation_id": generation_id,
         "tournament_id": tournament_id,
         "mean_score": gen_mean_score,
-        # This candidate's outcomes grouped by ``facet:`` board tag
-        # (BOARD-FORMAT.md §1.4) — the server-side join the dossier's facet
-        # strip renders. ``{}`` when the board declares no facet tag, so the
-        # payload keeps ONE shape and the strip simply does not paint.
-        # Diagnostic: nothing downstream of this key feeds a decision.
-        "facet_scores": facet_scores_for_generation(paths, epoch_id, entries),
+        # This candidate re-aggregated per ``facet:`` board tag, plus the
+        # same aggregate over every entry as the ``overall`` row to compare
+        # against (BOARD-FORMAT.md §1.4). Computed server-side: DQ1 keeps
+        # the group-by off the client. Empty facets ⇒ the table does not
+        # paint. Diagnostic: nothing downstream of this key feeds a decision.
+        "facet_scores": facet_scores_for_generation(paths, epoch_id, generation_id),
         "entries": entries,
     }
 
