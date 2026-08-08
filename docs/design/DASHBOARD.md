@@ -509,9 +509,11 @@ noise threshold, so the tables must not read as scoreboards:
    column. The emphasised column is as often the worse one.
 2. A slice nobody scored shows an em dash, never `0.00`. Its `scalar` is
    still real: an unscored entry still produced drift.
-3. The count travels with the numbers (`2`, or `0/1` when they differ).
-   A racing rung that ran a board subset can thin a facet to one entry,
-   and a scalar over one entry must not read like one over twenty.
+3. The count travels with the numbers (`2`, or `0/1` when they differ),
+   and its denominator is the entries the BOARD puts in the slice — not
+   the ones that ran. A racing rung that runs a board subset would
+   otherwise render a mostly-unrun slice as fully covered, which is the
+   one thing these counts exist to prevent.
 
 **④ Scalar waterfall.** The scalar is a weighted sum of drift-derived
 components (see [SCORING.md](SCORING.md) — the per-`judge_name`

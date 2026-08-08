@@ -1923,6 +1923,33 @@ def test_per_entry_rows_name_the_facets_the_entry_feeds(tmp_path: Path) -> None:
     assert rows["plain"] == []
 
 
+def test_per_entry_facet_counts_the_tagged_entries_not_the_ones_that_ran(
+    tmp_path: Path,
+) -> None:
+    """A slice sizes itself from the BOARD, so an unrun entry stays visible.
+
+    Sizing by what ran would report a racing rung's partial slice as fully
+    covered — the exact case the counts exist to expose. Three entries carry
+    ``facet:x``; only one ran. The slice must read 1-of-3, not 1-of-1.
+    """
+    ws = tmp_path / ".zicato"
+    ws.mkdir()
+    _build_facet_workspace(
+        ws,
+        [("a", True, 0.5, 0.2)],  # only `a` produced a run
+        {e: ["facet:x"] for e in ("a", "b", "c")},
+    )
+
+    row = _facets(ws)["facets"]["x"]
+
+    assert row["entry_count"] == 3, "the slice is three entries wide on the board"
+    assert row["ran_count"] == 1, "only one of them ran"
+    assert row["scored_count"] == 1
+    # The scalar rests on the one run — `ran_count` is its real denominator:
+    # drift 0.2 + (1 - its 0.50 score).
+    assert row["scalar"] == pytest.approx(0.7)
+
+
 def test_per_entry_facet_scalar_is_comparable_to_the_candidate_overall(tmp_path: Path) -> None:
     """Each facet reports the SAME quantities as the candidate's own aggregate.
 
@@ -2059,7 +2086,10 @@ def test_per_entry_facet_survives_a_torn_run_file(tmp_path: Path) -> None:
 
     row = _facets(ws)["facets"]["x"]
 
-    assert row["entry_count"] == 1
+    # Both entries are tagged, so the slice is still two wide — the torn one
+    # simply did not contribute a profile.
+    assert row["entry_count"] == 2
+    assert row["ran_count"] == 1
     assert row["mean_score"] == pytest.approx(0.60)
 
 

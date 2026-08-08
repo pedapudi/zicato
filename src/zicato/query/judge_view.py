@@ -342,7 +342,7 @@ def build_per_entry_for_generation(
         # against (BOARD-FORMAT.md §1.4). Computed server-side: DQ1 keeps
         # the group-by off the client. Empty facets ⇒ the table does not
         # paint. Diagnostic: nothing downstream of this key feeds a decision.
-        "facet_scores": facet_scores_for_generation(paths, epoch_id, generation_id),
+        "facet_scores": facet_scores_for_generation(paths, epoch_id, generation_id, entry_facets),
         "entries": entries,
     }
 

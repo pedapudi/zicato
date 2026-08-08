@@ -1390,7 +1390,8 @@ def _epoch_scoring_weights(paths: WorkspacePaths, epoch_id: str) -> Any:
     own scalar was, or the two are not comparable — which is the whole
     point of reporting them side by side. A missing / malformed
     ``scoring.json`` degrades to the dataclass defaults rather than
-    raising, and the payload says so via ``weights_source``.
+    raising — the facet numbers stay readable, they are simply computed at
+    the defaults rather than the epoch's own weights.
     """
     from zicato.core import ScoringWeights  # noqa: PLC0415
     from zicato.workspace_loader import scoring_weights_from_dict  # noqa: PLC0415
@@ -1405,7 +1406,10 @@ def _epoch_scoring_weights(paths: WorkspacePaths, epoch_id: str) -> Any:
 
 
 def facet_scores_for_generation(
-    paths: WorkspacePaths, epoch_id: str, generation_id: str
+    paths: WorkspacePaths,
+    epoch_id: str,
+    generation_id: str,
+    facets_by_entry_map: dict[str, tuple[str, ...]] | None = None,
 ) -> dict[str, Any]:
     """Per-``facet:`` aggregates for one candidate, on the SAME terms as its own.
 
@@ -1440,6 +1444,10 @@ def facet_scores_for_generation(
     threshold; making one drive a decision means first measuring that
     decision's error rates (04-evaluation-statistics.md §3.2).
 
+    ``facets_by_entry_map`` is an optional prebuilt
+    ``{entry_id: (facet, ...)}`` — pass it when the caller already read the
+    board, so one request does not walk ``board.jsonl`` twice.
+
     Best-effort (DQ3): an unreadable board or absent run files yield
     ``{"facets": {}, "overall": None}`` and the dossier's facet table simply
     does not paint.
@@ -1447,7 +1455,10 @@ def facet_scores_for_generation(
     from zicato.tournament.scoring import aggregate_generation_score  # noqa: PLC0415
 
     empty: dict[str, Any] = {"facets": {}, "overall": None}
-    facets_by_entry_map = facets_by_entry(paths, epoch_id)
+    # The caller may already hold the map (the dossier feed stamps each entry
+    # row with its facets), so accept it and skip a second board read.
+    if facets_by_entry_map is None:
+        facets_by_entry_map = facets_by_entry(paths, epoch_id)
     if not facets_by_entry_map:
         return empty
     losses = _generation_loss_profiles(paths, epoch_id, generation_id)
@@ -1455,7 +1466,15 @@ def facet_scores_for_generation(
         return empty
     weights = _epoch_scoring_weights(paths, epoch_id)
 
-    def _block(subset: list[Any]) -> dict[str, Any] | None:
+    def _block(subset: list[Any], tagged: int) -> dict[str, Any] | None:
+        """One aggregate block. ``tagged`` is the slice's size ON THE BOARD.
+
+        ``tagged`` is passed in rather than derived from ``subset`` because a
+        tagged entry that never RAN is absent from ``subset`` entirely. Sizing
+        the slice by what ran would report a slice as fully covered while
+        hiding the entries missing from it — which is the one thing these
+        counts exist to expose (a racing rung runs a board subset).
+        """
         if not subset:
             return None
         try:
@@ -1464,14 +1483,20 @@ def facet_scores_for_generation(
             return None
         scored = int(agg.get("expectation_count") or 0)
         return {
-            "scalar": _opt_score_val(agg.get("scalar")),
+            # The scalar is a LOSS and unbounded above, so it goes through the
+            # plain finite-float guard — NOT ``_opt_score_val``, whose contract
+            # is a score in ``[0, 1]``.
+            "scalar": coerce_float(agg.get("scalar")),
             # ``mean_score`` reports 1.0 by convention when NOTHING was
             # scored (so the (1 - mean) term contributes zero). That is the
             # right default for the scalar and the wrong one to display, so
             # the honest ``None`` replaces it here.
             "mean_score": _opt_score_val(agg.get("mean_score")) if scored else None,
             "scored_count": scored,
-            "entry_count": len(subset),
+            # Entries the board puts in this slice — including any that did
+            # not run. ``ran_count`` is how many of them produced a profile.
+            "entry_count": tagged,
+            "ran_count": len(subset),
         }
 
     by_facet: dict[str, list[Any]] = {}
@@ -1479,11 +1504,19 @@ def facet_scores_for_generation(
         for name in facets_by_entry_map.get(getattr(loss, "entry_id", ""), ()):
             by_facet.setdefault(name, []).append(loss)
 
+    # The slice sizes come from the BOARD, so a facet whose entries all ran is
+    # indistinguishable from one whose entries mostly did not only when it
+    # genuinely is.
+    tagged_count: dict[str, int] = {}
+    for names in facets_by_entry_map.values():
+        for name in names:
+            tagged_count[name] = tagged_count.get(name, 0) + 1
+
     facets: dict[str, Any] = {}
     for name in sorted(by_facet):
-        block = _block(by_facet[name])
+        block = _block(by_facet[name], tagged_count.get(name, len(by_facet[name])))
         if block is not None:
             facets[name] = block
     if not facets:
         return empty
-    return {"facets": facets, "overall": _block(losses)}
+    return {"facets": facets, "overall": _block(losses, len(losses))}

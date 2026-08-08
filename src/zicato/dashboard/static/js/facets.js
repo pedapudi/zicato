@@ -43,12 +43,19 @@ export function facetNum(value) {
   return svg.isNum(value) ? svg.fmt(value, 2) : '—';
 }
 
-// `scored/total`, collapsed to `scored` when they agree. A facet is a SLICE of
-// the board, so a racing rung that ran a board subset can thin one to a single
-// entry — the denominator is what makes that visible.
-export function facetCount(scored, total) {
+// `scored/tagged`, collapsed to one number only when EVERY tagged entry ran
+// and was scored. A facet is a SLICE of the board, so a racing rung that runs
+// a board subset can leave most of a slice unrun — and the denominator is the
+// only thing that shows it. Sizing by what ran would render such a slice as
+// "3", indistinguishable from a slice that is genuinely complete.
+//
+// The cell shows scored-vs-tagged only. The payload also carries `ran_count`
+// (how many tagged entries produced a profile, and therefore the scalar's own
+// denominator), but a third number in a narrow column buys less than it costs;
+// the scalar hovercard names it instead.
+export function facetCount(scored, tagged) {
   const s = Number.isInteger(scored) ? scored : 0;
-  const t = Number.isInteger(total) ? total : 0;
+  const t = Number.isInteger(tagged) ? tagged : 0;
   return s === t ? String(s) : `${s}/${t}`;
 }
 
@@ -57,7 +64,7 @@ export function scalarHovercard() {
   return hovercardBody([
     el('div', { class: 'dn-hc-title', text: 'scalar · lower is better' }),
     el('p', { text: 'The same loss the promote gate compares, computed over just this slice at this epoch’s frozen weights: the drift term (every judge’s weighted contribution included), the missed outcome, and the namespace terms.' }),
-    el('p', { text: 'Same units as the candidate’s own scalar, so a slice reads directly against it. Diagnostic only — no facet feeds the gate.' }),
+    el('p', { text: 'Computed over the tagged entries that RAN, so a slice whose entries were mostly skipped rests on fewer runs than “scored” suggests. Same units as the candidate’s own scalar, so a slice reads directly against it. Diagnostic only — no facet feeds the gate.' }),
   ]);
 }
 

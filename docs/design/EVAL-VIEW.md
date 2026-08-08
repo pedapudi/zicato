@@ -344,7 +344,9 @@ dossier's table (one candidate × every facet) and the per-board page's
 `static/js/facets.js` and differ only in orientation.
 
 Returns `{facets: {name: {scalar, mean_score, scored_count,
-entry_count}}, overall: {...} | None}`. Each block is
+entry_count, ran_count}}, overall: {...} | None}`. `entry_count` sizes the
+slice from the BOARD and `ran_count` is how many of those produced a
+profile — the scalar's own denominator. Each block is
 `tournament.scoring.aggregate_generation_score` run over just that
 slice's loss profiles at the epoch's FROZEN weights, so a facet's
 `scalar` is the same quantity, in the same units and direction, as the

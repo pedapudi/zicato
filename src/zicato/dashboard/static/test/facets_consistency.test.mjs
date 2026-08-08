@@ -27,6 +27,10 @@ test('facets: the count collapses only when the slice was fully scored', () => {
   assertEqual(facets.facetCount(2, 2), '2', 'a full slice hides the denominator');
   assertEqual(facets.facetCount(0, 1), '0/1', 'nothing scored exposes it');
   assertEqual(facets.facetCount(1, 4), '1/4', 'a partial slice exposes it');
+  // The denominator is the count of TAGGED entries, so a slice whose entries
+  // were mostly never run still reads as partial. Sizing by what ran would
+  // render this '1' — indistinguishable from a genuinely complete slice.
+  assertEqual(facets.facetCount(1, 3), '1/3', 'unrun tagged entries stay visible');
 });
 
 test('facets: both column labels carry their direction', () => {

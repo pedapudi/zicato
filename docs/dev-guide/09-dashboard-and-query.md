@@ -724,7 +724,7 @@ chapter leans on:
 | `build_round_pipeline` | `/api/live/pipeline` | `{running, stale, phase, steps[], active_step, decision, in_flight}` | every input degrades independently (§9.11) |
 | `build_racing_field` | `/api/epoch/{id}/racing-field` | `{present, structure, rounds[], standings, champion_lineage}` | `{present: false}` (§9.2.5) |
 | `build_round_timeline` | `/api/epoch/{id}/round-timeline` | `{rounds[], waterfall[]}` | empty rounds list |
-| `build_per_entry_for_generation` | `/api/generation/{e}/{g}/per-entry` | `{tournament_id, mean_score, facet_scores, entries[]}`; `facet_scores` is `{facets: {name: {scalar, mean_score, scored_count, entry_count}}, overall}` — the candidate re-aggregated per `facet:` board tag at the epoch's frozen weights, so a facet scalar is comparable to the `overall` row | `{facets: {}, overall: null}` (always present) |
+| `build_per_entry_for_generation` | `/api/generation/{e}/{g}/per-entry` | `{tournament_id, mean_score, facet_scores, entries[]}`; `facet_scores` is `{facets: {name: {scalar, mean_score, scored_count, entry_count, ran_count}}, overall}` — the candidate re-aggregated per `facet:` board tag at the epoch's frozen weights, so a facet scalar is comparable to the `overall` row | `{facets: {}, overall: null}` (always present) |
 | `build_snapshot` | `/api/state`, SSE `snapshot` | see above | each field independently `None` |
 | `read_active_runs_view` | `/api/active-runs` | `[{run_id, progress, elapsed_seconds, budget_seconds, …}]` | `[]` |
 | `list_reflections` (`query/reflection_view.py`) | `/api/reflections[?epoch=]` | `{reflections:[{reflection_id, epoch_id, created_at, mode, executed, noise_floor_max_abs_delta, decision_flip_p, n_findings, n_judges}]}` | `{reflections: []}` |
