@@ -21,9 +21,22 @@ from zicato.storage._atomic import (
     read_json,
 )
 
+#: ``F_GETPATH`` — the Darwin fcntl that fills a buffer with an open fd's
+#: path. Only macOS builds of CPython define ``fcntl.F_GETPATH``, so the
+#: literal is the fallback for a build that omits it; ``50`` is the value
+#: from Darwin's ``sys/fcntl.h`` and has been stable across releases.
+_F_GETPATH = 50
+#: ``MAXPATHLEN`` on Darwin — the buffer ``F_GETPATH`` writes into.
+_MAXPATHLEN = 1024
+
 
 def _fd_path(fd: int) -> Path:
-    """Best-effort path for an open fd, used only by fsync spy tests."""
+    """Best-effort path for an open fd, used only by fsync spy tests.
+
+    Linux resolves it through ``/proc``; macOS has no ``/proc``, so the
+    Darwin branch asks the kernel directly. The branch is unreachable on
+    the CI platform, which is why it is kept to one syscall.
+    """
     proc_path = Path(f"/proc/self/fd/{fd}")
     if proc_path.exists():
         return Path(os.readlink(proc_path))
@@ -31,7 +44,9 @@ def _fd_path(fd: int) -> Path:
     if hasattr(os, "uname") and os.uname().sysname == "Darwin":
         import fcntl
 
-        raw = fcntl.fcntl(fd, 50, bytes(1024))
+        raw = fcntl.fcntl(fd, getattr(fcntl, "F_GETPATH", _F_GETPATH), bytes(_MAXPATHLEN))
+        # The kernel writes a NUL-terminated path into the buffer and hands
+        # back the whole buffer, trailing padding included.
         path = raw.split(b"\0", 1)[0].decode()
         if path:
             return Path(path)
