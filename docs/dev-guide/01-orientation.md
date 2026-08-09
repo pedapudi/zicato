@@ -14,21 +14,30 @@ wins — file an erratum, do not guess.
 
 ## 1. What zicato is
 
-zicato wraps a multi-agent system you already have — a coordinator plus
-specialists, a deep sub-agent tree, a single LLM (Large Language Model)
-agent, any shape — and turns it into the **inner harness** of a learning
-loop. It runs that harness against a **board** of tasks, watches what goes
-wrong via structured runtime telemetry, and rewrites the harness so the
-next **generation** goes less wrong. The loop is evolutionary: propose a
-small structured edit, run a scored **tournament** between the incumbent
-(champion) and the edited copy (challenger), and promote the challenger
-only when it beats a statistical gate.
+zicato wraps a system you already have and turns it into the **inner
+harness** of a learning loop. It runs that harness against a **board** of
+tasks, watches what goes wrong via structured runtime telemetry, and
+rewrites the harness so the next **generation** goes less wrong. The loop
+is evolutionary: propose a small structured edit, run a scored
+**tournament** between the incumbent (champion) and the edited copy
+(challenger), and promote the challenger only when it beats a statistical
+gate.
+
+Multi-agent systems are the founding and primary use case — a coordinator
+plus specialists, a deep sub-agent tree, a single LLM (Large Language
+Model) agent, any shape — and the only shipped concrete adapter targets
+Google ADK. The loop itself is not agent-specific: it needs an entrypoint
+it can drive, one or more mutable source trees, and a board that scores
+each run. When you are changing zicato's code, assume the target is
+"some tree of files with an evaluation contract"; an agent tree is one
+instance of that, not the definition.
 
 The one-paragraph version, verbatim from the repo's own agent guide:
 
-> zicato wraps an inner multi-agent harness in an **evolve loop**: it
-> proposes a small structured edit to the harness (an agent instruction,
-> a tool description, a planner template, a role scope), runs a scored
+> zicato wraps an inner harness in an **evolve loop**: it proposes a
+> small structured edit to the harness (for the primary agent use case:
+> an agent instruction, a tool description, a planner template, a role
+> scope — in general, any annotated mutation point), runs a scored
 > **tournament** between the parent (champion) and the child (challenger)
 > across a **board** of tasks, derives a scalar **loss** from runtime
 > drift telemetry plus per-task pass/fail predicates, and promotes the
