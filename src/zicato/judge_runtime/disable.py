@@ -81,11 +81,8 @@ def kind_to_wire_string(kind: Any) -> str:
     (idempotent); a stray ``"DriftKind.TOOL_ERROR"`` repr is normalised
     to its last dotted segment, lowercased.
 
-    Public because the epoch contract canonicalizer
-    (:func:`zicato.epoch.contract._canon_board_meta`) must reduce a
-    board's ``disable_drift`` to exactly the same wire form this module
-    dispatches on — the hash and the runtime have to agree on what "the
-    same set of disabled kinds" means.
+    Public so the epoch contract canonicalizer reduces a board's
+    ``disable_drift`` to the same wire form this module dispatches on.
     """
     text = str(kind).strip()
     if "." in text:
