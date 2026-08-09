@@ -61,6 +61,18 @@ meaning — they are masked to fixed sentinels before diffing (`lib/normalize.py
 - random uuid patch ids (`uuid4().hex`) → `<HEX32>`
 - the per-run tmp workspace root (absolute path) → `<TMP>`
 
+REINDEX-DUMP normalizes one more thing, in `lib/test_reindex_golden.py`:
+the *spelling* of REAL literals. SQLite renders REAL columns to text with
+its own float formatter, and 3.41 switched that formatter to the shortest
+round-trippable form — so one stored double prints as
+`-3.999999999999999111e-01` against an older library and
+`-0.39999999999999991` against a newer one. Pinning either spelling makes
+the golden hostage to whichever SQLite happened to capture it, so every
+REAL is re-spelled through Python's shortest round-trip `repr` before
+diffing. Only unquoted stretches are touched: numbers inside a string
+literal are payload zicato serialized itself, and integers are left alone
+so an INTEGER column that starts rendering as a float still moves the gate.
+
 Everything else — every scalar, loss, component, decision, structural id,
 and serialization detail — is compared verbatim.
 
