@@ -152,6 +152,16 @@ Pareto admission, and nothing about it is persisted.
 names the slice `data_quality`, while `my_facet:x`, `FACET:x`, and a bare
 `facet:` are all ordinary labels.
 
+The two reserved tags COMPOSE, and `holdout` wins. An entry tagged both
+`holdout` and `facet:x` is held out, so it feeds no facet number: facets
+are computed over the TRAIN slice only, which is the slice the gate's own
+scalar is computed over (OVERFITTING.md §3). Two reasons, and either
+alone would settle it — a facet has to be readable against the
+candidate's headline number, which is a train-slice number; and a
+dashboard that broke the holdout out by facet on every page load would be
+an ungoverned query against the slice that exists to stay un-mined. A
+facet whose entries are ALL held out therefore reports nothing.
+
 What the facet surfaces render is in [DASHBOARD.md](DASHBOARD.md) §4;
 what the reader returns is in [EVAL-VIEW.md](EVAL-VIEW.md) §3.4.
 

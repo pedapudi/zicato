@@ -1427,17 +1427,51 @@ def facet_scores_for_generation(
     comparability is the point — a facet scalar can be read directly against
     the ``overall`` row, which is the same aggregate over every entry.
 
+    THE TRAIN SLICE, not the whole board. The number the gate compares and
+    the number ``gen_score.json`` caches are BOTH the train-slice aggregate
+    (:func:`zicato.tournament.governance._train_aggs`), because the holdout
+    is confirm-only and default-on: a board of six or more entries hands
+    ~30% of itself to the holdout with no tag in sight. Aggregating the
+    whole board here would put a second, larger "candidate scalar" on the
+    same screen as the gate's — measurably different, identically labelled.
+    So holdout entries are excluded from every block, and ``overall`` is
+    exactly the candidate's own headline number. A facet is then that
+    number restricted to a slice, which is the only reading that makes the
+    side-by-side comparison mean anything.
+
+    The exclusion is also what keeps this screen out of the holdout. The
+    holdout is meant to stay un-mined, and the Ladder governs how often the
+    loop may query it (OVERFITTING.md §4); a dossier that broke the holdout
+    out by facet on every page load would be an ungoverned query against it,
+    read by the operator who steers the next proposal.
+
+    Two consequences worth naming. A facet whose train entries all failed to
+    run keeps its row, with null numbers and ``ran_count`` zero — dropping it
+    would make an unrun slice indistinguishable from an untagged one, the
+    exact collapse this payload exists to prevent. A facet whose entries are
+    ALL in the holdout has no scored slice at all and reports no row; it has
+    nothing to say about the number the gate compares.
+
     ``mean_score`` is the outcome axis (higher is better, ``[0, 1]``), the
     same field the generation's own aggregate carries. ``None`` when nothing
     in the slice produced an outcome — an absent measurement, never a
     fabricated ``0.0`` (EVAL-VIEW.md §3 DQ2).
 
-    ``scored_count`` is ``mean_score``'s denominator and ``entry_count`` the
-    slice's size. Both travel because a facet is a SLICE: a racing rung that
-    ran a board subset can thin one to a single entry, and a scalar over one
-    entry must not read like a scalar over twenty. The weights were
-    calibrated board-wide, so a thin facet's scalar is noisy — the counts are
-    what make that visible.
+    ``scored_count`` is ``mean_score``'s denominator, ``ran_count`` the
+    scalar's, and ``entry_count`` the slice's size on the board. All three
+    travel because a facet is a SLICE: a racing rung that ran a board subset
+    can thin one to a single entry, and a scalar over one entry must not
+    read like a scalar over twenty. The weights were calibrated board-wide,
+    so a thin facet's scalar is noisy — the counts are what make that
+    visible.
+
+    NOT threaded: the opt-in ``diff_complexity`` term, which the gate folds
+    into the CHALLENGER's aggregate only (from its diff size). At the
+    default weight of ``0.0`` the term is absent from both and nothing
+    differs; under a non-zero weight a facet scalar omits a per-candidate
+    constant that the headline scalar carries. Per-slice parsimony is not a
+    defined quantity — a diff is not attributable to a board tag — so the
+    term is left out rather than invented.
 
     DIAGNOSTIC ONLY. Nothing here feeds the scalar the gate reads, the gate
     itself, scheduling, or Pareto admission. A facet number carries no noise
@@ -1466,7 +1500,27 @@ def facet_scores_for_generation(
         return empty
     weights = _epoch_scoring_weights(paths, epoch_id)
 
-    def _block(subset: list[Any], tagged: int) -> dict[str, Any] | None:
+    # The gate's split, read the way every other eval_view surface reads it,
+    # so a facet row and the per-entry `slice` badge beside it can never
+    # disagree about which entries are held out.
+    board_entries = _load_board_entries(paths, epoch_id)
+    holdout = _holdout_ids(paths, epoch_id, board_entries)
+    board_ids = {e.id for e in board_entries}
+
+    def _is_train(entry_id: str) -> bool:
+        """Does this entry feed the scored (train) slice?
+
+        An id the board load did not yield is treated as train: the loader
+        VALIDATES, so it blanks on one stale row, and a blank board must not
+        silently reclassify the whole workspace as held out.
+        """
+        return entry_id not in holdout
+
+    losses = [loss for loss in losses if _is_train(str(getattr(loss, "entry_id", "")))]
+    if not losses:
+        return empty
+
+    def _block(subset: list[Any], tagged: int) -> dict[str, Any]:
         """One aggregate block. ``tagged`` is the slice's size ON THE BOARD.
 
         ``tagged`` is passed in rather than derived from ``subset`` because a
@@ -1474,19 +1528,25 @@ def facet_scores_for_generation(
         the slice by what ran would report a slice as fully covered while
         hiding the entries missing from it — which is the one thing these
         counts exist to expose (a racing rung runs a board subset).
+
+        An EMPTY subset still returns a block, with null numbers and
+        ``ran_count`` zero. A slice can empty out legitimately (its entries
+        all landed in the holdout, or none of them ran) and dropping the row
+        would make that indistinguishable from a facet nobody ever tagged —
+        the collapse this whole payload exists to prevent.
         """
-        if not subset:
-            return None
-        try:
-            agg = aggregate_generation_score(subset, weights)
-        except Exception:  # noqa: BLE001 — best-effort; a bad slice drops out
-            return None
+        agg: dict[str, Any] = {}
+        if subset:
+            try:
+                agg = aggregate_generation_score(subset, weights)
+            except Exception:  # noqa: BLE001 — best-effort; a bad slice reads null
+                agg = {}
         scored = int(agg.get("expectation_count") or 0)
         return {
             # The scalar is a LOSS and unbounded above, so it goes through the
             # plain finite-float guard — NOT ``_opt_score_val``, whose contract
             # is a score in ``[0, 1]``.
-            "scalar": coerce_float(agg.get("scalar")),
+            "scalar": coerce_float(agg.get("scalar")) if agg else None,
             # ``mean_score`` reports 1.0 by convention when NOTHING was
             # scored (so the (1 - mean) term contributes zero). That is the
             # right default for the scalar and the wrong one to display, so
@@ -1494,7 +1554,8 @@ def facet_scores_for_generation(
             "mean_score": _opt_score_val(agg.get("mean_score")) if scored else None,
             "scored_count": scored,
             # Entries the board puts in this slice — including any that did
-            # not run. ``ran_count`` is how many of them produced a profile.
+            # not run. ``ran_count`` is how many of them produced a profile,
+            # and is the scalar's own denominator.
             "entry_count": tagged,
             "ran_count": len(subset),
         }
@@ -1504,19 +1565,27 @@ def facet_scores_for_generation(
         for name in facets_by_entry_map.get(getattr(loss, "entry_id", ""), ()):
             by_facet.setdefault(name, []).append(loss)
 
-    # The slice sizes come from the BOARD, so a facet whose entries all ran is
-    # indistinguishable from one whose entries mostly did not only when it
-    # genuinely is.
+    # The slice sizes come from the BOARD, minus the holdout — the same
+    # entries the aggregate above is allowed to see. So a facet whose entries
+    # all ran is indistinguishable from one whose entries mostly did not only
+    # when it genuinely is.
     tagged_count: dict[str, int] = {}
-    for names in facets_by_entry_map.values():
+    for entry_id, names in facets_by_entry_map.items():
+        if not _is_train(entry_id):
+            continue
         for name in names:
             tagged_count[name] = tagged_count.get(name, 0) + 1
 
-    facets: dict[str, Any] = {}
-    for name in sorted(by_facet):
-        block = _block(by_facet[name], tagged_count.get(name, len(by_facet[name])))
-        if block is not None:
-            facets[name] = block
+    # Every facet the board declares gets a row, including one whose train
+    # slice is empty — `by_facet` alone would omit exactly the slices whose
+    # absence is the finding.
+    declared = sorted(set(by_facet) | set(tagged_count))
+    facets = {name: _block(by_facet.get(name, []), tagged_count.get(name, 0)) for name in declared}
     if not facets:
         return empty
-    return {"facets": facets, "overall": _block(losses, len(losses))}
+    # ``overall`` is the candidate's own aggregate — the row every facet is
+    # read against — so it is sized by the whole TRAIN slice of the board,
+    # not by what happened to run. A `3/3` overall above a `1/4` facet would
+    # claim a complete board while the slices beneath it say otherwise.
+    train_size = len([eid for eid in board_ids if _is_train(eid)]) or len(losses)
+    return {"facets": facets, "overall": _block(losses, train_size)}

@@ -2093,6 +2093,157 @@ def test_per_entry_facet_survives_a_torn_run_file(tmp_path: Path) -> None:
     assert row["mean_score"] == pytest.approx(0.60)
 
 
+def test_per_entry_facet_overall_is_the_gates_own_number(tmp_path: Path) -> None:
+    """``overall`` IS the candidate's headline scalar, holdout excluded.
+
+    The number the gate compares — and the one ``gen_score.json`` caches —
+    is the TRAIN-slice aggregate (``governance._train_aggs``). The holdout
+    is default-on and needs no tag: a board of six or more entries hands
+    ~30% of itself over by hash alone. Aggregating the whole board would put
+    a second, larger "candidate scalar" on the same screen as the gate's,
+    identically labelled, and a facet covering the whole board would not
+    report the headline number it is supposed to equal.
+
+    So this pins the payload against an INDEPENDENT computation of the
+    gate's own slice rather than against a hand-derived constant.
+    """
+    from zicato.board.jsonl import load_board
+    from zicato.board.split import rotation_seed, split_board
+    from zicato.core import ScoringWeights
+    from zicato.telemetry.reducer import loss_profile_from_dict
+    from zicato.tournament.scoring import aggregate_generation_score
+
+    ws = tmp_path / ".zicato"
+    ws.mkdir()
+    # Ten entries, no `holdout` tag anywhere — the hash-derived split fires
+    # on its own. One entry is a deliberate outlier so landing it in or out
+    # of the slice moves the numbers far past any rounding.
+    ids = [f"e{i}" for i in range(10)]
+    runs = [(e, e != "e4", 0.0 if e == "e4" else 0.9, 5.0 if e == "e4" else 0.1) for e in ids]
+    _build_facet_workspace(ws, runs, {e: ["facet:everything"] for e in ids})
+
+    epoch_id = "2026-05-16_e0"
+    weights = ScoringWeights(drift_weight=1.0, pass_weight=1.0)
+    board = load_board(ws / "epochs" / epoch_id / "board.jsonl")
+    train_ids, holdout_ids = split_board(
+        board, weights.overfitting, seed=rotation_seed(weights.overfitting, epoch_id)
+    )
+    assert holdout_ids, "the default split must hold something out, or this proves nothing"
+    profiles = {
+        entry_id: loss_profile_from_dict(
+            json.loads(
+                (
+                    ws
+                    / "epochs"
+                    / epoch_id
+                    / "generations"
+                    / "v1"
+                    / "runs"
+                    / entry_id
+                    / "loss.json"
+                ).read_text()
+            )
+        )
+        for entry_id in ids
+    }
+    train_agg = aggregate_generation_score([profiles[i] for i in train_ids], weights)
+    whole_board_agg = aggregate_generation_score([profiles[i] for i in ids], weights)
+    assert train_agg["scalar"] != pytest.approx(
+        whole_board_agg["scalar"]
+    ), "the fixture must make the two slices differ, or the assertion below is vacuous"
+
+    fs = _facets(ws)
+
+    assert fs["overall"]["scalar"] == pytest.approx(train_agg["scalar"])
+    assert fs["overall"]["mean_score"] == pytest.approx(train_agg["mean_score"])
+    # A facet covering the WHOLE board reports exactly the headline number —
+    # the property that makes a facet scalar readable against `overall`.
+    assert fs["facets"]["everything"]["scalar"] == pytest.approx(train_agg["scalar"])
+    # ... and the counts say the slice is the train slice, not the board.
+    assert fs["overall"]["entry_count"] == len(train_ids)
+    assert fs["facets"]["everything"]["entry_count"] == len(train_ids)
+
+
+def test_per_entry_facet_excludes_an_explicitly_held_out_entry(tmp_path: Path) -> None:
+    """An entry tagged ``holdout`` feeds no facet, however it is also tagged.
+
+    A hand-declared holdout wins the split outright, so this is the
+    deterministic form of the rule above: `facet:x` covers two entries, one
+    of them held out, and the facet reports the one that the gate scores.
+    """
+    ws = tmp_path / ".zicato"
+    ws.mkdir()
+    _build_facet_workspace(
+        ws,
+        [("scored", True, 0.60, 0.2), ("held", False, 0.0, 9.0)],
+        {"scored": ["facet:x"], "held": ["facet:x", "holdout"]},
+    )
+
+    row = _facets(ws)["facets"]["x"]
+
+    # Only `scored` counts: drift 0.2 + (1 - 0.60). The held-out entry's
+    # drift of 9.0 would be impossible to miss had it been folded in.
+    assert row["scalar"] == pytest.approx(0.60)
+    assert row["entry_count"] == 1, "the slice is one entry wide once the holdout is removed"
+    assert row["ran_count"] == 1
+    assert row["scored_count"] == 1
+
+
+def test_per_entry_facet_with_no_runs_keeps_its_row(tmp_path: Path) -> None:
+    """A facet whose entries never ran stays VISIBLE, with null numbers.
+
+    Dropping the row would make an unrun slice indistinguishable from one
+    nobody tagged — the same collapse that sizing a slice by what ran
+    produces, one step further along. The operator tagged three entries;
+    the payload has to say that none of them reported.
+    """
+    ws = tmp_path / ".zicato"
+    ws.mkdir()
+    _build_facet_workspace(
+        ws,
+        [("ran", True, 0.5, 0.2)],  # only `ran` produced a profile
+        {
+            "ran": ["facet:covered"],
+            "skipped_a": ["facet:missing"],
+            "skipped_b": ["facet:missing"],
+            "skipped_c": ["facet:missing"],
+        },
+    )
+
+    fs = _facets(ws)
+
+    assert set(fs["facets"]) == {"covered", "missing"}, "the unrun slice is still named"
+    missing = fs["facets"]["missing"]
+    assert missing["scalar"] is None, "no runs, no scalar — never a fabricated 0.0"
+    assert missing["mean_score"] is None
+    assert missing["ran_count"] == 0
+    assert missing["scored_count"] == 0
+    assert missing["entry_count"] == 3, "the board still puts three entries in the slice"
+
+
+def test_per_entry_facet_overall_is_sized_by_the_board_not_by_what_ran(tmp_path: Path) -> None:
+    """The ``overall`` row carries the board's denominator, like every facet.
+
+    Sizing `overall` by the profiles that happened to load would print a
+    complete-looking `2/2` above a facet reading `1/4` — the candidate row
+    claiming full coverage while the slices beneath it say otherwise.
+    """
+    ws = tmp_path / ".zicato"
+    ws.mkdir()
+    _build_facet_workspace(
+        ws,
+        [("a", True, 0.5, 0.2), ("b", True, 0.5, 0.2)],  # two of five ran
+        {e: ["facet:x"] for e in ("a", "b", "c", "d", "e")},
+    )
+
+    fs = _facets(ws)
+
+    assert fs["overall"]["entry_count"] == 5, "five entries on the board"
+    assert fs["overall"]["ran_count"] == 2, "two of them reported"
+    assert fs["facets"]["x"]["entry_count"] == 5
+    assert fs["facets"]["x"]["ran_count"] == 2
+
+
 def test_matchup_grid_endpoint(client: TestClient, workspace: Path) -> None:
     """The ``/api/matchup-grid/{epoch}/{champion}/{challenger}`` route
     serves the persisted-loss-file grid as JSON."""

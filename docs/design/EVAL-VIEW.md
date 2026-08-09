@@ -355,6 +355,24 @@ belongs in this module because a facet is this module's own transpose:
 rows are board entries grouped by the operator's ontology, the column is
 one candidate.
 
+**The TRAIN slice, not the whole board.** The scalar the gate compares —
+and the one `gen_score.json` caches — is `governance._train_aggs`, so
+holdout entries are excluded from every block here and `overall` IS the
+candidate's headline number. Aggregating the whole board would put a
+second, larger "candidate scalar" beside the gate's, identically
+labelled; it would also make every dossier load an ungoverned holdout
+query (OVERFITTING.md §4). The split is read through the module's own
+`_holdout_ids`, so this reader and the per-entry `slice` badge can never
+disagree about which entries are held out. A facet whose train slice is
+empty because nothing RAN keeps its row with null numbers; one whose
+entries are all HELD OUT reports no row.
+
+Not threaded: the opt-in `diff_complexity` term, which the gate folds
+into the challenger's aggregate from its diff size. At the default weight
+of `0.0` nothing differs; under a non-zero weight a facet scalar omits a
+per-candidate constant the headline scalar carries, because a diff is not
+attributable to a board tag.
+
 Reads the persisted `loss.json` files rather than the index (the files
 are canonical, so a completed generation is readable with no index) and
 the epoch's `scoring.json`. Per DQ3, an unreadable board, absent run
