@@ -12,11 +12,37 @@ this file.
 
 ## 1. What zicato is and why
 
-zicato is a **meta-harness** for multi-agent systems. It takes a
-multi-agent system you have already built — a coordinator with
-specialists, a deep `sub_agents` tree, a single planning agent, an
-arbitrary callable that fronts a model — and turns it into the *inner
-harness* of a learning loop.
+zicato is a **meta-harness** for any system whose behaviour you can
+measure. It takes a system you have already built, declares part of its
+source tree mutable, and turns it into the *inner harness* of a learning
+loop.
+
+Multi-agent systems are the founding and primary use case — a coordinator
+with specialists, a deep `sub_agents` tree, a single planning agent, an
+arbitrary callable that fronts a model — and the only concrete adapter
+shipped so far targets Google ADK. But the definition is not agent-shaped.
+What the loop actually requires is:
+
+* an **entrypoint** the runner can drive to produce an output;
+* one or more **mutable trees** — source roots the proposer may edit,
+  which need not contain the entrypoint;
+* a **board** of tasks carrying typed expectations, so each run yields a
+  score.
+
+Any Python-file-based system that fits that shape can be evolved. The
+mutation surface is declared with in-source comment markers, not derived
+from agent structure, so nothing in the patch path inspects agent classes
+or role graphs — the enforced adapter contract is literally
+`("mutable_subpaths", "load", "mutation_points")`, and a `RunResult`
+carries strings.
+
+The in-tree proof is `examples/zicato_examples/target_0_convergence`: a
+`DeterministicPolicyAdapter`, registered through `adapter.kind = "import"`,
+whose mutable surface is a module-level string constant and whose
+docstring notes there is **no LLM anywhere**. The full loop — propose,
+apply, worker, reduce, gate — runs against it under CI. Target 2 is the
+other end of the range: goldfive itself, a library, mutated with the
+entrypoint outside every mutable tree.
 
 Across many runs of that inner harness, zicato:
 
@@ -44,6 +70,43 @@ generations within an epoch are directly comparable. Cross-epoch
 comparison is fuzzy by design (the contract changed; the goalposts
 moved).
 
+### How much of this requires goldfive
+
+goldfive is a **hard install dependency**, not an optional extra: zicato's
+core board types reference its drift taxonomy at module scope
+(`DriftSeverity` in `src/zicato/core/board.py`), so `import zicato.core`
+fails outright without it.
+
+What that does *not* imply is that your target must be a goldfive
+application. The adapter protocol is deliberately framework-neutral — it
+asks for `load`, `mutable_subpaths`, and `mutation_points`, plus
+`run(entry, sinks, config) -> RunResult` on the loaded harness — and a
+workspace declares a non-ADK harness through `adapter.kind = "import"`.
+A target that emits no drift events is scored on its predicates, rubrics,
+and any other metric namespaces it reports; the loss surface accepts
+arbitrary namespaced metrics (`drift:*`, `cost:*`, `latency:*`), so drift
+is one input to the scalar rather than a precondition for having one.
+
+The lever that actually decouples a target from goldfive is
+`scoring.json`'s `telemetry_dialect`. The default, `goldfive`, is the only
+dialect that produces drift kinds and plan revisions; `adk_events` and
+`transcript` are tolerant readers for a harness that does not run under the
+drift-instrumented ecosystem harness at all. Under `transcript` the drift
+term is structurally zero, the drift knobs go inert (zicato warns rather
+than failing), and scoring degrades to predicates plus optional in-run
+judges. See [TELEMETRY-DIALECTS.md](TELEMETRY-DIALECTS.md).
+
+Two board-level headers are often mistaken for that lever and are not it.
+`disable_drift` names drift kinds whose **mapped built-in judges** are
+suppressed on the ADK path — kinds with no mapped judge are silently
+inert, and the remaining contributions to the drift term (plan revisions,
+task-failure ratio, runtime, custom per-judge drift) all survive. There is
+no "all drift off" board mode; setting `drift_weight` to `0.0` is what
+removes the drift component from the scalar. `judge_only` is orthogonal
+again: it keeps judges armed while disabling steering entirely (no
+goal-derivation call, no replanning, no drift-triggered refine). See
+[BOARD-FORMAT.md](BOARD-FORMAT.md).
+
 ### Why this is a separate library
 
 The orchestration scaffolding that makes drift legible — goals, plans,
@@ -63,7 +126,7 @@ The three libraries have non-overlapping cadences:
 
 Keeping zicato a separate library keeps the cadence clean. goldfive
 must never reach across runs; harmonograf must never reach into the
-agent's source. zicato is the only thing that does either.
+inner harness's source. zicato is the only thing that does either.
 
 ### What zicato is *not*
 
@@ -109,7 +172,7 @@ agent's source. zicato is the only thing that does either.
    │   ┌──────────────┐    ┌───────────────────────────────┐ │               │
    │   │  Board       │    │  Inner harness (HarnessAdapter)│ │               │
    │   │ (.jsonl,     │    │                                │ │               │
-   │   │  frozen      │    │   any multi-agent system       │ │               │
+   │   │  frozen      │    │   any system under test        │ │               │
    │   │  per epoch)  │    │   exposing:                    │ │               │
    │   └──────┬───────┘    │     run_entry(entry) -> result │ │               │
    │          │            │     mutation_points() -> [...] │ │               │
@@ -219,7 +282,7 @@ below.
 ### 4.1 HarnessAdapter
 
 **Responsibility.** The narrow protocol that decouples zicato from any
-specific multi-agent framework. The adapter implementer is the
+specific harness framework. The adapter implementer is the
 inner-harness author; zicato treats the adapter as the only handle on
 the system under test.
 

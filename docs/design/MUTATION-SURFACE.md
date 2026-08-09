@@ -26,8 +26,8 @@ A meta-harness has a safety-vs-reach trade-off:
 
 - **Free-form source edits** maximise reach (the proposer can change
   anything) at the cost of safety (the proposer can break anything).
-  Validating "this still works" against a multi-agent system is
-  extremely hard.
+  Validating "this still works" against a live system — a multi-agent
+  tree, a library, anything with real behaviour — is extremely hard.
 - **Pure span-level annotated mutations** maximise safety (only marked
   strings move) at the cost of reach (related strings in the same
   file may need to move together but can't be addressed as a group).
@@ -263,6 +263,32 @@ The first registered root is conventionally the package containing the
 agent factory; additional roots are added with repeated
 `--mutable-tree` flags. All registered roots contribute mutation
 points to the same enumeration.
+
+Nothing about a root has to be agent-shaped. A root is any importable
+Python package whose behaviour the board can score — its basename must be
+a valid, non-keyword Python identifier, and that is the whole constraint.
+The enumerator resolves markers through the AST without ever asking what a
+file *means*: it does not look for agent classes, role graphs, or prompt
+attributes, and the applier dispatches on the point's kind and the file's
+suffix alone.
+
+Two in-tree targets bracket the range. Target 0
+(`examples/zicato_examples/target_0_convergence`) is a deterministic policy
+with no LLM at all, whose entire surface is one marked module-level string
+constant. Target 2 is goldfive — a library, registered with
+`zicato register --mutable-tree <checkout>/goldfive` while the entrypoint
+stays outside every tree.
+
+What the surface does *not* span is arbitrary file types. The native marker
+pass walks `*.py` only, so a markdown prompt or a YAML config sitting in a
+mutable tree is invisible to it. The one route to a non-Python surface
+today is an additive second pass, the **manifest bridge**
+(`zicato.synthetic.manifest_bridge`): when a root carries a goldfive-shaped
+`optimization/manifest.toml`, each manifest entry becomes a
+`MutationPoint`, and prompt entries point at markdown bodies rather than
+`.py` spans. It is how target 2 exposes goldfive's prompt surface without
+sprinkling zicato markers through an upstream tree, and it no-ops silently
+for every root that has no such manifest.
 
 The list shape is part of the v0 contract even though v0 typically
 uses one root. Forcing the shape now means target 2 plugs in without

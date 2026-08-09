@@ -197,12 +197,19 @@ without it, journals degenerate into "what changed, what scored". See
 
 ## Inner harness
 
-The multi-agent system zicato wraps. Any shape (single agent,
-coordinator + specialists, deep sub-agents) — zicato treats it as a
-black box behind a `HarnessAdapter`. The inner harness emits a
-`goldfive.v1.Event` stream when wrapped with `goldfive.wrap` (the
-adapter is responsible for the wrapping). See
-[ARCHITECTURE.md §1](ARCHITECTURE.md#1-what-zicato-is-and-why).
+The system zicato wraps and optimizes. Typically a multi-agent system —
+any shape (single agent, coordinator + specialists, deep sub-agents) —
+but the term is not agent-specific: a library or any other Python source
+tree with an entrypoint and a scoring board is an inner harness too.
+zicato treats it as a black box behind a `HarnessAdapter`.
+
+Under the default `goldfive` telemetry dialect the inner harness emits a
+`goldfive.v1.Event` stream, wrapped with `goldfive.wrap` by the adapter.
+That is the dialect that yields drift kinds, not a requirement on the
+harness: the `adk_events` and `transcript` dialects read a harness that
+never runs under goldfive at all. See
+[ARCHITECTURE.md §1](ARCHITECTURE.md#1-what-zicato-is-and-why) and
+[TELEMETRY-DIALECTS.md](TELEMETRY-DIALECTS.md).
 
 ## Instance
 

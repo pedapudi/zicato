@@ -34,7 +34,7 @@
 ## 1. The north star
 
 zicato exists to be a **demonstrably effective self-improvement harness**: a
-loop that takes an agent system under a frozen evaluation contract, proposes
+loop that takes a target system under a frozen evaluation contract, proposes
 targeted mutations to its declared mutable surface, measures each candidate
 under tournament conditions, and promotes only what a noise-aware decision
 procedure can actually distinguish from the incumbent — while journaling

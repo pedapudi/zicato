@@ -27,8 +27,9 @@ document treats as a black-box loss. This doc is the *why* and the
 
 ## 1. What problem is selection actually solving?
 
-zicato is a meta-loop. The inner harness — a multi-agent system you
-already have — is the thing under optimization. zicato runs it over a
+zicato is a meta-loop. The inner harness — a system you already have,
+typically but not necessarily a multi-agent one — is the thing under
+optimization. zicato runs it over a
 **board** of tasks, reduces the runtime telemetry to a scalar **loss**
 (lower is better), proposes a small structured edit to the harness, and
 keeps the edit only if it helps. A kept edit is a new **generation**;

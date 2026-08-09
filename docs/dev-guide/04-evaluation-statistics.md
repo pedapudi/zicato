@@ -56,7 +56,7 @@ stages. Every stage has exactly one home:
 
 | Stage | What happens | Home | Runs where |
 |---|---|---|---|
-| 1. Run | The agent under test executes the entry; goldfive emits `events.jsonl` (one file per run) | adapter + goldfive `JSONLPersistenceSink` | killable worker subprocess |
+| 1. Run | The system under test executes the entry; under the default `goldfive` dialect goldfive emits `events.jsonl` (one file per run) | adapter + goldfive `JSONLPersistenceSink` | killable worker subprocess |
 | 2. Reduce | Events → one `LossProfile` (drift counts, pass/fail, per-judge loss, `drift_loss`) | `src/zicato/telemetry/reducer.py` (`reduce_loss`) | worker subprocess |
 | 3. Persist | `LossProfile` → the unit's replicate-keyed `loss.json` cache slot | `src/zicato/tournament/unit_cache.py` | worker writes; orchestrator reads |
 | 4. Aggregate | Per-entry losses → one per-generation summary dict (`scalar`, `pass_rate`, `mean_score`, `per_entry`, `namespace_aggregates`, `scalar_components`) | `src/zicato/tournament/scoring.py` (`aggregate_generation_score`) | orchestrator |

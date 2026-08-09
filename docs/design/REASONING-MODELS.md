@@ -9,9 +9,9 @@
 > (the first consumer hurt by the gap). Nothing here is built; the
 > parse-side mitigations described in §3 *are* in the tree today.
 
-zicato exists to evolve agents that run on **reasoning models** — models that
-emit a chain-of-thought scratchpad before they answer. Yet zicato's own LLM
-seam, the two-callable `(system, user, model) -> str` contract
+zicato's most common target is an agent running on a **reasoning model** —
+a model that emits a chain-of-thought scratchpad before it answers. Yet
+zicato's own LLM seam, the two-callable `(system, user, model) -> str` contract
 (`CallLLM` in `zicato/core/runtime.py`), has **no model of reasoning-model
 reality**. It assumes the string it receives is the answer. For a reasoning
 model that assumption is false in a way that is not merely cosmetic: it
