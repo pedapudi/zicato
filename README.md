@@ -5,17 +5,26 @@
   <img alt="zicato" src="docs/brand/zicato-lockup-light.svg" width="420">
 </picture>
 
-**A self-improving harness for multi-agent systems.**
+**A self-improving harness for any system you can measure.**
 
 </div>
 
 # zicato
 
-zicato wraps a multi-agent system you already have — a coordinator + specialists,
-a deep sub-agent tree, a single LlmAgent, whatever shape — and turns it into the
-**inner harness** of a learning loop. It runs your system against a board of
-tasks, watches what goes wrong via structured runtime telemetry, and rewrites
-the inner harness so the next generation goes less wrong.
+zicato wraps a file-based system you already have and turns it into the **inner
+harness** of a learning loop. It runs your system against a board of tasks,
+scores each run against a per-epoch evaluation contract, and rewrites the source
+so the next generation goes less wrong.
+
+Multi-agent systems are the founding and primary use case — a coordinator +
+specialists, a deep sub-agent tree, a single LlmAgent, whatever shape — and the
+shipped reference adapter targets Google ADK. But nothing in the loop is
+agent-specific. The contract asks for three things: an **entrypoint** the runner
+can drive, one or more **mutable trees** of source the proposer may edit, and a
+**board** of tasks with typed expectations. Anything that fits that shape can be
+the target — a library, a prompt set, a rule engine — and the entrypoint may sit
+*outside* every mutable tree, which is how you evolve a dependency while the
+driver holds still.
 
 zicato is the third member of an ecosystem:
 
@@ -49,8 +58,20 @@ rewrite the harness".
 Alpha. Design and surface are under active iteration — the public API will
 break. The first reference adapter targets Google ADK (the framework goldfive
 itself wires deepest into). The design is **framework-agnostic at its core**:
-any inner harness that fronts a `HarnessAdapter` and emits goldfive telemetry
-can participate. LangChain and plain-callable adapters land after ADK.
+the `HarnessAdapter` protocol asks only for `load`, `mutable_subpaths`, and
+`mutation_points`, and the loaded harness only for
+`run(entry, sinks, config) -> RunResult` — nothing in it mentions agents. A
+workspace declares a non-ADK harness with `adapter.kind = "import"`, which
+imports an operator-supplied factory. Shipped concrete adapters are ADK-only so
+far; LangChain and plain-callable adapters land after it.
+
+**goldfive is a required dependency, not an optional extra.** Its drift taxonomy
+is referenced by zicato's core board types (`DriftSeverity` in
+`src/zicato/core/board.py`), so `import zicato.core` fails without it. What
+goldfive does *not* do is constrain your target: a system that emits no drift
+events simply scores on its predicates, rubrics, and whatever other metric
+namespaces it reports — the loss surface takes arbitrary namespaced metrics
+(`drift:*`, `cost:*`, `latency:*`), not drift alone.
 
 ## Model-agnostic
 

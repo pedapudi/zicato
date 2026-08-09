@@ -1,7 +1,7 @@
 # AGENTS.md
 
 Operating guide for an AI agent working on or with **zicato** — the
-self-improving meta-harness for multi-agent systems. Read this before
+self-improving meta-harness for any system you can measure. Read this before
 touching the repo or driving a workspace. The human-facing overview is
 [`README.md`](README.md); the full design lives under
 [`docs/design/`](docs/design/) (start with `ARCHITECTURE.md`).
@@ -18,9 +18,10 @@ touching the repo or driving a workspace. The human-facing overview is
 
 ## What zicato is, in one paragraph
 
-zicato wraps an inner multi-agent harness in an **evolve loop**: it
-proposes a small structured edit to the harness (an agent instruction,
-a tool description, a planner template, a role scope), runs a scored
+zicato wraps an inner harness in an **evolve loop**: it proposes a
+small structured edit to the harness (for the primary agent use case:
+an agent instruction, a tool description, a planner template, a role
+scope — in general, any annotated mutation point), runs a scored
 **tournament** between the parent (champion) and the child (challenger)
 across a **board** of tasks, derives a scalar **loss** from runtime
 drift telemetry plus per-task pass/fail predicates, and promotes the

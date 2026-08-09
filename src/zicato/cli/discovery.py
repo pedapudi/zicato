@@ -298,11 +298,13 @@ def build_cli_root() -> click.Group:
     )
     @click.version_option(version=_resolve_version(), prog_name="zicato")
     def root() -> None:
-        """zicato — a self-improving harness for multi-agent systems.
+        """zicato — a self-improving harness for any system you can measure.
 
-        zicato wraps an inner multi-agent harness in an evolve loop: it
-        proposes a small change, runs a scored tournament between the
-        parent and the child, and keeps the winner — round after round.
+        zicato wraps an inner harness in an evolve loop: it proposes a
+        small change, runs a scored tournament between the parent and
+        the child, and keeps the winner — round after round. Multi-agent
+        systems are the primary use case, but the target can be any tree
+        of source files with an entrypoint and a board of tasks.
 
         \b
         The whole tool, for most operators, is two commands:

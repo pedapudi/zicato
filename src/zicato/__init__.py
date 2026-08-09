@@ -1,4 +1,4 @@
-"""zicato — a self-improving harness for multi-agent systems.
+"""zicato — a self-improving harness for any system you can measure.
 
 Library/driver contract
 -----------------------
