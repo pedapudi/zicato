@@ -6,7 +6,7 @@ _Analysis date: 2026-07-01_
 
 ## Executive abstract
 
-zicato is a self-improving **meta-harness** for multi-agent systems. It wraps an agent system you already built, runs it against a frozen board of tasks, reduces each run's structured runtime telemetry (a `goldfive.v1.Event` stream) into a typed per-run loss profile, aggregates those into recurring failure **patterns**, asks an LLM **proposer** to emit typed **patches** against an annotated mutation surface, and then runs a **tournament** that promotes the candidate generation only when it wins by a configured margin without regressing. The architecture is a Python orchestration loop (`src/zicato/`, ~85k LOC across 235 files) whose safety is enforced out-of-band by an independent Rust supervisor (`crates/supervisor/`, ~14.5k LOC) that never shares memory with the loop and only reads atomic state files. The codebase is large less because it does many things than because it is written to be *legible and self-auditing*: an AST/token census puts only ~47% of `src/zicato/` lines at executable code, with ~40% docstrings and comments (31% + 9%) carrying the design rationale inline, and nearly every capability ships as a byte-identical-by-default opt-in wrapped in defense-in-depth checks. That prose is mostly merited — but a [code-quality audit](#code-quality-is-the-verbosity-merited) found the *reducible* debt is structural, not textual: three god-functions (~3,000 lines between them), duplicated evolve/dashboard logic, and a handful of dead symbols.
+zicato is a self-improving **meta-harness** for any system whose behaviour can be measured — multi-agent systems are its founding and primary use case, not its definition. It wraps a system you already built, runs it against a frozen board of tasks, reduces each run's structured runtime telemetry (a `goldfive.v1.Event` stream) into a typed per-run loss profile, aggregates those into recurring failure **patterns**, asks an LLM **proposer** to emit typed **patches** against an annotated mutation surface, and then runs a **tournament** that promotes the candidate generation only when it wins by a configured margin without regressing. The architecture is a Python orchestration loop (`src/zicato/`, ~85k LOC across 235 files) whose safety is enforced out-of-band by an independent Rust supervisor (`crates/supervisor/`, ~14.5k LOC) that never shares memory with the loop and only reads atomic state files. The codebase is large less because it does many things than because it is written to be *legible and self-auditing*: an AST/token census puts only ~47% of `src/zicato/` lines at executable code, with ~40% docstrings and comments (31% + 9%) carrying the design rationale inline, and nearly every capability ships as a byte-identical-by-default opt-in wrapped in defense-in-depth checks. That prose is mostly merited — but a [code-quality audit](#code-quality-is-the-verbosity-merited) found the *reducible* debt is structural, not textual: three god-functions (~3,000 lines between them), duplicated evolve/dashboard logic, and a handful of dead symbols.
 
 The deterministic guarantees are concentrated in the supervisor and the Python single-writer state contract: warn-only heartbeats (the watchdog can never kill the orchestrator), pid-reuse-proof signalling, an untrusted-and-clamped run deadline, a tamper-evident hash-chained audit ledger, diff-containment re-hashing of every child snapshot, an independent re-derivation of the promotion gate, atomic tmp→fsync→rename writes, a pid-start-time-checked workspace lock, and a conservative crash-resume protocol that discards on any ambiguity. The single highest-leverage improvement is to the proposer: its per-slot generation step is still one i.i.d. sample. A [branch audit](#branch-audit-main-is-the-union-of-the-merged-feature-work) (added after the first draft) found that **all three of the `FUNCTIONALITY-RECOMMENDATIONS.md §4` proposer levers are already implemented and merged into `main`** (from `feat/proposer-quality`): best-of-N + self-critique, hypothesis prediction-accuracy grading, and the field-diversity constraint. The genuine headline recommendations are therefore narrower than "build them": (a) **enable** the already-shipped-but-default-off best-of-N + self-critique wrapper (`best_of_n = 1` today — a scoring-contract flip that rolls the epoch), and (b) make the already-computed hypothesis prediction-accuracy signal **actionable** — today it is graded post-tournament and shown to the proposer as an advisory low/medium/high band but is never used to bias best-of-N selection or any gate. Both stay inside the existing overfitting-restricted context channels.
 
@@ -29,17 +29,26 @@ The deterministic guarantees are concentrated in the supervisor and the Python s
 
 ## 1. What zicato is for
 
-**Thesis (one sentence).** zicato is a self-improving *meta-harness* for multi-agent systems: it wraps an agent system you already built, runs it against a fixed board of tasks, watches what goes wrong via structured runtime telemetry, and rewrites the system so the next generation goes less wrong.
+**Thesis (one sentence).** zicato is a self-improving *meta-harness* for any system you can measure — agent systems being the primary use case: it wraps a system you already built, runs it against a fixed board of tasks, watches what goes wrong via structured runtime telemetry, and rewrites the system so the next generation goes less wrong.
 
 **What it actually does.** zicato treats your existing multi-agent system — any shape at all — as the **inner harness** of a learning loop and improves it *between* runs rather than during them.
 
-README.md:14-18
+README.md:14-27
 ```
-zicato wraps a multi-agent system you already have — a coordinator + specialists,
-a deep sub-agent tree, a single LlmAgent, whatever shape — and turns it into the
-**inner harness** of a learning loop. It runs your system against a board of
-tasks, watches what goes wrong via structured runtime telemetry, and rewrites
-the inner harness so the next generation goes less wrong.
+zicato wraps a file-based system you already have and turns it into the **inner
+harness** of a learning loop. It runs your system against a board of tasks,
+scores each run against a per-epoch evaluation contract, and rewrites the source
+so the next generation goes less wrong.
+
+Multi-agent systems are the founding and primary use case — a coordinator +
+specialists, a deep sub-agent tree, a single LlmAgent, whatever shape — and the
+shipped reference adapter targets Google ADK. But nothing in the loop is
+agent-specific. The contract asks for three things: an **entrypoint** the runner
+can drive, one or more **mutable trees** of source the proposer may edit, and a
+**board** of tasks with typed expectations. Anything that fits that shape can be
+the target — a library, a prompt set, a rule engine — and the entrypoint may sit
+*outside* every mutable tree, which is how you evolve a dependency while the
+driver holds still.
 ```
 
 ### Place in the goldfive / harmonograf ecosystem

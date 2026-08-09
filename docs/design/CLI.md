@@ -5,7 +5,9 @@
 > is the source of truth; if this document and the binary ever disagree,
 > trust `zicato --help` / `zicato help <command>`.
 >
-> *Last reconciled against the live `--help` on 2026-07-29.* Verified the
+> *Last reconciled against the live `--help` on 2026-08-09* (root help text
+> re-checked after the positioning rewrite; command set and options unchanged
+> since the 2026-07-29 pass). Verified the
 > full command set (`init`, `evolve`, and the advanced/debugging group:
 > `analyze-telemetry`, `board`, `builder`, `config`, `dashboard`, `epoch`,
 > `health`, `help`, `logs`, `mutations`, `propose`, `reflect`, `regenerate-report`,
@@ -16,10 +18,12 @@
 > `epochs` or `workspace` command — the group is `epoch`, singular), and
 > every `repair-*` / `reindex-*` name is the full, un-truncated id.
 
-`zicato` is a self-improving harness for multi-agent systems. It wraps an
-inner multi-agent harness in an **evolve loop**: it proposes a small change,
-runs a scored tournament between the parent and the child, and keeps the
-winner — round after round.
+`zicato` is a self-improving harness for any system you can measure. It wraps
+an inner harness in an **evolve loop**: it proposes a small change, runs a
+scored tournament between the parent and the child, and keeps the winner —
+round after round. Multi-agent systems are the primary use case, but the
+target can be any tree of source files with an entrypoint and a board of
+tasks.
 
 ## Setup
 

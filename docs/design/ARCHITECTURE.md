@@ -12,11 +12,27 @@ this file.
 
 ## 1. What zicato is and why
 
-zicato is a **meta-harness** for multi-agent systems. It takes a
-multi-agent system you have already built — a coordinator with
-specialists, a deep `sub_agents` tree, a single planning agent, an
-arbitrary callable that fronts a model — and turns it into the *inner
-harness* of a learning loop.
+zicato is a **meta-harness** for any system whose behaviour you can
+measure. It takes a system you have already built, declares part of its
+source tree mutable, and turns it into the *inner harness* of a learning
+loop.
+
+Multi-agent systems are the founding and primary use case — a coordinator
+with specialists, a deep `sub_agents` tree, a single planning agent, an
+arbitrary callable that fronts a model — and the only concrete adapter
+shipped so far targets Google ADK. But the definition is not agent-shaped.
+What the loop actually requires is:
+
+* an **entrypoint** the runner can drive to produce an output;
+* one or more **mutable trees** — source roots the proposer may edit,
+  which need not contain the entrypoint;
+* a **board** of tasks carrying typed expectations, so each run yields a
+  score.
+
+Any file-based system that fits that shape can be evolved: a library, a
+prompt set, a rule engine, a parser. The mutation surface is declared with
+in-source markers, not derived from agent structure, so nothing in the
+patch path inspects agent classes or role graphs.
 
 Across many runs of that inner harness, zicato:
 
@@ -44,6 +60,30 @@ generations within an epoch are directly comparable. Cross-epoch
 comparison is fuzzy by design (the contract changed; the goalposts
 moved).
 
+### How much of this requires goldfive
+
+goldfive is a **hard install dependency**, not an optional extra: zicato's
+core board types reference its drift taxonomy at module scope
+(`DriftSeverity` in `src/zicato/core/board.py`), so `import zicato.core`
+fails outright without it.
+
+What that does *not* imply is that your target must be a goldfive
+application. The adapter protocol is deliberately framework-neutral — it
+asks for `load`, `mutable_subpaths`, and `mutation_points`, plus
+`run(entry, sinks, config) -> RunResult` on the loaded harness — and a
+workspace declares a non-ADK harness through `adapter.kind = "import"`.
+A target that emits no drift events is scored on its predicates, rubrics,
+and any other metric namespaces it reports; the loss surface accepts
+arbitrary namespaced metrics (`drift:*`, `cost:*`, `latency:*`), so drift
+is one input to the scalar rather than a precondition for having one.
+
+Two board-level headers tune how much of the goldfive machinery runs:
+`disable_drift` suppresses named drift kinds for every run on the board,
+and `judge_only` keeps the judges armed while disabling steering entirely
+(no goal-derivation call, no replanning, no drift-triggered refine).
+Neither is a global "telemetry off" switch — see
+[BOARD-FORMAT.md](BOARD-FORMAT.md).
+
 ### Why this is a separate library
 
 The orchestration scaffolding that makes drift legible — goals, plans,
@@ -63,7 +103,7 @@ The three libraries have non-overlapping cadences:
 
 Keeping zicato a separate library keeps the cadence clean. goldfive
 must never reach across runs; harmonograf must never reach into the
-agent's source. zicato is the only thing that does either.
+inner harness's source. zicato is the only thing that does either.
 
 ### What zicato is *not*
 

@@ -26,8 +26,8 @@ A meta-harness has a safety-vs-reach trade-off:
 
 - **Free-form source edits** maximise reach (the proposer can change
   anything) at the cost of safety (the proposer can break anything).
-  Validating "this still works" against a multi-agent system is
-  extremely hard.
+  Validating "this still works" against a live system — a multi-agent
+  tree, a library, anything with real behaviour — is extremely hard.
 - **Pure span-level annotated mutations** maximise safety (only marked
   strings move) at the cost of reach (related strings in the same
   file may need to move together but can't be addressed as a group).
@@ -263,6 +263,14 @@ The first registered root is conventionally the package containing the
 agent factory; additional roots are added with repeated
 `--mutable-tree` flags. All registered roots contribute mutation
 points to the same enumeration.
+
+Nothing about a root has to be agent-shaped. A root is any importable
+Python package whose behaviour the board can score, and the enumerator
+resolves markers through the AST without ever asking what a file
+*means* — it does not look for agent classes, role graphs, or prompt
+attributes. Target 2 of the dogfood plan is exactly this case: goldfive
+is a library, registered with `--mutable-tree <checkout>/goldfive`
+while the entrypoint stays outside it.
 
 The list shape is part of the v0 contract even though v0 typically
 uses one root. Forcing the shape now means target 2 plugs in without
