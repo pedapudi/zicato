@@ -1,5 +1,55 @@
 # Changelog
 
+### Any file can be a mutation site, not only `*.py`
+
+The native marker pass walked `*.py` and nothing else, so a markdown prompt
+or a YAML policy sitting inside a registered mutable tree was invisible to
+the enumerator — the only route to a non-Python surface was the
+goldfive-shaped manifest bridge. Markers now live in any allowlisted text
+file, under any conventional comment leader (`#`, `//`, `/*`, `<!--`, `;`,
+`--`, `%`, with a trailing `-->` / `*/` tolerated).
+
+**The marker requirement is unchanged.** This widens *where* a marker may
+live, never whether one is needed; an unmarked `config.yaml` is exactly as
+immutable as an unmarked `agent.py`. Outside Python the `:file` and
+`:code` region forms apply and the bare span form does not — "the nearest
+string literal beneath" is an AST fact, and the tempting line-shaped
+approximation would let a `replace` swallow the `temperature:` key it was
+aimed at. A bare span marker in a text file now warns by name instead of
+vanishing. The region form carries the safety argument: both anchors are
+explicit, operator-written, and OUTSIDE the mutable range, so a patch can
+neither escape the region nor delete its own markers (echoed marker lines
+are stripped from the replacement).
+
+Discovery is an extension allowlist, not a content sniff — the enumerator
+re-runs after every applied patch, so the walk stays on the hot path, and
+an allowlist decides without opening a file and cannot wander into a
+binary. Vendored directories are pruned from the text pass only (pruning
+the Python pass would move existing points), text files over 2 MB are
+skipped, and a single-file root now resolves by suffix instead of
+enumerating to zero in silence.
+
+Python enumeration is byte-identical: `.py` files are still parsed under
+the historical `#`-only grammar, which makes that a property of the
+grammar rather than a claim a test has to keep re-establishing. A
+golden-equality pin over a fixture tree — captured from the pre-widening
+enumerator — holds it, and every parity gate stayed green.
+
+Post-apply, the `.py` syntax gate is unchanged and a narrow `.toml`
+structural gate joins it: whole-file patches only, on files that parsed
+*before* the batch. JSON is deliberately absent — strict JSON has no
+comment syntax, so it cannot host a marker at all. The contract
+pre-flight's synthetic degradation grew a format-neutral form so its probe
+still applies against a gated file.
+
+The manifest bridge is unchanged in shape but finally has direct tests,
+which turned up a latent bug: it re-derived its effective source root as
+`manifest_path.parents[2]`, correct for `goldfive/optimization/manifest.toml`
+but one level too high for the bare `optimization/manifest.toml` layout, so
+every `source` under that layout resolved to a missing path and the bridge
+returned nothing. It now uses the base the manifest was found under. Since
+that shape enumerated zero points, the fix can only add points.
+
 ### The scalar's discards get a record: the Pareto frontier (issue #139)
 
 The promote gate keeps one generation per round and picks it by a weighted

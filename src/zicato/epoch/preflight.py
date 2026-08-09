@@ -180,6 +180,7 @@ from uuid import uuid4
 
 from zicato.core import BoardEntry, Generation, RuntimeConfig, ScoringWeights
 from zicato.core.mutation import MutationPoint, Patch
+from zicato.mutation.formats import FORMAT_NEUTRAL_CONTENT
 from zicato.tournament.calibration import (
     DEFAULT_CALIBRATION_RUNS,
     NoiseFloor,
@@ -481,12 +482,21 @@ def degraded_content_for(point: MutationPoint) -> str:
     * ``"code"`` — ``pass`` (the region's control flow is blanked; always
       valid Python at any indent thanks to the applier's re-anchoring).
     * ``"file"`` — a comment-only module for ``.py`` files (blank file —
-      parses, exports nothing) and the reversed content otherwise.
+      parses, exports nothing); the format-neutral stand-in from
+      :data:`~zicato.mutation.formats.FORMAT_NEUTRAL_CONTENT` for the
+      formats the applier structurally checks (``.json`` / ``.toml``),
+      since reversing a JSON document would fail that gate and turn the
+      probe into a rejected patch instead of a measured degradation; and
+      the reversed content for everything else.
     """
     if point.kind == "code":
         return "pass\n"
-    if point.kind == "file" and point.file.suffix == ".py":
-        return "# degraded by contract pre-flight (synthetic worsening probe)\n"
+    if point.kind == "file":
+        if point.file.suffix == ".py":
+            return "# degraded by contract pre-flight (synthetic worsening probe)\n"
+        neutral = FORMAT_NEUTRAL_CONTENT.get(point.file.suffix)
+        if neutral is not None:
+            return neutral
     if not point.content.strip():
         return "zicato-preflight-degraded"
     return point.content[::-1]

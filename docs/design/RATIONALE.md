@@ -17,9 +17,16 @@ in the inner harness's tree. Maximally flexible; the proposer can
 restructure the harness if it wants to.
 
 **Chosen.** Source files are not editable except where the operator
-has placed a `# zicato:mutable` marker (span or file). The proposer
-addresses patches by stable id; the applier rewrites only what an id
-resolves to. See [MUTATION-SURFACE.md](MUTATION-SURFACE.md).
+has placed a `zicato:mutable` marker (span, region, or file). The
+proposer addresses patches by stable id; the applier rewrites only what
+an id resolves to. See [MUTATION-SURFACE.md](MUTATION-SURFACE.md).
+
+Markers are not confined to `.py` files — a marker may sit in any
+allowlisted text file, so a markdown prompt or a YAML policy is mutable
+surface in its own right. That widens *where a marker may live*; it does
+not weaken the decision above by a step. An unmarked file is immutable
+whatever its type, and the free-form alternative stays rejected for
+exactly the reasons below.
 
 **Why.** An inner harness is high-leverage, low-reversibility
 code. Letting an LLM-driven proposer rewrite arbitrary files is a
