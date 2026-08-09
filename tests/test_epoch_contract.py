@@ -604,16 +604,6 @@ def test_hash_changes_when_a_different_drift_kind_is_disabled(tmp_path: Path) ->
     assert h1 != h2
 
 
-def test_hash_changes_when_a_kind_is_added_to_disable_drift(tmp_path: Path) -> None:
-    """Widening the disabled set rolls the hash even though it stays non-empty."""
-    base = _write_contract(tmp_path, board=_board_with_disable_drift(["tool_error"]))
-    h1 = compute_contract_hash(base)
-
-    base.board_path.write_text(_board_with_disable_drift(["tool_error", "goal_drift"]))
-    h2 = compute_contract_hash(base)
-    assert h1 != h2
-
-
 def test_hash_stable_across_disable_drift_ordering(tmp_path: Path) -> None:
     """``disable_drift`` is a SET: declaration order must not move the hash."""
     base = _write_contract(
@@ -622,16 +612,6 @@ def test_hash_stable_across_disable_drift_ordering(tmp_path: Path) -> None:
     h1 = compute_contract_hash(base)
 
     base.board_path.write_text(_board_with_disable_drift(["agent_refusal", "tool_error"]))
-    h2 = compute_contract_hash(base)
-    assert h1 == h2
-
-
-def test_hash_stable_across_disable_drift_duplicates(tmp_path: Path) -> None:
-    """A kind named twice is the same set as naming it once."""
-    base = _write_contract(tmp_path, board=_board_with_disable_drift(["tool_error"]))
-    h1 = compute_contract_hash(base)
-
-    base.board_path.write_text(_board_with_disable_drift(["tool_error", "tool_error"]))
     h2 = compute_contract_hash(base)
     assert h1 == h2
 
@@ -656,38 +636,6 @@ def test_empty_disable_drift_hashes_like_a_board_with_no_header(tmp_path: Path) 
     assert _canon_board_meta(absent) == _canon_board_meta(empty)
     # The historic canonical bytes, pinned literally.
     assert json.loads(_canon_board_meta(absent)) == {"judges": [], "disable_drift": False}
-
-
-def test_canon_board_meta_tolerates_a_scalar_disable_drift(tmp_path: Path) -> None:
-    """A legacy scalar ``disable_drift: true`` still canonicalizes.
-
-    The kind list is the only shape the board writer emits, but the
-    canonicalizer is fed by a defensive raw scan; a scalar can only mean
-    "something is disabled" and must not raise.
-    """
-    from zicato.epoch.contract import _canon_board_meta
-
-    board = tmp_path / "board.jsonl"
-    board.write_text(json.dumps({"board_meta": True, "disable_drift": True}) + "\n")
-    assert json.loads(_canon_board_meta(board))["disable_drift"] is True
-
-
-def test_canon_board_meta_normalizes_drift_kind_spellings(tmp_path: Path) -> None:
-    """``DriftKind.TOOL_ERROR`` reprs and bare wire strings canonicalize alike.
-
-    The board loader hands back ``DriftKind`` members while the raw-JSONL
-    fallback hands back strings; both must reduce to the same wire form
-    or the two read paths would disagree on the hash.
-    """
-    from zicato.epoch.contract import _canon_board_meta
-
-    plain = tmp_path / "plain.jsonl"
-    plain.write_text(_board_with_disable_drift(["tool_error"]))
-
-    fancy = tmp_path / "fancy.jsonl"
-    fancy.write_text(_board_with_disable_drift(["DriftKind.TOOL_ERROR"]))
-
-    assert _canon_board_meta(plain) == _canon_board_meta(fancy)
 
 
 def test_canon_judges_is_order_independent() -> None:

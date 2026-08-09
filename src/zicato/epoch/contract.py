@@ -34,7 +34,7 @@ import hashlib
 import json
 import logging
 import os
-from collections.abc import Iterable, Mapping
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 
@@ -182,40 +182,26 @@ def _fold_entry_grading_source(entry: dict[str, object]) -> dict[str, object]:
 
 
 def _canon_disable_drift(raw: object) -> object:
-    """Canonical form of a board's ``disable_drift`` — the sorted kind SET.
+    """Reduce the board's ``disable_drift`` to the sorted kind SET.
 
-    ``disable_drift`` is a *list of drift-kind tokens*: each named kind
-    disarms the built-in judge that emits it (see
-    :mod:`zicato.judge_runtime.disable`), so WHICH kinds are named
-    decides which judges are armed and therefore the loss surface. The
-    contract hash must see the kinds themselves — canonicalizing to a
-    bare "any/none" flag would let an operator swap ``tool_error`` for
-    ``goal_drift`` without rolling the epoch, silently making
-    generations either side of that edit incomparable.
+    Each named kind disarms the built-in judge that emits it
+    (:mod:`zicato.judge_runtime.disable`), so which kinds are named
+    decides which judges are armed — and the hash must see them. Tokens
+    are reduced to their wire form via
+    :func:`~zicato.judge_runtime.disable.kind_to_wire_string`, so
+    ``DriftKind`` members and bare strings agree; declaration order and
+    repeats are no-ops.
 
-    Tokens are reduced to their wire form through
-    :func:`zicato.judge_runtime.disable.kind_to_wire_string` (so
-    ``DriftKind`` members from the loader and bare strings from the raw
-    scan agree), then de-duplicated and sorted — it is a set, so
-    declaration order and repeats are no-ops.
-
-    **Empty canonicalizes to ``False``, not ``[]``.** That is the
-    omit-at-default discipline (§3.4) paid at the value level: ``false``
-    is the byte the canonical form has always carried for "nothing
-    disabled", so every board that disables nothing — including every
-    board written before ``disable_drift`` existed — keeps the exact
-    hash it has today and no workspace rolls its epoch for this change.
+    The empty set canonicalizes to ``False``, not ``[]`` — the
+    omit-at-default discipline (§3.4) at the value level. ``false`` is
+    the byte this form has always carried for "nothing disabled", so a
+    board that disables nothing keeps the hash it already has.
     """
     from zicato.judge_runtime.disable import kind_to_wire_string  # noqa: PLC0415
 
-    if not raw:
-        return False
-    if isinstance(raw, str) or not isinstance(raw, Iterable):
-        # A scalar where a list belongs (a legacy ``true``, say): it can
-        # only mean "something is disabled", and there is no kind to name.
+    if not isinstance(raw, list | tuple):
         return bool(raw)
-    kinds = sorted({kind_to_wire_string(kind) for kind in raw})
-    return kinds or False
+    return sorted({kind_to_wire_string(kind) for kind in raw}) or False
 
 
 def _canon_board_meta(board_path: Path) -> str:
@@ -282,9 +268,8 @@ def _scan_raw_board_meta(board_path: Path) -> tuple[object, object, bool]:
     A board-level object is a JSON line carrying ``judges`` and/or
     ``disable_drift`` / ``judge_only`` but no entry ``id`` (entry rows
     always have one). Returns ``([], (), False)`` when no such line
-    exists. ``disable_drift`` is handed back RAW — the kind list as
-    written — for :func:`_canon_disable_drift` to normalize; collapsing
-    it to a bool here is what used to hide kind changes from the hash.
+    exists; ``disable_drift`` is handed back raw for
+    :func:`_canon_disable_drift` to normalize.
     """
     judges: object = []
     disable_drift: object = ()
