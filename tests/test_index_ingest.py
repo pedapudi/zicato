@@ -321,9 +321,12 @@ def test_rebuild_index_no_metric_surface_yields_no_metric_counts(
     assert metric_counts_for_run(db, run_id) == []
 
 
-def test_rebuild_index_dump_is_idempotent(tmp_path: Path) -> None:
+def test_rebuild_index_dump_is_idempotent(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     # Determinism guard: two rebuilds of the same workspace produce a
     # byte-identical SQL dump (every projection is stable across runs).
+    # The cursor stamp is wall-clock, not a projection — pin it so the
+    # comparison cannot straddle a second boundary.
+    monkeypatch.setattr("zicato.index.ingest._now_iso", lambda: "2026-01-01T00:00:00Z")
     ws, _ = _build_workspace(tmp_path)
     db = rebuild_index(ws)
     first = _dump_index(db)
