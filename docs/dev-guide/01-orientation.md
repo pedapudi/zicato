@@ -728,10 +728,10 @@ contract input — see `docs/design/PROPOSER.md`.
 
 **`mutation/`** — the annotation-driven mutation surface: `markers.py`
 (the marker grammar, in its `"python"` and `"text"` comment syntaxes),
-enumerator (two marker walks — `*.py` under the AST, allowlisted text
-files by line — → `MutationPoint`s), applier (patches → child tree),
-validator (post-apply checks), `formats.py` (the best-effort `.toml`
-structural gate). The `zicato mutations` CLI audits it.
+enumerator (one walk over every marker-carrying file, with Python
+specialized by an AST context that supplies the docstring-line set and
+the span resolver), applier (patches → child tree), validator (post-apply
+checks). The `zicato mutations` CLI audits it.
 
 **`board/`** — the typed board-authoring API (Predicate/Rubric/Judge
 builders), the JSONL loader/saver, and `split.py` (the train/holdout

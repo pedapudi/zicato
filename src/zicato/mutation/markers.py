@@ -41,12 +41,10 @@ therefore takes a ``syntax`` argument:
 * ``"python"`` (the default, and the ONLY syntax used for ``*.py``) —
   the lead-in must be ``#``. This is the historical grammar, unchanged
   to the character.
-* ``"text"`` — the lead-in may be any of the leaders in
-  :data:`TEXT_COMMENT_LEADERS` (``#``, ``//``, ``/*``, ``<!--``, ``;``,
-  ``--``, ``%``), and the line may carry a trailing block-comment closer
-  (``-->``, ``*/``). This is what lets a marker live inside a markdown
-  ``<!-- ... -->`` comment, a YAML/TOML ``#`` comment, a JS ``//``
-  comment, or an INI ``;`` comment.
+* ``"text"`` — the lead-in may be any of :data:`TEXT_COMMENT_LEADERS`,
+  and the line may carry a trailing ``-->`` closer, so a marker can live
+  inside a markdown ``<!-- ... -->`` comment as well as a YAML/TOML ``#``
+  one.
 
 The split is deliberate rather than "one permissive regex everywhere":
 ``.py`` enumeration is the load-bearing legacy surface, and gating it to
@@ -55,9 +53,9 @@ property of the grammar instead of something a test has to keep
 discovering. Callers pick the syntax from the file's suffix with
 :func:`marker_syntax_for`.
 
-``*`` is NOT a text leader even though C block comments conventionally
-continue with it — it would make every markdown bullet a candidate
-marker line. Write the marker on the ``/*`` line instead.
+Adding a leader for another comment style is one entry in
+:data:`TEXT_COMMENT_LEADERS`; the set stays at what the supported file
+types actually use, so no leader is carried speculatively.
 """
 
 from __future__ import annotations
@@ -93,18 +91,18 @@ MARKER_GRADING_PREFIX = "# zicato:grading"
 #: leader in :data:`TEXT_COMMENT_LEADERS`.
 MarkerSyntax = Literal["python", "text"]
 
-#: Comment lead-ins recognised under the ``"text"`` syntax, in the source
-#: form an operator writes them. Ordered longest-first in the compiled
-#: alternation so ``<!--`` is not shadowed by a shorter prefix.
-TEXT_COMMENT_LEADERS: tuple[str, ...] = ("<!--", "/*", "//", "--", "#", ";", "%")
+#: Comment lead-ins recognised under the ``"text"`` syntax — one per
+#: comment style the supported file types use: ``#`` for YAML / TOML /
+#: plain text, ``<!--`` for markdown. Ordered longest-first in the
+#: compiled alternation.
+TEXT_COMMENT_LEADERS: tuple[str, ...] = ("<!--", "#")
 
-#: Trailing block-comment closers tolerated at end of a marker line, so a
-#: markdown ``<!-- zicato:mutable:end -->`` or a C ``/* ... */`` marker
-#: parses. On an OPENING marker the closer simply lands in the metadata
-#: tail and yields no ``key="value"`` pairs, so it needs no special case
-#: there; the id-less ``:end`` / ``:grading`` sentinels are anchored and
-#: do need it spelled out.
-_TEXT_CLOSER = r"(?:\s*(?:-->|\*/))?"
+#: Trailing block-comment closer tolerated at end of a marker line, so a
+#: markdown ``<!-- zicato:mutable:end -->`` parses. On an OPENING marker
+#: the closer simply lands in the metadata tail and yields no
+#: ``key="value"`` pairs, so only the id-less ``:end`` sentinel — which is
+#: anchored — needs it spelled out.
+_TEXT_CLOSER = r"(?:\s*-->)?"
 
 _LEADER_PY = r"\#"
 _LEADER_TEXT = "(?:" + "|".join(re.escape(lead) for lead in TEXT_COMMENT_LEADERS) + ")"
