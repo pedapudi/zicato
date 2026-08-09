@@ -34,7 +34,7 @@ import hashlib
 import json
 import logging
 import os
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 
@@ -112,8 +112,9 @@ def _canon_board(board_path: Path) -> str:
 
     Beyond the per-entry rows the board also carries two *board-level*
     pieces of contract: the configured ``judges`` and the board-level
-    ``disable_drift`` flag. Both are canonicalized here so swapping a
-    judge — or toggling drift scoring off — correctly rolls the epoch.
+    ``disable_drift`` kind list. Both are canonicalized here so swapping
+    a judge — or changing which drift kinds are disarmed — correctly
+    rolls the epoch.
     They are read defensively (see :func:`_canon_board_meta`) so a board
     that predates those fields still hashes deterministically.
     """
@@ -180,13 +181,50 @@ def _fold_entry_grading_source(entry: dict[str, object]) -> dict[str, object]:
     return out
 
 
+def _canon_disable_drift(raw: object) -> object:
+    """Canonical form of a board's ``disable_drift`` — the sorted kind SET.
+
+    ``disable_drift`` is a *list of drift-kind tokens*: each named kind
+    disarms the built-in judge that emits it (see
+    :mod:`zicato.judge_runtime.disable`), so WHICH kinds are named
+    decides which judges are armed and therefore the loss surface. The
+    contract hash must see the kinds themselves — canonicalizing to a
+    bare "any/none" flag would let an operator swap ``tool_error`` for
+    ``goal_drift`` without rolling the epoch, silently making
+    generations either side of that edit incomparable.
+
+    Tokens are reduced to their wire form through
+    :func:`zicato.judge_runtime.disable.kind_to_wire_string` (so
+    ``DriftKind`` members from the loader and bare strings from the raw
+    scan agree), then de-duplicated and sorted — it is a set, so
+    declaration order and repeats are no-ops.
+
+    **Empty canonicalizes to ``False``, not ``[]``.** That is the
+    omit-at-default discipline (§3.4) paid at the value level: ``false``
+    is the byte the canonical form has always carried for "nothing
+    disabled", so every board that disables nothing — including every
+    board written before ``disable_drift`` existed — keeps the exact
+    hash it has today and no workspace rolls its epoch for this change.
+    """
+    from zicato.judge_runtime.disable import kind_to_wire_string  # noqa: PLC0415
+
+    if not raw:
+        return False
+    if isinstance(raw, str) or not isinstance(raw, Iterable):
+        # A scalar where a list belongs (a legacy ``true``, say): it can
+        # only mean "something is disabled", and there is no kind to name.
+        return bool(raw)
+    kinds = sorted({kind_to_wire_string(kind) for kind in raw})
+    return kinds or False
+
+
 def _canon_board_meta(board_path: Path) -> str:
     """Canonical form of the board-level ``judges`` + ``disable_drift``.
 
     The board carries two pieces of contract beyond its entry rows: the
-    list of configured judges and a board-level ``disable_drift`` flag
-    (both introduced alongside multi-judge scoring). This helper reduces
-    them to a stable, sorted-key JSON string.
+    list of configured judges and a board-level ``disable_drift`` kind
+    list (both introduced alongside multi-judge scoring). This helper
+    reduces them to a stable, sorted-key JSON string.
 
     The board-level fields are resolved defensively — the loader API for
     them is owned by :mod:`zicato.board` and is reconciled at
@@ -200,7 +238,7 @@ def _canon_board_meta(board_path: Path) -> str:
       boards written before these fields existed keep a stable hash.
     """
     judges: object = []
-    disable_drift = False
+    disable_drift: object = ()
     judge_only = False
 
     from zicato.board import jsonl as _board_jsonl  # noqa: PLC0415
@@ -213,14 +251,14 @@ def _canon_board_meta(board_path: Path) -> str:
             meta = None
         if meta is not None:
             judges = _meta_get(meta, "judges", [])
-            disable_drift = bool(_meta_get(meta, "disable_drift", False))
+            disable_drift = _meta_get(meta, "disable_drift", ())
             judge_only = bool(_meta_get(meta, "judge_only", False))
     else:
         judges, disable_drift, judge_only = _scan_raw_board_meta(board_path)
 
     canon: dict[str, object] = {
         "judges": _canon_judges(judges),
-        "disable_drift": bool(disable_drift),
+        "disable_drift": _canon_disable_drift(disable_drift),
     }
     # ``judge_only`` is folded into the contract hash so flipping it opens
     # a new epoch. It is added ONLY when True so a board that never set it
@@ -238,16 +276,18 @@ def _meta_get(meta: object, key: str, default: object) -> object:
     return getattr(meta, key, default)
 
 
-def _scan_raw_board_meta(board_path: Path) -> tuple[object, bool, bool]:
+def _scan_raw_board_meta(board_path: Path) -> tuple[object, object, bool]:
     """Best-effort scan for a board-level metadata object in raw JSONL.
 
     A board-level object is a JSON line carrying ``judges`` and/or
     ``disable_drift`` / ``judge_only`` but no entry ``id`` (entry rows
-    always have one). Returns ``([], False, False)`` when no such line
-    exists.
+    always have one). Returns ``([], (), False)`` when no such line
+    exists. ``disable_drift`` is handed back RAW — the kind list as
+    written — for :func:`_canon_disable_drift` to normalize; collapsing
+    it to a bool here is what used to hide kind changes from the hash.
     """
     judges: object = []
-    disable_drift = False
+    disable_drift: object = ()
     judge_only = False
     try:
         text = board_path.read_text(encoding="utf-8")
@@ -266,7 +306,7 @@ def _scan_raw_board_meta(board_path: Path) -> tuple[object, bool, bool]:
         if "judges" in payload:
             judges = payload["judges"]
         if "disable_drift" in payload:
-            disable_drift = bool(payload["disable_drift"])
+            disable_drift = payload["disable_drift"]
         if "judge_only" in payload:
             judge_only = bool(payload["judge_only"])
     return judges, disable_drift, judge_only
