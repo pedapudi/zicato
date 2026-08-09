@@ -60,7 +60,9 @@ and the reviewer's read slug agree.
 
 from __future__ import annotations
 
+import json
 import os
+import re
 from typing import Any
 
 try:
@@ -114,6 +116,221 @@ def _output_base() -> str:
 
 
 # ---------------------------------------------------------------------------
+# Measurement mode (opt-in, DEFAULT OFF) — ZICATO_TARGET1_MEASUREMENT_MODE=1
+#
+# This board's designed difficulty is the write/read slug mismatch below, and
+# the affordances here would each dissolve part of it. They exist for running
+# the board as a MEASUREMENT INSTRUMENT — comparing proposer configurations
+# against each other — where the question is "which config proposes better",
+# not "can the loop repair this board". Left on by default they would score a
+# broken pipeline the same as a working one, so the gate is off unless asked.
+#
+#   * canonical deck dir: one fixed location write/read/find all agree on,
+#     removing run-to-run variance that has nothing to do with the arm.
+#   * salvage: persist the deck when the model DESCRIBES it instead of calling
+#     write_webpage, so a run is scoreable ~100% of the time rather than
+#     intermittently.
+#   * history snapshots: an immutable copy per write, so "did turn N+1 keep
+#     what turn N built?" is answerable from the artifact.
+#
+# None of these are proposer mutation points; they are operator bookkeeping.
+#
+# A run with the mode on drops a ``MEASUREMENT_MODE`` note in its output base,
+# because the artifact tree it produces is NOT comparable with a normal run's
+# and nothing else in the tree would say so.
+# ---------------------------------------------------------------------------
+
+_MEASUREMENT_ENV = "ZICATO_TARGET1_MEASUREMENT_MODE"
+_DECK_DIRNAME = "presentation"
+_HISTORY_DIRNAME = "deck_history"
+
+#: Dropped in the canonical deck dir by a real ``write_webpage`` call, and
+#: consulted by ``salvage_deck_from_response`` to decide whether the deck on
+#: disk is the developer's own tool output (never clobber it) or a previous
+#: salvage (refresh it, so a multi-turn revision is what the artifact holds).
+#: A file, not a directory, so ``find_presentation_files`` cannot list it as a
+#: candidate; and it lives under the per-run scratch dir, so the provenance
+#: cannot leak from one run into the next the way a module global would.
+_WRITE_MARKER = ".written_by_write_webpage"
+
+#: Written to the output base whenever the mode is engaged, so an artifact
+#: tree read back later carries the fact that a scorer cannot distinguish a
+#: working pipeline from a broken one in it. See ``_mark_measurement_run``.
+_MODE_MARKER = "MEASUREMENT_MODE"
+
+#: Enforced output contract for the web_developer under measurement mode.
+#: Setting this as the agent's ADK ``output_schema`` makes the model return a
+#: validated JSON object on EVERY turn (structured output is enforced by the
+#: API), which is what makes a deck reliably available to salvage.
+DECK_OUTPUT_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "html_content": {"type": "string"},
+        "css_content": {"type": "string"},
+        "js_content": {"type": "string"},
+    },
+    "required": ["html_content", "css_content", "js_content"],
+}
+
+
+def measurement_mode() -> bool:
+    """True when the board is being run as a measurement instrument."""
+    return os.environ.get(_MEASUREMENT_ENV, "0") == "1"
+
+
+def _deck_dir() -> str:
+    """Canonical per-run deck directory (always exists)."""
+    d = os.path.join(_output_base(), _DECK_DIRNAME)
+    os.makedirs(d, exist_ok=True)
+    _mark_measurement_run()
+    return d
+
+
+def _mark_measurement_run() -> None:
+    """Record in the artifact tree that this run had measurement mode on.
+
+    Salvage guarantees a deck exists however the pipeline failed, so a scorer
+    reading only the artifact cannot tell a working pipeline from a broken
+    one. That is acceptable while measuring, and misleading afterwards — so
+    the run leaves the fact on disk next to the deck rather than only in the
+    operator's memory of which shell exported the variable.
+
+    Called from ``_deck_dir`` rather than only from ``build_agent_tree``:
+    the tree is built once per process (``root_agent`` is cached) while a
+    worker process serves many runs, so a build-time-only note would land in
+    the first run's output base and nowhere else. Idempotent, best-effort.
+    """
+    base = _output_base()
+    marker = os.path.join(base, _MODE_MARKER)
+    if os.path.exists(marker):
+        return
+    try:
+        with open(marker, "w") as fh:
+            fh.write(
+                f"{_MEASUREMENT_ENV}=1 was set for this run.\n"
+                "The deck under presentation/ may have been salvaged from the "
+                "developer's prose rather than written by write_webpage, and "
+                "read/find resolve to that one directory regardless of topic. "
+                "Do not read a file-findability result out of this tree.\n"
+            )
+    except OSError:
+        pass
+
+
+def snapshot_deck(html: str, css: str, js: str) -> None:
+    """Persist an immutable copy of this write as ``deck_history/turn_<n>/``.
+
+    The canonical deck dir is overwritten in place each turn, which erases the
+    history a revision-quality metric needs. Turn numbering is the count of
+    existing snapshots, so the sequence is write-ordered. Best-effort: a
+    snapshot failure must never break the run or the deck just written.
+    """
+    if not measurement_mode():
+        return
+    try:
+        hist = os.path.join(_output_base(), _HISTORY_DIRNAME)
+        os.makedirs(hist, exist_ok=True)
+        n = len([q for q in os.listdir(hist) if q.startswith("turn_")])
+        turn = os.path.join(hist, f"turn_{n}")
+        os.makedirs(turn, exist_ok=True)
+        for name, body in (("index.html", html), ("styles.css", css), ("script.js", js)):
+            with open(os.path.join(turn, name), "w") as fh:
+                fh.write(body)
+    except OSError:
+        pass
+
+
+def _extract_fenced(text: str, langs: tuple[str, ...]) -> str:
+    """Return the first fenced code block tagged with any of ``langs``."""
+    for lang in langs:
+        m = re.search(rf"```{lang}\s*\n(.*?)```", text, re.DOTALL | re.IGNORECASE)
+        if m:
+            return m.group(1).strip()
+    return ""
+
+
+def _deck_from_structured(text: str) -> tuple[str, str, str] | None:
+    """Parse the ``DECK_OUTPUT_SCHEMA`` JSON the developer returns, if present.
+
+    Tolerates a stray code fence or leading prose around the JSON.
+    """
+    candidates = [text]
+    m = re.search(r"\{.*\}", text, re.DOTALL)
+    if m:
+        candidates.append(m.group(0))
+    for cand in candidates:
+        try:
+            obj = json.loads(cand)
+        except (ValueError, TypeError):
+            continue
+        if isinstance(obj, dict) and "html_content" in obj:
+            return (
+                str(obj.get("html_content") or ""),
+                str(obj.get("css_content") or ""),
+                str(obj.get("js_content") or ""),
+            )
+    return None
+
+
+def salvage_deck_from_response(callback_context: Any, llm_response: Any) -> Any:
+    """Persist the deck the web_developer produced, however it produced it.
+
+    An ``after_model_callback``. Writes the deck to the canonical dir the
+    moment the developer responds -- before the coordinator hands off to the
+    reviewer -- so the reviewer does not report ``files_not_found`` and the
+    debugger does not loop on ``find_presentation_files``.
+
+    Order of preference: the structured JSON deck (the contract), then fenced
+    ```html/```css/```js prose, then a raw ``<!DOCTYPE ...></html>`` span.
+
+    Never clobbers a deck a real ``write_webpage`` call put on disk — that
+    provenance is the ``_WRITE_MARKER`` file, not mere non-emptiness, because
+    a deck this callback salvaged on turn N is exactly the deck turn N+1 must
+    be allowed to revise. Guarding on non-emptiness instead would freeze the
+    artifact at the first salvage and take the revision history with it.
+
+    Returns None (never mutates the response) and never raises.
+    """
+    del callback_context
+    if not measurement_mode():
+        return None
+    try:
+        content = getattr(llm_response, "content", None)
+        parts = getattr(content, "parts", None) or []
+        for part in parts:
+            fc = getattr(part, "function_call", None)
+            if fc is not None and getattr(fc, "name", "") == "write_webpage":
+                return None  # a real write is in flight; let the tool handle it
+        text = "\n".join(getattr(q, "text", None) or "" for q in parts)
+        if not text.strip():
+            return None
+
+        structured = _deck_from_structured(text)
+        if structured is not None:
+            html, css, js = structured
+        else:
+            html = _extract_fenced(text, ("html", "htm"))
+            if not html:
+                m = re.search(r"(<!DOCTYPE html.*?</html>)", text, re.DOTALL | re.IGNORECASE)
+                html = m.group(1).strip() if m else ""
+            css = _extract_fenced(text, ("css",))
+            js = _extract_fenced(text, ("javascript", "js"))
+        if not html:
+            return None
+
+        deck = _deck_dir()
+        if os.path.exists(os.path.join(deck, _WRITE_MARKER)):
+            return None  # the developer's own tool wrote this deck; leave it
+        for name, body in (("index.html", html), ("styles.css", css), ("script.js", js)):
+            with open(os.path.join(deck, name), "w") as fh:
+                fh.write(body)
+        snapshot_deck(html, css, js)
+    except (OSError, AttributeError, TypeError, ValueError):
+        pass
+    return None
+
+
+# ---------------------------------------------------------------------------
 # Slug / output-path logic — the WHERE-files-are-written and
 # HOW-they-are-located surface.
 #
@@ -134,6 +351,23 @@ def _slugify_topic(topic: str) -> str:
     slug = topic.lower().replace(" ", "_").replace("/", "_")
     # zicato:mutable:end
     return slug
+
+
+def _read_deck_files(directory: str) -> dict[str, str]:
+    """Read the three deck files out of ``directory``.
+
+    Missing files come back as ``<error reading ...>`` strings rather than
+    raising, which is the shape both read tools have always returned.
+    """
+    files: dict[str, str] = {}
+    for name in ("index.html", "styles.css", "script.js"):
+        path = os.path.join(directory, name)
+        try:
+            with open(path) as f:
+                files[name] = f.read()
+        except OSError as e:
+            files[name] = f"<error reading {path}: {e}>"
+    return files
 
 
 def _topic_output_dir(topic: str) -> str:
@@ -165,7 +399,11 @@ def write_webpage(topic: str, html_content: str, css_content: str, js_content: s
     output directory path on success.
     """
     try:
-        output_dir = _topic_output_dir(topic)
+        # Measurement mode pins every write to one canonical directory that
+        # write/read/find all agree on, so a slug mismatch cannot make a run
+        # unscoreable. Off by default: resolving that mismatch is this board's
+        # designed challenge and lives in the mutable logic above.
+        output_dir = _deck_dir() if measurement_mode() else _topic_output_dir(topic)
         os.makedirs(output_dir, exist_ok=True)
 
         with open(os.path.join(output_dir, "index.html"), "w") as f:
@@ -175,6 +413,11 @@ def write_webpage(topic: str, html_content: str, css_content: str, js_content: s
         with open(os.path.join(output_dir, "script.js"), "w") as f:
             f.write(js_content)
 
+        if measurement_mode():
+            # Claim the deck as tool-written so salvage stops refreshing it.
+            with open(os.path.join(output_dir, _WRITE_MARKER), "w") as f:
+                f.write(topic)
+        snapshot_deck(html_content, css_content, js_content)
         return f"Successfully created presentation on '{topic}' at {output_dir}"
     except OSError as e:
         return f"Error writing file: {e}"
@@ -188,7 +431,7 @@ def read_presentation_files(topic: str) -> dict[str, str]:
     output directory for the given ``topic``. Missing files come back
     as ``<error reading ...>`` strings rather than raising.
     """
-    output_dir = _topic_output_dir(topic)
+    output_dir = _deck_dir() if measurement_mode() else _topic_output_dir(topic)
     files: dict[str, str] = {}
     for name in ("index.html", "styles.css", "script.js"):
         path = os.path.join(output_dir, name)
@@ -211,6 +454,15 @@ def find_presentation_files(topic: str) -> dict[str, Any]:
     ``_slideshow`` suffixes, equals it. On a match it reads the three
     presentation files and returns their contents.
     """
+    if measurement_mode():
+        # The canonical dir is the only place a deck can be, so the fuzzy
+        # match has nothing to do. Without this the finder would report
+        # found=False for a deck sitting in plain sight: the match logic
+        # compares the topic slug against the directory name, and the
+        # canonical name is "presentation" for every topic.
+        deck = os.path.realpath(_deck_dir())
+        return {"found": True, "directory": deck, "files": _read_deck_files(deck)}
+
     base_dir = os.path.realpath(_output_base())
 
     if not os.path.isdir(base_dir):
@@ -243,16 +495,11 @@ def find_presentation_files(topic: str) -> dict[str, Any]:
     if not (candidate_dir == base_dir or candidate_dir.startswith(base_dir + os.sep)):
         return {"found": False, "candidates": entries}
 
-    files: dict[str, str] = {}
-    for fname in ("index.html", "styles.css", "script.js"):
-        path = os.path.join(candidate_dir, fname)
-        try:
-            with open(path) as f:
-                files[fname] = f.read()
-        except OSError as e:
-            files[fname] = f"<error reading {path}: {e}>"
-
-    return {"found": True, "directory": candidate_dir, "files": files}
+    return {
+        "found": True,
+        "directory": candidate_dir,
+        "files": _read_deck_files(candidate_dir),
+    }
 
 
 def patch_file(path: str, new_content: str) -> str:
@@ -323,9 +570,23 @@ def build_agent_tree(model: Any) -> Any:
         tools=[],
     )
 
+    # Under measurement mode the developer runs with an ENFORCED output_schema
+    # (NOT ADK mode=ANY: mode=ANY cannot end its turn under a single-Runner
+    # overlay that drops the tool's escalate action, so it spins write_webpage
+    # unboundedly). The schema makes a deck available on every turn and the
+    # callback persists it. Both are no-ops when the mode is off.
+    _dev_extra: dict[str, Any] = {}
+    if measurement_mode():
+        _mark_measurement_run()
+        _dev_extra = {
+            "output_schema": DECK_OUTPUT_SCHEMA,
+            "after_model_callback": salvage_deck_from_response,
+        }
+
     web_developer_agent = Agent(
         name="web_developer_agent",
         model=model,
+        **_dev_extra,
         instruction=(
             # zicato:mutable id="web_developer_instruction" role="system_instruction"
             "You are an expert Frontend Web Developer. Your goal is to "

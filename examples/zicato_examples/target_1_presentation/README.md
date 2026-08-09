@@ -252,6 +252,46 @@ zicato tournament
 The exact subcommands and flags are documented under
 `docs/design/CLI.md`; this section will be updated once they freeze.
 
+## Measurement mode — running the board as an instrument
+
+`ZICATO_TARGET1_MEASUREMENT_MODE=1` (default off) changes what this
+board is for. Off, it is a puzzle: the write/read slug mismatch is its
+designed difficulty and the thing the proposer has to solve. On, it is
+an instrument for comparing proposer *configurations* against each
+other, where that difficulty is only noise between the arms:
+
+- **Canonical deck dir.** `write_webpage`, `read_presentation_files`
+  and `find_presentation_files` all resolve to one fixed
+  `output/presentation/`, so no topic string can make a run
+  unscoreable.
+- **Enforced output contract + salvage.** The `web_developer` gets
+  `output_schema=DECK_OUTPUT_SCHEMA`, and an `after_model_callback`
+  writes the deck to the canonical dir the moment the developer
+  responds — from the structured JSON, or from fenced
+  ` ```html/```css/```js ` prose, or from a raw `<!DOCTYPE …></html>`
+  span. It never clobbers a deck a real `write_webpage` call put there.
+- **History snapshots.** An immutable `output/deck_history/turn_<n>/`
+  copy per write, so "did turn N+1 keep what turn N built?" is
+  answerable from the artifact rather than from the transcript.
+
+The contract is an `output_schema` rather than ADK `mode=ANY`, because
+`mode=ANY` cannot end its turn under a single-Runner overlay that drops
+the tool's `escalate` action and so spins `write_webpage` unboundedly.
+
+**Do not read a file-findability result out of a measurement-mode
+run.** Salvage guarantees a deck exists however the pipeline failed, so
+a scorer reading only the artifact cannot tell a working pipeline from
+a broken one, and the canonical dir makes the reviewer's read succeed
+whatever slug it asks for. A run with the mode on leaves a
+`MEASUREMENT_MODE` note in its output base saying exactly that, so an
+artifact tree read back later carries the caveat with it.
+
+Off is off: `tests/test_example_target_1_measurement_mode.py` pins that
+with the variable absent the tools are byte-identical to their
+pre-measurement-mode behaviour and no measurement artifact — not the
+canonical dir, not the history, neither marker — reaches disk. Only the
+exact string `1` arms the mode; anything else fails closed.
+
 ## Why vendor instead of cross-reference?
 
 The upstream `presentation_agent_orchestrated` reference dynamically
