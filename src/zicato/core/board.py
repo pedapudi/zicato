@@ -189,13 +189,10 @@ class JudgeSpec:
         process-judge callable when :attr:`mode` is
         :attr:`JudgeMode.PYTHON`.
     severity:
-        Drift severity the judge's adverse verdict is reported at.
-        Typed as :class:`zicato.core.DriftSeverity`, the string mirror of
-        ``goldfive.DriftSeverity`` (same names, values, and order), so the
-        core board types stay importable without the optional goldfive
-        extra. Members of either enum compare equal and serialise to the
-        same token, so a board authored against ``goldfive.DriftSeverity``
-        is accepted unchanged.
+        Drift severity the judge's adverse verdict is reported at. Typed
+        as :class:`zicato.core.DriftSeverity`, the string mirror of
+        ``goldfive.DriftSeverity``; members of either enum compare equal
+        and serialise to the same token.
     """
 
     name: str

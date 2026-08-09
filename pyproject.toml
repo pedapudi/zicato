@@ -31,12 +31,7 @@ classifiers = [
 ]
 dependencies = [
     # Core is intentionally light; storage / telemetry / LLMs are pluggable.
-    # goldfive is NOT here: it moved to the `goldfive` extra below. The
-    # core import surface (zicato, zicato.core, board load/save, the CLI)
-    # is goldfive-free — zicato.core.drift_kinds carries a string mirror
-    # of goldfive's DriftKind / DriftSeverity enums so the board types
-    # keep their vocabulary without the import. See the extra for what
-    # you lose without it.
+    # goldfive is NOT here — see the `goldfive` extra below.
     # harmonograf_client ships the live-streaming sink the telemetry
     # layer attaches to every inner-harness run when
     # ZICATO_HARMONOGRAF_URL is set. It is imported lazily (see
@@ -62,24 +57,14 @@ dependencies = [
 
 [project.optional-dependencies]
 # The drift-instrumented ecosystem harness. Optional because zicato's
-# core — the board types, the epoch contract, the CLI, the storage and
-# query layers — is goldfive-free by construction (see the mirror in
-# zicato/core/drift_kinds.py and the no-goldfive import proof in
-# tests/test_no_goldfive_import.py). What the extra buys:
-#
-#   * the ADK adapter path (zicato.adapters.adk wraps the inner harness
-#     in goldfive.wrap and consumes its Event stream),
-#   * the built-in and custom in-run process judges (JudgeSpec is
-#     handed to goldfive as additional judges; without goldfive a
-#     board's `judges` are inert),
-#   * the default `goldfive` telemetry dialect, the only dialect that
-#     yields drift kinds and plan revisions. `adk_events` and
-#     `transcript` read a harness that never runs under goldfive.
-#
-# NOTE: `harmonograf-client` (a hard dependency) requires goldfive
-# transitively, so a standard install still resolves it; the extra is
-# what makes the requirement DECLARED rather than incidental, and the
-# import surface is what makes it genuinely optional.
+# core is goldfive-free by construction: zicato/core/drift_kinds.py
+# mirrors the drift vocabulary as strings, and
+# tests/test_no_goldfive_import.py proves the import surface against an
+# interpreter that cannot import goldfive. The extra buys the ADK
+# adapter path, the in-run process judges, and the default `goldfive`
+# telemetry dialect. NOTE: harmonograf-client requires goldfive
+# transitively, so a standard install still resolves it — the extra is
+# what makes the requirement declared rather than incidental.
 goldfive = ["goldfive"]
 adk = ["google-adk[extensions]", "goldfive[adk]"]
 # The standalone dashboard service: a Starlette/ASGI app served by

@@ -20,10 +20,8 @@ fully-formed :class:`~zicato.core.JudgeSpec` ready to attach to a
 The ``name`` is mandatory and becomes goldfive's ``judge_name``, so it is
 validated to be a stable slug-like identifier. ``severity`` is a
 :class:`~zicato.core.DriftSeverity` member — a typed choice, never a bare
-string. That enum is zicato's string mirror of ``goldfive.DriftSeverity``
-(same names, values, and order), so boards written against either symbol
-are accepted and produce the same wire token; the mirror is what keeps
-these types importable without the optional ``goldfive`` extra.
+string. That enum mirrors ``goldfive.DriftSeverity``, and either symbol is
+accepted.
 """
 
 from __future__ import annotations

@@ -1,29 +1,28 @@
 """Proof that zicato's core import surface does not need goldfive.
 
-goldfive is an optional extra (``pip install zicato[goldfive]``). The
-property this file pins is *structural*: nothing on the path from
-``import zicato`` through board load/save and ``zicato --help`` reaches
-``import goldfive``. Nothing weaker will do — the dev environment always
-has goldfive installed (``uv sync --all-extras``), and ``harmonograf-client``
-pulls it in transitively even without the extra, so the only honest way to
-observe the property is to make the import genuinely fail.
+goldfive is an optional extra (``pip install zicato[goldfive]``). Nothing
+on the path from ``import zicato`` through board load/save and
+``zicato --help`` may reach ``import goldfive``.
 
-Each test therefore runs a child interpreter whose ``sys.meta_path`` carries
-a finder that raises :class:`ImportError` for ``goldfive`` and every
-submodule, installed before zicato is imported. A regression — someone adding
-a module-scope ``from goldfive import ...`` to a core module — turns these
-red with the offending traceback rather than rotting silently.
+A minimal venv would not prove that: the dev environment always installs
+goldfive (``uv sync --all-extras``) and ``harmonograf-client`` pulls it in
+transitively even without the extra. So each test runs a child interpreter
+whose ``sys.meta_path`` refuses ``goldfive``, installed before zicato is
+imported — a module-scope ``from goldfive import ...`` added to a core
+module turns these red with the offending traceback.
 """
 
 from __future__ import annotations
 
-import json
 import subprocess
 import sys
 import textwrap
+import tomllib
 from pathlib import Path
 
 import pytest
+
+from zicato.core import drift_kinds
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
@@ -83,29 +82,20 @@ def test_blocker_actually_blocks() -> None:
     assert "blocked:" in _ok(result)
 
 
-@pytest.mark.parametrize(
-    "module",
-    [
-        "zicato",
-        "zicato.core",
-        "zicato.board",
-        "zicato.board.jsonl",
-        "zicato.board.judges",
-        "zicato.board.builder",
-        "zicato.epoch",
-        "zicato.storage",
-        "zicato.workspace_loader",
-        "zicato.cli",
-    ],
-)
-def test_module_imports_without_goldfive(module: str) -> None:
+def test_core_modules_import_without_goldfive() -> None:
+    """Every module on the core import surface resolves goldfive-free."""
     _ok(
         _run_without_goldfive(
-            f"""
-            import importlib
-            importlib.import_module({module!r})
-            import sys
-            assert "goldfive" not in sys.modules, "goldfive leaked into sys.modules"
+            """
+            import importlib, sys
+
+            for name in [
+                "zicato", "zicato.core", "zicato.board", "zicato.board.jsonl",
+                "zicato.board.judges", "zicato.board.builder", "zicato.epoch",
+                "zicato.storage", "zicato.workspace_loader", "zicato.cli",
+            ]:
+                importlib.import_module(name)
+                assert "goldfive" not in sys.modules, f"{name} pulled in goldfive"
             """
         )
     )
@@ -114,14 +104,14 @@ def test_module_imports_without_goldfive(module: str) -> None:
 def test_board_roundtrip_without_goldfive(tmp_path: Path) -> None:
     """A board builds, saves, loads, and re-saves byte-identically without goldfive.
 
-    Covers the whole authoring surface an operator touches for a target
-    that does not run under goldfive: the ``Board`` builder, ``Predicate``,
-    a board-level ``disable_drift`` header (drift kinds come from the
-    mirror), and the JSONL reader/writer.
+    Covers the authoring surface an operator touches for a target that
+    does not run under goldfive: ``Board`` / ``Entry`` / ``Predicate`` /
+    ``Judge``, a board-level ``disable_drift`` header, and the JSONL
+    reader/writer.
     """
     board = tmp_path / "board.jsonl"
     out = tmp_path / "roundtrip.jsonl"
-    stdout = _ok(
+    _ok(
         _run_without_goldfive(
             f"""
             from pathlib import Path
@@ -148,14 +138,10 @@ def test_board_roundtrip_without_goldfive(tmp_path: Path) -> None:
             assert [k.value for k in disable_drift] == ["off_topic", "tool_error"], disable_drift
             assert judge_only is False
             save_board(entries, Path({str(out)!r}), disable_drift=disable_drift)
-            print("roundtrip-ok")
             """
         )
     )
-    assert "roundtrip-ok" in stdout
     assert out.read_text(encoding="utf-8") == board.read_text(encoding="utf-8")
-    header = json.loads(board.read_text(encoding="utf-8").splitlines()[0])
-    assert header["disable_drift"] == ["off_topic", "tool_error"]
 
 
 def test_drift_vocabulary_available_without_goldfive() -> None:
@@ -190,16 +176,14 @@ def test_drift_vocabulary_available_without_goldfive() -> None:
 def test_cli_help_without_goldfive() -> None:
     """``zicato --help`` renders every subcommand with goldfive blocked.
 
-    ``build_cli_root`` auto-discovers command modules and *skips a broken
-    plugin with a warning*, so a root ``--help`` alone would still render
-    if half the subcommands failed to import. Asserting the discovered
-    command set is non-trivial and that each subcommand's own ``--help``
-    renders is what makes this a real check.
+    ``build_cli_root`` skips a command module that fails to import,
+    logging a warning, so a root ``--help`` alone would still render with
+    half the subcommands missing. Hence the command-count floor and the
+    per-subcommand help.
     """
     stdout = _ok(
         _run_without_goldfive(
             """
-            import sys
             import click
             from zicato.cli.discovery import build_cli_root
 
@@ -212,51 +196,35 @@ def test_cli_help_without_goldfive() -> None:
             for name in names:
                 cmd = root.commands[name]
                 sub = click.Context(cmd, parent=ctx, info_name=name, terminal_width=80)
-                assert cmd.get_help(sub)
-            assert "goldfive" not in sys.modules, "goldfive leaked into sys.modules"
-            print("commands:", " ".join(names))
+                assert cmd.get_help(sub), name
             """
         )
     )
     assert "Usage:" in stdout
-    assert "commands:" in stdout
 
 
-def test_goldfive_is_an_extra_not_a_core_dependency() -> None:
-    """The packaging half of the property.
-
-    The import proof above would still pass if someone re-added goldfive to
-    ``[project.dependencies]`` — the dev environment installs it either way.
-    This pins the declaration itself so the two halves cannot drift apart.
-    """
-    import tomllib
-
+def test_goldfive_is_declared_as_an_extra() -> None:
+    """The packaging half: the import proof alone would not catch a re-add."""
     pyproject = tomllib.loads((REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8"))
-    core = pyproject["project"]["dependencies"]
+    names = [d.split("[")[0].strip() for d in pyproject["project"]["dependencies"]]
     extras = pyproject["project"]["optional-dependencies"]
 
-    assert not [d for d in core if d.split("[")[0].strip() == "goldfive"], (
-        "goldfive is back in [project.dependencies]; it belongs in the "
-        "`goldfive` extra — see tests/test_no_goldfive_import.py"
-    )
+    assert "goldfive" not in names, "goldfive belongs in the `goldfive` extra"
     assert "goldfive" in extras["goldfive"]
-    # The ADK adapter path is where goldfive is load-bearing, so the adk
-    # extra must keep pulling it in on its own.
+    # The ADK adapter path is where goldfive is load-bearing.
     assert any(d.split("[")[0].strip() == "goldfive" for d in extras["adk"]), extras["adk"]
 
 
-@pytest.mark.parametrize("enum_name", ["DriftKind", "DriftSeverity"])
-def test_mirror_matches_goldfive(enum_name: str) -> None:
+def test_mirror_matches_goldfive() -> None:
     """The mirror must not skew from upstream: same names, values, ORDER.
 
     Order is observable — ``_coerce_disable_drift`` and ``_coerce_enum``
     render ``valid values are: ...`` by iterating the enum — so this pins
-    the sequence, not just the set. Skipped when goldfive is absent; the
-    dev/CI environment installs it via ``uv sync --all-extras``.
+    the sequence, not just the set.
     """
     goldfive = pytest.importorskip("goldfive", reason="goldfive extra not installed")
-    import zicato.core.drift_kinds as mirror
 
-    upstream = getattr(goldfive, enum_name)
-    mine = getattr(mirror, enum_name)
-    assert [(m.name, m.value) for m in mine] == [(m.name, m.value) for m in upstream]
+    for name in ("DriftKind", "DriftSeverity"):
+        upstream = getattr(goldfive, name)
+        mine = getattr(drift_kinds, name)
+        assert [(m.name, m.value) for m in mine] == [(m.name, m.value) for m in upstream], name
