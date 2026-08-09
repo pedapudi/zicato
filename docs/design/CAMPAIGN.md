@@ -958,7 +958,7 @@ board runs at **≈ 2.5 h** of parallel board-run wall-clock. Against measuremen
 | | original estimate | measured |
 |---|---|---|
 | a 16-cell × 6-round run | — | **4 h 56 m** |
-| a 144-cell × 3-round run | — | **7 h 23 m** |
+| a 144-cell × 3-round run, **12 cells concurrent** | — | **7 h 23 m** (run 1; both sweeps ≈ 7.5 h) |
 | the 8-arm screening design | ≈ 2.5 h parallel board-run wall-clock | **several times a 16-cell run again** |
 
 **Use the measured figures for every future budget.** The failure mode of the
@@ -985,6 +985,39 @@ concurrency, different endpoint latency. **Do not extrapolate wall-clock from
 one anchor as though the rate were a constant** — that is a smaller version of
 exactly the error the original ≈2.5 h estimate made. Quote the anchor you are
 interpolating from, and label the result **planning**.
+
+**Record the concurrency with every anchor, or the anchor cannot be used.** Both
+rates above are *throughput over a parallel run*, not per-round latency, and
+that is most of why they disagree. The 144-cell × 3-round run held **12 cells
+concurrent** (**measured**), so its ≈1.0 min per cell-round is really ≈12 min of
+elapsed time per cell-round. An anchor quoted without the concurrency it was
+measured at is not interpolatable — it is a ratio of two numbers, one of which
+is missing.
+
+**The per-unit latencies behind the anchors.** The original estimate went wrong
+in a single assumption rather than in the arithmetic, so it is worth recording
+what that assumption should have been:
+
+| | original assumption | measured |
+|---|---|---|
+| per model call | 0.8 s | **≈ 9–10 s** |
+| per 3-round cell, end to end | — | **1,300–2,300 s (median ≈ 2,000 s)** |
+| per board run (≈ 5 serial-ish calls) | ≈ 4 s | ≈ 48 s (**derived**, see caveat) |
+
+0.8 s is a fast single-turn completion; a `target_1` board run drives a
+coordinator plus specialists whose turns are long and partly serial.
+
+**Interpolate from the per-cell row, not the per-board-run row.** The per-cell
+figure is the one that composes with the anchors and with concurrency: 144 cells
+at 12 concurrent is 12 waves, each gated by its slowest cell, at ≈2,000 s ⇒
+≈6.7 h, against a **measured ≈7.5 h for both sweeps** (run 1 at 7 h 23 m). The
+per-board-run figure is **derived** from the per-cell figure by dividing through
+the **planning** 7-entry shape's 14 board runs/round (14 × 3 ≈ 42 per cell), and
+the executed board carried **5 entries** with a structurally empty holdout
+(R.6) — whose meter arithmetic gives fewer board runs per round than that.
+**So ≈48 s is an order-of-magnitude figure against the 0.8 s assumption, not a
+reconciliation target**; §6.1 reconciles against the cost meter, never against
+this row.
 
 **Cost-meter semantics (grounded in `builder/operations.py::estimate_cost`).**
 The meter reports **board runs per round** (each = one agent execution on one
@@ -1201,21 +1234,37 @@ zicato reflect run   --workspace .zicato          # MSA pass over the eval contr
   `models.proposer_depth` block into the workspace `config.json` before
   `evolve` (its `scoring.json` == A0's).
 
-**Parallelism (recommend ≤ 4 concurrent `evolve` processes).** Arms run in
-separate workspaces, so they *can* run concurrently, but bound concurrency at
-**≤ 4** for two grounded reasons:
+**Parallelism — the measured working point is ≈ 12 concurrent cells.** Arms and
+cells run in separate workspaces, so they *can* run concurrently. Both 144-cell
+sweeps in the standing record held **12 cells concurrent** (**measured**) and
+produced the §5 wall-clock anchors at that setting; an executor that bounds
+itself lower will not reproduce them, and one that bounds itself higher will not
+beat them. Three constraints, in the order they actually bind:
 
-1. **Shared endpoint rate limits.** Every arm hits the same operator harness +
-   auxiliary endpoints; N concurrent arms multiply the offered load N× against
-   one rate limit. Beyond ~4, the endpoint throttles and wall-clock inflates.
-2. **One dashboard port each.** `zicato evolve` binds the dashboard on
-   `--dashboard-port` (default **7892**, `cli/commands/evolve.py`). Concurrent
-   evolves do **not** collide on it — `dashboard/server.py::_pick_port` walks
-   `preferred..preferred+10` and takes the first free one — but they do land on
+1. **The host, not the endpoint — this is the one that bit.** The loop spawns a
+   **heavyweight process per board unit**, so **raising concurrency does not
+   recover wall-clock linearly**: past roughly a dozen concurrent cells the box
+   spends its time context-switching rather than generating (**measured**). ≈12
+   is what one host sustained, not a portable constant — size it against the
+   cores and memory of the machine you are on, and re-measure before quoting a
+   §5 anchor at a different setting.
+2. **Shared endpoint rate limits (planning — asserted, never measured).** Every
+   arm hits the same operator harness + auxiliary endpoints, so N concurrent
+   runs multiply the offered load N× against one rate limit. The executed sweeps
+   observed **no throttling at 12**, so treat this as a §6.4 watch item against
+   your own endpoint's limits, not as a ceiling.
+3. **One dashboard port each — and at this concurrency the default range runs
+   out.** `zicato evolve` binds the dashboard on `--dashboard-port` (default
+   **7892**, `cli/commands/evolve.py`). `dashboard/server.py::_pick_port` walks
+   `preferred..preferred+10` and takes the first free one — **11 candidates, and
+   it raises `OSError` when all are taken.** So 12 concurrent evolves all
+   defaulting to 7892 leave the twelfth unable to start: the auto-walk covers 4
+   concurrent runs comfortably and 12 not at all. Assign each concurrent run an
+   **explicit, distinct** port (7892, 7893, … 7903 for a 12-wide wave) — which
+   also keeps the mapping legible, since the auto-walk otherwise lands runs on
    ports nobody chose. The house rule forbids a `--dashboard-bind` flag and says
-   nothing about the port, so assign each concurrent run a **distinct** port —
-   7892, 7893, 7894, 7895 — to keep the mapping legible, and **record each run's
-   actual printed URL**, which is the port that was really bound.
+   nothing about the port. **Record each run's actual printed URL**, which is the
+   port that was really bound.
 
 **Run ordering — the CONTROLS first, then BASE, then the treatments.** The
 pre-gates (§6.1 items 2–3) come before any spend. Then launch the **A/A** and
