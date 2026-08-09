@@ -595,19 +595,17 @@ function candidateDigest(s) {
     entries: s.entries.map((e) => [e.entry_id, svg.isNum(e.drift_loss) ? e.drift_loss.toFixed(3) : null, e.pass_fail, !!e.wall_clock_budget_exceeded, e.rung || null, e.match_id || null, !!e.cached, svg.isNum(e.score) ? e.score.toFixed(3) : null, metricsDigest(e.metrics)]),
     // per-generation mean continuous outcome (#18); null on the pre-score path.
     meanScore: svg.isNum(s.meanScore) ? s.meanScore.toFixed(3) : null,
-    // Facet means fold at their RENDERED precision so a no-op heartbeat
-    // leaves the digest byte-identical and the strip's DOM nodes survive
-    // (G10). A board with no facet tag contributes an empty array —
-    // unchanged digest vs the pre-facet path.
     // Facet numbers fold at their RENDERED precision so a no-op heartbeat
     // leaves the digest byte-identical and the table's DOM nodes survive
     // (G10). A board with no facet tag contributes empty — unchanged digest
-    // vs the pre-facet path.
+    // vs the pre-facet path. Every count the cell can print folds too: `ran`
+    // reaches the DOM through facetCount, so a digest blind to it would pin
+    // a stale denominator in place.
     facets: [...s.facetScores.rows, s.facetScores.overall].filter(Boolean).map((f) => [
       f.name,
       svg.isNum(f.scalar) ? f.scalar.toFixed(2) : null,
       svg.isNum(f.mean) ? f.mean.toFixed(2) : null,
-      f.scored, f.total,
+      f.scored, f.ran, f.total,
     ]),
     cached: s.cached ? [s.cachedProvenance && s.cachedProvenance.sourceEpoch, s.cachedProvenance && s.cachedProvenance.sourceRun] : null,
     progression: s.progression && Array.isArray(s.progression.stages)
@@ -1101,6 +1099,10 @@ function facetRows(raw) {
     scalar: svg.isNum(row.scalar) ? row.scalar : null,
     mean: svg.isNum(row.mean_score) ? row.mean_score : null,
     scored: Number.isInteger(row.scored_count) ? row.scored_count : 0,
+    // The SCALAR's denominator — how many tagged entries produced a run.
+    // Distinct from `scored` (the mean's denominator) and from `total` (what
+    // the board tagged), so all three ride to the cell.
+    ran: Number.isInteger(row.ran_count) ? row.ran_count : null,
     total: Number.isInteger(row.entry_count) ? row.entry_count : 0,
   });
   const rows = Object.keys(facets).sort().map((n) => norm(facets[n] || {}, n));
@@ -1133,23 +1135,15 @@ function facetRows(raw) {
 // an absent measurement is not a failing one. Its `scalar` is still real: an
 // unscored entry still contributes drift.
 function facetTable(model) {
-  const body = (model.rows || []).map((f) => [
+  const cellsFor = (f) => [
     { text: f.name },
     { text: facets.facetNum(f.scalar), class: 'dn-num' },
     { text: facets.facetNum(f.mean), class: 'dn-num' },
-    { text: facets.facetCount(f.scored, f.total), class: 'dn-num dn-faint' },
-  ]);
+    { text: facets.facetCount(f.scored, f.ran, f.total), class: 'dn-num dn-faint' },
+  ];
+  const body = (model.rows || []).map(cellsFor);
   if (model.overall) {
-    const o = model.overall;
-    body.push({
-      class: 'dn-facet-overall',
-      cells: [
-        { text: o.name },
-        { text: facets.facetNum(o.scalar), class: 'dn-num' },
-        { text: facets.facetNum(o.mean), class: 'dn-num' },
-        { text: facets.facetCount(o.scored, o.total), class: 'dn-num dn-faint' },
-      ],
-    });
+    body.push({ class: 'dn-facet-overall', cells: cellsFor(model.overall) });
   }
   const table = dataTable({
     class: 'dn-facet-table',
@@ -1164,6 +1158,9 @@ function facetTable(model) {
   const heads = facets.tableHeaderCells(table);
   facets.attachFacetHover(heads[1], 'scalar');
   facets.attachFacetHover(heads[2], 'mean_score');
+  // The count column carries THREE denominators collapsed into one string,
+  // so it needs its own explanation as much as the two numbers do.
+  facets.attachFacetHover(heads[3], 'count');
   return el('div', { class: 'dn-facets' }, [
     facets.facetCaption('this candidate re-scored per board tag'),
     table,

@@ -43,20 +43,39 @@ export function facetNum(value) {
   return svg.isNum(value) ? svg.fmt(value, 2) : '—';
 }
 
-// `scored/tagged`, collapsed to one number only when EVERY tagged entry ran
-// and was scored. A facet is a SLICE of the board, so a racing rung that runs
-// a board subset can leave most of a slice unrun — and the denominator is the
-// only thing that shows it. Sizing by what ran would render such a slice as
-// "3", indistinguishable from a slice that is genuinely complete.
+// `scored/ran/tagged`, collapsed to the shortest form that loses nothing.
+// A facet is a SLICE of the board, so a racing rung that runs a board subset
+// can leave most of a slice unrun — and the denominators are the only thing
+// that shows it. Sizing by what ran would render such a slice as "3",
+// indistinguishable from a slice that is genuinely complete.
 //
-// The cell shows scored-vs-tagged only. The payload also carries `ran_count`
-// (how many tagged entries produced a profile, and therefore the scalar's own
-// denominator), but a third number in a narrow column buys less than it costs;
-// the scalar hovercard names it instead.
-export function facetCount(scored, tagged) {
+// The three numbers answer three different questions and are NOT redundant:
+//   * `tagged` — how many entries the BOARD puts in the slice.
+//   * `ran`    — how many of them produced a profile: the SCALAR's denominator.
+//   * `scored` — how many produced an outcome: the MEAN SCORE's denominator.
+// `1/3` alone cannot distinguish "three ran, two had no outcome check" from
+// "one ran, two were skipped" — the first says the board is thin on checks,
+// the second says the measurement is missing. So each number appears exactly
+// when it differs from the one after it.
+export function facetCount(scored, ran, tagged) {
   const s = Number.isInteger(scored) ? scored : 0;
   const t = Number.isInteger(tagged) ? tagged : 0;
-  return s === t ? String(s) : `${s}/${t}`;
+  // A payload without `ran_count` degrades to the two-number form rather
+  // than inventing a third value.
+  const r = Number.isInteger(ran) ? ran : t;
+  if (s === r && r === t) return String(s);
+  if (r === t) return `${s}/${t}`;
+  return `${s}/${r}/${t}`;
+}
+
+// The ONE explanation of the count column. Names all three denominators,
+// because the collapsed forms hide whichever ones happen to coincide.
+export function countHovercard() {
+  return hovercardBody([
+    el('div', { class: 'dn-hc-title', text: 'scored / ran / tagged' }),
+    el('p', { text: 'How many entries the board puts in this slice (tagged), how many produced a run (ran — the scalar’s denominator), and how many of those produced an outcome (scored — the mean score’s denominator).' }),
+    el('p', { text: 'Numbers that coincide are collapsed, so a bare “3” means all three agree. A slice is only as trustworthy as its smallest count; none of them carries a noise threshold.' }),
+  ]);
 }
 
 // The ONE explanation of `scalar`, shared by every facet surface.
@@ -79,12 +98,28 @@ export function meanScoreHovercard() {
   ]);
 }
 
-// Attach an explanation to a header cell. `kind` is 'scalar' or 'mean_score'.
-// attachHovercard sets tabindex + aria-describedby, so the explanation is
-// keyboard-reachable and not mouse-only.
+// Attach an explanation to a header cell. `kind` is 'scalar', 'mean_score' or
+// 'count'. attachHovercard sets tabindex + aria-describedby, so the
+// explanation is keyboard-reachable and not mouse-only.
+const HOVERCARDS = { scalar: scalarHovercard, mean_score: meanScoreHovercard, count: countHovercard };
+
 export function attachFacetHover(cell, kind) {
   if (!cell) return cell;
-  return attachHovercard(cell, kind === 'mean_score' ? meanScoreHovercard : scalarHovercard);
+  return attachHovercard(cell, HOVERCARDS[kind] || scalarHovercard);
+}
+
+// One facet SCALAR as the per-board drill-down shows it: the number, plus its
+// coverage when the slice is not whole. That table has one cell per
+// (candidate × facet) and no room for a count column, but a scalar resting on
+// one run of a four-entry slice must not print identically to one resting on
+// all four. The suffix appears only when it carries information.
+export function facetScalarText(cell) {
+  const c = cell || {};
+  const num = facetNum(c.scalar);
+  const ran = Number.isInteger(c.ran_count) ? c.ran_count : null;
+  const tagged = Number.isInteger(c.entry_count) ? c.entry_count : null;
+  if (ran === null || tagged === null || ran === tagged) return num;
+  return `${num} · ${ran}/${tagged}`;
 }
 
 // The header cells of a dataTable-built table, or [] when the shape is not

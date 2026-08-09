@@ -509,11 +509,20 @@ noise threshold, so the tables must not read as scoreboards:
    column. The emphasised column is as often the worse one.
 2. A slice nobody scored shows an em dash, never `0.00`. Its `scalar` is
    still real: an unscored entry still produced drift.
-3. The count travels with the numbers (`2`, or `0/1` when they differ),
-   and its denominator is the entries the BOARD puts in the slice — not
-   the ones that ran. A racing rung that runs a board subset would
-   otherwise render a mostly-unrun slice as fully covered, which is the
-   one thing these counts exist to prevent.
+3. The counts travel with the numbers, as `scored/ran/tagged` collapsed
+   to the shortest form that loses nothing (`2`, `0/1`, `1/1/3`). All
+   three appear because they answer different questions: `tagged` is what
+   the BOARD puts in the slice, `ran` is the scalar's denominator, and
+   `scored` is the mean score's. A racing rung that runs a board subset
+   would otherwise render a mostly-unrun slice as fully covered, which is
+   the one thing these counts exist to prevent. The per-board table has
+   no room for a count column, so a cell there carries its coverage on
+   the number itself (`0.77 · 1/4`) whenever the slice is not whole.
+
+Facets are computed over the TRAIN slice, so `candidate overall` is the
+same number the gate compares and a facet covering the whole board
+reports exactly it. Holdout entries feed no facet — see EVAL-VIEW.md
+§3.4 for why both halves of that matter.
 
 **④ Scalar waterfall.** The scalar is a weighted sum of drift-derived
 components (see [SCORING.md](SCORING.md) — the per-`judge_name`

@@ -1821,3 +1821,51 @@ test('candidate digest: a MOVED facet scalar repaints the dossier', async () => 
   assert(host.getAttribute('data-t-digest') !== digest1, 'a real facet move changes the digest');
   assertDeep(facetCells(host)[1], ['data_cleaning', '1.40', '0.41', '2'], 'the table shows the new scalar');
 });
+
+test('candidate view: the count cell SURFACES ran_count, the scalar’s own denominator', async () => {
+  freshState();
+  // Two slices that would print identically if the payload's `ran_count` went
+  // unread — `1/3` in both cases. They mean opposite things: `thin_checks`
+  // ran its whole slice and only one entry carried an outcome check;
+  // `mostly_skipped` scored everything that ran, and two entries never ran at
+  // all. The second is a measurement gap, the first is a board property.
+  installFixtureMap(withFacets({
+    thin_checks: { scalar: 0.50, mean_score: 0.70, scored_count: 1, ran_count: 3, entry_count: 3 },
+    mostly_skipped: { scalar: 0.50, mean_score: 0.70, scored_count: 1, ran_count: 1, entry_count: 3 },
+  }, OVERALL));
+  const candidate = await import('../js/views/candidate.js');
+  const host = document.createElement('div');
+  await candidate.render(host, { navigate() {}, href: router.href }, { epochId: EPOCH_ID, gen: 'v1' });
+
+  const cells = facetCells(host);
+  assertDeep(cells[1], ['mostly_skipped', '0.50', '0.70', '1/1/3'], 'a skipped slice shows what ran');
+  assertDeep(cells[2], ['thin_checks', '0.50', '0.70', '1/3'], 'a fully-run slice collapses the middle');
+  // The three-number form needs its own explanation, so the column carries one.
+  const heads = allByClass(host, 'dn-facet-table')[0].children[0].children[0].children;
+  assertEqual(heads[3].getAttribute('data-hovercard'), '1', 'the count column explains itself');
+  assertEqual(heads[3].getAttribute('tabindex'), '0', 'and is keyboard-reachable');
+});
+
+test('candidate digest: a slice that GAINED runs repaints, even at an unchanged scalar', async () => {
+  freshState();
+  installFixtureMap(withFacets(
+    { data_cleaning: { scalar: 0.89, mean_score: 0.41, scored_count: 2, ran_count: 2, entry_count: 4 } },
+    OVERALL));
+  const candidate = await import('../js/views/candidate.js');
+  const host = document.createElement('div');
+  const ctx = { navigate() {}, href: router.href };
+  await candidate.render(host, ctx, { epochId: EPOCH_ID, gen: 'v1' });
+  const digest1 = host.getAttribute('data-t-digest');
+
+  // The remaining two entries run and land on the same numbers. Nothing the
+  // old digest folded moved — but the CELL did, from `2/2/4` to `2/4`, and a
+  // digest blind to `ran_count` would pin the stale denominator on screen.
+  freshState();
+  installFixtureMap(withFacets(
+    { data_cleaning: { scalar: 0.89, mean_score: 0.41, scored_count: 2, ran_count: 4, entry_count: 4 } },
+    OVERALL));
+  await candidate.render(host, ctx, { epochId: EPOCH_ID, gen: 'v1' });
+
+  assert(host.getAttribute('data-t-digest') !== digest1, 'a coverage change is a real change');
+  assertDeep(facetCells(host)[1], ['data_cleaning', '0.89', '0.41', '2/4'], 'the cell shows the new coverage');
+});
