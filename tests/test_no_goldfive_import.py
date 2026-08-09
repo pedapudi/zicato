@@ -158,6 +158,42 @@ def test_board_roundtrip_without_goldfive(tmp_path: Path) -> None:
     assert header["disable_drift"] == ["off_topic", "tool_error"]
 
 
+def test_contract_hash_of_a_disable_drift_board_without_goldfive(tmp_path: Path) -> None:
+    """Canonicalizing a board that names drift kinds must not reach goldfive.
+
+    ``_canon_disable_drift`` normalizes each token through
+    ``judge_runtime.disable.kind_to_wire_string`` — a module that *does*
+    talk to goldfive, but only lazily and under ``TYPE_CHECKING``. The
+    epoch contract is on the core import surface, so the normalizer must
+    stay on the goldfive-free side of that line.
+    """
+    board = tmp_path / "board.jsonl"
+    board.write_text(
+        json.dumps({"board_meta": True, "disable_drift": ["tool_error", "agent_refusal"]})
+        + "\n"
+        + json.dumps(
+            {"id": "e1", "kind": "single_turn", "wall_clock_budget_seconds": 60, "input": "hi"}
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    stdout = _ok(
+        _run_without_goldfive(
+            f"""
+            import sys
+            from pathlib import Path
+            from zicato.epoch.contract import _canon_board_meta
+
+            canon = _canon_board_meta(Path({str(board)!r}))
+            assert '"disable_drift": ["agent_refusal", "tool_error"]' in canon, canon
+            assert "goldfive" not in sys.modules, "goldfive leaked into sys.modules"
+            print("contract-canon-ok")
+            """
+        )
+    )
+    assert "contract-canon-ok" in stdout
+
+
 def test_drift_vocabulary_available_without_goldfive() -> None:
     """The mirror keeps the FULL vocabulary — unknown tokens still raise."""
     stdout = _ok(
