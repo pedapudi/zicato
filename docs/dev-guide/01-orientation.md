@@ -314,9 +314,13 @@ automatically (the canonicalizer recurses into nested dataclasses):
 `TournamentStructure`, `OverfittingConfig` (+ `LadderConfig`),
 `ProposerQualityConfig`, `ExperimentMemoryConfig`.
 
-**mutation point** — a span or file the proposer may edit, marked in the
-target's source with `# zicato:mutable id="..."`. Typed as
-`MutationPoint`; enumerated by `enumerate_mutations`
+**mutation point** — a span, a bracketed region, or a whole file the
+proposer may edit, marked in the target's source with a
+`zicato:mutable id="..."` comment. The marker may sit in a `.py` file
+(where a span binds to the string literal beneath it) or in any
+allowlisted text file — markdown, YAML, TOML, shell — where the `:code`
+region and `:file` forms apply and any conventional comment leader is
+accepted. Typed as `MutationPoint`; enumerated by `enumerate_mutations`
 (`src/zicato/mutation/enumerator.py`); audited by `zicato mutations`.
 The set of *registered mutable trees* (which subtrees are mutable at all)
 is contract identity; the *content* of those trees is not.
@@ -722,9 +726,12 @@ skill hashing), `hints.py`, `brief.py`, `tools.py` / `adk_agent.py`
 (the tool-using ADK-native proposer). The proposer is a first-class
 contract input — see `docs/design/PROPOSER.md`.
 
-**`mutation/`** — the annotation-driven mutation surface: enumerator
-(marker walking → `MutationPoint`s), applier (patches → child tree),
-validator (post-apply checks). The `zicato mutations` CLI audits it.
+**`mutation/`** — the annotation-driven mutation surface: `markers.py`
+(the marker grammar, in its `"python"` and `"text"` comment syntaxes),
+enumerator (two marker walks — `*.py` under the AST, allowlisted text
+files by line — → `MutationPoint`s), applier (patches → child tree),
+validator (post-apply checks), `formats.py` (the best-effort `.toml`
+structural gate). The `zicato mutations` CLI audits it.
 
 **`board/`** — the typed board-authoring API (Predicate/Rubric/Judge
 builders), the JSONL loader/saver, and `split.py` (the train/holdout

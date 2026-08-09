@@ -9,7 +9,8 @@ the id covers.
 
 This document specifies:
 
-- The two marker forms (span-level, file-level) and their syntax.
+- The three marker forms (span-level, file-level, region-level) and
+  their syntax, in Python and in any other text file (§2).
 - The AST resolution rules that map a marker to a source location.
 - The shape of `MutationPoint` and the
   `HarnessAdapter.mutation_points()` protocol method.
@@ -32,18 +33,25 @@ A meta-harness has a safety-vs-reach trade-off:
   strings move) at the cost of reach (related strings in the same
   file may need to move together but can't be addressed as a group).
 
-zicato takes the middle path. Span markers are the default. A file
-marker covers the cases where a whole module — e.g. a `prompts.py`
-with several closely-related templates — should move as one unit.
-Both forms produce `MutationPoint`s with stable ids; both are
-addressed by the proposer through those ids; neither lets the proposer
-rewrite an unmarked file.
+zicato takes the middle path. Span markers are the default. A region
+marker covers a bounded run of lines — a block of control flow, a prompt
+body, a config stanza. A file marker covers the cases where a whole
+module — e.g. a `prompts.py` with several closely-related templates —
+should move as one unit. All three forms produce `MutationPoint`s with
+stable ids; all three are addressed by the proposer through those ids;
+none of them lets the proposer rewrite an unmarked file.
+
+Widening the surface beyond `.py` (§2.4) does not relax this. It changes
+*where a marker may live*, never whether one is required. An unmarked
+`config.yaml` is exactly as immutable as an unmarked `agent.py`.
 
 ## 2. Marker syntax
 
-Both forms are Python comments. The walker is a Python AST visitor;
-the comments are recognised by their exact prefix and the AST node
-they immediately precede or annotate.
+Markers are comments in whatever language hosts them. In a `.py` file
+the walker pairs them with the AST, so a span marker can bind to the
+string-literal node beneath it; in any other text file they resolve by
+line position (§2.4). §2.1–§2.3 describe the three forms in their Python
+spelling; §2.4 gives the general grammar.
 
 ### 2.1 Span marker
 
@@ -118,7 +126,170 @@ A file with a file marker MAY also carry span markers for finer-grained
 targets. Both are emitted by `mutation_points()`; the proposer chooses
 the granularity that fits the change.
 
-### 2.3 What markers do NOT do
+### 2.3 Region marker
+
+A region marker brackets a run of lines. The opening marker carries the
+`:code` suffix and an id; a bare `:end` sentinel closes it:
+
+```
+# zicato:mutable:code id="<stable-id>" [key="value" ...]
+...the mutable lines...
+# zicato:mutable:end
+```
+
+The point's content is the lines **strictly between** the two markers.
+The marker lines themselves are outside the mutable range and the applier
+strips any the proposer echoes back, so a patch can neither move nor
+delete its own anchors — which is what keeps the id resolving from one
+generation to the next.
+
+```python
+def make_slug(title):
+    # zicato:mutable:code id="slug_logic"
+    slug = title.lower()
+    slug = slug.replace(" ", "-")
+    # zicato:mutable:end
+    return slug
+```
+
+In a `.py` file the region body is real Python control flow — this is how
+a block of logic becomes mutable surface without exposing the whole file
+and without wrapping the body in a string literal. The applier owns the
+indent: the replacement is dedented to a common baseline and re-anchored
+to the region's column, so a proposer working from a truncated preview
+cannot shift the block off its suite. An unterminated region (no `:end`
+before EOF) is dropped.
+
+Outside Python the same form does the same thing over that file's own
+content — see §2.4.
+
+### 2.4 Markers in non-Python files
+
+A mutable tree is not a Python-only tree. A prompt can live in
+`prompts/researcher.md`, a policy in `config/runtime.yaml`, a tool
+manifest in `tools.toml`. The marker *token* is the same everywhere;
+only the host language's comment lead-in changes.
+
+**Accepted lead-ins.** `#` · `//` · `/*` · `<!--` · `;` · `--` · `%`.
+A trailing block-comment closer (`-->`, `*/`) is tolerated on any marker
+line. So all of these are the same marker:
+
+```yaml
+# zicato:mutable:code id="retry_policy"
+```
+```markdown
+<!-- zicato:mutable:code id="researcher_brief" role="prompt" -->
+```
+```javascript
+// zicato:mutable:code id="tool_descriptions"
+```
+
+`*` is deliberately **not** a lead-in, even though C block comments
+conventionally continue with it: every markdown bullet would become a
+candidate marker line. Write the marker on the `/*` line instead.
+
+`.py` files are parsed under the historical `#`-only grammar and nothing
+else. That is not an oversight — it is what makes "widening the surface
+moves zero Python points" a property of the grammar rather than a claim a
+test has to keep re-establishing.
+
+**Which forms carry over.** Two of three:
+
+| Form | In a `.py` file | In any other text file |
+|---|---|---|
+| `:file` | whole file | whole file — identical |
+| `:code` | region between the markers | region between the markers — identical |
+| bare span | binds to the nearest string literal beneath | **not supported**; warns and contributes nothing |
+
+A bare span marker has no meaning without a parser: "the nearest string
+literal beneath" is an AST fact. The tempting approximation — bind to the
+next non-blank line — is worse than nothing, because a `replace` against
+`temperature: 0.7` would swallow the `temperature:` key the operator
+meant to keep. So the enumerator refuses it, and says so by name:
+
+```
+enumerator: config/runtime.yaml:12 declares span marker id='temperature',
+but span markers bind to a Python string literal and runtime.yaml is not a
+Python file; use the region form (zicato:mutable:code ...
+zicato:mutable:end) or zicato:mutable:file instead. This marker
+contributes no mutation point.
+```
+
+**The region form is the workhorse**, and carries the safety argument.
+Both anchors are explicit, both are written by the operator, and both sit
+*outside* the mutable range:
+
+```yaml
+runtime:
+  # zicato:mutable:code id="retry_policy"
+  retries: 3
+  backoff_seconds: 1.5
+  # zicato:mutable:end
+  owner: operator          # <- not mutable, and cannot become mutable
+```
+
+The point's `content` is exactly the lines strictly between the markers.
+Three properties follow, and each is pinned by a test:
+
+1. **A patch cannot escape.** The applier rebuilds the file as
+   `everything before the region` + `replacement` + `everything after`.
+   The surrounding text is never in play.
+2. **A patch cannot eat its own markers.** Marker lines are stripped from
+   the replacement body before it is written, so a proposer that echoes
+   `<!-- zicato:mutable:end -->` back — or tries to open a *new* region —
+   has those lines dropped rather than honoured. The anchors survive, so
+   the id still resolves next round.
+3. **Relative indentation survives.** The replacement is dedented to a
+   common baseline and re-anchored to the region's own indent, so a
+   proposer that emits at column 0 still lands correctly inside a nested
+   YAML block, and nested structure is not flattened.
+
+A `:file` marker gives up property 2 by definition — a whole-file replace
+*can* delete the marker. That is caught after the fact by post-apply check
+A2 (every patched id must still resolve), which rejects the snapshot.
+
+**JSON.** Strict JSON has no comment syntax, so there is no way to write a
+marker in a `.json` file without invalidating it. `.json` / `.jsonl` are
+therefore not walked at all; the comment-bearing dialects `.jsonc` and
+`.json5` are.
+
+### 2.5 Which files are walked
+
+Discovery is an **extension allowlist**, not a content sniff — see
+`TEXT_FILE_SUFFIXES` / `TEXT_FILE_NAMES` in
+`zicato.mutation.enumerator` for the current set (prose, config,
+templates, shell, markup, and the common source languages).
+
+The alternative — open every file and guess from its bytes whether it is
+text — was rejected on two grounds. It reads *every* file in the tree
+including binaries, and the enumerator re-runs after **every applied
+patch**, so the walk sits on the hot path. And a surface that decides by
+guessing is a surface whose contents can change because a file's first
+8KB changed. An allowlist decides without opening the file and cannot
+wander into a binary at all.
+
+The cost is real and worth naming: an operator with an unusual extension
+must add it to the allowlist. That is a visible, reviewable edit — the
+right failure mode for the thing that decides what an LLM may rewrite.
+
+Three guards ride along:
+
+- Vendored / generated directories (`.git`, `node_modules`, `.venv`,
+  `__pycache__`, `dist`, `build`, …) are pruned from the **text pass
+  only**. Pruning the Python pass would change which `.py` files
+  enumerate, and that is exactly what must not move.
+- Text files over 2 MB are skipped. A multi-megabyte `.jsonl` in a
+  mutable tree is data, not surface.
+- A file that is not valid UTF-8, or that contains a NUL byte, yields
+  nothing — belt and braces behind the allowlist.
+
+A **single-file root** now resolves by suffix: `.py` through the Python
+pass, an allowlisted suffix through the text pass, and anything else
+warns. Previously a non-`.py` single-file root fell through to the
+directory branch, whose `rglob` on a file matches nothing, and enumerated
+to zero points in complete silence.
+
+### 2.6 What markers do NOT do
 
 - Markers do not declare any *constraints* on the new text. They mark
   a target; validation happens at apply time, not at mark time.
@@ -128,14 +299,16 @@ the granularity that fits the change.
 - Markers do not survive into the wire format. The JSONL event stream
   knows nothing about mutation points; this is a source-side concern
   only.
-- Markers are not executable. They are comments. The Python interpreter
-  ignores them.
+- Markers are not executable. They are comments — in whatever language
+  hosts them. The Python interpreter, the YAML loader, and the markdown
+  renderer all ignore them.
 
 ## 3. AST resolution rules
 
-The mutation enumerator is a Python AST visitor. For each registered
-source root it walks every `.py` file, parses to AST, and walks the
-nodes.
+These rules govern the **Python pass**. For each registered source root
+the enumerator walks every `.py` file, parses to AST, and walks the
+nodes. The text pass (§2.4) needs none of this: it has no span form, and
+its `:file` / `:code` forms resolve by line position alone.
 
 **Span marker resolution:**
 
@@ -179,8 +352,8 @@ from typing import Literal
 
 @dataclass(frozen=True, slots=True)
 class MutationPoint:
-    id: str                       # globally unique within registration
-    kind: Literal["span", "file"] # marker form
+    id: str                                 # globally unique within registration
+    kind: Literal["span", "file", "code"]   # marker form ("code" = region)
     file: Path                    # absolute path to the source file
     source_root: Path             # which registered root this came from
     line_start: int               # 1-indexed inclusive
@@ -279,16 +452,27 @@ constant. Target 2 is goldfive — a library, registered with
 `zicato register --mutable-tree <checkout>/goldfive` while the entrypoint
 stays outside every tree.
 
-What the surface does *not* span is arbitrary file types. The native marker
-pass walks `*.py` only, so a markdown prompt or a YAML config sitting in a
-mutable tree is invisible to it. The one route to a non-Python surface
-today is an additive second pass, the **manifest bridge**
-(`zicato.synthetic.manifest_bridge`): when a root carries a goldfive-shaped
+Nor is the surface Python-only. The native marker pass walks `*.py` **and**
+every allowlisted text file (§2.4, §2.5), so a markdown prompt or a YAML
+config sitting in a mutable tree is real, addressable surface — the marker
+requirement is unchanged, only the set of places a marker may live has
+widened. What stays out of reach is a file with no marker in it, and a
+file type the allowlist does not name.
+
+A second, additive pass covers one shape that declares its surface
+elsewhere: the **manifest bridge**
+(`zicato.synthetic.manifest_bridge`). When a root carries a goldfive-shaped
 `optimization/manifest.toml`, each manifest entry becomes a
-`MutationPoint`, and prompt entries point at markdown bodies rather than
-`.py` spans. It is how target 2 exposes goldfive's prompt surface without
-sprinkling zicato markers through an upstream tree, and it no-ops silently
-for every root that has no such manifest.
+`MutationPoint` — prompt entries pointing at markdown bodies, numeric
+entries at `.py` attributes. It is how target 2 exposes goldfive's prompt
+surface without sprinkling zicato markers through an upstream tree, and it
+no-ops silently for every root that has no such manifest.
+
+The two passes are independent, which means a manifest id and a marker id
+*can* collide if an operator marks a file the manifest already declares.
+Nothing prevents it at enumeration time; `validate_patches` rejects the
+ambiguous id (see §6) rather than letting the applier edit whichever point
+was enumerated last.
 
 The list shape is part of the v0 contract even though v0 typically
 uses one root. Forcing the shape now means target 2 plugs in without
@@ -315,7 +499,8 @@ so a malformed batch is refused as a whole rather than half-applied):
 |---|---|---|
 | P1 | Each patch's `mutation_id` resolves to an enumerated `MutationPoint`. | A patch that targets nothing cannot be applied. |
 | P2 | The `op` matches its payload: `replace` carries `new_content`, `set_numeric` carries `new_numeric`, `set_enum` carries `new_enum`, and no foreign payload field is set. | Catches a malformed proposer response before it touches disk. |
-| P3 | The `op` is compatible with the target point's `kind`: `replace` works on `span` or `file`; `set_numeric` / `set_enum` require a `span` point (they locate a constant after the marker). | A file-level rewrite has no single constant to retarget. |
+| P3 | The `op` is compatible with the target point's `kind`: `replace` works on `span`, `file`, or `code`; `set_numeric` / `set_enum` require a `span` point (they locate a constant after the marker). | A file-level or region rewrite has no single constant to retarget. Since the text pass emits only `file` / `code` points, this is also what stops a `set_numeric` landing in a YAML file. |
+| P4 | Every `mutation_id` a patch targets resolves to exactly ONE point across the whole surface. | The Python pass, the text pass, and the manifest bridge are independent; an id declared twice would otherwise resolve last-write-wins. |
 
 A standalone helper, `check_forbidden_ids`, rejects any patch whose
 `mutation_id` is in an operator-supplied forbidden set — the
@@ -327,14 +512,39 @@ non-empty error list):
 
 | # | Constraint | Why |
 |---|---|---|
-| A1 | Every touched `.py` file still parses (`ast.parse`). Non-Python touched files (e.g. markdown prompt bodies under a manifest-bridged surface) are checked for existence and readability only. | A non-parsing file can't be imported; the whole snapshot is unusable. |
+| A1 | Every touched `.py` file still parses (`ast.parse`). Non-Python touched files are checked for existence and readability only. | A non-parsing file can't be imported; the whole snapshot is unusable. |
 | A2 | Every patch's `mutation_id` still resolves in a fresh enumeration of the snapshot. | The next round must be able to re-find this id. |
 | A3 | For any point whose pre-apply `metadata` declared `required_placeholders`, each named placeholder (exact substring, braces included) survives in the patched content. | Prevents the proposer from silently dropping a `{user_message}` formatter the surrounding code injects. |
 | A4 | Top-level imports in every patched `.py` file are preserved — the post-apply import set must be a superset of the pre-apply set. The proposer may add imports but not silently remove them. | A dropped import breaks the snapshot at runtime, not at parse time. |
+| A5 | A **whole-file** patch against a `.toml` file that parsed *before* the batch must still parse after it. Enforced by the applier, not `validate_post_apply`. | The cheap non-Python counterpart to A1 — see below. |
 
 A3 is opt-in per mutation point via the `required_placeholders`
 metadata key on the marker; the validator never guesses placeholders
-for an unannotated span.
+for an unannotated span. It is format-agnostic — a placeholder is an
+exact substring, so it fires on a markdown region body exactly as it does
+on a Python literal.
+
+A5 is deliberately the narrowest useful check, and it is worth being
+explicit about what it is *not*. There is no general "still valid" notion
+for text, so the gate covers only what the standard library can check for
+free, and only where a failure is unambiguously the patch's fault:
+
+- **`.toml` only.** YAML is absent because no YAML parser is a zicato
+  runtime dependency. JSON is absent for a sharper reason: strict JSON has
+  no comment syntax, so a `.json` file cannot host a marker at all, and
+  the comment-bearing dialects (`.jsonc` / `.json5`) that can are by
+  construction not parseable by `json.loads`.
+- **Whole-file patches only.** A region patch rewrites a *fragment* whose
+  syntactic self-containment depends on where the operator put the
+  markers, not on what the proposer wrote. Failing a snapshot there would
+  reject legitimate edits and blame the wrong party.
+- **Files that parsed beforehand only.** The gate catches a patch that
+  *breaks* a working file. A fixture the operator committed malformed is
+  not the proposer's doing and does not fail the round.
+
+Everything outside that intersection is unchecked, on purpose. A5 is a
+convenience, not the safety property; the safety property is that a patch
+can only ever land inside an operator-marked region.
 
 The mutation surface stays **operator-owned**: the proposer addresses
 patches by id and rewrites within an enumerated point, but only the
@@ -423,11 +633,12 @@ plausible but deliberately deferred:
   consecutive string literals. The use case is "rewrite this tuple of
   related prompts as a group." Today the operator hoists them to a
   single module-level string or uses a file marker.
-- **JSON / YAML inner harnesses.** Markers in non-Python sources.
-  Today the marker walker is Python-only; an inner harness whose
-  prompts live in YAML must hoist them through a Python module to be
-  mutable. Most ADK setups already do this; LangChain setups
-  sometimes do not.
+- ~~**JSON / YAML inner harnesses.** Markers in non-Python sources.~~
+  **Shipped** — see §2.4 / §2.5. An inner harness whose prompts live in
+  markdown or YAML no longer has to hoist them through a Python module.
+  The two caveats that remain: there is no span form outside Python (use
+  a region), and strict JSON cannot host a marker at all because it has
+  no comment syntax.
 - **Type-narrowed mutation points.** A marker that asserts "the new
   value must satisfy this Pydantic shape." Today the
   `required_placeholders` check (A3) plus the `min` / `max` / `enum`

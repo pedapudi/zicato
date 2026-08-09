@@ -42,7 +42,13 @@ from pathlib import Path
 from zicato.core.types import MutationPoint, Patch
 from zicato.epoch.snapshot_scope import copytree_ignore
 from zicato.mutation.enumerator import enumerate_mutations
-from zicato.mutation.markers import is_end_marker, parse_marker_line
+from zicato.mutation.formats import file_format_problem, is_format_checked
+from zicato.mutation.markers import (
+    MarkerSyntax,
+    is_end_marker,
+    marker_syntax_for,
+    parse_marker_line,
+)
 from zicato.mutation.validator import validate_patches
 
 #: A ``shutil.copytree``-compatible ``ignore`` callable. When a caller
@@ -89,11 +95,17 @@ def _resolve_marker_line(file_path: Path, mutation_id: str) -> int | None:
 
     Used by numeric/enum patches that need to find the target constant
     even though the enumerator's string-only resolution does not see it.
+
+    The line is parsed under the file's own comment grammar
+    (:func:`~zicato.mutation.markers.marker_syntax_for`), so a marker in a
+    markdown or YAML file resolves the same way a ``#``-led Python marker
+    does.
     """
 
+    syntax = marker_syntax_for(file_path)
     text = file_path.read_text(encoding="utf-8")
     for idx, line in enumerate(text.splitlines()):
-        parsed = parse_marker_line(line)
+        parsed = parse_marker_line(line, syntax=syntax)
         if parsed is not None and parsed.id == mutation_id:
             return idx + 1
     return None
@@ -438,7 +450,12 @@ def _region_base_indent(original_body: str) -> str:
     return ""
 
 
-def _reindent_code_region(new_content: str, indent: str) -> str:
+def _reindent_code_region(
+    new_content: str,
+    indent: str,
+    *,
+    syntax: MarkerSyntax = "python",
+) -> str:
     """Re-anchor a ``:code`` replacement body to ``indent``.
 
     A ``:code`` region is real Python control flow that the proposer
@@ -464,13 +481,25 @@ def _reindent_code_region(new_content: str, indent: str) -> str:
     Blank lines are emitted empty so no trailing whitespace is introduced.
     The transform is idempotent: a body that already sits at ``indent``
     with no stray markers round-trips unchanged.
+
+    ``syntax`` selects the comment grammar the marker-stripping step
+    recognises, so a proposer that echoes a markdown region's
+    ``<!-- zicato:mutable:end -->`` back inside its replacement has that
+    line dropped exactly as a Python ``# zicato:mutable:end`` would be.
+    Step 1 is the enforcement point for "the marker lines are OUTSIDE the
+    mutable region": the region body can never contain a marker, so the
+    proposer cannot delete, move, or duplicate its own anchors. Step 3's
+    dedent-then-re-anchor preserves RELATIVE indentation, which is what
+    keeps a nested YAML/JSON region structurally intact and not flattened.
     """
     raw_lines = new_content.splitlines()
     # Drop any marker lines the proposer echoed back — the body is the
     # region's interior only; the markers are owned by the surrounding
     # file and re-emitted by the applier.
     kept = [
-        line for line in raw_lines if parse_marker_line(line) is None and not is_end_marker(line)
+        line
+        for line in raw_lines
+        if parse_marker_line(line, syntax=syntax) is None and not is_end_marker(line, syntax=syntax)
     ]
     if not kept:
         return ""
@@ -488,12 +517,18 @@ def _apply_span_replace(point: MutationPoint, new_content: str) -> None:
     """Replace a span point's content with ``new_content``.
 
     For file-kind points the new content overwrites the whole file.
-    For code-kind points (a ``# zicato:mutable:code`` region) the body
-    lines between the markers are replaced verbatim — the region is
-    real Python control flow, so ``new_content`` is fully-formed source
-    and the applier must not wrap it as a string literal. The proposer
-    is responsible for producing a block that parses in place (the
-    post-apply syntax check is the backstop).
+    For code-kind points (a ``zicato:mutable:code`` region) the body
+    lines between the markers are replaced verbatim — the region is the
+    file's own content, so ``new_content`` is fully-formed text for that
+    file's format and the applier must not wrap it as a string literal.
+    In a ``.py`` file that content is real Python control flow, and the
+    proposer is responsible for producing a block that parses in place
+    (the post-apply syntax check is the backstop); in a markdown prompt or
+    a YAML config it is prose / config lines, checked only as far as
+    :mod:`zicato.mutation.formats` can check them for free. Either way the
+    ``:code`` / ``:end`` marker lines sit OUTSIDE the replaced range, so
+    the rewrite is bounded by the operator's own anchors and the mutation
+    id keeps resolving afterwards.
     For span-kind points the policy depends on the file's syntax:
 
     * For ``.py`` files, the span is a Python string-literal expression.
@@ -565,7 +600,7 @@ def _apply_span_replace(point: MutationPoint, new_content: str) -> None:
         # untouched, so the mutation id keeps resolving.
         original_body = "".join(lines[point.line_start - 1 : point.line_end])
         indent = _region_base_indent(original_body)
-        middle = _reindent_code_region(new_content, indent)
+        middle = _reindent_code_region(new_content, indent, syntax=marker_syntax_for(point.file))
         _write_text_writable(point.file, before + middle + after)
         return
 
@@ -673,9 +708,11 @@ def apply_patches(
         When the patch set fails :func:`validate_patches` — the error
         message enumerates every problem found; when a patch's anchor no
         longer resolves at apply time (erased by an earlier patch in the
-        same batch); or when the post-apply syntax gate finds a touched
-        ``.py`` file unparseable. The copied tree is removed before the
-        exception propagates in every case.
+        same batch); when the post-apply syntax gate finds a touched
+        ``.py`` file unparseable; or when the post-apply format gate finds
+        that a whole-file replace left a ``.json`` / ``.toml`` file that
+        parsed before the batch no longer parsing. The copied tree is
+        removed before the exception propagates in every case.
     """
 
     source_root = Path(source_root).resolve()
@@ -689,8 +726,12 @@ def apply_patches(
     # Atomic pre-validation: enumerate the freshly-copied tree and check
     # every patch up front. The copied tree has identical content to
     # ``source_root``, so its enumeration is the surface the subsequent
-    # apply will resolve against.
-    problems = validate_patches(patches, source_root=target_root)
+    # apply will resolve against. The enumeration is taken here rather
+    # than inside ``validate_patches`` because the format gate below needs
+    # the same pre-apply surface — and one walk is cheaper than two.
+    pre_points = enumerate_mutations([target_root])
+    format_baseline = _format_gate_baseline(pre_points, patches)
+    problems = validate_patches(patches, enumeration=pre_points)
     if problems:
         # Refuse the whole batch — remove the copied tree so generation
         # lineage stays append-only and nothing is left half-applied.
@@ -724,6 +765,61 @@ def apply_patches(
             "apply_patches: refusing to promote snapshot; "
             f"{len(syntax_problems)} post-apply syntax problem(s): " + "; ".join(syntax_problems)
         )
+
+    # Post-apply format gate: the non-Python counterpart to the syntax
+    # gate, for the two formats the standard library can check for free.
+    # Deliberately narrower than the syntax gate — see
+    # :func:`_format_gate_baseline` for exactly what it does and does not
+    # cover, and :mod:`zicato.mutation.formats` for why.
+    format_problems = [
+        problem
+        for problem in (file_format_problem(path) for path in sorted(format_baseline))
+        if problem is not None
+    ]
+    if format_problems:
+        shutil.rmtree(target_root, ignore_errors=True)
+        raise ValueError(
+            "apply_patches: refusing to promote snapshot; "
+            f"{len(format_problems)} post-apply format problem(s): " + "; ".join(format_problems)
+        )
+
+
+def _format_gate_baseline(pre_points: list[MutationPoint], patches: list[Patch]) -> set[Path]:
+    """Return the files the post-apply format gate is allowed to fail on.
+
+    A file qualifies only when all three hold:
+
+    1. A patch in this batch targets a **whole-file** (``kind="file"``)
+       point in it. A ``kind="code"`` region rewrites a *fragment*, and
+       whether that fragment is syntactically self-contained is a property
+       of where the operator put the markers, not of what the proposer
+       wrote — failing the snapshot there would reject legitimate edits
+       and blame the wrong party. A whole-file replace has no such
+       ambiguity: the patch owns the entire document.
+    2. Its suffix has a stdlib checker (``.json`` / ``.toml``; see
+       :mod:`zicato.mutation.formats`).
+    3. It **parses right now**, before the patch lands. The gate exists to
+       catch a patch that BREAKS a working file. Failing a snapshot over a
+       malformed fixture the operator committed that way would be a
+       confusing, unrelated rejection.
+
+    Everything outside that intersection is unchecked, on purpose: this is
+    a cheap best-effort guard, not the safety property. The safety
+    property is that a patch can only ever land inside an operator-marked
+    region — see :func:`apply_patches`.
+    """
+
+    targeted = {patch.mutation_id for patch in patches}
+    baseline: set[Path] = set()
+    for point in pre_points:
+        if point.id not in targeted or point.kind != "file":
+            continue
+        path = point.file.resolve()
+        if not is_format_checked(path):
+            continue
+        if file_format_problem(path) is None:
+            baseline.add(path)
+    return baseline
 
 
 def _touched_py_files(target_root: Path, patches: list[Patch]) -> set[Path]:

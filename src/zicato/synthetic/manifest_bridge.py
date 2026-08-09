@@ -57,6 +57,35 @@ _MANIFEST_CANDIDATES: tuple[str, ...] = (
 _PROMPT_BODY_SEPARATOR = "\n---\n"
 
 
+def _find_manifest_with_root(source_root: Path) -> tuple[Path, Path] | None:
+    """Return ``(manifest_path, effective_root)``, or ``None``.
+
+    The effective root is the directory the manifest's ``source`` fields
+    are relative to: the base a :data:`_MANIFEST_CANDIDATES` entry was
+    joined to in order to find the manifest — ``source_root`` itself, or
+    the child directory the one-level-deep probe matched.
+
+    Returning the base directly is what makes BOTH conventional layouts
+    work. The caller previously re-derived it as ``manifest_path.parents[2]``,
+    which is correct for the three-component
+    ``goldfive/optimization/manifest.toml`` but lands one level ABOVE the
+    checkout for the two-component ``optimization/manifest.toml`` form —
+    so every ``source`` under that layout resolved to a non-existent path
+    and every entry was dropped. That shape enumerated zero points, so
+    correcting it can only add points, never move an existing one.
+    """
+
+    root = Path(source_root).resolve()
+    for base in (root, *(sorted(root.iterdir()) if root.is_dir() else ())):
+        if base is not root and not base.is_dir():
+            continue
+        for rel in _MANIFEST_CANDIDATES:
+            candidate = base / rel
+            if candidate.is_file():
+                return candidate, base
+    return None
+
+
 def find_manifest(source_root: Path) -> Path | None:
     """Return the path to a goldfive optimization manifest under ``source_root``.
 
@@ -74,21 +103,8 @@ def find_manifest(source_root: Path) -> Path | None:
     invoked unconditionally without raising on non-goldfive source
     roots.
     """
-    root = Path(source_root).resolve()
-    for rel in _MANIFEST_CANDIDATES:
-        candidate = root / rel
-        if candidate.is_file():
-            return candidate
-    # One-level-deep probe to handle snapshot-into-named-subdir layouts.
-    if root.is_dir():
-        for child in sorted(root.iterdir()):
-            if not child.is_dir():
-                continue
-            for rel in _MANIFEST_CANDIDATES:
-                candidate = child / rel
-                if candidate.is_file():
-                    return candidate
-    return None
+    found = _find_manifest_with_root(source_root)
+    return None if found is None else found[0]
 
 
 def _load_manifest_entries(manifest_path: Path) -> list[dict[str, Any]]:
@@ -290,14 +306,14 @@ def enumerate_manifest_points(source_roots: Iterable[Path]) -> list[MutationPoin
     out: list[MutationPoint] = []
     for raw_root in source_roots:
         root = Path(raw_root).resolve()
-        manifest_path = find_manifest(root)
-        if manifest_path is None:
+        found = _find_manifest_with_root(root)
+        if found is None:
             continue
-        # Resolve the effective source root: the goldfive worktree dir
-        # the manifest lives under. For root-level manifests this is
-        # ``root`` itself; for the deep-probe case it's whichever child
-        # directory contained the manifest.
-        effective_root = manifest_path.parents[2]
+        # The effective source root is the checkout the manifest's
+        # ``source`` fields are relative to — ``root`` itself for a
+        # root-level manifest, or the child directory the deep probe
+        # matched. See :func:`_find_manifest_with_root`.
+        manifest_path, effective_root = found
         for entry in _load_manifest_entries(manifest_path):
             kind = entry.get("kind")
             point: MutationPoint | None

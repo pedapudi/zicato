@@ -29,12 +29,16 @@ What the loop actually requires is:
 * a **board** of tasks carrying typed expectations, so each run yields a
   score.
 
-Any Python-file-based system that fits that shape can be evolved. The
-mutation surface is declared with in-source comment markers, not derived
-from agent structure, so nothing in the patch path inspects agent classes
-or role graphs — the enforced adapter contract is literally
+Any system that fits that shape can be evolved. The mutation surface is
+declared with in-source comment markers, not derived from agent
+structure, so nothing in the patch path inspects agent classes or role
+graphs — the enforced adapter contract is literally
 `("mutable_subpaths", "load", "mutation_points")`, and a `RunResult`
-carries strings.
+carries strings. The markers are not Python-only either: a marker may sit
+in any allowlisted text file, so a markdown prompt or a YAML policy is
+first-class mutable surface (see
+[MUTATION-SURFACE.md](MUTATION-SURFACE.md) §2.4). The entrypoint is still
+Python, because the runner drives it.
 
 The in-tree proof is `examples/zicato_examples/target_0_convergence`: a
 `DeterministicPolicyAdapter`, registered through `adapter.kind = "import"`,
@@ -163,8 +167,9 @@ inner harness's source. zicato is the only thing that does either.
   harmonograf, if the operator wants the console). zicato only acts
   between runs.
 - Not a single-file editor. The mutation surface is annotated and
-  granular — a span, or at most a whole file marked mutable. zicato
-  never rewrites the inner harness's tree at large.
+  granular — a string span, a bracketed region, or at most a whole file
+  marked mutable. zicato never rewrites the inner harness's tree at
+  large, and an unmarked file is immutable whatever its type.
 
 ## 2. The meta-loop, end to end
 
@@ -322,8 +327,9 @@ list of source roots that contain mutation-point annotations.
   conversation (multi-turn scripted / emulated), and returning a typed
   `RunResult` shaped by the entry kind.
 - `mutation_points() -> list[MutationPoint]` — walks every registered
-  source root and returns every annotated mutation point (span markers
-  and file markers; see [MUTATION-SURFACE.md](MUTATION-SURFACE.md)).
+  source root and returns every annotated mutation point (span, region,
+  and file markers, in `.py` and in any allowlisted text file; see
+  [MUTATION-SURFACE.md](MUTATION-SURFACE.md)).
   The return value is a list because v0+1 needs to walk multiple roots
   for cross-repo dogfood (target 2 — see
   [DOGFOOD-TARGETS.md](DOGFOOD-TARGETS.md)) even though v0 typically
