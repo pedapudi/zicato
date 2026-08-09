@@ -10,23 +10,19 @@ We deliberately do NOT import the upstream enums here. Zicato's core types
 are model-agnostic data; binding the in-process vocabulary to goldfive's
 importable symbols would force a hard runtime dependency on goldfive at
 type-check time and would couple zicato's parse-time behavior to whatever
-generated stub layout goldfive is currently shipping. Instead this module
-keeps a frozen mirror of the registered string values — both the drift-kind
-set and, since goldfive became an optional extra, the ``DriftKind`` /
-``DriftSeverity`` enums themselves.
+generated stub layout goldfive is currently shipping. goldfive is an
+optional extra, so this module mirrors the ``DriftKind`` / ``DriftSeverity``
+enums as well as the drift-kind set.
 
 The mirrors are :class:`enum.StrEnum` subclasses with the SAME member names,
 values, and declaration order as upstream, so a mirror member and the
 corresponding goldfive member compare equal, hash equal, and serialise to
-the same ``.value``. Board files, contract hashes, and the wire form are
-therefore identical whichever type produced them. ``tests/test_drift_kind_
-mirror.py`` pins that correspondence against the real goldfive enums
-whenever goldfive is installed, so skew shows up as a failing test rather
-than as silent divergence.
+the same ``.value`` — board files, contract hashes, and the wire form are
+identical whichever type produced them.
 
 When goldfive adds a new ``DriftKind`` member, append the matching member
-here (in upstream declaration order — the order is observable in the
-``valid values are: ...`` error messages). Extending is forward-compatible;
+here, in upstream declaration order: the order is observable in the
+``valid values are: ...`` errors. Extending is forward-compatible;
 reordering is not.
 """
 
@@ -38,12 +34,7 @@ from typing import Any
 
 
 class DriftKind(StrEnum):
-    """Mirror of ``goldfive.DriftKind``.
-
-    Member names, values, and declaration order match upstream exactly.
-    See the module docstring for why this is a mirror rather than a
-    re-export.
-    """
+    """Mirror of ``goldfive.DriftKind`` — see the module docstring."""
 
     TOOL_ERROR = "tool_error"
     AGENT_REFUSAL = "agent_refusal"
@@ -89,12 +80,12 @@ class DriftKind(StrEnum):
 
 
 class DriftSeverity(StrEnum):
-    """Mirror of ``goldfive.DriftSeverity``.
+    """The three scoring severities a drift verdict is reported at.
 
-    The three scoring severities a drift verdict is reported at. Upstream
-    carries no ``UNSPECIFIED`` member and neither does this mirror;
-    :func:`normalize_wire_severity` is the tolerant reader for wire values
-    outside the vocabulary.
+    Mirror of ``goldfive.DriftSeverity``. Upstream carries no
+    ``UNSPECIFIED`` member and neither does this;
+    :func:`normalize_wire_severity` is the tolerant reader for wire
+    values outside the vocabulary.
     """
 
     INFO = "info"
@@ -113,35 +104,28 @@ GOLDFIVE_DRIFT_KINDS: frozenset[str] = frozenset(m.value for m in DriftKind)
 
 
 @lru_cache(maxsize=1)
-def _goldfive_severity_type() -> type | None:
-    """Return ``goldfive.DriftSeverity`` if goldfive is installed, else ``None``.
+def _severity_types() -> tuple[type, ...]:
+    """The severity enums :func:`is_drift_severity` accepts.
 
-    Resolved lazily and cached: goldfive is an optional extra, and this is
-    the only place zicato needs the upstream *type* (as opposed to the
-    mirror) at runtime — see :func:`is_drift_severity`.
+    Resolved once: goldfive is an optional extra, and this is the only
+    place zicato needs the upstream *type* rather than the mirror.
     """
     try:
-        from goldfive import DriftSeverity as _GoldfiveDriftSeverity  # noqa: PLC0415
+        from goldfive import DriftSeverity as _Upstream  # noqa: PLC0415
     except ImportError:
-        return None
-    return _GoldfiveDriftSeverity if isinstance(_GoldfiveDriftSeverity, type) else None
+        return (DriftSeverity,)
+    return (DriftSeverity, _Upstream)
 
 
 def is_drift_severity(value: Any) -> bool:
-    """Return whether *value* is a drift-severity enum member.
+    """Return whether *value* is a :class:`DriftSeverity` (mirror or upstream).
 
-    Accepts a :class:`DriftSeverity` mirror member or — when goldfive is
-    installed — an upstream ``goldfive.DriftSeverity`` member, so operator
-    board code written against either symbol keeps working. A bare string
-    is NOT accepted: the point of the check at the ``Judge.custom`` /
-    ``Judge.python`` boundary is to force a typed choice rather than a
-    free-form token, and widening it to strings would let a typo through
-    to the runtime as a silently-defaulted severity.
+    A bare string is NOT accepted: the check exists at the
+    ``Judge.custom`` / ``Judge.python`` boundary to force a typed choice,
+    and widening it to strings would let a typo reach the runtime as a
+    silently-defaulted severity.
     """
-    if isinstance(value, DriftSeverity):
-        return True
-    goldfive_type = _goldfive_severity_type()
-    return goldfive_type is not None and isinstance(value, goldfive_type)
+    return isinstance(value, _severity_types())
 
 
 def validate_drift_kind(kind: str) -> None:
