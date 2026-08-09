@@ -62,16 +62,27 @@ the `HarnessAdapter` protocol asks only for `load`, `mutable_subpaths`, and
 `mutation_points`, and the loaded harness only for
 `run(entry, sinks, config) -> RunResult` — nothing in it mentions agents. A
 workspace declares a non-ADK harness with `adapter.kind = "import"`, which
-imports an operator-supplied factory. Shipped concrete adapters are ADK-only so
-far; LangChain and plain-callable adapters land after it.
+imports an operator-supplied `module:callable` factory. Shipped concrete
+adapters are ADK-only so far; LangChain and plain-callable adapters land
+after it.
 
-**goldfive is a required dependency, not an optional extra.** Its drift taxonomy
-is referenced by zicato's core board types (`DriftSeverity` in
-`src/zicato/core/board.py`), so `import zicato.core` fails without it. What
-goldfive does *not* do is constrain your target: a system that emits no drift
-events simply scores on its predicates, rubrics, and whatever other metric
-namespaces it reports — the loss surface takes arbitrary namespaced metrics
-(`drift:*`, `cost:*`, `latency:*`), not drift alone.
+The worked example is `examples/zicato_examples/target_0_convergence`: a
+deterministic policy adapter with **no LLM anywhere**, whose mutable surface
+is a module-level string constant, driven through `kind = "import"`. The
+whole loop — propose, apply, run, reduce, gate — runs against it in CI.
+
+**goldfive is a required dependency, not an optional extra.** Its drift
+taxonomy is referenced by zicato's core board types (`DriftSeverity` in
+`src/zicato/core/board.py`), so `import zicato.core` fails without it.
+
+That is an install-time fact, not a constraint on your target. Which
+telemetry zicato consumes is chosen per epoch by `scoring.json`'s
+`telemetry_dialect`: the default `goldfive` dialect is the only one that
+yields drift kinds and plan revisions, while `adk_events` and `transcript`
+read a harness that never runs under goldfive at all. Under `transcript`
+the drift term is structurally zero, the drift knobs go inert (zicato warns
+rather than failing), and scoring falls back to predicates plus optional
+in-run judges.
 
 ## Model-agnostic
 

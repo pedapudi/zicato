@@ -76,8 +76,10 @@ instead keeps the epoch but resets its pattern history (AGENTS.md rule 5).
 - **Specific dead entries** → the index names them. Replace or harden those
   entries' expectations.
 - **Identically-zero drift** → the harness/telemetry emits no drift, or entries
-  have no expectations. Add Predicate/Rubric expectations; confirm the adapter
-  emits the goldfive event stream.
+  have no expectations. Add Predicate/Rubric expectations. If the epoch is on
+  the default `goldfive` telemetry dialect, confirm the adapter emits the
+  goldfive event stream; under the `adk_events` / `transcript` dialects zero
+  drift is expected and the pass/rubric side must carry the signal on its own.
 
 Confirm with read-only SQL (see `zicato-index-ops`):
 

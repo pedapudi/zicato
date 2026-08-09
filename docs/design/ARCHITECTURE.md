@@ -29,10 +29,20 @@ What the loop actually requires is:
 * a **board** of tasks carrying typed expectations, so each run yields a
   score.
 
-Any file-based system that fits that shape can be evolved: a library, a
-prompt set, a rule engine, a parser. The mutation surface is declared with
-in-source markers, not derived from agent structure, so nothing in the
-patch path inspects agent classes or role graphs.
+Any Python-file-based system that fits that shape can be evolved. The
+mutation surface is declared with in-source comment markers, not derived
+from agent structure, so nothing in the patch path inspects agent classes
+or role graphs — the enforced adapter contract is literally
+`("mutable_subpaths", "load", "mutation_points")`, and a `RunResult`
+carries strings.
+
+The in-tree proof is `examples/zicato_examples/target_0_convergence`: a
+`DeterministicPolicyAdapter`, registered through `adapter.kind = "import"`,
+whose mutable surface is a module-level string constant and whose
+docstring notes there is **no LLM anywhere**. The full loop — propose,
+apply, worker, reduce, gate — runs against it under CI. Target 2 is the
+other end of the range: goldfive itself, a library, mutated with the
+entrypoint outside every mutable tree.
 
 Across many runs of that inner harness, zicato:
 
@@ -77,11 +87,24 @@ and any other metric namespaces it reports; the loss surface accepts
 arbitrary namespaced metrics (`drift:*`, `cost:*`, `latency:*`), so drift
 is one input to the scalar rather than a precondition for having one.
 
-Two board-level headers tune how much of the goldfive machinery runs:
-`disable_drift` suppresses named drift kinds for every run on the board,
-and `judge_only` keeps the judges armed while disabling steering entirely
-(no goal-derivation call, no replanning, no drift-triggered refine).
-Neither is a global "telemetry off" switch — see
+The lever that actually decouples a target from goldfive is
+`scoring.json`'s `telemetry_dialect`. The default, `goldfive`, is the only
+dialect that produces drift kinds and plan revisions; `adk_events` and
+`transcript` are tolerant readers for a harness that does not run under the
+drift-instrumented ecosystem harness at all. Under `transcript` the drift
+term is structurally zero, the drift knobs go inert (zicato warns rather
+than failing), and scoring degrades to predicates plus optional in-run
+judges. See [TELEMETRY-DIALECTS.md](TELEMETRY-DIALECTS.md).
+
+Two board-level headers are often mistaken for that lever and are not it.
+`disable_drift` names drift kinds whose **mapped built-in judges** are
+suppressed on the ADK path — kinds with no mapped judge are silently
+inert, and the remaining contributions to the drift term (plan revisions,
+task-failure ratio, runtime, custom per-judge drift) all survive. There is
+no "all drift off" board mode; setting `drift_weight` to `0.0` is what
+removes the drift component from the scalar. `judge_only` is orthogonal
+again: it keeps judges armed while disabling steering entirely (no
+goal-derivation call, no replanning, no drift-triggered refine). See
 [BOARD-FORMAT.md](BOARD-FORMAT.md).
 
 ### Why this is a separate library
@@ -149,7 +172,7 @@ inner harness's source. zicato is the only thing that does either.
    │   ┌──────────────┐    ┌───────────────────────────────┐ │               │
    │   │  Board       │    │  Inner harness (HarnessAdapter)│ │               │
    │   │ (.jsonl,     │    │                                │ │               │
-   │   │  frozen      │    │   any multi-agent system       │ │               │
+   │   │  frozen      │    │   any system under test        │ │               │
    │   │  per epoch)  │    │   exposing:                    │ │               │
    │   └──────┬───────┘    │     run_entry(entry) -> result │ │               │
    │          │            │     mutation_points() -> [...] │ │               │
@@ -259,7 +282,7 @@ below.
 ### 4.1 HarnessAdapter
 
 **Responsibility.** The narrow protocol that decouples zicato from any
-specific multi-agent framework. The adapter implementer is the
+specific harness framework. The adapter implementer is the
 inner-harness author; zicato treats the adapter as the only handle on
 the system under test.
 

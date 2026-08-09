@@ -14,14 +14,14 @@ applies or (b) bring a new concern that wasn't weighed.
 
 **Alternative considered.** Let the proposer rewrite arbitrary files
 in the inner harness's tree. Maximally flexible; the proposer can
-restructure the agent if it wants to.
+restructure the harness if it wants to.
 
 **Chosen.** Source files are not editable except where the operator
 has placed a `# zicato:mutable` marker (span or file). The proposer
 addresses patches by stable id; the applier rewrites only what an id
 resolves to. See [MUTATION-SURFACE.md](MUTATION-SURFACE.md).
 
-**Why.** A multi-agent system is high-leverage, low-reversibility
+**Why.** An inner harness is high-leverage, low-reversibility
 code. Letting an LLM-driven proposer rewrite arbitrary files is a
 machine for generating subtle breakage. The validator can catch
 syntax errors and import failures, but it cannot catch "the
@@ -378,10 +378,17 @@ doesn't assume the inner harness is ADK, LangChain, or anything else
 The drift taxonomy is **ecosystem-specific**: goldfive ships it,
 zicato consumes it. That's not the same as model-specific or
 vendor-specific. An adapter implementer can use any inner harness
-they want; the inner harness emits goldfive events because the
-adapter wraps the harness with `goldfive.wrap`. The taxonomy is
-the contract between adapter and zicato, not between zicato and any
-particular model.
+they want; under the default dialect the inner harness emits goldfive
+events because the adapter wraps the harness with `goldfive.wrap`. The
+taxonomy is the contract between adapter and zicato, not between zicato
+and any particular model.
+
+Nor is it a requirement on the harness. `scoring.json`'s
+`telemetry_dialect` selects the producer, and the `adk_events` /
+`transcript` dialects read a harness that never runs under goldfive —
+scoring then degrades to predicates plus optional in-run judges. Drift is
+the richest signal zicato can consume, not the only one it can score on
+(see [TELEMETRY-DIALECTS.md](TELEMETRY-DIALECTS.md)).
 
 ## 12. Why no zicato-specific EventSink
 

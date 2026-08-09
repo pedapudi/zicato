@@ -160,11 +160,16 @@ The board also exercises two parts of the typed board-authoring API
 beyond plain OUTCOME expectations:
 
 - A board-level `board_meta` header line carrying `disable_drift`
-  (`user_steer`, `user_pause`) — drift kinds suppressed for every run
-  on this board — and `judge_only: true`. In judge-only mode goldfive
-  JUDGES the presentation agent (drift / process judges stay armed) but
-  does ZERO steering: no goal-derivation LLM call, no planner
-  replanning, no drift-triggered refine. The presentation agent is meant
+  (`user_steer`, `user_pause`) and `judge_only: true`. `disable_drift`
+  suppresses the *built-in judges mapped to* the named drift kinds; both
+  kinds named here are user-interaction kinds with no mapped built-in
+  judge, so on this board the header exercises the authoring API and
+  round-trips through the contract without suppressing anything at run
+  time. It is not a switch that turns drift off — see
+  [BOARD-FORMAT.md](../../../docs/design/BOARD-FORMAT.md). In judge-only
+  mode goldfive JUDGES the presentation agent (drift / process judges
+  stay armed) but does ZERO steering: no goal-derivation LLM call, no
+  planner replanning, no drift-triggered refine. The presentation agent is meant
   to be evaluated as-is, not actively steered, so this board opts in.
 - PROCESS `judges` on `transformers_lay_audience` and
   `picky_stakeholder_emulated`. Where an `expectation` grades the
