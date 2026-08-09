@@ -159,6 +159,7 @@ Use this table to jump; the subsections below carry the definitions.
 | resolve / drive a field | `resolve_tournament`, `EvidencePreGate` | `src/zicato/selection/driver.py` |
 | evidence gate | `EVIDENCE_REPLICATE_BASE`, `rating_block` | `src/zicato/selection/evidence_gate.py` |
 | holdout/train split | `split_board`, `rotation_seed` | `src/zicato/board/split.py` |
+| facet slice (display only) | `FACET_TAG_PREFIX`, `facet_scores_for_generation` | `src/zicato/query/eval_view.py` |
 | Ladder | `LadderConfig` / `holdout_record` | `src/zicato/core/scoring_config.py` / `src/zicato/tournament/ladder.py` |
 | screen | `run_candidate_screen`, `SCREEN_REPLICATE_BASE` | `src/zicato/epoch/screen.py` |
 | slate / best-of-N | `BestOfNProposerAgent`, `wrap_with_proposer_quality` | `src/zicato/proposer/best_of_n.py` |
@@ -430,6 +431,13 @@ inconclusive terminals land in the dead-letter queue
 (`src/zicato/selection/dead_letter.py`). Soundness device, not a power
 device — see the measured ~37-consecutive-wins fact in
 `tests/test_decision_procedure_power.py` and 06-tournament-and-selection.md.
+
+**facet** — a named diagnostic slice of the board, declared by tagging
+entries `facet:{name}` (the second reserved tag after `holdout`).
+`query.eval_view.facet_scores_for_generation` re-aggregates a candidate
+over each slice at the epoch's frozen weights, so a facet's `scalar` is
+comparable to the candidate's own. DISPLAY ONLY — nothing is persisted
+and no decision reads it (EVAL-VIEW.md §3.4, BOARD-FORMAT.md §1.4).
 
 **holdout / train split** — the anti-overfitting board partition
 (`split_board`, `rotation_seed` in `src/zicato/board/split.py`).

@@ -1780,6 +1780,470 @@ def test_per_entry_for_generation_back_compat_no_score(tmp_path: Path) -> None:
     assert entry["metrics"] is None
 
 
+def _build_facet_workspace(
+    ws: Path,
+    runs: list[tuple[str, bool | None, float | None, float]],
+    tags_by_entry: dict[str, list[str]],
+    weights: dict[str, object] | None = None,
+) -> None:
+    """A workspace with real run files and a tagged board.
+
+    ``runs`` is ``(entry_id, pass_fail, score, drift_loss)``. The facet
+    aggregate reads the persisted ``loss.json`` files (the canonical source)
+    and the epoch's frozen ``scoring.json``, so both are written here.
+    """
+    import json as _json
+
+    epoch_id = "2026-05-16_e0"
+    for entry_id, pass_fail, score, drift_loss in runs:
+        loss: dict[str, object] = {
+            "run_id": f"run_v1_{entry_id}",
+            "entry_id": entry_id,
+            "generation_id": "v1",
+            "epoch_id": epoch_id,
+            "drift_counts": [],
+            "plan_revisions": 0,
+            "task_failure_ratio": 0.0,
+            "runtime_ms": 1000,
+            "wall_clock_budget_exceeded": False,
+            "expectation_result": None,
+            "drift_loss": drift_loss,
+            "pass_fail": pass_fail,
+        }
+        if score is not None:
+            loss["score"] = score
+        _write_json(
+            ws / "epochs" / epoch_id / "generations" / "v1" / "runs" / entry_id / "loss.json",
+            loss,
+        )
+    _write(
+        ws / "epochs" / epoch_id / "board.jsonl",
+        "\n".join(
+            _json.dumps(
+                {
+                    "id": entry_id,
+                    "kind": "single_turn",
+                    "wall_clock_budget_seconds": 60,
+                    "input": "go",
+                    "tags": tags,
+                }
+            )
+            for entry_id, tags in tags_by_entry.items()
+        )
+        + "\n",
+    )
+    _write_json(
+        ws / "epochs" / epoch_id / "scoring.json",
+        weights if weights is not None else {"drift_weight": 1.0, "pass_weight": 1.0},
+    )
+
+    # The per-entry ROWS come from the index (the facet aggregate reads the run
+    # files); build it too so `entries` is populated for tests that read it.
+    conn = sqlite3.connect(ws / "index.db")
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS loss_profiles(run_id TEXT, epoch_id TEXT, "
+        "generation_id TEXT, entry_id TEXT, drift_loss REAL, pass_fail TEXT, "
+        "runtime_ms INTEGER, wall_clock_budget_exceeded INTEGER, loss_json TEXT, "
+        "tournament_id TEXT)"
+    )
+    conn.executemany(
+        "INSERT INTO loss_profiles VALUES(?,?,?,?,?,?,?,?,?,?)",
+        [
+            (
+                f"run_v1_{entry_id}",
+                epoch_id,
+                "v1",
+                entry_id,
+                drift_loss,
+                None if pass_fail is None else ("pass" if pass_fail else "fail"),
+                1000,
+                0,
+                _json.dumps({} if score is None else {"score": score}),
+                None,
+            )
+            for entry_id, pass_fail, score, drift_loss in runs
+        ],
+    )
+    conn.commit()
+    conn.close()
+
+
+def _facets(ws: Path) -> dict[str, object]:
+    from zicato.query import WorkspacePaths, build_per_entry_for_generation
+
+    return build_per_entry_for_generation(WorkspacePaths(ws), "2026-05-16_e0", "v1")["facet_scores"]
+
+
+def test_facet_prefix_is_reserved_as_a_whole_tag_prefix(tmp_path: Path) -> None:
+    """``facet:`` matches a WHOLE tag prefix, never a substring.
+
+    The prefix is reserved vocabulary (BOARD-FORMAT.md §1.4), so the rule an
+    operator is told has to hold: only a tag literally starting ``facet:``
+    with something after it names a slice. A bare ``facet:`` names nothing,
+    and a tag that merely CONTAINS the word stays an ordinary label.
+    """
+    ws = tmp_path / ".zicato"
+    ws.mkdir()
+    _build_facet_workspace(
+        ws,
+        [("a", True, 0.5, 0.2)],
+        {"a": ["facet:real", "my_facet:x", "facet:", "facets:x", "FACET:x"]},
+    )
+
+    assert set(_facets(ws)["facets"]) == {"real"}
+
+
+def test_per_entry_rows_name_the_facets_the_entry_feeds(tmp_path: Path) -> None:
+    """Each entry row carries its own facet names, sorted.
+
+    The per-board drill-down reads this to name the slices an entry feeds
+    without re-reading the board. An untagged entry carries ``[]``.
+    """
+    ws = tmp_path / ".zicato"
+    ws.mkdir()
+    _build_facet_workspace(
+        ws,
+        [("clean_csv", True, 0.60, 0.2), ("plain", True, None, 0.2)],
+        {
+            "clean_csv": ["facet:extraction", "facet:data_cleaning", "smoke"],
+            "plain": ["smoke"],
+        },
+    )
+
+    from zicato.query import WorkspacePaths, build_per_entry_for_generation
+
+    rows = {
+        e["entry_id"]: e["facets"]
+        for e in build_per_entry_for_generation(WorkspacePaths(ws), "2026-05-16_e0", "v1")[
+            "entries"
+        ]
+    }
+
+    assert rows["clean_csv"] == ["data_cleaning", "extraction"]
+    assert rows["plain"] == []
+
+
+def test_per_entry_facet_counts_the_tagged_entries_not_the_ones_that_ran(
+    tmp_path: Path,
+) -> None:
+    """A slice sizes itself from the BOARD, so an unrun entry stays visible.
+
+    Sizing by what ran would report a racing rung's partial slice as fully
+    covered — the exact case the counts exist to expose. Three entries carry
+    ``facet:x``; only one ran. The slice must read 1-of-3, not 1-of-1.
+    """
+    ws = tmp_path / ".zicato"
+    ws.mkdir()
+    _build_facet_workspace(
+        ws,
+        [("a", True, 0.5, 0.2)],  # only `a` produced a run
+        {e: ["facet:x"] for e in ("a", "b", "c")},
+    )
+
+    row = _facets(ws)["facets"]["x"]
+
+    assert row["entry_count"] == 3, "the slice is three entries wide on the board"
+    assert row["ran_count"] == 1, "only one of them ran"
+    assert row["scored_count"] == 1
+    # The scalar rests on the one run — `ran_count` is its real denominator:
+    # drift 0.2 + (1 - its 0.50 score).
+    assert row["scalar"] == pytest.approx(0.7)
+
+
+def test_per_entry_facet_scalar_is_comparable_to_the_candidate_overall(tmp_path: Path) -> None:
+    """Each facet reports the SAME quantities as the candidate's own aggregate.
+
+    A facet's ``scalar`` is that slice run through the same scoring formula at
+    the epoch's frozen weights, so it can be read directly against the
+    ``overall`` row — which is that formula over every entry.
+    """
+    ws = tmp_path / ".zicato"
+    ws.mkdir()
+    _build_facet_workspace(
+        ws,
+        [("clean_csv", True, 0.60, 0.2), ("dedupe_rows", False, None, 1.0)],
+        {"clean_csv": ["facet:data_cleaning"], "dedupe_rows": ["facet:tone"]},
+    )
+
+    fs = _facets(ws)
+
+    # clean_csv alone: drift 0.2 + (1 - 0.60) = 0.60.
+    assert fs["facets"]["data_cleaning"]["scalar"] == pytest.approx(0.60)
+    assert fs["facets"]["data_cleaning"]["mean_score"] == pytest.approx(0.60)
+    # dedupe_rows alone: drift 1.0 + (1 - 0.0) = 2.0 — worse than overall.
+    assert fs["facets"]["tone"]["scalar"] == pytest.approx(2.0)
+    # overall: mean drift 0.6 + (1 - mean_score 0.30) = 1.30.
+    assert fs["overall"]["scalar"] == pytest.approx(1.30)
+    assert fs["overall"]["mean_score"] == pytest.approx(0.30)
+    # The comparison the table exists for: one facet above, one below.
+    assert fs["facets"]["data_cleaning"]["scalar"] < fs["overall"]["scalar"]
+    assert fs["facets"]["tone"]["scalar"] > fs["overall"]["scalar"]
+
+
+def test_per_entry_facet_uses_the_epochs_frozen_weights(tmp_path: Path) -> None:
+    """The facet scalar is computed at the SAME weights the candidate's is.
+
+    A different ``scoring.json`` must move the facet scalar, or the two are
+    not on the same terms and the comparison is meaningless.
+    """
+    ws = tmp_path / ".zicato"
+    ws.mkdir()
+    _build_facet_workspace(
+        ws,
+        [("clean_csv", True, 0.60, 0.2)],
+        {"clean_csv": ["facet:data_cleaning"]},
+        weights={"drift_weight": 10.0, "pass_weight": 1.0},
+    )
+
+    # drift 0.2 * 10 + (1 - 0.60) = 2.40, not the 0.60 the defaults give.
+    assert _facets(ws)["facets"]["data_cleaning"]["scalar"] == pytest.approx(2.40)
+
+
+def test_per_entry_facet_groups_multi_tag_entries_into_each_facet(tmp_path: Path) -> None:
+    """An entry carrying several facet tags counts once in each."""
+    ws = tmp_path / ".zicato"
+    ws.mkdir()
+    _build_facet_workspace(
+        ws,
+        [("clean_csv", True, 0.60, 0.2), ("dedupe_rows", True, None, 0.2)],
+        {
+            "clean_csv": ["facet:data_cleaning", "facet:extraction", "smoke"],
+            "dedupe_rows": ["facet:data_cleaning"],
+        },
+    )
+
+    fs = _facets(ws)
+
+    assert set(fs["facets"]) == {"data_cleaning", "extraction"}
+    assert fs["facets"]["data_cleaning"]["entry_count"] == 2
+    assert fs["facets"]["extraction"]["entry_count"] == 1
+    # data_cleaning: the 0.60 continuous score and the bare pass bit (1.0).
+    assert fs["facets"]["data_cleaning"]["mean_score"] == pytest.approx(0.80)
+
+
+def test_per_entry_facet_with_nothing_scored_keeps_its_scalar(tmp_path: Path) -> None:
+    """An unscored slice reports no mean, but its scalar is still real.
+
+    The entry produced no outcome, so there is nothing to average — but it
+    still produced drift, which the scalar must carry. Reporting ``0.0`` for
+    the mean would invent a failure that was never measured.
+    """
+    ws = tmp_path / ".zicato"
+    ws.mkdir()
+    _build_facet_workspace(
+        ws, [("schema_response", None, None, 0.3)], {"schema_response": ["facet:schema"]}
+    )
+
+    row = _facets(ws)["facets"]["schema"]
+
+    assert row["mean_score"] is None
+    assert row["scored_count"] == 0
+    assert row["entry_count"] == 1
+    # drift 0.3 + (1 - 1.0), the no-expectation convention ⇒ the drift alone.
+    assert row["scalar"] == pytest.approx(0.3)
+
+
+def test_per_entry_facet_scores_empty_without_tags_or_runs(tmp_path: Path) -> None:
+    """``facet_scores`` keeps ONE shape when there is nothing to report (DQ3).
+
+    A board with only ordinary tags, an unreadable board, and a generation
+    with no run files all degrade to the same empty block.
+    """
+    ws = tmp_path / ".zicato"
+    ws.mkdir()
+    _build_facet_workspace(ws, [("a", True, None, 0.2)], {"a": ["smoke", "holdout"]})
+    empty = {"facets": {}, "overall": None}
+    assert _facets(ws) == empty
+
+    board = ws / "epochs" / "2026-05-16_e0" / "board.jsonl"
+    board.write_bytes(b"\xff\xfe not utf-8 at all\n")
+    assert _facets(ws) == empty
+
+    board.unlink()
+    assert _facets(ws) == empty
+
+
+def test_per_entry_facet_survives_a_torn_run_file(tmp_path: Path) -> None:
+    """A malformed loss.json costs its own entry, not the whole block."""
+    ws = tmp_path / ".zicato"
+    ws.mkdir()
+    _build_facet_workspace(
+        ws,
+        [("clean_csv", True, 0.60, 0.2), ("dedupe_rows", True, None, 0.2)],
+        {"clean_csv": ["facet:x"], "dedupe_rows": ["facet:x"]},
+    )
+    torn = (
+        ws
+        / "epochs"
+        / "2026-05-16_e0"
+        / "generations"
+        / "v1"
+        / "runs"
+        / "dedupe_rows"
+        / "loss.json"
+    )
+    torn.write_text("{ truncated mid-write", encoding="utf-8")
+
+    row = _facets(ws)["facets"]["x"]
+
+    # Both entries are tagged, so the slice is still two wide — the torn one
+    # simply did not contribute a profile.
+    assert row["entry_count"] == 2
+    assert row["ran_count"] == 1
+    assert row["mean_score"] == pytest.approx(0.60)
+
+
+def test_per_entry_facet_overall_is_the_gates_own_number(tmp_path: Path) -> None:
+    """``overall`` IS the candidate's headline scalar, holdout excluded.
+
+    The number the gate compares — and the one ``gen_score.json`` caches —
+    is the TRAIN-slice aggregate (``governance._train_aggs``). The holdout
+    is default-on and needs no tag: a board of six or more entries hands
+    ~30% of itself over by hash alone. Aggregating the whole board would put
+    a second, larger "candidate scalar" on the same screen as the gate's,
+    identically labelled, and a facet covering the whole board would not
+    report the headline number it is supposed to equal.
+
+    So this pins the payload against an INDEPENDENT computation of the
+    gate's own slice rather than against a hand-derived constant.
+    """
+    from zicato.board.jsonl import load_board
+    from zicato.board.split import rotation_seed, split_board
+    from zicato.core import ScoringWeights
+    from zicato.telemetry.reducer import loss_profile_from_dict
+    from zicato.tournament.scoring import aggregate_generation_score
+
+    ws = tmp_path / ".zicato"
+    ws.mkdir()
+    # Ten entries, no `holdout` tag anywhere — the hash-derived split fires
+    # on its own. One entry is a deliberate outlier so landing it in or out
+    # of the slice moves the numbers far past any rounding.
+    ids = [f"e{i}" for i in range(10)]
+    runs = [(e, e != "e4", 0.0 if e == "e4" else 0.9, 5.0 if e == "e4" else 0.1) for e in ids]
+    _build_facet_workspace(ws, runs, {e: ["facet:everything"] for e in ids})
+
+    epoch_id = "2026-05-16_e0"
+    weights = ScoringWeights(drift_weight=1.0, pass_weight=1.0)
+    board = load_board(ws / "epochs" / epoch_id / "board.jsonl")
+    train_ids, holdout_ids = split_board(
+        board, weights.overfitting, seed=rotation_seed(weights.overfitting, epoch_id)
+    )
+    assert holdout_ids, "the default split must hold something out, or this proves nothing"
+    profiles = {
+        entry_id: loss_profile_from_dict(
+            json.loads(
+                (
+                    ws
+                    / "epochs"
+                    / epoch_id
+                    / "generations"
+                    / "v1"
+                    / "runs"
+                    / entry_id
+                    / "loss.json"
+                ).read_text()
+            )
+        )
+        for entry_id in ids
+    }
+    train_agg = aggregate_generation_score([profiles[i] for i in train_ids], weights)
+    whole_board_agg = aggregate_generation_score([profiles[i] for i in ids], weights)
+    assert train_agg["scalar"] != pytest.approx(
+        whole_board_agg["scalar"]
+    ), "the fixture must make the two slices differ, or the assertion below is vacuous"
+
+    fs = _facets(ws)
+
+    assert fs["overall"]["scalar"] == pytest.approx(train_agg["scalar"])
+    assert fs["overall"]["mean_score"] == pytest.approx(train_agg["mean_score"])
+    # A facet covering the WHOLE board reports exactly the headline number —
+    # the property that makes a facet scalar readable against `overall`.
+    assert fs["facets"]["everything"]["scalar"] == pytest.approx(train_agg["scalar"])
+    # ... and the counts say the slice is the train slice, not the board.
+    assert fs["overall"]["entry_count"] == len(train_ids)
+    assert fs["facets"]["everything"]["entry_count"] == len(train_ids)
+
+
+def test_per_entry_facet_excludes_an_explicitly_held_out_entry(tmp_path: Path) -> None:
+    """An entry tagged ``holdout`` feeds no facet, however it is also tagged.
+
+    A hand-declared holdout wins the split outright, so this is the
+    deterministic form of the rule above: `facet:x` covers two entries, one
+    of them held out, and the facet reports the one that the gate scores.
+    """
+    ws = tmp_path / ".zicato"
+    ws.mkdir()
+    _build_facet_workspace(
+        ws,
+        [("scored", True, 0.60, 0.2), ("held", False, 0.0, 9.0)],
+        {"scored": ["facet:x"], "held": ["facet:x", "holdout"]},
+    )
+
+    row = _facets(ws)["facets"]["x"]
+
+    # Only `scored` counts: drift 0.2 + (1 - 0.60). The held-out entry's
+    # drift of 9.0 would be impossible to miss had it been folded in.
+    assert row["scalar"] == pytest.approx(0.60)
+    assert row["entry_count"] == 1, "the slice is one entry wide once the holdout is removed"
+    assert row["ran_count"] == 1
+    assert row["scored_count"] == 1
+
+
+def test_per_entry_facet_with_no_runs_keeps_its_row(tmp_path: Path) -> None:
+    """A facet whose entries never ran stays VISIBLE, with null numbers.
+
+    Dropping the row would make an unrun slice indistinguishable from one
+    nobody tagged — the same collapse that sizing a slice by what ran
+    produces, one step further along. The operator tagged three entries;
+    the payload has to say that none of them reported.
+    """
+    ws = tmp_path / ".zicato"
+    ws.mkdir()
+    _build_facet_workspace(
+        ws,
+        [("ran", True, 0.5, 0.2)],  # only `ran` produced a profile
+        {
+            "ran": ["facet:covered"],
+            "skipped_a": ["facet:missing"],
+            "skipped_b": ["facet:missing"],
+            "skipped_c": ["facet:missing"],
+        },
+    )
+
+    fs = _facets(ws)
+
+    assert set(fs["facets"]) == {"covered", "missing"}, "the unrun slice is still named"
+    missing = fs["facets"]["missing"]
+    assert missing["scalar"] is None, "no runs, no scalar — never a fabricated 0.0"
+    assert missing["mean_score"] is None
+    assert missing["ran_count"] == 0
+    assert missing["scored_count"] == 0
+    assert missing["entry_count"] == 3, "the board still puts three entries in the slice"
+
+
+def test_per_entry_facet_overall_is_sized_by_the_board_not_by_what_ran(tmp_path: Path) -> None:
+    """The ``overall`` row carries the board's denominator, like every facet.
+
+    Sizing `overall` by the profiles that happened to load would print a
+    complete-looking `2/2` above a facet reading `1/4` — the candidate row
+    claiming full coverage while the slices beneath it say otherwise.
+    """
+    ws = tmp_path / ".zicato"
+    ws.mkdir()
+    _build_facet_workspace(
+        ws,
+        [("a", True, 0.5, 0.2), ("b", True, 0.5, 0.2)],  # two of five ran
+        {e: ["facet:x"] for e in ("a", "b", "c", "d", "e")},
+    )
+
+    fs = _facets(ws)
+
+    assert fs["overall"]["entry_count"] == 5, "five entries on the board"
+    assert fs["overall"]["ran_count"] == 2, "two of them reported"
+    assert fs["facets"]["x"]["entry_count"] == 5
+    assert fs["facets"]["x"]["ran_count"] == 2
+
+
 def test_matchup_grid_endpoint(client: TestClient, workspace: Path) -> None:
     """The ``/api/matchup-grid/{epoch}/{champion}/{challenger}`` route
     serves the persisted-loss-file grid as JSON."""

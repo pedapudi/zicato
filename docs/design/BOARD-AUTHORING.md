@@ -438,7 +438,7 @@ Common keyword arguments:
 | `judges=` | List of `Judge` process checks. Default `()`. |
 | `budget_s=` | Wall-clock budget for the whole entry, in seconds. Default `300`. |
 | `weight=` | Relative scoring weight. Default `1.0`. |
-| `tags=` | Operator labels for pattern slicing. Default `()`. |
+| `tags=` | Operator labels for pattern slicing. `holdout` and `facet:{name}` are reserved (BOARD-FORMAT.md §1.4). Default `()`. |
 
 For a `multi_turn_scripted` entry, `Entry` auto-fills `max_turns` to
 `len(turns)` when you do not pass it; for `multi_turn_emulated` it

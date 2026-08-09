@@ -35,6 +35,7 @@ import { candidateProgression, inflightForActiveEpoch, inflightForEntryGen, runP
 import { roundsFromTimeline, reignModel } from '../rounds.js';
 import { deriveLiveStatus } from '../livestatus.js';
 import { harmonografIsLive, harmonografLink, harmonografMini } from '../core/harmonograf.js';
+import * as facets from '../facets.js';
 
 export async function render(host, ctx, params, route) {
   params = params || {};
@@ -221,6 +222,12 @@ async function resolveCandidate(epochId, genId, genList, experiments, scalarByGe
   const entries = (pe && Array.isArray(pe.entries)) ? pe.entries : [];
   // per-generation mean continuous outcome (#18); null on the pre-score path.
   const meanScore = pe && svg.isNum(pe.mean_score) ? pe.mean_score : null;
+  // The per-facet means this candidate RECORDED when it was scored
+  // (BOARD-FORMAT.md §1.4) — read, never derived here. `[]` when the board
+  // carries no `facet:` tag, so the facet table simply does not paint.
+  // DIAGNOSTIC: a facet number is a place to look, never a verdict, so it
+  // gets no verdict colour and no Δ-vs-champion treatment.
+  const facetScores = facetRows(pe && pe.facet_scores);
 
   // The CHAMPION's per-board loss on the SAME boards/slice — so each lifecycle
   // circle, and the Σ node, can show candidate-vs-champion · Δ (the comparison
@@ -344,7 +351,7 @@ async function resolveCandidate(epochId, genId, genList, experiments, scalarByGe
   const generalization = buildGeneralizationModel(exp);
 
   return {
-    node, baseline, decision, mpts, entries, meanScore, mine, gateSpecs, gates,
+    node, baseline, decision, mpts, entries, meanScore, facetScores, mine, gateSpecs, gates,
     primaryDelta, championId, championScalar, scalarByGen, progression,
     championLoss, championSigma, candidateSigma, deltaSigma, gateExplain,
     entryParam, exps, judges, drillRow, drillHeader, inflight, cached, cachedProvenance,
@@ -588,6 +595,18 @@ function candidateDigest(s) {
     entries: s.entries.map((e) => [e.entry_id, svg.isNum(e.drift_loss) ? e.drift_loss.toFixed(3) : null, e.pass_fail, !!e.wall_clock_budget_exceeded, e.rung || null, e.match_id || null, !!e.cached, svg.isNum(e.score) ? e.score.toFixed(3) : null, metricsDigest(e.metrics)]),
     // per-generation mean continuous outcome (#18); null on the pre-score path.
     meanScore: svg.isNum(s.meanScore) ? s.meanScore.toFixed(3) : null,
+    // Facet numbers fold at their RENDERED precision so a no-op heartbeat
+    // leaves the digest byte-identical and the table's DOM nodes survive
+    // (G10). A board with no facet tag contributes empty — unchanged digest
+    // vs the pre-facet path. Every count the cell can print folds too: `ran`
+    // reaches the DOM through facetCount, so a digest blind to it would pin
+    // a stale denominator in place.
+    facets: [...s.facetScores.rows, s.facetScores.overall].filter(Boolean).map((f) => [
+      f.name,
+      svg.isNum(f.scalar) ? f.scalar.toFixed(2) : null,
+      svg.isNum(f.mean) ? f.mean.toFixed(2) : null,
+      f.scored, f.ran, f.total,
+    ]),
     cached: s.cached ? [s.cachedProvenance && s.cachedProvenance.sourceEpoch, s.cachedProvenance && s.cachedProvenance.sourceRun] : null,
     progression: s.progression && Array.isArray(s.progression.stages)
       ? s.progression.stages.map((st) => [st.label, st.kind, svg.isNum(st.delta) ? st.delta.toFixed(2) : null, st.verdict]) : null,
@@ -899,6 +918,7 @@ function paintCandidate(host, ctx, epochId, s, cmpId, isPrimary, narrow, structu
         el('span', { text: ' · per-entry continuous outcome, higher is better' }),
       ]));
     }
+    if (s.facetScores.rows.length) scoreCard.appendChild(facetTable(s.facetScores));
   } else if (s.radar && s.radar.projectedOnly) {
     // RACING / IN-FLIGHT with no SETTLED per-board rows yet: don't read "no
     // entries" — surface the racing affordance so the column isn't bare.
@@ -1064,6 +1084,87 @@ export function generalizationPanel(g) {
     ? 'holdout gap exceeds tolerance — possible memorization'
     : 'small gap — generalizes (no memorization)' }));
   return card;
+}
+
+// Normalize the dossier feed's `facet_scores` block for render.
+// Reads `{facets: {name: {scalar, mean_score, scored_count, entry_count}},
+// overall: {...}}` defensively — a missing/torn block yields `[]` rows and the
+// table does not paint. Sorted by name so row order is stable across repaints
+// (G10).
+function facetRows(raw) {
+  const block = (raw && typeof raw === 'object') ? raw : {};
+  const facets = (block.facets && typeof block.facets === 'object') ? block.facets : {};
+  const norm = (row, name) => ({
+    name,
+    scalar: svg.isNum(row.scalar) ? row.scalar : null,
+    mean: svg.isNum(row.mean_score) ? row.mean_score : null,
+    scored: Number.isInteger(row.scored_count) ? row.scored_count : 0,
+    // The SCALAR's denominator — how many tagged entries produced a run.
+    // Distinct from `scored` (the mean's denominator) and from `total` (what
+    // the board tagged), so all three ride to the cell.
+    ran: Number.isInteger(row.ran_count) ? row.ran_count : null,
+    total: Number.isInteger(row.entry_count) ? row.entry_count : 0,
+  });
+  const rows = Object.keys(facets).sort().map((n) => norm(facets[n] || {}, n));
+  const overall = (block.overall && typeof block.overall === 'object')
+    ? norm(block.overall, 'candidate overall') : null;
+  return { rows, overall };
+}
+
+// The FACET table — one row per `facet:` board tag this candidate carries,
+// plus the candidate's OWN aggregate as the last row to read against.
+//
+// Both numbers are the candidate's own quantities recomputed over the slice at
+// the epoch's frozen weights, so a facet row is directly comparable to the
+// overall row beneath it — that comparison is the point of the table.
+//   * `scalar`     — the SAME loss the gate's number is (lower is better):
+//                    drift (every judge's weighted contribution included),
+//                    the outcome miss, and the namespace terms.
+//   * `mean score` — the outcome axis (higher is better).
+// The two run OPPOSITE directions because one counts problems and the other
+// counts quality, so the header states each direction rather than relying on
+// the reader to know.
+//
+// Deliberately plain: no verdict colour, no bars, no ordering by value. These
+// numbers carry NO noise threshold (BOARD-FORMAT.md §1.4) and a thin slice is
+// mostly noise, so the table must not read as a scoreboard. `scored` is shown
+// for the same reason — a scalar over one entry must not read like a scalar
+// over twenty.
+//
+// A facet nobody scored shows an em dash for `mean score` rather than 0.00 —
+// an absent measurement is not a failing one. Its `scalar` is still real: an
+// unscored entry still contributes drift.
+function facetTable(model) {
+  const cellsFor = (f) => [
+    { text: f.name },
+    { text: facets.facetNum(f.scalar), class: 'dn-num' },
+    { text: facets.facetNum(f.mean), class: 'dn-num' },
+    { text: facets.facetCount(f.scored, f.ran, f.total), class: 'dn-num dn-faint' },
+  ];
+  const body = (model.rows || []).map(cellsFor);
+  if (model.overall) {
+    body.push({ class: 'dn-facet-overall', cells: cellsFor(model.overall) });
+  }
+  const table = dataTable({
+    class: 'dn-facet-table',
+    columns: [
+      { label: 'facet' },
+      { label: facets.SCALAR_LABEL, class: 'dn-num' },
+      { label: facets.MEAN_SCORE_LABEL, class: 'dn-num' },
+      { label: 'scored', class: 'dn-num' },
+    ],
+    rows: body,
+  });
+  const heads = facets.tableHeaderCells(table);
+  facets.attachFacetHover(heads[1], 'scalar');
+  facets.attachFacetHover(heads[2], 'mean_score');
+  // The count column carries THREE denominators collapsed into one string,
+  // so it needs its own explanation as much as the two numbers do.
+  facets.attachFacetHover(heads[3], 'count');
+  return el('div', { class: 'dn-facets' }, [
+    facets.facetCaption('this candidate re-scored per board tag'),
+    table,
+  ]);
 }
 
 // A small, clearly-marked "racing — settled comparisons appear once boards

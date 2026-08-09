@@ -2900,6 +2900,17 @@
   /* the per-generation mean-score caption beneath the per-board dumbbell. */
   .dn-meanscore { margin-top: 6px; font: 11px var(--v2-mono); }
   .dn-meanscore-val { color: var(--v2-ink-soft); }
+  /* the facet strip — one chip per `facet:` board tag. Deliberately quiet:
+     neutral ink, no verdict colour, no bar. A facet mean is diagnostic and
+     un-thresholded, so it must not read as a scoreboard row. */
+  .dn-facets { margin-top: 8px; }
+  .dn-facets-head { font: 11px var(--v2-mono); }
+  .dn-facet-table { margin-top: 4px; font: 11px var(--v2-mono); }
+  /* the two explained columns read as hoverable without shouting. */
+  .dn-facet-table th[data-hovercard] { cursor: help; text-decoration: underline dotted var(--v2-rule); }
+  /* The candidate's OWN aggregate — the row every facet is read against.
+     Ruled off above rather than coloured: it is a reference, not a verdict. */
+  .dn-facet-overall td { border-top: 1px solid var(--v2-rule); color: var(--v2-ink-soft); }
   /* breakdown-table score + precision/recall cells (board view). */
   .dn-score-cell { color: var(--v2-ink-soft); }
   .dn-pr-cell { color: var(--v2-ink-faint); font-size: 11px; }

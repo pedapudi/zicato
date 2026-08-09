@@ -210,6 +210,64 @@ def test_build_search_results_judge_hit_from_board(
     assert results["mutations"] == []
 
 
+def test_build_search_results_judge_scan_degrades_on_a_torn_board(
+    search_workspace: Path,
+) -> None:
+    """The board judge scan degrades per ROW, and never raises (DQ3).
+
+    The scan runs on the raw JSONL rather than the validating loader, so a
+    board that ``load_board`` would reject still yields the judge names it
+    can read: a malformed line and a non-object line drop out while their
+    siblings survive.
+    """
+    paths = WorkspacePaths(search_workspace)
+    board = search_workspace / "epochs" / "2026-05-20_presn" / "board.jsonl"
+    _write(
+        board,
+        "\n".join(
+            [
+                json.dumps({"board_meta": True, "disable_drift": []}),
+                "{ truncated mid-write",
+                "[1, 2, 3]",
+                json.dumps(
+                    {
+                        "id": "picky_stakeholder_emulated",
+                        "kind": "multi_turn_emulated",
+                        "judges": [{"name": "no_fabricated_numbers"}],
+                    }
+                ),
+            ]
+        )
+        + "\n",
+    )
+
+    results = build_search_results(paths, "no_fabricated")
+    assert {j["name"] for j in results["judges"]} == {"no_fabricated_numbers"}
+
+
+def test_judge_board_scan_survives_a_non_utf8_board(
+    search_workspace: Path,
+) -> None:
+    """A board that is not UTF-8 yields no judge names, never an exception.
+
+    ``read_text(encoding="utf-8")`` raises ``UnicodeDecodeError`` — a
+    ``ValueError``, NOT an ``OSError`` — so a reader that guards only on
+    ``OSError`` lets it escape and turns a best-effort reader into a 500.
+
+    Pinned against the judge scan directly rather than through
+    :func:`build_search_results`, because that endpoint ALSO reads the board
+    via ``epoch_view._parse_board`` for its entries category, and that reader
+    still carries the ``OSError``-only guard this test would otherwise trip
+    over. Move this up to the endpoint once ``_parse_board`` degrades too.
+    """
+    from zicato.query.judge_view import _collect_judge_names_from_board_file
+
+    board = search_workspace / "epochs" / "2026-05-20_presn" / "board.jsonl"
+    board.write_bytes(b"\xff\xfe not utf-8 at all\n")
+
+    assert _collect_judge_names_from_board_file(board) == set()
+
+
 def test_build_search_results_patches_rationale_substring(
     search_workspace: Path,
 ) -> None:

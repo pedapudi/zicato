@@ -44,7 +44,7 @@ Every board entry carries the same envelope:
 | `kind` | `string` | yes | Discriminator. v0 set: `"single_turn"`, `"multi_turn_scripted"`, `"multi_turn_emulated"`. Open-ended — see §6. |
 | `wall_clock_budget_seconds` | `number` | yes | Hard ceiling for the WHOLE entry. Exceeded → run aborts and scores as worst-case. |
 | `weight` | `number` | no (default `1.0`) | Relative importance in scoring aggregation. |
-| `tags` | `list[string]` | no (default `[]`) | Operator labels; pattern detectors can slice by tag. |
+| `tags` | `list[string]` | no (default `[]`) | Operator labels; pattern detectors and diagnostic scorecards can slice by tag. |
 | `expectation` | `Expectation` | no (default absent) | A single **outcome** check — a `Predicate` / `Rubric` matcher run post-hoc on the run's output or transcript. Absent → drift-loss-only scoring for this entry. An entry carries **at most one** expectation. See §3. |
 | `judges` | `list[Judge]` | no (default `[]`) | **Process** checks — goldfive judges that watch the reasoning stream in-run. Empty → only goldfive's ambient built-in judges run. See §4. |
 | `context` | `object` | no | Opaque adapter-specific metadata. ADK adapters might use `{"attachments": [...], "session_state": {...}}`. Zicato never interprets the contents. |
@@ -131,12 +131,44 @@ weight of `2.0` raises a entry to "count twice" for.
 
 Operator labels. The pattern detectors slice by tag (e.g. "show me the
 drift counts on `[hard, multi-turn]` entries only"). Tags also let the
-rubric steer the proposer toward or away from certain slices. Tags
+rubric steer the proposer toward or away from certain slices. Most tags
 have no semantic meaning to zicato — they are operator strings.
+
+Two tags ARE reserved, and an operator must not use either as an
+ordinary label:
+
+| Tag | Meaning | Owner |
+|---|---|---|
+| `holdout` | Puts the entry in the confirm-only holdout slice. | `zicato.board.split.HOLDOUT_TAG` |
+| `facet:{name}` | Puts the entry in the named diagnostic slice `{name}`. | `query.eval_view.FACET_TAG_PREFIX` |
+
+The difference in consequence is the part to remember. `holdout` changes
+what the loop DOES: the entry is withheld from selection and spent only
+to confirm a promotion (OVERFITTING.md §3). `facet:` changes only what
+the dashboard SHOWS — it can alter no score, gate verdict, schedule, or
+Pareto admission, and nothing about it is persisted.
+
+`facet:` matches a WHOLE tag prefix, case-sensitively: `facet:data_quality`
+names the slice `data_quality`, while `my_facet:x`, `FACET:x`, and a bare
+`facet:` are all ordinary labels.
+
+The two reserved tags COMPOSE, and `holdout` wins. An entry tagged both
+`holdout` and `facet:x` is held out, so it feeds no facet number: facets
+are computed over the TRAIN slice only, which is the slice the gate's own
+scalar is computed over (OVERFITTING.md §3). Two reasons, and either
+alone would settle it — a facet has to be readable against the
+candidate's headline number, which is a train-slice number; and a
+dashboard that broke the holdout out by facet on every page load would be
+an ungoverned query against the slice that exists to stay un-mined. A
+facet whose entries are ALL held out therefore reports nothing.
+
+What the facet surfaces render is in [DASHBOARD.md](DASHBOARD.md) §4;
+what the reader returns is in [EVAL-VIEW.md](EVAL-VIEW.md) §3.4.
 
 Conventional tags worth adopting:
 
 - `easy` / `medium` / `hard` — operator difficulty estimate
+- `facet:{name}` — diagnostic slice shown on the candidate + board views
 - `regression:{name}` — pinned regression tests
 - `adversarial` — designed to provoke a specific failure mode
 

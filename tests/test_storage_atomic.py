@@ -21,6 +21,38 @@ from zicato.storage._atomic import (
     read_json,
 )
 
+#: ``F_GETPATH`` — the Darwin fcntl that fills a buffer with an open fd's
+#: path. Only macOS builds of CPython define ``fcntl.F_GETPATH``, so the
+#: literal is the fallback for a build that omits it; ``50`` is the value
+#: from Darwin's ``sys/fcntl.h`` and has been stable across releases.
+_F_GETPATH = 50
+#: ``MAXPATHLEN`` on Darwin — the buffer ``F_GETPATH`` writes into.
+_MAXPATHLEN = 1024
+
+
+def _fd_path(fd: int) -> Path:
+    """Best-effort path for an open fd, used only by fsync spy tests.
+
+    Linux resolves it through ``/proc``; macOS has no ``/proc``, so the
+    Darwin branch asks the kernel directly. The branch is unreachable on
+    the CI platform, which is why it is kept to one syscall.
+    """
+    proc_path = Path(f"/proc/self/fd/{fd}")
+    if proc_path.exists():
+        return Path(os.readlink(proc_path))
+
+    if hasattr(os, "uname") and os.uname().sysname == "Darwin":
+        import fcntl
+
+        raw = fcntl.fcntl(fd, getattr(fcntl, "F_GETPATH", _F_GETPATH), bytes(_MAXPATHLEN))
+        # The kernel writes a NUL-terminated path into the buffer and hands
+        # back the whole buffer, trailing padding included.
+        path = raw.split(b"\0", 1)[0].decode()
+        if path:
+            return Path(path)
+
+    raise OSError(f"cannot resolve path for fd {fd}")
+
 
 def test_atomic_write_text_roundtrip(tmp_path: Path) -> None:
     target = tmp_path / "deep" / "nested" / "state.json"
@@ -52,7 +84,7 @@ def test_atomic_write_fsyncs_the_parent_directory(
         import stat
 
         if stat.S_ISDIR(os.fstat(fd).st_mode):
-            synced_dirs.append(Path(os.readlink(f"/proc/self/fd/{fd}")))
+            synced_dirs.append(_fd_path(fd))
         real_fsync(fd)
 
     monkeypatch.setattr(os, "fsync", spying_fsync)
@@ -103,7 +135,7 @@ def test_atomic_claim_fsyncs_both_parents(tmp_path: Path, monkeypatch: pytest.Mo
 
     def spying_fsync(fd: int) -> None:
         if stat.S_ISDIR(os.fstat(fd).st_mode):
-            synced_dirs.append(Path(os.readlink(f"/proc/self/fd/{fd}")).resolve())
+            synced_dirs.append(_fd_path(fd).resolve())
         real_fsync(fd)
 
     monkeypatch.setattr(os, "fsync", spying_fsync)

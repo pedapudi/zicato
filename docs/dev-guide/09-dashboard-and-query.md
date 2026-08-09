@@ -59,7 +59,8 @@ server + the JS). Nothing in the library knows the driver exists.
 | `src/zicato/query/epoch_view.py` | `build_epoch_view`, `build_environment`'s epoch slice, `_current_champion` (reigning spine end), `build_workspace_view`, `compute_board_split` | 35 KB |
 | `src/zicato/query/gate_view.py` | `build_gate_breakdown` (+ `deciding_rule`), `build_score_trajectory`, `build_health_report`, `build_rating_view`, `build_drift_movements` | 56 KB |
 | `src/zicato/query/tournament_view.py` | `build_bracket`, `build_tournament_structure`, `build_matchup_detail`, `build_matchup_grid` | 51 KB |
-| `src/zicato/query/{judge,hypothesis,lineage,events_index,run_log}_view.py` | per-judge matrices, hypothesis/calibration accuracy, lineage feed, `/api/environment` coalescer + meta-loop ledger, the run-log tail | — |
+| `src/zicato/query/{judge,hypothesis,lineage,events_index,run_log}_view.py` | per-judge matrices, hypothesis/calibration accuracy, lineage feed, `/api/environment` coalescer + meta-loop ledger, the run-log tail. `judge_view.build_per_entry_for_generation` serves the dossier; its `facet_scores` block comes from `eval_view.facet_scores_for_generation` | — |
+| `src/zicato/query/board_scan.py` | `iter_board_rows` + the `board_entry_id` / `board_entry_tags` guards — the tolerant raw `board.jsonl` walk shared by the judge-name union and the facet-tag read. Per-ROW degrade: `load_board` VALIDATES, so one stale entry would blank a whole read model | ~75 lines |
 | `src/zicato/dashboard/server.py` | `create_app` (routes + `read_only`), `run` (port walk + harmonograf), static serving with ETag revalidation | 575 lines |
 | `src/zicato/dashboard/endpoints.py` | `make_endpoints` (the per-surface factories), `_is_safe_id` / `_is_safe_tournament_id`, the control POST handlers | 62 KB |
 | `src/zicato/dashboard/sse.py` | `ChangeBroker` (coalescing file watcher), `sse_event_stream`, `_classify`, `_progress_signal` | 398 lines |
@@ -723,6 +724,7 @@ chapter leans on:
 | `build_round_pipeline` | `/api/live/pipeline` | `{running, stale, phase, steps[], active_step, decision, in_flight}` | every input degrades independently (§9.11) |
 | `build_racing_field` | `/api/epoch/{id}/racing-field` | `{present, structure, rounds[], standings, champion_lineage}` | `{present: false}` (§9.2.5) |
 | `build_round_timeline` | `/api/epoch/{id}/round-timeline` | `{rounds[], waterfall[]}` | empty rounds list |
+| `build_per_entry_for_generation` | `/api/generation/{e}/{g}/per-entry` | `{tournament_id, mean_score, facet_scores, entries[]}`; `facet_scores` is `{facets: {name: {scalar, mean_score, scored_count, entry_count, ran_count}}, overall}` — the candidate re-aggregated per `facet:` board tag at the epoch's frozen weights, so a facet scalar is comparable to the `overall` row | `{facets: {}, overall: null}` (always present) |
 | `build_snapshot` | `/api/state`, SSE `snapshot` | see above | each field independently `None` |
 | `read_active_runs_view` | `/api/active-runs` | `[{run_id, progress, elapsed_seconds, budget_seconds, …}]` | `[]` |
 | `list_reflections` (`query/reflection_view.py`) | `/api/reflections[?epoch=]` | `{reflections:[{reflection_id, epoch_id, created_at, mode, executed, noise_floor_max_abs_delta, decision_flip_p, n_findings, n_judges}]}` | `{reflections: []}` |

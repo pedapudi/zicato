@@ -486,6 +486,44 @@ verdict; it reads from the same paired per-entry deltas the gate
 consumes (`/api/matchup-grid/...` for the grid,
 `/api/round/.../gate` for the gate-aligned breakdown).
 
+**Facet slices.** When board entries carry `facet:{name}` tags
+(BOARD-FORMAT.md §1.4), two screens report those slices. Each facet is
+the candidate re-aggregated over just that slice at the epoch's frozen
+weights, so it carries the same `scalar` (lower is better) and
+`mean score` (higher is better) the candidate's own aggregate carries —
+and a facet scalar therefore reads directly against it.
+
+- The **candidate dossier**, under Per-board scoring: one row per facet,
+  with the candidate's own aggregate as the last row to compare against.
+- The **per-board drill-down**, under Per-candidate loss: one row per
+  candidate, one column per facet the entry feeds. Candidates are rows
+  because an epoch grows candidates, not facets.
+
+Both read from `static/js/facets.js`, which owns every label, format and
+explanation so the two cannot drift apart.
+
+Three display rules, all for the same reason — a facet number carries no
+noise threshold, so the tables must not read as scoreboards:
+
+1. No verdict colour, no bars, no ordering by value, and no dimmed
+   column. The emphasised column is as often the worse one.
+2. A slice nobody scored shows an em dash, never `0.00`. Its `scalar` is
+   still real: an unscored entry still produced drift.
+3. The counts travel with the numbers, as `scored/ran/tagged` collapsed
+   to the shortest form that loses nothing (`2`, `0/1`, `1/1/3`). All
+   three appear because they answer different questions: `tagged` is what
+   the BOARD puts in the slice, `ran` is the scalar's denominator, and
+   `scored` is the mean score's. A racing rung that runs a board subset
+   would otherwise render a mostly-unrun slice as fully covered, which is
+   the one thing these counts exist to prevent. The per-board table has
+   no room for a count column, so a cell there carries its coverage on
+   the number itself (`0.77 · 1/4`) whenever the slice is not whole.
+
+Facets are computed over the TRAIN slice, so `candidate overall` is the
+same number the gate compares and a facet covering the whole board
+reports exactly it. Holdout entries feed no facet — see EVAL-VIEW.md
+§3.4 for why both halves of that matter.
+
 **④ Scalar waterfall.** The scalar is a weighted sum of drift-derived
 components (see [SCORING.md](SCORING.md) — the per-`judge_name`
 `per_judge_weights` term plus the rest of the loss). The waterfall

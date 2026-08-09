@@ -392,3 +392,132 @@ test('teardown: reset shared AppState + data cache for the next file', () => {
 });
 
 await run();
+
+// ---- the FACET panel on the per-board drill-down --------------------------
+// Drilling into a board entry from a candidate should say which facet slices
+// that entry feeds, and how each candidate scores on them. Both halves ride on
+// the per-entry payload the view already fetches: the entry ROW names its
+// facets, each candidate's `facet_scores` carries that candidate's aggregate.
+
+function storeWithFacets() {
+  return {
+    ...STORE,
+    perEntry: {
+      g0: {
+        entries: [{ entry_id: 'task_login', drift_loss: 0.62, pass_fail: false, run_id: 'r0',
+                    facets: ['auth', 'data_cleaning'] }],
+        facet_scores: { facets: {
+          auth: { scalar: 1.20, mean_score: 0.10, scored_count: 1, entry_count: 1 },
+          data_cleaning: { scalar: 0.90, mean_score: 0.40, scored_count: 2, entry_count: 2 },
+        }, overall: null },
+      },
+      g2: {
+        entries: [{ entry_id: 'task_login', drift_loss: 0.31, pass_fail: true, run_id: 'r2',
+                    facets: ['auth', 'data_cleaning'] }],
+        facet_scores: { facets: {
+          auth: { scalar: 0.40, mean_score: 0.90, scored_count: 1, entry_count: 1 },
+          data_cleaning: { scalar: 0.55, mean_score: 0.80, scored_count: 2, entry_count: 2 },
+        }, overall: null },
+      },
+    },
+  };
+}
+
+function facetPanelCells(host) {
+  const tables = host.querySelectorAll('[class]').filter((n) =>
+    (n.getAttribute('class') || '').split(/\s+/).includes('dn-facet-table'));
+  if (!tables.length) return [];
+  const out = [];
+  for (const part of tables[0].children) {
+    for (const tr of part.children) out.push([...tr.children].map((c) => (c.textContent || '').trim()));
+  }
+  return out;
+}
+
+test('board drill-down: the facet panel names the slices this entry feeds, per candidate', async () => {
+  resetForRender();
+  installFetch(storeWithFacets());
+  const host = document.createElement('div');
+  await board.render(host, ctxReal(), { epochId: 'e3', entry: 'task_login', gen: 'g2' });
+
+  const cells = facetPanelCells(host);
+  // One column per candidate that reported facets, in lineage order.
+  // The unit rides on the row header: every cell is that candidate's scalar.
+  // The champion is named in its header, not by weighting its numbers: dimming
+  // a column reads as emphasis on the others, which would imply a verdict this
+  // table must not carry.
+  // CANDIDATES are the rows (the orientation the rest of the page uses, and
+  // the one that scales — an epoch grows candidates, not facets). The champion
+  // is named in its cell, never by weighting its numbers.
+  assertDeep(cells[0], ['candidate · scalar ↓', 'auth', 'data_cleaning'], 'the unit + a column per facet');
+  assertDeep(cells[1], ['g0 ○', '1.20', '0.90'], 'the champion row, marked');
+  assertDeep(cells[2], ['g2', '0.40', '0.55'], 'the challenger improved on both slices');
+  // The unit header explains itself on hover, keyboard-reachable.
+  const tbl = host.querySelectorAll('[class]').filter((n) =>
+    (n.getAttribute('class') || '').split(/\s+/).includes('dn-facet-table'))[0];
+  const unitHead = tbl.children[0].children[0].children[0];
+  assertEqual(unitHead.getAttribute('data-hovercard'), '1', 'the unit header explains the scalar');
+  assertEqual(unitHead.getAttribute('tabindex'), '0', 'and is keyboard-reachable');
+  // Every number cell carries the SAME class — no column is visually weighted.
+  const bodyCells = [...tbl.children[1].children].flatMap((tr) => [...tr.children].slice(1));
+  assert(bodyCells.length > 0, 'the table has number cells');
+  assert(bodyCells.every((c) => (c.getAttribute('class') || '') === 'dn-num'),
+    'no candidate column is dimmed or emphasised');
+});
+
+test('board drill-down: the facet panel scales with candidates, not columns', async () => {
+  resetForRender();
+  // Eight candidates, two facets — the shape a real epoch reaches by round
+  // eight. Rows grow, columns do NOT: the table stays three wide.
+  const gens = Array.from({ length: 8 }, (_, i) => 'g' + i);
+  const perEntry = {};
+  for (const g of gens) {
+    perEntry[g] = {
+      entries: [{ entry_id: 'task_login', drift_loss: 0.3, pass_fail: true, run_id: 'r_' + g,
+                  facets: ['auth', 'data_cleaning'] }],
+      facet_scores: { facets: {
+        auth: { scalar: 1.0, mean_score: 0.5, scored_count: 1, entry_count: 1 },
+        data_cleaning: { scalar: 0.5, mean_score: 0.8, scored_count: 1, entry_count: 1 },
+      }, overall: null },
+    };
+  }
+  installFetch({
+    ...STORE,
+    lineage: { generations: gens.map((g, i) => ({
+      generation_id: g, parent_generation_id: i ? gens[i - 1] : null,
+      promoted: i === 0, epoch_id: 'e3',
+    })) },
+    perEntry,
+  });
+  const host = document.createElement('div');
+  await board.render(host, ctxReal(), { epochId: 'e3', entry: 'task_login', gen: 'g2' });
+
+  const cells = facetPanelCells(host);
+  assertEqual(cells[0].length, 3, 'still three columns wide with eight candidates');
+  assertEqual(cells.length, 9, 'one header row + one row per candidate');
+  assertDeep(cells[0], ['candidate · scalar ↓', 'auth', 'data_cleaning'], 'columns are the facets');
+});
+
+test('board drill-down: no facet panel when the entry carries no facet tags', async () => {
+  resetForRender();
+  installFetch(STORE);   // the base fixture's rows carry no `facets`.
+  const host = document.createElement('div');
+  await board.render(host, ctxReal(), { epochId: 'e3', entry: 'task_login', gen: 'g2' });
+
+  assertEqual(facetPanelCells(host).length, 0, 'an untagged entry paints no facet panel');
+});
+
+test('board drill-down: a no-op re-render over a facet-bearing entry churns NO DOM', async () => {
+  resetForRender();
+  installFetch(storeWithFacets());
+  const host = document.createElement('div');
+  const ctx = ctxReal();
+  const params = { epochId: 'e3', entry: 'task_login', gen: 'g2' };
+  await board.render(host, ctx, params);
+  const upper = host.querySelector(':scope > [data-node="board-upper"]');
+  const digest1 = upper.getAttribute('data-t-digest');
+  const first = upper.firstChild;
+  await board.render(host, ctx, params);
+  assertEqual(upper.getAttribute('data-t-digest'), digest1, 'digest unchanged on a no-op beat');
+  assert(upper.firstChild === first, 'no clear-and-rebuild on the no-op beat');
+});

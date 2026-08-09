@@ -224,7 +224,8 @@ whose `redundant_with` is the corpus redundancy). WS-DOSSIER and WS-HEALTH
 
 ## 3. The reader contracts
 
-Two readers land in `src/zicato/query/eval_view.py`. House invariants they
+Two readers land in `src/zicato/query/eval_view.py`, plus
+`facet_scores_for_generation` (§3.4). House invariants they
 obey (verified against the sibling readers): **DQ1** server-derived (the
 view renders, never computes domain math); **DQ2** snake_case payloads;
 **DQ3** cold-index / unknown-entry / no-calibration degrade to a
@@ -333,6 +334,54 @@ In `eval_view.py`, pure and independently tested:
   `loss_profiles`; the fold itself is unchanged and independently tested.)
 - `runtime_aggregates(values) -> {mean, p50, max}` — over non-`None` ms.
 - `pass_ratio(bits) -> float | None`, `evidence_of(n) -> str`.
+
+### 3.4 `facet_scores_for_generation(paths, epoch_id, generation_id) -> dict`
+
+The FACET slice: one candidate re-aggregated per `facet:` board tag
+(BOARD-FORMAT.md §1.4). Feeds both facet surfaces — the candidate
+dossier's table (one candidate × every facet) and the per-board page's
+(one entry's facets × every candidate). They share one vocabulary in
+`static/js/facets.js` and differ only in orientation.
+
+Returns `{facets: {name: {scalar, mean_score, scored_count,
+entry_count, ran_count}}, overall: {...} | None}`. `entry_count` sizes the
+slice from the BOARD and `ran_count` is how many of those produced a
+profile — the scalar's own denominator. Each block is
+`tournament.scoring.aggregate_generation_score` run over just that
+slice's loss profiles at the epoch's FROZEN weights, so a facet's
+`scalar` is the same quantity, in the same units and direction, as the
+`overall` row — that comparability is the reader's whole purpose. It
+belongs in this module because a facet is this module's own transpose:
+rows are board entries grouped by the operator's ontology, the column is
+one candidate.
+
+**The TRAIN slice, not the whole board.** The scalar the gate compares —
+and the one `gen_score.json` caches — is `governance._train_aggs`, so
+holdout entries are excluded from every block here and `overall` IS the
+candidate's headline number. Aggregating the whole board would put a
+second, larger "candidate scalar" beside the gate's, identically
+labelled; it would also make every dossier load an ungoverned holdout
+query (OVERFITTING.md §4). The split is read through the module's own
+`_holdout_ids`, so this reader and the per-entry `slice` badge can never
+disagree about which entries are held out. A facet whose train slice is
+empty because nothing RAN keeps its row with null numbers; one whose
+entries are all HELD OUT reports no row.
+
+Not threaded: the opt-in `diff_complexity` term, which the gate folds
+into the challenger's aggregate from its diff size. At the default weight
+of `0.0` nothing differs; under a non-zero weight a facet scalar omits a
+per-candidate constant the headline scalar carries, because a diff is not
+attributable to a board tag.
+
+Reads the persisted `loss.json` files rather than the index (the files
+are canonical, so a completed generation is readable with no index) and
+the epoch's `scoring.json`. Per DQ3, an unreadable board, absent run
+files, or a malformed `scoring.json` degrade to `{facets: {}, overall:
+None}` / the default weights — never a raise. Per DQ2, a slice nothing
+scored reports `mean_score: null`, never a fabricated `0.0`.
+
+DIAGNOSTIC ONLY: nothing here feeds the scalar the gate reads, the gate,
+scheduling, or Pareto admission.
 
 ## 4. Statistical-honesty rules (the views MUST obey)
 
