@@ -17,6 +17,7 @@ import os
 from pathlib import Path
 
 import pytest
+from goldendiff import golden_mismatch_message
 from mock_evolve_capture import GOLDEN_PATH, run_mock_evolve
 
 
@@ -35,8 +36,11 @@ def test_mock_evolve_golden(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> 
 
     assert GOLDEN_PATH.exists(), f"golden missing at {GOLDEN_PATH}; run with ZICATO_PARITY_UPDATE=1"
     expected = GOLDEN_PATH.read_text(encoding="utf-8")
-    assert text == expected, (
+    assert text == expected, golden_mismatch_message(
         "MOCK-GOLDEN drift: the deterministic racing mock evolve produced "
         "different serialized artifacts than the committed golden. A "
-        "behavior-preserving refactor must not move these bytes."
+        "behavior-preserving refactor must not move these bytes.",
+        expected,
+        text,
+        golden_path=str(GOLDEN_PATH),
     )

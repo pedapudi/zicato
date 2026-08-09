@@ -25,6 +25,22 @@ Exit code is 0 only when every selected gate passes.
 | **MOCK-GOLDEN**   | A full deterministic, no-live-LLM racing evolve end to end. | Reuses the `test_example_target_1_racing` mocks; captures `gen_score.json` / `experiment.json` / `loss.json` / `lineage.json`, diffs against `golden/mock_evolve_racing.json`. |
 | **MYPY**          | Type-checker error count. | `uv run mypy src/zicato/`; gate is "not worse than `golden/mypy_baseline.txt`". |
 
+## In CI
+
+The `parity` job in `.github/workflows/ci.yml` runs `bash tools/parity.sh
+--skip PYTEST` on Python 3.12 for every push to `main` and every pull
+request. PYTEST is skipped only because the `lint-and-test` job already
+runs that exact suite; every other gate runs there, so a golden-covered
+surface can no longer move without a red check.
+
+The gates are environment-independent by construction — verified green
+across Python 3.11 and 3.12, `TZ=Pacific/Kiritimati`, `LC_ALL=C`, a
+relocated `TMPDIR`, a non-tty stdout, and a checkout at a different
+absolute path. The one wall-clock dependency that used to exist (the epoch
+id's date prefix seeds the holdout rotation, which selects the racing
+rung's board slice) is pinned in `lib/mock_evolve_capture.py` by freezing
+`_today`.
+
 ## The fixture workspace
 
 REINDEX-DUMP and MOCK-GOLDEN share one deterministic source: the racing

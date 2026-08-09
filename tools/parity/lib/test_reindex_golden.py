@@ -30,6 +30,7 @@ import sqlite3
 from pathlib import Path
 
 import pytest
+from goldendiff import golden_mismatch_message
 from mock_evolve_capture import drive_mock_evolve
 from normalize import _EPOCH_DATE_PREFIX, _ISO_TS  # noqa: PLC2701
 
@@ -76,8 +77,11 @@ def test_reindex_dump_golden(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) ->
 
     assert GOLDEN_PATH.exists(), f"golden missing at {GOLDEN_PATH}; run with ZICATO_PARITY_UPDATE=1"
     expected = GOLDEN_PATH.read_text(encoding="utf-8")
-    assert dump == expected, (
+    assert dump == expected, golden_mismatch_message(
         "REINDEX-DUMP drift: the SQLite index projection of the fixture "
         "workspace changed. The index is a pure projection — a "
-        "behavior-preserving refactor must keep it byte-identical."
+        "behavior-preserving refactor must keep it byte-identical.",
+        expected,
+        dump,
+        golden_path=str(GOLDEN_PATH),
     )
