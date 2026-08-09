@@ -50,7 +50,7 @@ def _judge_from_dict(raw: Any) -> JudgeSpec:
     Reuses the same enum coercion the board loader applies so an invalid
     ``mode`` / ``severity`` token fails with a clear message.
     """
-    from goldfive import DriftSeverity  # noqa: PLC0415
+    from zicato.core.drift_kinds import DriftSeverity  # noqa: PLC0415
 
     if not isinstance(raw, dict):
         raise ValueError("judge must be a JSON object")
@@ -231,9 +231,10 @@ def _builder_vocab() -> dict[str, list[str]]:
     """
     from typing import get_args  # noqa: PLC0415
 
-    from goldfive import DriftSeverity  # noqa: PLC0415
-
-    from zicato.core.drift_kinds import GOLDFIVE_DRIFT_KINDS  # noqa: PLC0415
+    from zicato.core.drift_kinds import (  # noqa: PLC0415
+        GOLDFIVE_DRIFT_KINDS,
+        DriftSeverity,
+    )
     from zicato.core.types import (  # noqa: PLC0415
         BoardEntryKind,
         ExpectationKind,

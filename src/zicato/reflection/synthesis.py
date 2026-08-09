@@ -47,8 +47,6 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from goldfive import DriftSeverity
-
 from zicato.core.board import (
     BoardEntry,
     Expectation,
@@ -59,6 +57,7 @@ from zicato.core.board import (
     UserPersona,
     validate_board_entry,
 )
+from zicato.core.drift_kinds import DriftSeverity
 from zicato.core.runtime import CallLLM
 from zicato.reflection.bootstrap_predicates import NOT_ABORTED_PATH
 from zicato.reflection.mining import (

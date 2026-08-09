@@ -15,6 +15,7 @@ from zicato.board.jsonl import (
     remove_entry,
     save_board,
 )
+from zicato.core.drift_kinds import DriftSeverity as MirrorDriftSeverity
 from zicato.core.types import (
     BoardEntry,
     Expectation,
@@ -373,7 +374,13 @@ def test_save_board_round_trips_judges(tmp_path: Path) -> None:
     parsed = load_board(board_file)
     assert parsed == [entry]
     assert parsed[0].judges[0].mode is JudgeMode.INLINE
-    assert parsed[0].judges[0].severity is DriftSeverity.WARNING
+    # The entry was AUTHORED with goldfive's DriftSeverity (still accepted),
+    # but the loader coerces through zicato's mirror — goldfive is an
+    # optional extra, so the parse path may not have the upstream enum. The
+    # two members compare equal and serialise to the same token; only `is`
+    # distinguishes them.
+    assert parsed[0].judges[0].severity is MirrorDriftSeverity.WARNING
+    assert parsed[0].judges[0].severity == DriftSeverity.WARNING
 
 
 def test_save_board_round_trips_disable_drift(tmp_path: Path) -> None:

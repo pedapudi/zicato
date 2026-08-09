@@ -486,9 +486,8 @@ def _request_from_suggestion(
 
 
 def _judge_from_json(draft: dict[str, Any]) -> JudgeSpec | None:
-    from goldfive import DriftSeverity  # noqa: PLC0415
-
     from zicato.core import JudgeMode  # noqa: PLC0415
+    from zicato.core.drift_kinds import DriftSeverity  # noqa: PLC0415
 
     try:
         return JudgeSpec(

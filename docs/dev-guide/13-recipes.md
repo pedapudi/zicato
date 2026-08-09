@@ -532,7 +532,7 @@ only when you need custom routing or a genuinely new wire kind.
 |---|---|---|
 | `src/zicato/core/scoring_config.py` | `per_kind_weights` / `per_judge_weights` | the weight (often the ONLY change) |
 | `src/zicato/telemetry/reducer.py` | `_DRIFT_KIND_INT_TO_STR` | ONLY for a new wire-int kind |
-| `src/zicato/core/drift_kinds.py` | the shared normalizer map | ONLY for a new wire-int kind |
+| `src/zicato/core/drift_kinds.py` | the `DriftKind` mirror enum + the shared normalizer map | ONLY for a new wire-int kind |
 | `tests/test_telemetry_reducer.py`, `tests/test_per_judge_loss_promotion.py` | tests | pin it |
 
 **Steps.**
@@ -561,8 +561,12 @@ only when you need custom routing or a genuinely new wire kind.
    distinct weight, set `per_judge_weights["<judge_name>"]`.
 3. **Only for a genuinely NEW wire-int kind** (goldfive added an integer the map
    does not know): add an entry to `_DRIFT_KIND_INT_TO_STR` in `reducer.py` AND
-   to the shared `zicato.core.drift_kinds` normalizer (`normalize_wire_drift_kind`
-   / `_severity`). The two must agree — the reducer aliases the shared map.
+   append the member to the `DriftKind` mirror enum in
+   `zicato.core.drift_kinds` (in goldfive's declaration order — the order is
+   observable in `valid values are: ...` errors; `GOLDFIVE_DRIFT_KINDS` derives
+   from it, and `tests/test_no_goldfive_import.py::test_mirror_matches_goldfive`
+   fails until the mirror matches upstream). The maps must agree — the reducer
+   aliases the shared normalizer.
 4. **Where it lands.** Drift loss is computed by `compute_drift_loss(...)` →
    `resolve_drift_loss(DriftContext(... builtin_loss=builtin_drift_loss(...)))`
    (the killable-worker seam), and the top reducer `reduce_loss` folds it into a

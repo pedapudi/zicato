@@ -201,7 +201,7 @@ def _reconstruct_op_args(op_name: str, args: dict[str, Any]) -> tuple[Any, ...]:
     if op_name == "add_board_entry":
         return (validate_board_entry(args["entry"]),)
     if op_name == "add_judge":
-        from goldfive import DriftSeverity  # noqa: PLC0415
+        from zicato.core.drift_kinds import DriftSeverity  # noqa: PLC0415
 
         raw = args["judge"]
         if not isinstance(raw, dict):

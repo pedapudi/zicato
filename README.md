@@ -71,9 +71,15 @@ deterministic policy adapter with **no LLM anywhere**, whose mutable surface
 is a module-level string constant, driven through `kind = "import"`. The
 whole loop — propose, apply, run, reduce, gate — runs against it in CI.
 
-**goldfive is a required dependency, not an optional extra.** Its drift
-taxonomy is referenced by zicato's core board types (`DriftSeverity` in
-`src/zicato/core/board.py`), so `import zicato.core` fails without it.
+**goldfive is an optional extra** — `pip install zicato[goldfive]`. The core
+import surface is goldfive-free: `import zicato`, `import zicato.core`,
+board load/save, and the CLI all work without it, because
+`src/zicato/core/drift_kinds.py` carries a string mirror of goldfive's
+`DriftKind` / `DriftSeverity` vocabulary rather than importing the upstream
+enums. What you lose without the extra: the ADK adapter path, the built-in
+and custom in-run process judges, and the default `goldfive` telemetry
+dialect. (`tests/test_no_goldfive_import.py` proves the property against an
+interpreter that cannot import goldfive, so it does not rot.)
 
 That is an install-time fact, not a constraint on your target. Which
 telemetry zicato consumes is chosen per epoch by `scoring.json`'s
