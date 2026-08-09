@@ -73,13 +73,19 @@ _DRIFT_KIND_TO_BUILTIN: dict[str, str] = {
 }
 
 
-def _kind_to_wire_string(kind: Any) -> str:
+def kind_to_wire_string(kind: Any) -> str:
     """Project a :class:`goldfive.DriftKind` (or string) to its wire form.
 
     ``DriftKind`` is a :class:`enum.StrEnum`, so ``str(member)`` is the
     lowercase canonical value. A bare string is accepted unchanged
     (idempotent); a stray ``"DriftKind.TOOL_ERROR"`` repr is normalised
     to its last dotted segment, lowercased.
+
+    Public because the epoch contract canonicalizer
+    (:func:`zicato.epoch.contract._canon_board_meta`) must reduce a
+    board's ``disable_drift`` to exactly the same wire form this module
+    dispatches on — the hash and the runtime have to agree on what "the
+    same set of disabled kinds" means.
     """
     text = str(kind).strip()
     if "." in text:
@@ -111,7 +117,7 @@ def builtin_judge_names_to_suppress(
         return set()
     suppress: set[str] = set()
     for kind in disable_drift:
-        wire = _kind_to_wire_string(kind)
+        wire = kind_to_wire_string(kind)
         judge_name = _DRIFT_KIND_TO_BUILTIN.get(wire)
         if judge_name is None:
             log.debug(
@@ -149,4 +155,5 @@ def default_judges_minus(
 __all__ = [
     "builtin_judge_names_to_suppress",
     "default_judges_minus",
+    "kind_to_wire_string",
 ]

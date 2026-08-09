@@ -630,7 +630,9 @@ of `goldfive.DriftKind` enum values — turns off the named *built-in*
 judges for every entry on that board. It suppresses built-ins by
 kind; it does not touch custom judges (those are removed by deleting
 them from an entry's `judges`). `disable_drift` is part of the
-evaluation contract (see
+evaluation contract, and it is the *set of named kinds* that is
+contract — editing the list to disable a different kind rolls the
+epoch, reordering it does not (see
 [EPOCHS-AND-JOURNALING.md](EPOCHS-AND-JOURNALING.md) §10).
 
 **No new typology.** This integration is consistent with the decision

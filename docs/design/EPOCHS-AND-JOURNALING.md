@@ -980,7 +980,7 @@ so spurious edits do not roll the epoch:
 
 | Component | Canonicalization |
 |---|---|
-| board | `load_board()`, sort entries by id, serialize each to a sorted-key JSON dict (including its `expectations` and `judges`), join; the board's `disable_drift` set sorts into the same canonical form. Semantic content only — reordering rows or reformatting the JSONL is a no-op. |
+| board | `load_board()`, sort entries by id, serialize each to a sorted-key JSON dict (including its `expectations` and `judges`), join; the board's `disable_drift` set sorts into the same canonical form — as the sorted, de-duplicated **kind set**, so changing *which* kinds are disabled rolls the epoch while reordering them does not (an empty set canonicalizes to `false`, the historic byte-form, so a board that disables nothing never re-hashes). Semantic content only — reordering rows or reformatting the JSONL is a no-op. |
 | proposer brief | Read text, normalize line endings to `\n`, strip trailing whitespace per line, strip leading/trailing blank lines. CRLF churn and re-indentation are no-ops. |
 | scoring | Parse into a fully-defaulted `ScoringWeights` — **including the `tournament` structure block** (§9) — round every float to 6 decimal places, `json.dumps(sort_keys=True)`. Partial vs full documents and float-precision noise are no-ops; a structure or param change is NOT a no-op (it rolls the epoch). |
 | entrypoint | The string verbatim. |

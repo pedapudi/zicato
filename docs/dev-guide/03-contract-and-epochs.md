@@ -241,20 +241,39 @@ Semantic content only, id-sorted (`src/zicato/epoch/contract.py::_canon_board`):
 - entries are **sorted by id** and each serialized to a sorted-key JSON dict, so
   reordering rows or reformatting the JSONL leaves the hash unchanged; editing an
   entry's input / expectation / weight changes it;
-- the **board-level metadata** — the configured `judges` and the board-level
-  `disable_drift` and `judge_only` flags — is folded in via `_canon_board_meta`,
-  prepended as a NUL-marked line (`\x00board-meta\x00…`) so it participates in
-  the hash without colliding with an entry row;
+- the **board-level metadata** — the configured `judges`, the board-level
+  `disable_drift` kind list, and the `judge_only` flag — is folded in via
+  `_canon_board_meta`, prepended as a NUL-marked line (`\x00board-meta\x00…`) so
+  it participates in the hash without colliding with an entry row;
 - a **missing** board file logs a warning and hashes as the empty string, so a
   board-less workspace still hashes deterministically.
 
 `_canon_board_meta` reads the board-level object *defensively* — it prefers a
 `zicato.board.jsonl.load_board_meta` callable if the board API exposes one,
 otherwise scans the raw JSONL for a line carrying `judges` / `disable_drift` /
-`judge_only` but no entry `id`. `judge_only` is folded in **only when `True`**,
-so a board that never set it (every board written before the flag existed)
-hashes byte-for-byte identically to before — the omit-at-default discipline
-(§3.4) applied at the board level.
+`judge_only` but no entry `id`. (The board API exposes `load_board_with_meta`,
+not `load_board_meta`, so in practice the raw-scan branch is the live path; the
+loader branch is kept for the day that API lands.) `judge_only` is folded in
+**only when `True`**, so a board that never set it (every board written before
+the flag existed) hashes byte-for-byte identically to before — the
+omit-at-default discipline (§3.4) applied at the board level.
+
+`_canon_disable_drift` canonicalizes `disable_drift` as the **sorted,
+de-duplicated set of drift-kind wire strings** — not as a bare "any / none"
+flag. Each named kind drops the built-in judge that emits it
+(`zicato.judge_runtime.disable`), so *which* kinds are named decides which
+judges are armed and therefore the loss surface; swapping `tool_error` for
+`goal_drift` has to roll the epoch just as adding a judge does. Tokens are
+reduced through `judge_runtime.disable.kind_to_wire_string` so `DriftKind`
+members (from the loader branch) and bare strings (from the raw scan) agree on
+one form. Declaration order and repeated kinds are no-ops.
+
+The empty set canonicalizes to `false`, **not** `[]` — omit-at-default paid at
+the *value* level. `false` is the byte this form has always carried for "nothing
+disabled", so every board that disables nothing, including every board written
+before `disable_drift` existed, keeps the exact hash it already has and no
+workspace rolls its epoch for the kind-set change. A board that *does* name
+kinds re-hashes once, by design.
 
 `_canon_judges` reduces the judges list to an order-independent form: each judge
 is normalized to a sorted-key dict, then the list is sorted by its serialized
