@@ -60,6 +60,59 @@ jobs:
       - name: Pytest
         run: uv run pytest tests/
 
+  parity:
+    name: parity gates
+    # The end-to-end oracle under tools/parity/: goldens that pin the
+    # contract hash, the whole CLI --help surface, the SQLite index
+    # projection, and a full deterministic no-live-LLM racing evolve.
+    # Until this job existed those gates only ran when someone remembered
+    # to run them by hand, so a --help edit or a target_1 fixture edit
+    # could land with CI fully green.
+    #
+    # PYTEST is skipped here on purpose: that gate is the same suite the
+    # lint-and-test job's Pytest step already runs (pyproject testpaths =
+    # ["tests"]), so running it again would duplicate the longest step in
+    # CI for no added signal. Every other gate runs.
+    runs-on: ubuntu-latest
+    env:
+      # tools/parity.sh shells out to `uv run`; --frozen keeps those from
+      # re-resolving the lock mid-gate.
+      UV_FROZEN: "1"
+      UV_PYTHON: "3.12"
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+        with:
+          enable-cache: true
+          cache-dependency-glob: "uv.lock"
+
+      - name: Set up Python 3.12
+        run: uv python install 3.12
+
+      - name: Sync dependencies
+        # The gates import the tests/ helpers and the examples package, so
+        # they need the full dev+examples install, not just the runtime.
+        run: uv sync --all-extras --frozen
+
+      - name: Mypy cache
+        # The MYPY gate runs the same check as lint-and-test; sharing the
+        # cache key means it restores that job's cache instead of paying
+        # for a cold whole-tree check.
+        uses: actions/cache@v4
+        with:
+          path: .mypy_cache
+          key: mypy-3.12-${{ hashFiles('pyproject.toml', 'uv.lock') }}
+          restore-keys: |
+            mypy-3.12-
+
+      - name: Parity gates
+        # Each gate prints its own unified diff / mismatch detail before
+        # the runner sees the nonzero exit, so a red check names the lines
+        # that moved rather than only the gate that failed.
+        run: bash tools/parity.sh --skip PYTEST
+
   supervisor:
     name: supervisor (Rust)
     runs-on: ubuntu-latest

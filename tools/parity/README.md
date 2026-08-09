@@ -25,6 +25,22 @@ Exit code is 0 only when every selected gate passes.
 | **MOCK-GOLDEN**   | A full deterministic, no-live-LLM racing evolve end to end. | Reuses the `test_example_target_1_racing` mocks; captures `gen_score.json` / `experiment.json` / `loss.json` / `lineage.json`, diffs against `golden/mock_evolve_racing.json`. |
 | **MYPY**          | Type-checker error count. | `uv run mypy src/zicato/`; gate is "not worse than `golden/mypy_baseline.txt`". |
 
+## In CI
+
+The `parity` job in `.github/workflows/ci.yml` runs `bash tools/parity.sh
+--skip PYTEST` on Python 3.12 for every push to `main` and every pull
+request. PYTEST is skipped only because the `lint-and-test` job already
+runs that exact suite; every other gate runs there, so a golden-covered
+surface can no longer move without a red check.
+
+The gates are environment-independent by construction — verified green
+across Python 3.11 and 3.12, `TZ=Pacific/Kiritimati`, `LC_ALL=C`, a
+relocated `TMPDIR`, a non-tty stdout, and a checkout at a different
+absolute path. The one wall-clock dependency that used to exist (the epoch
+id's date prefix seeds the holdout rotation, which selects the racing
+rung's board slice) is pinned in `lib/mock_evolve_capture.py` by freezing
+`_today`.
+
 ## The fixture workspace
 
 REINDEX-DUMP and MOCK-GOLDEN share one deterministic source: the racing
@@ -44,6 +60,18 @@ meaning — they are masked to fixed sentinels before diffing (`lib/normalize.py
 - the date prefix of an epoch id (`2026-06-10_t1_racing`) → `<DATE>_t1_racing`
 - random uuid patch ids (`uuid4().hex`) → `<HEX32>`
 - the per-run tmp workspace root (absolute path) → `<TMP>`
+
+REINDEX-DUMP normalizes one more thing, in `lib/test_reindex_golden.py`:
+the *spelling* of REAL literals. SQLite renders REAL columns to text with
+its own float formatter, and 3.41 switched that formatter to the shortest
+round-trippable form — so one stored double prints as
+`-3.999999999999999111e-01` against an older library and
+`-0.39999999999999991` against a newer one. Pinning either spelling makes
+the golden hostage to whichever SQLite happened to capture it, so every
+REAL is re-spelled through Python's shortest round-trip `repr` before
+diffing. Only unquoted stretches are touched: numbers inside a string
+literal are payload zicato serialized itself, and integers are left alone
+so an INTEGER column that starts rendering as a float still moves the gate.
 
 Everything else — every scalar, loss, component, decision, structural id,
 and serialization detail — is compared verbatim.
