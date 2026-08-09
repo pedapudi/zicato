@@ -1002,9 +1002,7 @@ def set_board_meta(
     control lands with the board-editor phase; until then this op is
     reachable from the copilot and the REST dispatch only.
     """
-    from goldfive import DriftKind  # noqa: PLC0415
-
-    from zicato.core.drift_kinds import validate_drift_kind  # noqa: PLC0415
+    from zicato.core.drift_kinds import DriftKind, validate_drift_kind  # noqa: PLC0415
 
     changed: dict[str, Any] = {}
     if disable_drift is not None:

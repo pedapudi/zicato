@@ -64,8 +64,7 @@ from dataclasses import asdict
 from pathlib import Path
 from typing import Any
 
-from goldfive import DriftKind
-
+from zicato.core.drift_kinds import DriftKind
 from zicato.core.types import BoardEntry, validate_board_entry
 
 #: Discriminant key that marks a JSONL line as the board-level metadata

@@ -11,9 +11,7 @@ from dataclasses import dataclass, field
 from enum import Enum, StrEnum
 from typing import Any, Literal
 
-from goldfive import DriftSeverity
-
-from zicato.core.drift_kinds import validate_drift_kind
+from zicato.core.drift_kinds import DriftSeverity, validate_drift_kind
 
 # ---------------------------------------------------------------------------
 # Board
@@ -191,8 +189,13 @@ class JudgeSpec:
         process-judge callable when :attr:`mode` is
         :attr:`JudgeMode.PYTHON`.
     severity:
-        Goldfive drift severity the judge's adverse verdict is reported
-        at. Reuses :class:`goldfive.DriftSeverity` verbatim.
+        Drift severity the judge's adverse verdict is reported at.
+        Typed as :class:`zicato.core.DriftSeverity`, the string mirror of
+        ``goldfive.DriftSeverity`` (same names, values, and order), so the
+        core board types stay importable without the optional goldfive
+        extra. Members of either enum compare equal and serialise to the
+        same token, so a board authored against ``goldfive.DriftSeverity``
+        is accepted unchanged.
     """
 
     name: str

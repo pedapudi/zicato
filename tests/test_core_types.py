@@ -41,6 +41,7 @@ from zicato.core import (
     validate_board_entry,
     validate_drift_kind,
 )
+from zicato.core.drift_kinds import DriftSeverity as MirrorDriftSeverity
 
 # ---------------------------------------------------------------------------
 # Board-authoring enums
@@ -408,7 +409,12 @@ def test_validate_board_entry_multi_turn_emulated_round_trip() -> None:
     assert len(entry.judges) == 1
     assert entry.judges[0].name == "no_double_booking"
     assert entry.judges[0].mode is JudgeMode.INLINE
-    assert entry.judges[0].severity is DriftSeverity.CRITICAL
+    # `validate_board_entry` coerces the wire token through zicato's
+    # DriftSeverity mirror (goldfive is an optional extra, so the parse path
+    # cannot depend on the upstream enum). The mirror member compares equal
+    # to goldfive's and serialises to the same token.
+    assert entry.judges[0].severity is MirrorDriftSeverity.CRITICAL
+    assert entry.judges[0].severity == DriftSeverity.CRITICAL
 
 
 def test_validate_board_entry_rejects_unknown_expectation_kind() -> None:

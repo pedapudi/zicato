@@ -794,7 +794,7 @@ def _judge_from_dict(raw: Any) -> JudgeSpec:
     the REST path coerce a judge identically (same enum handling, same
     clear failure on a bad ``mode`` / ``severity`` token).
     """
-    from goldfive import DriftSeverity  # noqa: PLC0415
+    from zicato.core.drift_kinds import DriftSeverity  # noqa: PLC0415
 
     if not isinstance(raw, dict):
         raise ValueError("judge must be a JSON object")

@@ -72,10 +72,30 @@ moved).
 
 ### How much of this requires goldfive
 
-goldfive is a **hard install dependency**, not an optional extra: zicato's
-core board types reference its drift taxonomy at module scope
-(`DriftSeverity` in `src/zicato/core/board.py`), so `import zicato.core`
-fails outright without it.
+goldfive is an **optional extra** (`zicato[goldfive]`), not a hard install
+dependency. The core import surface — `import zicato`, `import zicato.core`,
+the board reader/writer and builder, the epoch contract, the storage and
+query layers, and every `zicato --help` — resolves without it. What makes
+that true is `src/zicato/core/drift_kinds.py`: it mirrors goldfive's
+`DriftKind` / `DriftSeverity` as `enum.StrEnum` classes with the same member
+names, values, and declaration order, so the board types keep the full
+vocabulary (unknown tokens still raise, with the same message) without
+importing upstream. Mirror members and goldfive members compare equal and
+serialise to the same token, so boards authored against either symbol behave
+identically. A goldfive-gated test pins the two enums member-for-member, and
+`tests/test_no_goldfive_import.py` runs the import surface in a child
+interpreter whose `sys.meta_path` refuses `goldfive`, so neither half of the
+property rots.
+
+What the extra actually buys is three things: the ADK adapter path
+(`zicato.adapters.adk` wraps the inner harness in `goldfive.wrap`), the
+in-run process judges (a board's `judges` are handed to goldfive as
+additional judges; without it they are inert), and the default `goldfive`
+telemetry dialect — the only dialect that yields drift kinds and plan
+revisions. Note that `harmonograf-client`, a hard dependency, requires
+goldfive transitively, so a standard install still resolves it; the extra is
+what makes the requirement *declared*, and the import surface is what makes
+it genuinely optional.
 
 What that does *not* imply is that your target must be a goldfive
 application. The adapter protocol is deliberately framework-neutral — it

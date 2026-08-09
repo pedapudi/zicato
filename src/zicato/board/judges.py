@@ -18,17 +18,19 @@ fully-formed :class:`~zicato.core.JudgeSpec` ready to attach to a
                  severity=DriftSeverity.CRITICAL)
 
 The ``name`` is mandatory and becomes goldfive's ``judge_name``, so it is
-validated to be a stable slug-like identifier. ``severity`` is goldfive's
-:class:`~goldfive.DriftSeverity` enum — a typed choice, never a bare
-string.
+validated to be a stable slug-like identifier. ``severity`` is a
+:class:`~zicato.core.DriftSeverity` member — a typed choice, never a bare
+string. That enum is zicato's string mirror of ``goldfive.DriftSeverity``
+(same names, values, and order), so boards written against either symbol
+are accepted and produce the same wire token; the mirror is what keeps
+these types importable without the optional ``goldfive`` extra.
 """
 
 from __future__ import annotations
 
 import re
 
-from goldfive import DriftSeverity
-
+from zicato.core.drift_kinds import DriftSeverity, is_drift_severity
 from zicato.core.types import JudgeMode, JudgeSpec
 
 # A judge name becomes goldfive's ``judge_name``; it must be a stable,
@@ -100,7 +102,7 @@ class Judge:
         validated = _validate_name(name)
         if not isinstance(criterion, str) or not criterion.strip():
             raise ValueError(f"Judge.custom: 'criterion' for judge {validated!r} must be non-empty")
-        if not isinstance(severity, DriftSeverity):
+        if not is_drift_severity(severity):
             raise ValueError(
                 f"Judge.custom: 'severity' for judge {validated!r} must be a "
                 f"goldfive.DriftSeverity, got {type(severity).__name__}"
@@ -134,7 +136,7 @@ class Judge:
                 f"Judge.python: 'dotted_path' for judge {validated!r} must be a "
                 "dotted path with a module component, e.g. 'pkg.mod.attr'"
             )
-        if not isinstance(severity, DriftSeverity):
+        if not is_drift_severity(severity):
             raise ValueError(
                 f"Judge.python: 'severity' for judge {validated!r} must be a "
                 f"goldfive.DriftSeverity, got {type(severity).__name__}"

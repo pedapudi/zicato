@@ -150,7 +150,7 @@ Use this table to jump; the subsections below carry the definitions.
 | board / board entry | `BoardEntry` | `src/zicato/core/board.py` (type) / `src/zicato/board/jsonl.py` (I/O) |
 | expectation / predicate / rubric | `Expectation`, `ExpectationKind` | `src/zicato/core/board.py` |
 | judge | `JudgeSpec` | `src/zicato/core/board.py` (type) / `src/zicato/judge_runtime/` (bridge) |
-| drift kinds | `GOLDFIVE_DRIFT_KINDS` | `src/zicato/core/drift_kinds.py` |
+| drift kinds / severities | `DriftKind`, `DriftSeverity`, `GOLDFIVE_DRIFT_KINDS` | `src/zicato/core/drift_kinds.py` — zicato's string mirror of goldfive's enums (goldfive is an optional extra) |
 | proposer brief | `ProposerBrief` | `src/zicato/proposer/brief.py` |
 | scoring | `ScoringWeights` | `src/zicato/core/scoring_config.py` |
 | mutation point / patch | `MutationPoint`, `Patch` | `src/zicato/core/mutation.py` / `src/zicato/mutation/` |

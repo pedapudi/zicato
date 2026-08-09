@@ -26,8 +26,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from goldfive import DriftKind
-
+from zicato.core.drift_kinds import DriftKind
 from zicato.core.types import (
     BoardEntry,
     BoardEntryKind,

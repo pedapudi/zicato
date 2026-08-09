@@ -16,6 +16,9 @@ from __future__ import annotations
 
 from zicato.core.drift_kinds import (
     GOLDFIVE_DRIFT_KINDS,
+    DriftKind,
+    DriftSeverity,
+    is_drift_severity,
     normalize_wire_drift_kind,
     normalize_wire_severity,
     validate_drift_kind,
@@ -88,8 +91,11 @@ from zicato.core.workspace import (
 )
 
 __all__ = [
-    # drift-kind registry
+    # drift-kind registry (zicato's string mirror of goldfive's taxonomy)
     "GOLDFIVE_DRIFT_KINDS",
+    "DriftKind",
+    "DriftSeverity",
+    "is_drift_severity",
     "normalize_wire_drift_kind",
     "normalize_wire_severity",
     "validate_drift_kind",

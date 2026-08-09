@@ -39,7 +39,7 @@ from zicato.core.types import (
 )
 
 if TYPE_CHECKING:
-    from goldfive import DriftKind
+    from zicato.core.drift_kinds import DriftKind
 
 
 @dataclass(frozen=True, slots=True)

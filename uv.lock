@@ -6962,7 +6962,6 @@ version = "0.3.0"
 source = { editable = "." }
 dependencies = [
     { name = "click" },
-    { name = "goldfive" },
     { name = "harmonograf-client" },
     { name = "harmonograf-server" },
     { name = "jsonschema" },
@@ -6994,11 +6993,14 @@ dev = [
     { name = "watchdog" },
     { name = "zicato-examples" },
 ]
+goldfive = [
+    { name = "goldfive" },
+]
 
 [package.metadata]
 requires-dist = [
     { name = "click", specifier = ">=8.1" },
-    { name = "goldfive", git = "https://github.com/pedapudi/goldfive.git?rev=ed44eaaf93215a5d4ae122293c39fbd04ff204d6" },
+    { name = "goldfive", marker = "extra == 'goldfive'", git = "https://github.com/pedapudi/goldfive.git?rev=ed44eaaf93215a5d4ae122293c39fbd04ff204d6" },
     { name = "goldfive", extras = ["adk"], marker = "extra == 'adk'", git = "https://github.com/pedapudi/goldfive.git?rev=ed44eaaf93215a5d4ae122293c39fbd04ff204d6" },
     { name = "google-adk", extras = ["extensions"], marker = "extra == 'adk'" },
     { name = "harmonograf-client", git = "https://github.com/pedapudi/harmonograf.git?subdirectory=client&rev=bd0175551ad5a7a79c29ce3937fcc7d8827e46f6" },
@@ -7022,7 +7024,7 @@ requires-dist = [
     { name = "watchdog", marker = "extra == 'dev'", specifier = ">=4.0" },
     { name = "zicato-examples", marker = "extra == 'dev'", editable = "examples" },
 ]
-provides-extras = ["adk", "dashboard", "dev"]
+provides-extras = ["goldfive", "adk", "dashboard", "dev"]
 
 [[package]]
 name = "zicato-examples"

@@ -31,7 +31,12 @@ classifiers = [
 ]
 dependencies = [
     # Core is intentionally light; storage / telemetry / LLMs are pluggable.
-    "goldfive",
+    # goldfive is NOT here: it moved to the `goldfive` extra below. The
+    # core import surface (zicato, zicato.core, board load/save, the CLI)
+    # is goldfive-free — zicato.core.drift_kinds carries a string mirror
+    # of goldfive's DriftKind / DriftSeverity enums so the board types
+    # keep their vocabulary without the import. See the extra for what
+    # you lose without it.
     # harmonograf_client ships the live-streaming sink the telemetry
     # layer attaches to every inner-harness run when
     # ZICATO_HARMONOGRAF_URL is set. It is imported lazily (see
@@ -56,6 +61,26 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+# The drift-instrumented ecosystem harness. Optional because zicato's
+# core — the board types, the epoch contract, the CLI, the storage and
+# query layers — is goldfive-free by construction (see the mirror in
+# zicato/core/drift_kinds.py and the no-goldfive import proof in
+# tests/test_no_goldfive_import.py). What the extra buys:
+#
+#   * the ADK adapter path (zicato.adapters.adk wraps the inner harness
+#     in goldfive.wrap and consumes its Event stream),
+#   * the built-in and custom in-run process judges (JudgeSpec is
+#     handed to goldfive as additional judges; without goldfive a
+#     board's `judges` are inert),
+#   * the default `goldfive` telemetry dialect, the only dialect that
+#     yields drift kinds and plan revisions. `adk_events` and
+#     `transcript` read a harness that never runs under goldfive.
+#
+# NOTE: `harmonograf-client` (a hard dependency) requires goldfive
+# transitively, so a standard install still resolves it; the extra is
+# what makes the requirement DECLARED rather than incidental, and the
+# import surface is what makes it genuinely optional.
+goldfive = ["goldfive"]
 adk = ["google-adk[extensions]", "goldfive[adk]"]
 # The standalone dashboard service: a Starlette/ASGI app served by
 # uvicorn, with a watchdog-backed file watcher for the SSE stream.
@@ -405,8 +430,8 @@ zicato-examples = { workspace = true }
 # dependency clones with the default GITHUB_TOKEN — no secret needed).
 # The rev is pinned so `uv.lock` is reproducible; bump it when zicato
 # needs a newer goldfive. When goldfive is eventually published to an
-# index, this entry is dropped and the [project.dependencies] spec
-# resolves it from there. (The harmonograf-client entry below mirrors
+# index, this entry is dropped and the `goldfive` / `adk` extras resolve
+# it from there. (The harmonograf-client entry below mirrors
 # this pattern for the live-streaming sink.)
 goldfive = { git = "https://github.com/pedapudi/goldfive.git", rev = "ed44eaaf93215a5d4ae122293c39fbd04ff204d6" }
 # harmonograf is a monorepo whose `harmonograf-client` subpackage lives
