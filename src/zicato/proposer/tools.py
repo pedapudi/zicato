@@ -33,8 +33,17 @@ snapshot would corrupt the very tree the round is about to patch (and
 break the content-hash guard the applier relies on), so the whole
 surface is deliberately read-only. ``read_mutable_file`` and
 ``grep_mutable`` additionally refuse any path that escapes the mutable
-subtrees, so a tool call cannot read outside the surface the proposer
-is allowed to reason about.
+roots, so a tool call cannot read outside the generation snapshot.
+
+Note the scope this guard does and does not draw. The readable surface is
+the *whole snapshot* — :meth:`ProposerToolContext.mutable_roots` anchors
+the generation root first, so the proposer can read the non-mutable code
+that consumes a mutable string, which is what makes a candidate rewrite
+groundable. The guard is snapshot containment (no ``..`` traversal, no
+absolute paths), NOT a narrowing of what the proposer may reason about.
+What the proposer may *change* stays narrow and operator-owned: patches
+are addressed by mutation id, and the applier writes only what an id
+covers.
 """
 
 from __future__ import annotations
@@ -215,6 +224,32 @@ def _resolve_under_mutable_roots(relative_path: str, ctx: ProposerToolContext) -
     )
 
 
+def _walk_roots(ctx: ProposerToolContext) -> tuple[Path, ...]:
+    """Return the mutable roots to WALK — the outermost ones only.
+
+    :meth:`ProposerToolContext.mutable_roots` deliberately returns the
+    snapshot root *and* each declared subtree, so path *resolution* accepts
+    both the manifest-advertised shape (``agent/prompts.py``) and the bare
+    subtree-relative one (``prompts.py``). A recursive walk must not iterate
+    that list directly: the declared subtrees are descendants of the
+    snapshot root, so every file under one would be visited once per
+    containing root and emitted under a different relative path each time —
+    duplicate hits in inconsistent shapes, and a match budget consumed
+    several times over by the same lines.
+
+    Filtering to the roots that are not contained in another root keeps the
+    walked *file set* identical (the snapshot root already covers every
+    subtree) while visiting each file exactly once, under the
+    snapshot-relative path :func:`list_mutation_points` advertises.
+    """
+    resolved = list(dict.fromkeys(root.resolve() for root in ctx.mutable_roots()))
+    return tuple(
+        root
+        for root in resolved
+        if not any(other != root and root.is_relative_to(other) for other in resolved)
+    )
+
+
 def list_mutation_points() -> str:
     """Return the current mutation manifest as a JSON string.
 
@@ -269,7 +304,9 @@ def read_mutable_file(relative_path: str) -> str:
 def grep_mutable(pattern: str) -> str:
     """Regex-search the mutable subtrees, returning ``path:line: text``.
 
-    Walks every file under the mutable subtree roots and returns each
+    Walks every file under the mutable surface — the outermost mutable
+    roots, see :func:`_walk_roots`, so a file inside a declared subtree is
+    visited once rather than once per containing root — and returns each
     matching line as ``<relative_path>:<line_no>: <line text>``. The
     match count is capped at :data:`_GREP_MATCH_LIMIT`; truncation is
     annotated in the returned text. Read-only. A line with no matches
@@ -284,7 +321,7 @@ def grep_mutable(pattern: str) -> str:
 
     matches: list[str] = []
     truncated = False
-    for root in ctx.mutable_roots():
+    for root in _walk_roots(ctx):
         resolved_root = root.resolve()
         for path in sorted(resolved_root.rglob("*")):
             if not path.is_file():
