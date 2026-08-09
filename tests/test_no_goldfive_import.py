@@ -14,6 +14,7 @@ module turns these red with the offending traceback.
 
 from __future__ import annotations
 
+import json
 import subprocess
 import sys
 import textwrap
