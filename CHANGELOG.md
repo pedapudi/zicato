@@ -11,7 +11,9 @@ file, under any conventional comment leader (`#`, `//`, `/*`, `<!--`, `;`,
 
 **The marker requirement is unchanged.** This widens *where* a marker may
 live, never whether one is needed; an unmarked `config.yaml` is exactly as
-immutable as an unmarked `agent.py`. Outside Python the `:file` and
+immutable as an unmarked `agent.py`. The supported set is deliberately
+small — `.md`, `.markdown`, `.txt`, `.yaml`, `.yml`, `.toml`, with `#` and
+`<!--` lead-ins — and grows one entry at a time as targets need it. Outside Python the `:file` and
 `:code` region forms apply and the bare span form does not — "the nearest
 string literal beneath" is an AST fact, and the tempting line-shaped
 approximation would let a `replace` swallow the `temperature:` key it was
@@ -24,7 +26,9 @@ are stripped from the replacement).
 Discovery is an extension allowlist, not a content sniff — the enumerator
 re-runs after every applied patch, so the walk stays on the hot path, and
 an allowlist decides without opening a file and cannot wander into a
-binary. Vendored directories are pruned from the text pass only (pruning
+binary. Enumeration is one pipeline, with Python a specialization that
+contributes the AST context (docstring lines + span resolver) rather than
+a second walk alongside. Vendored directories are pruned from the text pass only (pruning
 the Python pass would move existing points), text files over 2 MB are
 skipped, and a single-file root now resolves by suffix instead of
 enumerating to zero in silence.
@@ -35,12 +39,12 @@ grammar rather than a claim a test has to keep re-establishing. A
 golden-equality pin over a fixture tree — captured from the pre-widening
 enumerator — holds it, and every parity gate stayed green.
 
-Post-apply, the `.py` syntax gate is unchanged and a narrow `.toml`
-structural gate joins it: whole-file patches only, on files that parsed
-*before* the batch. JSON is deliberately absent — strict JSON has no
-comment syntax, so it cannot host a marker at all. The contract
-pre-flight's synthetic degradation grew a format-neutral form so its probe
-still applies against a gated file.
+Post-apply, the `.py` syntax gate is unchanged and there is deliberately
+no non-Python counterpart: "still parses" has no cheap, dependency-free
+meaning for markdown or YAML, and a gate covering only the one format the
+standard library can check would buy inconsistent protection at the cost
+of a second validation path. Strict JSON is not walked at all — it has no
+comment syntax, so it cannot host a marker.
 
 The manifest bridge is unchanged in shape but finally has direct tests,
 which turned up a latent bug: it re-derived its effective source root as

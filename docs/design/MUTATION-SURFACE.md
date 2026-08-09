@@ -170,9 +170,9 @@ A mutable tree is not a Python-only tree. A prompt can live in
 manifest in `tools.toml`. The marker *token* is the same everywhere;
 only the host language's comment lead-in changes.
 
-**Accepted lead-ins.** `#` · `//` · `/*` · `<!--` · `;` · `--` · `%`.
-A trailing block-comment closer (`-->`, `*/`) is tolerated on any marker
-line. So all of these are the same marker:
+**Accepted lead-ins.** `#` and `<!--`, with a trailing `-->` closer
+tolerated — one per comment style the supported file types use. So both
+of these are the same marker:
 
 ```yaml
 # zicato:mutable:code id="retry_policy"
@@ -180,13 +180,10 @@ line. So all of these are the same marker:
 ```markdown
 <!-- zicato:mutable:code id="researcher_brief" role="prompt" -->
 ```
-```javascript
-// zicato:mutable:code id="tool_descriptions"
-```
 
-`*` is deliberately **not** a lead-in, even though C block comments
-conventionally continue with it: every markdown bullet would become a
-candidate marker line. Write the marker on the `/*` line instead.
+The set is not carried speculatively: adding `//` for JavaScript is one
+entry in `TEXT_COMMENT_LEADERS` plus one in the suffix allowlist, done
+when a target actually needs it.
 
 `.py` files are parsed under the historical `#`-only grammar and nothing
 else. That is not an oversight — it is what makes "widening the surface
@@ -249,16 +246,16 @@ A `:file` marker gives up property 2 by definition — a whole-file replace
 A2 (every patched id must still resolve), which rejects the snapshot.
 
 **JSON.** Strict JSON has no comment syntax, so there is no way to write a
-marker in a `.json` file without invalidating it. `.json` / `.jsonl` are
-therefore not walked at all; the comment-bearing dialects `.jsonc` and
-`.json5` are.
+marker in a `.json` file without invalidating it. JSON is therefore not
+walked at all.
 
 ### 2.5 Which files are walked
 
-Discovery is an **extension allowlist**, not a content sniff — see
-`TEXT_FILE_SUFFIXES` / `TEXT_FILE_NAMES` in
-`zicato.mutation.enumerator` for the current set (prose, config,
-templates, shell, markup, and the common source languages).
+Discovery is an **extension allowlist**, not a content sniff. The set is
+`TEXT_FILE_SUFFIXES` in `zicato.mutation.enumerator`, currently
+`.md` · `.markdown` · `.txt` · `.yaml` · `.yml` · `.toml` — prompts and
+config, the two shapes the surface exists for. Extending it is one entry,
+made when a target needs it rather than in advance.
 
 The alternative — open every file and guess from its bytes whether it is
 text — was rejected on two grounds. It reads *every* file in the tree
@@ -268,9 +265,9 @@ guessing is a surface whose contents can change because a file's first
 8KB changed. An allowlist decides without opening the file and cannot
 wander into a binary at all.
 
-The cost is real and worth naming: an operator with an unusual extension
-must add it to the allowlist. That is a visible, reviewable edit — the
-right failure mode for the thing that decides what an LLM may rewrite.
+The cost is real and worth naming: an operator with an unlisted extension
+must add it. That is a visible, reviewable edit — the right failure mode
+for the thing that decides what an LLM may rewrite.
 
 Three guards ride along:
 
@@ -278,8 +275,8 @@ Three guards ride along:
   `__pycache__`, `dist`, `build`, …) are pruned from the **text pass
   only**. Pruning the Python pass would change which `.py` files
   enumerate, and that is exactly what must not move.
-- Text files over 2 MB are skipped. A multi-megabyte `.jsonl` in a
-  mutable tree is data, not surface.
+- Text files over 2 MB are skipped. A multi-megabyte file in a mutable
+  tree is data, not surface.
 - A file that is not valid UTF-8, or that contains a NUL byte, yields
   nothing — belt and braces behind the allowlist.
 
@@ -516,7 +513,6 @@ non-empty error list):
 | A2 | Every patch's `mutation_id` still resolves in a fresh enumeration of the snapshot. | The next round must be able to re-find this id. |
 | A3 | For any point whose pre-apply `metadata` declared `required_placeholders`, each named placeholder (exact substring, braces included) survives in the patched content. | Prevents the proposer from silently dropping a `{user_message}` formatter the surrounding code injects. |
 | A4 | Top-level imports in every patched `.py` file are preserved — the post-apply import set must be a superset of the pre-apply set. The proposer may add imports but not silently remove them. | A dropped import breaks the snapshot at runtime, not at parse time. |
-| A5 | A **whole-file** patch against a `.toml` file that parsed *before* the batch must still parse after it. Enforced by the applier, not `validate_post_apply`. | The cheap non-Python counterpart to A1 — see below. |
 
 A3 is opt-in per mutation point via the `required_placeholders`
 metadata key on the marker; the validator never guesses placeholders
@@ -524,27 +520,12 @@ for an unannotated span. It is format-agnostic — a placeholder is an
 exact substring, so it fires on a markdown region body exactly as it does
 on a Python literal.
 
-A5 is deliberately the narrowest useful check, and it is worth being
-explicit about what it is *not*. There is no general "still valid" notion
-for text, so the gate covers only what the standard library can check for
-free, and only where a failure is unambiguously the patch's fault:
-
-- **`.toml` only.** YAML is absent because no YAML parser is a zicato
-  runtime dependency. JSON is absent for a sharper reason: strict JSON has
-  no comment syntax, so a `.json` file cannot host a marker at all, and
-  the comment-bearing dialects (`.jsonc` / `.json5`) that can are by
-  construction not parseable by `json.loads`.
-- **Whole-file patches only.** A region patch rewrites a *fragment* whose
-  syntactic self-containment depends on where the operator put the
-  markers, not on what the proposer wrote. Failing a snapshot there would
-  reject legitimate edits and blame the wrong party.
-- **Files that parsed beforehand only.** The gate catches a patch that
-  *breaks* a working file. A fixture the operator committed malformed is
-  not the proposer's doing and does not fail the round.
-
-Everything outside that intersection is unchecked, on purpose. A5 is a
-convenience, not the safety property; the safety property is that a patch
-can only ever land inside an operator-marked region.
+There is deliberately **no** non-Python counterpart to A1. "Still parses"
+has no cheap, dependency-free meaning for markdown or YAML, and a gate
+that covered only the one format the standard library can check would buy
+inconsistent protection at the cost of a second validation path. The
+safety property is not the gate — it is that a patch can only ever land
+inside an operator-marked region.
 
 The mutation surface stays **operator-owned**: the proposer addresses
 patches by id and rewrites within an enumerated point, but only the
@@ -637,8 +618,8 @@ plausible but deliberately deferred:
   **Shipped** — see §2.4 / §2.5. An inner harness whose prompts live in
   markdown or YAML no longer has to hoist them through a Python module.
   The two caveats that remain: there is no span form outside Python (use
-  a region), and strict JSON cannot host a marker at all because it has
-  no comment syntax.
+  a region), and strict JSON cannot host a marker at all because it has no
+  comment syntax.
 - **Type-narrowed mutation points.** A marker that asserts "the new
   value must satisfy this Pydantic shape." Today the
   `required_placeholders` check (A3) plus the `min` / `max` / `enum`

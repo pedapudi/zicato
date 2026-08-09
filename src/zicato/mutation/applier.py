@@ -42,7 +42,6 @@ from pathlib import Path
 from zicato.core.types import MutationPoint, Patch
 from zicato.epoch.snapshot_scope import copytree_ignore
 from zicato.mutation.enumerator import enumerate_mutations
-from zicato.mutation.formats import file_format_problem, is_format_checked
 from zicato.mutation.markers import (
     MarkerSyntax,
     is_end_marker,
@@ -524,8 +523,8 @@ def _apply_span_replace(point: MutationPoint, new_content: str) -> None:
     In a ``.py`` file that content is real Python control flow, and the
     proposer is responsible for producing a block that parses in place
     (the post-apply syntax check is the backstop); in a markdown prompt or
-    a YAML config it is prose / config lines, checked only as far as
-    :mod:`zicato.mutation.formats` can check them for free. Either way the
+    a YAML config it is prose / config lines, for which there is no cheap
+    dependency-free notion of "still valid" and so no gate. Either way the
     ``:code`` / ``:end`` marker lines sit OUTSIDE the replaced range, so
     the rewrite is bounded by the operator's own anchors and the mutation
     id keeps resolving afterwards.
@@ -708,11 +707,9 @@ def apply_patches(
         When the patch set fails :func:`validate_patches` — the error
         message enumerates every problem found; when a patch's anchor no
         longer resolves at apply time (erased by an earlier patch in the
-        same batch); when the post-apply syntax gate finds a touched
-        ``.py`` file unparseable; or when the post-apply format gate finds
-        that a whole-file replace left a ``.json`` / ``.toml`` file that
-        parsed before the batch no longer parsing. The copied tree is
-        removed before the exception propagates in every case.
+        same batch); or when the post-apply syntax gate finds a touched
+        ``.py`` file unparseable. The copied tree is removed before the
+        exception propagates in every case.
     """
 
     source_root = Path(source_root).resolve()
@@ -726,12 +723,8 @@ def apply_patches(
     # Atomic pre-validation: enumerate the freshly-copied tree and check
     # every patch up front. The copied tree has identical content to
     # ``source_root``, so its enumeration is the surface the subsequent
-    # apply will resolve against. The enumeration is taken here rather
-    # than inside ``validate_patches`` because the format gate below needs
-    # the same pre-apply surface — and one walk is cheaper than two.
-    pre_points = enumerate_mutations([target_root])
-    format_baseline = _format_gate_baseline(pre_points, patches)
-    problems = validate_patches(patches, enumeration=pre_points)
+    # apply will resolve against.
+    problems = validate_patches(patches, source_root=target_root)
     if problems:
         # Refuse the whole batch — remove the copied tree so generation
         # lineage stays append-only and nothing is left half-applied.
@@ -765,61 +758,6 @@ def apply_patches(
             "apply_patches: refusing to promote snapshot; "
             f"{len(syntax_problems)} post-apply syntax problem(s): " + "; ".join(syntax_problems)
         )
-
-    # Post-apply format gate: the non-Python counterpart to the syntax
-    # gate, for the two formats the standard library can check for free.
-    # Deliberately narrower than the syntax gate — see
-    # :func:`_format_gate_baseline` for exactly what it does and does not
-    # cover, and :mod:`zicato.mutation.formats` for why.
-    format_problems = [
-        problem
-        for problem in (file_format_problem(path) for path in sorted(format_baseline))
-        if problem is not None
-    ]
-    if format_problems:
-        shutil.rmtree(target_root, ignore_errors=True)
-        raise ValueError(
-            "apply_patches: refusing to promote snapshot; "
-            f"{len(format_problems)} post-apply format problem(s): " + "; ".join(format_problems)
-        )
-
-
-def _format_gate_baseline(pre_points: list[MutationPoint], patches: list[Patch]) -> set[Path]:
-    """Return the files the post-apply format gate is allowed to fail on.
-
-    A file qualifies only when all three hold:
-
-    1. A patch in this batch targets a **whole-file** (``kind="file"``)
-       point in it. A ``kind="code"`` region rewrites a *fragment*, and
-       whether that fragment is syntactically self-contained is a property
-       of where the operator put the markers, not of what the proposer
-       wrote — failing the snapshot there would reject legitimate edits
-       and blame the wrong party. A whole-file replace has no such
-       ambiguity: the patch owns the entire document.
-    2. Its suffix has a stdlib checker (``.json`` / ``.toml``; see
-       :mod:`zicato.mutation.formats`).
-    3. It **parses right now**, before the patch lands. The gate exists to
-       catch a patch that BREAKS a working file. Failing a snapshot over a
-       malformed fixture the operator committed that way would be a
-       confusing, unrelated rejection.
-
-    Everything outside that intersection is unchecked, on purpose: this is
-    a cheap best-effort guard, not the safety property. The safety
-    property is that a patch can only ever land inside an operator-marked
-    region — see :func:`apply_patches`.
-    """
-
-    targeted = {patch.mutation_id for patch in patches}
-    baseline: set[Path] = set()
-    for point in pre_points:
-        if point.id not in targeted or point.kind != "file":
-            continue
-        path = point.file.resolve()
-        if not is_format_checked(path):
-            continue
-        if file_format_problem(path) is None:
-            baseline.add(path)
-    return baseline
 
 
 def _touched_py_files(target_root: Path, patches: list[Patch]) -> set[Path]:

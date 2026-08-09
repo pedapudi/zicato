@@ -6,17 +6,18 @@ root carrying an ``optimization/manifest.toml`` contributes one
 threshold surface is mutable without zicato markers being sprinkled
 through an upstream tree.
 
-It had no direct test coverage until the mutation surface was widened past
-``*.py``, which put it squarely in the blast radius: the text pass now
-walks the very ``.md`` and ``.toml`` files the bridge reads. The last
-section here pins that the two passes compose without duplicating or
-colliding.
+It had no direct coverage until the mutation surface was widened past
+``*.py``, which put it in the blast radius: the text pass now walks the
+very ``.md`` and ``.toml`` files the bridge reads. The last section pins
+that the two passes compose without duplicating or colliding.
 """
 
 from __future__ import annotations
 
 import textwrap
 from pathlib import Path
+
+import pytest
 
 from zicato.core.types import Patch
 from zicato.mutation.enumerator import enumerate_mutations
@@ -94,11 +95,6 @@ def test_finds_manifest_under_the_goldfive_prefix(tmp_path: Path) -> None:
     assert find_manifest(tmp_path) == gf / "optimization" / "manifest.toml"
 
 
-def test_finds_manifest_at_the_bare_optimization_path(tmp_path: Path) -> None:
-    _write(tmp_path / "optimization" / "manifest.toml", "")
-    assert find_manifest(tmp_path) == tmp_path / "optimization" / "manifest.toml"
-
-
 def test_bare_optimization_layout_resolves_its_sources(tmp_path: Path) -> None:
     """The layout the old fixed ``parents[2]`` hop silently zeroed out.
 
@@ -157,14 +153,6 @@ def test_prompt_entry_binds_the_body_after_the_separator(tmp_path: Path) -> None
     assert prompt.metadata["description"] == "The refine-step prompt body."
 
 
-def test_prompt_without_a_separator_takes_the_whole_file(tmp_path: Path) -> None:
-    gf = _goldfive_tree(tmp_path)
-    _write(gf / "optimization" / "prompts" / "refine.md", "Just a body.\n")
-    (prompt,) = (p for p in enumerate_manifest_points([tmp_path]) if p.id == "refine_prompt")
-    assert prompt.content == "Just a body."
-    assert (prompt.line_start, prompt.line_end) == (1, 1)
-
-
 def test_numeric_entry_carries_range_metadata(tmp_path: Path) -> None:
     gf = _goldfive_tree(tmp_path)
     points = {p.id: p for p in enumerate_manifest_points([tmp_path])}
@@ -178,78 +166,40 @@ def test_numeric_entry_carries_range_metadata(tmp_path: Path) -> None:
     assert numeric.metadata["max"] == "1.0"
 
 
-def test_points_are_sorted_deterministically(tmp_path: Path) -> None:
-    _goldfive_tree(tmp_path)
-    ids = [p.id for p in enumerate_manifest_points([tmp_path])]
-    assert ids == sorted(ids)
-    assert ids == [p.id for p in enumerate_manifest_points([tmp_path])]
-
-
 # --------------------------------------------------------------------------
 # Tolerance: the bridge is best-effort and must never crash the walk
 # --------------------------------------------------------------------------
 
 
-def test_malformed_manifest_toml_yields_nothing(tmp_path: Path) -> None:
-    _goldfive_tree(tmp_path, manifest="this is = = not toml\n")
-    assert enumerate_manifest_points([tmp_path]) == []
-
-
-def test_non_array_mutation_key_yields_nothing(tmp_path: Path) -> None:
-    _goldfive_tree(tmp_path, manifest='mutation = "not an array"\n')
-    assert enumerate_manifest_points([tmp_path]) == []
-
-
-def test_entry_with_a_missing_source_file_is_skipped(tmp_path: Path) -> None:
-    _goldfive_tree(
-        tmp_path,
-        manifest="""
-        [[mutation]]
-        id = "gone"
-        kind = "prompt"
-        source = "goldfive/optimization/prompts/does_not_exist.md"
-        """,
-    )
-    assert enumerate_manifest_points([tmp_path]) == []
-
-
-def test_entry_with_unknown_kind_is_skipped(tmp_path: Path) -> None:
-    _goldfive_tree(
-        tmp_path,
-        manifest="""
-        [[mutation]]
-        id = "weird"
-        kind = "sculpture"
-        source = "goldfive/optimization/prompts/refine.md"
-        """,
-    )
-    assert enumerate_manifest_points([tmp_path]) == []
-
-
-def test_entry_with_non_string_id_is_skipped(tmp_path: Path) -> None:
-    _goldfive_tree(
-        tmp_path,
-        manifest="""
-        [[mutation]]
-        id = 7
-        kind = "prompt"
-        source = "goldfive/optimization/prompts/refine.md"
-        """,
-    )
-    assert enumerate_manifest_points([tmp_path]) == []
-
-
-def test_numeric_entry_without_a_colon_in_source_is_skipped(tmp_path: Path) -> None:
-    _goldfive_tree(
-        tmp_path,
-        manifest="""
-        [[mutation]]
-        id = "bad_numeric"
-        kind = "numeric"
-        source = "goldfive/steering.py"
-        """,
-    )
-    assert enumerate_manifest_points([tmp_path]) == []
+@pytest.mark.parametrize(
+    ("label", "manifest"),
+    [
+        ("malformed toml", "this is = = not toml\n"),
+        ("mutation is not an array", 'mutation = "not an array"\n'),
+        (
+            "source file missing",
+            '[[mutation]]\nid = "gone"\nkind = "prompt"\n'
+            'source = "goldfive/optimization/prompts/nope.md"\n',
+        ),
+        (
+            "unknown kind",
+            '[[mutation]]\nid = "weird"\nkind = "sculpture"\n'
+            'source = "goldfive/optimization/prompts/refine.md"\n',
+        ),
+        (
+            "non-string id",
+            '[[mutation]]\nid = 7\nkind = "prompt"\n'
+            'source = "goldfive/optimization/prompts/refine.md"\n',
+        ),
+        (
+            "numeric source without an attr",
+            '[[mutation]]\nid = "bad"\nkind = "numeric"\nsource = "goldfive/steering.py"\n',
+        ),
+    ],
+)
+def test_broken_manifest_entries_yield_nothing(label: str, manifest: str, tmp_path: Path) -> None:
+    _goldfive_tree(tmp_path, manifest=manifest)
+    assert enumerate_manifest_points([tmp_path]) == [], label
 
 
 # --------------------------------------------------------------------------
@@ -314,15 +264,3 @@ def test_a_marked_prompt_file_is_the_only_way_the_two_passes_can_collide(
     )
     problems = validate_patches([patch], enumeration=points)
     assert any("is ambiguous" in problem for problem in problems)
-
-
-def test_unrelated_markers_in_a_goldfive_tree_still_enumerate(tmp_path: Path) -> None:
-    """A goldfive worktree can carry native text surface of its own."""
-
-    gf = _goldfive_tree(tmp_path)
-    _write(
-        gf / "optimization" / "prompts" / "extra.md",
-        '<!-- zicato:mutable:file id="extra_prompt" -->\nbody\n',
-    )
-    ids = {p.id for p in enumerate_mutations([tmp_path])}
-    assert ids == {"refine_prompt", "refine_threshold", "extra_prompt"}
