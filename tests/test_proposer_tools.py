@@ -99,7 +99,8 @@ def _build_declared_subtree_snapshot(tmp_path: Path) -> tuple[Path, tuple]:
     exactly as a real generation snapshot copies a registered ``agent`` tree
     under its basename::
 
-        {tmp}/generations/v1/snapshot/agent/prompts.py
+        {tmp}/generations/v1/snapshot/agent/prompts.py   <- mutable, declared
+        {tmp}/generations/v1/snapshot/runner.py          <- NOT mutable, consumes it
 
     The manifest's ``source_root`` is the DECLARED mutable subtree
     (``{snapshot}/agent``) — what an adapter with a ``mutable_subpaths``
@@ -109,12 +110,22 @@ def _build_declared_subtree_snapshot(tmp_path: Path) -> tuple[Path, tuple]:
     snapshot-relative (``agent/prompts.py``), so the advertised path no longer
     resolved. The mismatch is unconditional (independent of round); the
     ``agent`` basename is just this layout's folder name, not a special case.
+
+    ``runner.py`` sits INSIDE the snapshot but OUTSIDE the declared subtree:
+    the non-mutable consumer whose reachability is the reason the snapshot
+    root is a readable root at all. It is what distinguishes "walk the
+    outermost roots" from "walk the declared subtrees" — both visit each file
+    once, only the former still lets the proposer see who reads the value it
+    is about to rewrite.
     """
     snapshot = tmp_path / "generations" / "v1" / "snapshot"
     agent = snapshot / "agent"
     agent.mkdir(parents=True)
     (agent / "prompts.py").write_text(
         "SYSTEM_PROMPT = 'You are a helpful assistant.'\n", encoding="utf-8"
+    )
+    (snapshot / "runner.py").write_text(
+        "from agent.prompts import SYSTEM_PROMPT\n", encoding="utf-8"
     )
     mp = make_mutation_point(
         id="agent__system_prompt",
@@ -226,6 +237,12 @@ def test_grep_mutable_visits_each_file_once_under_a_declared_subtree(
     paths (``agent/prompts.py:1:`` and ``prompts.py:1:``) and burning the
     match budget on duplicates. Each match must appear exactly once, under
     the snapshot-relative path ``list_mutation_points`` advertises.
+
+    Deduping must keep the OUTERMOST root, not the innermost: the exact
+    result pins ``runner.py`` — inside the snapshot, outside the declared
+    subtree — so a "walk only the declared subtrees" dedupe, which also
+    visits each file once, still fails here for losing the non-mutable
+    consumer the proposer needs in order to ground a rewrite.
     """
     snapshot, mutations = _build_declared_subtree_snapshot(tmp_path)
     ctx = ProposerToolContext(
@@ -242,7 +259,10 @@ def test_grep_mutable_visits_each_file_once_under_a_declared_subtree(
         out = grep_mutable(r"SYSTEM_PROMPT")
 
     lines = [line for line in out.splitlines() if line.strip()]
-    assert lines == ["agent/prompts.py:1: SYSTEM_PROMPT = 'You are a helpful assistant.'"]
+    assert lines == [
+        "agent/prompts.py:1: SYSTEM_PROMPT = 'You are a helpful assistant.'",
+        "runner.py:1: from agent.prompts import SYSTEM_PROMPT",
+    ]
 
 
 def test_grep_mutable_budget_is_not_spent_on_duplicates(tmp_path: Path) -> None:

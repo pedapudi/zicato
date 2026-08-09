@@ -1688,7 +1688,7 @@ empty degrades that tool to an explicit "coordinates unavailable" answer).
 |---|---|---|---|
 | `list_mutation_points()` | the bound manifest, rendered as JSON (id, kind, file rel-to-snapshot, lines, content, metadata) | n/a — only ids listed here are valid patch targets | — |
 | `read_mutable_file(relative_path)` | one file under the mutable roots | `_resolve_under_mutable_roots`: absolute paths rejected; `..` traversal rejected per-root (`is_relative_to` after `resolve()`); content capped at 200 000 chars with a truncation note | `ValueError` on escape / not-a-file |
-| `grep_mutable(pattern)` | regex over every file under the mutable roots, `path:line: text` | match cap `_GREP_MATCH_LIMIT = 200` (annotated); unreadable/binary files skipped; `"(no matches)"` explicit empty signal | `ValueError` on an invalid regex |
+| `grep_mutable(pattern)` | regex over every file under the mutable surface, `path:line: text` — walks `_walk_roots` (the OUTERMOST mutable roots), not `mutable_roots()` directly | match cap `_GREP_MATCH_LIMIT = 200` (annotated); unreadable/binary files skipped; `"(no matches)"` explicit empty signal | `ValueError` on an invalid regex |
 | `read_journal()` | the epoch's narrative journal | — | `""` when absent |
 | `read_insights()` | `load_latest_insights` — the SAME helper the text shim embeds, so both paths see identical content | — | `""` when absent |
 | `mutation_track_record(mutation_id)` | the fertility map for ONE manifest point, as JSON (counts, promoted, `recent` flag, the banded summary line) | AGGREGATES ONLY — same banding as the manifest annotation; the honesty `basis` field is mandatory | `ValueError` on an id not in the current manifest ("actionable retry signal"); a zeroed record — not an error — for an untouched point |
@@ -1707,6 +1707,19 @@ snapshot root FIRST, then each `source_root`-basename subtree — both path
 shapes resolve, and the escape guard still rejects any `..` out of whichever
 root matched, so widening the accepted roots never widens the readable surface
 beyond the snapshot.
+
+**Its corollary — never *walk* `mutable_roots()`.** That list is built for
+path *resolution*, and it deliberately overlaps: the declared subtrees are
+descendants of the snapshot root. A recursive walk that iterates it directly
+visits every file inside a declared subtree once per containing root, emitting
+the same line under a different relative path each time and spending the match
+budget several times over on revisits. `grep_mutable` therefore walks
+`_walk_roots(ctx)` — the roots not contained in another root, resolved first so
+the containment test is over real paths. Keep the filter on the OUTERMOST
+roots, not the innermost: both dedupe, but only the outermost keeps the whole
+snapshot readable, and reaching the non-mutable code that *consumes* a mutable
+value is the entire reason the snapshot root is a readable root. Any new
+recursive tool goes through `_walk_roots` too.
 
 > ⛔ NEVER add a WRITING tool. The whole surface is read-only by contract: "a
 > proposer tool that mutated the snapshot would corrupt the very tree the
