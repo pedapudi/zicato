@@ -137,6 +137,7 @@ schema bump.)
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from typing import Any
 
@@ -760,6 +761,18 @@ def evaluate_gate(
 
     delta_scalar = child_scalar - parent_scalar
     delta_pass_rate = child_pass - parent_pass
+
+    # A persisted aggregate can outlive the validation that created it (or be
+    # manually corrupted), so the promotion boundary must fail closed too.
+    # IEEE comparisons with NaN are always false: without this guard, a NaN
+    # margin/scalar can skip Rule 1 and let a worse challenger advance.
+    if not math.isfinite(parent_scalar) or not math.isfinite(child_scalar):
+        return GateOutcome(
+            decision=TournamentDecision.REJECTED,
+            reason=("invalid scalar evidence: champion and challenger scalars must both be finite"),
+            delta_scalar=delta_scalar,
+            delta_pass_rate=delta_pass_rate,
+        )
 
     # Per-entry regressions attributable to THIS duel, on every path and both
     # verdicts (issue #130). Observation only — it never changes a decision and
