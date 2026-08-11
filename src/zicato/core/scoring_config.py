@@ -6,6 +6,7 @@ Split out of :mod:`zicato.core.types`; re-exported from there and from
 
 from __future__ import annotations
 
+import math
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Any
@@ -89,6 +90,27 @@ def _knob(
     }
 
 
+def _require_finite_number(name: str, value: object) -> None:
+    """Reject a non-numeric or non-finite evaluation-contract knob.
+
+    A scoring contract controls promotion decisions, so ``NaN`` and infinities
+    cannot be treated as ordinary numeric values.  In particular, comparison
+    with ``NaN`` is always false and can otherwise bypass a gate condition.
+    JSON accepts those spellings by default, and direct dataclass construction
+    can supply them too, so validation belongs at the frozen-contract boundary.
+    """
+    if isinstance(value, bool) or not isinstance(value, int | float):
+        raise ValueError(f"{name} must be a finite number, got {value!r}")
+    if not math.isfinite(float(value)):
+        raise ValueError(f"{name} must be finite, got {value!r}")
+
+
+def _require_finite_mapping(name: str, values: Mapping[str, object]) -> None:
+    """Validate every numeric coefficient in one scoring-weight mapping."""
+    for key, value in values.items():
+        _require_finite_number(f"{name}[{key!r}]", value)
+
+
 # ---------------------------------------------------------------------------
 # Scoring config (overfitting / proposer-quality sub-configs)
 # ---------------------------------------------------------------------------
@@ -149,6 +171,10 @@ class LadderConfig:
     noise_scale: float = 0.0
 
     def __post_init__(self) -> None:
+        if self.threshold is not None:
+            _require_finite_number("ladder.threshold", self.threshold)
+        _require_finite_number("ladder.budget", self.budget)
+        _require_finite_number("ladder.noise_scale", self.noise_scale)
         if self.threshold is not None and self.threshold < 0.0:
             raise ValueError(f"ladder.threshold must be >= 0 or None, got {self.threshold!r}")
         if self.budget < 0:
@@ -259,6 +285,13 @@ class OverfittingConfig:
     )
 
     def __post_init__(self) -> None:
+        _require_finite_number("holdout_fraction", self.holdout_fraction)
+        _require_finite_number("min_board_size_for_split", self.min_board_size_for_split)
+        if self.max_generations_per_contract is not None:
+            _require_finite_number(
+                "max_generations_per_contract", self.max_generations_per_contract
+            )
+        _require_finite_number("random_baseline_every_n", self.random_baseline_every_n)
         if not 0.0 < self.holdout_fraction < 1.0:
             raise ValueError(f"holdout_fraction must be in (0, 1), got {self.holdout_fraction!r}")
         if self.min_board_size_for_split < 0:
@@ -527,6 +560,14 @@ class ProposerQualityConfig:
     )
 
     def __post_init__(self) -> None:
+        for name in (
+            "best_of_n",
+            "screen_entries",
+            "process_exemplars",
+            "genealogy",
+            "calibration_feedback",
+        ):
+            _require_finite_number(name, getattr(self, name))
         if self.best_of_n < 1:
             raise ValueError(f"best_of_n must be >= 1, got {self.best_of_n!r}")
         if self.screen_entries < 0:
@@ -1125,6 +1166,26 @@ class ScoringWeights:
         contract can be hashed with the spec string + a degraded source hash.
         """
         from zicato.scoring.transforms import validate_transform_spec  # noqa: PLC0415
+
+        for name in (
+            "drift_weight",
+            "pass_weight",
+            "default_judge_weight",
+            "plan_revision_weight",
+            "runtime_weight",
+            "diff_complexity_weight",
+            "diff_complexity_ceiling",
+            "promote_margin",
+            "holdout_entry_regression_budget",
+            "regression_timeout_s",
+        ):
+            _require_finite_number(name, getattr(self, name))
+        if self.holdout_margin is not None:
+            _require_finite_number("holdout_margin", self.holdout_margin)
+        _require_finite_mapping("severity_weights", self.severity_weights)
+        _require_finite_mapping("per_kind_weights", self.per_kind_weights)
+        _require_finite_mapping("per_judge_weights", self.per_judge_weights)
+        _require_finite_mapping("namespace_weights", self.namespace_weights)
 
         if self.pass_transform is not None:
             validate_transform_spec(self.pass_transform)
