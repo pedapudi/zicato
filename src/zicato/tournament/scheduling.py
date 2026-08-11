@@ -59,6 +59,25 @@ from zicato.tournament.worker_transport import _runtime_state, _stamp_replicate_
 log = logging.getLogger("zicato.tournament.runner")
 
 
+# Cacheable board units are immutable under a fixed contract (T1), but several
+# matchups can request the same cold unit in one event-loop turn.  Keep the
+# leader task here until its cache lookup and, if needed, worker run complete;
+# followers await it rather than starting a second worker for the same key.
+# ``force_fresh`` evaluations deliberately do not enter this map.
+_inflight_cacheable_units: dict[tuple[str, str, str, str, int], asyncio.Task[LossProfile]] = {}
+
+
+def _cacheable_unit_key(
+    workspace_root: Path,
+    epoch_id: str,
+    generation_id: str,
+    entry_id: str,
+    replicate_index: int,
+) -> tuple[str, str, str, str, int]:
+    """Return the in-process single-flight key for one cacheable board unit."""
+    return (str(workspace_root.resolve()), epoch_id, generation_id, entry_id, replicate_index)
+
+
 async def _run_single(
     *,
     adapter: Any,
@@ -992,7 +1011,8 @@ async def _run_unit_cache_first(
     ``provenance`` (when supplied) accumulates the per-generation
     cached-vs-fresh tally for the round.
     """
-    if not force_fresh:
+
+    async def _load_or_run() -> LossProfile:
         cached = _resolve_cached_unit(
             workspace_root=workspace_root,
             epoch_id=epoch_id,
@@ -1003,6 +1023,83 @@ async def _run_unit_cache_first(
         if cached is not None:
             _record_provenance(provenance, generation.id, cached=True)
             return cached
+
+        return await _run_unit_after_cache_miss(
+            adapter=adapter,
+            generation=generation,
+            entry=entry,
+            weights=weights,
+            config=config,
+            workspace_root=workspace_root,
+            epoch_id=epoch_id,
+            side=side,
+            replicate_index=replicate_index,
+            match_id=match_id,
+            provenance=provenance,
+        )
+
+    if force_fresh:
+        return await _run_unit_after_cache_miss(
+            adapter=adapter,
+            generation=generation,
+            entry=entry,
+            weights=weights,
+            config=config,
+            workspace_root=workspace_root,
+            epoch_id=epoch_id,
+            side=side,
+            replicate_index=replicate_index,
+            match_id=match_id,
+            provenance=provenance,
+        )
+
+    key = _cacheable_unit_key(
+        workspace_root,
+        epoch_id,
+        generation.id,
+        entry.id,
+        replicate_index,
+    )
+    in_flight = _inflight_cacheable_units.get(key)
+    if in_flight is not None:
+        # This caller launched no worker. Count the shared result as reused,
+        # even when the leader ultimately had to perform a fresh evaluation.
+        _record_provenance(provenance, generation.id, cached=True)
+        return await asyncio.shield(in_flight)
+
+    async def _leader() -> LossProfile:
+        try:
+            return await _load_or_run()
+        finally:
+            # Removing the task after an exception or an infra abort leaves a
+            # later request a correct cache MISS and allows a clean retry.
+            _inflight_cacheable_units.pop(key, None)
+
+    in_flight = asyncio.create_task(
+        _leader(),
+        name=f"zicato-unit:{generation.id}:{entry.id}:r{replicate_index}",
+    )
+    _inflight_cacheable_units[key] = in_flight
+    # Shield the leader task so cancellation of one matchup cannot cancel the
+    # shared unit evaluation while its sibling matchups still need the result.
+    return await asyncio.shield(in_flight)
+
+
+async def _run_unit_after_cache_miss(
+    *,
+    adapter: Any,
+    generation: Generation,
+    entry: BoardEntry,
+    weights: ScoringWeights,
+    config: RuntimeConfig,
+    workspace_root: Path,
+    epoch_id: str,
+    side: str,
+    replicate_index: int,
+    match_id: str,
+    provenance: dict[str, _UnitProvenance] | None,
+) -> LossProfile:
+    """Run and persist one board unit after cache reuse has been ruled out."""
 
     from zicato.telemetry.meta_loop import SPAN_WORKER, meta_span  # noqa: PLC0415
 
