@@ -607,6 +607,25 @@ def test_pre_existing_break_does_not_stall_successive_generations(tmp_path: Path
     assert _exec_value((gen2 / "prompts.py").read_text(encoding="utf-8"), "ROSTER") == "gen2"
 
 
+def test_non_utf8_py_file_does_not_escape_the_gate(tmp_path: Path) -> None:
+    """A ``.py`` file that is not UTF-8 is baseline breakage, not a crash.
+
+    Decoding it raises ``UnicodeDecodeError``, which is a ``ValueError`` and
+    not an ``OSError``.  Uncaught, it escapes the gate, skips every cleanup
+    path, and reaches the caller as an ordinary "bad patch set" while a
+    half-applied tree stays on disk.
+    """
+    src = tmp_path / "src"
+    tgt = tmp_path / "tgt"
+    _write(src / "prompts.py", '# zicato:mutable id="roster"\nROSTER = "old"\n')
+    (src / "latin1.py").write_bytes(b'GREETING = "caf\xe9"\n')
+
+    apply_patches(src, [_patch(mutation_id="roster", new_content="new")], tgt)
+
+    assert _exec_value((tgt / "prompts.py").read_text(encoding="utf-8"), "ROSTER") == "new"
+    assert (tgt / "latin1.py").read_bytes() == b'GREETING = "caf\xe9"\n'
+
+
 # ---------------------------------------------------------------------------
 # Filesystem (issue #4) — read-only source trees apply successfully.
 # ---------------------------------------------------------------------------
