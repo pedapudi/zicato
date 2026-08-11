@@ -564,6 +564,49 @@ def test_issue_11_no_corrupt_snapshot_blocks_next_generation(tmp_path: Path) -> 
     assert ns["slug"]("Hello") == "hello"  # type: ignore[operator]
 
 
+def test_post_apply_gate_ignores_file_broken_before_the_batch(tmp_path: Path) -> None:
+    """The syntax gate must blame only the round that caused the damage.
+
+    A source tree can hold a ``.py`` file that never parsed — a deliberately
+    broken test fixture, a template, a file that uses newer syntax than the
+    running interpreter.  That file is copied into every child snapshot, so
+    the gate sees the same ``SyntaxError`` on every batch.  It must not
+    reject a batch whose own patches all applied cleanly.
+    """
+    src = tmp_path / "src"
+    tgt = tmp_path / "tgt"
+    _write(src / "prompts.py", '# zicato:mutable id="roster"\nROSTER = "old"\n')
+    # Broken before the run starts, and no patch in the batch touches it.
+    _write(src / "fixture_broken.py", "def f(:\n    pass\n")
+
+    apply_patches(src, [_patch(mutation_id="roster", new_content="new")], tgt)
+
+    out = (tgt / "prompts.py").read_text(encoding="utf-8")
+    assert _exec_value(out, "ROSTER") == "new"
+    # The pre-existing breakage is carried forward untouched, not repaired
+    # and not treated as this round's fault.
+    assert (tgt / "fixture_broken.py").read_text(encoding="utf-8") == "def f(:\n    pass\n"
+
+
+def test_pre_existing_break_does_not_stall_successive_generations(tmp_path: Path) -> None:
+    """The failure above compounds: the broken file rides into every child.
+
+    If the gate rejects on it, no generation is ever promoted and the evolve
+    loop stalls for good.  Two derivations from the same parent must both
+    succeed.
+    """
+    src = tmp_path / "src"
+    _write(src / "prompts.py", '# zicato:mutable id="roster"\nROSTER = "gen0"\n')
+    _write(src / "fixture_broken.py", "def f(:\n    pass\n")
+
+    gen1 = tmp_path / "gen1"
+    apply_patches(src, [_patch(mutation_id="roster", new_content="gen1")], gen1)
+    gen2 = tmp_path / "gen2"
+    apply_patches(gen1, [_patch(mutation_id="roster", new_content="gen2")], gen2)
+
+    assert _exec_value((gen2 / "prompts.py").read_text(encoding="utf-8"), "ROSTER") == "gen2"
+
+
 # ---------------------------------------------------------------------------
 # Filesystem (issue #4) — read-only source trees apply successfully.
 # ---------------------------------------------------------------------------
