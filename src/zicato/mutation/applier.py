@@ -720,6 +720,12 @@ def apply_patches(
         )
     shutil.copytree(source_root, target_root, ignore=ignore or copytree_ignore())
 
+    # Baseline for the post-apply syntax gate below, taken BEFORE the first
+    # edit lands. A source tree may legitimately carry a ``.py`` file that
+    # never parsed, and it rides into every child snapshot; without this
+    # baseline the gate blames each batch for it and the run stalls.
+    baseline_broken = set(_unparseable_py_files(target_root))
+
     # Atomic pre-validation: enumerate the freshly-copied tree and check
     # every patch up front. The copied tree has identical content to
     # ``source_root``, so its enumeration is the surface the subsequent
@@ -748,10 +754,11 @@ def apply_patches(
     # PRODUCED it. A malformed proposer patch must degrade into a rejected
     # challenger here, not silently write an unparseable snapshot that
     # crashes the *next* generation's enumeration one round later. We
-    # re-parse every ``.py`` file the batch touched; if any no longer
-    # parses, remove the copied tree (keeping lineage append-only) and
-    # raise so the caller records a single rejection.
-    syntax_problems = _post_apply_syntax_problems(target_root, patches)
+    # re-parse every ``.py`` file and report the ones that parsed before the
+    # batch and do not parse now; if any, remove the copied tree (keeping
+    # lineage append-only) and raise so the caller records a single
+    # rejection.
+    syntax_problems = _post_apply_syntax_problems(target_root, patches, baseline_broken)
     if syntax_problems:
         shutil.rmtree(target_root, ignore_errors=True)
         raise ValueError(
@@ -781,29 +788,77 @@ def _touched_py_files(target_root: Path, patches: list[Patch]) -> set[Path]:
     return touched
 
 
-def _post_apply_syntax_problems(target_root: Path, patches: list[Patch]) -> list[str]:
-    """Return one problem string per ``.py`` file the batch left unparseable.
+def _unparseable_py_files(root: Path) -> dict[Path, str]:
+    """Return ``{resolved path: reason}`` for each unreadable/unparseable ``.py``.
+
+    The shared scan behind the post-apply syntax gate. It runs TWICE per
+    apply — once on the freshly-copied tree to record the baseline, once
+    after the batch lands — and the gate reports the difference. Both passes
+    must therefore classify a given file identically, which is why the scan
+    lives in one function rather than being written out at each call site.
+
+    A file that is not valid UTF-8 counts as unparseable and is reported
+    like a ``SyntaxError``. Decoding it raises ``UnicodeDecodeError``, which
+    is a ``ValueError`` and NOT an ``OSError``: letting it propagate would
+    escape the gate, skip every ``rmtree`` cleanup path in
+    :func:`apply_patches`, and reach the caller as an indistinguishable
+    ``ValueError`` — a "bad patch set" report for a file the batch never
+    touched, with a half-applied tree left on disk. Caught here, such a file
+    is simply part of the baseline and changes nothing.
+    """
+
+    out: dict[Path, str] = {}
+    for py_file in sorted(root.rglob("*.py")):
+        try:
+            text = py_file.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        except UnicodeDecodeError as exc:
+            out[py_file.resolve()] = f"not valid UTF-8: {exc}"
+            continue
+        try:
+            ast.parse(text)
+        except SyntaxError as exc:
+            out[py_file.resolve()] = str(exc)
+    return out
+
+
+def _post_apply_syntax_problems(
+    target_root: Path,
+    patches: list[Patch],
+    baseline_broken: set[Path],
+) -> list[str]:
+    """Return one problem string per ``.py`` file THIS BATCH left unparseable.
 
     Walks every ``.py`` file under ``target_root`` and re-parses it. Walking
     the whole tree (not only the files we can map a still-resolving id back
     to) is deliberate: a span replace that corrupted a file makes that
     file's ids vanish from the enumeration, so a mapping-only check would
     miss exactly the failure this guard exists to catch.
+
+    ``baseline_broken`` is the same scan taken on the freshly-copied tree,
+    BEFORE the first edit landed. Subtracting it is what makes the gate
+    attribute corruption to the round that produced it. A source tree may
+    legitimately hold a ``.py`` file that never parsed — a deliberately
+    broken test fixture, a template, a file written for a newer interpreter.
+    That file is copied into every child snapshot, so without the baseline
+    every batch fails on it, every candidate is rejected, no generation is
+    ever promoted, and the run stalls for good while blaming a file no patch
+    ever read.
+
+    A file that was already broken AND is in ``touched`` is still reported:
+    the batch edited it, so its state is this round's business.
     """
 
     target_root = Path(target_root).resolve()
     touched = _touched_py_files(target_root, patches)
     problems: list[str] = []
-    for py_file in sorted(target_root.rglob("*.py")):
-        try:
-            text = py_file.read_text(encoding="utf-8")
-        except OSError:
+    for py_file, reason in sorted(_unparseable_py_files(target_root).items()):
+        if py_file in baseline_broken and py_file not in touched:
+            # Broken before this batch and untouched by it — not our doing.
             continue
-        try:
-            ast.parse(text)
-        except SyntaxError as exc:
-            tag = " (touched)" if py_file.resolve() in touched else ""
-            problems.append(f"{py_file}{tag}: {exc}")
+        tag = " (touched)" if py_file in touched else ""
+        problems.append(f"{py_file}{tag}: {reason}")
     return problems
 
 
