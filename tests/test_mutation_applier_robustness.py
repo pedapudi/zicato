@@ -158,6 +158,25 @@ def test_issue_38_sibling_simple_span_not_corrupted(tmp_path: Path) -> None:
     assert ids == {"roster", "custom_tools_src"}
 
 
+def test_replace_span_after_unicode_prefix_preserves_assignment(tmp_path: Path) -> None:
+    """AST byte columns must not be used as decoded-string indexes.
+
+    The string literal begins after a non-ASCII identifier.  CPython reports
+    the literal's AST columns in UTF-8 bytes, while the applier edits decoded
+    text.  A correct replacement must therefore preserve the assignment,
+    leave the generated module parseable, and bind the requested value.
+    """
+    out = _apply_one(
+        tmp_path,
+        '# zicato:mutable id="prompt"\n变量 = "old"\n',
+        _patch(mutation_id="prompt", new_content="rewritten"),
+    )
+
+    ast.parse(out)
+    assert "变量 = " in out
+    assert _exec_value(out, "变量") == "rewritten"
+
+
 # ---------------------------------------------------------------------------
 # op × content shape — replace a simple ``X = "..."`` span with every shape
 # of content. In each case the assignment target survives, the file parses,
