@@ -42,9 +42,7 @@ Backends
   ``git worktree``. Because the object store dedups unchanged blobs across
   a lineage, and the worktree checkout *is* the isolated per-run tree, the
   git backend removes both the per-generation and the per-run ``copytree``
-  the directory backend pays. It is the default unless the
-  ``storage_backend`` config knob selects otherwise (see
-  :func:`default_generation_store`). The operator-facing git CLI
+  the directory backend pays. The operator-facing git CLI
   (``zicato repo`` / ``log`` / ``diff`` / ``show`` / ``bisect`` /
   ``blame``, ``workspace migrate-to-git``) is still on the roadmap.
 * :class:`DirectoryGenerationStore` — the directory-snapshot backend,
@@ -55,6 +53,13 @@ Backends
   fully supported, config-selectable backend for environments where a
   private git repo is unwanted; the git default simply removes the copy
   cost for the common case.
+
+Which backend reads a given workspace is
+:func:`resolve_generation_store_backend`'s decision: the explicit
+``storage_backend`` knob first, then the workspace's own on-disk contents,
+and only then the default. A workspace's backend is a durable property of
+what it already holds, so the default settles it only for a workspace that
+holds no generations yet.
 """
 
 from __future__ import annotations
@@ -733,59 +738,210 @@ class DirectoryGenerationStore:
 
 
 #: Workspace ``config.json`` key selecting the generation-store backend.
-#: ``"git"`` (the default) or ``"directory"``.
+#: ``"git"`` or ``"directory"``.
 STORAGE_BACKEND_KEY = "storage_backend"
 
-#: The backend selected when the knob is absent or empty. ``"git"``: the
-#: content-addressed worktree backend dedups blobs across a lineage and
-#: its worktree checkout *is* the isolated per-run tree, so it removes
-#: both the per-generation and per-run ``copytree`` the directory backend
-#: pays. ``"directory"`` stays selectable for environments that do not
-#: want a private git repo.
-DEFAULT_STORAGE_BACKEND = "git"
+#: The git backend's name, in the config knob and in a resolution.
+GIT_BACKEND = "git"
+
+#: The directory-snapshot backend's name.
+DIRECTORY_BACKEND = "directory"
+
+#: Every backend name the knob accepts. A knob naming anything else is a
+#: typo, and is refused rather than silently resolved.
+KNOWN_STORAGE_BACKENDS = (GIT_BACKEND, DIRECTORY_BACKEND)
+
+#: The backend a workspace gets when neither the knob nor the workspace's
+#: own contents decide — i.e. a workspace that holds no generations yet.
+#: ``"git"``: the content-addressed worktree backend dedups blobs across a
+#: lineage and its worktree checkout *is* the isolated per-run tree, so it
+#: removes both the per-generation and per-run ``copytree`` the directory
+#: backend pays. ``"directory"`` stays selectable for environments that do
+#: not want a private git repo.
+DEFAULT_STORAGE_BACKEND = GIT_BACKEND
+
+#: Workspace subdirectory holding the git backend's private repository.
+#: The presence of its ``.git`` is the on-disk evidence of a git-backed
+#: workspace; :class:`~zicato.epoch.git_genstore.GitGenerationStore` reads
+#: this as its ``REPO_DIRNAME``.
+GIT_REPO_DIRNAME = "repo"
+
+#: A generation's source tree under the directory backend, inside
+#: ``epochs/{epoch_id}/generations/{generation_id}/``.
+SNAPSHOT_DIRNAME = "snapshot"
 
 
-def _read_storage_backend_knob(workspace_root: Path) -> str:
-    """Read the ``storage_backend`` knob from a workspace ``config.json``.
+@dataclass(frozen=True)
+class BackendResolution:
+    """Which generation-store backend a workspace uses, and on what grounds.
 
-    Best-effort: a missing or malformed ``config.json`` (a workspace not
-    yet ``zicato init``-ed, or one predating the knob) yields the
-    :data:`DEFAULT_STORAGE_BACKEND` default. The generation store must
-    never fail to construct just because the config is absent.
+    ``source`` records *why* — ``"config"`` (the explicit knob),
+    ``"evidence"`` (the workspace's own contents), or ``"default"``
+    (nothing on disk to go on). ``mismatch``, when set, is an
+    operator-facing sentence naming a disagreement between the resolved
+    backend and what is on disk; the resolution still stands.
+    """
+
+    backend: str
+    source: str
+    mismatch: str | None = None
+
+
+def _read_storage_backend_knob(workspace_root: Path) -> str | None:
+    """Return the ``storage_backend`` knob, or ``None`` when it is absent.
+
+    Best-effort on the *file*: a missing or malformed ``config.json`` (a
+    workspace not yet ``zicato init``-ed, or one predating the knob) reads
+    as no knob, because a config the loader cannot parse must not decide
+    the backend. A knob that *is* present and names an unknown backend is
+    a different matter — see :func:`resolve_generation_store_backend`.
     """
     config_path = Path(workspace_root) / "config.json"
     if not config_path.is_file():
-        return DEFAULT_STORAGE_BACKEND
+        return None
     try:
         import json  # noqa: PLC0415
 
         loaded = json.loads(config_path.read_text(encoding="utf-8"))
     except (OSError, ValueError):
-        return DEFAULT_STORAGE_BACKEND
+        return None
     if not isinstance(loaded, dict):
-        return DEFAULT_STORAGE_BACKEND
-    value = loaded.get(STORAGE_BACKEND_KEY, DEFAULT_STORAGE_BACKEND)
-    return str(value).strip().lower() or DEFAULT_STORAGE_BACKEND
+        return None
+    value = str(loaded.get(STORAGE_BACKEND_KEY, "")).strip().lower()
+    return value or None
+
+
+def _has_git_store(workspace_root: Path) -> bool:
+    """Return True iff the workspace holds the git backend's repository."""
+    return (Path(workspace_root) / GIT_REPO_DIRNAME / ".git").exists()
+
+
+def _generation_evidence(workspace_root: Path) -> tuple[bool, bool]:
+    """Return ``(any generation record, any directory snapshot)``.
+
+    Both backends write generation *records* (``experiment.json``,
+    patches, run logs); only the source tree differs, so a record alone
+    says "this workspace has produced something" — which is what makes
+    the absence of a git repository informative. A ``snapshot/`` beside
+    a record is the directory backend's source tree, and names the
+    backend outright.
+    """
+    epochs_root = Path(workspace_root) / "epochs"
+    any_record = False
+    for epoch in _children(epochs_root):
+        for generation in _children(epoch / "generations"):
+            any_record = True
+            if (generation / SNAPSHOT_DIRNAME).is_dir():
+                return True, True
+    return any_record, False
+
+
+def _children(path: Path) -> Iterable[Path]:
+    """Iterate ``path``'s subdirectories, yielding nothing when it is not one."""
+    if not path.is_dir():
+        return ()
+    return (child for child in path.iterdir() if child.is_dir())
+
+
+def resolve_generation_store_backend(workspace_root: Path) -> BackendResolution:
+    """Decide which generation-store backend reads a workspace.
+
+    The order is **explicit config > on-disk evidence > default**:
+
+    1. The ``storage_backend`` knob, when present, is the operator's
+       stated intent and wins. An unknown name raises :class:`ValueError`
+       rather than resolving to whichever backend the fallthrough happens
+       to reach.
+    2. Otherwise the workspace's own contents decide. A ``repo/.git``
+       means git wrote it. Generation records with *no* repository mean
+       the directory backend wrote it: a git-backed workspace that has
+       produced any generation necessarily has a repository, and snapshot
+       GC (:mod:`zicato.epoch.gc`) prunes ``snapshot/`` directories but
+       never the repository — so "records, no repo" stays directory
+       evidence even after every snapshot has been pruned.
+    3. A workspace holding no generations has nothing to go on, so
+       :data:`DEFAULT_STORAGE_BACKEND` decides.
+
+    Evidence outranks the default because the default is a *global*
+    constant: reading a knobless workspace through it re-interprets every
+    workspace ever created whenever it changes, which is exactly how a
+    directory-snapshot workspace came to be read as an empty git one.
+    Evidence is a property of the workspace and does not move under it.
+
+    A resolution that contradicts the disk — an explicit knob naming a
+    backend whose store is absent while the other's is present, or two
+    stores present at once — still stands, but carries a ``mismatch``
+    sentence naming it. :func:`default_generation_store` logs that at
+    warning level so the disagreement is never silent.
+    """
+    knob = _read_storage_backend_knob(workspace_root)
+    has_repo = _has_git_store(workspace_root)
+    has_records, has_snapshots = _generation_evidence(workspace_root)
+
+    if knob is not None:
+        if knob not in KNOWN_STORAGE_BACKENDS:
+            known = ", ".join(repr(name) for name in KNOWN_STORAGE_BACKENDS)
+            raise ValueError(
+                f"workspace {workspace_root!s}: unknown {STORAGE_BACKEND_KEY} {knob!r}; "
+                f"known backends: {known}"
+            )
+        chosen_present, other_present = (
+            (has_repo, has_snapshots) if knob == GIT_BACKEND else (has_snapshots, has_repo)
+        )
+        mismatch = None
+        if other_present and not chosen_present:
+            other = DIRECTORY_BACKEND if knob == GIT_BACKEND else GIT_BACKEND
+            mismatch = (
+                f"{STORAGE_BACKEND_KEY} is {knob!r} but this workspace holds a "
+                f"{other} generation store and no {knob} one; generations written by "
+                f"the {other} backend will not be listed"
+            )
+        return BackendResolution(knob, "config", mismatch)
+
+    if has_repo:
+        mismatch = None
+        if has_snapshots:
+            mismatch = (
+                "this workspace holds both a git generation store and directory "
+                f"snapshots; reading it as {GIT_BACKEND!r} — set {STORAGE_BACKEND_KEY} "
+                "to pin the intended one"
+            )
+        return BackendResolution(GIT_BACKEND, "evidence", mismatch)
+
+    if has_records:
+        return BackendResolution(DIRECTORY_BACKEND, "evidence", None)
+
+    return BackendResolution(DEFAULT_STORAGE_BACKEND, "default", None)
+
+
+#: Mismatches already logged, so a resolution on a hot path (every
+#: ``snapshot_root`` call goes through one) warns once per workspace
+#: rather than once per generation read.
+_reported_mismatches: set[tuple[str, str]] = set()
 
 
 def default_generation_store(workspace_root: Path) -> GenerationStore:
     """Return the canonical :class:`GenerationStore` for a workspace.
 
-    The backend is selected off the workspace ``config.json``'s
-    :data:`STORAGE_BACKEND_KEY` knob, defaulting to
-    :data:`DEFAULT_STORAGE_BACKEND` (``"git"``):
+    The backend comes from :func:`resolve_generation_store_backend` —
+    explicit ``storage_backend`` knob, else the workspace's own contents,
+    else :data:`DEFAULT_STORAGE_BACKEND`:
 
-    * ``"git"`` (the default, including for a missing/blank knob) →
-      :class:`~zicato.epoch.git_genstore.GitGenerationStore`, the
-      content-addressed git backend (``docs/design/STORAGE.md`` §7).
+    * ``"git"`` → :class:`~zicato.epoch.git_genstore.GitGenerationStore`,
+      the content-addressed git backend (``docs/design/STORAGE.md`` §7).
     * ``"directory"`` → :class:`DirectoryGenerationStore`, the
       directory-snapshot backend, always available as the no-git fallback.
 
     This function is the single seam where that choice is made — the
     generation-store mirror of :func:`zicato.storage.factory.default_backend`.
     """
-    backend = _read_storage_backend_knob(workspace_root)
-    if backend == "git":
+    resolution = resolve_generation_store_backend(workspace_root)
+    if resolution.mismatch is not None:
+        seen = (str(workspace_root), resolution.mismatch)
+        if seen not in _reported_mismatches:
+            _reported_mismatches.add(seen)
+            log.warning("generation store: %s", resolution.mismatch)
+    if resolution.backend == GIT_BACKEND:
         from zicato.epoch.git_genstore import GitGenerationStore  # noqa: PLC0415
 
         return GitGenerationStore(workspace_root)
@@ -795,6 +951,7 @@ def default_generation_store(workspace_root: Path) -> GenerationStore:
 __all__ = [
     "GenerationStore",
     "DirectoryGenerationStore",
+    "BackendResolution",
     "EphemeralCheckout",
     "TreeEntry",
     "PatchRecord",
@@ -802,7 +959,13 @@ __all__ = [
     "EPHEMERAL_SNAPSHOT_PREFIX",
     "STORAGE_BACKEND_KEY",
     "DEFAULT_STORAGE_BACKEND",
+    "DIRECTORY_BACKEND",
+    "GIT_BACKEND",
+    "GIT_REPO_DIRNAME",
+    "KNOWN_STORAGE_BACKENDS",
+    "SNAPSHOT_DIRNAME",
     "copy_checkout_ephemeral",
     "default_generation_store",
     "discard_ephemeral_parent",
+    "resolve_generation_store_backend",
 ]

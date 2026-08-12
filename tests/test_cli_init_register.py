@@ -43,6 +43,27 @@ def test_init_creates_workspace(tmp_path: Path) -> None:
     assert load_lineage(workspace) == {"epochs": []}
 
 
+def test_init_records_the_storage_backend(tmp_path: Path) -> None:
+    """A new workspace records which generation store it is built on.
+
+    The backend a workspace uses is a durable property of its contents,
+    so it is written at creation rather than inferred later from a
+    default that can change under an existing workspace (issue #204).
+    """
+    from zicato.epoch.genstore import (
+        DEFAULT_STORAGE_BACKEND,
+        STORAGE_BACKEND_KEY,
+        resolve_generation_store_backend,
+    )
+
+    workspace = tmp_path / ".zicato"
+    runner = CliRunner()
+    assert runner.invoke(init_cmd, ["--workspace", str(workspace)]).exit_code == 0
+    config = json.loads((workspace / CONFIG_FILENAME).read_text())
+    assert config[STORAGE_BACKEND_KEY] == DEFAULT_STORAGE_BACKEND
+    assert resolve_generation_store_backend(workspace).source == "config"
+
+
 def test_init_default_instance_id(tmp_path: Path) -> None:
     workspace = tmp_path / ".zicato"
     runner = CliRunner()

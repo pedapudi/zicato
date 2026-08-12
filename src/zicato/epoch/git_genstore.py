@@ -86,6 +86,7 @@ from zicato.core.types import Patch
 from zicato.epoch.genstore import (
     EPHEMERAL_SCRATCH_DIRNAME,
     EPHEMERAL_SNAPSHOT_PREFIX,
+    GIT_REPO_DIRNAME,
     EphemeralCheckout,
     PatchRecord,
     TreeEntry,
@@ -171,7 +172,9 @@ class GitGenerationStore:
     """
 
     #: Subdirectory of the workspace holding the private generation repo.
-    REPO_DIRNAME = "repo"
+    #: Shared with the backend-resolution evidence probe, which reads this
+    #: directory's ``.git`` as the mark of a git-backed workspace.
+    REPO_DIRNAME = GIT_REPO_DIRNAME
     #: Subdirectory holding materialised per-generation worktrees.
     WORKTREES_DIRNAME = "repo-worktrees"
 

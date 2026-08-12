@@ -42,7 +42,8 @@ def initialize_workspace(
     Layout produced:
 
     * ``{workspace_root}/`` (directory)
-    * ``{workspace_root}/config.json`` — ``{instance_id, created_at}``
+    * ``{workspace_root}/config.json`` — ``{instance_id, created_at,
+      storage_backend}``
     * ``{workspace_root}/lineage.json`` — empty DAG: ``{"epochs": []}``
       (the shape :func:`zicato.epoch.lineage.load_lineage` reads; the
       seed used to be ``{"nodes": [], "edges": []}``, which the loader
@@ -69,9 +70,20 @@ def initialize_workspace(
     if force or not lineage_path.exists():
         lineage_path.write_text(json.dumps({"epochs": []}, indent=2, sort_keys=True) + "\n")
 
+    # The generation-store backend is recorded, not left to the default.
+    # Which store a workspace's generations live in is a durable property
+    # of the workspace: writing it here means a later change to
+    # DEFAULT_STORAGE_BACKEND cannot re-interpret a workspace that already
+    # exists.
+    from zicato.epoch.genstore import (  # noqa: PLC0415
+        DEFAULT_STORAGE_BACKEND,
+        STORAGE_BACKEND_KEY,
+    )
+
     config: dict[str, Any] = {
         "instance_id": instance_id,
         "created_at": _utcnow_iso(),
+        STORAGE_BACKEND_KEY: DEFAULT_STORAGE_BACKEND,
     }
     write_workspace_config(workspace_root, config)
 

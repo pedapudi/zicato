@@ -231,7 +231,39 @@ backend-neutral API the dashboard Files view consumes (§7.4). It is
 
 The orchestrator's snapshot helpers go through a `GenerationStore`;
 `default_generation_store(workspace_root)` is the single construction
-seam, selecting the backend off `config.json`'s `storage_backend` knob.
+seam. It selects the backend through
+`resolve_generation_store_backend(workspace_root)`, in this order:
+
+1. **Explicit config.** `config.json`'s `storage_backend` knob, when
+   present, is the operator's stated intent and wins. A knob naming
+   anything other than `git` or `directory` raises rather than falling
+   through to a backend nobody asked for.
+2. **On-disk evidence.** With no knob, the workspace's own contents
+   decide. A `repo/.git` means the git backend wrote it. Generation
+   records with no repository mean the directory backend wrote it — a
+   git-backed workspace that has produced any generation necessarily has
+   a repository, and snapshot GC prunes `snapshot/` directories but never
+   the repository, so "records, no repo" stays directory evidence even
+   after every snapshot has been pruned.
+3. **Default.** A workspace holding no generations has nothing to go on,
+   so `DEFAULT_STORAGE_BACKEND` decides.
+
+Evidence outranks the default because the default is a *global* constant.
+Reading a knobless workspace through it re-interprets every workspace ever
+created whenever it changes — which is how directory-snapshot workspaces
+predating the git default came to be read as empty git ones, listing zero
+generations with every snapshot intact on disk. A workspace's backend is a
+property of what that workspace already holds, and does not move under it.
+
+A resolution that contradicts the disk — an explicit knob naming a backend
+whose store is absent while the other's is present, or both stores present
+at once — still stands, and carries a `mismatch` sentence that
+`default_generation_store` logs at warning level. The disagreement is never
+silent.
+
+`zicato init` writes `storage_backend` into a new workspace's
+`config.json`, so a workspace created today is decided by rule 1 forever
+and a later change of default cannot re-interpret it.
 
 #### 5.2.1 The mutable surface is code-only — artifact exclusion
 

@@ -20,9 +20,11 @@ from pathlib import Path
 
 from zicato.core.types import Patch
 from zicato.epoch.genstore import (
+    DEFAULT_STORAGE_BACKEND,
     DirectoryGenerationStore,
     GenerationStore,
     default_generation_store,
+    resolve_generation_store_backend,
 )
 
 # ---------------------------------------------------------------------------
@@ -99,6 +101,124 @@ def test_default_generation_store_honours_directory_knob(tmp_path: Path) -> None
     store = default_generation_store(tmp_path)
     assert isinstance(store, DirectoryGenerationStore)
     assert store.workspace_root == tmp_path
+
+
+# ---------------------------------------------------------------------------
+# backend resolution — explicit knob > on-disk evidence > default
+# ---------------------------------------------------------------------------
+
+
+def _directory_backed(workspace_root: Path, *, epoch_id: str = "e0") -> None:
+    """Give ``workspace_root`` a directory backend's on-disk shape."""
+    (workspace_root / "epochs" / epoch_id / "generations" / "v0" / "snapshot").mkdir(parents=True)
+
+
+def _git_backed(workspace_root: Path) -> None:
+    """Give ``workspace_root`` a git backend's on-disk shape."""
+    (workspace_root / "repo" / ".git").mkdir(parents=True)
+
+
+def test_knobless_workspace_with_snapshots_resolves_to_the_directory_backend(
+    tmp_path: Path,
+) -> None:
+    """A workspace predating the knob is read by the backend that wrote it.
+
+    The reported failure (issue #204): a workspace whose generations are
+    directory snapshots, with no ``storage_backend`` in ``config.json``,
+    fell through to the git default, whose ``list_generations`` returned
+    ``[]`` for the absent repo — every generation-listing surface empty
+    for an intact workspace.
+    """
+    _directory_backed(tmp_path)
+    resolution = resolve_generation_store_backend(tmp_path)
+    assert resolution.backend == "directory"
+    assert resolution.source == "evidence"
+    assert resolution.mismatch is None
+    assert isinstance(default_generation_store(tmp_path), DirectoryGenerationStore)
+    assert default_generation_store(tmp_path).list_generations("e0") == ["v0"]
+
+
+def test_knobless_workspace_with_a_repo_stays_on_the_git_backend(tmp_path: Path) -> None:
+    """The reverse case: git evidence keeps a knobless workspace on git."""
+    from zicato.epoch.git_genstore import GitGenerationStore
+
+    _git_backed(tmp_path)
+    # A git-backed workspace keeps generation *records* on disk; only the
+    # source tree lives in the repo, so there is no ``snapshot/``.
+    (tmp_path / "epochs" / "e0" / "generations" / "v0").mkdir(parents=True)
+    resolution = resolve_generation_store_backend(tmp_path)
+    assert resolution.backend == "git"
+    assert resolution.source == "evidence"
+    assert resolution.mismatch is None
+    assert isinstance(default_generation_store(tmp_path), GitGenerationStore)
+
+
+def test_generations_without_a_repo_resolve_to_the_directory_backend(tmp_path: Path) -> None:
+    """Snapshot GC removes ``snapshot/``; the absent repo still rules git out.
+
+    A git-backed workspace that has produced any generation necessarily
+    has ``repo/.git`` — the repo is never pruned. So generation records
+    plus no repo is directory evidence even after every snapshot has been
+    pruned.
+    """
+    (tmp_path / "epochs" / "e0" / "generations" / "v0").mkdir(parents=True)
+    resolution = resolve_generation_store_backend(tmp_path)
+    assert resolution.backend == "directory"
+    assert resolution.source == "evidence"
+
+
+def test_workspace_without_generations_resolves_to_the_default(tmp_path: Path) -> None:
+    """A fresh workspace has no evidence either way, so the default decides."""
+    resolution = resolve_generation_store_backend(tmp_path)
+    assert resolution.backend == DEFAULT_STORAGE_BACKEND
+    assert resolution.source == "default"
+    assert resolution.mismatch is None
+
+
+def test_the_knob_wins_over_contradicting_evidence_and_names_the_mismatch(
+    tmp_path: Path,
+) -> None:
+    """An explicit knob is the operator's stated intent — honoured, but loud."""
+    import json
+
+    _directory_backed(tmp_path)
+    (tmp_path / "config.json").write_text(json.dumps({"storage_backend": "git"}), encoding="utf-8")
+    resolution = resolve_generation_store_backend(tmp_path)
+    assert resolution.backend == "git"
+    assert resolution.source == "config"
+    assert resolution.mismatch is not None
+    assert "directory" in resolution.mismatch
+
+
+def test_both_stores_present_without_a_knob_names_the_ambiguity(tmp_path: Path) -> None:
+    """Two stores on disk is a real ambiguity: pick the repo, say so."""
+    _git_backed(tmp_path)
+    _directory_backed(tmp_path)
+    resolution = resolve_generation_store_backend(tmp_path)
+    assert resolution.backend == "git"
+    assert resolution.source == "evidence"
+    assert resolution.mismatch is not None
+    assert "storage_backend" in resolution.mismatch
+
+
+def test_an_unknown_backend_name_is_refused(tmp_path: Path) -> None:
+    """A misspelt knob used to resolve silently to the directory backend."""
+    import json
+
+    import pytest
+
+    (tmp_path / "config.json").write_text(json.dumps({"storage_backend": "gti"}), encoding="utf-8")
+    with pytest.raises(ValueError, match="'gti'"):
+        resolve_generation_store_backend(tmp_path)
+
+
+def test_a_malformed_config_falls_back_to_evidence(tmp_path: Path) -> None:
+    """A config the loader cannot read must not decide the backend."""
+    (tmp_path / "config.json").write_text("{not json", encoding="utf-8")
+    _directory_backed(tmp_path)
+    resolution = resolve_generation_store_backend(tmp_path)
+    assert resolution.backend == "directory"
+    assert resolution.source == "evidence"
 
 
 # ---------------------------------------------------------------------------
