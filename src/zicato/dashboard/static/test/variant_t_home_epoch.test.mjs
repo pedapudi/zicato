@@ -307,7 +307,16 @@ test('generations view: the FIELD renders as the structure-flow graphic (duelFlo
   // the dot is hovercard-wired and the hypothesis text is NOT in the visible DOM.
   const dots = allByClass(flow, 'dn-duelflow-dot');
   assert(dots.length >= 2 && dots.every((d) => d.getAttribute('data-hovercard') === '1'), 'each challenger dot is hovercard-wired (hypothesis + Δ on hover)');
-  assert(!host.textContent.includes('Enforce explicit slide-structure output'), 'the hypothesis is NOT a visible box/label — it lives on the hovercard');
+  assert(!flow.textContent.includes('Enforce explicit slide-structure output'), 'the hypothesis is NOT a visible box/label IN THE FIGURE — there it lives on the hovercard');
+
+  // DELIBERATE CHANGE (#194 §3): the hypothesis IS now visible on the page —
+  // threaded as a dim second line on the ROSTER rows, so a table of ids also
+  // says what each candidate tried. The FIGURE still keeps it on hover (above);
+  // this assertion pins the thread so the two placements cannot be confused.
+  const threaded = allByClass(host, 'dn-coreidea');
+  assert(threaded.length >= 1, 'the roster threads each candidate’s core idea as a dim second line');
+  assert(threaded.some((n) => (n.getAttribute('title') || '').includes('Enforce explicit slide-structure output')),
+    'the threaded line carries the FULL core idea on hover (the visible text is truncated)');
 });
 
 // ---- (d) match cards must NOT appear on the environment / workspace view ----

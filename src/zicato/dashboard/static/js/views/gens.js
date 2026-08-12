@@ -27,7 +27,7 @@ import { el } from '../core/dom.js';
 import { state } from '../core/state.js';
 import * as D from '../data.js';
 import * as svg from '../svg.js';
-import { gatedSwap, section, empty, verdictPill, decisionFor, decisionOf, dataTable, deltaCell, ratingCellEl, ratingTripleDigest } from '../ui.js';
+import { gatedSwap, section, empty, verdictPill, decisionFor, decisionOf, dataTable, deltaCell, ratingCellEl, ratingTripleDigest, coreIdeaLine } from '../ui.js';
 import { renderStructure, structurePill, structureDigest, isNonGauntlet, normalizeStructure, resolveNonGauntletSt } from './structure.js';
 import { livenessFor } from '../livestatus.js';
 import { roundsFromTimeline, roundModelDigest } from '../rounds.js';
@@ -139,6 +139,13 @@ export async function render(host, ctx, params) {
     ? D.gate(id, m.champion, m.challenger) : Promise.resolve(null)));
   const promotedCount = gens.filter((g) => g.promoted).length;
 
+  // {gid: core idea} — the roster names ids; the ledger names IDEAS (§3). The
+  // per-matchup feed already carries each challenger's `hypothesis_core_idea`
+  // (the bracket reader joins it), with the epoch's own experiment records as
+  // the fallback for a generation that never reached a matchup. A generation
+  // with neither simply threads no line.
+  const ideaByGen = coreIdeaMap(matchups, experiments);
+
   const digest = JSON.stringify({
     id, championId,
     champScalar: svg.isNum(champScalar) ? champScalar.toFixed(3) : null,
@@ -149,7 +156,10 @@ export async function render(host, ctx, params) {
     gens: gens.map((g) => [g.id, g.parent, g.promoted, scalarByGen.has(g.id) ? scalarByGen.get(g.id).toFixed(3) : null,
       // the visibility rating (int register) — a reindex that moves a rating
       // repaints; an unrated row folds null (pre-rating digest shape).
-      ratingTripleDigest(g)]),
+      ratingTripleDigest(g),
+      // the threaded core idea — rendered, so folded (a hypothesis landing on a
+      // freshly-minted row repaints it; a no-op beat stays byte-identical).
+      (ideaByGen.get(String(g.id)) || '').slice(0, 96)]),
   });
 
   gatedSwap(host, digest, () => {
@@ -186,7 +196,10 @@ export async function render(host, ctx, params) {
           return {
             class: g.promoted ? 'dn-board-champ' : '',
             cells: [
-              { class: 'dn-mono', text: g.id + (g.promoted ? ' ♛' : '') },
+              { class: 'dn-mono', el: [
+                el('span', { text: g.id + (g.promoted ? ' ♛' : '') }),
+                coreIdeaLine(ideaByGen.get(String(g.id))),
+              ].filter(Boolean) },
               { el: verdictPill(decision) },
               { class: 'dn-mono', text: g.parent || 'seed' },
               { class: 'dn-num dn-mono', text: svg.isNum(sc) ? svg.fmt(sc, 1) : '—' },
@@ -448,6 +461,26 @@ async function renderConfiguredStructure(host, ctx, id, ep, bracket, structure, 
     for (const n of renderStructure(shown, ctx, id)) nodes.push(n);
     return nodes;
   });
+}
+
+// {gid: core idea} for the roster thread. The per-matchup feed is preferred
+// (`hypothesis_core_idea`, joined by the bracket reader); the epoch's own
+// experiment records fill in a generation that never reached a matchup — the
+// seed, or a challenger minted but not yet raced. PURE (node-testable).
+export function coreIdeaMap(matchups, experiments) {
+  const by = new Map();
+  for (const x of (Array.isArray(experiments) ? experiments : [])) {
+    const gid = x && x.generation_id;
+    const idea = x && x.hypothesis && x.hypothesis.core_idea;
+    if (gid != null && typeof idea === 'string' && idea.trim()) by.set(String(gid), idea.trim());
+  }
+  // the matchup feed wins: it is the settled record of what ran.
+  for (const m of (Array.isArray(matchups) ? matchups : [])) {
+    const gid = m && m.challenger;
+    const idea = m && m.hypothesis_core_idea;
+    if (gid != null && typeof idea === 'string' && idea.trim()) by.set(String(gid), idea.trim());
+  }
+  return by;
 }
 
 // The gauntlet FIELD as a structure-flow GRAPHIC (replaces the boxed champion

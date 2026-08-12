@@ -1236,6 +1236,66 @@
   .dn-rule-caution .dn-rule-status { color: var(--v2-caution); }
   .dn-rule-detail { font-size: calc(11px * var(--dt-font-scale, 1)); line-height: 1.4; }
 
+  /* the DEFENDED rounds (#194 §4): the gate that decided THIS candidate leads
+     at full detail; the rounds it merely survived collapse to summary rows. The
+     nested gate panel loses its own frame so an expanded defence reads as part
+     of the list, not a panel inside a panel. */
+  .dn-gate-defence { border-bottom: 1px solid var(--v2-rule-soft); }
+  .dn-gate-defence:last-of-type { border-bottom: none; }
+  .dn-gate-defence > summary { display: flex; align-items: center; gap: 10px; padding: 7px 2px;
+    cursor: pointer; list-style: none; font-size: calc(12px * var(--dt-font-scale, 1)); }
+  .dn-gate-defence > summary::-webkit-details-marker { display: none; }
+  .dn-gate-defence > summary .chev { color: var(--v2-ink-faint); transition: transform 0.12s; }
+  .dn-gate-defence[open] > summary .chev { transform: rotate(90deg); }
+  .dn-gate-defence-vs { color: var(--v2-ink); }
+  .dn-gate-defence-delta { font-variant-numeric: tabular-nums; margin-left: auto; }
+  .dn-gate-defence > .dn-panel { border: none; background: none; padding: 2px 0 10px 18px; }
+
+  /* ===================  the candidate's IDENTITY (#194 §4)  =================== */
+  /* A candidate IS its idea, so the idea opens the dossier: the core idea in
+     the reading face, the reasoning under it, then the falsifiable claims and
+     the sites the patch touched. Quiet register — no chips, no new hues. */
+  .dn-proposal { display: flex; flex-direction: column; gap: 8px; }
+  .dn-proposal-idea { font-size: calc(15px * var(--dt-font-scale, 1)); line-height: 1.4; color: var(--v2-ink); }
+  .dn-proposal-why { font-size: calc(12.5px * var(--dt-font-scale, 1)); line-height: 1.5;
+    color: var(--v2-ink-soft); margin: 0; max-width: 88ch; }
+  .dn-proposal-movements, .dn-proposal-sites { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 14px;
+    font-size: calc(11.5px * var(--dt-font-scale, 1)); }
+  .dn-proposal-lab { text-transform: uppercase; letter-spacing: 0.06em;
+    font-size: calc(10px * var(--dt-font-scale, 1)); min-width: 6ch; }
+  .dn-proposal-mv, .dn-proposal-site { white-space: nowrap; }
+  .dn-proposal-dir { color: var(--v2-ink-soft); }
+  .dn-proposal-size { display: flex; align-items: baseline; gap: 12px; margin: 0;
+    font-size: calc(11px * var(--dt-font-scale, 1)); }
+  .dn-proposal-risks { margin: 0; font-size: calc(11px * var(--dt-font-scale, 1)); line-height: 1.45; max-width: 88ch; }
+
+  /* the ONE-LINE verdict sentence, directly under the proposal: decision ·
+     deciding rule · what regressed · how far from the margin. The decision
+     earns the tone (dn-good-t / dn-bad-t); the line itself adds no colour. */
+  .dn-verdictline { font-family: var(--v2-mono); font-size: calc(12.5px * var(--dt-font-scale, 1));
+    margin: 8px 0 0; line-height: 1.45; }
+
+  /* ===================  the EXPERIMENTS LEDGER (#194 §3)  =================== */
+  .dn-ledger-table td { vertical-align: top; }
+  .dn-ledger-ideacell { max-width: 44ch; }
+  /* the core idea clips to one line and expands IN PLACE — a quiet text button,
+     never an accent link (it navigates nowhere). */
+  .dn-ledger-idea { background: none; border: none; padding: 0; margin: 0; cursor: pointer;
+    text-align: left; font: inherit; color: var(--v2-ink); line-height: 1.4; }
+  .dn-ledger-idea:hover { color: var(--v2-accent); }
+  .dn-ledger-idea-open { white-space: normal; }
+  .dn-ledger-idea-flat { line-height: 1.4; }
+  .dn-ledger-sites { max-width: 30ch; }
+  .dn-ledger-site, .dn-ledger-site-more { display: block; font-size: calc(11px * var(--dt-font-scale, 1));
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .dn-ledger-reason { max-width: 40ch; font-size: calc(11px * var(--dt-font-scale, 1)); line-height: 1.4; }
+
+  /* the threaded CORE IDEA (#194 §3): a candidate's one-line hypothesis as a
+     dim second line under its id, on standings + roster + ledger rows. */
+  .dn-coreidea { display: block; font-family: var(--v2-sans); font-weight: 400;
+    font-size: calc(10.5px * var(--dt-font-scale, 1)); line-height: 1.35; margin-top: 2px;
+    max-width: 46ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
   /* ===================  scalar provenance decomposition (#19)  =================== */
   /* WHICH transform / plugin produced the scalar's pass term + drift component,
      parsed from the recorded provenance tokens. Renders only when a transform /

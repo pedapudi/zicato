@@ -129,6 +129,9 @@ from zicato.query.judge_view import (
     build_workspace_identity,
     resolve_run_id_for_entry,
 )
+from zicato.query.ledger_view import (
+    build_experiments_ledger,
+)
 from zicato.query.lineage_view import (
     build_lineage_view,
 )
@@ -360,6 +363,7 @@ __all__ = [
     "build_epochs_summary",
     "build_calibration_trend",
     "build_expectation_outcomes_for_run",
+    "build_experiments_ledger",
     "build_gate_breakdown",
     "build_hypothesis_accuracy",
     "build_rating_view",

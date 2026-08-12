@@ -926,6 +926,21 @@ export function pill(cls, word, extra) {
   return el('span', { class: c, text: word == null ? '' : String(word) });
 }
 
+// coreIdeaLine(idea) — the one-line HYPOTHESIS thread (issue #194 §3): a
+// candidate's core idea folded onto a standings / roster / ledger row as a dim
+// second line, so a row of ids also says what each one TRIED. An ABSENT idea
+// renders NOTHING (null) rather than a '—' that would read like a recorded
+// blank — a candidate with no hypothesis is silent, not empty-handed.
+export function coreIdeaLine(idea, chars) {
+  const text = (typeof idea === 'string' && idea.trim()) ? idea.trim() : null;
+  if (!text) return null;
+  return el('span', {
+    class: 'dn-coreidea dn-faint',
+    title: text,
+    text: truncate(text, _isNum(chars) ? chars : 72),
+  });
+}
+
 // hovercardBody(...children) — the `dn-hc-body` wrapper the seven hovercard
 // sites build by hand. Falsy children are dropped (matching the `.filter(Boolean)`
 // some sites already applied); a single array argument is also accepted (the

@@ -16,6 +16,7 @@ import { gatedSwap, section, empty, stat, renderMarkdown, densityTokens, chip, d
 import { structurePill, isNonGauntlet, structureLabel, normalizeStructure, racingModel, swissOverviewModel, elimModel, resolveNonGauntletSt, structureDigest } from './structure.js';
 import { roundsFromTimeline, roundModelDigest, waterfallSteps } from '../rounds.js';
 import { boardStatusModel, boardStatusDigest, renderBoardStatus } from './boardstatus.js';
+import { buildExperimentsLedger, ledgerDigest } from './ledger.js';
 
 // The user's last expand/collapse of the proposer brief, keyed by epoch. The
 // epoch view is digest-gated: a live heartbeat that moves ANY data rebuilds the
@@ -50,8 +51,12 @@ export async function render(host, ctx, params) {
   // + endpoint shipped long ago with zero view consumers — this is its view).
   // All null-degrade (the Rust supervisor serves none of the three) → the
   // panels are simply omitted.
-  const [loopTraj, loopCost, judgeTrend] = await Promise.all([
+  // The EXPERIMENTS LEDGER (§3) rides the same fan-out: one row per experiment
+  // (idea · sites · decision · Δ · reason · round), joined server-side. Null on
+  // a backend that does not serve it → the section is simply omitted.
+  const [loopTraj, loopCost, judgeTrend, ledger] = await Promise.all([
     D.trajectory(epochId), D.tournamentCost(epochId), D.perJudgeTrend(epochId),
+    D.experimentsLedger(epochId),
   ]);
 
   // THE EPOCH-SCOPED GENERATIONS FEED (server-scoped `/api/lineage?epoch=`),
@@ -249,6 +254,7 @@ export async function render(host, ctx, params) {
     loopTraj: trajectoryPanelDigest(loopTraj),
     loopCost: costPanelDigest(loopCost),
     judgeTrend: judgeTrendDigest(judgeTrend),
+    ledger: ledgerDigest(ledger),
   });
 
   gatedSwap(host, digest, () => {
@@ -308,6 +314,20 @@ export async function render(host, ctx, params) {
     ]);
     // Capture the user's expand/collapse so the next re-render restores it.
     briefDetails.addEventListener('toggle', () => { _briefOpen.set(epochId, !!briefDetails.open); });
+
+    // ---- THE EXPERIMENTS LEDGER (§3) — the epoch's roster of ideas ----
+    // One row per experiment: the idea, the sites it touched, the verdict, its
+    // Δ, and the reason. WHERE it sits is the point: a CLOSED epoch IS its
+    // ledger — the whole story, settled — so it leads the page; an OPEN epoch's
+    // live question is "what is happening now", so there the ledger follows the
+    // round timeline. Null (a backend that does not serve the read) → omitted.
+    const ledgerPanel = buildExperimentsLedger(ledger, {
+      epochId, hrefFor: (gen) => ctx.href('candidate', { epochId, gen }),
+    });
+    const ledgerSection = ledgerPanel
+      ? section('Experiments · every idea this epoch tried', ledgerPanel) : null;
+    if (ledgerSection && ep.closed) nodes.push(ledgerSection);
+
     nodes.push(section('Operator’s brief to the proposer', briefDetails));
 
     // ---- the CHAMPION-SPINE ROUND TIMELINE (the epoch overview hero) ----
@@ -412,6 +432,9 @@ export async function render(host, ctx, params) {
       ? 'Round timeline · ' + structureLabel(structure, params)
       : `Round timeline · the champion spine across ${epochRounds.length} rounds · ` + structureLabel(structure, params),
       timelineCard));
+
+    // an OPEN epoch's ledger follows the timeline (see its construction above).
+    if (ledgerSection && !ep.closed) nodes.push(ledgerSection);
 
     // ---- LOOP COMMUNICATION: the optimization trajectory + tournament cost ----
     // Rendered only when the read resolved with content (absent endpoint /

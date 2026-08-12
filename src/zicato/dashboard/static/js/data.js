@@ -321,6 +321,14 @@ export async function racingField(epochId) {
 export function perJudgeTrend(epochId) {
   return cachedJson(`/api/epoch/${enc(epochId)}/per-judge-trend`);
 }
+// The EXPERIMENTS LEDGER for one epoch — one row per experiment (idea, sites
+// touched, decision, Δscalar, rejection reason, round), joined SERVER-side
+// (build_experiments_ledger) from the index. Epoch-prefixed, so the live bust
+// refetches it as rounds settle; a pre-feature backend (no such endpoint)
+// null-degrades and the epoch page simply omits the section.
+export function experimentsLedger(epochId) {
+  return cachedJson(`/api/epoch/${enc(epochId)}/experiments-ledger`);
+}
 // The promoted-lineage OPTIMIZATION TRAJECTORY for one epoch — scalar points
 // along the winners spine + promotion_rate + the UNCERTAINTY-HONEST verdict
 // ("improving" only when the promoted spine actually advanced / "plateaued" /

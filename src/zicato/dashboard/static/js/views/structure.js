@@ -5,7 +5,7 @@
 
 import { el, svgEl } from '../core/dom.js';
 import * as svg from '../svg.js';
-import { section, empty, stat, verdictPill, overrideChip, overrideDigest, overrideControlCell, pendingOverride, pendingOverrideDigest, clearPendingOverride, chip, hovercardBody, dataTable, deltaCell, ratingCellEl, ratingTripleDigest } from '../ui.js';
+import { section, empty, stat, verdictPill, overrideChip, overrideDigest, overrideControlCell, pendingOverride, pendingOverrideDigest, clearPendingOverride, chip, hovercardBody, dataTable, deltaCell, ratingCellEl, ratingTripleDigest, coreIdeaLine } from '../ui.js';
 import { structureStatusLabel } from '../livestatus.js';
 import { attachHovercard } from '../hovercard.js';
 import { state } from '../core/state.js';
@@ -357,7 +357,9 @@ export function structureDigest(st) {
     // the proposing-step field — so the "Proposed field" section's gated
     // swap fires when a challenger is minted / applied / rejected, but stays
     // stable on a no-op heartbeat.
-    field_status: (Array.isArray(st.field_status) ? st.field_status : []).map((f) => [f && f.generation_id, f && f.status]),
+    // (the CORE IDEA slice rides along: it is what the standings rows thread as
+    // their dim second line, and a rendered field belongs in the digest.)
+    field_status: (Array.isArray(st.field_status) ? st.field_status : []).map((f) => [f && f.generation_id, f && f.status, ((f && f.hypothesis) || '').slice(0, 96)]),
     // the live champion aggregate scalar — anchors the racing scalar track /
     // gauntlet field bars; ROUNDED so a no-op beat stays byte-identical but a
     // real champion-scalar move repaints (anti-flash).
@@ -2259,6 +2261,11 @@ function standingsTable(st, ctx, epochId, live) {
   // attached for a real field with the diversity block (≥2 challengers) → no
   // badge on a gauntlet / single-challenger / pre-feature run (byte-identical).
   const divStatus = diversityStatusByGen(st);
+  // the per-challenger CORE IDEA (§3): the proposing step already records each
+  // applied challenger's one-line hypothesis on its field_status row, and a
+  // standing that names only an id makes the operator open the candidate to
+  // learn what it even tried. Threaded as a dim second line under the id.
+  const ideaByGen = coreIdeaByGen(st);
   // the advanced SET at settle (supports MULTIPLE promoted / ties) — resolves the
   // DRAINED state for an optimistic stamp that never landed.
   const promotedSet = (st && Array.isArray(st.promoted_generation_ids))
@@ -2378,7 +2385,10 @@ function standingsTable(st, ctx, epochId, live) {
       class: rowCls,
       cells: [
         { class: 'dn-mono', text: svg.isNum(s.rank) ? String(s.rank) : '—' },
-        { class: 'dn-mono', text: (s.generation_id || '—') + (status === 'champion' ? ' ' + CROWN.current : '') },
+        { class: 'dn-mono', el: [
+          el('span', { text: (s.generation_id || '—') + (status === 'champion' ? ' ' + CROWN.current : '') }),
+          coreIdeaLine(ideaByGen ? ideaByGen[gidStr] : null),
+        ].filter(Boolean) },
         { el: [statusPill(status), ovChip, divBadge] },
         scalarCell,
         // the visibility rating (server-joined BT triple; never the gate):
@@ -2453,6 +2463,22 @@ function statusPill(status) {
 // {gid: diversity_status} off the field_status records, ONLY when the diversity
 // block is attached (a real ≥2-challenger field). Absent / single-challenger /
 // pre-feature → null → no per-row badge (byte-identical to today).
+// {gid: core_idea} off the field_status records — the applied challenger's
+// one-line hypothesis, recorded by the proposing step. null when no slot
+// carries one (gauntlet / a pre-feature record), so the standings rows are
+// byte-identical to before the thread existed.
+function coreIdeaByGen(st) {
+  if (!st || !Array.isArray(st.field_status)) return null;
+  const by = {};
+  let any = false;
+  for (const f of st.field_status) {
+    if (!f || typeof f !== 'object' || f.generation_id == null) continue;
+    const idea = (typeof f.hypothesis === 'string' && f.hypothesis.trim()) ? f.hypothesis.trim() : null;
+    if (idea) { by[String(f.generation_id)] = idea; any = true; }
+  }
+  return any ? by : null;
+}
+
 function diversityStatusByGen(st) {
   if (!st || !st.diversity || !Array.isArray(st.field_status)) return null;
   const by = {};
