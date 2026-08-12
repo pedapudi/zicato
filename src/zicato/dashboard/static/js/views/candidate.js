@@ -378,6 +378,9 @@ async function resolveCandidate(epochId, genId, genList, experiments, scalarByGe
   return {
     node, baseline, decision, mpts, entries, meanScore, facetScores, mine, gateSpecs, gates,
     judgeComparisons, finalOpponent,
+    // the candidate's IDENTITY (§4): the proposer's own idea, reasoning,
+    // falsifiable claims and the sites it patched. Null for the seed.
+    proposal: buildProposalModel(exp),
     primaryDelta, championId, championScalar, scalarByGen, progression,
     championLoss, championSigma, candidateSigma, deltaSigma, gateExplain,
     entryParam, exps, judges, drillRow, drillHeader, inflight, cached, cachedProvenance,
@@ -540,6 +543,198 @@ export function buildRadarModel({ primaryGate, championScalar, settledScalar, pr
 // predicate / namespace (parsed from that rule's detail). This is the data that
 // resolves "smaller Σ but rejected": a challenger can lose on rule 2 / 3 even
 // when its scalar is better.
+// ══ THE CANDIDATE'S IDENTITY (issue #194 §4) ════════════════════════════════
+//
+// A candidate IS its idea. The dossier used to open on "born from v0 by a
+// patch" — true of every candidate ever minted, and therefore about none of
+// them — while the core idea, the reasoning, the predicted movements and the
+// sites it touched were scattered across other pages. These three builders
+// put the identity at the top and the verdict directly under it.
+
+// The PROPOSAL model for one experiment record: the proposer's own words +
+// its falsifiable claims + the sites its patches touched. PURE (node-testable).
+// Null when the record carries no proposal at all (the seed / an unread
+// experiment), so the header is simply omitted rather than rendering a
+// scaffold of dashes.
+export function buildProposalModel(exp) {
+  if (!exp || typeof exp !== 'object') return null;
+  const hyp = (exp.hypothesis && typeof exp.hypothesis === 'object') ? exp.hypothesis : {};
+  const text = (v) => (typeof v === 'string' && v.trim()) ? v.trim() : null;
+  const list = (v) => (Array.isArray(v) ? v : []);
+
+  // The falsifiable claims, in the grader's own precedence: a namespaced
+  // metric movement wins over a drift movement naming the same target
+  // (query/hypothesis_view.py `_expected_index`), so this header can never
+  // show a claim the prediction scorecard scored under a different name.
+  const movements = [];
+  const seen = new Set();
+  for (const mv of list(hyp.expected_metric_movements)) {
+    const target = mv && text(mv.metric_name);
+    if (!target || seen.has(target)) continue;
+    seen.add(target);
+    movements.push({ target, kind: 'metric', direction: mv.direction || null, magnitude: mv.magnitude || null });
+  }
+  for (const mv of list(hyp.expected_drift_movements)) {
+    const target = mv && text(mv.kind);
+    if (!target || seen.has(target)) continue;
+    seen.add(target);
+    movements.push({ target, kind: 'drift', direction: mv.direction || null, magnitude: mv.magnitude || null });
+  }
+
+  // The SITES: the patch records the experiment actually carries, keyed by
+  // mutation id. A proposal whose patches were not read back falls through to
+  // the hypothesis's own DECLARED `modulating` ids — named as declared, with
+  // no op, because we do not know how they were edited.
+  const patches = (exp.patches && typeof exp.patches === 'object') ? exp.patches : {};
+  const patchIds = Object.keys(patches).sort();
+  let sites = patchIds.map((id) => ({ mutation_id: id, op: text(patches[id] && patches[id].op) }));
+  if (!sites.length) sites = list(hyp.modulating).map(String).filter(Boolean).sort().map((id) => ({ mutation_id: id, op: null }));
+
+  // The DIFF SIZE, stated for exactly what it measures: the lines of NEW
+  // content the patches carry. It is not a +/- diff stat — we have the new
+  // side here, not the old — so it is never labelled as one.
+  let newLines = 0;
+  for (const id of patchIds) {
+    const content = patches[id] && patches[id].new_content;
+    if (typeof content === 'string' && content) newLines += content.split('\n').length;
+  }
+
+  const model = {
+    coreIdea: text(hyp.core_idea),
+    why: text(hyp.why),
+    risks: text(hyp.risks),
+    passRateClaim: text(hyp.expected_pass_rate_delta),
+    movements,
+    sites,
+    patchCount: patchIds.length,
+    newLines,
+  };
+  if (!model.coreIdea && !model.why && !movements.length && !sites.length) return null;
+  return model;
+}
+
+// The PROPOSAL HEADER — the top of the dossier. `opts.diffHref` links the
+// sites line to the side-by-side diff (omitted when the caller has no route).
+export function proposalHeader(model, opts) {
+  if (!model) return null;
+  const o = opts || {};
+  const card = el('div', { class: 'dn-panel dn-proposal' });
+
+  card.appendChild(el('div', { class: 'dn-proposal-idea', text: model.coreIdea || '(no core idea recorded)' }));
+  if (model.why) card.appendChild(el('p', { class: 'dn-proposal-why', text: model.why }));
+
+  // the falsifiable claims, in the prediction scorecard's OWN arrow grammar so
+  // the two surfaces read as one prediction seen twice (before / after).
+  if (model.movements.length || model.passRateClaim) {
+    const row = el('div', { class: 'dn-proposal-movements' }, [
+      el('span', { class: 'dn-proposal-lab dn-faint', text: 'expects' }),
+    ]);
+    for (const mv of model.movements) {
+      row.appendChild(el('span', { class: 'dn-proposal-mv', title: mv.kind + ' · ' + (mv.direction || 'no direction') }, [
+        el('span', { class: 'dn-mono', text: mv.target }),
+        el('span', { class: 'dn-proposal-dir', text: ' ' + dirArrow(mv.direction) + (mv.magnitude ? ' ' + mv.magnitude : '') }),
+      ]));
+    }
+    if (model.passRateClaim) {
+      row.appendChild(el('span', { class: 'dn-proposal-mv' }, [
+        el('span', { class: 'dn-mono', text: 'pass rate' }),
+        el('span', { class: 'dn-proposal-dir', text: ' ' + model.passRateClaim }),
+      ]));
+    }
+    card.appendChild(row);
+  }
+
+  // the SITES it touched + how big the edit was, with the diff a click away.
+  const sizeBits = [model.sites.length + (model.sites.length === 1 ? ' site' : ' sites')];
+  if (model.patchCount) sizeBits.push(model.patchCount + (model.patchCount === 1 ? ' patch' : ' patches'));
+  if (model.newLines) sizeBits.push(model.newLines + (model.newLines === 1 ? ' line' : ' lines') + ' of new content');
+  const sitesRow = el('div', { class: 'dn-proposal-sites' }, [
+    el('span', { class: 'dn-proposal-lab dn-faint', text: 'touches' }),
+  ]);
+  if (model.sites.length) {
+    for (const s of model.sites) {
+      sitesRow.appendChild(el('span', { class: 'dn-proposal-site' }, [
+        el('span', { class: 'dn-mono', text: s.mutation_id }),
+        s.op ? el('span', { class: 'dn-faint', text: ' ' + s.op }) : null,
+      ].filter(Boolean)));
+    }
+  } else {
+    sitesRow.appendChild(el('span', { class: 'dn-faint', text: 'no patch recorded' }));
+  }
+  card.appendChild(sitesRow);
+  card.appendChild(el('p', { class: 'dn-proposal-size dn-faint' }, [
+    el('span', { text: sizeBits.join(' · ') }),
+    o.diffHref ? el('a', { class: 'dn-linkbtn dn-proposal-difflink', href: o.diffHref, text: 'see the diff →' }) : null,
+  ].filter(Boolean)));
+  if (model.risks) card.appendChild(el('p', { class: 'dn-proposal-risks dn-faint', text: 'risks · ' + model.risks }));
+  return card;
+}
+
+// THE VERDICT SENTENCE — one line, assembled from STRUCTURED gate fields only:
+// the decision, the rule the server said fired, the entry/namespace/judge that
+// regressed, and how far the Δ landed from the promote margin. Every clause is
+// dropped when its field is absent, so a half-recorded gate produces a SHORTER
+// true sentence and never a fabricated one. `null` when there is no decision to
+// speak of at all. PURE (node-testable).
+//
+// Nothing here reads the rules' free-text `detail` — that string is display-only
+// and parsing it would put a regex between the gate and its own verdict.
+export function verdictSentence(explain) {
+  if (!explain || typeof explain !== 'object') return null;
+  const decision = (typeof explain.decision === 'string' && explain.decision) ? explain.decision : null;
+  if (!decision || decision === 'pending') return null;
+  const parts = [decision];
+  if (explain.decidingLabel) parts.push(String(explain.decidingLabel).toLowerCase());
+  if (explain.regressed) {
+    // A monotonicity rule names something that REGRESSED; `primary_driver`
+    // names the judge that moved the round most, in EITHER direction. Saying
+    // "regressed" about the latter would be false on a promoted candidate,
+    // so the word follows the provenance the gate recorded.
+    const verb = explain.regressedFrom === 'driver' ? 'driver ' : 'regressed ';
+    parts.push(verb + String(explain.regressed));
+  }
+  const margin = marginDistance(explain);
+  if (margin) parts.push(margin);
+  return parts.join(' · ');
+}
+
+// The margin clause: how far the Δ landed from the bar it had to clear. The
+// gate promotes on `delta_scalar <= -margin`, so the signed distance is
+// `delta + margin` — positive = it fell short by that much, negative = it
+// cleared by that much. Null unless BOTH numbers are recorded.
+function marginDistance(explain) {
+  const delta = svg.isNum(explain.deltaScalar) ? explain.deltaScalar : null;
+  const margin = svg.isNum(explain.margin) ? explain.margin : null;
+  if (delta == null || margin == null) return null;
+  const gap = delta + margin;
+  const size = svg.fmt(Math.abs(gap), 3);
+  const bar = svg.fmt(margin, 3) + ' margin';
+  return gap > 0 ? size + ' short of the ' + bar : size + ' clear of the ' + bar;
+}
+
+// The verdict sentence as a node — null when there is no sentence to speak.
+export function verdictSentenceEl(explain) {
+  const text = verdictSentence(explain);
+  if (!text) return null;
+  const decision = explain.decision;
+  const tone = decision === 'promoted' ? ' dn-good-t' : (decision === 'rejected' ? ' dn-bad-t' : '');
+  return el('p', { class: 'dn-verdictline' + tone, text });
+}
+
+// Digest fold for the proposal header: the words + claims + sites that reach
+// the DOM. null (no proposal) contributes nothing — a seed's dossier digest is
+// byte-identical to the pre-feature path.
+export function proposalDigest(model) {
+  if (!model) return null;
+  return [
+    (model.coreIdea || '').slice(0, 200), (model.why || '').slice(0, 200),
+    (model.risks || '').slice(0, 120), model.passRateClaim || null,
+    model.movements.map((m) => [m.target, m.kind, m.direction, m.magnitude]),
+    model.sites.map((s) => [s.mutation_id, s.op]),
+    model.patchCount, model.newLines,
+  ];
+}
+
 function deriveGateExplain(gate) {
   const rules = Array.isArray(gate.rules) ? gate.rules : [];
   const decision = decisionOf(gate) || 'pending';
@@ -555,16 +750,24 @@ function deriveGateExplain(gate) {
   const margin = svg.isNum(gate.margin) ? gate.margin : null;
   let regressed = (typeof gate.regressed_predicate === 'string' && gate.regressed_predicate) ? gate.regressed_predicate
     : ((typeof gate.regressed_namespace === 'string' && gate.regressed_namespace) ? gate.regressed_namespace : null);
-  // the gate's own primary_driver (a judge name) is the fallback regressed
-  // identifier when no monotonicity rule named one.
-  if (!regressed && gate.primary_driver && gate.primary_driver.judge) regressed = gate.primary_driver.judge;
+  // WHERE the named entry came from, because the two sources mean DIFFERENT
+  // things and a reader that conflates them lies about a promoted candidate:
+  // a monotonicity rule names something that actually REGRESSED, while
+  // `primary_driver` names the judge that moved the round MOST — in either
+  // direction. The fallback is kept (the name is the useful fact) but tagged,
+  // so the verdict sentence can say "regressed X" or "driver X" truthfully.
+  let regressedFrom = regressed ? 'rule' : null;
+  if (!regressed && gate.primary_driver && gate.primary_driver.judge) {
+    regressed = gate.primary_driver.judge;
+    regressedFrom = 'driver';
+  }
   return {
     decision,
     decidingRule: decidingId,
     decidingLabel: deciding ? (deciding.label || deciding.id || null) : (decidingId || null),
     // The deciding rule's raw detail string, scope-agnostic — display only.
     detail: deciding ? (deciding.detail || null) : null,
-    deltaScalar, margin, regressed,
+    deltaScalar, margin, regressed, regressedFrom,
     reason: gate.reason || null,
   };
 }
@@ -606,6 +809,12 @@ function candidateDigest(s) {
       s.projected.boards_total == null ? '?' : s.projected.boards_total,
     ] : null,
     mpts: s.mpts,
+    // the PROPOSAL header (§4) — the idea/why/claims/sites that lead the
+    // dossier. null (the seed) contributes nothing → pre-feature digest.
+    proposal: proposalDigest(s.proposal),
+    // the VERDICT SENTENCE assembled from the structured gate fields — folded
+    // so a settling gate rewrites the line and a no-op beat does not.
+    verdict: verdictSentence(s.gateExplain),
     // the candidate-vs-champion comparison + gate-rule explanation surfaced on
     // the lifecycle DAG — part of the digest so a change repaints (no flashing).
     champLoss: s.championLoss ? Object.keys(s.championLoss).sort().map((k) => [k, s.championLoss[k].toFixed(3)]) : null,
@@ -768,6 +977,19 @@ function paintCandidate(host, ctx, epochId, s, cmpId, isPrimary, narrow, structu
     stat(node.parent || 'seed', 'parent'),
     el('div', { class: 'dn-stat' }, [verdictPill(baseline ? 'baseline' : s.decision)]),
   ]));
+
+  // ── WHAT THIS CANDIDATE IS (§4) — its idea, before its numbers ──
+  // The proposal header (core idea · why · what it expected to move · the sites
+  // it touched · the diff) and, directly beneath it, the ONE-LINE verdict
+  // sentence synthesised from the STRUCTURED gate fields. The seed carries no
+  // proposal and an unsettled candidate carries no verdict, so either can be
+  // absent without the other's shape changing.
+  const proposalCard = proposalHeader(s.proposal, {
+    diffHref: baseline ? null : (ctx.href ? ctx.href('diff', { epochId, gen: genId }) : null),
+  });
+  if (proposalCard) host.appendChild(proposalCard);
+  const verdictLine = verdictSentenceEl(s.gateExplain);
+  if (verdictLine) host.appendChild(verdictLine);
 
   // ── the REIGN RIBBON — shown ONLY for a generation that became champion.
   // A reignGantt across the epoch's rounds, with THIS generation's tenure the
@@ -1019,19 +1241,7 @@ function paintCandidate(host, ctx, epochId, s, cmpId, isPrimary, narrow, structu
 
   // (LEFT) ── the STACKED promote gate(s) (fix #1) — moved INTO the dossier grid
   // so the deciding rules read beside the per-board evidence + the silhouette.
-  const gateSections = [];
-  if (s.gates.some((g) => g && Array.isArray(g.rules))) {
-    s.gateSpecs.forEach((k, i) => {
-      const g = s.gates[i];
-      if (!g || !Array.isArray(g.rules)) return;
-      gateSections.push(section(`Promote gate · ${k.champ} → ${k.chall} (${k.role})`,
-        gatePanel(g, (s.judgeComparisons || [])[i], k)));
-    });
-  } else if (!baseline) {
-    gateSections.push(section('Promote gate', el('div', { class: 'dn-panel' }, [empty('No gate decomposition recorded for this candidate’s round.')])));
-  } else {
-    gateSections.push(section('Promote gate', el('div', { class: 'dn-panel' }, [empty('The seed candidate has no gate — it defines the loss floor that challengers must beat.')])));
-  }
+  const gateSections = buildGateStack(s);
 
   // ── the PROPOSER PREDICTION-ACCURACY + CALIBRATION scorecard (DIAGNOSTIC) ──
   // Beneath the gate ladder in the main column: the orthogonal read of whether
@@ -2000,6 +2210,75 @@ export function diffComplexityDigest(gate) {
 // redundant with the RADAR SILHOUETTE (which now compares candidate vs champion
 // across the same scalar / pass-rate / per-judge axes). The deciding-rule detail
 // the components used to carry now reads off the gate-rule ladder + the radar.
+// The operator's expand/collapse of one DEFENDED round, keyed `champ>chall`.
+// The dossier is digest-gated, so without this an expanded defence would snap
+// shut on the next beat (the proposer-brief precedent in views/epoch.js).
+const _defenceOpen = new Map();
+
+// Test seam — the expand memory is module-level, so the node suite resets it.
+export function _resetDefenceExpansion() { _defenceOpen.clear(); }
+
+// ── THE GATE STACK (§4): the DECIDING round leads; the defences collapse ──
+//
+// A candidate's dossier had every gate it ever appeared in stacked at equal
+// weight, so a long-reigning champion buried the ONE round that decided its own
+// fate under the rounds it merely survived. The gate that decided THIS
+// candidate (the round it ran as challenger) now leads at full detail; each
+// round it DEFENDED as champion collapses to a one-line summary that expands to
+// the same full panel on demand. Nothing is dropped — only ranked.
+export function buildGateStack(s) {
+  const out = [];
+  const built = [];
+  s.gateSpecs.forEach((k, i) => {
+    const g = s.gates[i];
+    if (g && Array.isArray(g.rules)) built.push({ spec: k, gate: g, cmp: (s.judgeComparisons || [])[i] });
+  });
+  if (!built.length) {
+    out.push(section('Promote gate', el('div', { class: 'dn-panel' }, [empty(s.baseline
+      ? 'The seed candidate has no gate — it defines the loss floor that challengers must beat.'
+      : 'No gate decomposition recorded for this candidate’s round.')])));
+    return out;
+  }
+  const deciding = built.find((b) => b.spec.role === 'as challenger') || null;
+  const defences = built.filter((b) => b !== deciding);
+
+  if (deciding) {
+    out.push(section(`Promote gate · ${deciding.spec.champ} → ${deciding.spec.chall} · the deciding round`,
+      gatePanel(deciding.gate, deciding.cmp, deciding.spec)));
+  }
+  if (defences.length) {
+    const card = el('div', { class: 'dn-panel dn-gate-defences' });
+    for (const d of defences) card.appendChild(defenceRow(d));
+    // The caption must read true for the SEED too, which has no deciding round
+    // above it to point at — so it describes the rows, not their neighbours.
+    card.appendChild(el('p', { class: 'dn-faint', style: 'font-size:11px;margin:8px 0 0;',
+      text: 'rounds this candidate defended as champion · expand one for its full rule ladder' }));
+    out.push(section(`Defended rounds · ${defences.length}`, card));
+  }
+  return out;
+}
+
+// ONE defended round as a collapsed summary row: who challenged, how the gate
+// answered, and the Δ — expanding IN PLACE to the same full gate panel.
+function defenceRow(d) {
+  const key = d.spec.champ + '>' + d.spec.chall;
+  const decision = decisionOf(d.gate) || 'pending';
+  const delta = svg.isNum(d.gate.delta_scalar) ? d.gate.delta_scalar : null;
+  const open = _defenceOpen.get(key) === true;
+  const row = el('details', { class: 'dn-gate-defence', open: open ? '' : null }, [
+    el('summary', null, [
+      el('span', { class: 'chev', text: '▸' }),
+      el('span', { class: 'dn-mono dn-gate-defence-vs', text: 'vs ' + d.spec.chall }),
+      verdictPill(decision),
+      el('span', { class: 'dn-mono dn-faint dn-gate-defence-delta',
+        text: delta == null ? 'Δ —' : 'Δ ' + svg.fmtSigned(delta, 3) }),
+    ]),
+    gatePanel(d.gate, d.cmp, d.spec),
+  ]);
+  row.addEventListener('toggle', () => { _defenceOpen.set(key, !!row.open); });
+  return row;
+}
+
 export function gatePanel(gate, comparison, spec) {
   const card = el('div', { class: 'dn-panel dn-gate' });
   // Class B: a gate with no resolved decision is still pending, not rejected.

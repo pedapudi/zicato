@@ -311,6 +311,10 @@ def create_app(
             handlers["api_epoch_round_timeline"],
         ),
         Route(
+            "/api/epoch/{epoch_id}/experiments-ledger",
+            handlers["api_epoch_experiments_ledger"],
+        ),
+        Route(
             "/api/epoch/{epoch_id}/evals",
             handlers["api_epoch_evals"],
         ),

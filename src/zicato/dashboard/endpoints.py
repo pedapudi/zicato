@@ -317,6 +317,21 @@ def _make_epoch_endpoints(paths: WorkspacePaths) -> dict[str, Any]:
             )
         return JSONResponse(query.build_round_timeline(paths, epoch_id))
 
+    async def api_epoch_experiments_ledger(request: Request) -> JSONResponse:
+        """The epoch's EXPERIMENTS LEDGER — one row per experiment.
+
+        ``GET /api/epoch/{epoch_id}/experiments-ledger``. The idea, the sites
+        it touched, the verdict and its Δ, in round order — joined server-side
+        (:func:`zicato.query.build_experiments_ledger`) so the epoch page reads
+        an epoch's whole story without opening candidates one at a time. A
+        malformed id degrades to the empty ledger shape (HTTP 200), matching
+        every other coordinate handler.
+        """
+        epoch_id = request.path_params["epoch_id"]
+        if not _is_safe_id(epoch_id):
+            return JSONResponse({"epoch_id": epoch_id, "experiments": []}, status_code=200)
+        return JSONResponse(query.build_experiments_ledger(paths, epoch_id))
+
     async def api_contract_diff(request: Request) -> JSONResponse:
         """L1 (epoch-level) contract diff vs predecessor epoch."""
         epoch_id = request.path_params["epoch_id"]
@@ -484,6 +499,7 @@ def _make_epoch_endpoints(paths: WorkspacePaths) -> dict[str, Any]:
         "api_epoch_cost": api_epoch_cost,
         "api_epoch_racing_field": api_epoch_racing_field,
         "api_epoch_round_timeline": api_epoch_round_timeline,
+        "api_epoch_experiments_ledger": api_epoch_experiments_ledger,
         "api_contract_diff": api_contract_diff,
         "api_score_trajectory": api_score_trajectory,
         "api_calibration_trend": api_calibration_trend,
