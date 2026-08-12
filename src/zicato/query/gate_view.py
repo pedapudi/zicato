@@ -109,8 +109,9 @@ def build_score_trajectory(
     serves both this trajectory and the ``generations`` feed in one payload,
     so it built the lineage twice — and the walk reads a JSON file per
     generation, which cProfile put at 84% of that reader. A caller-supplied
-    feed must be the workspace-global one (the epoch filter below still
-    applies); ``include_ratings`` may differ, since the rating triple is
+    feed may be the workspace-global one OR one already scoped to the SAME
+    epoch — the filter below applies either way, and is a no-op on the
+    scoped feed; ``include_ratings`` may differ, since the rating triple is
     additive and nothing here reads it.
 
     The environment-wide evolution curve: one point per generation, in
@@ -140,7 +141,7 @@ def build_score_trajectory(
         # for one epoch's curve. ``epoch_id`` is None only when the workspace
         # has no current epoch, and then the global walk is what we want.
         lineage = build_lineage_view(paths, epoch_id, include_ratings=False)
-    # The filter STAYS: a caller-supplied feed is workspace-global.
+    # The filter STAYS: a caller-supplied feed may be workspace-global.
     ordered = [
         g
         for g in lineage.get("generations", [])
