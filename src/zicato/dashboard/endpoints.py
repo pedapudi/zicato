@@ -456,10 +456,25 @@ def _make_epoch_endpoints(paths: WorkspacePaths) -> dict[str, Any]:
         view = await run_in_threadpool(query.build_eval_health, paths, epoch_id)
         return JSONResponse(view)
 
+    async def api_epoch_judge_roster(request: Request) -> JSONResponse:
+        """What is armed to judge a run on one epoch's board (#194 §5).
+
+        ``GET /api/epoch/{epoch_id}/judge-roster``. A malformed id degrades to
+        the empty roster shape (HTTP 200), matching every other coordinate
+        handler. The reader stats the reflection tree, so it runs OFF the
+        event loop.
+        """
+        epoch_id = request.path_params["epoch_id"]
+        if not _is_safe_id(epoch_id):
+            return JSONResponse(query._empty_judge_roster(epoch_id), status_code=200)
+        view = await run_in_threadpool(query.build_judge_roster, paths, epoch_id)
+        return JSONResponse(view)
+
     # -- conversation endpoints --------------------------------------
 
     return {
         "api_epoch": api_epoch,
+        "api_epoch_judge_roster": api_epoch_judge_roster,
         "api_epoch_evals": api_epoch_evals,
         "api_epoch_eval_entry": api_epoch_eval_entry,
         "api_epoch_eval_health": api_epoch_eval_health,

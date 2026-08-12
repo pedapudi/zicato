@@ -90,9 +90,14 @@ export async function render(host, ctx, params) {
   const board = Array.isArray(ep.board) ? ep.board : [];
   const def = board.find((b) => (b.entry_id || b.id) === entryId) || null;
 
-  const [rows0, traj, dossier] = await Promise.all([
+  const [rows0, traj, dossier, roster] = await Promise.all([
     D.generationsForEpoch(epochId), D.scoreTrajectory(epochId), D.evalDossier(epochId, entryId),
+    D.judgeRoster(epochId),
   ]);
+  // The AUTHORED half of the Judges panel — this entry's custom judges, off the
+  // epoch payload's additive `board_judges` map (omitted entirely by a board
+  // whose entries declare none, so `[]` here is the honest read, not a failure).
+  const entryJudges = (ep.board_judges && ep.board_judges[entryId]) || [];
   const genList = rows0.length
     ? rows0.map((g) => ({ id: g.generation_id, parent: g.parent_generation_id || null, promoted: g.promoted == null ? null : !!g.promoted }))
     : (Array.isArray(ep.experiments) ? ep.experiments.map((x) => ({ id: x.generation_id, parent: x.parent_generation_id || null, promoted: x.promoted === true })) : []);
@@ -262,6 +267,10 @@ export async function render(host, ctx, params) {
       const cell = (facetByGen.get(g.id) || {})[f];
       return cell ? facets.facetScalarText(cell) : null;
     })]),
+    // The Judges panel is contract-frozen for the epoch, so its contribution is
+    // a constant across a round's beats — it can never be the thing that busts
+    // this digest, and it repaints only when the panel genuinely changed.
+    judges: judgesDigest(roster, entryJudges),
   });
   // The transcript STRUCTURE digest gates the frame (headers, columns, scroller
   // shells, the streaming caption) — deliberately EXCLUDING the growing turn
@@ -321,6 +330,17 @@ export async function render(host, ctx, params) {
         el('div', { class: 'dn-faint', style: 'font-size:10px;text-transform:uppercase;letter-spacing:0.06em;', text: 'input preview' }),
         el('div', { style: 'margin-top:4px;line-height:1.4;', text: '“' + def.input_preview + '”' }),
       ]));
+    }
+
+    // JUDGES (#194 §5) — the process half of the contract, beside the outcome
+    // half (kind / oracle / weight) the stat row above already names. It sits in
+    // the CONTRACT region of the page, before any result: what grades a run is
+    // part of the question, not part of the answer. A pre-feature server serves
+    // no roster AND the epoch payload carries no board_judges, so nothing is
+    // known and nothing is drawn — the page reads byte-identical to before.
+    if (roster || entryJudges.length) {
+      nodes.push(section('Judges · what grades this entry’s process',
+        judgesPanel(roster, entryJudges, ctx, epochId)));
     }
 
     // LIVE — candidates currently executing on THIS board entry surface as
@@ -817,6 +837,158 @@ function passClass(pf) {
   if (pf === 1 || pf === true) return 'dn-good-t';
   if (pf === 0 || pf === false) return 'dn-bad-t';
   return 'dn-faint';
+}
+
+// ── JUDGES (#194 §5) ──────────────────────────────────────────────────
+//
+// What actually grades a run on THIS entry. Two payloads, joined here: the
+// entry's own custom judges ride the epoch payload (`board_judges`, the
+// authored half) and the built-in roster after `disable_drift` suppression
+// rides `/api/epoch/{id}/judge-roster` (the derived half). The panel keeps the
+// suppressed built-ins ON screen, struck through — a shorter list would show
+// the header's effect by omission, which is to say not at all.
+
+// Quiet precision: an integral weight prints bare, a fractional one to two
+// places — `×2`, `×0.75`, never `×2.00`.
+export function weightText(w) {
+  if (!svg.isNum(w)) return null;
+  return '×' + (Number.isInteger(w) ? String(w) : w.toFixed(2));
+}
+
+// Severity → the shipped pill TONE. Reuses the colour vocabulary rather than
+// minting a severity palette: red for critical, caution for warning, neutral
+// for info and for anything the board spells differently.
+export function severityTone(severity) {
+  if (severity === 'critical') return 'rejected';
+  if (severity === 'warning') return 'deferred';
+  return 'baseline';
+}
+
+// The one line that says what the board's `disable_drift` header ACTUALLY did.
+// Null when the board names no kinds. A named kind that no built-in judge emits
+// suppresses NOTHING, and the line says so by name — the alternative (silence)
+// reads as "suppressed", which is the misreading this panel exists to prevent.
+export function suppressionText(roster) {
+  const kinds = (roster && Array.isArray(roster.disable_drift)) ? roster.disable_drift : [];
+  if (!kinds.length) return null;
+  const off = ((roster && Array.isArray(roster.builtins)) ? roster.builtins : [])
+    .filter((b) => b && b.suppressed).map((b) => b.name);
+  const unmapped = (roster && Array.isArray(roster.unmapped_drift_kinds)) ? roster.unmapped_drift_kinds : [];
+  const clauses = [];
+  if (off.length) clauses.push('suppresses ' + off.join(', '));
+  if (unmapped.length) {
+    clauses.push('no built-in judge emits ' + unmapped.join(', ')
+      + ', so ' + (unmapped.length === 1 ? 'it suppresses' : 'they suppress') + ' nothing');
+  }
+  return 'disable_drift · ' + kinds.join(' · ') + (clauses.length ? ' — ' + clauses.join('; ') : '');
+}
+
+// The faint uppercase micro-label the entry's input-preview panel already uses.
+// `spaced` opens a gap above it — the second label in a panel needs to separate
+// from the block it follows, the first sits flush against the panel's own padding.
+function microLabel(text, spaced) {
+  return el('div', { class: 'dn-faint', text,
+    style: 'font-size:10px;text-transform:uppercase;letter-spacing:0.06em;' + (spaced ? 'margin-top:14px;' : '') });
+}
+
+// A link to a judge's reflection scorecard — only when a reflection scored it.
+// The Instrument lens routes epoch → reflection → judge, so the link lands on
+// that judge's card rather than the reflection's front page.
+function scorecardLink(roster, name, ctx, epochId) {
+  const rid = (roster && roster.scorecards && roster.scorecards[name]) || null;
+  if (!rid) return el('span', { class: 'dn-faint', text: '—' });
+  return el('a', {
+    class: 'dn-linkbtn dn-mono', href: ctx.href('instrument', { epochId, reflectionId: rid, judge: name }),
+    title: 'open this judge’s scorecard in the Instrument lens (' + rid + ')', text: 'scorecard →',
+  });
+}
+
+// One built-in's chip. A suppressed built-in carries the reason IN the chip, not
+// only in a tooltip: an operator scanning the strip must be able to read why a
+// judge is dark without hovering it.
+function builtinChip(b, weights) {
+  const by = Array.isArray(b.suppressed_by) ? b.suppressed_by : [];
+  const w = weightText(weights[b.name]);
+  return el('span', {
+    class: 'dn-pill ' + (b.suppressed ? 'dn-judge-off' : 'dn-baseline'),
+    title: b.suppressed
+      ? 'suppressed by disable_drift' + (by.length ? ' · ' + by.join(' · ') : '')
+      : 'armed for every run on this board',
+  }, [
+    el('span', { class: 'dn-judge-name', text: b.name }),
+    b.suppressed ? el('span', { class: 'dn-faint', text: 'suppressed by disable_drift' }) : null,
+    w ? el('span', { class: 'dn-faint', text: w }) : null,
+  ].filter(Boolean));
+}
+
+// The Judges panel: armed built-ins, then this entry's custom judges. Both
+// halves degrade to a sentence that carries information — "no judges
+// configured" is a fact about the contract, not a missing payload.
+export function judgesPanel(roster, entryJudges, ctx, epochId) {
+  const weights = (roster && roster.per_judge_weights && typeof roster.per_judge_weights === 'object')
+    ? roster.per_judge_weights : {};
+  const builtins = (roster && Array.isArray(roster.builtins)) ? roster.builtins : [];
+  const judges = Array.isArray(entryJudges) ? entryJudges : [];
+  const card = el('div', { class: 'dn-panel' });
+
+  card.appendChild(microLabel('armed built-ins'));
+  if (builtins.length) {
+    card.appendChild(el('div', { class: 'dn-judges-strip' }, builtins.map((b) => builtinChip(b, weights))));
+  } else {
+    // Never guess a roster we could not read: the server names the reason.
+    card.appendChild(empty((roster && roster.builtins_note)
+      || 'Built-in roster not served for this epoch.'));
+  }
+  const supp = suppressionText(roster);
+  if (supp) card.appendChild(el('p', { class: 'dn-faint', style: 'font-size:11px;margin:6px 0 0;', text: supp }));
+
+  card.appendChild(microLabel('this entry’s judges', true));
+  if (!judges.length) {
+    card.appendChild(empty('predicate/rubric only — no judges configured on this entry.'));
+  } else {
+    card.appendChild(dataTable({
+      class: 'dn-board-table',
+      columns: [{ label: 'judge' }, { label: 'mode' }, { label: 'severity' }, { label: 'reflection' }],
+      rows: judges.map((j) => { const w = weightText(weights[j.name]); return [
+        { class: 'dn-mono', el: [
+          el('span', { text: j.name }),
+          // The weight rides BESIDE the name (per_judge_weights keys on judge
+          // name, across built-ins and custom judges alike); absent when the
+          // contract configured none for this judge.
+          w ? el('span', { class: 'dn-faint', text: ' ' + w }) : null,
+          // A python judge's body is its dotted import path — the callable's
+          // identity, and the only thing telling two python judges apart. An
+          // inline judge's body is the criterion PROMPT and stays off-screen.
+          j.path ? el('div', { class: 'dn-faint', style: 'font-size:10.5px;', text: j.path }) : null,
+        ].filter(Boolean) },
+        { class: 'dn-mono dn-faint', text: j.mode || '—' },
+        { el: j.severity ? pill(severityTone(j.severity), j.severity) : el('span', { class: 'dn-faint', text: '—' }) },
+        { el: scorecardLink(roster, j.name, ctx, epochId) },
+      ]; }),
+    }));
+  }
+
+  const dflt = weightText(roster && roster.default_judge_weight);
+  card.appendChild(el('p', { class: 'dn-faint', style: 'font-size:11px;margin:8px 0 0;',
+    text: 'built-ins are armed for every entry on this board; the judges above are this entry’s own'
+      + (dflt ? ' · any judge without a weight counts ' + dflt : '') }));
+  return card;
+}
+
+// The panel's digest contribution — value-only, folded into the board's upper
+// digest so a no-op beat leaves the panel's DOM untouched (G10).
+export function judgesDigest(roster, entryJudges) {
+  const r = roster || {};
+  return JSON.stringify({
+    note: r.builtins_note || null,
+    builtins: (Array.isArray(r.builtins) ? r.builtins : []).map((b) => [b && b.name, !!(b && b.suppressed), (b && b.suppressed_by) || []]),
+    kinds: Array.isArray(r.disable_drift) ? r.disable_drift : [],
+    unmapped: Array.isArray(r.unmapped_drift_kinds) ? r.unmapped_drift_kinds : [],
+    weights: r.per_judge_weights || {},
+    dflt: svg.isNum(r.default_judge_weight) ? r.default_judge_weight : null,
+    cards: r.scorecards || {},
+    entry: (Array.isArray(entryJudges) ? entryJudges : []).map((j) => [j && j.name, (j && j.mode) || null, (j && j.severity) || null, (j && j.path) || null]),
+  });
 }
 
 // ── EVAL DOSSIER (EVAL-VIEW.md §3.2 / WS-DOSSIER) ─────────────────────
