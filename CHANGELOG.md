@@ -1,5 +1,42 @@
 # Changelog
 
+### Target 4: a coding agent's configuration package as the system under test
+
+A fourth dogfood target, shipped as a skeleton. The mutable tree is an
+external coding agent's *configuration package* — `AGENTS.md` plus
+`skills/*.md`, carrying native markdown markers — which the agent loads at
+startup, so a generation snapshot of it is an agent identity and promoting
+a generation promotes a configuration.
+
+"An agent improves itself" is not circular here because it decomposes into
+two instances of one binary in different roles. The target is the config
+package. The entrypoint is a driver *outside* the tree (`adapter.kind =
+"import"`) that spawns the binary in rpc mode with its agent directory
+pointed at the snapshot, under `telemetry_dialect: transcript` — no
+goldfive, no ADK, no Python inside the tree. The gate, not either
+instance, decides what survives.
+
+The driver forwards each turn to the run's sinks as `{"role", "content"}`,
+which is what the transcript dialect already reads, so the whole path needs
+no new plumbing. It also diffs the run's working tree against the fixture
+and appends that diff to `final_output`: `RunResult` carries only what an
+agent *said*, and for a coding agent the evidence is what it *did*.
+Hygiene is per-run — a fresh agent directory so the read-only snapshot is
+never mutated, an environment allowlist so a caller's credentials cannot
+travel, the wall-clock budget as a hard kill, and the binary's `--version`
+probed and recorded (a version bump is an epoch boundary by convention).
+
+Two things are deliberately not surface. `settings.json` is immutable
+permanently: strict JSON cannot host a comment, so it cannot host a marker.
+`extensions/*.ts` wait on one syntax-table entry (#168) — the example ships
+no `extensions/` rather than one that silently enumerates nothing.
+
+Nothing here runs live. The tests drive a hermetic stand-in binary as a
+real subprocess speaking the real protocol, with no model anywhere, and the
+README states the rule before any real use: measure the agent-vs-itself A/A
+floor first, because each board entry is a full agentic run and the shipped
+`promote_margin` is a framework default, not a calibration.
+
 ### Any file can be a mutation site, not only `*.py`
 
 The native marker pass walked `*.py` and nothing else, so a markdown prompt
