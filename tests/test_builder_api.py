@@ -243,6 +243,61 @@ def test_builder_op_set_board_meta_bad_args_are_400(client: TestClient) -> None:
     assert "list" in resp.json()["error"]
 
 
+def test_builder_op_float_knobs_are_typed_not_passed_through(client: TestClient) -> None:
+    """A numeric knob lands in the contract as a NUMBER, or the post is a 400.
+
+    The float args used to reach the ops as the raw JSON value, and the
+    outcome split by which validator the field happened to have: a string
+    ``"0.5"`` landed in the contract intact for ``promote_margin`` and the
+    weight scalars (whose validators never compare them), while
+    ``holdout_fraction`` raised an uncaught ``TypeError`` — a 500 — from
+    the comparison in its validator. Both shapes are the mis-typed contract
+    knob the arg coercion exists to refuse.
+    """
+
+    def post(op: str, args: dict[str, object]) -> object:
+        return client.post("/builder/op", json={"session": "typed", "op": op, "args": args})
+
+    # A numeric string coerces to a real float rather than being stored raw.
+    resp = post("set_gate", {"promote_margin": "0.5"})
+    assert resp.status_code == 200
+    assert resp.json()["draft"]["scoring"]["promote_margin"] == 0.5
+    resp = post("set_holdout", {"fraction": "0.4"})
+    assert resp.status_code == 200
+    assert resp.json()["draft"]["scoring"]["overfitting"]["holdout_fraction"] == 0.4
+    # …including inside the ladder's partial mapping, which reaches the op
+    # as raw JSON from BOTH the REST dispatch and the copilot.
+    resp = post("set_holdout", {"ladder": {"budget": "8"}})
+    assert resp.status_code == 200
+    assert resp.json()["draft"]["scoring"]["overfitting"]["ladder"]["budget"] == 8
+
+    # Garbage is a field-precise 400, never a 500.
+    for op, args, needle in (
+        ("set_gate", {"holdout_margin": "x"}, "holdout_margin"),
+        ("set_weights", {"drift_weight": "heavy"}, "drift_weight"),
+        ("set_holdout", {"ladder": {"threshold": "bad"}}, "ladder.threshold"),
+        # A bool floats to 1.0 in Python, so it must be refused explicitly
+        # or `true` would read as a silent weight of 1.0.
+        ("set_weights", {"pass_weight": True}, "pass_weight"),
+    ):
+        resp = post(op, args)
+        assert resp.status_code == 400, (op, args, resp.status_code)
+        assert needle in resp.json()["error"]
+
+    # threshold is the ONE nullable ladder key (null = auto-derive from
+    # promote_margin). A null anywhere else used to reach the dataclass,
+    # where budget/noise_scale raised an uncaught TypeError from their
+    # comparison validators and `enabled`, having no validator to trip,
+    # silently stored None in a bool field.
+    resp = post("set_holdout", {"ladder": {"threshold": None}})
+    assert resp.status_code == 200
+    assert resp.json()["draft"]["scoring"]["overfitting"]["ladder"]["threshold"] is None
+    for key in ("enabled", "budget", "noise_scale"):
+        resp = post("set_holdout", {"ladder": {key: None}})
+        assert resp.status_code == 400, (key, resp.status_code)
+        assert f"ladder.{key} must not be null" in resp.json()["error"]
+
+
 def test_builder_apply_dry_run(client: TestClient, workspace: Path) -> None:
     client.post(
         "/builder/op",

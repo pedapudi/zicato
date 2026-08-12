@@ -18,6 +18,11 @@ end-to-end walkthroughs can import them as `zicato_examples.*`.
 - `zicato_examples/target_2_goldfive_steering/` — drives goldfive's
   own steering layer as the inner harness. See
   [`target_2_goldfive_steering/RUN.md`](zicato_examples/target_2_goldfive_steering/RUN.md).
+- `zicato_examples/target_4_agent_config/` — an external coding agent's
+  configuration package (`AGENTS.md` + `skills/*.md`) as the mutable
+  tree. Skeleton: the tests drive a hermetic stand-in binary, and live
+  runs are operator-initiated. See
+  [`target_4_agent_config/README.md`](zicato_examples/target_4_agent_config/README.md).
 
 ## Installing
 

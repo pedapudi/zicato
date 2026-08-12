@@ -936,6 +936,43 @@ def test_set_gate_full_coverage() -> None:
         ops.set_gate(TournamentDraft(), regression_timeout_s=0)
 
 
+def test_set_gate_holdout_confirmation_bounds() -> None:
+    """The holdout confirmation's own bounds are settable from the builder.
+
+    Both knobs (issue #118) reached a working gate with no builder path at
+    all; the registry's exemption guard is what named the omission. The
+    reset asymmetry is the interesting half: ``None`` means "leave
+    unchanged", so a NEGATIVE margin is the token that clears the pin back
+    to auto (reuse ``promote_margin``).
+    """
+    import pytest
+
+    draft = TournamentDraft()
+    assert draft.scoring.holdout_margin is None
+
+    patch = ops.set_gate(draft, holdout_margin=0.04, holdout_entry_regression_budget=1)
+    assert draft.scoring.holdout_margin == 0.04
+    assert draft.scoring.holdout_entry_regression_budget == 1
+    assert patch.changed["holdout_margin"] == {"from": None, "to": 0.04}
+    assert patch.changed["holdout_entry_regression_budget"] == {"from": 0, "to": 1}
+
+    # 0 is a REAL pin, not the off token — it must not read as "clear".
+    ops.set_gate(draft, holdout_margin=0.0)
+    assert draft.scoring.holdout_margin == 0.0
+
+    # …and a negative resets to auto rather than raising through the
+    # dataclass validator (which rejects a negative outright).
+    reset = ops.set_gate(draft, holdout_margin=-1)
+    assert draft.scoring.holdout_margin is None
+    assert reset.changed["holdout_margin"] == {"from": 0.0, "to": None}
+
+    # A no-op re-post records no change (the op is idempotent per knob).
+    assert ops.set_gate(draft, holdout_entry_regression_budget=1).changed == {}
+
+    with pytest.raises(ValueError, match="holdout_entry_regression_budget"):
+        ops.set_gate(TournamentDraft(), holdout_entry_regression_budget=-1)
+
+
 def test_set_namespace_weights() -> None:
     import pytest
 

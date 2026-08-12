@@ -17,10 +17,18 @@ import { section, empty, stat, densityTokens, renderView } from '../ui.js';
 import { inflightForActiveEpoch, inflightForEntryGen, runProgressRatio } from './structure.js';
 import { deriveLiveStatus } from '../livestatus.js';
 
-const KIND_ORDER = { multi_turn_emulated: 0, multi_turn_scripted: 1, single_turn: 2 };
+// The FULL entry-kind vocabulary (core/board.py::BoardEntryKind). The two
+// synthetic kinds are settable from the builder and serialized by the board
+// writer, so a view that knows only three renders them unlabelled and counts
+// them nowhere.
+const KIND_ORDER = {
+  multi_turn_emulated: 0, multi_turn_scripted: 1, single_turn: 2,
+  synthetic_adversarial: 3, synthetic_clean: 4,
+};
 const KIND_LABEL = {
   single_turn: 'single-turn', multi_turn_scripted: 'scripted multi-turn',
   multi_turn_emulated: 'emulated multi-turn',
+  synthetic_adversarial: 'synthetic adversarial', synthetic_clean: 'synthetic clean',
 };
 
 export async function render(host, ctx, params) {
@@ -89,11 +97,17 @@ export async function render(host, ctx, params) {
       el('p', { class: 'dn-lede', text: 'The fixed task board for this epoch as small-multiples — one card per entry, every candidate’s drift loss on a shared scale. Open a card for the per-board cross-candidate view + inline transcripts.' }),
     ]));
 
+    // The kind counters partition the WHOLE vocabulary. They used to test
+    // `=== 'single_turn'` and `startsWith('multi')`, so an all-synthetic board
+    // read "0 single-turn · 0 multi-turn" over N entries. The synthetic tile
+    // appears only when the board has any, so the common board is unchanged.
+    const synthetic = board.filter((b) => b.kind && b.kind.startsWith('synthetic')).length;
     nodes.push(el('div', { class: 'dn-panel dn-row' }, [
       stat(String(board.length), 'board entries'),
       stat(String(gens.length), 'candidates'),
       stat(String(board.filter((b) => b.kind === 'single_turn').length), 'single-turn'),
       stat(String(board.filter((b) => b.kind && b.kind.startsWith('multi')).length), 'multi-turn'),
+      ...(synthetic ? [stat(String(synthetic), 'synthetic')] : []),
     ]));
 
     nodes.push(section('Board trellis · drift loss across candidates', trellis(board, gens, rowByGenEntry, domain, epochId, ctx, inflightByEntry)));

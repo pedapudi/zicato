@@ -62,6 +62,7 @@ if TYPE_CHECKING:  # pragma: no cover - typing-only import
     from zicato.index.query import MutationTrackRecord
     from zicato.proposer.best_of_n import ScreenRunner
     from zicato.proposer.calibration import CalibrationSummary
+    from zicato.proposer.external import ExternalProposerConfig
     from zicato.proposer.genealogy import GenealogyItem
     from zicato.proposer.recombine import RecombinationPair
     from zicato.telemetry.meta_loop import MetaLoopEmitter
@@ -278,42 +279,73 @@ class DefaultProposerAgent:
     spec: ProposerSpec
 
     async def propose(self, ctx: ProposerContext) -> Experiment:
-        return await propose_experiment(
-            epoch_id=ctx.epoch_id,
-            parent_generation_id=ctx.parent_generation_id,
-            new_generation_id=ctx.new_generation_id,
-            patterns=ctx.patterns,
-            mutations=ctx.mutations,
-            brief_text=ctx.brief_text,
-            current_loss_summary=ctx.current_loss_summary,
-            aux_call_llm=ctx.aux_call_llm,
-            model=ctx.model,
-            max_retries=ctx.max_retries,
-            forbidden_ids=ctx.forbidden_ids,
-            workspace_root=ctx.workspace_root,
-            validate_experiment=ctx.validate_experiment,
-            meta_loop_emitter=ctx.meta_loop_emitter,
-            custom_judge_names=ctx.custom_judge_names,
-            prior_experiments=ctx.prior_experiments,
-            skills=self.spec.skills,
-            restrict_visibility=ctx.restrict_visibility,
-            failure_profile=ctx.failure_profile,
-            process_exemplars=ctx.process_exemplars,
-            genealogy=ctx.genealogy,
-            calibration=ctx.calibration,
-            sample_hint=ctx.sample_hint,
-            mutation_track_records=ctx.mutation_track_records,
-            revise_feedback=ctx.revise_feedback,
-        )
+        return await propose_via_engine(spec=self.spec, ctx=ctx, aux_call_llm=ctx.aux_call_llm)
+
+
+async def propose_via_engine(
+    *,
+    spec: ProposerSpec,
+    ctx: ProposerContext,
+    aux_call_llm: Callable[[str, str, str], Awaitable[str]],
+) -> Experiment:
+    """Run the single-shot engine over ``ctx``, against a chosen callable.
+
+    The one place a :class:`ProposerContext` is unpacked into
+    :func:`~zicato.proposer.proposer.propose_experiment`'s keyword
+    arguments. ``aux_call_llm`` is a parameter rather than being read off
+    the context because the transport is the only thing that varies:
+    :class:`DefaultProposerAgent` passes ``ctx.aux_call_llm`` (the text
+    shim), while :class:`~zicato.proposer.pi_agent.PiProposerAgent` passes
+    a live RPC session's ``call``. Everything downstream of that choice —
+    the bounded retry, the repair turns, the forbidden-id enforcement, the
+    post-apply validation hook, the meta-loop bookends — is identical for
+    both by construction rather than by two implementations agreeing.
+    """
+    return await propose_experiment(
+        epoch_id=ctx.epoch_id,
+        parent_generation_id=ctx.parent_generation_id,
+        new_generation_id=ctx.new_generation_id,
+        patterns=ctx.patterns,
+        mutations=ctx.mutations,
+        brief_text=ctx.brief_text,
+        current_loss_summary=ctx.current_loss_summary,
+        aux_call_llm=aux_call_llm,
+        model=ctx.model,
+        max_retries=ctx.max_retries,
+        forbidden_ids=ctx.forbidden_ids,
+        workspace_root=ctx.workspace_root,
+        validate_experiment=ctx.validate_experiment,
+        meta_loop_emitter=ctx.meta_loop_emitter,
+        custom_judge_names=ctx.custom_judge_names,
+        prior_experiments=ctx.prior_experiments,
+        skills=spec.skills,
+        restrict_visibility=ctx.restrict_visibility,
+        failure_profile=ctx.failure_profile,
+        process_exemplars=ctx.process_exemplars,
+        genealogy=ctx.genealogy,
+        calibration=ctx.calibration,
+        sample_hint=ctx.sample_hint,
+        mutation_track_records=ctx.mutation_track_records,
+        revise_feedback=ctx.revise_feedback,
+    )
 
 
 def build_proposer_agent(
     spec: ProposerSpec,
     proposer_path: Path | None = None,
+    external_config: ExternalProposerConfig | None = None,
 ) -> ProposerAgent:
     """Build the :class:`ProposerAgent` for a resolved proposer spec.
 
-    Three outcomes, in resolution order:
+    Four outcomes, in resolution order:
+
+    0. **External agent** — when ``runtime.proposer_agent`` named a class
+       (``spec.external_path`` is set), this imports it and constructs it
+       with ``(spec=..., config=...)``. It resolves FIRST because it is
+       the one tier that is not an ADK agent at all: the class owns its
+       own process, transport and tool surface, and zicato drives it
+       through the same one-method :class:`ProposerAgent` protocol. See
+       :mod:`zicato.proposer.external`.
 
     1. **Custom ADK agent** — when the proposer dir ships a
        ``proposers/<name>/agent.py`` (``spec.agent_source_sha256`` is set),
@@ -349,9 +381,23 @@ def build_proposer_agent(
     ------
     ValueError
         When the spec carries a custom agent module but no
-        ``proposer_path`` was supplied to load it from — a misconfiguration
-        the caller must fix rather than silently fall back to the default.
+        ``proposer_path`` was supplied to load it from, or when it carries
+        an ``external_path`` but no ``external_config`` to resolve it
+        against — misconfigurations the caller must fix rather than
+        silently fall back to the default.
     """
+    if spec.external_path is not None:
+        from zicato.proposer.external import load_external_proposer_class  # noqa: PLC0415
+
+        if external_config is None:
+            raise ValueError(
+                "spec declares an external proposer agent (external_path is "
+                f"{spec.external_path!r}) but no external_config was supplied "
+                "to construct it with"
+            )
+        cls = load_external_proposer_class(spec.external_path)
+        return cls(spec=spec, config=external_config)  # type: ignore[call-arg]
+
     # Lazy import: ADKProposerAgent pulls in the optional google-adk extra
     # only when its agent is actually built (at first propose), so importing
     # this module stays dependency-light.
@@ -381,4 +427,5 @@ __all__ = [
     "ProposerAgent",
     "ProposerContext",
     "build_proposer_agent",
+    "propose_via_engine",
 ]

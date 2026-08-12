@@ -1357,10 +1357,37 @@ can lean on the **screening-scaffolded-vs-exemplars-NOT-scaffolded asymmetry**
      settings-panel entry point;
    - the copilot tool wrapper in `src/zicato/builder/copilot_tools.py` (so the
      chat copilot can drive the knob), registered in that module's `__all__`.
+
+   …plus a **GUI row** in `static/js/views/builder.js` and an **arg-level
+   assertion** in `static/test/builder.test.mjs`. Five touchpoints, and
+   `tests/test_knob_registry.py` enforces all five — but only for a knob that
+   DECLARES itself, so the declaration is the load-bearing step:
+   ```python
+   # src/zicato/core/scoring_config.py — on the field itself
+   holdout_margin: float | None = field(
+       default=None,
+       metadata=_knob(omit_at_default=True, builder_op="set_gate"),
+   )
+   ```
+   Add `builder_arg` only when the op's arg name differs from the field name
+   (`screen_entries` → `entries`); use a DOTTED value (`"ladder.threshold"`)
+   when the op takes the knob as a subkey of a partial-mapping argument, so
+   the GUI-row and node-test checks bind to the subkey rather than being
+   satisfied vacuously by a sibling's row.
+
+   > ⚠️ TRAP — a knob with NO `builder_op` used to be invisible to the pin,
+   > which is how `holdout_margin` / `holdout_entry_regression_budget` shipped
+   > with a working gate and no way to set them from the builder. A second
+   > guard now refuses that silence: every contract knob field must either
+   > carry a `builder_op` or be listed in `_NO_BUILDER_OP_KNOBS` with the
+   > reason it should not be exposed (nested container, dotted callable spec,
+   > open TransformSpec mapping). "Not wired yet" is not one of the reasons.
+
    **Verify:**
    ```bash
    uv run pytest tests/test_builder_operations.py tests/test_builder_api.py \
-       tests/test_builder_copilot_tools.py -q
+       tests/test_builder_copilot_tools.py tests/test_knob_registry.py -q
+   node src/zicato/dashboard/static/test/builder.test.mjs
    ```
 
 7. **Answer the cost-meter question.** Does your knob change how many board runs

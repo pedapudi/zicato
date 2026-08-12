@@ -162,10 +162,14 @@ def _pin_default_proposer_to_text_shim(
 
     real_build = proposer_agent_mod.build_proposer_agent
 
-    def _build(spec: ProposerSpec, proposer_path: Path | None = None) -> Any:
+    def _build(
+        spec: ProposerSpec,
+        proposer_path: Path | None = None,
+        external_config: Any = None,
+    ) -> Any:
         if spec == ProposerSpec.default():
             return proposer_agent_mod.DefaultProposerAgent(spec)
-        return real_build(spec, proposer_path)
+        return real_build(spec, proposer_path, external_config)
 
     monkeypatch.setattr(proposer_agent_mod, "build_proposer_agent", _build)
 

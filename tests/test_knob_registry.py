@@ -114,20 +114,27 @@ _BUILDER_JS = _STATIC_DIR / "js" / "views" / "builder.js"
 _BUILDER_TEST_MJS = _STATIC_DIR / "test" / "builder.test.mjs"
 
 
-def _knob_registry() -> dict[str, tuple[str, str]]:
-    """Map every ``builder_op`` field to its ``(op, arg)`` from the metadata.
+def _knob_registry() -> dict[str, tuple[str, str, str]]:
+    """Map every ``builder_op`` field to its ``(op, arg, subkey)``.
+
+    Keyed by ``"<Dataclass>.<field>"``, NOT the bare field name: two knob
+    dataclasses may legitimately share a field name (``OverfittingConfig``
+    and ``LadderConfig`` both have ``enabled``) and a bare-name key would
+    silently drop one of them from the completeness guard.
 
     ``builder_arg`` defaults to the field name when the metadata leaves it
-    ``None`` (the arg name matches the field name); it is set explicitly only
-    where they differ (e.g. ``screen_entries`` → the ``entries`` arg).
+    ``None``; it is set explicitly only where they differ (e.g.
+    ``screen_entries`` → the ``entries`` arg). A DOTTED ``builder_arg``
+    (``"ladder.threshold"``) splits into the op's mapping arg plus the
+    SUBKEY within it; ``subkey`` is ``""`` for a plain argument.
     """
-    registry: dict[str, tuple[str, str]] = {}
+    registry: dict[str, tuple[str, str, str]] = {}
     for cls in _CONTRACT_KNOB_DATACLASSES:
         for f in fields(cls):
             op = f.metadata.get("builder_op")
             if op:
-                arg = f.metadata.get("builder_arg") or f.name
-                registry[f.name] = (op, arg)
+                arg, _, subkey = (f.metadata.get("builder_arg") or f.name).partition(".")
+                registry[f"{cls.__name__}.{f.name}"] = (op, arg, subkey)
     return registry
 
 
@@ -149,23 +156,28 @@ def _api_dispatch_block(op: str) -> str:
     return match.group(1) if match else ""
 
 
-def _has_op_signature_arg(op: str, arg: str) -> bool:
+def _has_op_signature_arg(op: str, arg: str, subkey: str) -> bool:
     fn = getattr(operations, op, None)
     return fn is not None and arg in inspect.signature(fn).parameters
 
 
-def _has_api_dispatch(op: str, arg: str) -> bool:
+def _has_api_dispatch(op: str, arg: str, subkey: str) -> bool:
     block = _api_dispatch_block(op)
     return f'"{arg}"' in block or f"'{arg}'" in block
 
 
-def _has_copilot_arg(op: str, arg: str) -> bool:
+def _has_copilot_arg(op: str, arg: str, subkey: str) -> bool:
     fn = getattr(copilot_tools, op, None)
     return fn is not None and arg in inspect.signature(fn).parameters
 
 
-def _has_gui_row(op: str, arg: str) -> bool:
+def _has_gui_row(op: str, arg: str, subkey: str) -> bool:
     """A ``runOp('<op>', { … <arg> … })`` call in builder.js.
+
+    For a mapping subkey (``ladder.threshold``) the SAME line must also
+    name the subkey: without that, one sibling's row (``ladder.enabled``)
+    would vacuously satisfy every other ladder knob — which is precisely
+    how ``ladder.threshold`` reached the op with no GUI row at all.
 
     Deliberately FAILS CLOSED: the scan assumes the call fits one line
     (every runOp in builder.js does today) — a reformat that wraps a call,
@@ -175,10 +187,13 @@ def _has_gui_row(op: str, arg: str) -> bool:
     """
     source = _BUILDER_JS.read_text(encoding="utf-8")
     pattern = re.compile(rf"""runOp\(\s*['"]{re.escape(op)}['"]\s*,[^\n]*\b{re.escape(arg)}\b""")
-    return bool(pattern.search(source))
+    return any(
+        pattern.search(line) and (not subkey or re.search(rf"\b{re.escape(subkey)}\b", line))
+        for line in source.splitlines()
+    )
 
 
-def _has_node_test_assertion(op: str, arg: str) -> bool:
+def _has_node_test_assertion(op: str, arg: str, subkey: str) -> bool:
     """A builder.test.mjs assertion naming the op's calls and the arg.
 
     TWO lines must exist: (i) a line carrying the quoted op AND the arg —
@@ -187,10 +202,13 @@ def _has_node_test_assertion(op: str, arg: str) -> bool:
     carrying the arg as a word — the actual value check. Requiring the
     ``assert`` line closes the review-found hole where a comment mentioning
     the op + arg satisfied the touchpoint with no assertion at all.
+
+    A mapping subkey is checked on the SUBKEY rather than the mapping arg,
+    for the same anti-vacuity reason as :func:`_has_gui_row`.
     """
     source = _BUILDER_TEST_MJS.read_text(encoding="utf-8")
     quoted_op = re.compile(rf"['\"]{re.escape(op)}['\"]")
-    word_arg = re.compile(rf"\b{re.escape(arg)}\b")
+    word_arg = re.compile(rf"\b{re.escape(subkey or arg)}\b")
     lines = source.splitlines()
     references_op_call = any(quoted_op.search(ln) and word_arg.search(ln) for ln in lines)
     asserts_arg = any("assert" in ln and word_arg.search(ln) for ln in lines)
@@ -217,12 +235,91 @@ def test_knob_registry_is_non_empty_and_covers_genealogy() -> None:
     """
     registry = _knob_registry()
     assert registry, "the knob registry derived from field metadata is empty"
-    assert registry.get("genealogy") == ("set_proposer_quality", "genealogy"), (
+    traced = registry.get("ProposerQualityConfig.genealogy")
+    assert traced == ("set_proposer_quality", "genealogy", ""), (
         "the genealogy knob (Finding 3's traced example) is missing or mis-mapped "
-        f"in the metadata-derived registry: {registry.get('genealogy')!r}"
+        f"in the metadata-derived registry: {traced!r}"
     )
     # The renamed-arg case must resolve to the op's actual arg name.
-    assert registry.get("screen_entries") == ("set_screening", "entries")
+    assert registry.get("ProposerQualityConfig.screen_entries") == (
+        "set_screening",
+        "entries",
+        "",
+    )
+    # The dotted mapping-subkey case splits into (mapping arg, subkey).
+    assert registry.get("LadderConfig.threshold") == ("set_holdout", "ladder", "threshold")
+    # Same-named fields on two knob dataclasses must BOTH be registered — a
+    # bare-field-name key used to collapse them onto one entry, silently
+    # exempting whichever lost the race.
+    assert "OverfittingConfig.enabled" in registry
+    assert "LadderConfig.enabled" in registry
+
+
+#: Contract knob fields with NO builder op, each with the reason it is
+#: EXEMPT rather than missing. Reviewed as part of the exemption guard
+#: below: adding a field here is a deliberate statement that the builder
+#: should not expose it, not a placeholder for "not wired yet".
+_NO_BUILDER_OP_KNOBS = {
+    # Nested config CONTAINERS: the knobs are the fields INSIDE them, each
+    # of which carries its own builder_op (the walk recurses into these
+    # dataclasses), so a container-level op would be a second way to say
+    # the same thing.
+    "ScoringWeights.overfitting": "container — its fields carry the ops",
+    "ScoringWeights.proposer_quality": "container — its fields carry the ops",
+    "ScoringWeights.experiment_memory": "container — its fields carry the ops",
+    # Dotted CALLABLE specs (``pkg.mod:fn``) resolved by the same importer
+    # predicates / judges use. A GUI field that names arbitrary importable
+    # code to run is a code-execution surface, not a knob; these stay
+    # contract-file-only, and the canonicalizer hashes the resolved
+    # module's SOURCE so editing the plugin still rolls the epoch.
+    "ScoringWeights.outcome_summarizer_spec": "dotted callable spec — contract-file only",
+    "ScoringWeights.drift_reducer": "dotted callable spec — contract-file only",
+    "ScoringWeights.scalar_fn": "dotted callable spec — contract-file only",
+    # Declarative TransformSpec mappings ({"op": …, …params}) whose param
+    # set varies per op; there is no fixed row shape for a GUI to render.
+    "ScoringWeights.pass_transform": "open TransformSpec mapping — no fixed GUI row shape",
+    "ScoringWeights.drift_kind_aggregation": "open TransformSpec mapping — no fixed GUI row shape",
+}
+
+
+def test_every_contract_knob_is_exposed_or_explicitly_exempt() -> None:
+    """THE EXEMPTION GUARD: no knob may skip the builder by staying silent.
+
+    The five-touchpoint pin below only ever saw fields that ALREADY declared
+    a ``builder_op`` — a knob with no metadata at all was invisible to it, so
+    "forgot to wire the builder entirely" was the one half-wired shape it
+    could not catch. That is exactly how ``holdout_margin`` and
+    ``holdout_entry_regression_budget`` (issue #118) shipped with a working
+    gate and no way to set them from the builder. This guard closes the
+    class: every contract knob field either carries a ``builder_op`` or is
+    named in :data:`_NO_BUILDER_OP_KNOBS` with the reason.
+    """
+    unexplained: list[str] = []
+    for cls in _CONTRACT_KNOB_DATACLASSES:
+        for f in fields(cls):
+            key = f"{cls.__name__}.{f.name}"
+            if not f.metadata.get("builder_op") and key not in _NO_BUILDER_OP_KNOBS:
+                unexplained.append(key)
+    assert not unexplained, (
+        "contract knob(s) with no builder op and no recorded exemption: "
+        f"{sorted(unexplained)}. Either wire the knob through a builder op "
+        "(_knob(builder_op=...) on the field, then the five touchpoints the "
+        "companion guard checks) or add it to _NO_BUILDER_OP_KNOBS with the "
+        "reason the builder should not expose it."
+    )
+    # And the exemption list may not rot: an entry for a field that no
+    # longer exists (or has since GAINED an op) is stale.
+    live = {
+        f"{cls.__name__}.{f.name}"
+        for cls in _CONTRACT_KNOB_DATACLASSES
+        for f in fields(cls)
+        if not f.metadata.get("builder_op")
+    }
+    stale = set(_NO_BUILDER_OP_KNOBS) - live
+    assert not stale, (
+        f"stale _NO_BUILDER_OP_KNOBS entries {sorted(stale)} — the field was "
+        "removed or has since gained a builder_op; drop the exemption."
+    )
 
 
 def test_every_builder_op_knob_is_fully_wired() -> None:
@@ -236,11 +333,12 @@ def test_every_builder_op_knob_is_fully_wired() -> None:
     """
     registry = _knob_registry()
     failures: list[str] = []
-    for field_name, (op, arg) in sorted(registry.items()):
+    for field_name, (op, arg, subkey) in sorted(registry.items()):
+        shown = f"{arg}.{subkey}" if subkey else arg
         for letter, description, predicate in _TOUCHPOINTS:
-            if not predicate(op, arg):
+            if not predicate(op, arg, subkey):
                 failures.append(
-                    f"knob {field_name!r} (op {op!r}, arg {arg!r}) is missing "
+                    f"knob {field_name!r} (op {op!r}, arg {shown!r}) is missing "
                     f"touchpoint ({letter}): {description}"
                 )
     assert not failures, "half-wired builder knob(s):\n" + "\n".join(failures)
