@@ -1428,6 +1428,11 @@
 
   .dn-mut-combined { display: grid; gap: 14px; grid-template-columns: minmax(280px, 1fr) minmax(320px, 1.4fr); align-items: start; }
   .dn-mut-detail { min-height: 120px; }
+  /* The provenance caption: this surface was reconstructed from records
+     because the snapshot tree is gone. A quiet standing fact about the
+     whole view — never an alarm, never coloured. */
+  .dn-mut-prov { font-size: calc(11px * var(--dt-font-scale, 1)); margin: -4px 0 12px;
+    font-family: var(--v2-mono); }
   .dn-sxs { border: 1px solid var(--v2-rule); border-radius: 4px; overflow: hidden; margin: 8px 0; }
   .dn-sxs-head { display: grid; grid-template-columns: 1fr 1fr; background: var(--v2-rule-soft); }
   .dn-sxs-col-h { font-family: var(--v2-mono); font-size: calc(10px * var(--dt-font-scale, 1)); text-transform: uppercase; letter-spacing: 0.05em;

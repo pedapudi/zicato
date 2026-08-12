@@ -352,8 +352,15 @@ def _load_scoring(layout: WorkspaceLayout, epoch_id: str) -> dict[str, Any]:
     return raw if isinstance(raw, dict) else {}
 
 
-def _load_mutation_surface(layout: WorkspaceLayout, epoch_id: str) -> tuple[dict[str, Any], ...]:
-    """Read ``mutations.json`` — the most-recent enumerated surface."""
+def load_mutation_surface(layout: WorkspaceLayout, epoch_id: str) -> tuple[dict[str, Any], ...]:
+    """Read ``mutations.json`` — the most-recent enumerated surface.
+
+    Public because it is the ONE reader of the epoch's frozen mutation
+    enumeration that keeps every recorded field (the dashboard's
+    ``_parse_mutations`` keeps only a preview). The dashboard's
+    mutation-site browser reads it too, as the record that outlives a
+    pruned snapshot tree — see :mod:`zicato.dashboard.mutations`.
+    """
     raw = _read_json(layout.mutations(epoch_id))
     if not isinstance(raw, list):
         return ()
@@ -641,7 +648,7 @@ def gather_epoch_report_data(workspace_root: Path, epoch_id: str) -> EpochReport
     cfg = _load_epoch_config(layout, epoch_id)
     board_entries, disable_drift = _load_board(layout, epoch_id)
     scoring = _load_scoring(layout, epoch_id)
-    mutation_surface = _load_mutation_surface(layout, epoch_id)
+    mutation_surface = load_mutation_surface(layout, epoch_id)
 
     brief_text = _read_text(layout.brief(epoch_id), _MAX_BRIEF_CHARS)
     journal_text = _read_text(layout.journal(epoch_id), _MAX_JOURNAL_CHARS)

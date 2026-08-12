@@ -228,6 +228,23 @@ def _parse_mutations(path: Path) -> list[dict[str, Any]] | None:
 
 
 def _read_harness(paths: WorkspacePaths) -> dict[str, Any] | None:
+    """The registered inner harness, from the WORKSPACE's live ``config.json``.
+
+    The one live-config read left on an epoch-scoped payload, and it is
+    deliberate rather than overlooked (issue #194 §6's sweep). An epoch
+    freezes its board, brief and scoring into ``epochs/{id}/``, but it
+    never records the harness itself — ``contract_components.json`` keeps
+    only the SHA of the entrypoint and mutable-tree list. So for a closed
+    epoch there is no record to prefer, and the choice is between the
+    workspace's current harness and nothing.
+
+    It stays live because nothing renders it: no dashboard view and no
+    TUI surface reads ``view["harness"]``, so no operator can be misled
+    by it today. Making it honest means recording the harness in the
+    epoch's own config at open time (a writer change), after which this
+    reader prefers the frozen copy — not flagging drift on a payload key
+    that has no reader.
+    """
     cfg = _read_json_value(paths.root / "config.json")
     if not isinstance(cfg, dict):
         return None
