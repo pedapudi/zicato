@@ -1,5 +1,14 @@
 """The promote gate: decide whether a child generation supersedes its parent.
 
+Every rule below is written as a REJECTION condition, which makes finite
+evidence a PRECONDITION rather than a detail: an IEEE comparison involving
+``NaN`` is always false, so one non-finite number in a persisted aggregate
+would skip the rule it feeds and fall through to a promotion carrying the
+empty reason that means "clean win". The contract knobs are already finite by
+``ScoringWeights.__post_init__``; the aggregates come off disk, so the gate
+and the holdout each check the numbers they compare and reject the duel with
+an ``"invalid evidence: ..."`` reason (see :func:`_nonfinite_evidence`).
+
 Before the three scoring rules, an OPT-IN parsimony CEILING may veto the
 candidate outright (OVERFITTING.md §5 / §12 #4 — the ceiling half of the
 diff-complexity regularizer):
@@ -289,6 +298,13 @@ def regressed_namespaces(
             continue
         parent_val = float(parent_ns[ns])
         child_val = float(child_ns[ns])
+        # A non-finite aggregate makes the comparison below false and would
+        # wave the namespace through (see :func:`_nonfinite_evidence`). Judge
+        # it a regression instead: unreadable movement is not proof of no
+        # movement, and this is the direction that fails closed.
+        if not math.isfinite(parent_val) or not math.isfinite(child_val):
+            regressed.append(ns)
+            continue
         if child_val > parent_val + NAMESPACE_MONOTONICITY_TOLERANCE:
             regressed.append(ns)
     regressed.sort()
@@ -519,6 +535,27 @@ def _mean_score(agg: dict[str, Any]) -> float:
     return float(agg.get("pass_rate", 1.0))
 
 
+def _nonfinite_evidence(*named: tuple[str, float]) -> str:
+    """Return a reject reason naming any non-finite evidence, or ``""`` to allow.
+
+    EVERY gate rule is written as a REJECTION condition, and an IEEE comparison
+    involving ``NaN`` is always false — so a single non-finite number silently
+    SKIPS the rule it feeds and the duel falls through to a promotion carrying
+    the empty reason that means "clean win". A ``NaN`` scalar defeats Rule 1's
+    margin, a ``NaN`` mean score defeats Rule 2's aggregate scope, and a ``NaN``
+    holdout scalar defeats the holdout veto. The numbers themselves are read
+    from persisted aggregates, which can outlive the validation that wrote them
+    (or be hand-edited), so each boundary that compares them checks them first.
+
+    Per-entry scores need no entry here: :func:`_row_score` already degrades a
+    non-finite score to a miss (``0.0``).
+    """
+    bad = [name for name, value in named if not math.isfinite(value)]
+    if not bad:
+        return ""
+    return f"invalid evidence: {', '.join(bad)} must be finite"
+
+
 def _pass_rate_regression_reason(
     parent_agg: dict[str, Any],
     child_agg: dict[str, Any],
@@ -633,6 +670,18 @@ def _holdout_confirms(
     margin = effective_holdout_margin(weights)
     parent_scalar = float(holdout_parent_agg["scalar"])
     child_scalar = float(holdout_child_agg["scalar"])
+    # The veto is only a veto if its comparisons can fire (see
+    # :func:`_nonfinite_evidence`): a non-finite holdout number would confirm
+    # every train-measured win, which is precisely the anti-memorization
+    # backstop silently going away.
+    invalid = _nonfinite_evidence(
+        ("holdout champion scalar", parent_scalar),
+        ("holdout challenger scalar", child_scalar),
+        ("holdout champion mean_score", _mean_score(holdout_parent_agg)),
+        ("holdout challenger mean_score", _mean_score(holdout_child_agg)),
+    )
+    if invalid:
+        return f"holdout_not_confirmed: {invalid}"
     # A holdout regression: the challenger's holdout loss rose past the
     # champion's by more than the noise band. (delta > +margin ⇒ regressed.)
     if child_scalar - parent_scalar > margin:
@@ -762,23 +811,27 @@ def evaluate_gate(
     delta_scalar = child_scalar - parent_scalar
     delta_pass_rate = child_pass - parent_pass
 
-    # A persisted aggregate can outlive the validation that created it (or be
-    # manually corrupted), so the promotion boundary must fail closed too.
-    # IEEE comparisons with NaN are always false: without this guard, a NaN
-    # margin/scalar can skip Rule 1 and let a worse challenger advance.
-    if not math.isfinite(parent_scalar) or not math.isfinite(child_scalar):
-        return GateOutcome(
-            decision=TournamentDecision.REJECTED,
-            reason=("invalid scalar evidence: champion and challenger scalars must both be finite"),
-            delta_scalar=delta_scalar,
-            delta_pass_rate=delta_pass_rate,
-        )
-
     # Per-entry regressions attributable to THIS duel, on every path and both
     # verdicts (issue #130). Observation only — it never changes a decision and
     # never enters ``reason``; the round log and the health report are where it
     # surfaces. Computed once here so every early return carries the same set.
     attributable = attributable_entry_regressions(parent_agg, child_agg)
+
+    # Precondition: finite evidence, before any rule reads these numbers.
+    invalid = _nonfinite_evidence(
+        ("champion scalar", parent_scalar),
+        ("challenger scalar", child_scalar),
+        ("champion mean_score", _mean_score(parent_agg)),
+        ("challenger mean_score", _mean_score(child_agg)),
+    )
+    if invalid:
+        return GateOutcome(
+            decision=TournamentDecision.REJECTED,
+            reason=invalid,
+            delta_scalar=delta_scalar,
+            delta_pass_rate=delta_pass_rate,
+            attributable_regressions=attributable,
+        )
 
     # Rule 0: diff-complexity ceiling (OPT-IN, default 0.0 = OFF). A structural
     # admissibility veto — a challenger whose diff complexity

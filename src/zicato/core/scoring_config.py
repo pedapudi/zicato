@@ -107,10 +107,15 @@ def _require_finite_number(name: str, value: object) -> None:
     with ``NaN`` is always false and can otherwise bypass a gate condition.
     JSON accepts those spellings by default, and direct dataclass construction
     can supply them too, so validation belongs at the frozen-contract boundary.
+    This is the same policy :func:`zicato.scoring.transforms.validate_transform_spec`
+    already applies to transform params, generalized to the rest of the contract.
     """
     if isinstance(value, bool) or not isinstance(value, int | float):
         raise ValueError(f"{name} must be a finite number, got {value!r}")
-    if not math.isfinite(float(value)):
+    # An ``int`` is finite by construction, and JSON can carry one too large to
+    # convert — ``float(10**400)`` raises ``OverflowError``, which would escape
+    # this function instead of the ``ValueError`` every caller expects.
+    if isinstance(value, float) and not math.isfinite(value):
         raise ValueError(f"{name} must be finite, got {value!r}")
 
 
