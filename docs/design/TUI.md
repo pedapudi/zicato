@@ -190,6 +190,12 @@ side by design** is a v1 non-goal that is not planned to move.
 
 ### Deferred lenses (coming back)
 
+A pre-descope build of all three lives unmerged at `feat/tui-full-six-lens`
+(`a2f9d7e`) — kept deliberately as the re-landing base, not stale cruft. Do
+not delete it; re-landing is a **port**, not a cherry-pick (it predates the
+four-absence vocabulary, the current routes table, and the removal of
+`margin_bar`, and its goldens need regenerating).
+
 | not in v1 | consequence | evidence that defers with it |
 | --- | --- | --- |
 | **Candidate** dossier | no per-candidate gate evidence in the terminal; the standings row + drawer carry the Δscalar, decision and rating instead | the four gate rules with pass/fail and margins, `deciding_rule`, the Bradley–Terry pre-gate (θ̂ whiskers, `p_stronger`), facet table, per-board rows, per-judge losses, lineage strip, operator-override provenance |
