@@ -212,14 +212,28 @@ def _replace_node_text(
     col_end = node.end_col_offset
     if col_end is None:
         # Fall back to end-of-line if the parser didn't give us a column.
-        col_end = len(lines[line_end - 1].rstrip("\n").rstrip("\r"))
+        col_end = len(lines[line_end - 1].rstrip("\n").rstrip("\r").encode("utf-8"))
 
-    # Compute the absolute byte offsets in the joined string by walking
-    # the line list. Using character offsets is fine because Python's
-    # AST exposes column offsets in characters for ``ast.parse``-d source.
-    before = "".join(lines[: line_start - 1]) + lines[line_start - 1][:col_start]
-    after = lines[line_end - 1][col_end:] + "".join(lines[line_end:])
+    # ``ast`` reports UTF-8 BYTE columns, while ``str`` slices use Unicode
+    # character indexes. Convert each boundary on its own source line before
+    # slicing so a non-ASCII identifier before the target literal does not
+    # shift the edit into the literal itself.
+    start_line = lines[line_start - 1]
+    end_line = lines[line_end - 1]
+    start_index = _byte_column_to_character_index(start_line, col_start)
+    end_index = _byte_column_to_character_index(end_line, col_end)
+    before = "".join(lines[: line_start - 1]) + start_line[:start_index]
+    after = end_line[end_index:] + "".join(lines[line_end:])
     _write_text_writable(file_path, before + new_text + after)
+
+
+def _byte_column_to_character_index(line: str, byte_column: int) -> int:
+    """Translate an ``ast`` UTF-8 byte column into a ``str`` index.
+
+    AST node boundaries always fall between UTF-8 code points, so decoding the
+    byte prefix is lossless and its decoded length is the matching slice index.
+    """
+    return len(line.encode("utf-8")[:byte_column].decode("utf-8"))
 
 
 def _looks_like_python_string_literal(text: str) -> bool:
