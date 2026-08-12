@@ -29,7 +29,7 @@ import * as D from '../data.js';
 import * as svg from '../svg.js';
 import { gatedSwap, section, empty, verdictPill, decisionFor, decisionOf, dataTable, deltaCell, ratingCellEl, ratingTripleDigest } from '../ui.js';
 import { renderStructure, structurePill, structureDigest, isNonGauntlet, normalizeStructure, resolveNonGauntletSt } from './structure.js';
-import { deriveLiveStatus } from '../livestatus.js';
+import { livenessFor } from '../livestatus.js';
 import { roundsFromTimeline, roundModelDigest } from '../rounds.js';
 
 // Does the LIVE run (active tournament / heartbeat) belong to the epoch being
@@ -41,10 +41,12 @@ import { roundsFromTimeline, roundModelDigest } from '../rounds.js';
 // views/epoch.js's `liveForThisEpoch` guard). A run must also actually be
 // running for this to be true.
 function liveBelongsToEpoch(epochId) {
-  const running = deriveLiveStatus({
-    heartbeat: state.heartbeat, activeRuns: state.activeRuns, activeTournament: state.activeTournament,
-  }).running;
-  if (!running) return false;
+  // THE STALE GATE (issue #194 SS1): the served tri-state, not file presence.
+  // This one flag feeds every live overlay on the rounds/standings surfaces —
+  // the projected scalars, the PROJ badges and progress bars, the in-flight
+  // round and its "racing" / "deciding..." pills — so gating it here is what
+  // keeps a dead workspace from claiming a round is still being decided.
+  if (!livenessFor(state).liveness.live) return false;
   const at = state.activeTournament;
   const hb = state.heartbeat;
   const atEpoch = (at && at.epoch_id != null) ? at.epoch_id : null;
@@ -257,10 +259,9 @@ async function renderRoundDrilldown(host, ctx, id, ep, bracket, traj, rows, roun
             champion_lineage: bracket && bracket.champion_lineage, source: 'index',
           }, false)
         : null);
-    const status = deriveLiveStatus({
-      heartbeat: state.heartbeat, activeRuns: state.activeRuns, activeTournament: state.activeTournament,
-    });
-    const liveRaw = (liveForThisEpoch && status.running) ? await D.activeTournament() : null;
+    // `liveForThisEpoch` already carries the tri-state gate (it is false
+    // unless liveness reads live), so no second running check is needed.
+    const liveRaw = liveForThisEpoch ? await D.activeTournament() : null;
     const resolved = resolveNonGauntletSt({
       structure, epochId: id, liveRaw,
       heartbeat: state.heartbeat, activeRuns: state.activeRuns,
@@ -355,9 +356,6 @@ async function renderConfiguredStructure(host, ctx, id, ep, bracket, structure, 
   // ladder. The caller passes `isLiveForThisEpoch`; recompute defensively when
   // it is omitted (a direct call).
   const liveForThisEpoch = isLiveForThisEpoch == null ? liveBelongsToEpoch(id) : !!isLiveForThisEpoch;
-  const status = deriveLiveStatus({
-    heartbeat: state.heartbeat, activeRuns: state.activeRuns, activeTournament: state.activeTournament,
-  });
   // the LIVE topology (full {structure,phase,competitors,rounds,standings}) —
   // adopted ONLY for the active epoch's view. The progressive live builders, the
   // racing reconstruction, and the live-vs-record adoption decision ALL live in
@@ -366,7 +364,7 @@ async function renderConfiguredStructure(host, ctx, id, ep, bracket, structure, 
   // the COMPLETED per-tournament record here (the resolver is sync + I/O-free) and
   // hand it in as the recorded fallback the resolver uses when no live run is
   // adopted AND (for racing) the bracket reconstruction does not resolve.
-  const liveRaw = (liveForThisEpoch && status.running) ? await D.activeTournament() : null;
+  const liveRaw = liveForThisEpoch ? await D.activeTournament() : null;
 
   // pre-fetch the settled record. RACING reads the SERVED racing-field payload
   // (`/api/epoch/{id}/racing-field` — the per-challenger join lives
@@ -417,7 +415,7 @@ async function renderConfiguredStructure(host, ctx, id, ep, bracket, structure, 
         : 'The configured tournament structure for this epoch. Open a match or competitor for its candidate detail, promote gate, per-board scoring, and patch diff.' }),
     ]));
     if (!shown) {
-      nodes.push(empty((liveForThisEpoch && status.running)
+      nodes.push(empty(liveForThisEpoch
         ? 'A run is starting — the live tournament topology is not available yet.'
         : (tournamentId ? 'The tournament structure is unavailable (the index may not be built).'
                         : 'No completed tournament is recorded for this structure — any minted field appears on the epoch’s round timeline, but no bracket matches were committed (the run was torn down first).')));

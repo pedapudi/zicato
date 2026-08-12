@@ -10,7 +10,7 @@ import { el } from '../core/dom.js';
 import { state } from '../core/state.js';
 import * as D from '../data.js';
 import * as svg from '../svg.js';
-import { deriveLiveStatus } from '../livestatus.js';
+import { livenessFor } from '../livestatus.js';
 import { gatedSwap, section, empty, stat, renderMarkdown, densityTokens, chip, dataTable,
   loopVerdict, promotionRateLabel, costPerPromotionLabel, fmtDurationMs, noiseBandFor } from '../ui.js';
 import { structurePill, isNonGauntlet, structureLabel, normalizeStructure, racingModel, swissOverviewModel, elimModel, resolveNonGauntletSt, structureDigest } from './structure.js';
@@ -132,10 +132,11 @@ export async function render(host, ctx, params) {
   // the non-gauntlet overview path.
   let liveInflight = null;
   {
-    const status = deriveLiveStatus({
-      heartbeat: state.heartbeat, activeRuns: state.activeRuns, activeTournament: state.activeTournament,
-    });
-    const liveRaw = status.running ? await D.activeTournament() : null;
+    // The live envelope is fetched ONLY while the served tri-state reads
+    // live — active_tournament.json survives the process that wrote it, and
+    // overlaying it on a dead epoch is what produced the forever-"deciding"
+    // round (issue #194 SS1).
+    const liveRaw = livenessFor(state).liveness.live ? await D.activeTournament() : null;
     const liveForThisEpoch = (liveRaw && liveRaw.epoch_id != null)
       ? String(liveRaw.epoch_id) === String(epochId) : !!liveRaw;
     if (liveForThisEpoch && liveRaw && liveRaw.projected && typeof liveRaw.projected === 'object') liveProjected = liveRaw.projected;

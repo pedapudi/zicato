@@ -2250,7 +2250,12 @@ function standingsTable(st, ctx, epochId, live) {
   // workspace shows the control DISABLED (never POST-and-fail). The POST body
   // names the field round so the readback can attribute it.
   const settled = !live;
-  const readOnly = !!(state.health && state.health.read_only);
+  // POLARITY: writable requires an EXPLICIT `read_only: false`, matching the
+  // topbar controls (shell.js). The truthy read here meant a health payload
+  // that had not arrived (or a server that omits the field) rendered the
+  // override controls ENABLED against a workspace that may reject the POST —
+  // the safe default for a control affordance is off, not on.
+  const readOnly = !(state.health && state.health.read_only === false);
   const tournamentId = (st && st.tournament_id != null) ? String(st.tournament_id) : null;
   const bodyBase = {};
   if (epochId != null) bodyBase.epoch = String(epochId);

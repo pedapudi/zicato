@@ -15,7 +15,7 @@ import * as D from '../data.js';
 import * as svg from '../svg.js';
 import { section, empty, stat, densityTokens, renderView, figCaption } from '../ui.js';
 import { inflightForActiveEpoch, inflightForEntryGen, runProgressRatio } from './structure.js';
-import { deriveLiveStatus } from '../livestatus.js';
+import { livenessFor } from '../livestatus.js';
 
 // The FULL entry-kind vocabulary (core/board.py::BoardEntryKind). The two
 // synthetic kinds are settable from the builder and serialized by the board
@@ -59,12 +59,12 @@ export async function render(host, ctx, params) {
   // LIVE — in-flight board runs, CURRENT-EPOCH-SCOPED. A foreign-epoch run must
   // not light up this trellis, so the set is gated on the live run belonging to
   // the viewed epoch (mirrors gens.js / candidate.js).
-  const liveStatus = deriveLiveStatus({
-    heartbeat: state.heartbeat, activeRuns: state.activeRuns, activeTournament: state.activeTournament,
-  });
   const epochInflight = inflightForActiveEpoch(state.activeRuns, {
     heartbeat: state.heartbeat, activeTournament: state.activeTournament,
-    running: liveStatus.running, epochId,
+    // The served tri-state, not file presence: `active_runs` records outlive
+    // their process, and a trellis cell reading "3 running" months later is
+    // the stale-live bug (issue #194 SS1).
+    running: livenessFor(state).liveness.live, epochId,
   });
   // per-entry in-flight tally (count + summed progress) for the trellis cells.
   const inflightByEntry = new Map();

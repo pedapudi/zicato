@@ -2009,6 +2009,9 @@
   .dt-status-stale { color: var(--v2-ink-faint); font-style: italic; white-space: nowrap;
     text-transform: none; letter-spacing: normal; }
   .dt-status-stale:empty { display: none; }
+  /* the transport word collapses when the socket is healthy (it only speaks
+   * when broken); the dot alone carries "connected". */
+  .dt-status-text:empty { display: none; }
   .dt-run-label { color: var(--v2-good); text-transform: lowercase; letter-spacing: normal; white-space: nowrap; }
   .dt-run-label:empty { display: none; }
   .dt-run-count { color: var(--v2-ink-faint); text-transform: none; letter-spacing: normal; white-space: nowrap; }

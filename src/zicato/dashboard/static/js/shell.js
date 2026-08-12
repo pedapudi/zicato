@@ -32,7 +32,7 @@ import * as D from './data.js';
 import { invalidateLive, liveDataSignature } from './data.js';
 import { buildTree, treeDigest } from './tree.js';
 import { roundsForTree } from './rounds.js';
-import { deriveLiveStatus, deriveLiveness, liveStatusDigest, treeLiveSet, staleLabel, runStateLabel, LIVENESS } from './livestatus.js';
+import { livenessFor, liveStatusDigest, treeLiveSet, staleLabel, runStateLabel, LIVENESS } from './livestatus.js';
 import { LiveController } from './live.js';
 import { buildSwatchDropdown, syncSwatchDropdowns } from './swatchdropdown.js';
 import { syncTypefaceDropdowns, syncFontSizeSegments } from './typefacedropdown.js';
@@ -873,14 +873,12 @@ async function renderTree(route) {
   // on the active rows. Gated on the structure-agnostic running verdict +, when
   // tagged, scoped to the viewed epoch. Folded into the digest so the pulse
   // re-stamps when the set changes — a steady beat with the same set is a no-op.
-  const status = deriveLiveStatus({
-    heartbeat: state.heartbeat,
-    activeRuns: state.activeRuns,
-    activeTournament: state.activeTournament,
-  });
+  const { status, liveness } = livenessFor(state);
   const routeEpochId = (route && route.params) ? route.params.epochId : null;
   const live = treeLiveSet({
-    activeRuns: state.activeRuns, running: status.running,
+    // The tri-state, not file presence — leftover active-run records must not
+    // leave tree rows pulsing months after the run died (issue #194 SS1).
+    activeRuns: state.activeRuns, running: liveness.live && status.running,
     epochId: routeEpochId != null ? routeEpochId : model.current,
   });
   const digest = treeDigest(model, route, _toggles, live);
@@ -927,21 +925,18 @@ function renderStatus() {
   // pill's LIVE/STALLED/SETTLED/DEAD verdict that rides right after it. It must
   // NOT also say "live" (two adjacent "live" markers read as a redundant bug);
   // "connected" names the transport without colliding with the run pill.
-  const conn = state.connected ? 'connected' : state.connecting ? 'connecting…' : 'offline';
-  const status = deriveLiveStatus({
-    heartbeat: state.heartbeat,
-    activeRuns: state.activeRuns,
-    activeTournament: state.activeTournament,
-    // the orchestrator progress cursor (RUNTIME-V2 Phase 4) — drives the
-    // four-state run pill; absent / -1 degrades to the timestamp verdict.
-    seq: state.lastSeq,
-    terminal: state.terminal,
-    lastSeqAdvanceAt: state.lastSeqAdvanceAt,
-  });
-  // THE TRI-STATE (issue #194 §1) — the one verdict every present-tense
+  // TRANSPORT SURFACES ONLY WHEN BROKEN. A healthy socket is silence: the
+  // operator saw "connected / STALLED / · racing · rung 0 / · 7 units" — four
+  // status tokens, three truth sources, no hierarchy, and the tail of it
+  // contradicted the head. "connected" describes the BROWSER's socket and was
+  // read as a claim about the RUN. It now says nothing while it is fine.
+  const conn = state.connected ? '' : state.connecting ? 'connecting…' : 'disconnected — retrying';
+  // THE TRI-STATE (issue #194 SS1) — the one verdict every present-tense
   // claim in the chrome consumes, so the pill cannot read LIVE against a
-  // workspace the server has already called interrupted.
-  const liveness = deriveLiveness({ liveness: state.liveness, status });
+  // workspace the server has already called interrupted. The four-state
+  // verdict rides alongside it; it only refines a LIVE run into LIVE vs
+  // STALLED and supplies the phase label.
+  const { status, liveness } = livenessFor(state);
   // The loop-control cluster gates on its OWN digest ({shown, paused}) —
   // paused is not part of the status digest, so it must render before the
   // status early-return below.
@@ -952,6 +947,8 @@ function renderStatus() {
 
   patchText(_statusTextEl || _statusEl, conn);
   patchClass(_statusEl, 'dt-connected', state.connected);
+  // The transport DOT is the healthy socket's only trace; the word is empty.
+  patchClass(_statusEl, 'dt-transport-quiet', !conn);
   patchClass(_statusEl, 'dt-running', liveness.live && status.running);
   // A frozen heartbeat (stale, not live) gets a distinct chrome class so the
   // dot/badge can read "not live" rather than borrowing the running accent.
@@ -1133,15 +1130,7 @@ function renderExecLink() {
 // directly (core/sse.js), this runs sub-second — push, not poll.
 function refreshLive() {
   if (!_live) return;
-  const status = deriveLiveStatus({
-    heartbeat: state.heartbeat,
-    activeRuns: state.activeRuns,
-    activeTournament: state.activeTournament,
-    seq: state.lastSeq,
-    terminal: state.terminal,
-    lastSeqAdvanceAt: state.lastSeqAdvanceAt,
-  });
-  const liveness = deriveLiveness({ liveness: state.liveness, status });
+  const { status, liveness } = livenessFor(state);
   _live.update({
     status,
     liveness,

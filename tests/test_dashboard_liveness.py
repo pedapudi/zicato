@@ -222,6 +222,23 @@ def test_stale_workers_alone_do_not_make_it_live(tmp_path: Path) -> None:
     assert _derive(ws)["state"] == LIVENESS_INTERRUPTED
 
 
+def test_active_runs_carry_an_ageable_timestamp(tmp_path: Path) -> None:
+    """Each run record ships ``last_progress_ts`` (ms epoch).
+
+    The frontend ages the in-flight tally off THIS field, exactly as it ages
+    the heartbeat off ``ts`` — no ISO parsing, no magnitude guessing. Without
+    it a consumer can only count records, which is how a workspace dead since
+    June reported seven units running.
+    """
+    from zicato.query.runtime_view import read_active_runs_view
+
+    ws = _ws(tmp_path, run_ages_s=[5.0])
+    rows = read_active_runs_view(WorkspacePaths(ws))
+    assert len(rows) == 1
+    expected = int((NOW - _dt.timedelta(seconds=5.0)).timestamp() * 1000)
+    assert rows[0]["last_progress_ts"] == expected
+
+
 # ---------------------------------------------------------------------------
 # The phase vocabulary
 # ---------------------------------------------------------------------------

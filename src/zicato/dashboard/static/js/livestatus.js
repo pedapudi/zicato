@@ -73,6 +73,42 @@ function heartbeatTs(hb) {
   return (typeof v === 'number' && isFinite(v)) ? v : NaN;
 }
 
+// An active-run record's last known progress, as ms-epoch. The server stamps
+// `last_progress_ts` (read_active_runs_view) the same way it stamps the
+// heartbeat's `ts`; an older server without it degrades to parsing the ISO
+// stamps it does send.
+function runTs(r) {
+  if (!r || typeof r !== 'object') return NaN;
+  if (typeof r.last_progress_ts === 'number' && isFinite(r.last_progress_ts)) return r.last_progress_ts;
+  const iso = r.last_progress || r.started_at;
+  const t = iso ? Date.parse(iso) : NaN;
+  return isFinite(t) ? t : NaN;
+}
+
+// Active-run records that are ACTUALLY still beating.
+//
+// THE BUG (issue #194 §1): `active_runs/*.json` outlives the process that
+// wrote it. A killed run leaves its records on disk forever, and counting them
+// made a workspace dead since June report seven units in flight — which in
+// turn forced `pulsing`, so the run-state pill settled on STALLED (alive, no
+// progress) rather than DEAD, and the hero stayed up. Each record carries the
+// per-run beater's `last_progress`, so they can be aged exactly like the
+// orchestrator heartbeat.
+//
+// A record with NO ageable timestamp at all counts as fresh: the real producer
+// (ActiveRun) always writes `started_at`, so an untimestamped record is a
+// hand-built or minimal payload, and dropping it would silently under-report a
+// genuinely live run. The stale-forever case we are fixing always HAS a
+// timestamp — an old one.
+function freshRunCount(runs, now) {
+  let n = 0;
+  for (const r of runs) {
+    const t = runTs(r);
+    if (!isFinite(t) || (now - t) <= STALE_HEARTBEAT_MS) n += 1;
+  }
+  return n;
+}
+
 // Build a short, readable label from the heartbeat phase + the structure.
 // Examples:
 //   phase "tournament:round_0:rung0_m3", structure "racing" → "racing · rung 0"
@@ -187,7 +223,9 @@ export function deriveLiveStatus(
   const at = (activeTournament && typeof activeTournament === 'object') ? activeTournament : null;
 
   const phaseActive = isActivePhase(phase);
-  const inFlight = runs.length;
+  // Only runs that are STILL BEATING count as in flight. `runs.length` is the
+  // record count on disk, which a dead run never cleans up.
+  const inFlight = freshRunCount(runs, now);
   const tournamentRunning = !!(at && String(at.phase || '').toLowerCase() === 'running');
 
   // Heartbeat freshness: a FROZEN heartbeat from a dead/torn-down process must
@@ -214,10 +252,11 @@ export function deriveLiveStatus(
   // The orchestrator-derived live signals (the heartbeat `phase` and the
   // active-tournament `phase === "running"`) only count as live while the
   // heartbeat is FRESH — both are written by the same orchestrator process, so
-  // a frozen heartbeat means a frozen tournament file too. An in-flight
+  // a frozen heartbeat means a frozen tournament file too. A FRESH in-flight
   // board-unit is the one exception: those records are bumped by per-run
-  // worker beaters independent of the orchestrator heartbeat, so a present
-  // active-run is ground truth and forces live on its own.
+  // worker beaters independent of the orchestrator heartbeat, so a run still
+  // beating is ground truth and forces live on its own (that is what carries a
+  // long model call through a starved orchestrator beat).
   const phaseLive = phaseActive && heartbeatFresh;
   const tournamentLive = tournamentRunning && heartbeatFresh;
 
@@ -236,7 +275,14 @@ export function deriveLiveStatus(
   // With NO seq known (pre-RUNTIME-V2: seq absent / -1) the run-state
   // DEGRADES to the legacy timestamp verdict (byte-identical to today):
   // running ⇒ LIVE, a frozen heartbeat ⇒ DEAD, an idle workspace ⇒ SETTLED.
-  const seqKnown = typeof seq === 'number' && isFinite(seq) && seq >= 0;
+  // A real transition is seq >= 1. `progress_log.tail_seq` returns 0 for an
+  // ABSENT or empty log, which is exactly the workspace written before the
+  // progress log existed — so seq 0 is "no progress recorded", NOT a known
+  // cursor. Treating it as known was the other half of the stale-live bug:
+  // the client counts the first seq it ever sees as an advance and stamps
+  // `lastSeqAdvanceAt = now`, so a workspace dead since June reported that it
+  // had just progressed, and the run-state pill read LIVE on load.
+  const seqKnown = typeof seq === 'number' && isFinite(seq) && seq > 0;
   const advanceAge = isFinite(lastSeqAdvanceAt) ? Math.max(0, now - lastSeqAdvanceAt) : NaN;
   const seqAdvancingFresh = seqKnown && isFinite(advanceAge) && advanceAge <= SEQ_STALL_BUDGET_MS;
   // A heartbeat is "pulsing" when it exists AND is fresh (the run-state DEAD/
@@ -425,7 +471,10 @@ export function staleLabel(ageMs) {
   const m = Math.floor(s / 60);
   if (m < 60) return `last seen ${m}m ago`;
   const h = Math.floor(m / 60);
-  return `last seen ${h}h ago`;
+  if (h < 48) return `last seen ${h}h ago`;
+  // A workspace can sit dead for months. "last seen 1512h ago" is technically
+  // true and useless; days is the unit an operator reads at that distance.
+  return `last seen ${Math.floor(h / 24)}d ago`;
 }
 
 // ── the TREE LIVE-ACTIVITY set (Task 2) ──────────────────────────────

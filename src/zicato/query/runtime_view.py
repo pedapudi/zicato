@@ -422,6 +422,12 @@ def read_active_runs_view(paths: WorkspacePaths) -> list[dict[str, Any]]:
         d["progress"] = progress
         d["elapsed_seconds"] = elapsed
         d["budget_seconds"] = budget
+        # THE ONE ageable timestamp per run, ms-epoch — the same discipline the
+        # heartbeat's `ts` follows. These records OUTLIVE the process that wrote
+        # them, so a consumer that counts them without ageing them reports seven
+        # units in flight for a run that died in June. Derived from the per-run
+        # beater's ``last_progress``, falling back to ``started_at``.
+        d["last_progress_ts"] = _heartbeat_ts_ms(d.get("last_progress") or d.get("started_at"))
         out.append(d)
     return out
 

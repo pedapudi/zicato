@@ -83,7 +83,12 @@ export async function render(host, ctx, params, route) {
   // run no longer reads "did not run in any round" while it is plainly racing.
   const staticMatchups = (bracket && Array.isArray(bracket.matchups)) ? bracket.matchups : [];
   const at = state.activeTournament;
-  const liveForThisEpoch = liveBelongsToEpoch(epochId, { heartbeat: state.heartbeat, activeTournament: at });
+  // THE ONE LIVENESS READ for this view. Everything present-tense below hangs
+  // off it: the live matchups folded into the dossier, the racing resolver's
+  // live envelope, and the in-flight board table (issue #194 SS1).
+  const { liveness } = livenessFor(state);
+  const liveForThisEpoch = liveness.live
+    && liveBelongsToEpoch(epochId, { heartbeat: state.heartbeat, activeTournament: at });
   const liveMatchups = (at && liveForThisEpoch) ? liveMatchupsForCandidate(at, null) : [];
   // dedupe by champion>challenger>match_id — the static feed wins (it has the
   // hypothesis + committed decision); a live match only fills a NEW pair.
@@ -106,12 +111,6 @@ export async function render(host, ctx, params, route) {
   // LIVE in-flight board runs, CURRENT-EPOCH-SCOPED. A run in flight for a
   // FOREIGN epoch must not light up this candidate's board/dot-plot, so the set
   // is gated on the live run belonging to the viewed epoch (mirrors gens.js).
-  // ...and on the SERVED TRI-STATE (issue #194 §1): `active_runs` records
-  // outlive the process that wrote them, so a workspace dead since June still
-  // holds seven of them. They are in-flight only while liveness reads `live`;
-  // otherwise they are a record of what was running when it stopped, and the
-  // panel says so in the past tense instead of animating progress bars.
-  const { liveness } = livenessFor(state);
   // The RAW set — every record, live or not. `liveness` (threaded alongside)
   // is what decides whether they read as in-flight or as a past-tense note.
   const epochInflight = inflightForActiveEpoch(state.activeRuns, {
