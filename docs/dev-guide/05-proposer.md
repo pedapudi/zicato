@@ -1666,8 +1666,13 @@ so a custom agent simply does
 A tool function cannot carry per-round context as a bound argument: the custom
 agent is constructed ONCE (at import / first propose) and reused across every
 challenger. The tools therefore read a module-level
-`contextvars.ContextVar[ProposerToolContext | None]`, which
-`ADKProposerAgent.propose` sets around each agent run via
+`contextvars.ContextVar[ProposerToolContext | None]`. That plumbing lives in
+`zicato/proposer/tool_context.py` and is re-exported from
+`zicato/proposer/tools.py`, so `from zicato.proposer.tools import
+ProposerToolContext, bind_proposer_tool_context` stays the import site it has
+always been; the split exists so `validate.py` can reach the context without
+importing the tool bodies (see the callout at the end of §5.9.2). The
+contextvar is what `ADKProposerAgent.propose` sets around each agent run via
 `bind_proposer_tool_context(tool_ctx)` — set on entry, **reset to the prior
 value on exit even on exception**. A `ContextVar` (not a plain global) means
 concurrent challengers — each agent on its own asyncio task — never leak
@@ -1694,6 +1699,30 @@ empty degrades that tool to an explicit "coordinates unavailable" answer).
 | `mutation_track_record(mutation_id)` | the fertility map for ONE manifest point, as JSON (counts, promoted, `recent` flag, the banded summary line) | AGGREGATES ONLY — same banding as the manifest annotation; the honesty `basis` field is mandatory | `ValueError` on an id not in the current manifest ("actionable retry signal"); a zeroed record — not an error — for an untouched point |
 | `read_parent_diff()` | what the LAST promotion changed: `git diff` between the parent generation's tag and ITS parent's under the git backend (tree objects only — nothing checked out); the journal's patch records under the directory backend | output cap 20 000 chars; per-patch value cap 2 000 chars on the fallback | explicit notices for: no coordinates, a seed generation, a byte-identical promotion |
 | `mutation_usage(mutation_id)` | where the point's symbol (the trailing `__`-segment of its id) and short single-line literal value are referenced across the snapshot | delegates to `grep_mutable` with `re.escape`, so the escape guard + match cap apply unchanged | `ValueError` on an unknown id |
+| `validate_patches(patches_json)` | nothing — it WRITES a draft patch set into a throwaway `ztw-pvalidate-*` scratch copy of the parent snapshot and reports what broke, as `{"ok", "errors", "tiers"}` | three tiers, stopping at the first failure: structure + apply + A1–A4; the contract-declared static-check delta; the sandboxed `adapter.load` probe. Per-check timeouts (120s / 60s), output capped at 4 000 chars, scratch tree removed in a `finally` | `ValueError` on an argument that is not a usable patch array; a check that could not run is a NOTE (never `ok: false`) |
+| `train_slice_drift_profile()` | banded per-entry incidence of each drift kind (and its severity mix) across the champion's TRAIN slice | slice re-derived, never passed in; two independent slice gates; default-deny read allowlist admitting NO free-text field; rates banded; label count capped at 40 | fails closed to `status: "train slice unavailable"` with no data — never the whole board |
+| `train_slice_agent_profile()` | per agent role: banded incidence of invocation, of attributed drift, and of being steered | as above; agent names are open-vocabulary, so each passes through `scrub_identity` then `truncate_free_text` | as above |
+| `train_slice_process_profile()` | banded incidence of the process-failure payload cases (`task_failed` / `task_blocked` / `task_cancelled` / `plan_revised`) | as above; case names are goldfive's closed payload-oneof vocabulary and carry no content of their own | as above |
+
+The registry is also served over MCP (`zicato/proposer/mcp_server.py`) for a
+proposer that is not an in-process ADK agent. That server **derives its tool
+list by reflecting over `DEFAULT_PROPOSER_TOOLS`** and dispatches into the same
+functions inside the same `bind_proposer_tool_context` block, so it neither
+narrows nor widens the surface and the escape guard gets no second
+implementation. The sanctioned-surface question is therefore decided in
+`tools.py` and nowhere else. One server per challenger process: the context var
+is process-wide, so a shared server would cross-bind concurrent rounds.
+
+**The external proposer is not yet wired to it.** `SANCTIONED_TOOLS` in
+`zicato/proposer/pi_agent.py` is still `("propose_experiment",)` — the
+terminating structured-output tool and nothing else — and the envelope
+assertion in `tests/test_proposer_pi_envelope.py` pins exactly that. Connecting
+the two is deliberately a separate step, and `pi_agent.py`'s module docstring
+states its shape: override `PiProposerAgent.tool_flags` to return the server's
+launch flags and declare the exposed names in `SANCTIONED_TOOLS`. Both are read
+by the launch *and* by the contract identity, so widening the external
+proposer's tool surface rolls the epoch by construction — which is why the
+wiring must go through those two constants rather than around them.
 
 **The `mutable_roots` path-shape lesson** (read this before touching path
 resolution): `list_mutation_points` advertises files **relative to the whole
@@ -1721,11 +1750,24 @@ snapshot readable, and reaching the non-mutable code that *consumes* a mutable
 value is the entire reason the snapshot root is a readable root. Any new
 recursive tool goes through `_walk_roots` too.
 
-> ⛔ NEVER add a WRITING tool. The whole surface is read-only by contract: "a
-> proposer tool that mutated the snapshot would corrupt the very tree the
-> round is about to patch (and break the content-hash guard the applier relies
-> on)". If a proposer needs to try an edit, that is what the propose→validate
-> hook cycle is for.
+> ⛔ NEVER add a tool that writes to the GENERATION SNAPSHOT. "A proposer tool
+> that mutated the snapshot would corrupt the very tree the round is about to
+> patch (and break the content-hash guard the applier relies on)."
+>
+> `validate_patches` is the one tool that writes anything, and it does not
+> relax that rule: it writes only into a disposable scratch copy in the OS temp
+> root, removed in a `finally`. The line it must also satisfy is the governing
+> principle of [PROPOSER.md §2.10](../design/PROPOSER.md) — *the proposer may
+> check its patch by any means that consumes no board data and produces no
+> scores; it may never execute board entries* — pinned by the
+> `"the proposer's patch validator has no path to the board"` import-linter
+> contract and by the runtime closure test in
+> `tests/test_proposer_validate.py`. Two structural details exist to keep that
+> pin satisfiable, and must survive any refactor: the tier-3 probe lives in
+> `zicato/proposer/_load_probe.py` and is reached by SPAWNING a subprocess (so
+> the adapters stay on the forbidden list), and the contextvar plumbing lives
+> in `zicato/proposer/tool_context.py` (so reaching `_active_context` does not
+> drag the analyzer, and through it the board loader, into the closure).
 
 ### 5.9.3 Why tools do NOT fold into the contract hash
 

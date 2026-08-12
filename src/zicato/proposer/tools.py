@@ -12,26 +12,27 @@ and ADK wraps each as a ``FunctionTool`` automatically.
 
 Why a context var
 -----------------
-A tool function cannot carry the per-round runtime context (which
-generation snapshot to read, the mutation manifest, the epoch's
-journal) as a bound argument, because the custom agent is constructed
-ONCE at import time — long before any round runs, and reused across
-every challenger. The tools therefore read their context from a
-module-level :class:`contextvars.ContextVar`, which
-:func:`ADKProposerAgent.propose` sets immediately around each agent run
-via :func:`bind_proposer_tool_context`. A ``ContextVar`` (not a plain
-global) is used so concurrent challengers — each running its own agent
-on its own asyncio task — never leak context into one another: a child
-task started under one ``bind_proposer_tool_context`` block sees that
-block's value, and the reset on block exit restores the prior value.
+A tool function cannot carry the per-round runtime context as a bound
+argument, because the custom agent is constructed ONCE at import time —
+long before any round runs — and reused across every challenger. The
+tools therefore read their context from a module-level
+:class:`contextvars.ContextVar`. That plumbing lives in
+:mod:`zicato.proposer.tool_context` (see its docstring for the full
+rationale, including why it is a separate module) and is re-exported
+here, so ``from zicato.proposer.tools import ProposerToolContext,
+bind_proposer_tool_context`` stays the import site it has always been.
 
-Read-only by contract
-----------------------
-Every tool here READS the parent generation's snapshot and the epoch's
-narrative — none of them write. A proposer tool that mutated the
-snapshot would corrupt the very tree the round is about to patch (and
-break the content-hash guard the applier relies on), so the whole
-surface is deliberately read-only. ``read_mutable_file`` and
+Never write to the snapshot
+---------------------------
+Every tool here but :func:`~zicato.proposer.validate.validate_patches`
+READS the parent generation's snapshot and the epoch's narrative — none
+of them write. A proposer tool that mutated the snapshot would corrupt
+the very tree the round is about to patch (and break the content-hash
+guard the applier relies on), so that prohibition is absolute and
+``validate_patches`` does not relax it: it writes only into a disposable
+scratch copy in the OS temp root, never into the snapshot, and it
+consumes no board data and produces no score (see
+:mod:`zicato.proposer.validate`). ``read_mutable_file`` and
 ``grep_mutable`` additionally refuse any path that escapes the mutable
 roots, so a tool call cannot read outside the generation snapshot.
 
@@ -48,15 +49,17 @@ covers.
 
 from __future__ import annotations
 
-import contextvars
 import json
 import re
-from collections.abc import Iterator
-from contextlib import contextmanager
-from dataclasses import dataclass
 from pathlib import Path
 
-from zicato.core.types import MutationPoint
+from zicato.proposer.redacted_query import REDACTED_QUERY_TOOLS
+from zicato.proposer.tool_context import (
+    ProposerToolContext,
+    _active_context,
+    bind_proposer_tool_context,
+)
+from zicato.proposer.validate import validate_patches
 
 #: Hard cap on the number of ``grep_mutable`` matches returned, so a
 #: pathological pattern cannot flood the agent's context window. The cap
@@ -68,128 +71,6 @@ _GREP_MATCH_LIMIT = 200
 #: content ceiling. Generous enough for any real prompt body / source
 #: file; only a pathologically large file is trimmed (with a note).
 _READ_FILE_LIMIT_CHARS = 200_000
-
-
-@dataclass(frozen=True)
-class ProposerToolContext:
-    """The per-round runtime context a proposer tool reads.
-
-    Set immediately around each agent run by
-    :func:`bind_proposer_tool_context` and read by every tool via the
-    module-level context var. Frozen so a bound context is a stable,
-    re-readable value across the agent's tool calls within one round.
-
-    Fields
-    ------
-    workspace_root:
-        The ``.zicato/`` workspace root — used to resolve the epoch's
-        journal / insights paths.
-    generation_root:
-        The parent generation's snapshot directory. ``read_mutable_file``
-        and ``grep_mutable`` resolve relative paths under this root's
-        mutable subtrees.
-    epoch_id:
-        The active epoch's id — the journal / insights lookups key on it.
-    mutations:
-        The resolved mutation manifest for this round — exactly the
-        :class:`MutationPoint` tuple the default proposer is offered.
-        ``list_mutation_points`` renders it; the read/grep tools derive
-        the mutable subtrees from its ``source_root`` set.
-    generation_id:
-        The id of the generation ``generation_root`` snapshots — the
-        round's champion (the proposer's PARENT generation). Lets
-        ``read_parent_diff`` resolve the generation-store coordinates of
-        the tree the tools are already reading. Empty (the legacy
-        default) degrades that tool to an explicit "coordinates
-        unavailable" answer.
-    """
-
-    workspace_root: Path
-    generation_root: Path
-    epoch_id: str
-    mutations: tuple[MutationPoint, ...]
-    generation_id: str = ""
-
-    def mutable_roots(self) -> tuple[Path, ...]:
-        """Return the mutable surface roots under the snapshot.
-
-        Always includes the whole :attr:`generation_root` (the snapshot
-        root) FIRST, then each distinct mutable subtree the manifest's
-        :attr:`MutationPoint.source_root` values re-base onto it by
-        basename (the same re-basing :meth:`ADKHarnessAdapter.mutable_subpaths`
-        does — a snapshot copies each registered tree under its basename).
-
-        Why the snapshot root is always present
-        ---------------------------------------
-        :func:`list_mutation_points` advertises every mutable file RELATIVE TO
-        THE WHOLE SNAPSHOT (``file.relative_to(generation_root)`` — e.g.
-        ``agent/prompts.py``). The old derivation, however, admitted ONLY the
-        narrower declared subtree as a readable root when an adapter declared
-        one (``source_root`` basename ``agent`` → root ``<snapshot>/agent``), so
-        the very path the manifest hands the proposer resolved to
-        ``<snapshot>/agent/agent/prompts.py`` — not a file — and raised; only
-        the bare subtree-relative ``prompts.py`` resolved. The mismatch is
-        UNCONDITIONAL (the surface is identical every round); it tends to
-        surface once the proposer starts issuing the manifest-advertised
-        snapshot-relative form rather than a bare filename. Anchoring the
-        snapshot root makes the snapshot-relative path resolve too, so the read
-        no longer depends on which path shape the proposer happened to pick;
-        keeping the subtree roots lets the bare subtree-relative form resolve as
-        before. The escape guard in :func:`_resolve_under_mutable_roots` still
-        rejects any ``..`` traversal out of whichever root matched, so widening
-        the accepted roots never widens the readable surface beyond the
-        snapshot.
-        """
-        root = self.generation_root.resolve()
-        seen: dict[str, Path] = {str(root): root}
-        for mp in self.mutations:
-            candidate = root / Path(mp.source_root).name
-            if candidate.exists():
-                seen.setdefault(str(candidate), candidate)
-        return tuple(seen.values())
-
-
-_TOOL_CONTEXT: contextvars.ContextVar[ProposerToolContext | None] = contextvars.ContextVar(
-    "zicato_proposer_tool_context",
-    default=None,
-)
-
-
-@contextmanager
-def bind_proposer_tool_context(ctx: ProposerToolContext) -> Iterator[None]:
-    """Bind ``ctx`` as the active proposer-tool context for the block.
-
-    Sets the module-level context var on entry and RESETS it to its prior
-    value on exit (even on exception), so a concurrent challenger running
-    its own agent under its own ``bind_proposer_tool_context`` never sees
-    this block's context, and nothing leaks past the block. Used by
-    :class:`ADKProposerAgent` to wrap each ``goldfive.run`` of the custom
-    agent.
-    """
-    token = _TOOL_CONTEXT.set(ctx)
-    try:
-        yield
-    finally:
-        _TOOL_CONTEXT.reset(token)
-
-
-def _active_context() -> ProposerToolContext:
-    """Return the bound context or raise a clear out-of-context error.
-
-    A tool called outside a :func:`bind_proposer_tool_context` block has
-    no runtime context to read; raising here (rather than returning a
-    misleading empty result) makes the misuse obvious — the custom agent
-    must be run through :class:`ADKProposerAgent`, which binds the
-    context around the run.
-    """
-    ctx = _TOOL_CONTEXT.get()
-    if ctx is None:
-        raise RuntimeError(
-            "proposer tool called with no bound ProposerToolContext; "
-            "proposer tools may only be called from within an "
-            "ADKProposerAgent run (see bind_proposer_tool_context)"
-        )
-    return ctx
 
 
 def _resolve_under_mutable_roots(relative_path: str, ctx: ProposerToolContext) -> Path:
@@ -650,9 +531,30 @@ def mutation_usage(mutation_id: str) -> str:
     return "\n\n".join(sections)
 
 
-#: The full read-only tool set a custom proposer agent may opt into at
-#: once. A custom ``agent.py`` does ``tools=list(DEFAULT_PROPOSER_TOOLS)``
-#: to expose every tool above to its ``LlmAgent``.
+#: The full proposer tool set a custom proposer agent may opt into at once.
+#: A custom ``agent.py`` does ``tools=list(DEFAULT_PROPOSER_TOOLS)`` to
+#: expose every tool to its ``LlmAgent``. This tuple IS the sanctioned
+#: surface: adding to it widens what every proposer can do, so it is pinned
+#: by name in ``tests/test_proposer_tools.py`` rather than counted.
+#:
+#: Three groups, in order:
+#:
+#: * the SNAPSHOT tools (``list_mutation_points`` … ``mutation_usage``) —
+#:   read-only over the parent generation's tree and the epoch's narrative;
+#: * ``validate_patches`` — the only tool that writes anything, and the
+#:   exception is narrow by construction: a disposable scratch copy in the
+#:   OS temp root, never the snapshot the round is about to patch, and it
+#:   consumes no board data and produces no score (see
+#:   :mod:`zicato.proposer.validate`);
+#: * the REDACTED QUERY tools (:data:`~zicato.proposer.redacted_query.REDACTED_QUERY_TOOLS`)
+#:   — banded aggregates over the champion's TRAIN slice only, through the
+#:   same mechanical redaction the process-exemplar channel performs. They
+#:   emit no entry id, no task text and no model output, and they can never
+#:   read the holdout (see :mod:`zicato.proposer.redacted_query`).
+#:
+#: The standing prohibition none of them relax: no tool may write to the
+#: generation snapshot, and no tool may widen the proposer's view of the
+#: board beyond the marginal aggregates the overfitting envelope allows.
 DEFAULT_PROPOSER_TOOLS = (
     list_mutation_points,
     read_mutable_file,
@@ -662,6 +564,8 @@ DEFAULT_PROPOSER_TOOLS = (
     mutation_track_record,
     read_parent_diff,
     mutation_usage,
+    validate_patches,
+    *REDACTED_QUERY_TOOLS,
 )
 
 
@@ -677,4 +581,5 @@ __all__ = [
     "read_journal",
     "read_mutable_file",
     "read_parent_diff",
+    "validate_patches",
 ]

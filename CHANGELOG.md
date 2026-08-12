@@ -1,5 +1,89 @@
 # Changelog
 
+### The proposer can check its own patch, and ask the run corpus questions
+
+Three additions to the proposer's tool surface, all governed by one line now
+written into `docs/design/PROPOSER.md` §2.10:
+
+> **The proposer may check its patch by any means that consumes no board data
+> and produces no scores; it may never execute board entries.**
+
+That is the line separating a legitimate self-check from grading your own
+work. A proposer that could run against a slice it chose would be doing the
+tournament's job with none of the tournament's guards.
+
+**`validate_patches` — proposing stops being open-loop.** Both existing
+proposer tiers emitted a patch set and were done; neither had ever seen its
+own output checked. For a span replace that is fine — the applier re-quotes
+span content as a string literal, so a span edit cannot break syntax or drop
+an import. For a **file-marker `replace`**, `new_content` is a whole
+post-edit module that must satisfy A1–A4 of MUTATION-SURFACE.md §6, and
+emitting it in one shot and hoping is exactly the workload a tool-using agent
+exists to avoid — a violation cost a full retry round-trip, re-sending the
+entire manifest. The new tool applies a draft patch set to a scratch copy of
+the parent snapshot and reports what broke, in three tiers that stop at the
+first failure: **structure + apply** (the shape and cross-check passes, a new
+optional `content_sha256` pre-image guard that catches a stale read, then
+A1–A4); **static analysis** (the workspace's declared linters, reported as
+the DELTA against the same checks on the unpatched tree, so a patch is never
+blamed for the tree's pre-existing lint debt); and a **load probe** that runs
+the same `adapter.load` the tournament runs before any entry executes, one
+expensive round earlier. Tier 1 reimplements nothing — every check is
+machinery the round pipeline already applies *after* the proposer answers.
+The contribution is running it before. It is in `DEFAULT_PROPOSER_TOOLS`, so
+the ADK default proposer gets the closed loop, not only an external agent.
+
+A missing linter or an adapterless workspace produces a **note**, never a
+failure. A validator that rejected a good patch because a dev tool was
+uninstalled is a validator the proposer learns to ignore.
+
+**Redacted, train-slice-only run-corpus queries.** The proposer's other
+channels are pre-rendered: the orchestrator samples and bands the patterns,
+the failure profile and the process exemplars before the proposer sees them.
+Three new tools make a small, provably-clean part of the same corpus
+queryable on demand — same privacy envelope, asked rather than pushed. They
+report banded per-entry incidence of drift kinds, of agent roles, and of
+process failures across the champion's train slice. The envelope, not the
+feature, is the deliverable: the train slice is **re-derived, never accepted
+as an argument**, through the same `split_board` / `rotation_seed` pair the
+tournament uses, and fails closed to "unavailable" with no data rather than
+ever falling back to the whole board; a second, independent gate re-filters
+by entry id afterwards, because a single gate is one refactor away from being
+bypassed. Reading is default-deny over a narrow allowlist of closed-vocabulary
+event fields with **no free-text field admitted at all**, which is what keeps
+the task prompt and every completion summary structurally unreachable rather
+than merely scrubbed. Figures are banded and stable within a reign, so there
+is no round-over-round surface to hill-climb. The design invariant is
+PROPOSER.md §2.5's: **feed the marginal, never the joint**.
+
+**The tools are also served over MCP.** A thin stdio server exposes the same
+functions, unchanged, to a proposer that is not an in-process ADK agent. It
+reimplements nothing — every call lands on the registry function inside the
+same context binding the ADK path uses, so the mutable-root escape guard has
+no second implementation to drift — and the tool list is derived by reflecting
+over the registry, so a tool added there is served with no edit. One server
+per challenger process, because the context var is process-wide.
+
+Three structural notes for anyone editing this code. The tier-3 probe lives
+in its own `_load_probe.py` and is reached by *spawning* a subprocess, not by
+importing the adapter factory; the contextvar plumbing moved to
+`tool_context.py` so the validator can reach the context without dragging the
+analyzer, and through it the board loader, into its import closure; and the
+R3/R4 redaction primitives moved to `analyzer/redaction.py` so the exemplar
+channel and the query surface apply byte-identical redaction. Those three
+splits are what make the governing principle enforceable *structurally* — an
+import-linter contract forbids the validator any path to the board, the
+adapters, the tournament worker, the emulator or the judges, with a runtime
+closure test as its twin.
+
+The tier-2 static-check set is **contract, not configuration**
+(`contract.proposer_static_checks`), folded into the proposer component of
+the contract hash, because changing which checks the proposer holds itself to
+changes what it proposes. The declarable names are a closed registry rather
+than operator-supplied command lines: a hashed name is a reviewable identity,
+a hashed command line is an arbitrary-execution surface a contract edit could
+widen silently. The empty default is omitted from the canonical form, so every
+workspace that never configures it hashes byte-identically to before.
 ### The builder reaches every contract knob, and a guard says so
 
 `holdout_margin` and `holdout_entry_regression_budget` — the holdout

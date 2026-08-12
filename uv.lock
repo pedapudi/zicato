@@ -7036,6 +7036,7 @@ dashboard = [
 dev = [
     { name = "httpx" },
     { name = "import-linter" },
+    { name = "mcp" },
     { name = "mypy" },
     { name = "pre-commit" },
     { name = "pytest" },
@@ -7053,6 +7054,9 @@ dev = [
 goldfive = [
     { name = "goldfive" },
 ]
+mcp = [
+    { name = "mcp" },
+]
 tui = [
     { name = "textual" },
 ]
@@ -7068,6 +7072,8 @@ requires-dist = [
     { name = "httpx", marker = "extra == 'dev'", specifier = ">=0.27" },
     { name = "import-linter", marker = "extra == 'dev'", specifier = ">=2.0" },
     { name = "jsonschema", specifier = ">=4.20" },
+    { name = "mcp", marker = "extra == 'dev'", specifier = ">=1.0" },
+    { name = "mcp", marker = "extra == 'mcp'", specifier = ">=1.0" },
     { name = "mypy", marker = "extra == 'dev'", specifier = ">=1.10" },
     { name = "pre-commit", marker = "extra == 'dev'", specifier = ">=4" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8" },
@@ -7086,7 +7092,7 @@ requires-dist = [
     { name = "watchdog", marker = "extra == 'dev'", specifier = ">=4.0" },
     { name = "zicato-examples", marker = "extra == 'dev'", editable = "examples" },
 ]
-provides-extras = ["goldfive", "adk", "dashboard", "tui", "dev"]
+provides-extras = ["goldfive", "adk", "dashboard", "tui", "mcp", "dev"]
 
 [[package]]
 name = "zicato-examples"
