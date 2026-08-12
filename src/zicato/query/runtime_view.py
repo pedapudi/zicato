@@ -427,6 +427,170 @@ def read_active_runs_view(paths: WorkspacePaths) -> list[dict[str, Any]]:
 
 
 # ---------------------------------------------------------------------------
+# Liveness — THE one derivation every live surface reads
+# ---------------------------------------------------------------------------
+
+#: Heartbeat staleness window, seconds. :class:`~zicato.runtime.heartbeat.HeartbeatBeater`
+#: bumps ``heartbeat.json`` every ~2s, so 30s is a generous multiple of the
+#: cadence: long enough to ride out a slow tick, short enough that a dead
+#: process stops reading live within half a minute. The frontend's
+#: ``STALE_HEARTBEAT_MS`` (livestatus.js) is the same number.
+STALE_HEARTBEAT_S = 30.0
+
+#: Heartbeat-``phase`` tokens that mean "the loop is at rest". Mirrors the
+#: frontend's ``IDLE_PHASES`` (livestatus.js). The empty string is NOT here:
+#: an absent phase is *unknown*, not at-rest, and a fresh heartbeat carrying
+#: one belongs to a process that is plainly alive (the beater's very first
+#: beat writes ``phase == ""``).
+IDLE_PHASE_TOKENS = frozenset(
+    {"idle", "done", "complete", "completed", "finished", "stopped", "error"}
+)
+
+#: The tri-state vocabulary. ``live`` — something is running right now.
+#: ``settled`` — the loop reached an end (terminal progress event, or a
+#: heartbeat parked on an at-rest phase), including a workspace that never
+#: ran. ``interrupted`` — it stopped mid-flight without ever ending.
+LIVENESS_LIVE = "live"
+LIVENESS_SETTLED = "settled"
+LIVENESS_INTERRUPTED = "interrupted"
+
+
+def is_active_phase(phase: Any) -> bool:
+    """Whether a heartbeat ``phase`` string names in-flight work.
+
+    The phase is a colon path (``tournament:round_0:rung0_m3``,
+    ``evolve_n_rounds:done``) and the terminal token can land in ANY
+    segment, so a phase is at-rest when any segment is an idle token.
+    An empty / absent phase is not active (it carries no claim).
+    """
+    p = str(phase or "").strip().lower()
+    if not p:
+        return False
+    return not any(seg in IDLE_PHASE_TOKENS for seg in p.split(":"))
+
+
+def _is_fresh(stamp: Any, now: _dt.datetime) -> bool:
+    """Whether an ISO stamp sits within :data:`STALE_HEARTBEAT_S` of ``now``.
+
+    An unparseable / absent stamp is NOT fresh — a record with no ageable
+    timestamp must never default to live. A stamp slightly in the future
+    (clock skew between writer and reader) reads fresh.
+    """
+    ts = _parse_iso(stamp)
+    if ts is None:
+        return False
+    return (now - ts).total_seconds() <= STALE_HEARTBEAT_S
+
+
+def _on_disk_heartbeat(paths: WorkspacePaths) -> dict[str, Any] | None:
+    """The RAW heartbeat record, or ``None`` when the file is absent.
+
+    Deliberately NOT :func:`read_heartbeat_dict`: that reader synthesizes a
+    heartbeat for a post-mortem workspace with a persistent harmonograf,
+    stamped with the current time — reading liveness off it would make a
+    dead workspace pulse forever. Liveness must key on what the
+    orchestrator actually wrote. An unparseable ``last_heartbeat`` falls
+    back to the file's mtime, the freshest moment the record was rewritten.
+    """
+    try:
+        hb = read_heartbeat(paths.root)
+    except Exception:  # noqa: BLE001 — best-effort
+        return None
+    if hb is None:
+        return None
+    out = hb.to_dict()
+    if _parse_iso(out.get("last_heartbeat")) is None:
+        out["last_heartbeat"] = _heartbeat_file_mtime_iso(paths)
+    return out
+
+
+def _progress_tail(paths: WorkspacePaths) -> tuple[bool, bool, str | None]:
+    """``(has_tail, is_terminal, ts)`` of the orchestrator progress log.
+
+    The terminal marker is the AUTHORITATIVE end-of-loop signal: the evolve
+    loop appends ``Settled`` / ``Stopped`` on a clean end. Degrades to
+    ``(False, False, None)`` for an absent log (a workspace written before
+    the progress log existed) so the phase fallback below decides instead.
+    """
+    try:
+        from zicato.runtime import progress_log  # noqa: PLC0415
+
+        tail = progress_log.tail(paths.root)
+        if tail is None:
+            return (False, False, None)
+        ts = tail.ts if isinstance(tail.ts, str) and tail.ts else None
+        return (True, progress_log.is_terminal(tail.type), ts)
+    except Exception:  # noqa: BLE001 — best-effort
+        return (False, False, None)
+
+
+def derive_liveness(paths: WorkspacePaths, *, now: _dt.datetime | None = None) -> dict[str, Any]:
+    """THE liveness verdict — ``{state, last_heartbeat?, ended_at?}``.
+
+    One derivation, read by every live surface, so "is anything running?"
+    has exactly one answer. Liveness is a property of the CLOCK, not of
+    file presence: a workspace whose runtime files froze in June still has
+    a ``phase``, an ``active_tournament.json`` reading ``running`` and
+    seven ``active_runs`` records — none of which mean anything is running.
+
+    The rules, in order:
+
+    1. **settled** — the progress log's tail is a terminal event, or the
+       heartbeat is parked on an at-rest phase (``…:done``). The loop
+       reached an end; ``ended_at`` names when. A workspace that never ran
+       (no heartbeat, no runs, no progress log) settles too, with no
+       timestamps to report.
+    2. **live** — something is pulsing within :data:`STALE_HEARTBEAT_S`:
+       the orchestrator heartbeat, or any in-flight run's ``last_progress``
+       (the per-run beaters bump those independently, so a worker keeps the
+       verdict live through a wedged orchestrator beat).
+    3. **interrupted** — everything else: it stopped mid-flight and never
+       recorded an end. ``ended_at`` is the last moment it was seen alive.
+
+    Keys are omit-when-absent and additive; a consumer that does not know
+    the block degrades to whatever it read before.
+    """
+    now = now or _utc_now()
+    hb = _on_disk_heartbeat(paths)
+    try:
+        runs = read_active_runs_view(paths)
+    except Exception:  # noqa: BLE001 — best-effort
+        runs = []
+    has_tail, terminal, tail_ts = _progress_tail(paths)
+
+    last_heartbeat = hb.get("last_heartbeat") if hb is not None else None
+    phase = hb.get("phase") if hb is not None else None
+    # A heartbeat parked on an at-rest phase is how a workspace written
+    # before the progress log existed records a clean end.
+    at_rest = hb is not None and bool(str(phase or "").strip()) and not is_active_phase(phase)
+
+    pulse = _is_fresh(last_heartbeat, now) or any(
+        _is_fresh(r.get("last_progress") or r.get("started_at"), now) for r in runs
+    )
+
+    if terminal or at_rest:
+        state = LIVENESS_SETTLED
+        ended_at = tail_ts if terminal else last_heartbeat
+    elif pulse:
+        state = LIVENESS_LIVE
+        ended_at = None
+    elif hb is None and not runs and not has_tail:
+        # Nothing was ever written here — at rest, with nothing to report.
+        state = LIVENESS_SETTLED
+        ended_at = None
+    else:
+        state = LIVENESS_INTERRUPTED
+        ended_at = last_heartbeat or tail_ts
+
+    out: dict[str, Any] = {"state": state}
+    if isinstance(last_heartbeat, str) and last_heartbeat:
+        out["last_heartbeat"] = last_heartbeat
+    if isinstance(ended_at, str) and ended_at:
+        out["ended_at"] = ended_at
+    return out
+
+
+# ---------------------------------------------------------------------------
 # Composite /api/state snapshot
 # ---------------------------------------------------------------------------
 
@@ -437,9 +601,14 @@ def build_snapshot(paths: WorkspacePaths) -> dict[str, Any]:
     ``paused`` (the operator pause-flag presence) rides top-level too —
     a paused-but-not-running workspace has no heartbeat to carry it, so
     the state read must surface it independently.
+
+    ``liveness`` is the served tri-state (:func:`derive_liveness`) — the
+    one answer every live surface reads instead of re-deriving "is
+    anything running?" from raw file presence.
     """
     return {
         "heartbeat": read_heartbeat_dict(paths),
+        "liveness": derive_liveness(paths),
         "lock": read_lock_dict(paths),
         "active_runs": read_active_runs_view(paths),
         "active_tournament": read_active_tournament_dict(paths),

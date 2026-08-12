@@ -121,7 +121,11 @@ test('live hero: an active-tournament (racing, running) renders the live hero + 
 test('live hero: a phase/active-runs update mutates the live surfaces WITHOUT a full repaint (node identity preserved; structure digest gates the scalar track)', () => {
   try { globalThis.window.localStorage.clear(); } catch (e) { /* ignore */ }
   coreState.state.connected = true; coreState.state.connecting = false;
-  coreState.state.setHeartbeat({ phase: 'tournament:round_1:rung1_m0', generation_id: 'v1' });
+  // A FRESH `ts` on every beat: the run is genuinely live across this whole
+  // test, which is what it is about (in-place mutation vs repaint). Without
+  // one the heartbeat cannot be aged, so the tri-state reads the workspace
+  // as interrupted and tears the drawer down mid-test.
+  coreState.state.setHeartbeat({ phase: 'tournament:round_1:rung1_m0', generation_id: 'v1', ts: Date.now() });
   coreState.state.activeRuns = [{ generation_id: 'v1', entry_id: 'b0', run_id: 'r1', progress: 0.2 }];
   coreState.state.activeTournament = HERO_LIVE_RACING;
 
@@ -150,7 +154,7 @@ test('live hero: a phase/active-runs update mutates the live surfaces WITHOUT a 
   next.rounds[1].matches[0].cut = ['v0'];
   coreState.state.activeTournament = next;
   coreState.state.activeRuns = [];   // the in-flight run completed.
-  coreState.state.setHeartbeat({ phase: 'tournament:round_2:racing-final' });
+  coreState.state.setHeartbeat({ phase: 'tournament:round_2:racing-final', ts: Date.now() });
   coreState.state._changed();
 
   // the scalar track rebuilt (the structure digest changed) — but the ticker LIST

@@ -797,9 +797,10 @@ test('racing multi-survivor — the live HERO leads with the scalar-track mini (
 
   // ORDERING: the full-width race (the scalar-track mini in `_funnelHost`/
   // `_trackHost`) appears BEFORE the "what's running" matches list (_matchesHost)
-  // in the hero's DOM. Both ride inside wrapper divs (the `race` row + the
-  // `detail` row), so find which top-level child subtree contains each.
-  const kids = c.node.childNodes;
+  // in the hero's DRAWER. Both ride inside wrapper divs (the `race` row + the
+  // `detail` row) under `_body` — the one-line status band is a sibling ABOVE
+  // the drawer, so the reading order is measured inside the drawer itself.
+  const kids = c._body.childNodes;
   const subtreeIndexOf = (target) => {
     for (let i = 0; i < kids.length; i++) {
       let found = false;
@@ -927,8 +928,8 @@ test('hero redesign — the race state is the FULL-WIDTH primary viz: the scalar
   // responsive → width:100% + the load-bearing hero class for the max-width cap.
   assertEqual(track.getAttribute('width'), '100%', 'the track fills the hero width (responsive width:100%)');
   assert((track.getAttribute('class') || '').includes('dn-scalartrack-hero'), 'the track carries the dn-scalartrack-hero class (the svg.* max-WIDTH cap governs)');
-  // the track host leads ABOVE the detail row in the hero DOM (race → detail).
-  const kids = c.node.childNodes;
+  // the track host leads ABOVE the detail row inside the drawer (race → detail).
+  const kids = c._body.childNodes;
   const idxOf = (target) => { for (let i = 0; i < kids.length; i++) { let f = false; walk(kids[i], (n) => { if (n === target) f = true; }); if (f) return i; } return -1; };
   assert(idxOf(c._trackHost) < idxOf(c._matchesHost), 'the full-width race leads above the detail row');
 });

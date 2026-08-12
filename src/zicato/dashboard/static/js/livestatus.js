@@ -289,6 +289,129 @@ export function deriveLiveStatus(
   };
 }
 
+// ── the TRI-STATE every present-tense surface consumes ───────────────
+//
+// THE BUG this fixes (issue #194 §1): liveness was read off FILE PRESENCE.
+// A workspace dead since June still holds a heartbeat naming a round, an
+// `active_tournament.json` reading `phase: "running"`, and seven
+// `active_runs` records — so every view opened with `LIVE · racing · 7
+// units running`, 100%-forever progress bars, and "deciding…" figures, two
+// months after the process died.
+//
+// One derivation, three words:
+//   live        — something is pulsing right now.
+//   settled     — the loop reached an end (it appended a terminal progress
+//                 event, or its heartbeat is parked on an at-rest phase).
+//   interrupted — it stopped mid-flight and never recorded an end.
+//
+// The SERVER derives this tri-state (runtime_view.derive_liveness) and
+// serves it as `liveness` on /api/state, /api/environment and the SSE
+// snapshot. THE SERVER'S VERDICT IS THE ANSWER — it is the only reader that
+// can see the terminal progress event log, and the only one that ages the
+// per-run records rather than counting them. This function does not
+// re-derive it.
+//
+// The client's one contribution is DEMOTION. A served payload is a
+// photograph: if the stream dies mid-run, "live" would stay on the page
+// forever. So the client's own ageing (`deriveLiveStatus().alive`, the
+// existing hero-visibility gate) can only ever pull a `live` verdict DOWN
+// to `interrupted` — never push a dead workspace up to live. That is what
+// keeps this from becoming a second staleness brain.
+//
+// With no `liveness` block at all (an older server, or the Rust supervisor,
+// which does not serve it yet) the four-state verdict maps in directly:
+// SETTLED → settled, LIVE/STALLED → live, DEAD → interrupted. That is
+// byte-for-byte today's behaviour.
+export const LIVENESS = Object.freeze({
+  LIVE: 'live', SETTLED: 'settled', INTERRUPTED: 'interrupted',
+});
+
+export function deriveLiveness({ liveness, status } = {}) {
+  const served = (liveness && typeof liveness === 'object') ? liveness : null;
+  const s = status || {};
+  const servedState = served ? String(served.state || '') : '';
+
+  let state;
+  if (servedState === LIVENESS.SETTLED || servedState === LIVENESS.INTERRUPTED) {
+    state = servedState;
+  } else if (servedState === LIVENESS.LIVE) {
+    // The server saw a pulse; the client keeps ageing it.
+    state = s.alive === false ? LIVENESS.INTERRUPTED : LIVENESS.LIVE;
+  } else if (s.runState === RUN_STATE.SETTLED) {
+    state = LIVENESS.SETTLED;
+  } else {
+    state = s.alive ? LIVENESS.LIVE : LIVENESS.INTERRUPTED;
+  }
+
+  // When did it end? The server names the moment it saw (the terminal
+  // event's stamp, or the last beat before it went cold); the last
+  // heartbeat is the fallback. A live run reports no end.
+  let endedAt = null;
+  if (state !== LIVENESS.LIVE && served) {
+    endedAt = served.ended_at || served.last_heartbeat || null;
+  }
+  return {
+    state,
+    live: state === LIVENESS.LIVE,
+    endedAt,
+    lastHeartbeat: served ? (served.last_heartbeat || null) : null,
+  };
+}
+
+// The views' one-line entry point: both verdicts straight off an
+// AppState-shaped object. Still pure — it takes the state, never imports it —
+// so a fixture object drives it in a test exactly like the real app does.
+// EVERY present-tense claim in the console goes through this: if it says
+// "racing", "deciding…", "N boards running", or animates a bar, it must first
+// have asked here whether anything is actually running.
+export function livenessFor(appState, now = Date.now()) {
+  const s = appState || {};
+  const status = deriveLiveStatus({
+    heartbeat: s.heartbeat,
+    activeRuns: s.activeRuns,
+    activeTournament: s.activeTournament,
+    seq: s.lastSeq,
+    terminal: s.terminal,
+    lastSeqAdvanceAt: s.lastSeqAdvanceAt,
+  }, now);
+  return { status, liveness: deriveLiveness({ liveness: s.liveness, status }) };
+}
+
+// The one-line status band's text. Live surfaces the phase + in-flight
+// count; a dead workspace speaks in the PAST TENSE with the date it
+// stopped, so no view claims anything is happening when nothing is.
+//   live        → "racing · rung 1 · 7 units"
+//   settled     → "last run · Jun 8 · settled"
+//   interrupted → "last run · Jun 8 · interrupted mid-round"
+export function livenessBandText(liveness, status) {
+  const s = status || {};
+  if (liveness.state === LIVENESS.LIVE) {
+    const bits = [s.label || 'running'];
+    if (s.inFlight > 0) bits.push(s.inFlight + ' unit' + (s.inFlight === 1 ? '' : 's'));
+    return bits.join(' · ');
+  }
+  const when = shortDate(liveness.endedAt);
+  const verdict = liveness.state === LIVENESS.INTERRUPTED
+    ? 'interrupted mid-round' : 'settled';
+  // No timestamp at all ⇒ nothing ever ran here; say that rather than
+  // dating a run that never happened.
+  if (!when) return liveness.state === LIVENESS.INTERRUPTED ? verdict : 'no run yet';
+  return 'last run · ' + when + ' · ' + verdict;
+}
+
+// An ISO stamp as a short "Jun 8" (or "Jun 8, 2025" across a year
+// boundary). Empty string when unparseable — callers drop the date rather
+// than print "Invalid Date".
+export function shortDate(iso, now = new Date()) {
+  if (!iso) return '';
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return '';
+  const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+                  'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  const base = MONTHS[d.getMonth()] + ' ' + d.getDate();
+  return d.getFullYear() === now.getFullYear() ? base : base + ', ' + d.getFullYear();
+}
+
 // Format a heartbeat age (ms) into a short "last seen Ns ago" affordance.
 // `NaN` (an untimestamped frozen heartbeat) reads as a bare "stale" — there
 // is no age to report but the run is still not live. Used by the chrome to
