@@ -842,6 +842,17 @@ def _render_report_md(
                 f"{_fmt(c.get('recall'))} | {_fmt(c.get('f1'))} | "
                 f"{_fmt(c.get('self_consistency_kappa'))} | {exercised} |"
             )
+        # The per-judge remedies, BENEATH the table rather than as a twelfth
+        # column — a recommendation is a sentence, and the table is already
+        # eleven columns of numbers. Listed only for judges that carry one,
+        # so a clean audit adds no empty section.
+        remedies = [(c.get("judge_name"), c.get("recommendation")) for c in scorecards]
+        remedies = [(name, text) for name, text in remedies if text]
+        if remedies:
+            lines.append("")
+            lines.append("Recommendations:")
+            for name, text in remedies:
+                lines.append(f"- `{name}` — {text}")
     lines.append("")
     return "\n".join(lines)
 

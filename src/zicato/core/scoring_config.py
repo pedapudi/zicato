@@ -74,10 +74,19 @@ def _knob(
     ``builder_arg`` — the argument NAME the op / API dispatch / copilot tool
     / GUI row use for this field WHEN it differs from the field name (e.g.
     ``screen_entries`` is the ``entries`` arg of ``set_screening``); ``None``
-    means "same as the field name". A registry-driven completeness guard
-    test asserts every ``builder_op`` knob is wired through all its
-    touchpoints (op signature, API dispatch, copilot tool, GUI row, node
-    test), naming exactly which touchpoint is missing for which knob.
+    means "same as the field name". A DOTTED value (``"ladder.threshold"``)
+    names a field the op takes as a SUBKEY of a partial-mapping argument:
+    the op / dispatch / copilot touchpoints are checked against the mapping
+    arg (``ladder``), while the GUI row and node test must additionally
+    name the subkey — otherwise one row for one subkey would vacuously
+    cover every sibling (which is exactly how ``ladder.threshold`` shipped
+    with no GUI row at all). A registry-driven completeness guard test
+    asserts every ``builder_op`` knob is wired through all its touchpoints
+    (op signature, API dispatch, copilot tool, GUI row, node test), naming
+    exactly which touchpoint is missing for which knob — and a companion
+    guard asserts every contract knob field either CARRIES a ``builder_op``
+    or sits in an explicitly justified exemption set, so a knob can no
+    longer skip the builder entirely by simply omitting this metadata.
 
     Defaults and validation are unaffected — they stay on the field
     declaration / ``__post_init__`` exactly as before; this is metadata only.
@@ -143,10 +152,18 @@ class LadderConfig:
         DP-grade noise calibration later; must be ``>= 0``.
     """
 
-    enabled: bool = True
-    threshold: float | None = None
-    budget: int = 16
-    noise_scale: float = 0.0
+    enabled: bool = field(
+        default=True, metadata=_knob(builder_op="set_holdout", builder_arg="ladder.enabled")
+    )
+    threshold: float | None = field(
+        default=None, metadata=_knob(builder_op="set_holdout", builder_arg="ladder.threshold")
+    )
+    budget: int = field(
+        default=16, metadata=_knob(builder_op="set_holdout", builder_arg="ladder.budget")
+    )
+    noise_scale: float = field(
+        default=0.0, metadata=_knob(builder_op="set_holdout", builder_arg="ladder.noise_scale")
+    )
 
     def __post_init__(self) -> None:
         if self.threshold is not None and self.threshold < 0.0:
@@ -246,13 +263,21 @@ class OverfittingConfig:
         existing epochs never roll retroactively. Must be ``>= 0``.
     """
 
-    enabled: bool = True
-    holdout_fraction: float = 0.3
-    min_board_size_for_split: int = 6
-    restrict_proposer_visibility: bool = True
-    ladder: LadderConfig = field(default_factory=_default_ladder_config)
-    rotate_holdout: bool = True
-    max_generations_per_contract: int | None = None
+    enabled: bool = field(default=True, metadata=_knob(builder_op="set_holdout"))
+    holdout_fraction: float = field(
+        default=0.3, metadata=_knob(builder_op="set_holdout", builder_arg="fraction")
+    )
+    min_board_size_for_split: int = field(default=6, metadata=_knob(builder_op="set_holdout"))
+    restrict_proposer_visibility: bool = field(
+        default=True, metadata=_knob(builder_op="set_holdout")
+    )
+    ladder: LadderConfig = field(
+        default_factory=_default_ladder_config, metadata=_knob(builder_op="set_holdout")
+    )
+    rotate_holdout: bool = field(default=True, metadata=_knob(builder_op="set_holdout"))
+    max_generations_per_contract: int | None = field(
+        default=None, metadata=_knob(builder_op="set_holdout")
+    )
     random_baseline_every_n: int = field(
         default=0,
         metadata=_knob(omit_at_default=True, builder_op="set_holdout"),
@@ -892,14 +917,21 @@ class ScoringWeights:
         Validated fail-fast in :meth:`__post_init__`.
     """
 
-    drift_weight: float = 1.0
-    pass_weight: float = 1.0
-    severity_weights: Mapping[str, float] = field(default_factory=_default_severity_weights)
-    per_kind_weights: Mapping[str, float] = field(default_factory=dict)
-    per_judge_weights: Mapping[str, float] = field(default_factory=dict)
-    default_judge_weight: float = 1.0
-    plan_revision_weight: float = 0.5
-    runtime_weight: float = 0.0
+    drift_weight: float = field(default=1.0, metadata=_knob(builder_op="set_weights"))
+    pass_weight: float = field(default=1.0, metadata=_knob(builder_op="set_weights"))
+    severity_weights: Mapping[str, float] = field(
+        default_factory=_default_severity_weights,
+        metadata=_knob(builder_op="set_weights"),
+    )
+    per_kind_weights: Mapping[str, float] = field(
+        default_factory=dict, metadata=_knob(builder_op="set_weights")
+    )
+    per_judge_weights: Mapping[str, float] = field(
+        default_factory=dict, metadata=_knob(builder_op="set_weights")
+    )
+    default_judge_weight: float = field(default=1.0, metadata=_knob(builder_op="set_weights"))
+    plan_revision_weight: float = field(default=0.5, metadata=_knob(builder_op="set_weights"))
+    runtime_weight: float = field(default=0.0, metadata=_knob(builder_op="set_weights"))
     # Opt-in parsimony / MDL term (OVERFITTING.md §5 / §12 #4). DEFAULT 0.0 ⇒
     # the diff-complexity term is exactly absent and the scalar / contract hash
     # / every golden are byte-identical to a contract without this field (the
@@ -922,7 +954,7 @@ class ScoringWeights:
         default=0.0,
         metadata=_knob(omit_at_default=True, builder_op="set_namespace_weights"),
     )
-    promote_margin: float = 0.01
+    promote_margin: float = field(default=0.01, metadata=_knob(builder_op="set_gate"))
     # The holdout confirmation's OWN bounds (issue #118). ``promote_margin``
     # was calibrated against the train slice and reused verbatim on the
     # holdout, whose 1/N quantization is coarser; the two uses then pull one
@@ -933,28 +965,44 @@ class ScoringWeights:
     # default so no existing epoch's contract hash moves.
     holdout_margin: float | None = field(
         default=None,
-        metadata=_knob(omit_at_default=True),
+        metadata=_knob(omit_at_default=True, builder_op="set_gate"),
     )
     holdout_entry_regression_budget: int = field(
         default=0,
-        metadata=_knob(omit_at_default=True),
+        metadata=_knob(omit_at_default=True, builder_op="set_gate"),
     )
-    pass_rate_monotonicity: bool = True
-    pass_rate_monotonicity_scope: PassRateMonotonicityScope = "per_entry"
-    regression_gate_enabled: bool = False
-    regression_test_command: tuple[str, ...] = ("pytest", "tests/", "-q")
-    regression_timeout_s: int = 600
+    pass_rate_monotonicity: bool = field(
+        default=True,
+        metadata=_knob(builder_op="set_gate", builder_arg="monotonicity"),
+    )
+    pass_rate_monotonicity_scope: PassRateMonotonicityScope = field(
+        default="per_entry",
+        metadata=_knob(builder_op="set_gate", builder_arg="monotonicity_scope"),
+    )
+    regression_gate_enabled: bool = field(default=False, metadata=_knob(builder_op="set_gate"))
+    regression_test_command: tuple[str, ...] = field(
+        default=("pytest", "tests/", "-q"),
+        metadata=_knob(builder_op="set_gate"),
+    )
+    regression_timeout_s: int = field(default=600, metadata=_knob(builder_op="set_gate"))
     # Multi-objective surface — see the helpers above for the rationale
     # behind the default coefficient choices.
-    namespace_weights: Mapping[str, float] = field(default_factory=_default_namespace_weights)
+    namespace_weights: Mapping[str, float] = field(
+        default_factory=_default_namespace_weights,
+        metadata=_knob(builder_op="set_namespace_weights"),
+    )
     namespace_monotonicity: Mapping[str, bool] = field(
-        default_factory=_default_namespace_monotonicity
+        default_factory=_default_namespace_monotonicity,
+        metadata=_knob(builder_op="set_gate"),
     )
     # Per-epoch tournament structure (gauntlet by default). Modelled here
     # so it factors into the contract hash through the existing scoring
     # canonicalizer with zero new plumbing: changing the structure or any
     # param rolls the epoch. See :class:`TournamentStructure`.
-    tournament_structure: TournamentStructure = field(default_factory=_default_tournament_structure)
+    tournament_structure: TournamentStructure = field(
+        default_factory=_default_tournament_structure,
+        metadata=_knob(builder_op="set_structure", builder_arg="structure"),
+    )
     # Anti-overfitting controls (train/holdout split + proposer leakage
     # restriction). Modelled here so it factors into the contract hash
     # through the existing scoring canonicalizer with zero new plumbing:

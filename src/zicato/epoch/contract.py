@@ -37,6 +37,7 @@ import os
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
+from typing import TYPE_CHECKING
 
 from zicato.core.scoring_config import (
     ExperimentMemoryConfig,
@@ -45,6 +46,9 @@ from zicato.core.scoring_config import (
     ProposerQualityConfig,
     ScoringWeights,
 )
+
+if TYPE_CHECKING:  # pragma: no cover - typing-only import
+    from zicato.proposer.external import ExternalProposerConfig
 
 log = logging.getLogger("zicato.epoch.contract")
 
@@ -94,6 +98,12 @@ class ContractInputs:
     #: the epoch, or ``None`` for the built-in default proposer. ``None``
     #: by default so existing construction sites keep working.
     proposer_path: Path | None = None
+    #: The resolved ``runtime.proposer_agent`` external proposer, or
+    #: ``None`` (the default, and every workspace that configures none).
+    #: :func:`_canon_proposer` folds its causal-surface digest in, so
+    #: naming an external agent — or upgrading the runtime it launches —
+    #: rolls the epoch.
+    external_proposer: ExternalProposerConfig | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -569,7 +579,10 @@ def _canon_mutable_trees(mutable_trees: tuple[str, ...]) -> str:
     return "\n".join(normalized)
 
 
-def _canon_proposer(proposer_path: Path | None) -> str:
+def _canon_proposer(
+    proposer_path: Path | None,
+    external: ExternalProposerConfig | None = None,
+) -> str:
     """Canonical form of the proposer: agent identity + skills + tools.
 
     Resolves the proposer dir (or ``None`` ⇒ the built-in default) to a
@@ -586,6 +599,13 @@ def _canon_proposer(proposer_path: Path | None) -> str:
     * ``agent_source_sha256`` — SHA-256 of a custom ``agent.py`` (or
       ``null``), so editing the custom agent rolls the epoch.
 
+    An ``external`` proposer (``runtime.proposer_agent``) adds ONE more
+    key, ``external``, carrying the dotted path plus the digest of the
+    agent's causal surface (:mod:`zicato.proposer.external`). The key is
+    added only when an external proposer is configured, so every workspace
+    that configures none canonicalizes byte-identically to before this
+    seam existed — and its contract hash does not move.
+
     The built-in default produces a stable canonical string, so a
     workspace that never configures a proposer keeps a stable hash.
     """
@@ -594,7 +614,7 @@ def _canon_proposer(proposer_path: Path | None) -> str:
         resolve_proposer_spec,
     )
 
-    spec = resolve_proposer_spec(proposer_path)
+    spec = resolve_proposer_spec(proposer_path, external)
     skills = sorted(
         (
             {"name": skill.name, "sha256": _sha(normalize_skill_body(skill.body))}
@@ -608,6 +628,11 @@ def _canon_proposer(proposer_path: Path | None) -> str:
         "skills": skills,
         "agent_source_sha256": spec.agent_source_sha256,
     }
+    if spec.external_path is not None:
+        canon["external"] = {
+            "path": spec.external_path,
+            "identity_sha256": spec.external_identity_sha256,
+        }
     return json.dumps(canon, sort_keys=True, ensure_ascii=False)
 
 
@@ -648,7 +673,7 @@ def compute_contract_hash(inputs: ContractInputs) -> str:
         _canon_scoring(inputs.scoring_path),
         _canon_entrypoint(inputs.entrypoint),
         _canon_mutable_trees(inputs.mutable_trees),
-        _canon_proposer(inputs.proposer_path),
+        _canon_proposer(inputs.proposer_path, inputs.external_proposer),
     ]
     joined = _SEP.join(components)
     return hashlib.sha256(joined.encode("utf-8")).hexdigest()
@@ -667,7 +692,7 @@ def compute_component_hashes(inputs: ContractInputs) -> dict[str, str]:
         "scoring": _sha(_canon_scoring(inputs.scoring_path)),
         "entrypoint": _sha(_canon_entrypoint(inputs.entrypoint)),
         "mutable_trees": _sha(_canon_mutable_trees(inputs.mutable_trees)),
-        "proposer": _sha(_canon_proposer(inputs.proposer_path)),
+        "proposer": _sha(_canon_proposer(inputs.proposer_path, inputs.external_proposer)),
     }
 
 
@@ -692,6 +717,8 @@ def resolve_contract_inputs(workspace_root: Path) -> ContractInputs:
       directory).
     * ``adk_entrypoint`` — the registered adapter entrypoint.
     * ``mutable_trees`` — the registered source roots.
+    * ``runtime.proposer_agent`` — the optional external proposer
+      (:func:`zicato.proposer.external.external_proposer_config`).
 
     Raises
     ------
@@ -740,6 +767,10 @@ def resolve_contract_inputs(workspace_root: Path) -> ContractInputs:
     else:
         proposer_path = None
 
+    # ``runtime.proposer_agent`` is optional — absent ⇒ no external
+    # proposer and a canonical form byte-identical to before this seam.
+    from zicato.proposer.external import external_proposer_config  # noqa: PLC0415
+
     return ContractInputs(
         board_path=board_path,
         brief_path=brief_path,
@@ -747,6 +778,7 @@ def resolve_contract_inputs(workspace_root: Path) -> ContractInputs:
         entrypoint=entrypoint,
         mutable_trees=mutable_trees,
         proposer_path=proposer_path,
+        external_proposer=external_proposer_config(config, workspace_root),
     )
 
 

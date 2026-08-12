@@ -159,10 +159,14 @@ def drive_mock_evolve(monkeypatch, tmp_path: Path) -> tuple[Path, str]:
 
     _real_build = _proposer_agent_mod.build_proposer_agent
 
-    def _build_proposer(spec: ProposerSpec, proposer_path: Path | None = None) -> object:
+    def _build_proposer(
+        spec: ProposerSpec,
+        proposer_path: Path | None = None,
+        external_config: object = None,
+    ) -> object:
         if spec == ProposerSpec.default():
             return _proposer_agent_mod.DefaultProposerAgent(spec)
-        return _real_build(spec, proposer_path)
+        return _real_build(spec, proposer_path, external_config)  # type: ignore[arg-type]
 
     monkeypatch.setattr(_proposer_agent_mod, "build_proposer_agent", _build_proposer)
 

@@ -174,13 +174,14 @@ function digestFor(d) {
       isNum(j.recall) ? j.recall.toFixed(3) : null,
       isNum(j.f1) ? j.f1.toFixed(3) : null,
       isNum(j.self_consistency_kappa) ? j.self_consistency_kappa.toFixed(3) : null,
+      j.recommendation || null,
     ]);
     const pr = d.practices || {};
     return JSON.stringify({
       m: 'bill', id: d.reflectionId, found: !!s.found,
       p: s.pillars || {},
       flip: isNum(s.decision_flip_p) ? s.decision_flip_p.toFixed(4) : null,
-      findings: (s.findings || []).map((f) => [f.finding_id, f.severity, f.title, (f.evidence || []).length, f.proposed_op && f.proposed_op.op]),
+      findings: (s.findings || []).map((f) => [f.finding_id, f.severity, f.title, (f.evidence || []).length, f.proposed_op && f.proposed_op.op, f.recommendation || null]),
       cards,
       // the practice-review narrative — folded so a new/changed check repaints
       // while a no-op re-serve stays byte-identical.
@@ -188,6 +189,9 @@ function digestFor(d) {
       prac: (Array.isArray(pr.checks) ? pr.checks : []).map((c) => [
         c.check_id, c.verdict, c.headline, c.rationale,
         c.proposed_op && c.proposed_op.op, c.unmeasured_reason || null,
+        // the measured numbers behind the headline — folded so a check whose
+        // evidence moved repaints even when its verdict and wording hold.
+        formatEvidence(c.evidence),
       ]),
     });
   }
@@ -505,6 +509,24 @@ function practiceReview(review) {
   return panel;
 }
 
+// Render a PracticeCheck's `evidence` dict as one `key=value` line — the twin
+// of the report's `_format_evidence` (cli/commands/reflect.py), including its
+// clip, since the odd evidence value is a long list whose tail reads better
+// from the JSON. Returns '' for an absent/empty dict so callers can skip.
+const EVIDENCE_VALUE_CLIP = 80;
+function formatEvidence(evidence) {
+  if (!evidence || typeof evidence !== 'object' || Array.isArray(evidence)) return '';
+  const parts = [];
+  for (const key of Object.keys(evidence)) {
+    const raw = evidence[key];
+    let text = typeof raw === 'string' ? raw : JSON.stringify(raw);
+    if (text == null) text = String(raw);
+    if (text.length > EVIDENCE_VALUE_CLIP) text = text.slice(0, EVIDENCE_VALUE_CLIP - 1).trimEnd() + '…';
+    parts.push(key + '=' + text);
+  }
+  return parts.join(', ');
+}
+
 function practiceRow(c) {
   const tone = practiceTone(c.verdict);
   const row = el('div', { class: 'dn-instr-frow dn-instr-fs-' + tone });
@@ -514,6 +536,11 @@ function practiceRow(c) {
     el('span', { class: 'dn-instr-frow-title', text: c.headline || c.check_id }),
   ]));
   if (c.rationale) row.appendChild(el('p', { class: 'dn-faint dn-instr-frow-why', text: String(c.rationale) }));
+  // The measured numbers behind the headline. Issue #129's render-conformance
+  // rule — the report already prints this dict, and a check whose evidence is
+  // dropped states a verdict the operator cannot check.
+  const pev = formatEvidence(c.evidence);
+  if (pev) row.appendChild(el('p', { class: 'dn-faint dn-instr-frow-ev', text: 'evidence · ' + pev }));
   // unmeasured: name the missing input faint (honesty over coverage).
   if (String(c.verdict).toLowerCase() === 'unmeasured' && c.unmeasured_reason) {
     row.appendChild(el('p', { class: 'dn-faint dn-instr-frow-missing', text: 'missing input · ' + String(c.unmeasured_reason) }));
@@ -574,6 +601,12 @@ function findingRow(f, reflectionId, ctx, epochId) {
     row.appendChild(el('p', { class: 'dn-faint dn-instr-frow-ev' }, kids));
   }
 
+  // What to DO about it. The report prints this; the lens dropped it, which
+  // matters most for the emitters that carry no proposed_op, where the
+  // recommendation is the only remedy text the finding has.
+  if (f.recommendation) {
+    row.appendChild(el('p', { class: 'dn-instr-frow-rec', text: 'recommend · ' + String(f.recommendation) }));
+  }
   // a proposed op — an inline faint mono phrase — plus the copyable CLI apply
   // invocation (the CLI IS the apply path for findings; recommend-only MVP).
   if (f.proposed_op && f.proposed_op.op) {
@@ -677,6 +710,12 @@ function scorecard(j, evidence, d, ctx) {
       }));
     });
     card.appendChild(el('p', { class: 'dn-faint dn-instr-card-ev' }, kids));
+  }
+  // What to do about this judge. First-class in the record's schema and
+  // rendered by NEITHER surface until now — a card that reports a judge's
+  // precision without its remedy leaves the operator to re-derive one.
+  if (j.recommendation) {
+    card.appendChild(el('p', { class: 'dn-instr-frow-rec', text: 'recommend · ' + String(j.recommendation) }));
   }
   return card;
 }

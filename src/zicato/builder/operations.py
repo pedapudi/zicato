@@ -298,6 +298,44 @@ def set_param(draft: TournamentDraft, key: str, value: Any) -> DraftPatch:
     )
 
 
+#: The ladder mapping's per-key coercion. The mapping arrives as raw JSON
+#: (both the REST dispatch and the copilot hand it through untouched), so a
+#: string ``"8"`` would otherwise reach ``LadderConfig`` and raise an
+#: uncaught ``TypeError`` from its comparison validator — a 500 where every
+#: other builder arg gives a field-precise 400.
+_LADDER_TYPES: dict[str, type] = {
+    "enabled": bool,
+    "threshold": float,
+    "budget": int,
+    "noise_scale": float,
+}
+
+
+def _coerce_ladder_value(key: str, value: Any) -> Any:
+    """Coerce one ladder mapping value to its field type, or raise.
+
+    ``threshold`` is the ONLY nullable ladder key — its ``None`` means
+    "auto-derive from ``promote_margin``". A null anywhere else used to
+    reach the dataclass, where ``budget``/``noise_scale`` raised an
+    uncaught ``TypeError`` from their comparison validators (a 500) and
+    ``enabled``, which has no validator to trip, silently stored ``None``
+    in a bool field.
+    """
+    if value is None:
+        if key == "threshold":
+            return None
+        raise ValueError(f"ladder.{key} must not be null (only ladder.threshold is nullable)")
+    want = _LADDER_TYPES[key]
+    if want is bool:
+        return bool(value)
+    if isinstance(value, bool):
+        raise ValueError(f"ladder.{key} must be a number, got {value!r}")
+    try:
+        return want(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"ladder.{key} must be a number, got {value!r}") from exc
+
+
 def set_holdout(
     draft: TournamentDraft,
     *,
@@ -369,9 +407,10 @@ def set_holdout(
         for key, value in ladder.items():
             # ``threshold: None`` is a REAL value (auto-derive); every other
             # key treats None as absent-from-the-mapping only.
-            if value != getattr(of.ladder, key):
-                ladder_changes[key] = value
-                changed[f"ladder.{key}"] = {"from": getattr(of.ladder, key), "to": value}
+            coerced = _coerce_ladder_value(key, value)
+            if coerced != getattr(of.ladder, key):
+                ladder_changes[key] = coerced
+                changed[f"ladder.{key}"] = {"from": getattr(of.ladder, key), "to": coerced}
         if ladder_changes:
             of_changes["ladder"] = dataclasses.replace(of.ladder, **ladder_changes)
     if of_changes:
@@ -452,6 +491,8 @@ def set_gate(
     draft: TournamentDraft,
     *,
     promote_margin: float | None = None,
+    holdout_margin: float | None = None,
+    holdout_entry_regression_budget: int | None = None,
     monotonicity: bool | None = None,
     monotonicity_scope: str | None = None,
     namespace_monotonicity: dict[str, bool] | None = None,
@@ -468,6 +509,14 @@ def set_gate(
     champion-passed entry must hold — or ``"aggregate"`` — only the overall
     pass-rate may not regress; see SCORING.md §5). An invalid scope token
     raises rather than silently coercing.
+
+    ``holdout_margin`` and ``holdout_entry_regression_budget`` are the
+    holdout CONFIRMATION's own bounds (issue #118), separate from the
+    train-side ``promote_margin`` because the holdout is the coarser slice
+    by construction. ASYMMETRY, like ``max_generations_per_contract`` on
+    :func:`set_holdout`: ``None`` here means "leave unchanged", so a
+    NEGATIVE ``holdout_margin`` is the token that RESETS the field to auto
+    (``None`` — reuse ``promote_margin``); a non-negative value pins it.
 
     The remaining keywords cover the rest of the gate contract:
     ``namespace_monotonicity`` replaces the per-namespace strict-
@@ -487,6 +536,29 @@ def set_gate(
             "from": draft.scoring.promote_margin,
             "to": promote_margin,
         }
+    if holdout_margin is not None:
+        # Negative CLEARS to auto (the field's meaningful "off" is None,
+        # which this op reserves for "leave unchanged"); the dataclass
+        # rejects a negative outright, so no valid pin is shadowed.
+        effective = None if holdout_margin < 0 else holdout_margin
+        if effective != draft.scoring.holdout_margin:
+            scoring_changes["holdout_margin"] = effective
+            changed["holdout_margin"] = {
+                "from": draft.scoring.holdout_margin,
+                "to": effective,
+            }
+    if holdout_entry_regression_budget is not None:
+        if holdout_entry_regression_budget < 0:
+            raise ValueError(
+                f"holdout_entry_regression_budget must be >= 0, got "
+                f"{holdout_entry_regression_budget!r}"
+            )
+        if holdout_entry_regression_budget != draft.scoring.holdout_entry_regression_budget:
+            scoring_changes["holdout_entry_regression_budget"] = holdout_entry_regression_budget
+            changed["holdout_entry_regression_budget"] = {
+                "from": draft.scoring.holdout_entry_regression_budget,
+                "to": holdout_entry_regression_budget,
+            }
     if monotonicity is not None and monotonicity != draft.scoring.pass_rate_monotonicity:
         scoring_changes["pass_rate_monotonicity"] = monotonicity
         changed["pass_rate_monotonicity"] = {
