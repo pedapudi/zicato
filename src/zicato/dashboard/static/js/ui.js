@@ -430,6 +430,41 @@ export function section(titleText, ...children) {
 
 export function subhead(text) { return el('div', { class: 'dn-subhead', text }); }
 
+// The "?" AFFORDANCE itself — a small focusable glyph carrying detail in a
+// hovercard, so a surface can print the FACT at full weight and keep the
+// EXPLANATION one hover away. figCaption composes it for a caption's overflow
+// lines; a panel head that is already a stat line (board status) composes it
+// directly, so the two never drift into two different-looking "?"s.
+//
+// `content` is either an ordered list of strings (nullish/empty dropped, joined
+// one per line) or a FUNCTION returning a node — the rich-card form, for detail
+// that carries a doc link. Returns null when a string form has nothing left to
+// say: a "?" with nothing behind it is a dead control.
+export function moreMark(content, opts) {
+  const o = opts || {};
+  let card = null;
+  if (typeof content === 'function') {
+    card = content;
+  } else {
+    const kept = (Array.isArray(content) ? content : [content])
+      .map((l) => (l == null ? '' : String(l).trim()))
+      .filter(Boolean);
+    if (!kept.length) return null;
+    card = kept.join('\n');
+  }
+  const label = o.title || 'More detail';
+  const mark = el('button', {
+    class: 'dn-figcap-more' + (o.class ? ' ' + o.class : ''), type: 'button', text: '?',
+    title: label, 'aria-label': label,
+  });
+  attachHovercard(mark, card);
+  // the "?" is a HOVER/FOCUS affordance, not an action. These marks live inside
+  // clickable cards (the board trellis cell navigates on click), so swallow the
+  // click here — otherwise reading the detail with Enter would navigate.
+  mark.addEventListener('click', (ev) => { if (ev && ev.stopPropagation) ev.stopPropagation(); });
+  return mark;
+}
+
 // A figure CAPTION that refuses to stack. One dim line reads as a caption; two
 // or more read as a wall the eye skips, so anything past the first line
 // collapses behind the lifecycle DAG's affordance (dag.js): a small focusable
@@ -452,17 +487,7 @@ export function figCaption(lines, opts) {
     el('span', { class: 'dn-figcap-lead', text: kept[0] }),
   ]);
   if (kept.length > 1) {
-    const mark = el('button', {
-      class: 'dn-figcap-more', type: 'button', text: '?',
-      title: o.title || 'More about this figure',
-      'aria-label': o.title || 'More about this figure',
-    });
-    attachHovercard(mark, kept.slice(1).join('\n'));
-    // the "?" is a HOVER/FOCUS affordance, not an action. Captions live inside
-    // clickable cards (the board trellis cell navigates on click), so swallow
-    // the click here — otherwise reading the detail with Enter would navigate.
-    mark.addEventListener('click', (ev) => { if (ev && ev.stopPropagation) ev.stopPropagation(); });
-    p.appendChild(mark);
+    p.appendChild(moreMark(kept.slice(1), { title: o.title || 'More about this figure' }));
   }
   return p;
 }

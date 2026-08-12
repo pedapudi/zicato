@@ -1679,14 +1679,16 @@
 
   /* 1 — the split strip. train = OUTLINE, holdout = ACCENT FILL (matches the
    * builder's Board & holdout strip). All theme tokens — carries every scheme. */
-  .dn-bs-counts { font-family: var(--v2-mono); font-size: calc(12px * var(--dt-font-scale, 1)); margin-bottom: 8px; }
-  .dn-bs-counts-main { color: var(--v2-ink); font-variant-numeric: tabular-nums; }
-  .dn-bs-noholdout { margin-left: 6px; }
-  /* the board_meta header line, under the counts: judge-only reads as a real
-     state change (accent), drift suppression as faint provenance. */
-  .dn-bs-meta { display: flex; flex-wrap: wrap; gap: 4px 10px; font-family: var(--v2-mono);
-    font-size: calc(11px * var(--dt-font-scale, 1)); margin: -4px 0 8px; }
-  .dn-bs-meta-judgeonly { color: var(--v2-accent); }
+  /* the STAT LINE: three dn-stat tiles with the board-level fact chips riding
+     at their baseline, so counts read as values and flags read as chips. */
+  .dn-bs-statline { align-items: baseline; row-gap: 8px; margin-bottom: 10px; }
+  .dn-bs-chips { display: flex; flex-wrap: wrap; gap: 4px 6px; }
+  /* the two fact tones: judge-only is a real change to how the board scores
+     (accent), the rest is provenance (faint). No new hue. */
+  .dn-chip.dn-chip-judgeonly { color: var(--v2-accent); border-color: var(--v2-accent); }
+  .dn-chip.dn-chip-boardfact { color: var(--v2-ink-faint); }
+  .dn-bs-fact { cursor: help; }
+  .dn-bs-fact:focus { outline: none; box-shadow: 0 0 0 2px color-mix(in srgb, var(--v2-accent) 50%, transparent); }
   .dn-bs-grid { display: flex; flex-wrap: wrap; gap: 6px; }
   .dn-bs-chip {
     font-family: var(--v2-mono); font-size: calc(10.5px * var(--dt-font-scale, 1)); line-height: 1.4;
@@ -1700,15 +1702,18 @@
   }
   .dn-bs-chip:focus { outline: none; box-shadow: 0 0 0 2px color-mix(in srgb, var(--v2-accent) 50%, transparent); }
 
-  /* 2 — the played-at legend + the ladder budget readout. */
-  .dn-bs-legend { display: flex; flex-direction: column; gap: 6px; padding-top: 4px;
-    border-top: 1px solid var(--v2-rule-soft); }
-  .dn-bs-legrow { display: flex; align-items: center; gap: 8px; font-family: var(--v2-mono); font-size: calc(11.5px * var(--dt-font-scale, 1)); }
-  .dn-bs-legtxt strong { color: var(--v2-ink); font-weight: 600; }
+  /* 2 — the swatch key + the ladder budget readout, on ONE row, with the
+   * where/when sentences behind the key's "?" (.dn-figcap-more, shared with the
+   * figure captions). Both PACK LEFT: on a wide panel, space-between would
+   * strand the budget against the far edge with nothing between the two. */
+  .dn-bs-legend { display: flex; flex-wrap: wrap; align-items: center;
+    gap: 8px 28px; padding-top: 6px; border-top: 1px solid var(--v2-rule-soft); }
+  .dn-bs-legrow { display: flex; align-items: center; gap: 6px; font-family: var(--v2-mono); font-size: calc(11.5px * var(--dt-font-scale, 1)); }
+  .dn-bs-legtxt { color: var(--v2-ink); margin-right: 6px; }
   .dn-bs-sw { display: inline-block; width: 14px; height: 14px; border-radius: 3px; flex: 0 0 auto; }
   .dn-bs-sw.dn-bs-train { border: 1px solid var(--v2-rule); background: transparent; }
   .dn-bs-sw.dn-bs-holdout { border: 1px solid var(--v2-accent); background: var(--v2-accent); }
-  .dn-bs-ladder { display: flex; align-items: baseline; gap: 8px; margin-top: 4px;
+  .dn-bs-ladder { display: flex; align-items: baseline; gap: 8px;
     font-family: var(--v2-mono); font-size: calc(11.5px * var(--dt-font-scale, 1)); }
   .dn-bs-ladder-lab { color: var(--v2-ink-faint); text-transform: uppercase; letter-spacing: 0.05em; font-size: calc(9.5px * var(--dt-font-scale, 1)); }
   .dn-bs-ladder-val { color: var(--v2-ink); font-variant-numeric: tabular-nums; font-size: calc(14px * var(--dt-font-scale, 1)); }
@@ -1717,7 +1722,6 @@
   .dn-bs-gap { padding-top: 4px; border-top: 1px solid var(--v2-rule-soft); }
   .dn-bs-gap-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px;
     font-family: var(--v2-mono); font-size: calc(11.5px * var(--dt-font-scale, 1)); color: var(--v2-ink); margin-bottom: 6px; }
-  .dn-bs-gap-note { font-size: calc(10.5px * var(--dt-font-scale, 1)); }
   .dn-bs-gap-rows { display: flex; flex-direction: column; gap: 6px; }
   .dn-bs-gap-row { display: flex; align-items: center; gap: 10px; }
   .dn-bs-gap-lab { font-family: var(--v2-mono); font-size: calc(10.5px * var(--dt-font-scale, 1)); width: 56px; flex: 0 0 56px;

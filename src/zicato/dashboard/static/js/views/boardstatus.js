@@ -6,12 +6,19 @@
 // they degrade to honest empty states (never crash) before the overfitting
 // `#2` Ladder / `#5` generalization-gap detector land:
 //
-//   1. THE SPLIT — the epoch's board as a strip, train (outline) vs holdout
-//      (accent fill), with counts + the held-out fraction.
-//   2. WHERE / WHEN — a compact legend: train → every round (proposer-visible);
-//      holdout → gated confirmation only; + the Ladder budget remaining.
+//   1. THE SPLIT — one STAT LINE (train / holdout / % held out in the shipped
+//      stat idiom) with the board-level facts as CHIPS beside it, over the
+//      epoch's board as a strip: train (outline) vs holdout (accent fill).
+//   2. WHERE / WHEN — the swatch KEY the strip cannot be read without, plus the
+//      Ladder budget remaining.
 //   3. GENERALIZATION GAP — train_loss vs holdout_loss across the lineage as a
-//      pair of sparklines, with a "widening gap = overfitting" note.
+//      pair of sparklines, with the reading (widening / stable) as a verdict.
+//
+// The panel prints FACTS at value weight and keeps every EXPLANATION one hover
+// away — the "?" mark (ui.js `moreMark`, the `#199` figCaption idiom) for the
+// where/when sentences and the gap explainer, a chip's own hovercard for the
+// board_meta wording. Six dim prose lines at one weight was a wall the eye
+// skipped; nothing was dropped, it moved behind the affordance.
 //
 // Per-entry + per-panel detail rides on the shared accessible HOVERCARD
 // (hovercard.js — the same popover the rest of Console uses): a transient
@@ -20,7 +27,7 @@
 
 import { el } from '../core/dom.js';
 import * as svg from '../svg.js';
-import { section, empty, truncate, hovercardBody } from '../ui.js';
+import { section, empty, truncate, hovercardBody, stat, chip, moreMark } from '../ui.js';
 import { attachHovercard } from '../hovercard.js';
 
 // The doc the popovers point at for "what does this mean" detail.
@@ -226,44 +233,26 @@ export function renderBoardStatus(model, opts) {
   return section('Board status · train / holdout split', card);
 }
 
-// 1 — THE SPLIT: the board as a chip grid, train = outline, holdout = accent
-//     fill, + the counts/fraction header.
+// 1 — THE SPLIT: one stat line + the board-level fact chips, over the board as
+//     a chip grid (train = outline, holdout = accent fill).
 function splitPanel(split, meta, opts) {
   const wrap = el('div', { class: 'dn-bs-split' });
   const frac = split.total > 0 ? split.holdoutCount / split.total : 0;
-  const headText = split.total === 0
-    ? 'no board entries'
-    : `${split.trainCount} train · ${split.holdoutCount} holdout`
-      + ` · ${(frac * 100).toFixed(0)}% held out`;
-  wrap.appendChild(el('div', { class: 'dn-bs-counts' }, [
-    el('span', { class: 'dn-bs-counts-main', text: headText }),
-    split.configured
-      ? null
-      : el('span', {
-        class: 'dn-faint dn-bs-noholdout',
-        text: '· no holdout configured — every entry is train',
-      }),
-  ].filter(Boolean)));
 
-  // The board-level header, beside the counts. WORDING IS THE BUILDER'S,
-  // VERBATIM (views/builder.js's board-metadata panel) — the two surfaces name
-  // the same flag, so they must not describe it in two different sentences.
-  if (meta) {
-    const bits = [];
-    if (meta.judgeOnly) {
-      bits.push(el('span', {
-        class: 'dn-bs-meta-judgeonly',
-        text: 'judge-only board — score on judges alone, no steering',
-      }));
-    }
-    if (meta.disableDrift.length) {
-      bits.push(el('span', {
-        class: 'dn-faint dn-bs-meta-drift',
-        text: 'drift suppressed for every entry · ' + meta.disableDrift.join(', '),
-      }));
-    }
-    wrap.appendChild(el('div', { class: 'dn-bs-meta' }, bits));
-  }
+  // The three counts an operator actually reads, in the shipped stat idiom
+  // (mono value over a small key) — the same tiles the epoch header uses, so
+  // the numbers carry value weight instead of hiding inside a sentence. A
+  // board with no entries prints no tiles: `0 · 0 · 0%` would be three numbers
+  // restating the empty state below them.
+  const head = el('div', { class: 'dn-row dn-bs-statline' },
+    split.total === 0 ? [] : [
+      stat(String(split.trainCount), 'train'),
+      stat(String(split.holdoutCount), 'holdout'),
+      stat(`${(frac * 100).toFixed(0)}%`, 'held out'),
+    ]);
+  const facts = factChips(split, meta);
+  if (facts.length) head.appendChild(el('div', { class: 'dn-bs-chips' }, facts));
+  if (head.childNodes.length) wrap.appendChild(head);
 
   if (split.total === 0) {
     wrap.appendChild(empty('No board entries for this epoch yet.'));
@@ -292,6 +281,45 @@ function splitPanel(split, meta, opts) {
   return wrap;
 }
 
+// The board-level FACTS as chips beside the stat line: whether a holdout is
+// configured at all, and the `board_meta` header (BOARD-FORMAT §1.0) — the
+// judge-only flag + the drift kinds suppressed for every entry. Both fold into
+// the contract hash, so they describe how THIS board is scored; each was a
+// sentence at prose weight, and a sentence per flag is what made this panel a
+// wall. The chip carries the fact; the wording rides its hovercard.
+function factChips(split, meta) {
+  const chips = [];
+  // only worth saying of a board that HAS entries — "no holdout" over an empty
+  // board is a fact about nothing.
+  if (split.total > 0 && !split.configured) {
+    chips.push(factChip('boardfact', 'no holdout',
+      'no holdout configured — every entry is train'));
+  }
+  if (meta && meta.judgeOnly) {
+    // WORDING IS THE BUILDER'S, VERBATIM (views/builder.js's board-metadata
+    // panel) — the two surfaces name the same flag, so they must not describe
+    // it in two different sentences.
+    chips.push(factChip('judgeonly', 'judge-only',
+      'judge-only board — score on judges alone, no steering'));
+  }
+  const drift = (meta && meta.disableDrift) || [];
+  if (drift.length) {
+    chips.push(factChip('boardfact',
+      'drift suppressed' + (drift.length > 1 ? ' ×' + drift.length : ''),
+      'drift suppressed for every entry · ' + drift.join(', ')));
+  }
+  return chips;
+}
+
+// One fact chip in the shipped chip vocabulary. attachHovercard makes the chip
+// focusable, so the sentence is reachable by keyboard — on this surface the
+// hovercard is the ONLY copy of that wording.
+function factChip(tone, word, sentence) {
+  const node = chip(tone, word, 'dn-bs-fact');
+  attachHovercard(node, sentence);
+  return node;
+}
+
 // The per-entry hovercard content (entry id, kind, slice, weight, tags,
 // why-held-out). `kind` and `tags` are the client-local join off `ep.board` —
 // membership + provenance, never a per-entry SCALAR: breaking the holdout out
@@ -318,29 +346,27 @@ function entryCard(r) {
   return hovercardBody(lines);
 }
 
-// 2 — WHERE / WHEN: the played-at legend + the Ladder budget remaining.
+// 2 — WHERE / WHEN: the swatch key + the Ladder budget remaining, on one row.
+//
+// The KEY stays visible and the two where/when SENTENCES collapse behind the
+// "?": figCaption's own rule is that a swatch key the figure cannot be read
+// without belongs beside the figure, while its explanation does not. The chip
+// grid above is unreadable without knowing which fill means held out; it is
+// perfectly readable without being told when each slice is played.
 function legendPanel(split, ladder) {
   const wrap = el('div', { class: 'dn-bs-legend' });
 
   const trainSwatch = el('span', { class: 'dn-bs-sw dn-bs-train' });
-  attachHovercard(trainSwatch, 'train slice');
-  wrap.appendChild(el('div', { class: 'dn-bs-legrow' }, [
-    trainSwatch,
-    el('span', { class: 'dn-bs-legtxt' }, [
-      el('strong', { text: 'train' }),
-      el('span', { class: 'dn-faint', text: ' → every round · proposer-visible' }),
-    ]),
-  ]));
-
   const holdSwatch = el('span', { class: 'dn-bs-sw dn-bs-holdout' });
-  attachHovercard(holdSwatch, 'holdout slice');
-  wrap.appendChild(el('div', { class: 'dn-bs-legrow' }, [
-    holdSwatch,
-    el('span', { class: 'dn-bs-legtxt' }, [
-      el('strong', { text: 'holdout' }),
-      el('span', { class: 'dn-faint', text: ' → gated confirmation only · proposer never sees it' }),
-    ]),
-  ]));
+  const key = el('div', { class: 'dn-bs-legrow' }, [
+    trainSwatch, el('span', { class: 'dn-bs-legtxt', text: 'train' }),
+    holdSwatch, el('span', { class: 'dn-bs-legtxt', text: 'holdout' }),
+  ]);
+  key.appendChild(moreMark([
+    'train → every round · proposer-visible',
+    'holdout → gated confirmation only · proposer never sees it',
+  ], { title: 'where and when each slice is played' }));
+  wrap.appendChild(key);
 
   // The Ladder budget readout. Graceful "—" + "after a run" when no decision
   // has recorded a holdout step yet (the `#2` Ladder absent / null).
@@ -392,22 +418,22 @@ function ladderCard(ladder) {
 }
 
 // 3 — GENERALIZATION-GAP TREND: train vs holdout loss across the lineage as a
-//     pair of sparklines, plus the "widening gap = overfitting" note.
+//     pair of sparklines. The numbers stay; what a widening gap MEANS collapses
+//     behind the "?" — the verdict line below already reports this run's
+//     reading, so the definition is reference, not news.
 function gapPanel(gap) {
   const wrap = el('div', { class: 'dn-bs-gap' });
   const head = el('div', { class: 'dn-bs-gap-head' }, [
     el('span', { text: 'generalization gap · train vs holdout loss' }),
   ]);
-  const note = el('span', { class: 'dn-faint dn-bs-gap-note', text:
-    'a WIDENING gap (holdout loss pulling above train) = overfitting' });
-  attachHovercard(note, () => hovercardBody([
+  head.appendChild(moreMark(() => hovercardBody([
     el('div', { class: 'dn-hc-title', text: 'Generalization gap' }),
     el('div', { class: 'dn-hc-row', text:
       'The gap is holdout loss minus train loss. A champion that keeps improving'
-      + ' on train while the holdout stalls or worsens is overfitting the train slice.' }),
+      + ' on train while the holdout stalls or worsens is overfitting the train slice:'
+      + ' a WIDENING gap (holdout loss pulling above train) = overfitting.' }),
     el('a', { class: 'dn-hc-link', href: DOC_HREF, text: 'overfitting design →' }),
-  ]));
-  head.appendChild(note);
+  ]), { title: 'what a widening gap means' }));
   wrap.appendChild(head);
 
   if (!gap.hasAny) {

@@ -3,10 +3,17 @@
 //
 // Pins: the model derives the split/ladder/gap DEFENSIVELY from /api/epoch
 // (graceful when the overfitting `#2`/`#5` fields are absent); the render
-// paints train (outline) vs holdout (accent fill) chips, the played-at legend
-// with the ladder budget, and the train-vs-holdout sparklines; per-entry +
-// per-panel hovercards are wired (the accessible popover); and a no-op repaint
-// churns no DOM (digest-gated).
+// paints the counts as a STAT LINE with the board-level facts as CHIPS beside
+// it, train (outline) vs holdout (accent fill) entry chips, the swatch key with
+// the where/when sentences behind a "?" and the ladder budget, and the
+// train-vs-holdout sparklines; per-entry + per-panel hovercards are wired (the
+// accessible popover); and a no-op repaint churns no DOM (digest-gated).
+//
+// The DENSITY DIET (issue #207 §4) rewrote six of these render pins: what was
+// printed as a dim sentence is now a stat tile, a chip, or a "?" hovercard, and
+// each pin below follows its fact to wherever it now lives. Nothing was
+// dropped — a pin that stopped asserting a sentence asserts the same words in
+// the popover that replaced it.
 
 import { installDom, test, run, assert, assertEqual, assertDeep } from './harness.mjs';
 
@@ -128,6 +135,34 @@ test('renderBoardStatus: ladder budget falls back to "—" + "after a run" when 
   assert(after, 'shows the "after a run" graceful hint');
 });
 
+// REWRITTEN by the density diet: the legend was two dim sentences with a
+// swatch each. The KEY stays visible (the entry grid is unreadable without it);
+// the where/when sentences moved behind the shared "?" mark.
+test('renderBoardStatus: the legend keeps its swatch key, collapses the sentences behind "?"', () => {
+  const node = bs.renderBoardStatus(bs.boardStatusModel(EP_FULL), {});
+  const key = allByClass(node, 'dn-bs-legrow')[0];
+  assertEqual(allByClass(key, 'dn-bs-sw').length, 2, 'both swatches stay visible');
+  assertEqual(key.textContent.replace('?', ''), 'trainholdout', 'the key names the two slices, nothing more');
+  const mark = allByClass(key, 'dn-figcap-more')[0];
+  assert(mark != null, 'the shared "?" affordance (the #199 figCaption idiom) carries the rest');
+  const text = hovercardTextOf(mark);
+  assert(text.includes('every round · proposer-visible'), 'the train sentence is one hover away');
+  assert(text.includes('proposer never sees it'), 'and the holdout sentence with it');
+});
+
+// REWRITTEN by the density diet: the "a WIDENING gap … = overfitting" note was
+// printed beside the head; it now lives in the head's "?" with the doc link.
+test('renderBoardStatus: the gap head explains a widening gap behind "?", not in prose', () => {
+  const node = bs.renderBoardStatus(bs.boardStatusModel(EP_FULL), {});
+  const head = allByClass(node, 'dn-bs-gap-head')[0];
+  assertEqual(head.textContent, 'generalization gap · train vs holdout loss?',
+    'the head prints the figure name and the mark, no explainer');
+  const text = hovercardTextOf(allByClass(head, 'dn-figcap-more')[0]);
+  assert(text.includes('WIDENING gap (holdout loss pulling above train) = overfitting'),
+    'the note survives verbatim in the popover');
+  assert(text.includes('overfitting design'), 'with the doc link');
+});
+
 test('renderBoardStatus: the gap trend paints two sparklines + a verdict', () => {
   const node = bs.renderBoardStatus(bs.boardStatusModel(EP_FULL), {});
   const sparks = node.querySelectorAll('[class]').filter((n) =>
@@ -213,20 +248,64 @@ test('boardStatusModel: reads board_meta; absent / fully default reads null', ()
     'a fully-default header says nothing about the board ⇒ null');
 });
 
-test('renderBoardStatus: board_meta paints beside the counts in the BUILDER\'S wording', () => {
+// REWRITTEN by the density diet: board_meta was two dim sentences under the
+// counts; it is now two CHIPS beside the stat line, each carrying the builder's
+// sentence VERBATIM in its hovercard. The pin follows the wording — the two
+// surfaces still must not describe the same flag in two different sentences.
+test('renderBoardStatus: board_meta rides as chips carrying the BUILDER\'S wording', () => {
   const node = bs.renderBoardStatus(bs.boardStatusModel(EP_FULL), {});
-  const meta = allByClass(node, 'dn-bs-meta')[0];
-  assert(meta != null, 'the board_meta line is painted');
-  const t = meta.textContent || '';
-  // verbatim from the builder's board-metadata panel — one flag, one sentence.
-  assert(t.includes('judge-only board — score on judges alone, no steering'),
+  const facts = allByClass(node, 'dn-bs-fact');
+  assertEqual(facts.length, 2, 'a judge-only chip and a drift-suppressed chip');
+  const words = facts.map((n) => n.textContent);
+  assertDeep(words, ['judge-only', 'drift suppressed ×2'],
+    'the chip prints the FACT (with the suppression count), not the sentence');
+  assert(hovercard.hasHovercard(facts[0]), 'the chip is hovercard-wired (focusable popover)');
+  assert(hovercardTextOf(facts[0]).includes('judge-only board — score on judges alone, no steering'),
     'the judge-only wording matches the builder exactly');
-  assert(t.includes('user_steer, user_pause'), 'the suppressed drift kinds are named');
+  assert(hovercardTextOf(facts[1]).includes('user_steer, user_pause'),
+    'the suppressed drift kinds are named in the popover');
 });
 
-test('renderBoardStatus: no board_meta line when the header is absent', () => {
+test('renderBoardStatus: no fact chip for judge-only / drift when the header is absent', () => {
+  const plain = JSON.parse(JSON.stringify(EP_FULL));
+  delete plain.board_meta;
+  const words = allByClass(bs.renderBoardStatus(bs.boardStatusModel(plain), {}), 'dn-bs-fact')
+    .map((n) => n.textContent);
+  assertDeep(words, [], 'a default board grows no meta chips');
+});
+
+// REWRITTEN by the density diet: the counts were one dim sentence
+// ("5 train · 2 holdout · 29% held out"); they are now three dn-stat tiles.
+test('renderBoardStatus: the counts paint as a stat line (mono values, labelled)', () => {
+  const node = bs.renderBoardStatus(bs.boardStatusModel(EP_FULL), {});
+  const line = allByClass(node, 'dn-bs-statline')[0];
+  assert(line != null, 'the stat line is painted');
+  const tiles = allByClass(line, 'dn-stat');
+  assertEqual(tiles.length, 3, 'train / holdout / held-out fraction');
+  assertDeep(tiles.map((t) => t.textContent), ['2train', '1holdout', '33%held out'],
+    'each tile is a value over its key');
+});
+
+test('renderBoardStatus: an empty board prints the empty state, not 0/0/0% tiles', () => {
+  const node = bs.renderBoardStatus(bs.boardStatusModel({}), {});
+  assertEqual(allByClass(node, 'dn-stat').length, 0, 'no stat tiles restating an empty board');
+  assertEqual(allByClass(node, 'dn-bs-fact').length, 0,
+    'and no "no holdout" chip — that is a fact about nothing on an empty board');
+  assert(allByClass(node, 'dn-empty').some((n) => (n.textContent || '').includes('No board entries')),
+    'the honest empty state stays, one line');
+});
+
+// REWRITTEN by the density diet: "no holdout configured — every entry is train"
+// was a dim clause on the counts line; it is now a chip with the same sentence.
+test('renderBoardStatus: an unconfigured split says so as a chip, not a clause', () => {
   const node = bs.renderBoardStatus(bs.boardStatusModel({ board: [{ entry_id: 'b1' }] }), {});
-  assertEqual(allByClass(node, 'dn-bs-meta').length, 0, 'a default board grows no meta line');
+  const fact = allByClass(node, 'dn-bs-fact')[0];
+  assertEqual(fact.textContent, 'no holdout', 'the chip prints the fact');
+  assert(hovercardTextOf(fact).includes('no holdout configured — every entry is train'),
+    'and carries the full sentence in its popover');
+  assertEqual(allByClass(bs.renderBoardStatus(bs.boardStatusModel(EP_FULL), {}), 'dn-bs-fact')
+    .filter((n) => n.textContent === 'no holdout').length, 0,
+    'a configured split grows no such chip');
 });
 
 test('boardStatusDigest: board_meta is FOLDED — flipping judge_only repaints', () => {
