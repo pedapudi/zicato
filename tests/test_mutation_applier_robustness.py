@@ -615,6 +615,118 @@ def test_issue_11_no_corrupt_snapshot_blocks_next_generation(tmp_path: Path) -> 
     assert ns["slug"]("Hello") == "hello"  # type: ignore[operator]
 
 
+def test_post_apply_gate_ignores_file_broken_before_the_batch(tmp_path: Path) -> None:
+    """The syntax gate must blame only the round that caused the damage.
+
+    A source tree can hold a ``.py`` file that never parsed — a deliberately
+    broken test fixture, a template, a file that uses newer syntax than the
+    running interpreter.  That file is copied into every child snapshot, so
+    the gate sees the same ``SyntaxError`` on every batch.  It must not
+    reject a batch whose own patches all applied cleanly.
+    """
+    src = tmp_path / "src"
+    tgt = tmp_path / "tgt"
+    _write(src / "prompts.py", '# zicato:mutable id="roster"\nROSTER = "old"\n')
+    # Broken before the run starts, and no patch in the batch touches it.
+    _write(src / "fixture_broken.py", "def f(:\n    pass\n")
+
+    apply_patches(src, [_patch(mutation_id="roster", new_content="new")], tgt)
+
+    out = (tgt / "prompts.py").read_text(encoding="utf-8")
+    assert _exec_value(out, "ROSTER") == "new"
+    # The pre-existing breakage is carried forward untouched, not repaired
+    # and not treated as this round's fault.
+    assert (tgt / "fixture_broken.py").read_text(encoding="utf-8") == "def f(:\n    pass\n"
+
+
+def test_pre_existing_break_does_not_stall_successive_generations(tmp_path: Path) -> None:
+    """The failure above compounds: the broken file rides into every child.
+
+    If the gate rejects on it, no generation is ever promoted and the evolve
+    loop stalls for good.  Two derivations from the same parent must both
+    succeed.
+    """
+    src = tmp_path / "src"
+    _write(src / "prompts.py", '# zicato:mutable id="roster"\nROSTER = "gen0"\n')
+    _write(src / "fixture_broken.py", "def f(:\n    pass\n")
+
+    gen1 = tmp_path / "gen1"
+    apply_patches(src, [_patch(mutation_id="roster", new_content="gen1")], gen1)
+    gen2 = tmp_path / "gen2"
+    apply_patches(gen1, [_patch(mutation_id="roster", new_content="gen2")], gen2)
+
+    assert _exec_value((gen2 / "prompts.py").read_text(encoding="utf-8"), "ROSTER") == "gen2"
+
+
+def test_non_utf8_py_file_does_not_escape_the_gate(tmp_path: Path) -> None:
+    """A ``.py`` file that is not UTF-8 is baseline breakage, not a crash.
+
+    Decoding it raises ``UnicodeDecodeError``, which is a ``ValueError`` and
+    not an ``OSError``.  Uncaught, it escapes the gate, skips every cleanup
+    path, and reaches the caller as an ordinary "bad patch set" while a
+    half-applied tree stays on disk.
+    """
+    src = tmp_path / "src"
+    tgt = tmp_path / "tgt"
+    _write(src / "prompts.py", '# zicato:mutable id="roster"\nROSTER = "old"\n')
+    (src / "latin1.py").write_bytes(b'GREETING = "caf\xe9"\n')
+
+    apply_patches(src, [_patch(mutation_id="roster", new_content="new")], tgt)
+
+    assert _exec_value((tgt / "prompts.py").read_text(encoding="utf-8"), "ROSTER") == "new"
+    assert (tgt / "latin1.py").read_bytes() == b'GREETING = "caf\xe9"\n'
+
+
+def test_a_batch_cannot_edit_a_baseline_broken_file(tmp_path: Path) -> None:
+    """The invariant that lets the gate subtract the baseline unconditionally.
+
+    The gate forgives every file that was already broken, with no "but the
+    batch touched it" carve-out.  That is only sound because a batch cannot
+    reach into such a file at all: an unparseable file enumerates to zero
+    mutation points, so the pre-check rejects the patch before a single edit
+    lands.  "Already broken" and "this batch wrote it" stay disjoint, and the
+    forgiveness can never launder damage this round did.
+    """
+    src = tmp_path / "src"
+    _write(src / "broken.py", '# zicato:mutable id="inside"\nV = "a"\ndef f(:\n')
+
+    with pytest.raises(ValueError, match="does not resolve to an enumerated mutation point"):
+        apply_patches(src, [_patch(mutation_id="inside", new_content="b")], tmp_path / "tgt")
+    assert not (tmp_path / "tgt").exists()
+
+
+def test_gate_still_rejects_a_file_this_batch_broke(tmp_path: Path) -> None:
+    """The baseline must not blunt the guard for damage the round DID cause.
+
+    A tree carrying unrelated pre-existing breakage must still have its own
+    corruption caught: the forgiven file is skipped, the newly-broken one is
+    reported, and no snapshot survives.
+    """
+    src = tmp_path / "src"
+    tgt = tmp_path / "tgt"
+    _write(src / "fixture_broken.py", "def f(:\n    pass\n")
+    _write(
+        src / "tools.py",
+        """
+        def slug(topic):
+            # zicato:mutable:code id="slug_logic"
+            s = topic.lower()
+            # zicato:mutable:end
+            return s
+        """,
+    )
+
+    patches = [_patch(mutation_id="slug_logic", new_content="s = topic.lower((")]
+    with pytest.raises(ValueError, match="post-apply syntax") as excinfo:
+        apply_patches(src, patches, tgt)
+
+    message = str(excinfo.value)
+    assert "tools.py" in message
+    # The pre-existing breakage is not piled onto this round's report.
+    assert "fixture_broken.py" not in message
+    assert not tgt.exists()
+
+
 # ---------------------------------------------------------------------------
 # Filesystem (issue #4) — read-only source trees apply successfully.
 # ---------------------------------------------------------------------------
