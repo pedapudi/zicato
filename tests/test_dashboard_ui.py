@@ -793,7 +793,20 @@ def test_bundle_under_size_envelope() -> None:
     # growth, so rather than nudge it a fourth time the envelope goes to
     # 2.03 M — ~2% over the honest total, the same slack the rebase and §5 both
     # chose, sized to absorb the #194 sections still in flight.
-    assert total < 2_030_000, f"bundle is {total} chars, exceeds 2_030_000 envelope\n" + "\n".join(
+    # The CONSOLE REVIEW ROUND (#207) then lands on a 2.03 M line that main had
+    # already spent down to ~6.6 KB of headroom. Its figure-sizing section adds
+    # ~8 KB: the shared `applyIntrinsic` mode in svg.js (the counterpart to
+    # `applyResponsive` — a compact figure renders at its viewBox width so its
+    # text stops magnifying with the pane), the epoch page's MEASUREMENT BAND
+    # (heatmap | per-judge trend | calibration mini in one wrapping grid, with
+    # the calibration card a genuinely new rendered surface on that page) and
+    # its CSS, plus the layout rule in CONTRACTS.md. Several sibling sections of
+    # the same review round are in flight against this same bundle, and ~6.6 KB
+    # cannot absorb a wave — the same "about to fire on the next surface" state
+    # the 1.96 M line hit. Rather than have each section shave its own comments
+    # to fit, the envelope goes to 2.07 M: ~2% over the honest 2.032 M total,
+    # the same slack the rebase, §5 and the 2.03 M line each chose.
+    assert total < 2_070_000, f"bundle is {total} chars, exceeds 2_070_000 envelope\n" + "\n".join(
         f"  {name:40s} {size:>10,}" for name, size in sorted(sizes.items(), key=lambda kv: -kv[1])
     )
 

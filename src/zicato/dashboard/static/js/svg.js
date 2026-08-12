@@ -264,6 +264,27 @@ function applyResponsive(svgAttrs, opts, w, h, heroClass) {
   return svgAttrs;
 }
 
+// ── intrinsic (content-width, capped) sizing ─────────────────────────
+//
+// The OTHER half of the shared sizing contract, and the right mode for a
+// COMPACT figure. `applyResponsive` scales a builder's coordinate system with
+// the pane, magnifying marks, radii and above all TEXT — safe ONLY where a
+// matched `*-hero` CSS class caps the width. Uncapped, captions and end labels
+// render at 3–4× their designed size (the calibration-trend defect). Intrinsic
+// instead: `width` is the viewBox width in CSS px → scale exactly 1, so text
+// renders at the size CSS asks for at any pane width, while `max-width:100%` +
+// `xMinYMid meet` let a narrower pane shrink the whole figure UNIFORMLY.
+// `preserveAspectRatio:'none'` at `width:100%` is the same bug's other shape —
+// a horizontal-only stretch that flattens slopes and smears dots into ellipses
+// (the per-judge trend). The rule is written down in static/js/CONTRACTS.md.
+function applyIntrinsic(svgAttrs, w) {
+  svgAttrs.width = w;
+  svgAttrs.preserveAspectRatio = 'xMinYMid meet';
+  const cap = 'max-width:100%;';
+  svgAttrs.style = svgAttrs.style ? svgAttrs.style + cap : cap;
+  return svgAttrs;
+}
+
 // The lane set for a racing rung's FULL field (every survivor still racing this
 // rung), per the shared contract: the UNION of the rung's `live_progress` keys,
 // its `competitors`, and its `survivors`/`cut` ids — EXCLUDING the champion /
@@ -424,6 +445,12 @@ export function sparkline(opts) {
     delete svgAttrs.height;
     svgAttrs.class = 'dn-spark dn-spark-hero';
     svgAttrs.style = `aspect-ratio:${w} / ${h};`;
+  } else if (o.intrinsic) {
+    // INTRINSIC: the spark occupies exactly its `width` px (the fleet-card
+    // treatment) instead of stretching its 'none' scale across whatever lane
+    // the layout hands it — the stretch flattens every slope and smears the
+    // end dot into an ellipse.
+    applyIntrinsic(svgAttrs, w);
   }
   const svg = svgEl('svg', svgAttrs);
   if (fin.length === 0) {
@@ -4355,15 +4382,25 @@ export function metaLoopLedgerDigest(opts) {
 export function calibrationTrend(opts) {
   const o = opts || {};
   const pts = (Array.isArray(o.points) ? o.points : []).filter((p) => p && p.generation_id != null);
-  const W = o.width || 360;
-  const H = o.height || 64;
+  // A CARD-SCALE figure: it plots a 0..1 fraction over a handful of
+  // generations, and it carries text (the end label + the n_scored caption).
+  // It is therefore sized INTRINSICALLY — never a full-width hero. Rendered at
+  // pane width its viewBox scale ran to 3× and every dot, tick and glyph
+  // magnified with it.
+  const W = o.width || 340;
+  const H = o.height || 78;
   const padX = 8;
   const padY = 8;
-  const svg = svgEl('svg', applyResponsive({
-    class: 'dn-caltrend', width: '100%', height: H,
-    viewBox: `0 0 ${W} ${H}`, preserveAspectRatio: 'xMidYMid meet', role: 'img',
+  // The `n_scored` caption gets its OWN gutter under the 0..1 band. Drawn at
+  // the frame's foot INSIDE the plot, a run of low fractions (the common case)
+  // struck straight through it. The plot loses the gutter, not the figure.
+  const capH = isNum(o.n_scored) ? 13 : 0;
+  const plotB = H - padY - capH;   // the band's bottom edge (fraction 0)
+  const svg = svgEl('svg', applyIntrinsic({
+    class: 'dn-caltrend', height: H,
+    viewBox: `0 0 ${W} ${H}`, role: 'img',
     'aria-label': 'proposer calibration trend — prediction-accuracy fraction over generations (diagnostic)',
-  }, o, W, H, 'dn-caltrend-hero'));
+  }, W));
 
   if (pts.length === 0) {
     return emptyState(svg, W, H, 'no scored predictions yet');
@@ -4372,10 +4409,10 @@ export function calibrationTrend(opts) {
   // the fraction band is a FIXED 0..1 (a calibration fraction, not a free scale)
   // so the line reads on an absolute "did the proposer call it" axis.
   const x = scale([0, Math.max(1, pts.length - 1)], [padX, W - padX]);
-  const y = scale([0, 1], [H - padY, padY]);
+  const y = scale([0, 1], [plotB, padY]);
 
   // the 0..1 band backdrop + the 0.5 midline (the "half its calls landed" mark).
-  svg.appendChild(svgEl('rect', { x: padX, y: padY, width: W - 2 * padX, height: H - 2 * padY, class: 'dn-spark-band' }));
+  svg.appendChild(svgEl('rect', { x: padX, y: padY, width: W - 2 * padX, height: plotB - padY, class: 'dn-spark-band' }));
   const midY = y(0.5);
   svg.appendChild(svgEl('line', { x1: padX, x2: W - padX, y1: midY, y2: midY, class: 'dn-caltrend-mid' }));
 
