@@ -625,6 +625,394 @@ agent's active tool list equals the sanctioned set.
 
 ---
 
+## 2.10 `validate_patches` — the proposer's closed loop (issue #147 phase 3)
+
+Every channel above feeds the proposer *inputs*. This one closes the loop on
+its *output*.
+
+Both historical proposer tiers **emit** a patch set and are done; neither has
+ever seen its own work checked. For a span replace of a short instruction that
+is fine — the applier re-quotes span content as a Python string literal, so a
+span edit is structurally incapable of breaking syntax or dropping an import.
+For a **file-marker `replace`**, though, `new_content` is an entire post-edit
+module that must satisfy every constraint in
+[MUTATION-SURFACE.md](MUTATION-SURFACE.md) §6 — A1 parses, A2 the id still
+resolves, A3 `required_placeholders` survive, A4 the import set is a superset.
+Emitting a whole module in one shot and hoping it satisfies A1–A4 is exactly
+the workload a tool-using agent exists to avoid, and a violation costs a full
+retry round-trip through the propose loop, re-sending the entire manifest.
+
+`validate_patches` (`src/zicato/proposer/validate.py`) is a **linter for
+patches**. The proposer drafts, validates, sees `A4: dropped 'import re'`,
+fixes it, validates again, and only then answers. Zicato's bounded retry stops
+being the main loop and becomes the rare fallback it was designed as. It is in
+`DEFAULT_PROPOSER_TOOLS`, so the ADK default proposer gets the closed loop too,
+not only an external agent — and the default proposer's instruction now tells
+it to validate before answering.
+
+### The governing principle
+
+> **The proposer may check its patch by any means that consumes no board data
+> and produces no scores; it may never execute board entries.**
+
+This is the line that separates a legitimate self-check from grading your own
+work. If the proposer could run against a slice it chose, it would be doing the
+tournament's job with none of the tournament's guards — the overfitting failure
+the whole meta-loop exists to prevent (see the non-goal in issue #147: *the
+proposer does not run the inner harness*). Everything in the tool is therefore
+static: the tree it writes to is a disposable scratch copy, the checks read
+source, and the load probe resolves the harness entry point **without invoking
+it**.
+
+The principle is enforced **structurally, not by inspection**. An import-linter
+contract in `pyproject.toml` ("the proposer's patch validator has no path to
+the board") forbids `zicato.proposer.validate` from reaching the entire
+capability surface: `zicato.board` (where entry text is loaded),
+`zicato.adapters` / `zicato.adapter_factory` / `zicato._tournament_worker` (how
+a harness is loaded and run), and `zicato.emulator` / `zicato.judge_runtime`
+(how an entry is judged). `tests/test_proposer_validate.py` pins the same
+property over the runtime import closure, so a regression is caught by
+whichever gate a change hits first.
+
+Two structural consequences worth knowing before you edit this code:
+
+- **The tier-3 probe lives in its own module** (`_load_probe.py`) and is
+  reached by *spawning a subprocess*, not by importing the adapter factory.
+  That is what keeps the adapter packages on the forbidden list instead of
+  forcing an exemption — and it contains `adapter.load`'s arbitrary operator
+  code (which can hang, or leave import side effects) in a child process with
+  a timeout.
+- **The context plumbing was split into `tool_context.py`.** Importing
+  `zicato.proposer.tools` merely to reach `_active_context` would have dragged
+  the analyzer — and through it the board loader — into the validator's import
+  closure, making the contract unsatisfiable for a reason that says nothing
+  about what the validator does.
+
+`zicato.scoring` and `zicato.tournament` are deliberately **not** on the
+forbidden list: every module in the repo reaches them through
+`core.types → core.scoring_config`, which imports them for *type definitions*.
+That edge is a type-model artifact, not a capability.
+
+### The three tiers
+
+Stages run in order and stop at the first that fails — there is nothing to lint
+in a tree that would not apply. The tool returns
+`{"ok": bool, "errors": [...], "tiers": {...}}`; `errors` is the flat list to
+act on, `tiers` says which stage each finding came from.
+
+| Tier | What it runs | Reuses |
+|---|---|---|
+| 1 **structure + apply** (always on) | the `patches` shape pass, the cross-check pass (mutation-id resolution, op/payload discrimination, `min`/`max`, enum domains), the pre-image guard (`content_hash` from the drafted-against manifest vs a fresh enumeration), the pre-apply surface check, an all-or-nothing apply into a scratch copy of the parent snapshot, then A1–A4 | `PATCHES_JSON_SCHEMA` + `parse_patch_list` (`structured.py`), `validate_patches` + `validate_post_apply` (`mutation/validator.py`), `apply_patches` (`mutation/applier.py`) |
+| 2 **static analysis** (opt-in, contract-declared) | the workspace's declared linter / type-checker set over the scratch tree | the tools already in zicato's environment, via `sys.executable -m` |
+| 3 **load probe** (on whenever the workspace has a config to resolve an adapter from) | `adapter.load` against the scratch snapshot in a subprocess with a timeout — the same call the tournament makes before any entry executes, one expensive round earlier | `make_adapter_from_config` + `load_workspace_config`, in the child process |
+
+Tier 1 reimplements nothing: every check it runs is machinery the round
+pipeline already applies after the proposer answers. The tool's contribution is
+running it *before*.
+
+**Tier 2 reports a DELTA, not findings.** Each declared check runs over the
+parent tree *and* the scratch tree; only findings present in the second and
+absent from the first are errors. Real trees carry lint debt, and a validator
+that blamed a patch for the tree it landed in would fail every draft and teach
+the proposer to ignore it. The comparison normalizes away the file path and the
+`line:col` prefix, so an edit that shifts line numbers does not manufacture
+findings; that normalization is deliberately approximate in one direction — a
+genuinely new finding textually identical to a pre-existing one elsewhere in the
+same file is suppressed, which is the right error for an advisory linter.
+
+**Errors and notes are different things.** A checker that is not installed, a
+misspelled check name, a workspace with no adapter to probe — these are *notes*.
+They are reported so the operator learns nothing is running, but they never set
+`ok: false`. A validator that failed a well-formed patch because a dev tool was
+missing is a validator the proposer learns to distrust.
+
+### The static-check set is contract, and it is a closed registry
+
+Tier 2's set is declared at `contract.proposer_static_checks` in the
+workspace's `config.json` — the same `contract` block that carries
+`proposer_path` — and folded into the proposer component of the contract hash
+by `_canon_proposer`. It is contract, not configuration: changing which checks
+the proposer must satisfy before it will emit a patch changes which patches it
+accepts from itself, hence what it proposes. The empty default is **omitted
+from the canonical form**, so every workspace that never configures the feature
+hashes byte-identically to before it existed (§4's omit-at-default discipline).
+
+The declarable names are a **closed registry** (`STATIC_CHECKS` — currently
+`ruff`, `ruff-format`, `mypy`, `compileall`), not operator-supplied command
+lines. A hashed *name* is a stable, reviewable identity; a hashed command line
+would be an arbitrary-execution surface that a contract edit could widen
+silently. A workspace needing a checker that is not there should propose adding
+it to the registry rather than gaining a way to name any command.
+
+### The pre-image guard — a docstring that was finally made true
+
+`MutationPoint.content_hash` has existed since the enumerator was written, and
+its docstring claimed *"the patch applier checks this before applying a patch so
+a stale proposer round cannot clobber an already-rewritten region."* **The
+applier never read it.** The field was written by the enumerator, rendered by
+the CLI and the dashboard, and checked by nothing — a guarantee documented for
+long enough to be believed and never once enforced.
+
+Tier 1 is that check. It compares `content_hash` for each patched point between
+**the manifest the proposal was drafted against** (`ProposerToolContext.mutations`,
+which is an `enumerate_mutations` result) and **a fresh enumeration of the parent
+snapshot** at validate time. A point whose hash moved between the two was
+rewritten under the proposer — by a concurrent promotion, or an operator editing
+the tree — so the draft is reasoning about text that no longer exists, and
+applying it would clobber whatever changed it.
+
+**Nothing is asked of the proposer, deliberately.** An earlier revision of this
+feature made the pre-image a digest the model declared on each patch. That was
+worse twice over: it made the guard *opt-in* (a model that omitted the field was
+simply not checked, and the guard's whole value is in the case where the model
+does not realise anything is wrong), and it asked the model for arithmetic it
+has no reason to get right. Comparing two enumerations zicato already computes
+needs no cooperation and no wire change — **`Patch` carries no pre-image field
+and must not grow one**; issue #147 is explicit that the `Experiment` schema
+does not change.
+
+The applier is still deliberately not the site. It applies a patch set that has
+already been validated, all-or-nothing; a staleness rejection there would
+surface as a failed derive with no route back to the proposer that could fix it.
+Catching it in `validate_patches` puts the finding where a fix is still cheap.
+A point that has *vanished* rather than moved is left to A2, which reports it
+against the post-apply tree with a better message — one fault should cost one
+fix, not two.
+
+> ⛔ The standing prohibition is unchanged: **no proposer tool may write to the
+> generation snapshot.** `validate_patches` does not relax it — it writes only
+> into a `ztw-pvalidate-*` scratch tree in the OS temp root, removed in a
+> `finally`, and never touches the tree the round is about to patch. That
+> prefix is deliberately distinct from `ztw-slate-*` so the round pipeline's
+> stale-slate sweep can never reap a live validation.
+
+---
+
+## 2.11 The redacted query surface — asking the corpus, not reading a report
+
+Every channel in §2.5–§2.8 is **pushed**: the orchestrator samples, bands, and
+renders it before the proposer sees a byte. A proposer whose entire job is
+diagnosing *why* the harness fails could not ask a follow-up question. This
+surface (`src/zicato/proposer/redacted_query.py`) makes a small, provably-clean
+part of the same corpus **pulled** — same privacy envelope, asked rather than
+pushed.
+
+Three tools, all banded per-entry incidence over the champion's train slice:
+
+| Tool | Answers |
+|---|---|
+| `train_slice_drift_profile()` | which drift kinds fire, at which severities, and whether a mode is broad or narrow |
+| `train_slice_agent_profile()` | which agent role a failure localises to — invoked / drifting / being steered |
+| `train_slice_process_profile()` | how runs unfold — task failures, blocks, cancellations, plan revisions |
+
+`restrict_proposer_visibility` exists to stop the proposer memorising "entry 47
+wants X". It was never meant to stop it from understanding mechanism. That is
+the gap this closes, and the whole design question is how to close it without
+widening the envelope by a byte.
+
+### The redaction contract
+
+The design invariant is §2.5's: **feed the MARGINAL, never the JOINT.** The
+proposer may learn an aggregate property of the *harness's* behaviour; it must
+never be able to reconstruct any board entry. Concretely, six commitments, each
+independently testable:
+
+1. **Train slice only, derived — never trusted.** No caller passes a slice in.
+   Each tool re-derives the partition itself from `workspace_root` + `epoch_id`
+   through the same `rotation_seed` → `split_board` pair the tournament runner
+   uses, so this surface cannot see a wider slice than the one the round's
+   patterns and loss summary were computed over.
+2. **Fail closed.** No board, no `scoring.json`, an unparseable either, no
+   epoch id, an empty train slice — every failure path returns
+   `status: "train slice unavailable"` with a reason and **no data**. There is
+   deliberately no whole-board fallback; a silently-widened slice is precisely
+   the failure this module exists to prevent.
+3. **Two independent gates.** Gate 1 opens only train-slice entries' event
+   files. Gate 2 (`drop_out_of_slice`) re-filters the collected results by
+   entry id afterwards. A single gate is one refactor away from being bypassed
+   — a view that arrives "already filtered" is trusted exactly once and then
+   quietly is not.
+4. **Default-deny reads, with no free-text field admitted at all.** Only a
+   narrow allowlist of closed-vocabulary event fields (drift kind, severity,
+   steering outcome, intervention level, judge classification) plus harness-side
+   agent labels is read; every other payload case, and every unlisted field of
+   a listed case, is dropped and its strings join the identity corpus. This is
+   *narrower* than the process-exemplar channel's R1 policy, deliberately —
+   that channel is capped at a couple of windows per round, this one is
+   queryable on demand. It is what makes `run_started.goal_summary` (the task
+   prompt) and every completion summary (model output) **structurally
+   unreachable** rather than merely scrubbed. The open-vocabulary labels that
+   do survive pass through `scrub_identity` then `truncate_free_text` — the
+   R3/R4 primitives now shared with the exemplar channel via
+   `src/zicato/analyzer/redaction.py`.
+5. **Banded, and per-entry incidence rather than per-event counts.** Every
+   figure is a rate coarsened through the existing band vocabulary, and each
+   entry contributes at most once to each rate, so one chatty run cannot
+   dominate a figure and no per-entry magnitude is recoverable. Results are
+   ordered by band then name, so neither the value nor the ordering hands back
+   a fine-grained response surface (OVERFITTING.md §11).
+6. **Stable within a reign.** The champion's event files do not change between
+   rounds, so re-asking returns byte-identical answers until the champion
+   changes. There is no round-over-round signal to hill-climb — the same
+   argument PROCESS-EXEMPLARS.md §2 makes for its refresh semantics.
+
+Entry ids are used to LOCATE files and are never emitted. The tools are
+best-effort by contract: a missing file, a malformed line, an unknown payload
+are all tolerated, never raised — a diagnostic read must never abort a round.
+
+### The design deviation, and why it was ratified
+
+Issue #147 §6 framed this as "expose `zicato/query/` views … through the same
+mechanical redaction". **No `zicato/query/` view is exposed. Every one was
+excluded**, and the shipped surface is three purpose-built aggregators over the
+champion's train-slice `events.jsonl` — the same source `extract_process_exemplars`
+reads, differing only in folding events into counts instead of windowing them.
+
+The audit that produced that conclusion is worth stating in full, because it is
+the reason and not an excuse:
+
+> The query layer splits cleanly into two halves, and neither half can be
+> redacted into this envelope. Its *aggregate* views (`gate_view`, the
+> per-judge tables) are keyed by generation with no entry id in the row, so
+> there is nothing to filter on — you cannot narrow them to the train slice,
+> and a champion's generation-wide numbers include the holdout runs the
+> promote gate played. Its *entry-scoped* views do carry the key, but an
+> entry-keyed row is precisely the joint distribution the envelope exists to
+> withhold; filtering one to the train slice leaves you holding per-entry
+> data, which is the thing you were trying not to have. So the only shape
+> that satisfies both constraints — narrowable to the slice AND aggregable to
+> a marginal — is the raw per-run event file, which is entry-scoped at the
+> *file path* level and content-free at the *field* level once a default-deny
+> allowlist is applied.
+
+Provably clean beat plausibly clean. A redacted *view* would have been a filter
+argued to be sufficient; a purpose-built *aggregator* over a default-deny field
+allowlist is a surface where the leak has no path to begin with.
+
+### What is deliberately NOT exposed
+
+The per-view exclusion list, so the next person does not helpfully add one:
+
+- **`transcript_view`** (`build_run_transcript`, `resolve_conversation`,
+  `empty_run_transcript`) — reconstructs the model's turn-by-turn
+  conversation; it *is* task text and model output.
+- **`conversations_view`** (`build_matchup_conversations`) — same payload,
+  paired per matchup; scrubbing free-form model output into safety is not a
+  thing we do, we drop the field.
+- **`trace_view`** (`build_trace_detail`, `build_trace_list`,
+  `build_suggestion_provenance`) — carries reflection/suggestion prose, which
+  quotes board inputs and candidate outputs verbatim.
+- **`judge_view` per-judge family** (`build_per_judge_for_generation`,
+  `build_per_judge_for_run`, `build_per_judge_trend`,
+  `build_per_judge_comparison`) — a judge may be attached to a single board
+  entry, so a per-judge figure is a per-entry measurement wearing an
+  aggregate's clothes; also generation-wide (train+holdout) with no entry key
+  to filter on.
+- **`judge_view` per-entry family** (`build_per_entry_for_generation`,
+  `build_expectation_outcomes_for_run`, `resolve_run_id_for_entry`,
+  `build_run_header`) — entry-keyed rows are the JOINT, not the marginal; the
+  entry id is the payload.
+- **`judge_view` search** (`build_search_results`) — free-text search over
+  board/run content; an arbitrary-query read of the corpus is the exact leak
+  vector.
+- **`gate_view`** (`_drift_counts_for_generation`, `build_gate_breakdown`,
+  `build_drift_movements`, `build_score_trajectory`, `build_health_report`,
+  `build_rating_view`) — generation-scoped with **no entry key**, so it cannot
+  be narrowed to the train slice; the drift counts mix holdout runs in and the
+  gate/score views expose the exact holdout-confirmation numbers.
+- **`epoch_view`** (`build_epoch_view`, `build_epoch_analysis`,
+  `compute_board_split`, `_parse_board`, `_board_input_preview`) — renders the
+  board itself: entry ids, input previews, and the train/holdout membership map.
+- **`eval_view`** (`build_eval_matrix`, `build_eval_dossier`,
+  `build_eval_health`) — per-entry × per-candidate matrix; the joint by
+  construction.
+- **`tournament_view` / `racing_view` / `rounds_view` / `loop_view`** —
+  bracket, matchup and board-slice views keyed by entry id and by
+  holdout-confirmed outcomes.
+- **`reflection_view`** (`build_judge_scorecards`, `build_adjudication_xray`,
+  `entry_candidate_matrix`, `build_practice_review`) — adjudicated per-entry
+  evidence, entry-keyed and quoting run content.
+- **`run_log` / `log_stream` / `events_index` raw readers** (`build_run_log`,
+  `tail_records`, `build_log_view`, `resolve_transcript_events`,
+  `read_run_result`) — unredacted event/log passthrough; there is no allowlist
+  between them and `run_started.goal_summary`.
+- **`journal_view`, `hypothesis_view`, `lineage_view`, `decisions`,
+  `runtime_view`, `paths`** — excluded as out of scope rather than as leaks:
+  either already reachable through an existing proposer channel (journal,
+  prior experiments) or carrying no mechanism signal worth a new surface.
+
+If a future channel needs one of these, the move is to build a redacted
+aggregate over it — a new marginal — not to expose the view and filter its
+rows.
+
+### Known limits of the banding
+
+Two caveats a reviewer should hold, both recorded rather than hidden:
+
+- **On a small train slice the bands are nearly lossless.** `band_rate` rounds
+  to 10% steps, so with four train entries `1/4` reads `~30%` and the band
+  recovers the count. The memorization resistance on this surface comes mostly
+  from the AGGREGATION — per-entry membership sets, so one chatty run cannot
+  dominate a figure and no per-entry magnitude survives — rather than from the
+  band width. A workspace with a very small board gets correspondingly less
+  from the banding.
+- **Two exact integers are emitted**, `train_slice_entries` and
+  `entries_with_events`. Both are constant within a reign (the split rotates
+  per epoch; the champion's files do not change between rounds), and the
+  proposer already sees the train run count verbatim in its loss summary
+  (`over N runs`). They are not a round-over-round response surface **as long
+  as the slice stays per-epoch** — if rotation ever becomes per-round, these
+  two need banding too.
+
+### Enforcement
+
+`tests/test_proposer_redacted_query.py` is an **identity-leak probe**, not a
+smoke test. The fixture plants unmistakable sentinel strings as every board
+entry id, task prompt, model output, and holdout value — including a drift
+`detail` that quotes the task prompt verbatim, which is the case R4 exists for
+— then loops over the module's own exported `REDACTED_QUERY_TOOLS` tuple and
+asserts no sentinel appears in any output. Looping over the tuple rather than a
+transcribed list is deliberate: a newly-added tool is covered automatically and
+cannot skip the probe. Because a leak probe passes vacuously when the tools
+return nothing, the same file pins the positive content too — the aggregates
+must actually be present, and banded, while the sentinels are not.
+
+**`src/zicato/analyzer/redaction.py` is the single source of truth for the R3
+and R4 primitives** (`truncate_free_text`, `scrub_identity`,
+`iter_string_leaves`, and their constants). It has two consumers — the
+process-exemplar channel and this surface — and the point of the extraction is
+that both apply byte-identical redaction. `PROCESS-EXEMPLARS.md` §3 stays
+NORMATIVE for what R1–R4 mean; R1 (the payload allowlist) and R2 (the
+window-local anonymizer) remain in `process_exemplars.py` because both are
+bound to the exemplar window's own structure. Order is load-bearing wherever
+they are used: **scrub first, truncate second** — truncation only removes
+characters and puts the elision marker between head and tail, so a scrubbed
+string can never re-form an identity across the split.
+
+Two notes for whoever edits this next:
+
+- **Gate 2 (`drop_out_of_slice`) catches nothing today, and that is the
+  point.** Gate 1 — opening only train-slice event files — is currently
+  sufficient on every path. Gate 2 exists for the refactor where someone
+  routes in a result set that arrives "already filtered" and is trusted
+  exactly once. Its test feeds it a row gate 1 could never produce, precisely
+  so it stays alive independently. **Do not delete it as dead code.**
+- **`_load_events` / `_payload` are duplicated** (~30 lines) between
+  `process_exemplars.py` and `redacted_query.py`. Deliberate for now: the two
+  allowlists differ, and a self-contained parser inside the security-critical
+  module was preferred over a shared one. A consolidation is a reasonable
+  follow-up, but it must move the *whole* reader, not half of it — a shared
+  parser paired with a per-consumer allowlist is the shape that invites the
+  wrong allowlist being applied.
+
+The obvious next increment is a **parameterized drill-down** (a per-drift-kind
+× agent cross-tab). It was left out on purpose: a zero-arg tool has no input to
+validate and therefore no oracle surface, and shipping a provably clean surface
+first is worth more than the extra resolution. Revisit it only with the widened
+envelope documented before the code.
+
+---
+
 ## 3. Design A — why a tool-using proposer owns its own model
 
 The text shim is a single-shot text exchange: zicato hands the auxiliary
@@ -812,8 +1200,37 @@ surface to climb.
 
 Emission is **deterministic and free** — no model is called, so the operator's
 queue is reproducible from the same round logs. `--draft-with-llm` adds an
-optional polish pass over the remedy's prose through the auxiliary-call seam; a
-failed or empty call keeps the deterministic remedy rather than degrading it.
+optional polish pass over the remedy's prose through the auxiliary-call seam,
+wrapped in `aux_call_timeout_s` like every other aux call site; a failed,
+timed-out, or empty call keeps the deterministic remedy rather than degrading
+it. The budget matters more here than elsewhere: the remedy is already complete
+before the model is asked anything, so a pass that blocked on a dead endpoint
+would be waiting for nothing.
+
+### 6.2.1 Two round-log subtleties the reader must respect
+
+**Re-run rounds.** One `round_log.jsonl` can hold more than one attempt at the
+same round index — a round that applied patches but died before its experiment
+was written never consumes its index, so the next invocation reopens it and
+appends. The two families of aggregate therefore take *opposite* slices:
+
+- **gate / decision / generation / unit facts** come from the FINAL attempt
+  span only (the same slice `round_integrity._final_attempt_span` takes), because
+  a dead attempt's gate is not the round's outcome and counting it could credit a
+  second promotion to a round the epoch settled once;
+- **proposal-failure and cost facts** come from EVERY attempt, because a failed
+  attempt is not noise to be sliced away — it is precisely the signal. Slicing it
+  would make the failure rate improve exactly when the proposer did worst, and a
+  call spent on an attempt that later died was still spent.
+
+**Revision success.** `ProposalSession` carries no revise counter and folds the
+revise's veto in with the slate's, so the rate is read from raw envelopes. A
+re-sample that survives the screen is the one the selector then picks
+(`critique_selected.reason == "screen_revise_survivor"`), so the screened verdict
+and the definitive token agree. The denominator counts re-samples that *produced*
+a candidate: a revise whose propose call raised emits no `candidate_screened` at
+all, so the rate answers "when the revise produced something, did it survive",
+not "did the revise mechanism work at all".
 
 ### 6.3 The four invariants, and where each one lives
 
@@ -823,6 +1240,14 @@ failed or empty call keeps the deterministic remedy rather than degrading it.
 | **Never self-applied** | There is no import edge from `reflection.py` to `apply_recommendation.py`; a test reads the module source to pin the absent edge. |
 | **Redacted evidence only** | `assert_redacted` walks every record at the persist boundary and RAISES on an identity/content key at any depth. The scorecard never carries an `entry_id` by construction (it counts units and ignores `attributable_regressions`); the guard is what keeps a future emitter honest. |
 | **Every accepted edit is hashed** | The remedy carries the SHA-256 of the exact bytes; `apply-recommendation` re-verifies before writing, so an edited record cannot be applied under its original id. |
+
+One sharp edge under that last row: `_canon_proposer` folds a skill as
+`{name, sha256(normalized body)}` and deliberately does **not** hash the
+frontmatter `description`, so rewording a description is cosmetic and correctly
+does not roll. A drafted remedy is safe from that because its heading and its
+evidence line live in the *body* — but only by layout, so both halves are pinned:
+a description-only edit must not roll (the canon's semantics, which this feature
+must not drift), and a drafted remedy's replacement must.
 
 ### 6.4 The boundary and the apply gate
 

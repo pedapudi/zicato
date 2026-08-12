@@ -100,6 +100,20 @@ class ProposerContext:
     max_retries: int = 2
     forbidden_ids: tuple[str, ...] = ()
     workspace_root: Path | None = None
+    #: The PARENT generation's materialised snapshot — the tree this round is
+    #: about to patch, resolved by the orchestrator through the generation
+    #: store's path convention and threaded here so a tool-using proposer
+    #: does not re-derive it. :class:`~zicato.proposer.adk_agent.ADKProposerAgent`
+    #: binds it onto the tool context, and the external-proposer launch
+    #: forwards it into the MCP server's per-round context file.
+    #:
+    #: ``None`` (the default) means "no orchestrator populated this" — the
+    #: ADK path then falls back to deriving it, which is exactly the
+    #: duplication this field removes, so the fallback is a compatibility
+    #: shim for contexts built by hand (tests, a standalone propose) and NOT
+    #: a supported production shape. ``_propose_child`` takes it as a
+    #: REQUIRED argument so the real path cannot reach the fallback.
+    generation_root: Path | None = None
     validate_experiment: ExperimentValidator | None = None
     meta_loop_emitter: MetaLoopEmitter | None = None
     custom_judge_names: frozenset[str] | None = None

@@ -343,6 +343,13 @@ class RoundIntegrity:
     boolean throws exactly that away. ``evidence`` is the short
     human-readable trail the CLI renders, so a reader can see WHY a
     round was called void without re-running anything.
+
+    ``promoted_regressions`` is kept OUT of ``evidence`` on purpose. It
+    changes no verdict — a promoted duel is ``complete`` whatever it
+    regressed — and ``evidence`` is the trail justifying the status, so
+    folding a non-verdict observation into it would make the rationale
+    read as though the regression were part of the call. See
+    :func:`classify_round` for what the field holds and why it is here.
     """
 
     round_index: int
@@ -355,6 +362,7 @@ class RoundIntegrity:
     infra_markers: tuple[str, ...]
     evidence: tuple[str, ...]
     log_path: str
+    promoted_regressions: tuple[str, ...] = ()
 
     @property
     def settled(self) -> bool:
@@ -568,9 +576,35 @@ def classify_round(
     error prose matches no marker, since rule 3 outranks rule 4. That is
     the case the ``HARD_INFRA_MARKERS`` vocabulary is actually load-bearing
     for; widen it via ``infra_markers`` when an endpoint's prose is unusual.
+
+    **``promoted_regressions`` — an observation, not a rule.** A duel can
+    promote while entries regressed on their OWN per-entry evidence; the gate
+    records them (:attr:`GateEvaluated.attributable_regressions`) and does not
+    act on them, so ``rule_fired`` is correctly empty and the loss lands in the
+    lineage unannounced. This field collects those entry ids from the round's
+    PROMOTED gates only — a rejected challenger is discarded, so nothing it
+    regressed enters the lineage.
+
+    This is NOT the only surface, and it must not be described as the fix for a
+    silent regression: the live loop already raises a health finding for the
+    same observation (:func:`zicato.health.diagnostics.detect_attributable_entry_regression`).
+    What was missing is the POST-HOC read. The durable round log outlives the
+    run, and it is what an operator opens afterwards to ask what a completed
+    epoch actually did — that reader had no way to see this at all.
     """
     settled = record.opened and record.closed
     gate_count = len(record.gates)
+    # PROMOTED gates only, in log order, de-duplicated: a round with several
+    # duels can name the same entry more than once, and repeating it in the
+    # report would read as more distinct regressions than the log holds.
+    promoted_regressions = tuple(
+        dict.fromkeys(
+            str(entry_id)
+            for gate in record.gates
+            if gate.decision == "promoted"
+            for entry_id in gate.attributable_regressions
+        )
+    )
     # A MECHANICAL recombination mint is a candidate the loop produced
     # WITHOUT consulting the model — ``mint_recombined_experiment``
     # (``proposer/recombine.py``) is pure, and the surviving slot emits its
@@ -632,6 +666,7 @@ def classify_round(
             infra_markers=markers,
             evidence=tuple(evidence),
             log_path=log_path,
+            promoted_regressions=promoted_regressions,
         )
 
     if proposer_reached:
@@ -850,6 +885,13 @@ def render_round_integrity(report: EpochRoundIntegrity) -> str:
     its gate count, and the lines explaining the call — matched infra
     markers verbatim — so the verdict can be audited from this output
     alone.
+
+    A round that PROMOTED while entries regressed on their own evidence also
+    gets a warning line naming them. It sits apart from the evidence trail
+    because it does not bear on the verdict — the round is ``complete`` either
+    way — but it is the one thing in a healthy-looking round worth reading,
+    and this report is the post-hoc surface where it was absent (the live loop
+    raises its own health finding for the same observation).
     """
     # ``Path(".")`` as the workspace root turns the path helper into the
     # workspace-RELATIVE convention (``epochs/{id}/rounds``) without
@@ -867,6 +909,12 @@ def render_round_integrity(report: EpochRoundIntegrity) -> str:
         )
         for line in entry.evidence:
             lines.append(f"      {line}")
+        if entry.promoted_regressions:
+            lines.append(
+                "      WARNING: promoted despite per-entry regression(s) on "
+                + ", ".join(entry.promoted_regressions)
+                + " — the loss is in the lineage and no gate rule fired"
+            )
     counts = report.counts
     lines.append(
         "  counts: "

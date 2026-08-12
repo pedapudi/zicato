@@ -26,6 +26,15 @@ import { attachHovercard } from '../hovercard.js';
 // The doc the popovers point at for "what does this mean" detail.
 const DOC_HREF = '/docs/design/OVERFITTING.md';
 
+// The FULL entry-kind vocabulary (core/board.py::BoardEntryKind) — the same
+// five labels the board + trellis views print, so one entry never reads as two
+// different things on two surfaces. An unknown key renders the raw token.
+const KIND_LABEL = {
+  single_turn: 'single-turn', multi_turn_scripted: 'scripted multi-turn',
+  multi_turn_emulated: 'emulated multi-turn',
+  synthetic_adversarial: 'synthetic adversarial', synthetic_clean: 'synthetic clean',
+};
+
 // ---- model ----------------------------------------------------------
 //
 // Pure, defensive derivation from the /api/epoch payload. Everything is
@@ -33,8 +42,9 @@ const DOC_HREF = '/docs/design/OVERFITTING.md';
 // never a throw. Returns:
 //   {
 //     split:   { configured, enabled, holdoutFraction, holdoutTags,
-//                entries:[{entryId, slice, tag, weight}], trainCount,
-//                holdoutCount, total },
+//                entries:[{entryId, slice, tag, weight, kind, tags}],
+//                trainCount, holdoutCount, total },
+//     meta:    { judgeOnly, disableDrift:[…] } | null,
 //     ladder:  { present, confirmed, trainScalar, holdoutScalar,
 //                released, budgetTotal, budgetRemaining, threshold,
 //                generationId } | null,
@@ -44,12 +54,34 @@ export function boardStatusModel(ep) {
   const e = ep && typeof ep === 'object' ? ep : {};
   return {
     split: splitModel(e),
+    meta: metaModel(e),
     ladder: ladderModel(e),
     gap: gapModel(e),
   };
 }
 
+// Per-entry `kind` + `tags` indexed by entry_id off the RAW board. The
+// server's board_split carries membership only (slice / why-held-out tag /
+// weight), so the join is CLIENT-LOCAL — the same `ep.board` the fallback
+// branch below already reads, no second fetch and no server change.
+function boardIndex(ep) {
+  const byId = new Map();
+  const board = Array.isArray(ep.board) ? ep.board : [];
+  for (const b of board) {
+    if (!b || typeof b !== 'object') continue;
+    const id = b.entry_id != null ? String(b.entry_id) : '';
+    if (!id) continue;
+    byId.set(id, {
+      kind: typeof b.kind === 'string' && b.kind ? b.kind : null,
+      tags: Array.isArray(b.tags) ? b.tags.filter((t) => typeof t === 'string') : [],
+    });
+  }
+  return byId;
+}
+
 function splitModel(ep) {
+  const byId = boardIndex(ep);
+  const joined = (id) => byId.get(id) || { kind: null, tags: [] };
   const bs = ep.board_split && typeof ep.board_split === 'object' ? ep.board_split : null;
   // Prefer the server-computed split; fall back to "everything is train"
   // derived from the raw board so the strip still draws on a pre-feature
@@ -61,7 +93,7 @@ function splitModel(ep) {
       slice: r && r.slice === 'holdout' ? 'holdout' : 'train',
       tag: r && typeof r.tag === 'string' ? r.tag : null,
       weight: r && svg.isNum(r.weight) ? r.weight : null,
-    })).filter((r) => r.entryId);
+    })).filter((r) => r.entryId).map((r) => Object.assign(r, joined(r.entryId)));
   } else {
     const board = Array.isArray(ep.board) ? ep.board : [];
     entries = board.map((b) => ({
@@ -69,7 +101,7 @@ function splitModel(ep) {
       slice: 'train',
       tag: null,
       weight: b && svg.isNum(b.weight) ? b.weight : null,
-    })).filter((r) => r.entryId);
+    })).filter((r) => r.entryId).map((r) => Object.assign(r, joined(r.entryId)));
   }
   const holdoutCount = entries.filter((r) => r.slice === 'holdout').length;
   const trainCount = entries.length - holdoutCount;
@@ -84,6 +116,22 @@ function splitModel(ep) {
     holdoutCount,
     total: entries.length,
   };
+}
+
+// The board-level `board_meta` header (BOARD-FORMAT §1.0) as the epoch view
+// serves it: the drift kinds suppressed for every entry + the judge-only flag.
+// Both fold into the contract hash, so they describe how THIS board is scored —
+// a runtime surface that omits them draws a board the operator cannot recognise
+// from the one the builder authored. Absent / fully default ⇒ null (the server
+// omits the key for a default board, and there is nothing to say about it).
+function metaModel(ep) {
+  const m = ep.board_meta && typeof ep.board_meta === 'object' ? ep.board_meta : null;
+  if (!m) return null;
+  const disableDrift = Array.isArray(m.disable_drift)
+    ? m.disable_drift.filter((t) => typeof t === 'string') : [];
+  const judgeOnly = m.judge_only === true;
+  if (!disableDrift.length && !judgeOnly) return null;
+  return { judgeOnly, disableDrift };
 }
 
 function ladderModel(ep) {
@@ -133,14 +181,20 @@ function gapModel(ep) {
 export function boardStatusDigest(model) {
   const m = model || {};
   const s = m.split || {};
+  const meta = m.meta || null;
   const l = m.ladder || null;
   const g = m.gap || {};
   return JSON.stringify({
     split: [
       s.configured, s.enabled, s.holdoutFraction, s.trainCount, s.holdoutCount,
-      (s.entries || []).map((r) => [r.entryId, r.slice, r.tag, r.weight]),
+      // `kind` + `tags` ride the per-entry leg: they are RENDERED (the entry
+      // hovercard), so a board edit that retypes or retags an entry has to
+      // repaint — an unfolded rendered field is the no-repaint bug class.
+      (s.entries || []).map((r) => [r.entryId, r.slice, r.tag, r.weight, r.kind, r.tags || []]),
       (s.holdoutTags || []),
     ],
+    // the board_meta header, likewise rendered beside the counts row.
+    meta: meta ? [meta.judgeOnly, meta.disableDrift] : null,
     ladder: l ? [
       l.confirmed, l.released, l.budgetTotal, l.budgetRemaining,
       svg.isNum(l.threshold) ? l.threshold.toFixed(4) : null,
@@ -165,7 +219,7 @@ export function renderBoardStatus(model, opts) {
   const m = model || boardStatusModel(null);
   const card = el('div', { class: 'dn-panel dn-boardstatus' });
 
-  card.appendChild(splitPanel(m.split, o));
+  card.appendChild(splitPanel(m.split, m.meta, o));
   card.appendChild(legendPanel(m.split, m.ladder));
   card.appendChild(gapPanel(m.gap));
 
@@ -174,7 +228,7 @@ export function renderBoardStatus(model, opts) {
 
 // 1 — THE SPLIT: the board as a chip grid, train = outline, holdout = accent
 //     fill, + the counts/fraction header.
-function splitPanel(split, opts) {
+function splitPanel(split, meta, opts) {
   const wrap = el('div', { class: 'dn-bs-split' });
   const frac = split.total > 0 ? split.holdoutCount / split.total : 0;
   const headText = split.total === 0
@@ -190,6 +244,26 @@ function splitPanel(split, opts) {
         text: '· no holdout configured — every entry is train',
       }),
   ].filter(Boolean)));
+
+  // The board-level header, beside the counts. WORDING IS THE BUILDER'S,
+  // VERBATIM (views/builder.js's board-metadata panel) — the two surfaces name
+  // the same flag, so they must not describe it in two different sentences.
+  if (meta) {
+    const bits = [];
+    if (meta.judgeOnly) {
+      bits.push(el('span', {
+        class: 'dn-bs-meta-judgeonly',
+        text: 'judge-only board — score on judges alone, no steering',
+      }));
+    }
+    if (meta.disableDrift.length) {
+      bits.push(el('span', {
+        class: 'dn-faint dn-bs-meta-drift',
+        text: 'drift suppressed for every entry · ' + meta.disableDrift.join(', '),
+      }));
+    }
+    wrap.appendChild(el('div', { class: 'dn-bs-meta' }, bits));
+  }
 
   if (split.total === 0) {
     wrap.appendChild(empty('No board entries for this epoch yet.'));
@@ -218,13 +292,22 @@ function splitPanel(split, opts) {
   return wrap;
 }
 
-// The per-entry hovercard content (entry id, slice, weight, why-held-out).
+// The per-entry hovercard content (entry id, kind, slice, weight, tags,
+// why-held-out). `kind` and `tags` are the client-local join off `ep.board` —
+// membership + provenance, never a per-entry SCALAR: breaking the holdout out
+// by measurement on every page load would be an ungoverned query against it
+// (eval_view.py excludes holdout entries from facet aggregation for exactly
+// that reason).
 function entryCard(r) {
   const lines = [
     el('div', { class: 'dn-hc-title', text: r.entryId }),
-    el('div', { class: 'dn-hc-row', text: r.slice === 'holdout' ? 'slice: holdout' : 'slice: train' }),
   ];
+  if (r.kind) lines.push(el('div', { class: 'dn-hc-row', text: `kind: ${KIND_LABEL[r.kind] || r.kind}` }));
+  lines.push(el('div', { class: 'dn-hc-row', text: r.slice === 'holdout' ? 'slice: holdout' : 'slice: train' }));
   if (svg.isNum(r.weight)) lines.push(el('div', { class: 'dn-hc-row', text: `weight: ${svg.fmt(r.weight, 2)}` }));
+  if (Array.isArray(r.tags) && r.tags.length) {
+    lines.push(el('div', { class: 'dn-hc-row', text: `tags: ${r.tags.join(', ')}` }));
+  }
   if (r.slice === 'holdout') {
     lines.push(el('div', { class: 'dn-hc-row', text: r.tag
       ? `held out by tag “${r.tag}” — played at the gate's confirmation step only`

@@ -9,12 +9,25 @@
 // cohesive visual; per-matchup detail (champion vs challenger per board) is
 // appended from the matchup grid.
 //
-// Bind: /api/epoch/{epoch_id}/analysis → { analysis_md }. Cold deep-link safe.
+// Bind: /api/epoch/{epoch_id}/analysis → { analysis_html_inline, analysis_md }.
+// Cold deep-link safe.
+//
+// THE SERVER RENDER IS PREFERRED. `/api/epoch` and `/api/epoch/{id}/analysis`
+// BOTH run the full report renderer (analyzer.report.render_report_html_fragment
+// over gather_epoch_report_data) on every call to produce `analysis_html_inline`
+// — a paper-styled, self-contained fragment with its own scoped <style> and
+// server-drawn figures. Re-rendering the markdown client-side threw that entire
+// render away and printed a lesser paper. So: prefer the fragment when it is
+// non-empty, and fall back to the markdown path (parsePaper + renderMarkdown)
+// only when the server did not produce one (no analysis yet, a render failure,
+// or the Rust supervisor). The live interactive figures are appended either way
+// — they are the thing the static fragment cannot carry.
 
 import { el } from '../core/dom.js';
 import { state } from '../core/state.js';
 import * as D from '../data.js';
 import * as svg from '../svg.js';
+import { harmonografIsLive, harmonografMini } from '../core/harmonograf.js';
 import { gatedSwap, empty, subhead, renderMarkdown, decisionFor, densityTokens, dataTable, deltaCell } from '../ui.js';
 
 // Parse analysis_md into { eyebrow, title, meta:[{label,value}], abstract,
@@ -84,6 +97,10 @@ export async function render(host, ctx, params) {
     D.analysis(epochId), D.generationsForEpoch(epochId), D.scoreTrajectory(epochId), D.bracket(epochId),
   ]);
   const md = (analysis && typeof analysis.analysis_md === 'string') ? analysis.analysis_md : '';
+  // The SERVER-rendered paper fragment — preferred over re-rendering `md`
+  // client-side (see the header note). Empty string = no server render.
+  const inlineHtml = (analysis && typeof analysis.analysis_html_inline === 'string')
+    ? analysis.analysis_html_inline : '';
 
   const gens = rows.length
     ? rows.map((g) => ({ id: g.generation_id, parent: g.parent_generation_id || null, promoted: g.promoted == null ? null : !!g.promoted })) : [];
@@ -99,11 +116,43 @@ export async function render(host, ctx, params) {
 
   const digest = JSON.stringify({
     epochId, mdLen: md.length,
+    // the SERVER-rendered fragment is what actually paints when present, so its
+    // length gates the swap too — a re-run `epoch analyze` that changes the
+    // rendered paper repaints, an identical re-render stays byte-identical.
+    htmlLen: inlineHtml.length,
     gens: gens.map((g) => [g.id, g.parent, g.promoted, scalarByGen.has(g.id) ? scalarByGen.get(g.id).toFixed(3) : null]),
-    grids: grids.map((gr) => gr && Array.isArray(gr.entry_grid) ? gr.entry_grid.map((r) => [r.entry_id, r.parent_drift_loss, r.child_drift_loss, r.verdict]) : null),
+    // every entry_grid field the per-match-up table RENDERS folds here: the two
+    // drift losses + verdict as before, PLUS the continuous #18 score pair,
+    // their precision/recall metrics, `won_by`, and the two session ids that
+    // decide whether a harmonograf deep link paints.
+    grids: grids.map((gr) => gr && Array.isArray(gr.entry_grid) ? gr.entry_grid.map((r) => [
+      r.entry_id, r.parent_drift_loss, r.child_drift_loss, r.verdict,
+      svg.isNum(r.parent_score) ? r.parent_score.toFixed(3) : null,
+      svg.isNum(r.child_score) ? r.child_score.toFixed(3) : null,
+      metricsDigest(r.parent_metrics), metricsDigest(r.child_metrics),
+      r.won_by == null ? null : String(r.won_by),
+      r.parent_session_id || null, r.child_session_id || null,
+    ]) : null),
+    // the harmonograf deep links are liveness-gated (core/harmonograf.js), so a
+    // server coming up / a run ending must repaint the link column. Same fold
+    // the candidate dossier uses (`hgLive`).
+    hgLive: harmonografIsLive(),
   });
 
   gatedSwap(host, digest, () => {
+    // ── PREFERRED PATH: the server's own paper render ────────────────────
+    if (inlineHtml.trim()) {
+      const served = el('article', { class: 'dn-paper' });
+      // the fragment ships its own scoped <style> + article markup; it scrolls
+      // inside its OWN container so a wide server-rendered table can never make
+      // the page scroll sideways (the never-overflow house rule).
+      served.appendChild(el('div', { class: 'dn-paper-served dn-table-scroll', html: inlineHtml }));
+      // the LIVE, interactive figures the static fragment cannot carry.
+      appendCanonicalFigures(served, figures);
+      appendMatchupDetail(served, figures);
+      return [served];
+    }
+
     const paper = parsePaper(md);
     const article = el('article', { class: 'dn-paper' });
 
@@ -249,8 +298,28 @@ function appendCanonicalFigures(article, figures) {
   article.appendChild(plates);
 }
 
+// The precision/recall decomposition a scorer may hang off an entry_grid row
+// (`parent_metrics` / `child_metrics`, #18). Rendered as "P .82 / R .60" and
+// folded into the digest at the SAME precision it prints, so a no-op beat is
+// byte-identical. Null when the scorer exposed neither number.
+export function prText(metrics) {
+  if (!metrics || typeof metrics !== 'object') return null;
+  const p = svg.isNum(metrics.precision) ? metrics.precision : null;
+  const rc = svg.isNum(metrics.recall) ? metrics.recall : null;
+  if (p == null && rc == null) return null;
+  return 'P ' + (p == null ? '—' : svg.fmt(p, 2)) + ' / R ' + (rc == null ? '—' : svg.fmt(rc, 2));
+}
+export function metricsDigest(metrics) { return prText(metrics); }
+
 // Per-matchup detail — champion vs challenger per board, for EVERY decided
 // round (the brief mandates this in the paper).
+//
+// The table honours the FULL entry_grid row contract (query/tournament_view.py
+// build_matchup_grid): the drift-loss pair + Δ + verdict, the CONTINUOUS #18
+// score pair with its precision/recall decomposition, the `won_by` side, and a
+// per-side harmonograf deep link off `parent_session_id` / `child_session_id`.
+// A pre-score loss.json carries score/metrics == null, so a bool-only board
+// renders exactly as it did before the columns existed.
 function appendMatchupDetail(article, figures) {
   const { matchups, grids, ctx, epochId } = figures;
   const sec = el('section', { class: 'dn-paper-matchups' });
@@ -261,28 +330,70 @@ function appendMatchupDetail(article, figures) {
     const rows = (grid && Array.isArray(grid.entry_grid)) ? grid.entry_grid : [];
     if (!rows.length) return;
     any = true;
+    // the continuous-score columns only appear when SOMETHING on this grid was
+    // scored — a bool-only board must not grow four empty columns.
+    const scored = rows.some((r) => svg.isNum(r.parent_score) || svg.isNum(r.child_score));
+    const anyMetrics = rows.some((r) => prText(r.parent_metrics) || prText(r.child_metrics));
+    const anySession = rows.some((r) => r.parent_session_id || r.child_session_id);
     sec.appendChild(subhead(`${m.champion} → ${m.challenger}${m.decision ? ' · ' + m.decision : ''}`));
+    const columns = [{ label: 'board entry' }, { label: m.champion, class: 'dn-num' },
+      { label: m.challenger, class: 'dn-num' }, { label: 'Δ', class: 'dn-num' }];
+    if (scored) columns.push({ label: 'score ' + m.champion, class: 'dn-num' }, { label: 'score ' + m.challenger, class: 'dn-num' });
+    if (anyMetrics) columns.push({ label: 'precision / recall' });
+    columns.push({ label: 'verdict' }, { label: 'won by' });
+    if (anySession) columns.push({ label: 'trace' });
     const tbl = dataTable({
       class: 'dn-md-table',
-      columns: [{ label: 'board entry' }, { label: m.champion, class: 'dn-num' },
-        { label: m.challenger, class: 'dn-num' }, { label: 'Δ', class: 'dn-num' }, { label: 'verdict' }],
+      columns,
       rows: rows.map((r) => {
         const d = svg.isNum(r.delta) ? r.delta : (svg.isNum(r.child_drift_loss) && svg.isNum(r.parent_drift_loss) ? r.child_drift_loss - r.parent_drift_loss : NaN);
         const vCls = r.verdict === 'improved' ? 'dn-good-t' : r.verdict === 'regressed' ? 'dn-bad-t' : '';
+        const cells = [
+          { class: 'dn-mono', text: r.entry_id },
+          { class: 'dn-num dn-mono', text: svg.isNum(r.parent_drift_loss) ? svg.fmt(r.parent_drift_loss, 1) : '—' },
+          { class: 'dn-num dn-mono', text: svg.isNum(r.child_drift_loss) ? svg.fmt(r.child_drift_loss, 1) : '—' },
+          { class: 'dn-num dn-mono ' + vCls, text: svg.isNum(d) ? svg.fmtSigned(d, 1) : '—' },
+        ];
+        if (scored) {
+          cells.push({ class: 'dn-num dn-mono', text: svg.isNum(r.parent_score) ? svg.fmt(r.parent_score, 2) : '—' });
+          cells.push({ class: 'dn-num dn-mono', text: svg.isNum(r.child_score) ? svg.fmt(r.child_score, 2) : '—' });
+        }
+        if (anyMetrics) {
+          // champion / challenger precision-recall, in that order.
+          const pp = prText(r.parent_metrics);
+          const cp = prText(r.child_metrics);
+          cells.push({ class: 'dn-mono dn-faint', text: (pp || '—') + '  →  ' + (cp || '—') });
+        }
+        cells.push({ class: vCls, text: r.verdict || '—' });
+        // `won_by` is the SERVER's call (lower drift loss wins); rendered, never
+        // re-derived from the two losses.
+        const wonCls = r.won_by == null ? 'dn-faint'
+          : (String(r.won_by) === String(m.challenger) ? 'dn-good-t' : '');
+        cells.push({ class: 'dn-mono ' + wonCls, text: r.won_by == null ? '—' : String(r.won_by) });
+        if (anySession) {
+          const links = [];
+          const pl = r.parent_session_id
+            ? harmonografMini({ adk_session_id: r.parent_session_id }, m.champion, `open ${m.champion}'s ${r.entry_id} trace in harmonograf`) : null;
+          const cl = r.child_session_id
+            ? harmonografMini({ adk_session_id: r.child_session_id }, m.challenger, `open ${m.challenger}'s ${r.entry_id} trace in harmonograf`) : null;
+          if (pl) links.push(pl);
+          if (cl) { if (links.length) links.push(el('span', { class: 'dn-faint', text: ' · ' })); links.push(cl); }
+          cells.push(links.length
+            ? { el: el('span', { class: 'dn-paper-trace' }, links) }
+            : { class: 'dn-faint', text: '—' });
+        }
         return {
           style: 'cursor: pointer',
           onClick: () => ctx.navigate('board', { epochId, entry: r.entry_id, gen: m.challenger }),
-          cells: [
-            { class: 'dn-mono', text: r.entry_id },
-            { class: 'dn-num dn-mono', text: svg.isNum(r.parent_drift_loss) ? svg.fmt(r.parent_drift_loss, 1) : '—' },
-            { class: 'dn-num dn-mono', text: svg.isNum(r.child_drift_loss) ? svg.fmt(r.child_drift_loss, 1) : '—' },
-            { class: 'dn-num dn-mono ' + vCls, text: svg.isNum(d) ? svg.fmtSigned(d, 1) : '—' },
-            { class: vCls, text: r.verdict || '—' },
-          ],
+          cells,
         };
       }),
     });
     sec.appendChild(el('div', { class: 'dn-table-scroll' }, [tbl]));
   });
-  if (any) article.appendChild(sec);
+  if (any) {
+    sec.appendChild(el('p', { class: 'dn-faint', style: 'font-size:11px;margin:8px 0 0;',
+      text: 'drift loss (lower = better) · score is the continuous per-entry outcome (higher = better) · "won by" is the server\'s per-board call · a trace link opens that side\'s run in harmonograf while a server is reachable' }));
+    article.appendChild(sec);
+  }
 }

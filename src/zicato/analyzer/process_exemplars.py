@@ -33,11 +33,18 @@ The invariants, mirroring :mod:`zicato.analyzer.outcome_marginals`:
   R1 :data:`_FIELD_POLICY` (payload allowlist; unknown cases render as a
   bare case marker), R2 :class:`_WindowAnonymizer` (window-local task-id
   tokens; entry ids never emitted; relative offsets, never absolute
-  sequence numbers), R3 :func:`_truncate_free_text` (head/tail elision at
-  a fixed cap), R4 :func:`_scrub_identity` over :func:`_identity_corpus`
-  (every DROPPED string value + every identity token is scrubbed out of
-  every KEPT free-text value — a drift detail that quotes the task prompt
-  loses the quote mechanically).
+  sequence numbers), R3 :func:`~zicato.analyzer.redaction.truncate_free_text`
+  (head/tail elision at a fixed cap), R4
+  :func:`~zicato.analyzer.redaction.scrub_identity` over
+  :func:`_identity_corpus` (every DROPPED string value + every identity
+  token is scrubbed out of every KEPT free-text value — a drift detail
+  that quotes the task prompt loses the quote mechanically).
+
+R3 and R4 are pure string transforms with a SECOND consumer (the
+proposer's redacted query surface, :mod:`zicato.proposer.redacted_query`),
+so they live in :mod:`zicato.analyzer.redaction` — one implementation, one
+set of constants, byte-identical redaction on both paths. This module
+keeps R1 and R2, which are bound to the exemplar window's own structure.
 
 Like the decision-telemetry aggregator, this module is JSONL-only and
 proto-stub-free: it reads the files goldfive's persistence sink wrote
@@ -51,11 +58,18 @@ from __future__ import annotations
 
 import json
 import re
-from collections.abc import Collection, Iterator, Mapping, Sequence
+from collections.abc import Collection, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from zicato.analyzer.redaction import (
+    FREE_TEXT_LIMIT_CHARS,
+    MIN_SCRUB_LEN,
+    iter_string_leaves,
+    scrub_identity,
+    truncate_free_text,
+)
 from zicato.core import normalize_wire_drift_kind, normalize_wire_severity
 
 # ---------------------------------------------------------------------------
@@ -72,24 +86,15 @@ _WINDOW_RADIUS = 3
 #: (``ProposerQualityConfig.process_exemplars``) supplies the live value.
 DEFAULT_EXEMPLAR_CAP = 2
 
-#: Free-text truncation (R3): total ceiling and the head/tail split. Only
-#: T-class fields — process narration authored by goldfive's own
-#: detectors / judges / steerer — ever reach this; task text and model
-#: outputs are D-class and never render at all.
-_FREE_TEXT_LIMIT_CHARS = 160
-_FREE_TEXT_HEAD_CHARS = 120
-_FREE_TEXT_TAIL_CHARS = 24
-_ELISION = " … "
-
-#: Identity-corpus scrub (R4): a dropped string value must be at least this
-#: long to be scrubbed by substring (shorter dropped values — enum-ish
-#: strings like ``"warning"`` — would mangle legitimate process text).
-#: Identity TOKENS (entry / task / invocation / run ids) are scrubbed at
-#: any length via word-boundary matching instead.
-_MIN_SCRUB_LEN = 12
-
-#: Replacement marker for scrubbed identity content.
-_WITHHELD = "[withheld]"
+#: The R3 / R4 tunables live with their implementations in
+#: :mod:`zicato.analyzer.redaction` (``FREE_TEXT_*`` / ``ELISION`` /
+#: ``MIN_SCRUB_LEN`` / ``WITHHELD``) so both consumers share one set of
+#: values. PROCESS-EXEMPLARS.md §2–§3 remains normative for all of them.
+#: The two historical private spellings below are kept as aliases so the
+#: rule-by-rule R3 tests (and any caller that reached for them) keep
+#: resolving from this module after the move.
+_FREE_TEXT_LIMIT_CHARS = FREE_TEXT_LIMIT_CHARS
+_truncate_free_text = truncate_free_text
 
 
 # ---------------------------------------------------------------------------
@@ -331,41 +336,8 @@ class _WindowAnonymizer:
 
 
 # ---------------------------------------------------------------------------
-# R3 — free-text truncation
+# R4 — the identity corpus (the scrub itself lives in analyzer.redaction)
 # ---------------------------------------------------------------------------
-
-
-def _truncate_free_text(text: str) -> str:
-    """Cap free text at :data:`_FREE_TEXT_LIMIT_CHARS` with head/tail elision.
-
-    Keeps the first :data:`_FREE_TEXT_HEAD_CHARS` and the last
-    :data:`_FREE_TEXT_TAIL_CHARS` characters joined by :data:`_ELISION`.
-    Runs AFTER the identity scrub (R4) — truncation only removes
-    characters, and the elision marker sits between head and tail, so a
-    scrubbed text can never re-form an identity string across the split.
-    """
-    if len(text) <= _FREE_TEXT_LIMIT_CHARS:
-        return text
-    head = text[:_FREE_TEXT_HEAD_CHARS].rstrip()
-    tail = text[-_FREE_TEXT_TAIL_CHARS:].lstrip()
-    return f"{head}{_ELISION}{tail}"
-
-
-# ---------------------------------------------------------------------------
-# R4 — the identity corpus + scrub
-# ---------------------------------------------------------------------------
-
-
-def _iter_string_leaves(obj: Any) -> Iterator[str]:
-    """Yield every string leaf of a nested payload structure."""
-    if isinstance(obj, str):
-        yield obj
-    elif isinstance(obj, Mapping):
-        for v in obj.values():
-            yield from _iter_string_leaves(v)
-    elif isinstance(obj, list):
-        for v in obj:
-            yield from _iter_string_leaves(v)
 
 
 #: Payload fields that are identity TOKENS (scrubbed at any length, on word
@@ -383,8 +355,9 @@ def _identity_corpus(
     ``texts`` are the string values of every DROPPED field across the WHOLE
     file (not just the window — the task prompt lives in
     ``run_started.goal_summary`` wherever that event sits), scrubbed by
-    substring when ≥ :data:`_MIN_SCRUB_LEN` chars. ``tokens`` are identity
-    ids — the entry id, envelope run/session/event ids, and every raw
+    substring when at least :data:`~zicato.analyzer.redaction.MIN_SCRUB_LEN`
+    chars long. ``tokens`` are identity ids — the entry id, envelope
+    run/session/event ids, and every raw
     task / invocation id — scrubbed at any length on word boundaries.
     Kept / truncated field values are NOT in the corpus (they are the text
     being protected, not the identity being removed).
@@ -407,31 +380,10 @@ def _identity_corpus(
                 tokens.add(value)
             if fname in admitted:
                 continue
-            for leaf in _iter_string_leaves(value):
-                if len(leaf) >= _MIN_SCRUB_LEN:
+            for leaf in iter_string_leaves(value):
+                if len(leaf) >= MIN_SCRUB_LEN:
                     texts.add(leaf)
     return frozenset(texts), frozenset(tokens)
-
-
-def _scrub_identity(text: str, corpus_texts: frozenset[str], tokens: frozenset[str]) -> str:
-    """Replace every corpus occurrence inside kept free text with a marker.
-
-    Two passes (PROCESS-EXEMPLARS.md §3 R4): long dropped-field strings are
-    replaced by plain substring match (longest first, so a fragment nested
-    inside a longer fragment cannot survive its outer replacement); identity
-    tokens are replaced on word boundaries at any length (so a short id
-    like ``t1`` cannot mangle unrelated words). This is defense in depth
-    behind the R1 allowlist — it catches verbatim quotation of dropped
-    content inside admitted process text.
-    """
-    for fragment in sorted(corpus_texts, key=len, reverse=True):
-        if fragment in text:
-            text = text.replace(fragment, _WITHHELD)
-    for token in sorted(tokens, key=len, reverse=True):
-        if not token:
-            continue
-        text = re.sub(rf"(?<![\w-]){re.escape(token)}(?![\w-])", _WITHHELD, text)
-    return text
 
 
 # ---------------------------------------------------------------------------
@@ -482,8 +434,8 @@ def _redact_event(
         raw = payload.get(fname)
         if not isinstance(raw, str) or not raw:
             continue
-        scrubbed = _scrub_identity(raw, corpus_texts, tokens)
-        fields.append((fname, _truncate_free_text(scrubbed)))
+        scrubbed = scrub_identity(raw, corpus_texts, tokens)
+        fields.append((fname, truncate_free_text(scrubbed)))
     for fname in policy.anonymize:
         raw = payload.get(fname)
         if not isinstance(raw, str) or not raw:

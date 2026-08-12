@@ -112,7 +112,24 @@ _DEFAULT_PROPOSER_INSTRUCTION = (
     "- call `read_parent_diff` to see exactly what the LAST promotion "
     "changed, so you can build on it rather than blindly re-roll it;\n"
     "- call `mutation_usage` to find where a candidate target's current "
-    "value/symbol is referenced across the snapshot before you change it.\n\n"
+    "value/symbol is referenced across the snapshot before you change it;\n"
+    "- call `train_slice_drift_profile` / `train_slice_agent_profile` / "
+    "`train_slice_process_profile` to ask the run corpus directly which "
+    "failure modes are broad vs narrow, which agent role they localise to, "
+    "and how runs unfold — instead of relying only on the pre-rendered "
+    "summary in your prompt. These return BANDED aggregates over the "
+    "champion's train slice; they cannot tell you anything about an "
+    "individual board entry, and asking again within a reign returns the "
+    "same answer, so use them to understand mechanism, not to search.\n\n"
+    "THEN CHECK YOUR OWN WORK BEFORE YOU ANSWER: call `validate_patches` "
+    "with the exact `patches` array you are about to emit. It applies your "
+    "draft to a scratch copy and reports what breaks — a file that stops "
+    "parsing, a mutation id that no longer resolves, a dropped import, a "
+    "required placeholder you deleted. If it reports `ok: false`, FIX the "
+    "listed problems and validate again; only answer once it reports "
+    "`ok: true`. This is much cheaper than being rejected after you "
+    "answer. It runs no board entry and produces no score — it is a linter "
+    "for your patch, not a test of whether the idea is good.\n\n"
     "Then emit a SINGLE JSON object matching the schema in the user message "
     "— no prose, no markdown fences. The first character of your final "
     "response MUST be '{' and the last MUST be '}'."
@@ -185,7 +202,15 @@ def _render_task_text(spec: ProposerSpec, ctx: ProposerContext, feedback: str) -
 
 
 def _resolve_generation_root(ctx: ProposerContext) -> Path:
-    """Resolve the parent generation's snapshot dir the tools read.
+    """Return the parent generation's snapshot dir the tools read.
+
+    Prefers :attr:`ProposerContext.generation_root`, which the orchestrator
+    populates at the single ``_propose_child`` construction site (a REQUIRED
+    argument there, so the real path always carries it). The derivation
+    below is the fallback for a context assembled by hand — a test, a
+    standalone propose — and exists only so those keep working; it
+    duplicates the generation store's path convention, which is precisely
+    why the field was added.
 
     The read-only tools (``read_mutable_file`` / ``grep_mutable``) read the
     PARENT generation snapshot — the tree this round is about to patch. We
@@ -198,6 +223,8 @@ def _resolve_generation_root(ctx: ProposerContext) -> Path:
     the current directory — the read/grep tools then simply find no files,
     which is the correct degenerate behaviour for a contextless call.
     """
+    if ctx.generation_root is not None:
+        return ctx.generation_root
     if ctx.workspace_root is None:
         return Path.cwd()
     from zicato.epoch.genstore import default_generation_store

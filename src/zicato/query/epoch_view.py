@@ -102,6 +102,46 @@ def _parse_board(path: Path) -> list[dict[str, Any]] | None:
     return entries
 
 
+def _parse_board_meta(path: Path) -> dict[str, Any] | None:
+    """The board's optional leading ``board_meta`` header, normalized.
+
+    BOARD-FORMAT §1.0: a board MAY open with a ``{"board_meta": true, ...}``
+    line carrying the board-wide ``disable_drift`` suppression list and the
+    ``judge_only`` flag; when present it MUST be the first line, so only the
+    first non-blank line is examined. Returns ``None`` when the header is
+    absent, unreadable, or **fully default** (an empty suppression list AND
+    ``judge_only`` false) — the writer emits no header at all for a default
+    board, so a default header and no header describe the SAME board, and
+    omitting the key keeps every such epoch's payload byte-identical to the
+    read that predates this block.
+
+    A sibling of :func:`_parse_board` rather than a second return value: that
+    reader's shape is shared with ``judge_view`` and the ``zicato.query``
+    export surface.
+    """
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError:
+        return None
+    for raw_line in text.splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        try:
+            obj = json.loads(line)
+        except json.JSONDecodeError:
+            return None
+        if not isinstance(obj, dict) or obj.get("board_meta") is not True:
+            return None  # the first line is an entry ⇒ this board has no header
+        kinds = obj.get("disable_drift")
+        disable_drift = [k for k in kinds if isinstance(k, str)] if isinstance(kinds, list) else []
+        judge_only = obj.get("judge_only") is True
+        if not disable_drift and not judge_only:
+            return None
+        return {"disable_drift": disable_drift, "judge_only": judge_only}
+    return None
+
+
 def _parse_mutations(path: Path) -> list[dict[str, Any]] | None:
     value = _read_json_value(path)
     if not isinstance(value, list):
@@ -764,10 +804,12 @@ def build_epoch_view(paths: WorkspacePaths, epoch_id: str | None = None) -> dict
       no experiment of the relevant kind carries a finite delta.
     * ``journal`` — ``journal.md`` text (empty string when absent).
     * ``analysis_md`` — ``analysis.md`` text (empty string when absent).
-    * ``analysis_html_inline`` — paper-styled HTML fragment for the
-      Epoch view's inline Analysis section (empty string when no
-      report yet). Same renderer as the standalone ``analysis.html``
-      so both surfaces read as a paper.
+    * ``analysis_html_inline`` — ALWAYS the empty string on this view.
+      The paper-styled fragment is rendered by
+      :func:`build_epoch_analysis` on its own route; rendering it here
+      too put a full report render on the most frequently polled
+      payload for a field nothing read off it. The key is kept because
+      dropping it would change the payload shape.
     * ``analysis_html_available`` — ``True`` when ``analysis.html``
       exists on disk; the frontend can link directly to
       ``/api/epoch/{id}/analysis.html``.
@@ -812,6 +854,16 @@ def build_epoch_view(paths: WorkspacePaths, epoch_id: str | None = None) -> dict
     view["board_split"] = compute_board_split(
         board if board is not None else [], _overfitting_block_from_scoring(scoring)
     )
+
+    # Board-level ``board_meta`` header (BOARD-FORMAT §1.0): the drift kinds
+    # suppressed for every entry + the judge-only flag. It is authored in the
+    # builder and folds into the contract hash, so a runtime surface that drops
+    # it draws a board that is scored differently from the one it shows.
+    # Omitted — like the ``tournament`` block below — when the header is absent
+    # or fully default, which is byte-identical to the pre-block read.
+    board_meta = _parse_board_meta(epoch_dir / "board.jsonl")
+    if board_meta is not None:
+        view["board_meta"] = board_meta
 
     # Tournament structure block (TOURNAMENT-DATA-MODEL.md §3.1). Echo the
     # epoch's resolved ``{structure, params}`` from the frozen
@@ -889,21 +941,18 @@ def build_epoch_view(paths: WorkspacePaths, epoch_id: str | None = None) -> dict
     analysis_md = _read_text_best_effort(epoch_dir / "analysis.md")
     view["analysis_md"] = analysis_md
     view["analysis_html_available"] = (epoch_dir / "analysis.html").is_file()
-    # Inline paper-styled HTML fragment so the Epoch view's Analysis
-    # section reads as a paper inline; best-effort — empty string if
-    # render fails or the analysis is not yet written.
+    # The paper-styled fragment is rendered by ``build_epoch_analysis`` on the
+    # DEDICATED ``/api/epoch/{id}/analysis`` route — the one the publication
+    # view actually fetches — and NOT here.
+    #
+    # It used to be rendered here too, on the plain ``/api/epoch`` read, which
+    # meant a full ``gather_epoch_report_data`` + report render on the most
+    # frequently polled payload in the dashboard, for a field no client ever
+    # read off THIS view. The key stays (its absence would be a payload-shape
+    # change, and every reader-parity fixture pins it) but it is now always the
+    # empty string here, which is what those fixtures already record. A caller
+    # that wants the fragment asks the route whose job it is.
     view["analysis_html_inline"] = ""
-    if analysis_md.strip():
-        try:
-            from zicato.analyzer.report import render_report_html_fragment
-            from zicato.analyzer.report_data import gather_epoch_report_data
-
-            data = gather_epoch_report_data(paths.root, epoch_id)
-            view["analysis_html_inline"] = render_report_html_fragment(
-                epoch_id, analysis_md, data=data
-            )
-        except Exception:  # noqa: BLE001 — best-effort
-            view["analysis_html_inline"] = ""
 
     return view
 
@@ -927,11 +976,17 @@ def build_epoch_analysis(paths: WorkspacePaths, epoch_id: str) -> dict[str, Any]
     Returns ``{epoch_id, analysis_md, analysis_html_inline,
     analysis_html_available}``. ``analysis_html_inline`` is the
     paper-styled HTML fragment (self-contained inline CSS, inline SVG
-    figures) the dashboard can drop directly into the Epoch view's
+    figures) the dashboard drops directly into the Epoch view's
     Analysis section — same renderer as the standalone ``analysis.html``
     so both surfaces look like a paper. The raw markdown ``analysis_md``
-    is still returned for backward compatibility with older frontends
-    that did their own minimal rendering.
+    is the FALLBACK, rendered client-side when the inline HTML is empty.
+
+    That order was inverted here for as long as the fields existed, and
+    the description was wrong in the direction that hid a cost: the
+    dashboard read only ``analysis_md`` and re-rendered markdown itself,
+    so the expensive server render this docstring called the primary path
+    was built and discarded on every request. The reader now prefers the
+    inline HTML, which is what makes the render worth doing.
 
     Best-effort (DQ3): a missing ``analysis.md`` reads as the empty
     string; a failed fragment render degrades to ``""``; never raises.

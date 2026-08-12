@@ -104,6 +104,16 @@ class ContractInputs:
     #: naming an external agent — or upgrading the runtime it launches —
     #: rolls the epoch.
     external_proposer: ExternalProposerConfig | None = None
+    #: The tier-2 static-check names the proposer holds its own draft
+    #: patches to (``contract.proposer_static_checks`` in ``config.json``;
+    #: see :func:`zicato.proposer.validate.declared_static_checks`). This
+    #: is contract, not configuration: changing which checks the proposer
+    #: must satisfy changes which patches it accepts from itself, hence
+    #: what it proposes. ``()`` — the default, and every workspace that
+    #: never configures the feature — is OMITTED from the canonical form,
+    #: so the proposer component hashes byte-identically to before this
+    #: field existed.
+    proposer_static_checks: tuple[str, ...] = ()
 
 
 # ---------------------------------------------------------------------------
@@ -582,6 +592,7 @@ def _canon_mutable_trees(mutable_trees: tuple[str, ...]) -> str:
 def _canon_proposer(
     proposer_path: Path | None,
     external: ExternalProposerConfig | None = None,
+    static_checks: tuple[str, ...] = (),
 ) -> str:
     """Canonical form of the proposer: agent identity + skills + tools.
 
@@ -597,7 +608,13 @@ def _canon_proposer(
       the proposer brief, so a whitespace-only skill edit does not move the
       hash; a semantic edit (or adding / removing / renaming a skill) does;
     * ``agent_source_sha256`` — SHA-256 of a custom ``agent.py`` (or
-      ``null``), so editing the custom agent rolls the epoch.
+      ``null``), so editing the custom agent rolls the epoch;
+    * ``validate_static_checks`` — the sorted tier-2 static-check names
+      from ``static_checks``, present ONLY when non-empty. Declaring or
+      changing the set the proposer must satisfy before it will emit a
+      patch rolls the epoch; the empty default omits the key entirely, so
+      every workspace that never configures it hashes byte-identically to
+      before the field existed.
 
     An ``external`` proposer (``runtime.proposer_agent``) adds ONE more
     key, ``external``, carrying the dotted path plus the digest of the
@@ -633,6 +650,10 @@ def _canon_proposer(
             "path": spec.external_path,
             "identity_sha256": spec.external_identity_sha256,
         }
+    # Omit-at-default: the key is absent for every workspace that declares
+    # no static checks, so their canonical string — and hash — is unchanged.
+    if static_checks:
+        canon["validate_static_checks"] = sorted(static_checks)
     return json.dumps(canon, sort_keys=True, ensure_ascii=False)
 
 
@@ -673,7 +694,11 @@ def compute_contract_hash(inputs: ContractInputs) -> str:
         _canon_scoring(inputs.scoring_path),
         _canon_entrypoint(inputs.entrypoint),
         _canon_mutable_trees(inputs.mutable_trees),
-        _canon_proposer(inputs.proposer_path, inputs.external_proposer),
+        _canon_proposer(
+            inputs.proposer_path,
+            inputs.external_proposer,
+            inputs.proposer_static_checks,
+        ),
     ]
     joined = _SEP.join(components)
     return hashlib.sha256(joined.encode("utf-8")).hexdigest()
@@ -692,7 +717,11 @@ def compute_component_hashes(inputs: ContractInputs) -> dict[str, str]:
         "scoring": _sha(_canon_scoring(inputs.scoring_path)),
         "entrypoint": _sha(_canon_entrypoint(inputs.entrypoint)),
         "mutable_trees": _sha(_canon_mutable_trees(inputs.mutable_trees)),
-        "proposer": _sha(_canon_proposer(inputs.proposer_path, inputs.external_proposer)),
+        "proposer": _sha(
+            _canon_proposer(
+                inputs.proposer_path, inputs.external_proposer, inputs.proposer_static_checks
+            )
+        ),
     }
 
 
@@ -771,6 +800,11 @@ def resolve_contract_inputs(workspace_root: Path) -> ContractInputs:
     # proposer and a canonical form byte-identical to before this seam.
     from zicato.proposer.external import external_proposer_config  # noqa: PLC0415
 
+    # ``contract.proposer_static_checks`` is read through the validator's
+    # own resolver so the reader that HASHES the set and the reader that
+    # RUNS it can never disagree about which names are declared.
+    from zicato.proposer.validate import declared_static_checks  # noqa: PLC0415
+
     return ContractInputs(
         board_path=board_path,
         brief_path=brief_path,
@@ -779,6 +813,7 @@ def resolve_contract_inputs(workspace_root: Path) -> ContractInputs:
         mutable_trees=mutable_trees,
         proposer_path=proposer_path,
         external_proposer=external_proposer_config(config, workspace_root),
+        proposer_static_checks=declared_static_checks(workspace_root),
     )
 
 

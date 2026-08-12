@@ -73,9 +73,24 @@ class MutationPoint:
         span body (without the marker comment); for ``"file"`` kind, the
         whole file contents.
     content_hash:
-        Hex-encoded SHA-256 of :attr:`content`. The patch applier checks
-        this before applying a patch so a stale proposer round cannot
-        clobber an already-rewritten region.
+        Hex-encoded SHA-256 of :attr:`content`, stamped by the enumerator.
+
+        The applier does NOT read it. This docstring used to claim it did
+        ("the patch applier checks this before applying a patch so a stale
+        proposer round cannot clobber an already-rewritten region"), and
+        that was never true — the field was written here, rendered by the
+        CLI and the dashboard, and checked by nothing. The check it
+        described now exists one layer earlier, as the pre-image guard in
+        :func:`zicato.proposer.validate.validate_patches`: it compares this
+        hash between the manifest a proposal was drafted against and a
+        fresh enumeration of the parent snapshot, so a point rewritten
+        under the proposer is caught before the patch is applied rather
+        than after.
+
+        The applier is deliberately still not the site. It applies a patch
+        set that has already been validated, all-or-nothing, and a
+        staleness rejection there would surface as a failed derive with no
+        route back to the proposer that could fix it.
     metadata:
         Adapter-specific structured metadata. Common keys include
         ``"required_placeholders"`` (comma-separated f-string-style

@@ -32,7 +32,7 @@ from __future__ import annotations
 import json
 import re
 import uuid
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from datetime import UTC, datetime
 from typing import Any
 
@@ -598,6 +598,69 @@ def _validate_enum_domain(patch_dict: Mapping[str, Any], mp: MutationPoint, idx:
         )
 
 
+#: The ``patches`` array sub-schema, lifted out of
+#: :data:`EXPERIMENT_JSON_SCHEMA` so a caller holding only a patch list can
+#: run the SAME shape pass a full experiment gets. Used by
+#: :func:`zicato.proposer.validate.validate_patches`, which validates a
+#: draft patch set that has no hypothesis yet.
+PATCHES_JSON_SCHEMA: dict[str, Any] = EXPERIMENT_JSON_SCHEMA["properties"]["patches"]
+
+
+def parse_patch_list(
+    raw_patches: Sequence[Mapping[str, Any]],
+    mutations_by_id: Mapping[str, MutationPoint],
+) -> list[Patch]:
+    """Lift a shape-valid ``patches`` array into typed :class:`Patch` objects.
+
+    The cross-check pass for patches alone: every ``mutation_id`` resolves
+    in ``mutations_by_id``, the op discriminates which ``new_*`` field is
+    required (and forbids the other two), ``set_numeric`` falls inside any
+    declared ``min`` / ``max`` range, and ``set_enum`` lies in any declared
+    enum domain. Unknown keys are ignored, matching the schema's deliberate
+    slack (see :data:`EXPERIMENT_JSON_SCHEMA`), so a caller may attach its
+    own commentary fields without the parser objecting.
+
+    Callers are responsible for the SHAPE pass first
+    (:data:`PATCHES_JSON_SCHEMA` for a bare list,
+    :data:`EXPERIMENT_JSON_SCHEMA` for a whole experiment); this function
+    assumes required keys are present and correctly typed.
+
+    Raises
+    ------
+    ExperimentParseError
+        On any cross-check failure, with a message suitable for echoing
+        back to the proposer on retry.
+    """
+
+    patches: list[Patch] = []
+    for i, p_dict in enumerate(raw_patches):
+        mutation_id = p_dict["mutation_id"]
+        mp = mutations_by_id.get(mutation_id)
+        if mp is None:
+            raise ExperimentParseError(
+                f"patch[{i}]: unknown mutation_id {mutation_id!r} "
+                "(must match an id from the supplied mutation manifest)"
+            )
+        _validate_op_fields(p_dict, i)
+        op = p_dict["op"]
+        if op == "set_numeric":
+            _validate_numeric_range(p_dict, mp, i)
+        elif op == "set_enum":
+            _validate_enum_domain(p_dict, mp, i)
+        patches.append(
+            Patch(
+                id=uuid.uuid4().hex,
+                mutation_id=mutation_id,
+                op=op,
+                new_content=p_dict.get("new_content") if op == "replace" else None,
+                new_numeric=(float(p_dict["new_numeric"]) if op == "set_numeric" else None),
+                new_enum=p_dict.get("new_enum") if op == "set_enum" else None,
+                rationale=p_dict["rationale"],
+            )
+        )
+    return patches
+
+
 def parse_experiment_json(
     response_text: str,
     epoch_id: str,
@@ -792,33 +855,7 @@ def parse_experiment_json(
         expected_metric_movements=tuple(metric_movements),
     )
 
-    raw_patches = data["patches"]
-    patches: list[Patch] = []
-    for i, p_dict in enumerate(raw_patches):
-        mutation_id = p_dict["mutation_id"]
-        mp = mutations_by_id.get(mutation_id)
-        if mp is None:
-            raise ExperimentParseError(
-                f"patch[{i}]: unknown mutation_id {mutation_id!r} "
-                "(must match an id from the supplied mutation manifest)"
-            )
-        _validate_op_fields(p_dict, i)
-        op = p_dict["op"]
-        if op == "set_numeric":
-            _validate_numeric_range(p_dict, mp, i)
-        elif op == "set_enum":
-            _validate_enum_domain(p_dict, mp, i)
-        patches.append(
-            Patch(
-                id=uuid.uuid4().hex,
-                mutation_id=mutation_id,
-                op=op,
-                new_content=p_dict.get("new_content") if op == "replace" else None,
-                new_numeric=(float(p_dict["new_numeric"]) if op == "set_numeric" else None),
-                new_enum=p_dict.get("new_enum") if op == "set_enum" else None,
-                rationale=p_dict["rationale"],
-            )
-        )
+    patches = parse_patch_list(data["patches"], mutations_by_id)
 
     return Experiment(
         id=f"exp_{epoch_id}_{new_gen}",
@@ -834,8 +871,10 @@ def parse_experiment_json(
 
 __all__ = [
     "EXPERIMENT_JSON_SCHEMA",
+    "PATCHES_JSON_SCHEMA",
     "ExperimentParseError",
     "PostApplyValidationError",
     "extract_json_object",
     "parse_experiment_json",
+    "parse_patch_list",
 ]
