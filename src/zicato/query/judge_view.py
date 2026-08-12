@@ -869,6 +869,13 @@ def build_environment(
     # port / build) and is supplied by the /api/health route handler,
     # not this reader — it is intentionally absent from the environment
     # payload. ``heartbeat`` is the orchestrator's runtime heartbeat.
+    #
+    # ONE lineage walk for the whole payload. Two fields need the generations
+    # feed — ``generations`` serves it verbatim and ``score_trajectory`` reads
+    # its order — and each used to build it independently. The walk reads a
+    # JSON file per generation, so that second build was the single largest
+    # cost in this reader (cProfile: 84% of build_environment, ncalls=2).
+    generations = build_lineage_view(paths)
     return {
         "workspace": build_workspace_identity(paths),
         "epoch_id": read_current_epoch(paths),
@@ -877,8 +884,8 @@ def build_environment(
         "active_tournament": read_active_tournament_dict(paths),
         "tournaments": build_bracket(paths),
         # SERVED verbatim (the environment feed) — the rating triple stays.
-        "generations": build_lineage_view(paths),
-        "score_trajectory": _gate_view.build_score_trajectory(paths),
+        "generations": generations,
+        "score_trajectory": _gate_view.build_score_trajectory(paths, lineage=generations),
         "active_runs": read_active_runs_view(paths),
         "health_report": _gate_view.build_health_report(paths),
         "heartbeat": read_heartbeat_dict(paths),
