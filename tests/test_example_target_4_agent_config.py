@@ -227,6 +227,50 @@ async def test_driver_drives_the_stub_and_reports_the_produced_patch(
     assert "values[: size - 1]" in (EXAMPLE_DIR / "fixtures/toolbox/ops.py").read_text()
 
 
+async def test_emitted_lines_round_trip_through_the_real_transcript_reducer(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The driver's sink lines reduce under the dialect the contract pins.
+
+    The claim this target rests on is that ``telemetry_dialect: transcript``
+    needs no new plumbing — so this drives the REAL goldfive JSONL sink the
+    worker attaches and the REAL producer, rather than asserting the shape
+    of the dicts and hoping.
+
+    It is also a guard against a silent regression. ``reduce_transcript``
+    skips any line carrying a ``type`` it does not know, counting it as
+    malformed rather than raising, so a future edit that wrapped these
+    lines in the driver's own ``{"type": "turn", ...}`` protocol envelope
+    would reduce every run to zero turns and fail nothing. Asserting
+    ``malformed_line_count == 0`` is what catches that.
+    """
+    pytest.importorskip("goldfive")
+    from goldfive.sinks.persistence import JSONLPersistenceSink
+
+    from zicato.telemetry.dialects import reduce_transcript
+
+    _use_stub(
+        monkeypatch,
+        {"turns": [{"role": "assistant", "content": "reading ops.py"}], "final": "done"},
+    )
+    events = tmp_path / "events.jsonl"
+    entry = _entry()
+    await (
+        make_adapter()
+        .load(EXAMPLE_DIR)
+        .run(entry, [JSONLPersistenceSink(path=events, mode="write")], None)
+    )
+
+    signals = reduce_transcript(events, entry)
+    assert signals.user_turns == ("fix the window slice",)
+    assert signals.agent_turns == ("reading ops.py",)
+    assert signals.malformed_line_count == 0
+    assert signals.warnings == ()
+    # The floor tier carries no drift, which is why the drift knobs in
+    # scoring.json are left at their (inert) defaults.
+    assert signals.drift_counts == ()
+
+
 async def test_driver_mounts_the_snapshot_config_package(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:

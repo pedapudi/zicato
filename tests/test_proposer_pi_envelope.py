@@ -164,6 +164,72 @@ def test_the_pinned_version_is_the_backstop() -> None:
     assert version == pinned["dependencies"]["@earendil-works/pi-coding-agent"]
 
 
+# -- the tool-registration seam ----------------------------------------------
+
+
+def test_a_tool_server_reaches_the_launch_without_editing_the_transport(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    """The seam issue #147 phases 3-5 plug into: flags plus per-LAUNCH env.
+
+    The env half is the one that is easy to get wrong. Best-of-N runs N
+    challengers concurrently in ONE process, so a tool server's round
+    context cannot travel through the shared process environment — the
+    last slot to write it would win for all of them. Here two concurrent
+    proposals must reach their subprocesses with DIFFERENT context paths.
+    """
+    import asyncio
+
+    class WithToolServer(PiProposerAgent):
+        def tool_flags(self) -> tuple[str, ...]:
+            return ("--extension", "/opt/mcp-adapter.ts")
+
+        def tool_env(self, ctx: Any, agent_dir: Path) -> dict[str, str]:
+            # A per-challenger context file, inside the dir that is already
+            # unique per invocation and removed when the call ends.
+            return {"ZICATO_PROPOSER_TOOL_CONTEXT": str(agent_dir / "round.json")}
+
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    records = tmp_path / "records"
+    monkeypatch.setenv("ZICATO_PI_STUB_RECORD", str(records))
+    monkeypatch.setenv("ZICATO_PI_STUB_SCRIPT", str(tmp_path / "script.json"))
+    _script(tmp_path, [{"emit": _experiment_args()}] * 3)
+
+    agent = WithToolServer(
+        spec=ProposerSpec.default(),
+        config=ExternalProposerConfig(
+            dotted_path="zicato.proposer.pi_agent:PiProposerAgent",
+            workspace_root=workspace,
+            options={"pi_bin": str(STUB)},
+        ),
+    )
+
+    async def _both() -> None:
+        await asyncio.gather(agent.propose(_context(workspace)), agent.propose(_context(workspace)))
+
+    asyncio.run(_both())
+
+    launches = _launches(records)
+    assert len(launches) == 2
+    for launch in launches:
+        assert launch["argv"][-2:] == ["--extension", "/opt/mcp-adapter.ts"]
+        # ...and the envelope still wins over anything the server asked for.
+        assert launch["env"]["PI_OFFLINE"] == "1"
+    contexts = {launch["env"]["ZICATO_PROPOSER_TOOL_CONTEXT"] for launch in launches}
+    assert len(contexts) == 2, "concurrent challengers shared one tool context"
+
+
+def test_a_tool_server_cannot_relax_the_envelope(tmp_path: Path) -> None:
+    """The pi-state variables are applied last, on purpose."""
+    from zicato.proposer.pi_agent import build_pi_env
+
+    env = build_pi_env(tmp_path, {"PI_OFFLINE": "0", "PI_CODING_AGENT_DIR": "/home/operator/.pi"})
+
+    assert env["PI_OFFLINE"] == "1"
+    assert env["PI_CODING_AGENT_DIR"] == str(tmp_path)
+
+
 # -- the tool contract must not drift from its Python authority --------------
 
 

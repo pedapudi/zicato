@@ -116,10 +116,24 @@ zicato-side shape; a binary speaking a different wire needs a shim in
 
 `ZICATO_TARGET_4_AGENT_BIN` is a command line (shlex-split), following
 target 1's `ZICATO_TARGET_1_MODEL` precedent of a target-local variable
-read at the point of use. `--mode rpc --no-session` is appended. A
-first-class `runtime.pi_bin`-style config knob is the intended
-successor; **nothing on `main` provides one today**, which is why this
-example uses the env var.
+read at the point of use. `--mode rpc --no-session` is appended.
+
+A `runtime.pi_bin` knob does now exist, added by #173 — but it belongs
+to the *other* surface. `zicato.proposer.pi_agent.resolve_pi_bin` reads
+it off `ExternalProposerConfig`, which configures the **proposer**; this
+adapter configures the **target**. #170 keeps those two roles apart on
+purpose, because "the same binary in two roles" is the entire safety
+argument, and a single knob naming both would erase the distinction it
+rests on. So the env var stays until a target-side knob exists.
+
+**Open question worth deciding before a live round.** The proposer now
+resolves a *pinned* install (`integrations/pi/node_modules/.bin/pi`, at
+the version `integrations/pi/package.json` pins), while this target
+defaults to bare `pi` on `PATH`. Pointing the target at the same pinned
+install would make the version-pinning discipline automatic rather than
+a thing the operator must remember. It would also couple the target's
+identity to the proposer's tooling, which is exactly the coupling the
+role split avoids. Deliberately not decided here.
 
 The binary's `--version` is probed once per load and recorded beside the
 run. A version bump changes the system under test without changing the
