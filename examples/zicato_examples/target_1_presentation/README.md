@@ -120,13 +120,47 @@ content's line range shifts.
 | `picky_stakeholder_emulated` | multi_turn_emulated | persona_picky | **1.5** | predicate: `addressed_picky_feedback` |
 | `every_expectation_kind_demo` | single_turn | expectation_kinds | 0.5 | regex (with alts in `context`) |
 
+### What the expectations read
+
+The deliverable is the rendered webpage the agent writes through
+`write_webpage`; its closing chat message is a report *about* that page.
+The board grades the two separately:
+
+- The **deliverable** predicates (`wrote_presentation_file`,
+  `mentions_waffles`, `mentions_transformers`,
+  `mentions_quarterly_metrics`, `has_slide_titles`,
+  `has_structured_outline`, `avoids_offtopic_raccoons`) read the deck on
+  disk — found by searching the run's output root for `index.html`,
+  under whatever slug the agent chose. A run that wrote no deck fails
+  them regardless of what its reply claimed.
+- The **conversation** predicates (`stayed_coherent_across_turns`,
+  `addressed_picky_feedback`) read the transcript, because cross-turn
+  memory and feedback handling live nowhere else.
+
+Grading the reply for a deliverable property is blind in both
+directions: a run that narrates slide titles without ever calling
+`write_webpage` passes, and a run that writes a good deck and confirms
+it in one terse line fails. The `final_output` a live run scores is a
+short planner summary the agent does not author, so it carries almost
+none of the deck's content.
+
+WHERE under the output root the deck landed is deliberately not graded
+here — the write/read slug agreement is this board's designed
+difficulty and is scored as process drift by the `file_findability`
+judge. Grading it twice would double-count it and would make a good
+deck invisible for a naming reason.
+
+The `regex`, `expected_text` and `json_schema` kinds match against
+`final_output` by construction, so an entry that grades the artifact
+must use the `predicate` kind.
+
 Notes on individual entries:
 
-- **`waffles_single`** — the canonical smoke test. Predicate is the
-  weakest possible topical check (`"waffle"` appears anywhere in the
-  final output). If this fails, the tree is broken end-to-end.
+- **`waffles_single`** — the canonical smoke test. The predicate asks
+  for a usable deck on disk that is about waffles. If this fails, the
+  tree is broken end-to-end.
 - **`q3_metrics_outline`** — exercises structure rather than content.
-  The predicate asserts a numbered list or bullet list of >= 3 items.
+  The predicate asserts the deck carries >= 3 slides or >= 3 list items.
 - **`transformers_lay_audience`** — exercises the audience-adaptation
   axis. The predicate accepts the bare word "transformer" OR the
   jargon ("attention", "encoder", "decoder") since the entry asks
@@ -154,7 +188,8 @@ Notes on individual entries:
   `json_schema`, `rubric`) in its `context.alt_expectations_for_demo`
   field so future tooling can fan it out per kind without modifying
   `board.jsonl`. Weight 0.5 — this entry exists for the demo more than
-  for scoring.
+  for scoring, which is why it is the one entry left grading the reply:
+  the `regex` kind it demonstrates cannot reach the artifact.
 
 The board also exercises two parts of the typed board-authoring API
 beyond plain OUTCOME expectations:
