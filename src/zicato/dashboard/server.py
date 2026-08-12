@@ -437,6 +437,13 @@ def create_app(
             "/api/run/{epoch_id}/{generation_id}/{entry_id}/transcript",
             handlers["api_run_transcript"],
         ),
+        # The live conversation pane's cursor-append read (issue #194 §2) —
+        # a SEPARATE route so the full-transcript payload above keeps its
+        # shape for the side-by-side panes that already read it.
+        Route(
+            "/api/run/{epoch_id}/{generation_id}/{entry_id}/transcript/delta",
+            handlers["api_run_transcript_delta"],
+        ),
         # Instrument-lens (board-reflection) surface — self-contained block so
         # the concurrent endpoints.py thinning (track U2) merges additively.
         Route("/api/reflections", handlers["api_reflections"]),

@@ -1117,7 +1117,7 @@ function paintCandidate(host, ctx, epochId, s, cmpId, isPrimary, narrow, structu
     ].filter(Boolean)));
     const tbl = dataTable({
       class: 'dn-board-table dn-inflight-table',
-      columns: [{ label: 'board' }, { label: 'run' }, { label: 'progress' }, { label: 'execution' }],
+      columns: [{ label: 'board' }, { label: 'run' }, { label: 'progress' }, { label: 'conversation' }, { label: 'execution' }],
       rows: inflight.map((r) => {
         const eid = r.entry_id != null ? r.entry_id : '—';
         const pr = runProgressRatio(r);
@@ -1128,6 +1128,18 @@ function paintCandidate(host, ctx, epochId, s, cmpId, isPrimary, narrow, structu
         // not live / no harmonograf url (harmonografMini returns null).
         const exec = harmonografMini(r, 'execution', 'open this run’s harmonograf trace');
         if (exec) exec.addEventListener('click', (ev) => ev.stopPropagation());
+        // FOLLOW the live conversation (issue #194 §2). These rows are the
+        // second entry point into the pane: the operator is already looking at
+        // a unit in flight, so the conversation is one click away rather than a
+        // navigation to the board and a second selection. Stop-propagated so it
+        // does not also fire the row's board navigation.
+        const follow = eid === '—' ? null : el('a', {
+          class: 'dn-linkbtn dn-inflight-follow',
+          href: ctx.href('board', { epochId, entry: eid, gen: genId }, { follow: true }),
+          title: 'follow this run’s conversation as it streams',
+          text: 'follow →',
+          onclick: (ev) => ev.stopPropagation(),
+        });
         const row = {
           class: 'dn-inflight-row',
           cells: [
@@ -1139,6 +1151,7 @@ function paintCandidate(host, ctx, epochId, s, cmpId, isPrimary, narrow, structu
               ]),
               el('span', { class: 'dn-mono dn-faint dn-progress-pct', text: pct != null ? ' ' + pct + '%' : ' running…' }),
             ] },
+            { el: follow || el('span', { class: 'dn-faint', text: '—' }) },
             { el: exec || el('span', { class: 'dn-faint', text: '—' }) },
           ],
         };

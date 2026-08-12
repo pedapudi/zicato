@@ -520,6 +520,27 @@ export function killRunButton(runInfo, onKill) {
   return btn;
 }
 
+// One "follow" affordance for one in-flight run — opens that unit's live
+// conversation pane (issue #194 §2). No confirm step: reading a conversation is
+// harmless and reversible, unlike the kill beside it. The click never bubbles
+// into the row's competitor navigation, which would take the operator to the
+// candidate page instead. Exported for the node behaviour tests.
+export function followRunButton(gen, runInfo, onFollow) {
+  const entry = String((runInfo && runInfo.entry_id) || '');
+  const runId = (runInfo && runInfo.run_id) ? String(runInfo.run_id) : null;
+  const btn = el('button', {
+    class: 'dt-live-follow', type: 'button', 'data-follow-run': entry,
+    title: 'follow the live conversation for ' + gen + ' on ' + entry,
+    'aria-label': 'follow live conversation for ' + gen + ' on ' + entry,
+    text: '💬',
+  });
+  btn.addEventListener('click', (ev) => {
+    if (ev && ev.stopPropagation) ev.stopPropagation();
+    onFollow(gen, entry, runId);
+  });
+  return btn;
+}
+
 // The in-flight runs that belong to each competitor generation, epoch-guarded
 // exactly like tournamentHasActiveRuns (a KNOWN-and-different epoch run never
 // lights up a stale tournament). Returns { '<gen>': [{run_id, entry_id}] }.
@@ -617,6 +638,18 @@ function liveMatchRow(e, onCompetitor, ctl) {
   row.appendChild(scalar);
   row.appendChild(boards);
   row.appendChild(tag);
+  // THE FOLLOW AFFORDANCE (issue #194 §2). One per in-flight run on this
+  // competitor: the operator can see a unit is running here, so this is where
+  // they should be able to open its conversation. Offered ONLY while the run
+  // is in flight — a settled unit's transcript is reached through its board,
+  // and offering "follow" against a dead loop is the §1 lie in miniature.
+  const followRuns = (ctl && typeof ctl.onFollow === 'function' && !settled && Array.isArray(e.runs))
+    ? e.runs.filter((r) => r && r.entry_id) : [];
+  if (followRuns.length) {
+    const cluster = el('span', { class: 'dt-live-follow-cluster' });
+    for (const r of followRuns) cluster.appendChild(followRunButton(String(e.id), r, ctl.onFollow));
+    row.appendChild(cluster);
+  }
   if (killRuns.length) {
     const cluster = el('span', { class: 'dt-live-kill-cluster' });
     for (const r of killRuns) cluster.appendChild(killRunButton(r, ctl.onKill));
@@ -670,6 +703,9 @@ export class LiveController {
     // the per-run kill sink (postControl('kill/'+runId) at the shell); null
     // (or canControl:false on update) hides every kill affordance.
     this.onKill = typeof o.onKill === 'function' ? o.onKill : null;
+    // the per-run FOLLOW sink (issue #194 §2) — navigates to the unit's live
+    // conversation pane. Read-only, so it is NOT gated on canControl.
+    this.onFollow = typeof o.onFollow === 'function' ? o.onFollow : null;
     this._canControl = false;
     this._seq = 0;
     this._prevSnap = null;
@@ -1000,10 +1036,13 @@ export class LiveController {
     const runsKey = Object.keys(byGen).sort()
       .map((g) => g + ':' + byGen[g].map((r) => r.run_id).sort().join('+')).join(',');
     // the second-idiom digest gate folded onto gatedSwap (same no-flash contract).
-    const digest = liveMatchBlocksDigest(blocks) + '|kill:' + (canKill ? runsKey : '-');
+    const digest = liveMatchBlocksDigest(blocks) + '|kill:' + (canKill ? runsKey : '-')
+      + '|follow:' + (this.onFollow ? runsKey : '-');
     gatedSwap(this._matchesBody, digest, () => {
-      const node = liveMatchGroupedBlocks(blocks, this.onCompetitor || undefined,
-        canKill ? { canControl: true, onKill: this.onKill } : undefined);
+      const ctl = (canKill || this.onFollow)
+        ? { canControl: canKill, onKill: this.onKill, onFollow: this.onFollow }
+        : undefined;
+      const node = liveMatchGroupedBlocks(blocks, this.onCompetitor || undefined, ctl);
       if (node.classList) node.classList.add('dt-live-enter');
       return node;
     });

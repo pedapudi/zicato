@@ -22,6 +22,14 @@ import * as svg from '../svg.js';
 import { gatedSwap, section, empty, stat, decisionFor, densityTokens, prText, metricsDigest, scoreFmt, pill, dataTable, deltaCell } from '../ui.js';
 import { splitFrame, captureScroll, restoreScroll } from '../compare.js';
 import * as facets from '../facets.js';
+import { buildTurnNode, dedupConsecutiveTurns, reconcileTurns } from '../turns.js';
+import { mountConversationPane } from '../convo.js';
+import { unitLiveness, hasActiveRunFor } from '../unit_liveness.js';
+
+// The transcript turn vocabulary now lives in js/turns.js so the live follow
+// pane can share it without importing back through this view. Re-exported
+// because views/traces.js and the board tests already read it from here.
+export { buildTurnNode, dedupConsecutiveTurns };
 
 // In-flight board-units for THIS entry, read from /api/active-runs (folded
 // into AppState by /api/environment). Each carries a generation_id / run_id /
@@ -70,7 +78,7 @@ const KIND_LABEL = {
 // the legacy always-bust path.
 const _lastBoardSeqByEntry = new Map();
 
-export async function render(host, ctx, params) {
+export async function render(host, ctx, params, route) {
   if (!host.firstChild) host.appendChild(el('p', { class: 'dn-empty', text: 'Reading board entry…' }));
   const entryId = params && params.entry;
   const selGen = (params && params.gen) || null;
@@ -490,7 +498,10 @@ export async function render(host, ctx, params) {
               // board route), so clicking "showing ↓" closes it and a reload
               // won't reopen it. A RUNNING candidate reads "watch live →" so the
               // operator knows the transcript will stream as new turns land.
-              ? el('a', { class: 'dn-linkbtn dn-board-run' + (isSel ? ' dn-linkbtn-on' : '') + (r.running ? ' dn-board-run-live' : ''), href: ctx.href('board', isSel ? { epochId, entry: entryId } : { epochId, entry: entryId, gen: r.gen }), text: isSel ? 'showing ↓' : (r.running ? 'watch live →' : 'show inline →') })
+              // A RUNNING candidate's "watch live →" opens the FOLLOW pane
+              // (issue #194 §2) rather than the static side-by-side: the
+              // operator asked to watch, so give them the streaming read.
+              ? el('a', { class: 'dn-linkbtn dn-board-run' + (isSel ? ' dn-linkbtn-on' : '') + (r.running ? ' dn-board-run-live' : ''), href: ctx.href('board', isSel ? { epochId, entry: entryId } : { epochId, entry: entryId, gen: r.gen }, isSel ? undefined : { follow: r.running }), text: isSel ? 'showing ↓' : (r.running ? 'watch live →' : 'show inline →') })
               : el('span', { class: 'dn-faint', text: 'no run' }) },
           ],
         };
@@ -560,6 +571,78 @@ export async function render(host, ctx, params) {
   // pure-append reconciles preserve scroll themselves. Restore after both so a
   // selection-change rebuild keeps a bottom-pinned column tailing.
   if (rebuilt) restoreScroll(xscriptHost, scrollState);
+
+  syncFollowPane(host, xscriptHost, { epochId, entryId, selGen, leftSel, route });
+}
+
+// ── THE LIVE CONVERSATION PANE (issue #194 §2) ─────────────────────────
+//
+// Mounted in its OWN persistent host above the side-by-side, only when the
+// route carries `~follow=1`. It is mounted EXACTLY ONCE per (gen, entry): a
+// board re-render must not remount it, because a remount would throw away the
+// pane's cursor, its rendered turn nodes, and the reader's scroll position —
+// the three things the whole design exists to preserve. Every later render
+// finds the pane already there and leaves it alone; the pane keeps itself
+// current off the SSE growth signal, not off this view's render loop.
+function syncFollowPane(host, xscriptHost, spec) {
+  const wanted = !!(spec.route && spec.route.follow) && !!spec.selGen;
+  let followHost = host.querySelector(':scope > [data-node="board-follow"]');
+
+  if (!wanted) {
+    // Leaving follow mode tears the pane down explicitly — an orphaned pane
+    // would keep pulling deltas for a conversation nobody is reading.
+    if (followHost) {
+      if (followHost._followHandle) followHost._followHandle.destroy();
+      followHost.remove();
+    }
+    return;
+  }
+
+  // The unit's verdict is re-derived on EVERY render, not just at mount. The
+  // board paints before the environment read lands, so a pane mounted on that
+  // first frame sees no active-run record yet and would otherwise be stuck
+  // reading "interrupted" for a unit that is plainly running.
+  //
+  // Composition, not a second derivation (#194 §1): the LOOP's liveness is
+  // per-workspace, and this unit is live only if the loop is live AND it has
+  // an active-run record of its own. `state.activeRuns` is read raw here on
+  // purpose — the gating lives in unitLiveness, so a dead loop yields
+  // interrupted whatever stale records are lying around.
+  const { liveness } = livenessFor(state);
+  const tri = unitLiveness({
+    liveness,
+    hasActiveRun: hasActiveRunFor(state.activeRuns, spec.selGen, spec.entryId),
+  });
+
+  const key = spec.epochId + '|' + spec.selGen + '|' + spec.entryId;
+  if (followHost && followHost._followKey === key) {
+    // Already mounted for this unit — push the current verdict IN PLACE. Never
+    // remount: that is what would throw away the cursor, the turn nodes and the
+    // reader's scroll position. A pane that has already seen a terminal event
+    // is left alone; the transcript's own `complete` outranks any runtime file,
+    // so a lingering active-run record cannot resurrect a finished run.
+    const handle = followHost._followHandle;
+    if (handle && !handle.pane.stream.complete && handle.pane.tri !== tri) {
+      handle.setTriState(tri, liveness.endedAt);
+    }
+    return;
+  }
+  if (followHost) {
+    if (followHost._followHandle) followHost._followHandle.destroy();
+    followHost.remove();
+  }
+
+  followHost = el('div', { 'data-node': 'board-follow' });
+  host.insertBefore(followHost, xscriptHost);
+  followHost._followKey = key;
+  followHost._followHandle = mountConversationPane(followHost, {
+    epochId: spec.epochId,
+    gen: spec.selGen,
+    entry: spec.entryId,
+    runId: (spec.leftSel && spec.leftSel.runId) || null,
+    tri,
+    endedAt: liveness.endedAt,
+  });
 }
 
 // Two transcripts on the same board, side by side, in ONE constrained pane —
@@ -665,143 +748,12 @@ function reconcileTranscript(hostEl, side, sel, conv) {
   const scroller = col.querySelector('[data-scroll-side="' + side + '"]');
   if (!scroller) return; // err / wait / nosel column — no scroller to fill.
 
-  // DEDUP CONSECUTIVE IDENTICAL TURNS. goldfive emits the goal twice — on
-  // `runStarted.goalSummary` and again on `goalDerived` (the LiteralGoalDeriver
-  // echoes the same string) — so the goal reads twice; collapse the literal
-  // duplicate (see dedupConsecutiveTurns).
-  const turns = dedupConsecutiveTurns((conv && Array.isArray(conv.turns)) ? conv.turns : []);
-  const anns = (conv && Array.isArray(conv.annotations)) ? conv.annotations : [];
-  const annBySeq = new Map();
-  for (const a of anns) {
-    const k = a.anchor_seq;
-    if (!annBySeq.has(k)) annBySeq.set(k, []);
-    annBySeq.get(k).push(a);
-  }
-
-  const wantSig = turns.map((t) => turnSig(t, annBySeq));
-  const haveSig = Array.isArray(scroller._turnSig) ? scroller._turnSig : [];
-  // The FIRST index at which the rendered signatures diverge from the desired
-  // (within the overlap). -1 ⇒ the rendered prefix is intact and the desired
-  // list only extends it (pure append) or is identical.
-  let diverge = -1;
-  const overlap = Math.min(haveSig.length, wantSig.length);
-  for (let i = 0; i < overlap; i += 1) { if (haveSig[i] !== wantSig[i]) { diverge = i; break; } }
-
-  if (diverge === -1 && haveSig.length <= wantSig.length) {
-    if (haveSig.length === wantSig.length) {
-      // No content change — ZERO DOM (scroll untouched).
-    } else {
-      // APPEND the tail turns only — the existing turn nodes stay in place.
-      const pinned = nearBottom(scroller);
-      for (let i = haveSig.length; i < turns.length; i += 1) scroller.appendChild(buildTurnNode(turns[i], annBySeq));
-      scroller._turnSig = wantSig;
-      if (pinned && typeof scroller.scrollHeight === 'number') scroller.scrollTop = scroller.scrollHeight;
-    }
-  } else if (diverge === haveSig.length - 1 && wantSig.length >= haveSig.length) {
-    // LAST-TURN-GREW — the ONLY divergence is the final rendered turn, the
-    // ROUTINE streaming case (goldfive's llmCallStart→llmCallEnd merge into ONE
-    // turn whose text grows across two seqs, flipping just the last turnSig while
-    // every earlier turn is byte-stable). Re-render JUST that node in place +
-    // append any tail; the prefix nodes and scroll position are preserved (no
-    // clamp-to-0 as the wholesale rebuild below would cause). It is the last
-    // rendered node, so remove-then-append keeps document order.
-    const pinned = nearBottom(scroller);
-    const idx = haveSig.length - 1;
-    const oldNode = scroller.childNodes[idx];
-    if (oldNode) scroller.removeChild(oldNode);
-    scroller.appendChild(buildTurnNode(turns[idx], annBySeq));
-    for (let i = haveSig.length; i < turns.length; i += 1) scroller.appendChild(buildTurnNode(turns[i], annBySeq));
-    scroller._turnSig = wantSig;
-    if (pinned && typeof scroller.scrollHeight === 'number') scroller.scrollTop = scroller.scrollHeight;
-  } else {
-    // GENUINE prefix divergence — an earlier turn changed, or the list shrank (a
-    // completed run's final transcript). Rebuild wholesale, but preserve the
-    // reader's scroll DISCIPLINE across the clear: a bottom-pinned reader stays
-    // pinned (keeps live-tailing), a scrolled-up reader keeps their offset.
-    // Capture BEFORE clearChildren; the outer restoreScroll (~:421) fires only on
-    // a FRAME rebuild — never on a content-blind beat — so the pin lands here.
-    const pinned = nearBottom(scroller);
-    const prevTop = typeof scroller.scrollTop === 'number' ? scroller.scrollTop : null;
-    clearChildren(scroller);
-    for (const t of turns) scroller.appendChild(buildTurnNode(t, annBySeq));
-    scroller._turnSig = wantSig;
-    if (typeof scroller.scrollHeight === 'number') {
-      if (pinned) scroller.scrollTop = scroller.scrollHeight;
-      else if (prevTop != null) scroller.scrollTop = prevTop;
-    }
-  }
+  const out = reconcileTurns(scroller, (conv && conv.turns) || [], conv && conv.annotations);
 
   // The streaming caption reads "streaming — through turn N" while running; the
   // caption shell exists only on a running column, so it is gone once complete.
   const cap = col.querySelector('[data-stream-count]');
-  if (cap) cap.textContent = 'streaming — through turn ' + turns.length;
-}
-
-// Per-turn content signature for the append reconcile — seq / role / text length
-// / tool-call count / annotation count. Two turns with the same signature render
-// identically, so an unchanged prefix is a true no-op; a changed one rebuilds.
-function turnSig(t, annBySeq) {
-  const na = annBySeq && annBySeq.get(t.seq);
-  return [t.seq, t.role, (t.text || '').length, Array.isArray(t.tool_calls) ? t.tool_calls.length : 0, na ? na.length : 0].join(':');
-}
-
-// Whether the scroller is pinned at (or within a hair of) the bottom — the
-// live-tail signal. A headless test DOM without scroll metrics defaults to tail.
-function nearBottom(scroller) {
-  const sh = scroller.scrollHeight, st = scroller.scrollTop, ch = scroller.clientHeight;
-  if (typeof sh !== 'number' || typeof ch !== 'number' || typeof st !== 'number') return true;
-  return (sh - st - ch) <= 8;
-}
-
-// Build ONE turn's DOM node — the shared turn renderer for both the initial fill
-// and the live append, so an appended turn is byte-identical to a rebuilt one.
-// EXPORTED so the Traces view (views/traces.js) reconstructs a foreign trace's
-// conversation with the IDENTICAL transcript turn vocabulary (WS-TRACES · reuse,
-// don't fork): a trace turn ({role, text}) renders through this same builder with
-// an empty annotation map (foreign traces carry no per-seq annotations).
-export function buildTurnNode(t, annBySeq) {
-  const turn = el('div', { class: 'dn-turn dn-turn-' + (t.role || 'agent') }, [
-    el('div', { class: 'dn-turn-head dn-faint dn-mono' }, [
-      el('span', { text: t.agent || t.role || 'turn' }),
-      t.kind ? el('span', { text: ' · ' + t.kind }) : null,
-    ].filter(Boolean)),
-    t.text ? el('div', { class: 'dn-turn-text', text: t.text }) : null,
-  ].filter(Boolean));
-  if (Array.isArray(t.tool_calls)) for (const tc of t.tool_calls) {
-    turn.appendChild(el('div', { class: 'dn-tool dn-mono', text: '⚙ ' + (tc.name || tc.tool || 'tool') }));
-  }
-  for (const a of ((annBySeq && annBySeq.get(t.seq)) || [])) {
-    turn.appendChild(el('div', { class: 'dn-annot dn-annot-' + (a.kind || 'note'), text: '◂ ' + (a.summary || a.kind) }));
-  }
-  return turn;
-}
-
-// Drop a turn that EXACTLY repeats the one immediately before it — same role,
-// identical non-empty text, neither carrying its own tool calls — folding the
-// literal goal duplicate (runStarted then goalDerived) to ONE read. Genuinely-
-// distinct turns (different text, a tool call, an empty turn) are kept, and only
-// CONSECUTIVE duplicates fold (a later echo across intervening turns is kept).
-export function dedupConsecutiveTurns(turns) {
-  const list = Array.isArray(turns) ? turns : [];
-  const out = [];
-  for (const t of list) {
-    const prev = out[out.length - 1];
-    if (prev && isDuplicateTurn(prev, t)) continue;
-    out.push(t);
-  }
-  return out;
-}
-
-function isDuplicateTurn(a, b) {
-  if (!a || !b) return false;
-  const aText = (a.text || '').trim();
-  const bText = (b.text || '').trim();
-  if (aText === '' || aText !== bText) return false;
-  if ((a.role || '') !== (b.role || '')) return false;
-  const aTools = Array.isArray(a.tool_calls) && a.tool_calls.length;
-  const bTools = Array.isArray(b.tool_calls) && b.tool_calls.length;
-  if (aTools || bTools) return false;
-  return true;
+  if (cap) cap.textContent = 'streaming — through turn ' + out.rendered;
 }
 
 // Resolve one side's transcript by the DETERMINISTIC (epoch, gen, entry)

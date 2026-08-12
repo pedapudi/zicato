@@ -53,6 +53,12 @@ function splitHash(hash) {
 export function parseRoute(hash) {
   const { path, extra } = splitHash(hash);
   const cmp = extra.cmp || null;
+  // `~follow=1` on a board route opens the selected candidate's conversation
+  // in the live FOLLOW pane (issue #194 §2). It rides the same `~k=v` suffix
+  // mechanism as `~cmp=` and extends the existing transcript route family
+  // rather than forking a route of its own — so a followed conversation is
+  // deep-linkable, and dropping the suffix lands on the same board.
+  const follow = extra.follow === '1';
   const raw = path;
   // bare `#/` prefix: the path part is everything after the leading slash.
   const parts = raw.replace(/^\/+/, '').split('/').filter(Boolean).map(dec);
@@ -93,7 +99,7 @@ export function parseRoute(hash) {
     case 'boards':
       return { view: 'boards', params: { epochId }, cmp };
     case 'board':
-      return { view: 'board', params: { epochId, entry: parts[3] || null, gen: parts[4] || null }, cmp };
+      return { view: 'board', params: { epochId, entry: parts[3] || null, gen: parts[4] || null }, cmp, follow };
     case 'evals':
       // …/evals — the top-level EVALS view (the entries × candidates matrix,
       // the board-as-instrument OUTCOMES lens). Epoch-scoped; no sub-legs.
@@ -186,7 +192,11 @@ export function href(view, params, opts) {
   }
   const o = opts || {};
   // the compare target rides only on the candidate split.
-  return (o.cmp && view === 'candidate') ? base + '~cmp=' + enc(o.cmp) : base;
+  if (o.cmp && view === 'candidate') return base + '~cmp=' + enc(o.cmp);
+  // the follow flag rides only on a board route that has a candidate selected
+  // — there is no conversation to follow without one.
+  if (o.follow && view === 'board' && p.gen) return base + '~follow=1';
+  return base;
 }
 
 export function navigate(view, params, opts) {
@@ -236,6 +246,10 @@ export function up(route) {
     // the evals matrix is an epoch-level surface — it steps up to the epoch.
     case 'evals': return { view: 'epoch', params: { epochId: p.epochId } };
     case 'board':
+      // FOLLOWING a conversation steps back to the same board+candidate with
+      // the pane closed — one level, not two, so the back button does not skip
+      // the side-by-side the operator came through.
+      if (route.follow) return { view: 'board', params: { epochId: p.epochId, entry: p.entry, gen: p.gen } };
       // an inline-transcript selection steps up to the bare board first.
       if (p.gen) return { view: 'board', params: { epochId: p.epochId, entry: p.entry } };
       return { view: 'boards', params: { epochId: p.epochId } };

@@ -255,8 +255,11 @@ from zicato.query.trace_view import (
     build_trace_list,
 )
 from zicato.query.transcript_view import (
+    FIDELITY_EVENTS,
     build_run_transcript,
+    build_run_transcript_delta,
     empty_run_transcript,
+    empty_run_transcript_delta,
     resolve_conversation,
 )
 
@@ -426,8 +429,11 @@ __all__ = [
     "compute_board_split",
     "compute_epoch_delta_summary",
     "find_generation_entry_events",
+    "FIDELITY_EVENTS",
     "build_run_transcript",
+    "build_run_transcript_delta",
     "empty_run_transcript",
+    "empty_run_transcript_delta",
     "find_generation_run",
     "find_run_events_path",
     "list_epoch_ids",

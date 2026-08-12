@@ -915,6 +915,28 @@ export function chip(cls, word, extra) {
   return el('span', { class: c, text: word == null ? '' : String(word) });
 }
 
+// ---- transcript FIDELITY vocabulary ---------------------------------
+//
+// The ONE place a fidelity tier becomes words. The Instrument lens's x-ray
+// captions the tier its transcript was drawn from; the live conversation pane
+// (js/convo.js) captions the same axis, and the two must agree — an operator
+// who reads "reconstructed" in one surface and something else in the other has
+// no way to tell which reading to trust.
+//
+// The tiers are the server's (BOARD-REFLECTION.md's ladder, spelled in
+// zicato/reflection/corpus.py) plus `events`, which is what the follow pane
+// actually renders: the events.jsonl reconstruction. The client never RANKS
+// these — it only names them (DQ1).
+export function fidelityLabel(fidelity) {
+  const f = String(fidelity || 'unavailable');
+  if (f === 'verbatim') return 'verbatim (exact judge input)';
+  if (f === 'result') return 'result.json (reconstructed)';
+  if (f === 'events') return 'reconstructed from events';
+  if (f === 'preview') return 'preview (no capture retained)';
+  if (f === 'unavailable') return 'unavailable';
+  return f;
+}
+
 // pill(cls, word) — the `dn-pill dn-<cls>` span with a CUSTOM word. This is the
 // sibling of verdictPill: verdictPill(decision) colours by a decision AND
 // derives the label from it ('seed (v0)' / 'racing…'), whereas these sites want

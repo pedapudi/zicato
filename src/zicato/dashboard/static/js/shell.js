@@ -124,8 +124,17 @@ export function goBack(route) {
   const r = route || parseRoute(location.hash);
   const dest = up(r);
   if (!dest) return false;
-  navigate(dest.view, dest.params, dest.cmp ? { cmp: dest.cmp } : undefined);
+  navigate(dest.view, dest.params, navOpts(dest));
   return true;
+}
+
+// The hash-suffix options a destination carries (`~cmp=` / `~follow=1`).
+// undefined when it carries neither, so href() emits a bare path.
+function navOpts(dest) {
+  if (!dest) return undefined;
+  if (dest.cmp) return { cmp: dest.cmp };
+  if (dest.follow) return { follow: true };
+  return undefined;
 }
 
 export function applyTheme(theme, rootEl) {
@@ -639,6 +648,15 @@ export function mountShell(root) {
     // routes through the file-based control channel; refresh afterwards so
     // the torn-down run leaves the in-flight rows promptly.
     onKill: (runId) => fireLoopControl('kill/' + encodeURIComponent(runId), undefined, null),
+    // the per-run FOLLOW sink (issue #194 §2) — opens that unit's live
+    // conversation on its board, deep-linked so the followed conversation
+    // survives a reload and can be shared.
+    onFollow: (gen, entry, runId) => {
+      if (!gen || !entry) return;
+      const r = parseRoute(location.hash);
+      const epochId = (r.params && r.params.epochId) || state.epoch.id || null;
+      if (epochId) navigate('board', { epochId, entry, gen }, { follow: true });
+    },
   });
   _heroHost = el('div', { class: 'dt-hero-host' }, [_live.node]);
   root.appendChild(_heroHost);
@@ -1194,7 +1212,9 @@ function closeSettingsOverlay() {
   // Navigate back to the route the overlay paints over; dispatch then hides it.
   if (!_settingsOpen) return;
   const dest = _underlyingRoute || { view: 'home', params: {} };
-  navigate(dest.view, dest.params, dest.cmp ? { cmp: dest.cmp } : undefined);
+  // Restore the follow flag too, or closing Settings would quietly stop a
+  // conversation the operator left following.
+  navigate(dest.view, dest.params, navOpts(dest));
 }
 
 function hideSettingsOverlay() {
@@ -1268,14 +1288,17 @@ async function dispatch() {
   // A non-settings route closes the overlay (if open) and becomes the route the
   // overlay will paint over next time it opens.
   hideSettingsOverlay();
-  _underlyingRoute = { view: route.view, params: route.params || {}, cmp: route.cmp || null };
+  _underlyingRoute = { view: route.view, params: route.params || {}, cmp: route.cmp || null, follow: !!route.follow };
   // Clear the settings panel host so the drawer re-mounts fresh next open.
   if (_settingsPanelHost && _settingsPanelHost.firstChild) clearChildren(_settingsPanelHost);
 
   const renderer = RENDERERS[route.view] || RENDERERS.home;
   // the compare target is part of the selection — a cmp change must clear +
-  // repaint the detail pane (the split appears/disappears).
-  const viewKey = route.view + '|' + JSON.stringify(route.params || {}) + '|' + (route.cmp || '');
+  // repaint the detail pane (the split appears/disappears). So is the follow
+  // flag: opening or closing the live conversation pane changes what the
+  // board route shows, and without it here the pane would not appear until
+  // some other selection changed.
+  const viewKey = route.view + '|' + JSON.stringify(route.params || {}) + '|' + (route.cmp || '') + '|' + (route.follow ? 'f' : '');
 
   const prevView = _lastViewKey == null ? null : String(_lastViewKey).split('|')[0];
   const prevKey = _lastViewKey;
