@@ -242,7 +242,7 @@ export async function render(host, ctx, params) {
   // (and its scroll position) untouched — mirrors compare.js's per-side hosts.
   const upperDigest = JSON.stringify({
     epochId, entryId, selGen,
-    def: def ? [def.kind, def.weight, def.budget_s] : null,
+    def: def ? [def.kind, def.weight, def.budget_s, def.expectation_kind || null, (def.tags || []).join(',')] : null,
     champ: championId,
     // rows fold the continuous score + its precision/recall metrics (#18) so a
     // scored board repaints when a score moves; a bool-only row contributes
@@ -301,12 +301,21 @@ export async function render(host, ctx, params) {
       el('p', { class: 'dn-lede', text: 'How every candidate performed on this one board entry — lower drift loss is better. Select a candidate to read its transcript inline, side by side with the champion’s.' }),
     ]));
 
+    // The drill-down used to show LESS of the entry than the overview it is
+    // reached from: `expectation_kind` and `tags` ride the same ep.board row
+    // the trellis already reads, and this page — the one an operator opens to
+    // ask what this entry actually checks — dropped both.
     nodes.push(el('div', { class: 'dn-panel dn-row' }, [
       stat(def ? (KIND_LABEL[def.kind] || def.kind || '—') : '—', 'kind'),
+      stat(def && def.expectation_kind ? String(def.expectation_kind) : '—', 'oracle'),
       stat(def && svg.isNum(def.weight) ? svg.fmt(def.weight, 1) : '—', 'weight'),
       stat(def && svg.isNum(def.budget_s) ? def.budget_s + 's' : '—', 'budget'),
       stat(String(rows.filter((r) => r.ran).length) + '/' + String(rows.length), 'candidates ran'),
     ]));
+    const tags = (def && Array.isArray(def.tags)) ? def.tags : [];
+    if (tags.length) {
+      nodes.push(el('p', { class: 'dn-faint dn-board-tags', text: 'tags · ' + tags.join(' · ') }));
+    }
     if (def && def.input_preview) {
       nodes.push(el('div', { class: 'dn-panel' }, [
         el('div', { class: 'dn-faint', style: 'font-size:10px;text-transform:uppercase;letter-spacing:0.06em;', text: 'input preview' }),
