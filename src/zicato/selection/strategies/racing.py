@@ -26,7 +26,7 @@ from __future__ import annotations
 
 import hashlib
 import math
-from collections.abc import Mapping, Sequence
+from collections.abc import Sequence
 from typing import Any
 
 from zicato.core.types import TournamentDecision
@@ -49,94 +49,35 @@ from zicato.selection.strategy import (
 #: order. The default for every contract that does not name a schedule.
 LEGACY_SLICE_SCHEDULE = "prefix"
 
-#: Nested prefixes of a permutation stratified by exact tag SET.
-STRATIFIED_RANDOM_SLICE_SCHEDULE = "stratified_random_v1"
+#: Nested prefixes of a deterministic permutation derived from the board's
+#: entry ids alone.
+SHUFFLED_SLICE_SCHEDULE = "shuffled_v1"
 
 #: Every ``slice_schedule`` racing accepts. The builder validates an edit
 #: against this same tuple so a typo is a contract-time error rather than a
 #: round-start one.
-SLICE_SCHEDULES: tuple[str, ...] = (LEGACY_SLICE_SCHEDULE, STRATIFIED_RANDOM_SLICE_SCHEDULE)
+SLICE_SCHEDULES: tuple[str, ...] = (LEGACY_SLICE_SCHEDULE, SHUFFLED_SLICE_SCHEDULE)
 
 
-def _stratified_random_order(
-    board_ids: Sequence[str], tags_by_id: Mapping[str, object]
-) -> tuple[str, ...]:
-    """Return a stable permutation of a frozen board, stratified by tag SET.
+def _shuffled_order(board_ids: Sequence[str]) -> tuple[str, ...]:
+    """Return a stable permutation of a frozen board.
 
-    The ordering is derived solely from the board ids and their complete tag
-    sets, both already covered by the board's contract hash. Entries sharing
-    an identical tag set form one stratum and are independently hash-shuffled;
-    a largest-deficit merge then keeps every prefix as proportionate to the
-    full stratum mix as possible. Thus rung slices remain nested while neither
-    authored board order nor a process-global random seed can decide an
-    elimination.
-
-    The strata are exact tag SETS, not individual tags: an entry tagged
-    ``{a, b}`` shares no stratum with one tagged ``{a}``. Balance is therefore
-    proportional over tag-set combinations, and a per-tag *marginal* is
-    balanced only as far as the combinations imply. A board whose entries all
-    carry distinct tag sets has only singleton strata, and the result is a
-    plain deterministic shuffle. Proportionality is also over entry COUNT and
-    ignores :attr:`~zicato.core.board.BoardEntry.weight`, so a small stratum
-    carrying a large share of the aggregate's weight can still go unsampled
-    on an early rung.
+    The ordering is a pure function of the entry ids — already covered by the
+    board's contract hash — so the same board always yields the same
+    permutation, on resume and across machines, while neither authored JSONL
+    row order nor a process-global random seed can decide an elimination.
+    Each id's rank is its SHA-256 digest keyed by the whole id set; the id
+    itself tie-breaks, making a digest collision deterministic too.
     """
     if not board_ids:
         return ()
+    unique_ids = sorted({str(entry_id) for entry_id in board_ids})
+    seed_material = "\x1e".join(unique_ids)
 
-    def tags_for(entry_id: str) -> tuple[str, ...]:
-        raw_tags = tags_by_id.get(entry_id, ())
-        if isinstance(raw_tags, str):
-            return (raw_tags,)
-        if not isinstance(raw_tags, Sequence):
-            return ()
-        return tuple(sorted({str(tag) for tag in raw_tags}))
+    def rank(entry_id: str) -> bytes:
+        return hashlib.sha256(f"{seed_material}\x1c{entry_id}".encode()).digest()
 
-    # Entry ids are unique in a validated board. Sorting here makes this order
-    # independent of JSONL row order; tags distinguish the sampling strata.
-    strata: dict[tuple[str, ...], list[str]] = {}
-    for entry_id in sorted(str(entry_id) for entry_id in board_ids):
-        strata.setdefault(tags_for(entry_id), []).append(entry_id)
-
-    # The separators are bound to names because a backslash inside an f-string
-    # EXPRESSION is a syntax error before Python 3.12 (PEP 701), and the project
-    # supports >=3.11. Keep them out of the braces.
-    record_sep, unit_sep, tag_sep = "\x1e", "\x1f", "\x1d"
-    seed_material = record_sep.join(
-        f"{entry_id}{unit_sep}{tag_sep.join(tags_for(entry_id))}"
-        for entry_id in sorted(str(entry_id) for entry_id in board_ids)
-    )
-
-    def rank(*parts: str) -> bytes:
-        payload = "\x1c".join((seed_material, *parts)).encode("utf-8")
-        return hashlib.sha256(payload).digest()
-
-    # Shuffle independently inside each stratum. The stable id fallback makes
-    # a vanishingly unlikely digest collision deterministic too.
-    for stratum, entry_ids in strata.items():
-        stratum_key = "\x1d".join(stratum)
-        entry_ids.sort(key=lambda entry_id: (rank("entry", stratum_key, entry_id), entry_id))
-
-    total = len(board_ids)
-    used = {stratum: 0 for stratum in strata}
-    tie_order = {stratum: rank("stratum", "\x1d".join(stratum)) for stratum in strata}
-    ordered: list[str] = []
-    for step in range(1, total + 1):
-        available = [
-            stratum for stratum, entry_ids in strata.items() if used[stratum] < len(entry_ids)
-        ]
-        # Exact integer deficits avoid platform-dependent float ties:
-        # desired samples at this prefix minus samples already emitted.
-        chosen = max(
-            available,
-            key=lambda stratum: (
-                step * len(strata[stratum]) - used[stratum] * total,
-                tie_order[stratum],
-            ),
-        )
-        ordered.append(strata[chosen][used[chosen]])
-        used[chosen] += 1
-    return tuple(ordered)
+    return tuple(sorted(unique_ids, key=lambda entry_id: (rank(entry_id), entry_id)))
 
 
 class RacingStrategy(SelectionStrategy):
@@ -165,25 +106,10 @@ class RacingStrategy(SelectionStrategy):
             raise ValueError(
                 f"racing slice_schedule must be one of {valid}; got {self._slice_schedule!r}"
             )
-        stratified = self._slice_schedule == STRATIFIED_RANDOM_SLICE_SCHEDULE
-        if stratified and self._board_ids and "_board_tags" not in self.params:
-            # ``_board_tags`` is runtime-derived board metadata make_strategy
-            # injects from the frozen board. Its ABSENCE (as opposed to a
-            # board whose entries are genuinely untagged, which arrives as a
-            # populated map of empty tuples) means the caller never supplied
-            # it — and stratifying without it collapses every entry into one
-            # stratum, an unstratified shuffle wearing the stratified
-            # schedule's name. Refuse, exactly as an unknown schedule refuses
-            # rather than degrading to authored order.
-            raise ValueError(
-                f"racing slice_schedule {STRATIFIED_RANDOM_SLICE_SCHEDULE!r} needs the "
-                "board's tags; construct the strategy via "
-                "make_strategy(..., board_tags=...)"
-            )
-        raw_tags = self.params.get("_board_tags", {})
-        tags_by_id = raw_tags if isinstance(raw_tags, Mapping) else {}
         self._slice_board_ids = (
-            _stratified_random_order(self._board_ids, tags_by_id) if stratified else self._board_ids
+            _shuffled_order(self._board_ids)
+            if self._slice_schedule == SHUFFLED_SLICE_SCHEDULE
+            else self._board_ids
         )
         self._replicates = max(1, _param_int(self.params, "replicates", self._default_replicates))
 
@@ -587,6 +513,6 @@ class RacingStrategy(SelectionStrategy):
 __all__ = [
     "LEGACY_SLICE_SCHEDULE",
     "SLICE_SCHEDULES",
-    "STRATIFIED_RANDOM_SLICE_SCHEDULE",
+    "SHUFFLED_SLICE_SCHEDULE",
     "RacingStrategy",
 ]

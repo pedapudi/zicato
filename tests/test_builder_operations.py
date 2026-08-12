@@ -58,10 +58,10 @@ def test_set_param_validates_closed_vocabulary_keys() -> None:
     # the dispatch turns it into a field-precise 400.
     draft = TournamentDraft()
     with pytest.raises(ValueError, match="slice_schedule must be one of"):
-        ops.set_param(draft, "slice_schedule", "stratified_random")
+        ops.set_param(draft, "slice_schedule", "shuffled")
     assert "slice_schedule" not in draft.scoring.tournament_structure.params
 
-    for schedule in ("prefix", "stratified_random_v1"):
+    for schedule in ("prefix", "shuffled_v1"):
         ops.set_param(draft, "slice_schedule", schedule)
         assert draft.scoring.tournament_structure.params["slice_schedule"] == schedule
     # Removal stays available, and is how the builder drops back to the default.
