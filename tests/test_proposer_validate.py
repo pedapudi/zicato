@@ -35,7 +35,6 @@ from zicato.proposer.validate import (
     run_static_checks,
     validate_patches,
 )
-from zicato.testing import make_mutation_point
 
 # A module with a marked span, an import the span's code needs, and a
 # second marked file — enough surface for every A1-A4 case below.
@@ -51,20 +50,30 @@ def normalize(text):
 '''
 
 
+def _enumerate(snapshot: Path) -> tuple:
+    """Build the bound manifest the way the ORCHESTRATOR builds it.
+
+    Deliberately not :func:`~zicato.testing.make_mutation_point`: that
+    helper stamps a placeholder ``content_hash`` (``"0" * 64``), which is
+    fine for a manifest nobody hashes but wrong here — the pre-image guard
+    compares ``content_hash`` between the bound manifest and a fresh
+    enumeration, so a fixture with a fake hash would report every clean
+    draft as stale. Enumerating for real is both the fix and the faithful
+    thing: ``ProposerContext.mutations`` is an ``enumerate_mutations``
+    result in production.
+    """
+    from zicato.mutation.enumerator import enumerate_mutations
+
+    return tuple(enumerate_mutations([snapshot]))
+
+
 def _build_snapshot(tmp_path: Path) -> tuple[Path, tuple]:
-    """A generation snapshot plus a manifest that re-bases onto it."""
+    """A generation snapshot plus the manifest enumerated from it."""
     snapshot = tmp_path / "snapshot"
     harness = snapshot / "harness"
     harness.mkdir(parents=True)
     (harness / "prompts.py").write_text(_PROMPTS_PY, encoding="utf-8")
-
-    mp = make_mutation_point(
-        id="harness__system_prompt",
-        file=harness / "prompts.py",
-        source_root=Path("/orig/harness"),
-        content="You are a helpful assistant.",
-    )
-    return snapshot, (mp,)
+    return snapshot, _enumerate(snapshot)
 
 
 @pytest.fixture
@@ -105,23 +114,14 @@ def file_ctx(tmp_path: Path) -> ProposerToolContext:
     """
     snapshot = tmp_path / "snapshot"
     snapshot.mkdir()
-    whole = snapshot / "whole.py"
-    whole.write_text(_WHOLE_PY, encoding="utf-8")
+    (snapshot / "whole.py").write_text(_WHOLE_PY, encoding="utf-8")
     workspace = tmp_path / "ws"
     workspace.mkdir()
     return ProposerToolContext(
         workspace_root=workspace,
         generation_root=snapshot,
         epoch_id="ep-001",
-        mutations=(
-            make_mutation_point(
-                id="harness__whole",
-                file=whole,
-                source_root=snapshot,
-                content=_WHOLE_PY,
-                kind="file",
-            ),
-        ),
+        mutations=_enumerate(snapshot),
         generation_id="v1",
     )
 
@@ -200,7 +200,7 @@ def test_requires_a_bound_context() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Tier 1a — structure, cross-checks, and the content_sha256 pre-image guard
+# Tier 1a — structure, cross-checks, and the pre-image guard
 # ---------------------------------------------------------------------------
 
 
@@ -231,31 +231,110 @@ def test_op_payload_mismatch_is_a_structure_error(ctx: ProposerToolContext) -> N
 
 
 def test_stale_pre_image_is_caught(ctx: ProposerToolContext) -> None:
-    """The whole point of the guard: a proposer patching a version it no
-    longer holds is told so, instead of producing a confident rewrite of
-    content that has moved on."""
-    report = _validate(ctx, _replace("x", content_sha256="0" * 64))
-    assert report["ok"] is False
-    assert any("stale pre-image" in e for e in report["errors"])
+    """The guard's whole reason to exist: the point moved under the draft.
+
+    The bound manifest is the enumeration the proposal was drafted
+    against. Rewriting the parent snapshot AFTER that manifest was handed
+    out — which is what a concurrent promotion or an operator edit does —
+    must be caught, or the patch confidently clobbers whatever changed it.
+    """
+    target = ctx.generation_root / "harness" / "prompts.py"
+    target.write_text(
+        _PROMPTS_PY.replace("You are a helpful assistant.", "Someone else already rewrote this."),
+        encoding="utf-8",
+    )
+    report = _validate(ctx, _replace("You are a terse assistant."))
+    assert report["ok"] is False, report
+    stale = [e for e in report["errors"] if "stale pre-image" in e]
+    assert stale, report["errors"]
+    # Naming the point is the actionable part — the proposer has to know
+    # WHICH of its patches to re-draft.
+    assert "harness__system_prompt" in stale[0]
 
 
-def test_matching_pre_image_passes(ctx: ProposerToolContext) -> None:
-    import hashlib
+def test_unmoved_points_pass_the_pre_image_guard(ctx: ProposerToolContext) -> None:
+    """The guard must be silent on the overwhelmingly common case.
 
-    digest = hashlib.sha256(ctx.mutations[0].content.encode("utf-8")).hexdigest()
-    report = _validate(ctx, _replace("You are a terse assistant.", content_sha256=digest))
-    assert report["ok"] is True, report
-
-
-def test_pre_image_is_optional(ctx: ProposerToolContext) -> None:
-    """Absence means "I made no claim", not "the pre-image is empty"."""
+    Nothing is asked of the proposer, so a guard that fired spuriously
+    would make every clean draft look stale.
+    """
     assert _validate(ctx, _replace("You are a terse assistant."))["ok"] is True
 
 
-def test_non_string_pre_image_is_reported_not_crashed(ctx: ProposerToolContext) -> None:
-    report = _validate(ctx, _replace("x", content_sha256=12345))
-    assert report["ok"] is False
-    assert any("content_sha256 must be" in e for e in report["errors"])
+def test_pre_image_guard_ignores_untouched_points(tmp_path: Path) -> None:
+    """A point that moved but is NOT patched is none of the guard's business.
+
+    The guard is about the patch's own target. Rejecting a draft because
+    some unrelated part of the tree changed would make it unusable in any
+    workspace with a live operator.
+    """
+    snapshot = tmp_path / "snapshot"
+    harness = snapshot / "harness"
+    harness.mkdir(parents=True)
+    (harness / "prompts.py").write_text(_PROMPTS_PY, encoding="utf-8")
+    other = harness / "other.py"
+    other.write_text(
+        '# zicato:mutable id="harness__other"\nOTHER = """original"""\n', encoding="utf-8"
+    )
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    ctx = ProposerToolContext(
+        workspace_root=workspace,
+        generation_root=snapshot,
+        epoch_id="ep-001",
+        mutations=_enumerate(snapshot),
+        generation_id="v1",
+    )
+    # Move the UNPATCHED point only.
+    other.write_text(
+        '# zicato:mutable id="harness__other"\nOTHER = """moved"""\n', encoding="utf-8"
+    )
+    report = _validate(ctx, _replace("You are a terse assistant."))
+    assert report["ok"] is True, report
+
+
+def test_patch_carries_no_pre_image_field(ctx: ProposerToolContext) -> None:
+    """The guard asks the proposer for nothing — issue #147 forbids a
+    schema change, and an opt-in digest would be a guard a model could
+    skip by omission.
+
+    A patch object carrying an unknown key is still accepted (the schema
+    deliberately leaves ``additionalProperties`` open), but the key has no
+    meaning: the verdict is identical with and without it.
+    """
+    from zicato.core.types import Patch
+
+    assert not hasattr(Patch("i", "m", "replace", None, None, None, "r"), "content_sha256")
+    with_key = _validate(ctx, _replace("You are a terse assistant.", content_sha256="0" * 64))
+    without = _validate(ctx, _replace("You are a terse assistant."))
+    assert with_key["ok"] == without["ok"] is True
+    assert with_key["errors"] == without["errors"] == []
+
+
+def test_content_hash_has_exactly_one_reader() -> None:
+    """``MutationPoint.content_hash``'s docstring described a check the
+    applier never performed. This module is now the check it described.
+
+    Pinned because the field is written by the enumerator and rendered by
+    the CLI and the dashboard — plenty of *mentions*, and for a long time
+    zero *readers*, which is exactly how the docstring stayed wrong.
+    """
+    import subprocess
+
+    root = Path(__file__).resolve().parent.parent / "src" / "zicato"
+    hits = subprocess.run(
+        ["grep", "-rn", r"\.content_hash", str(root)],
+        capture_output=True,
+        text=True,
+        check=False,
+    ).stdout.splitlines()
+    # Attribute READS only — the enumerator writes it as a kwarg, which
+    # does not match ``.content_hash``.
+    readers = {line.split(":")[0].split("/")[-1] for line in hits if line.strip()}
+    assert "validate.py" in readers, hits
+    comparing = [ln for ln in hits if "==" in ln or "!=" in ln]
+    assert comparing, "no module actually COMPARES content_hash any more"
+    assert all("validate.py" in ln for ln in comparing), comparing
 
 
 # ---------------------------------------------------------------------------
@@ -664,3 +743,110 @@ def test_python_executable_is_used_for_every_static_check() -> None:
         argv = builder(Path("/tmp/x"))
         assert argv[0] == sys.executable, name
         assert argv[1] == "-m", name
+
+
+# ---------------------------------------------------------------------------
+# ProposerContext.generation_root — populated, not merely declared
+# ---------------------------------------------------------------------------
+
+
+def test_propose_child_requires_generation_root() -> None:
+    """The field must be IMPOSSIBLE to forget at the real construction site.
+
+    A dataclass field defaulting to ``None`` is exactly the shape that goes
+    silently unpopulated: everything keeps working, the ADK path quietly
+    falls back to re-deriving the store's path convention, and the reason
+    the field exists is undone with no signal. ``_propose_child`` therefore
+    takes it as a REQUIRED keyword-only argument — a call site that omits
+    it is a TypeError, not a ``None``.
+    """
+    import inspect
+
+    from zicato.evolve.propose_apply import _propose_child
+
+    param = inspect.signature(_propose_child).parameters["generation_root"]
+    assert param.default is inspect.Parameter.empty, (
+        "generation_root must stay REQUIRED on _propose_child; a default "
+        "would let a call site silently reintroduce the derivation"
+    )
+    assert param.kind is inspect.Parameter.KEYWORD_ONLY
+
+
+def test_every_propose_child_call_site_passes_generation_root() -> None:
+    """Both pipelines (gauntlet + multi-challenger field) must populate it.
+
+    Asserted over the source rather than by running an evolve round: the
+    two call sites live in different modules and a new third one is the
+    realistic regression. The required-argument pin above makes omission a
+    TypeError, and this makes the omission visible in review too.
+    """
+    import re as _re
+    import subprocess
+
+    root = Path(__file__).resolve().parent.parent / "src" / "zicato"
+    out = subprocess.run(
+        ["grep", "-rn", "-A", "8", r"await _propose_child($", str(root)],
+        capture_output=True,
+        text=True,
+        check=False,
+    ).stdout
+    blocks = _re.split(r"\n--\n", out.strip())
+    assert len(blocks) >= 2, f"expected both call sites, got:\n{out}"
+    for block in blocks:
+        assert "generation_root=" in block, block
+
+
+def test_adk_agent_prefers_the_populated_generation_root(tmp_path: Path) -> None:
+    """A populated field wins over the fallback derivation.
+
+    The fallback resolves through the generation store, which for a
+    workspace with no such generation yields a path that does not exist —
+    so a context carrying an explicit root must not be routed through it.
+    """
+    from zicato.proposer.adk_agent import _resolve_generation_root
+    from zicato.proposer.agent import ProposerContext
+
+    async def _never_called(system: str, user: str, model: str) -> str:  # pragma: no cover
+        raise AssertionError("the resolver must not call the model")
+
+    explicit = tmp_path / "explicit-snapshot"
+    explicit.mkdir()
+    ctx = ProposerContext(
+        epoch_id="ep-001",
+        parent_generation_id="v1",
+        new_generation_id="v2",
+        patterns=(),
+        mutations=(),
+        brief_text="",
+        current_loss_summary="",
+        aux_call_llm=_never_called,
+        workspace_root=tmp_path / "ws",
+        generation_root=explicit,
+    )
+    assert _resolve_generation_root(ctx) == explicit
+
+
+def test_adk_agent_falls_back_when_generation_root_is_absent(tmp_path: Path) -> None:
+    """The compatibility shim still works for a hand-built context."""
+    from zicato.proposer.adk_agent import _resolve_generation_root
+    from zicato.proposer.agent import ProposerContext
+
+    async def _never_called(system: str, user: str, model: str) -> str:  # pragma: no cover
+        raise AssertionError("the resolver must not call the model")
+
+    workspace = tmp_path / "ws"
+    workspace.mkdir()
+    ctx = ProposerContext(
+        epoch_id="ep-001",
+        parent_generation_id="v1",
+        new_generation_id="v2",
+        patterns=(),
+        mutations=(),
+        brief_text="",
+        current_loss_summary="",
+        aux_call_llm=_never_called,
+        workspace_root=workspace,
+    )
+    resolved = _resolve_generation_root(ctx)
+    assert resolved != workspace
+    assert "v1" in str(resolved)

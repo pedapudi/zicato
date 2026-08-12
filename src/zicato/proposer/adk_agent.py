@@ -202,7 +202,15 @@ def _render_task_text(spec: ProposerSpec, ctx: ProposerContext, feedback: str) -
 
 
 def _resolve_generation_root(ctx: ProposerContext) -> Path:
-    """Resolve the parent generation's snapshot dir the tools read.
+    """Return the parent generation's snapshot dir the tools read.
+
+    Prefers :attr:`ProposerContext.generation_root`, which the orchestrator
+    populates at the single ``_propose_child`` construction site (a REQUIRED
+    argument there, so the real path always carries it). The derivation
+    below is the fallback for a context assembled by hand — a test, a
+    standalone propose — and exists only so those keep working; it
+    duplicates the generation store's path convention, which is precisely
+    why the field was added.
 
     The read-only tools (``read_mutable_file`` / ``grep_mutable``) read the
     PARENT generation snapshot — the tree this round is about to patch. We
@@ -215,6 +223,8 @@ def _resolve_generation_root(ctx: ProposerContext) -> Path:
     the current directory — the read/grep tools then simply find no files,
     which is the correct degenerate behaviour for a contextless call.
     """
+    if ctx.generation_root is not None:
+        return ctx.generation_root
     if ctx.workspace_root is None:
         return Path.cwd()
     from zicato.epoch.genstore import default_generation_store

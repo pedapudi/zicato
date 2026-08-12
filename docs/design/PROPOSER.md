@@ -702,7 +702,7 @@ act on, `tiers` says which stage each finding came from.
 
 | Tier | What it runs | Reuses |
 |---|---|---|
-| 1 **structure + apply** (always on) | the `patches` shape pass, the cross-check pass (mutation-id resolution, op/payload discrimination, `min`/`max`, enum domains), the `content_sha256` pre-image guard, the pre-apply surface check, an all-or-nothing apply into a scratch copy of the parent snapshot, then A1–A4 | `PATCHES_JSON_SCHEMA` + `parse_patch_list` (`structured.py`), `validate_patches` + `validate_post_apply` (`mutation/validator.py`), `apply_patches` (`mutation/applier.py`) |
+| 1 **structure + apply** (always on) | the `patches` shape pass, the cross-check pass (mutation-id resolution, op/payload discrimination, `min`/`max`, enum domains), the pre-image guard (`content_hash` from the drafted-against manifest vs a fresh enumeration), the pre-apply surface check, an all-or-nothing apply into a scratch copy of the parent snapshot, then A1–A4 | `PATCHES_JSON_SCHEMA` + `parse_patch_list` (`structured.py`), `validate_patches` + `validate_post_apply` (`mutation/validator.py`), `apply_patches` (`mutation/applier.py`) |
 | 2 **static analysis** (opt-in, contract-declared) | the workspace's declared linter / type-checker set over the scratch tree | the tools already in zicato's environment, via `sys.executable -m` |
 | 3 **load probe** (on whenever the workspace has a config to resolve an adapter from) | `adapter.load` against the scratch snapshot in a subprocess with a timeout — the same call the tournament makes before any entry executes, one expensive round earlier | `make_adapter_from_config` + `load_workspace_config`, in the child process |
 
@@ -744,19 +744,40 @@ would be an arbitrary-execution surface that a contract edit could widen
 silently. A workspace needing a checker that is not there should propose adding
 it to the registry rather than gaining a way to name any command.
 
-### The `content_sha256` pre-image guard
+### The pre-image guard — a docstring that was finally made true
 
-A patch may carry an optional `content_sha256`: the SHA-256 of the mutation
-point's content **as the proposer read it**. When present it is checked against
-the live manifest, so a stale read — the proposer reasoned about a version of
-the point the manifest no longer holds — is caught immediately instead of
-producing a confidently wrong rewrite. Absence means "I made no claim", not
-"the pre-image is empty".
+`MutationPoint.content_hash` has existed since the enumerator was written, and
+its docstring claimed *"the patch applier checks this before applying a patch so
+a stale proposer round cannot clobber an already-rewritten region."* **The
+applier never read it.** The field was written by the enumerator, rendered by
+the CLI and the dashboard, and checked by nothing — a guarantee documented for
+long enough to be believed and never once enforced.
 
-The field is **validate-only**. The `Experiment` schema is unchanged and
-`parse_experiment_json` ignores the key like any other unknown one (the schema
-deliberately leaves `additionalProperties` open on patch objects), so a
-proposer may leave it on the patches it finally emits.
+Tier 1 is that check. It compares `content_hash` for each patched point between
+**the manifest the proposal was drafted against** (`ProposerToolContext.mutations`,
+which is an `enumerate_mutations` result) and **a fresh enumeration of the parent
+snapshot** at validate time. A point whose hash moved between the two was
+rewritten under the proposer — by a concurrent promotion, or an operator editing
+the tree — so the draft is reasoning about text that no longer exists, and
+applying it would clobber whatever changed it.
+
+**Nothing is asked of the proposer, deliberately.** An earlier revision of this
+feature made the pre-image a digest the model declared on each patch. That was
+worse twice over: it made the guard *opt-in* (a model that omitted the field was
+simply not checked, and the guard's whole value is in the case where the model
+does not realise anything is wrong), and it asked the model for arithmetic it
+has no reason to get right. Comparing two enumerations zicato already computes
+needs no cooperation and no wire change — **`Patch` carries no pre-image field
+and must not grow one**; issue #147 is explicit that the `Experiment` schema
+does not change.
+
+The applier is still deliberately not the site. It applies a patch set that has
+already been validated, all-or-nothing; a staleness rejection there would
+surface as a failed derive with no route back to the proposer that could fix it.
+Catching it in `validate_patches` puts the finding where a fix is still cheap.
+A point that has *vanished* rather than moved is left to A2, which reports it
+against the post-apply tree with a better message — one fault should cost one
+fix, not two.
 
 > ⛔ The standing prohibition is unchanged: **no proposer tool may write to the
 > generation snapshot.** `validate_patches` does not relax it — it writes only
@@ -839,32 +860,109 @@ Entry ids are used to LOCATE files and are never emitted. The tools are
 best-effort by contract: a missing file, a malformed line, an unknown payload
 are all tolerated, never raised — a diagnostic read must never abort a round.
 
+### The design deviation, and why it was ratified
+
+Issue #147 §6 framed this as "expose `zicato/query/` views … through the same
+mechanical redaction". **No `zicato/query/` view is exposed. Every one was
+excluded**, and the shipped surface is three purpose-built aggregators over the
+champion's train-slice `events.jsonl` — the same source `extract_process_exemplars`
+reads, differing only in folding events into counts instead of windowing them.
+
+The audit that produced that conclusion is worth stating in full, because it is
+the reason and not an excuse:
+
+> The query layer splits cleanly into two halves, and neither half can be
+> redacted into this envelope. Its *aggregate* views (`gate_view`, the
+> per-judge tables) are keyed by generation with no entry id in the row, so
+> there is nothing to filter on — you cannot narrow them to the train slice,
+> and a champion's generation-wide numbers include the holdout runs the
+> promote gate played. Its *entry-scoped* views do carry the key, but an
+> entry-keyed row is precisely the joint distribution the envelope exists to
+> withhold; filtering one to the train slice leaves you holding per-entry
+> data, which is the thing you were trying not to have. So the only shape
+> that satisfies both constraints — narrowable to the slice AND aggregable to
+> a marginal — is the raw per-run event file, which is entry-scoped at the
+> *file path* level and content-free at the *field* level once a default-deny
+> allowlist is applied.
+
+Provably clean beat plausibly clean. A redacted *view* would have been a filter
+argued to be sufficient; a purpose-built *aggregator* over a default-deny field
+allowlist is a surface where the leak has no path to begin with.
+
 ### What is deliberately NOT exposed
 
-Issue #147 §6 framed this as exposing `zicato/query/` views. It is built
-instead over the champion's `events.jsonl` files directly, the way
-`process_exemplars` is, and **no `zicato/query/` view is exposed at all.** The
-query layer is a SQLite-backed *operator* surface: its readers are built to
-join a run back to its entry and show a human what happened, so entry ids are
-load-bearing in their return shapes rather than incidental. Redacting them
-would mean rewriting each reader's contract at the call site — exactly the
-"clean the output" posture the default-deny discipline rejects in favour of
-"drop the field".
+The per-view exclusion list, so the next person does not helpfully add one:
 
-The high-risk ones are named here so the next person does not helpfully add
-them: **`transcript_view` / `conversations_view` / `trace_view`** return the
-model's own turns and the task text that prompted them — the D-class content
-this envelope exists to withhold, and unredactable by construction, since
-scrubbing free-form model output is a filter you can only ever lose against.
-**`eval_view` / `judge_view` / `gate_view`** carry per-entry scores and
-verdicts — `build_eval_matrix` is explicitly "one cell per (entry, candidate),
-with holdout flagging", which is the JOINT written out as a table. Handing that
-to the proposer would let it optimise against individual entries, the entire
-overfitting failure. **`board_scan`** reads `board.jsonl`.
+- **`transcript_view`** (`build_run_transcript`, `resolve_conversation`,
+  `empty_run_transcript`) — reconstructs the model's turn-by-turn
+  conversation; it *is* task text and model output.
+- **`conversations_view`** (`build_matchup_conversations`) — same payload,
+  paired per matchup; scrubbing free-form model output into safety is not a
+  thing we do, we drop the field.
+- **`trace_view`** (`build_trace_detail`, `build_trace_list`,
+  `build_suggestion_provenance`) — carries reflection/suggestion prose, which
+  quotes board inputs and candidate outputs verbatim.
+- **`judge_view` per-judge family** (`build_per_judge_for_generation`,
+  `build_per_judge_for_run`, `build_per_judge_trend`,
+  `build_per_judge_comparison`) — a judge may be attached to a single board
+  entry, so a per-judge figure is a per-entry measurement wearing an
+  aggregate's clothes; also generation-wide (train+holdout) with no entry key
+  to filter on.
+- **`judge_view` per-entry family** (`build_per_entry_for_generation`,
+  `build_expectation_outcomes_for_run`, `resolve_run_id_for_entry`,
+  `build_run_header`) — entry-keyed rows are the JOINT, not the marginal; the
+  entry id is the payload.
+- **`judge_view` search** (`build_search_results`) — free-text search over
+  board/run content; an arbitrary-query read of the corpus is the exact leak
+  vector.
+- **`gate_view`** (`_drift_counts_for_generation`, `build_gate_breakdown`,
+  `build_drift_movements`, `build_score_trajectory`, `build_health_report`,
+  `build_rating_view`) — generation-scoped with **no entry key**, so it cannot
+  be narrowed to the train slice; the drift counts mix holdout runs in and the
+  gate/score views expose the exact holdout-confirmation numbers.
+- **`epoch_view`** (`build_epoch_view`, `build_epoch_analysis`,
+  `compute_board_split`, `_parse_board`, `_board_input_preview`) — renders the
+  board itself: entry ids, input previews, and the train/holdout membership map.
+- **`eval_view`** (`build_eval_matrix`, `build_eval_dossier`,
+  `build_eval_health`) — per-entry × per-candidate matrix; the joint by
+  construction.
+- **`tournament_view` / `racing_view` / `rounds_view` / `loop_view`** —
+  bracket, matchup and board-slice views keyed by entry id and by
+  holdout-confirmed outcomes.
+- **`reflection_view`** (`build_judge_scorecards`, `build_adjudication_xray`,
+  `entry_candidate_matrix`, `build_practice_review`) — adjudicated per-entry
+  evidence, entry-keyed and quoting run content.
+- **`run_log` / `log_stream` / `events_index` raw readers** (`build_run_log`,
+  `tail_records`, `build_log_view`, `resolve_transcript_events`,
+  `read_run_result`) — unredacted event/log passthrough; there is no allowlist
+  between them and `run_started.goal_summary`.
+- **`journal_view`, `hypothesis_view`, `lineage_view`, `decisions`,
+  `runtime_view`, `paths`** — excluded as out of scope rather than as leaks:
+  either already reachable through an existing proposer channel (journal,
+  prior experiments) or carrying no mechanism signal worth a new surface.
 
 If a future channel needs one of these, the move is to build a redacted
 aggregate over it — a new marginal — not to expose the view and filter its
 rows.
+
+### Known limits of the banding
+
+Two caveats a reviewer should hold, both recorded rather than hidden:
+
+- **On a small train slice the bands are nearly lossless.** `band_rate` rounds
+  to 10% steps, so with four train entries `1/4` reads `~30%` and the band
+  recovers the count. The memorization resistance on this surface comes mostly
+  from the AGGREGATION — per-entry membership sets, so one chatty run cannot
+  dominate a figure and no per-entry magnitude survives — rather than from the
+  band width. A workspace with a very small board gets correspondingly less
+  from the banding.
+- **Two exact integers are emitted**, `train_slice_entries` and
+  `entries_with_events`. Both are constant within a reign (the split rotates
+  per epoch; the champion's files do not change between rounds), and the
+  proposer already sees the train run count verbatim in its loss summary
+  (`over N runs`). They are not a round-over-round response surface **as long
+  as the slice stays per-epoch** — if rotation ever becomes per-round, these
+  two need banding too.
 
 ### Enforcement
 
@@ -878,6 +976,40 @@ transcribed list is deliberate: a newly-added tool is covered automatically and
 cannot skip the probe. Because a leak probe passes vacuously when the tools
 return nothing, the same file pins the positive content too — the aggregates
 must actually be present, and banded, while the sentinels are not.
+
+**`src/zicato/analyzer/redaction.py` is the single source of truth for the R3
+and R4 primitives** (`truncate_free_text`, `scrub_identity`,
+`iter_string_leaves`, and their constants). It has two consumers — the
+process-exemplar channel and this surface — and the point of the extraction is
+that both apply byte-identical redaction. `PROCESS-EXEMPLARS.md` §3 stays
+NORMATIVE for what R1–R4 mean; R1 (the payload allowlist) and R2 (the
+window-local anonymizer) remain in `process_exemplars.py` because both are
+bound to the exemplar window's own structure. Order is load-bearing wherever
+they are used: **scrub first, truncate second** — truncation only removes
+characters and puts the elision marker between head and tail, so a scrubbed
+string can never re-form an identity across the split.
+
+Two notes for whoever edits this next:
+
+- **Gate 2 (`drop_out_of_slice`) catches nothing today, and that is the
+  point.** Gate 1 — opening only train-slice event files — is currently
+  sufficient on every path. Gate 2 exists for the refactor where someone
+  routes in a result set that arrives "already filtered" and is trusted
+  exactly once. Its test feeds it a row gate 1 could never produce, precisely
+  so it stays alive independently. **Do not delete it as dead code.**
+- **`_load_events` / `_payload` are duplicated** (~30 lines) between
+  `process_exemplars.py` and `redacted_query.py`. Deliberate for now: the two
+  allowlists differ, and a self-contained parser inside the security-critical
+  module was preferred over a shared one. A consolidation is a reasonable
+  follow-up, but it must move the *whole* reader, not half of it — a shared
+  parser paired with a per-consumer allowlist is the shape that invites the
+  wrong allowlist being applied.
+
+The obvious next increment is a **parameterized drill-down** (a per-drift-kind
+× agent cross-tab). It was left out on purpose: a zero-arg tool has no input to
+validate and therefore no oracle surface, and shipping a provably clean surface
+first is worth more than the extra resolution. Revisit it only with the widened
+envelope documented before the code.
 
 ---
 

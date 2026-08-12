@@ -920,6 +920,7 @@ async def evolve_once(
                 epoch_id=resolved_epoch_id,
                 parent_id=parent_id,
                 next_id=next_id,
+                generation_root=genstore.snapshot_root(resolved_epoch_id, parent_id),
                 patterns=patterns,
                 mutations=mutations,
                 brief=brief,

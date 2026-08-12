@@ -131,6 +131,13 @@ async def _propose_child(
     auxiliary_model: str,
     max_proposer_retries: int,
     workspace_root: Path,
+    #: The PARENT generation's materialised snapshot — the tree this round
+    #: is about to patch. Threaded onto :class:`ProposerContext` so a
+    #: tool-using proposer reaches it without re-deriving the store's path
+    #: convention. REQUIRED (no default) on purpose: both call sites have a
+    #: ``genstore`` in hand, and a defaulted ``None`` would let a future
+    #: caller silently reintroduce the derivation this exists to remove.
+    generation_root: Path,
     validate_experiment: Any,
     meta_loop_emitter: Any,
     custom_judge_names: frozenset[str],
@@ -198,6 +205,7 @@ async def _propose_child(
                     max_retries=max_proposer_retries,
                     forbidden_ids=brief.forbidden_ids,
                     workspace_root=workspace_root,
+                    generation_root=generation_root,
                     validate_experiment=validate_experiment,
                     meta_loop_emitter=meta_loop_emitter,
                     custom_judge_names=custom_judge_names,
@@ -377,6 +385,7 @@ async def _propose_and_apply_challenger(
             epoch_id=epoch_id,
             parent_id=parent_id,
             next_id=next_id,
+            generation_root=genstore.snapshot_root(epoch_id, parent_id),
             patterns=patterns,
             mutations=mutations,
             brief=brief,

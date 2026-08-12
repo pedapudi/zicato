@@ -1699,7 +1699,7 @@ empty degrades that tool to an explicit "coordinates unavailable" answer).
 | `mutation_track_record(mutation_id)` | the fertility map for ONE manifest point, as JSON (counts, promoted, `recent` flag, the banded summary line) | AGGREGATES ONLY — same banding as the manifest annotation; the honesty `basis` field is mandatory | `ValueError` on an id not in the current manifest ("actionable retry signal"); a zeroed record — not an error — for an untouched point |
 | `read_parent_diff()` | what the LAST promotion changed: `git diff` between the parent generation's tag and ITS parent's under the git backend (tree objects only — nothing checked out); the journal's patch records under the directory backend | output cap 20 000 chars; per-patch value cap 2 000 chars on the fallback | explicit notices for: no coordinates, a seed generation, a byte-identical promotion |
 | `mutation_usage(mutation_id)` | where the point's symbol (the trailing `__`-segment of its id) and short single-line literal value are referenced across the snapshot | delegates to `grep_mutable` with `re.escape`, so the escape guard + match cap apply unchanged | `ValueError` on an unknown id |
-| `validate_patches(patches_json)` | nothing — it WRITES a draft patch set into a throwaway `ztw-pvalidate-*` scratch copy of the parent snapshot and reports what broke, as `{"ok", "errors", "tiers"}` | three tiers, stopping at the first failure: structure + apply + A1–A4; the contract-declared static-check delta; the sandboxed `adapter.load` probe. Per-check timeouts (120s / 60s), output capped at 4 000 chars, scratch tree removed in a `finally` | `ValueError` on an argument that is not a usable patch array; a check that could not run is a NOTE (never `ok: false`) |
+| `validate_patches(patches_json)` | nothing — it WRITES a draft patch set into a throwaway `ztw-pvalidate-*` scratch copy of the parent snapshot and reports what broke, as `{"ok", "errors", "tiers"}` | three tiers, stopping at the first failure: structure (incl. the `content_hash` pre-image guard) + apply + A1–A4; the contract-declared static-check delta; the sandboxed `adapter.load` probe. Per-check timeouts (120s / 60s), output capped at 4 000 chars, scratch tree removed in a `finally` | `ValueError` on an argument that is not a usable patch array; a check that could not run is a NOTE (never `ok: false`) |
 | `train_slice_drift_profile()` | banded per-entry incidence of each drift kind (and its severity mix) across the champion's TRAIN slice | slice re-derived, never passed in; two independent slice gates; default-deny read allowlist admitting NO free-text field; rates banded; label count capped at 40 | fails closed to `status: "train slice unavailable"` with no data — never the whole board |
 | `train_slice_agent_profile()` | per agent role: banded incidence of invocation, of attributed drift, and of being steered | as above; agent names are open-vocabulary, so each passes through `scrub_identity` then `truncate_free_text` | as above |
 | `train_slice_process_profile()` | banded incidence of the process-failure payload cases (`task_failed` / `task_blocked` / `task_cancelled` / `plan_revised`) | as above; case names are goldfive's closed payload-oneof vocabulary and carry no content of their own | as above |
@@ -1752,7 +1752,7 @@ recursive tool goes through `_walk_roots` too.
 
 > ⛔ NEVER add a tool that writes to the GENERATION SNAPSHOT. "A proposer tool
 > that mutated the snapshot would corrupt the very tree the round is about to
-> patch (and break the content-hash guard the applier relies on)."
+> patch" — and the round would then score a tree nobody derived.
 >
 > `validate_patches` is the one tool that writes anything, and it does not
 > relax that rule: it writes only into a disposable scratch copy in the OS temp
@@ -1768,6 +1768,19 @@ recursive tool goes through `_walk_roots` too.
 > the adapters stay on the forbidden list), and the contextvar plumbing lives
 > in `zicato/proposer/tool_context.py` (so reaching `_active_context` does not
 > drag the analyzer, and through it the board loader, into the closure).
+
+**The pre-image guard is the only reader of `MutationPoint.content_hash`.**
+That field's docstring claimed for years that "the patch applier checks this
+before applying a patch so a stale proposer round cannot clobber an
+already-rewritten region". The applier never did: the field was written by the
+enumerator, rendered by the CLI and the dashboard, and checked by nothing.
+Tier 1 of `validate_patches` is that check — it compares `content_hash` between
+the manifest bound on the tool context (what the proposal was drafted against)
+and a fresh enumeration of the parent snapshot, so a point rewritten under the
+proposer is caught while a fix is still cheap.
+`tests/test_proposer_validate.py::test_content_hash_has_exactly_one_reader`
+pins that this stays the ONLY comparison site — "plenty of mentions, zero
+readers" is exactly how that docstring stayed wrong for so long.
 
 ### 5.9.3 Why tools do NOT fold into the contract hash
 
