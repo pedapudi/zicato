@@ -39,7 +39,7 @@
 
 import { el } from '../core/dom.js';
 import * as D from '../data.js';
-import { section, empty, chip, dataTable, renderView, stat, isNum, fmt } from '../ui.js';
+import { section, empty, chip, dataTable, renderView, stat, isNum, fmt, fidelityLabel } from '../ui.js';
 
 // ---- small local coercions (display-only) ---------------------------
 function num(v, d) { return isNum(v) ? fmt(v, isNum(d) ? d : 3) : '—'; }
@@ -871,12 +871,4 @@ function severityMatchLine(adj, jv) {
     class: 'dn-instr-xsevmatch dn-instr-t-' + (adj.severity_match ? 'good' : 'bad'),
     text,
   });
-}
-
-function fidelityLabel(fidelity) {
-  const f = String(fidelity || 'unavailable');
-  if (f === 'verbatim') return 'verbatim (exact judge input)';
-  if (f === 'result') return 'result.json (reconstructed)';
-  if (f === 'unavailable') return 'unavailable';
-  return f;
 }

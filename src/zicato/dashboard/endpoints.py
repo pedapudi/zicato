@@ -1208,12 +1208,54 @@ def _make_conversation_endpoints(paths: WorkspacePaths) -> dict[str, Any]:
             )
         )
 
+    async def api_run_transcript_delta(request: Request) -> Response:
+        """The append-only slice of one run's transcript past ``?after=``.
+
+        The live conversation pane's read (issue #194 §2). Cursor
+        semantics, the torn-line tolerance and the same-shape degrade all
+        live on the reader
+        (:func:`zicato.query.build_run_transcript_delta`); this handler
+        only validates coordinates and clamps the query. Always answers
+        200 — every failure is the ``found: false`` delta.
+        """
+        epoch_id = request.path_params["epoch_id"]
+        generation_id = request.path_params["generation_id"]
+        entry_id = request.path_params["entry_id"]
+        if not _is_safe_id(epoch_id) or not _is_safe_id(generation_id) or not _is_safe_id(entry_id):
+            return JSONResponse(
+                query.empty_run_transcript_delta(
+                    epoch_id,
+                    generation_id,
+                    entry_id,
+                    error="invalid epoch/generation/entry id",
+                ),
+                status_code=200,
+            )
+        run_q = request.query_params.get("run")
+        match_q = request.query_params.get("match")
+        run_q = run_q if (run_q and _is_safe_id(run_q)) else None
+        match_q = match_q if (match_q and _is_safe_id(match_q)) else None
+        return JSONResponse(
+            query.build_run_transcript_delta(
+                paths,
+                epoch_id,
+                generation_id,
+                entry_id,
+                after=_int_query(request, "after"),
+                limit=_int_query(request, "limit"),
+                run_id=run_q,
+                match_id=match_q,
+                reconstruct=reconstruct_transcript if _HAVE_TRANSCRIPT else None,
+            )
+        )
+
     # -- control endpoints (POST) ------------------------------------
 
     return {
         "api_conversation": api_conversation,
         "api_matchup_conversations": api_matchup_conversations,
         "api_run_transcript": api_run_transcript,
+        "api_run_transcript_delta": api_run_transcript_delta,
     }
 
 

@@ -98,6 +98,34 @@ The drill-down / lazy endpoints (unchanged):
 - `GET /api/files...`, `GET /api/mutations/...` — Files view.
 - `GET /api/conversation/{run}` — the run_id-keyed transcript
   (`D.conversation()`; `D.runTranscript()` is the preferred gen×entry read).
+- `GET /api/run/{epoch}/{gen}/{entry}/transcript/delta?after=<cursor>` — the
+  live conversation pane's **cursor-append** read (issue #194 §2). Returns
+  only what changed since `after`, so following a running unit never
+  re-sends a settled conversation:
+
+  ```jsonc
+  { "found": true, "cursor": int,            // feed back as the next `after`
+    "turns": [ { ...turn, "turn_index": int } ],   // only new/changed turns
+    "annotations": [ { ...annotation } ],
+    "turn_total": int, "event_count": int,
+    "complete": bool,                        // a terminal event was seen
+    "truncated": bool,                       // delta exceeded `limit` — the
+                                             // client must re-read in full
+    "fidelity": "events", "verbatim_available": bool,
+    "events_path": str|null }
+  ```
+
+  The **cursor counts parsed events**, not goldfive `sequence` numbers: a
+  `multi_turn_emulated` entry restarts `sequence` at 0 per run, so only the
+  parsed-event count is monotone over the file. Being a count it sits one
+  past the last index it covers, so the server's filter is **inclusive**
+  (`source_index >= after`) — which is what re-delivers the OPEN final turn
+  when it grows, at its existing `turn_index`. Replaying an unchanged cursor
+  therefore yields an empty delta. A torn final line takes no cursor
+  position, so it arrives whole on a later poll. `limit` is clamped by the
+  run-log's own `clamp_run_log_limit`. This is a SEPARATE route from
+  `/transcript` above, which keeps its full-payload shape for the
+  side-by-side panes.
 - `GET /api/matchup/{entry_id}/conversations` — **NO client, by decision.**
   It is a **curl / operator surface**, not a live drill-down: the champion-vs-
   challenger transcript comparison the operator actually uses is the Board

@@ -2300,6 +2300,25 @@
      in-flight pulse (no new chrome), just a small flex line above the turns. */
   .dn-xscript-stream { display: flex; align-items: center; gap: 6px;
     font-size: calc(10.5px * var(--dt-font-scale, 1)); margin: 0 0 6px; }
+  /* ---- the LIVE CONVERSATION pane (issue #194 §2) -------------------------
+     One component for both modes, so the styling must not branch on live vs
+     settled: what changes when a run finishes is the pill and the caption
+     text, never the geometry — a layout shift at the moment of settling would
+     undo the point of transitioning in place. */
+  .dn-convo { position: relative; }
+  .dn-convo-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+    padding-bottom: 6px; margin-bottom: 4px; border-bottom: 1px solid var(--v2-rule); }
+  .dn-convo-cap { font-size: calc(10.5px * var(--dt-font-scale, 1)); margin: 0 0 8px; }
+  .dn-convo-scroll { max-height: 56vh; }
+  /* the "N new turns ↓" pin. Anchored to the pane (not the page) and only in
+     the document while there IS a backlog — an affordance that outlives its
+     condition trains the operator to ignore it. */
+  .dn-convo-pin { position: absolute; right: 14px; bottom: 12px;
+    font-family: var(--v2-mono); font-size: calc(10px * var(--dt-font-scale, 1));
+    color: var(--v2-paper); background: var(--v2-accent); border: 0;
+    border-radius: 10px; padding: 2px 9px; cursor: pointer; white-space: nowrap;
+    box-shadow: 0 1px 4px color-mix(in srgb, var(--v2-ink) 25%, transparent); }
+  .dn-convo-pin[hidden] { display: none; }
   .dn-board-sel { outline: 2px solid var(--v2-accent); outline-offset: -2px; }
   a.dn-linkbtn.dn-linkbtn-on { color: var(--v2-paper); background: var(--v2-accent); border-radius: 3px; }
   /* a RUNNING candidate row — its loss is not scored yet; the live link reads
@@ -3312,6 +3331,15 @@
   .dt-live-match-row-kill {
     grid-template-columns: max-content minmax(40px, 1fr) max-content max-content max-content max-content; }
   .dt-live-kill-cluster { display: inline-flex; gap: 4px; }
+  /* the per-run FOLLOW affordance (issue #194 §2) — same quiet register as the
+     kill button beside it, but tinted with the accent rather than the bad tone:
+     reading a conversation is the safe sibling of tearing a run down. */
+  .dt-live-follow-cluster { display: inline-flex; gap: 4px; }
+  .dt-live-follow { font-family: var(--v2-mono); font-size: calc(9.5px * var(--dt-font-scale, 1));
+    color: var(--v2-ink-faint); background: transparent; border: 1px solid var(--v2-rule);
+    border-radius: 4px; padding: 0 5px; line-height: 1.5; cursor: pointer; white-space: nowrap;
+    transition: color 0.15s, border-color 0.15s; }
+  .dt-live-follow:hover { color: var(--v2-accent); border-color: var(--v2-accent); }
   .dt-live-kill { font-family: var(--v2-mono); font-size: calc(9.5px * var(--dt-font-scale, 1));
     color: var(--v2-ink-faint); background: transparent; border: 1px solid var(--v2-rule);
     border-radius: 4px; padding: 0 5px; line-height: 1.5; cursor: pointer; white-space: nowrap;

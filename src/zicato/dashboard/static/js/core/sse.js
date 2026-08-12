@@ -5,7 +5,10 @@
 //
 //   * snapshot       → state.applySnapshot()
 //   * state_change   → debounced ONE /api/environment fetch
-//   * run_log        → append-only /api/run-log?after=<cursor> poll
+//   * run_log        → append-only /api/run-log?after=<cursor> poll, plus a
+//                      `run_log:grew` bus emit carrying the frame (which names
+//                      the events.jsonl that grew) for the live conversation
+//                      pane's cursor-append pull
 //   * heartbeat      → state.setHeartbeat() (merge)
 //   * : ping         → keepalive, ignored
 //
@@ -25,6 +28,7 @@
 // (a pre-RUNTIME-V2 server) DEGRADES to the legacy always-refresh path.
 
 import { state } from './state.js';
+import { bus } from './bus.js';
 import { loadEnvironment, pollLogTailAppend } from './api.js';
 
 const REFRESH_DEBOUNCE_MS = 400;
@@ -113,8 +117,18 @@ export function connectSSE() {
     }
     refreshAfterEvent();
   });
-  _sse.addEventListener('run_log', () => {
+  _sse.addEventListener('run_log', (ev) => {
     pollLogTailAppend();
+    // The same frame is the LIVE CONVERSATION signal: it fires when an
+    // events.jsonl GREW and names which one. Re-emitted on the bus so a
+    // follow pane can filter to its own run's file and pull its cursor
+    // delta — a pane watching one unit must not refetch on a sibling's
+    // growth. A frame we cannot parse is dropped rather than fanned out
+    // as an unfiltered wake-up.
+    try {
+      const frame = ev && ev.data != null ? JSON.parse(ev.data) : null;
+      if (frame && typeof frame === 'object') bus.emit('run_log:grew', frame);
+    } catch { /* not a frame we can route */ }
   });
   _sse.addEventListener('heartbeat', (ev) => {
     try { state.setHeartbeat(JSON.parse(ev.data)); state._changed(); }

@@ -198,6 +198,15 @@ class Turn:
     single turn; a tool call and its matching result land in the same
     turn's ``tool_calls`` / ``tool_results`` lists.
 
+    ``source_index`` is the HIGHEST parsed-event index folded into this
+    turn — the append cursor the live-follow delta filters on. It counts
+    positions in the parsed-event list (blank / unparseable lines never
+    take a position), NOT the per-run ``sequence``: a multi-run events
+    file restarts ``sequence`` at 0 inside every ``runId`` group, so a
+    sequence-keyed cursor is not monotone over the file, while the parsed
+    index always is (the file is append-only). ``-1`` marks a turn built
+    with no index attribution.
+
     ``run_index`` is the 1-based ordinal of the goldfive run this turn
     belongs to within a multi-run events file. ``multi_turn_emulated``
     board entries spawn N goldfive runs (one per emulated user turn) and
@@ -220,6 +229,7 @@ class Turn:
     tool_results: list[dict[str, Any]] = field(default_factory=list)
     run_id: str | None = None
     run_index: int = 1
+    source_index: int = -1
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -233,6 +243,7 @@ class Turn:
             "tool_results": [dict(tr) for tr in self.tool_results],
             "run_id": self.run_id,
             "run_index": self.run_index,
+            "source_index": self.source_index,
         }
 
 
@@ -245,6 +256,10 @@ class Annotation:
     conversation content; they explain what the framework did alongside
     it. ``anchor_seq`` is the sequence of the nearest preceding turn so
     the dashboard can pin the note to the conversation flow.
+
+    ``source_index`` is the parsed-event index this annotation was minted
+    from — the same append cursor :class:`Turn` carries, so the
+    live-follow delta filters both lists on one comparison.
     """
 
     kind: str = ""
@@ -252,6 +267,7 @@ class Annotation:
     summary: str = ""
     anchor_seq: int | None = None
     detail: dict[str, Any] = field(default_factory=dict)
+    source_index: int = -1
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -260,6 +276,7 @@ class Annotation:
             "summary": self.summary,
             "anchor_seq": self.anchor_seq,
             "detail": dict(self.detail),
+            "source_index": self.source_index,
         }
 
 
@@ -644,7 +661,6 @@ def reconstruct_transcript(events_path: Path, *, partial_ok: bool = True) -> Tra
     # always opens a fresh turn rather than extending run 1's last.
     for run_index, rid in enumerate(ordered_run_ids, start=1):
         bucket = sorted(groups[rid], key=_within_group_key)
-        ordered = [event for _, event in bucket]
 
         current: Turn | None = None
         pending_calls.clear()
@@ -655,7 +671,7 @@ def reconstruct_transcript(events_path: Path, *, partial_ok: bool = True) -> Tra
                 transcript.turns.append(current)
                 current = None
 
-        for event in ordered:
+        for src_idx, event in bucket:
             kind, payload = _kind_and_payload(event)
             if not kind:
                 continue
@@ -674,6 +690,7 @@ def reconstruct_transcript(events_path: Path, *, partial_ok: bool = True) -> Tra
                         summary=_clip(_annotation_summary(kind, payload), 1200),
                         anchor_seq=last_turn_seq,
                         detail={"event_kind": kind, **payload},
+                        source_index=src_idx,
                     )
                 )
                 continue
@@ -702,6 +719,10 @@ def reconstruct_transcript(events_path: Path, *, partial_ok: bool = True) -> Tra
                             "task_id": payload.get("task_id"),
                         }
                     )
+                    # The caller turn just changed — re-stamp it so a
+                    # follower past that turn's old index still receives it.
+                    if src_idx > caller.source_index:
+                        caller.source_index = src_idx
                     # The sub-agent's own summary still deserves a turn
                     # so the side-by-side view shows what it produced.
                     if not text:
@@ -727,6 +748,7 @@ def reconstruct_transcript(events_path: Path, *, partial_ok: bool = True) -> Tra
                     kind=kind,
                     run_id=rid,
                     run_index=run_index,
+                    source_index=src_idx,
                 )
             else:
                 assert current is not None
@@ -737,6 +759,10 @@ def reconstruct_transcript(events_path: Path, *, partial_ok: bool = True) -> Tra
                     current.ts = ts
                 if not current.agent and agent:
                     current.agent = agent
+                # …but the LATEST source index: a merged turn is "new" to a
+                # follower until every event it absorbed is past their cursor.
+                if src_idx > current.source_index:
+                    current.source_index = src_idx
 
             assert current is not None
             if text:

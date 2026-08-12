@@ -364,6 +364,64 @@ def test_ordering_by_sequence_not_file_order(tmp_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
+# source_index — the live-follow append cursor (issue #194 §2)
+# ---------------------------------------------------------------------------
+
+
+def test_source_index_is_the_parsed_position_not_the_sequence(tmp_path: Path) -> None:
+    """The cursor counts FILE positions, so out-of-order sequences do not
+    move it — that is what makes it monotone over an append-only file even
+    when a multi-run stream restarts its sequence numbering."""
+    lines = [
+        _camel("runStarted", {"goalSummary": "g"}, runId="r", sequence="5"),
+        _camel(
+            "taskCompleted",
+            {"summary": "later text", "agentName": "a"},
+            runId="r",
+            sequence="1",
+        ),
+    ]
+    t = reconstruct_transcript(_write(tmp_path, lines))
+
+    # Sorted by sequence (the agent turn leads), but each turn remembers the
+    # LINE it came from: the agent turn is file position 1.
+    assert [turn.text for turn in t.turns] == ["later text", "g"]
+    assert [turn.source_index for turn in t.turns] == [1, 0]
+    assert t.event_count == 2
+
+
+def test_merged_turn_carries_the_highest_source_index_it_absorbed(tmp_path: Path) -> None:
+    """A turn that keeps growing must keep re-qualifying for the delta."""
+    lines = [
+        _camel("goldfiveLlmCallStart", {"inputPreview": "thinking"}, runId="r", sequence="0"),
+        _camel("goldfiveLlmCallEnd", {"decisionSummary": "done"}, runId="r", sequence="1"),
+    ]
+    t = reconstruct_transcript(_write(tmp_path, lines))
+
+    assert len(t.turns) == 1
+    assert t.turns[0].source_index == 1
+
+
+def test_unparseable_line_takes_no_source_index_position(tmp_path: Path) -> None:
+    """A skipped line must not consume a cursor position, or every later
+    turn would sit one past where the follower expects it."""
+    lines = [
+        _camel("runStarted", {"goalSummary": "g"}, runId="r", sequence="0"),
+        "{ not json",
+        _camel(
+            "taskCompleted",
+            {"summary": "s", "agentName": "a"},
+            runId="r",
+            sequence="1",
+        ),
+    ]
+    t = reconstruct_transcript(_write(tmp_path, lines))
+
+    assert [turn.source_index for turn in t.turns] == [0, 1]
+    assert t.event_count == 2
+
+
+# ---------------------------------------------------------------------------
 # Multi-run grouping (multi_turn_emulated board entries)
 # ---------------------------------------------------------------------------
 
@@ -993,10 +1051,13 @@ def test_to_dict_is_json_serializable(tmp_path: Path) -> None:
         "tool_results",
         "run_id",
         "run_index",
+        # The live-follow append cursor (issue #194 §2): the highest
+        # parsed-event index folded into this turn.
+        "source_index",
     }
     for turn in decoded["turns"]:
         assert set(turn.keys()) == turn_keys
-    ann_keys = {"kind", "ts", "summary", "anchor_seq", "detail"}
+    ann_keys = {"kind", "ts", "summary", "anchor_seq", "detail", "source_index"}
     for ann in decoded["annotations"]:
         assert set(ann.keys()) == ann_keys
 
