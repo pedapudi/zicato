@@ -51,3 +51,12 @@ examples/target_1_presentation/agent/output/
 # The supervisor binary the hatchling build hook compiles and stages
 # into the wheel. Generated at build time — never committed.
 src/zicato/_bin/
+
+# The pinned pi runtime for the external proposer (integrations/pi).
+# The PIN lives in git (package.json + package-lock.json); the BYTES
+# arrive via `npm ci`, exactly like uv.lock and .venv.
+node_modules/
+# npm regenerates this on install; the reproducible pin is the exact
+# version in integrations/pi/package.json plus the publisher's own
+# npm-shrinkwrap.json, which pins every transitive dependency.
+package-lock.json
