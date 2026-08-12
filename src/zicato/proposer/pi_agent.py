@@ -45,10 +45,13 @@ configured default deciding would mean the run is not the run the
 contract describes.
 
 Registering a tool server (the MCP surface of issue #147 phases 3-5) does
-not touch the transport: override :meth:`PiProposerAgent.tool_flags` to
-return the server's launch flags, and declare the tool names it exposes in
-:data:`SANCTIONED_TOOLS`. Both are read by the launch AND by the contract
-identity, so a widened tool surface rolls the epoch by construction.
+not touch the transport. Three overrides, no edits:
+:meth:`PiProposerAgent.tool_flags` returns the server's launch flags,
+:meth:`PiProposerAgent.tool_env` returns the per-LAUNCH variables that
+point it at this challenger's round context, and the tool names it exposes
+go in :data:`SANCTIONED_TOOLS`. That constant is read by the launch AND by
+the contract identity, so a widened tool surface rolls the epoch by
+construction.
 """
 
 from __future__ import annotations
@@ -219,7 +222,7 @@ def build_pi_argv(
     return argv
 
 
-def build_pi_env(agent_dir: Path) -> dict[str, str]:
+def build_pi_env(agent_dir: Path, extra: Mapping[str, str] | None = None) -> dict[str, str]:
     """The child environment: the operator's, with pi's own vars overridden.
 
     Inheriting the parent environment is deliberate — provider credentials
@@ -229,8 +232,17 @@ def build_pi_env(agent_dir: Path) -> dict[str, str]:
     package dir all point inside a fresh per-challenger tree, so the
     process cannot reach the operator's installed packages, memory
     extensions or saved trust decisions.
+
+    ``extra`` is the other half of the tool-registration seam
+    (:meth:`PiProposerAgent.tool_env`): per-LAUNCH variables, so concurrent
+    challengers can each point a tool server at their own round context
+    without writing to the shared process environment. It is applied
+    BEFORE the pi-state overrides, so a tool server cannot relax the
+    envelope by setting ``PI_OFFLINE`` or redirecting the agent dir.
     """
     env = dict(os.environ)
+    if extra:
+        env.update(extra)
     env["PI_CODING_AGENT_DIR"] = str(agent_dir)
     env["PI_CODING_AGENT_SESSION_DIR"] = str(agent_dir / "sessions")
     env["PI_PACKAGE_DIR"] = str(agent_dir / "packages")
@@ -512,6 +524,28 @@ class PiProposerAgent:
         """
         return ()
 
+    def tool_env(self, ctx: ProposerContext, agent_dir: Path) -> Mapping[str, str]:
+        """Per-LAUNCH environment for whatever :meth:`tool_flags` registered.
+
+        The other half of the seam, and the half that is easy to get
+        wrong: a tool server needs this round's context, and best-of-N
+        runs N challengers concurrently in one process, so the context
+        cannot travel through the shared process environment — the last
+        slot to write it would win for all of them. It travels here
+        instead, one mapping per launch.
+
+        ``agent_dir`` is the per-challenger isolated tree. Write anything
+        the server must read (a serialized round context, a socket path)
+        inside it: it is already unique per invocation and it is removed
+        when the call ends, so nothing outlives the challenger that
+        created it.
+
+        Whatever this returns cannot loosen the envelope — the pi-state
+        variables are applied after it (:func:`build_pi_env`).
+        """
+        del ctx, agent_dir
+        return {}
+
     async def propose(self, ctx: ProposerContext) -> Experiment:
         """Drive one challenger's proposal through a live pi session."""
         if not ctx.model:
@@ -545,7 +579,7 @@ class PiProposerAgent:
                         extra_tool_flags=self.tool_flags(),
                     ),
                     cwd=agent_dir / "cwd",
-                    env=build_pi_env(agent_dir),
+                    env=build_pi_env(agent_dir, self.tool_env(ctx, agent_dir)),
                     system_prompt=system_prompt,
                 )
             except PiTransportError as exc:
