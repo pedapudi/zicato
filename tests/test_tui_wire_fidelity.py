@@ -22,7 +22,7 @@ from tests.test_dashboard_server import _populate_workspace
 from tests.tui_fixture import PAYLOADS
 from zicato.dashboard.server import create_app
 from zicato.dashboard.static_assets import resolve_static_dir
-from zicato.tui.client import ServiceError
+from zicato.tui.client import ServiceError, SnapshotClient
 from zicato.tui.lenses import LENSES, LensContext, safe_render
 from zicato.tui.routes import Route
 from zicato.tui.view import render_text
@@ -148,3 +148,47 @@ def test_gate_and_generation_payloads_answer_for_a_real_pair(
         f"/api/generation/{epoch_id}/{gen}/per-judge",
     ):
         assert isinstance(live.get(path), dict), path
+
+
+# ---------------------------------------------------------------------------
+# Served shapes that are NOT objects
+# ---------------------------------------------------------------------------
+#
+# A lens reads payloads with ``as_dict`` / ``as_list``, which coerce anything
+# unexpected to an empty container. That is the right default — a lens must
+# degrade, never raise — but it also means a wrong assumption about a served
+# shape fails SILENTLY, as a screen full of em-dashes rather than an error.
+# These pin the three shapes most likely to be assumed wrongly.
+
+
+@pytest.mark.parametrize("path", ["/api/heartbeat", "/api/active-tournament"])
+def test_a_json_null_payload_does_not_break_any_lens(path: str, epoch_id: str) -> None:
+    """Two endpoints legitimately serve JSON ``null``, not an object.
+
+    ``null`` means "no loop is running" / "no tournament in flight" — both
+    ordinary states, not errors. Every lens must render through them.
+    """
+    payloads: dict[str, Any] = {
+        "/api/heartbeat": None,
+        "/api/active-tournament": None,
+        "/api/workspace": {"current_epoch_id": epoch_id},
+    }
+    assert path in payloads, "the parametrisation must name a payload under test"
+    for lens in LENSES:
+        view = safe_render(
+            lens,
+            SnapshotClient(payloads),
+            LensContext(route=Route(lens=lens.name, params={"epoch": epoch_id})),
+        )
+        assert "failed to render" not in (view.degraded or ""), (lens.name, path)
+        assert render_text(view).strip()
+
+
+def test_active_runs_is_a_bare_array_not_an_object(live: LiveClient) -> None:
+    """``/api/active-runs`` serves a LIST at the top level.
+
+    Every other collection endpoint wraps its rows in an object, so this one is
+    the standing trap. Pinned here so a future lens that reaches for it starts
+    from the served truth rather than from the house pattern.
+    """
+    assert isinstance(live.get("/api/active-runs"), list)
