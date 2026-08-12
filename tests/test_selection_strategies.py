@@ -371,6 +371,63 @@ def test_racing_rung_uses_board_subset_then_full_board() -> None:
     assert all(len(m.board_subset) == 2 for m in first)
 
 
+def test_racing_stratified_schedule_is_order_independent_and_nested() -> None:
+    board_ids = [group + str(index) for group in ("a", "b", "c", "d") for index in range(4)]
+    board_tags = {entry_id: (entry_id[0],) for entry_id in board_ids}
+    spec = TournamentStructure(
+        structure="racing",
+        params={
+            "field_size": 4,
+            "eta": 2,
+            "board_fraction": 0.25,
+            "slice_schedule": "stratified_random_v1",
+        },
+    )
+    # Reverse one source ordering: tag-balanced randomness must be derived
+    # from the frozen board contents, not JSONL row order.
+    left = make_strategy(spec, board_ids=board_ids, board_tags=board_tags)
+    right = make_strategy(spec, board_ids=list(reversed(board_ids)), board_tags=board_tags)
+    challengers = [_challenger(f"v{i}") for i in (1, 2, 3, 4)]
+    left.seed(_champion("v0"), challengers)
+    right.seed(_champion("v0"), challengers)
+
+    left_rung0 = left.next_matchups()
+    right_rung0 = right.next_matchups()
+    assert left_rung0 and right_rung0
+    rung0 = left_rung0[0].board_subset
+    assert rung0 == right_rung0[0].board_subset
+    assert rung0 is not None and len(rung0) == 4
+    assert {entry_id[0] for entry_id in rung0} == {"a", "b", "c", "d"}
+
+    # Four challengers halve to two, which schedules rung 1 on a nested
+    # eight-entry prefix. Every stratum remains proportionally represented.
+    scalars = {"v0": 1.0, "v1": 0.9, "v2": 0.8, "v3": 0.5, "v4": 0.2}
+    for matchup in left_rung0:
+        left.record_result(
+            _result(
+                matchup,
+                left_scalar=scalars[matchup.left.generation_id],
+                right_scalar=scalars[matchup.right.generation_id],
+            )
+        )
+    rung1 = left.next_matchups()
+    assert rung1
+    rung1_subset = rung1[0].board_subset
+    assert rung1_subset is not None and len(rung1_subset) == 8
+    assert set(rung0) <= set(rung1_subset)
+    assert {tag: sum(entry_id.startswith(tag) for entry_id in rung1_subset) for tag in "abcd"} == {
+        "a": 2,
+        "b": 2,
+        "c": 2,
+        "d": 2,
+    }
+
+
+def test_racing_rejects_unknown_slice_schedule() -> None:
+    with pytest.raises(ValueError, match="slice_schedule"):
+        make_strategy(_racing_spec(slice_schedule="unseeded"))
+
+
 def test_racing_final_runs_full_board_gate() -> None:
     s = make_strategy(_racing_spec())
     champ = _champion("v0")

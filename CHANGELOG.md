@@ -1,5 +1,14 @@
 # Changelog
 
+### Racing slices can be deterministic and tag-balanced
+
+Racing now supports `tournament.params.slice_schedule`.
+`"prefix"` preserves the legacy authored-board order, while the new
+`"stratified_random_v1"` derives a reproducible, tag-balanced permutation
+from the frozen board and uses nested prefixes for its rungs. New workspace
+scaffolds opt into the latter; adding it to an existing racing contract rolls
+the epoch, so historical evaluations keep their original schedule.
+
 ### The builder reaches every contract knob, and a guard says so
 
 `holdout_margin` and `holdout_entry_regression_budget` — the holdout

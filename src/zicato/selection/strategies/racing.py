@@ -24,8 +24,9 @@ a misconfiguration degrades gracefully rather than erroring.
 
 from __future__ import annotations
 
+import hashlib
 import math
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from typing import Any
 
 from zicato.core.types import TournamentDecision
@@ -45,6 +46,72 @@ from zicato.selection.strategy import (
 )
 
 
+def _stratified_random_order(
+    board_ids: Sequence[str], tags_by_id: Mapping[str, object]
+) -> tuple[str, ...]:
+    """Return a stable, tag-balanced permutation of a frozen board.
+
+    The ordering is derived solely from the board ids and their complete tag
+    sets, both already covered by the board's contract hash. Entries in each
+    tag stratum are independently hash-shuffled; a largest-deficit merge then
+    keeps every prefix as proportionate to the full stratum mix as possible.
+    Thus rung slices remain nested while neither authored board order nor a
+    process-global random seed can decide an elimination.
+    """
+    if not board_ids:
+        return ()
+
+    def tags_for(entry_id: str) -> tuple[str, ...]:
+        raw_tags = tags_by_id.get(entry_id, ())
+        if isinstance(raw_tags, str):
+            return (raw_tags,)
+        if not isinstance(raw_tags, Sequence):
+            return ()
+        return tuple(sorted({str(tag) for tag in raw_tags}))
+
+    # Entry ids are unique in a validated board. Sorting here makes this order
+    # independent of JSONL row order; tags distinguish the sampling strata.
+    strata: dict[tuple[str, ...], list[str]] = {}
+    for entry_id in sorted(str(entry_id) for entry_id in board_ids):
+        strata.setdefault(tags_for(entry_id), []).append(entry_id)
+
+    seed_material = "\x1e".join(
+        f"{entry_id}\x1f{'\x1d'.join(tags_for(entry_id))}"
+        for entry_id in sorted(str(entry_id) for entry_id in board_ids)
+    )
+
+    def rank(*parts: str) -> bytes:
+        payload = "\x1c".join((seed_material, *parts)).encode("utf-8")
+        return hashlib.sha256(payload).digest()
+
+    # Shuffle independently inside each stratum. The stable id fallback makes
+    # a vanishingly unlikely digest collision deterministic too.
+    for stratum, entry_ids in strata.items():
+        stratum_key = "\x1d".join(stratum)
+        entry_ids.sort(key=lambda entry_id: (rank("entry", stratum_key, entry_id), entry_id))
+
+    total = len(board_ids)
+    used = {stratum: 0 for stratum in strata}
+    tie_order = {stratum: rank("stratum", "\x1d".join(stratum)) for stratum in strata}
+    ordered: list[str] = []
+    for step in range(1, total + 1):
+        available = [
+            stratum for stratum, entry_ids in strata.items() if used[stratum] < len(entry_ids)
+        ]
+        # Exact integer deficits avoid platform-dependent float ties:
+        # desired samples at this prefix minus samples already emitted.
+        chosen = max(
+            available,
+            key=lambda stratum: (
+                step * len(strata[stratum]) - used[stratum] * total,
+                tie_order[stratum],
+            ),
+        )
+        ordered.append(strata[chosen][used[chosen]])
+        used[chosen] += 1
+    return tuple(ordered)
+
+
 class RacingStrategy(SelectionStrategy):
     """Successive-halving rungs, then a final full-board champion-gate duel."""
 
@@ -55,6 +122,8 @@ class RacingStrategy(SelectionStrategy):
     # enlarge it). Declared explicitly so the shared default-replicates map
     # reads a stable value.
     _default_replicates = 1
+    _LEGACY_SLICE_SCHEDULE = "prefix"
+    _STRATIFIED_RANDOM_SLICE_SCHEDULE = "stratified_random_v1"
 
     def __init__(self, params: dict[str, Any] | None = None) -> None:
         super().__init__(params)
@@ -65,6 +134,19 @@ class RacingStrategy(SelectionStrategy):
         self._rung0 = _param_int(self.params, "rung0_board_size", 0)  # 0 ⇒ use fraction
         raw_ids = self.params.get("board_ids", ())
         self._board_ids: tuple[str, ...] = tuple(str(x) for x in raw_ids)
+        self._slice_schedule = str(self.params.get("slice_schedule", self._LEGACY_SLICE_SCHEDULE))
+        if self._slice_schedule not in {
+            self._LEGACY_SLICE_SCHEDULE,
+            self._STRATIFIED_RANDOM_SLICE_SCHEDULE,
+        }:
+            raise ValueError("racing slice_schedule must be 'prefix' or " "'stratified_random_v1'")
+        raw_tags = self.params.get("_board_tags", {})
+        tags_by_id = raw_tags if isinstance(raw_tags, Mapping) else {}
+        self._slice_board_ids = (
+            _stratified_random_order(self._board_ids, tags_by_id)
+            if self._slice_schedule == self._STRATIFIED_RANDOM_SLICE_SCHEDULE
+            else self._board_ids
+        )
         self._replicates = max(1, _param_int(self.params, "replicates", self._default_replicates))
 
         # --- Matchup-level wall-clock budgets (opt-in; None ⇒ uncapped). ---
@@ -129,7 +211,7 @@ class RacingStrategy(SelectionStrategy):
         if not self._board_ids:
             return None  # whole board
         size = self._rung_board_size()
-        return self._board_ids[:size]
+        return self._slice_board_ids[:size]
 
     def _rung_fraction(self) -> float:
         total = len(self._board_ids)

@@ -28,6 +28,7 @@ def test_recommended_scaffold_weights_shape() -> None:
     assert t.params["field_size"] == 4
     assert t.params["eta"] == 2
     assert t.params["board_fraction"] == 0.4
+    assert t.params["slice_schedule"] == "stratified_random_v1"
     assert t.params["replicates"] == 2
     # The evidence gate is enabled EXPLICITLY with an honest budget.
     assert read_promote_confidence_threshold(t.params) == 0.8
@@ -65,6 +66,7 @@ def test_init_writes_full_effective_scoring_scaffold(tmp_path: Path) -> None:
     assert raw["tournament"]["structure"] == "racing"
     assert params["field_size"] == 4
     assert params["replicates"] == 2
+    assert params["slice_schedule"] == "stratified_random_v1"
     assert params["promote_confidence_threshold"] == 0.8
     assert params["promote_confidence_replicates"] == 32
     assert raw["proposer_quality"]["best_of_n"] == 3

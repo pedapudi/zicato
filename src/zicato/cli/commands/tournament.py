@@ -139,7 +139,11 @@ def tournament_cmd(
     from zicato.selection.registry import make_strategy  # noqa: PLC0415
     from zicato.tournament import run_fast_mode, run_tournament  # noqa: PLC0415
 
-    strategy = make_strategy(weights.tournament_structure, board_ids=[e.id for e in board])
+    strategy = make_strategy(
+        weights.tournament_structure,
+        board_ids=[e.id for e in board],
+        board_tags={e.id: e.tags for e in board},
+    )
     resolved_replicates = replicates if replicates is not None else strategy.replicates()
 
     if mode == "full":

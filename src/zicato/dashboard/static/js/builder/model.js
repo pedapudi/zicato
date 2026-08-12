@@ -124,6 +124,13 @@ export function paramSpecsFor(structure) {
         key: 'rung0_board_size', label: 'Rung-0 board size (override)', def: 0,
         min: 0, step: 1, int: true, removeAtZero: true,
         info: { title: 'Rung-0 board size', def: 'unset (use the fraction)', body: 'An explicit entry COUNT for the first (cheapest) racing rung, overriding board_fraction. When > 0 the first rung scores exactly this many train entries (capped at the board); 0 removes the override and the rung-0 slice falls back to ceil(board_fraction × board). A larger rung-0 buys more signal on the cheapest rung at more cost.' },
+      }, {
+        key: 'slice_schedule', label: 'Board-slice schedule', def: 'prefix',
+        options: [
+          { value: 'prefix', label: 'Prefix (legacy)' },
+          { value: 'stratified_random_v1', label: 'Stratified random' },
+        ],
+        info: { title: 'Board-slice schedule', def: 'prefix (legacy); scaffold: stratified random', body: 'Prefix preserves the board authoring order. Stratified random derives a reproducible permutation from the frozen board and its tags, then uses nested prefixes of that order. It prevents authored order from deciding a cut while keeping every rung reproducible and tag-balanced.' },
       }, ...evidence];
     default:
       return [FIELD_SIZE, REPLICATES, ...evidence];
