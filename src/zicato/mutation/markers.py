@@ -69,7 +69,8 @@ enforceable containment.
 from __future__ import annotations
 
 import re
-from collections.abc import Mapping
+from collections.abc import Iterator, Mapping
+from contextlib import contextmanager
 from dataclasses import dataclass
 from functools import cache
 from pathlib import Path
@@ -284,6 +285,27 @@ def active_syntax_table() -> Mapping[str, MarkerSyntax]:
     return _ACTIVE_TABLE
 
 
+@contextmanager
+def swap_syntax_table(raw: Mapping[str, Any] | None) -> Iterator[tuple[str, ...]]:
+    """Install ``raw`` for the block, then restore the previous table.
+
+    The sanctioned entry for tests and tooling that need a declared table
+    for a bounded scope. :func:`install_syntax_table` is the RUN path's
+    one-way install — a caller that uses it without restoring leaves every
+    later enumeration in the process running under a table it never asked
+    for, which is an order-dependent failure rather than an obvious one.
+    Restoring on the way out (including on exception) is what keeps that
+    from being a footgun, so reach for this rather than the module state.
+    """
+
+    previous = dict(_ACTIVE_TABLE)
+    try:
+        yield install_syntax_table(raw)
+    finally:
+        _ACTIVE_TABLE.clear()
+        _ACTIVE_TABLE.update(previous)
+
+
 @dataclass(frozen=True, slots=True)
 class ParsedMarker:
     """A successfully-parsed opening marker comment line.
@@ -398,5 +420,6 @@ __all__ = [
     "is_grading_marker",
     "marker_syntax_for",
     "parse_marker_line",
+    "swap_syntax_table",
     "syntax_table_from_config",
 ]

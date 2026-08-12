@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import logging
 import textwrap
+from collections.abc import Iterator
 from dataclasses import asdict
 from pathlib import Path
 
@@ -24,9 +25,10 @@ from zicato.mutation.enumerator import (
 )
 from zicato.mutation.markers import (
     BUILTIN_SYNTAXES,
-    install_syntax_table,
+    active_syntax_table,
     is_end_marker,
     parse_marker_line,
+    swap_syntax_table,
     syntax_table_from_config,
 )
 from zicato.mutation.validator import validate_patches, validate_post_apply
@@ -39,12 +41,11 @@ _TS_SURFACE = {".ts": {"leaders": ["//", "/*"], "trailers": ["*/"]}}
 
 
 @pytest.fixture
-def declare_typescript() -> object:
-    """Install the ``.ts`` declaration for one test, then restore the built-ins."""
+def declare_typescript() -> Iterator[None]:
+    """Declare ``.ts`` for one test, through the scoped entry point."""
 
-    install_syntax_table(_TS_SURFACE)
-    yield
-    install_syntax_table(None)
+    with swap_syntax_table(_TS_SURFACE):
+        yield
 
 
 def _write(path: Path, body: str) -> None:
@@ -443,6 +444,23 @@ def test_an_undeclared_suffix_is_not_surface(tmp_path: Path) -> None:
 
     _write(tmp_path / "ext.ts", '// zicato:mutable:file id="ext"\nexport const x = 1;\n')
     assert enumerate_mutations([tmp_path]) == []
+
+
+def test_a_declared_table_does_not_outlive_its_scope(tmp_path: Path) -> None:
+    """Process-level state, scoped: what one test declares, the next never sees.
+
+    The run path's install is one-way ON PURPOSE — propose and apply must
+    agree on the surface for the whole invocation. That makes an unrestored
+    activation an order-dependent leak, so the scoped entry restores the
+    previous table and the autouse fixture in ``conftest`` backstops it.
+    """
+
+    _write(tmp_path / "ext.ts", '// zicato:mutable:file id="ext"\nexport const x = 1;\n')
+    with swap_syntax_table(_TS_SURFACE) as declared:
+        assert declared == (".ts",)
+        assert [p.id for p in enumerate_mutations([tmp_path])] == ["ext"]
+    assert enumerate_mutations([tmp_path]) == []
+    assert dict(active_syntax_table()) == dict(BUILTIN_SYNTAXES)
 
 
 def test_the_table_refuses_a_declaration_it_could_not_enforce() -> None:
