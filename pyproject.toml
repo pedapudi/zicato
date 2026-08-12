@@ -83,6 +83,14 @@ dashboard = [
 tui = [
     "textual == 8.2.8",
 ]
+# The Model Context Protocol server that exposes the proposer tool
+# registry (zicato.proposer.mcp_server) to a proposer that is NOT an
+# in-process ADK agent — an external agent process, an operator's own
+# client. Optional because every shipped proposer path reaches the same
+# functions in-process; the extra only buys the second door. Every `mcp`
+# import in that module is lazy, so importing it without the extra is
+# safe and only building/serving a server needs the dependency.
+mcp = ["mcp >= 1.0"]
 dev = [
     "pytest >= 8",
     "pytest-asyncio >= 0.23",
@@ -120,6 +128,9 @@ dev = [
     "httpx >= 0.27",
     # The terminal console and its Pilot-driven tests.
     "textual == 8.2.8",
+    # The proposer MCP server and its in-memory client/server tests
+    # (tests/test_proposer_mcp_server.py importorskips it).
+    "mcp >= 1.0",
     # The vendored dogfood targets — a separate distribution under
     # examples/, resolved as a uv workspace member (see
     # [tool.uv.sources] below). The test_example_* smoke tests import
@@ -397,6 +408,44 @@ forbidden_modules = ["zicato.builder"]
 # mount); what this contract forbids is the cli growing its own builder
 # dependency.
 allow_indirect_imports = true
+
+[[tool.importlinter.contracts]]
+name = "the proposer's patch validator has no path to the board"
+type = "forbidden"
+source_modules = ["zicato.proposer.validate"]
+forbidden_modules = [
+    "zicato.board",
+    "zicato.judge_runtime",
+    "zicato.emulator",
+    "zicato.adapters",
+    "zicato.adapter_factory",
+    "zicato._tournament_worker",
+]
+# The governing principle of docs/design/PROPOSER.md: the proposer may
+# check its patch by any means that consumes no board data and produces no
+# scores, and may NEVER execute board entries. `validate_patches` is the
+# only proposer tool that writes anything at all, so the claim is pinned
+# structurally rather than by inspection.
+#
+# The forbidden set is exactly the CAPABILITY surface: `zicato.board` is
+# where entry text is loaded, `zicato.adapters` / `zicato.adapter_factory`
+# / `zicato._tournament_worker` are how a harness is loaded and run, and
+# `zicato.emulator` / `zicato.judge_runtime` are how an entry is judged.
+# The validator can reach none of them, transitively or otherwise.
+#
+# `zicato.scoring` and `zicato.tournament` are deliberately NOT listed:
+# they are reachable from every module in the repo through
+# `zicato.core.types` -> `zicato.core.scoring_config`, which imports them
+# for TYPE definitions. That edge is a type-model artifact, not a
+# capability — nothing on it reads a board entry or produces a score — and
+# listing them would make the contract unsatisfiable for reasons that say
+# nothing about this module. The capability claim is carried by the list
+# above and by the runtime closure pin in tests/test_proposer_validate.py.
+#
+# The tier-3 `adapter.load` probe reaches an adapter by SPAWNING
+# `zicato.proposer._load_probe` as a subprocess, which is exactly why the
+# probe lives in its own module: it keeps the adapter packages on this
+# forbidden list instead of forcing an exemption.
 
 [[tool.importlinter.contracts]]
 name = "the query layer stays dashboard-free"

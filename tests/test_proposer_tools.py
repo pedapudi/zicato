@@ -15,6 +15,7 @@ from pathlib import Path
 
 import pytest
 
+from zicato.proposer import tool_context
 from zicato.proposer import tools as proposer_tools
 from zicato.proposer.tools import (
     DEFAULT_PROPOSER_TOOLS,
@@ -28,6 +29,7 @@ from zicato.proposer.tools import (
     read_journal,
     read_mutable_file,
     read_parent_diff,
+    validate_patches,
 )
 from zicato.testing import make_mutation_point
 
@@ -326,11 +328,11 @@ def test_tools_raise_with_no_bound_context() -> None:
 def test_bind_context_sets_and_resets(tmp_path: Path) -> None:
     ctx = _make_ctx(tmp_path)
     # Unset before.
-    assert proposer_tools._TOOL_CONTEXT.get() is None
+    assert tool_context._TOOL_CONTEXT.get() is None
     with bind_proposer_tool_context(ctx):
-        assert proposer_tools._TOOL_CONTEXT.get() is ctx
+        assert tool_context._TOOL_CONTEXT.get() is ctx
     # Reset after the block, even though we entered cleanly.
-    assert proposer_tools._TOOL_CONTEXT.get() is None
+    assert tool_context._TOOL_CONTEXT.get() is None
 
 
 def test_bind_context_resets_on_exception(tmp_path: Path) -> None:
@@ -338,10 +340,21 @@ def test_bind_context_resets_on_exception(tmp_path: Path) -> None:
     with pytest.raises(RuntimeError, match="boom"):
         with bind_proposer_tool_context(ctx):
             raise RuntimeError("boom")
-    assert proposer_tools._TOOL_CONTEXT.get() is None
+    assert tool_context._TOOL_CONTEXT.get() is None
 
 
-def test_default_proposer_tools_are_the_read_only_set() -> None:
+def test_default_proposer_tools_are_the_sanctioned_set() -> None:
+    """The registry is the whole sanctioned surface, in order.
+
+    Every entry but the last is read-only over the parent snapshot.
+    ``validate_patches`` is the one tool that writes, and only into a
+    disposable scratch copy in the OS temp root — never the snapshot the
+    round is about to patch (``zicato.proposer.validate``). Adding a tool
+    here widens what the proposer can do, so the list is pinned rather than
+    counted.
+    """
+    from zicato.proposer.redacted_query import REDACTED_QUERY_TOOLS
+
     assert DEFAULT_PROPOSER_TOOLS == (
         list_mutation_points,
         read_mutable_file,
@@ -351,4 +364,6 @@ def test_default_proposer_tools_are_the_read_only_set() -> None:
         mutation_track_record,
         read_parent_diff,
         mutation_usage,
+        validate_patches,
+        *REDACTED_QUERY_TOOLS,
     )
