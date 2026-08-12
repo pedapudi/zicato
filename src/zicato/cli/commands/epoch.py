@@ -55,10 +55,14 @@ import click
 
 from zicato.core.types import ScoringWeights
 from zicato.epoch import lifecycle
-from zicato.epoch.contract import default_contract_paths
+from zicato.epoch.contract import default_contract_paths, resolve_contract_inputs
 from zicato.epoch.lineage import render_lineage_summary
 from zicato.index.ingest import rebuild_index, repair_epoch_goals
-from zicato.workspace.config_io import read_workspace_config, write_workspace_config
+from zicato.workspace.config_io import (
+    read_workspace_config,
+    workspace_is_initialized,
+    write_workspace_config,
+)
 
 
 def _prompt_for_goal() -> str:
@@ -286,16 +290,15 @@ def new_cmd(
     # contexts (CI, piped input, automation).
     resolved_goal = goal if goal is not None else _prompt_for_goal()
 
-    # Carry the registered inner-harness identity (entrypoint + mutable
-    # trees) into the epoch's contract hash. `zicato evolve` derives the
-    # contract hash from these same `config.json` values via
-    # resolve_contract_inputs; freezing the epoch with empty identity
-    # components would make the two hashes disagree and trigger a
-    # spurious roll on the very first evolve.
-    config = read_workspace_config(ws)
-    entrypoint = str(config.get("adk_entrypoint", ""))
-    raw_trees = config.get("mutable_trees") or config.get("source_roots") or []
-    mutable_trees = tuple(str(t) for t in raw_trees)
+    # Carry the workspace's registered contract components (inner-harness
+    # identity, proposer dir, external proposer, proposer static checks)
+    # into the epoch's contract hash, read through the SAME resolver
+    # `zicato evolve` uses. Freezing the epoch with any component missing
+    # would make the two hashes disagree and roll the epoch on the very
+    # first evolve — and would run the epoch under a proposer the operator
+    # never registered. An uninitialized workspace has nothing registered
+    # to carry; the epoch then hashes every component empty, as before.
+    contract = resolve_contract_inputs(ws) if workspace_is_initialized(ws) else None
 
     cfg = lifecycle.new_epoch(
         workspace_root=ws,
@@ -305,8 +308,7 @@ def new_cmd(
         weights=weights,
         auto_close_previous=True,
         aux_call_llm=None,
-        entrypoint=entrypoint,
-        mutable_trees=mutable_trees,
+        contract=contract,
         goal=resolved_goal,
     )
     # Publish the supplied files as the workspace's live contract so

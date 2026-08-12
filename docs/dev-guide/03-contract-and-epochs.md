@@ -146,7 +146,7 @@ contract hash is the mechanical detector for "the ground shifted."
 
 `ContractInputs` (`src/zicato/epoch/contract.py`) is the frozen bundle the
 hasher consumes — three live file paths plus the two harness-identity strings
-plus the optional proposer dir:
+plus the proposer's three optional fields:
 
 ```python
 # src/zicato/epoch/contract.py — ContractInputs
@@ -159,12 +159,21 @@ plus the optional proposer dir:
     #: the epoch, or ``None`` for the built-in default proposer. ``None``
     #: by default so existing construction sites keep working.
     proposer_path: Path | None = None
+    #: The resolved ``runtime.proposer_agent`` external proposer, or None.
+    external_proposer: ExternalProposerConfig | None = None
+    #: ``contract.proposer_static_checks`` — the tier-2 checks the proposer
+    #: holds its own draft patches to.
+    proposer_static_checks: tuple[str, ...] = ()
 ```
+
+The last three all canonicalize into the single `proposer` component: which
+agent proposes, and under what self-imposed checks.
 
 `resolve_contract_inputs(workspace_root)` builds it by reading the workspace's
 `config.json`: `contract.board_path` / `brief_path` (legacy alias
 `rubric_path`) / `scoring_path`, `adk_entrypoint`, `mutable_trees` (legacy alias
-`source_roots`), and the optional `contract.proposer_path`. A relative
+`source_roots`), the optional `contract.proposer_path`,
+`runtime.proposer_agent`, and `contract.proposer_static_checks`. A relative
 `proposer_path` is absolutized against the workspace's *parent* (the operator's
 project root). A missing `config.json` raises `FileNotFoundError` telling the
 operator to run `zicato register`.
@@ -176,6 +185,21 @@ operator to run `zicato register`.
 > copies are what a *created* epoch hashes; the live copies are what the *next*
 > `evolve` re-hashes to detect drift. If you point a canonicalizer at the wrong
 > one, every round will look like a contract change.
+
+> ⛔ NEVER hand-enumerate the registered components when creating an epoch.
+> `new_epoch` takes the resolved `ContractInputs` whole (`contract=`) and
+> re-points only its three file paths at the copies it just froze; both
+> creators — `zicato epoch new` and `_create_epoch_from_contract` — pass what
+> `resolve_contract_inputs` returned. Passing one keyword per component is how
+> issue #186 happened: `epoch new` carried `entrypoint` and `mutable_trees`
+> only, so a workspace with a registered `proposer_path` froze `None` and ran
+> the whole epoch under the built-in proposer, while both creators dropped
+> `external_proposer` and `proposer_static_checks` and could never match the
+> hash `evolve` recomputes. `tests/test_epoch_contract_carryover.py` is the
+> guard: a component added to `ContractInputs` fails it until the fixture
+> registers it. The `entrypoint` / `mutable_trees` / `proposer_path` keywords
+> that remain on `new_epoch` are shorthand for callers with no workspace
+> config to resolve — tests.
 
 ### 3.1.1 The on-disk epoch layout
 
