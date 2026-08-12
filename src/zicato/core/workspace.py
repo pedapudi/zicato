@@ -452,6 +452,9 @@ __all__ = [
     "reflection_scorecards_path",
     "reflection_findings_path",
     "reflection_practices_path",
+    # Defined since the eval-synthesis surface landed but never exported; the
+    # CLI reaches it through the module, so the omission was invisible.
+    "reflection_suggestions_path",
     "proposer_reflections_dir",
     "proposer_reflection_dir",
     "proposer_reflection_findings_path",

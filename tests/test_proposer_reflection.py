@@ -352,8 +352,69 @@ def test_applying_rolls_the_contract_hash(tmp_path: Path) -> None:
     )
 
     before = compute_contract_hash(inputs)
-    apply_recommendation(tmp_path, finding_id, proposer_path=proposer_dir, epoch_id=EPOCH)
+    applied = apply_recommendation(tmp_path, finding_id, proposer_path=proposer_dir, epoch_id=EPOCH)
     assert compute_contract_hash(inputs) != before
+
+    # ...and it must keep rolling for a REPLACEMENT, not only for the first
+    # add. The canon hashes a skill's normalized BODY and deliberately does not
+    # hash its frontmatter description, so an edit that moved only the
+    # description would be invisible to the gate — an applied recommendation
+    # that silently did NOT roll, under a command whose whole contract is that
+    # it does. The drafted skill is safe from that because its heading and its
+    # evidence line live in the body; this asserts the property rather than
+    # trusting the layout.
+    rewritten = applied.path.read_text(encoding="utf-8").replace(
+        "description: ", "description: REWORDED "
+    )
+    applied.path.write_text(rewritten, encoding="utf-8")
+    description_only = compute_contract_hash(inputs)
+
+    body_edit = rewritten + "\nOne more sentence of guidance.\n"
+    applied.path.write_text(body_edit, encoding="utf-8")
+    assert (
+        compute_contract_hash(inputs) != description_only
+    ), "a semantic body edit must roll the epoch"
+
+
+def test_a_description_only_skill_edit_does_not_roll(tmp_path: Path) -> None:
+    """Pinning the CANON's semantics, which this feature must not drift.
+
+    ``_canon_proposer`` folds each skill as ``{name, sha256(normalized body)}``:
+    the frontmatter description is NOT hashed, so rewording it is a cosmetic
+    edit that leaves generations comparable and correctly does not roll. This
+    test exists so that stays a DECISION rather than an accident — if a future
+    change starts hashing the description, every workspace with a proposer dir
+    rolls an epoch on the next evolve for no semantic reason, and this fails
+    loudly instead.
+    """
+    from zicato.epoch.contract import ContractInputs, compute_contract_hash
+
+    proposer_dir = tmp_path / "proposers" / "p"
+    skills = proposer_dir / "skills"
+    skills.mkdir(parents=True)
+    skill = skills / "house-style.md"
+    skill.write_text(
+        "---\nname: house-style\ndescription: the original wording\n---\n\nBody text.\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "board.jsonl").write_text("", encoding="utf-8")
+    (tmp_path / "brief.md").write_text("brief", encoding="utf-8")
+    (tmp_path / "scoring.json").write_text("{}", encoding="utf-8")
+    inputs = ContractInputs(
+        board_path=tmp_path / "board.jsonl",
+        brief_path=tmp_path / "brief.md",
+        scoring_path=tmp_path / "scoring.json",
+        entrypoint="pkg:agent",
+        mutable_trees=("src",),
+        proposer_path=proposer_dir,
+    )
+
+    before = compute_contract_hash(inputs)
+    skill.write_text(
+        "---\nname: house-style\ndescription: entirely different wording\n---\n\nBody text.\n",
+        encoding="utf-8",
+    )
+    assert compute_contract_hash(inputs) == before
 
 
 def test_the_next_epoch_claims_the_staged_id(tmp_path: Path) -> None:
@@ -421,6 +482,30 @@ async def test_a_failing_draft_call_keeps_the_deterministic_remedy(tmp_path: Pat
         return "   "
 
     assert await draft_remedy(finding, call_llm=empty, model="m") == finding
+
+
+@pytest.mark.asyncio
+async def test_a_hung_draft_endpoint_cannot_wedge_the_pass(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The optional polish call is wrapped in the shared aux budget.
+
+    It matters more here than at most aux call sites: the remedy is already
+    complete before the model is asked anything, so a pass that blocked on a
+    dead endpoint would be waiting for nothing. The budget is pinned tiny and
+    the callable never returns; the finding must come back deterministic.
+    """
+    import asyncio
+
+    monkeypatch.setattr("zicato.proposer.reflection.aux_call_timeout_s", lambda: 0.05)
+    _failing_rounds(tmp_path, n=6)
+    finding = next(f for f in derive_findings(_investigation(tmp_path)) if f.remedy is not None)
+
+    async def hangs(system: str, user: str, model: str) -> str:
+        await asyncio.sleep(60)
+        return "never arrives"
+
+    assert await draft_remedy(finding, call_llm=hangs, model="m") == finding
 
 
 # ---------------------------------------------------------------------------

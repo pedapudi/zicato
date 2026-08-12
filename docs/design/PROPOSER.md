@@ -812,8 +812,37 @@ surface to climb.
 
 Emission is **deterministic and free** — no model is called, so the operator's
 queue is reproducible from the same round logs. `--draft-with-llm` adds an
-optional polish pass over the remedy's prose through the auxiliary-call seam; a
-failed or empty call keeps the deterministic remedy rather than degrading it.
+optional polish pass over the remedy's prose through the auxiliary-call seam,
+wrapped in `aux_call_timeout_s` like every other aux call site; a failed,
+timed-out, or empty call keeps the deterministic remedy rather than degrading
+it. The budget matters more here than elsewhere: the remedy is already complete
+before the model is asked anything, so a pass that blocked on a dead endpoint
+would be waiting for nothing.
+
+### 6.2.1 Two round-log subtleties the reader must respect
+
+**Re-run rounds.** One `round_log.jsonl` can hold more than one attempt at the
+same round index — a round that applied patches but died before its experiment
+was written never consumes its index, so the next invocation reopens it and
+appends. The two families of aggregate therefore take *opposite* slices:
+
+- **gate / decision / generation / unit facts** come from the FINAL attempt
+  span only (the same slice `round_integrity._final_attempt_span` takes), because
+  a dead attempt's gate is not the round's outcome and counting it could credit a
+  second promotion to a round the epoch settled once;
+- **proposal-failure and cost facts** come from EVERY attempt, because a failed
+  attempt is not noise to be sliced away — it is precisely the signal. Slicing it
+  would make the failure rate improve exactly when the proposer did worst, and a
+  call spent on an attempt that later died was still spent.
+
+**Revision success.** `ProposalSession` carries no revise counter and folds the
+revise's veto in with the slate's, so the rate is read from raw envelopes. A
+re-sample that survives the screen is the one the selector then picks
+(`critique_selected.reason == "screen_revise_survivor"`), so the screened verdict
+and the definitive token agree. The denominator counts re-samples that *produced*
+a candidate: a revise whose propose call raised emits no `candidate_screened` at
+all, so the rate answers "when the revise produced something, did it survive",
+not "did the revise mechanism work at all".
 
 ### 6.3 The four invariants, and where each one lives
 
@@ -823,6 +852,14 @@ failed or empty call keeps the deterministic remedy rather than degrading it.
 | **Never self-applied** | There is no import edge from `reflection.py` to `apply_recommendation.py`; a test reads the module source to pin the absent edge. |
 | **Redacted evidence only** | `assert_redacted` walks every record at the persist boundary and RAISES on an identity/content key at any depth. The scorecard never carries an `entry_id` by construction (it counts units and ignores `attributable_regressions`); the guard is what keeps a future emitter honest. |
 | **Every accepted edit is hashed** | The remedy carries the SHA-256 of the exact bytes; `apply-recommendation` re-verifies before writing, so an edited record cannot be applied under its original id. |
+
+One sharp edge under that last row: `_canon_proposer` folds a skill as
+`{name, sha256(normalized body)}` and deliberately does **not** hash the
+frontmatter `description`, so rewording a description is cosmetic and correctly
+does not roll. A drafted remedy is safe from that because its heading and its
+evidence line live in the *body* — but only by layout, so both halves are pinned:
+a description-only edit must not roll (the canon's semantics, which this feature
+must not drift), and a drafted remedy's replacement must.
 
 ### 6.4 The boundary and the apply gate
 

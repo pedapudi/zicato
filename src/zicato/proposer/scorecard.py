@@ -43,13 +43,28 @@ What each aggregate means
   that bar. Gates whose scalars predate the fields are counted as ``unmeasured``
   and excluded from the statistics rather than defaulted to zero.
 * **Revision-success rate** — of the bounded screen-informed revise re-samples
-  an all-vetoed slate may take, the fraction that survived the screen.
+  an all-vetoed slate may take, the fraction that survived the screen. A
+  re-sample that survives is the one the selector then picks
+  (``critique_selected.reason == "screen_revise_survivor"``), so the screened
+  verdict and the definitive token agree. The denominator counts re-samples
+  that PRODUCED a candidate: a revise whose propose call raised emits no
+  ``candidate_screened`` at all, so it is invisible here — the rate answers
+  "when the revise produced something, did it survive", not "did the revise
+  mechanism work at all".
 * **Cost per accepted proposal** — in the two units the round log actually
   records: proposer attempts (the sampling calls) and board units (the
   ``(entry, replicate, side)`` runs the tournament spent). Both are ``None``
   when the epoch accepted nothing — a divide-by-zero is not "free".
 * **Per-mutation-site track records** — for each ``mutation_id`` the proposer
   patched, how many rounds proposed it and how many of those promoted.
+
+Re-run rounds
+-------------
+One ``round_log.jsonl`` can hold more than one attempt at the same round index
+(a round that applied patches but died before its experiment was written never
+consumes its index). The two families of aggregate take opposite slices, and
+:func:`_read_rounds` documents why: gate/decision facts come from the FINAL
+attempt only, proposal-failure and cost facts from EVERY attempt.
 
 Redaction
 ---------
@@ -74,6 +89,7 @@ from zicato.epoch.round_log import (
     ProposalAttempted,
     RoundLog,
     RoundLogEnvelope,
+    RoundOpened,
     RoundRecord,
     fold_round_record,
     rounds_dir,
@@ -284,16 +300,48 @@ def _round_indices(workspace_root: Path, epoch_id: str) -> list[int]:
     return sorted(out)
 
 
+def _final_attempt_span(events: list[RoundLogEnvelope]) -> list[RoundLogEnvelope]:
+    """The envelopes from the LAST ``round_opened`` onward.
+
+    One round log can hold MORE THAN ONE attempt at the same round index: a
+    round that applied patches but died before its experiment was written never
+    consumes its index, so the next invocation reopens it and APPENDS to the
+    same log (:func:`zicato.epoch.round_integrity._final_attempt_span`, which
+    this mirrors). ``fold_round_record`` accumulates across the whole stream and
+    cannot tell the attempts apart.
+    """
+    last_open = -1
+    for index, envelope in enumerate(events):
+        if isinstance(envelope.event, RoundOpened):
+            last_open = index
+    return events if last_open < 0 else events[last_open:]
+
+
 def _read_rounds(
     workspace_root: Path, epoch_id: str
 ) -> list[tuple[list[RoundLogEnvelope], RoundRecord]]:
-    """Every readable round in the epoch, as ``(events, folded record)`` pairs.
+    """Every readable round, as ``(all events, final-attempt record)`` pairs.
 
-    Both halves are kept because the fold is lossy where two aggregates need
-    the detail: it flattens each attempt's errors into one epoch-wide tuple
-    (losing the per-attempt grouping the A1–A4 rates are defined over) and it
-    tallies screen vetoes without keeping the ``revise`` flag that separates a
-    revise re-sample from an ordinary slate slot.
+    The two halves answer two different questions, and a re-run round is where
+    the difference bites.
+
+    * The RECORD is folded from the FINAL attempt span only. A round the loop
+      reopened carries the earlier attempt's gate and decision in the same log,
+      and counting both would let a dead attempt contribute a second gate — and
+      possibly a second promotion — to a round the epoch settled once. The last
+      attempt is the one whose outcome the epoch actually carries, so gates,
+      the decision, the applied generations and the units all come from it.
+    * The EVENTS are the whole stream, because proposal attempts are the
+      opposite case: a failed attempt is not noise to be sliced away, it is
+      precisely the signal this scorecard exists to measure. Slicing to the
+      final span would hide the failures that caused the re-run — the rate would
+      improve exactly when the proposer did worst. Sampling cost is counted the
+      same way: a call spent on an attempt that later died was still spent.
+
+    Reading the raw events also recovers what the fold discards: the per-attempt
+    grouping the A1–A4 rates are defined over (the fold flattens every attempt's
+    errors into one tuple) and the ``revise`` flag that separates a re-sample
+    from an ordinary slate slot (the fold folds its veto in with the slate's).
 
     A corrupt interior line raises out of :meth:`RoundLog.read` by design (the
     append-only invariant was violated). The scorecard is a REPORT, not the
@@ -307,7 +355,7 @@ def _read_rounds(
             events = RoundLog(workspace_root, epoch_id, index).read()
         except (OSError, ValueError):
             continue
-        out.append((events, fold_round_record(events)))
+        out.append((events, fold_round_record(_final_attempt_span(events))))
     return out
 
 

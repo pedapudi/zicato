@@ -48,6 +48,7 @@ asked to act on, and it is not a gradient over anything.
 
 from __future__ import annotations
 
+import asyncio
 import datetime as _dt
 import difflib
 import hashlib
@@ -57,6 +58,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Protocol, runtime_checkable
 
+from zicato.aux_timeout import aux_call_timeout_s
 from zicato.core.runtime import CallLLM
 from zicato.core.workspace import (
     proposer_reflection_findings_path,
@@ -727,8 +729,16 @@ async def draft_remedy(
         indent=2,
         sort_keys=True,
     )
+    # Wrapped in the shared per-call auxiliary budget, like every other aux
+    # call site. A hung endpoint must not wedge a reflection pass — and the
+    # timeout matters MORE here than elsewhere, because this call is optional
+    # polish over a remedy that is already complete: there is nothing to wait
+    # for. ``TimeoutError`` is an ``Exception``, so it lands in the same
+    # keep-the-deterministic-remedy branch as any other failure.
     try:
-        raw = await call_llm(_DRAFT_SYSTEM, user, model)
+        raw = await asyncio.wait_for(
+            call_llm(_DRAFT_SYSTEM, user, model), timeout=aux_call_timeout_s()
+        )
     except Exception:  # noqa: BLE001 - a failed polish pass must not fail the finding
         return finding
     guidance = (raw or "").strip()
