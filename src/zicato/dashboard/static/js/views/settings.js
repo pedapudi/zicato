@@ -207,6 +207,10 @@ async function renderContract() {
     epoch: c.epoch_id || null, board: board.length, structure, params,
     train: trainCount, hold: holdoutCount,
     briefLen: brief.length, margin: scoring.promote_margin,
+    // the holdout confirmation's own bounds fold in so pinning either one
+    // repaints the summary (they are additive, so both are usually absent).
+    hMargin: scoring.holdout_margin != null ? scoring.holdout_margin : null,
+    hBudget: scoring.holdout_entry_regression_budget || 0,
     mono: !!scoring.pass_rate_monotonicity,
     holdFrac: overfitting.holdout_fraction, ofEnabled: overfitting.enabled,
     proposer: proposer ? (proposer.has_custom_agent ? 'agent' : 'skills') : null,
@@ -227,6 +231,17 @@ async function renderContract() {
       contractRow('Tournament structure', structure, 'builder'),
       contractRow('Promote margin', String(margin), 'builder'),
       contractRow('Pass-rate monotonicity', scoring.pass_rate_monotonicity ? 'required' : 'off', 'builder'),
+      // The holdout confirmation's own bounds, shown ONLY once pinned. Both
+      // default to "reuse the train-side rule", and a row reading the same
+      // number twice would be noise; but left unshown when they ARE pinned,
+      // this summary implies the promote margin governs the holdout too —
+      // exactly the single-knob confusion the separate bounds exist to end.
+      ...(scoring.holdout_margin != null
+        ? [contractRow('Holdout margin', String(scoring.holdout_margin), 'builder')] : []),
+      ...(scoring.holdout_entry_regression_budget
+        ? [contractRow('Holdout regression budget',
+            `${scoring.holdout_entry_regression_budget} ${scoring.holdout_entry_regression_budget === 1 ? 'entry' : 'entries'}`,
+            'builder')] : []),
       contractRow('Overfitting guard',
         overfitting.enabled === false ? 'disabled'
           : (holdFrac != null ? `holdout ${holdFrac}` : 'on'), 'builder'),
