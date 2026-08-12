@@ -14,6 +14,8 @@ cost without new coverage.
 
 from __future__ import annotations
 
+import json
+import shutil
 import textwrap
 from pathlib import Path
 
@@ -21,9 +23,11 @@ import pytest
 from starlette.testclient import TestClient
 
 from zicato.core.types import Experiment, HypothesisSpec, Patch
+from zicato.dashboard.mutations import RECORDS_CAPTION, UNREACHABLE_CAPTION
 from zicato.dashboard.server import create_app
 from zicato.epoch.genstore import DirectoryGenerationStore
 from zicato.epoch.journal import write_experiment
+from zicato.mutation.enumerator import enumerate_mutations
 
 
 def _write(path: Path, body: str) -> None:
@@ -209,3 +213,260 @@ def test_mutation_detail_baseline_differs_from_patched(client: TestClient) -> No
     baseline = body["baseline"]["content"]
     patched = body["versions"][0]["content"]
     assert baseline != patched
+
+
+# ---------------------------------------------------------------------------
+# Records-first: the surface outlives the tree (issue #194 §6)
+# ---------------------------------------------------------------------------
+#
+# Snapshot GC prunes generation source trees and keeps every record. The
+# repro these pin: prune the trees of a real, fully-recorded epoch and the
+# whole mutation browser used to render EMPTY, while ``mutations.json`` and
+# the patch records sat unread beside it.
+
+
+def _record_surface(ws: Path, epoch_id: str, roots: list[Path]) -> None:
+    """Write the epoch's ``mutations.json`` the way an evolve round does.
+
+    Through the orchestrator's own writer, not a hand-rolled dict: the
+    dashboard reads what that writer produces, and a fixture that spelled
+    the record itself could keep passing while the two drifted apart.
+    """
+    from zicato.orchestrator import _dump_mutations_snapshot
+
+    _dump_mutations_snapshot(ws, epoch_id, list(enumerate_mutations(roots)))
+
+
+def _prune_trees(ws: Path, epoch_id: str, *generation_ids: str) -> None:
+    """Remove generations' source trees, keeping every record — like GC."""
+    for generation_id in generation_ids:
+        shutil.rmtree(ws / "epochs" / epoch_id / "generations" / generation_id / "snapshot")
+
+
+@pytest.fixture
+def pruned_workspace(populated_workspace: Path) -> Path:
+    """``populated_workspace`` after snapshot GC took every tree."""
+    store = DirectoryGenerationStore(populated_workspace)
+    _record_surface(populated_workspace, "e1", [Path(store.snapshot_root("e1", "v0"))])
+    _prune_trees(populated_workspace, "e1", "v0", "v1")
+    return populated_workspace
+
+
+@pytest.fixture
+def pruned_client(pruned_workspace: Path, tmp_path: Path) -> TestClient:
+    static_dir = tmp_path / "static-pruned"
+    static_dir.mkdir()
+    app = create_app(pruned_workspace, static_dir, read_only=True)
+    with TestClient(app) as c:
+        yield c
+
+
+def test_mutation_index_survives_pruned_trees(pruned_client: TestClient) -> None:
+    """The repro: every tree gone, the full site index still renders."""
+    body = pruned_client.get("/api/mutations/e1").json()
+    ids = {m["mutation_id"] for m in body["mutations"]}
+    assert ids == {"researcher_instr", "reviewer_instr"}
+    assert "error" not in body
+    sites = {m["mutation_id"]: m for m in body["mutations"]}
+    assert sites["researcher_instr"]["file"] == "agent/prompts.py"
+    assert sites["researcher_instr"]["patched_generation_ids"] == ["v1"]
+
+
+def test_mutation_index_flags_record_provenance(pruned_client: TestClient) -> None:
+    """A reconstructed surface says so, in the words the view renders."""
+    body = pruned_client.get("/api/mutations/e1").json()
+    assert body["provenance"] == "records"
+    assert body["provenance_note"] == RECORDS_CAPTION
+
+
+def test_mutation_index_keeps_snapshot_provenance_when_tree_present(client: TestClient) -> None:
+    """The tree is exactly faithful, so it stays the path — and says nothing."""
+    body = client.get("/api/mutations/e1").json()
+    assert body["provenance"] == "snapshot"
+    assert body["provenance_note"] == ""
+
+
+def test_mutation_index_columns_include_pruned_generations(pruned_client: TestClient) -> None:
+    """A generation whose tree is gone keeps its column in the matrix."""
+    body = pruned_client.get("/api/mutations/e1").json()
+    assert body["generations"] == ["v0", "v1"]
+
+
+def test_mutation_detail_reconstructs_patched_content(pruned_client: TestClient) -> None:
+    """A pruned challenger's patched content comes back from its patch record."""
+    body = pruned_client.get("/api/mutations/e1/researcher_instr").json()
+    version = body["versions"][0]
+    assert version["generation_id"] == "v1"
+    assert version["provenance"] == "records"
+    assert "rewritten instruction" in version["content"]
+    assert body["provenance_note"] == RECORDS_CAPTION
+
+
+def test_mutation_detail_declines_to_name_a_records_baseline(pruned_client: TestClient) -> None:
+    """The frozen enumeration is the round's champion — not provably ``v0``."""
+    body = pruned_client.get("/api/mutations/e1/researcher_instr").json()
+    assert body["baseline"]["generation_id"] is None
+    assert body["baseline"]["provenance"] == "records"
+    assert "original instruction" in body["baseline"]["content"]
+
+
+def test_mutation_detail_names_v0_when_the_tree_answered(client: TestClient) -> None:
+    body = client.get("/api/mutations/e1/researcher_instr").json()
+    assert body["baseline"]["generation_id"] == "v0"
+    assert body["baseline"]["provenance"] == "snapshot"
+    assert body["versions"][0]["provenance"] == "snapshot"
+    assert body["provenance_note"] == ""
+
+
+def test_mutation_index_names_an_unreachable_tree_as_such(
+    populated_workspace: Path, tmp_path: Path
+) -> None:
+    """A tree the STORE cannot reach is not a pruned tree, and does not say so.
+
+    The condition a real June-dead workspace arrives in: directory-shaped
+    snapshots on disk, but the declared backend looks somewhere else. The
+    records still answer; claiming GC pruned trees the operator can see
+    would be a guess.
+    """
+    store = DirectoryGenerationStore(populated_workspace)
+    _record_surface(populated_workspace, "e1", [Path(store.snapshot_root("e1", "v0"))])
+    (populated_workspace / "config.json").write_text('{"storage_backend": "git"}', encoding="utf-8")
+    static_dir = tmp_path / "static-unreachable"
+    static_dir.mkdir()
+    with TestClient(create_app(populated_workspace, static_dir, read_only=True)) as c:
+        body = c.get("/api/mutations/e1").json()
+    assert len(body["mutations"]) == 2
+    assert body["provenance_note"] == UNREACHABLE_CAPTION
+
+
+def test_mutation_index_with_neither_tree_nor_record_names_both(
+    pruned_workspace: Path, tmp_path: Path
+) -> None:
+    (pruned_workspace / "epochs" / "e1" / "mutations.json").unlink()
+    static_dir = tmp_path / "static-empty"
+    static_dir.mkdir()
+    with TestClient(create_app(pruned_workspace, static_dir, read_only=True)) as c:
+        body = c.get("/api/mutations/e1").json()
+    assert body["mutations"] == []
+    assert "no v0 source tree" in body["error"]
+    assert "no mutations.json record" in body["error"]
+
+
+# ---------------------------------------------------------------------------
+# set_numeric / set_enum reconstruction
+# ---------------------------------------------------------------------------
+#
+# A ``replace`` record IS the new content. A ``set_numeric`` / ``set_enum``
+# record carries a VALUE the applier wrote into a constant, so reconstructing
+# means substituting it into the baseline span — and the test of "faithful"
+# is the applier's own output, captured from the tree before it is pruned.
+
+
+def _value_patch(pid: str, mutation_id: str, op: str, **payload: object) -> Patch:
+    return Patch(
+        id=pid,
+        mutation_id=mutation_id,
+        op=op,  # type: ignore[arg-type]
+        new_content=payload.get("new_content"),  # type: ignore[arg-type]
+        new_numeric=payload.get("new_numeric"),  # type: ignore[arg-type]
+        new_enum=payload.get("new_enum"),  # type: ignore[arg-type]
+        rationale="value-op reconstruction test",
+    )
+
+
+def _value_workspace(tmp_path: Path, source: str, patch: Patch) -> Path:
+    """Seed ``v0`` from ``source``, derive ``v1`` with ``patch``, record both."""
+    ws = tmp_path / ".zicato"
+    ws.mkdir()
+    (ws / "epochs" / "e1").mkdir(parents=True)
+    (ws / "config.json").write_text('{"storage_backend": "directory"}', encoding="utf-8")
+    store = DirectoryGenerationStore(ws)
+    tree = tmp_path / "src" / "agent"
+    _write(tree / "knobs.py", source)
+    store.seed_generation("e1", "v0", [tree])
+    store.derive_generation("e1", "v0", "v1", [patch])
+    write_experiment(ws, "e1", "v1", _experiment((patch,)))
+    _record_surface(ws, "e1", [Path(store.snapshot_root("e1", "v0"))])
+    return ws
+
+
+def _detail(ws: Path, tmp_path: Path, mutation_id: str) -> dict:
+    static_dir = tmp_path / f"static-{mutation_id}"
+    static_dir.mkdir(parents=True, exist_ok=True)
+    with TestClient(create_app(ws, static_dir, read_only=True)) as c:
+        return c.get(f"/api/mutations/e1/{mutation_id}").json()
+
+
+def test_set_enum_reconstruction_matches_the_applier(tmp_path: Path) -> None:
+    ws = _value_workspace(
+        tmp_path,
+        """
+        # zicato:mutable id="strategy"
+        STRATEGY = "greedy"
+        """,
+        _value_patch("p1", "strategy", "set_enum", new_enum="balanced"),
+    )
+    from_tree = _detail(ws, tmp_path, "strategy")["versions"][0]
+    assert from_tree["provenance"] == "snapshot"
+
+    _prune_trees(ws, "e1", "v0", "v1")
+    from_records = _detail(ws, tmp_path / "b", "strategy")["versions"][0]
+    assert from_records["provenance"] == "records"
+    assert from_records["content"] == from_tree["content"]
+    assert "balanced" in from_records["content"]
+
+
+def test_set_numeric_reconstruction_matches_the_applier(tmp_path: Path) -> None:
+    """The constant sits INSIDE the enumerated span — reconstructable exactly."""
+    ws = _value_workspace(
+        tmp_path,
+        """
+        # zicato:mutable id="threshold"
+        THRESHOLD = ("promote margin", 0.85)
+        """,
+        _value_patch("p1", "threshold", "set_numeric", new_numeric=0.42),
+    )
+    from_tree = _detail(ws, tmp_path, "threshold")["versions"][0]
+    assert "0.42" in from_tree["content"]
+
+    _prune_trees(ws, "e1", "v0", "v1")
+    from_records = _detail(ws, tmp_path / "b", "threshold")["versions"][0]
+    assert from_records["content"] == from_tree["content"]
+
+
+def test_set_numeric_outside_the_span_says_so(tmp_path: Path) -> None:
+    """The applier's target can sit outside the span; then there is nothing to show."""
+    ws = _value_workspace(
+        tmp_path,
+        """
+        # zicato:mutable id="threshold"
+        THRESHOLD_DOC = "the promote margin"
+        THRESHOLD = 0.85
+        """,
+        _value_patch("p1", "threshold", "set_numeric", new_numeric=0.42),
+    )
+    _prune_trees(ws, "e1", "v0", "v1")
+    version = _detail(ws, tmp_path, "threshold")["versions"][0]
+    assert version["content"] is None
+    assert "0.42" in version["note"]
+    assert "outside the recorded span" in version["note"]
+
+
+def test_records_path_reports_the_site_file_relative(pruned_workspace: Path) -> None:
+    """The record stores an absolute path from a tree that no longer exists.
+
+    Even after the workspace is MOVED, the rendered location stays the
+    repo-relative path the file-tree browser shows — the recorded prefix is
+    not resolved against anything that has to still be there.
+    """
+    moved = pruned_workspace.parent.parent / "moved" / ".zicato"
+    moved.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copytree(pruned_workspace, moved)
+    recorded = json.loads((moved / "epochs" / "e1" / "mutations.json").read_text())
+    assert str(recorded[0]["file"]).startswith(str(pruned_workspace))  # stale, by design
+
+    from zicato.dashboard.mutations import build_mutation_index
+    from zicato.query import WorkspacePaths
+
+    body = build_mutation_index(WorkspacePaths(moved), "e1")
+    assert {m["file"] for m in body["mutations"]} == {"agent/prompts.py"}

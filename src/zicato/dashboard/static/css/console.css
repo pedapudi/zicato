@@ -4166,4 +4166,12 @@
   /* the reconstructed conversation — own-container scroll (dn-transcript) */
   .dn-trace-convpanel { padding: 10px 12px; }
   .dn-trace-conv-focus { outline: 1px solid var(--v2-accent); outline-offset: 2px; border-radius: 3px; }
+
+  /* ===================  record-backed post-hoc provenance  =================== */
+  /* The caption a view prints when its surface was reconstructed from the
+     records because the snapshot tree is gone (issue #194 §6). A quiet
+     standing fact about the whole view — never an alarm, never coloured;
+     the honesty is in the words, which the SERVER owns. */
+  .dn-mut-prov { font-size: calc(11px * var(--dt-font-scale, 1)); margin: -4px 0 12px;
+    font-family: var(--v2-mono); }
 }

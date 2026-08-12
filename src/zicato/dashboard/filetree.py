@@ -32,6 +32,17 @@ Endpoints (wired in :mod:`zicato.dashboard.server`)
   :func:`build_generation_diff` — the files a generation changed
   relative to its parent (or the ``v0`` baseline), each with the old
   and new content for a side-by-side diff.
+
+When a tree is gone
+-------------------
+Snapshot GC prunes generation source trees and keeps every record
+(:mod:`zicato.epoch.gc`), so these views must answer for a generation
+they cannot walk. Whole-tree browsing is the one thing records cannot
+rebuild — the tree view and the content view say exactly that and point
+at what survives — while the DIFF's real subject, the spans the
+generation's patches touched, is reconstructible and is reconstructed
+(issue #194 §6). Every response says which it is: ``provenance`` plus
+the caption to render.
 """
 
 from __future__ import annotations
@@ -40,6 +51,13 @@ import re
 from dataclasses import asdict
 from typing import Any
 
+from zicato.dashboard.mutations import (
+    FROM_RECORDS,
+    FROM_SNAPSHOT,
+    SPANS_CAPTION,
+    reconstructed_spans,
+    recorded_generation_ids,
+)
 from zicato.epoch.genstore import GenerationStore, default_generation_store
 from zicato.query import WorkspacePaths
 from zicato.query.paths import list_epoch_ids
@@ -65,6 +83,46 @@ def _store(paths: WorkspacePaths) -> GenerationStore:
     return default_generation_store(paths.root)
 
 
+def _has_tree(store: GenerationStore, epoch_id: str, generation_id: str) -> bool:
+    """Return ``True`` when the generation still has a materialised tree."""
+    try:
+        return store.has_generation(epoch_id, generation_id)
+    except (OSError, ValueError):
+        return False
+
+
+#: What a view says when a RECORDED generation's tree is gone. Whole-tree
+#: browsing is genuinely unrecoverable — unlike the patch-touched spans,
+#: which the records reconstruct (:func:`build_generation_diff`).
+_PRUNED_TREE_ERROR = (
+    "no source tree for {epoch_id}/{generation_id} — pruned by snapshot GC, or the "
+    "workspace was archived without its snapshots. The records survive: the patch set "
+    "at /api/files/{epoch_id}/{generation_id}/patches, the patched spans at "
+    "/api/files/{epoch_id}/{generation_id}/diff, the site surface at "
+    "/api/mutations/{epoch_id}."
+)
+
+#: …and when there is no such generation at all. Kept apart because a
+#: typo'd coordinate and a collected tree call for opposite next moves,
+#: and pointing an operator at records that were never written would be
+#: its own small dishonesty.
+_UNKNOWN_GENERATION_ERROR = "no generation {epoch_id}/{generation_id} in this workspace"
+
+
+def _missing_tree_error(paths: WorkspacePaths, epoch_id: str, generation_id: str) -> str:
+    """Name what actually happened to a tree the store cannot walk.
+
+    The record directory is the discriminator: present ⇒ the generation
+    ran and its tree was collected; absent ⇒ the coordinate names nothing.
+    """
+    template = (
+        _PRUNED_TREE_ERROR
+        if generation_id in recorded_generation_ids(paths, epoch_id)
+        else _UNKNOWN_GENERATION_ERROR
+    )
+    return template.format(epoch_id=epoch_id, generation_id=generation_id)
+
+
 def build_file_index(paths: WorkspacePaths) -> dict[str, Any]:
     """Return the top-level Files-view index: epochs → generations.
 
@@ -72,6 +130,10 @@ def build_file_index(paths: WorkspacePaths) -> dict[str, Any]:
     a file count and a patch count — without shipping the whole tree.
     The dashboard lazy-loads a generation's full tree on expansion via
     :func:`build_generation_tree`.
+
+    ``has_tree`` separates the two readings of ``file_count: 0``: a
+    generation whose source tree snapshot GC collected (records intact,
+    tree gone forever) from one the store genuinely found empty.
     """
     store = _store(paths)
     epochs: list[dict[str, Any]] = []
@@ -96,6 +158,7 @@ def build_file_index(paths: WorkspacePaths) -> dict[str, Any]:
                     "generation_id": generation_id,
                     "file_count": file_count,
                     "patch_count": patch_count,
+                    "has_tree": _has_tree(store, epoch_id, generation_id),
                 }
             )
         epochs.append({"epoch_id": epoch_id, "generations": generations})
@@ -113,7 +176,10 @@ def build_generation_tree(
 
     On a missing generation the response carries ``"error"`` and an
     empty ``entries`` list rather than raising, so the dashboard
-    degrades to an empty tree instead of a 500.
+    degrades to an empty tree instead of a 500. The error NAMES what
+    happened and where the surviving records are: a pruned tree is the
+    one thing in this module records cannot rebuild, so the honest move
+    is to say so and point at what they can (issue #194 §6).
     """
     store = _store(paths)
     try:
@@ -123,7 +189,7 @@ def build_generation_tree(
             "epoch_id": epoch_id,
             "generation_id": generation_id,
             "entries": [],
-            "error": f"no source tree for {epoch_id}/{generation_id}",
+            "error": _missing_tree_error(paths, epoch_id, generation_id),
         }
     except (OSError, ValueError) as exc:
         return {
@@ -223,6 +289,27 @@ def build_generation_patches(
 _VERSION_RE = re.compile(r"^v(\d+)$")
 
 
+def _recorded_parent(paths: WorkspacePaths, epoch_id: str, generation_id: str) -> str | None:
+    """The lineage edge from the generation's OWN record — no tree needed.
+
+    ``experiment.json`` outlives the tree it describes, so this answers
+    "what was this derived from" for a pruned generation too. Separate
+    from :func:`_resolve_parent_generation` because the two questions
+    differ once trees go missing: this one is the truth, that one is the
+    best available tree to diff against.
+    """
+    from zicato.epoch.journal import read_experiment  # noqa: PLC0415
+
+    try:
+        experiment = read_experiment(paths.root, epoch_id, generation_id)
+    except (FileNotFoundError, OSError, ValueError):
+        return None
+    recorded = (experiment.parent_generation_id or "").strip()
+    if not recorded or recorded == generation_id:
+        return None
+    return recorded
+
+
 def _resolve_parent_generation(
     paths: WorkspacePaths,
     store: GenerationStore,
@@ -245,16 +332,9 @@ def _resolve_parent_generation(
     or a workspace with only the one generation. The caller then treats
     every file as added.
     """
-    from zicato.epoch.journal import read_experiment  # noqa: PLC0415
-
-    try:
-        experiment = read_experiment(paths.root, epoch_id, generation_id)
-        recorded = (experiment.parent_generation_id or "").strip()
-        if recorded and recorded != generation_id:
-            if store.has_generation(epoch_id, recorded):
-                return recorded
-    except (FileNotFoundError, OSError, ValueError):
-        pass
+    recorded = _recorded_parent(paths, epoch_id, generation_id)
+    if recorded is not None and store.has_generation(epoch_id, recorded):
+        return recorded
 
     match = _VERSION_RE.match(generation_id)
     if match is not None:
@@ -324,16 +404,34 @@ def build_generation_diff(
     split diff without a second round trip. The store seam keeps this
     backend-neutral — it works for the directory-snapshot and the
     git-backed workspace identically.
+
+    Once a tree is gone the whole-file diff is not recoverable, but the
+    spans the generation's patches touched are: the response then carries
+    :func:`zicato.dashboard.mutations.reconstructed_spans` entries,
+    ``provenance: "records"`` and the caption the view renders. Two
+    conditions take that path — the generation's own tree is missing, or
+    the tree of the parent it was RECORDED as derived from is. The second
+    matters because falling back to whichever older tree still exists
+    would silently answer a different question ("what changed since
+    ``v0``") under the same heading.
     """
     store = _store(paths)
-    if not store.has_generation(epoch_id, generation_id):
-        return {
+    recorded_parent = _recorded_parent(paths, epoch_id, generation_id)
+    if not store.has_generation(epoch_id, generation_id) or (
+        recorded_parent is not None and not store.has_generation(epoch_id, recorded_parent)
+    ):
+        spans = reconstructed_spans(paths, epoch_id, generation_id)
+        payload: dict[str, Any] = {
             "epoch_id": epoch_id,
             "generation_id": generation_id,
-            "parent_generation_id": None,
-            "files": [],
-            "error": f"no source tree for {epoch_id}/{generation_id}",
+            "parent_generation_id": recorded_parent,
+            "files": spans,
+            "provenance": FROM_RECORDS,
+            "provenance_note": SPANS_CAPTION,
         }
+        if not spans:
+            payload["error"] = _missing_tree_error(paths, epoch_id, generation_id)
+        return payload
 
     parent_id = _resolve_parent_generation(paths, store, epoch_id, generation_id)
     new_paths = _file_paths(store, epoch_id, generation_id)
@@ -376,6 +474,8 @@ def build_generation_diff(
         "generation_id": generation_id,
         "parent_generation_id": parent_id,
         "files": files,
+        "provenance": FROM_SNAPSHOT,
+        "provenance_note": "",
     }
 
 

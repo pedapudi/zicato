@@ -18,6 +18,13 @@
 //
 // The pinned site lives in the URL (#/N/mutations/<mutId>) so the diff pane
 // rebuilds ONLY on a route change, never on a heartbeat.
+//
+// PROVENANCE (issue #194 §6). A closed epoch's snapshot trees get pruned; the
+// records do not. The server then reconstructs this surface from
+// epochs/{id}/mutations.json + the patch records and says so on the payload —
+// `provenance` ("snapshot" | "records") and `provenance_note`, the caption. The
+// note is rendered VERBATIM, never re-worded here: the server knows WHY the
+// tree is missing (pruned vs unreachable) and this view does not.
 
 import { el, svgEl } from '../core/dom.js';
 import * as D from '../data.js';
@@ -68,7 +75,16 @@ export async function render(host, ctx, params) {
       // baseline content (STRING) — never the object.
       const baselineStr = (detail && detail.baseline && typeof detail.baseline.content === 'string')
         ? detail.baseline.content : null;
-      return { epochId, gens, sites, patchedBySite, pinnedSite, detail, patchesByGen, baselineStr };
+      // The server's own words for where this came from — the site index's
+      // caption, or the pinned site's (which also covers a reconstructed
+      // VERSION under an intact baseline).
+      const note = String((detail && detail.provenance_note) || (mut && mut.provenance_note) || '');
+      // The label for the diff's LEFT column. `null` on the records path: the
+      // frozen enumeration is the round's champion surface, and calling it v0
+      // would be a guess.
+      const baselineGen = (detail && detail.baseline && detail.baseline.generation_id) || null;
+      const surfaceError = String((mut && mut.error) || '');
+      return { epochId, gens, sites, patchedBySite, pinnedSite, detail, patchesByGen, baselineStr, note, baselineGen, surfaceError };
     },
     digest: (d) => JSON.stringify({
       epochId: d.epochId, gens: d.gens,
@@ -77,14 +93,20 @@ export async function render(host, ctx, params) {
       pinnedGen: pinnedGen || null,
       baselineLen: d.baselineStr == null ? -1 : d.baselineStr.length,
       patched: d.pinnedSite ? [...d.patchesByGen.keys()] : null,
+      note: d.note, baselineGen: d.baselineGen, surfaceError: d.surfaceError,
+      versions: (d.detail && Array.isArray(d.detail.versions))
+        ? d.detail.versions.map((v) => [v.generation_id, v.provenance, v.note || v.error || '',
+          v.content == null ? -1 : v.content.length])
+        : null,
     }),
     build: (d) => {
-      const { epochId, gens, sites, patchedBySite, pinnedSite, detail, patchesByGen, baselineStr } = d;
+      const { epochId, gens, sites, patchedBySite, pinnedSite, detail, patchesByGen, baselineStr, note, baselineGen, surfaceError } = d;
     const nodes = [];
     nodes.push(el('div', { class: 'dn-pagehead' }, [
       el('h1', { class: 'dn-h1', text: 'Mutation surface · site × generation' }),
       el('p', { class: 'dn-lede', text: 'Every enumerated mutation point (a `# zicato:mutable` region) and which generation patched it. Click a ▪ CELL for ONE generation’s side-by-side patch diff at that site; click the SITE row label for ALL generations that patched it, stacked — champion baseline against each challenger’s new content.' }),
     ]));
+    if (note) nodes.push(el('p', { class: 'dn-faint dn-mut-prov', text: note }));
 
     nodes.push(el('div', { class: 'dn-panel dn-row' }, [
       stat(String(sites.length), 'mutation sites'),
@@ -93,14 +115,16 @@ export async function render(host, ctx, params) {
     ]));
 
     if (!sites.length || !gens.length) {
-      nodes.push(section('Surface', el('div', { class: 'dn-panel' }, [empty('No mutation surface for this epoch (the enumeration may be missing).')])));
+      // Say WHICH read came back empty — the server's error names both the
+      // absent tree and the absent record.
+      nodes.push(section('Surface', el('div', { class: 'dn-panel' }, [empty(surfaceError || 'No mutation surface for this epoch (the enumeration may be missing).')])));
       return nodes;
     }
 
     // ONE cohesive layout: the matrix and the detail pane in a single section.
     const combined = el('div', { class: 'dn-mut-combined' }, [
       el('div', { class: 'dn-panel dn-mut-matrix' }, [matrixTable(sites, gens, patchedBySite, pinned, pinnedGen, ctx, epochId)]),
-      el('div', { class: 'dn-panel dn-mut-detail' }, [detailPane(pinnedSite, pinnedGen, baselineStr, detail, patchesByGen, ctx, epochId)]),
+      el('div', { class: 'dn-panel dn-mut-detail' }, [detailPane(pinnedSite, pinnedGen, baselineStr, detail, patchesByGen, ctx, epochId, baselineGen)]),
     ]);
     nodes.push(section('Mutation surface + side-by-side diff', combined));
     return nodes;
@@ -175,7 +199,7 @@ function matrixTable(sites, gens, patchedBySite, pinned, pinnedGen, ctx, epochId
 // The detail pane: fills on selection with the SIDE-BY-SIDE diff(s).
 //   * a CELL (mutId + pinnedGen) → ONLY that one generation's diff;
 //   * the SITE row (mutId, no pinnedGen) → ALL generations that patched it.
-function detailPane(site, pinnedGen, baselineStr, detail, patchesByGen, ctx, epochId) {
+function detailPane(site, pinnedGen, baselineStr, detail, patchesByGen, ctx, epochId, baselineGen) {
   const pane = el('div');
   if (!site) {
     pane.appendChild(el('p', { class: 'dn-empty', text: 'Click a ▪ cell for ONE generation’s side-by-side diff at that site, or the site row label for ALL generations that patched it.' }));
@@ -189,24 +213,33 @@ function detailPane(site, pinnedGen, baselineStr, detail, patchesByGen, ctx, epo
   ]));
 
   if (baselineStr == null) {
-    pane.appendChild(el('p', { class: 'dn-patch-note dn-faint', text: 'No baseline (v0) content recorded for this site — the diff needs both sides.' }));
+    pane.appendChild(el('p', { class: 'dn-patch-note dn-faint', text: 'No baseline content recorded for this site — the diff needs both sides.' }));
   }
 
+  const versions = (detail && Array.isArray(detail.versions)) ? detail.versions : [];
   const touched = [...(patchesByGen.keys ? patchesByGen.keys() : [])];
   let any = false;
   for (const g of touched) {
     const patches = patchesByGen.get(g) || [];
     const patch = patches.find((p) => p.mutation_id === site.mutation_id || p.id === site.mutation_id);
+    const version = versions.find((x) => x.generation_id === g) || null;
     // challenger new content (STRING) from /patches; fall back to the detail's
-    // version content if the patches payload lacks it.
+    // version content if the patches payload lacks it (a value op carries no
+    // new_content, so the server's reconstruction is the only text there is).
     let newStr = patch && patch.new_content != null ? String(patch.new_content) : null;
-    if (newStr == null && detail && Array.isArray(detail.versions)) {
-      const v = detail.versions.find((x) => x.generation_id === g);
-      if (v && typeof v.content === 'string') newStr = v.content;
+    if (newStr == null && version && typeof version.content === 'string') newStr = version.content;
+    if (newStr == null) {
+      // No content for this generation — but the server said WHY (a value
+      // whose constant sits outside the recorded span; a marker the tree no
+      // longer enumerates). Print its reason rather than dropping the row.
+      const why = version ? String(version.note || version.error || '') : '';
+      if (!why) continue;
+      any = true;
+      pane.appendChild(genNoteBlock(g, patch, version, why, ctx, epochId));
+      continue;
     }
-    if (newStr == null) continue;
     any = true;
-    pane.appendChild(genDiffBlock(g, patch, baselineStr == null ? '' : baselineStr, newStr, site, ctx, epochId));
+    pane.appendChild(genDiffBlock(g, patch, baselineStr == null ? '' : baselineStr, newStr, site, ctx, epochId, baselineGen, version));
   }
   if (!any) {
     pane.appendChild(el('p', { class: 'dn-empty', text: single
@@ -216,21 +249,50 @@ function detailPane(site, pinnedGen, baselineStr, detail, patchesByGen, ctx, epo
   return pane;
 }
 
-function genDiffBlock(gen, patch, baselineStr, newStr, site, ctx, epochId) {
-  const block = el('div', { class: 'dn-patch-block' });
-  const op = String((patch && patch.op) || 'replace');
-  block.appendChild(el('div', { class: 'dn-patch-head' }, [
+// The head every per-generation block shares: the generation, its op, and —
+// when this ONE generation's content came from the records while another's did
+// not — which of the two it is. Per block, because the mixed case is the COMMON
+// one: GC never prunes v0, so an exact baseline routinely sits beside a
+// reconstructed challenger.
+function genBlockHead(gen, patch, version, ctx, epochId) {
+  const op = String((patch && patch.op) || (version && version.op) || 'replace');
+  const fromRecords = !!(version && version.provenance === 'records');
+  return el('div', { class: 'dn-patch-head' }, [
     el('a', { class: 'dn-mtx-genlink', href: ctx.href('candidate', { epochId, gen }), text: gen }),
     el('span', { class: 'dn-patch-op dn-mono', text: op }),
-  ]));
-  const rationale = patch && patch.rationale ? String(patch.rationale).trim() : '';
-  if (rationale) {
-    block.appendChild(el('p', { class: 'dn-patch-why' }, [el('span', { class: 'dn-patch-why-lead', text: 'Why. ' }), rationale]));
-  }
+    fromRecords ? el('span', { class: 'dn-faint dn-mono', text: ' · from records' }) : null,
+  ].filter(Boolean));
+}
+
+// The patch's own reason for existing. Kept beside a block that has no
+// content to show as much as one that does — "what was this trying to do"
+// survives in the record even when the changed text does not.
+function blockWhy(patch, version) {
+  const rationale = String((patch && patch.rationale) || (version && version.rationale) || '').trim();
+  if (!rationale) return null;
+  return el('p', { class: 'dn-patch-why' }, [el('span', { class: 'dn-patch-why-lead', text: 'Why. ' }), rationale]);
+}
+
+function genNoteBlock(gen, patch, version, why, ctx, epochId) {
+  const block = el('div', { class: 'dn-patch-block' });
+  block.appendChild(genBlockHead(gen, patch, version, ctx, epochId));
+  const why_ = blockWhy(patch, version);
+  if (why_) block.appendChild(why_);
+  block.appendChild(el('p', { class: 'dn-patch-note dn-faint', text: why }));
+  return block;
+}
+
+function genDiffBlock(gen, patch, baselineStr, newStr, site, ctx, epochId, baselineGen, version) {
+  const block = el('div', { class: 'dn-patch-block' });
+  block.appendChild(genBlockHead(gen, patch, version, ctx, epochId));
+  const why = blockWhy(patch, version);
+  if (why) block.appendChild(why);
   block.appendChild(svg.sideBySideDiff({
     baseline: baselineStr,
     challenger: newStr,
-    leftLabel: 'champion baseline · v0',
+    // Name the generation the left column actually IS. Without a tree the
+    // server declines to name one, and so does the label.
+    leftLabel: baselineGen ? `champion baseline · ${baselineGen}` : 'champion baseline · from records',
     rightLabel: `challenger new · ${gen}`,
   }));
   return block;

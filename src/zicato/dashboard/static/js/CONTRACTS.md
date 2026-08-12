@@ -150,10 +150,19 @@ The drill-down / lazy endpoints (unchanged):
   built from `parent_session_id` / `child_session_id`). A malformed
   coordinate degrades to an empty grid (HTTP 200), never a 500.
 
+Every one of these reads can outlive the tree it describes: snapshot GC
+prunes generation source trees and keeps the records. So each response
+declares `provenance` — `"snapshot"` (re-enumerated from a materialised
+tree, exact) or `"records"` (reconstructed) — and a records-sourced
+response carries `provenance_note`, the caption the view MUST render
+**verbatim**. The server knows *why* a tree is missing (pruned vs
+unreachable); the client does not, and must not re-word it.
+
 The Files-view endpoints in full:
 - `GET /api/files` — `{ epochs:[{ epoch_id, generations:[{ generation_id,
-  file_count, patch_count }] }] }`. Generations are listed in store
-  order; the last element is the latest generation.
+  file_count, patch_count, has_tree }] }] }`. Generations are listed in
+  store order; the last element is the latest generation. `has_tree:false`
+  with `file_count:0` means the tree was pruned, not that it was empty.
 - `GET /api/files/{epoch}/{gen}/tree` — `{ epoch_id, generation_id,
   entries:[{ path, is_dir, size }], error? }`. Still served by the
   server (and exercised by tests) but no longer consumed by the
@@ -175,6 +184,25 @@ The Files-view endpoints in full:
   Files view renders each entry as a side-by-side split diff
   (`old_content` left, `new_content` right) via the `diff` component
   in `mode:'split'`.
+  When the generation's tree — or its RECORDED parent's — is gone,
+  `files` instead carries the patch-touched SPANS reconstructed from the
+  records, each flagged `reconstructed:true` with `span:{mutation_id, op,
+  rationale, line_start, line_end}` and, where the record cannot honestly
+  produce content, `new_content:null` plus a `note` saying why.
+- `GET /api/mutations/{epoch}` — `{ epoch_id, generations:[str],
+  mutations:[{ mutation_id, kind, file, role, line_start, line_end,
+  metadata, patched_by, patched_generation_ids }], provenance,
+  provenance_note, error? }`. `generations` is the union of the store's
+  listing and the epoch's per-generation RECORD directories, so a
+  generation whose tree is gone still gets its matrix column.
+- `GET /api/mutations/{epoch}/{mutation_id}` — one site:
+  `{ …site fields…, baseline:{ generation_id, content, content_hash,
+  file, role, line_start, line_end, provenance }, versions:[{
+  generation_id, patch_id, op, rationale, content, provenance,
+  note?, error? }], provenance_note, error? }`. `baseline.generation_id`
+  is `null` on the records path — the frozen enumeration is the round's
+  champion surface, and naming it `v0` would be a guess — so the diff's
+  left label reads "from records" rather than a generation id.
 
 The Files view's CUMULATIVE patch chain ("Patches applied to reach
 v{N}") is derived ON THE CLIENT — no new endpoint. The walk follows

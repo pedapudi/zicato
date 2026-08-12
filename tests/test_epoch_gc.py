@@ -21,6 +21,7 @@ from click.testing import CliRunner
 from zicato.core.epoch import Generation
 from zicato.core.experiment import Experiment, HypothesisSpec
 from zicato.core.types import Patch
+from zicato.dashboard.mutations import FROM_RECORDS, SPANS_CAPTION
 from zicato.epoch.gc import (
     STORAGE_GC_KEY,
     maybe_prune_on_epoch_close,
@@ -307,10 +308,16 @@ def test_dashboard_views_degrade_gracefully_for_pruned_generation(workspace: Pat
     assert patches.get("error") is None
     assert [p["id"] for p in patches["patches"]] == ["p_v1"]
 
-    # Diff view on the pruned generation: explicit error, not a raise.
+    # Diff view on the pruned generation: the whole-FILE diff went with the
+    # tree, but the diff's real subject — the spans this generation's patches
+    # touched — is reconstructed from the records and captioned as such
+    # (issue #194 §6). Degrading to an honest caption, not to silence.
     diff = build_generation_diff(paths, EPOCH, "v1")
-    assert diff["files"] == []
-    assert "error" in diff
+    assert "error" not in diff
+    assert diff["provenance"] == FROM_RECORDS
+    assert diff["provenance_note"] == SPANS_CAPTION
+    assert [f["span"]["mutation_id"] for f in diff["files"]] == ["instr"]
+    assert all(f["reconstructed"] for f in diff["files"])
 
     # Diff view on a KEPT generation still works after the sweep.
     kept_diff = build_generation_diff(paths, EPOCH, "v3")
@@ -324,6 +331,9 @@ def test_dashboard_mutation_index_survives_pruned_generations(workspace: Path) -
     never pruned) and, per site, the generations whose patch set touched
     it — read through ``list_patches``, whose record survives pruning on
     both backends (per-patch JSON files / journal fallback).
+
+    The generation LIST behind that attribution is now record-backed too
+    (issue #194 §6), which is what makes the two backends agree here.
     """
     from zicato.dashboard.mutations import build_mutation_index
     from zicato.query import WorkspacePaths
@@ -338,18 +348,18 @@ def test_dashboard_mutation_index_survives_pruned_generations(workspace: Path) -
     patched_by = {g["generation_id"] for g in sites["instr"].get("patched_by", [])}
     # The KEPT generations always attribute their patches to the site.
     assert "v4" in patched_by
-    backend = json.loads((workspace / "config.json").read_text(encoding="utf-8"))["storage_backend"]
-    if backend == "directory":
-        # Directory backend: pruned generations still ENUMERATE (their
-        # record directories survive) and their per-patch JSON records
-        # keep the attribution alive.
-        assert {"v1", "v2"} <= patched_by
-    else:
-        # Git backend: a pruned generation's tag is gone, so it drops
-        # out of the store's enumeration — the view degrades to
-        # omitting it (its history stays in the journal/lineage views,
-        # which never read the genstore).
-        assert {"v1", "v2"}.isdisjoint(patched_by)
+    # BOTH backends attribute the pruned generations. The epoch's
+    # per-generation RECORD directories survive GC on either backend — the
+    # git backend relocates TREES, not records — so the surface enumerates
+    # from those rather than from the store's tag listing, and
+    # ``list_patches`` reads the journal record once the tag is gone.
+    #
+    # The git backend used to drop v1/v2 here: their tags were deleted, so
+    # the store no longer named them and their patches vanished from the
+    # site × generation matrix even though every record was intact. Same
+    # workspace, same history, different picture depending on the storage
+    # backend — that was the bug, not the contract (issue #194 §6).
+    assert {"v1", "v2"} <= patched_by
 
 
 # ---------------------------------------------------------------------------
