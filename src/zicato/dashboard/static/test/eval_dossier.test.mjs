@@ -161,7 +161,7 @@ test('attribution: absent first-passed / no regression degrades to a quiet faint
   const rows = allByClass(host, 'dn-eval-attr-row');
   assertEqual(rows.length, 2, 'both rows still render');
   assertEqual(allTags(rows[0], 'a').length, 0, 'no first-passed link when nothing passed');
-  assert(/no champion-spine generation has passed/.test(textOf(rows[0])), 'an honest rationale, not a fabricated gen');
+  assert(/[Nn]o champion-spine generation passed/.test(textOf(rows[0])), 'an honest rationale, not a fabricated gen');
   assertEqual(allTags(rows[1], 'a').length, 0, 'no regression links when nothing regressed');
 });
 

@@ -10,7 +10,7 @@ import { el } from '../core/dom.js';
 import { state } from '../core/state.js';
 import * as D from '../data.js';
 import * as svg from '../svg.js';
-import { livenessFor } from '../livestatus.js';
+import { livenessFor, epochIsLive } from '../livestatus.js';
 import { gatedSwap, section, empty, stat, renderMarkdown, densityTokens, chip, dataTable, figCaption,
   loopVerdict, promotionRateLabel, costPerPromotionLabel, fmtDurationMs, noiseBandFor } from '../ui.js';
 import { structurePill, isNonGauntlet, structureLabel, normalizeStructure, racingModel, swissOverviewModel, elimModel, resolveNonGauntletSt, structureDigest } from './structure.js';
@@ -259,6 +259,9 @@ export async function render(host, ctx, params) {
     judgeTrend: judgeTrendDigest(judgeTrend),
     calib: calib ? svg.calibrationTrendDigest(calib) : null,
     ledger: ledgerDigest(ledger),
+    // the ledger's pending verdict pills read "racing…" only while THIS epoch's
+    // loop runs, so their tense is rendered content and belongs in the digest.
+    ledgerLive: epochIsLive(state, epochId) ? 1 : 0,
   });
 
   gatedSwap(host, digest, () => {
@@ -327,6 +330,9 @@ export async function render(host, ctx, params) {
     // round timeline. Null (a backend that does not serve the read) → omitted.
     const ledgerPanel = buildExperimentsLedger(ledger, {
       epochId, hrefFor: (gen) => ctx.href('candidate', { epochId, gen }),
+      // an experiment with no recorded decision is "racing…" only while the
+      // loop is running for this epoch; otherwise it went undecided (#207 §2).
+      live: epochIsLive(state, epochId),
     });
     const ledgerSection = ledgerPanel
       ? section('Experiments · every idea this epoch tried', ledgerPanel) : null;

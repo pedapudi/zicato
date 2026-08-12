@@ -28,7 +28,8 @@ import { state } from '../core/state.js';
 import * as D from '../data.js';
 import * as svg from '../svg.js';
 import { harmonografIsLive, harmonografMini } from '../core/harmonograf.js';
-import { gatedSwap, empty, subhead, renderMarkdown, decisionFor, densityTokens, dataTable, deltaCell } from '../ui.js';
+import { gatedSwap, empty, subhead, renderMarkdown, decisionFor, verdictLabel, densityTokens, dataTable, deltaCell } from '../ui.js';
+import { epochIsLive } from '../livestatus.js';
 
 // Parse analysis_md into { eyebrow, title, meta:[{label,value}], abstract,
 // body } — the same marker scheme K uses.
@@ -112,7 +113,11 @@ export async function render(host, ctx, params) {
   const grids = await Promise.all(matchups.map((m) => (m.champion && m.challenger)
     ? D.matchupGrid(epochId, m.champion, m.challenger) : Promise.resolve(null)));
 
-  const figures = { gens, scalarByGen, matchups, grids, ctx, epochId };
+  // Is the loop running FOR THIS EPOCH? A publication of a settled epoch that
+  // labels an undecided candidate "racing…" is describing a race that ended
+  // (#207 §2); `epochLive` is what puts that label in the past tense.
+  const epochLive = epochIsLive(state, epochId);
+  const figures = { gens, scalarByGen, matchups, grids, ctx, epochId, epochLive };
 
   const digest = JSON.stringify({
     epochId, mdLen: md.length,
@@ -137,6 +142,8 @@ export async function render(host, ctx, params) {
     // server coming up / a run ending must repaint the link column. Same fold
     // the candidate dossier uses (`hgLive`).
     hgLive: harmonografIsLive(),
+    // the scores table's pending label is tense-bound, so its liveness folds too.
+    epochLive: epochLive ? 1 : 0,
   });
 
   gatedSwap(host, digest, () => {
@@ -207,10 +214,10 @@ export async function render(host, ctx, params) {
 // ONE cohesive visual (fix #3).
 function figureFor(name, figures) {
   const key = String(name).toLowerCase();
-  const { gens, scalarByGen, matchups, grids, ctx, epochId } = figures;
+  const { gens, scalarByGen, matchups, grids, ctx, epochId, epochLive } = figures;
 
   if (key.includes('score') || key.includes('aggregate') || key.includes('summary')) {
-    return aggregateScoresFigure(gens, scalarByGen);
+    return aggregateScoresFigure(gens, scalarByGen, epochLive);
   }
   if ((key.includes('lineage') || key.includes('bump')) && gens.length) {
     const fig = el('figure', { class: 'dn-paper-fig' });
@@ -251,7 +258,7 @@ function figureFor(name, figures) {
 
 // ONE cohesive visual: the aggregate generation scores TABLE and its summary
 // BAR CHART, side by side (not two redundant blocks).
-function aggregateScoresFigure(gens, scalarByGen) {
+function aggregateScoresFigure(gens, scalarByGen, epochLive) {
   const fig = el('figure', { class: 'dn-paper-fig dn-scores-fig' });
   const items = gens.map((g) => ({ id: g.id, label: g.id, promoted: g.promoted, parent: g.parent, value: scalarByGen.get(g.id) }))
     .filter((it) => svg.isNum(it.value));
@@ -270,9 +277,15 @@ function aggregateScoresFigure(gens, scalarByGen) {
     class: 'dn-md-table dn-scores-table',
     columns: [{ label: 'generation' }, { label: 'scalar (loss)', class: 'dn-num' }, { label: 'outcome' }],
     rows: items.map((it) => {
-      // Class B: an unscored candidate reads pending, never rejected.
+      // Class B: an unscored candidate reads pending, never rejected. And the
+      // pending WORD is tense-bound (#207 §2): a publication of a settled epoch
+      // that says "racing…" is describing a race that finished. The pill's own
+      // liveness-aware vocabulary decides it; this table only re-skins the two
+      // labels it renders differently (the ♛ and the short "seed").
       const dec = decisionFor({ promoted: it.promoted, parent: it.parent });
-      const label = dec === 'promoted' ? 'promoted ♛' : dec === 'baseline' ? 'seed' : dec === 'pending' ? 'racing…' : dec;
+      const label = dec === 'promoted' ? 'promoted ♛'
+        : dec === 'baseline' ? 'seed'
+          : verdictLabel(dec, { live: epochLive });
       return [
         { class: 'dn-mono', text: it.label },
         { class: 'dn-num dn-mono', text: svg.fmt(it.value, 2) },

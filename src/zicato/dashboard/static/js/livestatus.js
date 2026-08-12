@@ -423,6 +423,30 @@ export function livenessFor(appState, now = Date.now()) {
   return { status, liveness: deriveLiveness({ liveness: s.liveness, status }) };
 }
 
+// Is a run LIVE right now FOR THE EPOCH ON SCREEN? Two questions folded into
+// one answer (issue #194 §1): the CLOCK (`livenessFor` — is the loop running
+// at all) and the SCOPE (does the live envelope describe THIS epoch — a closed
+// e0 must not borrow e1's present tense). Keyed off the active tournament's
+// epoch id, falling back to the heartbeat's; when NEITHER live signal carries
+// an epoch tag it is a legacy single-epoch payload, so it is trusted for the
+// viewed epoch. A null `epochId` asks the unscoped question.
+//
+// This is what every present-tense VERDICT consumes: a pill that says "racing…"
+// is claiming this candidate is in a race right now, and only a live-for-this-
+// epoch loop makes that true.
+export function epochIsLive(appState, epochId, now = Date.now()) {
+  const s = appState || {};
+  if (!livenessFor(s, now).liveness.live) return false;
+  if (epochId == null) return true;
+  const at = s.activeTournament;
+  const hb = s.heartbeat;
+  const atEpoch = (at && at.epoch_id != null) ? String(at.epoch_id) : null;
+  const hbEpoch = (hb && hb.epoch_id != null) ? String(hb.epoch_id) : null;
+  if (atEpoch != null) return atEpoch === String(epochId);
+  if (hbEpoch != null) return hbEpoch === String(epochId);
+  return true;
+}
+
 // The one-line status band's text. Live surfaces the phase + in-flight
 // count; a dead workspace speaks in the PAST TENSE with the date it
 // stopped, so no view claims anything is happening when nothing is.

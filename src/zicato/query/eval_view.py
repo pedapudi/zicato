@@ -519,25 +519,65 @@ def _per_entry_flip_rates(
 # ---------------------------------------------------------------------------
 
 
-def _promoted_tristate_for(
-    paths: WorkspacePaths, epoch_id: str, gid: str, index_promoted: bool | None
-) -> bool | None:
-    """The tri-state ``promoted`` for one generation (EVAL-VIEW.md §3.1 / F1).
+def _lineage_nodes(paths: WorkspacePaths, epoch_id: str) -> dict[str, dict[str, Any]]:
+    """The epoch's lineage nodes keyed by generation id (EVAL-VIEW.md §3.1 / F1).
 
-    Derives the canonical :func:`promoted_tristate` of the generation's
-    ``experiment.json`` decision: ``true`` (won the gate), ``false`` (lost), or
-    ``null`` (in-flight / never raced). The index ``promoted`` bool is the
-    fallback ONLY when the experiment record is absent/unreadable — a readable
-    but undecided experiment stays ``null`` (never collapsed to ``false``).
+    The lineage view is THE promotion authority: it folds the canonical
+    :func:`promoted_tristate` of ``experiment.json`` **and** the ``lineage.json``
+    record the gate writes at settle time. Reading only the experiment record —
+    as this module used to — makes the matrix disagree with ``/api/lineage``
+    wherever the decision was journalled to lineage alone (every pre-stamp
+    workspace: ``outcome: null`` on disk, a settled promoted/rejected in
+    lineage), so settled rejections render as never-raced nulls.
+    Best-effort (DQ3): an unreadable workspace yields ``{}`` and the caller
+    falls back to the index bool.
     """
-    from zicato.query.decisions import experiment_decision, promoted_tristate  # noqa: PLC0415
+    from zicato.query.lineage_view import build_lineage_view  # noqa: PLC0415
 
-    exp = _read_json_value(
-        layout_of(paths).epoch_dir(epoch_id) / "generations" / gid / "experiment.json"
-    )
-    if isinstance(exp, dict):
-        return promoted_tristate(experiment_decision(exp))
-    return index_promoted
+    try:
+        view = build_lineage_view(paths, epoch_id, include_ratings=False)
+    except Exception:  # noqa: BLE001 — best-effort
+        return {}
+    return {
+        node["generation_id"]: node
+        for node in view.get("generations", [])
+        if isinstance(node, dict) and isinstance(node.get("generation_id"), str)
+    }
+
+
+def _seed_id(nodes: dict[str, dict[str, Any]]) -> str | None:
+    """The epoch's SEED — the parentless generation the reign starts from.
+
+    A recorded parent may be absent, ``None``, or the empty string older
+    workspaces write; all three mean "no parent". When an epoch records more
+    than one root (a re-seeded epoch) the sorted-first id wins, matching
+    :func:`~zicato.query.tournament_view._champion_lineage`'s root choice.
+    """
+    roots = sorted(gid for gid, node in nodes.items() if not node.get("parent_generation_id"))
+    return roots[0] if roots else None
+
+
+def _spine_ids(nodes: dict[str, dict[str, Any]]) -> list[str]:
+    """The champion spine in reign order — the promoted chain, ANCHORED AT THE SEED.
+
+    The seed is the epoch's baseline champion: it reigns from round 0 and keeps
+    reigning until a challenger beats it. So an epoch whose challengers were all
+    rejected still HAS a spine — ``[v0]`` — and a one-generation spine is a real
+    trajectory (the seed's own outcome on each entry), not an absent one.
+    Dropping it is what made the dossier claim "no champion-spine trajectory"
+    for an epoch whose spine was plainly recorded.
+
+    The promoted chain itself comes from the shared
+    :func:`~zicato.query.tournament_view._champion_lineage` walk; the seed is
+    prepended only when the chain does not already start there.
+    """
+    from zicato.query.tournament_view import _champion_lineage  # noqa: PLC0415
+
+    chain = _champion_lineage(list(nodes.values()))
+    seed = _seed_id(nodes)
+    if seed is not None and seed not in chain:
+        chain = [seed, *chain]
+    return chain
 
 
 def _candidate_axis(paths: WorkspacePaths, epoch_id: str) -> list[dict[str, Any]]:
@@ -546,8 +586,8 @@ def _candidate_axis(paths: WorkspacePaths, epoch_id: str) -> list[dict[str, Any]
     Column order is ``(round_index ?? +inf, created_at, generation_id)`` — the
     index already returns generations in ``(created_at, generation_id)`` order,
     so a stable sort by ``round_index`` finishes the ordering. Each column
-    carries ``promoted`` / ``champion_spine`` (the promoted spine) and the
-    read-only rating triple.
+    carries ``promoted`` / ``seed`` / ``champion_spine`` (the seed-anchored
+    reign) and the read-only rating triple.
     """
     from zicato.index.query import generations_for_epoch  # noqa: PLC0415
 
@@ -556,25 +596,44 @@ def _candidate_axis(paths: WorkspacePaths, epoch_id: str) -> list[dict[str, Any]
     except Exception:  # noqa: BLE001 — best-effort
         rows = []
 
+    # The generation graph the seed + spine are derived from: the index rows,
+    # OVERLAID by the lineage nodes. Lineage is authoritative wherever it has a
+    # node (it folds experiment.json AND the settle-time lineage record); the
+    # index row carries a generation lineage never walked (DQ3 fallback).
+    nodes: dict[str, dict[str, Any]] = {}
+    for r in rows:
+        gid = _row_get(r, "generation_id")
+        if isinstance(gid, str) and gid:
+            nodes[gid] = {
+                "generation_id": gid,
+                "parent_generation_id": _row_get(r, "parent_generation_id"),
+                "promoted": _opt_bool(_row_get(r, "promoted")),
+            }
+    nodes.update(_lineage_nodes(paths, epoch_id))
+    spine = set(_spine_ids(nodes))
+    seed = _seed_id(nodes)
+
     axis: list[dict[str, Any]] = []
     for r in rows:
         gid = _row_get(r, "generation_id")
         if not isinstance(gid, str) or not gid:
             continue
-        # TRISTATE promoted (EVAL-VIEW.md §3.1 / F1): derive from the canonical
-        # experiment classifier so an in-flight / never-raced candidate serves
-        # ``null`` — NEVER a collapsed ``false`` (the Class-B bug decisions.py
-        # names). The index bool is the fallback ONLY when the experiment.json is
-        # unreadable (the lineage_view.py:104-110 idiom).
-        promoted = _promoted_tristate_for(paths, epoch_id, gid, _opt_bool(_row_get(r, "promoted")))
+        # TRISTATE promoted (EVAL-VIEW.md §3.1 / F1), from the ONE classifier the
+        # lineage payload serves — so the matrix and /api/lineage cannot disagree
+        # about the same generation. An in-flight / never-raced candidate serves
+        # ``null``, NEVER a collapsed ``false`` (the Class-B bug decisions.py
+        # names).
+        promoted = nodes[gid].get("promoted")
         axis.append(
             {
                 "generation_id": gid,
                 "round_index": _opt_int(_row_get(r, "round_index")),
-                "promoted": promoted,
-                # The PROMOTED generations form the champion spine (§3.1): a
-                # definite ``true`` only — a null/false candidate is not on it.
-                "champion_spine": promoted is True,
+                "promoted": promoted if isinstance(promoted, bool) else None,
+                # The epoch's baseline. It faced no gate, so it is on the spine
+                # WITHOUT a promotion — the UI reads it as the seed, not as a win.
+                "seed": gid == seed,
+                # The reign: the promoted chain anchored at the seed (§3.1).
+                "champion_spine": gid in spine,
                 "elo": coerce_float(_row_get(r, "elo")),
                 "elo_se": coerce_float(_row_get(r, "elo_se")),
             }
@@ -849,9 +908,96 @@ def _empty_dossier(epoch_id: str | None, entry_id: str) -> dict[str, Any]:
             "cached_share": None,
         },
         "trajectory": [],
-        "attribution": {"first_passed_by": None, "regressed_by": []},
+        # The empty-state REASON travels with the empty shape (issue #207 §3) so
+        # a cold / unknown coordinate explains itself exactly like a real one.
+        "trajectory_reason": "No records for this epoch and entry were found.",
+        "attribution": {
+            "first_passed_by": None,
+            "regressed_by": [],
+            "first_passed_reason": "No records for this epoch and entry were found.",
+            "regressed_reason": "No records for this epoch and entry were found.",
+        },
         "reflection_findings": [],
         "note": "no such epoch / entry",
+    }
+
+
+def _spine_reasons(
+    trajectory: list[dict[str, Any]],
+    spine_verdicts: dict[str, bool | None],
+    seed_id: str | None,
+    first_passed_by: str | None,
+    regressed_by: list[str],
+) -> dict[str, str | None]:
+    """WHY the spine trajectory / attribution panels are empty (issue #207 §3).
+
+    An empty panel that says only "nothing yet" is unactionable: it cannot be
+    told apart from a panel that is empty because the epoch promoted nothing,
+    because the champion never ran this entry, or because the loss records were
+    pruned. Each of those is a DIFFERENT fact about the workspace, so each gets
+    its own sentence — derived here, where the records are, rather than guessed
+    at by the client.
+
+    Every reason is past-tense and unhedged: a settled workspace that says
+    "not yet" is claiming a future that is not coming. ``None`` on any key means
+    the panel has real content and needs no explanation.
+    """
+    spine = [t for t in trajectory if t.get("champion_spine")]
+    seed_note = f"the seed ({seed_id})" if seed_id else "the seed"
+
+    # ── the trajectory figure: it draws drift loss along the spine ──────────
+    trajectory_reason: str | None
+    if not trajectory:
+        trajectory_reason = "This epoch has no generations on record."
+    elif not spine:
+        trajectory_reason = (
+            "No generation was promoted in this epoch and no seed is on record, "
+            "so the epoch has no champion spine to plot."
+        )
+    elif any(isinstance(t.get("drift_loss"), int | float) for t in spine):
+        trajectory_reason = None
+    elif any((t.get("replicates") or 0) > 0 for t in spine):
+        trajectory_reason = (
+            "The champion spine ran this entry but recorded no drift loss — "
+            "the loss records are unavailable."
+        )
+    else:
+        names = ", ".join(str(t["generation_id"]) for t in spine)
+        trajectory_reason = f"The champion spine ({names}) never ran this entry."
+
+    # ── first-passed-by: the first spine generation to pass this entry ──────
+    first_reason: str | None
+    if first_passed_by is not None:
+        first_reason = None
+    elif not spine:
+        first_reason = "No generation was promoted in this epoch, so nothing could pass it."
+    elif not any(v is not None for v in spine_verdicts.values()):
+        first_reason = "No champion-spine generation has a recorded verdict on this entry."
+    elif len(spine) == 1 and seed_id is not None and spine[0]["generation_id"] == seed_id:
+        # THE honest reading of a one-generation spine: the seed failed the
+        # entry and every challenger that could have fixed it was rejected.
+        first_reason = (
+            f"{seed_note[0].upper()}{seed_note[1:]} did not pass this entry, "
+            "and no later generation was promoted."
+        )
+    else:
+        first_reason = "No champion-spine generation passed this entry."
+
+    # ── regressed-by: a spine generation that flipped a pass back to a fail ─
+    regressed_reason: str | None
+    if regressed_by:
+        regressed_reason = None
+    elif not spine:
+        regressed_reason = "No generation was promoted in this epoch, so nothing could regress it."
+    elif len(spine) < 2:
+        regressed_reason = f"A one-generation spine cannot regress — only {seed_note} ever reigned."
+    else:
+        regressed_reason = "No champion-spine generation regressed a prior pass on this entry."
+
+    return {
+        "trajectory": trajectory_reason,
+        "first_passed": first_reason,
+        "regressed": regressed_reason,
     }
 
 
@@ -959,6 +1105,7 @@ def build_eval_dossier(
     first_passed_by: str | None = None
     regressed_by: list[str] = []
     prev_pass: bool | None = None
+    spine_verdicts: dict[str, bool | None] = {}
     for cand in candidates:
         gen = cand["generation_id"]
         rows = per_candidate_rows.get(gen, [])
@@ -970,19 +1117,25 @@ def build_eval_dossier(
                 "generation_id": gen,
                 "round_index": cand["round_index"],
                 "champion_spine": cand["champion_spine"],
+                "seed": cand["seed"],
                 "drift_loss": cell["drift_loss"] if cell else None,
                 "pass_ratio": cell["pass_ratio"] if cell else None,
                 "replicates": cell["replicates"] if cell else 0,
                 "cached": cell["cached"] if cell else False,
             }
         )
-        # Attribution walks the champion spine only (the promoted path).
-        if cand["champion_spine"] and verdict is not None:
-            if verdict and first_passed_by is None:
-                first_passed_by = gen
-            if prev_pass is True and verdict is False:
-                regressed_by.append(gen)
-            prev_pass = verdict
+        # Attribution walks the champion spine only (the reign).
+        if cand["champion_spine"]:
+            spine_verdicts[gen] = verdict
+            if verdict is not None:
+                if verdict and first_passed_by is None:
+                    first_passed_by = gen
+                if prev_pass is True and verdict is False:
+                    regressed_by.append(gen)
+                prev_pass = verdict
+
+    seed_id = next((c["generation_id"] for c in candidates if c["seed"]), None)
+    reasons = _spine_reasons(trajectory, spine_verdicts, seed_id, first_passed_by, regressed_by)
 
     return {
         "epoch_id": resolved,
@@ -1006,7 +1159,13 @@ def build_eval_dossier(
             "cached_share": cached_share,
         },
         "trajectory": trajectory,
-        "attribution": {"first_passed_by": first_passed_by, "regressed_by": regressed_by},
+        "trajectory_reason": reasons["trajectory"],
+        "attribution": {
+            "first_passed_by": first_passed_by,
+            "regressed_by": regressed_by,
+            "first_passed_reason": reasons["first_passed"],
+            "regressed_reason": reasons["regressed"],
+        },
         "reflection_findings": _reflection_findings_for_entry(paths, resolved, entry_id),
     }
 

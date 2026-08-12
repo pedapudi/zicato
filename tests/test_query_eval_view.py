@@ -356,11 +356,19 @@ def test_matrix_axes_and_ordering(tmp_path: Path) -> None:
     m = ev.build_eval_matrix(_paths(tmp_path), EPOCH)
     assert m["found"] is True
     assert m["epoch_id"] == EPOCH
-    # Columns in round order; champion spine = the promoted generations.
+    # Columns in round order; champion spine = the SEED plus the promoted chain.
     assert [c["generation_id"] for c in m["candidates"]] == ["g0", "g1", "g2"]
     assert [c["champion_spine"] for c in m["candidates"]] == [True, True, False]
-    # Tristate promoted: g0 (fallback True) / g1 (promoted True) / g2 (rejected False).
-    assert [c["promoted"] for c in m["candidates"]] == [True, True, False]
+    # The parentless g0 is the SEED — the baseline the reign starts from.
+    assert [c["seed"] for c in m["candidates"]] == [True, False, False]
+    # Tristate promoted, from the ONE lineage classifier: g1 promoted / g2
+    # rejected, and g0 NULL — nothing on disk recorded a decision for the seed
+    # (it faced no gate), so the axis reports "no decision" rather than
+    # inheriting the index bool. The index's `promoted` column is a weaker
+    # record than lineage — the June workspace stamps 0 on a generation lineage
+    # records as promoted — so it no longer overrides a file-derived answer.
+    # The seed is still the epoch's champion: `seed` + `champion_spine` say so.
+    assert [c["promoted"] for c in m["candidates"]] == [None, True, False]
     assert m["candidates"][0]["round_index"] == 0
     # Rows in board order; the tagged entry is flagged holdout.
     assert [e["entry_id"] for e in m["entries"]] == ["entryA", "entryB", "entryC"]
@@ -499,7 +507,11 @@ def test_dossier_unknown_entry_same_shape(tmp_path: Path) -> None:
     d = ev.build_eval_dossier(_paths(tmp_path), EPOCH, "no_such_entry")
     assert d["found"] is False
     assert d["trajectory"] == []
-    assert d["attribution"] == {"first_passed_by": None, "regressed_by": []}
+    assert d["attribution"]["first_passed_by"] is None
+    assert d["attribution"]["regressed_by"] == []
+    # An empty panel carries WHY it is empty, on the cold path too (#207 §3).
+    assert d["trajectory_reason"] == "No records for this epoch and entry were found."
+    assert d["attribution"]["first_passed_reason"] == d["trajectory_reason"]
     assert d["instrument"]["flip_rate"] is None
 
 
@@ -699,3 +711,170 @@ def test_endpoint_eval_health(tmp_path: Path) -> None:
         r2 = c.get("/api/epoch/bad%20id/eval-health")
         assert r2.status_code == 200
         assert r2.json()["found"] is False
+
+
+# ---------------------------------------------------------------------------
+# The JUNE-SHAPED workspace (issue #207 §2/§3) — the decisions live in
+# lineage.json, NOT in experiment.json.
+# ---------------------------------------------------------------------------
+#
+# Every real pre-stamp workspace looks like this: the orchestrator wrote each
+# generation's ``experiment.json`` with ``outcome: null`` at PROPOSE time and
+# never rewrote it at settle time; the gate journalled the decision to
+# ``lineage.json`` instead. So ``/api/lineage`` reports a settled promoted /
+# rejected while the experiment record on disk still reads undecided.
+#
+# The eval matrix used to classify off ``experiment.json`` ALONE, which made it
+# report ``promoted: null`` for every candidate — six columns of "racing…" on an
+# epoch that finished in June — and, because the spine is the promoted set, an
+# empty champion spine, which is what made the board dossier claim there was no
+# trajectory. Both reds are pinned below.
+
+
+def _seed_june_shaped(workspace: Path) -> None:
+    """``_seed`` with the decisions moved to lineage.json (the June shape)."""
+    _seed(workspace)
+    # Every experiment record is present but UNDECIDED (outcome: null).
+    for gid, parent in (("g0", None), ("g1", "g0"), ("g2", "g0")):
+        _write_experiment(workspace, EPOCH, gid, parent, None)
+    # lineage.json carries the settled truth: the seed reigns, g1 won, g2 lost.
+    (workspace / "lineage.json").write_text(
+        json.dumps(
+            {
+                "epochs": [
+                    {
+                        "id": EPOCH,
+                        "generations": [
+                            {"id": "g0", "parent_id": None, "promoted": True},
+                            {"id": "g1", "parent_id": "g0", "promoted": True},
+                            {"id": "g2", "parent_id": "g0", "promoted": False},
+                        ],
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+
+def test_matrix_reads_settled_decisions_from_lineage(tmp_path: Path) -> None:
+    # RED (#207 §2): a settled REJECTION recorded only in lineage.json must
+    # render as rejected, not as a never-raced null the UI spells "racing…".
+    _seed_june_shaped(tmp_path)
+    m = ev.build_eval_matrix(_paths(tmp_path), EPOCH)
+    by_gen = {c["generation_id"]: c for c in m["candidates"]}
+    assert by_gen["g2"]["promoted"] is False
+    assert by_gen["g1"]["promoted"] is True
+    assert by_gen["g0"]["promoted"] is True
+    # The matrix and /api/lineage now answer from the ONE classifier, so they
+    # cannot disagree about the same generation.
+    from zicato.query.lineage_view import build_lineage_view
+
+    lineage = build_lineage_view(_paths(tmp_path), EPOCH, include_ratings=False)
+    assert {n["generation_id"]: n["promoted"] for n in lineage["generations"]} == {
+        g: c["promoted"] for g, c in by_gen.items()
+    }
+
+
+def test_spine_includes_the_seed_when_every_challenger_was_rejected(tmp_path: Path) -> None:
+    # RED (#207 §3): an epoch whose challengers were ALL rejected still has a
+    # spine — the seed alone — and a one-generation spine is a real trajectory.
+    _seed_june_shaped(tmp_path)
+    # Demote g1 so the seed is the only reigning generation.
+    (tmp_path / "lineage.json").write_text(
+        json.dumps(
+            {
+                "epochs": [
+                    {
+                        "id": EPOCH,
+                        "generations": [
+                            {"id": "g0", "parent_id": None, "promoted": True},
+                            {"id": "g1", "parent_id": "g0", "promoted": False},
+                            {"id": "g2", "parent_id": "g0", "promoted": False},
+                        ],
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    m = ev.build_eval_matrix(_paths(tmp_path), EPOCH)
+    by_gen = {c["generation_id"]: c for c in m["candidates"]}
+    assert by_gen["g0"]["seed"] is True and by_gen["g0"]["champion_spine"] is True
+    assert [g for g, c in by_gen.items() if c["champion_spine"]] == ["g0"]
+
+    d = ev.build_eval_dossier(_paths(tmp_path), EPOCH, "entryA")
+    spine = [t for t in d["trajectory"] if t["champion_spine"]]
+    assert [t["generation_id"] for t in spine] == ["g0"]
+    # The seed's own reading on the entry IS the trajectory point.
+    assert spine[0]["drift_loss"] is not None
+    assert d["trajectory_reason"] is None  # there is something to plot
+
+
+def test_seed_is_on_the_spine_even_with_nothing_promoted(tmp_path: Path) -> None:
+    # The seed anchors the reign whether or not anything recorded a promotion
+    # for it: it is the champion the epoch started from.
+    _seed_june_shaped(tmp_path)
+    (tmp_path / "lineage.json").write_text(
+        json.dumps({"epochs": [{"id": EPOCH, "generations": []}]}), encoding="utf-8"
+    )
+    m = ev.build_eval_matrix(_paths(tmp_path), EPOCH)
+    by_gen = {c["generation_id"]: c for c in m["candidates"]}
+    assert by_gen["g0"]["promoted"] is None  # no decision was ever recorded
+    assert by_gen["g0"]["seed"] is True and by_gen["g0"]["champion_spine"] is True
+
+
+def test_empty_spine_panels_carry_distinct_reasons(tmp_path: Path) -> None:
+    # #207 §3: each genuinely-empty panel names WHY, and the reasons differ by
+    # cause — a seed that failed the entry reads differently from a spine that
+    # never ran it.
+    _seed_june_shaped(tmp_path)
+    (tmp_path / "lineage.json").write_text(
+        json.dumps(
+            {
+                "epochs": [
+                    {
+                        "id": EPOCH,
+                        "generations": [
+                            {"id": "g0", "parent_id": None, "promoted": True},
+                            {"id": "g1", "parent_id": "g0", "promoted": False},
+                            {"id": "g2", "parent_id": "g0", "promoted": False},
+                        ],
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    p = _paths(tmp_path)
+
+    # entryA: the seed RAN it and PASSED it → first-passed-by is real, and the
+    # one-generation spine explains why nothing could have regressed.
+    passed = ev.build_eval_dossier(p, EPOCH, "entryA")
+    assert passed["attribution"]["first_passed_by"] == "g0"
+    assert passed["attribution"]["first_passed_reason"] is None
+    assert "one-generation spine cannot regress" in passed["attribution"]["regressed_reason"]
+
+    # entryB with the seed's verdict flipped to a FAIL: the honest reading is
+    # that the seed failed it and nothing later was promoted — never "not yet".
+    conn = sqlite3.connect(str(tmp_path / "index.db"))
+    try:
+        conn.execute("UPDATE loss_profiles SET pass_fail = 0 WHERE run_id = 'g0:entryB'")
+        conn.commit()
+    finally:
+        conn.close()
+    _write_run_loss(tmp_path, EPOCH, "g0", "entryB", passes=False, drift=0.9, runtime=5)
+    failed = ev.build_eval_dossier(p, EPOCH, "entryB")
+    assert failed["attribution"]["first_passed_by"] is None
+    assert failed["attribution"]["first_passed_reason"] == (
+        "The seed (g0) did not pass this entry, and no later generation was promoted."
+    )
+    assert "yet" not in failed["attribution"]["first_passed_reason"]
+
+    # entryC: the seed never ran it at all → a different reason again.
+    never = ev.build_eval_dossier(p, EPOCH, "entryC")
+    assert never["found"] is True
+    assert (
+        never["attribution"]["first_passed_reason"]
+        != (failed["attribution"]["first_passed_reason"])
+    )

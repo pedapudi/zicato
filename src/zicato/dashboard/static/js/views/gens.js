@@ -29,7 +29,7 @@ import * as D from '../data.js';
 import * as svg from '../svg.js';
 import { gatedSwap, section, empty, verdictPill, decisionFor, decisionOf, dataTable, deltaCell, ratingCellEl, ratingTripleDigest, coreIdeaLine } from '../ui.js';
 import { renderStructure, structurePill, structureDigest, isNonGauntlet, normalizeStructure, resolveNonGauntletSt } from './structure.js';
-import { livenessFor } from '../livestatus.js';
+import { epochIsLive } from '../livestatus.js';
 import { roundsFromTimeline, roundModelDigest } from '../rounds.js';
 
 // Does the LIVE run (active tournament / heartbeat) belong to the epoch being
@@ -60,9 +60,11 @@ function envelopeBelongsToEpoch(epochId) {
 
 // Is a run LIVE right now, for the epoch on screen? This is what every
 // present-tense claim consumes: the projected scalars, the PROJ badges and
-// progress bars, the in-flight round and its "racing" / "deciding…" pills.
+// progress bars, the in-flight round and its "racing" / "deciding…" pills —
+// and the verdict pills' tense. The composition (clock AND scope) now lives in
+// livestatus.js beside `livenessFor`, so every view asks it the same way.
 function liveBelongsToEpoch(epochId) {
-  return livenessFor(state).liveness.live && envelopeBelongsToEpoch(epochId);
+  return epochIsLive(state, epochId);
 }
 
 export async function render(host, ctx, params) {
@@ -148,6 +150,9 @@ export async function render(host, ctx, params) {
 
   const digest = JSON.stringify({
     id, championId,
+    // rendered: the pending verdict pill's TENSE moves with it, so the beat that
+    // settles the loop must repaint the roster rather than leave "racing…" up.
+    live: isLiveForThisEpoch ? 1 : 0,
     champScalar: svg.isNum(champScalar) ? champScalar.toFixed(3) : null,
     rounds: matchups.map((m, i) => [m.champion, m.challenger, m.decision,
       svg.isNum(m.delta_scalar) ? m.delta_scalar.toFixed(2) : null,
@@ -200,7 +205,9 @@ export async function render(host, ctx, params) {
                 el('span', { text: g.id + (g.promoted ? ' ♛' : '') }),
                 coreIdeaLine(ideaByGen.get(String(g.id))),
               ].filter(Boolean) },
-              { el: verdictPill(decision) },
+              // the pending pill reads "racing…" only while THIS epoch's loop is
+              // running; on a settled / interrupted epoch it reads "undecided".
+              { el: verdictPill(decision, { live: isLiveForThisEpoch }) },
               { class: 'dn-mono', text: g.parent || 'seed' },
               { class: 'dn-num dn-mono', text: svg.isNum(sc) ? svg.fmt(sc, 1) : '—' },
               // the visibility rating (server-joined; never the gate).
