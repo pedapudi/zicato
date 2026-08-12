@@ -250,15 +250,6 @@ async def ensure_epoch_for_contract(
     log.info("contract changed (%s) — rolled %s -> %s", changed, cur, new_id)
     print(f"contract changed ({changed}) — rolled {cur} -> {new_id}")
 
-    # The boundary is when applying a proposer recommendation is FREE: the
-    # epoch is rolling anyway, so an edit to the proposer costs nothing extra
-    # in comparability. Print the pending queue here (and only here — the
-    # no-roll path above returns before this) so the operator meets it at the
-    # one moment the decision is cheap. Silent when nothing is pending.
-    from zicato.proposer.reflection import echo_pending_recommendations  # noqa: PLC0415
-
-    echo_pending_recommendations(workspace_root)
-
     # Drain any promote/reject overrides left pending across the roll. They
     # target a bare generation id (e.g. "v3"); generation ids restart at v0
     # in the new epoch, so a survivor would mis-fire on the new epoch's
@@ -296,6 +287,16 @@ async def ensure_epoch_for_contract(
         f"NOTE: epoch {new_id} opened by auto-roll with no goal recorded; "
         f'run `zicato epoch set-goal --epoch {new_id} --goal "..."` to fill it in.'
     )
+
+    # Last, so it is what the operator is left looking at. The boundary is when
+    # applying a proposer recommendation is FREE — the epoch is rolling anyway,
+    # so the edit costs nothing extra in comparability — and this is the only
+    # path that reaches it (the no-roll return above is well upstream). Silent
+    # when nothing is pending, so a boundary without recommendations reads
+    # exactly as it did before this existed.
+    from zicato.proposer.reflection import echo_pending_recommendations  # noqa: PLC0415
+
+    echo_pending_recommendations(workspace_root)
     return new_id
 
 

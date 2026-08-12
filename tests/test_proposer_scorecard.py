@@ -208,6 +208,53 @@ def test_gates_without_scalars_are_unmeasured_not_zero(tmp_path: Path) -> None:
     assert card.margins.achieved_median is None
 
 
+def test_a_reran_round_counts_one_gate_and_every_attempt(tmp_path: Path) -> None:
+    """The two families of aggregate take OPPOSITE slices of a re-run round.
+
+    One log can hold two attempts at the same index: a round that applied
+    patches but died before its experiment was written never consumes its
+    index, so the next invocation reopens it and appends. Folding the union
+    would let the dead attempt contribute a second gate — and here a second
+    promotion — to a round the epoch settled once. But slicing proposal
+    attempts the same way would hide the failure that CAUSED the re-run, which
+    is the one thing this scorecard exists to measure: the failure rate would
+    improve exactly when the proposer did worst.
+    """
+    log = RoundLog(tmp_path, EPOCH, 0)
+    # Attempt 1: the proposer failed A4, then the round died.
+    for event in [
+        RoundOpened(contract_hash="c"),
+        ProposalAttempted(errors=("A4: dropped top-level imports: os",)),
+        GateEvaluated(decision="promoted", champion_scalar=0.5, challenger_scalar=0.1),
+    ]:
+        log.append(event)
+    # Attempt 2: reopened at the same index, clean, and rejected.
+    for event in [
+        RoundOpened(contract_hash="c"),
+        ProposalAttempted(),
+        GateEvaluated(
+            decision="rejected",
+            champion_scalar=0.5,
+            challenger_scalar=0.52,
+            margin_required=0.05,
+        ),
+        DecisionRecorded(decision="rejected"),
+        RoundClosed(),
+    ]:
+        log.append(event)
+
+    card = read_epoch_scorecard(tmp_path, EPOCH)
+    # Gate + decision facts: the FINAL attempt only. The dead attempt's
+    # promotion is not the epoch's outcome and must not be counted as one.
+    assert card.margins.n == 1
+    assert card.promote_rate == Rate(k=0, n=1)
+    # Proposal facts: EVERY attempt. Both were real proposer calls, and one
+    # really did fail A4.
+    assert card.proposals == 2
+    assert card.validator_failure_rates["A4"] == Rate(k=1, n=2)
+    assert card.cost.proposal_attempts == 2
+
+
 def test_a_corrupt_round_is_skipped_not_fatal(tmp_path: Path) -> None:
     """One damaged round must not deny the operator the others."""
     _write(tmp_path, 0, _round(decision="promoted"))
