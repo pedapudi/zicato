@@ -160,6 +160,11 @@ export async function render(host, ctx, params, route) {
   const ratingByGen = new Map(rows.map((g) => [String(g.generation_id), { elo: g.elo, elo_se: g.elo_se, elo_games: g.elo_games }]));
   sideA.rating = ratingByGen.get(String(genId)) || null;
   if (sideB) sideB.rating = ratingByGen.get(String(cmpId)) || null;
+  // Is the loop running FOR THIS EPOCH? The verdict pills' tense hangs off it:
+  // a gate with no resolved decision is "racing…" only while something is
+  // actually racing; on a settled / interrupted epoch it went undecided.
+  sideA.live = liveForThisEpoch;
+  if (sideB) sideB.live = liveForThisEpoch;
 
   const digest = JSON.stringify({
     epochId, genId, cmpId, entry: params.entry || null, structure,
@@ -925,7 +930,7 @@ function candidateDigest(s) {
     // beat that advances progress repaints, but a no-op heartbeat stays equal.
     // the tri-state + the interrupted tally: the panel says something
     // different in each state, so a state flip must repaint.
-    liveness: (s.endedAt || '') + '|' + (s.interruptedBoards || 0),
+    liveness: (s.endedAt || '') + '|' + (s.interruptedBoards || 0) + '|' + (s.live ? 1 : 0),
     inflight: Array.isArray(s.inflight) ? s.inflight.map((r) => {
       const pr = runProgressRatio(r);
       return [r.entry_id != null ? r.entry_id : null,
@@ -975,7 +980,7 @@ function paintCandidate(host, ctx, epochId, s, cmpId, isPrimary, narrow, structu
     deltaStat,
     ratingStat,
     stat(node.parent || 'seed', 'parent'),
-    el('div', { class: 'dn-stat' }, [verdictPill(baseline ? 'baseline' : s.decision)]),
+    el('div', { class: 'dn-stat' }, [verdictPill(baseline ? 'baseline' : s.decision, { live: s.live })]),
   ]));
 
   // ── WHAT THIS CANDIDATE IS (§4) — its idea, before its numbers ──
@@ -2257,11 +2262,11 @@ export function buildGateStack(s) {
 
   if (deciding) {
     out.push(section(`Promote gate · ${deciding.spec.champ} → ${deciding.spec.chall} · the deciding round`,
-      gatePanel(deciding.gate, deciding.cmp, deciding.spec)));
+      gatePanel(deciding.gate, deciding.cmp, deciding.spec, { live: s.live })));
   }
   if (defences.length) {
     const card = el('div', { class: 'dn-panel dn-gate-defences' });
-    for (const d of defences) card.appendChild(defenceRow(d));
+    for (const d of defences) card.appendChild(defenceRow(d, { live: s.live }));
     // The caption must read true for the SEED too, which has no deciding round
     // above it to point at — so it describes the rows, not their neighbours.
     card.appendChild(el('p', { class: 'dn-faint', style: 'font-size:11px;margin:8px 0 0;',
@@ -2273,7 +2278,7 @@ export function buildGateStack(s) {
 
 // ONE defended round as a collapsed summary row: who challenged, how the gate
 // answered, and the Δ — expanding IN PLACE to the same full gate panel.
-function defenceRow(d) {
+function defenceRow(d, opts) {
   const key = d.spec.champ + '>' + d.spec.chall;
   const decision = decisionOf(d.gate) || 'pending';
   const delta = svg.isNum(d.gate.delta_scalar) ? d.gate.delta_scalar : null;
@@ -2282,17 +2287,17 @@ function defenceRow(d) {
     el('summary', null, [
       el('span', { class: 'chev', text: '▸' }),
       el('span', { class: 'dn-mono dn-gate-defence-vs', text: 'vs ' + d.spec.chall }),
-      verdictPill(decision),
+      verdictPill(decision, opts),
       el('span', { class: 'dn-mono dn-faint dn-gate-defence-delta',
         text: delta == null ? 'Δ —' : 'Δ ' + svg.fmtSigned(delta, 3) }),
     ]),
-    gatePanel(d.gate, d.cmp, d.spec),
+    gatePanel(d.gate, d.cmp, d.spec, opts),
   ]);
   row.addEventListener('toggle', () => { _defenceOpen.set(key, !!row.open); });
   return row;
 }
 
-export function gatePanel(gate, comparison, spec) {
+export function gatePanel(gate, comparison, spec, opts) {
   const card = el('div', { class: 'dn-panel dn-gate' });
   // Class B: a gate with no resolved decision is still pending, not rejected.
   // The backend emits decision:"deferred" verbatim until BOTH aggregates
@@ -2313,7 +2318,7 @@ export function gatePanel(gate, comparison, spec) {
     ]));
   }
   card.appendChild(el('div', { class: 'dn-gate-head' }, [
-    el('div', { class: 'dn-gate-decision' }, [verdictPill(decision), ovChip].filter(Boolean)),
+    el('div', { class: 'dn-gate-decision' }, [verdictPill(decision, opts), ovChip].filter(Boolean)),
     // ABSOLUTE scalars sit LEFT of the Δ chips — the settled champion floor and
     // the candidate's absolute scalar (or, mid-flight, its PROJECTED scalar in
     // the projStat treatment) so the operator reads the two ENDPOINTS the Δ is

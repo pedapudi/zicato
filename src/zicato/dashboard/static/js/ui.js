@@ -538,10 +538,26 @@ export function decisionFor(spec) {
   return 'pending';
 }
 
-export function verdictPill(decision) {
+// The verdict pill. `opts.live === false` puts the PENDING label in the past
+// tense — "racing…" is a claim about right now, and a workspace whose loop
+// stopped in June is not racing anything (issue #194 §1 / #207 §2). The
+// VOCABULARY is not forked: the decision token and its `dn-pending` class are
+// unchanged, so the pill still reads as the one shipped in-contention state;
+// only the WORD moves to what actually happened — the run ended undecided.
+// Liveness is the CALLER's to know (it is per-epoch, and the pill has no app
+// state), so the default stays present-tense and every site that renders a
+// settled epoch passes it explicitly.
+export function verdictLabel(decision, opts) {
   const d = decision || 'baseline';
-  const label = d === 'baseline' ? 'seed (v0)' : d === 'pending' ? 'racing…' : d;
-  return el('span', { class: `dn-pill dn-${d}`, text: label });
+  const live = !opts || opts.live !== false;
+  if (d === 'baseline') return 'seed (v0)';
+  if (d === 'pending') return live ? 'racing…' : 'undecided';
+  return d;
+}
+
+export function verdictPill(decision, opts) {
+  const d = decision || 'baseline';
+  return el('span', { class: `dn-pill dn-${d}`, text: verdictLabel(d, opts) });
 }
 
 // ---- operator-override provenance (the overrideChip primitive) -------

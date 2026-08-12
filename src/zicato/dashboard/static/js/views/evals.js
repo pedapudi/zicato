@@ -30,8 +30,10 @@
 // cells verbatim and renders both without branching on structure.
 
 import { el, svgEl } from '../core/dom.js';
+import { state } from '../core/state.js';
 import * as D from '../data.js';
-import { section, empty, gatedSwap, verdictPill } from '../ui.js';
+import { section, empty, gatedSwap, verdictPill, decisionFor } from '../ui.js';
+import { epochIsLive } from '../livestatus.js';
 import { CROWN, fmt } from '../svg.js';
 import { harmonografMini, harmonografIsLive } from '../core/harmonograf.js';
 import { flipWhisker, discriminationPips, vizFromFeedAdmission } from '../core/admission_viz.js';
@@ -190,7 +192,7 @@ function ghostDigestPart(ghosts) {
 // it). NO timestamps, NO raw floats beyond a rounded drift, so a no-op beat is
 // byte-identical. The ghost feed is appended ONLY when present (byte-identical
 // no-ghost pin).
-function digestOf(matrix, live, ghosts) {
+function digestOf(matrix, live, ghosts, epochLive) {
   const gp = (ghosts && ghosts.length) ? '|g' + JSON.stringify(ghostDigestPart(ghosts)) : '';
   if (!matrix) return 'evals|null|' + fbits() + gp;
   if (!matrix.found) return 'evals|notfound|' + (matrix.epoch_id || '') + '|' + fbits() + gp;
@@ -199,7 +201,7 @@ function digestOf(matrix, live, ghosts) {
   // Class-B bug: null must never collapse into false).
   const promo3 = (p) => (p === true ? 1 : p === false ? 0 : 'n');
   const cands = (matrix.candidates || []).map((c) =>
-    [c.generation_id, c.round_index, c.champion_spine ? 1 : 0, promo3(c.promoted)]);
+    [c.generation_id, c.round_index, c.champion_spine ? 1 : 0, promo3(c.promoted), c.seed ? 1 : 0]);
   const rows = (matrix.entries || []).map((e) =>
     [e.entry_id, e.slice, e.flip_rate_measured ? Math.round((e.flip_rate || 0) * 100) : 'u']);
   const cells = (matrix.cells || []).map((row) => (row || []).map((c) =>
@@ -209,7 +211,11 @@ function digestOf(matrix, live, ghosts) {
   return 'evals|' + JSON.stringify({
     ep: matrix.epoch_id, c: cands, r: rows, x: cells,
     cal: [cal.measured ? 1 : 0, cal.runs || 0, Math.round((cal.max_abs_delta || 0) * 1000)],
-    live: live ? 1 : 0, f: fbits(),
+    // BOTH liveness reads are view-visible: the harmonograf deep-link appears
+    // with `live`, and the pending pill's TENSE ("racing…" vs "undecided")
+    // moves with `epochLive`. A digest blind to either would freeze the stale
+    // wording on the beat that settles the loop.
+    live: live ? 1 : 0, el: epochLive ? 1 : 0, f: fbits(),
   }) + gp;
 }
 function fbits() {
@@ -221,6 +227,10 @@ export async function render(host, ctx, params, _route) {
   const epochId = (params && params.epochId) || null;
   const matrix = epochId ? await D.evalMatrix(epochId) : null;
   const live = harmonografIsLive();
+  // Is the loop running FOR THIS EPOCH? The verdict pills' tense hangs off it:
+  // an undecided candidate in an epoch nothing is racing did not stay in the
+  // race — the race ended without deciding it (issue #207 §2).
+  const epochLive = epochIsLive(state, epochId);
   // the suggestions feed powers the GHOST ROWS. It is fetched ONCE per epoch into
   // a module cache (never awaited in the hot path — the gated render keeps the
   // matrix-only microtask cadence) and re-renders once when it lands; a
@@ -229,13 +239,14 @@ export async function render(host, ctx, params, _route) {
   ensureSugFeed(host, ctx, epochId);
   const entries = (matrix && Array.isArray(matrix.entries)) ? matrix.entries : [];
   const ghosts = ghostEntriesFrom(_sugFeed, entries, epochId);
-  gatedSwap(host, digestOf(matrix, live, ghosts), () => build(host, ctx, matrix, epochId, live, ghosts));
+  gatedSwap(host, digestOf(matrix, live, ghosts, epochLive),
+    () => build(host, ctx, matrix, epochId, live, ghosts, epochLive));
   // The staleness sentinel for the async ghost-feed repaint (see ensureSugFeed):
   // whatever node this render mounted — disconnected means the operator left.
   _builtRoot = host.firstChild || null;
 }
 
-function build(host, ctx, matrix, epochId, live, ghosts) {
+function build(host, ctx, matrix, epochId, live, ghosts, epochLive) {
   const nodes = [];
   nodes.push(el('div', { class: 'dt-pagehead' }, [
     el('h1', { class: 'dn-h1', text: 'Evals' }),
@@ -285,7 +296,7 @@ function build(host, ctx, matrix, epochId, live, ghosts) {
   nodes.push(buildToolbar(host, ctx, matrix));
 
   // ── the matrix ────────────────────────────────────────────────────────
-  nodes.push(buildMatrix(ctx, epochId, candidates, entries, cells, live, ghosts));
+  nodes.push(buildMatrix(ctx, epochId, candidates, entries, cells, live, ghosts, epochLive));
 
   // the health SECTION (ranked lists) sits below the matrix.
   nodes.push(sectionHost);
@@ -329,7 +340,7 @@ function buildToolbar(host, ctx, matrix) {
   return toolbar;
 }
 
-function buildMatrix(ctx, epochId, candidates, entries, cells, live, ghosts) {
+function buildMatrix(ctx, epochId, candidates, entries, cells, live, ghosts, epochLive) {
   const table = el('table', { class: 'dn-mtx dn-evalmtx' });
 
   // ── column group header (round_index grouped) + the candidate header ──
@@ -339,7 +350,7 @@ function buildMatrix(ctx, epochId, candidates, entries, cells, live, ghosts) {
   const hr = el('tr', { class: 'dn-evalmtx-headrow' });
   hr.appendChild(el('th', { class: 'dn-mtx-corner', text: 'entry · candidate →' }));
   for (const c of candidates) {
-    hr.appendChild(candidateHeader(ctx, epochId, c));
+    hr.appendChild(candidateHeader(ctx, epochId, c, epochLive));
   }
   thead.appendChild(hr);
   table.appendChild(thead);
@@ -466,23 +477,36 @@ function roundGroupRow(candidates) {
 
 // A candidate column header: the champion-spine crown + the gen id + the served
 // decision verdict pill (reusing the shipped dn-pill vocabulary — NO new chip).
-function candidateHeader(ctx, epochId, c) {
+//
+// The decision comes from the SHARED classifier (`decisionFor`), not from a
+// local re-reading of `promoted`. This column used to derive it inline, and the
+// inline derivation could not see the seed or the settle-time lineage record —
+// so an epoch whose challengers were all rejected in June rendered six columns
+// of "racing…". The server now stamps `promoted` off the one lineage authority
+// and flags the `seed`; `epochLive` puts the still-undecided ones in the past
+// tense when the loop that would decide them is not running.
+function candidateHeader(ctx, epochId, c, epochLive) {
   const spine = c.champion_spine === true;
+  const seed = c.seed === true;
   const kids = [];
   if (spine) {
-    kids.push(el('span', { class: 'dn-evalmtx-crown', 'aria-label': 'champion spine', title: 'on the promoted-champion spine', text: CROWN.current }));
+    kids.push(el('span', {
+      class: 'dn-evalmtx-crown', 'aria-label': 'champion spine',
+      title: seed ? 'the seed — the champion this epoch started from' : 'on the promoted-champion spine',
+      text: CROWN.current,
+    }));
   }
   kids.push(el('a', {
     class: 'dn-mtx-genlink dn-evalmtx-genlink',
     href: ctx.href('candidate', { epochId, gen: c.generation_id }),
     text: shortId(c.generation_id, 14),
   }));
-  // the shipped decision vocabulary, TRISTATE (§3.1 / F1): promoted → dn-promoted,
-  // rejected → dn-rejected, null (in-flight / never raced) → the shipped 'pending'
-  // pill ("racing…") — NEVER collapse a null into rejected (the Class-B bug).
-  const decision = spine || c.promoted === true ? 'promoted'
-    : c.promoted === false ? 'rejected' : 'pending';
-  kids.push(verdictPill(decision));
+  // the shipped decision vocabulary, TRISTATE (§3.1 / F1): the seed → 'baseline'
+  // (it faced no gate, so it never WON one), promoted → dn-promoted, rejected →
+  // dn-rejected, null (in-flight / never raced) → the shipped 'pending' pill —
+  // NEVER collapse a null into rejected (the Class-B bug).
+  const decision = decisionFor({ baseline: seed, promoted: c.promoted });
+  kids.push(verdictPill(decision, { live: epochLive }));
   return el('th', {
     class: 'dn-mtx-gen dn-evalmtx-gen' + (spine ? ' dn-evalmtx-spine' : ''),
     scope: 'col', 'data-gen': String(c.generation_id),

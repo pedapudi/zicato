@@ -793,19 +793,33 @@ def test_bundle_under_size_envelope() -> None:
     # growth, so rather than nudge it a fourth time the envelope goes to
     # 2.03 M — ~2% over the honest total, the same slack the rebase and §5 both
     # chose, sized to absorb the #194 sections still in flight.
-    # The CONSOLE REVIEW ROUND (#207) then lands on a 2.03 M line that main had
-    # already spent down to ~6.6 KB of headroom. Its figure-sizing section adds
-    # ~8 KB: the shared `applyIntrinsic` mode in svg.js (the counterpart to
+    # The CONSOLE REVIEW ROUND (#207) then lands on a 2.03 M line with 3,147
+    # chars of headroom left (an honest 2,026,853). Its figure-sizing section
+    # adds ~8 KB: the shared `applyIntrinsic` mode in svg.js (the counterpart to
     # `applyResponsive` — a compact figure renders at its viewBox width so its
     # text stops magnifying with the pane), the epoch page's MEASUREMENT BAND
     # (heatmap | per-judge trend | calibration mini in one wrapping grid, with
     # the calibration card a genuinely new rendered surface on that page) and
-    # its CSS, plus the layout rule in CONTRACTS.md. Several sibling sections of
-    # the same review round are in flight against this same bundle, and ~6.6 KB
-    # cannot absorb a wave — the same "about to fire on the next surface" state
-    # the 1.96 M line hit. Rather than have each section shave its own comments
-    # to fit, the envelope goes to 2.07 M: ~2% over the honest 2.032 M total,
-    # the same slack the rebase, §5 and the 2.03 M line each chose.
+    # its CSS, plus the layout rule in CONTRACTS.md. That section does not merely
+    # crowd the 2.03 M line — it BREACHES it, landing at 2,035,041, 5,041 chars
+    # over. Which is the sharpest form of the state the 1.96 M line hit: not a
+    # ceiling about to fire on the next surface, but one that a single section
+    # already cleared. And several siblings of the same review round are in
+    # flight against the same bundle. Rather than have each of them shave its own
+    # comments to fit, the envelope goes to 2.07 M — ~1.7% over that honest
+    # total, the same order of slack the rebase, §5 and the 2.03 M line each
+    # chose.
+    #
+    # MATRIX VERDICTS + THE SEED SPINE (#207 §2/§3) is one of the siblings that
+    # raise anticipated: the liveness-aware verdict label and the `epochIsLive`
+    # scope helper it reads, threaded through the five surfaces that could render
+    # a pending pill (the evals matrix, the roster, the ledger, the candidate
+    # gate stack, the publication scores table), plus the served empty-state
+    # reasons the board dossier renders instead of "yet". +8,134 chars — mostly
+    # the comments recording WHY each site now asks about the clock, since a bare
+    # `{ live }` argument is exactly the kind of change a later reader deletes as
+    # noise. Honest total 2,043,175: it fits inside the 2.07 M line with 26,825
+    # to spare, so that line stands.
     assert total < 2_070_000, f"bundle is {total} chars, exceeds 2_070_000 envelope\n" + "\n".join(
         f"  {name:40s} {size:>10,}" for name, size in sorted(sizes.items(), key=lambda kv: -kv[1])
     )

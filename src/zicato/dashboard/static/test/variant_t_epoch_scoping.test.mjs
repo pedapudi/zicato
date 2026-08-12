@@ -158,8 +158,11 @@ test('Tier1 (cross-epoch): publication view scopes lineage/figures to the viewed
   await publication.render(host, { navigate() {}, href: router.href }, { epochId: SC_NEW });
   // the aggregate-scores table lists e1's own gens only; v2 belongs to e0.
   assert(!host.textContent.includes('v2'), 'no leaked e0 generation v2 in the e1 publication figures');
-  // the unscored challenger reads "racing…", never "rejected".
-  assert(!/rejected/.test(host.textContent) || host.textContent.includes('racing'), 'an unscored gen reads racing, not a default rejected');
+  // the unscored challenger reads as still-unsettled, never "rejected" — and
+  // the WORD is tense-bound (#207 §2): this fixture has no live signals, so the
+  // settled reading "undecided" is correct and "racing…" would be the lie.
+  assert(!/rejected/.test(host.textContent) || /racing|undecided/.test(host.textContent),
+    'an unscored gen reads undecided/racing, not a default rejected');
 });
 
 // ---- HEADER SCOPING: the epoch view's H1 + STATE pill read the ROUTED epoch.

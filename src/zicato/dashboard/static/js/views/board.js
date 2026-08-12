@@ -979,7 +979,31 @@ function trajectoryFigure(dossier) {
   const card = el('div', { class: 'dn-panel' });
   const series = trajectorySeries(dossier);
   if (!series.loss.some((v) => svg.isNum(v))) {
-    card.appendChild(empty('No champion-spine trajectory for this entry yet.'));
+    // The empty state carries the SERVER's reason (issue #207 §3): "no spine",
+    // "the spine never ran this entry" and "the loss records are gone" are three
+    // different facts about the workspace, and only the reader that walked the
+    // records can tell them apart. The generic line is the last resort for a
+    // payload written before the reason existed.
+    card.appendChild(empty(dossier && dossier.trajectory_reason
+      ? dossier.trajectory_reason
+      : 'No champion-spine trajectory for this entry.'));
+    return card;
+  }
+  // A ONE-GENERATION spine is a real trajectory, but it is not a TREND — there
+  // is no second point to slope towards. Drawn as a sparkline it is a lone dot
+  // in a wide empty frame, which reads as a broken chart rather than as the one
+  // fact it carries. So the seed-only reign states its reading as a number and
+  // says the reign never moved (issue #207 §3).
+  const drawn = series.loss.filter((v) => svg.isNum(v));
+  if (drawn.length === 1) {
+    const i = series.loss.findIndex((v) => svg.isNum(v));
+    card.appendChild(el('div', { class: 'dn-row' }, [
+      stat(svg.fmt(series.loss[i], 2), 'drift loss · ' + series.gens[i]),
+      stat('1', 'generation on the spine'),
+    ]));
+    card.appendChild(el('div', { class: 'dn-legend' }, [
+      el('span', { class: 'dn-faint', text: 'the champion spine is one generation long, so this entry has one reading and no movement to plot — the reign never changed hands' }),
+    ]));
     return card;
   }
   card.appendChild(svg.sparkline({
@@ -1062,19 +1086,23 @@ function attributionSection(dossier, ctx, epochId) {
   const firstBy = attr.first_passed_by || null;
   const regressed = Array.isArray(attr.regressed_by) ? attr.regressed_by.filter(Boolean) : [];
   const card = el('div', { class: 'dn-panel' });
+  // An empty attribution row states WHY it is empty, from the server's own read
+  // of the spine (issue #207 §3) — "the seed did not pass this entry, and no
+  // later generation was promoted" is a finding; "not yet" is a stall notice for
+  // a run that ended in June.
   card.appendChild(attributionRow(
     firstBy ? 'good' : 'faint', 'first passed by',
     firstBy ? [candLink(firstBy, ctx, epochId)] : null,
     firstBy
       ? 'the first champion-spine generation whose verdict on this entry passed'
-      : 'no champion-spine generation has passed this entry yet',
+      : (attr.first_passed_reason || 'No champion-spine generation passed this entry.'),
   ));
   card.appendChild(attributionRow(
     regressed.length ? 'bad' : 'faint', 'regressed by',
     regressed.length ? interleaveLinks(regressed, ctx, epochId) : null,
     regressed.length
       ? 'champion-spine generations that flipped a prior pass back to a fail on this entry'
-      : 'no champion-spine generation regressed a prior pass on this entry',
+      : (attr.regressed_reason || 'No champion-spine generation regressed a prior pass on this entry.'),
   ));
   return card;
 }
@@ -1141,6 +1169,14 @@ export function evalDossierDigest(dossier, epochId, entryId) {
       t && t.generation_id, !!(t && t.champion_spine), round(t && t.drift_loss),
       round(t && t.pass_ratio), (t && t.replicates) || 0, !!(t && t.cached),
     ]),
+    // the empty-state REASONS are rendered text, so they belong in the digest —
+    // a spine that goes from "never ran this entry" to "no drift loss recorded"
+    // is a visible change even though every number stayed null.
+    reasons: [
+      d.trajectory_reason || null,
+      (d.attribution && d.attribution.first_passed_reason) || null,
+      (d.attribution && d.attribution.regressed_reason) || null,
+    ],
     attribution: [
       (d.attribution && d.attribution.first_passed_by) || null,
       (d.attribution && Array.isArray(d.attribution.regressed_by)) ? d.attribution.regressed_by.slice() : [],

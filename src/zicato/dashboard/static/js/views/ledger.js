@@ -86,6 +86,9 @@ function ledgerRow(r, epochId, o) {
   // gate and must not read as still racing), `pending` only when a candidate
   // genuinely has not settled. Nothing is re-derived from the raw outcome.
   const decision = decisionFor({ promoted: r.promoted, parent: r.parent_generation_id, exp: r });
+  // `o.live === false` (a settled / interrupted epoch) puts a still-pending
+  // verdict in the past tense: the run ended without deciding it (#207 §2).
+  const live = o && o.live === false ? false : true;
   const delta = svg.isNum(r.scalar_score_delta) ? r.scalar_score_delta : null;
   const reason = (typeof r.rejection_reason === 'string' && r.rejection_reason) ? r.rejection_reason : null;
   return {
@@ -96,7 +99,7 @@ function ledgerRow(r, epochId, o) {
       { class: 'dn-mono', el: genCell(gen, r, o) },
       { class: 'dn-ledger-ideacell', el: ideaCell(r.core_idea, epochId, gen) },
       { class: 'dn-ledger-sites', el: sitesCell(r.mutation_ids) },
-      { el: verdictPill(decision) },
+      { el: verdictPill(decision, { live }) },
       deltaCell(delta, { base: 'dn-num dn-mono', text: delta == null ? '—' : svg.fmtSigned(delta, 3) }),
       {
         class: 'dn-ledger-reason dn-faint',
