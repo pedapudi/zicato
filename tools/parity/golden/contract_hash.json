@@ -1,13 +1,13 @@
 {
   "component_hashes": {
-    "board": "cae83333c4a902b0f4cc85248326921fb6dc3a6d56d7450642b8a6094ec8e7b6",
+    "board": "45192c0a06fb376b4ea8c91c121faff99fdcb4f6d28898ab9068025d8e86445f",
     "brief": "466a5a9c2d1569fa8cfa8e0fe2dea135395af1d1cc42bc19ad146dd4ccc59eff",
     "entrypoint": "85655a014d66dd333f5089c8d4faa8c8ddd7fdb2f50381d57f3d955711f904aa",
     "mutable_trees": "d4f0bc5a29de06b510f9aa428f1eedba926012b591fef7a518e776a7c9bd1824",
     "proposer": "de6fb5da86f4c9df7de8bddaedff5966b5d36ff9faacb71e9f43f6dea83aae0e",
     "scoring": "242baf89fb25113d8f74629e969d1c4150b68327185a252f25cc9f03b5e57c57"
   },
-  "contract_hash": "5136f4841bd9595263f2d243148c82410c0a24d4022a09607a8b48d0481859cc",
+  "contract_hash": "003343ecb1e176dcec95a787eb27b8e1ccc20e9e305adc1c54d62cdc989124f3",
   "entrypoint": "zicato_examples.target_1_presentation.agent:root_agent",
   "fixture": "target_1_presentation",
   "mutable_trees": [
