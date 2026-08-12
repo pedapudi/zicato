@@ -504,15 +504,28 @@ function fieldSection(d) {
   const params = ts.params || {};
   const rows = specs.map((spec) => {
     const val = params[spec.key] != null ? params[spec.key] : spec.def;
-    const input = el('input', {
-      class: 'dn-bld-num', type: 'number', value: String(val),
-      min: spec.min != null ? String(spec.min) : null,
-      max: spec.max != null ? String(spec.max) : null,
-      step: spec.step != null ? String(spec.step) : '1',
-      'aria-label': spec.label,
-    });
+    const input = spec.options
+      ? el('select', { class: 'dn-bld-num', 'aria-label': spec.label }, spec.options.map((option) =>
+        el('option', { value: option.value, text: option.label, selected: option.value === val ? '' : null })))
+      : el('input', {
+        class: 'dn-bld-num', type: 'number', value: String(val),
+        min: spec.min != null ? String(spec.min) : null,
+        max: spec.max != null ? String(spec.max) : null,
+        step: spec.step != null ? String(spec.step) : '1',
+        'aria-label': spec.label,
+      });
     const commit = () => {
       const raw = input.value != null ? input.value : input.getAttribute('value');
+      if (spec.options) {
+        // Opt-in choice params: picking the DEFAULT removes the key, so a
+        // contract that never chose a schedule hashes byte-identically to one
+        // written before the knob existed (same discipline as removeAtZero).
+        runOp('set_param', {
+          key: spec.key,
+          value: (spec.removeAtDefault && raw === spec.def) ? null : raw,
+        });
+        return;
+      }
       let num = Number(raw);
       if (!isFinite(num)) return;
       if (spec.int) num = Math.round(num);

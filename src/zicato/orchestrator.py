@@ -741,11 +741,16 @@ async def evolve_once(
     # stopping stays in evolve_n_rounds, OUTSIDE the strategy.
     from zicato.selection.registry import make_strategy  # noqa: PLC0415
 
-    # Inject the epoch's board entry ids as the default ``board_ids`` so a
-    # board-aware structure (racing) slices the full epoch board out of the
-    # box; an explicit ``params["board_ids"]`` still overrides. Board-agnostic
-    # structures (gauntlet, single/double-elim, swiss) ignore the param.
-    strategy = make_strategy(tournament_spec, board_ids=[e.id for e in board])
+    # Internal field matchups run exclusively on the train board. Inject its
+    # ids/tags so a board-aware structure (racing) never allocates a rung
+    # position to a confirmation-only holdout entry; an explicit
+    # ``params["board_ids"]`` still overrides. Board-agnostic structures
+    # (gauntlet, single/double-elim, swiss) ignore the metadata.
+    strategy = make_strategy(
+        tournament_spec,
+        board_ids=[e.id for e in train_board],
+        board_tags={e.id: e.tags for e in train_board},
+    )
     if strategy.field_size() > 1:
         return await _evolve_multi_challenger(
             screen_candidates=screen_candidates,

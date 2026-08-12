@@ -39,6 +39,7 @@ from zicato.core.types import (
     TournamentStructure,
 )
 from zicato.selection.registry import default_replicates_for
+from zicato.selection.strategies.racing import SLICE_SCHEDULES
 
 # ---------------------------------------------------------------------------
 # Result shapes
@@ -277,13 +278,29 @@ def set_structure(draft: TournamentDraft, structure: str) -> DraftPatch:
     )
 
 
+#: Structure params whose value is a closed vocabulary rather than a number.
+#: The params object is otherwise opaque to the data layer, but an unchecked
+#: typo here would sail through the draft, roll the epoch on save, and only
+#: surface as a ``ValueError`` from ``make_strategy`` at round start — costing
+#: a round to learn about a misspelling. Validating at edit time makes it a
+#: field-precise 400 instead (the same reasoning as ``_LADDER_TYPES`` below).
+_PARAM_CHOICES: dict[str, tuple[str, ...]] = {"slice_schedule": SLICE_SCHEDULES}
+
+
 def set_param(draft: TournamentDraft, key: str, value: Any) -> DraftPatch:
     """Set one structure param (``field_size``, ``replicates``, …).
 
     The params object is opaque to the data layer (per-key semantics are
-    the selection strategy's), so the value is stored verbatim. Setting a
-    value of ``None`` removes the key.
+    the selection strategy's), so the value is stored verbatim — except for
+    the closed-vocabulary keys in :data:`_PARAM_CHOICES`, which are checked
+    against the strategy's accepted values. Setting a value of ``None``
+    removes the key.
     """
+    if value is not None and key in _PARAM_CHOICES:
+        allowed = _PARAM_CHOICES[key]
+        if value not in allowed:
+            choices = ", ".join(repr(c) for c in allowed)
+            raise ValueError(f"{key} must be one of {choices}, got {value!r}")
     old = draft.scoring.tournament_structure
     params = dict(old.params)
     prev = params.get(key)

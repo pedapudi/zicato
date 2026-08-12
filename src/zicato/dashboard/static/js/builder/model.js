@@ -124,6 +124,13 @@ export function paramSpecsFor(structure) {
         key: 'rung0_board_size', label: 'Rung-0 board size (override)', def: 0,
         min: 0, step: 1, int: true, removeAtZero: true,
         info: { title: 'Rung-0 board size', def: 'unset (use the fraction)', body: 'An explicit entry COUNT for the first (cheapest) racing rung, overriding board_fraction. When > 0 the first rung scores exactly this many train entries (capped at the board); 0 removes the override and the rung-0 slice falls back to ceil(board_fraction × board). A larger rung-0 buys more signal on the cheapest rung at more cost.' },
+      }, {
+        key: 'slice_schedule', label: 'Board-slice schedule', def: 'prefix', removeAtDefault: true,
+        options: [
+          { value: 'prefix', label: 'Prefix (authored order)' },
+          { value: 'stratified_random_v1', label: 'Stratified random (opt-in)' },
+        ],
+        info: { title: 'Board-slice schedule', def: 'prefix (authored order)', body: 'Prefix takes each rung’s slice from the board’s authoring order, so where an entry sits in the JSONL decides whether it gets to eliminate a challenger. Stratified random instead derives a reproducible permutation from the frozen board and takes nested prefixes of it, so authored order cannot decide a cut. Its strata are exact tag SETS, not individual tags: entries tagged {a,b} and {a} are different strata, so a board whose entries all carry distinct tag sets gets a plain shuffle rather than balance. Balance is also over entry COUNT, not weight — an up-weighted minority stratum can still miss an early rung.' },
       }, ...evidence];
     default:
       return [FIELD_SIZE, REPLICATES, ...evidence];

@@ -1529,6 +1529,19 @@ test('paramSpecsFor: racing carries the rung0_board_size override spec (both est
     'gauntlet does not carry the racing-only rung0 spec');
 });
 
+test('paramSpecsFor: racing carries an explicit, contract-visible slice schedule', () => {
+  const racing = builder.paramSpecsFor('racing');
+  const schedule = racing.find((s) => s.key === 'slice_schedule');
+  assert(schedule, 'the racing block declares the slice schedule');
+  assertEqual(schedule.def, 'prefix', 'contracts remain prefix-scheduled when the key is absent');
+  assertEqual(JSON.stringify(schedule.options.map((o) => o.value)), JSON.stringify(['prefix', 'stratified_random_v1']),
+    'the builder offers both the authored-order and the opt-in stratified schedule');
+  // Picking the default must REMOVE the key rather than stamp it: an explicit
+  // "prefix" rolls the epoch while changing nothing about how a rung slices.
+  assert(schedule.removeAtDefault === true,
+    'selecting the default removes the key so an untouched contract hashes identically');
+});
+
 test('paramSpecsFor: the rung0 override does not perturb the cost twin (spec-only, arithmetic unchanged)', () => {
   // both estimators already read rung0_board_size, so an explicit value moves
   // the meter identically on both sides — the spec only surfaces the control.
