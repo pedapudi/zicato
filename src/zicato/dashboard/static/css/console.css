@@ -1393,6 +1393,19 @@
     font-weight: 600; }
   .dn-caltrend-cap { fill: var(--v2-ink-faint); font-size: calc(9.5px * var(--dt-font-scale, 1)); }
 
+  /* The judge ledger's PRIMARY-DRIVER row. The server names which judge
+     decided the round and the row is marked for it; without a rule the mark
+     was invisible, so the answer to "which judge decided this" sat in the
+     markup and nowhere on screen. The tag beside the name reads faint; the
+     row itself carries the weight. */
+  .dn-board-table tr.dn-judgecmp-driver td {
+    background: color-mix(in srgb, var(--v2-accent) 8%, transparent); }
+  .dn-board-table tr.dn-judgecmp-driver td:first-child { font-weight: 600; }
+  /* The per-board harmonograf links under a match-up row — a bare span with
+     no companion class, so it needs its own size/tone. */
+  .dn-paper-trace { font-size: calc(10.5px * var(--dt-font-scale, 1));
+    color: var(--v2-ink-faint); }
+
   /* ===================  side-by-side mutation diff (fix #2)  =================== */
 
   .dn-mut-combined { display: grid; gap: 14px; grid-template-columns: minmax(280px, 1fr) minmax(320px, 1.4fr); align-items: start; }

@@ -804,10 +804,12 @@ def build_epoch_view(paths: WorkspacePaths, epoch_id: str | None = None) -> dict
       no experiment of the relevant kind carries a finite delta.
     * ``journal`` — ``journal.md`` text (empty string when absent).
     * ``analysis_md`` — ``analysis.md`` text (empty string when absent).
-    * ``analysis_html_inline`` — paper-styled HTML fragment for the
-      Epoch view's inline Analysis section (empty string when no
-      report yet). Same renderer as the standalone ``analysis.html``
-      so both surfaces read as a paper.
+    * ``analysis_html_inline`` — ALWAYS the empty string on this view.
+      The paper-styled fragment is rendered by
+      :func:`build_epoch_analysis` on its own route; rendering it here
+      too put a full report render on the most frequently polled
+      payload for a field nothing read off it. The key is kept because
+      dropping it would change the payload shape.
     * ``analysis_html_available`` — ``True`` when ``analysis.html``
       exists on disk; the frontend can link directly to
       ``/api/epoch/{id}/analysis.html``.
@@ -939,21 +941,18 @@ def build_epoch_view(paths: WorkspacePaths, epoch_id: str | None = None) -> dict
     analysis_md = _read_text_best_effort(epoch_dir / "analysis.md")
     view["analysis_md"] = analysis_md
     view["analysis_html_available"] = (epoch_dir / "analysis.html").is_file()
-    # Inline paper-styled HTML fragment so the Epoch view's Analysis
-    # section reads as a paper inline; best-effort — empty string if
-    # render fails or the analysis is not yet written.
+    # The paper-styled fragment is rendered by ``build_epoch_analysis`` on the
+    # DEDICATED ``/api/epoch/{id}/analysis`` route — the one the publication
+    # view actually fetches — and NOT here.
+    #
+    # It used to be rendered here too, on the plain ``/api/epoch`` read, which
+    # meant a full ``gather_epoch_report_data`` + report render on the most
+    # frequently polled payload in the dashboard, for a field no client ever
+    # read off THIS view. The key stays (its absence would be a payload-shape
+    # change, and every reader-parity fixture pins it) but it is now always the
+    # empty string here, which is what those fixtures already record. A caller
+    # that wants the fragment asks the route whose job it is.
     view["analysis_html_inline"] = ""
-    if analysis_md.strip():
-        try:
-            from zicato.analyzer.report import render_report_html_fragment
-            from zicato.analyzer.report_data import gather_epoch_report_data
-
-            data = gather_epoch_report_data(paths.root, epoch_id)
-            view["analysis_html_inline"] = render_report_html_fragment(
-                epoch_id, analysis_md, data=data
-            )
-        except Exception:  # noqa: BLE001 — best-effort
-            view["analysis_html_inline"] = ""
 
     return view
 
