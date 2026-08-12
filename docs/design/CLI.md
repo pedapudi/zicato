@@ -90,7 +90,7 @@ zicato evolve \
 Scaffold a fresh `.zicato/` workspace (run once per project). Creates the
 workspace directory if it doesn't exist, writes an empty lineage DAG
 (`lineage.json`: `{"epochs": []}`), and writes `config.json`
-containing `{instance_id, created_at}`. Also scaffolds the operator's live
+containing `{instance_id, created_at, storage_backend}`. Also scaffolds the operator's live
 `scoring.json` (next to the workspace, only when absent) with the full
 recommended contract — racing field 4, replicates 2, the evidence gate
 enabled explicitly. Refuses to overwrite an existing

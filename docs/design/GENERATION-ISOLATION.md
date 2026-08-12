@@ -42,9 +42,12 @@ materialised. Both are fixed.
 1. **Storage layer — the generation store is content-addressed by default.**
    `GitGenerationStore` (`zicato.epoch.git_genstore`) stores each generation
    as a commit tagged `epoch/{epoch_id}/{generation_id}` on an `epoch/{id}`
-   branch, and it is now the **default** backend: a missing or blank
-   `storage_backend` knob selects `"git"` at the single selection seam,
+   branch, and it is the **default** backend: a workspace holding no
+   generations, and no `storage_backend` knob to say otherwise, resolves to
+   `"git"` at the single selection seam,
    `zicato.epoch.genstore.default_generation_store` (`DEFAULT_STORAGE_BACKEND`).
+   A workspace that *does* hold generations is read by the backend that
+   wrote them ([`STORAGE.md`](STORAGE.md) §5.2).
    `DirectoryGenerationStore` remains the dependency-free fallback under
    `storage_backend: "directory"`. Git's object store *is* the delta
    representation this note wanted: a module unchanged across 20 generations
@@ -475,7 +478,8 @@ never applied; the fourth and fifth were addressed.)*
   capability detection, with full `copytree` as the only implementation. Pure
   refactor, behaviour-identical, parity-gated. → *Landed in a different shape:
   the seam is `GenerationStore.checkout_ephemeral`, the "capability detection" is
-  the explicit `storage_backend` knob (no probing), and the fallback is
+  the `storage_backend` knob and, absent a knob, the workspace's own contents —
+  no probing of *host* capabilities either way — and the fallback is
   `copy_checkout_ephemeral`.*
 - **P2 — reflink/CoW fast path.** Cheapest to add (no privilege, no mount); detect
   the FS and use it, else fall back. → *Dropped (strategy B).*
