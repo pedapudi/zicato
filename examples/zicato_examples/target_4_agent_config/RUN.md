@@ -134,9 +134,23 @@ replicate.
 
 Before a live round is worth running:
 
-1. Install the agent binary and export
-   `ZICATO_TARGET_4_AGENT_BIN=/path/to/pi`.
-2. Record `pi --version`. Treat a version bump as an epoch boundary.
+1. **Point the target at the pinned install** — the recommended
+   default, and the same binary the proposer resolves:
+
+   ```bash
+   export ZICATO_TARGET_4_AGENT_BIN=/home/sunil/git/zicato/integrations/pi/node_modules/.bin/pi
+   ```
+
+   `npm install` in `integrations/pi/` materializes that path at the
+   version `integrations/pi/package.json` pins, so target and proposer
+   run the same pinned binary without sharing a knob. Bare `pi` on
+   `PATH` is the explicitly degraded alternative: it works, but nothing
+   pins what it resolves to.
+2. Record the version. On the pinned route it is already fixed by
+   `integrations/pi/package.json`; on the degraded `PATH` route, run
+   `pi --version` and record it by hand. Either way a version bump is
+   an **epoch boundary** — rebase the baseline, do not compare across
+   it.
 3. **Measure the A/A floor.** Run the board champion-versus-itself and
    look at the spread of the scalar. Until that number exists,
    `promote_margin` in `scoring.json` is the framework default, not a
