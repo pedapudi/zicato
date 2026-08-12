@@ -664,6 +664,9 @@
   .dn-fleet-card.dn-is-current { border-color: var(--v2-good); }
   .dn-fleet-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
   .dn-fleet-id { font-family: var(--v2-mono); font-size: calc(12.5px * var(--dt-font-scale, 1)); color: var(--v2-ink); }
+  /* the faint back-reference a card prints instead of repeating the epoch
+     before it verbatim (views/home.js goalModels) — meta, not prose. */
+  .dn-fleet-goal-same { font-style: italic; }
   .dn-fleet-goal { font-size: calc(12px * var(--dt-font-scale, 1)); color: var(--v2-ink-soft); margin: 5px 0 6px; line-height: 1.35;
     /* The objective wraps to its FULL text — never clipped mid-sentence. (It was
        previously hard-clipped at max-height:3.4em + overflow:hidden, which cut
@@ -739,7 +742,16 @@
    * every other card — NOT a coloured accent left rail. */
   .dn-drill { }
 
-  .dn-quicklinks { display: flex; gap: 12px; flex-wrap: wrap; margin: 12px 0 4px; }
+  /* FIGURE CAPTION (ui.js figCaption): one visible dim line plus a "?" that
+     carries everything that would otherwise stack under the figure. The glyph
+     borrows the lifecycle DAG's info-badge look (.ezn-dag-info-*) in HTML. */
+  .dn-figcap { display: flex; align-items: baseline; gap: 6px; min-width: 0; }
+  .dn-figcap-lead { min-width: 0; }
+  .dn-figcap-more { flex: none; appearance: none; cursor: help;
+    width: 14px; height: 14px; padding: 0; line-height: 12px; text-align: center;
+    border: 1px solid var(--v2-rule); border-radius: 50%; background: var(--v2-rule-soft);
+    font: 600 9px var(--v2-mono); color: var(--v2-ink-faint); }
+  .dn-figcap-more:hover, .dn-figcap-more:focus { border-color: var(--v2-accent); color: var(--v2-accent); }
 
   /* transcript scroll container: constrained, normal block flow, no overlap */
   .dn-transcript { max-height: 60vh; overflow-y: auto; min-height: 0; display: flex; flex-direction: column; }
@@ -925,8 +937,6 @@
   .dn-kind-tag.dn-kind-synthetic_adversarial { border-color: var(--v2-caution); color: var(--v2-caution); }
   .dn-kind-tag.dn-kind-synthetic_clean { border-color: var(--v2-flat); color: var(--v2-flat); }
   .dn-trellis-foot { display: flex; gap: 9px; flex-wrap: wrap; font-size: calc(9.5px * var(--dt-font-scale, 1)); margin-top: 4px; font-family: var(--v2-mono); }
-  .dn-trellis-tags { color: var(--v2-ink-faint); }
-  .dn-trellis-preview { font-size: calc(10px * var(--dt-font-scale, 1)); margin-top: 4px; font-style: italic; line-height: 1.3; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
   /* sparkbar verdict overlay — the bars stretch to fill width, the glyph keeps
      its 1:1 aspect (a TRUE triangle, never sheared into an oval/wedge). */
@@ -2258,54 +2268,6 @@
   /* a split side keeps its sections compact so two columns stay legible */
   .dt-split-side .dn-section { margin: 20px 0; }
   .dt-split-side .dn-row { gap: 16px; }
-
-  /* ===================  the PAGE-WIDE SCALE pill (draggable + reset)  ===================
-   *
-   * A continuous, draggable control beside the colour / typeface pickers — the
-   * sole sizing control now that density is gone. Overall PAGE SIZE (text +
-   * diagrams), applied as `zoom` on the app root by the shell. A native range
-   * input → draggable AND keyboard-accessible (arrows step ±5). A % readout +
-   * a RESET button (→ 100%) sit to its right. */
-  .dt-scale-pill {
-    display: inline-flex; align-items: center; gap: 8px;
-    border: 1px solid var(--v2-rule); border-radius: 5px; padding: 2px 9px;
-  }
-  .dt-scale-lab {
-    font-family: var(--v2-mono); font-size: calc(9.5px * var(--dt-font-scale, 1)); text-transform: uppercase;
-    letter-spacing: 0.08em; color: var(--v2-ink-faint);
-  }
-  .dt-scale-range {
-    -webkit-appearance: none; appearance: none;
-    width: 96px; height: 4px; margin: 0; cursor: pointer;
-    background: var(--v2-rule); border-radius: 3px; outline: none;
-  }
-  .dt-scale-range:focus-visible { outline: 2px solid var(--v2-accent); outline-offset: 3px; }
-  .dt-scale-range::-webkit-slider-thumb {
-    -webkit-appearance: none; appearance: none;
-    width: 13px; height: 13px; border-radius: 50%;
-    background: var(--v2-accent); border: 2px solid var(--v2-paper);
-    box-shadow: 0 0 0 1px var(--v2-accent); cursor: grab;
-  }
-  .dt-scale-range::-webkit-slider-thumb:active { cursor: grabbing; }
-  .dt-scale-range::-moz-range-thumb {
-    width: 13px; height: 13px; border-radius: 50%;
-    background: var(--v2-accent); border: 2px solid var(--v2-paper); cursor: grab;
-  }
-  .dt-scale-range::-moz-range-track { height: 4px; background: var(--v2-rule); border-radius: 3px; }
-  .dt-scale-readout {
-    font-family: var(--v2-mono); font-size: calc(10.5px * var(--dt-font-scale, 1)); color: var(--v2-ink-soft);
-    font-variant-numeric: tabular-nums; min-width: 3.4ch; text-align: right;
-  }
-  /* the RESET affordance — snaps the page scale back to 100% (keyboard-accessible <button>) */
-  .dt-scale-reset {
-    display: inline-flex; align-items: center; justify-content: center;
-    width: 17px; height: 17px; padding: 0; margin-left: 1px;
-    border: 1px solid var(--v2-rule); border-radius: 4px; background: transparent;
-    color: var(--v2-ink-faint); font-size: calc(11px * var(--dt-font-scale, 1)); line-height: 1; cursor: pointer;
-    transition: color 0.15s, border-color 0.15s, background 0.15s;
-  }
-  .dt-scale-reset:hover { color: var(--v2-paper); background: var(--v2-accent); border-color: var(--v2-accent); }
-  .dt-scale-reset:focus-visible { outline: 2px solid var(--v2-accent); outline-offset: 2px; }
 
   /* ===================  the CHAMPION-SPINE ROUND TIMELINE (dn-roundtl-*)  ===================
    *

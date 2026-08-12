@@ -57,7 +57,7 @@ test('router.up: navigates UP the selection hierarchy (incl. collapsing a compar
   assertEqual(router.up(router.parseRoute('#/')), null, 'environment has no parent');
   assertEqual(router.up(router.parseRoute(`#/e/${EPOCH_ID}`)).view, 'home', 'epoch → environment');
   assertEqual(router.up(router.parseRoute(`#/e/${EPOCH_ID}/gens`)).view, 'epoch', 'gens → epoch');
-  assertEqual(router.up(router.parseRoute(`#/e/${EPOCH_ID}/gen/v1`)).view, 'gens', 'candidate → generations');
+  assertEqual(router.up(router.parseRoute(`#/e/${EPOCH_ID}/gen/v1`)).view, 'gens', 'candidate → rounds');
   // a compare split collapses to the bare candidate FIRST (it is a deeper state).
   const upFromCmp = router.up(router.parseRoute(`#/e/${EPOCH_ID}/gen/v1~cmp=v2`));
   assertEqual(upFromCmp.view, 'candidate'); assert(!upFromCmp.cmp, 'back clears the comparison first');
@@ -66,7 +66,7 @@ test('router.up: navigates UP the selection hierarchy (incl. collapsing a compar
 
 // ---- HEADLINE: the data-model TREE sidebar -------------------------
 
-test('tree sidebar: renders Environment → Epoch → {Generations, Boards, Mutation surface, Publication}', () => {
+test('tree sidebar: renders Environment → Epoch → {Rounds, Boards, Evals, Instrument, Mutation surface, Publication}', () => {
   const host = document.createElement('div');
   const model = {
     epochs: [{ id: EPOCH_ID, current: true }],
@@ -84,7 +84,11 @@ test('tree sidebar: renders Environment → Epoch → {Generations, Boards, Muta
   const txt = host.textContent;
   assert(txt.includes('Environment'), 'Environment root present');
   assert(txt.includes(EPOCH_ID), 'the epoch node present');
-  assert(txt.includes('Generations'), 'Generations group present');
+  // DELIBERATE RENAME (issue #194 §7): the gens surface answers to ONE name —
+  // ROUNDS — on the rail, in the crumb, and in its page title. The ROUTE is
+  // unchanged (`…/gens`); only the label moved.
+  assert(txt.includes('Rounds'), 'Rounds group present');
+  assert(!txt.includes('Generations'), 'the old "Generations" rail label is gone');
   assert(txt.includes('Boards'), 'Boards group present');
   assert(txt.includes('Mutation surface'), 'Mutation surface node present');
   assert(txt.includes('Publication'), 'Publication node present');
@@ -1286,7 +1290,7 @@ test('brand wordmark: renders "zıcato" with a dotless ı (U+0131) and the accen
 // page-scale pill, and the status pill; and the wordmark dot stays centred for
 // the FIXED brand mono regardless of the selected typeface (applyTypeface still
 // works via the shared store + the Settings dropdown).
-test('top bar: NO typeface picker (removed → Settings only); colour dropdown + scale + status remain; wordmark dot centred for the fixed brand mono', async () => {
+test('top bar: NO typeface picker and NO scale pill (both → Settings only); colour dropdown + status remain; wordmark dot centred for the fixed brand mono', async () => {
   freshState(); installFetch();
   const listeners = { hashchange: [] };
   globalThis.HashChangeEvent = function HashChangeEvent() {};
@@ -1322,8 +1326,12 @@ test('top bar: NO typeface picker (removed → Settings only); colour dropdown +
   const cds = allByClass(topbar, 'dt-cd');
   assertEqual(cds.length, 1, 'only the colour swatch dropdown (dt-cd) remains in the top bar');
   assert(allByClass(topbar, 'dt-cd-trigger')[0], 'the colour dropdown trigger is present');
-  // the page-scale pill, the status pill, the settings link, and the brand stay.
-  assert(allByClass(topbar, 'dt-scale-pill')[0], 'the page-scale pill is still in the top bar');
+  // the PAGE-SCALE pill is GONE from the top bar too (issue #194 §7 topbar
+  // diet) — it follows the typeface picker into Settings → Appearance, which
+  // already drives the same applyScale/resetScale store. The status pill, the
+  // settings link, and the brand stay.
+  assertEqual(allByClass(topbar, 'dt-scale-pill').length, 0, 'no page-scale pill in the top bar (moved to Settings)');
+  assertEqual(allByClass(topbar, 'dt-scale-range').length, 0, 'no page-scale slider in the top bar');
   assert(allByClass(topbar, 'dt-status')[0], 'the live-status pill is still in the top bar');
   assert(allByClass(topbar, 'dt-nav-build')[0], 'the settings link is still in the top bar');
   // the TOURNAMENT BUILDER is its own top-level view now — a discoverable nav

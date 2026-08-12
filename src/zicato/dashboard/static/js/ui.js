@@ -7,6 +7,7 @@
 // data fetching, no state mutation.
 
 import { el, clearChildren } from './core/dom.js';
+import { attachHovercard } from './hovercard.js';
 import { href } from './router.js';
 import { isNum, fmt, fmtSigned } from './svg.js';
 import * as D from './data.js';
@@ -428,6 +429,43 @@ export function section(titleText, ...children) {
 }
 
 export function subhead(text) { return el('div', { class: 'dn-subhead', text }); }
+
+// A figure CAPTION that refuses to stack. One dim line reads as a caption; two
+// or more read as a wall the eye skips, so anything past the first line
+// collapses behind the lifecycle DAG's affordance (dag.js): a small focusable
+// "?" glyph carrying the rest in a hovercard — detail on demand.
+//
+// `lines` is an ordered list of strings (nullish/empty entries are dropped);
+// the FIRST is the line that stays visible, so the caller decides what leads.
+// A single surviving line renders as a plain caption with no "?" — the collapse
+// only appears where there was crowding to relieve.
+//
+// NOT for a caption that carries legend semantics inline (a swatch/glyph key
+// the figure cannot be read without): that belongs beside the figure, visible.
+export function figCaption(lines, opts) {
+  const o = opts || {};
+  const kept = (Array.isArray(lines) ? lines : [lines])
+    .map((l) => (l == null ? '' : String(l).trim()))
+    .filter(Boolean);
+  if (!kept.length) return null;
+  const p = el('p', { class: 'dn-figcap dn-faint' + (o.class ? ' ' + o.class : '') }, [
+    el('span', { class: 'dn-figcap-lead', text: kept[0] }),
+  ]);
+  if (kept.length > 1) {
+    const mark = el('button', {
+      class: 'dn-figcap-more', type: 'button', text: '?',
+      title: o.title || 'More about this figure',
+      'aria-label': o.title || 'More about this figure',
+    });
+    attachHovercard(mark, kept.slice(1).join('\n'));
+    // the "?" is a HOVER/FOCUS affordance, not an action. Captions live inside
+    // clickable cards (the board trellis cell navigates on click), so swallow
+    // the click here — otherwise reading the detail with Enter would navigate.
+    mark.addEventListener('click', (ev) => { if (ev && ev.stopPropagation) ev.stopPropagation(); });
+    p.appendChild(mark);
+  }
+  return p;
+}
 
 export function empty(text) {
   return el('p', { class: 'dn-empty', text: text || 'No data yet.' });

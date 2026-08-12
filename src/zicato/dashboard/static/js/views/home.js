@@ -11,8 +11,9 @@ import { el } from '../core/dom.js';
 import { state } from '../core/state.js';
 import * as D from '../data.js';
 import * as svg from '../svg.js';
-import { gatedSwap, section, empty, fmt, chip,
+import { gatedSwap, section, empty, fmt, chip, truncate,
   loopVerdict, promotionRateLabel, costPerPromotionLabel, fmtDurationMs, noiseBandFor, loopStatsDigest } from '../ui.js';
+import { attachHovercard } from '../hovercard.js';
 import { deriveLiveStatus } from '../livestatus.js';
 
 // The loop-communication helpers moved to ui.js (they were shared UPWARD by
@@ -74,15 +75,24 @@ export async function render(host, ctx) {
   // epoch) drops the panel — byte-identical to the pre-feature home.
   const calib = current != null ? await D.calibrationTrend(current) : null;
 
+  // What each card will PRINT for its objective (first line clipped, or a faint
+  // back-reference when the goal repeats the card before it) — decided once,
+  // read by both the digest and the build.
+  const goals = goalModels(rows);
+
   const digest = JSON.stringify({
     live, cur: current,
-    rows: rows.map((r) => [r.epoch_id, r.generation_count || 0, r.promoted_count || 0,
+    rows: rows.map((r, i) => [r.epoch_id, r.generation_count || 0, r.promoted_count || 0,
       svg.isNum(r.best_scalar) ? r.best_scalar.toFixed(3) : null, !!r.closed,
       // WHICH generation set that floor (events_index `best_generation_id`) —
       // rendered on the fleet card + as the overview tile's deep link, so it
       // has to gate the swap: the same best_scalar can change hands.
       r.best_generation_id == null ? null : String(r.best_generation_id),
-      (trajByEpoch.get(r.epoch_id) || []).map((v) => v.toFixed(3))]),
+      (trajByEpoch.get(r.epoch_id) || []).map((v) => v.toFixed(3)),
+      // the rendered objective (first-line clip / "same goal as …") — the goal
+      // was absent from the fold entirely, so an edited objective never
+      // repainted the card that shows it.
+      goalModelDigest(goals[i])]),
     // the loop-communication stats are content-gated on their own rounded fold
     // so a no-op heartbeat (identical rates/verdicts/costs) churns no DOM.
     loop: rows.map((r) => loopStatsDigest(loopByEpoch.get(r.epoch_id), costByEpoch.get(r.epoch_id))),
@@ -110,8 +120,8 @@ export async function render(host, ctx) {
     // a glance, each card the per-epoch drill-in.
     const fleet = rows.length === 0
       ? empty('No epochs recorded in this workspace yet.')
-      : el('div', { class: 'dn-fleet' }, rows.map((r) => fleetCard(r, r.epoch_id === current, ctx, trajByEpoch.get(r.epoch_id) || [], live,
-        loopByEpoch.get(r.epoch_id), costByEpoch.get(r.epoch_id))));
+      : el('div', { class: 'dn-fleet' }, rows.map((r, i) => fleetCard(r, r.epoch_id === current, ctx, trajByEpoch.get(r.epoch_id) || [], live,
+        loopByEpoch.get(r.epoch_id), costByEpoch.get(r.epoch_id), goals[i])));
     nodes.push(section('Fleet · ' + rows.length + ' epoch' + (rows.length === 1 ? '' : 's'), fleet));
 
     // Below the fleet: the composed meta-loop ledger (study opt 7) — the
@@ -204,7 +214,64 @@ function statTile(value, key, foot) {
   ].filter(Boolean));
 }
 
-function fleetCard(row, isCurrent, ctx, sparkVals, live, loop, cost) {
+// ---- the fleet's GOAL PROSE (one line per card, never a wall) --------
+//
+// An epoch inherits its predecessor's objective far more often than it rewrites
+// it, so the fleet strip used to print the same five-line paragraph on card
+// after card — the one thing that differs between epochs (the numbers) pushed
+// below the fold by the one thing that does not. Two rules fix it:
+//
+//   * a card shows its goal's FIRST LINE, clipped to ~90 chars; the untouched
+//     text rides the hovercard (the console's standard "detail on demand");
+//   * a goal IDENTICAL to the previous card's collapses to a faint back-
+//     reference — the card says which epoch it is repeating, and says it once.
+//
+// A pure model so the digest and the DOM read the same decision.
+export const GOAL_CLIP = 90;
+
+export function goalModels(rows) {
+  let prevGoal = null, prevId = null;
+  return (Array.isArray(rows) ? rows : []).map((r) => {
+    const full = (r && typeof r.goal === 'string') ? r.goal.trim() : '';
+    const id = r ? r.epoch_id : null;
+    if (!full) { prevGoal = null; prevId = id; return { kind: 'none' }; }
+    if (prevGoal != null && full === prevGoal) {
+      const m = { kind: 'same', of: prevId == null ? null : String(prevId), full };
+      prevId = id;
+      return m;
+    }
+    const first = full.split('\n').map((l) => l.trim()).filter(Boolean)[0] || full;
+    const lead = truncate(first, GOAL_CLIP);
+    prevGoal = full; prevId = id;
+    return { kind: 'text', lead, full, clipped: lead !== full };
+  });
+}
+
+// The digest fold: what the card will actually PRINT, so a goal edit that
+// changes nothing visible is a no-op beat and one that does repaints.
+export function goalModelDigest(m) {
+  if (!m) return null;
+  if (m.kind === 'same') return ['same', m.of];
+  if (m.kind === 'text') return ['text', m.lead, m.clipped];
+  return ['none'];
+}
+
+function goalLine(m) {
+  if (!m || m.kind === 'none') {
+    return el('div', { class: 'dn-fleet-goal dn-faint', text: '(no goal recorded)' });
+  }
+  if (m.kind === 'same') {
+    const node = el('div', { class: 'dn-fleet-goal dn-fleet-goal-same dn-faint',
+      text: m.of ? 'same goal as ' + m.of : 'same goal as the previous epoch' });
+    attachHovercard(node, m.full);
+    return node;
+  }
+  const node = el('div', { class: 'dn-fleet-goal', text: m.lead });
+  if (m.clipped) attachHovercard(node, m.full);
+  return node;
+}
+
+function fleetCard(row, isCurrent, ctx, sparkVals, live, loop, cost, goalModel) {
   // "running" requires the GATED live flag (fresh heartbeat) — not just an
   // active_tournament.json whose epoch_id matches. A stale file must not paint
   // the current epoch's chip "running" after the orchestrator has exited.
@@ -219,7 +286,7 @@ function fleetCard(row, isCurrent, ctx, sparkVals, live, loop, cost) {
     verdict ? chip(verdict.cls, verdict.word) : null,
     chip(liveHere ? 'live' : st, liveHere ? 'running' : st),
   ].filter(Boolean));
-  const goal = el('div', { class: 'dn-fleet-goal', text: row.goal || '(no goal recorded)' });
+  const goal = goalLine(goalModel);
   // The measured A/A noise floor renders as a band around the champion floor
   // (the trajectory's last scalar): movement inside it is indistinguishable
   // from a re-roll. Absent floor → no band (byte-identical to today).

@@ -278,12 +278,12 @@ export async function render(host, ctx, params) {
     nodes.push(el('p', { class: 'dn-faint', style: 'font-size:11px;margin:6px 0 0;',
       text: 'Δ scalar sums the per-experiment scalar_score_delta · the champion-spine sum counts PROMOTED hops only — the meta-loop’s actual progress · the gross sum includes rejected challengers and never enters the lineage (lower = better)' }));
 
-    nodes.push(el('div', { class: 'dn-quicklinks' }, [
-      el('a', { class: 'dn-linkbtn', href: ctx.href('gens', { epochId }), text: 'Generations →' }),
-      el('a', { class: 'dn-linkbtn', href: ctx.href('boards', { epochId }), text: 'Boards (trellis) →' }),
-      el('a', { class: 'dn-linkbtn', href: ctx.href('mutations', { epochId }), text: 'Mutation surface + diff →' }),
-      el('a', { class: 'dn-linkbtn', href: ctx.href('publication', { epochId }), text: 'Epoch publication (ACM) →' }),
-    ]));
+    // (NO in-content nav row here. The four buttons that used to sit under the
+    // stat tiles — Generations / Boards / Mutation surface / Publication —
+    // restated the rail's own epoch children one line below the rail that was
+    // already showing them, selected state and all. The RAIL is canonical: it
+    // carries every child this row did, plus Evals and Instrument, and it shows
+    // where you are. They carried no state the rail lacks, so nothing folded in.)
 
     const briefText = ep.brief || '';
     // Default-open a short brief; but if the user has toggled it this session,

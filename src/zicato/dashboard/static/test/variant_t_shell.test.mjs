@@ -1,6 +1,6 @@
 // test/variant_t_shell.test.mjs — Variant T ("Console IV") unit tests:
 // Console IV rounds 8-9: visual elements fit their panes; the page-wide
-// scale pill, themes + swatch dropdown, and the fluid layout.
+// scale control, themes + swatch dropdown, and the fluid layout.
 //
 // Split mechanically from the former variant_t.test.mjs (assertions
 // verbatim); shared fixtures + helpers live in ./fixtures.mjs.
@@ -122,7 +122,7 @@ test('lifecycle DAG height is DERIVED from the (deduped) board-node count, not a
 });
 
 // ====================================================================
-// Console IV folds (round 9): a PAGE-WIDE SCALE pill + a FLUID,
+// Console IV folds (round 9): a PAGE-WIDE SCALE control + a FLUID,
 // resolution-responsive layout. The operator scales the WHOLE page
 // (text + diagrams) — NOT per-pane — and the content uses the full
 // viewport width so the side-by-side compare panes (and their SVGs)
@@ -130,14 +130,14 @@ test('lifecycle DAG height is DERIVED from the (deduped) board-node count, not a
 // ====================================================================
 
 
-// ---- (a) the scale constants + normalisation (the pill's range) ----
+// ---- (a) the scale constants + normalisation (the control's range) ----
 
 test('page scale: ui exposes a 70–150% range (5% steps) with a 100% default and snaps/clamps', () => {
   freshState();
   assertEqual(ui.DEFAULT_SCALE, 100, 'the page scale defaults to 100%');
-  assertEqual(ui.SCALE_MIN, 70, 'the pill floors at 70%');
-  assertEqual(ui.SCALE_MAX, 150, 'the pill ceils at 150%');
-  assertEqual(ui.SCALE_STEP, 5, 'the pill steps by 5%');
+  assertEqual(ui.SCALE_MIN, 70, 'the scale floors at 70%');
+  assertEqual(ui.SCALE_MAX, 150, 'the scale ceils at 150%');
+  assertEqual(ui.SCALE_STEP, 5, 'the scale steps by 5%');
   assertEqual(ui.normaliseScale(40), 70, 'below-range clamps up to the min');
   assertEqual(ui.normaliseScale(999), 150, 'above-range clamps down to the max');
   assertEqual(ui.normaliseScale(112), 110, 'an off-grid value snaps to the 5% step grid');
@@ -146,29 +146,47 @@ test('page scale: ui exposes a 70–150% range (5% steps) with a 100% default an
   assertEqual(shell.DEFAULT_SCALE, 100, 'the shell exposes the default scale');
 });
 
-// ---- (b) the pill exists in the chrome + drives a PAGE-WIDE scale ----
+// ---- (b) the control lives in SETTINGS and drives a PAGE-WIDE scale ----
+//
+// DELIBERATE MOVE (issue #194 §7, topbar diet). The scale control used to be a
+// pill in the top-bar chrome; it is a set-once appearance preference and the
+// widest control on a bar that has to make room for the run state, so it
+// follows the typeface picker into Settings → Appearance. Same store, same
+// applyScale/resetScale path — these assertions moved with it, they were not
+// dropped.
 
-test('page scale: the draggable scale pill exists in the chrome; setting it applies a PAGE-WIDE scale at the app ROOT (not a pane) + persists + restores', () => {
+async function appearanceBody(root) {
+  const settings = await import('../js/views/settings.js');
+  const host = globalThis.document.createElement('div');
+  await settings.render(host, { navigate() {}, href: router.href }, { section: 'appearance' });
+  await new Promise((r) => setTimeout(r, 0));
+  return allByClass(host, 'dn-set-body')[0];
+}
+
+test('page scale: the control lives in Settings → Appearance; setting it applies a PAGE-WIDE scale at the app ROOT (not a pane) + persists + restores', async () => {
   // start from a clean store so the restore assertion is meaningful.
   try { globalThis.window.localStorage.clear(); } catch (e) { /* ignore */ }
+  installFetch();
   const root = mountLiveShell('#/');
 
-  // the pill is a draggable range input that lives in the top chrome.
-  const pill = allByClass(root, 'dt-scale-pill')[0];
-  assert(pill, 'the scale pill rendered in the chrome (beside the pickers)');
-  const range = root.querySelectorAll('[class]').filter((n) =>
-    n.localName === 'input' && (n.getAttribute('class') || '').includes('dt-scale-range'))[0];
-  assert(range, 'the pill is a draggable/keyboard range input');
+  // the top bar carries NO scale control any more.
+  const topbar = allByClass(root, 'dt-topbar')[0];
+  assertEqual(allByClass(topbar, 'dt-scale-pill').length, 0, 'no scale pill in the top-bar chrome');
+
+  const body = await appearanceBody(root);
+  const range = body.querySelectorAll('[class]').filter((n) =>
+    n.localName === 'input' && (n.getAttribute('class') || '').includes('dn-set-range'))[0];
+  assert(range, 'the page-scale control is a draggable/keyboard range input in Appearance');
   assertEqual(range.getAttribute('type'), 'range', 'it is a native range slider (draggable + arrow-key accessible)');
   assertEqual(range.getAttribute('min'), '70', 'the slider min is 70%');
   assertEqual(range.getAttribute('max'), '150', 'the slider max is 150%');
   assertEqual(range.getAttribute('step'), '5', 'the slider steps by 5%');
-  assert(allByClass(root, 'dt-scale-readout')[0], 'a % readout sits beside the slider');
+  assert(allByClass(body, 'dn-set-readout')[0], 'a % readout sits beside the slider');
 
   // default is 100% (no clipping; whole page at native size).
   assertEqual(root.getAttribute('data-t-scale'), '100', 'the page starts at 100% scale');
 
-  // DRAG / SET the pill → the WHOLE PAGE scales at the app ROOT (the zoom token
+  // DRAG / SET it → the WHOLE PAGE scales at the app ROOT (the zoom token
   // changes on the variant root, NOT on any individual pane).
   range.value = '130';
   range.setAttribute('value', '130');
@@ -177,7 +195,7 @@ test('page scale: the draggable scale pill exists in the chrome; setting it appl
   assertEqual(String(root.style.zoom), '1.3', 'the scale is applied as `zoom` on the variant root (page-wide, reflows — no clipping)');
   assertEqual(root.style.cssText.includes('--dt-page-scale:1.3'), true, 'the raw scale ratio is stamped on the root');
   // the readout reflects the new value.
-  assert(allByClass(root, 'dt-scale-readout')[0].textContent.includes('130%'), 'the % readout updated to 130%');
+  assert(allByClass(body, 'dn-set-readout')[0].textContent.includes('130%'), 'the % readout updated to 130%');
 
   // it is NOT a per-pane control: no pane carries its own scale attribute/zoom.
   const panes = root.querySelectorAll('[class]').filter((n) =>
@@ -190,21 +208,25 @@ test('page scale: the draggable scale pill exists in the chrome; setting it appl
   // PERSIST: the chosen scale was written to localStorage.
   assertEqual(ui.readScale(), 130, 'the chosen page scale persisted to localStorage');
 
-  // RESTORE: a fresh mount reads it back and re-applies it to the root.
+  // RESTORE: a fresh mount reads it back and re-applies it to the root, and a
+  // freshly-rendered Appearance section reflects the persisted value.
   const root2 = mountLiveShell('#/');
   assertEqual(root2.getAttribute('data-t-scale'), '130', 'a fresh mount restores the persisted scale');
   assertEqual(String(root2.style.zoom), '1.3', 'the restored scale is re-applied as root zoom');
-  const range2 = root2.querySelectorAll('[class]').filter((n) =>
-    n.localName === 'input' && (n.getAttribute('class') || '').includes('dt-scale-range'))[0];
+  const body2 = await appearanceBody(root2);
+  const range2 = body2.querySelectorAll('[class]').filter((n) =>
+    n.localName === 'input' && (n.getAttribute('class') || '').includes('dn-set-range'))[0];
   assertEqual(range2.getAttribute('value'), '130', 'the restored slider reflects the persisted value');
 });
 
-// ---- (c) keyboard accessibility (the pill is a native range) -------
+// ---- (c) keyboard accessibility (a native range) -------------------
 
-test('page scale: the pill is keyboard-accessible — it is a focusable native range with the aria value bounds', () => {
+test('page scale: the control is keyboard-accessible — a focusable native range with the aria value bounds', async () => {
+  installFetch();
   const root = mountLiveShell('#/');
-  const range = root.querySelectorAll('[class]').filter((n) =>
-    n.localName === 'input' && (n.getAttribute('class') || '').includes('dt-scale-range'))[0];
+  const body = await appearanceBody(root);
+  const range = body.querySelectorAll('[class]').filter((n) =>
+    n.localName === 'input' && (n.getAttribute('class') || '').includes('dn-set-range'))[0];
   // a native range input is inherently arrow-key adjustable; expose the aria bounds.
   assertEqual(range.getAttribute('aria-valuemin'), '70', 'aria-valuemin set for assistive tech');
   assertEqual(range.getAttribute('aria-valuemax'), '150', 'aria-valuemax set for assistive tech');
@@ -235,8 +257,9 @@ test('page scale: persists across re-applies and survives a colour/typeface chan
 
 // ---- CHANGE 4: the scale RESET affordance returns to 100% + persists ----
 
-test('page scale RESET: a keyboard-accessible reset button snaps the scale back to 100% and persists', () => {
+test('page scale RESET: a keyboard-accessible reset button snaps the scale back to 100% and persists', async () => {
   try { globalThis.window.localStorage.clear(); } catch (e) { /* ignore */ }
+  installFetch();
   const root = mountLiveShell('#/');
 
   // move off 100% first.
@@ -244,10 +267,11 @@ test('page scale RESET: a keyboard-accessible reset button snaps the scale back 
   assertEqual(root.getAttribute('data-t-scale'), '135', 'scale moved to 135%');
   assertEqual(ui.readScale(), 135, '135% persisted');
 
-  // the reset affordance is a real <button> (keyboard-accessible) beside the pill.
-  const resetBtn = root.querySelectorAll('[class]').filter((n) =>
-    n.localName === 'button' && (n.getAttribute('class') || '').includes('dt-scale-reset'))[0];
-  assert(resetBtn, 'a reset button sits beside the scale pill');
+  // the reset affordance is a real <button> (keyboard-accessible) beside the range.
+  const body = await appearanceBody(root);
+  const resetBtn = body.querySelectorAll('[class]').filter((n) =>
+    n.localName === 'button' && (n.getAttribute('class') || '').includes('dn-set-reset'))[0];
+  assert(resetBtn, 'a reset button sits beside the scale range');
   assert((resetBtn.getAttribute('aria-label') || '').length > 0, 'the reset button carries an aria-label (keyboard/AT accessible)');
 
   // clicking it snaps the page scale back to 100% and persists.

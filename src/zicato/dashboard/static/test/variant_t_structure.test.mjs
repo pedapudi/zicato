@@ -416,7 +416,7 @@ async function renderRacingView(view, params, { live }) {
 test('REGRESSION (round-view-empty): the per-ROUND racing drill-down builds a NON-EMPTY rung model from the LIVE envelope when the field record carries rounds:[]', async () => {
   const host = await renderRacingView('gens', { epochId: EPOCH_ID, round: 0 }, { live: true });
   // the title is the round drill-down (not the all-rounds page).
-  assert(host.textContent.includes('round 0'), 'the round drill-down header reads "round 0"');
+  assert(host.textContent.includes('Round 0 · match-ups'), 'the round drill-down header reads "Round 0 · match-ups"');
   // THE BUG: the round view used to show this empty state. It must NOT now.
   assert(!host.textContent.includes('No rungs evaluated yet'), 'the round view does NOT show the "No rungs evaluated yet." empty state');
   // the racing scalar track + survival funnel render the rungs from the live envelope.

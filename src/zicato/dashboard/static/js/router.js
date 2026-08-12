@@ -9,7 +9,7 @@
 //
 //   #/                                          → Environment (the fleet)
 //   #/e/<epochId>                               → Epoch overview (heatmap)
-//   #/e/<epochId>/gens                          → Generations group landing
+//   #/e/<epochId>/gens                          → Rounds landing (all rounds)
 //   #/e/<epochId>/gen/<gen>[/<entry>]           → Candidate (lifecycle + gate)
 //   #/e/<epochId>/gen/<gen>/diff[/<mutId>]      → that candidate's patch diff
 //   #/e/<epochId>/boards                        → Boards group (trellis)
@@ -81,7 +81,7 @@ export function parseRoute(hash) {
 
   switch (group) {
     case 'gens': {
-      // an optional `/r/<round>` drill scopes the Match-ups to ONE evolve round.
+      // an optional `/r/<round>` drill scopes the Rounds surface to ONE round.
       const round = (parts[3] === 'r' && parts[4] != null) ? parts[4] : null;
       return { view: 'gens', params: { epochId, round }, cmp };
     }
@@ -202,7 +202,7 @@ export function navigate(view, params, opts) {
 // PARENT { view, params } of the current route (or null at the root). The shell
 // renders this destination into the MAIN detail pane — never the sidebar (the
 // explicit fix over Q's buggy back button). A compare split collapses to the
-// single candidate first; then the candidate steps up to the generations group.
+// single candidate first; then the candidate steps up to the rounds group.
 export function up(route) {
   const p = (route && route.params) || {};
   // A compare split is a "deeper" state than the bare candidate — step out of
@@ -224,7 +224,7 @@ export function up(route) {
     case 'logs': return { view: 'home', params: {} };
     case 'epoch': return { view: 'home', params: {} };
     case 'gens':
-      // a round drill-down steps up to the full (all-rounds) Match-ups first.
+      // a round drill-down steps up to the full (all-rounds) Rounds view first.
       if (p.round != null) return { view: 'gens', params: { epochId: p.epochId } };
       return { view: 'epoch', params: { epochId: p.epochId } };
     case 'candidate':
@@ -265,6 +265,12 @@ export function up(route) {
 }
 
 // The breadcrumb trail mirrors the tree path. Returns [{label, view, params, current}].
+//
+// LABELS ARE NOT ADDRESSES. The `gens` view is addressed `…/gens` for all time
+// (routes are API), but it answers to exactly ONE name in the interface —
+// ROUNDS — on the rail (tree.js), in this crumb, and in its page title
+// (views/gens.js). It used to answer to three (generations / Match-ups /
+// ROUNDS), which read as three different surfaces.
 export function crumbTrail(route) {
   const p = route.params || {};
   const home = { label: 'environment', view: 'home', params: {} };
@@ -288,10 +294,10 @@ export function crumbTrail(route) {
       return [home, { label: p.epochId || 'epoch', current: true }];
     case 'gens':
       return p.round != null
-        ? [home, epoch, { label: 'generations', view: 'gens', params: { epochId: p.epochId } }, { label: 'round ' + p.round, current: true }].filter(Boolean)
-        : [home, epoch, { label: 'generations', current: true }].filter(Boolean);
+        ? [home, epoch, { label: 'rounds', view: 'gens', params: { epochId: p.epochId } }, { label: 'round ' + p.round, current: true }].filter(Boolean)
+        : [home, epoch, { label: 'rounds', current: true }].filter(Boolean);
     case 'candidate': {
-      const trail = [home, epoch, { label: 'generations', view: 'gens', params: { epochId: p.epochId } }].filter(Boolean);
+      const trail = [home, epoch, { label: 'rounds', view: 'gens', params: { epochId: p.epochId } }].filter(Boolean);
       if (p.entry) {
         trail.push({ label: p.gen || 'candidate', view: 'candidate', params: { epochId: p.epochId, gen: p.gen } });
         trail.push({ label: p.entry, current: true });
@@ -305,7 +311,7 @@ export function crumbTrail(route) {
     }
     case 'diff':
       return [home, epoch,
-        { label: 'generations', view: 'gens', params: { epochId: p.epochId } },
+        { label: 'rounds', view: 'gens', params: { epochId: p.epochId } },
         { label: p.gen || 'candidate', view: 'candidate', params: { epochId: p.epochId, gen: p.gen } },
         { label: 'patch diff', current: true },
       ].filter(Boolean);

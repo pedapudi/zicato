@@ -1,6 +1,9 @@
-// js/views/gens.js — GENERATIONS group landing.
+// js/views/gens.js — ROUNDS: the epoch's tournament rounds.
 //
-// The detail pane for the tree's "Generations" group. Console IV folds in
+// The detail pane for the tree's "Rounds" group. ONE surface, ONE name: the
+// rail node, the breadcrumb (router.crumbTrail) and the page title all read
+// ROUNDS, and a round-scoped drill reads "Round N · match-ups". The route stays
+// `…/gens` — addresses are API, labels are not. Console IV folds in
 // Variant W's ARENA standings as the hero of this page:
 //
 //   * a CHAMPION-DEFENDS banner — the reigning champion id · loss · N title
@@ -59,7 +62,7 @@ export async function render(host, ctx, params) {
   const ep = await D.epoch(epochId);
   const id = epochId || (ep && ep.epoch_id) || null;
   if (!id) {
-    gatedSwap(host, 'no-epoch', () => [el('h1', { class: 'dn-h1', text: 'Generations' }), empty('No epoch selected.')]);
+    gatedSwap(host, 'no-epoch', () => [el('h1', { class: 'dn-h1', text: 'Rounds' }), empty('No epoch selected.')]);
     return;
   }
   const [rows, traj, bracket, timeline] = await Promise.all([
@@ -70,7 +73,7 @@ export async function render(host, ctx, params) {
   // param scopes THIS view to ONE evolve round's tournament. We render the
   // selected round's field-tournament (its bracket tree / swiss ladder / racing
   // ladder + the per-round flow + per-board scoring) via renderStructure. The
-  // full (all-rounds) Match-ups view is unchanged when no round is selected.
+  // full (all-rounds) Rounds view is unchanged when no round is selected.
   const roundParam = (params && params.round != null) ? params.round : null;
   if (roundParam != null) {
     await renderRoundDrilldown(host, ctx, id, ep, bracket, traj, rows, roundParam, timeline);
@@ -141,7 +144,7 @@ export async function render(host, ctx, params) {
   gatedSwap(host, digest, () => {
     const nodes = [];
     nodes.push(el('div', { class: 'dn-pagehead' }, [
-      el('h1', { class: 'dn-h1', text: `Generations · ${id}` }),
+      el('h1', { class: 'dn-h1', text: `Rounds · ${id}` }),
       el('p', { class: 'dn-lede', text: 'Every candidate in this epoch. Open one for its lifecycle, promote gate, all match-ups, per-board scoring, and patch diff.' }),
     ]));
 
@@ -228,7 +231,7 @@ async function renderRoundDrilldown(host, ctx, id, ep, bracket, traj, rows, roun
 
   // THE ROUND'S TOURNAMENT PAYLOAD — for a non-gauntlet structure, resolve it
   // THROUGH THE SHARED resolver (live-first → reconstructRacing → per-round
-  // record) so the round view and the all-rounds Match-ups / epoch view CANNOT
+  // record) so the round view and the all-rounds Rounds / epoch view CANNOT
   // DRIFT. The old code read `round.tournamentRef.rounds` directly, but a RACING
   // field record carries `rounds: []` by design (rungs live in the per-challenger
   // records + the live envelope, not the aggregate field record) — so the round
@@ -291,7 +294,7 @@ async function renderRoundDrilldown(host, ctx, id, ep, bracket, traj, rows, roun
   gatedSwap(host, digest, () => {
     const nodes = [];
     nodes.push(el('div', { class: 'dn-pagehead' }, [
-      el('h1', { class: 'dn-h1', text: `Match-ups · ${id} · round ${roundParam}` }),
+      el('h1', { class: 'dn-h1', text: `Round ${roundParam} · match-ups · ${id}` }),
       el('div', { class: 'dt-structure-line' }, [structurePill(structure, (tournament && tournament.params) || (st && st.structure_params))]),
       el('p', { class: 'dn-lede', text: 'One evolve round of this epoch: its incoming champion, the field minted that round, the tournament, and the gate. The epoch timeline indexes every round; this view shows ONE.' }),
       el('a', { class: 'dn-linkbtn', href: ctx.href('gens', { epochId: id }), text: '← all rounds' }),
@@ -404,7 +407,7 @@ async function renderConfiguredStructure(host, ctx, id, ep, bracket, structure, 
   gatedSwap(host, digest, () => {
     const nodes = [];
     nodes.push(el('div', { class: 'dn-pagehead' }, [
-      el('h1', { class: 'dn-h1', text: `Match-ups · ${id}` }),
+      el('h1', { class: 'dn-h1', text: `Rounds · ${id}` }),
       el('div', { class: 'dt-structure-line' }, [
         structurePill(shownStructure, (shown && shown.structure_params) || params),
         liveUsable ? el('span', { class: 'dt-live-pill', text: 'LIVE' }) : null,
