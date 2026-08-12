@@ -1,0 +1,21 @@
+Standings * swiss
+rounds=2
+
+Standings * live
+#  generation  scalar  W-L  status  rating
+1  v4           0.041    1-0  racing  1548 +30  |---+---|
+2  v7          ~0.046    0-0  racing  -
+3  v6           0.056    0-1  cut     -
+~ marks a projected scalar: the competitor is still racing
+
+Rounds
+round 1
+  v4 vs v6  won by v4 * cut v6  promoted
+  v7  bye
+round 2
+  (no committed match)
+
+Proposed field
+v6                        applied
+v7                        applied
+v8                        rejected      patch did not apply cleanly
