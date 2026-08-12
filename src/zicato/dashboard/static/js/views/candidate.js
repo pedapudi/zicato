@@ -273,7 +273,17 @@ async function resolveCandidate(epochId, genId, genList, experiments, scalarByGe
   }
   const seenK = new Set();
   const gateSpecs = gateKeys.filter((k) => { const id = k.champ + '>' + k.chall; if (seenK.has(id)) return false; seenK.add(id); return true; });
-  const gates = await Promise.all(gateSpecs.map((k) => D.gate(epochId, k.champ, k.chall)));
+  // WHICH JUDGE DECIDED THE ROUND. The gate payload names ONE `primary_driver`;
+  // this read carries the ledger it was picked from — every judge's champion vs
+  // challenger weighted loss and the signed Δ between them — so "the round
+  // turned on judge X" is auditable rather than asserted. Fetched beside the
+  // gates (same round coordinates, same cached failure-tolerant class); a
+  // never-indexed workspace / the Rust supervisor reads null and the block is
+  // simply omitted.
+  const [gates, judgeComparisons] = await Promise.all([
+    Promise.all(gateSpecs.map((k) => D.gate(epochId, k.champ, k.chall))),
+    Promise.all(gateSpecs.map((k) => D.perJudgeComparison(epochId, k.champ, k.chall))),
+  ]);
   const primaryGate = gates.find((g, i) => g && gateSpecs[i].role === 'as challenger') || null;
   const primaryDelta = primaryGate && svg.isNum(primaryGate.delta_scalar) ? primaryGate.delta_scalar : null;
   // The gate EXPLANATION for the lifecycle GATE node: which of the 3 rules was
@@ -350,13 +360,39 @@ async function resolveCandidate(epochId, genId, genList, experiments, scalarByGe
   // shrank it from a hero figure), never a crash when the triplet is absent.
   const generalization = buildGeneralizationModel(exp);
 
+  // THE CHAMPION-GATE OPPONENT (racing). The racing-final match names both
+  // sides in `competitors`; the one that is not this candidate is who it faced
+  // at the gate. The candidate's tournament-path strip previously said "final ·
+  // Δ · promoted/rejected" without ever naming the opponent.
+  const finalOpponent = racingFinalOpponent(racingSt, genId);
+
   return {
     node, baseline, decision, mpts, entries, meanScore, facetScores, mine, gateSpecs, gates,
+    judgeComparisons, finalOpponent,
     primaryDelta, championId, championScalar, scalarByGen, progression,
     championLoss, championSigma, candidateSigma, deltaSigma, gateExplain,
     entryParam, exps, judges, drillRow, drillHeader, inflight, cached, cachedProvenance,
     projected, radar, generalization, scorecard,
   };
+}
+
+// WHO THE CANDIDATE FACED AT THE CHAMPION GATE, from a normalized racing
+// structure payload — the `racing-final` match's OTHER competitor. Returns null
+// for a gauntlet candidate, an unserved field, or a candidate that never
+// reached the final. PURE (node-testable).
+export function racingFinalOpponent(st, genId) {
+  if (!st || typeof st !== 'object' || genId == null) return null;
+  if (String(st.structure || '') !== 'racing') return null;
+  const id = String(genId);
+  for (const r of (Array.isArray(st.rounds) ? st.rounds : [])) {
+    const m = (r && Array.isArray(r.matches) && r.matches[0]) ? r.matches[0] : null;
+    if (!m || String(m.match_id || '') !== 'racing-final') continue;
+    const comps = (Array.isArray(m.competitors) ? m.competitors : []).map(String);
+    if (comps.indexOf(id) < 0) return null;
+    const other = comps.find((c) => c !== id);
+    return other || null;
+  }
+  return null;
 }
 
 // The candidate's train→holdout generalization triplet from its experiment
@@ -610,6 +646,10 @@ function candidateDigest(s) {
     cached: s.cached ? [s.cachedProvenance && s.cachedProvenance.sourceEpoch, s.cachedProvenance && s.cachedProvenance.sourceRun] : null,
     progression: s.progression && Array.isArray(s.progression.stages)
       ? s.progression.stages.map((st) => [st.label, st.kind, svg.isNum(st.delta) ? st.delta.toFixed(2) : null, st.verdict]) : null,
+    // WHO the candidate met at the champion gate — printed on the tournament-path
+    // strip, so a re-resolved final that changes the opponent must repaint. null
+    // (gauntlet / never reached the final) → pre-feature digest (back-compat).
+    finalOpponent: s.finalOpponent || null,
     matchups: s.mine.map((m) => [m.champion, m.challenger, m.decision, svg.isNum(m.delta_scalar) ? m.delta_scalar.toFixed(2) : null]),
     gates: s.gates.map((g, i) => g && Array.isArray(g.rules)
       ? [s.gateSpecs[i].champ, s.gateSpecs[i].chall, s.gateSpecs[i].role, g.decision, svg.isNum(g.delta_scalar) ? g.delta_scalar.toFixed(3) : null, g.rules.map((r) => [r.id, r.status, r.fired]),
@@ -641,9 +681,23 @@ function candidateDigest(s) {
         // / pre-feature) contributes nothing → pre-feature digest (back-compat).
         diffComplexityDigest(g)]
       : null),
+    // the PER-JUDGE COMPARISON ledger rendered beside each gate — every judge's
+    // champion / challenger weighted loss + Δ, plus the server's primary_driver.
+    // Folded at the RENDERED precision so a no-op beat stays byte-identical; a
+    // judge's side resolving (or the driver changing hands) repaints. null
+    // (unserved / no judges) contributes nothing → pre-feature digest.
+    judgeCmp: (s.judgeComparisons || []).map((c) => judgeComparisonDigest(c)),
     drill: s.entryParam || null,
     drillExp: s.exps && Array.isArray(s.exps.outcomes) ? s.exps.outcomes.map((o) => [o.kind, o.passed, o.judge_name, o.detail]) : null,
-    drillJudge: s.judges && Array.isArray(s.judges.judges) ? s.judges.judges.map((j) => [j.judge_name, j.weighted_loss]) : null,
+    // the per-judge drill folds RAW loss + WEIGHT beside the weighted value —
+    // all three are rendered, so all three must gate the swap (a re-weighted
+    // judge moves `weight` + `weighted_loss` while `raw_loss` holds still).
+    drillJudge: s.judges && Array.isArray(s.judges.judges) ? s.judges.judges.map((j) => [
+      j.judge_name,
+      svg.isNum(j.weighted_loss) ? j.weighted_loss.toFixed(3) : null,
+      svg.isNum(j.raw_loss) ? j.raw_loss.toFixed(3) : null,
+      svg.isNum(j.weight) ? j.weight.toFixed(3) : null,
+    ]) : null,
     // harmonograf deep-link state — folded in so the link appears/disappears
     // when liveness flips (server up ⇄ run ended) without a no-op-beat repaint.
     hgLive: harmonografIsLive(),
@@ -741,10 +795,21 @@ function paintCandidate(host, ctx, epochId, s, cmpId, isPrimary, narrow, structu
   // tournament rounds even when the per-run records carry no rung tags. Absent
   // for a gauntlet candidate (one matchup, no rungs → no strip).
   if (s.progression && Array.isArray(s.progression.stages) && s.progression.stages.length) {
+    // NAME THE OPPONENT. The strip's `final` stage prints "final · Δ · promoted/
+    // rejected" — the one thing it never said is WHO the candidate faced at the
+    // champion gate. The racing-final match carries both sides; the opponent is
+    // the other one. Absent (gauntlet / never reached the final) → no chip, so
+    // the strip is byte-identical to before.
+    const reachedFinal = s.progression.stages.some((st) => st.kind === 'final');
     dagCard.appendChild(el('div', { class: 'dn-rungprog-strip' }, [
       el('span', { class: 'dn-rungprog-cap dn-faint', text: 'tournament path' }),
       rungProgression({ stages: s.progression.stages, width: narrow ? 480 : 720 }),
-    ]));
+      (reachedFinal && s.finalOpponent) ? el('span', {
+        class: 'dn-rungprog-opponent dn-faint dn-mono',
+        title: 'the champion this candidate faced at the gate',
+        text: 'vs ' + s.finalOpponent,
+      }) : null,
+    ].filter(Boolean)));
   }
 
   dagCard.appendChild(lifecycleDag({
@@ -935,7 +1000,8 @@ function paintCandidate(host, ctx, epochId, s, cmpId, isPrimary, narrow, structu
     s.gateSpecs.forEach((k, i) => {
       const g = s.gates[i];
       if (!g || !Array.isArray(g.rules)) return;
-      gateSections.push(section(`Promote gate · ${k.champ} → ${k.chall} (${k.role})`, gatePanel(g)));
+      gateSections.push(section(`Promote gate · ${k.champ} → ${k.chall} (${k.role})`,
+        gatePanel(g, (s.judgeComparisons || [])[i], k)));
     });
   } else if (!baseline) {
     gateSections.push(section('Promote gate', el('div', { class: 'dn-panel' }, [empty('No gate decomposition recorded for this candidate’s round.')])));
@@ -1910,7 +1976,7 @@ export function diffComplexityDigest(gate) {
 // redundant with the RADAR SILHOUETTE (which now compares candidate vs champion
 // across the same scalar / pass-rate / per-judge axes). The deciding-rule detail
 // the components used to carry now reads off the gate-rule ladder + the radar.
-export function gatePanel(gate) {
+export function gatePanel(gate, comparison, spec) {
   const card = el('div', { class: 'dn-panel dn-gate' });
   // Class B: a gate with no resolved decision is still pending, not rejected.
   // The backend emits decision:"deferred" verbatim until BOTH aggregates
@@ -1997,7 +2063,93 @@ export function gatePanel(gate) {
   const decomp = scalarDecomp(gate.scalar_decomposition);
   if (decomp) card.appendChild(decomp);
 
+  // (d) WHICH JUDGE DECIDED THIS ROUND — the per-judge champion-vs-challenger
+  // ledger the gate's one-word `primary_driver` was picked from. Absent /
+  // unserved → null → the panel is byte-identical to before the read existed.
+  const cmp = perJudgeComparisonBlock(comparison, spec);
+  if (cmp) card.appendChild(cmp);
+
   return card;
+}
+
+// ── WHICH JUDGE DECIDED THE ROUND (per-judge comparison) ─────────────────────
+//
+// `/api/round/{epoch}/{champion}/{challenger}/per-judge-comparison`
+// (query/judge_view.py build_per_judge_comparison) joins the two sides' judge
+// ledgers into `{judges: [{judge_name, champion_weighted_loss,
+// challenger_weighted_loss, delta}], primary_driver}`. `delta` is
+// challenger − champion, so NEGATIVE = the challenger drifted LESS on that
+// judge (better). `primary_driver` is the judge with the largest |delta| — the
+// server's call, rendered, never re-derived here.
+//
+// Returns null when the read is absent or names no judge, so a round without an
+// indexed judge ledger renders exactly as it did before.
+export function perJudgeComparisonBlock(comparison, spec) {
+  if (!comparison || typeof comparison !== 'object') return null;
+  const rows = (Array.isArray(comparison.judges) ? comparison.judges : [])
+    .filter((j) => j && j.judge_name);
+  if (!rows.length) return null;
+  const champLabel = (spec && spec.champ) || comparison.champion || 'champion';
+  const chalLabel = (spec && spec.chall) || comparison.challenger || 'challenger';
+  const driver = comparison.primary_driver == null ? null : String(comparison.primary_driver);
+
+  const wrap = el('div', { class: 'dn-gate-judgecmp' });
+  wrap.appendChild(subhead('Which judge decided it · per-judge weighted loss'));
+  // biggest mover first — the same ordering the driver is chosen by.
+  const sorted = rows.slice().sort((a, b) => {
+    const av = svg.isNum(a.delta) ? Math.abs(a.delta) : -1;
+    const bv = svg.isNum(b.delta) ? Math.abs(b.delta) : -1;
+    return bv - av;
+  });
+  wrap.appendChild(dataTable({
+    class: 'dn-board-table dn-judgecmp-table',
+    columns: [{ label: 'judge' }, { label: champLabel, class: 'dn-num' },
+      { label: chalLabel, class: 'dn-num' }, { label: 'Δ', class: 'dn-num' }],
+    rows: sorted.map((j) => {
+      const name = String(j.judge_name);
+      const isDriver = driver != null && name === driver;
+      const d = svg.isNum(j.delta) ? j.delta : null;
+      // lower loss is better, so a NEGATIVE Δ (challenger drifted less) is good.
+      const dCls = d == null ? '' : (d < 0 ? 'dn-good-t' : d > 0 ? 'dn-bad-t' : '');
+      return {
+        class: isDriver ? 'dn-judgecmp-driver' : '',
+        dataset: { judge: name },
+        cells: [
+          { el: el('span', null, [
+            el('span', { class: 'dn-mono', text: name }),
+            isDriver ? el('span', { class: 'dn-judgecmp-drivertag dn-faint', text: ' · primary driver' }) : null,
+          ].filter(Boolean)) },
+          { class: 'dn-num dn-mono', text: svg.isNum(j.champion_weighted_loss) ? svg.fmt(j.champion_weighted_loss, 2) : '—' },
+          { class: 'dn-num dn-mono', text: svg.isNum(j.challenger_weighted_loss) ? svg.fmt(j.challenger_weighted_loss, 2) : '—' },
+          { class: 'dn-num dn-mono ' + dCls, text: d == null ? '—' : svg.fmtSigned(d, 2) },
+        ],
+      };
+    }),
+  }));
+  wrap.appendChild(el('p', { class: 'dn-faint', style: 'font-size:11px;margin:8px 0 0;',
+    text: 'weighted process-drift loss per judge · Δ = challenger − champion, so NEGATIVE is better · '
+      + (driver ? 'the round turned on ' + driver + ' (largest |Δ|)' : 'no single judge dominated') }));
+  return wrap;
+}
+
+// A content digest of the per-judge comparison ledger — each judge's rounded
+// pair + Δ, plus the primary driver. Returns null when absent / empty so it
+// contributes NOTHING to the candidate digest (back-compat: a round with no
+// indexed judge ledger digests exactly as it did before this read existed).
+export function judgeComparisonDigest(comparison) {
+  if (!comparison || typeof comparison !== 'object') return null;
+  const rows = (Array.isArray(comparison.judges) ? comparison.judges : [])
+    .filter((j) => j && j.judge_name);
+  if (!rows.length) return null;
+  return [
+    comparison.primary_driver == null ? null : String(comparison.primary_driver),
+    rows.map((j) => [
+      String(j.judge_name),
+      svg.isNum(j.champion_weighted_loss) ? j.champion_weighted_loss.toFixed(3) : null,
+      svg.isNum(j.challenger_weighted_loss) ? j.challenger_weighted_loss.toFixed(3) : null,
+      svg.isNum(j.delta) ? j.delta.toFixed(3) : null,
+    ]).sort(),
+  ];
 }
 
 // ── the PROPOSER PREDICTION-ACCURACY + CALIBRATION scorecard (DIAGNOSTIC) ──────
@@ -2273,12 +2425,42 @@ function entryDrilldown(ctx, epochId, genId, entryId, row, exps, judges, header)
     card.appendChild(el('div', { style: 'margin-top:12px;' }, [empty('No expectation recorded for this entry (no predicate / rubric).')]));
   }
 
+  // ── per-judge drift: RAW beside WEIGHTED (the two are different questions) ──
+  // The endpoint serves {judge_name, weighted_loss, raw_loss, weight}. The bars
+  // plot the WEIGHTED loss (what the scalar actually paid), but a tall bar is
+  // ambiguous on its own: it can mean the judge FIRED HARD (big raw_loss) or
+  // merely that the judge CARRIES A BIG WEIGHT. The table beneath separates
+  // them — raw × weight = weighted — so "why is this judge dominating?" is
+  // answerable without opening the contract.
   const jrows = (judges && Array.isArray(judges.judges)) ? judges.judges : [];
   const jitems = jrows.filter((j) => svg.isNum(j.weighted_loss)).sort((a, b) => b.weighted_loss - a.weighted_loss).map((j) => ({ label: j.judge_name, value: j.weighted_loss }));
   if (jitems.length) {
     card.appendChild(el('p', { class: 'dn-faint', style: 'margin:14px 0 4px;font-size:11px;', text: 'per-judge weighted process-drift loss · higher = more drift' }));
     const djt = densityTokens();
     card.appendChild(svg.valueBars({ width: 420, rowHeight: Math.round(20 * djt.sizeScale), labelWidth: 180, items: jitems }));
+  }
+  if (jrows.length) {
+    const sortedJ = jrows.slice().sort((a, b) => {
+      const av = svg.isNum(a.weighted_loss) ? a.weighted_loss : -Infinity;
+      const bv = svg.isNum(b.weighted_loss) ? b.weighted_loss : -Infinity;
+      return bv - av;
+    });
+    card.appendChild(dataTable({
+      class: 'dn-board-table dn-judgeraw-table',
+      columns: [{ label: 'judge' }, { label: 'raw', class: 'dn-num' },
+        { label: 'weight', class: 'dn-num' }, { label: 'weighted', class: 'dn-num' }],
+      rows: sortedJ.map((j) => ({
+        dataset: { judge: String(j.judge_name == null ? '' : j.judge_name) },
+        cells: [
+          { class: 'dn-mono', text: j.judge_name == null ? '—' : String(j.judge_name) },
+          { class: 'dn-num dn-mono', text: svg.isNum(j.raw_loss) ? svg.fmt(j.raw_loss, 2) : '—' },
+          { class: 'dn-num dn-mono dn-faint', text: svg.isNum(j.weight) ? svg.fmt(j.weight, 2) : '—' },
+          { class: 'dn-num dn-mono', text: svg.isNum(j.weighted_loss) ? svg.fmt(j.weighted_loss, 2) : '—' },
+        ],
+      })),
+    }));
+    card.appendChild(el('p', { class: 'dn-faint', style: 'font-size:11px;margin:6px 0 0;',
+      text: 'raw = how hard the judge fired · weight = how much the contract cares · weighted = what the scalar paid (raw × weight)' }));
   }
 
   // fix #5 path: the transcript opens INLINE on the board view (no separate run page).

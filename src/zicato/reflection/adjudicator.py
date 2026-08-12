@@ -61,12 +61,14 @@ adjudicator's OWN reliability via the existing
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from zicato.aux_timeout import aux_call_timeout_s
 from zicato.judge_runtime.reliability import _freeze_context, pairwise_disagreement
 from zicato.reflection.corpus import (
     FIDELITY_PREVIEW,
@@ -443,14 +445,43 @@ async def _adjudicate_once(
     parsed object (or ``None`` after two malformed responses) plus the raw text
     of the last response — so the ambiguous verdict can retain the exact bytes
     the model returned. Never raises on a malformed response.
+
+    Each attempt is bounded by :func:`asyncio.wait_for` against
+    :func:`aux_call_timeout_s`, the same budget every other auxiliary-LLM
+    consumer uses. A hung adjudicator degrades EXACTLY as a malformed one does
+    — that attempt yields no parse and its timeout text becomes the raw
+    response — because this function's contract is that it never raises, and a
+    ``TimeoutError`` escaping here would propagate through a whole corpus
+    adjudication and wedge ``reflect run`` on one unlucky decision. The retry
+    is still EXACTLY ONE: a first attempt that times out gets the same single
+    second chance a first attempt that returns garbage gets.
     """
-    raw = str(await call_llm(system, user, model))
+    raw = await _call_bounded(call_llm, system, user, model)
     parsed = extract_verdict_json(raw)
     if parsed is not None:
         return parsed, raw
-    raw = str(await call_llm(system, user + _RETRY_SUFFIX, model))
+    raw = await _call_bounded(call_llm, system, user + _RETRY_SUFFIX, model)
     parsed = extract_verdict_json(raw)
     return parsed, raw
+
+
+async def _call_bounded(call_llm: Any, system: str, user: str, model: str) -> str:
+    """One adjudicator call under the auxiliary timeout; a timeout returns text.
+
+    The timeout is rendered as the attempt's RAW RESPONSE rather than raised,
+    so it survives into an ambiguous verdict's ``raw_response`` and the
+    operator reading that verdict can tell "the adjudicator did not answer in
+    time" from "the adjudicator answered with prose". Both are ambiguous; only
+    one of them is fixed by raising the budget.
+    """
+    try:
+        return str(
+            await asyncio.wait_for(call_llm(system, user, model), timeout=aux_call_timeout_s())
+        )
+    except TimeoutError:
+        text = f"adjudicator call timed out after {aux_call_timeout_s():.1f}s"
+        log.warning("reflection adjudicator: %s; treating the attempt as malformed", text)
+        return text
 
 
 def _classify(observed: str, adjudicated: str) -> str:

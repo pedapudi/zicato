@@ -229,3 +229,77 @@ def test_epoch_view_holdout_summary_defensive_on_garbage(tmp_path: Path) -> None
     assert h["train_scalar"] is None
     assert h["ladder_budget_remaining"] is None
     assert h["ladder_budget_total"] is None
+
+
+# ---------------------------------------------------------------------------
+# build_epoch_view — board_meta (the board-level header)
+# ---------------------------------------------------------------------------
+
+
+def _write_board(ws: Path, rows: list[dict[str, object]]) -> None:
+    edir = ws / "epochs" / EPOCH
+    (edir / "board.jsonl").write_text(
+        "\n".join(json.dumps(r) for r in rows) + "\n", encoding="utf-8"
+    )
+
+
+def test_epoch_view_serves_the_board_meta_header(tmp_path: Path) -> None:
+    """``board_meta`` is authored in the builder and folds into the contract
+    hash — the runtime view has to name it or the surface draws a board that is
+    scored differently from the one it shows."""
+    ws = _epoch_ws(tmp_path, scoring={"weights": {"drift_loss": 1.0}})
+    _write_board(
+        ws,
+        [
+            {"board_meta": True, "disable_drift": ["user_steer", "user_pause"], "judge_only": True},
+            *_board_jsonl_rows(),
+        ],
+    )
+    view = build_epoch_view(WorkspacePaths(ws))
+    assert view["board_meta"] == {
+        "disable_drift": ["user_steer", "user_pause"],
+        "judge_only": True,
+    }
+    # the header is NOT an entry — it must not leak into the board rows.
+    assert len(view["board"]) == 4
+    assert view["board_split"]["total"] == 4
+
+
+def test_epoch_view_omits_board_meta_when_absent_or_default(tmp_path: Path) -> None:
+    """A default board has no header line at all (BOARD-FORMAT §1.0), so a
+    default header and no header describe the SAME board — both omit the key
+    and keep the payload byte-identical to the read that predates it."""
+    ws = _epoch_ws(tmp_path, scoring={"weights": {"drift_loss": 1.0}})
+    # no header at all
+    assert "board_meta" not in build_epoch_view(WorkspacePaths(ws))
+    # a header that says nothing
+    _write_board(
+        ws,
+        [{"board_meta": True, "disable_drift": [], "judge_only": False}, *_board_jsonl_rows()],
+    )
+    assert "board_meta" not in build_epoch_view(WorkspacePaths(ws))
+
+
+def test_epoch_view_board_meta_is_defensive_on_garbage(tmp_path: Path) -> None:
+    ws = _epoch_ws(tmp_path, scoring={"weights": {"drift_loss": 1.0}})
+    # a malformed header: disable_drift is a bool, judge_only a string.
+    _write_board(
+        ws,
+        [
+            {"board_meta": True, "disable_drift": False, "judge_only": "yes"},
+            *_board_jsonl_rows(),
+        ],
+    )
+    # every malformed field degrades to its default ⇒ nothing to say ⇒ omitted.
+    assert "board_meta" not in build_epoch_view(WorkspacePaths(ws))
+    # a partly-usable header keeps the usable half and drops the non-strings.
+    _write_board(
+        ws,
+        [
+            {"board_meta": True, "disable_drift": ["user_steer", 7, None], "judge_only": 1},
+            *_board_jsonl_rows(),
+        ],
+    )
+    view = build_epoch_view(WorkspacePaths(ws))
+    # ``judge_only: 1`` is not the boolean the format requires ⇒ False.
+    assert view["board_meta"] == {"disable_drift": ["user_steer"], "judge_only": False}

@@ -318,6 +318,19 @@ export function entryEditor(buffer, vocab, handlers) {
     b.tags = String(v).split(',').map((t) => t.trim()).filter(Boolean);
   }, 'dn-bld-ef-tags'), el('span', { class: 'dn-bld-ef-hint', text: 'comma-separated; the holdout tag is owned by the train/holdout toggle' })));
 
+  // `context` round-trips through the buffer either way (entryToBuffer reads it,
+  // bufferToEntryJson writes it back), so an entry that HAS one keeps it whether
+  // or not it is shown — but without a control the operator can neither read nor
+  // author it. A free-form JSON object, so the control is the json_schema
+  // treatment: a textarea + a live parse hint, the parsed object committed only
+  // when it parses (unparseable keystrokes never overwrite a good value).
+  const ctxHint = el('span', { class: 'dn-bld-ef-hint dn-bld-ef-ctxhint', text: contextHint(b.context) });
+  wrap.appendChild(fieldRow('Context', areaInput(contextText(b.context), 'Entry context', (v) => {
+    const parsed = parseContext(v);
+    if (parsed) b.context = parsed;
+    ctxHint.textContent = contextHint(b.context, v);
+  }, 'dn-bld-ef-context'), ctxHint));
+
   // — PER-KIND discriminant fields —
   wrap.appendChild(kindFields(b, V, onChange));
 
@@ -458,6 +471,46 @@ function expectationForm(b, V, onChange) {
   box.appendChild(fieldRow('Reads', selectInput(exp.reads || 'final_output', 'Expectation reads',
     V.reads || DEFAULT_VOCAB.reads, (v) => { exp.reads = v; }, disabledReads)));
   return box;
+}
+
+// ── `context` (a free-form JSON object) ────────────────────────────────
+
+// The buffer's object → the textarea's text. An empty/absent context shows an
+// EMPTY box, never a bare `{}` the operator has to delete before typing.
+function contextText(ctx) {
+  if (!ctx || typeof ctx !== 'object' || Array.isArray(ctx) || !Object.keys(ctx).length) return '';
+  return JSON.stringify(ctx, null, 2);
+}
+
+// The textarea's text → an object to commit, or `null` for "do not commit".
+// Blank IS a real value (clear it); anything that does not parse as a JSON
+// OBJECT commits nothing, so a half-typed key never destroys the live value.
+function parseContext(text) {
+  const s = String(text == null ? '' : text).trim();
+  if (!s) return {};
+  let parsed;
+  try { parsed = JSON.parse(s); } catch (e) { return null; }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null;
+  return parsed;
+}
+
+// The live parse hint. `raw` (the current text) is passed on every commit so an
+// unparseable box says so out loud — the buffer still holds the last good value
+// and a Save would write THAT, which the operator must be able to see.
+function contextHint(ctx, raw) {
+  if (raw !== undefined && parseContext(raw) === null) {
+    const s = String(raw).trim();
+    let why = 'not valid JSON';
+    try {
+      const parsed = JSON.parse(s);
+      why = Array.isArray(parsed) ? 'context must be a JSON object, not an array'
+        : 'context must be a JSON object';
+    } catch (e) { why = 'not valid JSON: ' + (e && e.message ? e.message : 'parse error'); }
+    return '⚠ ' + why + ' — the last valid value is kept until this parses';
+  }
+  const n = (ctx && typeof ctx === 'object' && !Array.isArray(ctx)) ? Object.keys(ctx).length : 0;
+  if (!n) return 'empty — an optional JSON object handed to the run alongside the input';
+  return `✓ ${n} key${n === 1 ? '' : 's'}`;
 }
 
 function jsonHint(spec) {

@@ -1681,7 +1681,6 @@ test('under-render: a NEW candidate folded into AppState repaints the tree (no h
   assert(genRows1.length > genRows0.length, 'the tree grew by the newly-minted candidate');
 });
 
-await run();
 
 // ---- the FACET table: this candidate re-scored per board tag -------------
 // The dossier READS `facet_scores` off the per-entry feed; the view never
@@ -1869,3 +1868,237 @@ test('candidate digest: a slice that GAINED runs repaints, even at an unchanged 
   assert(host.getAttribute('data-t-digest') !== digest1, 'a coverage change is a real change');
   assertDeep(facetCells(host)[1], ['data_cleaning', '0.89', '0.41', '2/4'], 'the cell shows the new coverage');
 });
+
+const candidateMod = await import('../js/views/candidate.js');
+
+// ── A5 · WHICH JUDGE DECIDED THE ROUND (per-judge comparison) ────────────────
+//
+// /api/round/{epoch}/{champion}/{challenger}/per-judge-comparison
+// (build_per_judge_comparison) had NO client at all — no fetcher, no view, no
+// CLI reader. The gate named ONE `primary_driver`; the ledger it came from was
+// unreachable. These pin the fetcher, the render, and the digest fold.
+
+const CMP_FIXTURE = {
+  epoch_id: EPOCH_ID, champion: 'v0', challenger: 'v1',
+  judges: [
+    { judge_name: 'tone', champion_weighted_loss: 12.5, challenger_weighted_loss: 40.0, delta: 27.5 },
+    { judge_name: 'structure', champion_weighted_loss: 30.0, challenger_weighted_loss: 28.0, delta: -2.0 },
+    { judge_name: 'brevity', champion_weighted_loss: null, challenger_weighted_loss: 3.0, delta: 3.0 },
+  ],
+  primary_driver: 'tone',
+};
+
+function withJudgeComparison(cmp) {
+  const F = Object.assign({}, FIXTURE);
+  if (cmp !== null) F[`/api/round/${EPOCH_ID}/v0/v1/per-judge-comparison`] = cmp;
+  return F;
+}
+
+test('A5 · perJudgeComparisonBlock: renders the full per-judge ledger and FLAGS the server’s primary driver', () => {
+  const node = candidateMod.perJudgeComparisonBlock(CMP_FIXTURE, { champ: 'v0', chall: 'v1' });
+  assert(node, 'a served comparison renders a block');
+  const host = document.createElement('div');
+  host.appendChild(node);
+  const txt = host.textContent;
+  assert(txt.includes('tone') && txt.includes('structure') && txt.includes('brevity'),
+    'every judge on the ledger is named (not just the driver)');
+  assert(txt.includes('primary driver'), 'the driver is flagged');
+  assertEqual(allByClass(host, 'dn-judgecmp-driver').length, 1, 'exactly one row is marked the driver');
+  // Δ = challenger − champion, so NEGATIVE is better (lower loss).
+  assert(txt.includes('+27.50') || txt.includes('+27.5'), 'the driver’s signed Δ renders');
+  assert(txt.includes('the round turned on tone'), 'the caption names the deciding judge');
+});
+
+test('A5 · perJudgeComparisonBlock: absent / empty degrades to null (byte-identical to the pre-read gate)', () => {
+  assertEqual(candidateMod.perJudgeComparisonBlock(null), null, 'a null read renders nothing');
+  assertEqual(candidateMod.perJudgeComparisonBlock({ judges: [] }), null, 'an empty ledger renders nothing');
+  assertEqual(candidateMod.perJudgeComparisonBlock({ judges: [{}] }), null, 'a nameless row renders nothing');
+});
+
+test('A5 · the candidate dossier mounts the per-judge comparison beside the gate breakdown', async () => {
+  freshState(); installFixtureMap(withJudgeComparison(CMP_FIXTURE));
+  const host = document.createElement('div');
+  await candidateMod.render(host, { navigate() {}, href: router.href }, { epochId: EPOCH_ID, gen: 'v1' });
+  assertEqual(allByClass(host, 'dn-gate-judgecmp').length, 1, 'the comparison block mounts once, inside the gate panel');
+  assert(host.textContent.includes('Which judge decided it'), 'the block is titled');
+  // it sits INSIDE the promote-gate panel (beside the gate breakdown).
+  const gate = allByClass(host, 'dn-gate')[0];
+  assert(gate && allByClass(gate, 'dn-gate-judgecmp').length === 1, 'the block lives in the gate panel');
+});
+
+test('A5 · an unserved comparison leaves the gate panel byte-identical (back-compat)', async () => {
+  freshState(); installFixtureMap(withJudgeComparison(null));
+  const host = document.createElement('div');
+  await candidateMod.render(host, { navigate() {}, href: router.href }, { epochId: EPOCH_ID, gen: 'v1' });
+  assertEqual(allByClass(host, 'dn-gate-judgecmp').length, 0, 'no comparison block when the endpoint is absent');
+  assert(allByClass(host, 'dn-gate')[0], 'the gate panel still renders');
+});
+
+test('A5 · judgeComparisonDigest is FOLDED — a driver change / a moved judge repaints', async () => {
+  freshState(); installFixtureMap(withJudgeComparison(CMP_FIXTURE));
+  const host = document.createElement('div');
+  const ctx = { navigate() {}, href: router.href };
+  await candidateMod.render(host, ctx, { epochId: EPOCH_ID, gen: 'v1' });
+  const first = host.getAttribute('data-t-digest');
+  assert(first.includes('judgeCmp'), 'the comparison is folded into the dossier digest');
+
+  // a NO-OP beat: identical payload → zero DOM.
+  const firstNode = host.firstChild;
+  const writes = host.innerHTMLWriteCount();
+  freshState(); installFixtureMap(withJudgeComparison(CMP_FIXTURE));
+  await candidateMod.render(host, ctx, { epochId: EPOCH_ID, gen: 'v1' });
+  assertEqual(host.getAttribute('data-t-digest'), first, 'an identical comparison is a digest no-op');
+  assert(host.firstChild === firstNode, 'no rebuild on the no-op beat');
+  assertEqual(host.innerHTMLWriteCount(), writes, 'no innerHTML churn on the no-op beat');
+
+  // the driver changing hands — every loss identical — must repaint.
+  const handed = JSON.parse(JSON.stringify(CMP_FIXTURE));
+  handed.primary_driver = 'structure';
+  freshState(); installFixtureMap(withJudgeComparison(handed));
+  await candidateMod.render(host, ctx, { epochId: EPOCH_ID, gen: 'v1' });
+  assert(host.getAttribute('data-t-digest') !== first, 'the primary driver changing hands flips the digest');
+
+  // and a judge's side resolving must repaint too.
+  const resolved = JSON.parse(JSON.stringify(CMP_FIXTURE));
+  resolved.judges[2].champion_weighted_loss = 1.0;
+  assert(candidateMod.judgeComparisonDigest(resolved) !== candidateMod.judgeComparisonDigest(CMP_FIXTURE),
+    'a judge side resolving flips the comparison digest');
+});
+
+// ── A16 · the champion-gate OPPONENT on the racing tournament path ───────────
+
+test('A16 · racingFinalOpponent: names the OTHER side of the racing-final match', () => {
+  const st = {
+    structure: 'racing',
+    rounds: [
+      { stage_index: 0, label: 'Rung 0', matches: [{ match_id: 'rung0', competitors: ['v0', 'v1', 'v2'], survivors: ['v1'], cut: ['v2'] }] },
+      { stage_index: 1, label: 'Champion gate', matches: [{ match_id: 'racing-final', competitors: ['v0', 'v1'], winner: 'v1', decision: 'promoted', delta_scalar: -3.5 }] },
+    ],
+  };
+  assertEqual(candidateMod.racingFinalOpponent(st, 'v1'), 'v0', 'the challenger faced v0 at the gate');
+  assertEqual(candidateMod.racingFinalOpponent(st, 'v0'), 'v1', 'read from the champion’s side it names the challenger');
+  assertEqual(candidateMod.racingFinalOpponent(st, 'v2'), null, 'a candidate cut before the final has no gate opponent');
+  assertEqual(candidateMod.racingFinalOpponent(null, 'v1'), null, 'an unserved field yields null');
+  assertEqual(candidateMod.racingFinalOpponent({ structure: 'gauntlet', rounds: [] }, 'v1'), null,
+    'a gauntlet candidate has no racing final');
+});
+
+
+// ── A16 (render) · the racing dossier NAMES the gate opponent ────────────────
+
+const RACING_EPOCH = Object.assign({}, FIXTURE['/api/epoch'], {
+  tournament: { structure: 'racing', params: { eta: 2, board_fraction: 0.5 } },
+  current_champion: 'v0',
+});
+const RACING_FIELD = {
+  present: true, epoch_id: EPOCH_ID, structure: 'racing',
+  structure_params: { eta: 2, board_fraction: 0.5 },
+  competitors: [{ generation_id: 'v0', role: 'champion' }, { generation_id: 'v1', role: 'challenger' }, { generation_id: 'v2', role: 'challenger' }],
+  standings: [],
+  rounds: [
+    { stage_index: 0, label: 'Rung 0', matches: [{ match_id: 'rung0', competitors: ['v1', 'v2'], survivors: ['v1'], cut: ['v2'], board_fraction: 0.5, deltas: { v1: -4.0, v2: 6.0 } }] },
+    { stage_index: 1, label: 'Champion gate', matches: [{ match_id: 'racing-final', competitors: ['v0', 'v1'], winner: 'v1', decision: 'promoted', delta_scalar: -4.0, board_fraction: 1.0 }] },
+  ],
+};
+
+function racingFixture() {
+  const F = Object.assign({}, FIXTURE);
+  F['/api/epoch'] = RACING_EPOCH;
+  F[`/api/epoch?epoch=${EPOCH_ID}`] = RACING_EPOCH;
+  F[`/api/epoch/${EPOCH_ID}/racing-field`] = RACING_FIELD;
+  return F;
+}
+
+test('A16 · the racing tournament-path strip NAMES the champion the candidate faced at the gate', async () => {
+  freshState(); installFixtureMap(racingFixture());
+  const host = document.createElement('div');
+  const ctx = { navigate() {}, href: router.href };
+  await candidateMod.render(host, ctx, { epochId: EPOCH_ID, gen: 'v1' });
+  const opp = allByClass(host, 'dn-rungprog-opponent')[0];
+  assert(opp, 'the strip carries the gate-opponent label');
+  assertEqual(String(opp.textContent).trim(), 'vs v0', 'it names v0 — the champion v1 met at the gate');
+  // and the digest folds it, so a re-resolved final that changes the opponent repaints.
+  assert(host.getAttribute('data-t-digest').includes('finalOpponent'),
+    'finalOpponent is folded into the dossier digest');
+});
+
+test('A16 · a candidate cut before the final gets NO opponent chip (byte-identical to before)', async () => {
+  freshState(); installFixtureMap(racingFixture());
+  const host = document.createElement('div');
+  await candidateMod.render(host, { navigate() {}, href: router.href }, { epochId: EPOCH_ID, gen: 'v2' });
+  assertEqual(allByClass(host, 'dn-rungprog-opponent').length, 0,
+    'v2 never reached the champion gate, so no opponent is claimed');
+});
+
+// ── A17 · RAW loss beside WEIGHTED in the per-entry drill-down ───────────────
+//
+// /api/run/{e}/{g}/{entry}/per-judge serves {judge_name, weighted_loss,
+// raw_loss, weight}; the drill rendered ONLY weighted_loss, so a tall bar was
+// ambiguous — a judge that FIRED HARD and a judge that merely CARRIES A BIG
+// WEIGHT looked identical.
+
+const DRILL_ENTRY = 'waffles_single';
+const PER_JUDGE = {
+  run_id: 'run_v1_waffles',
+  judges: [
+    { judge_name: 'tone', weighted_loss: 40.0, raw_loss: 8.0, weight: 5.0 },
+    { judge_name: 'structure', weighted_loss: 30.0, raw_loss: 30.0, weight: 1.0 },
+  ],
+};
+
+function drillFixture(perJudge) {
+  const F = Object.assign({}, FIXTURE);
+  F[`/api/run/${EPOCH_ID}/v1/${DRILL_ENTRY}/per-judge`] = perJudge;
+  F[`/api/run/${EPOCH_ID}/v1/${DRILL_ENTRY}/expectations`] = { outcomes: [] };
+  F[`/api/run/${EPOCH_ID}/v1/${DRILL_ENTRY}/header`] = { adk_session_id: '' };
+  return F;
+}
+
+test('A17 · the per-entry drill renders RAW and WEIGHT beside the weighted loss', async () => {
+  freshState(); installFixtureMap(drillFixture(PER_JUDGE));
+  const host = document.createElement('div');
+  await candidateMod.render(host, { navigate() {}, href: router.href },
+    { epochId: EPOCH_ID, gen: 'v1', entry: DRILL_ENTRY });
+  const tbl = allByClass(host, 'dn-judgeraw-table')[0];
+  assert(tbl, 'the raw/weight/weighted table renders in the entry drill');
+  const txt = String(tbl.textContent);
+  // tone: raw 8.00 × weight 5.00 = weighted 40.00 — the "big weight" case.
+  assert(txt.includes('8.00') && txt.includes('5.00') && txt.includes('40.00'),
+    'tone shows raw 8.00 · weight 5.00 · weighted 40.00, got: ' + txt);
+  // structure: raw 30.00 × weight 1.00 = 30.00 — the "fired hard" case.
+  assert(txt.includes('30.00') && txt.includes('1.00'), 'structure shows its raw ≈ weighted at weight 1');
+  assert(host.textContent.includes('raw = how hard the judge fired'),
+    'the caption explains what separates raw from weighted');
+});
+
+test('A17 · raw_loss + weight are FOLDED into the dossier digest (a re-weight repaints)', async () => {
+  freshState(); installFixtureMap(drillFixture(PER_JUDGE));
+  const host = document.createElement('div');
+  const ctx = { navigate() {}, href: router.href };
+  await candidateMod.render(host, ctx, { epochId: EPOCH_ID, gen: 'v1', entry: DRILL_ENTRY });
+  const first = host.getAttribute('data-t-digest');
+
+  // the SAME weighted loss, a DIFFERENT raw/weight split — the exact case a
+  // digest folding only `weighted_loss` would refuse to repaint.
+  const resplit = JSON.parse(JSON.stringify(PER_JUDGE));
+  resplit.judges[0].raw_loss = 4.0;
+  resplit.judges[0].weight = 10.0;   // 4 × 10 = 40 — weighted is unchanged.
+  freshState(); installFixtureMap(drillFixture(resplit));
+  await candidateMod.render(host, ctx, { epochId: EPOCH_ID, gen: 'v1', entry: DRILL_ENTRY });
+  assert(host.getAttribute('data-t-digest') !== first,
+    'a re-weighted judge (same weighted loss, new raw/weight) flips the dossier digest');
+  assert(String(allByClass(host, 'dn-judgeraw-table')[0].textContent).includes('10.00'),
+    'the table repainted with the new weight');
+});
+
+test('A17 · a per-judge payload with no raw/weight still renders (honest dashes)', async () => {
+  freshState(); installFixtureMap(drillFixture({ run_id: 'r', judges: [{ judge_name: 'tone', weighted_loss: 40.0 }] }));
+  const host = document.createElement('div');
+  await candidateMod.render(host, { navigate() {}, href: router.href },
+    { epochId: EPOCH_ID, gen: 'v1', entry: DRILL_ENTRY });
+  const tbl = allByClass(host, 'dn-judgeraw-table')[0];
+  assert(tbl, 'the table still renders on a pre-field payload');
+  assert(String(tbl.textContent).includes('—'), 'the absent raw/weight read as honest dashes, never zeros');
+});
+
+await run();
