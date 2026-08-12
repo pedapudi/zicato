@@ -298,6 +298,36 @@ def set_param(draft: TournamentDraft, key: str, value: Any) -> DraftPatch:
     )
 
 
+#: The ladder mapping's per-key coercion. The mapping arrives as raw JSON
+#: (both the REST dispatch and the copilot hand it through untouched), so a
+#: string ``"8"`` would otherwise reach ``LadderConfig`` and raise an
+#: uncaught ``TypeError`` from its comparison validator — a 500 where every
+#: other builder arg gives a field-precise 400.
+_LADDER_TYPES: dict[str, type] = {
+    "enabled": bool,
+    "threshold": float,
+    "budget": int,
+    "noise_scale": float,
+}
+
+
+def _coerce_ladder_value(key: str, value: Any) -> Any:
+    """Coerce one ladder mapping value to its field type, or raise."""
+    if value is None:
+        # Only ``threshold`` is genuinely nullable (auto-derive); the
+        # dataclass rejects a null for the others with its own message.
+        return None
+    want = _LADDER_TYPES[key]
+    if want is bool:
+        return bool(value)
+    if isinstance(value, bool):
+        raise ValueError(f"ladder.{key} must be a number, got {value!r}")
+    try:
+        return want(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"ladder.{key} must be a number, got {value!r}") from exc
+
+
 def set_holdout(
     draft: TournamentDraft,
     *,
@@ -369,9 +399,10 @@ def set_holdout(
         for key, value in ladder.items():
             # ``threshold: None`` is a REAL value (auto-derive); every other
             # key treats None as absent-from-the-mapping only.
-            if value != getattr(of.ladder, key):
-                ladder_changes[key] = value
-                changed[f"ladder.{key}"] = {"from": getattr(of.ladder, key), "to": value}
+            coerced = _coerce_ladder_value(key, value)
+            if coerced != getattr(of.ladder, key):
+                ladder_changes[key] = coerced
+                changed[f"ladder.{key}"] = {"from": getattr(of.ladder, key), "to": coerced}
         if ladder_changes:
             of_changes["ladder"] = dataclasses.replace(of.ladder, **ladder_changes)
     if of_changes:
