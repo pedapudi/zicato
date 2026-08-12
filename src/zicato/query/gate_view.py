@@ -93,11 +93,25 @@ def _mean_drift_loss_per_generation(
     return sum(entry_means) / len(entry_means), len(entry_means)
 
 
-def build_score_trajectory(paths: WorkspacePaths, epoch_id: str | None = None) -> dict[str, Any]:
+def build_score_trajectory(
+    paths: WorkspacePaths,
+    epoch_id: str | None = None,
+    *,
+    lineage: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     """``GET /api/score-trajectory`` — the scalar across generations.
 
     ``epoch_id`` defaults to the current epoch; a validated id scopes the
     trajectory to that epoch's generations instead.
+
+    ``lineage`` lets a caller that ALREADY built the lineage feed hand it in
+    rather than paying for a second workspace walk. ``build_environment``
+    serves both this trajectory and the ``generations`` feed in one payload,
+    so it built the lineage twice — and the walk reads a JSON file per
+    generation, which cProfile put at 84% of that reader. A caller-supplied
+    feed must be the workspace-global one (the epoch filter below still
+    applies); ``include_ratings`` may differ, since the rating triple is
+    additive and nothing here reads it.
 
     The environment-wide evolution curve: one point per generation, in
     lineage (creation) order, plotting the generation's aggregate
@@ -119,7 +133,14 @@ def build_score_trajectory(paths: WorkspacePaths, epoch_id: str | None = None) -
     epoch_id = _resolve_epoch_id(paths, epoch_id)
     # Lineage order is authoritative for the x-axis — the index's
     # ``generations`` rows can carry empty ``created_at`` strings.
-    lineage = build_lineage_view(paths, include_ratings=False)
+    if lineage is None:
+        # Scope the WALK to the epoch this reader is about to filter down to.
+        # It used to walk every epoch and discard all but one, and the walk
+        # costs a JSON read per generation, so a 60-epoch workspace paid 60x
+        # for one epoch's curve. ``epoch_id`` is None only when the workspace
+        # has no current epoch, and then the global walk is what we want.
+        lineage = build_lineage_view(paths, epoch_id, include_ratings=False)
+    # The filter STAYS: a caller-supplied feed is workspace-global.
     ordered = [
         g
         for g in lineage.get("generations", [])
