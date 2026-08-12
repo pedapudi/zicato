@@ -24,10 +24,7 @@ import { splitFrame, captureScroll, restoreScroll } from '../compare.js';
 import * as facets from '../facets.js';
 import { buildTurnNode, dedupConsecutiveTurns, reconcileTurns } from '../turns.js';
 import { mountConversationPane } from '../convo.js';
-// `livenessFor` is ALIASED because #194 §1 adds its own `livenessFor` import
-// to this same file from '../livestatus.js'. Aliasing keeps both landings
-// mergeable, and makes the eventual swap a one-line deletion here.
-import { unitLiveness, hasActiveRunFor, livenessFor as loopLiveness } from '../unit_liveness.js';
+import { unitLiveness, hasActiveRunFor } from '../unit_liveness.js';
 
 // The transcript turn vocabulary now lives in js/turns.js so the live follow
 // pane can share it without importing back through this view. Re-exported
@@ -611,7 +608,7 @@ function syncFollowPane(host, xscriptHost, spec) {
   // an active-run record of its own. `state.activeRuns` is read raw here on
   // purpose — the gating lives in unitLiveness, so a dead loop yields
   // interrupted whatever stale records are lying around.
-  const { liveness } = loopLiveness(state);
+  const { liveness } = livenessFor(state);
   const tri = unitLiveness({
     liveness,
     hasActiveRun: hasActiveRunFor(state.activeRuns, spec.selGen, spec.entryId),

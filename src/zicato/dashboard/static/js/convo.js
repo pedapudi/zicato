@@ -37,6 +37,7 @@ import { fidelityLabel, pill } from './ui.js';
 import { reconcileTurns, nearBottom } from './turns.js';
 import { createTranscriptStream, spliceTurns, mergeAnnotations } from './transcript_stream.js';
 import { LIVENESS } from './unit_liveness.js';
+import { shortDate } from './livestatus.js';
 
 // mountConversationPane(host, spec) → a handle.
 //
@@ -246,22 +247,6 @@ export function captionText(tri, rendered, stream, endedAt) {
   return parts.join(' · ');
 }
 
-// A short past-tense date for the interrupted caption ("Jun 8"). §1 exports a
-// `shortDate(iso)` for exactly this; swap to it when that lands so every
-// past-tense surface spells a date the same way.
-//
-// Rendered in UTC, deliberately. The server stamps these in UTC, and a run
-// that stopped at 03:58Z reads as the PREVIOUS day under a western local
-// timezone — so a local-time render would have this pane and the candidate
-// dossier naming different days for the same interruption, which is worse
-// than either choice on its own.
-function shortDate(iso) {
-  const t = Date.parse(iso);
-  if (!Number.isFinite(t)) return String(iso);
-  return new Date(t).toLocaleDateString(undefined, {
-    month: 'short', day: 'numeric', timeZone: 'UTC',
-  });
-}
 
 function triWord(tri) {
   if (tri === LIVENESS.LIVE) return 'live';

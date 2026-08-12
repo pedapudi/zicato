@@ -25,7 +25,8 @@ installDom();
 
 const { mountConversationPane, captionText } = await import('../js/convo.js');
 const { spliceTurns, mergeAnnotations, createTranscriptStream } = await import('../js/transcript_stream.js');
-const { LIVENESS, unitLiveness, hasActiveRunFor, livenessFor } = await import('../js/unit_liveness.js');
+const { LIVENESS, unitLiveness, hasActiveRunFor } = await import('../js/unit_liveness.js');
+const { shortDate } = await import('../js/livestatus.js');
 
 // ---------------------------------------------------------------------------
 // A fake server that serves cursor deltas out of a growing turn list.
@@ -346,8 +347,13 @@ test('captionText is honest for each mode', () => {
   assert(stopped.indexOf('still going when the loop was interrupted') >= 0, stopped);
   assert(stopped.indexOf('never committed') >= 0, stopped);
   assert(stopped.indexOf('3 turns before it stopped') >= 0, stopped);
-  // …and it dates the stop when the server said when.
-  assert(captionText(LIVENESS.INTERRUPTED, 3, stream, '2026-06-08T03:58:49Z').indexOf('Jun 8') >= 0);
+  // …and it dates the stop the way the REST of the console dates it. Asserted
+  // against §1's shortDate rather than a hardcoded 'Jun 8', because the point
+  // is agreement: this pane and the candidate dossier must never name
+  // different days for one interruption.
+  const stoppedAt = '2026-06-08T03:58:49Z';
+  const dated = captionText(LIVENESS.INTERRUPTED, 3, stream, stoppedAt);
+  assert(dated.indexOf(shortDate(stoppedAt)) >= 0, dated);
 });
 
 // ---------------------------------------------------------------------------
@@ -533,22 +539,6 @@ test('the record lookup is exact — a sibling unit does not make this one live'
   assertEqual(hasActiveRunFor(null, 'v3', 'waffles'), false);
 });
 
-test('the served liveness verdict is preferred over the heartbeat', () => {
-  // The server is the only reader that can see the progress log's terminal
-  // marker, so its verdict outranks our own ageing. A settled loop whose
-  // heartbeat happens to be fresh must still read settled.
-  const out = livenessFor({ liveness: { state: 'settled', ended_at: '2026-06-08T03:58:49Z' },
-    heartbeat: { last_heartbeat: new Date().toISOString() } });
-  assertEqual(out.liveness.state, 'settled');
-  assertEqual(out.liveness.live, false);
-  assertEqual(out.liveness.endedAt, '2026-06-08T03:58:49Z');
-});
 
-test('without a served verdict, a stale heartbeat ages the loop out of live', () => {
-  const now = Date.parse('2026-08-09T00:00:00Z');
-  assertEqual(livenessFor({ heartbeat: { last_heartbeat: '2026-06-08T03:58:49Z' } }, now).liveness.live, false);
-  assertEqual(livenessFor({ heartbeat: { last_heartbeat: '2026-08-09T00:00:00Z' } }, now).liveness.live, true);
-  assertEqual(livenessFor({}, now).liveness.live, false);
-});
 
 await run();
