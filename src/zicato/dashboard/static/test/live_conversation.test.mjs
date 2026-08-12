@@ -25,7 +25,8 @@ installDom();
 
 const { mountConversationPane, captionText } = await import('../js/convo.js');
 const { spliceTurns, mergeAnnotations, createTranscriptStream } = await import('../js/transcript_stream.js');
-const { RUN_TRI, runTriState } = await import('../js/livestatus_tristate_stub.js');
+const { RUN_TRI, runTriState, triStateOfRunState } = await import('../js/livestatus_tristate_stub.js');
+const { RUN_STATE } = await import('../js/livestatus.js');
 
 // ---------------------------------------------------------------------------
 // A fake server that serves cursor deltas out of a growing turn list.
@@ -148,6 +149,10 @@ test('growth APPENDS: the already-rendered turn nodes keep their identity', asyn
   // this one.
   assert(scroller.childNodes[0] === before[0], 'turn 1 node was replaced');
   assert(scroller.childNodes[1] === before[1], 'turn 2 node was replaced');
+  // And the whole pane was built by node construction, never by an innerHTML
+  // write — the harness counts those, and one here would mean the thread was
+  // serialized and re-parsed (losing node identity, scroll, and selection).
+  assertEqual(h.node.innerHTMLWriteCount(), 0, 'the pane wrote innerHTML');
 });
 
 test('a beat that brings nothing writes ZERO dom', async () => {
@@ -181,6 +186,32 @@ test('the OPEN final turn growing re-renders only itself', async () => {
   assertEqual(scroller.childNodes.length, 2, 'the grown turn did not duplicate');
   assert(scroller.childNodes[0] === first, 'the untouched prefix turn was rebuilt');
   assert(String(scroller.childNodes[1].textContent).indexOf('decided') >= 0, 'the growth is not rendered');
+});
+
+test('a LATE annotation on turn 1 re-decorates only turn 1', async () => {
+  // CAUGHT IN THE BROWSER, not by the earlier tests. Drift detections and judge
+  // verdicts anchor to the nearest PRECEDING turn, so a note arriving twenty
+  // turns later re-decorates turn 1. Under a prefix-diff reconcile that read as
+  // "the prefix diverged" and rebuilt the whole thread on nearly every beat —
+  // silently undoing the append-only guarantee against real data.
+  const srv = fakeServer().add('one').add('two').add('three');
+  const h = mount(srv, fakeBus());
+  await h.ready;
+
+  const scroller = scrollerOf(h);
+  const before = [...scroller.childNodes];
+
+  srv.annotations.push({ anchor_seq: 0, kind: 'drift', summary: 'wandered off', source_index: 99 });
+  await h.refresh();
+
+  assertEqual(scroller.childNodes.length, 3, 'the thread changed length');
+  // Turn 1 legitimately changed, so its node is new…
+  assert(scroller.childNodes[0] !== before[0], 'the annotated turn was not re-rendered');
+  assert(String(scroller.childNodes[0].textContent).indexOf('wandered off') >= 0,
+    'the annotation is not rendered on its turn');
+  // …but turns 2 and 3 did NOT change, so they must be the very same nodes.
+  assert(scroller.childNodes[1] === before[1], 'an unrelated turn was rebuilt');
+  assert(scroller.childNodes[2] === before[2], 'an unrelated turn was rebuilt');
 });
 
 test('the pane follows its OWN run: a sibling growth frame costs no fetch', async () => {
@@ -241,6 +272,28 @@ test('settling stops the follow subscription', async () => {
   await h.refresh();
 
   assertEqual(bus.count, 0, 'a settled pane is still following');
+});
+
+test('a corrected tri-state upgrades the pane IN PLACE, without a remount', async () => {
+  // The board paints before the environment read lands, so a pane can mount
+  // believing a plainly-running unit is interrupted. The correction must be a
+  // state change, not a remount — a remount here would discard the cursor and
+  // the turns already on screen.
+  const srv = fakeServer().add('one');
+  const bus = fakeBus();
+  const h = mount(srv, bus, { tri: RUN_TRI.INTERRUPTED });
+  await h.ready;
+
+  const scroller = scrollerOf(h);
+  const first = scroller.childNodes[0];
+  assertEqual(bus.count, 0, 'an interrupted pane subscribed to growth');
+
+  h.setTriState(RUN_TRI.LIVE);
+
+  assert(scrollerOf(h) === scroller, 'the scroller was remounted');
+  assert(scroller.childNodes[0] === first, 'the rendered turn was rebuilt');
+  assertEqual(bus.count, 1, 'the corrected pane did not start following');
+  assert(captionOf(h).indexOf('following') >= 0);
 });
 
 test('a settled or interrupted unit opens in the same component, not following', async () => {
@@ -462,6 +515,18 @@ test('a fresh heartbeat with a live run record reads live', () => {
   const now = Date.parse('2026-08-09T00:00:00Z');
   assertEqual(runTriState({ complete: false, hasActiveRun: true, lastHeartbeat: '2026-08-09T00:00:00Z', now }),
     RUN_TRI.LIVE);
+});
+
+test('the four-state run vocabulary collapses onto the pane’s three', () => {
+  // The join point for §1's helper. A STALLED run is alive with no progress —
+  // its events file may still grow, and following it is how the operator finds
+  // out whether it is wedged, so it stays followable.
+  assertEqual(triStateOfRunState(RUN_STATE.LIVE), RUN_TRI.LIVE);
+  assertEqual(triStateOfRunState(RUN_STATE.STALLED), RUN_TRI.LIVE);
+  assertEqual(triStateOfRunState(RUN_STATE.SETTLED), RUN_TRI.SETTLED);
+  // …and a DEAD loop's unit is interrupted, never live. This is §1's headline
+  // bug expressed as a mapping.
+  assertEqual(triStateOfRunState(RUN_STATE.DEAD), RUN_TRI.INTERRUPTED);
 });
 
 await run();

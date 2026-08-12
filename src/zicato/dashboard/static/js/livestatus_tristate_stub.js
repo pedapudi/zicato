@@ -23,7 +23,7 @@
 //     workspace rendering "7 units running" forever is exactly the bug §1
 //     names, so the stale case must NOT read live.
 
-import { STALE_HEARTBEAT_MS } from './livestatus.js';
+import { STALE_HEARTBEAT_MS, RUN_STATE } from './livestatus.js';
 
 export const RUN_TRI = Object.freeze({
   LIVE: 'live', SETTLED: 'settled', INTERRUPTED: 'interrupted',
@@ -39,6 +39,23 @@ export function runTriState(sig) {
   if (s.complete) return RUN_TRI.SETTLED;
   if (!s.hasActiveRun) return RUN_TRI.SETTLED;
   return heartbeatFresh(s.lastHeartbeat, s.now) ? RUN_TRI.LIVE : RUN_TRI.INTERRUPTED;
+}
+
+// THE JOIN, made mechanical. §1's helper is consolidating onto
+// livestatus.js's `deriveLiveStatus(...).runState`, which already speaks a
+// FOUR-state vocabulary (live / stalled / settled / dead). This collapses that
+// vocabulary onto the pane's three, so when the per-run helper lands the swap
+// is: derive its runState, pass it through here, delete runTriState above.
+//
+// STALLED folds to LIVE, not INTERRUPTED: a stalled run is alive with a fresh
+// heartbeat and no progress, so its events file may still grow — following it
+// is exactly how an operator finds out whether it is wedged. DEAD folds to
+// INTERRUPTED, which is the whole point of §1: a dead loop's non-terminal unit
+// is not "running", it is a run that stopped.
+export function triStateOfRunState(runState) {
+  if (runState === RUN_STATE.LIVE || runState === RUN_STATE.STALLED) return RUN_TRI.LIVE;
+  if (runState === RUN_STATE.DEAD) return RUN_TRI.INTERRUPTED;
+  return RUN_TRI.SETTLED;
 }
 
 // Is the heartbeat within the staleness window? An unparseable or absent

@@ -12,7 +12,7 @@
 // follow pane, so the pane cannot import back from board.js). board.js
 // re-exports them, so its existing importers and tests are untouched.
 
-import { el, clearChildren } from './core/dom.js';
+import { el } from './core/dom.js';
 
 // Build ONE turn's DOM node — the shared turn renderer for both the initial
 // fill and the live append, so an appended turn is byte-identical to a rebuilt
@@ -97,19 +97,27 @@ export function annotationsBySeq(annotations) {
 // Reconcile a turn list into a persistent scroller. THE append-only renderer,
 // shared by the board's side-by-side columns and the live follow pane.
 //
-// Appends ONLY the newly-landed turns (the rendered prefix is stable — dedup
-// only folds consecutive duplicates, and turns arrive append-only), so a live
-// beat adds the tail nodes without touching the existing turn DOM (no thread
-// rebuild); a no-op beat writes ZERO DOM. A bottom-pinned reader keeps tailing
-// new turns. When the ONLY divergence is the final rendered turn growing (a
-// merged llmCall reasoning turn whose text grows across two seqs — the ROUTINE
-// streaming case), just that one node is re-rendered in place, preserving every
-// prefix node + the scroll position. A GENUINE prefix divergence (an earlier
-// turn changed, or the list shrank — a completed run's final transcript) falls
-// back to a full rebuild that still preserves the reader's scroll discipline
-// (pinned stays pinned, scrolled-up keeps its offset).
+// A NODE IS ONLY TOUCHED WHEN ITS OWN CONTENT CHANGED. Unchanged turns keep
+// their exact DOM nodes, so scroll position, text selection and focus all
+// survive; a beat that brings nothing writes ZERO DOM.
 //
-// Returns { rendered, appended, rebuilt, pinned } — `appended` is how many turn
+// This is a per-index patch rather than a prefix-diff-then-rebuild, because a
+// transcript does NOT only grow at the end. Two ordinary things change an
+// already-rendered turn:
+//
+//   * the open final turn absorbs another event and its text grows (goldfive's
+//     llmCallStart → llmCallEnd merge into one turn);
+//   * an ANNOTATION lands anchored to an EARLIER turn — drift detections and
+//     judge verdicts anchor to the nearest preceding turn, so a note arriving
+//     twenty turns later re-decorates turn 1.
+//
+// The second case is what makes a prefix-diff wrong here: it reads as "the
+// prefix diverged", and rebuilding the thread on every late annotation is
+// exactly the churn this renderer exists to avoid. Patching by index keeps
+// every other node untouched and costs one rebuild of the one turn that
+// genuinely changed.
+//
+// Returns { rendered, appended, patched, pinned } — `appended` is how many turn
 // nodes newly landed and `pinned` whether the reader was tailing when they did,
 // which is exactly what the follow pane's "N new turns ↓" badge counts.
 export function reconcileTurns(scroller, rawTurns, annotations) {
@@ -122,58 +130,35 @@ export function reconcileTurns(scroller, rawTurns, annotations) {
 
   const wantSig = turns.map((t) => turnSig(t, annBySeq));
   const haveSig = Array.isArray(scroller._turnSig) ? scroller._turnSig : [];
-  // The FIRST index at which the rendered signatures diverge from the desired
-  // (within the overlap). -1 ⇒ the rendered prefix is intact and the desired
-  // list only extends it (pure append) or is identical.
-  let diverge = -1;
+
+  const out = { rendered: turns.length, appended: 0, patched: 0, pinned: nearBottom(scroller) };
   const overlap = Math.min(haveSig.length, wantSig.length);
-  for (let i = 0; i < overlap; i += 1) { if (haveSig[i] !== wantSig[i]) { diverge = i; break; } }
 
-  const out = { rendered: turns.length, appended: 0, rebuilt: false, pinned: true };
-
-  if (diverge === -1 && haveSig.length === wantSig.length) {
-    // No content change — ZERO DOM (scroll untouched).
-    out.pinned = nearBottom(scroller);
-    return out;
+  // 1 — PATCH the turns whose OWN content changed. Every other node is left
+  //     untouched, which is what preserves scroll, selection and focus.
+  for (let i = 0; i < overlap; i += 1) {
+    if (haveSig[i] === wantSig[i]) continue;
+    const oldNode = scroller.childNodes[i];
+    const fresh = buildTurnNode(turns[i], annBySeq);
+    if (oldNode) { scroller.insertBefore(fresh, oldNode); scroller.removeChild(oldNode); }
+    else scroller.appendChild(fresh);
+    out.patched += 1;
   }
 
-  if (diverge === -1 && haveSig.length < wantSig.length) {
-    // APPEND the tail turns only — the existing turn nodes stay in place.
-    out.pinned = nearBottom(scroller);
-    for (let i = haveSig.length; i < turns.length; i += 1) scroller.appendChild(buildTurnNode(turns[i], annBySeq));
-    out.appended = turns.length - haveSig.length;
-  } else if (diverge === haveSig.length - 1 && wantSig.length >= haveSig.length) {
-    // LAST-TURN-GREW — the ONLY divergence is the final rendered turn, the
-    // ROUTINE streaming case (goldfive's llmCallStart→llmCallEnd merge into ONE
-    // turn whose text grows across two seqs, flipping just the last turnSig while
-    // every earlier turn is byte-stable). Re-render JUST that node in place +
-    // append any tail; the prefix nodes and scroll position are preserved (no
-    // clamp-to-0 as the wholesale rebuild below would cause). It is the last
-    // rendered node, so remove-then-append keeps document order.
-    out.pinned = nearBottom(scroller);
-    const idx = haveSig.length - 1;
-    const oldNode = scroller.childNodes[idx];
-    if (oldNode) scroller.removeChild(oldNode);
-    scroller.appendChild(buildTurnNode(turns[idx], annBySeq));
-    for (let i = haveSig.length; i < turns.length; i += 1) scroller.appendChild(buildTurnNode(turns[i], annBySeq));
-    out.appended = turns.length - haveSig.length;
-  } else {
-    // GENUINE prefix divergence — an earlier turn changed, or the list shrank (a
-    // completed run's final transcript). Rebuild wholesale, but preserve the
-    // reader's scroll DISCIPLINE across the clear: a bottom-pinned reader stays
-    // pinned (keeps live-tailing), a scrolled-up reader keeps their offset.
-    out.pinned = nearBottom(scroller);
-    out.rebuilt = true;
-    const prevTop = typeof scroller.scrollTop === 'number' ? scroller.scrollTop : null;
-    clearChildren(scroller);
-    for (const t of turns) scroller.appendChild(buildTurnNode(t, annBySeq));
-    scroller._turnSig = wantSig;
-    if (typeof scroller.scrollHeight === 'number') {
-      if (out.pinned) scroller.scrollTop = scroller.scrollHeight;
-      else if (prevTop != null) scroller.scrollTop = prevTop;
-    }
-    return out;
+  // 2 — APPEND what is new past the end.
+  for (let i = overlap; i < turns.length; i += 1) {
+    scroller.appendChild(buildTurnNode(turns[i], annBySeq));
+    out.appended += 1;
   }
+
+  // 3 — TRIM a list that shrank (a completed run's final, deduped transcript).
+  for (let i = haveSig.length - 1; i >= overlap; i -= 1) {
+    const extra = scroller.childNodes[i];
+    if (extra) scroller.removeChild(extra);
+  }
+
+  // Nothing moved — ZERO DOM, and the scroll position is not even read back.
+  if (out.patched === 0 && out.appended === 0 && haveSig.length === wantSig.length) return out;
 
   scroller._turnSig = wantSig;
   if (out.pinned && typeof scroller.scrollHeight === 'number') scroller.scrollTop = scroller.scrollHeight;

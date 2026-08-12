@@ -598,8 +598,30 @@ function syncFollowPane(host, xscriptHost, spec) {
     return;
   }
 
+  // The tri-state is re-derived on EVERY render, not just at mount. The board
+  // paints before the environment read lands, so a pane mounted on that first
+  // frame sees no active-run record yet and would otherwise be stuck reading
+  // "interrupted" for a unit that is plainly running.
+  const tri = runTriState({
+    complete: false,
+    hasActiveRun: inflightForEntry(state.activeRuns, spec.entryId)
+      .some((r) => r.generation_id === spec.selGen),
+    lastHeartbeat: (state.heartbeat && state.heartbeat.last_heartbeat) || null,
+  });
+
   const key = spec.epochId + '|' + spec.selGen + '|' + spec.entryId;
-  if (followHost && followHost._followKey === key) return;   // already mounted
+  if (followHost && followHost._followKey === key) {
+    // Already mounted for this unit — push the current verdict IN PLACE. Never
+    // remount: that is what would throw away the cursor, the turn nodes and the
+    // reader's scroll position. A pane that has already seen a terminal event
+    // is left alone; the transcript's own `complete` outranks any runtime file,
+    // so a lingering active-run record cannot resurrect a finished run.
+    const handle = followHost._followHandle;
+    if (handle && !handle.pane.stream.complete && handle.pane.tri !== tri) {
+      handle.setTriState(tri);
+    }
+    return;
+  }
   if (followHost) {
     if (followHost._followHandle) followHost._followHandle.destroy();
     followHost.remove();
@@ -608,20 +630,12 @@ function syncFollowPane(host, xscriptHost, spec) {
   followHost = el('div', { 'data-node': 'board-follow' });
   host.insertBefore(followHost, xscriptHost);
   followHost._followKey = key;
-  // The tri-state decides whether this opens FOLLOWING or already settled. A
-  // running candidate is live; anything else opens the same component settled,
-  // and the pane promotes itself to settled on its own the moment the
-  // transcript reports a terminal event.
   followHost._followHandle = mountConversationPane(followHost, {
     epochId: spec.epochId,
     gen: spec.selGen,
     entry: spec.entryId,
     runId: (spec.leftSel && spec.leftSel.runId) || null,
-    tri: runTriState({
-      complete: false,
-      hasActiveRun: !!(spec.leftSel && spec.leftSel.running),
-      lastHeartbeat: (state.heartbeat && state.heartbeat.last_heartbeat) || null,
-    }),
+    tri,
   });
 }
 

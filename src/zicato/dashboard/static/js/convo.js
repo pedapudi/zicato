@@ -34,7 +34,7 @@
 import { el, clearChildren } from './core/dom.js';
 import { bus } from './core/bus.js';
 import { fidelityLabel, pill } from './ui.js';
-import { reconcileTurns } from './turns.js';
+import { reconcileTurns, nearBottom } from './turns.js';
 import { createTranscriptStream, spliceTurns, mergeAnnotations } from './transcript_stream.js';
 import { RUN_TRI } from './livestatus_tristate_stub.js';
 
@@ -88,7 +88,7 @@ export function mountConversationPane(host, spec, opts) {
   // the affordance must never outlive the condition it describes.
   if (typeof scroller.addEventListener === 'function') {
     scroller.addEventListener('scroll', () => {
-      if (atTail()) { pane.unseen = 0; paintPin(); }
+      if (nearBottom(scroller)) { pane.unseen = 0; paintPin(); }
     });
   }
 
@@ -185,12 +185,6 @@ export function mountConversationPane(host, spec, opts) {
       : '';
     if (show) pinBtn.removeAttribute('hidden');
     else pinBtn.setAttribute('hidden', 'hidden');
-  }
-
-  function atTail() {
-    const sh = scroller.scrollHeight, st = scroller.scrollTop, ch = scroller.clientHeight;
-    if (typeof sh !== 'number' || typeof ch !== 'number' || typeof st !== 'number') return true;
-    return (sh - st - ch) <= 8;
   }
 
   function tailNow() {
