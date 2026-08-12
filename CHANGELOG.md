@@ -1,5 +1,35 @@
 # Changelog
 
+### The builder reaches every contract knob, and a guard says so
+
+`holdout_margin` and `holdout_entry_regression_budget` — the holdout
+confirmation's own bounds — reached a working gate with no builder path at
+all. `ladder.threshold` had an op but no GUI row. Neither was caught, because
+the completeness pin only ever inspected knobs that already declared
+themselves to it: a field with no `builder_op` metadata was invisible, so
+"forgot the builder entirely" was the one half-wired shape it could not see.
+
+All three are now settable from the builder (and from the chat copilot),
+and the metadata is backfilled across the 24 knobs that had working ops but
+no declaration. Both margin-shaped knobs follow the reset asymmetry the
+generation ceiling already used: `None` means "leave unchanged", so a
+NEGATIVE value is the token that clears the pin back to auto — reuse
+`promote_margin` for the holdout margin, derive from it for the Ladder's
+release threshold.
+
+The class is closed rather than the three instances patched. Every contract
+knob must now either carry a `builder_op` or sit in an explicitly justified
+exemption set, and an exemption cannot outlive its field. The eight
+survivors are the nested config containers, the dotted callable specs (a GUI
+field naming arbitrary importable code is a code-execution surface, not a
+knob), and the open TransformSpec mappings that have no fixed row shape.
+Backfilling also revealed fifteen knobs the builder's own test suite never
+asserted, and a registry keyed by bare field name that silently collapsed
+`OverfittingConfig.enabled` onto `LadderConfig.enabled`.
+
+Purely additive: every default is unchanged and the contract hash is
+unmoved, so no shipping workspace rolls.
+
 ### Any file can be a mutation site, not only `*.py`
 
 The native marker pass walked `*.py` and nothing else, so a markdown prompt
