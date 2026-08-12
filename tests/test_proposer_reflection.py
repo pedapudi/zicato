@@ -20,6 +20,7 @@ from __future__ import annotations
 import json
 from dataclasses import replace
 from pathlib import Path
+from typing import Any
 
 import pytest
 from click.testing import CliRunner
@@ -457,3 +458,99 @@ def test_apply_cli_refuses_without_a_proposer_dir(tmp_path: Path) -> None:
     )
     assert result.exit_code != 0
     assert "built-in default proposer" in result.output
+
+
+# ---------------------------------------------------------------------------
+# The epoch boundary — where the queue is surfaced and the lineage is stamped
+# ---------------------------------------------------------------------------
+
+
+def _cli_workspace(tmp_path: Path) -> tuple[Path, Path, Path]:
+    """A minimal workspace + board + brief `zicato epoch new` can run against."""
+    from zicato.workspace.config_io import write_workspace_config
+
+    workspace = tmp_path / ".zicato"
+    workspace.mkdir()
+    write_workspace_config(workspace, {"instance_id": "test", "created_at": "2026-08-11T00:00:00Z"})
+    board = tmp_path / "board.jsonl"
+    board.write_text(
+        '{"id": "e1", "kind": "single_turn", "wall_clock_budget_seconds": 60, "input": "hi"}\n',
+        encoding="utf-8",
+    )
+    brief = tmp_path / "brief.md"
+    brief.write_text("# brief\n", encoding="utf-8")
+    return workspace, board, brief
+
+
+def _epoch_new(workspace: Path, board: Path, brief: Path, name: str) -> Any:
+    from zicato.cli.commands.epoch import epoch_grp
+
+    return CliRunner().invoke(
+        epoch_grp,
+        [
+            "new",
+            name,
+            "--workspace",
+            str(workspace),
+            "--board",
+            str(board),
+            "--brief",
+            str(brief),
+            "--goal",
+            "g",
+        ],
+    )
+
+
+def test_epoch_new_surfaces_the_pending_queue(tmp_path: Path) -> None:
+    """The boundary is where applying one is free, so the boundary prints them."""
+    workspace, board, brief = _cli_workspace(tmp_path)
+    _failing_rounds(workspace, n=6)
+    write_reflection(workspace, reflect(workspace, EPOCH))
+
+    result = _epoch_new(workspace, board, brief, "alpha")
+    assert result.exit_code == 0, result.output
+    assert "Pending proposer recommendations" in result.output
+    assert "zicato proposer apply-recommendation" in result.output
+
+
+def test_epoch_new_stays_quiet_with_nothing_pending(tmp_path: Path) -> None:
+    """A boundary with no recommendation reads exactly as it did before."""
+    workspace, board, brief = _cli_workspace(tmp_path)
+    result = _epoch_new(workspace, board, brief, "alpha")
+    assert result.exit_code == 0, result.output
+    assert "Pending proposer recommendations" not in result.output
+
+
+def test_the_new_epoch_records_why_the_proposer_changed(tmp_path: Path) -> None:
+    """Proposer lineage end to end: apply → roll → the epoch record names the id.
+
+    This is the whole point of the staged queue. Apply cannot know which epoch
+    will pick its edit up, so it parks the id; the epoch that actually opens
+    under the edited proposer claims it, and its record says why the proposer
+    it ran under is not the one the epoch before it ran under.
+    """
+    workspace, board, brief = _cli_workspace(tmp_path)
+    _failing_rounds(workspace, n=6)
+    proposer_dir = tmp_path / "proposers" / "p"
+    (proposer_dir / "skills").mkdir(parents=True)
+    reflection = reflect(workspace, EPOCH, proposer_path=proposer_dir)
+    write_reflection(workspace, reflection)
+    finding_id = next(f.finding_id for f in reflection.findings if f.remedy is not None)
+
+    apply_recommendation(workspace, finding_id, proposer_path=proposer_dir, epoch_id=EPOCH)
+    result = _epoch_new(workspace, board, brief, "alpha")
+    assert result.exit_code == 0, result.output
+    assert finding_id in result.output
+
+    from zicato.epoch.lifecycle import current_epoch_id, load_epoch
+
+    new_id = current_epoch_id(workspace)
+    assert new_id is not None
+    assert load_epoch(workspace, new_id).applied_proposer_recommendations == (finding_id,)
+    # The queue is drained: a SECOND epoch does not re-claim the same edit.
+    second = _epoch_new(workspace, board, brief, "beta")
+    assert second.exit_code == 0, second.output
+    second_id = current_epoch_id(workspace)
+    assert second_id is not None
+    assert load_epoch(workspace, second_id).applied_proposer_recommendations == ()

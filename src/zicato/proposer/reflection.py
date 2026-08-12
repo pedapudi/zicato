@@ -495,7 +495,7 @@ def _check_history(investigation: Investigation, code: str) -> str:
     ]
     if not rows:
         return (
-            f"No prior epoch carries a {code} rate — this is the first measurement, "
+            f"No prior epoch carries an {code} rate — this is the first measurement, "
             "so there is no trend to compare against."
         )
     return f"Banded prior epochs ({code}): " + ", ".join(rows)
