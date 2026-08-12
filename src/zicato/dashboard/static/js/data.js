@@ -21,20 +21,33 @@ import { state } from './core/state.js';
 // A tiny module-level cache keyed by URL. Drill-down payloads are immutable
 // for a completed generation, so caching avoids re-fetching on every
 // SSE-driven re-render. The SSE refresh path busts keys via invalidate().
+//
+// The cache holds the in-flight PROMISE, not the resolved value. Two callers
+// that ask for one URL in the same tick must share ONE request: the shell and
+// the home view both read /api/workspace at boot, and the per-epoch reads fan
+// out across views. A value-only cache fills only after the fetch resolves, so
+// it allowed every concurrent caller to issue its own duplicate GET.
+//
+// Caching the promise also removes a stale-write race. The old body wrote the
+// cache AFTER awaiting, so an invalidate() that landed mid-flight was clobbered
+// by the resolving fetch putting the pre-invalidation payload back — and since
+// invalidateLive() fires on every live-data change while reads are in flight,
+// the bust that was meant to surface a new candidate was routinely undone by
+// the very request it superseded. NOTHING may write the cache after the fetch
+// resolves. The abandoned promise still feeds the callers already holding it
+// (their render began pre-bust, so pre-bust data is the honest answer), but it
+// can never re-enter the map; the next caller starts a fresh fetch.
 const _cache = new Map();
 
-export async function cachedJson(path) {
+export function cachedJson(path) {
   if (_cache.has(path)) return _cache.get(path);
-  try {
-    const data = await fetchJson(path);
-    _cache.set(path, data);
-    return data;
-  } catch (err) {
-    // A transient failure is cached as null so the view paints an honest
-    // "unavailable" rather than spinning forever; a later invalidate() retries.
-    _cache.set(path, null);
-    return null;
-  }
+  // A transient failure resolves to null (and stays cached as null) so the view
+  // paints an honest "unavailable" rather than spinning forever; a later
+  // invalidate() retries. The catch also keeps the cached promise from ever
+  // rejecting, so a shared entry cannot raise in an unrelated caller.
+  const pending = fetchJson(path).catch(() => null);
+  _cache.set(path, pending);
+  return pending;
 }
 
 export function invalidate(prefix) {
