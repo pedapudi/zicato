@@ -5,15 +5,15 @@
 > is the source of truth; if this document and the binary ever disagree,
 > trust `zicato --help` / `zicato help <command>`.
 >
-> *Last reconciled against the live `--help` on 2026-08-09* (root help text
-> re-checked after the positioning rewrite; command set and options unchanged
-> since the 2026-07-29 pass). Verified the
+> *Last reconciled against the live `--help` on 2026-08-11* (the `tui`
+> command was added and then descoped to three lenses; everything else
+> unchanged since the 2026-08-09 pass). Verified the
 > full command set (`init`, `evolve`, and the advanced/debugging group:
 > `analyze-telemetry`, `board`, `builder`, `config`, `dashboard`, `epoch`,
 > `health`, `help`, `logs`, `mutations`, `propose`, `reflect`, `regenerate-report`,
 > `register`, `reindex`, `reindex-generations`, `repair-epoch-goals`,
 > `repair-judge-losses`, `repair-tournament-fk`, `repair-v0-baseline`,
-> `tournament`) and every option/default below by running
+> `tournament`, `tui`) and every option/default below by running
 > `uv run zicato <command> --help`. No phantom commands exist (there is no
 > `epochs` or `workspace` command — the group is `epoch`, singular), and
 > every `repair-*` / `reindex-*` name is the full, un-truncated id.
@@ -948,3 +948,26 @@ zicato tournament [OPTIONS] PARENT CHILD
 | `--mode [full\|fast]` | `full` | `full` = run both generations; `fast` = child vs parent's historical aggregate. |
 | `--skip-regression` | off | Skip the regression-suite gate even when enabled in scoring. |
 | `--replicates INTEGER` | contract's resolved structure value | Debug override for the per-duel replicate count. Defaults to the contract's resolved structure value (what `evolve` uses) — pass this only to force a different count for this one invocation. |
+
+### `zicato tui`
+
+Review a zicato workspace from the terminal — the browser dashboard's peer
+surface, rendering the *same* served payloads. Three lenses (Home, Standings,
+Instrument) with `1`–`3` to jump, `j`/`k` to move, `enter` to drill, `b` to go
+back, and `?` for help; Candidate, Board and Health are designed and deferred.
+**Read-only**: the console mutates nothing and runs nothing — the Instrument
+lens prints the exact `zicato reflect apply …` line for the operator to run.
+Needs the `tui` extra (`uv sync --extra tui`); without it the command exits
+with an install instruction. See [`TUI.md`](TUI.md).
+
+```
+zicato tui [OPTIONS]
+```
+
+| Option | Default | Meaning |
+|---|---|---|
+| `--workspace PATH` | `.zicato` | Path to the zicato workspace root to review. |
+| `--url TEXT` | unset | URL of a running dashboard service to attach to (e.g. `http://127.0.0.1:7892`). Unset: attach to this workspace's service if one is running, else start one. |
+| `--view TEXT` | unset ⇒ Home | Open a lens directly. Takes the SAME path the browser's hash router takes — `/e/<epoch>/gens`, `/e/<epoch>/instrument` — or a shorthand like `standings` or `instrument`. An address for a deferred lens still resolves, to the nearest one that exists. |
+| `--port INTEGER RANGE` | `7892` (1–65535) | Preferred port when starting a dashboard service (it walks +1 if taken). |
+| `--ascii` | off | Force the ASCII, weight-only rendering (also on under `NO_COLOR` / a non-UTF-8 locale). |
