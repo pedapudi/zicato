@@ -341,6 +341,39 @@ def test_hash_changes_when_recombine_opted_in(tmp_path: Path) -> None:
     assert h_default != h_on
 
 
+def test_hash_stable_when_mutation_surface_is_empty(tmp_path: Path) -> None:
+    # The declared mutation-site syntax table (issue #168) is omit-at-default:
+    # a contract that predates the field hashes byte-identically to one that
+    # spells out the empty table, so widening the ENVELOPE mechanism rolls no
+    # existing epoch.
+    base = _write_contract(tmp_path)
+    base.scoring_path.write_text(json.dumps({"drift_weight": 1.0}))
+    h_omitted = compute_contract_hash(base)
+    base.scoring_path.write_text(json.dumps({"drift_weight": 1.0, "mutation_surface": {}}))
+    h_explicit_default = compute_contract_hash(base)
+    assert h_omitted == h_explicit_default
+
+
+def test_hash_changes_when_a_file_type_is_declared(tmp_path: Path) -> None:
+    # Declaring a file type widens what the proposer may rewrite — the surface,
+    # hence comparability — so it rolls the epoch like any contract edit. The
+    # LEADERS are part of it too: they decide what the applier can strip out of
+    # a region body, so retuning them alone must move the hash.
+    base = _write_contract(tmp_path)
+    base.scoring_path.write_text(json.dumps({"drift_weight": 1.0}))
+    h_none = compute_contract_hash(base)
+    base.scoring_path.write_text(
+        json.dumps({"drift_weight": 1.0, "mutation_surface": {".ts": {"leaders": ["//"]}}})
+    )
+    h_ts = compute_contract_hash(base)
+    base.scoring_path.write_text(
+        json.dumps({"drift_weight": 1.0, "mutation_surface": {".ts": {"leaders": ["//", "/*"]}}})
+    )
+    h_ts_two_leaders = compute_contract_hash(base)
+    assert h_none != h_ts
+    assert h_ts != h_ts_two_leaders
+
+
 def test_hash_stable_when_genealogy_at_default(tmp_path: Path) -> None:
     # The genealogy channel (WS-GENE) is omit-at-default like the screen /
     # exemplar knobs: a contract that predates the field hashes byte-identically

@@ -170,9 +170,9 @@ A mutable tree is not a Python-only tree. A prompt can live in
 manifest in `tools.toml`. The marker *token* is the same everywhere;
 only the host language's comment lead-in changes.
 
-**Accepted lead-ins.** `#` and `<!--`, with a trailing `-->` closer
-tolerated — one per comment style the supported file types use. So both
-of these are the same marker:
+**Accepted lead-ins.** Per file type, from the syntax table (§2.5). The
+built-in text entries accept `#` and `<!--`, with a trailing `-->` closer
+tolerated, so both of these are the same marker:
 
 ```yaml
 # zicato:mutable:code id="retry_policy"
@@ -181,9 +181,10 @@ of these are the same marker:
 <!-- zicato:mutable:code id="researcher_brief" role="prompt" -->
 ```
 
-The set is not carried speculatively: adding `//` for JavaScript is one
-entry in `TEXT_COMMENT_LEADERS` plus one in the suffix allowlist, done
-when a target actually needs it.
+Nothing is carried speculatively, and nothing waits on a zicato release
+either: a target whose surface is TypeScript declares `.ts` with leaders
+`//` and `/*` in its own contract, and its markers parse from that epoch
+on.
 
 `.py` files are parsed under the historical `#`-only grammar and nothing
 else. That is not an oversight — it is what makes "widening the surface
@@ -251,23 +252,64 @@ walked at all.
 
 ### 2.5 Which files are walked
 
-Discovery is an **extension allowlist**, not a content sniff. The set is
-`TEXT_FILE_SUFFIXES` in `zicato.mutation.enumerator`, currently
-`.md` · `.markdown` · `.txt` · `.yaml` · `.yml` · `.toml` — prompts and
-config, the two shapes the surface exists for. Extending it is one entry,
-made when a target needs it rather than in advance.
+Discovery is a **declared suffix table**, not a content sniff. The
+built-ins (`zicato.mutation.markers.BUILTIN_SYNTAXES`) are `.md` ·
+`.markdown` · `.txt` · `.yaml` · `.yml` · `.toml` — prompts and config,
+the two shapes the surface exists for — plus the reserved `.py`. Every
+other file type the operator DECLARES, in the contract's
+`mutation_surface` table:
+
+```json
+{
+  "mutation_surface": {
+    ".ts":  {"leaders": ["//", "/*"], "trailers": ["*/"]},
+    ".sql": {"leaders": ["--"]}
+  }
+}
+```
+
+Each entry names the comment leaders a marker may be written under and,
+optionally, the block closers tolerated at end of line. The table folds
+over the built-ins: an entry for a built-in suffix overrides it, and an
+absent table means the built-ins alone.
+
+**The leaders are not decoration — they are the containment mechanism.**
+`zicato:mutable id="..."` is nearly collision-proof for *discovery*, so
+one could enumerate any text file carrying the token and drop the table
+entirely. But when the applier rebuilds a `:code` region it strips
+echoed marker lines out of the replacement body (§6), and it can only do
+that under a comment syntax it knows. A file type with no declared
+leaders is one where the proposer could smuggle a live `:end` marker into
+a region body. Declared syntax is *enforceable* containment, which is why
+a leaderless entry is rejected outright.
+
+Two consequences follow from the table being contract:
+
+- **Editing it rolls the epoch.** The table decides what is enumerable,
+  hence what the proposer may rewrite, hence comparability across
+  generations. It is folded into the contract hash (omitted at its empty
+  default, so every workspace that declares nothing keeps the hash it
+  has). Widening the surface is a material contract change and shows up
+  as one.
+- **`.py` is reserved.** The table governs the text pass only; an entry
+  for `.py` is an error. That is what keeps "widening the surface moves
+  zero Python points" a property of the grammar rather than a claim a
+  test has to keep re-establishing.
+
+Widening the envelope never gives the *proposer* new reach on its own:
+patches carry no paths, only enumerated mutation ids. It lets the
+*operator* declare more.
 
 The alternative — open every file and guess from its bytes whether it is
 text — was rejected on two grounds. It reads *every* file in the tree
 including binaries, and the enumerator re-runs after **every applied
 patch**, so the walk sits on the hot path. And a surface that decides by
 guessing is a surface whose contents can change because a file's first
-8KB changed. An allowlist decides without opening the file and cannot
-wander into a binary at all.
+8KB changed. A suffix decides without opening the file and cannot wander
+into a binary at all.
 
-The cost is real and worth naming: an operator with an unlisted extension
-must add it. That is a visible, reviewable edit — the right failure mode
-for the thing that decides what an LLM may rewrite.
+Strict `.json` stays out: no comment can host a marker without
+invalidating the document. A `.jsonc`-style type is one table entry.
 
 Three guards ride along:
 
@@ -278,10 +320,10 @@ Three guards ride along:
 - Text files over 2 MB are skipped. A multi-megabyte file in a mutable
   tree is data, not surface.
 - A file that is not valid UTF-8, or that contains a NUL byte, yields
-  nothing — belt and braces behind the allowlist.
+  nothing — belt and braces behind the declared suffix.
 
 A **single-file root** now resolves by suffix: `.py` through the Python
-pass, an allowlisted suffix through the text pass, and anything else
+pass, a declared suffix through the text pass, and anything else
 warns. Previously a non-`.py` single-file root fell through to the
 directory branch, whose `rglob` on a file matches nothing, and enumerated
 to zero points in complete silence.
@@ -309,32 +351,43 @@ its `:file` / `:code` forms resolve by line position alone.
 
 **Span marker resolution:**
 
-1. Iterate over every comment in the file (the enumerator uses
-   `tokenize` for comment lines paired with the `ast.parse` tree).
-2. For each `# zicato:mutable id="..."` comment that is NOT a file
-   marker (i.e. lacks the `:file` suffix), find the AST node on the
-   **next non-blank, non-comment source line**.
-3. The target node MUST be one of:
-   - `ast.Assign` whose `value` is `ast.Constant` of type `str`
-     (covers `X = "..."` and `X = """..."""`).
-   - `ast.AnnAssign` whose `value` is `ast.Constant` of type `str`.
-   - `ast.keyword` (inside a `ast.Call`) whose `value` is
-     `ast.Constant` of type `str`.
-4. If the marker's id has been seen earlier in the walk, this is an
-   error: ids must be unique within a registration.
-5. The enumerator records the target location (file path, start line,
-   end line, start column, end column) and the current string value.
+1. Marker lines are found by **line regex**, not by `tokenize` — one
+   pass over the file's lines, matching the leader + token + `id="..."`
+   shape. The AST is used for exactly two things a regex cannot supply:
+   the set of lines covered by a string literal, and the literal spans a
+   marker can bind to.
+2. A marker written **inside a string literal** (a docstring showing the
+   syntax) is treated as documentation and contributes nothing. That is
+   the first use of the literal-line set.
+3. A span marker binds to the **nearest string literal beneath it** —
+   the literal whose start line is the smallest line strictly greater
+   than the marker's. Not a fixed list of node types: assignment value,
+   keyword argument, positional argument, or any other expression
+   context all resolve, because the rule is about position, not shape.
+4. The enumerator records **whole lines** (file, `line_start`,
+   `line_end`) and the sliced text. Column precision lives in the
+   applier, which re-resolves the exact literal node at apply time so a
+   replacement never eats the `NAME =` in front of it (§6).
+5. A span marker with **no literal beneath it** is dropped silently; the
+   `zicato mutations` listing is where the operator sees the id missing.
 
-**File marker resolution:**
+**Duplicate ids** are not rejected at enumeration — the enumerator emits
+one point per marker and does not dedupe. They are rejected at
+*validation*, and only for ids a patch actually targets: a patch can only
+mean one location, so an ambiguous target fails the batch loudly rather
+than editing an arbitrary one of the colliding spans. A duplicate
+elsewhere in the tree does not block an otherwise-clean batch.
 
-1. In the file's header region, search for a line matching
-   `# zicato:mutable:file id="..."`.
-2. If found, the entire file is the target. The recorded `content` is
-   the file's full text.
-3. A file may carry at most one file marker.
+**File marker resolution:** a `# zicato:mutable:file id="..."` line
+anywhere in the file (not only a header region) makes the whole file one
+point, with the file's full text as `content`. Nothing limits a file to
+one file marker; two would simply be two points, which the duplicate-id
+rule then catches if they share an id.
 
-**Unrecognized marker form:** the enumerator emits a warning to stderr
-and skips it. The mutation surface does not silently absorb typos.
+**Unrecognized lines** are not markers and are skipped in silence — a
+comment that merely resembles the syntax is not a typo to report. The
+enumerator warns for the one case where intent is unambiguous and the
+form is unsupported: a bare span marker in a non-Python file (§2.4).
 
 ## 4. `MutationPoint`
 
@@ -450,11 +503,11 @@ constant. Target 2 is goldfive — a library, registered with
 stays outside every tree.
 
 Nor is the surface Python-only. The native marker pass walks `*.py` **and**
-every allowlisted text file (§2.4, §2.5), so a markdown prompt or a YAML
+every declared text file (§2.4, §2.5), so a markdown prompt or a YAML
 config sitting in a mutable tree is real, addressable surface — the marker
 requirement is unchanged, only the set of places a marker may live has
 widened. What stays out of reach is a file with no marker in it, and a
-file type the allowlist does not name.
+file type the contract's syntax table does not declare.
 
 A second, additive pass covers one shape that declares its surface
 elsewhere: the **manifest bridge**

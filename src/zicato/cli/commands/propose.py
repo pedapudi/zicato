@@ -182,6 +182,9 @@ def _load_mutations(workspace_dir: Path, epoch_id: str, parent_gen: str) -> list
         raise click.ClickException(
             "Workspace config has no 'source_roots'; cannot enumerate mutations."
         )
+    from zicato.workspace_loader import activate_mutation_surface  # noqa: PLC0415
+
+    activate_mutation_surface(workspace_dir)
     enumerate_mutations = mutation_pkg.enumerate_mutations
     return list(enumerate_mutations(source_roots))
 

@@ -23,6 +23,7 @@ import dataclasses
 import math
 import re
 import statistics
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -764,6 +765,42 @@ def set_telemetry_dialect(
             draft.scoring = _replace_scoring(draft, telemetry_dialect=dialect)
             changed["telemetry_dialect"] = {"from": current, "to": dialect}
     return DraftPatch(op="set_telemetry_dialect", changed=changed)
+
+
+def set_mutation_surface(
+    draft: TournamentDraft,
+    *,
+    mutation_surface: Mapping[str, Any] | None = None,
+) -> DraftPatch:
+    """Declare which file types carry mutation sites (MUTATION-SURFACE.md §2.5).
+
+    ``mutation_surface`` is the whole table, keyed by suffix:
+    ``{".ts": {"leaders": ["//", "/*"], "trailers": ["*/"]}}``. It folds
+    over the built-in syntaxes (markdown / YAML / TOML / text, and the
+    reserved ``.py``), so an empty table is "the built-ins alone". The
+    leaders are what lets the applier strip an echoed marker line out of a
+    region body, which is why declaring one is required and why ``.py`` —
+    whose grammar is load-bearing legacy — cannot be redeclared.
+
+    The table decides what the proposer may rewrite, so it is contract:
+    declaring a file type rolls the epoch (and clearing it back to empty
+    rolls back to the original hash). ``None`` leaves it unchanged; a
+    malformed table raises :class:`ValueError` from the same validator the
+    run path installs through — never a second copy of the rules.
+    """
+    from zicato.mutation.markers import syntax_table_from_config  # noqa: PLC0415
+
+    changed: dict[str, Any] = {}
+    if mutation_surface is not None:
+        table = {
+            str(k): dict(v) if isinstance(v, Mapping) else v for k, v in mutation_surface.items()
+        }
+        syntax_table_from_config(table)
+        current = dict(draft.scoring.mutation_surface)
+        if table != current:
+            draft.scoring = _replace_scoring(draft, mutation_surface=table)
+            changed["mutation_surface"] = {"from": current, "to": table}
+    return DraftPatch(op="set_mutation_surface", changed=changed)
 
 
 def set_screening(
@@ -2116,6 +2153,7 @@ __all__ = [
     "set_namespace_weights",
     "set_proposer_quality",
     "set_experiment_memory",
+    "set_mutation_surface",
     "set_telemetry_dialect",
     "set_screening",
     "edit_board_entry",

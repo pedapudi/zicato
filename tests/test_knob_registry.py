@@ -52,6 +52,11 @@ from zicato.epoch.contract import (
 #: two-hands ritual, because either alone would be a contract-hash bug.
 _FROZEN_OMIT_AT_DEFAULT_FIELDS = frozenset(
     {
+        # The declared mutation-site syntax table (issue #168). Additive and
+        # empty by default — every workspace that never declares a file type
+        # keeps the hash it has, while a declared suffix widens the surface
+        # and rolls the epoch.
+        "mutation_surface",
         "diff_complexity_weight",
         "diff_complexity_ceiling",
         # The holdout confirmation's own bounds (issue #118). Additive and

@@ -478,6 +478,31 @@ def set_telemetry_dialect(dialect: str | None = None) -> str:
     return _result_json(_summary(patch))
 
 
+def set_mutation_surface(mutation_surface: dict[str, Any] | None = None) -> str:
+    """Declare which file types carry mutation sites.
+
+    ``mutation_surface`` is the whole table keyed by file suffix —
+    ``{".ts": {"leaders": ["//", "/*"], "trailers": ["*/"]}}`` — folded
+    over the built-ins (``.md``, ``.markdown``, ``.txt``, ``.yaml``,
+    ``.yml``, ``.toml``, and the reserved ``.py``). ``leaders`` are the
+    comment lead-ins a marker may be written under and are required:
+    zicato strips echoed marker lines out of a rewritten region under
+    them, so a file type with no declared comment syntax is one whose
+    regions it cannot keep contained. ``trailers`` are optional
+    end-of-line block closers (``*/``, ``-->``).
+
+    Pass ``{}`` to go back to the built-ins alone. Widening the surface
+    changes what the proposer may rewrite, so it rolls the epoch. Returns
+    an ``error`` for a malformed table or an entry for ``.py``.
+    """
+    ctx = _active_context()
+    try:
+        patch = ops.set_mutation_surface(ctx.draft(), mutation_surface=mutation_surface)
+    except ValueError as exc:
+        return _result_json({"error": str(exc)})
+    return _result_json(_summary(patch))
+
+
 def set_screening(entries: int | None = None, veto_only: bool | None = None) -> str:
     """Set the pre-tournament candidate screen (tryouts).
 
@@ -821,6 +846,7 @@ DEFAULT_BUILDER_TOOLS = (
     set_proposer_quality,
     set_experiment_memory,
     set_telemetry_dialect,
+    set_mutation_surface,
     set_screening,
     edit_board_entry,
     add_board_entry,
@@ -856,6 +882,7 @@ __all__ = [
     "set_proposer_quality",
     "set_experiment_memory",
     "set_telemetry_dialect",
+    "set_mutation_surface",
     "set_screening",
     "edit_board_entry",
     "add_board_entry",

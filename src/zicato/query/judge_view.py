@@ -738,7 +738,11 @@ def build_workspace_identity(paths: WorkspacePaths) -> dict[str, Any]:
     if source_roots:
         try:
             from zicato.mutation.enumerator import enumerate_mutations  # noqa: PLC0415
+            from zicato.workspace_loader import activate_mutation_surface  # noqa: PLC0415
 
+            # Count the surface the RUN sees, which means the contract's
+            # declared file types, not the built-ins alone.
+            activate_mutation_surface(paths.root)
             mutation_point_count = len(enumerate_mutations([Path(r) for r in source_roots]))
         except Exception:  # noqa: BLE001 — best-effort
             mutation_point_count = 0

@@ -32,9 +32,9 @@ the type-specific rewrite logic (see :mod:`zicato.mutation.applier`).
 Non-Python files
 ----------------
 
-Markers are not a Python-only surface. Any text file whose suffix is in
-:data:`TEXT_FILE_SUFFIXES` is walked for markers written under the
-``"text"`` comment grammar (see :mod:`zicato.mutation.markers`), so a
+Markers are not a Python-only surface. Any file whose suffix the
+contract's syntax table declares (see :mod:`zicato.mutation.markers`) is
+walked for markers written under that suffix's comment leaders, so a
 markdown prompt or a YAML config carries mutable surface directly, with
 no Python module in between.
 
@@ -55,13 +55,13 @@ Two of the three marker forms carry over; one does not:
   names the file, the line, the id, and the ``:code`` form to use
   instead.
 
-Discovery is an **extension allowlist**, not a content sniff. The
+Discovery is the **declared suffix table**, not a content sniff. The
 enumerator re-runs on every applied patch, so the walk has to stay cheap;
-an allowlist decides without opening the file, and it cannot wander into
-a binary at all. The cost is that an operator with an unusual extension
-must add it to :data:`TEXT_FILE_SUFFIXES` — a visible, reviewable edit,
-which is the right failure mode for a surface that decides what an LLM
-may rewrite.
+a suffix decides without opening the file, and it cannot wander into a
+binary at all. The cost is that an operator with an unusual extension
+must declare it in the contract's ``mutation_surface`` table — a visible,
+epoch-rolling edit, which is the right failure mode for a surface that
+decides what an LLM may rewrite.
 """
 
 from __future__ import annotations
@@ -69,12 +69,14 @@ from __future__ import annotations
 import ast
 import hashlib
 import logging
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from pathlib import Path
 
 from zicato.core.types import MutationPoint
 from zicato.mutation.markers import (
+    PYTHON_SUFFIX,
     MarkerSyntax,
+    active_syntax_table,
     is_end_marker,
     is_grading_marker,
     marker_syntax_for,
@@ -82,16 +84,6 @@ from zicato.mutation.markers import (
 )
 
 _log = logging.getLogger(__name__)
-
-#: Suffixes walked in addition to ``*.py`` — prompts and config, the two
-#: shapes this surface exists for. Every entry hosts a comment one of
-#: :data:`~zicato.mutation.markers.TEXT_COMMENT_LEADERS` covers, which is
-#: what excludes JSON and CSV: a marker cannot be written in them without
-#: invalidating the document. Extend one entry at a time, when a target
-#: needs it.
-TEXT_FILE_SUFFIXES: frozenset[str] = frozenset(
-    {".md", ".markdown", ".txt", ".yaml", ".yml", ".toml"}
-)
 
 #: Directory names the TEXT pass refuses to descend into. Vendored and
 #: generated trees hold files no operator ever marks, and the enumerator
@@ -199,20 +191,21 @@ def _python_context(
     return literal_lines, lambda line: _resolve_span_for_marker(line, literal_spans)
 
 
-def _enumerate_file(file_path: Path, source_root: Path) -> list[MutationPoint]:
+def _enumerate_file(
+    file_path: Path, source_root: Path, syntax: MarkerSyntax
+) -> list[MutationPoint]:
     """Enumerate mutation points within one file of any supported type.
 
-    ONE pipeline: read, take the file's marker syntax from its suffix,
-    apply the grading guard, scan for markers. Python is a specialization
-    of it rather than a parallel path — it contributes the two things only
-    a parser can supply (:func:`_python_context`) and shares everything
-    else, so a text file is simply the case where there is no parser
-    context and therefore no span form.
+    ONE pipeline: read, parse under the syntax the caller resolved from
+    the file's suffix, apply the grading guard, scan for markers. Python
+    is a specialization of it rather than a parallel path — it contributes
+    the two things only a parser can supply (:func:`_python_context`) and
+    shares everything else, so a text file is simply the case where there
+    is no parser context and therefore no span form.
     """
 
-    syntax = marker_syntax_for(file_path)
     try:
-        if syntax == "text" and file_path.stat().st_size > MAX_TEXT_FILE_BYTES:
+        if not syntax.is_python and file_path.stat().st_size > MAX_TEXT_FILE_BYTES:
             # A multi-megabyte file in a mutable tree is data, not surface,
             # and enumeration re-runs after every applied patch.
             _log.debug("enumerator: skipping %s (over %d bytes)", file_path, MAX_TEXT_FILE_BYTES)
@@ -221,14 +214,14 @@ def _enumerate_file(file_path: Path, source_root: Path) -> list[MutationPoint]:
     except OSError:
         return []
     except UnicodeDecodeError:
-        # Belt and braces behind the suffix allowlist: a ``.md`` that is
+        # Belt and braces behind the declared suffix: a ``.md`` that is
         # really a binary blob contributes nothing rather than raising.
         _log.debug("enumerator: skipping %s (not valid UTF-8)", file_path)
         return []
 
     ignored_lines: set[int] = set()
     span_resolver: Callable[[int], tuple[int, int] | None] | None = None
-    if syntax == "python":
+    if syntax.is_python:
         context = _python_context(file_path, text)
         if context is None:
             return []
@@ -413,27 +406,33 @@ def _scan_markers(
     return points
 
 
-def is_text_mutation_candidate(path: Path) -> bool:
+def is_text_mutation_candidate(
+    path: Path, *, table: Mapping[str, MarkerSyntax] | None = None
+) -> bool:
     """Return ``True`` iff the text pass should walk ``path`` for markers.
 
     A pure predicate over the path — it never opens the file, which is the
-    whole point of an allowlist. ``.py`` is excluded because the Python
-    walk owns it.
+    whole point of deciding by suffix. ``.py`` is excluded because the
+    Python walk owns it. ``table`` defaults to the process's active syntax
+    table.
     """
 
-    return path.suffix != ".py" and path.suffix in TEXT_FILE_SUFFIXES
+    return path.suffix != PYTHON_SUFFIX and marker_syntax_for(path, table=table) is not None
 
 
-def _text_pass_files(root: Path) -> list[Path]:
-    """Return the text-pass candidates under ``root``, in sorted order.
+def _text_pass_files(
+    root: Path, table: Mapping[str, MarkerSyntax]
+) -> list[tuple[Path, MarkerSyntax]]:
+    """Return the text-pass candidates under ``root`` with their syntax, sorted.
 
     Prunes :data:`TEXT_SCAN_SKIP_DIRS` anywhere in the relative path. The
     prune is text-pass-only — see that constant's note.
     """
 
-    out: list[Path] = []
+    out: list[tuple[Path, MarkerSyntax]] = []
     for path in sorted(root.rglob("*")):
-        if not is_text_mutation_candidate(path):
+        syntax = marker_syntax_for(path, table=table)
+        if syntax is None or syntax.is_python:
             continue
         try:
             rel_parts = path.relative_to(root).parts[:-1]
@@ -443,7 +442,7 @@ def _text_pass_files(root: Path) -> list[Path]:
             continue
         if not path.is_file():
             continue
-        out.append(path)
+        out.append((path, syntax))
     return out
 
 
@@ -455,9 +454,9 @@ def enumerate_mutations(source_roots: list[Path]) -> list[MutationPoint]:
     * The Python marker pass — walks ``*.py`` files for
       ``# zicato:mutable`` comment markers and binds span markers to the
       nearest string literal (the historical behaviour, unchanged).
-    * The text marker pass — walks every other allowlisted text file
-      (:data:`TEXT_FILE_SUFFIXES`) for the same markers written under that
-      file type's comment leader. ``:file`` and
+    * The text marker pass — walks every other file whose suffix the
+      contract's syntax table declares, for the same markers written
+      under that file type's comment leaders. ``:file`` and
       ``:code`` resolve; a bare span marker warns, because it has no
       literal to bind to. See this module's docstring.
     * The manifest bridge — if the root looks like a goldfive worktree
@@ -480,6 +479,8 @@ def enumerate_mutations(source_roots: list[Path]) -> list[MutationPoint]:
         mutation points carry absolute paths.
     """
 
+    table = active_syntax_table()
+    python_syntax = table[PYTHON_SUFFIX]
     out: list[MutationPoint] = []
     for raw_root in source_roots:
         root = Path(raw_root).resolve()
@@ -493,20 +494,21 @@ def enumerate_mutations(source_roots: list[Path]) -> list[MutationPoint]:
             # only unhandled case is a suffix the text pass does not
             # recognise, and that is worth saying out loud: it is
             # invariably an operator who expected the file to be surface.
-            if root.suffix == ".py" or is_text_mutation_candidate(root):
-                out.extend(_enumerate_file(root, root.parent))
+            root_syntax = marker_syntax_for(root, table=table)
+            if root_syntax is not None:
+                out.extend(_enumerate_file(root, root.parent, root_syntax))
             else:
                 _log.warning(
                     "enumerator: source root %s is a file whose suffix is not walkable "
-                    "(neither .py nor an allowlisted text suffix); it contributes no "
-                    "mutation points",
+                    "(neither .py nor a suffix the mutation_surface table declares); it "
+                    "contributes no mutation points",
                     root,
                 )
             continue
         for py_file in sorted(root.rglob("*.py")):
-            out.extend(_enumerate_file(py_file.resolve(), root))
-        for text_file in _text_pass_files(root):
-            out.extend(_enumerate_file(text_file.resolve(), root))
+            out.extend(_enumerate_file(py_file.resolve(), root, python_syntax))
+        for text_file, syntax in _text_pass_files(root, table):
+            out.extend(_enumerate_file(text_file.resolve(), root, syntax))
 
     # Manifest bridge — additive, runs after the native marker pass.
     # Imported here (not at module top) so the bridge's tomllib /
@@ -530,7 +532,6 @@ def enumerate_mutations(source_roots: list[Path]) -> list[MutationPoint]:
 
 __all__ = [
     "MAX_TEXT_FILE_BYTES",
-    "TEXT_FILE_SUFFIXES",
     "TEXT_SCAN_SKIP_DIRS",
     "enumerate_mutations",
     "is_text_mutation_candidate",

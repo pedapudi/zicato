@@ -1450,6 +1450,54 @@ function proposerPicker(d) {
   ]);
 }
 
+// The declared mutation-site file types (MUTATION-SURFACE.md §2.5): the
+// built-ins (.md/.markdown/.txt/.yaml/.yml/.toml, plus the reserved .py) are
+// implied, and each row here declares one MORE suffix with the comment
+// leaders zicato parses markers under. Wholesale like every other mapping
+// editor — a row edit posts the whole table.
+function mutationSurfacePanel(sc) {
+  const cur = sc.mutation_surface || {};
+  const tokens = (v) => (Array.isArray(v) ? v.join(', ') : '');
+  const post = (next) => runOp('set_mutation_surface', { mutation_surface: next });
+  const rows = Object.keys(cur).sort().map((suffix) => {
+    const entry = cur[suffix] || {};
+    const drop = el('button', { class: 'dn-bld-btn', type: 'button', text: 'Remove', 'aria-label': 'Remove file type ' + suffix });
+    drop.addEventListener('click', () => {
+      const next = Object.assign({}, cur);
+      delete next[suffix];
+      post(next);
+    });
+    return controlRow(suffix, {
+      title: 'mutation_surface[' + suffix + ']',
+      def: 'declared',
+      body: 'Leaders ' + (tokens(entry.leaders) || '—') + '; trailers ' + (tokens(entry.trailers) || '—') + '. Removing the file type narrows the surface and rolls the epoch.',
+    }, drop);
+  });
+  const suffixIn = el('input', { class: 'dn-bld-text', type: 'text', placeholder: '.ts', 'aria-label': 'File suffix' });
+  const leadersIn = el('input', { class: 'dn-bld-text', type: 'text', placeholder: '//, /*', 'aria-label': 'Comment leaders' });
+  const trailersIn = el('input', { class: 'dn-bld-text', type: 'text', placeholder: '*/', 'aria-label': 'Comment trailers' });
+  const readTokens = (input) => String(input.value != null ? input.value : (input.getAttribute('value') || ''))
+    .split(',').map((t) => t.trim()).filter(Boolean);
+  const addBtn = el('button', { class: 'dn-bld-btn', type: 'button', text: 'Declare', 'aria-label': 'Declare file type' });
+  addBtn.addEventListener('click', () => {
+    const suffix = String(suffixIn.value != null ? suffixIn.value : (suffixIn.getAttribute('value') || '')).trim();
+    const leaders = readTokens(leadersIn);
+    if (!suffix || !leaders.length) return;
+    const entry = { leaders };
+    const trailers = readTokens(trailersIn);
+    if (trailers.length) entry.trailers = trailers;
+    const next = Object.assign({}, cur);
+    next[suffix] = entry;
+    post(next);
+  });
+  return el('div', { class: 'dn-bld-mutsurface' }, [
+    el('div', { class: 'dn-bld-subhead-min', text: 'Mutation-site file types' }),
+    el('p', { class: 'dn-faint', text: 'Beyond the built-in .md / .markdown / .txt / .yaml / .yml / .toml (and .py, which is reserved), the file types whose markers are enumerable. Leaders are the comment lead-ins a marker may be written under — zicato strips echoed marker lines out of a rewritten region under them, so a declared leader is what keeps a region contained. Declaring a type widens what the proposer may rewrite, so it rolls the epoch.' }),
+    ...rows,
+    el('div', { class: 'dn-bld-proposer-freerow' }, [suffixIn, leadersIn, trailersIn, addBtn]),
+  ]);
+}
+
 function proposerSection(d) {
   const p = d.proposer || {};
   const skills = Array.isArray(p.skills) ? p.skills : [];
@@ -1504,6 +1552,7 @@ function proposerSection(d) {
       body: 'Opts settled experiments from PRIOR epochs that share the current contract hash into the proposer\'s digest — banded, clearly separated, and only in the budget left after same-epoch history. Different-contract experiments are never surfaced.',
     }, checkInput(!!em.cross_epoch, 'Cross-epoch experiment memory', 'surface settled prior-epoch experiments (same contract hash)',
       (on) => runOp('set_experiment_memory', { cross_epoch: on }))),
+    mutationSurfacePanel(d.scoring || {}),
     el('div', { class: 'dn-bld-panel' }, [
       el('div', { class: 'dn-bld-kv' }, [
         el('span', { class: 'dn-bld-k', text: 'mode' }),
