@@ -56,6 +56,7 @@ from zicato.dashboard.mutations import (
     FROM_SNAPSHOT,
     SPANS_CAPTION,
     reconstructed_spans,
+    recorded_generation_ids,
 )
 from zicato.epoch.genstore import GenerationStore, default_generation_store
 from zicato.query import WorkspacePaths
@@ -90,7 +91,7 @@ def _has_tree(store: GenerationStore, epoch_id: str, generation_id: str) -> bool
         return False
 
 
-#: What a view says when a generation's whole tree is gone. Whole-tree
+#: What a view says when a RECORDED generation's tree is gone. Whole-tree
 #: browsing is genuinely unrecoverable — unlike the patch-touched spans,
 #: which the records reconstruct (:func:`build_generation_diff`).
 _PRUNED_TREE_ERROR = (
@@ -100,6 +101,26 @@ _PRUNED_TREE_ERROR = (
     "/api/files/{epoch_id}/{generation_id}/diff, the site surface at "
     "/api/mutations/{epoch_id}."
 )
+
+#: …and when there is no such generation at all. Kept apart because a
+#: typo'd coordinate and a collected tree call for opposite next moves,
+#: and pointing an operator at records that were never written would be
+#: its own small dishonesty.
+_UNKNOWN_GENERATION_ERROR = "no generation {epoch_id}/{generation_id} in this workspace"
+
+
+def _missing_tree_error(paths: WorkspacePaths, epoch_id: str, generation_id: str) -> str:
+    """Name what actually happened to a tree the store cannot walk.
+
+    The record directory is the discriminator: present ⇒ the generation
+    ran and its tree was collected; absent ⇒ the coordinate names nothing.
+    """
+    template = (
+        _PRUNED_TREE_ERROR
+        if generation_id in recorded_generation_ids(paths, epoch_id)
+        else _UNKNOWN_GENERATION_ERROR
+    )
+    return template.format(epoch_id=epoch_id, generation_id=generation_id)
 
 
 def build_file_index(paths: WorkspacePaths) -> dict[str, Any]:
@@ -168,7 +189,7 @@ def build_generation_tree(
             "epoch_id": epoch_id,
             "generation_id": generation_id,
             "entries": [],
-            "error": _PRUNED_TREE_ERROR.format(epoch_id=epoch_id, generation_id=generation_id),
+            "error": _missing_tree_error(paths, epoch_id, generation_id),
         }
     except (OSError, ValueError) as exc:
         return {
@@ -409,9 +430,7 @@ def build_generation_diff(
             "provenance_note": SPANS_CAPTION,
         }
         if not spans:
-            payload["error"] = _PRUNED_TREE_ERROR.format(
-                epoch_id=epoch_id, generation_id=generation_id
-            )
+            payload["error"] = _missing_tree_error(paths, epoch_id, generation_id)
         return payload
 
     parent_id = _resolve_parent_generation(paths, store, epoch_id, generation_id)

@@ -300,11 +300,26 @@ def test_files_index_flags_a_pruned_tree(populated_workspace: Path, tmp_path: Pa
     assert gens["v1"]["patch_count"] == 1
 
 
-def test_files_tree_names_gc_and_points_at_the_records(client: TestClient) -> None:
-    body = client.get("/api/files/e1/v99/tree").json()
+def test_files_tree_names_gc_and_points_at_the_records(
+    populated_workspace: Path, tmp_path: Path
+) -> None:
+    """A collected tree is named as one, with the surviving records listed."""
+    _record_experiment(populated_workspace, "v1", "v0", _patch("p1", '"""rewritten"""'))
+    _prune_tree(populated_workspace, "e1", "v1")
+    static_dir = tmp_path / "static-tree"
+    static_dir.mkdir()
+    with TestClient(create_app(populated_workspace, static_dir, read_only=True)) as c:
+        body = c.get("/api/files/e1/v1/tree").json()
     assert body["entries"] == []
     assert "pruned by snapshot GC" in body["error"]
     assert "/api/mutations/e1" in body["error"]
+
+
+def test_files_tree_unknown_generation_is_not_called_pruned(client: TestClient) -> None:
+    """A coordinate that names nothing must not be blamed on GC."""
+    body = client.get("/api/files/e1/v99/tree").json()
+    assert body["entries"] == []
+    assert body["error"] == "no generation e1/v99 in this workspace"
 
 
 def test_files_diff_reconstructs_spans_for_a_pruned_generation(
