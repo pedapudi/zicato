@@ -106,6 +106,10 @@ from zicato.query.journal_view import (
     read_epoch_journal,
     read_epoch_journal_md,
 )
+from zicato.query.judge_roster import (
+    _empty_judge_roster,
+    build_judge_roster,
+)
 from zicato.query.judge_view import (
     SEARCH_LIMIT_PER_CATEGORY,
     _collect_judge_names_from_board_file,
@@ -276,6 +280,7 @@ __all__ = [
     "_drift_counts_for_generation",
     "_empty_dossier",
     "_empty_health",
+    "_empty_judge_roster",
     "_empty_matrix",
     "_empty_provenance",
     "_empty_search_result",
@@ -362,6 +367,7 @@ __all__ = [
     "build_proposer_scorecard",
     "build_racing_field",
     "build_reflection_summary",
+    "build_judge_roster",
     "build_judge_scorecards",
     "build_practice_review",
     "build_adjudication_xray",

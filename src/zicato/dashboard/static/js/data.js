@@ -488,6 +488,19 @@ export function evalDossier(epochId, entryId) {
   return cachedJson(`/api/epoch/${enc(epochId)}/eval/${enc(entryId)}`);
 }
 
+// WHAT IS ARMED TO JUDGE A RUN on this epoch's board (#194 §5) — goldfive's
+// built-in judge set with each entry marked `suppressed` by the board's
+// `disable_drift` header, the drift kinds that header names which NO built-in
+// emits (and so suppress nothing), the frozen per-judge weights, and the
+// reflection that scored each judge. The per-ENTRY custom judges are NOT here:
+// they ride the epoch payload as `board_judges`, so the panel joins one served
+// projection to one derived one. Epoch-scoped and contract-frozen; a
+// pre-feature server (no such endpoint → the GET throws) degrades to null and
+// the panel simply reports the built-in half as unavailable.
+export function judgeRoster(epochId) {
+  return cachedJson(`/api/epoch/${enc(epochId)}/judge-roster`);
+}
+
 // The promote-gate decomposition for one round.
 export function gate(epochId, championId, challengerId) {
   return cachedJson(`/api/round/${enc(epochId)}/${enc(championId)}/${enc(challengerId)}/gate`);

@@ -276,7 +276,8 @@ function installFetch(store) {
   globalThis.fetch = async (path) => {
     const p = String(path);
     let body = {};
-    if (p.includes('/eval/')) body = store.dossier;
+    if (p.includes('/judge-roster')) body = store.roster || null;
+    else if (p.includes('/eval/')) body = store.dossier;
     else if (p.startsWith('/api/lineage')) body = store.lineage;
     else if (p.startsWith('/api/score-trajectory')) body = store.traj;
     else if (p.startsWith('/api/epoch')) body = store.epoch;

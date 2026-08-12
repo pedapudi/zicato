@@ -1169,6 +1169,14 @@
   .dn-board-table tr.dn-board-champ td { background: var(--v2-good-soft); }
   .dn-board-run { padding: 2px 7px; font-size: calc(10.5px * var(--dt-font-scale, 1)); }
 
+  /* the armed built-in judge chips (#194 §5). A SUPPRESSED built-in stays on
+   * the strip, struck through and faded: dropping it would show the
+   * disable_drift header's effect by omission, which shows nothing. */
+  .dn-judges-strip { display: flex; flex-wrap: wrap; gap: 6px; margin: 5px 0 0; }
+  .dn-pill.dn-judge-off { color: var(--v2-ink-faint); border-color: var(--v2-rule);
+    border-style: dashed; background: none; }
+  .dn-judge-off .dn-judge-name { text-decoration: line-through; }
+
   /* ===================  loop communication (trajectory / cost / judges) ============= */
 
   /* the promoted-spine id strip under the trajectory sparkline: each id is a

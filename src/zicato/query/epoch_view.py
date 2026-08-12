@@ -7,6 +7,7 @@ import re
 from pathlib import Path
 from typing import Any
 
+from zicato.query.board_scan import board_entry_id, iter_board_rows
 from zicato.query.decisions import (
     experiment_decision,
     promoted_tristate,
@@ -140,6 +141,57 @@ def _parse_board_meta(path: Path) -> dict[str, Any] | None:
             return None
         return {"disable_drift": disable_drift, "judge_only": judge_only}
     return None
+
+
+def _parse_board_judges(path: Path) -> dict[str, list[dict[str, Any]]] | None:
+    """The PROCESS judges each board entry declares, keyed by entry id.
+
+    BOARD-FORMAT §1.3: an entry MAY carry ``judges: [{name, mode, body,
+    severity}]`` — the custom judges the adapter appends to the built-in set
+    for that entry's runs. Returns ``{entry_id: [{name, mode, severity}]}``
+    for every entry declaring at least one usable judge, and ``None`` when
+    the board declares none — the key is then omitted, keeping every
+    judge-free epoch's payload byte-identical to the read that predates this
+    block (the :func:`_parse_board_meta` precedent).
+
+    ``body`` is NOT projected for an inline judge: it is the criterion
+    PROMPT, and a roster is not a place to publish prompts. A python judge's
+    body is a dotted import path — the callable's identity rather than prose
+    — so it rides along as ``path``, which is what tells two python judges
+    apart on screen.
+
+    A SIBLING of :func:`_parse_board` rather than a widening of it: that
+    reader's row shape is shared with ``judge_view`` and the
+    ``zicato.query`` export surface, and neither wants a new key.
+    """
+    by_entry: dict[str, list[dict[str, Any]]] = {}
+    for row in iter_board_rows(path):
+        entry_id = board_entry_id(row)
+        raw = row.get("judges")
+        if entry_id is None or entry_id in by_entry or not isinstance(raw, list):
+            continue
+        judges: list[dict[str, Any]] = []
+        for spec in raw:
+            if not isinstance(spec, dict):
+                continue
+            name = spec.get("name")
+            if not isinstance(name, str) or not name:
+                continue  # the name IS the judge's identity; nothing to show without it
+            mode = spec.get("mode")
+            mode = mode if isinstance(mode, str) and mode else None
+            severity = spec.get("severity")
+            judge: dict[str, Any] = {
+                "name": name,
+                "mode": mode,
+                "severity": severity if isinstance(severity, str) and severity else None,
+            }
+            body = spec.get("body")
+            if mode == "python" and isinstance(body, str) and body:
+                judge["path"] = body
+            judges.append(judge)
+        if judges:
+            by_entry[entry_id] = judges
+    return by_entry or None
 
 
 def _parse_mutations(path: Path) -> list[dict[str, Any]] | None:
@@ -864,6 +916,14 @@ def build_epoch_view(paths: WorkspacePaths, epoch_id: str | None = None) -> dict
     board_meta = _parse_board_meta(epoch_dir / "board.jsonl")
     if board_meta is not None:
         view["board_meta"] = board_meta
+
+    # Per-entry PROCESS judges (BOARD-FORMAT §1.3), keyed by entry id — the
+    # custom half of what the board page's Judges panel shows. Same omit-when-
+    # absent discipline as the header above: a board whose entries declare no
+    # judges reads byte-identical to the pre-block payload.
+    board_judges = _parse_board_judges(epoch_dir / "board.jsonl")
+    if board_judges is not None:
+        view["board_judges"] = board_judges
 
     # Tournament structure block (TOURNAMENT-DATA-MODEL.md §3.1). Echo the
     # epoch's resolved ``{structure, params}`` from the frozen

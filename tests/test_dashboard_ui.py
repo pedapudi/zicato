@@ -754,7 +754,19 @@ def test_bundle_under_size_envelope() -> None:
     # discard and its dead state slots), that is ~+5.6 KB of genuinely new
     # RENDERED surface, not new machinery. The envelope is raised to 1.92 M
     # to cover it with headroom.
-    assert total < 1_920_000, f"bundle is {total} chars, exceeds 1_920_000 envelope\n" + "\n".join(
+    #
+    # The console review (#194) then gives each surface it names a home. §5's
+    # JUDGES panel is the first: the board page's armed built-in roster after
+    # `disable_drift` suppression, this entry's declared judges with their
+    # modes / severities / weights, and the link to each judge's reflection
+    # scorecard — ~10 KB of board.js + data.js + two console.css rules,
+    # rendering payloads the server already derives. It landed against 1,011
+    # chars of headroom, which is a guard about to fire on the next surface
+    # rather than one doing its job: a limit that cannot absorb one more
+    # panel stops measuring growth and starts blocking work. Raised to
+    # 1.96 M — ~2% over the honest total, the same slack the rebase above
+    # chose — so the remaining #194 sections land against a real ceiling.
+    assert total < 1_960_000, f"bundle is {total} chars, exceeds 1_960_000 envelope\n" + "\n".join(
         f"  {name:40s} {size:>10,}" for name, size in sorted(sizes.items(), key=lambda kv: -kv[1])
     )
 
