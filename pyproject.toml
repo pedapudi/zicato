@@ -74,6 +74,15 @@ dashboard = [
     "uvicorn >= 0.30",
     "watchdog >= 4.0",
 ]
+# The terminal console (`zicato tui`) — a SECOND RENDERER of the dashboard
+# service's payloads, not a second brain. Textual only: the TUI's service
+# client is stdlib urllib, so a terminal install stays small and can review a
+# workspace from a machine that could not serve one. Pinned exactly, because
+# the Pilot snapshot tests compare rendered text and a framework bump can move
+# it.
+tui = [
+    "textual == 8.2.8",
+]
 dev = [
     "pytest >= 8",
     "pytest-asyncio >= 0.23",
@@ -109,6 +118,8 @@ dev = [
     "uvicorn >= 0.30",
     "watchdog >= 4.0",
     "httpx >= 0.27",
+    # The terminal console and its Pilot-driven tests.
+    "textual == 8.2.8",
     # The vendored dogfood targets — a separate distribution under
     # examples/, resolved as a uv workspace member (see
     # [tool.uv.sources] below). The test_example_* smoke tests import
@@ -350,7 +361,19 @@ forbidden_modules = [
     "zicato.cli",
     "zicato.dashboard",
     "zicato.builder",
+    "zicato.tui",
 ]
+
+# The terminal console is a FOURTH driver, and the strictest one: it reaches
+# the workspace ONLY over the dashboard service's HTTP API. Forbidding the
+# import of every other driver — including the dashboard itself — is what makes
+# "a second renderer, never a second brain" structural rather than a promise.
+# It spawns the service by argv (`python -m zicato.dashboard`), never by import.
+[[tool.importlinter.contracts]]
+name = "tui driver: no import of the other drivers (it speaks HTTP, not Python)"
+type = "forbidden"
+source_modules = ["zicato.tui"]
+forbidden_modules = ["zicato.cli", "zicato.dashboard", "zicato.builder"]
 
 [[tool.importlinter.contracts]]
 name = "dashboard driver: no import of the cli (dashboard -> builder mount is the declared edge)"
