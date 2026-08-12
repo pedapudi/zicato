@@ -87,10 +87,66 @@ def _mean_drift_loss_per_generation(
         if r["drift_loss"] is None:
             continue
         per_entry.setdefault(r["entry_id"], []).append(float(r["drift_loss"]))
+    return _fold_per_entry(per_entry)
+
+
+def _fold_per_entry(per_entry: dict[str, list[float]]) -> tuple[float | None, int]:
+    """THE two-stage fold: mean of per-entry mean ``drift_loss``.
+
+    Shared by :func:`_mean_drift_loss_per_generation` (one generation) and
+    :func:`_mean_drift_loss_by_generation` (every generation in one read) so
+    the two cannot drift apart. ``entry_count`` is the number of DISTINCT
+    entries that carried a non-NULL ``drift_loss``, never the row count.
+    """
     if not per_entry:
         return None, 0
     entry_means = [sum(v) / len(v) for v in per_entry.values()]
     return sum(entry_means) / len(entry_means), len(entry_means)
+
+
+def _mean_drift_loss_by_generation(
+    conn: sqlite3.Connection,
+) -> dict[tuple[str, str], tuple[float | None, int]]:
+    """Every generation's scalar in ONE read — the bulk twin of
+    :func:`_mean_drift_loss_per_generation`.
+
+    Returns ``{(epoch_id, generation_id): (mean_drift_loss, entry_count)}``.
+    A caller looks up ``result.get((epoch_id, gid), (None, 0))`` and gets
+    exactly what the per-generation function would have returned, without a
+    query per generation. Three readers walk every generation in the
+    workspace — ``build_score_trajectory``, ``build_workspace_view`` and the
+    meta-loop ledger — and each issued one query per generation, so a
+    1800-generation workspace cost ~1800 round trips per request on the
+    endpoints the dashboard refetches most (``/api/environment`` on every SSE
+    beat).
+
+    The fold is deliberately done in PYTHON, reusing :func:`_fold_per_entry`,
+    rather than as a nested SQL ``AVG(AVG(...))``. Two reasons: the arithmetic
+    stays bit-identical to the per-generation path (a SQL aggregate could
+    round differently and silently shift every scalar on every chart), and the
+    two-stage rule lives in exactly one place.
+
+    ``ORDER BY`` pins the per-entry accumulation order to the same order the
+    single-generation query yields, so the floating-point summation matches
+    to the last bit.
+
+    Rows with a NULL ``epoch_id`` or ``generation_id`` are skipped: the
+    per-generation query matches with ``epoch_id = ?``, and SQL equality
+    never matches NULL, so such a row is invisible there and must stay
+    invisible here.
+    """
+    per_gen: dict[tuple[str, str], dict[str, list[float]]] = {}
+    for r in _query(
+        conn,
+        "SELECT epoch_id, generation_id, entry_id, drift_loss FROM loss_profiles "
+        "WHERE drift_loss IS NOT NULL "
+        "AND epoch_id IS NOT NULL AND generation_id IS NOT NULL "
+        "ORDER BY epoch_id, generation_id, rowid",
+        (),
+    ):
+        key = (r["epoch_id"], r["generation_id"])
+        per_gen.setdefault(key, {}).setdefault(r["entry_id"], []).append(float(r["drift_loss"]))
+    return {key: _fold_per_entry(per_entry) for key, per_entry in per_gen.items()}
 
 
 def build_score_trajectory(paths: WorkspacePaths, epoch_id: str | None = None) -> dict[str, Any]:
@@ -128,10 +184,14 @@ def build_score_trajectory(paths: WorkspacePaths, epoch_id: str | None = None) -
 
     try:
         with open_index_ro(paths.index_db) as conn:
+            # ONE bulk read for every generation's scalar — this loop walks the
+            # whole lineage, and a query per point made /api/environment (which
+            # the client refetches on every SSE beat) O(generations).
+            scalar_by_gen = _mean_drift_loss_by_generation(conn)
             points: list[dict[str, Any]] = []
             for g in ordered:
                 gid = g["generation_id"]
-                scalar, entry_count = _mean_drift_loss_per_generation(conn, g.get("epoch_id"), gid)
+                scalar, entry_count = scalar_by_gen.get((g.get("epoch_id"), gid), (None, 0))
                 points.append(
                     {
                         "generation_id": gid,

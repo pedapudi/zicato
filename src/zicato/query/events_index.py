@@ -7,7 +7,7 @@ import sqlite3
 from pathlib import Path
 from typing import Any
 
-from zicato.query._sqlite import open_index_ro_or_none
+from zicato.query._sqlite import _query, open_index_ro_or_none
 from zicato.query.decisions import (
     experiment_decision,
     promoted_tristate,
@@ -18,7 +18,7 @@ from zicato.query.epoch_view import (
     _read_epoch_brief,
     _tournament_block_from_scoring,
 )
-from zicato.query.gate_view import _mean_drift_loss_per_generation
+from zicato.query.gate_view import _mean_drift_loss_by_generation
 from zicato.query.paths import (
     WorkspacePaths,
     _is_finite,
@@ -417,6 +417,25 @@ def read_run_result(run_dir: Path) -> dict[str, Any] | None:
 # ---------------------------------------------------------------------------
 
 
+def _parent_epoch_ids(conn: sqlite3.Connection) -> dict[str, str]:
+    """``{epoch_id: parent_epoch_id}`` for every epoch that records a parent.
+
+    One read replacing a query per epoch. Only a non-empty string counts as a
+    parent, so an absent row, a NULL, or an empty string all leave the epoch
+    out of the mapping — a caller's ``.get(epoch_id)`` then yields ``None``,
+    exactly as the per-epoch query did. A v1 / never-indexed database has no
+    ``parent_epoch_id`` column and ``_query`` swallows that to ``[]``, so
+    every epoch degrades to ``None`` (DQ3).
+    """
+    out: dict[str, str] = {}
+    for r in _query(conn, "SELECT epoch_id, parent_epoch_id FROM epochs", ()):
+        eid = r["epoch_id"]
+        raw = r["parent_epoch_id"]
+        if isinstance(eid, str) and eid and isinstance(raw, str) and raw:
+            out[eid] = raw
+    return out
+
+
 def build_workspace_view(paths: WorkspacePaths) -> dict[str, Any]:
     """L0 (workspace-level) cross-epoch summary.
 
@@ -465,6 +484,12 @@ def build_workspace_view(paths: WorkspacePaths) -> dict[str, Any]:
     # epoch surfaces a ``None`` best scalar but the row list still renders.
 
     with open_index_ro_or_none(paths.index_db) as conn:
+        # Two bulk reads BEFORE the epoch loop. Both were per-item queries
+        # inside it: the scalar once per generation and the parent edge once
+        # per epoch, so a 1800-generation workspace cost ~1800 round trips for
+        # one /api/workspace.
+        scalar_by_gen = _mean_drift_loss_by_generation(conn) if conn is not None else {}
+        parent_by_epoch = _parent_epoch_ids(conn) if conn is not None else {}
         for epoch in iter_epochs(layout_of(paths)):
             epoch_dir = epoch.directory
             epoch_id = epoch.id
@@ -503,7 +528,7 @@ def build_workspace_view(paths: WorkspacePaths) -> dict[str, Any]:
             promoted_count = 0
             if conn is not None:
                 for gid in gen_ids:
-                    scalar, _entries = _mean_drift_loss_per_generation(conn, epoch_id, gid)
+                    scalar, _entries = scalar_by_gen.get((epoch_id, gid), (None, 0))
                     if scalar is None or not _is_finite(scalar):
                         continue
                     if best_scalar is None or scalar < best_scalar:
@@ -525,19 +550,7 @@ def build_workspace_view(paths: WorkspacePaths) -> dict[str, Any]:
             # between consecutive epochs. Best-effort: a v1 / never-
             # indexed database surfaces ``None`` and the L0 view falls
             # back to directory order.
-            parent_epoch_id: str | None = None
-            if conn is not None:
-                try:
-                    row_ep = conn.execute(
-                        "SELECT parent_epoch_id FROM epochs WHERE epoch_id = ?",
-                        (epoch_id,),
-                    ).fetchone()
-                    if row_ep is not None:
-                        raw_p = row_ep["parent_epoch_id"]
-                        if isinstance(raw_p, str) and raw_p:
-                            parent_epoch_id = raw_p
-                except sqlite3.Error:
-                    parent_epoch_id = None
+            parent_epoch_id: str | None = parent_by_epoch.get(epoch_id)
 
             row = {
                 "epoch_id": epoch_id,
@@ -767,6 +780,9 @@ def build_meta_loop_ledger(paths: WorkspacePaths) -> dict[str, Any]:
 
     layout = layout_of(paths)
     with open_index_ro_or_none(paths.index_db) as conn:
+        # ONE bulk read for every generation's scalar — the held-floor scan
+        # below walks every generation of every epoch (was a query each).
+        scalar_by_gen = _mean_drift_loss_by_generation(conn) if conn is not None else {}
         prev_hashes: dict[str, str] = {}
         prev_structure: str | None = None
         for idx, epoch_id in enumerate(epoch_ids):
@@ -786,7 +802,7 @@ def build_meta_loop_ledger(paths: WorkspacePaths) -> dict[str, Any]:
             champion_gen: str | None = None
             if conn is not None:
                 for gid in gen_ids:
-                    scalar, _entries = _mean_drift_loss_per_generation(conn, epoch_id, gid)
+                    scalar, _entries = scalar_by_gen.get((epoch_id, gid), (None, 0))
                     if scalar is None or not _is_finite(scalar):
                         continue
                     if floor is None or scalar < floor:
