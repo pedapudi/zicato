@@ -98,10 +98,13 @@ def _resolve_marker_line(file_path: Path, mutation_id: str) -> int | None:
     The line is parsed under the file's own comment grammar
     (:func:`~zicato.mutation.markers.marker_syntax_for`), so a marker in a
     markdown or YAML file resolves the same way a ``#``-led Python marker
-    does.
+    does. A file whose suffix the syntax table does not declare has no
+    marker grammar at all, and so no marker line to resolve.
     """
 
     syntax = marker_syntax_for(file_path)
+    if syntax is None:
+        return None
     text = file_path.read_text(encoding="utf-8")
     for idx, line in enumerate(text.splitlines()):
         parsed = parse_marker_line(line, syntax=syntax)
@@ -453,7 +456,7 @@ def _reindent_code_region(
     new_content: str,
     indent: str,
     *,
-    syntax: MarkerSyntax = "python",
+    syntax: MarkerSyntax,
 ) -> str:
     """Re-anchor a ``:code`` replacement body to ``indent``.
 
@@ -597,9 +600,21 @@ def _apply_span_replace(point: MutationPoint, new_content: str) -> None:
         # the BODY between the markers is rewritten; the ``:code`` /
         # ``:end`` markers (which live just outside the body span) are
         # untouched, so the mutation id keeps resolving.
+        syntax = marker_syntax_for(point.file)
+        if syntax is None:
+            # No declared comment grammar ⇒ no way to strip an echoed
+            # marker line out of the body, so the region's anchors are not
+            # enforceable. Refuse rather than write an uncontained region;
+            # reachable only when the mutation_surface table drops a suffix
+            # between enumeration and apply.
+            raise ValueError(
+                f"applier: {point.file} has no declared marker syntax for suffix "
+                f"{point.file.suffix!r}; refusing to rewrite region {point.id!r} "
+                "(declare the suffix in the contract's mutation_surface table)"
+            )
         original_body = "".join(lines[point.line_start - 1 : point.line_end])
         indent = _region_base_indent(original_body)
-        middle = _reindent_code_region(new_content, indent, syntax=marker_syntax_for(point.file))
+        middle = _reindent_code_region(new_content, indent, syntax=syntax)
         _write_text_writable(point.file, before + middle + after)
         return
 

@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import logging
 import textwrap
+from collections.abc import Iterator
 from dataclasses import asdict
 from pathlib import Path
 
@@ -22,8 +23,29 @@ from zicato.mutation.enumerator import (
     enumerate_mutations,
     is_text_mutation_candidate,
 )
-from zicato.mutation.markers import is_end_marker, parse_marker_line
+from zicato.mutation.markers import (
+    BUILTIN_SYNTAXES,
+    active_syntax_table,
+    is_end_marker,
+    parse_marker_line,
+    swap_syntax_table,
+    syntax_table_from_config,
+)
 from zicato.mutation.validator import validate_patches, validate_post_apply
+
+_MARKDOWN = BUILTIN_SYNTAXES[".md"]
+
+#: The declared table the ``.ts`` tests run under — the operator-side edit
+#: this whole surface exists to make possible (issue #168).
+_TS_SURFACE = {".ts": {"leaders": ["//", "/*"], "trailers": ["*/"]}}
+
+
+@pytest.fixture
+def declare_typescript() -> Iterator[None]:
+    """Declare ``.ts`` for one test, through the scoped entry point."""
+
+    with swap_syntax_table(_TS_SURFACE):
+        yield
 
 
 def _write(path: Path, body: str) -> None:
@@ -62,7 +84,7 @@ def test_text_syntax_leaders_closers_and_metadata(
 ) -> None:
     """A closer lands in the tail, so it never leaks into metadata."""
 
-    parsed = parse_marker_line(line, syntax="text")
+    parsed = parse_marker_line(line, syntax=_MARKDOWN)
     assert parsed is not None
     assert (parsed.id, parsed.is_file) == ("x", True)
     assert parsed.metadata == expected_metadata
@@ -73,7 +95,7 @@ def test_python_syntax_stays_hash_only() -> None:
 
     assert parse_marker_line('<!-- zicato:mutable id="x" -->') is None
     assert is_end_marker("<!-- zicato:mutable:end -->") is False
-    assert is_end_marker("<!-- zicato:mutable:end -->", syntax="text") is True
+    assert is_end_marker("<!-- zicato:mutable:end -->", syntax=_MARKDOWN) is True
     assert is_end_marker("# zicato:mutable:end") is True
 
 
@@ -410,6 +432,129 @@ def test_end_to_end_text_only_surface(tmp_path: Path) -> None:
     # Unmarked neighbours untouched; the source tree never mutated.
     assert "owner: operator" in (dst / "config" / "runtime.yaml").read_text(encoding="utf-8")
     assert "retries: 3" in (src / "config" / "runtime.yaml").read_text(encoding="utf-8")
+
+
+# --------------------------------------------------------------------------
+# A declared file type (issue #168)
+# --------------------------------------------------------------------------
+
+
+def test_an_undeclared_suffix_is_not_surface(tmp_path: Path) -> None:
+    """The table is the envelope: no declaration, no enumeration."""
+
+    _write(tmp_path / "ext.ts", '// zicato:mutable:file id="ext"\nexport const x = 1;\n')
+    assert enumerate_mutations([tmp_path]) == []
+
+
+def test_a_declared_table_does_not_outlive_its_scope(tmp_path: Path) -> None:
+    """Process-level state, scoped: what one test declares, the next never sees.
+
+    The run path's install is one-way ON PURPOSE — propose and apply must
+    agree on the surface for the whole invocation. That makes an unrestored
+    activation an order-dependent leak, so the scoped entry restores the
+    previous table and the autouse fixture in ``conftest`` backstops it.
+    """
+
+    _write(tmp_path / "ext.ts", '// zicato:mutable:file id="ext"\nexport const x = 1;\n')
+    with swap_syntax_table(_TS_SURFACE) as declared:
+        assert declared == (".ts",)
+        assert [p.id for p in enumerate_mutations([tmp_path])] == ["ext"]
+    assert enumerate_mutations([tmp_path]) == []
+    assert dict(active_syntax_table()) == dict(BUILTIN_SYNTAXES)
+
+
+def test_the_table_refuses_a_declaration_it_could_not_enforce() -> None:
+    """A leaderless entry has no containment; ``.py`` is not redeclarable."""
+
+    with pytest.raises(ValueError, match="at least one comment leader"):
+        syntax_table_from_config({".sql": {}})
+    with pytest.raises(ValueError, match=r"\.py is reserved"):
+        syntax_table_from_config({".py": {"leaders": ["#", "//"]}})
+
+
+def test_declared_typescript_round_trips_end_to_end(
+    tmp_path: Path, declare_typescript: object
+) -> None:
+    """enumerate -> validate -> apply -> re-enumerate under `//` and `/* */`."""
+
+    src, dst = tmp_path / "src", tmp_path / "dst"
+    _write(
+        src / "extension.ts",
+        """
+        /* zicato:mutable:file id="header" */
+        export const NAME = "researcher";
+        """,
+    )
+    _write(
+        src / "policy.ts",
+        """
+        export function retry() {
+          // zicato:mutable:code id="retry_policy"
+          const attempts = 3;
+          return attempts;
+          // zicato:mutable:end
+        }
+        """,
+    )
+    pre = enumerate_mutations([src])
+    assert {p.id: p.kind for p in pre} == {"header": "file", "retry_policy": "code"}
+
+    patches = [
+        _replace(
+            "header", '/* zicato:mutable:file id="header" */\nexport const NAME = "critic";\n'
+        ),
+        _replace("retry_policy", "const attempts = 7;\nreturn attempts;\n"),
+    ]
+    assert validate_patches(patches, enumeration=pre) == []
+    apply_patches(src, patches, dst)
+    assert validate_post_apply(dst, patches, pre) == []
+
+    post = {p.id: p for p in enumerate_mutations([dst])}
+    assert set(post) == {"header", "retry_policy"}
+    assert 'NAME = "critic"' in post["header"].content
+    # The region body is re-anchored to the enclosing suite's indent, so the
+    # replacement lands inside the function it was carved out of.
+    assert post["retry_policy"].content == "  const attempts = 7;\n  return attempts;\n"
+
+
+def test_declared_typescript_region_cannot_eat_its_markers(
+    tmp_path: Path, declare_typescript: object
+) -> None:
+    """Containment is what the declared leaders buy.
+
+    The replacement closes the region early under one declared leader and
+    opens a fresh region under the other. Both marker lines are stripped:
+    the operator's anchors survive and no new mutation id appears.
+    """
+
+    src, dst = tmp_path / "src", tmp_path / "dst"
+    _write(
+        src / "policy.ts",
+        """
+        // untouchable header
+        // zicato:mutable:code id="policy"
+        const attempts = 3;
+        // zicato:mutable:end
+        // untouchable footer
+        """,
+    )
+    hostile = (
+        "// zicato:mutable:end\n"
+        "const escaped = true;\n"
+        '/* zicato:mutable:code id="hijacked" */\n'
+        "const more = 1;\n"
+    )
+    apply_patches(src, [_replace("policy", hostile)], dst)
+
+    text = (dst / "policy.ts").read_text(encoding="utf-8")
+    assert "// untouchable header" in text
+    assert "// untouchable footer" in text
+    assert text.count("zicato:mutable:code") == 1
+    assert text.count("zicato:mutable:end") == 1
+    assert "hijacked" not in text
+    points = {p.id: p for p in enumerate_mutations([dst])}
+    assert set(points) == {"policy"}
+    assert points["policy"].content == "const escaped = true;\nconst more = 1;\n"
 
 
 def test_required_placeholders_survive_the_text_path(tmp_path: Path) -> None:

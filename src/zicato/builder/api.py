@@ -21,7 +21,7 @@ shapes via the existing validators. They never start a live run.
 from __future__ import annotations
 
 import json
-from collections.abc import AsyncIterator, Awaitable, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
 from pathlib import Path
 from typing import Any
 
@@ -136,6 +136,12 @@ def _dispatch_op(draft: TournamentDraft, op: str, args: dict[str, Any]) -> ops.D
         return ops.set_experiment_memory(draft, cross_epoch=_opt_bool(args, "cross_epoch"))
     if op == "set_telemetry_dialect":
         return ops.set_telemetry_dialect(draft, dialect=_opt_str(args, "dialect"))
+    if op == "set_mutation_surface":
+        raw_surface = args.get("mutation_surface")
+        return ops.set_mutation_surface(
+            draft,
+            mutation_surface=raw_surface if isinstance(raw_surface, Mapping) else None,
+        )
     if op == "set_screening":
         raw_entries = args.get("entries")
         raw_veto_only = args.get("veto_only")

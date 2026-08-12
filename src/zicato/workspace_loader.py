@@ -316,6 +316,30 @@ def tournament_structure_from_dict(raw: Any) -> TournamentStructure:
     return TournamentStructure(structure=structure, params=params)
 
 
+def activate_mutation_surface(workspace_root: Path) -> tuple[str, ...]:
+    """Install the current epoch's declared mutation-surface table for this process.
+
+    The contract's ``mutation_surface`` table decides which file types are
+    enumerable (MUTATION-SURFACE.md §2.5), and enumeration re-runs deep in
+    the apply loop from call sites that hold nothing but paths — so the
+    declared table is installed once per invocation, here, rather than
+    threaded through every walk. Propose-time and apply-time enumeration
+    then cannot disagree about what is surface.
+
+    Returns the operator-declared suffixes (empty for a workspace that
+    declares none, which is every workspace that predates the table). A
+    workspace with no readable epoch scoring keeps the built-ins — the
+    read-only viewers call this against trees that may not have one.
+    """
+    from zicato.mutation.markers import install_syntax_table  # noqa: PLC0415
+
+    try:
+        weights = load_current_scoring(workspace_root)
+    except (OSError, ValueError):
+        return install_syntax_table(None)
+    return install_syntax_table(weights.mutation_surface)
+
+
 def tournament_structure_to_dict(spec: TournamentStructure) -> dict[str, Any]:
     """Serialize a :class:`TournamentStructure` to the ``tournament`` block.
 
@@ -326,6 +350,7 @@ def tournament_structure_to_dict(spec: TournamentStructure) -> dict[str, Any]:
 
 
 __all__ = [
+    "activate_mutation_surface",
     "load_workspace_config",
     "scoring_weights_from_dict",
     "load_current_epoch_config",

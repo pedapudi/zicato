@@ -23,6 +23,7 @@ import click
 
 from zicato.core.types import MutationPoint
 from zicato.mutation.enumerator import enumerate_mutations
+from zicato.workspace_loader import activate_mutation_surface
 
 _PREVIEW_LEN = 60
 
@@ -208,6 +209,7 @@ def mutations_cmd(
 
     workspace_dir = Path(workspace)
     source_roots = _load_source_roots(workspace_dir)
+    activate_mutation_surface(workspace_dir)
     points = enumerate_mutations(source_roots)
     filtered = _filter_points(points, id_glob, kind_filter)
     if fmt == "json":

@@ -81,6 +81,26 @@ def _isolate_config_pins() -> Iterator[None]:
     clear_pinned_overrides()
 
 
+@pytest.fixture(autouse=True)
+def _isolate_mutation_syntax_table() -> Iterator[None]:
+    """Restore the built-in mutation syntax table around every test.
+
+    The declared table (MUTATION-SURFACE.md §2.5) is process-level state:
+    the run path installs the contract's table once per invocation so
+    propose-time and apply-time enumeration cannot disagree about what is
+    surface. In a test process that same property is a leak — a test that
+    activates a workspace declaring ``.ts`` would otherwise leave every
+    LATER test enumerating under it, an order-dependent failure rather than
+    an obvious one. Restored on BOTH sides, like the config pins above, so
+    a test neither inherits nor bequeaths a declared surface.
+    """
+    from zicato.mutation.markers import install_syntax_table
+
+    install_syntax_table(None)
+    yield
+    install_syntax_table(None)
+
+
 @pytest.fixture(scope="session")
 def _session_worker_permit_dir(tmp_path_factory: pytest.TempPathFactory) -> Path:
     """One private host-wide worker-permit directory for this test session."""

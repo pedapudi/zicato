@@ -126,14 +126,19 @@ purpose, because "the same binary in two roles" is the entire safety
 argument, and a single knob naming both would erase the distinction it
 rests on. So the env var stays until a target-side knob exists.
 
-**Open question worth deciding before a live round.** The proposer now
-resolves a *pinned* install (`integrations/pi/node_modules/.bin/pi`, at
-the version `integrations/pi/package.json` pins), while this target
-defaults to bare `pi` on `PATH`. Pointing the target at the same pinned
-install would make the version-pinning discipline automatic rather than
-a thing the operator must remember. It would also couple the target's
-identity to the proposer's tooling, which is exactly the coupling the
-role split avoids. Deliberately not decided here.
+**Resolved.** The proposer resolves a *pinned* install
+(`integrations/pi/node_modules/.bin/pi`, at the version
+`integrations/pi/package.json` pins), while this target keeps its own
+knob. The roles stay **decoupled** — no shared knob — because "the same
+binary in two roles" is the safety argument, and one knob naming both
+would erase the distinction it rests on.
+
+The version-pinning concern is settled by **procedure, not coupling**:
+RUN.md's operator recipe recommends pointing
+`ZICATO_TARGET_4_AGENT_BIN` at that same pinned install, by path. Bare
+`pi` on `PATH` stays available as the explicitly degraded alternative,
+and an operator who takes it records the version by hand. Same binary
+pin, two independent knobs, distinction intact.
 
 The binary's `--version` is probed once per load and recorded beside the
 run. A version bump changes the system under test without changing the

@@ -1429,6 +1429,30 @@ test('builder view: the Proposer picker lists discovered dirs + builtin default 
     'the free-text row posts set_proposer with the typed path');
 });
 
+test('builder view: declaring a file type posts the WHOLE mutation_surface table', async () => {
+  const host = await mountAt('Proposer');
+  const suffixIn = byAria(host, 'dn-bld-text', 'File suffix');
+  const leadersIn = byAria(host, 'dn-bld-text', 'Comment leaders');
+  const trailersIn = byAria(host, 'dn-bld-text', 'Comment trailers');
+  const addBtn = byAria(host, 'dn-bld-btn', 'Declare file type');
+  assert(suffixIn && leadersIn && trailersIn && addBtn, 'the declare-a-file-type row renders');
+  // a suffix with no leader is not a declarable surface — nothing is posted.
+  suffixIn.value = '.sql';
+  addBtn.dispatchEvent(makeEvent('click'));
+  await tick();
+  assert(!OP_CALLS.find((c) => c.op === 'set_mutation_surface'), 'a leaderless suffix posts nothing');
+  leadersIn.value = '//, /*';
+  trailersIn.value = '*/';
+  suffixIn.value = '.ts';
+  addBtn.dispatchEvent(makeEvent('click'));
+  await tick();
+  const call = OP_CALLS.find((c) => c.op === 'set_mutation_surface' && c.args.mutation_surface);
+  assert(call, 'set_mutation_surface was posted with the mutation_surface table');
+  assertEqual(JSON.stringify(call.args.mutation_surface['.ts']),
+    JSON.stringify({ leaders: ['//', '/*'], trailers: ['*/'] }),
+    'the declared entry carries the split leaders and trailers');
+});
+
 test('builder view: the Proposer lede no longer claims a read-only summary', async () => {
   const host = await mountAt('Proposer');
   const lede = firstClass(host, 'dn-lede');

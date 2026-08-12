@@ -45,6 +45,7 @@ from zicato.core.types import MutationPoint
 from zicato.epoch.genstore import GenerationStore, default_generation_store
 from zicato.mutation.enumerator import enumerate_mutations
 from zicato.query import WorkspacePaths
+from zicato.workspace_loader import activate_mutation_surface
 
 #: The seed / baseline generation id. ``v0`` is the original tree every
 #: mutation-site diff is taken *against*.
@@ -62,7 +63,7 @@ def _store(paths: WorkspacePaths) -> GenerationStore:
 
 
 def _enumerate_generation(
-    store: GenerationStore, epoch_id: str, generation_id: str
+    store: GenerationStore, epoch_id: str, generation_id: str, workspace_root: Path
 ) -> dict[str, MutationPoint]:
     """Enumerate one generation's mutation surface, keyed by mutation id.
 
@@ -71,7 +72,13 @@ def _enumerate_generation(
     The enumeration runs against the generation's snapshot root, so the
     :class:`MutationPoint.content` it yields is that generation's
     *current* (post-apply, for a derived generation) content.
+
+    ``workspace_root`` supplies the contract's declared syntax table
+    (MUTATION-SURFACE.md §2.5) — without it the browser would show a
+    narrower surface than the run enumerated whenever the workspace
+    declares a file type beyond the built-ins.
     """
+    activate_mutation_surface(workspace_root)
     if not store.has_generation(epoch_id, generation_id):
         return {}
     try:
@@ -171,7 +178,7 @@ def build_mutation_index(paths: WorkspacePaths, epoch_id: str) -> dict[str, Any]
     except (FileNotFoundError, OSError, ValueError):
         generation_ids = []
 
-    baseline = _enumerate_generation(store, epoch_id, _BASELINE_GENERATION)
+    baseline = _enumerate_generation(store, epoch_id, _BASELINE_GENERATION, paths.root)
     if not baseline:
         return {
             "epoch_id": epoch_id,
@@ -225,7 +232,7 @@ def build_mutation_detail(paths: WorkspacePaths, epoch_id: str, mutation_id: str
     back as an ``error`` field, never an exception.
     """
     store = _store(paths)
-    baseline = _enumerate_generation(store, epoch_id, _BASELINE_GENERATION)
+    baseline = _enumerate_generation(store, epoch_id, _BASELINE_GENERATION, paths.root)
     if not baseline:
         return {
             "epoch_id": epoch_id,
@@ -254,7 +261,9 @@ def build_mutation_detail(paths: WorkspacePaths, epoch_id: str, mutation_id: str
     for patch_info in touching:
         generation_id = patch_info["generation_id"]
         if generation_id not in enum_cache:
-            enum_cache[generation_id] = _enumerate_generation(store, epoch_id, generation_id)
+            enum_cache[generation_id] = _enumerate_generation(
+                store, epoch_id, generation_id, paths.root
+            )
         point = enum_cache[generation_id].get(mutation_id)
         if point is None:
             # The generation's patch set named this id but the materialised

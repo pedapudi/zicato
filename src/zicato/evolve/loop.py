@@ -504,6 +504,7 @@ async def evolve_n_rounds(
     # orch.block_while_paused, ...) are honoured — exactly the module-global
     # late binding the in-orchestrator loop relied on.
     from zicato import orchestrator as _orch  # noqa: PLC0415
+    from zicato import workspace_loader  # noqa: PLC0415
 
     def _set_stop_reason(reason: str) -> None:
         if stop_reason_out is not None:
@@ -538,6 +539,13 @@ async def evolve_n_rounds(
     # invocation (optional enrichment; the workers bind the full
     # epoch/generation/run context on their side).
     set_log_context(epoch_id=epoch_id)
+    # Install the contract's declared mutation-site syntax table for this
+    # process, before anything enumerates. Deliberately NOT best-effort: a
+    # workspace that declares a file type and then enumerates without it
+    # would present a narrower surface than its own contract, silently.
+    declared_suffixes = workspace_loader.activate_mutation_surface(workspace_root)
+    if declared_suffixes:
+        log.info("mutation surface: declared file types %s", ", ".join(declared_suffixes))
     # Contract-load preflight: surface the telemetry-dialect capability
     # warnings ONCE per invocation (relocated out of the per-entry reducer),
     # beside the epoch-open preflight machinery below. Best-effort.
