@@ -313,6 +313,24 @@ A view's `render` is re-run after every state change but MUST gate all
 DOM writes on a digest (`gatedSwap`) or use the `patch*` helpers so
 unchanged nodes are untouched. A view never sets `container.innerHTML`.
 
+### 4a. Figure width — intrinsic, capped
+
+A figure's width is its **intrinsic content width**, capped; full width is
+reserved for tables and timelines, whose rows genuinely use it. An SVG at
+`width:100%` scales its own coordinate system, so every mark, radius and
+especially every `<text>` magnifies with the pane — a 340×64 trend rendered
+across 1000px draws its captions at 3× the size CSS asked for. Two builders in
+`svg.js` encode the choice: `applyIntrinsic` pins the viewBox width in CSS
+pixels (scale exactly 1) with `max-width:100%` + `xMinYMid meet`, so a narrow
+pane shrinks the whole figure uniformly; `applyResponsive` opts into the
+aspect-locked full-width hero mode and is legitimate ONLY for a builder that
+also ships a matched `svg.dn-*-hero` max-width cap in `console.css`. A
+`preserveAspectRatio:'none'` figure stretched across a `1fr` grid lane is the
+same defect in its other shape — a horizontal-only scale that flattens slopes
+and smears dots into ellipses. Compact figures pack side by side into a shared
+wrapping grid band (the epoch view's Measurement band) rather than each taking
+a full-width panel; each card keeps its own collapsed `figCaption` "?".
+
 ## 5. The event bus — `core/bus.js`
 
 `bus.on(topic, fn)` / `bus.emit(topic, payload)`. Topics:

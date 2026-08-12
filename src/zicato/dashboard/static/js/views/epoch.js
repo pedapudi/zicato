@@ -11,7 +11,7 @@ import { state } from '../core/state.js';
 import * as D from '../data.js';
 import * as svg from '../svg.js';
 import { livenessFor } from '../livestatus.js';
-import { gatedSwap, section, empty, stat, renderMarkdown, densityTokens, chip, dataTable,
+import { gatedSwap, section, empty, stat, renderMarkdown, densityTokens, chip, dataTable, figCaption,
   loopVerdict, promotionRateLabel, costPerPromotionLabel, fmtDurationMs, noiseBandFor } from '../ui.js';
 import { structurePill, isNonGauntlet, structureLabel, normalizeStructure, racingModel, swissOverviewModel, elimModel, resolveNonGauntletSt, structureDigest } from './structure.js';
 import { roundsFromTimeline, roundModelDigest, waterfallSteps } from '../rounds.js';
@@ -54,9 +54,12 @@ export async function render(host, ctx, params) {
   // The EXPERIMENTS LEDGER (§3) rides the same fan-out: one row per experiment
   // (idea · sites · decision · Δ · reason · round), joined server-side. Null on
   // a backend that does not serve it → the section is simply omitted.
-  const [loopTraj, loopCost, judgeTrend, ledger] = await Promise.all([
+  // `calib` joins the fan-out for the MEASUREMENT BAND (below): the compact
+  // calibration mini sits beside the heatmap and the per-judge trend, all three
+  // being figures that measure the INSTRUMENT rather than the candidates.
+  const [loopTraj, loopCost, judgeTrend, ledger, calib] = await Promise.all([
     D.trajectory(epochId), D.tournamentCost(epochId), D.perJudgeTrend(epochId),
-    D.experimentsLedger(epochId),
+    D.experimentsLedger(epochId), D.calibrationTrend(epochId),
   ]);
 
   // THE EPOCH-SCOPED GENERATIONS FEED (server-scoped `/api/lineage?epoch=`),
@@ -254,6 +257,7 @@ export async function render(host, ctx, params) {
     loopTraj: trajectoryPanelDigest(loopTraj),
     loopCost: costPanelDigest(loopCost),
     judgeTrend: judgeTrendDigest(judgeTrend),
+    calib: calib ? svg.calibrationTrendDigest(calib) : null,
     ledger: ledgerDigest(ledger),
   });
 
@@ -450,20 +454,20 @@ export async function render(host, ctx, params) {
     });
     if (costPanel) nodes.push(section('Tournament cost · wall-clock per promotion', costPanel));
 
-    // ---- the PER-JUDGE TREND: one sparkline per judge across the spine ----
-    // Consumes the long-shipped /api/epoch/{id}/per-judge-trend read (its
-    // first view consumer). Absent / empty → the panel is simply omitted.
-    const judgePanel = buildJudgeTrendPanel(judgeTrend);
-    if (judgePanel) nodes.push(section('Per-judge trend · weighted loss across the spine', judgePanel));
-
-    // ---- COMPACT board entries × generations heatmap (stays here, fix #6) ----
+    // ---- THE MEASUREMENT BAND: heatmap | per-judge trend | calibration ----
+    // Three COMPACT figures that measure the instrument share one wrapping
+    // multi-column band instead of each owning a full-width panel for a ~300px
+    // figure. Each card keeps its own collapsed "?"-caption, so packing them
+    // together costs no explanation.
     const rows = [...entryIds].sort().map((id) => ({ id, label: id }));
     const cols = gens.map((g) => ({ id: g.id, label: g.id }));
-    // FIT-TO-WIDTH: the heatmap is a responsive SVG (width:100% + viewBox), so
-    // it scales to the pane — NO overflow-x wrapper. Density scales cell size.
     const hmt = densityTokens();
-    const hmCard = el('div', { class: 'dn-panel dn-figpane' });
+    const hmCard = el('div', { class: 'dn-measure-card dn-figpane' }, [
+      el('div', { class: 'dn-measure-head', text: 'Board entries × generations · drift loss' }),
+    ]);
     if (rows.length && cols.length) {
+      // The heatmap draws at its INTRINSIC cell size (viewBox + 'meet'): the
+      // band column bounds it, it never inflates to fill one.
       hmCard.appendChild(svg.heatmap({
         rows, cols, cellW: Math.round(hmt.heatCell * 1.6), cellH: hmt.heatCell,
         value: (r, c) => (lossLookup.has(`${r}|${c}`) ? lossLookup.get(`${r}|${c}`) : null),
@@ -471,11 +475,24 @@ export async function render(host, ctx, params) {
         // the entry id (the row) — NOT to an arbitrary candidate.
         onClick: (rId) => ctx.navigate('board', { epochId, entry: rId }),
       }));
-      hmCard.appendChild(el('p', { class: 'dn-faint', style: 'font-size:11px;margin:8px 0 0;', text: 'cell = drift loss for one board entry in one generation · denser ink = more drift · click a row → that board across every candidate · the small-multiples trellis lives in Boards' }));
+      hmCard.appendChild(figCaption([
+        'cell = drift loss for one board entry in one generation · denser ink = more drift',
+        'click a row → that board across every candidate',
+        'the small-multiples trellis lives in Boards',
+      ]));
     } else {
       hmCard.appendChild(empty('No per-entry loss profiles yet (the index may not be built).'));
     }
-    nodes.push(section('Board entries × generations · drift loss (heatmap)', hmCard));
+
+    // Consumes the long-shipped /api/epoch/{id}/per-judge-trend read (its
+    // first view consumer). Absent / empty → the card is simply omitted.
+    const judgePanel = buildJudgeTrendPanel(judgeTrend);
+    const calibPanel = buildCalibrationMini(calib, {
+      onGen: (gid) => ctx.navigate('candidate', { epochId, gen: gid }),
+    });
+    const band = el('div', { class: 'dn-measure-band' },
+      [hmCard, judgePanel, calibPanel].filter(Boolean));
+    nodes.push(section('Measurement · where the loss lands, which judge carries it, is the proposer calibrated', band));
 
     // ---- BOARD STATUS: the train/holdout split + ladder + generalization gap.
     // Self-contained component; a board entry routes to its cross-candidate
@@ -705,18 +722,57 @@ export function buildJudgeTrendPanel(trend) {
     rows.push({ name: String(j.judge_name), vals });
   }
   if (!rows.length) return null;
-  const card = el('div', { class: 'dn-panel dn-judgetrend-pane' });
+  const card = el('div', { class: 'dn-measure-card dn-judgetrend-pane' }, [
+    el('div', { class: 'dn-measure-head', text: 'Per-judge trend · weighted loss across the spine' }),
+  ]);
   for (const r of rows) {
     const finite = r.vals.filter((v) => svg.isNum(v));
     const last = finite.length ? finite[finite.length - 1] : null;
     card.appendChild(el('div', { class: 'dn-judgetrend-row', 'data-judge': r.name }, [
       el('span', { class: 'dn-judgetrend-name', title: r.name, text: r.name }),
-      svg.sparkline({ width: 320, height: 26, values: r.vals, markers: true, goodDirection: 'down' }),
+      // INTRINSIC width (the fleet-card treatment): the spark is 280px of real
+      // trend, not a lane stretched to the pane — a stretched 'none' scale
+      // flattens every slope and smears the end dot into an ellipse.
+      svg.sparkline({ width: 280, height: 26, intrinsic: true, values: r.vals, markers: true, goodDirection: 'down' }),
       el('span', { class: 'dn-judgetrend-last', text: svg.isNum(last) ? last.toFixed(3) : '—' }),
     ]));
   }
-  card.appendChild(el('p', { class: 'dn-faint', style: 'font-size:11px;margin:8px 0 0;',
-    text: 'each judge’s weighted loss across the promoted spine (lower = better) · a diverging judge names WHICH pressure the loop is trading away' }));
+  card.appendChild(figCaption([
+    'each judge’s weighted loss across the promoted spine (lower = better)',
+    'a diverging judge names WHICH pressure the loop is trading away',
+  ]));
+  return card;
+}
+
+// ---- the CALIBRATION MINI (pure builder — node-testable) --------------
+
+// The third card of the Measurement band: the proposer's prediction-accuracy
+// fraction across this epoch's lineage. Same read and figure the home view
+// mounts (/api/calibration-trend), at card scale. Null when the read is absent
+// (Rust supervisor) or carries no SCORED point, so an epoch with no falsifiable
+// claims yet shows a two-card band rather than an empty frame.
+export function buildCalibrationMini(calib, opts) {
+  if (!calib || typeof calib !== 'object') return null;
+  const points = Array.isArray(calib.points) ? calib.points : [];
+  if (!points.some((p) => p && svg.isNum(p.score_fraction))) return null;
+  const o = opts || {};
+  const card = el('div', { class: 'dn-measure-card dn-figpane dn-caltrend-pane' }, [
+    el('div', { class: 'dn-measure-head', text: 'Calibration · proposer prediction accuracy' }),
+  ]);
+  card.appendChild(svg.calibrationTrend({
+    points, rolling_mean: calib.rolling_mean, trend_sign: calib.trend_sign,
+    latest_fraction: calib.latest_fraction, n_scored: calib.n_scored,
+    onGen: typeof o.onGen === 'function' ? o.onGen : null,
+  }));
+  const tsign = svg.isNum(calib.trend_sign) ? calib.trend_sign : 0;
+  const trendWord = tsign > 0 ? 'improving' : tsign < 0 ? 'regressing' : 'flat / too few';
+  const rm = svg.isNum(calib.rolling_mean) ? Math.round(calib.rolling_mean * 100) + '%' : '—';
+  const lf = svg.isNum(calib.latest_fraction) ? Math.round(calib.latest_fraction * 100) + '%' : '—';
+  card.appendChild(figCaption([
+    'diagnostic — does not affect the gate · calibration ' + trendWord,
+    'epoch mean ' + rm + ' of claims landed · latest ' + lf + ' · higher = better-calibrated',
+    'click a generation → its candidate dossier',
+  ]));
   return card;
 }
 

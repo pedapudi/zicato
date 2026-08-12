@@ -148,7 +148,6 @@ export async function render(host, ctx) {
         // fraction and how many generations carried claims. Read, never
         // re-derived from `points` client-side.
         latest_fraction: calib.latest_fraction, n_scored: calib.n_scored,
-        responsive: true,
         onGen: (gid) => ctx.navigate && current != null && ctx.navigate('candidate', { epochId: current, gen: gid }),
       }));
       const tsign = svg.isNum(calib.trend_sign) ? calib.trend_sign : 0;

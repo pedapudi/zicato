@@ -1198,9 +1198,33 @@
     color: var(--v2-accent); text-decoration: underline; text-underline-offset: 2px; }
   .dn-looptraj-verdict { vertical-align: middle; }
 
-  /* the per-judge trend rows: name column + a sparkline lane + the last value. */
-  .dn-judgetrend-row { display: grid; grid-template-columns: minmax(120px, 18ch) 1fr 8ch;
-    gap: 12px; align-items: center; padding: 3px 0; }
+  /* ── THE MEASUREMENT BAND (epoch view) ──────────────────────────────
+   * Three compact figures — heatmap, per-judge trend, calibration mini —
+   * share one wrapping grid instead of each owning a full-width panel for a
+   * ~300px figure. The 460px floor is the WIDEST card's intrinsic content
+   * (judge name + its 280px spark + the value column), so it is what keeps
+   * every figure at its designed size; below it the spark scales down. Two
+   * columns on a laptop, three on a wide screen, one when narrow;
+   * `min(100%, …)` keeps the floor from overflowing a narrower pane. A track
+   * BOUNDS a figure, it never inflates one. */
+  .dn-measure-band { display: grid; gap: 14px; align-items: start;
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, 460px), 1fr)); }
+  .dn-measure-card { min-width: 0; border: 1px solid var(--v2-rule); border-radius: 8px;
+    padding: 12px 14px; background: var(--v2-paper); }
+  .dn-measure-card > svg, .dn-measure-card .dn-judgetrend-row > svg {
+    display: block; max-width: 100%; }
+  .dn-measure-head { font-family: var(--v2-mono); font-size: calc(10.5px * var(--dt-font-scale, 1));
+    letter-spacing: 0.04em; text-transform: uppercase; color: var(--v2-ink-soft);
+    margin-bottom: 9px; }
+
+  /* the per-judge trend rows: name column + a sparkline lane + the last value.
+   * The spark column is INTRINSIC (max-content, floor 0) — it holds the
+   * figure's own 280px and shrinks it uniformly in a narrower card, rather
+   * than stretching a `preserveAspectRatio:none` scale across a `1fr` lane
+   * (which flattened every slope and smeared the end dot). */
+  .dn-judgetrend-row { display: grid;
+    grid-template-columns: minmax(0, 14ch) minmax(0, max-content) 7ch;
+    gap: 10px; align-items: center; padding: 3px 0; }
   .dn-judgetrend-name { font-family: var(--v2-mono); font-size: calc(11px * var(--dt-font-scale, 1));
     color: var(--v2-ink-soft); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .dn-judgetrend-last { font-family: var(--v2-mono); font-size: calc(11px * var(--dt-font-scale, 1));
@@ -1457,7 +1481,15 @@
   /* === calibration trend (DIAGNOSTIC) — proposer accuracy over the lineage === */
   /* reuses the dn-spark band/line/dot grammar; the 0.5 midline + the rolling-
      mean dashed reference are the only additions. NEVER feeds the gate. */
+  /* The home view's calibration panel wraps a 340px figure, so the PANEL is
+   * capped too — a full-width frame around a card-scale figure is the same
+   * wrong-allocation the epoch heatmap had. Wide enough for the diagnostic
+   * caption to read in two lines. */
   .dn-caltrend-pane { padding: 10px 12px; }
+  .dn-panel.dn-caltrend-pane { max-width: 560px; }
+  /* inside the Measurement band the card owns the padding (this rule follows
+   * .dn-measure-card in source order, so it must restate it). */
+  .dn-measure-card.dn-caltrend-pane { padding: 12px 14px; }
   .dn-caltrend-mid { stroke: var(--v2-rule); stroke-width: 1; stroke-dasharray: 1 3; vector-effect: non-scaling-stroke; }
   .dn-caltrend-mean { stroke: var(--v2-ink-soft); stroke-width: 1; stroke-dasharray: 4 3; vector-effect: non-scaling-stroke; opacity: 0.8; }
   .dn-caltrend-dot { fill: var(--v2-ink); }
