@@ -1,0 +1,38 @@
+Instrument · refl-2026-07-04
+2026-07-04_e2 · adjudicated · executed · 2026-07-04T11:30:00Z
+
+Reflection
+noise floor             0.0044
+decision flip P         0.080
+fidelity tiers          adjudicated, reconstructed
+
+Pillars
+discrimination            attend        one entry never discriminates
+reliability               sound         kappa 0.81 across judges
+
+Findings
+* warning     plan-long-1 never discriminates
+  every candidate passes this entry; it cannot separate the field.
+  evidence · TP step 3 · TP step 2
+! critical    tool_discipline fires falsely on recovery turns
+  4 of 9 adjudicated firings were false positives on recovery turns.
+  evidence · FP turn 4
+
+Recommendation queue
+retire_entry(entry_id)                zicato reflect apply refl-2026-07-04 f-dea
+tighten_judge(judge_name, scope)      zicato reflect apply refl-2026-07-04 f-jud
+press a to run the apply command — it shells out; nothing is applied in-process
+
+Judge audit
+judge            P     R     kappa  disagree  TP/FP/FN/TN  exercised
+plan_coherence   0.92  0.86   0.81      0.09    12/1/2/20    yes
+tool_discipline  0.56  0.83   0.64      0.22    5/4/1/25     yes
+
+Practices
+sound 1   attend 1   unsound 0   unmeasured 0
+holdout is never trained on         sound
+the A/A noise floor is measured     attend        measured 3 rounds ago
+
+Reflections
+refl-2026-07-04               adjudicated   executed    2 findings
+refl-2026-07-01               zero-llm      executed    0 findings

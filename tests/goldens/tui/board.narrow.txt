@@ -1,0 +1,39 @@
+Board · 2026-07-04_e2
+2 entries · 1 train / 1 holdout
+
+Split
+split configured        yes
+split enabled           yes
+holdout fraction        0.25
+holdout tags            holdout
+train / holdout         1 / 1
+latest train scalar     0.039
+latest holdout scalar   0.047
+ladder budget           6
+holdout budget          4 spent / 10
+
+Rotation
+rotation enabled        yes
+generations / contract  6
+generations evaluated   5
+refresh recommended     yes
+rotate the holdout before the next contract roll
+
+Power
+MDE                     0.0121   relaxed 0.0098
+noise floor             0.0044
+replicates              3
+
+Entries
+entry        slice    outcomes  flip rate  weight
+plan-long-1  train    ██             0.00    1.00
+plan-long-2  holdout  ░·             0.33    1.50
+outcomes: ' ' none passed → '█' all passed; '·' never run
+
+Flagged
+dead (never discriminates)
+  plan-long-1                     reason every candidate passes
+noisiest
+  plan-long-2                     flip_rate 0.330
+redundant clusters
+  plan-long-1

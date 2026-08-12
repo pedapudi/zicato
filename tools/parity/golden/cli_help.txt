@@ -77,6 +77,8 @@ Advanced commands — off the happy path (inspection & debugging):
                         every epoch.
   tournament            Advanced: run a tournament between two generations in
                         isolation.
+  tui                   Advanced: review a workspace in the terminal (the
+                        dashboard's peer surface).
 
   Happy path (this is the whole tool for most operators):
     zicato init                       # once: scaffold ./.zicato/
@@ -1107,4 +1109,32 @@ Options:
                         Defaults to the contract's resolved structure value
                         (what `zicato evolve` uses) — pass this only to force a
                         different count for this one invocation.
+  --help                Show this message and exit.
+
+===== zicato tui --help =====
+Usage: zicato tui [OPTIONS]
+
+  Review a zicato workspace from the terminal.
+
+  The browser dashboard's peer surface: the same served payloads, rendered for a
+  terminal. Six lenses -- Home, Standings, Candidate, Board, Instrument, Health
+  -- with 1-6 to jump, j/k to move, enter to drill, b to go back, / to filter,
+  and ? for help.
+
+  Applying a recommendation shells out to the same CLI command an operator would
+  type; the console never mutates the workspace itself.
+
+Options:
+  --workspace PATH      Path to the zicato workspace root to review.  [default:
+                        .zicato]
+  --url TEXT            URL of a running dashboard service to attach to (e.g.
+                        http://127.0.0.1:7892). Unset: attach to this
+                        workspace's service if one is running, else start one.
+  --view TEXT           Open a lens directly. Takes the SAME path the browser's
+                        hash router takes — `/e/<epoch>/gen/<gen>`, `/logs` — or
+                        a shorthand like `candidate/<gen>` or `instrument`.
+  --port INTEGER RANGE  Preferred port when starting a dashboard service (it
+                        walks +1 if taken).  [default: 7892; 1<=x<=65535]
+  --ascii               Force the ASCII, weight-only rendering (also on under
+                        NO_COLOR / a non-UTF-8 locale).
   --help                Show this message and exit.

@@ -1,0 +1,43 @@
+Candidate · v4
+from v3 · 2026-07-04T09:12:00Z
+
+Candidate
+decision                promoted
+rating                  1548 ±30
+hypothesis              fewer, larger planner edits reduce recovery drift
+patched files           1
+
+Gate
+decision                promoted   scalar improved past the promote margin with
+Δscalar                 -0.0121      ▌     promote margin 0.0050
+champion scalar         0.053
+challenger scalar       0.041
+Δ pass rate             +0.050
+primary driver          plan_coherence
+champion θ                -0.120    ╟───┼──╣           ±0.090
+challenger θ               0.310             ╟───┼──╣  ±0.080
+P(challenger stronger)  0.940 · needs ≥ 0.900
+  no namespace regressed              pass          0 of 4 namespaces regressed
+→ scalar beat the promote margin      pass          Δ -0.0121, needs ≤ -0.0050
+  holdout did not veto                pass          holdout Δ -0.0074
+rules short-circuit in order; → marks the one that decided
+
+Facets
+facet     scalar  mean   scored
+planning   0.039  0.740     1/1
+recovery   0.046  0.680     1/1
+overall    0.041  0.710     2/2
+
+Judges
+judge            weighted  raw     weight  runs
+plan_coherence     0.0244  0.0244    1.00     2
+tool_discipline    0.0168  0.0336    0.50     2
+
+Board
+entry        drift loss  pass  runtime  rung
+plan-long-1      0.0388    ✓       41.2s  —
+plan-long-2      0.0461    ✕          2m  —
+board mean score 0.710
+
+Lineage
+v0 → v3 → v4

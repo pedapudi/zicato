@@ -1,0 +1,23 @@
+2026-07-04_e2
+cut planner drift on the long-horizon board · contract 9f2c41ab77de
+
+Loop
+verdict                 plateaued
+loss trend              ⣷⣦⡀  5 settled · lower is better
+promotions              2/5 · 40%
+cost per promotion      45.1m
+recent movement         0.0121
+noise floor (A/A)       ±0.0044 · 6 runs
+plateau measurable      yes
+
+Champion
+v4  promoted
+rating                  1548 ±30
+Δscalar (spine)         -0.0121
+Δscalar (gross)         -0.0083
+board entries           2
+
+Live round
+propose ▸ screen ▸ tournament ▸ gate
+no round in flight
+last decision           promoted

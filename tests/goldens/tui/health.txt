@@ -1,0 +1,18 @@
+Health
+checked 2026-07-04T11:31:00Z
+
+Loop health · 2026-07-04_e2
+warning     board_discrimination              1 of 2 board entries never discriminates be…
+
+Service
+service                 ok
+workspace               /tmp/ws/.zicato
+read only               yes
+loop phase              idle
+generation              v5
+paused                  no
+
+Logs
+info       orchestrator          round 3 promoted v4 over v3
+warning    tournament            run r-8842 exceeded its wall-clock budget
+invocation inv-2026-07-04-01 · tail of 2 · `zicato logs --follow` to stream

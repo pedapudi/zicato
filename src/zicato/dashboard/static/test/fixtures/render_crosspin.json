@@ -1,0 +1,122 @@
+{
+  "_readme": [
+    "The CROSS-PIN. Every case here is asserted twice: against the browser's own",
+    "mapping in ui.js / svg.js / structure.js / instrument.js (render_crosspin.test.mjs)",
+    "and against the Python port in zicato/tui/present.py (tests/test_tui_crosspin.py).",
+    "",
+    "The two surfaces render the same served model, so they must agree about what",
+    "'stalled' means, when a rating is provisional, and whether an absent outcome is",
+    "a rejection. Changing either implementation without changing the other fails",
+    "here, which is the whole point: this file is the contract, not documentation."
+  ],
+  "loop_verdict": [
+    { "traj": { "verdict": "no_signal" }, "expect": { "word": "no detectable signal (below noise floor)", "cls": "nosignal" } },
+    { "traj": { "verdict": "stalled" }, "expect": { "word": "stalled (no promotions)", "cls": "stalled" } },
+    { "traj": { "verdict": "plateaued" }, "expect": { "word": "plateaued", "cls": "plateau" } },
+    { "traj": { "verdict": "improving" }, "expect": null },
+    { "traj": { "verdict": "warming_up" }, "expect": null },
+    { "traj": {}, "expect": null },
+    { "traj": null, "expect": null }
+  ],
+  "rating_model": [
+    { "src": { "elo": 1512.4, "elo_se": 34.2, "elo_games": 7 }, "expect": { "elo": 1512, "se": 34, "games": 7, "provisional": false, "text": "1512 ±34" } },
+    { "src": { "elo": 1488.0, "elo_se": 77.0, "elo_games": 2 }, "expect": { "elo": 1488, "se": 77, "games": 2, "provisional": true, "text": "1488 ±77" } },
+    { "src": { "elo": 1500, "elo_se": null, "elo_games": 5 }, "expect": { "elo": 1500, "se": null, "games": 5, "provisional": false, "text": "1500" } },
+    { "src": { "elo": 1500, "elo_games": 4 }, "expect": { "elo": 1500, "se": null, "games": 4, "provisional": true, "text": "1500" } },
+    { "src": { "elo": null }, "expect": null },
+    { "src": {}, "expect": null },
+    { "src": null, "expect": null }
+  ],
+  "decision_for": [
+    { "spec": { "parent": null, "promoted": null }, "expect": "baseline" },
+    { "spec": { "parent": "v0", "promoted": true }, "expect": "promoted" },
+    { "spec": { "parent": "v0", "promoted": false }, "expect": "rejected" },
+    { "spec": { "parent": "v0", "promoted": null }, "expect": "pending" },
+    { "spec": { "parent": "v0", "promoted": null, "exp": { "decision": "promoted" } }, "expect": "promoted" },
+    { "spec": { "parent": "v0", "promoted": null, "gate": { "decision": "deferred" } }, "expect": "deferred" },
+    { "spec": { "parent": "v0", "promoted": null, "exp": { "decision": "" } }, "expect": "pending" },
+    { "spec": { "parent": "v0", "promoted": null, "baseline": true }, "expect": "baseline" }
+  ],
+  "verdict_label": [
+    { "decision": "baseline", "expect": "seed (v0)" },
+    { "decision": "pending", "expect": "racing…" },
+    { "decision": "promoted", "expect": "promoted" },
+    { "decision": "rejected", "expect": "rejected" },
+    { "decision": null, "expect": "seed (v0)" }
+  ],
+  "fmt_duration_ms": [
+    { "ms": 0, "expect": "0ms" },
+    { "ms": 412, "expect": "412ms" },
+    { "ms": 999, "expect": "999ms" },
+    { "ms": 1000, "expect": "1s" },
+    { "ms": 41200, "expect": "41.2s" },
+    { "ms": 89999, "expect": "90s" },
+    { "ms": 120000, "expect": "2m" },
+    { "ms": 2706000, "expect": "45.1m" },
+    { "ms": 5412000, "expect": "1.5h" },
+    { "ms": -1, "expect": "—" },
+    { "ms": null, "expect": "—" }
+  ],
+  "promotion_rate_label": [
+    { "traj": { "promotion_rate": 0.4, "promoted_count": 2, "challenger_count": 5 }, "expect": "2/5 · 40%" },
+    { "traj": { "promotion_rate": 0.0, "promoted_count": 0, "challenger_count": 3 }, "expect": "0/3 · 0%" },
+    { "traj": { "promotion_rate": 0.333, "promoted_count": 1, "challenger_count": 3 }, "expect": "1/3 · 33%" },
+    { "traj": { "promotion_rate": null, "challenger_count": 3 }, "expect": null },
+    { "traj": { "promotion_rate": 0.5, "challenger_count": 0 }, "expect": null },
+    { "traj": null, "expect": null }
+  ],
+  "cost_per_promotion_label": [
+    { "cost": { "cost_per_promotion_ms": 2706000 }, "expect": "45.1m" },
+    { "cost": { "cost_per_promotion_ms": null }, "expect": null },
+    { "cost": {}, "expect": null },
+    { "cost": null, "expect": null }
+  ],
+  "score_fmt": [
+    { "value": 0.7123, "digits": 2, "expect": "0.71" },
+    { "value": 0, "digits": 2, "expect": "0.00" },
+    { "value": null, "digits": 2, "expect": "—" },
+    { "value": 0.0412, "digits": 3, "expect": "0.041" }
+  ],
+  "fmt_signed": [
+    { "value": 0.0121, "digits": 4, "expect": "+0.0121" },
+    { "value": -0.0121, "digits": 4, "expect": "-0.0121" },
+    { "value": 0, "digits": 3, "expect": "0.000" },
+    { "value": null, "digits": 3, "expect": "—" }
+  ],
+  "severity_tone": [
+    { "severity": "critical", "expect": "bad" },
+    { "severity": "warning", "expect": "warn" },
+    { "severity": "info", "expect": "faint" },
+    { "severity": null, "expect": "faint" }
+  ],
+  "practice_tone": [
+    { "verdict": "sound", "expect": "good" },
+    { "verdict": "unsound", "expect": "bad" },
+    { "verdict": "attend", "expect": "warn" },
+    { "verdict": "unmeasured", "expect": "faint" },
+    { "verdict": null, "expect": "faint" }
+  ],
+  "normalize_structure": [
+    {
+      "st": { "structure": "swiss", "phase": "tournament", "rounds": [{ "stage_index": 0, "matches": [] }] },
+      "live": true,
+      "expect": { "structure": "swiss", "live": true, "source": "live", "phase": "tournament", "round_indexes": [0] }
+    },
+    {
+      "st": { "structure": "swiss", "phase": "complete", "rounds": [{ "round_index": 1, "matches": [] }] },
+      "live": true,
+      "expect": { "structure": "swiss", "live": false, "source": "index", "phase": "complete", "round_indexes": [1] }
+    },
+    {
+      "st": { "structure": "racing", "phase": "idle", "rounds": [] },
+      "live": true,
+      "expect": { "structure": "racing", "live": false, "source": "index", "phase": "idle", "round_indexes": [] }
+    },
+    {
+      "st": { "phase": "tournament", "rounds": [] },
+      "live": false,
+      "expect": { "structure": "gauntlet", "live": false, "source": "index", "phase": "tournament", "round_indexes": [] }
+    },
+    { "st": null, "live": true, "expect": null }
+  ]
+}
