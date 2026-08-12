@@ -103,8 +103,14 @@ def build_per_judge_trend(paths: WorkspacePaths, epoch_id: str) -> dict[str, Any
     # Resolve the spine — the promoted lineage when available, else
     # every generation in directory order. The L1 heatmap renders only
     # promoted-spine generations so the columns stay narrow.
-    lineage_view = build_lineage_view(paths, include_ratings=False)
-    epoch_gens = [g for g in lineage_view.get("generations", []) if g.get("epoch_id") == epoch_id]
+    #
+    # SCOPED at the walk. This used to walk every epoch and then filter
+    # down to one, and the walk reads a JSON file per generation
+    # directory — so a 60-epoch workspace read all of them to render one
+    # epoch's matrix. ``epoch_id`` now does that filtering inside the
+    # walk; an unknown id still yields the empty feed it always did.
+    lineage_view = build_lineage_view(paths, epoch_id, include_ratings=False)
+    epoch_gens = lineage_view.get("generations", [])
     spine = _champion_lineage(epoch_gens)
     if not spine:
         spine = [g["generation_id"] for g in epoch_gens]

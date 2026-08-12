@@ -106,7 +106,10 @@ def build_round_timeline(paths: WorkspacePaths, epoch_id: str | None = None) -> 
 
     lineage = build_lineage_view(paths, epoch_id, include_ratings=False)
     gens: list[dict[str, Any]] = [g for g in lineage.get("generations", []) if isinstance(g, dict)]
-    traj = build_score_trajectory(paths, epoch_id)
+    # Hand over the feed just walked instead of making the trajectory walk
+    # the same epoch a second time — both are scoped to ``epoch_id``, and
+    # the trajectory's own epoch filter is a no-op on an already-scoped feed.
+    traj = build_score_trajectory(paths, epoch_id, lineage=lineage)
     scalar_by: dict[str, float] = {}
     for p in traj.get("points", []) or []:
         if isinstance(p, dict) and _is_num(p.get("scalar")):

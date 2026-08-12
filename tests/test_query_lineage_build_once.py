@@ -11,10 +11,21 @@ independent builds were happening:
 2. ``build_score_trajectory`` walked EVERY epoch and then filtered down to one,
    even though ``build_lineage_view`` takes an ``epoch_id`` that scopes the walk.
 
-Both are pure internal plumbing: the payloads must not move. These tests pin the
-call COUNT (the regression that reopens the cost) and the payload equivalence
-(the regression that would corrupt the curve). The reader-parity golden covers
-the byte-level claim across a multi-epoch fixture; these cover the mechanism.
+Two more readers had the same shape and are fixed the same way:
+
+3. ``build_per_judge_trend`` walked EVERY epoch and filtered to one, exactly
+   like (2). It now passes its ``epoch_id`` down.
+4. ``build_round_timeline`` walked one epoch and then made
+   ``build_score_trajectory`` walk that SAME epoch again. It now hands its
+   feed over — a feed already scoped to the requested epoch is a valid
+   hand-off, because the trajectory's epoch filter is a no-op on it.
+
+All four are pure internal plumbing: the payloads must not move. These tests pin
+the call COUNT (the regression that reopens the cost) and the payload
+equivalence (the regression that would corrupt the curve). The reader-parity
+golden covers the byte-level claim across a multi-epoch fixture for the
+environment, the trajectory and the per-judge trend; the round timeline is not
+in that golden, so its equivalence is pinned here directly.
 """
 
 from __future__ import annotations
@@ -26,8 +37,9 @@ from pathlib import Path
 import pytest
 
 from zicato.query import WorkspacePaths, build_score_trajectory
-from zicato.query.judge_view import build_environment
+from zicato.query.judge_view import build_environment, build_per_judge_trend
 from zicato.query.lineage_view import build_lineage_view
+from zicato.query.rounds_view import build_round_timeline
 
 EPOCHS = ("e0", "e1", "e2")
 GENS = ("v0", "v1", "v2", "v3")
@@ -98,7 +110,7 @@ def workspace(tmp_path: Path) -> Path:
 def _count_walks(monkeypatch) -> list[tuple[str | None, bool]]:
     """Record every build_lineage_view call as (epoch_id, include_ratings).
 
-    Both consumers import the symbol directly, so both module references have
+    Every consumer imports the symbol directly, so each module reference has
     to be patched — patching lineage_view alone would count nothing.
     """
     calls: list[tuple[str | None, bool]] = []
@@ -108,8 +120,8 @@ def _count_walks(monkeypatch) -> list[tuple[str | None, bool]]:
         calls.append((epoch_id, include_ratings))
         return real(paths, epoch_id, include_ratings=include_ratings)
 
-    monkeypatch.setattr("zicato.query.judge_view.build_lineage_view", spy)
-    monkeypatch.setattr("zicato.query.gate_view.build_lineage_view", spy)
+    for module in ("judge_view", "gate_view", "rounds_view"):
+        monkeypatch.setattr(f"zicato.query.{module}.build_lineage_view", spy)
     return calls
 
 
@@ -181,3 +193,72 @@ def test_no_current_epoch_still_walks_globally(workspace: Path, monkeypatch) -> 
     assert calls == [(None, False)], f"expected ONE global walk, got {calls}"
     # every epoch's generations are present
     assert len(result["points"]) == len(EPOCHS) * len(GENS)
+
+
+# ---------------------------------------------------------------------------
+# The same defect, in the two readers the first pass did not reach
+# ---------------------------------------------------------------------------
+
+
+def test_per_judge_trend_walks_only_its_own_epoch(workspace: Path, monkeypatch) -> None:
+    """Fix 3: the per-judge matrix scopes its walk instead of reading everything.
+
+    An unscoped walk here means every epoch's generation directories are read
+    to render ONE epoch's heatmap.
+    """
+    calls = _count_walks(monkeypatch)
+    build_per_judge_trend(WorkspacePaths(workspace), EPOCHS[1])
+    assert calls == [(EPOCHS[1], False)], f"expected one epoch-scoped walk, got {calls}"
+
+
+def test_per_judge_trend_matches_the_old_global_walk(workspace: Path, monkeypatch) -> None:
+    """Fix 3's equivalence claim, against a reconstruction of the old reader.
+
+    The pre-change reader walked every epoch and filtered the feed down to
+    one afterwards; the scoped walk has to be indistinguishable from that,
+    which is also what makes dropping the now-redundant filter safe.
+    """
+    paths = WorkspacePaths(workspace)
+    real = build_lineage_view
+
+    def global_walk_then_filter(p, epoch_id=None, *, include_ratings=True):
+        feed = real(p, None, include_ratings=include_ratings)
+        return {
+            "generations": [
+                g for g in feed["generations"] if epoch_id is None or g["epoch_id"] == epoch_id
+            ]
+        }
+
+    monkeypatch.setattr("zicato.query.judge_view.build_lineage_view", global_walk_then_filter)
+    old = {eid: build_per_judge_trend(paths, eid) for eid in EPOCHS}
+    monkeypatch.undo()
+    for eid in EPOCHS:
+        assert (
+            build_per_judge_trend(paths, eid) == old[eid]
+        ), f"the scoped walk diverged from the global-walk-then-filter for {eid}"
+
+
+def test_round_timeline_walks_the_lineage_once(workspace: Path, monkeypatch) -> None:
+    """Fix 4: the round timeline and its trajectory share ONE walk of the epoch.
+
+    Both were scoped to the same epoch already, so the second walk was pure
+    duplicate cost — this pins the hand-off that removed it.
+    """
+    calls = _count_walks(monkeypatch)
+    build_round_timeline(WorkspacePaths(workspace), EPOCHS[0])
+    assert calls == [(EPOCHS[0], False)], f"expected ONE scoped walk, got {len(calls)}: {calls}"
+
+
+def test_a_same_epoch_scoped_feed_is_a_valid_hand_off(workspace: Path) -> None:
+    """What fix 4 rests on: an already-scoped feed yields the same trajectory.
+
+    The trajectory keeps its epoch filter because a supplied feed MAY be
+    workspace-global; on a feed already scoped to the epoch being asked for,
+    that filter is a no-op and the curve is identical.
+    """
+    paths = WorkspacePaths(workspace)
+    for eid in EPOCHS:
+        scoped_feed = build_lineage_view(paths, eid, include_ratings=False)
+        assert build_score_trajectory(paths, eid, lineage=scoped_feed) == build_score_trajectory(
+            paths, eid
+        ), f"a same-epoch scoped feed changed the trajectory for {eid}"
