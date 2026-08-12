@@ -109,8 +109,14 @@ AGENT_CONFIG_DIR_ENV = "PI_CODING_AGENT_DIR"
 #: it can name a bare binary (``pi``), an absolute path, or an interpreter
 #: plus module. ``--mode rpc --no-session`` is appended by the driver.
 #:
-#: A first-class ``runtime.pi_bin`` config knob is the intended successor
-#: once one lands; nothing on main provides it today.
+#: A ``runtime.pi_bin`` knob now exists (#173) but belongs to a DIFFERENT
+#: surface: :func:`zicato.proposer.pi_agent.resolve_pi_bin` reads it off
+#: :class:`~zicato.proposer.external.ExternalProposerConfig`, which
+#: configures the PROPOSER. This adapter configures the TARGET, and #170
+#: keeps those two roles apart on purpose — the same binary in two roles
+#: is the safety argument, so one knob naming both would erase the
+#: distinction it rests on. The env var stays until a target-side knob
+#: exists. See README.md for the pinned-install question that raises.
 AGENT_BIN_ENV = "ZICATO_TARGET_4_AGENT_BIN"
 
 #: Default when :data:`AGENT_BIN_ENV` is unset.
