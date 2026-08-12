@@ -1183,6 +1183,12 @@ function overfittingSection(d) {
       body: 'The Ladder/Thresholdout governor over the holdout query: a new holdout signal is released only when the train-measured improvement clears the threshold, and each query charges a finite per-epoch budget. What keeps a reused holdout valid under an adaptive proposer.',
     }, checkInput(ladder.enabled !== false, 'Ladder governor enabled', 'Ladder/Thresholdout holdout governor',
       (on) => runOp('set_holdout', { ladder: { enabled: on } }))),
+    controlRow('Ladder release threshold', {
+      title: 'ladder.threshold', def: 'auto (derive from promote_margin)',
+      body: 'The TRAIN-improvement bar the Ladder release rule applies before a holdout signal is released at all. Auto derives it from promote_margin so the Ladder reuses the gate\'s own noise threshold; pin a float to widen the band independently. Distinct from holdout_margin, which bounds the confirmation AFTER release — raising this one WITHHOLDS the query instead, leaving a train promote unconfirmed. The op reads null in the ladder mapping as the real "auto" value, so a NEGATIVE value here posts that reset; -1 is the shown auto state.',
+    }, numInput(ladder.threshold != null ? ladder.threshold : -1,
+      { min: '-1', step: '0.01', 'aria-label': 'Ladder release threshold' },
+      (n) => runOp('set_holdout', { ladder: { threshold: n < 0 ? null : n } }))),
     controlRow('Ladder query budget', {
       title: 'ladder.budget', def: '16',
       body: 'Per-epoch holdout-query budget. Each round that consults the holdout charges one; exhausted, no further holdout signals are released (the loop degrades to champion-stands). The finite budget is what keeps a reused holdout statistically valid under an adaptive proposer.',
@@ -1610,6 +1616,18 @@ function gateSection(d) {
       title: 'Promote margin', def: '0.0',
       body: 'The minimum scalar improvement (champion loss − challenger loss) a challenger must clear to promote. A larger margin demands a more decisive win and resists noise; 0 promotes on any improvement. Must clear the measured A/A noise floor when the evidence gate is off — run the preflight (Review) to measure it.',
     }, margin),
+    controlRow('Holdout margin', {
+      title: 'holdout_margin', def: 'auto (reuse promote_margin)',
+      body: 'The scalar tolerance the HOLDOUT confirmation applies, separate from the train-side promote margin. The holdout is the smaller slice by construction, so its scalar moves in coarser 1/N steps and needs the WIDER bound: roughly promote_margin x N_train / N_holdout (about twice promote_margin on the default 0.3 split). ASYMMETRY: the op reserves None for "leave unchanged", so a NEGATIVE value here resets the field to auto (reuse promote_margin); -1 is the shown auto state.',
+    }, numInput(sc.holdout_margin != null ? sc.holdout_margin : -1,
+      { min: '-1', step: '0.01', 'aria-label': 'Holdout margin' },
+      (n) => runOp('set_gate', { holdout_margin: n }))),
+    controlRow('Holdout entry regression budget', {
+      title: 'holdout_entry_regression_budget', def: '0 (zero tolerance)',
+      body: 'How many holdout entries may regress before the confirmation rejects. 0 is the historical zero-tolerance rule; on a small noisy holdout ONE entry flipping pass to fail rejects at every margin, because that rejection never came from the scalar bound — this is the knob that rule never had. Holdout-only: the train side keeps zero tolerance.',
+    }, numInput(sc.holdout_entry_regression_budget != null ? sc.holdout_entry_regression_budget : 0,
+      { min: '0', step: '1', 'aria-label': 'Holdout entry regression budget' },
+      (n) => runOp('set_gate', { holdout_entry_regression_budget: n }), { int: true })),
     controlRow('Pass-rate monotonicity', {
       title: 'Pass-rate monotonicity', def: 'off',
       body: 'When on, a challenger may not regress the board pass-rate even if its weighted loss improves — every predicate the champion passed must still pass. Guards against trading a hard-pass away for an average-loss gain.',
