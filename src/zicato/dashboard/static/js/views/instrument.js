@@ -46,6 +46,21 @@ function num(v, d) { return isNum(v) ? fmt(v, isNum(d) ? d : 3) : '—'; }
 function pct(v) { return isNum(v) ? Math.round(v * 100) + '%' : '—'; }
 function yn(v) { return v === true ? 'yes' : v === false ? 'no' : '—'; }
 
+// A proposer-scorecard rate, rendered so the two honesty rules survive the
+// trip to the screen: a null NEVER renders as 0 (the server sends null when
+// nothing was observed, and '—' is the only truthful glyph for it), and the
+// sample count always rides alongside. A provisional rate carries '?'.
+function rateCell(r) {
+  if (!r) return '—';
+  const n = isNum(r.n) ? r.n : 0;
+  if (!isNum(r.value)) return n ? `— (0/${n})` : '— (n=0)';
+  return `${Math.round(r.value * 100)}%${r.provisional ? '?' : ''} (${r.k}/${n})`;
+}
+// The digest key for a rate — the same three server numbers, no derivation.
+function rateKey(r) {
+  return r ? [r.k, r.n, isNum(r.value) ? r.value.toFixed(4) : null, !!r.provisional] : null;
+}
+
 // The console's quiet-caption treatment — the ONE home for metadata (fidelity,
 // model, prompt version) and figure legends. Never a heavier frame.
 function caption(text) { return el('p', { class: 'dn-faint dn-instr-cap', text: String(text) }); }
@@ -112,8 +127,15 @@ export async function render(host, ctx, params) {
         ]);
         return { mode: 'bill', epochId, reflectionId, summary, scorecards, practices };
       }
-      const list = await D.reflections(epochId);
-      return { mode: 'landing', epochId, list };
+      // The landing carries the PROPOSER panel too: the lens audits the two
+      // instruments the loop runs on — the evaluation contract (board
+      // reflection) and the thing that writes proposals against it.
+      const [list, prop, recs] = await Promise.all([
+        D.reflections(epochId),
+        D.proposerScorecard(epochId),
+        D.proposerRecommendations(),
+      ]);
+      return { mode: 'landing', epochId, list, prop, recs };
     },
     digest: (d) => digestFor(d),
     build: (d) => buildFor(d, ctx),
@@ -131,7 +153,18 @@ function digestFor(d) {
       r.reflection_id, r.created_at, r.mode, !!r.executed,
       r.n_findings, isNum(r.decision_flip_p) ? r.decision_flip_p.toFixed(4) : null,
     ]);
-    return JSON.stringify({ m: 'landing', e: d.epochId, items });
+    // The proposer legs fold their own numbers verbatim (server-authored,
+    // never derived here) so a heartbeat that changes nothing re-serves an
+    // identical digest and gatedSwap writes zero DOM.
+    const trend = (((d.prop || {}).epochs) || []).map((c) => [
+      c.epoch_id, c.proposer_agent_id, c.rounds, c.proposals,
+      rateKey(c.promote_rate), rateKey(c.validation_failure_rate),
+      rateKey(c.screen_veto_rate), (c.margins || {}).achieved_median,
+    ]);
+    const pending = (((d.recs || {}).pending) || []).map((r) => [
+      r.finding_id, r.severity, r.title, r.remedy_kind, r.remedy_path, r.remedy_sha256,
+    ]);
+    return JSON.stringify({ m: 'landing', e: d.epochId, items, trend, pending });
   }
   if (d.mode === 'bill') {
     const s = d.summary || {};
@@ -196,6 +229,9 @@ function buildLanding(d, ctx) {
         'Run one with ', el('code', { class: 'dn-instr-apply', text: 'zicato reflect run' }), ' (off the happy path — diagnose-and-recommend only; it never edits the contract).',
       ]),
     ])));
+    // The proposer panel is independent of board reflection — an epoch with no
+    // reflections still has a scorecard, so it renders either way.
+    nodes.push(...buildProposerPanel(d));
     return nodes;
   }
 
@@ -217,6 +253,101 @@ function buildLanding(d, ctx) {
     })),
   });
   nodes.push(section('Reflections', el('div', { class: 'dn-panel dn-table-scroll' }, [table])));
+  nodes.push(...buildProposerPanel(d));
+  return nodes;
+}
+
+// ====================================================================
+// PROPOSER PANEL — the scorecard trend + the pending recommendations.
+//
+// The lens's second instrument: board reflection audits the evaluation
+// contract, this audits the thing that writes proposals against it. Same
+// server-authority rule as the rest of the lens — every rate, band, and count
+// is the reader's (query/proposer_view.py); nothing is derived here. Both
+// legs null-degrade: a workspace with no round logs shows the honest empty,
+// never a table of zeros.
+// ====================================================================
+function buildProposerPanel(d) {
+  const nodes = [];
+  const trend = ((d.prop || {}).epochs) || [];
+  const pending = ((d.recs || {}).pending) || [];
+
+  if (!trend.length) {
+    nodes.push(section('Proposer scorecard', el('div', { class: 'dn-panel' }, [
+      empty('No proposer scorecard yet — no epoch has run a round.'),
+      el('p', { class: 'dn-faint', style: 'font-size:12px;margin:6px 0 0;' }, [
+        'The scorecard is folded from round logs the loop already writes; read it at the terminal with ',
+        el('code', { class: 'dn-instr-apply', text: 'zicato proposer scorecard' }), '.',
+      ]),
+    ])));
+  } else {
+    const table = dataTable({
+      class: 'dn-board-table dn-instr-list',
+      columns: [
+        { label: 'epoch' }, { label: 'proposer' }, { label: 'rounds', class: 'dn-num' },
+        { label: 'promoted', class: 'dn-num' }, { label: 'validator fail', class: 'dn-num' },
+        { label: 'screen veto', class: 'dn-num' }, { label: 'median margin', class: 'dn-num' },
+      ],
+      rows: trend.map((c) => ({
+        cells: [
+          { text: c.epoch_id || '—', class: 'dn-mono' },
+          { text: c.proposer_agent_id || '—' },
+          { text: isNum(c.rounds) ? String(c.rounds) : '—', class: 'dn-num' },
+          { text: rateCell(c.promote_rate), class: 'dn-num' },
+          { text: rateCell(c.validation_failure_rate), class: 'dn-num' },
+          { text: rateCell(c.screen_veto_rate), class: 'dn-num' },
+          { text: num((c.margins || {}).achieved_median), class: 'dn-num' },
+        ],
+      })),
+    });
+    nodes.push(section('Proposer scorecard · by epoch', el('div', { class: 'dn-panel dn-table-scroll' }, [
+      el('p', { class: 'dn-lede', text: 'The proposer is frozen for its epoch, so proposal quality is only comparable within one — each row is one proposer’s record. A rate reads “n%(k/n)”; a “—” means nothing was observed, which is not the same claim as zero, and a “?” marks a sample too thin to act on.' }),
+      table,
+    ])));
+  }
+
+  if (!pending.length) {
+    nodes.push(section('Proposer recommendations', el('div', { class: 'dn-panel' }, [
+      empty('No pending recommendations.'),
+      el('p', { class: 'dn-faint', style: 'font-size:12px;margin:6px 0 0;' }, [
+        'Draft some with ', el('code', { class: 'dn-instr-apply', text: 'zicato proposer reflect' }),
+        ' — recommend-only; applying one is a separate, explicit command and rolls the epoch.',
+      ]),
+    ])));
+    return nodes;
+  }
+
+  // Rendered in the lens's EXISTING findings-row grammar (dn-instr-frow) — a
+  // recommendation is a finding, and the console already has one way to say so.
+  const rows = pending.map((r) => {
+    const tone = severityTone(r.severity);
+    const row = el('div', { class: 'dn-instr-frow dn-instr-fs-' + tone });
+    row.appendChild(el('div', { class: 'dn-instr-frow-head' }, [
+      toneMark(tone),
+      el('span', { class: 'dn-instr-frow-verdict dn-instr-t-' + tone, text: String(r.severity || 'info') }),
+      el('span', { class: 'dn-instr-frow-title', text: r.title || r.finding_id || '' }),
+    ]));
+    if (r.detail) row.appendChild(el('p', { class: 'dn-faint dn-instr-frow-why', text: String(r.detail) }));
+    // The five evidence slots, in the caption register the lens reserves for
+    // metadata — population + comparison here, safety below the apply line.
+    row.appendChild(el('p', { class: 'dn-faint dn-instr-frow-ev' }, [
+      'population: ' + (r.population || '—') + ' · compared against: ' + (r.compared_against || '—'),
+    ]));
+    row.appendChild(el('p', { class: 'dn-faint dn-instr-frow-op' }, [
+      'recommendation: ',
+      el('code', { class: 'dn-instr-apply', text: `${r.remedy_kind || 'edit'} ${r.remedy_path || ''}` }),
+      el('span', { class: 'dn-faint dn-instr-applynote' }, [
+        'apply with ',
+        el('code', { class: 'dn-instr-apply', text: `zicato proposer apply-recommendation ${r.finding_id || ''}` }),
+      ]),
+    ]));
+    if (r.remedy_safety) row.appendChild(caption(r.remedy_safety));
+    return row;
+  });
+  nodes.push(section('Proposer recommendations · pending', el('div', { class: 'dn-panel dn-instr-list-panel' }, [
+    el('p', { class: 'dn-lede', text: 'Drafted edits to the proposer dir, waiting on you. Nothing here has been applied and nothing applies itself — the epoch boundary is where applying one is free, because the epoch is rolling anyway.' }),
+    ...rows,
+  ])));
   return nodes;
 }
 

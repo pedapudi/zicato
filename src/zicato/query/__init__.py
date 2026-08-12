@@ -161,6 +161,10 @@ from zicato.query.paths import (
     read_current_epoch,
     to_snake,
 )
+from zicato.query.proposer_view import (
+    build_proposer_recommendations,
+    build_proposer_scorecard,
+)
 from zicato.query.racing_view import (
     build_racing_field,
 )
@@ -354,6 +358,8 @@ __all__ = [
     "build_matchup_grid",
     "build_meta_loop_ledger",
     "build_optimization_trajectory",
+    "build_proposer_recommendations",
+    "build_proposer_scorecard",
     "build_racing_field",
     "build_reflection_summary",
     "build_judge_scorecards",

@@ -761,6 +761,20 @@ def _make_reflection_endpoints(paths: WorkspacePaths) -> dict[str, Any]:
             query.build_adjudication_xray(paths, reflection_id, judge_name, run_ref)
         )
 
+    async def api_proposer_scorecard(request: Request) -> JSONResponse:
+        """The proposer scorecard trend, optionally detailing one ``?epoch=``."""
+        try:
+            epoch_id = _epoch_query(request)
+        except (_BadEpoch, ValueError):
+            epoch_id = None
+        return JSONResponse(
+            await run_in_threadpool(query.build_proposer_scorecard, paths, epoch_id)
+        )
+
+    async def api_proposer_recommendations(_request: Request) -> JSONResponse:
+        """The pending proposer-recommendation queue (workspace-wide)."""
+        return JSONResponse(await run_in_threadpool(query.build_proposer_recommendations, paths))
+
     async def api_reflection_traces(request: Request) -> JSONResponse:
         """The imported foreign traces for a reflection (TRAJECTORY-UI.md §3.1)."""
         reflection_id = request.path_params["reflection_id"]
@@ -829,6 +843,8 @@ def _make_reflection_endpoints(paths: WorkspacePaths) -> dict[str, Any]:
         "api_reflection_traces": api_reflection_traces,
         "api_reflection_trace": api_reflection_trace,
         "api_reflection_suggestion_provenance": api_reflection_suggestion_provenance,
+        "api_proposer_scorecard": api_proposer_scorecard,
+        "api_proposer_recommendations": api_proposer_recommendations,
     }
 
 

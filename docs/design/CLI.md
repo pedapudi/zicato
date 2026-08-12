@@ -600,6 +600,94 @@ zicato propose [OPTIONS]
 | `--patterns-from PATH` | — | Path to a Patterns JSON file. If absent, detectors are run fresh. |
 | `--max-retries INTEGER RANGE` | `2` (0–10) | How many times to ask the proposer to fix a malformed response. |
 
+### `zicato proposer`
+
+Advanced: score, diagnose, and improve the proposer itself. The evolve loop
+improves the *target*; this surface improves the *proposer* — it reads the
+proposal-quality signals the loop already records, diagnoses mechanism-level
+weaknesses, and drafts edits to the proposer dir for the operator to apply at
+an epoch boundary. Nothing here applies an edit on its own, and nothing runs
+mid-epoch: the proposer is frozen for its epoch (PROPOSER.md §6).
+
+```
+zicato proposer COMMAND [OPTIONS]
+```
+
+#### `zicato proposer scorecard`
+
+Render the proposer scorecard for one epoch, plus the cross-epoch trend. A pure
+read over the round logs, epoch configs, and experiments the loop already
+wrote — it starts no runs and spends no budget. A `—` in the table is *not*
+zero: it means nothing was observed. A `?` marks a provisional rate (fewer than
+five samples).
+
+```
+zicato proposer scorecard [OPTIONS]
+```
+
+| Option | Default | Meaning |
+|---|---|---|
+| `--workspace PATH` | `.zicato` | Workspace root. |
+| `--epoch TEXT` | current epoch | Epoch to detail. |
+| `--trend / --no-trend` | `--trend` | Also print the per-epoch trend table above the detail. |
+| `--limit INTEGER RANGE` | `10` | How many of the most recent epochs the trend covers. |
+| `--json` | off | Emit the raw card dicts. |
+
+#### `zicato proposer reflect`
+
+Diagnose the proposer from its own scorecard and draft edits to its skills.
+Recommend-only in the strong sense: this command has no code path to applying
+anything. It reads aggregate mechanism evidence — never board content — and
+writes findings whose remedy is a ready-to-apply diff.
+
+```
+zicato proposer reflect [OPTIONS]
+```
+
+| Option | Default | Meaning |
+|---|---|---|
+| `--workspace PATH` | `.zicato` | Workspace root. |
+| `--epoch TEXT` | current epoch | Epoch to reflect on. |
+| `--persist / --dry-run` | `--persist` | Write the findings record, or derive and print it without touching disk. |
+| `--draft-with-llm TEXT` | — | Dotted path to an auxiliary `call_llm` used to REFINE each remedy's prose. Optional — the drafted edits are complete without it. |
+| `--model TEXT` | `""` | Model name passed to `--draft-with-llm`'s callable. |
+| `--json` | off | Emit the raw record. |
+
+#### `zicato proposer recommendations`
+
+List every drafted recommendation that has not been applied. This is the same
+list the epoch boundary prints — the boundary is when applying one is free,
+because the epoch is rolling anyway.
+
+```
+zicato proposer recommendations [OPTIONS]
+```
+
+| Option | Default | Meaning |
+|---|---|---|
+| `--workspace PATH` | `.zicato` | Workspace root. |
+| `--json` | off | Emit the raw records. |
+
+#### `zicato proposer apply-recommendation`
+
+Apply one recommendation's drafted edit to the proposer dir. This is the
+operator's gate — the only path that writes a recommendation into the proposer.
+Because the proposer dir folds into the contract hash, the edit is contract
+drift: the next `zicato evolve` closes the current epoch and opens a fresh one
+before proposing anything, and that new epoch's record carries this
+recommendation id.
+
+```
+zicato proposer apply-recommendation RECOMMENDATION_ID [OPTIONS]
+```
+
+| Option | Default | Meaning |
+|---|---|---|
+| `--workspace PATH` | `.zicato` | Workspace root. |
+| `--epoch TEXT` | current epoch | Epoch owning the recommendation. |
+| `--proposer-path TEXT` | registered proposer dir | Proposer dir to write into. |
+| `--show-diff / --no-show-diff` | `--show-diff` | Print the remedy's unified diff before writing. |
+
 ### `zicato regenerate-report`
 
 Advanced: re-render an epoch's `analysis.md` from the current on-disk files.

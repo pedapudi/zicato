@@ -419,3 +419,99 @@ test('data F5: invalidateLive busts the cached reflection list but not the singu
 });
 
 await run();
+
+// ====================================================================
+// PROPOSER PANEL — the scorecard trend + the pending recommendations.
+//
+// The lens's second instrument. The checks that matter are the honesty ones:
+// a null rate must not read as zero, a thin sample must be marked, and a
+// no-op heartbeat must not repaint the panel.
+// ====================================================================
+test('proposer panel: the trend renders one row per epoch with reader numbers', async () => {
+  fresh();
+  installFixtureMap(reflectionFixtureMap());
+  const host = document.createElement('div');
+  await instrument.render(host, CTX, { epochId: EPOCH_ID });
+  const t = textOf(host);
+  assert(t.includes('Proposer scorecard'), 'the panel rendered');
+  assert(t.includes('builtin:default') && t.includes('dir:fancy'), 'both proposers named');
+  // e0's promote rate is 2/8 — the value AND the sample count both surface.
+  assert(t.includes('25% (2/8)'), 'a rate renders with its sample count beside it');
+});
+
+test('proposer panel: a null rate renders as — with its n, never as 0%', async () => {
+  fresh();
+  installFixtureMap(reflectionFixtureMap());
+  const host = document.createElement('div');
+  await instrument.render(host, CTX, { epochId: EPOCH_ID });
+  const t = textOf(host);
+  // e0 screened nothing ⇒ value null, n 0. "0%" would claim it screened
+  // plenty and vetoed none, which is the opposite of what happened.
+  assert(t.includes('— (n=0)'), 'an unobserved rate reads as an em dash with n=0');
+  assert(!t.includes('0% (0/0)'), 'a null rate is never rendered as a measured zero');
+  // ...and a null median margin degrades the same way rather than to 0.000.
+  assert(t.includes('—'), 'a null median margin renders as an em dash');
+});
+
+test('proposer panel: a thin sample is marked provisional', async () => {
+  fresh();
+  installFixtureMap(reflectionFixtureMap());
+  const host = document.createElement('div');
+  await instrument.render(host, CTX, { epochId: EPOCH_ID });
+  // the current epoch's rates are over 3 samples (< min_sample_n 5).
+  assert(textOf(host).includes('33%? (1/3)'), 'a provisional rate carries the ? marker');
+});
+
+test('proposer panel: a pending recommendation names its remedy and its apply command', async () => {
+  fresh();
+  installFixtureMap(reflectionFixtureMap());
+  const host = document.createElement('div');
+  await instrument.render(host, CTX, { epochId: EPOCH_ID });
+  const t = textOf(host);
+  assert(t.includes('Post-apply check A4 fails'), 'the recommendation title');
+  assert(t.includes('skills/preserve-imports.md'), 'the remedy path');
+  assert(t.includes('zicato proposer apply-recommendation prec-9f3a12bc'), 'the apply command');
+  // The five evidence slots reach the panel — a recommendation is evidence-led.
+  assert(t.includes('population:') && t.includes('compared against:'), 'the evidence slots');
+  // It renders in the lens's EXISTING findings-row grammar, not new chrome.
+  assert(hasClass(host, 'dn-instr-frow'), 'reuses the findings-row grammar');
+});
+
+test('proposer panel: null-degrades when the reads are unavailable', async () => {
+  fresh();
+  const F = { ...reflectionFixtureMap(),
+    '/api/proposer/scorecard': { found: false, epochs: [], card: null },
+    '/api/proposer/recommendations': { found: true, count: 0, pending: [] } };
+  installFixtureMap(F);
+  const host = document.createElement('div');
+  await instrument.render(host, CTX, { epochId: EPOCH_ID });
+  const t = textOf(host);
+  assert(t.includes('No proposer scorecard yet'), 'honest empty scorecard state');
+  assert(t.includes('zicato proposer scorecard'), 'points at the CLI entry point');
+  assert(t.includes('No pending recommendations'), 'honest empty queue state');
+  assert(t.includes('zicato proposer reflect'), 'points at the drafting command');
+});
+
+test('proposer panel: an identical repaint rebuilds ZERO DOM', async () => {
+  fresh();
+  installFixtureMap(reflectionFixtureMap());
+  const host = document.createElement('div');
+  await instrument.render(host, CTX, { epochId: EPOCH_ID });
+  const first = host.firstChild;
+  const writes1 = host.innerHTMLWriteCount();
+  await instrument.render(host, CTX, { epochId: EPOCH_ID });
+  assert(host.firstChild === first, 'no clear-and-rebuild when the panel data is unchanged');
+  assertEqual(host.innerHTMLWriteCount(), writes1, 'no innerHTML writes on the no-op repaint');
+});
+
+test('proposer panel: a changed recommendation queue DOES repaint', async () => {
+  fresh();
+  installFixtureMap(reflectionFixtureMap());
+  const host = document.createElement('div');
+  await instrument.render(host, CTX, { epochId: EPOCH_ID });
+  const first = host.firstChild;
+  installFixtureMap({ ...reflectionFixtureMap(),
+    '/api/proposer/recommendations': { found: true, count: 0, pending: [] } });
+  await instrument.render(host, CTX, { epochId: EPOCH_ID });
+  assert(host.firstChild !== first, 'the digest folds the queue, so a drained queue repaints');
+});
