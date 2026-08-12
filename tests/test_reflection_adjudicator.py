@@ -814,3 +814,86 @@ def test_read_adjudication_tolerates_defects(tmp_path: Path) -> None:
     wrong_version = tmp_path / "wv.json"
     wrong_version.write_text(json.dumps({"format_version": 999}), encoding="utf-8")
     assert read_adjudication(wrong_version) is None
+
+
+# ---------------------------------------------------------------------------
+# A hung adjudicator is bounded — it degrades like a malformed one, never wedges
+# ---------------------------------------------------------------------------
+
+
+def test_a_hung_adjudicator_times_out_into_an_ambiguous_verdict(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A never-answering meta-judge yields ambiguous, not a wedged `reflect run`.
+
+    Both attempts are bounded by the shared auxiliary budget, and the retry is
+    still EXACTLY ONE — a first attempt that hangs gets the same single second
+    chance a first attempt that returns garbage gets. Nothing propagates: this
+    path's contract is that it never raises, and a TimeoutError escaping it
+    would take the whole corpus adjudication down on one unlucky decision.
+    """
+    monkeypatch.setattr("zicato.reflection.adjudicator.aux_call_timeout_s", lambda: 0.01)
+
+    workspace = tmp_path / ".zicato"
+    loss_path = _write_loss(workspace, "v1", "entryA", 0, drift=False)
+    _plant_judge_io(loss_path, judge_name="j", fired=False, reasoning=PLANTED)
+    corpus = _ingest(workspace, ["v1"], ["entryA"])
+
+    calls = {"n": 0}
+
+    async def never_answers(system, user, model):
+        calls["n"] += 1
+        await asyncio.sleep(30)
+        return '{"should_fire": true}'  # pragma: no cover - never reached
+
+    verdict = _run(
+        adjudicate_decision(
+            obs=corpus[0],
+            judge_name="j",
+            decision=dict(corpus[0].judge_decisions[0]),
+            run_ref=run_ref_for(corpus[0]),
+            adjudicator_call_llm=never_answers,
+            adjudicator_model="m",
+        )
+    )
+
+    assert calls["n"] == 2  # bounded, retried exactly once, then given up on
+    assert verdict.verdict == VERDICT_AMBIGUOUS
+    assert verdict.adjudicated == "ambiguous"
+    # The raw response names the timeout, so the operator reading the ambiguous
+    # verdict can tell "did not answer in time" from "answered with prose".
+    assert "timed out" in (verdict.raw_response or "")
+
+
+def test_a_slow_but_answering_adjudicator_still_scores(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The bound is a ceiling, not a floor — a call inside the budget is normal."""
+    monkeypatch.setattr("zicato.reflection.adjudicator.aux_call_timeout_s", lambda: 5.0)
+
+    workspace = tmp_path / ".zicato"
+    loss_path = _write_loss(workspace, "v1", "entryA", 0, drift=False)
+    _plant_judge_io(loss_path, judge_name="j", fired=False, reasoning=PLANTED)
+    corpus = _ingest(workspace, ["v1"], ["entryA"])
+
+    calls = {"n": 0}
+
+    async def slow_but_valid(system, user, model):
+        calls["n"] += 1
+        await asyncio.sleep(0.01)
+        return '{"should_fire": true, "evidence_span": "' + PLANTED + '"}'
+
+    verdict = _run(
+        adjudicate_decision(
+            obs=corpus[0],
+            judge_name="j",
+            decision=dict(corpus[0].judge_decisions[0]),
+            run_ref=run_ref_for(corpus[0]),
+            adjudicator_call_llm=slow_but_valid,
+            adjudicator_model="m",
+        )
+    )
+
+    assert calls["n"] == 1  # no retry — the first attempt parsed
+    assert verdict.verdict == VERDICT_FN
+    assert verdict.raw_response is None

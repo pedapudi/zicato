@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import time
 from pathlib import Path
 from typing import Any
 
@@ -666,6 +667,80 @@ def build_run_header(
     return header
 
 
+#: How long a mutation-point count may be reused before it is re-walked.
+#:
+#: The enumeration is not cheap — it opens and AST-parses every file under
+#: every source root — and it sat on the ``/api/environment`` path, which the
+#: dashboard hits on every heartbeat, many times a second. Nothing here needs
+#: to be that fresh: mutation points change only when a patch lands, which
+#: happens at ROUND cadence (seconds to minutes), so a few seconds of staleness
+#: on a display counter is honest where a per-request walk was merely wasteful.
+#:
+#: A TTL rather than a content key because no cheap honest key exists: the
+#: count follows the file CONTENTS of a whole tree, and the only key that
+#: tracks those is the walk itself. Directory mtimes do not propagate from
+#: nested edits, so an mtime key would go stale silently and without bound —
+#: strictly worse than a bounded staleness the reader can reason about.
+_MUTATION_COUNT_TTL_S: float = 5.0
+
+#: ``{(workspace root, *source roots): (expires_at_monotonic, count)}``. The
+#: workspace root is IN the key, not just the trees: the surface is activated
+#: from that workspace's contract, so two workspaces over identical trees can
+#: legitimately enumerate different counts and must not share an entry.
+_MUTATION_COUNT_CACHE: dict[tuple[str, ...], tuple[float, int]] = {}
+
+
+def _mutation_point_count(workspace_root: Path, source_roots: list[str]) -> int:
+    """Mutation points across ``source_roots``, cached for :data:`_MUTATION_COUNT_TTL_S`.
+
+    Best-effort so a malformed source tree never bubbles up to the dashboard
+    endpoint as a 500 — the enumerator walks every source root for
+    ``# zicato:mutable`` markers plus a goldfive manifest if one exists, and any
+    failure reads as ``0``.
+
+    The surface is ACTIVATED from the workspace first, so the count is of the
+    surface the RUN sees — the contract's declared file types, not the built-ins
+    alone. Counting the built-in surface would under-report every workspace that
+    declares extra file types, which is the whole point of declaring them.
+
+    That activation installs a PROCESS-GLOBAL table, and a cache hit skips it —
+    safe only because nothing depends on this call for that side effect. Every
+    other enumerating caller (the mutations CLI, the dashboard's mutations
+    endpoint, the evolve loop, propose) activates the surface itself before its
+    own walk, exactly as ``activate_mutation_surface`` documents. If that ever
+    stops being true, hoist the activation OUT of the cached path rather than
+    widening the key.
+
+    Only the COUNT is cached, never the enumeration. ``mutation/enumerator.py``
+    is explicit that spans must not be cached — line numbers drift as patches
+    land, and a stale span clobbers the wrong lines — but that hazard belongs to
+    the applier, which re-enters :func:`enumerate_mutations` itself. A count
+    that is a few seconds behind mis-renders a number; it cannot mis-apply a
+    patch.
+
+    A failed walk is cached like any other result. Re-walking a broken tree on
+    every heartbeat is the exact cost this exists to avoid, and the TTL bounds
+    how long a fixed tree keeps reading ``0``.
+    """
+    if not source_roots:
+        return 0
+    key = (str(workspace_root), *source_roots)
+    now = time.monotonic()
+    cached = _MUTATION_COUNT_CACHE.get(key)
+    if cached is not None and cached[0] > now:
+        return cached[1]
+    try:
+        from zicato.mutation.enumerator import enumerate_mutations  # noqa: PLC0415
+        from zicato.workspace_loader import activate_mutation_surface  # noqa: PLC0415
+
+        activate_mutation_surface(workspace_root)
+        count = len(enumerate_mutations([Path(r) for r in source_roots]))
+    except Exception:  # noqa: BLE001 — best-effort
+        count = 0
+    _MUTATION_COUNT_CACHE[key] = (now + _MUTATION_COUNT_TTL_S, count)
+    return count
+
+
 def build_workspace_identity(paths: WorkspacePaths) -> dict[str, Any]:
     """Structured workspace identity block — Phase 1's L0 env object.
 
@@ -684,6 +759,13 @@ def build_workspace_identity(paths: WorkspacePaths) -> dict[str, Any]:
     * ``mutation_point_count`` — the count of mutation points the
       enumerator finds across ``source_roots``. ``0`` when the
       enumerator fails or there are no source roots — never raises.
+      DELIBERATELY UNRENDERED, and it should stay that way: the Mutations
+      view already shows a site count, taken from the per-epoch mutation
+      matrix, which is the better-scoped number. A second count computed
+      workspace-wide at a different moment can legitimately disagree with
+      it, and two near-identical tiles that sometimes contradict each
+      other is a worse surface than one. Kept on the payload for API
+      consumers, and cheap now (see :func:`_mutation_point_count`).
     * ``instance_id`` — heartbeat's ``instance_id`` when present,
       else ``"default"`` (the runtime's seed default).
     * ``created_at`` — heartbeat's ``started_at`` when present, else
@@ -730,22 +812,7 @@ def build_workspace_identity(paths: WorkspacePaths) -> dict[str, Any]:
         brief_path = None
         scoring_path = None
 
-    # Mutation point enumeration — best-effort so a malformed source
-    # tree never bubbles up to the dashboard endpoint as a 500. The
-    # enumerator walks every source root for ``# zicato:mutable`` markers
-    # plus a goldfive manifest if one exists.
-    mutation_point_count = 0
-    if source_roots:
-        try:
-            from zicato.mutation.enumerator import enumerate_mutations  # noqa: PLC0415
-            from zicato.workspace_loader import activate_mutation_surface  # noqa: PLC0415
-
-            # Count the surface the RUN sees, which means the contract's
-            # declared file types, not the built-ins alone.
-            activate_mutation_surface(paths.root)
-            mutation_point_count = len(enumerate_mutations([Path(r) for r in source_roots]))
-        except Exception:  # noqa: BLE001 — best-effort
-            mutation_point_count = 0
+    mutation_point_count = _mutation_point_count(paths.root, source_roots)
 
     hb = read_heartbeat_dict(paths)
     instance_id = "default"

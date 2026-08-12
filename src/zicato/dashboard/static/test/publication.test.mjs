@@ -7,7 +7,7 @@
 // never scrolls sideways, and a regenerated-but-identical analysis.md rebuilds
 // ZERO DOM (no flashing refresh).
 
-import { installDom, test, run, assert } from './harness.mjs';
+import { installDom, test, run, assert, assertEqual } from './harness.mjs';
 
 installDom();
 
@@ -62,6 +62,11 @@ const F = {
 };
 
 const ctx = { navigate() {}, href: router.href };
+
+function hasClass(node, cls) {
+  const c = (node && node.getAttribute && node.getAttribute('class')) || '';
+  return c.split(/\s+/).includes(cls);
+}
 
 // The harness querySelectorAll only matches attribute selectors, so find a
 // descendant by tag name (e.g. TABLE) with a small walk.
@@ -127,6 +132,170 @@ test('publication: the CSS pins the never-overflow guards', () => {
   // The paper column itself never scrolls the page sideways.
   assert(/\.dn-paper\s*\{[^}]*overflow-x:\s*hidden/.test(css),
     '.dn-paper declares overflow-x: hidden');
+});
+
+// ---------------------------------------------------------------------------
+// (5) A8 — the SERVER-RENDERED paper is preferred over re-rendering markdown.
+//
+// /api/epoch/{id}/analysis runs the full report renderer on every call to
+// produce `analysis_html_inline`. The view used to read ONLY `analysis_md` and
+// re-render it client-side, throwing that render away.
+// ---------------------------------------------------------------------------
+
+const SERVED_HTML = '<style>.paper{color:red}</style>'
+  + '<article class="paper paper-card" data-epoch="' + EPOCH + '">'
+  + '<div class="paper-article"><h1>Served Paper Title</h1>'
+  + '<p>Rendered by the server report renderer.</p></div></article>';
+
+function withServedHtml(extra) {
+  return Object.assign({}, F, {
+    [`/api/epoch/${EPOCH}/analysis`]: Object.assign(
+      { analysis_md: ANALYSIS_MD, analysis_html_inline: SERVED_HTML },
+      extra || {},
+    ),
+  });
+}
+
+async function renderWith(host, fixtures) {
+  data.invalidate();
+  installFixtureMap(fixtures);
+  await publication.render(host, ctx, { epochId: EPOCH });
+}
+
+test('publication (A8): a non-empty analysis_html_inline is PREFERRED over the markdown re-render', async () => {
+  const host = document.createElement('div');
+  await renderWith(host, withServedHtml());
+  const served = allByClass(host, 'dn-paper-served')[0];
+  assert(served, 'the server fragment is mounted');
+  // the harness does not parse innerHTML (it flags the write instead), so the
+  // proof the SERVER html is what painted is that exactly one innerHTML write
+  // landed on the fragment host — el({html}) is the only path that writes it.
+  assertEqual(served.innerHTMLWriteCount(), 1, 'the served HTML fragment was written into its host');
+  // the client-side markdown masthead must NOT also render (no double paper).
+  assertEqual(allByClass(host, 'dn-paper-masthead').length, 0,
+    'the client markdown masthead is not painted when the server render exists');
+  // the LIVE figures still ride along — they are what the static fragment cannot carry.
+  assert(allByClass(host, 'dn-paper-fig').length >= 1, 'the live interactive figures are still appended');
+});
+
+test('publication (A8): the served fragment scrolls in its OWN container (never the page)', async () => {
+  const host = document.createElement('div');
+  await renderWith(host, withServedHtml());
+  const served = allByClass(host, 'dn-paper-served')[0];
+  assert(hasClass(served, 'dn-table-scroll'),
+    'the fragment host carries dn-table-scroll so a wide server table scrolls inside itself');
+});
+
+test('publication (A8): an EMPTY analysis_html_inline falls back to the markdown path', async () => {
+  const host = document.createElement('div');
+  await renderWith(host, withServedHtml({ analysis_html_inline: '   ' }));
+  assertEqual(allByClass(host, 'dn-paper-served').length, 0, 'no served fragment when the server produced none');
+  assertEqual(allByClass(host, 'dn-paper-masthead').length, 1, 'the markdown path paints its masthead');
+  assert(host.textContent.includes('Publication Fixture'), 'the markdown title renders');
+});
+
+test('publication (A8): analysis_html_inline is FOLDED into the digest (a re-render of the paper repaints)', async () => {
+  const host = document.createElement('div');
+  await renderWith(host, withServedHtml());
+  const first = host.getAttribute('data-t-digest');
+  const firstNode = host.firstChild;
+
+  // a no-op: identical payload → zero DOM.
+  await renderWith(host, withServedHtml());
+  assertEqual(host.getAttribute('data-t-digest'), first, 'an identical served render is a digest no-op');
+  assert(host.firstChild === firstNode, 'the article node survives a no-op re-render');
+
+  // the SAME markdown, a DIFFERENT server render — the exact case a digest
+  // blind to analysis_html_inline would refuse to repaint.
+  await renderWith(host, withServedHtml({
+    analysis_html_inline: SERVED_HTML.replace('Served Paper Title', 'Regenerated Paper Title'),
+  }));
+  assert(host.getAttribute('data-t-digest') !== first,
+    'a re-rendered server paper (same markdown) flips the digest');
+  assert(host.firstChild !== firstNode, 'the article was rebuilt (the new server paper painted)');
+});
+
+// ---------------------------------------------------------------------------
+// (6) A10 — the #18 continuous-score entry_grid contract is honoured.
+//
+// tournament_view.build_matchup_grid serves parent_score / child_score /
+// parent_metrics / child_metrics / won_by / parent_session_id /
+// child_session_id; the per-match-up table read only the drift-loss pair.
+// ---------------------------------------------------------------------------
+
+const GRID_EPOCH = EPOCH;
+const SCORED_F = Object.assign({}, F, {
+  [`/api/tournaments?epoch=${GRID_EPOCH}`]: { matchups: [{ champion: 'v0', challenger: 'v1', decision: 'promoted' }] },
+  [`/api/matchup-grid/${GRID_EPOCH}/v0/v1`]: {
+    epoch_id: GRID_EPOCH, champion: 'v0', challenger: 'v1', source: 'loss_files',
+    entry_grid: [
+      { entry_id: 'waffles', parent_drift_loss: 60.5, child_drift_loss: 40.25,
+        parent_pass: false, child_pass: true,
+        parent_score: 0.41, child_score: 0.87,
+        parent_metrics: { precision: 0.5, recall: 0.33 },
+        child_metrics: { precision: 0.9, recall: 0.8 },
+        delta: -20.25, verdict: 'improved', won_by: 'v1',
+        parent_session_id: 'sess-parent-1', child_session_id: 'sess-child-1' },
+      { entry_id: 'picky', parent_drift_loss: 10, child_drift_loss: 12,
+        parent_score: null, child_score: null, parent_metrics: null, child_metrics: null,
+        delta: 2, verdict: 'regressed', won_by: 'v0' },
+    ],
+  },
+});
+
+test('publication (A10): the per-match-up table renders the continuous score pair + precision/recall', async () => {
+  const host = document.createElement('div');
+  await renderWith(host, SCORED_F);
+  const txt = host.textContent;
+  assert(txt.includes('score v0') && txt.includes('score v1'), 'both score columns are headed by their generation');
+  assert(txt.includes('0.41') && txt.includes('0.87'), 'both continuous scores render');
+  assert(txt.includes('P 0.90 / R 0.80'), 'the challenger precision/recall decomposition renders');
+});
+
+test('publication (A10): `won_by` is rendered as the server called it (never re-derived)', async () => {
+  const host = document.createElement('div');
+  await renderWith(host, SCORED_F);
+  const txt = host.textContent;
+  assert(txt.includes('won by'), 'the won-by column is headed');
+  // the challenger won the first board and the champion the second — both named.
+  assert(/v1/.test(txt) && /v0/.test(txt), 'both winners are named');
+});
+
+test('publication (A10): a bool-only grid grows NO score columns (back-compat)', async () => {
+  const plain = JSON.parse(JSON.stringify(SCORED_F[`/api/matchup-grid/${GRID_EPOCH}/v0/v1`]));
+  for (const r of plain.entry_grid) {
+    r.parent_score = null; r.child_score = null; r.parent_metrics = null; r.child_metrics = null;
+    delete r.parent_session_id; delete r.child_session_id;
+  }
+  const host = document.createElement('div');
+  await renderWith(host, Object.assign({}, SCORED_F, { [`/api/matchup-grid/${GRID_EPOCH}/v0/v1`]: plain }));
+  const txt = host.textContent;
+  assert(!txt.includes('score v0'), 'no score columns when nothing on the grid was scored');
+  assert(!txt.includes('precision / recall'), 'no metrics column when no scorer exposed one');
+  assertEqual(allByClass(host, 'dn-paper-trace').length, 0,
+    'no harmonograf trace cell when no session ids were recorded');
+});
+
+test('publication (A10): the score / metrics / won_by / session fields are FOLDED into the digest', async () => {
+  const host = document.createElement('div');
+  await renderWith(host, SCORED_F);
+  const first = host.getAttribute('data-t-digest');
+
+  // move ONLY the child score — every drift loss and verdict stays equal. A
+  // digest folding only the old four fields would not repaint.
+  const moved = JSON.parse(JSON.stringify(SCORED_F));
+  moved[`/api/matchup-grid/${GRID_EPOCH}/v0/v1`].entry_grid[0].child_score = 0.95;
+  await renderWith(host, moved);
+  assert(host.getAttribute('data-t-digest') !== first, 'a moved continuous score flips the digest');
+
+  // and `won_by` changing hands alone must flip it too.
+  const handed = JSON.parse(JSON.stringify(SCORED_F));
+  handed[`/api/matchup-grid/${GRID_EPOCH}/v0/v1`].entry_grid[0].won_by = 'v0';
+  const host2 = document.createElement('div');
+  await renderWith(host2, SCORED_F);
+  const base2 = host2.getAttribute('data-t-digest');
+  await renderWith(host2, handed);
+  assert(host2.getAttribute('data-t-digest') !== base2, 'won_by changing hands flips the digest');
 });
 
 await run();

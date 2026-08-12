@@ -40,12 +40,9 @@ export class AppState {
 
     // /api/tournaments — the gauntlet bracket.
     this.bracket = null;
-    // /api/tournaments/:id detail, cached by generation id.
-    this.matchupDetail = new Map();
-    // /api/drift-movements/:id, cached by challenger generation id.
-    this.driftMovements = {};
-    // generation id of the matchup whose detail panel is open.
-    this.selectedMatchup = null;
+    // (matchupDetail / driftMovements / selectedMatchup DELETED — they cached
+    // `/api/tournaments/{gen}` + `/api/drift-movements/{gen}` on every SSE beat
+    // and no view ever read them. See core/api.js for the full record.)
     // board entry whose inline conversation diff is open.
     this.selectedEntry = null;
     // generation id whose tournament is selected in the picker.
@@ -300,13 +297,6 @@ export class AppState {
 
   setHealthReport(report) {
     if (report && typeof report === 'object') { this.healthReport = report; this._changed(); }
-  }
-
-  setMatchupDetail(genId, detail) {
-    if (genId && detail && typeof detail === 'object') {
-      this.matchupDetail.set(genId, detail);
-      this._changed();
-    }
   }
 
   // -- selectors ---------------------------------------------------

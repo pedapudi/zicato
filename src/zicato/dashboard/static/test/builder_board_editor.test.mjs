@@ -249,6 +249,52 @@ test('entry_form: the JSON-schema spec shows a client parse hint (non-blocking)'
   assert(/parses as JSON/.test(hint.textContent), 'a valid schema flips the hint to OK');
 });
 
+// `context` round-tripped through the buffer with NO control, so an operator
+// could neither read an authored context nor write one — invisible, not lost.
+test('entry_form: an existing context is VISIBLE and round-trips through the form', () => {
+  const buf = ef.entryToBuffer({ id: 'c', kind: 'single_turn', budget_s: 30, input: 'z',
+    context: { locale: 'en-GB', tier: 2 } });
+  const node = editor(buf);
+  const area = byAria(node, 'Entry context');
+  assert(area != null, 'the Context control exists');
+  assert(/"locale": "en-GB"/.test(area.textContent), 'the authored context is shown, not hidden');
+  const hint = firstClass(node, 'dn-bld-ef-ctxhint');
+  assert(hint && /2 keys/.test(hint.textContent), 'the hint counts the keys');
+  assertDeep(ef.bufferToEntryJson(buf).context, { locale: 'en-GB', tier: 2 }, 'and serializes back unchanged');
+});
+
+test('entry_form: editing the context commits the parsed object; blank clears it', () => {
+  const buf = ef.newEntryBuffer('single_turn');
+  buf.id = 'c2';
+  const node = editor(buf);
+  const area = byAria(node, 'Entry context');
+  area.value = '{"seed": 7}';
+  area.dispatchEvent(makeEvent('input'));
+  assertDeep(buf.context, { seed: 7 }, 'a parsed object is committed to the buffer');
+  assertDeep(ef.bufferToEntryJson(buf).context, { seed: 7 }, 'and reaches the op payload');
+  area.value = '   ';
+  area.dispatchEvent(makeEvent('input'));
+  assertDeep(buf.context, {}, 'blank is a REAL value — it clears the context');
+  assert(!('context' in ef.bufferToEntryJson(buf)), 'an empty context is omitted from the op payload');
+});
+
+test('entry_form: unparseable context keeps the last good value and SAYS SO (no silent loss)', () => {
+  const buf = ef.entryToBuffer({ id: 'c3', kind: 'single_turn', budget_s: 30, input: 'z',
+    context: { locale: 'en-GB' } });
+  const node = editor(buf);
+  const area = byAria(node, 'Entry context');
+  const hint = firstClass(node, 'dn-bld-ef-ctxhint');
+  area.value = '{"locale": ';   // mid-keystroke
+  area.dispatchEvent(makeEvent('input'));
+  assertDeep(buf.context, { locale: 'en-GB' }, 'a half-typed value never destroys the live one');
+  assert(/not valid JSON/.test(hint.textContent), 'the hint says the box does not parse');
+  assert(/last valid value is kept/.test(hint.textContent), 'and what is being kept instead');
+  area.value = '["not", "an", "object"]';
+  area.dispatchEvent(makeEvent('input'));
+  assert(/must be a JSON object/.test(hint.textContent), 'a non-object is named as such');
+  assertDeep(buf.context, { locale: 'en-GB' }, 'and still commits nothing');
+});
+
 test('entry_form: conversation_end reads is DISABLED for single_turn', () => {
   const buf = ef.newEntryBuffer('single_turn');
   buf.id = 'k'; buf.expectation = { kind: 'expected_text', spec: 'x', reads: 'final_output' };

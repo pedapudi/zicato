@@ -25,7 +25,7 @@
 // (a pre-RUNTIME-V2 server) DEGRADES to the legacy always-refresh path.
 
 import { state } from './state.js';
-import { loadEnvironment, loadMatchupDetail, pollLogTailAppend } from './api.js';
+import { loadEnvironment, pollLogTailAppend } from './api.js';
 
 const REFRESH_DEBOUNCE_MS = 400;
 const SSE_BACKOFF_MAX_MS = 30_000;
@@ -45,8 +45,10 @@ function refreshAfterEvent() {
     if (!_refreshPending) return;
     _refreshPending = false;
     try {
+      // ONE consolidated read per beat — nothing else. The per-matchup detail
+      // + drift-movements re-fetch that used to ride here was FETCH-AND-DISCARD
+      // (no view read either cache); it is gone. Drill-downs are on demand.
       await loadEnvironment();
-      if (state.selectedMatchup) loadMatchupDetail(state.selectedMatchup);
     } catch (err) {
       console.warn('refresh failed:', err);
     }

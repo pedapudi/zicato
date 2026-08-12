@@ -768,6 +768,38 @@ def _render_practice_section(practices: list[dict[str, Any]]) -> list[str]:
     return lines
 
 
+def _discrimination_summary(discrimination: dict[str, Any]) -> str:
+    """One line for the DISCRIMINATION pillar: does the board separate anything?
+
+    The pillar carries three lists (per-entry differentiation, redundancy
+    clusters, coverage); the bill of health needs their SHAPE, and the lists
+    themselves stay in ``summary.json`` for anything that wants them.
+
+    Entries observed under fewer than two candidates report
+    ``differentiates=None`` and are counted UNDECIDABLE rather than folded into
+    either side — "this entry is flat" and "this entry was never compared" are
+    different findings, and averaging them together would report a thin corpus
+    as a healthy board. An empty pillar renders ``unmeasured``, never ``0/0``.
+    """
+    entries = (discrimination.get("entry_differentiation") or {}).get("entries") or []
+    if not entries:
+        return "unmeasured (no entries in the corpus)"
+    decided = [e for e in entries if e.get("differentiates") is not None]
+    undecidable = len(entries) - len(decided)
+    if decided:
+        moving = sum(1 for e in decided if e.get("differentiates"))
+        parts = [f"{moving}/{len(decided)} entries differentiate"]
+        if undecidable:
+            parts.append(f"{undecidable} undecidable (<2 candidates)")
+    else:
+        parts = [f"unmeasured ({undecidable} entries, none seen under 2+ candidates)"]
+    redundant = (discrimination.get("redundancy") or {}).get("redundant_clusters") or []
+    parts.append(f"{len(redundant)} redundant cluster(s)")
+    uncovered = (discrimination.get("coverage") or {}).get("uncovered_kinds") or []
+    parts.append(f"{len(uncovered)} uncovered drift kind(s)")
+    return ", ".join(parts)
+
+
 def _render_report_md(
     summary: dict[str, Any],
     scorecards: list[dict[str, Any]],
@@ -783,21 +815,56 @@ def _render_report_md(
         lines.extend(_render_practice_section(practices))
 
     # Pillar summary.
+    pillars = summary.get("pillars") or {}
     floor = summary.get("noise_floor_max_abs_delta")
+    floor_std = summary.get("noise_floor_delta_std")
     flip = summary.get("decision_flip_p")
     lines.append("## Bill of health")
-    lines.append(f"- noise floor (max |delta|): {floor if floor is not None else 'unmeasured'}")
+    # BOTH floor statistics, each labelled with what it is good for. The range
+    # (``max |delta|``) is a RANGE: its expectation grows without bound in the
+    # calibration draw count, so a margin sized from it rises as the
+    # measurement improves — the backwards behaviour issue #112 names.
+    # ``delta_std`` estimates the dispersion of exactly the delta the promote
+    # gate thresholds and sharpens with more draws, which is why
+    # ``recommended_promote_margin`` prefers it. Printing the range alone made
+    # this report show only the statistic the code itself says not to act on.
+    lines.append(
+        f"- noise floor (max |delta|, K-inflated): "
+        f"{floor if floor is not None else 'unmeasured'}"
+    )
+    lines.append(
+        f"- noise floor (delta std, draw-count-stable): "
+        f"{floor_std if floor_std is not None else 'unmeasured'}"
+    )
     if flip is not None:
         lines.append(f"- P(gate decision flips): {flip}")
     else:
         # S2: the bootstrap was undefined (too few replicates / no observations);
         # surface the reason rather than a fabricated 0.0.
-        reason = (
-            summary.get("pillars", {}).get("reliability", {}).get("decision_flip", {}) or {}
-        ).get("reason")
+        reason = ((pillars.get("reliability") or {}).get("decision_flip") or {}).get("reason")
         detail = f" ({reason})" if reason else ""
         lines.append(f"- P(gate decision flips): n/a{detail}")
-    validity = summary.get("pillars", {}).get("validity", {})
+
+    # CALIBRATION. The margin and the floor are one reading, not two: a margin
+    # at or below the floor cannot tell a promotion from a re-roll of the same
+    # generation, and that verdict is already computed in the pillar.
+    calibration = pillars.get("calibration", {}) or {}
+    margin = calibration.get("promote_margin")
+    lines.append(f"- promote margin: {margin if margin is not None else 'unmeasured'}")
+    clears = calibration.get("margin_clears_floor")
+    if clears is None:
+        clears_text = "unmeasured (no floor on record)"
+    elif clears:
+        clears_text = "yes"
+    else:
+        clears_text = "NO — promotions cannot be distinguished from re-rolls"
+    lines.append(f"- margin clears floor: {clears_text}")
+
+    lines.append(
+        f"- discrimination: {_discrimination_summary(pillars.get('discrimination') or {})}"
+    )
+
+    validity = pillars.get("validity") or {}
     agg_f1 = validity.get("aggregate_f1")
     agg_f1_str = agg_f1 if agg_f1 is not None else "n/a (no adjudication)"
     lines.append(f"- aggregate judge F1: {agg_f1_str}")
@@ -822,7 +889,16 @@ def _render_report_md(
             lines.append(f"- apply with: `zicato reflect apply {rid} {f.get('finding_id')}`")
         for ev in f.get("evidence", []):
             span = str(ev.get("span") or "")[:80]
-            lines.append(f"  - evidence: {ev.get('run_ref')} — {span}")
+            # The chip's OWN verdict and judge, never inferred from the
+            # finding's title. A finding titled "fires falsely" can carry an FN
+            # span (the pile a judge is scored on and the pile a finding is
+            # named for are chosen separately), so reading the verdict off the
+            # title MISLABELS the evidence — which is exactly what printing
+            # ``run_ref — span`` alone forced the reader to do. Both fields ride
+            # on every chip (``reflection/findings.py::_evidence``).
+            verdict = str(ev.get("verdict") or "?").upper()
+            judge_name = ev.get("judge_name") or "?"
+            lines.append(f"  - evidence: [{verdict}] {judge_name} {ev.get('run_ref')} — {span}")
         lines.append("")
 
     # Per-judge scorecard table.
@@ -830,21 +906,31 @@ def _render_report_md(
     if not scorecards:
         lines.append("(no adjudication ran)")
     else:
+        # ``fpr``, ``severity_accuracy`` and ``disagreement_rate`` are tracked
+        # APART from precision/recall by construction (``scorecards.py``): a
+        # judge can score a clean f1 and still fire at the wrong severity, or
+        # disagree with itself across replicates of the same decision. Dropping
+        # those columns hid the two failure modes the module separates them to
+        # expose. ``n_decisions`` is deliberately NOT a column: the invariant
+        # ``tp + fp + fn + tn + ambiguous == n_decisions`` holds per row, so it
+        # would be arithmetic the reader can already do.
         lines.append(
-            "| judge | TP | FP | FN | TN | amb | precision | recall | f1 | κ | exercised |"
+            "| judge | TP | FP | FN | TN | amb | precision | recall | f1 | FPR | "
+            "sev acc | disagree | κ | exercised |"
         )
-        lines.append("|---|---|---|---|---|---|---|---|---|---|---|")
+        lines.append("|---|---|---|---|---|---|---|---|---|---|---|---|---|---|")
         for c in scorecards:
             exercised = "yes" if c.get("exercised") else "no"
             lines.append(
                 f"| {c.get('judge_name')} | {c.get('tp')} | {c.get('fp')} | {c.get('fn')} | "
                 f"{c.get('tn')} | {c.get('ambiguous')} | {_fmt(c.get('precision'))} | "
-                f"{_fmt(c.get('recall'))} | {_fmt(c.get('f1'))} | "
+                f"{_fmt(c.get('recall'))} | {_fmt(c.get('f1'))} | {_fmt(c.get('fpr'))} | "
+                f"{_fmt(c.get('severity_accuracy'))} | {_fmt(c.get('disagreement_rate'))} | "
                 f"{_fmt(c.get('self_consistency_kappa'))} | {exercised} |"
             )
-        # The per-judge remedies, BENEATH the table rather than as a twelfth
+        # The per-judge remedies, BENEATH the table rather than as another
         # column — a recommendation is a sentence, and the table is already
-        # eleven columns of numbers. Listed only for judges that carry one,
+        # thirteen columns of numbers. Listed only for judges that carry one,
         # so a clean audit adds no empty section.
         remedies = [(c.get("judge_name"), c.get("recommendation")) for c in scorecards]
         remedies = [(name, text) for name, text in remedies if text]

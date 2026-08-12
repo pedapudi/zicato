@@ -57,25 +57,21 @@ export async function pollLogTailAppend() {
   }
 }
 
-// /api/tournaments/:gen — per-matchup detail, plus the drift-movements
-// for the same challenger. Both cached; a failure degrades the panel
-// to the bracket summary rather than breaking it.
-export async function loadMatchupDetail(genId) {
-  if (!genId || state.mock) return;
-  try {
-    const detail = await fetchJson('/api/tournaments/' + encodeURIComponent(genId));
-    state.setMatchupDetail(genId, detail);
-  } catch (err) {
-    // renderMatchupDetail falls back to the bracket summary.
-  }
-  try {
-    const dm = await fetchJson('/api/drift-movements/' + encodeURIComponent(genId));
-    state.driftMovements[genId] = dm;
-    state._changed();
-  } catch (err) {
-    // Section degrades to "no movements".
-  }
-}
+// (loadMatchupDetail() DELETED — FETCH-AND-DISCARD on the heartbeat path.)
+//
+// It pulled the whole `/api/tournaments/{gen}` matchup-detail payload (ab_grid
+// included) plus `/api/drift-movements/{gen}` into `state.matchupDetail` /
+// `state.driftMovements` on EVERY SSE beat, and NO view ever read either field —
+// the panels those caches were built for ("renderMatchupDetail", the movements
+// section) do not exist in this tree. Two per-beat round-trips, both discarded.
+//
+// The surfaces that DO render per-matchup detail read their own drill-downs
+// on demand through js/data.js (`D.bracket()` for the matchup list,
+// `D.matchupGrid()` for the per-board A/B grid — which reconstructs from the
+// persisted loss files rather than the best-effort index, so it is also the
+// more reliable source). `/api/tournaments/{gen}` and `/api/drift-movements/
+// {gen}` remain served for curl/operators; nothing on the beat path touches
+// them. See js/CONTRACTS.md (§ drill-down / lazy endpoints).
 
 // POST a control marker (pause / skip-round / kill / promote / reject /
 // brief). Read-only workspaces answer 403 — surfaced to the caller.

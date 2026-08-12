@@ -177,9 +177,15 @@ function digestFor(d) {
       j.recommendation || null,
     ]);
     const pr = d.practices || {};
+    const cal = (s.pillars && s.pillars.calibration) || {};
     return JSON.stringify({
       m: 'bill', id: d.reflectionId, found: !!s.found,
       p: s.pillars || {},
+      // The whole `pillars` object above already folds every pillar row, so the
+      // calibration figures gate through it; delta_std is ALSO named here so a
+      // later narrowing of `p` to a field list cannot silently un-gate the row
+      // that renders it (the recurring no-repaint bug class).
+      dstd: isNum(cal.noise_floor_delta_std) ? cal.noise_floor_delta_std.toFixed(6) : null,
       flip: isNum(s.decision_flip_p) ? s.decision_flip_p.toFixed(4) : null,
       findings: (s.findings || []).map((f) => [f.finding_id, f.severity, f.title, (f.evidence || []).length, f.proposed_op && f.proposed_op.op, f.recommendation || null]),
       cards,
@@ -205,7 +211,10 @@ function digestFor(d) {
     turns: (x.transcript && x.transcript.turns) || [],
     jv: [jv.fired, jv.severity, jv.claim, jv.transcript_span],
     adj: [adj.verdict, adj.evidence_span, adj.meta_judge_rationale, adj.meta_judge_model,
-      adj.fidelity, adj.prompt_version, adj.adjudicator_self_agreement],
+      adj.fidelity, adj.prompt_version, adj.adjudicator_self_agreement,
+      // severity agreement is a SEPARATE axis from the fire/silence verdict —
+      // folded so a re-adjudication that flips only the severity repaints.
+      adj.severity_match],
   });
 }
 
@@ -470,6 +479,13 @@ function calibrationRows(cal) {
   const rows = [];
   rows.push(['promote_margin', num(cal.promote_margin, 4)]);
   rows.push(['noise floor max|Δ|', num(cal.noise_floor_max_abs_delta, 4)]);
+  // The draw-count-stable A/A dispersion, next to the RANGE it corrects. max|Δ|
+  // grows with the calibration draw count K, so a surface showing only the range
+  // shows the one number the recommendation is derived NOT to use. Absent on a
+  // record that predates the statistic ⇒ no row (never an "undefined").
+  if (isNum(cal.noise_floor_delta_std)) {
+    rows.push(['noise floor Δ std', num(cal.noise_floor_delta_std, 4)]);
+  }
   const clears = cal.margin_clears_floor;
   rows.push(['margin clears floor', yn(clears), clears === true ? 'good' : clears === false ? 'bad' : null]);
   return rows;
@@ -830,9 +846,31 @@ function verdictPane(jv, adj) {
       'adjudication ', chip('instr-verdict-' + tone, String(adj.verdict || 'ambiguous')),
     ]),
     adj.meta_judge_rationale ? el('p', { class: 'dn-instr-xwhy', text: String(adj.meta_judge_rationale) }) : null,
+    severityMatchLine(adj, jv),
     caption(metaBits.join(' · ')),
   ].filter(Boolean)));
   return pane;
+}
+
+// Did the adjudicator agree with the judge's CLAIMED severity? Severity
+// correctness is tracked APART from fire/silence (BOARD-REFLECTION.md, judge
+// audit — confusion-matrix definitions):
+// a judge that fires on the right span at the wrong severity passes the 2×2
+// and still mis-weights the loss, so the verdict pill alone overstates it.
+// The adjudicator scores this on a TP only, so
+// `severity_match` is null everywhere else — and a null renders NOTHING (the
+// aggregate `severity_accuracy` on the scorecard is the only other home).
+function severityMatchLine(adj, jv) {
+  if (adj.severity_match !== true && adj.severity_match !== false) return null;
+  const claimed = jv && jv.severity ? String(jv.severity) : '';
+  const text = adj.severity_match
+    ? 'severity agrees' + (claimed ? ' · ' + claimed : '')
+    : 'severity mismatch' + (claimed ? ' · the judge claimed ' + claimed : '')
+      + ' — a correct fire at the wrong severity still mis-weights the loss';
+  return el('p', {
+    class: 'dn-instr-xsevmatch dn-instr-t-' + (adj.severity_match ? 'good' : 'bad'),
+    text,
+  });
 }
 
 function fidelityLabel(fidelity) {

@@ -6,7 +6,7 @@
 //     long-lived chrome nodes use — the digest no-op discipline itself
 //     lives in gatedSwap, pinned by the view suites).
 
-import { installDom, test, run, assert, assertEqual, makeEvent } from './harness.mjs';
+import { installDom, test, run, assert, assertEqual, assertDeep, makeEvent } from './harness.mjs';
 
 installDom();
 
@@ -96,6 +96,53 @@ test('harmonografSessionId: does NOT fall back to synthetic run-id', () => {
   const synth = deriveRunId(rec);
   assertEqual(synth, 'v0--waffles_single', 'deriveRunId still works for callers that need it');
   assert(sid !== synth, 'harmonografSessionId must not fall back to the synthetic run-id');
+});
+
+// --- A1/A2: the beat path makes ONE consolidated read, never fetch-and-discard.
+//
+// `loadMatchupDetail()` used to pull `/api/tournaments/{gen}` (the whole
+// matchup-detail payload, ab_grid included) AND `/api/drift-movements/{gen}`
+// into `state.matchupDetail` / `state.driftMovements` on EVERY SSE beat — and no
+// view read either field. Both the loader and the caches are gone; these pin
+// that they cannot come back silently.
+
+const api = await import('../js/core/api.js');
+const { state } = await import('../js/core/state.js');
+
+test('A1/A2: the fetch-and-discard matchup-detail loader and its caches are GONE', () => {
+  assertEqual(typeof api.loadMatchupDetail, 'undefined',
+    'core/api.js exports no loadMatchupDetail — the per-beat loader is deleted');
+  assertEqual(typeof state.setMatchupDetail, 'undefined',
+    'AppState has no setMatchupDetail mutator');
+  assert(!('matchupDetail' in state), 'AppState declares no matchupDetail cache');
+  assert(!('driftMovements' in state), 'AppState declares no driftMovements cache');
+  assert(!('selectedMatchup' in state), 'AppState declares no selectedMatchup key (it only kept the dead cache)');
+});
+
+test('A1/A2: a debounced SSE refresh fetches /api/environment and NOTHING else', async () => {
+  const sse = await import('../js/core/sse.js');
+  const seen = [];
+  const prevFetch = globalThis.fetch;
+  globalThis.fetch = async (path) => {
+    seen.push(String(path));
+    return { ok: true, json: async () => ({}) };
+  };
+  // Drive the loader the beat path actually calls. The per-beat matchup /
+  // drift-movement round-trips must not appear.
+  await api.loadEnvironment();
+  globalThis.fetch = prevFetch;
+  assertDeep(seen, ['/api/environment'], 'exactly one consolidated read per beat');
+  assert(!seen.some((p) => p.startsWith('/api/tournaments/')), 'no per-beat matchup-detail fetch');
+  assert(!seen.some((p) => p.startsWith('/api/drift-movements/')), 'no per-beat drift-movements fetch');
+  void sse;
+});
+
+// --- A3: the superseded contract-diff fetcher is deleted, not merely unused.
+
+test('A3: data.contractDiff is deleted (superseded by the /api/workspace ledger)', async () => {
+  const data = await import('../js/data.js');
+  assertEqual(typeof data.contractDiff, 'undefined',
+    'the dead /api/contract-diff fetcher is gone; views/home.js reads ws.ledger instead');
 });
 
 await run();

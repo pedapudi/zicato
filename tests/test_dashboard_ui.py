@@ -743,7 +743,18 @@ def test_bundle_under_size_envelope() -> None:
     # already ~306 KB over its stated 1.52 M line. The envelope is rebased
     # to 1.89 M (honest total + ~3% slack) so it reflects what the browser
     # actually loads, with headroom for continued iteration.
-    assert total < 1_890_000, f"bundle is {total} chars, exceeds 1_890_000 envelope\n" + "\n".join(
+    #
+    # The render-conformance sweep then landed a batch of surfaces for data
+    # the server was already computing and no view read: the per-judge
+    # head-to-head comparison, the entry grid's continuous score + metrics
+    # columns, the served calibration readout, board_meta on board-status,
+    # the entry-kind and context controls, and the adjudication x-ray's
+    # severity-match line — each with its CSS. Net of the deletions in the
+    # same sweep (the per-beat matchup-detail / drift-movement fetch-and-
+    # discard and its dead state slots), that is ~+5.6 KB of genuinely new
+    # RENDERED surface, not new machinery. The envelope is raised to 1.92 M
+    # to cover it with headroom.
+    assert total < 1_920_000, f"bundle is {total} chars, exceeds 1_920_000 envelope\n" + "\n".join(
         f"  {name:40s} {size:>10,}" for name, size in sorted(sizes.items(), key=lambda kv: -kv[1])
     )
 

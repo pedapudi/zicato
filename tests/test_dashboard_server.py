@@ -973,10 +973,22 @@ def test_epoch_view_includes_experiments_journal_analysis(workspace: Path) -> No
     assert "Two experiments" in view["analysis_md"]
     assert "analysis_html_available" in view
     assert view["analysis_html_available"] is False
-    # The inline paper-styled HTML fragment ships alongside the markdown
-    # so the Epoch view can render the report as a paper card inline.
+    # The inline paper-styled fragment is NOT rendered on this view. It used
+    # to be, which put a full report render on the most frequently polled
+    # payload in the dashboard for a field no client read off it — the
+    # publication view fetches the dedicated /api/epoch/{id}/analysis route.
+    # The key stays (dropping it would change the payload shape, and every
+    # reader-parity fixture pins it) and is always empty here.
     assert "analysis_html_inline" in view
-    assert "paper paper-card" in view["analysis_html_inline"]
+    assert view["analysis_html_inline"] == ""
+
+    # …and the route whose job it IS still renders the fragment, from the
+    # same markdown. Asserted here so moving the render did not lose it.
+    from zicato.query import build_epoch_analysis  # noqa: PLC0415
+
+    analysis = build_epoch_analysis(WorkspacePaths(workspace), view["epoch_id"])
+    assert "paper paper-card" in analysis["analysis_html_inline"]
+    assert analysis["analysis_md"] == view["analysis_md"]
 
 
 def test_epoch_view_experiments_empty_without_gens(workspace: Path) -> None:

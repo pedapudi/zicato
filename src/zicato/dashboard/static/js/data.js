@@ -9,8 +9,8 @@
 //     which generations patched each).
 //   * /api/files/{epoch}/{generation}/patches — what each generation
 //     actually changed (per-mutation patch ops).
-//   * /api/epoch/{epoch_id}/analysis       — the ACM publication `analysis_md`.
-//   * /api/contract-diff/{epoch_id}        — the contract delta.
+//   * /api/epoch/{epoch_id}/analysis       — the ACM publication (the server-
+//     rendered `analysis_html_inline` fragment, `analysis_md` behind it).
 //
 // Each is a thin, cached, failure-tolerant GET — the same discipline as
 // core/api.js. Nothing here mutates AppState; callers own their cache.
@@ -84,7 +84,6 @@ export function invalidateLive() {
       || key.startsWith('/api/lineage')
       || key.startsWith('/api/mutations/')
       || key.startsWith('/api/files/')
-      || key.startsWith('/api/contract-diff/')
       || key.startsWith('/api/conversation/')
       || key.startsWith('/api/tournament-structure/')
       || key.startsWith('/api/hypothesis-accuracy/')
@@ -366,14 +365,16 @@ export function patches(epochId, genId) {
 export function mutationDetail(epochId, mutationId) {
   return cachedJson(`/api/mutations/${enc(epochId)}/${enc(mutationId)}`);
 }
-// The epoch's ACM publication, as markdown with section markers.
+// The epoch's ACM publication — the server-rendered paper fragment
+// (`analysis_html_inline`) with the raw markdown (`analysis_md`) behind it.
 export function analysis(epochId) {
   return cachedJson(`/api/epoch/${enc(epochId)}/analysis`);
 }
-// The epoch contract delta (added / removed board entries, scoring moves).
-export function contractDiff(epochId) {
-  return cachedJson(`/api/contract-diff/${enc(epochId)}`);
-}
+// (contractDiff() DELETED — the `/api/contract-diff/{epoch}` read is SUPERSEDED
+// by the composed meta-loop LEDGER on `/api/workspace` (`ws.ledger`, rendered by
+// views/home.js), which carries the same per-component contract delta PLUS the
+// proposer + structure levers the contract-diff omits, on a read the home view
+// already makes. The server route stays for curl/operators; no client wants it.)
 
 // ---- Instrument lens (board reflection) reads -----------------------
 //
@@ -477,6 +478,19 @@ export function evalDossier(epochId, entryId) {
 // The promote-gate decomposition for one round.
 export function gate(epochId, championId, challengerId) {
   return cachedJson(`/api/round/${enc(epochId)}/${enc(championId)}/${enc(challengerId)}/gate`);
+}
+
+// WHICH JUDGE DECIDED THE ROUND — the per-judge champion-vs-challenger
+// comparison for ONE round (build_per_judge_comparison): `{judges:
+// [{judge_name, champion_weighted_loss, challenger_weighted_loss, delta}],
+// primary_driver}`. The gate payload names its own primary driver; this read
+// carries the FULL per-judge ledger the driver was picked from, so the operator
+// can see the runner-up pressures rather than one name. Round-scoped and
+// immutable once settled → the same cached, failure-tolerant class as gate()
+// (same cache lifetime, same null-degrade): a never-indexed workspace / the
+// Rust supervisor reads null and the panel is simply omitted.
+export function perJudgeComparison(epochId, championId, challengerId) {
+  return cachedJson(`/api/round/${enc(epochId)}/${enc(championId)}/${enc(challengerId)}/per-judge-comparison`);
 }
 
 // The proposer's PREDICTION-ACCURACY scorecard for ONE generation — predicted

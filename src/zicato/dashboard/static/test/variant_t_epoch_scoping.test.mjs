@@ -888,4 +888,102 @@ test('fonts: the two self-hosted monos stay woff2; the 12 finalized faces load v
   }
 });
 
+// ── A18 · the frozen CONTRACT HASH · and A11 · the Δscalar tiles ─────────────
+//
+// `contract_hash` (build_epoch_view, off config.json) named WHICH contract the
+// epoch froze and was read by NO js and no CLI. `delta_scalar_summary`
+// ({champion_spine, gross}) is documented in build_epoch_view as tiles the
+// caller renders — and had no caller.
+
+const epochViewMod = await import('../js/views/epoch.js');
+
+const CONTRACT_HASH = 'feedfacecafebabe0123456789abcdef0123456789abcdef';
+
+function epochHeaderFixture(over) {
+  const ep = Object.assign({}, FIXTURE['/api/epoch'], {
+    contract_hash: CONTRACT_HASH,
+    delta_scalar_summary: { champion_spine: -12.5, gross: 3.25 },
+  }, over || {});
+  const F = Object.assign({}, FIXTURE);
+  F['/api/epoch'] = ep;
+  F[`/api/epoch?epoch=${EPOCH_ID}`] = ep;
+  return F;
+}
+
+test('A18 · epoch.shortHash: the builder short-hash idiom (12 chars + ellipsis)', () => {
+  assertEqual(epochViewMod.shortHash(CONTRACT_HASH), 'feedfacecafe…', 'a long hash is shortened');
+  assertEqual(epochViewMod.shortHash('abc'), 'abc', 'a short hash passes through whole');
+  assertEqual(epochViewMod.shortHash(null), '', 'an absent hash reads empty');
+});
+
+test('A18 · the epoch header names WHICH contract the epoch froze (shortened, full on hover)', async () => {
+  freshState(); installFixtureMap(epochHeaderFixture());
+  const host = document.createElement('div');
+  await epochViewMod.render(host, { navigate() {}, href: router.href }, { epochId: EPOCH_ID });
+  const el = allByClass(host, 'dt-contract-hash')[0];
+  assert(el, 'the epoch header carries the contract hash');
+  assert(String(el.textContent).includes('feedfacecafe'), 'it renders the shortened hash');
+  assertEqual(el.getAttribute('title'), CONTRACT_HASH, 'the FULL hash is on hover — nothing is lost');
+});
+
+test('A18 · an epoch with no contract_hash renders no hash chip (byte-identical to before)', async () => {
+  freshState(); installFixtureMap(epochHeaderFixture({ contract_hash: undefined }));
+  const host = document.createElement('div');
+  await epochViewMod.render(host, { navigate() {}, href: router.href }, { epochId: EPOCH_ID });
+  assertEqual(allByClass(host, 'dt-contract-hash').length, 0, 'no chip when the epoch froze no recorded hash');
+});
+
+test('A11 · the epoch header renders BOTH Δscalar tiles, spine first, gross labelled secondary', async () => {
+  freshState(); installFixtureMap(epochHeaderFixture());
+  const host = document.createElement('div');
+  await epochViewMod.render(host, { navigate() {}, href: router.href }, { epochId: EPOCH_ID });
+  const txt = host.textContent;
+  assert(txt.includes('Δ scalar · champion spine'), 'the champion-spine tile is labelled');
+  assert(txt.includes('Δ scalar · gross (all experiments)'), 'the gross tile is labelled as the all-experiments sum');
+  assert(txt.includes('-12.50'), 'the spine sum renders signed');
+  assert(txt.includes('+3.25'), 'the gross sum renders signed');
+  assert(txt.indexOf('champion spine') < txt.indexOf('gross (all experiments)'),
+    'the spine number leads — it is the meta-loop’s actual progress');
+  assert(txt.includes('the champion-spine sum counts PROMOTED hops only'),
+    'the caption says why gross is not the headline');
+});
+
+test('A11 · an absent delta reads "—" (exactly as build_epoch_view documents)', async () => {
+  freshState(); installFixtureMap(epochHeaderFixture({ delta_scalar_summary: { champion_spine: null, gross: null } }));
+  const host = document.createElement('div');
+  await epochViewMod.render(host, { navigate() {}, href: router.href }, { epochId: EPOCH_ID });
+  assert(host.textContent.includes('Δ scalar · champion spine'), 'the tile still renders');
+  assert(host.textContent.includes('—'), 'an unrecorded delta reads as a dash, never a fabricated 0');
+});
+
+test('A18 + A11 · both are FOLDED into the epoch digest (a re-freeze / a new promotion repaints)', async () => {
+  freshState(); installFixtureMap(epochHeaderFixture());
+  const host = document.createElement('div');
+  const ctx = { navigate() {}, href: router.href };
+  await epochViewMod.render(host, ctx, { epochId: EPOCH_ID });
+  const first = host.getAttribute('data-t-digest');
+  assert(first.includes('contractHash'), 'contractHash is folded into the epoch digest');
+  assert(first.includes('deltaSummary'), 'deltaSummary is folded into the epoch digest');
+
+  // a no-op beat: identical payload → zero DOM.
+  const node = host.firstChild;
+  freshState(); installFixtureMap(epochHeaderFixture());
+  await epochViewMod.render(host, ctx, { epochId: EPOCH_ID });
+  assertEqual(host.getAttribute('data-t-digest'), first, 'an identical epoch payload is a digest no-op');
+  assert(host.firstChild === node, 'no rebuild on the no-op beat');
+
+  // the contract re-frozen — everything else identical — must repaint.
+  freshState(); installFixtureMap(epochHeaderFixture({ contract_hash: 'ffffffffffffffffffffffffffffffff' }));
+  await epochViewMod.render(host, ctx, { epochId: EPOCH_ID });
+  assert(host.getAttribute('data-t-digest') !== first, 'a re-frozen contract flips the epoch digest');
+
+  // and a moved spine sum alone must repaint too.
+  freshState(); installFixtureMap(epochHeaderFixture());
+  await epochViewMod.render(host, ctx, { epochId: EPOCH_ID });
+  const base = host.getAttribute('data-t-digest');
+  freshState(); installFixtureMap(epochHeaderFixture({ delta_scalar_summary: { champion_spine: -20.0, gross: 3.25 } }));
+  await epochViewMod.render(host, ctx, { epochId: EPOCH_ID });
+  assert(host.getAttribute('data-t-digest') !== base, 'a moved champion-spine Δ flips the epoch digest');
+});
+
 await run();

@@ -198,8 +198,32 @@ export async function render(host, ctx, params) {
   // when the overfitting `#2`/`#5` fields are absent.
   const boardStatus = boardStatusModel(ep);
 
+  // WHICH CONTRACT THIS EPOCH FROZE — `contract_hash` off `config.json`
+  // (build_epoch_view). An epoch is a frozen evaluation contract; the hash is
+  // its identity, and until now the epoch view never said which one it was
+  // running. Shortened for the header, full value on hover.
+  const contractHash = (ep && typeof ep.contract_hash === 'string' && ep.contract_hash.trim())
+    ? ep.contract_hash.trim() : null;
+  // The Δscalar AGGREGATES the epoch payload computes for exactly this header
+  // (`delta_scalar_summary` = {champion_spine, gross}). The spine sum is the
+  // meta-loop's ACTUAL progress (promoted hops only); `gross` sums every
+  // experiment including rejected challengers, so it is the SECONDARY read and
+  // is labelled as such — never the headline.
+  const deltaSummary = (ep && ep.delta_scalar_summary && typeof ep.delta_scalar_summary === 'object')
+    ? ep.delta_scalar_summary : null;
+  const spineDelta = deltaSummary && svg.isNum(deltaSummary.champion_spine) ? deltaSummary.champion_spine : null;
+  const grossDelta = deltaSummary && svg.isNum(deltaSummary.gross) ? deltaSummary.gross : null;
+
   const digest = JSON.stringify({
     epochId, goal: ep.goal || '', objective: objectiveText(ep), briefLen: (ep.brief || '').length, closed: !!ep.closed,
+    // the frozen contract identity rendered on the header (A18).
+    contractHash,
+    // the two Δscalar tiles (A11) at their RENDERED precision, so a no-op beat
+    // is byte-identical and a settled round that moves either sum repaints.
+    deltaSummary: [
+      spineDelta == null ? null : spineDelta.toFixed(3),
+      grossDelta == null ? null : grossDelta.toFixed(3),
+    ],
     structure: tournament ? [tournament.structure, JSON.stringify(tournament.params || {})] : null,
     nonGauntlet,
     racingFunnel: racingFunnel ? structureDigest(racingFunnel.st) : null,
@@ -226,9 +250,15 @@ export async function render(host, ctx, params) {
         el('div', { class: 'lab', text: 'objective' }),
         el('div', { class: 'txt', text: objectiveText(ep) }),
       ]),
-      tournament ? el('div', { class: 'dt-structure-line' }, [
-        structurePill(tournament.structure, tournament.params),
-      ]) : null,
+      (tournament || contractHash) ? el('div', { class: 'dt-structure-line' }, [
+        tournament ? structurePill(tournament.structure, tournament.params) : null,
+        // the frozen CONTRACT identity — shortened like every other hash in the
+        // tree (builder.js `shorten`), full value on hover.
+        contractHash ? el('span', {
+          class: 'dt-contract-hash dn-mono dn-faint', title: contractHash,
+          text: 'contract ' + shortHash(contractHash),
+        }) : null,
+      ].filter(Boolean)) : null,
     ].filter(Boolean)));
 
     const promotedCount = gens.filter((g) => g.promoted).length;
@@ -237,7 +267,16 @@ export async function render(host, ctx, params) {
       stat(String(experiments.length), 'experiments'),
       stat(String(promotedCount), 'promoted'),
       stat(ep.closed ? 'closed' : 'open', 'state'),
+      // ── the Δscalar AGGREGATES the payload computes for this header ──
+      // Rendered as "—" tiles when the epoch recorded no finite delta of that
+      // kind, exactly as build_epoch_view documents. The champion-spine sum
+      // leads (it is the meta-loop's real progress); `gross` follows, captioned
+      // so it is never mistaken for the headline.
+      stat(spineDelta == null ? '—' : svg.fmtSigned(spineDelta, 2), 'Δ scalar · champion spine'),
+      stat(grossDelta == null ? '—' : svg.fmtSigned(grossDelta, 2), 'Δ scalar · gross (all experiments)'),
     ]));
+    nodes.push(el('p', { class: 'dn-faint', style: 'font-size:11px;margin:6px 0 0;',
+      text: 'Δ scalar sums the per-experiment scalar_score_delta · the champion-spine sum counts PROMOTED hops only — the meta-loop’s actual progress · the gross sum includes rejected challengers and never enters the lineage (lower = better)' }));
 
     nodes.push(el('div', { class: 'dn-quicklinks' }, [
       el('a', { class: 'dn-linkbtn', href: ctx.href('gens', { epochId }), text: 'Generations →' }),
@@ -416,6 +455,15 @@ export async function render(host, ctx, params) {
   });
 }
 
+// A hash shortened for a header line — the same idiom the builder uses for
+// `new_contract_hash` (views/builder.js `shorten`): first 12 chars + an
+// ellipsis, with the caller putting the full value in a `title`.
+export function shortHash(h, n) {
+  const s = String(h == null ? '' : h).trim();
+  const len = n || 12;
+  return s.length > len ? s.slice(0, len) + '…' : s;
+}
+
 // The epoch OBJECTIVE line: the explicit `goal` if set, else a display-only
 // fallback to the epoch's OWN brief TITLE — the first H1 (`# …`) of brief.md,
 // stripping a leading "Epoch eN — " / "Epoch eN: " prefix. This reads the
@@ -444,6 +492,25 @@ function verdictLine(traj) {
   return null;
 }
 
+// DELIBERATE NON-READ — `points[].namespace_values`.
+//
+// `/api/epoch/{id}/trajectory` carries a per-namespace value map on every spine
+// point (query/loop_view.py build_optimization_trajectory). This panel reads
+// `generation_id` + `scalar` and DROPS `namespace_values`, on purpose:
+//
+//   * A namespace value is only actionable at the moment it REGRESSES, and that
+//     moment is already surfaced where the operator can act on it — the promote
+//     gate's `namespace_monotonicity` rule, whose detail names the regressed
+//     namespace (views/candidate.js gatePanel → the rules ladder).
+//   * A namespace × spine table here would re-use the per-judge trend panel's
+//     grammar (one row per component, a sparkline across the spine) without new
+//     signal, and would grow with every namespace an epoch declares — the epoch
+//     overview is already the densest page in the tree.
+//
+// This is recorded so the next "served but read by nothing" audit reads it as a
+// decision rather than a gap. Revisit if an epoch ever gates on a namespace the
+// gate ladder does not name.
+//
 // The OPTIMIZATION-TRAJECTORY panel for one /api/epoch/{id}/trajectory read.
 // Null when the read is absent (Rust supervisor) or carries no points AND no
 // promotion stats — the epoch view is then byte-identical to today.

@@ -32,11 +32,15 @@ function hovercardTextOf(node) {
 // gap series across two generations.
 const EP_FULL = {
   epoch_id: 'e0',
+  // `kind` + `tags` ride the RAW board (the server's board_split carries
+  // membership only), so the per-entry join is client-local.
   board: [
-    { entry_id: 'b1', weight: 1.0, tags: ['adversarial'] },
-    { entry_id: 'b2', weight: 2.0, tags: ['adversarial', 'rare'] },
-    { entry_id: 'b3', weight: 1.0, tags: [] },
+    { entry_id: 'b1', kind: 'single_turn', weight: 1.0, tags: ['adversarial'] },
+    { entry_id: 'b2', kind: 'synthetic_adversarial', weight: 2.0, tags: ['adversarial', 'rare'] },
+    { entry_id: 'b3', kind: 'multi_turn_emulated', weight: 1.0, tags: [] },
   ],
+  // The board-level header (BOARD-FORMAT §1.0) as epoch_view.py serves it.
+  board_meta: { disable_drift: ['user_steer', 'user_pause'], judge_only: true },
   board_split: {
     configured: true, enabled: true, holdout_fraction: 0.34,
     holdout_tags: ['rare'],
@@ -153,6 +157,86 @@ test('renderBoardStatus: per-entry hovercard carries id, slice, weight, why-held
   assert(text.includes('holdout'), 'card names the slice');
   assert(text.includes('rare'), 'card explains why it is held out (the tag)');
   assert(text.includes('weight'), 'card carries the weight');
+});
+
+// ---- the client-local kind / tags join (no server change) ------------
+
+test('boardStatusModel: joins kind + tags off ep.board by entry_id', () => {
+  const m = bs.boardStatusModel(EP_FULL);
+  const held = m.split.entries.find((e) => e.entryId === 'b2');
+  assertEqual(held.kind, 'synthetic_adversarial', 'the kind is joined onto the split row');
+  assertDeep(held.tags, ['adversarial', 'rare'], 'and the full tag list');
+  const plain = m.split.entries.find((e) => e.entryId === 'b3');
+  assertDeep(plain.tags, [], 'an untagged entry joins an empty list, never undefined');
+});
+
+test('boardStatusModel: an entry missing from ep.board joins null kind / empty tags', () => {
+  const ep = JSON.parse(JSON.stringify(EP_FULL));
+  ep.board = [];  // board_split names entries the raw board does not
+  const m = bs.boardStatusModel(ep);
+  assertEqual(m.split.entries.length, 3, 'the split still names every entry');
+  assertEqual(m.split.entries[0].kind, null, 'an unjoinable kind is null, not undefined');
+  assertDeep(m.split.entries[0].tags, [], 'and the tags degrade to an empty list');
+});
+
+test('renderBoardStatus: the entry hovercard names the kind (full five-kind vocabulary) + tags', () => {
+  const node = bs.renderBoardStatus(bs.boardStatusModel(EP_FULL), {});
+  const chips = allByClass(node, 'dn-bs-chip');
+  const held = chips.find((n) => (n.textContent || '').includes('b2'));
+  const text = hovercardTextOf(held);
+  assert(text.includes('kind: synthetic adversarial'), 'a SYNTHETIC kind is labelled, not left blank');
+  assert(text.includes('tags: adversarial, rare'), 'the entry tags are listed');
+  // the other two kinds in the same vocabulary.
+  const emulated = chips.find((n) => (n.textContent || '').includes('b3'));
+  assert(hovercardTextOf(emulated).includes('kind: emulated multi-turn'), 'multi_turn_emulated label');
+  const single = chips.find((n) => (n.textContent || '').includes('b1'));
+  assert(hovercardTextOf(single).includes('kind: single-turn'), 'single_turn label');
+});
+
+test('boardStatusDigest: kind + tags are FOLDED — a retype / retag repaints', () => {
+  const base = bs.boardStatusDigest(bs.boardStatusModel(EP_FULL));
+  const retyped = JSON.parse(JSON.stringify(EP_FULL));
+  retyped.board[0].kind = 'synthetic_clean';
+  assert(bs.boardStatusDigest(bs.boardStatusModel(retyped)) !== base, 'a kind change moves the digest');
+  const retagged = JSON.parse(JSON.stringify(EP_FULL));
+  retagged.board[2].tags = ['smoke'];
+  assert(bs.boardStatusDigest(bs.boardStatusModel(retagged)) !== base, 'a tag change moves the digest');
+});
+
+// ---- board_meta: settable in the builder, now visible at runtime -----
+
+test('boardStatusModel: reads board_meta; absent / fully default reads null', () => {
+  assertEqual(bs.boardStatusModel(EP_FULL).meta.judgeOnly, true, 'judge_only read through');
+  assertDeep(bs.boardStatusModel(EP_FULL).meta.disableDrift, ['user_steer', 'user_pause'], 'the suppression list');
+  assertEqual(bs.boardStatusModel({ board: [] }).meta, null, 'no header ⇒ null');
+  assertEqual(bs.boardStatusModel({ board_meta: { disable_drift: [], judge_only: false } }).meta, null,
+    'a fully-default header says nothing about the board ⇒ null');
+});
+
+test('renderBoardStatus: board_meta paints beside the counts in the BUILDER\'S wording', () => {
+  const node = bs.renderBoardStatus(bs.boardStatusModel(EP_FULL), {});
+  const meta = allByClass(node, 'dn-bs-meta')[0];
+  assert(meta != null, 'the board_meta line is painted');
+  const t = meta.textContent || '';
+  // verbatim from the builder's board-metadata panel — one flag, one sentence.
+  assert(t.includes('judge-only board — score on judges alone, no steering'),
+    'the judge-only wording matches the builder exactly');
+  assert(t.includes('user_steer, user_pause'), 'the suppressed drift kinds are named');
+});
+
+test('renderBoardStatus: no board_meta line when the header is absent', () => {
+  const node = bs.renderBoardStatus(bs.boardStatusModel({ board: [{ entry_id: 'b1' }] }), {});
+  assertEqual(allByClass(node, 'dn-bs-meta').length, 0, 'a default board grows no meta line');
+});
+
+test('boardStatusDigest: board_meta is FOLDED — flipping judge_only repaints', () => {
+  const base = bs.boardStatusDigest(bs.boardStatusModel(EP_FULL));
+  const flipped = JSON.parse(JSON.stringify(EP_FULL));
+  flipped.board_meta.judge_only = false;
+  assert(bs.boardStatusDigest(bs.boardStatusModel(flipped)) !== base, 'judge_only moves the digest');
+  const undrifted = JSON.parse(JSON.stringify(EP_FULL));
+  undrifted.board_meta.disable_drift = ['user_steer'];
+  assert(bs.boardStatusDigest(bs.boardStatusModel(undrifted)) !== base, 'the suppression set moves the digest');
 });
 
 test('renderBoardStatus: the ladder readout has an explainer hovercard with the doc link', () => {
