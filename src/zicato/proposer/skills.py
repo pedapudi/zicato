@@ -10,7 +10,10 @@ A *proposer* is, on disk, a directory ``proposers/<name>/`` carrying:
   it (the loading of the agent itself is a later phase).
 
 When no proposer dir is configured the proposer is the built-in default
-agent — no skills, no tools, no custom agent module.
+agent — no skills, no tools, no custom agent module. A workspace may
+instead name an *external* agent through ``runtime.proposer_agent``, in
+which case :mod:`zicato.proposer.external` supplies the identity and any
+proposer dir contributes only its skills.
 
 This module turns a proposer dir (or ``None``) into a hash-ready
 :class:`~zicato.core.types.ProposerSpec`. The contract layer
@@ -25,8 +28,12 @@ from __future__ import annotations
 
 import hashlib
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from zicato.core.types import ProposerSkill, ProposerSpec
+
+if TYPE_CHECKING:  # pragma: no cover - typing-only import
+    from zicato.proposer.external import ExternalProposerConfig
 
 
 def normalize_skill_body(body: str) -> str:
@@ -106,7 +113,10 @@ def load_proposer_skills(skills_dir: Path) -> tuple[ProposerSkill, ...]:
     return tuple(skills)
 
 
-def resolve_proposer_spec(proposer_path: Path | None) -> ProposerSpec:
+def resolve_proposer_spec(
+    proposer_path: Path | None,
+    external: ExternalProposerConfig | None = None,
+) -> ProposerSpec:
     """Resolve a proposer dir (or ``None``) into a :class:`ProposerSpec`.
 
     ``None`` ⇒ the built-in default proposer (:meth:`ProposerSpec.default`).
@@ -117,11 +127,24 @@ def resolve_proposer_spec(proposer_path: Path | None) -> ProposerSpec:
     * ``agent_source_sha256`` is the SHA-256 of ``<proposer_path>/agent.py``
       when that file exists, else ``None``;
     * ``tools`` is empty — tool declaration is a later phase.
+
+    ``external`` (a resolved ``runtime.proposer_agent``, absent for every
+    workspace that configures none) takes precedence over both: the spec
+    becomes the ``external:<label>`` identity from
+    :func:`zicato.proposer.external.resolve_external_spec`, still carrying
+    the proposer dir's skills when one is also configured — the external
+    agent is steered by the *hashed* skills, never by its own runtime's
+    parallel skill system.
     """
+    skills = load_proposer_skills(proposer_path / "skills") if proposer_path is not None else ()
+
+    if external is not None:
+        from zicato.proposer.external import resolve_external_spec  # noqa: PLC0415
+
+        return resolve_external_spec(external, skills=skills)
+
     if proposer_path is None:
         return ProposerSpec.default()
-
-    skills = load_proposer_skills(proposer_path / "skills")
 
     agent_py = proposer_path / "agent.py"
     agent_source_sha256: str | None
