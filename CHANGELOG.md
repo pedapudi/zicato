@@ -72,16 +72,21 @@ floor first, because each board entry is a full agentic run and the shipped
 The native marker pass walked `*.py` and nothing else, so a markdown prompt
 or a YAML policy sitting inside a registered mutable tree was invisible to
 the enumerator — the only route to a non-Python surface was the
-goldfive-shaped manifest bridge. Markers now live in any allowlisted text
-file, under any conventional comment leader (`#`, `//`, `/*`, `<!--`, `;`,
-`--`, `%`, with a trailing `-->` / `*/` tolerated).
+goldfive-shaped manifest bridge. Markers now live in any text file whose
+type the contract declares. The built-ins ship the proven set — `.md`,
+`.markdown`, `.txt`, `.yaml`, `.yml`, `.toml` under `#` and `<!--` lead-ins
+(a trailing `-->` tolerated), plus the reserved `.py` — and the operator
+declares anything further in a `mutation_surface` syntax table, naming each
+file type's comment leaders and closers. So a TypeScript or SQL surface is
+a contract edit rather than a zicato release; see MUTATION-SURFACE.md §2.5.
 
 **The marker requirement is unchanged.** This widens *where* a marker may
 live, never whether one is needed; an unmarked `config.yaml` is exactly as
-immutable as an unmarked `agent.py`. The supported set is deliberately
-small — `.md`, `.markdown`, `.txt`, `.yaml`, `.yml`, `.toml`, with `#` and
-`<!--` lead-ins — and grows one entry at a time as targets need it. Outside Python the `:file` and
-`:code` region forms apply and the bare span form does not — "the nearest
+immutable as an unmarked `agent.py`. Nothing is carried speculatively: the
+built-in set stays at what the supported formats actually use, and a
+declared file type widens the surface — so it rolls the epoch, exactly like
+any other contract change. Outside Python the `:file` and `:code` region
+forms apply and the bare span form does not — "the nearest
 string literal beneath" is an AST fact, and the tempting line-shaped
 approximation would let a `replace` swallow the `temperature:` key it was
 aimed at. A bare span marker in a text file now warns by name instead of
@@ -90,12 +95,16 @@ explicit, operator-written, and OUTSIDE the mutable range, so a patch can
 neither escape the region nor delete its own markers (echoed marker lines
 are stripped from the replacement).
 
-Discovery is an extension allowlist, not a content sniff — the enumerator
-re-runs after every applied patch, so the walk stays on the hot path, and
-an allowlist decides without opening a file and cannot wander into a
-binary. Enumeration is one pipeline, with Python a specialization that
-contributes the AST context (docstring lines + span resolver) rather than
-a second walk alongside. Vendored directories are pruned from the text pass only (pruning
+Discovery is the declared suffix table, not a content sniff — the enumerator
+re-runs after every applied patch, so the walk stays on the hot path, and a
+suffix decides without opening a file and cannot wander into a binary. The
+declared leaders are load-bearing beyond discovery: the applier strips
+echoed marker lines out of a region body under them, so a file type with no
+declared comment syntax is one whose regions could not be kept contained —
+which is why a leaderless declaration is rejected. Enumeration is one
+pipeline, with Python a specialization that contributes the AST context
+(docstring lines + span resolver) rather than a second walk alongside.
+Vendored directories are pruned from the text pass only (pruning
 the Python pass would move existing points), text files over 2 MB are
 skipped, and a single-file root now resolves by suffix instead of
 enumerating to zero in silence.

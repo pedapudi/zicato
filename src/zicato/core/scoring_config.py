@@ -1154,6 +1154,21 @@ class ScoringWeights:
         default=False,
         metadata=_knob(omit_at_default=True, builder_op="set_gate"),
     )
+    # The mutation-site file-type envelope, declared rather than released
+    # (MUTATION-SURFACE.md §2.5): ``{suffix: {"leaders": [...], "trailers":
+    # [...]}}``, folded over the built-in syntax table
+    # (``zicato.mutation.markers.BUILTIN_SYNTAXES``). The table decides which
+    # files are enumerable AT ALL, hence what the proposer may rewrite, hence
+    # comparability — so it is contract: editing it rolls the epoch, and the
+    # empty default (every workspace shipped so far) is omitted from the
+    # canonical form, leaving those hashes byte-identical. ``.py`` is
+    # reserved; the table governs the text pass only. Validated by
+    # ``markers.syntax_table_from_config`` at install / builder-op time — the
+    # ONE validator, never a second copy here (core must not import mutation).
+    mutation_surface: Mapping[str, Mapping[str, Any]] = field(
+        default_factory=dict,
+        metadata=_knob(omit_at_default=True, builder_op="set_mutation_surface"),
+    )
 
     def __post_init__(self) -> None:
         """Validate the declarative transform specs fail-fast at construction.

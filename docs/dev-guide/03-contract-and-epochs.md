@@ -645,6 +645,7 @@ The registered fields (`_SCORING_OMIT_AT_DEFAULT_FIELDS`,
 | `screen_entries` | `ProposerQualityConfig` (nested) | `0` | pre-tournament candidate screening |
 | `screen_veto_only` | `ProposerQualityConfig` (nested) | `False` | screen veto-only (no tiebreak feed) |
 | `process_exemplars` | `ProposerQualityConfig` (nested) | `0` | the redacted process-exemplar channel |
+| `mutation_surface` | `ScoringWeights` | `{}` | file types beyond the built-in mutation-site envelope (MUTATION-SURFACE.md §2.5) |
 
 Note the **nested** entries: `random_baseline_every_n`, `screen_entries`,
 `screen_veto_only`, and `process_exemplars` live on nested config dataclasses,

@@ -157,6 +157,10 @@ _NONDEFAULT_VALUES: dict[str, dict[str, Any]] = {
         # producer. Default "goldfive" is omit-at-default; a non-default
         # dialect rolls the epoch like any weight.
         "telemetry_dialect": "adk_events",
+        # The declared mutation-site syntax table (MUTATION-SURFACE.md §2.5):
+        # empty by default and omit-at-default in the canonicalizer; a declared
+        # file type widens the surface and rolls the epoch.
+        "mutation_surface": {".ts": {"leaders": ["//", "/*"], "trailers": ["*/"]}},
     },
 }
 
