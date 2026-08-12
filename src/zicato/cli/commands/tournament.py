@@ -142,7 +142,6 @@ def tournament_cmd(
     strategy = make_strategy(
         weights.tournament_structure,
         board_ids=[e.id for e in board],
-        board_tags={e.id: e.tags for e in board},
     )
     resolved_replicates = replicates if replicates is not None else strategy.replicates()
 

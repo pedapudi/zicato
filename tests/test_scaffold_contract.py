@@ -28,7 +28,7 @@ def test_recommended_scaffold_weights_shape() -> None:
     assert t.params["field_size"] == 4
     assert t.params["eta"] == 2
     assert t.params["board_fraction"] == 0.4
-    # The stratified slice schedule is opt-in EVERYWHERE, including new
+    # The shuffled slice schedule is opt-in EVERYWHERE, including new
     # workspaces: the scaffold must not name it (see TOURNAMENT-STRUCTURES.md).
     assert "slice_schedule" not in t.params
     assert t.params["replicates"] == 2

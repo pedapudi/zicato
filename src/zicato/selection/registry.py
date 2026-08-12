@@ -10,7 +10,7 @@ rather than erroring, mirroring fast mode's graceful degeneracy.
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Sequence
 from typing import TYPE_CHECKING
 
 from zicato.selection.strategies.double_elim import DoubleEliminationStrategy
@@ -61,7 +61,6 @@ def default_replicates_for(structure: str) -> int:
 def make_strategy(
     spec: TournamentStructure,
     board_ids: Sequence[str] | None = None,
-    board_tags: Mapping[str, Sequence[str]] | None = None,
 ) -> SelectionStrategy:
     """Construct a fresh strategy for one tournament resolution.
 
@@ -79,11 +78,6 @@ def make_strategy(
         without the operator having to list every id on the CLI, while
         leaving board-agnostic structures (gauntlet, single/double-elim,
         swiss) untouched — they simply ignore the param.
-    board_tags:
-        The epoch board's tags keyed by entry id, when known. Racing uses
-        these only with its explicit ``stratified_random_v1`` schedule to
-        derive a deterministic, tag-balanced board permutation. The values
-        come from the frozen board, never operator-supplied strategy params.
 
     Raises
     ------
@@ -101,20 +95,10 @@ def make_strategy(
             f"registered structures are: {valid}"
         )
     params = dict(spec.params)
-    # Runtime-derived board metadata is deliberately not a public tournament
-    # param: discard any persisted/private lookalike before injecting the
-    # canonical tags from the board below.
-    params.pop("_board_tags", None)
     # Default ``board_ids`` to the epoch's full board when the operator
     # did not pin a subset. Explicit ``params["board_ids"]`` always wins.
     if board_ids is not None and "board_ids" not in params:
         params["board_ids"] = tuple(str(x) for x in board_ids)
-    if board_tags is not None:
-        selected_ids = tuple(str(x) for x in params.get("board_ids", ()))
-        params["_board_tags"] = {
-            entry_id: tuple(str(tag) for tag in board_tags.get(entry_id, ()))
-            for entry_id in selected_ids
-        }
     return cls(params)
 
 
