@@ -285,6 +285,7 @@ markers = [
     "slow: real-subprocess / real-server test whose runtime IS the coverage; the fast lane is `-m 'not slow and not node'` (the full suite stays the default run)",
     "integration: crosses a process or network boundary (worker subprocesses, live servers, git subprocesses)",
     "cascade_oc: the opt-in evaluation-cascade OC measurement suite (CASCADE.md §4); EXCLUDED from the default run via addopts — run with `-m cascade_oc`",
+    "pi: launches the real pi coding agent from integrations/pi (needs `npm ci` + Node >= 22); SKIPS cleanly when it is not installed, so the default run is unaffected — the CI lane selects it with `-m pi`",
 ]
 # With the package under src/, an editable install puts `zicato` on
 # sys.path, but a bare `pytest` from a non-installed checkout would
