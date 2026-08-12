@@ -227,6 +227,43 @@ class WorkspaceLayout:
         """
         return self.reflection_dir(epoch_id, reflection_id) / "suggestions.json"
 
+    # -- proposer reflection -------------------------------------------------
+
+    def proposer_reflections_dir(self, epoch_id: str) -> Path:
+        """One epoch's PROPOSER-reflection subtree (``proposer_reflections/``).
+
+        The sibling of :meth:`reflections_dir`, kept separate because the two
+        audit different instruments: board reflection audits the evaluation
+        contract, proposer reflection audits the thing that writes proposals
+        against it. Same shape — one sub-directory per pass, keyed by its id,
+        created lazily, absent for an epoch never reflected on.
+        """
+        return self.epoch_dir(epoch_id) / "proposer_reflections"
+
+    def proposer_reflection_dir(self, epoch_id: str, reflection_id: str) -> Path:
+        """The directory holding ONE proposer-reflection pass's artifacts."""
+        return self.proposer_reflections_dir(epoch_id) / reflection_id
+
+    def proposer_reflection_findings(self, epoch_id: str, reflection_id: str) -> Path:
+        """One proposer-reflection pass's ``findings.json``.
+
+        The persisted recommendations — each carrying the five-slot evidence
+        block and, as its remedy slot, a ready-to-apply edit to the proposer
+        dir. Written by ``zicato proposer reflect``; never by anything else.
+        """
+        return self.proposer_reflection_dir(epoch_id, reflection_id) / "findings.json"
+
+    def proposer_staged_recommendations(self) -> Path:
+        """The workspace's staged-recommendation queue (``proposer_staged.json``).
+
+        ``zicato proposer apply-recommendation`` writes the applied id here
+        after editing the proposer dir; the NEXT epoch to open drains the queue
+        into its own record, so an epoch's lineage says which recommendation
+        changed the proposer that produced it. Absent until something is
+        applied.
+        """
+        return self.root / "proposer_staged.json"
+
     # -- per-generation ------------------------------------------------------
 
     def generation_dir(self, epoch_id: str, generation_id: str) -> Path:

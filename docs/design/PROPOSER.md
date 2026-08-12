@@ -748,7 +748,104 @@ docs are known to drift); as of writing the flag is `--proposer-path PATH`.
 
 ---
 
-## 6. Cross-references
+## 6. The proposer scorecard + recommend-only self-reflection
+
+The loop measures the proposer constantly, for free. Every round log records
+the proposal attempts it made, the validator errors they hit, the screen's
+verdict on each slate candidate, the gate's numbers on the child that reached
+it, and the terminal decision. This section is the instrument that READS those
+signals as a picture of proposer quality, and the gated path for acting on it.
+
+### 6.1 The scorecard (`zicato proposer scorecard`)
+
+`zicato/proposer/scorecard.py` is a **pure reader** — it opens round logs,
+epoch configs, and per-generation `experiment.json` files, and writes nothing.
+One card per epoch, because the proposer is frozen for its epoch (§4): two
+epochs' proposals came from two different proposers and are not comparable.
+
+| Aggregate | Read from |
+|---|---|
+| `validator_failure_rates` (A1–A4 + `unclassified`) | `proposal_attempted.errors`, classified by the code `validate_post_apply` stamps |
+| `validation_failure_rate` | the same, any-check |
+| `screen_veto_rate` | `candidate_screened.vetoed` over `candidate_screened` |
+| `revision_success_rate` | the `revise` screens that were not vetoed |
+| `margins` | `gate_evaluated`'s `champion_scalar` / `challenger_scalar` / `margin_required` |
+| `cost` | proposal attempts + `unit_completed` count, per promoted round |
+| `mutation_sites` | each round's child `experiment.json` patch `mutation_id`s |
+
+Three honesty rules are structural, not stylistic:
+
+- **Null is not zero.** `Rate.value` is `None` when nothing was observed. A
+  proposer that never had a candidate screened has *no* screen-veto rate;
+  rendering `0.0` would claim it screened plenty and vetoed none.
+- **The sample count rides every rate.** `n` is in the dataclass, in `to_json`,
+  in the CLI table, and in the panel, so no surface can show a rate without it.
+- **Thin samples are marked.** Under `MIN_SAMPLE_N` a rate is `provisional`
+  (a `?` in the CLI and the panel) — reported, because suppressing it loses
+  information, but flagged.
+
+**A1–A4 classification is structural.** `validate_post_apply` now prefixes each
+error string with its check code (`A4: Post-apply file … dropped top-level
+imports: …`) and `classify_post_apply_error` is the one reader of that prefix.
+The prose after the code stays free to reword; nothing regexes the sentence.
+An error carrying no recognised code counts under `unclassified` — the honest
+bucket for a proposer parse failure, a slate slot's credential lapse, or a log
+written before the codes existed.
+
+### 6.2 Reflection (`zicato proposer reflect`) — recommend-only
+
+`zicato/proposer/reflection.py` diagnoses the scorecard and drafts the edit:
+each finding carries the five-slot evidence convention (population, measured,
+compared-against, remedy, remedy-safety) where the **remedy is a ready-to-apply
+`skills/*.md` file plus its unified diff and SHA-256**. Records land under
+`epochs/<id>/proposer_reflections/<id>/findings.json`.
+
+The **investigation substrate is pluggable**: `InvestigationSource` returns an
+`Investigation`, and v1's `ScorecardInvestigation` reads the scorecard plus a
+BANDED history of prior epochs. A richer substrate — the redacted query
+facility of #147 phase 5 — implements the same protocol and returns the same
+`Investigation`, so it drops in without reshaping a persisted record. Historical
+rates are banded through `band_rate` for the same reason the failure-mode
+channel bands its marginals (§2.5): the comparison slot is the one number a
+drafting model reads round over round, and the exact rate would be a response
+surface to climb.
+
+Emission is **deterministic and free** — no model is called, so the operator's
+queue is reproducible from the same round logs. `--draft-with-llm` adds an
+optional polish pass over the remedy's prose through the auxiliary-call seam; a
+failed or empty call keeps the deterministic remedy rather than degrading it.
+
+### 6.3 The four invariants, and where each one lives
+
+| Invariant | Mechanism |
+|---|---|
+| **Never mid-epoch** | The only writer into the proposer dir is `apply_recommendation`, and its edit is contract drift, so the next `evolve` rolls the epoch before proposing. |
+| **Never self-applied** | There is no import edge from `reflection.py` to `apply_recommendation.py`; a test reads the module source to pin the absent edge. |
+| **Redacted evidence only** | `assert_redacted` walks every record at the persist boundary and RAISES on an identity/content key at any depth. The scorecard never carries an `entry_id` by construction (it counts units and ignores `attributable_regressions`); the guard is what keeps a future emitter honest. |
+| **Every accepted edit is hashed** | The remedy carries the SHA-256 of the exact bytes; `apply-recommendation` re-verifies before writing, so an edited record cannot be applied under its original id. |
+
+### 6.4 The boundary and the apply gate
+
+Pending recommendations are printed at both epoch boundaries — evolve's
+auto-roll and `zicato epoch new` — because that is the moment applying one is
+free: the epoch is rolling anyway.
+
+`zicato proposer apply-recommendation <id>` writes the skill into the LIVE
+proposer dir and parks the id in `proposer_staged.json`. The write **rolls the
+contract hash** (skills fold into `_canon_proposer`, §4), so the next `evolve`
+opens a fresh epoch — and `new_epoch` drains the queue into that epoch's
+`applied_proposer_recommendations`, which is proposer lineage: the record says
+*why* the proposer changed. The staged queue exists because apply cannot know
+which epoch will pick its edit up; the epoch that actually runs under the
+edited proposer claims it.
+
+`applied_proposer_recommendations` is a RECORD about the epoch, never a
+contract input — it does not fold into the contract hash. The edit it names
+already rolled the hash on its own.
+
+---
+
+## 7. Cross-references
 
 | Topic | Document |
 |---|---|
@@ -761,3 +858,6 @@ docs are known to drift); as of writing the flag is `--proposer-path PATH`.
 | The copy-me tool-using proposer agent | [`examples/zicato_examples/proposer_with_tools/agent.py`](../../examples/zicato_examples/proposer_with_tools/agent.py) |
 | The failure-mode feedback channel — anti-leakage (train-slice, banded, identity-free) | [OVERFITTING.md §11](OVERFITTING.md), `src/zicato/analyzer/outcome_marginals.py` |
 | `register` CLI reference | [CLI.md](CLI.md#zicato-register) |
+| The post-apply check codes the scorecard classifies on (§6.1) | [MUTATION-SURFACE.md](MUTATION-SURFACE.md), `src/zicato/mutation/validator.py` |
+| The recommend-only reflection pattern this mirrors (findings, five-slot evidence, apply-to-a-draft) | [BOARD-REFLECTION.md](BOARD-REFLECTION.md), `src/zicato/reflection/findings.py` |
+| The redaction envelope the reflection substrate reuses | [OVERFITTING.md §11](OVERFITTING.md), §2.5 above |

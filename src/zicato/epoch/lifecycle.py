@@ -59,6 +59,7 @@ from zicato.epoch._storage import (
     epoch_config_key,
     scoring_key,
 )
+from zicato.proposer.staging import drain_staged_recommendations
 from zicato.workspace import WorkspaceLayout, list_epoch_ids
 
 if TYPE_CHECKING:
@@ -194,6 +195,10 @@ def _config_to_dict(cfg: EpochConfig) -> dict[str, Any]:
         # Contract pre-flight verdict (runtime measurement, never hashed).
         # ``None`` ⇒ never run; written as null so it round-trips.
         "preflight": cfg.preflight,
+        # Applied proposer-reflection recommendation ids (proposer lineage,
+        # never hashed). Empty list ⇒ the proposer was not changed by an
+        # applied recommendation.
+        "applied_proposer_recommendations": list(cfg.applied_proposer_recommendations),
     }
 
 
@@ -235,6 +240,12 @@ def _config_from_dict(d: dict[str, Any]) -> EpochConfig:
         # ``preflight`` defaults to ``None`` (never run) so epochs written
         # before the pre-flight surface landed load cleanly.
         preflight=raw_preflight if isinstance(raw_preflight, dict) else None,
+        # ``applied_proposer_recommendations`` defaults to ``()`` so epochs
+        # written before proposer reflection landed load as "no applied
+        # recommendation", which is exactly what they are.
+        applied_proposer_recommendations=tuple(
+            str(x) for x in (d.get("applied_proposer_recommendations") or [])
+        ),
     )
 
 
@@ -508,6 +519,15 @@ def new_epoch(
 
     # 6. Config + lineage. ``EpochConfig.brief_path`` carries the path
     # to the frozen proposer brief (the ``brief.md`` file).
+    #
+    # Draining the staged proposer-recommendation queue here is what makes
+    # proposer lineage legible: ``zicato proposer apply-recommendation``
+    # edited the proposer dir and parked the id; the epoch that first runs
+    # under the edited proposer is THIS one, so it is the record that should
+    # say why the proposer changed. Draining is deliberately part of epoch
+    # creation rather than of apply — apply cannot know which epoch will pick
+    # the edit up, and an id parked against a guess would be wrong the moment
+    # the operator applied a second recommendation before rolling.
     cfg = EpochConfig(
         id=epoch_id,
         name=name,
@@ -520,6 +540,7 @@ def new_epoch(
         contract_hash=contract_hash,
         goal=goal,
         proposer_path=proposer_path,
+        applied_proposer_recommendations=drain_staged_recommendations(workspace_root),
     )
     _write_config(workspace_root, cfg)
 

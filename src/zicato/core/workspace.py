@@ -186,6 +186,28 @@ def reflection_suggestions_path(workspace_root: Path, epoch_id: str, reflection_
     return _layout(workspace_root).reflection_suggestions(epoch_id, reflection_id)
 
 
+def proposer_reflections_dir(workspace_root: Path, epoch_id: str) -> Path:
+    """Return one epoch's proposer-reflection subtree (``proposer_reflections/``)."""
+    return _layout(workspace_root).proposer_reflections_dir(epoch_id)
+
+
+def proposer_reflection_dir(workspace_root: Path, epoch_id: str, reflection_id: str) -> Path:
+    """Return the directory holding ONE proposer-reflection pass's artifacts."""
+    return _layout(workspace_root).proposer_reflection_dir(epoch_id, reflection_id)
+
+
+def proposer_reflection_findings_path(
+    workspace_root: Path, epoch_id: str, reflection_id: str
+) -> Path:
+    """Path to one proposer-reflection pass's ``findings.json``."""
+    return _layout(workspace_root).proposer_reflection_findings(epoch_id, reflection_id)
+
+
+def proposer_staged_recommendations_path(workspace_root: Path) -> Path:
+    """Path to the workspace's staged-recommendation queue (``proposer_staged.json``)."""
+    return _layout(workspace_root).proposer_staged_recommendations()
+
+
 def run_dir(
     workspace_root: Path,
     epoch_id: str,
@@ -430,6 +452,10 @@ __all__ = [
     "reflection_scorecards_path",
     "reflection_findings_path",
     "reflection_practices_path",
+    "proposer_reflections_dir",
+    "proposer_reflection_dir",
+    "proposer_reflection_findings_path",
+    "proposer_staged_recommendations_path",
     "run_dir",
     "events_jsonl_path",
     "loss_profile_path",

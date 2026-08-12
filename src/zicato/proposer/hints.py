@@ -119,7 +119,7 @@ _RATE_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
 def _band_to_rate(band: str) -> float:
     """Decode a banded rate token back to its approximate fraction.
 
-    Inverts :func:`zicato.proposer.prompts._band_rate`'s output vocabulary:
+    Inverts :func:`zicato.proposer.prompts.band_rate`'s output vocabulary:
     ``none`` → 0.0, ``~all`` → 1.0, ``~N%`` → N/100. Only ever applied to a
     token one of the :data:`_RATE_PATTERNS` captured, so the fallthrough is
     defensive.

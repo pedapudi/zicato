@@ -406,6 +406,25 @@ export function reflectionXray(reflectionId, judge, runRef) {
   return cachedJson(`/api/reflection/${enc(reflectionId)}/xray/${enc(judge)}/${enc(runRef)}`);
 }
 
+// ---- Proposer panel (proposer scorecard + recommendations) -----------
+//
+// Two reads under the same lens. Unlike a completed reflection these are NOT
+// immutable — a round appends to the trend and a reflect pass appends to the
+// queue — so they use the uncached `json()` and are folded into the view's
+// digest, which is what keeps a no-op heartbeat from repainting them.
+
+// The per-epoch scorecard trend; `?epoch=` also details that one epoch's card.
+export async function proposerScorecard(epochId) {
+  const path = epochId != null
+    ? `/api/proposer/scorecard?epoch=${enc(epochId)}`
+    : '/api/proposer/scorecard';
+  try { return await fetchJson(path); } catch (err) { return null; }
+}
+// The pending recommendation queue (workspace-wide, newest epoch first).
+export async function proposerRecommendations() {
+  try { return await fetchJson('/api/proposer/recommendations'); } catch (err) { return null; }
+}
+
 // ---- Traces surface (imported foreign trajectories · TRAJECTORY-UI.md §3) ----
 //
 // The persisted `imported/*.json` + `suggestions.json` under a reflection are

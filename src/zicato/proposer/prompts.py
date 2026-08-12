@@ -482,7 +482,7 @@ def _bucket_scalar_delta(delta: float) -> str:
 #: OVERFITTING.md §11.4). Edges are deliberately wide: "none" (essentially
 #: never), then ~10% steps surfaced as approximate labels. The label carries
 #: a ``~`` to signal it is approximate.
-def _band_rate(rate: float) -> str:
+def band_rate(rate: float) -> str:
     """Coarsen a fraction-of-runs rate to a memorization-resistant band.
 
     Returns an approximate label like ``~20%`` (rounded to the nearest 10%)
@@ -533,7 +533,7 @@ def render_failure_mode_profile(summary: OutcomeMarginalSummary) -> str:
     only, BUCKETED ``Failure-mode profile`` block the proposer reads to
     target *why* answers are wrong (over-retrieval vs misses vs empty
     answers), not just *that* a scalar moved. Every number is banded — rates
-    through :func:`_band_rate`, quality means through :func:`_band_quality` —
+    through :func:`band_rate`, quality means through :func:`_band_quality` —
     so no exact per-run value and no round-over-round response surface leaks
     (OVERFITTING.md §11.4). The summary itself carries only marginal rates
     (no entry id, question, or output token), so the rendered block is
@@ -570,13 +570,13 @@ def render_failure_mode_profile(summary: OutcomeMarginalSummary) -> str:
 
     if summary.over_retrieval_rate is not None:
         lines.append(
-            f"- over-retrieval (precision<0.5): {_band_rate(summary.over_retrieval_rate)} of runs"
+            f"- over-retrieval (precision<0.5): {band_rate(summary.over_retrieval_rate)} of runs"
         )
 
     # Generic, board-agnostic failure modes — one compact line.
     generic_parts = [
-        f"empty / terse answers: {_band_rate(summary.empty_rate + summary.terse_rate)}",
-        f"looping: {_band_rate(summary.looping_rate)}",
+        f"empty / terse answers: {band_rate(summary.empty_rate + summary.terse_rate)}",
+        f"looping: {band_rate(summary.looping_rate)}",
     ]
     lines.append("- " + " | ".join(generic_parts))
 
@@ -584,7 +584,7 @@ def render_failure_mode_profile(summary: OutcomeMarginalSummary) -> str:
     # bands, banded so the exact aggregate never leaks.
     outcome_parts: list[str] = []
     if summary.pass_rate is not None:
-        outcome_parts.append(f"pass-rate: {_band_rate(summary.pass_rate)}")
+        outcome_parts.append(f"pass-rate: {band_rate(summary.pass_rate)}")
     if summary.mean_score is not None:
         outcome_parts.append(f"mean score: {_band_quality(summary.mean_score)}")
     if outcome_parts:
@@ -594,7 +594,7 @@ def render_failure_mode_profile(summary: OutcomeMarginalSummary) -> str:
     # each as its own banded line, sorted for a stable block.
     for name in sorted(summary.operator_marginals):
         rate = summary.operator_marginals[name]
-        lines.append(f"- {name}: {_band_rate(rate)} of runs")
+        lines.append(f"- {name}: {band_rate(rate)} of runs")
 
     return "\n".join(lines)
 
@@ -1311,6 +1311,7 @@ def render_recombine_merge_prompt(
 __all__ = [
     "SYSTEM_PROMPT_TEMPLATE",
     "USER_PROMPT_TEMPLATE",
+    "band_rate",
     "render_calibration_block",
     "render_failure_mode_profile",
     "render_genealogy_block",
