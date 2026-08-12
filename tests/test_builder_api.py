@@ -284,6 +284,19 @@ def test_builder_op_float_knobs_are_typed_not_passed_through(client: TestClient)
         assert resp.status_code == 400, (op, args, resp.status_code)
         assert needle in resp.json()["error"]
 
+    # threshold is the ONE nullable ladder key (null = auto-derive from
+    # promote_margin). A null anywhere else used to reach the dataclass,
+    # where budget/noise_scale raised an uncaught TypeError from their
+    # comparison validators and `enabled`, having no validator to trip,
+    # silently stored None in a bool field.
+    resp = post("set_holdout", {"ladder": {"threshold": None}})
+    assert resp.status_code == 200
+    assert resp.json()["draft"]["scoring"]["overfitting"]["ladder"]["threshold"] is None
+    for key in ("enabled", "budget", "noise_scale"):
+        resp = post("set_holdout", {"ladder": {key: None}})
+        assert resp.status_code == 400, (key, resp.status_code)
+        assert f"ladder.{key} must not be null" in resp.json()["error"]
+
 
 def test_builder_apply_dry_run(client: TestClient, workspace: Path) -> None:
     client.post(

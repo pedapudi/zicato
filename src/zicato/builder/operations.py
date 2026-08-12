@@ -312,11 +312,19 @@ _LADDER_TYPES: dict[str, type] = {
 
 
 def _coerce_ladder_value(key: str, value: Any) -> Any:
-    """Coerce one ladder mapping value to its field type, or raise."""
+    """Coerce one ladder mapping value to its field type, or raise.
+
+    ``threshold`` is the ONLY nullable ladder key — its ``None`` means
+    "auto-derive from ``promote_margin``". A null anywhere else used to
+    reach the dataclass, where ``budget``/``noise_scale`` raised an
+    uncaught ``TypeError`` from their comparison validators (a 500) and
+    ``enabled``, which has no validator to trip, silently stored ``None``
+    in a bool field.
+    """
     if value is None:
-        # Only ``threshold`` is genuinely nullable (auto-derive); the
-        # dataclass rejects a null for the others with its own message.
-        return None
+        if key == "threshold":
+            return None
+        raise ValueError(f"ladder.{key} must not be null (only ladder.threshold is nullable)")
     want = _LADDER_TYPES[key]
     if want is bool:
         return bool(value)
