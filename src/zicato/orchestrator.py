@@ -341,6 +341,7 @@ async def evolve_once(
         detect_patterns,
     )
     from zicato.proposer.agent import build_proposer_agent  # noqa: PLC0415
+    from zicato.proposer.external import external_proposer_config  # noqa: PLC0415
     from zicato.proposer.proposer import ProposerError  # noqa: PLC0415
     from zicato.proposer.skills import resolve_proposer_spec  # noqa: PLC0415
     from zicato.telemetry.reducer import read_loss_profile  # noqa: PLC0415
@@ -391,12 +392,21 @@ async def evolve_once(
     # loop. Both the gauntlet path and the multi-challenger field reuse the
     # same agent.
     _epoch_cfg = load_epoch(workspace_root, resolved_epoch_id)
-    proposer_spec = resolve_proposer_spec(_epoch_cfg.proposer_path)
+    # ``runtime.proposer_agent`` (absent for every workspace that
+    # configures none) resolved from the SAME builder the contract hash
+    # used, so the identity that was hashed and the agent that runs cannot
+    # be resolved from different inputs.
+    _external_cfg = external_proposer_config(workspace_config, workspace_root)
+    proposer_spec = resolve_proposer_spec(_epoch_cfg.proposer_path, _external_cfg)
     # Thread the frozen ``proposer_path`` so a custom-agent spec (Design A)
     # can load ``proposers/<name>/agent.py`` from the same dir the spec was
     # resolved from. ``None`` (the default / skill-only proposer) yields the
     # single-shot built-in unchanged.
-    proposer_agent = build_proposer_agent(proposer_spec, proposer_path=_epoch_cfg.proposer_path)
+    proposer_agent = build_proposer_agent(
+        proposer_spec,
+        proposer_path=_epoch_cfg.proposer_path,
+        external_config=_external_cfg,
+    )
     # NOTE: the best-of-N proposer-quality wrapper is interposed BELOW, right
     # after the RuntimeConfig is built, because it now threads the config's
     # WS-ENS ensemble-role callables into the wrapper (see there).

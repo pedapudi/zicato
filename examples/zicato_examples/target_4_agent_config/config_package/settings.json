@@ -1,0 +1,7 @@
+{
+  "mode": "rpc",
+  "session": false,
+  "offline": true,
+  "skills_dir": "skills",
+  "max_tool_calls": 40
+}

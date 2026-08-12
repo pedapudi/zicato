@@ -167,6 +167,44 @@ test('bill of health: evidence renders as inline x-ray links in the row prose, n
   assert(links.some((a) => a.getAttribute('href') === target), 'an inline evidence link points at the x-ray route');
 });
 
+// Issue #129's render-conformance rule, applied to the lens: the report
+// already prints these, and a surface that states a verdict while dropping
+// the numbers behind it (or the remedy) reproduces the bug it fixed.
+test('render conformance: a practice check shows the measured numbers behind its headline', async () => {
+  fresh();
+  installFixtureMap(reflectionFixtureMap());
+  const host = document.createElement('div');
+  await instrument.render(host, CTX, { epochId: EPOCH_ID, reflectionId: REFLECTION_ID });
+  const t = textOf(host);
+  // promotion_hygiene's "remedy safety" pair — the margin against the floor
+  // it has to clear. Stating "promotions are earned" without them is a claim
+  // the operator cannot check.
+  assert(t.includes('promote_margin=0.045'), 'the practice evidence names the margin');
+  assert(t.includes('noise_floor=0.0145'), 'and the noise floor it is measured against');
+  assert(t.includes('min_detectable_delta=0.052'), 'the unsound check shows its own evidence too');
+  // an empty evidence dict adds no line (the unmeasured check carries {}).
+  const rows = allByClass(host, 'dn-instr-frow');
+  const unmeasured = rows.find((r) => ((allByClass(r, 'dn-instr-frow-verdict')[0] || {}).textContent || '').trim() === 'unmeasured');
+  assert(unmeasured, 'the unmeasured row exists');
+  assert(!allByClass(unmeasured, 'dn-instr-frow-ev').length, 'an empty evidence dict renders no line');
+});
+
+test('render conformance: findings and judge scorecards show their recommendation', async () => {
+  fresh();
+  installFixtureMap(reflectionFixtureMap());
+  const host = document.createElement('div');
+  await instrument.render(host, CTX, { epochId: EPOCH_ID, reflectionId: REFLECTION_ID });
+  const recs = allByClass(host, 'dn-instr-frow-rec');
+  assert(recs.length >= 2, 'recommendations render on findings and on judge cards');
+  const t = textOf(host);
+  // the finding whose ONLY remedy text is the recommendation (no proposed_op).
+  assert(t.includes("broaden 'safety.scope' to catch the named missed-fire spans"),
+    'a proposed_op-less finding still shows how to fix it');
+  // …and the per-judge remedy, which NEITHER surface rendered before.
+  assert(t.includes("tighten 'format.json' — it fires on 3 well-formed payloads"),
+    'the judge scorecard names its remedy');
+});
+
 test('bill of health: metadata (fidelity) is a dn-faint caption, not per-row tags', async () => {
   fresh();
   installFixtureMap(reflectionFixtureMap());

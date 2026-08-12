@@ -330,6 +330,40 @@ test('settings: the Contract section renders the read-only builder PREVIEW from 
   // there are NO apply / dry-run controls anywhere in the contract preview.
   assertEqual(byClass(body, 'dn-bld-applyrow').length, 0, 'no apply / dry-run controls in the read-only contract preview');
   assertEqual(byClass(body, 'dn-bld-btn-apply').length, 0, 'no apply button in the read-only contract preview');
+  // the holdout confirmation's own bounds are ABSENT at their default: both
+  // mean "reuse the train-side rule", and a row echoing the promote margin
+  // would be noise.
+  assert(!body.textContent.includes('Holdout margin'), 'no holdout-margin row while it is auto');
+  assert(!body.textContent.includes('Holdout regression budget'), 'no budget row at zero tolerance');
+});
+
+test('settings: the Contract section names the holdout bounds ONCE they are pinned', async () => {
+  installFetch();
+  // /api/epoch is read through the shared cache, so the earlier tests' epoch
+  // would otherwise stand in for this one's pinned contract.
+  (await import('../js/data.js')).invalidate('/api/epoch');
+  const base = globalThis.fetch;
+  globalThis.fetch = async (path, init) => {
+    if (path === '/api/epoch') {
+      return jsonRes(Object.assign({}, EPOCH, {
+        scoring: Object.assign({}, EPOCH.scoring, {
+          holdout_margin: 0.09, holdout_entry_regression_budget: 1,
+        }),
+      }));
+    }
+    return base(path, init);
+  };
+  const host = globalThis.document.createElement('div');
+  await settings.render(host, ctx, { section: 'contract' });
+  await tick();
+  const body = firstClass(host, 'dn-set-body');
+  // Unshown, this summary's lone "Promote margin" row implies one bound
+  // governs both slices — the single-knob reading the separate holdout
+  // bounds exist to end.
+  assert(body.textContent.includes('Holdout margin'), 'the pinned holdout margin is named');
+  assert(body.textContent.includes('0.09'), 'it shows the pinned value, not the promote margin');
+  assert(body.textContent.includes('Holdout regression budget'), 'the pinned budget is named');
+  assert(body.textContent.includes('1 entry'), 'the budget is singular at one entry');
 });
 
 test('settings: the Contract cost panel degrades to an honest "unavailable" line when the server envelope cannot be fetched (C6)', async () => {

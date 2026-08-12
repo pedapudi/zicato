@@ -66,11 +66,16 @@ epoch (§4).
 
 ---
 
-## 2. The three resolutions
+## 2. The four resolutions
 
 `build_proposer_agent` (`zicato/proposer/agent.py`) resolves a
-`ProposerSpec` to a running agent in three ways, in order:
+`ProposerSpec` to a running agent in four ways, in order:
 
+0. **External agent (opt-in)** — `runtime.proposer_agent` names a class by
+   dotted path (`spec.external_path` is set). zicato imports it and hands
+   it the spec; the class owns its own process, transport and tool
+   surface. It resolves first because it is the one tier that is not an
+   ADK agent at all. See §2.9.
 1. **Custom ADK agent** — a proposer dir ships a `proposers/<name>/agent.py`
    (`spec.agent_source_sha256` is set). zicato loads that author-owned
    `agent` and runs it on ADK's own `Runner`
@@ -564,6 +569,62 @@ reign's durable records with the grader's ledger).
 
 ---
 
+## 2.9 The external resolution — a proposer that is its own process
+
+`ProposerAgent` is a one-method protocol, so a proposer that runs outside
+the ADK `Runner` needs no new machinery — only a way to *name* it and a
+way to *hash* it. Both live in `zicato/proposer/external.py`:
+
+```toml
+[runtime]
+proposer_agent = "zicato.proposer.pi_agent:PiProposerAgent"
+```
+
+The class answers `contract_identity(config)` with its **causal surface**,
+and that mapping's digest is folded into the `proposer` contract component
+beside `agent_source_sha256` (§4). A workspace that names no external
+proposer canonicalizes byte-identically to before this seam existed — its
+contract hash does not move, which is pinned in
+`tests/test_proposer_external_seam.py`.
+
+What belongs in that identity: the version of the runtime we did not write
+(coarse — a patch release that changes no prompt and no tool schema should
+not roll an epoch, and the standing rule *do not upgrade mid-tournament*
+carries the rest), the bytes of the files we did write (they are edited in
+place, so they have no version to record), the tool set, and the launch
+envelope. What does **not** belong: the model. A `models.*` role is
+runtime infra that has never rolled an epoch, and nothing in the contract
+hash has ever named a model. The collusion hazard an external tier
+introduces — an agent quietly falling back to its own configured default —
+is closed where it happens, at launch: the resolved `ctx.model` is threaded
+into the process and an empty one is a hard failure, asserted in
+`tests/test_proposer_pi_envelope.py`.
+
+**The first implementation is pi** (`zicato/proposer/pi_agent.py`,
+`integrations/pi/`): one `pi --mode rpc` subprocess per challenger, driven
+through the *same* `propose_experiment` engine the text shim uses — the
+live RPC session is handed to it as the `aux_call_llm` callable, so a
+bounded retry becomes a follow-up message on a warm conversation instead
+of a cold restart that re-sends the whole manifest. The tier differs in
+its transport, not its semantics, which is what makes it an honest A/B
+baseline against the shim.
+
+The envelope is the other half, and it is enforced by what the proposer is
+shown. A default coding-agent session has `bash`, `read` and `grep`
+pointed at the working directory; a proposer with those can read the board
+and the holdout slice, and nothing errors and nothing warns. So: built-in
+tools off, extension/skill/prompt-template discovery off, context files
+off, project-local files untrusted, a fresh isolated agent directory with
+credentials copied in deliberately (no packages, no cross-round memory),
+no session file (cross-round persistence would be an unhashed side channel
+around the overfitting envelope), and a working directory outside every
+snapshot — the snapshot is the system under test, and reading it ambiently
+would be both an unhashed contract input and an injection path from the
+thing being rewritten into the thing rewriting it. CI asserts the running
+agent's active tool list equals the sanctioned set.
+
+---
+
 ## 3. Design A — why a tool-using proposer owns its own model
 
 The text shim is a single-shot text exchange: zicato hands the auxiliary
@@ -621,7 +682,7 @@ The proposer is folded into the contract hash by `_canon_proposer`
 builtin default) to a `ProposerSpec` via `resolve_proposer_spec`
 (`zicato/proposer/skills.py`) and serializes it sorted-key:
 
-- `agent_id` — `"builtin:default"` or `"dir:<name>"`;
+- `agent_id` — `"builtin:default"`, `"dir:<name>"`, or `"external:<label>"`;
 - `tools` — the tool names, sorted;
 - `skills` — `[{name, sha256-of-normalized-body}]`, sorted by name. Skill
   bodies are normalized exactly like the proposer brief (line endings folded,
@@ -629,7 +690,12 @@ builtin default) to a `ProposerSpec` via `resolve_proposer_spec`
   whitespace-only skill edit does **not** roll the epoch; a semantic edit — or
   adding / removing / renaming a skill — does;
 - `agent_source_sha256` — SHA-256 of a custom `agent.py` (or `null`), so
-  editing the custom agent rolls the epoch.
+  editing the custom agent rolls the epoch;
+- `external` — present **only** when `runtime.proposer_agent` is
+  configured: the dotted path plus the digest of the external agent's
+  causal surface (§2.9). Adding the key only when it applies is what keeps
+  every other workspace's canonical form, and therefore its hash,
+  unchanged.
 
 The builtin default produces a stable canonical string, so a workspace that
 never registers a proposer keeps a stable hash. The per-component roll message

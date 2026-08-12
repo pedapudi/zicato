@@ -3984,6 +3984,10 @@
     margin: 5px 0 0; line-height: 1.5; }
   .dn-instr-frow-ev, .dn-instr-frow-op, .dn-instr-frow-missing {
     font-size: calc(11.5px * var(--dt-font-scale, 1)); margin: 5px 0 0; line-height: 1.5; }
+  /* the remedy reads at full ink, not faint: it is the actionable half of the
+     row, and for a finding with no proposed_op it is the ONLY remedy text. */
+  .dn-instr-frow-rec { font-size: calc(12px * var(--dt-font-scale, 1)); color: var(--v2-ink);
+    margin: 5px 0 0; line-height: 1.5; }
   .dn-instr-applynote { display: block; font-size: calc(10.5px * var(--dt-font-scale, 1));
     margin-top: 4px; }
 

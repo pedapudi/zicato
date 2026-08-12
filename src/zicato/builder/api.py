@@ -75,8 +75,8 @@ def _dispatch_op(draft: TournamentDraft, op: str, args: dict[str, Any]) -> ops.D
     if op == "set_holdout":
         return ops.set_holdout(
             draft,
-            enabled=args.get("enabled"),
-            fraction=args.get("fraction"),
+            enabled=_opt_bool(args, "enabled"),
+            fraction=_opt_float(args, "fraction"),
             tags=args.get("tags"),
             min_board_size_for_split=_opt_int(args, "min_board_size_for_split"),
             rotate_holdout=_opt_bool(args, "rotate_holdout"),
@@ -90,20 +90,22 @@ def _dispatch_op(draft: TournamentDraft, op: str, args: dict[str, Any]) -> ops.D
     if op == "set_weights":
         return ops.set_weights(
             draft,
-            drift_weight=args.get("drift_weight"),
-            pass_weight=args.get("pass_weight"),
+            drift_weight=_opt_float(args, "drift_weight"),
+            pass_weight=_opt_float(args, "pass_weight"),
             per_kind_weights=args.get("per_kind_weights"),
             per_judge_weights=args.get("per_judge_weights"),
-            default_judge_weight=args.get("default_judge_weight"),
-            plan_revision_weight=args.get("plan_revision_weight"),
-            runtime_weight=args.get("runtime_weight"),
+            default_judge_weight=_opt_float(args, "default_judge_weight"),
+            plan_revision_weight=_opt_float(args, "plan_revision_weight"),
+            runtime_weight=_opt_float(args, "runtime_weight"),
             severity_weights=args.get("severity_weights"),
         )
     if op == "set_gate":
         return ops.set_gate(
             draft,
-            promote_margin=args.get("promote_margin"),
-            monotonicity=args.get("monotonicity"),
+            promote_margin=_opt_float(args, "promote_margin"),
+            holdout_margin=_opt_float(args, "holdout_margin"),
+            holdout_entry_regression_budget=_opt_int(args, "holdout_entry_regression_budget"),
+            monotonicity=_opt_bool(args, "monotonicity"),
             monotonicity_scope=args.get("monotonicity_scope"),
             namespace_monotonicity=args.get("namespace_monotonicity"),
             block_on_containment_violation=_opt_bool(args, "block_on_containment_violation"),
@@ -116,8 +118,8 @@ def _dispatch_op(draft: TournamentDraft, op: str, args: dict[str, Any]) -> ops.D
         return ops.set_namespace_weights(
             draft,
             namespace_weights=args.get("namespace_weights"),
-            diff_complexity_weight=args.get("diff_complexity_weight"),
-            diff_complexity_ceiling=args.get("diff_complexity_ceiling"),
+            diff_complexity_weight=_opt_float(args, "diff_complexity_weight"),
+            diff_complexity_ceiling=_opt_float(args, "diff_complexity_ceiling"),
         )
     if op == "set_proposer_quality":
         return ops.set_proposer_quality(
@@ -181,6 +183,32 @@ def _opt_int(args: dict[str, Any], key: str) -> int | None:
         return int(raw)
     except (TypeError, ValueError) as exc:
         raise ValueError(f"{key!r} must be an integer, got {raw!r}") from exc
+
+
+def _opt_float(args: dict[str, Any], key: str) -> float | None:
+    """Coerce an optional float arg (absent / null ⇒ ``None``).
+
+    The float twin of :func:`_opt_int`, and it closes the same hole on the
+    other half of the knobs: the float args used to reach the ops as the
+    RAW JSON value, where the outcome split by which validator the field
+    happens to have. A string ``"0.5"`` landed in the contract intact for
+    ``promote_margin`` / the weight scalars (whose validators never compare
+    them) and raised an uncaught ``TypeError`` — a 500, not a 400 — for
+    ``holdout_fraction`` (whose validator does). Both are the mis-typed
+    contract knob this coercion exists to refuse.
+
+    A bool is rejected outright: Python floats it to 0.0/1.0 happily, so
+    ``true`` would otherwise read as a silent 1.0 weight.
+    """
+    raw = args.get(key)
+    if raw is None:
+        return None
+    if isinstance(raw, bool):
+        raise ValueError(f"{key!r} must be a number, got {raw!r}")
+    try:
+        return float(raw)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"{key!r} must be a number, got {raw!r}") from exc
 
 
 def _opt_bool(args: dict[str, Any], key: str) -> bool | None:

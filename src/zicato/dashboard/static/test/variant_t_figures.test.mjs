@@ -1061,6 +1061,20 @@ test('#18 board view: a scored board adds a score + P/R column; reads the score 
   assert(prCells.some((t) => t === 'P 0.88 / R 0.74'), 'the P/R decomposition reads in the table');
 });
 
+test('board view: the drill-down shows the oracle + tags the overview already showed', async () => {
+  freshState(); installFixtureMap(scoredFixture());
+  const board = await import('../js/views/board.js');
+  const host = document.createElement('div');
+  await board.render(host, { navigate() {}, href: router.href }, { epochId: EPOCH_ID, entry: 'waffles_single' });
+  const t = host.textContent || '';
+  // Both ride the SAME ep.board row the trellis reads, and this is the page an
+  // operator opens to ask what the entry actually checks — it used to show
+  // strictly less of the entry than the overview it is reached from.
+  assert(t.includes('oracle'), 'the oracle (expectation_kind) stat renders');
+  assert(t.includes('predicate'), 'and names the entry’s expectation kind');
+  assert(t.includes('tags · smoke'), 'the entry tags render');
+});
+
 test('#18 board view: a BOOL-ONLY board (no scores) keeps the pre-score columns — no score column', async () => {
   freshState(); installFetch();   // base fixture — no scores anywhere.
   const board = await import('../js/views/board.js');

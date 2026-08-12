@@ -63,26 +63,44 @@ class ProposerSpec:
     Fields
     ------
     agent_id:
-        ``"builtin:default"`` for the built-in agent, or ``"dir:<name>"``
-        when a ``proposers/<name>/agent.py`` directory backs the proposer.
-        The id distinguishes the builtin from any on-disk proposer even
-        when the latter happens to carry no skills.
+        ``"builtin:default"`` for the built-in agent, ``"dir:<name>"``
+        when a ``proposers/<name>/agent.py`` directory backs the proposer,
+        or ``"external:<label>"`` when ``runtime.proposer_agent`` names a
+        non-ADK agent (:mod:`zicato.proposer.external`). The id
+        distinguishes the builtin from any on-disk proposer even when the
+        latter happens to carry no skills.
     tools:
         Names of the tools the proposer agent may call. Empty for the
-        builtin; tool declaration is a later phase, so an on-disk proposer
-        also resolves with empty tools for now.
+        builtin and for an on-disk proposer; an external agent declares
+        its sanctioned set, read off the same identity mapping that is
+        hashed.
     skills:
         The loaded :class:`ProposerSkill` modules, sorted by name.
     agent_source_sha256:
         Hex SHA-256 of the proposer dir's ``agent.py`` when present, else
         ``None``. Folded into the contract hash so editing the custom
         agent's source rolls the epoch.
+    external_path:
+        The ``runtime.proposer_agent`` dotted path when an external agent
+        backs the proposer, else ``None``. This is the field
+        :func:`~zicato.proposer.agent.build_proposer_agent` resolves on
+        first, ahead of both ADK tiers.
+    external_identity_sha256:
+        Hex SHA-256 of that agent's canonicalized causal surface — its
+        runtime version, the bytes of the files we author for it, its
+        tool set, its launch envelope (see
+        :func:`zicato.proposer.external.identity_sha256`). Folded into the
+        contract hash so upgrading the external runtime, or editing what
+        we hand it, rolls the epoch. ``None`` for every non-external
+        proposer, which is what keeps their canonical form unchanged.
     """
 
     agent_id: str
     tools: tuple[str, ...]
     skills: tuple[ProposerSkill, ...]
     agent_source_sha256: str | None
+    external_path: str | None = None
+    external_identity_sha256: str | None = None
 
     @classmethod
     def default(cls) -> ProposerSpec:
