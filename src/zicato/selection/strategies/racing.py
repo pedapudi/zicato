@@ -75,8 +75,12 @@ def _stratified_random_order(
     for entry_id in sorted(str(entry_id) for entry_id in board_ids):
         strata.setdefault(tags_for(entry_id), []).append(entry_id)
 
-    seed_material = "\x1e".join(
-        f"{entry_id}\x1f{'\x1d'.join(tags_for(entry_id))}"
+    # The separators are bound to names because a backslash inside an f-string
+    # EXPRESSION is a syntax error before Python 3.12 (PEP 701), and the project
+    # supports >=3.11. Keep them out of the braces.
+    record_sep, unit_sep, tag_sep = "\x1e", "\x1f", "\x1d"
+    seed_material = record_sep.join(
+        f"{entry_id}{unit_sep}{tag_sep.join(tags_for(entry_id))}"
         for entry_id in sorted(str(entry_id) for entry_id in board_ids)
     )
 
