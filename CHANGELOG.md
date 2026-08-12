@@ -1,13 +1,39 @@
 # Changelog
 
-### Racing slices can be deterministic and tag-balanced
+### A racing rung could eliminate half the field without evaluating anything
 
-Racing now supports `tournament.params.slice_schedule`.
-`"prefix"` preserves the legacy authored-board order, while the new
-`"stratified_random_v1"` derives a reproducible, tag-balanced permutation
-from the frozen board and uses nested prefixes for its rungs. New workspace
-scaffolds opt into the latter; adding it to an existing racing contract rolls
-the epoch, so historical evaluations keep their original schedule.
+Racing sized its rung slices against the FULL board and then handed them to
+`run_matchup`, which scores on the TRAIN board — so every holdout entry that
+fell inside a rung's slice was silently dropped from it. The rung ran on
+whatever was left and still recorded the fraction it had asked for.
+
+On the `target_1_presentation` racing contract, across 336 epoch ids (the
+holdout rotates per epoch), rung 0 actually evaluated 3 entries in 28% of
+epochs, 2 in 43%, 1 in 24% — and **zero in 4%**. Every one of those rounds
+journaled `board_fraction = 0.4286`. A rung that evaluates nothing scores
+every challenger at the neutral `0.0`, and the cut then ranks on
+`(scalar, generation_id)`: half the field eliminated in alphabetical order,
+unevaluated, with nothing in the record to say so.
+
+Racing now slices the train board directly. Rung sizes stop drifting with the
+holdout rotation, the journaled fraction is the fraction that ran, and a rung
+position can no longer be spent on a confirmation-only holdout entry.
+
+### Racing slices can opt out of authored board order
+
+Racing gained `tournament.params.slice_schedule`. `"prefix"` — the default
+everywhere, including new workspace scaffolds — keeps taking rung slices from
+the authored JSONL order. The opt-in `"stratified_random_v1"` instead derives
+a reproducible permutation from the frozen board and takes nested prefixes of
+it, so an entry's row position cannot decide a cut. Adding it to an existing
+contract rolls the epoch, so historical evaluations keep the schedule they
+actually ran under.
+
+It is opt-in rather than default because it under-delivers its name in two
+ways worth understanding first: its strata are exact tag SETS rather than
+individual tags (a board of distinct tag sets gets a plain shuffle, not
+balance), and it balances entry COUNT while ignoring `weight`. Both are
+documented in TOURNAMENT-STRUCTURES.md.
 
 ### A guarantee that was documented for years and never enforced
 

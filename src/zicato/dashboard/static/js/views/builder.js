@@ -517,7 +517,13 @@ function fieldSection(d) {
     const commit = () => {
       const raw = input.value != null ? input.value : input.getAttribute('value');
       if (spec.options) {
-        runOp('set_param', { key: spec.key, value: raw });
+        // Opt-in choice params: picking the DEFAULT removes the key, so a
+        // contract that never chose a schedule hashes byte-identically to one
+        // written before the knob existed (same discipline as removeAtZero).
+        runOp('set_param', {
+          key: spec.key,
+          value: (spec.removeAtDefault && raw === spec.def) ? null : raw,
+        });
         return;
       }
       let num = Number(raw);

@@ -356,12 +356,25 @@ the migration target is *byte-for-byte equivalent behaviour* with
   `params.board_fraction`); after a rung, eliminate the worst
   `1 − 1/eta` by scalar; survivors re-duel on a larger slice; repeat
   until one survivor or the full board is consumed.
-  `params.slice_schedule` controls how that nested subset is ordered:
-  `"prefix"` preserves the legacy JSONL order, while
-  `"stratified_random_v1"` derives a deterministic, tag-balanced permutation
-  from the frozen board and takes nested prefixes of it. The latter is the
-  recommended schedule; it makes authored board order unable to decide an
-  early cut while keeping resume and audit reproducible.
+  `params.slice_schedule` controls how that nested subset is ordered.
+  `"prefix"` — the default everywhere, including new workspace scaffolds —
+  takes the slice from the authored JSONL order, so an entry's row position
+  decides whether it gets to eliminate a challenger.
+  `"stratified_random_v1"` instead derives a deterministic permutation from
+  the frozen board (ids + tag sets only, never a process-global seed) and
+  takes nested prefixes of it, so authored order cannot decide an early cut
+  while resume and audit stay reproducible. It is **opt-in**, and two limits
+  are worth knowing before opting in:
+  - Its strata are exact tag **sets**, not individual tags — an entry tagged
+    `{a, b}` shares no stratum with one tagged `{a}`. Balance is therefore
+    proportional over tag-set *combinations*; a per-tag marginal is balanced
+    only as far as the combinations imply, and a board whose entries all
+    carry distinct tag sets has only singleton strata and gets a plain
+    deterministic shuffle. (The `target_1_presentation` example board is
+    exactly such a board.)
+  - Proportionality is over entry **count** and ignores `weight`, so a small
+    stratum carrying a large share of the aggregate's weight can still go
+    unsampled on an early rung.
 - **advance**: `record_result` accumulates per-rung scalars; elimination
   is by rank within the rung (not the gate) — this is best-arm ID, not a
   feasibility test. The gate is applied only at the **final** rung, on
@@ -471,7 +484,7 @@ it). Example — racing with a four-challenger field:
       "eta": 2,                   // racing: keep top 1/eta each rung
       "board_fraction": 0.4,      // racing: rung-0 board slice = ceil(fraction · |board|)
       "rung0_board_size": 0,      // racing: 0 ⇒ derive rung-0 size from board_fraction
-      "slice_schedule": "stratified_random_v1", // racing: deterministic tag-balanced nested slices
+      "slice_schedule": "stratified_random_v1", // racing: opt-in; omit for the default authored-order slices
       "matchup_budget_seconds": 300,      // racing: opt-in per-duel wall-clock cap (grind guard, §3.5)
       "final_rung_budget_seconds": 600    // racing: overrides the cap for the final crowning duel
       // swiss instead adds: "rounds_n": 4

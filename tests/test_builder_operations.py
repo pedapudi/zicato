@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import pytest
 from goldfive import DriftSeverity
 
 from zicato.board.split import HOLDOUT_TAG
@@ -49,6 +50,23 @@ def test_set_param_and_remove() -> None:
     patch = ops.set_param(draft, "replicates", None)
     assert "replicates" not in draft.scoring.tournament_structure.params
     assert patch.changed["replicates"]["to"] is None
+
+
+def test_set_param_validates_closed_vocabulary_keys() -> None:
+    # A typo'd schedule would otherwise be stored verbatim, roll the epoch on
+    # save, and only raise from make_strategy at round start. Catch it here so
+    # the dispatch turns it into a field-precise 400.
+    draft = TournamentDraft()
+    with pytest.raises(ValueError, match="slice_schedule must be one of"):
+        ops.set_param(draft, "slice_schedule", "stratified_random")
+    assert "slice_schedule" not in draft.scoring.tournament_structure.params
+
+    for schedule in ("prefix", "stratified_random_v1"):
+        ops.set_param(draft, "slice_schedule", schedule)
+        assert draft.scoring.tournament_structure.params["slice_schedule"] == schedule
+    # Removal stays available, and is how the builder drops back to the default.
+    ops.set_param(draft, "slice_schedule", None)
+    assert "slice_schedule" not in draft.scoring.tournament_structure.params
 
 
 def test_set_holdout_enabled_fraction_tags() -> None:

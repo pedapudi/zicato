@@ -1314,7 +1314,6 @@ def recommended_scaffold_weights() -> ScoringWeights:
                 "field_size": 4,
                 "eta": 2,
                 "board_fraction": 0.4,
-                "slice_schedule": "stratified_random_v1",
                 "replicates": 2,
                 "promote_confidence_threshold": DEFAULT_PROMOTE_CONFIDENCE_THRESHOLD,
                 # An honest defer→replicate budget: CI separation on a

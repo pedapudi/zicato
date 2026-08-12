@@ -428,6 +428,30 @@ def test_racing_rejects_unknown_slice_schedule() -> None:
         make_strategy(_racing_spec(slice_schedule="unseeded"))
 
 
+def test_racing_stratified_schedule_refuses_a_board_it_has_no_tags_for() -> None:
+    # Without the tags every entry collapses into one stratum, which is an
+    # unstratified shuffle wearing the stratified schedule's name. Refuse
+    # rather than degrade, exactly as an unknown schedule refuses.
+    spec = TournamentStructure(
+        structure="racing",
+        params={"field_size": 4, "eta": 2, "slice_schedule": "stratified_random_v1"},
+    )
+    with pytest.raises(ValueError, match="needs the board's tags"):
+        make_strategy(spec, board_ids=["e1", "e2", "e3", "e4"])
+
+    # A genuinely untagged board is NOT the same thing: the tags were supplied,
+    # they are simply empty, so the shuffle is honest and the strategy builds.
+    ok = make_strategy(
+        spec,
+        board_ids=["e1", "e2", "e3", "e4"],
+        board_tags={"e1": (), "e2": (), "e3": (), "e4": ()},
+    )
+    assert ok is not None
+
+    # No board at all (the evidence-pregate path) never slices, so it builds.
+    assert make_strategy(spec) is not None
+
+
 def test_racing_final_runs_full_board_gate() -> None:
     s = make_strategy(_racing_spec())
     champ = _champion("v0")

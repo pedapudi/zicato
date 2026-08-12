@@ -45,18 +45,41 @@ from zicato.selection.strategy import (
     pending_match_record,
 )
 
+#: The legacy schedule: rungs take nested prefixes of the authored JSONL
+#: order. The default for every contract that does not name a schedule.
+LEGACY_SLICE_SCHEDULE = "prefix"
+
+#: Nested prefixes of a permutation stratified by exact tag SET.
+STRATIFIED_RANDOM_SLICE_SCHEDULE = "stratified_random_v1"
+
+#: Every ``slice_schedule`` racing accepts. The builder validates an edit
+#: against this same tuple so a typo is a contract-time error rather than a
+#: round-start one.
+SLICE_SCHEDULES: tuple[str, ...] = (LEGACY_SLICE_SCHEDULE, STRATIFIED_RANDOM_SLICE_SCHEDULE)
+
 
 def _stratified_random_order(
     board_ids: Sequence[str], tags_by_id: Mapping[str, object]
 ) -> tuple[str, ...]:
-    """Return a stable, tag-balanced permutation of a frozen board.
+    """Return a stable permutation of a frozen board, stratified by tag SET.
 
     The ordering is derived solely from the board ids and their complete tag
-    sets, both already covered by the board's contract hash. Entries in each
-    tag stratum are independently hash-shuffled; a largest-deficit merge then
-    keeps every prefix as proportionate to the full stratum mix as possible.
-    Thus rung slices remain nested while neither authored board order nor a
-    process-global random seed can decide an elimination.
+    sets, both already covered by the board's contract hash. Entries sharing
+    an identical tag set form one stratum and are independently hash-shuffled;
+    a largest-deficit merge then keeps every prefix as proportionate to the
+    full stratum mix as possible. Thus rung slices remain nested while neither
+    authored board order nor a process-global random seed can decide an
+    elimination.
+
+    The strata are exact tag SETS, not individual tags: an entry tagged
+    ``{a, b}`` shares no stratum with one tagged ``{a}``. Balance is therefore
+    proportional over tag-set combinations, and a per-tag *marginal* is
+    balanced only as far as the combinations imply. A board whose entries all
+    carry distinct tag sets has only singleton strata, and the result is a
+    plain deterministic shuffle. Proportionality is also over entry COUNT and
+    ignores :attr:`~zicato.core.board.BoardEntry.weight`, so a small stratum
+    carrying a large share of the aggregate's weight can still go unsampled
+    on an early rung.
     """
     if not board_ids:
         return ()
@@ -126,8 +149,6 @@ class RacingStrategy(SelectionStrategy):
     # enlarge it). Declared explicitly so the shared default-replicates map
     # reads a stable value.
     _default_replicates = 1
-    _LEGACY_SLICE_SCHEDULE = "prefix"
-    _STRATIFIED_RANDOM_SLICE_SCHEDULE = "stratified_random_v1"
 
     def __init__(self, params: dict[str, Any] | None = None) -> None:
         super().__init__(params)
@@ -138,18 +159,31 @@ class RacingStrategy(SelectionStrategy):
         self._rung0 = _param_int(self.params, "rung0_board_size", 0)  # 0 ⇒ use fraction
         raw_ids = self.params.get("board_ids", ())
         self._board_ids: tuple[str, ...] = tuple(str(x) for x in raw_ids)
-        self._slice_schedule = str(self.params.get("slice_schedule", self._LEGACY_SLICE_SCHEDULE))
-        if self._slice_schedule not in {
-            self._LEGACY_SLICE_SCHEDULE,
-            self._STRATIFIED_RANDOM_SLICE_SCHEDULE,
-        }:
-            raise ValueError("racing slice_schedule must be 'prefix' or " "'stratified_random_v1'")
+        self._slice_schedule = str(self.params.get("slice_schedule", LEGACY_SLICE_SCHEDULE))
+        if self._slice_schedule not in SLICE_SCHEDULES:
+            valid = ", ".join(repr(s) for s in SLICE_SCHEDULES)
+            raise ValueError(
+                f"racing slice_schedule must be one of {valid}; got {self._slice_schedule!r}"
+            )
+        stratified = self._slice_schedule == STRATIFIED_RANDOM_SLICE_SCHEDULE
+        if stratified and self._board_ids and "_board_tags" not in self.params:
+            # ``_board_tags`` is runtime-derived board metadata make_strategy
+            # injects from the frozen board. Its ABSENCE (as opposed to a
+            # board whose entries are genuinely untagged, which arrives as a
+            # populated map of empty tuples) means the caller never supplied
+            # it — and stratifying without it collapses every entry into one
+            # stratum, an unstratified shuffle wearing the stratified
+            # schedule's name. Refuse, exactly as an unknown schedule refuses
+            # rather than degrading to authored order.
+            raise ValueError(
+                f"racing slice_schedule {STRATIFIED_RANDOM_SLICE_SCHEDULE!r} needs the "
+                "board's tags; construct the strategy via "
+                "make_strategy(..., board_tags=...)"
+            )
         raw_tags = self.params.get("_board_tags", {})
         tags_by_id = raw_tags if isinstance(raw_tags, Mapping) else {}
         self._slice_board_ids = (
-            _stratified_random_order(self._board_ids, tags_by_id)
-            if self._slice_schedule == self._STRATIFIED_RANDOM_SLICE_SCHEDULE
-            else self._board_ids
+            _stratified_random_order(self._board_ids, tags_by_id) if stratified else self._board_ids
         )
         self._replicates = max(1, _param_int(self.params, "replicates", self._default_replicates))
 
@@ -550,4 +584,9 @@ class RacingStrategy(SelectionStrategy):
         return self._standings(None)
 
 
-__all__ = ["RacingStrategy"]
+__all__ = [
+    "LEGACY_SLICE_SCHEDULE",
+    "SLICE_SCHEDULES",
+    "STRATIFIED_RANDOM_SLICE_SCHEDULE",
+    "RacingStrategy",
+]
