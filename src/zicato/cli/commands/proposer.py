@@ -246,9 +246,15 @@ def _render_findings(reflection: Any) -> str:
             "  No findings — every measured rate is either healthy or too thinly sampled "
             "to draft a contract change against."
         )
+    # The substrate line names what the pass could SEE — the source plus how
+    # many prior epochs its comparisons span. Every "compared against" line
+    # below is a claim about that history, so its breadth belongs on screen
+    # rather than only in the persisted record.
+    history = len(reflection.investigation.history if reflection.investigation else ())
     lines = [
         f"Proposer reflection {reflection.reflection_id} · epoch {reflection.epoch_id}",
-        f"  substrate: {reflection.investigation_source}",
+        f"  substrate: {reflection.investigation_source}"
+        f" · compared against {history} prior epoch(s)",
         "",
     ]
     for finding in reflection.findings:
