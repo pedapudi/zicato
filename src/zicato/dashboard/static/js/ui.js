@@ -915,12 +915,6 @@ export function chip(cls, word, extra) {
   return el('span', { class: c, text: word == null ? '' : String(word) });
 }
 
-// pill(cls, word) — the `dn-pill dn-<cls>` span with a CUSTOM word. This is the
-// sibling of verdictPill: verdictPill(decision) colours by a decision AND
-// derives the label from it ('seed (v0)' / 'racing…'), whereas these sites want
-// the decision COLOUR under a caller-chosen word (a role / 'champion' / a raw
-// token) — swapping them onto verdictPill would silently rewrite that label. An
-// optional `extra` appends further classes verbatim.
 // ---- transcript FIDELITY vocabulary ---------------------------------
 //
 // The ONE place a fidelity tier becomes words. The Instrument lens's x-ray
@@ -943,6 +937,12 @@ export function fidelityLabel(fidelity) {
   return f;
 }
 
+// pill(cls, word) — the `dn-pill dn-<cls>` span with a CUSTOM word. This is the
+// sibling of verdictPill: verdictPill(decision) colours by a decision AND
+// derives the label from it ('seed (v0)' / 'racing…'), whereas these sites want
+// the decision COLOUR under a caller-chosen word (a role / 'champion' / a raw
+// token) — swapping them onto verdictPill would silently rewrite that label. An
+// optional `extra` appends further classes verbatim.
 export function pill(cls, word, extra) {
   const c = 'dn-pill dn-' + cls + (extra ? ' ' + extra : '');
   return el('span', { class: c, text: word == null ? '' : String(word) });
