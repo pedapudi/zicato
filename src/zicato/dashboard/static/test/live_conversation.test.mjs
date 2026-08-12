@@ -25,8 +25,7 @@ installDom();
 
 const { mountConversationPane, captionText } = await import('../js/convo.js');
 const { spliceTurns, mergeAnnotations, createTranscriptStream } = await import('../js/transcript_stream.js');
-const { RUN_TRI, runTriState, triStateOfRunState } = await import('../js/livestatus_tristate_stub.js');
-const { RUN_STATE } = await import('../js/livestatus.js');
+const { LIVENESS, unitLiveness, hasActiveRunFor, livenessFor } = await import('../js/unit_liveness.js');
 
 // ---------------------------------------------------------------------------
 // A fake server that serves cursor deltas out of a growing turn list.
@@ -94,7 +93,7 @@ function fakeBus() {
 function mount(srv, bus, spec) {
   const host = document.createElement('div');
   return mountConversationPane(host, {
-    epochId: 'e1', gen: 'v3', entry: 'waffles', tri: RUN_TRI.LIVE, ...(spec || {}),
+    epochId: 'e1', gen: 'v3', entry: 'waffles', tri: LIVENESS.LIVE, ...(spec || {}),
   }, { fetchJson: srv.fetchJson, subscribe: bus.subscribe });
 }
 
@@ -250,7 +249,7 @@ test('a run completing transitions the SAME pane, without a remount', async () =
   srv.complete = true;
   await h.refresh();
 
-  assertEqual(h.pane.tri, RUN_TRI.SETTLED);
+  assertEqual(h.pane.tri, LIVENESS.SETTLED);
   // The scroller itself is the same node…
   assert(scrollerOf(h) === scroller, 'the scroller was remounted on settle');
   // …and so is every turn that was already in it.
@@ -281,14 +280,14 @@ test('a corrected tri-state upgrades the pane IN PLACE, without a remount', asyn
   // the turns already on screen.
   const srv = fakeServer().add('one');
   const bus = fakeBus();
-  const h = mount(srv, bus, { tri: RUN_TRI.INTERRUPTED });
+  const h = mount(srv, bus, { tri: LIVENESS.INTERRUPTED });
   await h.ready;
 
   const scroller = scrollerOf(h);
   const first = scroller.childNodes[0];
   assertEqual(bus.count, 0, 'an interrupted pane subscribed to growth');
 
-  h.setTriState(RUN_TRI.LIVE);
+  h.setTriState(LIVENESS.LIVE);
 
   assert(scrollerOf(h) === scroller, 'the scroller was remounted');
   assert(scroller.childNodes[0] === first, 'the rendered turn was rebuilt');
@@ -300,12 +299,12 @@ test('a settled or interrupted unit opens in the same component, not following',
   const srv = fakeServer().add('one');
   const bus = fakeBus();
 
-  const settled = mount(srv, bus, { tri: RUN_TRI.SETTLED });
+  const settled = mount(srv, bus, { tri: LIVENESS.SETTLED });
   await settled.ready;
   assertEqual(bus.count, 0, 'a settled pane subscribed to growth');
   assert(captionOf(settled).indexOf('settled') >= 0);
 
-  const stopped = mount(srv, fakeBus(), { tri: RUN_TRI.INTERRUPTED });
+  const stopped = mount(srv, fakeBus(), { tri: LIVENESS.INTERRUPTED });
   await stopped.ready;
   assert(captionOf(stopped).indexOf('interrupted') >= 0);
   // …and it still renders what the run DID produce — interrupted is not empty.
@@ -337,11 +336,18 @@ test('the caption does not invent a verbatim capture', async () => {
 
 test('captionText is honest for each mode', () => {
   const stream = { fidelity: 'events', verbatimAvailable: false };
-  assert(captionText(RUN_TRI.LIVE, 3, stream).indexOf('following') >= 0);
-  assert(captionText(RUN_TRI.SETTLED, 3, stream).indexOf('settled') >= 0);
-  // The interrupted caption must explain itself — "interrupted" alone reads as
-  // an error, when the truth is "this is as far as the run got".
-  assert(captionText(RUN_TRI.INTERRUPTED, 3, stream).indexOf('as far as it got') >= 0);
+  assert(captionText(LIVENESS.LIVE, 3, stream).indexOf('following') >= 0);
+  assert(captionText(LIVENESS.SETTLED, 3, stream).indexOf('settled') >= 0);
+  // The interrupted caption must explain ITSELF — "interrupted" alone reads as
+  // an error. Two facts the operator needs: this transcript is a fragment, and
+  // the run's score was never committed (§1's vocabulary, so the pane and the
+  // candidate dossier tell the same story about the same run).
+  const stopped = captionText(LIVENESS.INTERRUPTED, 3, stream);
+  assert(stopped.indexOf('still going when the loop was interrupted') >= 0, stopped);
+  assert(stopped.indexOf('never committed') >= 0, stopped);
+  assert(stopped.indexOf('3 turns before it stopped') >= 0, stopped);
+  // …and it dates the stop when the server said when.
+  assert(captionText(LIVENESS.INTERRUPTED, 3, stream, '2026-06-08T03:58:49Z').indexOf('Jun 8') >= 0);
 });
 
 // ---------------------------------------------------------------------------
@@ -472,7 +478,7 @@ test('mergeAnnotations does not double a replayed note', () => {
 test('a transient fetch failure is survivable, not fatal', async () => {
   const boom = { fetchJson: async () => { throw new Error('offline'); } };
   const host = document.createElement('div');
-  const h = mountConversationPane(host, { epochId: 'e', gen: 'g', entry: 'n', tri: RUN_TRI.LIVE },
+  const h = mountConversationPane(host, { epochId: 'e', gen: 'g', entry: 'n', tri: LIVENESS.LIVE },
     { fetchJson: boom.fetchJson, subscribe: fakeBus().subscribe });
   await h.ready;
 
@@ -495,38 +501,54 @@ test('the stream only ever ADVANCES its cursor', async () => {
 });
 
 // ---------------------------------------------------------------------------
-// The tri-state the pane keys on (stub — see livestatus_tristate_stub.js)
+// The unit verdict the pane keys on
 // ---------------------------------------------------------------------------
+//
+// §1 derives liveness per WORKSPACE — one evolve loop holds the lock, so it
+// answers "is the loop running". The pane needs "is THIS unit running", which
+// is a composition of that verdict with whether the unit has an active-run
+// record. These pin the composition; §1 owns the loop verdict itself.
 
-test('a terminal run is settled no matter what the runtime files claim', () => {
-  assertEqual(runTriState({ complete: true, hasActiveRun: true, lastHeartbeat: new Date().toISOString() }),
-    RUN_TRI.SETTLED);
+test('a unit with no active-run record is settled, whatever the loop is doing', () => {
+  assertEqual(unitLiveness({ liveness: { live: true }, hasActiveRun: false }), LIVENESS.SETTLED);
+  assertEqual(unitLiveness({ liveness: { live: false }, hasActiveRun: false }), LIVENESS.SETTLED);
 });
 
-test('a stale heartbeat reads interrupted, NEVER live', () => {
-  // This is issue #194 §1's headline bug in one assertion: a June-dead
-  // workspace must not render as live.
-  assertEqual(runTriState({ complete: false, hasActiveRun: true, lastHeartbeat: '2026-06-08T03:58:49Z', now: Date.parse('2026-08-09T00:00:00Z') }),
-    RUN_TRI.INTERRUPTED);
-  assertEqual(runTriState({ complete: false, hasActiveRun: true, lastHeartbeat: null }), RUN_TRI.INTERRUPTED);
+test('a unit is live only when the LOOP is live and the unit has a record', () => {
+  assertEqual(unitLiveness({ liveness: { live: true }, hasActiveRun: true }), LIVENESS.LIVE);
 });
 
-test('a fresh heartbeat with a live run record reads live', () => {
+test('a record against a dead loop reads interrupted, NEVER live', () => {
+  // Issue #194 §1's headline bug in one assertion: the June-dead workspace
+  // rendered stale active-run records as units in flight. That unit was
+  // mid-run when the loop died — its score was never committed.
+  assertEqual(unitLiveness({ liveness: { live: false, state: 'interrupted' }, hasActiveRun: true }),
+    LIVENESS.INTERRUPTED);
+});
+
+test('the record lookup is exact — a sibling unit does not make this one live', () => {
+  const runs = [{ generation_id: 'v3', entry_id: 'other' }, { generation_id: 'v9', entry_id: 'waffles' }];
+  assertEqual(hasActiveRunFor(runs, 'v3', 'waffles'), false);
+  assertEqual(hasActiveRunFor(runs, 'v3', 'other'), true);
+  assertEqual(hasActiveRunFor(null, 'v3', 'waffles'), false);
+});
+
+test('the served liveness verdict is preferred over the heartbeat', () => {
+  // The server is the only reader that can see the progress log's terminal
+  // marker, so its verdict outranks our own ageing. A settled loop whose
+  // heartbeat happens to be fresh must still read settled.
+  const out = livenessFor({ liveness: { state: 'settled', ended_at: '2026-06-08T03:58:49Z' },
+    heartbeat: { last_heartbeat: new Date().toISOString() } });
+  assertEqual(out.liveness.state, 'settled');
+  assertEqual(out.liveness.live, false);
+  assertEqual(out.liveness.endedAt, '2026-06-08T03:58:49Z');
+});
+
+test('without a served verdict, a stale heartbeat ages the loop out of live', () => {
   const now = Date.parse('2026-08-09T00:00:00Z');
-  assertEqual(runTriState({ complete: false, hasActiveRun: true, lastHeartbeat: '2026-08-09T00:00:00Z', now }),
-    RUN_TRI.LIVE);
-});
-
-test('the four-state run vocabulary collapses onto the pane’s three', () => {
-  // The join point for §1's helper. A STALLED run is alive with no progress —
-  // its events file may still grow, and following it is how the operator finds
-  // out whether it is wedged, so it stays followable.
-  assertEqual(triStateOfRunState(RUN_STATE.LIVE), RUN_TRI.LIVE);
-  assertEqual(triStateOfRunState(RUN_STATE.STALLED), RUN_TRI.LIVE);
-  assertEqual(triStateOfRunState(RUN_STATE.SETTLED), RUN_TRI.SETTLED);
-  // …and a DEAD loop's unit is interrupted, never live. This is §1's headline
-  // bug expressed as a mapping.
-  assertEqual(triStateOfRunState(RUN_STATE.DEAD), RUN_TRI.INTERRUPTED);
+  assertEqual(livenessFor({ heartbeat: { last_heartbeat: '2026-06-08T03:58:49Z' } }, now).liveness.live, false);
+  assertEqual(livenessFor({ heartbeat: { last_heartbeat: '2026-08-09T00:00:00Z' } }, now).liveness.live, true);
+  assertEqual(livenessFor({}, now).liveness.live, false);
 });
 
 await run();

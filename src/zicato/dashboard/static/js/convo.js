@@ -36,7 +36,7 @@ import { bus } from './core/bus.js';
 import { fidelityLabel, pill } from './ui.js';
 import { reconcileTurns, nearBottom } from './turns.js';
 import { createTranscriptStream, spliceTurns, mergeAnnotations } from './transcript_stream.js';
-import { RUN_TRI } from './livestatus_tristate_stub.js';
+import { LIVENESS } from './unit_liveness.js';
 
 // mountConversationPane(host, spec) → a handle.
 //
@@ -53,7 +53,10 @@ export function mountConversationPane(host, spec, opts) {
   const stream = createTranscriptStream(s, { fetchJson: o.fetchJson });
 
   const pane = {
-    tri: s.tri || RUN_TRI.SETTLED,
+    tri: s.tri || LIVENESS.SETTLED,
+    // When the loop stopped, for the interrupted caption's past tense. Null
+    // while live; supplied by the caller off §1's liveness payload.
+    endedAt: s.endedAt || null,
     turns: [],
     annotations: [],
     unseen: 0,
@@ -103,7 +106,7 @@ export function mountConversationPane(host, spec, opts) {
   let unsubscribe = null;
 
   function startFollowing() {
-    if (pane.following || pane.tri !== RUN_TRI.LIVE) return;
+    if (pane.following || pane.tri !== LIVENESS.LIVE) return;
     pane.following = true;
     unsubscribe = subscribe('run_log:grew', (frame) => {
       // FILTER to this run's file. A sibling unit's growth must not cost us a
@@ -159,7 +162,7 @@ export function mountConversationPane(host, spec, opts) {
     render();
 
     // The run just ended: become the permanent transcript, in place.
-    if (stream.complete && pane.tri === RUN_TRI.LIVE) setTriState(RUN_TRI.SETTLED);
+    if (stream.complete && pane.tri === LIVENESS.LIVE) setTriState(LIVENESS.SETTLED);
   }
 
   // ---- rendering ------------------------------------------------------
@@ -175,7 +178,7 @@ export function mountConversationPane(host, spec, opts) {
   }
 
   function paintCaption(rendered) {
-    caption.textContent = captionText(pane.tri, rendered, stream);
+    caption.textContent = captionText(pane.tri, rendered, stream, pane.endedAt);
   }
 
   function paintPin() {
@@ -196,13 +199,14 @@ export function mountConversationPane(host, spec, opts) {
   // THE LIVE → SETTLED TRANSITION. Caption and pill only: the scroller and
   // every turn node inside it are left exactly as they are, which is what
   // makes this a state change rather than a remount.
-  function setTriState(tri) {
+  function setTriState(tri, endedAt) {
     pane.tri = tri;
-    if (tri !== RUN_TRI.LIVE) stopFollowing();
+    if (endedAt !== undefined) pane.endedAt = endedAt;
+    if (tri !== LIVENESS.LIVE) stopFollowing();
     statusPill.textContent = triWord(tri);
     statusPill.className = 'dn-pill dn-' + triClass(tri);
     paintCaption(scroller.childNodes.length);
-    if (tri === RUN_TRI.LIVE) startFollowing();
+    if (tri === LIVENESS.LIVE) startFollowing();
   }
 
   // Open in the mode the caller asked for, then take the first read.
@@ -222,24 +226,51 @@ export function mountConversationPane(host, spec, opts) {
 // The caption — the fidelity sentence, in the shared vocabulary. It says three
 // things and no more: what these bytes are, whether the run is still producing
 // them, and whether a higher-fidelity record of the same run exists on disk.
-export function captionText(tri, rendered, stream) {
+export function captionText(tri, rendered, stream, endedAt) {
   const parts = [fidelityLabel((stream && stream.fidelity) || 'events')];
-  if (tri === RUN_TRI.LIVE) parts.push('following · ' + rendered + ' turns so far');
-  else if (tri === RUN_TRI.INTERRUPTED) parts.push('interrupted — the run stopped without a terminal event; this is as far as it got');
-  else parts.push('settled · ' + rendered + ' turns');
+  if (tri === LIVENESS.LIVE) {
+    parts.push('following · ' + rendered + ' turns so far');
+  } else if (tri === LIVENESS.INTERRUPTED) {
+    // §1's vocabulary for this state, and the part that actually matters to an
+    // operator reading it: the unit was mid-run when the loop stopped, so this
+    // transcript is a fragment AND its score was never committed. Past tense —
+    // nothing here is still happening.
+    parts.push('this run was still going when the loop was interrupted'
+      + (endedAt ? ' on ' + shortDate(endedAt) : '')
+      + ' · ' + rendered + ' turns before it stopped · its score was never committed');
+  } else {
+    parts.push('settled · ' + rendered + ' turns');
+  }
   if (stream && stream.verbatimAvailable) parts.push('a verbatim result.json capture was retained beside this run');
   if (stream && stream.error) parts.push(stream.error);
   return parts.join(' · ');
 }
 
+// A short past-tense date for the interrupted caption ("Jun 8"). §1 exports a
+// `shortDate(iso)` for exactly this; swap to it when that lands so every
+// past-tense surface spells a date the same way.
+//
+// Rendered in UTC, deliberately. The server stamps these in UTC, and a run
+// that stopped at 03:58Z reads as the PREVIOUS day under a western local
+// timezone — so a local-time render would have this pane and the candidate
+// dossier naming different days for the same interruption, which is worse
+// than either choice on its own.
+function shortDate(iso) {
+  const t = Date.parse(iso);
+  if (!Number.isFinite(t)) return String(iso);
+  return new Date(t).toLocaleDateString(undefined, {
+    month: 'short', day: 'numeric', timeZone: 'UTC',
+  });
+}
+
 function triWord(tri) {
-  if (tri === RUN_TRI.LIVE) return 'live';
-  if (tri === RUN_TRI.INTERRUPTED) return 'interrupted';
+  if (tri === LIVENESS.LIVE) return 'live';
+  if (tri === LIVENESS.INTERRUPTED) return 'interrupted';
   return 'settled';
 }
 
 function triClass(tri) {
-  if (tri === RUN_TRI.LIVE) return 'live';
-  if (tri === RUN_TRI.INTERRUPTED) return 'warn';
+  if (tri === LIVENESS.LIVE) return 'live';
+  if (tri === LIVENESS.INTERRUPTED) return 'warn';
   return 'faint';
 }

@@ -24,7 +24,10 @@ import { splitFrame, captureScroll, restoreScroll } from '../compare.js';
 import * as facets from '../facets.js';
 import { buildTurnNode, dedupConsecutiveTurns, reconcileTurns } from '../turns.js';
 import { mountConversationPane } from '../convo.js';
-import { runTriState } from '../livestatus_tristate_stub.js';
+// `livenessFor` is ALIASED because #194 §1 adds its own `livenessFor` import
+// to this same file from '../livestatus.js'. Aliasing keeps both landings
+// mergeable, and makes the eventual swap a one-line deletion here.
+import { unitLiveness, hasActiveRunFor, livenessFor as loopLiveness } from '../unit_liveness.js';
 
 // The transcript turn vocabulary now lives in js/turns.js so the live follow
 // pane can share it without importing back through this view. Re-exported
@@ -598,15 +601,20 @@ function syncFollowPane(host, xscriptHost, spec) {
     return;
   }
 
-  // The tri-state is re-derived on EVERY render, not just at mount. The board
-  // paints before the environment read lands, so a pane mounted on that first
-  // frame sees no active-run record yet and would otherwise be stuck reading
-  // "interrupted" for a unit that is plainly running.
-  const tri = runTriState({
-    complete: false,
-    hasActiveRun: inflightForEntry(state.activeRuns, spec.entryId)
-      .some((r) => r.generation_id === spec.selGen),
-    lastHeartbeat: (state.heartbeat && state.heartbeat.last_heartbeat) || null,
+  // The unit's verdict is re-derived on EVERY render, not just at mount. The
+  // board paints before the environment read lands, so a pane mounted on that
+  // first frame sees no active-run record yet and would otherwise be stuck
+  // reading "interrupted" for a unit that is plainly running.
+  //
+  // Composition, not a second derivation (#194 §1): the LOOP's liveness is
+  // per-workspace, and this unit is live only if the loop is live AND it has
+  // an active-run record of its own. `state.activeRuns` is read raw here on
+  // purpose — the gating lives in unitLiveness, so a dead loop yields
+  // interrupted whatever stale records are lying around.
+  const { liveness } = loopLiveness(state);
+  const tri = unitLiveness({
+    liveness,
+    hasActiveRun: hasActiveRunFor(state.activeRuns, spec.selGen, spec.entryId),
   });
 
   const key = spec.epochId + '|' + spec.selGen + '|' + spec.entryId;
@@ -618,7 +626,7 @@ function syncFollowPane(host, xscriptHost, spec) {
     // so a lingering active-run record cannot resurrect a finished run.
     const handle = followHost._followHandle;
     if (handle && !handle.pane.stream.complete && handle.pane.tri !== tri) {
-      handle.setTriState(tri);
+      handle.setTriState(tri, liveness.endedAt);
     }
     return;
   }
@@ -636,6 +644,7 @@ function syncFollowPane(host, xscriptHost, spec) {
     entry: spec.entryId,
     runId: (spec.leftSel && spec.leftSel.runId) || null,
     tri,
+    endedAt: liveness.endedAt,
   });
 }
 
