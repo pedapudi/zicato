@@ -158,6 +158,57 @@ def test_issue_38_sibling_simple_span_not_corrupted(tmp_path: Path) -> None:
     assert ids == {"roster", "custom_tools_src"}
 
 
+def test_replace_span_after_unicode_prefix_preserves_assignment(tmp_path: Path) -> None:
+    """AST byte columns must not be used as decoded-string indexes.
+
+    The string literal begins after a non-ASCII identifier.  CPython reports
+    the literal's AST columns in UTF-8 bytes, while the applier edits decoded
+    text.  A correct replacement must therefore preserve the assignment,
+    leave the generated module parseable, and bind the requested value.
+    """
+    out = _apply_one(
+        tmp_path,
+        '# zicato:mutable id="prompt"\n变量 = "old"\n',
+        _patch(mutation_id="prompt", new_content="rewritten"),
+    )
+
+    ast.parse(out)
+    assert "变量 = " in out
+    assert _exec_value(out, "变量") == "rewritten"
+
+
+@pytest.mark.parametrize(
+    ("label", "literal"),
+    [
+        ("two_byte", "café"),
+        ("three_byte", "日本語"),
+        ("four_byte", "a\U0001f600b"),
+    ],
+)
+def test_replace_span_with_unicode_in_literal_keeps_following_source(
+    tmp_path: Path, label: str, literal: str
+) -> None:
+    """The END byte column must be converted too, or the edit eats what follows.
+
+    The sibling of the prefix case, and the one an operator actually hits: a
+    prompt that merely *contains* a non-ASCII character. Every extra UTF-8 byte
+    inside the literal pushes ``end_col_offset`` past the literal's last
+    character, so the slice swallows source that follows it — here the list's
+    comma, which turns two elements into one implicitly concatenated string.
+    That corruption still PARSES, so the post-apply syntax gate never sees it;
+    only asserting the exec'd value catches it. Widths 2/3/4 pin that the
+    overshoot scales with the encoding, not with a fixed off-by-one.
+    """
+    out = _apply_one(
+        tmp_path,
+        f'# zicato:mutable id="prompt"\nDATA = ["{literal}", "other"]\n',
+        _patch(mutation_id="prompt", new_content="rewritten"),
+    )
+
+    ast.parse(out)
+    assert _exec_value(out, "DATA") == ["rewritten", "other"]
+
+
 # ---------------------------------------------------------------------------
 # op × content shape — replace a simple ``X = "..."`` span with every shape
 # of content. In each case the assignment target survives, the file parses,
