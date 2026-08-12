@@ -103,6 +103,8 @@ def _dispatch_op(draft: TournamentDraft, op: str, args: dict[str, Any]) -> ops.D
         return ops.set_gate(
             draft,
             promote_margin=args.get("promote_margin"),
+            holdout_margin=args.get("holdout_margin"),
+            holdout_entry_regression_budget=_opt_int(args, "holdout_entry_regression_budget"),
             monotonicity=args.get("monotonicity"),
             monotonicity_scope=args.get("monotonicity_scope"),
             namespace_monotonicity=args.get("namespace_monotonicity"),

@@ -301,6 +301,8 @@ def set_weights(
 
 def set_gate(
     promote_margin: float | None = None,
+    holdout_margin: float | None = None,
+    holdout_entry_regression_budget: int | None = None,
     monotonicity: bool | None = None,
     monotonicity_scope: str | None = None,
     namespace_monotonicity: dict[str, bool] | None = None,
@@ -324,14 +326,20 @@ def set_gate(
     alarm-only to BLOCKING (containment violations / gate
     contradictions). The ``regression_*`` trio runs the snapshot's own
     test suite as a hard pre-gate (argv list + timeout seconds >= 1).
+    ``holdout_margin`` / ``holdout_entry_regression_budget`` are the
+    holdout confirmation's own bounds — the holdout is the coarser slice,
+    so it needs a wider tolerance than ``promote_margin``; pass a NEGATIVE
+    ``holdout_margin`` to reset it to auto (reuse ``promote_margin``).
     Returns the patch + updated cost / warnings, or an ``error`` for an
-    invalid scope / command / timeout.
+    invalid scope / command / timeout / budget.
     """
     ctx = _active_context()
     try:
         patch = ops.set_gate(
             ctx.draft(),
             promote_margin=promote_margin,
+            holdout_margin=holdout_margin,
+            holdout_entry_regression_budget=holdout_entry_regression_budget,
             monotonicity=monotonicity,
             monotonicity_scope=monotonicity_scope,
             namespace_monotonicity=namespace_monotonicity,

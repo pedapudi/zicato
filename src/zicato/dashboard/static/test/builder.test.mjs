@@ -351,6 +351,14 @@ test('builder view: a holdout toggle posts set_holdout tags and re-renders the s
   const setHoldout = OP_CALLS.find((c) => c.op === 'set_holdout');
   assert(setHoldout && Array.isArray(setHoldout.args.tags), 'set_holdout posted with tags');
   assertEqual(setHoldout.args.tags.length, 1, 'one entry held out');
+  // The hash-derived split's own size rides the SAME op, from the same page.
+  const frac = byAria(host, 'dn-bld-num', 'Holdout fraction');
+  assert(frac, 'the holdout-fraction control renders');
+  frac.value = '0.4';
+  frac.dispatchEvent(makeEvent('change'));
+  await tick();
+  assert(OP_CALLS.find((c) => c.op === 'set_holdout' && c.args.fraction === 0.4),
+    'the holdout-fraction control posts set_holdout {fraction}');
 });
 
 test('builder view: the Review section dry-run + apply call /builder/apply with the right confirm', async () => {
@@ -704,6 +712,63 @@ test('builder view: the Overfitting section drives set_holdout (ladder, placebo,
   assert(call, 'the rotation toggle posts set_holdout {rotate_holdout:false}');
 });
 
+// The remaining set_holdout knobs, one EXPLICIT assertion each — the master
+// switch, the split floor, the visibility restriction, and the two ladder
+// subkeys the budget row does not cover. A ladder sibling's row can never
+// stand in for another: each subkey posts its own partial mapping.
+test('builder view: the Overfitting section covers the split floor, visibility, and the remaining ladder subkeys', async () => {
+  const host = await mountAt('Overfitting');
+  const guard = byAria(host, 'dn-bld-check', 'Overfitting guard enabled');
+  guard.checked = false;
+  guard.dispatchEvent(makeEvent('change'));
+  await tick();
+  assert(OP_CALLS.find((c) => c.op === 'set_holdout' && c.args.enabled === false),
+    'the master switch posts set_holdout {enabled:false}');
+
+  const floor = byAria(host, 'dn-bld-num', 'Min board size for split');
+  floor.value = '9';
+  floor.dispatchEvent(makeEvent('change'));
+  await tick();
+  assert(OP_CALLS.find((c) => c.op === 'set_holdout' && c.args.min_board_size_for_split === 9),
+    'the split floor posts set_holdout {min_board_size_for_split}');
+
+  const vis = byAria(host, 'dn-bld-check', 'Restrict proposer visibility');
+  vis.checked = false;
+  vis.dispatchEvent(makeEvent('change'));
+  await tick();
+  assert(OP_CALLS.find((c) => c.op === 'set_holdout' && c.args.restrict_proposer_visibility === false),
+    'the visibility toggle posts set_holdout {restrict_proposer_visibility:false}');
+
+  const gov = byAria(host, 'dn-bld-check', 'Ladder governor enabled');
+  gov.checked = false;
+  gov.dispatchEvent(makeEvent('change'));
+  await tick();
+  assert(OP_CALLS.find((c) => c.op === 'set_holdout' && c.args.ladder && c.args.ladder.enabled === false),
+    'the ladder switch posts set_holdout {ladder:{enabled:false}}');
+
+  const noise = byAria(host, 'dn-bld-num', 'Ladder noise scale');
+  noise.value = '0.05';
+  noise.dispatchEvent(makeEvent('change'));
+  await tick();
+  assert(OP_CALLS.find((c) => c.op === 'set_holdout' && c.args.ladder && c.args.ladder.noise_scale === 0.05),
+    'the noise-scale row posts set_holdout {ladder:{noise_scale}}');
+
+  // The release threshold: a pinned float, then the NEGATIVE reset that the
+  // op reads as the mapping's real null (auto — derive from promote_margin).
+  const thr = byAria(host, 'dn-bld-num', 'Ladder release threshold');
+  assert(thr, 'the ladder release-threshold control renders');
+  thr.value = '0.08';
+  thr.dispatchEvent(makeEvent('change'));
+  await tick();
+  assert(OP_CALLS.find((c) => c.op === 'set_holdout' && c.args.ladder && c.args.ladder.threshold === 0.08),
+    'the release threshold posts set_holdout {ladder:{threshold}}');
+  thr.value = '-1';
+  thr.dispatchEvent(makeEvent('change'));
+  await tick();
+  assert(OP_CALLS.find((c) => c.op === 'set_holdout' && c.args.ladder && c.args.ladder.threshold === null),
+    'a negative release threshold posts the null that resets it to auto');
+});
+
 test('builder view: the Weights section drives set_weights + set_namespace_weights (full mapping)', async () => {
   const host = await mountAt('Weights');
   const drift = byAria(host, 'dn-bld-num', 'Drift weight');
@@ -879,6 +944,49 @@ test('builder view: the Gate section gains scope + blocking + regression control
   const cmdCall = OP_CALLS.find((c) => c.op === 'set_gate' && Array.isArray(c.args.regression_test_command));
   assert(cmdCall, 'the regression command posts set_gate');
   assertEqual(cmdCall.args.regression_test_command.join('|'), 'python|-m|unittest|discover', 'whitespace-split argv');
+});
+
+// The holdout CONFIRMATION's own bounds (issue #118) — a working gate rule
+// that had no builder path at all until the registry's exemption guard
+// named it. Plus the two gate switches the section never asserted.
+test('builder view: the Gate section drives the holdout confirmation bounds', async () => {
+  const host = await mountAt('Gate');
+  const mono = byAria(host, 'dn-bld-check', 'Pass-rate monotonicity');
+  mono.checked = true;
+  mono.dispatchEvent(makeEvent('change'));
+  await tick();
+  assert(OP_CALLS.find((c) => c.op === 'set_gate' && c.args.monotonicity === true),
+    'the monotonicity switch posts set_gate {monotonicity:true}');
+
+  const regOn = byAria(host, 'dn-bld-check', 'Regression gate enabled');
+  regOn.checked = true;
+  regOn.dispatchEvent(makeEvent('change'));
+  await tick();
+  assert(OP_CALLS.find((c) => c.op === 'set_gate' && c.args.regression_gate_enabled === true),
+    'the regression-gate switch posts set_gate {regression_gate_enabled:true}');
+
+  const budget = byAria(host, 'dn-bld-num', 'Holdout entry regression budget');
+  assert(budget, 'the holdout entry-regression-budget control renders');
+  budget.value = '1';
+  budget.dispatchEvent(makeEvent('change'));
+  await tick();
+  assert(OP_CALLS.find((c) => c.op === 'set_gate' && c.args.holdout_entry_regression_budget === 1),
+    'the budget row posts set_gate {holdout_entry_regression_budget}');
+
+  // A pinned bound, then the NEGATIVE reset to auto (reuse promote_margin) —
+  // the op reserves null for "leave unchanged", so negative is the token.
+  const margin = byAria(host, 'dn-bld-num', 'Holdout margin');
+  assert(margin, 'the holdout-margin control renders');
+  margin.value = '0.04';
+  margin.dispatchEvent(makeEvent('change'));
+  await tick();
+  assert(OP_CALLS.find((c) => c.op === 'set_gate' && c.args.holdout_margin === 0.04),
+    'the margin row posts set_gate {holdout_margin}');
+  margin.value = '-1';
+  margin.dispatchEvent(makeEvent('change'));
+  await tick();
+  assert(OP_CALLS.find((c) => c.op === 'set_gate' && c.args.holdout_margin === -1),
+    'a negative holdout margin posts the reset the op reads as auto');
 });
 
 test('builder view: the evidence-gate params join Field & noise; threshold 0 REMOVES the key', async () => {
@@ -1148,21 +1256,31 @@ test('estimateCost: the per-structure default-replicates twin matches the Python
 //    namespace-monotonicity, overfitting ceiling, proposer picker, the
 //    revert/undo lifecycle, the rung0 param spec) ───────────────────────
 
+// One EXPLICIT assertion per knob rather than a table loop: the knob-registry
+// pin (tests/test_knob_registry.py) scans this file for a line naming the
+// quoted op AND the arg, so a table-driven `c.args[key]` reads as no coverage
+// at all. Explicit lines keep the pin honest without weakening its scan.
 test('builder view: Weights adds the default-judge / plan-revision / runtime scalar rows (set_weights)', async () => {
   const host = await mountAt('Weights');
-  for (const [aria, key, val] of [
-    ['Default judge weight', 'default_judge_weight', 2],
-    ['Plan revision weight', 'plan_revision_weight', 0.25],
-    ['Runtime weight', 'runtime_weight', 0.3],
-  ]) {
+  const setNum = async (aria, val) => {
     const input = byAria(host, 'dn-bld-num', aria);
     assert(input, `the ${aria} control renders`);
     input.value = String(val);
     input.dispatchEvent(makeEvent('change'));
     await tick();
-    const call = OP_CALLS.find((c) => c.op === 'set_weights' && c.args[key] === val);
-    assert(call, `${aria} posts set_weights {${key}}`);
-  }
+  };
+  await setNum('Pass weight', 3);
+  assert(OP_CALLS.find((c) => c.op === 'set_weights' && c.args.pass_weight === 3),
+    'the pass-weight row posts set_weights {pass_weight}');
+  await setNum('Default judge weight', 2);
+  assert(OP_CALLS.find((c) => c.op === 'set_weights' && c.args.default_judge_weight === 2),
+    'the default-judge row posts set_weights {default_judge_weight}');
+  await setNum('Plan revision weight', 0.25);
+  assert(OP_CALLS.find((c) => c.op === 'set_weights' && c.args.plan_revision_weight === 0.25),
+    'the plan-revision row posts set_weights {plan_revision_weight}');
+  await setNum('Runtime weight', 0.3);
+  assert(OP_CALLS.find((c) => c.op === 'set_weights' && c.args.runtime_weight === 0.3),
+    'the runtime row posts set_weights {runtime_weight}');
 });
 
 test('builder view: Weights severity_weights editor renders FIXED vocab rows + posts the WHOLE mapping', async () => {
