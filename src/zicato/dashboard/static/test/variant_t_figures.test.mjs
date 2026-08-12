@@ -333,7 +333,7 @@ test('round drill-down: the route carries a round param + renders ONE round’s 
   await gens.render(host, { navigate() {}, href: router.href }, { epochId: EPOCH_ID, round: '0' });
   // the round drill heads with the round + renders that round's full tournament
   // (the bracket-as-flow, with the match convergence nodes — the seat/box tree retired).
-  assert(host.textContent.includes('round 0'), 'the drill-down heads with the round');
+  assert(host.textContent.includes('Round 0 · match-ups'), 'the drill-down heads with "Round N · match-ups"');
   assert(host.textContent.includes('all rounds'), 'a "← all rounds" affordance returns to the full Match-ups');
   assertEqual(svgsByClass(host, 'dn-elimbracket').length, 0, 'the seat/box bracket tree is retired in the round drill too');
   const flow = svgsByClass(host, 'dn-elimflow')[0];

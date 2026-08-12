@@ -106,7 +106,7 @@ test('Tier1 (cross-epoch): gens view scopes to the viewed epoch; pending candida
   const gens = await import('../js/views/gens.js');
   const host = document.createElement('div');
   await gens.render(host, { navigate() {}, href: router.href }, { epochId: SC_NEW });
-  assert(host.textContent.includes(`Generations · ${SC_NEW}`), 'the gens page heads with e1');
+  assert(host.textContent.includes(`Rounds · ${SC_NEW}`), 'the gens page heads with e1');
   // the roster lists e1's {v0, v1} only — not e0's v2.
   const monos = allByClass(host, 'dn-mono').map((n) => n.textContent);
   assert(!host.textContent.includes('v2'), 'no leaked e0 generation v2 in the e1 roster');
@@ -122,9 +122,9 @@ test('Tier1 (cross-epoch): switching the epoch param changes the data (e0 ↔ e1
   const ctx = { navigate() {}, href: router.href };
   await gens.render(host, ctx, { epochId: SC_OLD });
   assert(host.textContent.includes('v2'), 'e0 view shows its own generation v2');
-  assert(host.textContent.includes(`Generations · ${SC_OLD}`), 'heads with e0');
+  assert(host.textContent.includes(`Rounds · ${SC_OLD}`), 'heads with e0');
   await gens.render(host, ctx, { epochId: SC_NEW });
-  assert(host.textContent.includes(`Generations · ${SC_NEW}`), 'switched to e1');
+  assert(host.textContent.includes(`Rounds · ${SC_NEW}`), 'switched to e1');
   assert(!host.textContent.includes('v2'), 'e2-only generation gone after switching to e1');
 });
 

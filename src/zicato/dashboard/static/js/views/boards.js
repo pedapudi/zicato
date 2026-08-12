@@ -13,7 +13,7 @@ import { el } from '../core/dom.js';
 import { state } from '../core/state.js';
 import * as D from '../data.js';
 import * as svg from '../svg.js';
-import { section, empty, stat, densityTokens, renderView } from '../ui.js';
+import { section, empty, stat, densityTokens, renderView, figCaption } from '../ui.js';
 import { inflightForActiveEpoch, inflightForEntryGen, runProgressRatio } from './structure.js';
 import { deriveLiveStatus } from '../livestatus.js';
 
@@ -116,6 +116,27 @@ export async function render(host, ctx, params) {
   });
 }
 
+// One trellis cell's dim caption. The cell used to stack TWO dim blocks under
+// its figure — a budget/weight/tags row and the entry's prompt — which is a
+// third of the cell's height spent on metadata, times N cells. Now: ONE short
+// key line (budget · weight, uniform width across cells so the grid reads as a
+// grid) with the prompt and the tags on the "?". The cell is already TITLED by
+// its entry_id, which names the task, so the prompt is confirmation, not
+// identification — exactly the detail-on-demand split.
+//
+// Exported so the collapse is testable without building the whole trellis.
+export function trellisCaption(b) {
+  const lead = [
+    svg.isNum(b.budget_s) ? `${b.budget_s}s budget` : 'no budget',
+    svg.isNum(b.weight) ? `w ${svg.fmt(b.weight, 1)}` : 'w —',
+  ].join(' · ');
+  const prompt = typeof b.input_preview === 'string' ? b.input_preview.trim() : '';
+  const tags = (Array.isArray(b.tags) && b.tags.length) ? b.tags.join(' · ') : '';
+  return figCaption([lead, prompt ? `“${prompt}”` : '', tags], {
+    class: 'dn-trellis-foot', title: 'This board entry’s prompt and tags',
+  });
+}
+
 function trellis(board, gens, rowByGenEntry, domain, epochId, ctx, inflightByEntry) {
   if (!board.length) return el('div', { class: 'dn-panel' }, [empty('No board entries recorded.')]);
   const dt = densityTokens();
@@ -155,12 +176,7 @@ function trellis(board, gens, rowByGenEntry, domain, epochId, ctx, inflightByEnt
       ]),
       svg.sparkbar({ width: 200, height: dt.sparkbarH, bars, domain: domain || undefined }),
       svg.genDots({ width: 200, height: Math.round(14 * dt.sizeScale), cells }),
-      el('div', { class: 'dn-trellis-foot dn-faint' }, [
-        el('span', { text: svg.isNum(b.budget_s) ? `${b.budget_s}s budget` : 'no budget' }),
-        el('span', { text: svg.isNum(b.weight) ? `w ${svg.fmt(b.weight, 1)}` : 'w —' }),
-        Array.isArray(b.tags) && b.tags.length ? el('span', { class: 'dn-trellis-tags', text: b.tags.slice(0, 3).join(' ') }) : null,
-      ].filter(Boolean)),
-      b.input_preview ? el('div', { class: 'dn-trellis-preview dn-faint', title: b.input_preview, text: '“' + (b.input_preview.length > 64 ? b.input_preview.slice(0, 63) + '…' : b.input_preview) + '”' }) : null,
+      trellisCaption(b),
     ].filter(Boolean));
     cell.style.cursor = 'pointer';
     // fix #7: route by entry id → per-board cross-candidate view (never v2).

@@ -4,10 +4,12 @@
 //
 //   Environment (workspace)
 //   └─ Epoch <id>                       (one node per epoch — multi-epoch nav)
-//      ├─ Generations
-//      │  └─ <gen> (champion / rejected)
+//      ├─ Rounds
+//      │  └─ Round <n> └─ <gen> (champion / rejected)
 //      ├─ Boards
 //      │  └─ <entry>
+//      ├─ Evals
+//      ├─ Instrument   (└─ Traces, when the epoch has reflections)
 //      ├─ Mutation surface
 //      └─ Publication
 //
@@ -115,19 +117,19 @@ export function buildTree(host, model, route, toggles, ctx, onToggle, live) {
     const bundle = model.byEpoch[epoch.id] || { gens: [], boards: [] };
 
     // An epoch's direct children are ROUNDS; each round holds the generations
-    // born / raced that round (epoch ⊃ rounds ⊃ generations). The group node is
-    // labelled "Rounds" whenever real round structure exists (>1 round, or a
-    // round_index stamp); it degrades to a flat "Generations" list only when
-    // there is no round structure to show.
+    // born / raced that round (epoch ⊃ rounds ⊃ generations). `showRounds` is
+    // about the CHILD LAYOUT (round nodes vs a flat generation list), not the
+    // name: the surface is called ROUNDS on the rail, in the crumb, and in the
+    // page title, whether or not the epoch recorded enough structure to nest.
     const rounds = Array.isArray(bundle.rounds) ? bundle.rounds : [];
     const stamped = bundle.gens.some((g) => Number.isInteger(g.round_index));
     const showRounds = rounds.length > 1 || (stamped && rounds.length >= 1);
 
-    // Rounds group (⊃ generations) — a flat "Generations" list when unstructured.
+    // Rounds group (⊃ generations) — a flat generation list when unstructured.
     const gKey = eKey + '/gens';
     const gOpen = open.has(gKey);
     tree.appendChild(branchRow({
-      key: gKey, depth: 2, kind: 'group', label: showRounds ? 'Rounds' : 'Generations',
+      key: gKey, depth: 2, kind: 'group', label: 'Rounds',
       sub: showRounds
         ? (rounds.length ? String(rounds.length) : null)
         : (bundle.gens.length ? String(bundle.gens.length) : null),
@@ -183,7 +185,7 @@ export function buildTree(host, model, route, toggles, ctx, onToggle, live) {
         onSelect: () => ctx.navigate('candidate', { epochId: epoch.id, gen: id, round: roundIndex }),
       });
 
-      // ROUND GROUPING (Task 5): Epoch → Generations → Round 0 / Round 1 / …
+      // ROUND GROUPING (Task 5): Epoch → Rounds → Round 0 / Round 1 / …
       // → {challengers minted that round}. We show the round layer ONLY when it
       // SAYS something — there is real round structure (>1 round, OR a
       // round_index stamp). A single round with no stamp degrades to today's
@@ -276,31 +278,35 @@ export function buildTree(host, model, route, toggles, ctx, onToggle, live) {
       onSelect: () => ctx.navigate('evals', { epochId: epoch.id }),
     }));
 
-    // Mutation surface (leaf)
+    // Instrument lens (leaf) — a peer of Boards / Evals / Mutation surface.
+    // ALWAYS present: it used to appear only for an epoch that had already run a
+    // reflection, which made the lens unreachable by click from every epoch that
+    // had not — the operator could not find the surface that would tell them the
+    // instrument was worth auditing. The landing degrades honestly ("No
+    // reflections for this epoch yet."), so the node costs nothing and the route
+    // stops being a URL-only feature.
     tree.appendChild(leafRow({
-      depth: 2, kind: 'mutations', label: 'Mutation surface', glyph: '⌗', tag: null,
-      selected: sel === 'mutations' && p.epochId === epoch.id,
-      onSelect: () => ctx.navigate('mutations', { epochId: epoch.id }),
+      depth: 2, kind: 'instrument', label: 'Instrument', glyph: '⌾', tag: null,
+      selected: sel === 'instrument' && p.epochId === epoch.id,
+      onSelect: () => ctx.navigate('instrument', { epochId: epoch.id }),
     }));
-
-    // Instrument lens (leaf) — a peer of Boards / Mutation surface, shown ONLY
-    // when the epoch has at least one reflection (board reflection is off the
-    // happy path; a bare epoch never grows the node).
+    // Traces (leaf) — the imported foreign-trajectory viewer. Still gated on the
+    // reflections flag: a trace is imported INTO a reflection, so with no
+    // reflection there is no trace surface to reach, only an empty list.
     if (bundle.hasReflections) {
-      tree.appendChild(leafRow({
-        depth: 2, kind: 'instrument', label: 'Instrument', glyph: '⌾', tag: null,
-        selected: sel === 'instrument' && p.epochId === epoch.id,
-        onSelect: () => ctx.navigate('instrument', { epochId: epoch.id }),
-      }));
-      // Traces (leaf) — the imported foreign-trajectory viewer, reflection-scoped
-      // like Instrument. Shown on the same reflections gate (a reflection with no
-      // imported traces still degrades to an honest empty state within the view).
       tree.appendChild(leafRow({
         depth: 2, kind: 'traces', label: 'Traces', glyph: '⌇', tag: null,
         selected: sel === 'traces' && p.epochId === epoch.id,
         onSelect: () => ctx.navigate('traces', { epochId: epoch.id }),
       }));
     }
+
+    // Mutation surface (leaf)
+    tree.appendChild(leafRow({
+      depth: 2, kind: 'mutations', label: 'Mutation surface', glyph: '⌗', tag: null,
+      selected: sel === 'mutations' && p.epochId === epoch.id,
+      onSelect: () => ctx.navigate('mutations', { epochId: epoch.id }),
+    }));
 
     // Publication (leaf)
     tree.appendChild(leafRow({

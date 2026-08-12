@@ -4,16 +4,16 @@
 // Variant P ("Console III") is the direct successor to Variant N — the same
 // dense, data-ink-maximal aesthetic (Monokai default + Technical typeface) —
 // but it REPLACES N's top-tab nav with a persistent, collapsible LEFT TREE
-// grounded in the real data model: Environment → Epoch(s) → {Generations →
-// <gen>; Boards → <entry>; Mutation surface; Publication}. Selecting any tree
-// node drives the single detail pane. The tree navigates MULTIPLE epochs AND
-// MULTIPLE generations (N could not). Selection is explicit + URL-encoded, so
+// grounded in the real data model: Environment → Epoch(s) → {Rounds → Round n
+// → <gen>; Boards → <entry>; Evals; Instrument; Mutation surface; Publication}.
+// Selecting any tree node drives the single detail pane. The tree navigates
+// MULTIPLE epochs AND generations (N could not). Selection is explicit + URL-encoded, so
 // a cold deep-link hydrates BOTH the open tree branches and the detail pane.
 //
 // The shell owns:
 //   * a COMPACT top bar — branding · breadcrumb · colour-theme picker (monokai
-//     default) · page-scale pill · status pill. The TYPEFACE picker lives in
-//     Settings → Appearance now (not the top bar), driving the same store;
+//     default) · status pill. The TYPEFACE and PAGE-SCALE controls live in
+//     Settings → Appearance now (not the top bar), driving the same stores;
 //   * the persistent tree sidebar (its own digest gate);
 //   * ONE persistent detail host (never recreated per repaint);
 //   * digest-gated dispatch — a `state:changed` tick that only re-stamps a
@@ -85,8 +85,6 @@ let _loopCtlHost = null;      // topbar loop-control cluster (pause/resume/skip)
 let _lastLoopCtlDigest = null;
 let _pausedOverride = null;   // optimistic paused verdict after a control POST
 let _colorDropdown = null;     // the swatch-dropdown controller (Change 6)
-let _scaleInput = null;
-let _scaleReadout = null;
 let _railHandle = null;        // the draggable rail-resize handle (Change 2)
 let _railDragging = false;     // true while a live rail drag is in flight
 let _backBtn = null;
@@ -152,7 +150,7 @@ export function applyTypeface(typeface, rootEl) {
 }
 
 // GLOBAL TEXT FONT-SIZE — the S/M/L control in the typeface picker. DISTINCT
-// from the page-scale pill (which `zoom`s the WHOLE page incl. figures): this is
+// from the page scale (which `zoom`s the WHOLE page incl. figures): this is
 // a TEXT-ONLY multiplier. It stamps `--dt-font-scale` (the number every html
 // `font-size: calc(Npx * var(--dt-font-scale,1))` rule reads) + a `data-t-fontsize`
 // attribute on the app root, persists under its own key, and syncs every live
@@ -172,14 +170,16 @@ export function applyFontSize(size, rootEl) {
   return v;
 }
 
-// PAGE-WIDE SCALE — the draggable scale pill. Distinct from density: this is a
-// single master multiplier on the ENTIRE page (text AND diagrams), applied as
-// `zoom` on the Variant-T app ROOT (NOT per-pane). `zoom` reflows rather than
-// transforms, so the layout re-wraps at the scaled size and never clips. We
-// also stamp `--dt-page-scale` (a 0–1 ratio) for any rule that wants the raw
-// factor. Persisted under its own key, so it composes with — and survives —
-// density / colour / typeface changes. Drives the pill + its % readout when
-// called programmatically (e.g. on restore or via the keyboard).
+// PAGE-WIDE SCALE. Distinct from density: this is a single master multiplier on
+// the ENTIRE page (text AND diagrams), applied as `zoom` on the Variant-T app
+// ROOT (NOT per-pane). `zoom` reflows rather than transforms, so the layout
+// re-wraps at the scaled size and never clips. We also stamp `--dt-page-scale`
+// (a 0–1 ratio) for any rule that wants the raw factor. Persisted under its own
+// key, so it composes with — and survives — colour / typeface changes.
+//
+// The CONTROL lives in Settings → Appearance (views/settings.js scalePicker),
+// which owns its own readout; this function only stamps + persists, so it is
+// equally the restore path and the programmatic/keyboard path.
 export function applyScale(scale, rootEl) {
   const n = normaliseScale(scale);
   const root = rootEl || _root;
@@ -190,24 +190,18 @@ export function applyScale(scale, rootEl) {
     root.setAttribute('data-t-scale', String(n));
   }
   persistScale(n);
-  if (_scaleInput) {
-    if (_scaleInput.value !== String(n)) _scaleInput.value = String(n);
-    _scaleInput.setAttribute('value', String(n));
-    _scaleInput.setAttribute('aria-valuenow', String(n));
-  }
-  if (_scaleReadout) patchText(_scaleReadout, n + '%');
   return n;
 }
 
 // RESET the page scale back to 100% (DEFAULT_SCALE) + persist. Backs the small
-// reset affordance beside the scale pill (Change 4); keyboard-accessible (it is
-// a real <button>). Returns the applied value.
+// reset affordance beside the Settings → Appearance scale range; keyboard-
+// accessible (it is a real <button>). Returns the applied value.
 export function resetScale(rootEl) {
   return applyScale(DEFAULT_SCALE, rootEl || _root);
 }
 
 // LEFT SIDE-PANEL (rail) WIDTH — set the `--dt-rail` grid column on the app root
-// + persist. Distinct from the page-scale pill (this resizes ONLY the tree
+// + persist. Distinct from the page scale (this resizes ONLY the tree
 // side-panel; the detail pane's 1fr column reflows to fill the rest). Backs the
 // draggable handle on the rail's right edge; clamped to a sensible min/max so
 // the rail can never collapse or eat the page. Returns the applied px width.
@@ -262,7 +256,7 @@ function readRailFromRoot(rootEl) {
 //
 // Two bugs made the old drag jump:
 //   (1) ZOOM MISMATCH. The handle lives inside the app root, which carries a
-//       page-wide `zoom` (the scale pill). `event.clientX` is a VIEWPORT CSS-px
+//       page-wide `zoom` (the page scale). `event.clientX` is a VIEWPORT CSS-px
 //       coordinate, but `--dt-rail` is laid out in the root's UNSCALED layout
 //       space. The old code set the width straight from `clientX − railLeft`,
 //       so at zoom ≠ 1 the width over-/under-tracked the pointer (it was then
@@ -511,46 +505,13 @@ export function mountShell(root) {
   // choosing a face in Settings still applies live + persists, and any other
   // apply path (keyboard / restore) keeps the Settings picker in lockstep.
 
-  // The PAGE-WIDE SCALE pill: a draggable range slider that scales the WHOLE
-  // page (text + diagrams) via `zoom` on the app root. With density removed this
-  // is the sole sizing control. Keyboard-accessible (a native range input:
-  // arrows step ±5); a % readout + a RESET button (→ 100%) sit beside it.
-  const initialScale = readScale();
-  _scaleInput = el('input', {
-    class: 'dt-scale-range', type: 'range',
-    min: String(SCALE_MIN), max: String(SCALE_MAX), step: String(SCALE_STEP),
-    value: String(initialScale),
-    'aria-label': 'Page scale (whole-page size)',
-    'aria-valuemin': String(SCALE_MIN), 'aria-valuemax': String(SCALE_MAX),
-    'aria-valuenow': String(initialScale),
-    title: 'Page scale — overall page size (text + diagrams); composes with density',
-  });
-  _scaleReadout = el('span', { class: 'dt-scale-readout', text: initialScale + '%' });
-  // Read the live value from the event target / input — fall back to the
-  // `value` attribute so a synthetic event (and the test harness, whose range
-  // input exposes `value` only as an attribute) still drives the scale.
-  const onScale = (ev) => {
-    const raw = (ev && ev.target && ev.target.value != null) ? ev.target.value
-      : (_scaleInput.value != null ? _scaleInput.value : _scaleInput.getAttribute('value'));
-    applyScale(raw);
-  };
-  _scaleInput.addEventListener('input', onScale);
-  _scaleInput.addEventListener('change', onScale);
-  // RESET affordance (Change 4): a real <button> beside the pill that snaps the
-  // page scale back to 100% and persists. A button is inherently keyboard-
-  // accessible (focusable + Enter/Space activate).
-  const scaleReset = el('button', {
-    class: 'dt-scale-reset', type: 'button',
-    title: 'Reset page scale to 100%', 'aria-label': 'Reset page scale to 100%',
-    text: '⟲',
-  });
-  scaleReset.addEventListener('click', () => resetScale());
-  const scalePill = el('div', { class: 'dt-scale-pill', role: 'group', 'aria-label': 'Page scale', title: 'Page scale — overall page size' }, [
-    el('span', { class: 'dt-scale-lab', text: 'scale', 'aria-hidden': 'true' }),
-    _scaleInput,
-    _scaleReadout,
-    scaleReset,
-  ]);
+  // PAGE-SCALE pill — REMOVED from the top-bar chrome, following the typeface
+  // picker: it is a set-once appearance preference, and a live range slider is
+  // the widest, busiest control on a bar that has to make room for the run
+  // state. It now lives ONLY in Settings → Appearance (views/settings.js's
+  // scalePicker), which already drives the same applyScale/resetScale path.
+  // applyScale stamps + persists and no longer syncs a top-bar node, so every
+  // other apply path (restore, keyboard, the Settings picker) is unchanged.
 
   // The live-status pill: a connection dot + the connection word, plus a
   // RUN badge that lights up whenever the loop is active for ANY tournament
@@ -640,7 +601,6 @@ export function mountShell(root) {
       el('span', { class: 'dt-nav-build-text', text: 'settings' }),
     ]),
     colorSwitch,
-    scalePill,
     _loopCtlHost,
     _statusEl,
   ]);

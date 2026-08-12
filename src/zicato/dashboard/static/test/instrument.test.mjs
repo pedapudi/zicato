@@ -481,9 +481,17 @@ test('digest no-op: the x-ray is fetch-once (immutable) — identical repaint is
 });
 
 // ====================================================================
-// TREE integration — the Instrument node shows only when the epoch has one.
+// TREE integration — the Instrument node is an UNCONDITIONAL epoch child.
+//
+// DELIBERATE INVERSION (issue #194 §7). The leaf used to be gated on
+// `hasReflections`, which made the lens reachable only from an epoch that had
+// already run a reflection — i.e. unreachable by click from every epoch that
+// had not, which is exactly the population that needs to be told the lens
+// exists. The landing degrades honestly ("No reflections for this epoch yet."),
+// so the node is now always present. TRACES stays gated: a trace is imported
+// INTO a reflection, so with no reflection there is no trace surface at all.
 // ====================================================================
-test('tree: the Instrument leaf appears only when the epoch has reflections', async () => {
+test('tree: the Instrument leaf is present when the epoch has reflections (and Traces with it)', async () => {
   fresh();
   installFixtureMap(reflectionFixtureMap());
   const model = await shell.buildTreeModel({ view: 'epoch', params: { epochId: EPOCH_ID } });
@@ -492,9 +500,11 @@ test('tree: the Instrument leaf appears only when the epoch has reflections', as
   tree.buildTree(host, model, { view: 'epoch', params: { epochId: EPOCH_ID } }, new Set(['e:' + EPOCH_ID]), CTX, () => {}, new Set());
   const leaves = host.querySelectorAll('[data-kind]').filter((n) => n.getAttribute('data-kind') === 'instrument');
   assertEqual(leaves.length, 1, 'exactly one Instrument node under the epoch');
+  const traces = host.querySelectorAll('[data-kind]').filter((n) => n.getAttribute('data-kind') === 'traces');
+  assertEqual(traces.length, 1, 'the Traces node rides the reflections gate');
 });
 
-test('tree: no Instrument leaf when the epoch has no reflections', async () => {
+test('tree: the Instrument leaf is present even with NO reflections (reachable by click); Traces is not', async () => {
   fresh();
   const F = { ...reflectionFixtureMap(), '/api/reflections': { reflections: [] } };
   installFixtureMap(F);
@@ -503,7 +513,15 @@ test('tree: no Instrument leaf when the epoch has no reflections', async () => {
   const host = document.createElement('div');
   tree.buildTree(host, model, { view: 'epoch', params: { epochId: EPOCH_ID } }, new Set(['e:' + EPOCH_ID]), CTX, () => {}, new Set());
   const leaves = host.querySelectorAll('[data-kind]').filter((n) => n.getAttribute('data-kind') === 'instrument');
-  assertEqual(leaves.length, 0, 'no Instrument node without reflections');
+  assertEqual(leaves.length, 1, 'the Instrument node is there for a reflection-free epoch too');
+  const traces = host.querySelectorAll('[data-kind]').filter((n) => n.getAttribute('data-kind') === 'traces');
+  assertEqual(traces.length, 0, 'no Traces node without a reflection to import into');
+  // RAIL ORDER: Rounds · Boards · Evals · Instrument · Mutation surface · Publication.
+  const kinds = host.querySelectorAll('[data-kind]')
+    .map((n) => n.getAttribute('data-kind'))
+    .filter((k) => ['group', 'evals', 'instrument', 'mutations', 'paper'].includes(k));
+  assertDeep(kinds, ['group', 'group', 'evals', 'instrument', 'mutations', 'paper'],
+    'the epoch children read Rounds · Boards · Evals · Instrument · Mutation surface · Publication');
 });
 
 // ====================================================================
