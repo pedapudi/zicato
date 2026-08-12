@@ -35,7 +35,7 @@ import {
 } from './svg.js';
 import { fieldStatus as readFieldStatus } from './data.js';
 import { gatedSwap } from './ui.js';
-import { runStateLabel } from './livestatus.js';
+import { runStateLabel, LIVENESS, livenessBandText } from './livestatus.js';
 import {
   racingModel, swissModel, elimModel, gauntletModel, gauntletModelDigest, normalizeStructure,
   buildLiveRacingModel, buildLiveSwissModel, buildLiveElimModel, buildLiveModel,
@@ -642,13 +642,30 @@ function liveMatchRow(e, onCompetitor, ctl) {
 //     animates as rungs resolve / cuts fire without flashing;
 //   * an in-flight unit count + the activity ticker stream live events.
 //
-// When idle, the hero hides itself (display gated by the `.dt-live-on` class)
-// so the normal summary leads. The controller is structure-agnostic — it leans
-// on racing's funnel where a racing topology is live, and degrades to the
-// progress + ticker for any other structure.
+// THE DEMOTION (issue #194 §1). The hero used to be the top ~45% of every
+// view, and it appeared whenever the runtime FILES looked busy — so a
+// workspace dead since June opened every page with a breathing LIVE pill and
+// seven units "running". It is now two separate things:
+//
+//   * a ONE-LINE STATUS BAND, always present, that speaks in whatever tense
+//     is true: `● LIVE · racing · rung 1 · 7 units` while live,
+//     `last run · Jun 8 · interrupted mid-round` when it is not;
+//   * the FULL LIVE SURFACE (race track, what's running, live activity) as a
+//     drawer beneath it that EXISTS ONLY while liveness is `live`, and which
+//     the operator can collapse to the band alone.
+//
+// The controller is structure-agnostic — it leans on racing's funnel where a
+// racing topology is live, and degrades to the progress + ticker for any
+// other structure.
+const BAND_COLLAPSE_KEY = 'zicato.live.collapsed';
+
 export class LiveController {
   constructor(opts) {
     const o = opts || {};
+    // The operator's drawer preference, remembered across navigation and
+    // reloads. Default OPEN: a run in flight is what the operator asked for.
+    this._collapsed = readCollapsed();
+    this._bandKey = null;
     this.onCompetitor = typeof o.onCompetitor === 'function' ? o.onCompetitor : null;
     // the per-run kill sink (postControl('kill/'+runId) at the shell); null
     // (or canControl:false on update) hides every kill affordance.
@@ -670,6 +687,27 @@ export class LiveController {
   }
 
   _build() {
+    // ── 0. THE STATUS BAND — one line, on every view, in every state ────
+    // The only part of the hero that is unconditional. Its text is the
+    // tri-state sentence (livestatus.livenessBandText), so a dead workspace
+    // reads `last run · Jun 8 · interrupted mid-round` here and nothing
+    // else on the page claims otherwise. The drawer toggle appears only
+    // when there IS a drawer (i.e. only when live).
+    this._bandDot = el('span', { class: 'dt-live-band-dot', 'aria-hidden': 'true' });
+    this._bandText = el('span', { class: 'dt-live-band-text', text: '' });
+    this._bandToggle = el('button', {
+      class: 'dt-live-band-toggle', type: 'button', text: '',
+      'aria-expanded': 'false',
+    });
+    this._bandToggle.addEventListener('click', () => {
+      this._collapsed = !this._collapsed;
+      writeCollapsed(this._collapsed);
+      this._applyDrawer(this.node.classList.contains('dt-live-live'));
+    });
+    this._band = el('div', { class: 'dt-live-band' }, [
+      this._bandDot, this._bandText, this._bandToggle,
+    ]);
+
     // ── 1. THE STATUS HEADER — ONE muted metadata baseline ──────────────
     // `● LIVE · racing · rung 2 of 2 · field of 2 · 7 units running`. NO
     // competing big phase title; every token reads in the same muted mono type.
@@ -723,23 +761,52 @@ export class LiveController {
     const detail = el('div', { class: 'dt-live-hero-detail' }, [this._matchesHost, this._tickerHost]);
 
     // reading order: status baseline → the full-width race → the balanced detail.
-    this.node = el('section', { class: 'dt-live-hero', 'aria-label': 'Live run', role: 'region' }, [head, race, detail]);
+    this._body = el('div', { class: 'dt-live-hero-body' }, [head, race, detail]);
+    this.node = el('section', { class: 'dt-live-hero', 'aria-label': 'Live run', role: 'region' }, [this._band, this._body]);
+  }
+
+  // Paint the always-present status band from the tri-state verdict, and
+  // show/hide the drawer + its toggle. Digest-gated on the sentence itself
+  // plus the two booleans, so a steady heartbeat writes ZERO DOM.
+  _updateBand(liveness, status) {
+    const lv = liveness || { state: LIVENESS.LIVE, live: true, endedAt: null };
+    const text = livenessBandText(lv, status);
+    const key = lv.state + '|' + text + '|' + (this._collapsed ? 'c' : 'o');
+    if (key === this._bandKey) return;
+    this._bandKey = key;
+    patchText(this._bandText, text);
+    patchClass(this._band, 'dt-live-band-live', lv.state === LIVENESS.LIVE);
+    patchClass(this._band, 'dt-live-band-interrupted', lv.state === LIVENESS.INTERRUPTED);
+    // The toggle is meaningless without a drawer to toggle.
+    patchText(this._bandToggle, lv.live ? (this._collapsed ? '▸ details' : '▾ details') : '');
+    this._bandToggle.setAttribute('aria-expanded', lv.live && !this._collapsed ? 'true' : 'false');
+    patchClass(this._bandToggle, 'dt-live-band-toggle-on', !!lv.live);
+  }
+
+  // The drawer exists ONLY while live, and only while the operator has not
+  // collapsed it. `dt-live-live` records liveness itself (the band reads it
+  // back on a toggle click); `dt-live-on` is what CSS shows the body on.
+  _applyDrawer(live) {
+    patchClass(this.node, 'dt-live-live', !!live);
+    patchClass(this.node, 'dt-live-on', !!live && !this._collapsed);
   }
 
   // Drive the hero from the current live state. Returns true when a run is live
   // (so the shell can toggle the hero's visibility class).
-  update({ status, heartbeat, activeRuns, activeTournament, canControl } = {}) {
+  update({ status, heartbeat, activeRuns, activeTournament, canControl, liveness } = {}) {
     // whether the workspace accepts control POSTs (read_only:false) — gates
     // the per-run kill affordances in the "what's running" rows.
     if (canControl != null) this._canControl = !!canControl;
     const running = !!(status && status.running);
-    // VISIBILITY gates on the orchestrator being ALIVE (a fresh heartbeat pulse:
-    // LIVE or STALLED), NOT on `running` — `running` drops the instant the phase
-    // reads a non-active token with no run in flight (mid-transition / a long
-    // reasoning call), which FLICKERED the hero. Falls back to `running` when a
-    // caller supplies no `alive` (the structure fixtures).
-    const alive = !!(status && (status.alive != null ? status.alive : status.running));
-    patchClass(this.node, 'dt-live-on', alive);
+    // THE DRAWER GATE is the served tri-state, not file presence: the drawer
+    // exists only while liveness reads `live`. A caller that supplies no
+    // verdict (the structure fixtures) falls back to the four-state `alive`
+    // flag, which is what gated it before.
+    const alive = liveness
+      ? !!liveness.live
+      : !!(status && (status.alive != null ? status.alive : status.running));
+    this._updateBand(liveness, status);
+    this._applyDrawer(alive);
 
     // ── the activity ticker: diff the snapshot, append the new events ──
     const snap = liveSnapshot({ status, heartbeat, activeRuns, activeTournament });
@@ -771,6 +838,14 @@ export class LiveController {
       // host-attribute digest); the funnel + meta line still use their vars.
       this._funnelDigest = null; this._metaKey = null;
       this.updatePipeline(null);
+      // TEAR THE DRAWER DOWN, don't just hide it — but only on an
+      // AUTHORITATIVE end. A tri-state verdict of settled/interrupted means
+      // the server watched the loop stop; there is then no live chrome worth
+      // keeping, and none for a later repaint to resurrect. The legacy
+      // `alive` flag (no verdict supplied) still FLICKERS between
+      // transitions, and tearing down on that would blank a running feed —
+      // so without a verdict we only hide.
+      if (liveness) this._teardownDrawer();
       return false;
     }
     this._wasAlive = true;
@@ -821,6 +896,20 @@ export class LiveController {
     // completed / stale-foreign shows the honest placeholder.
     this._updateStructure(activeTournament, heartbeat, activeRuns);
     return true;
+  }
+
+  // Empty every drawer host so a not-live hero holds no live chrome. The
+  // gatedSwap hosts also lose their digest attribute, so the next live tick
+  // rebuilds rather than skipping on a matching digest against an empty host.
+  _teardownDrawer() {
+    for (const host of [this._stepHost, this._trackHost, this._matchesBody, this._pipeHost]) {
+      if (!host) continue;
+      clear(host);
+      if (host.removeAttribute) host.removeAttribute('data-t-digest');
+    }
+    this._pipeDigest = null;
+    this.ticker.reset();
+    patchText(this._meta, '');
   }
 
   // Drive the round-pipeline stepper from the server's /api/live/pipeline
@@ -1099,6 +1188,16 @@ export class LiveController {
 }
 
 function clear(node) { while (node && node.firstChild) node.removeChild(node.firstChild); }
+
+// The drawer-collapse preference. Storage is best-effort on both sides (a
+// private-mode browser throws on read AND write); a failure just means the
+// drawer opens, which is the default anyway.
+function readCollapsed() {
+  try { return localStorage.getItem(BAND_COLLAPSE_KEY) === '1'; } catch { return false; }
+}
+function writeCollapsed(on) {
+  try { localStorage.setItem(BAND_COLLAPSE_KEY, on ? '1' : '0'); } catch { /* best-effort */ }
+}
 
 // ── the structure-figure eligibility gate ────────────────────────────
 //

@@ -274,6 +274,14 @@ export function resolveNonGauntletSt(opts) {
   };
   if (liveSt && (liveSt.live || hasStreamingRacingRung(liveSt))
       && (liveHasContent(liveSt) || !o.completedRecord)) {
+    // ADOPTED-FROM-THE-ENVELOPE is not the same as LIVE (issue #194 §1). When
+    // the caller knows the run is over (`live: false`), the topology is still
+    // the right thing to render — it is the only account of an interrupted
+    // round — but every figure keyed on `st.live` must stop speaking in the
+    // present tense: no "deciding…" gate, no racing verdicts, no LIVE caption.
+    if (o.live === false && liveSt.live) {
+      return { st: Object.assign({}, liveSt, { live: false, interrupted: true }), source: 'live' };
+    }
     return { st: liveSt, source: 'live' };
   }
 
@@ -625,13 +633,17 @@ export function elimModel(st) {
   if (!benchmarkId && lineage.length) benchmarkId = lineage[0];
 
   let championId = null;
-  let gateState = live ? 'deciding' : (finalMatch && finalMatch.winner ? 'settled' : 'pending');
+  // `interrupted` — the topology came off the envelope of a run that stopped
+  // before the gate ever committed. Not "deciding…" (nothing is deciding) and
+  // not "tbd" (nothing is coming): it was never decided.
+  let gateState = live ? 'deciding'
+    : (finalMatch && finalMatch.winner ? 'settled' : (st.interrupted ? 'interrupted' : 'pending'));
   if (!live && finalMatch && finalMatch.winner) {
     const winner = String(finalMatch.winner);
     const promoted = String(finalMatch.decision || '').toLowerCase() === 'promoted'
       || (lineage.length && lineage[lineage.length - 1] === winner && winner !== benchmarkId);
     if (promoted && winner !== benchmarkId) { championId = winner; gateState = 'crowned'; }
-    else gateState = 'stands';
+    else gateState = st.interrupted ? 'interrupted' : 'stands';
   }
   const gateDelta = (finalMatch && svg.isNum(finalMatch.delta_scalar)) ? finalMatch.delta_scalar : null;
   const hasMatches = winners.some((r) => r.matches.length) || (losers && losers.some((r) => r.matches.length));
@@ -894,14 +906,15 @@ export function swissModel(st) {
 
   const leader = standings.length ? standings[0].id : null;
   let championId = null;
-  let gateState = live ? 'deciding' : (standings.length ? 'settled' : 'pending');
+  let gateState = live ? 'deciding'
+    : (standings.length ? 'settled' : (st.interrupted ? 'interrupted' : 'pending'));
   if (!live && standings.length) {
     const promotedLeader = lineage.length && leader && lineage[lineage.length - 1] === leader && leader !== benchmarkId;
     const champStatus = standings.find((s) => s.status === 'champion');
     if (promotedLeader || (champStatus && String(champStatus.id) !== benchmarkId)) {
       championId = promotedLeader ? leader : (champStatus ? champStatus.id : null);
-      gateState = championId ? 'crowned' : 'stands';
-    } else gateState = 'stands';
+      gateState = championId ? 'crowned' : (st.interrupted ? 'interrupted' : 'stands');
+    } else gateState = st.interrupted ? 'interrupted' : 'stands';
   }
   return {
     rounds, standings, championId, benchmarkId, gateState, gateDelta: null, live,
@@ -1171,7 +1184,8 @@ export function racingModel(st) {
     return [];
   })();
   let championId = null;
-  let gateState = live ? 'deciding' : (gateMatch ? 'settled' : 'pending');
+  let gateState = live ? 'deciding'
+    : (gateMatch ? 'settled' : (st.interrupted ? 'interrupted' : 'pending'));
   if (!live && gateMatch) {
     const decided = String(gateMatch.decision || '').toLowerCase() === 'promoted'
       || (gateMatch.winner && gateMatch.winner !== (gateMatch.competitors || [])[0]);
@@ -1185,7 +1199,10 @@ export function racingModel(st) {
     if (!championId && lineage.length && finalRungSurvivors.indexOf(lineage[lineage.length - 1]) >= 0) {
       championId = lineage[lineage.length - 1];
     }
-    gateState = championId ? 'crowned' : 'stands';
+    // "champion stands" is a VERDICT. An interrupted run's gate match exists
+    // but never returned one, and inferring a verdict from an unfinished match
+    // is exactly the class of false claim this whole change is about.
+    gateState = championId ? 'crowned' : (st.interrupted ? 'interrupted' : 'stands');
   } else if (live && finalRungSurvivors.length === 1) {
     championId = finalRungSurvivors[0];
   }
@@ -2250,7 +2267,12 @@ function standingsTable(st, ctx, epochId, live) {
   // workspace shows the control DISABLED (never POST-and-fail). The POST body
   // names the field round so the readback can attribute it.
   const settled = !live;
-  const readOnly = !!(state.health && state.health.read_only);
+  // POLARITY: writable requires an EXPLICIT `read_only: false`, matching the
+  // topbar controls (shell.js). The truthy read here meant a health payload
+  // that had not arrived (or a server that omits the field) rendered the
+  // override controls ENABLED against a workspace that may reject the POST —
+  // the safe default for a control affordance is off, not on.
+  const readOnly = !(state.health && state.health.read_only === false);
   const tournamentId = (st && st.tournament_id != null) ? String(st.tournament_id) : null;
   const bodyBase = {};
   if (epochId != null) bodyBase.epoch = String(epochId);
@@ -2278,14 +2300,25 @@ function standingsTable(st, ctx, epochId, live) {
     // is structure-correct (elim → "in bracket", swiss → "playing", racing →
     // "racing"), NEVER a blanket "racing" for a non-racing tournament.
     if (live && (raw === 'champion' || raw === 'eliminated')) raw = 'competing';
-    const status = structureStatusLabel(raw, structure);
+    // INTERRUPTED — a row that was still in contention when the loop stopped
+    // was never decided, and "racing" / "playing" / "in bracket" all claim it
+    // still is. Say what actually happened instead (issue #194 §3). Committed
+    // verdicts (champion / eliminated) are real and pass through untouched.
+    const undecided = st.interrupted && raw !== 'champion' && raw !== 'eliminated';
+    const status = undecided ? 'undecided when the run ended'
+      : structureStatusLabel(raw, structure);
     // the statusPill verdict-state mirror: anything that is NOT a committed
     // champion / eliminated reads as the DEFERRED pill (still in contention).
     if (status !== 'champion' && status !== 'eliminated') anyDeferred = true;
     // PROJECTED — an in-flight row (boards still streaming) shows a projected
     // scalar, not a settled one: dashed/dimmed row + a "proj" badge + the
     // ~prefix on the number + a scored board-progress sub-bar.
-    const proj = !!(s.in_flight && svg.isNum(s.projected_scalar));
+    // The PROJ badge and its progress bar are a claim that boards are streaming
+    // in RIGHT NOW. They expire with liveness: an interrupted row shows the
+    // committed boards_done/total as a settled tally, never an animated bar.
+    const proj = !live && st.interrupted
+      ? false : !!(s.in_flight && svg.isNum(s.projected_scalar));
+    const strandedBoards = (st.interrupted && s.in_flight) ? true : false;
     const rowCls = (status === 'champion' ? 'dn-board-champ' : status === 'eliminated' ? 'dt-standings-out' : '')
       + (proj ? ' dt-proj-row' : '');
     const bd = svg.isNum(s.boards_done) ? s.boards_done : null;
@@ -2296,6 +2329,15 @@ function standingsTable(st, ctx, epochId, live) {
           el('span', { text: '~' + svg.fmt(s.projected_scalar, 1) }),
           el('span', { class: 'dt-proj-badge', text: 'proj' }),
         ] }
+      : strandedBoards
+      ? { class: 'dn-num dn-mono dn-faint',
+          title: 'boards were still running when the run stopped — this scalar was never committed',
+          el: [
+            el('span', { text: svg.isNum(s.projected_scalar) ? '~' + svg.fmt(s.projected_scalar, 1)
+                               : (svg.isNum(s.scalar) ? svg.fmt(s.scalar, 1) : '—') }),
+            el('span', { class: 'dt-interrupted-pill',
+                         text: (bd != null && bt != null) ? bd + '/' + bt + ' scored' : 'uncommitted' }),
+          ] }
       : { class: 'dn-num dn-mono', text: svg.isNum(s.scalar) ? svg.fmt(s.scalar, 1) : '—' };
     // operator-override provenance rides BESIDE the status pill (overrideChip),
     // never recoloring the verdict — durable readback wins, else the optimistic

@@ -1360,7 +1360,8 @@ export function survivalFunnel(opts) {
     return [];
   })();
   const champId = o.championId ? String(o.championId) : null;
-  const gateState = o.gateState || (live ? 'deciding' : (champId ? 'crowned' : 'pending'));
+  const gateState = o.gateState
+    || (live ? 'deciding' : (champId ? 'crowned' : (o.interrupted ? 'interrupted' : 'pending')));
   const crowned = gateState === 'crowned' && !!champId;
   const seatId = champId || (finalSurv.length === 1 ? finalSurv[0] : null);
   const winnerId = (champId && gidx.has(champId)) ? champId
@@ -1542,6 +1543,9 @@ export function survivalFunnel(opts) {
   } else if (gateState === 'deciding') {
     label = 'deciding…';
     tip = champId ? `${champId} leads — the gate has not committed${dStr}` : 'the final gate is deciding';
+  } else if (gateState === 'interrupted') {
+    label = 'never decided';
+    tip = 'the run stopped before the final gate committed — no winner was recorded';
   } else {
     label = 'tbd';
     tip = 'awaiting the final survivor';
@@ -1706,7 +1710,8 @@ export function swissLadder(opts) {
 
   // ── the champion-gate column (the leader vs the incumbent) ──
   const champId = o.championId ? String(o.championId) : null;
-  const gateState = o.gateState || (live ? 'deciding' : (champId ? 'crowned' : 'pending'));
+  const gateState = o.gateState
+    || (live ? 'deciding' : (champId ? 'crowned' : (o.interrupted ? 'interrupted' : 'pending')));
   const crowned = gateState === 'crowned' && !!champId;
   const gx = sx + standW + colGap;
   const gateHead = svgEl('text', { x: gx + gateW / 2, y: headTop + 12, class: 'dn-swissladder-head', 'text-anchor': 'middle' });
@@ -3103,7 +3108,8 @@ export function elimRadial(opts) {
   }
 
   // the CENTER champion gate.
-  const gateState = o.gateState || (live ? 'deciding' : (champId ? 'crowned' : 'pending'));
+  const gateState = o.gateState
+    || (live ? 'deciding' : (champId ? 'crowned' : (o.interrupted ? 'interrupted' : 'pending')));
   const crowned = gateState === 'crowned' && !!champId;
   const seatR = mini ? 11 : 14;
   const gateG = svgEl('g', { class: 'dn-elimradial-gate', tabindex: (champId && o.onCompetitor) ? '0' : null });

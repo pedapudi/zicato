@@ -37,7 +37,11 @@ function byClass(host, cls) { return allByClass(host, cls)[0] || null; }
 const flush = () => Promise.resolve().then(() => Promise.resolve());
 
 // A clean slate before each cell test — the pending registry is module-global.
-function reset() { ui._resetPendingOverrides(); state.health = null; }
+// A WRITABLE workspace is an explicit `read_only: false` — the same polarity
+// the topbar controls use. A null/absent health payload (not yet fetched, or a
+// server that omits the field) is NOT writable: a control affordance defaults
+// off, never on. Tests that exercise the enabled path must say so.
+function reset() { ui._resetPendingOverrides(); state.health = { read_only: false }; }
 
 // ── 1. CONFIRM-INLINE: the cell ARMS before it can POST (never one-click) ─────
 test('overrideControlCell: starts disarmed — one "override" arm button, no promote/reject yet', () => {
@@ -187,7 +191,7 @@ test('standings: read_only field renders the control DISABLED for every challeng
   const arms = allByClass(host, 'dn-ovr-arm');
   assertEqual(arms.length, 2, 'both rows show the (disabled) control');
   assert(arms.every((a) => a.getAttribute('disabled') === 'disabled'), 'every control is disabled in a read-only workspace');
-  state.health = null;
+  state.health = { read_only: false };
 });
 
 test('standings: firing an override stamps a queued chip + folds into structureDigest (live), no-op beat ZERO DOM', async () => {

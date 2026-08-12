@@ -14,7 +14,7 @@ import * as svg from '../svg.js';
 import { gatedSwap, section, empty, fmt, chip, truncate,
   loopVerdict, promotionRateLabel, costPerPromotionLabel, fmtDurationMs, noiseBandFor, loopStatsDigest } from '../ui.js';
 import { attachHovercard } from '../hovercard.js';
-import { deriveLiveStatus } from '../livestatus.js';
+import { livenessFor } from '../livestatus.js';
 
 // The loop-communication helpers moved to ui.js (they were shared UPWARD by
 // epoch.js — a reverse view→view dependency). Re-exported here so existing
@@ -33,16 +33,11 @@ export async function render(host, ctx) {
   // change set (incl. the proposer column the contract-diff omits). Surfaced as
   // a sibling of `epochs` on the SAME /api/workspace read, so no extra fan-out.
   const ledger = (ws && Array.isArray(ws.ledger)) ? ws.ledger : [];
-  // Liveness is GATED on heartbeat freshness, never raw presence of
+  // Liveness is the served tri-state, never raw presence of
   // active_tournament.json — a torn-down run leaves that file on disk, and
   // reading it as "LIVE / tournament running" forever is the stale-live bug
-  // class. deriveLiveStatus applies the STALE_HEARTBEAT_MS gate (the same one
-  // gens.js uses), so a dead orchestrator correctly reads idle.
-  const live = deriveLiveStatus({
-    heartbeat: state.heartbeat,
-    activeRuns: state.activeRuns,
-    activeTournament: state.activeTournament,
-  }).running;
+  // class (issue #194 §1).
+  const live = livenessFor(state).liveness.live;
 
   // Each fleet card's hero trendline is that epoch's OWN real per-generation
   // best-scalar trajectory — fetched PER epoch (keyed on epoch_id), never the

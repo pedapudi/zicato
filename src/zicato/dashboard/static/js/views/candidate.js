@@ -25,6 +25,7 @@
 
 import { el, svgEl } from '../core/dom.js';
 import { state } from '../core/state.js';
+import { livenessFor, LIVENESS, shortDate } from '../livestatus.js';
 import * as D from '../data.js';
 import * as svg from '../svg.js';
 import { attachHovercard } from '../hovercard.js';
@@ -33,7 +34,6 @@ import { gatedSwap, section, subhead, empty, stat, verdictPill, pill, overrideCh
 import { comparePicker, splitFrame } from '../compare.js';
 import { candidateProgression, inflightForActiveEpoch, inflightForEntryGen, runProgressRatio, liveMatchupsForCandidate, liveBelongsToEpoch, resolveNonGauntletSt, racingModel, structureDigest, normalizeStructure } from './structure.js';
 import { roundsFromTimeline, reignModel } from '../rounds.js';
-import { deriveLiveStatus } from '../livestatus.js';
 import { harmonografIsLive, harmonografLink, harmonografMini } from '../core/harmonograf.js';
 import * as facets from '../facets.js';
 
@@ -83,7 +83,12 @@ export async function render(host, ctx, params, route) {
   // run no longer reads "did not run in any round" while it is plainly racing.
   const staticMatchups = (bracket && Array.isArray(bracket.matchups)) ? bracket.matchups : [];
   const at = state.activeTournament;
-  const liveForThisEpoch = liveBelongsToEpoch(epochId, { heartbeat: state.heartbeat, activeTournament: at });
+  // THE ONE LIVENESS READ for this view. Everything present-tense below hangs
+  // off it: the live matchups folded into the dossier, the racing resolver's
+  // live envelope, and the in-flight board table (issue #194 SS1).
+  const { liveness } = livenessFor(state);
+  const liveForThisEpoch = liveness.live
+    && liveBelongsToEpoch(epochId, { heartbeat: state.heartbeat, activeTournament: at });
   const liveMatchups = (at && liveForThisEpoch) ? liveMatchupsForCandidate(at, null) : [];
   // dedupe by champion>challenger>match_id — the static feed wins (it has the
   // hypothesis + committed decision); a live match only fills a NEW pair.
@@ -106,14 +111,13 @@ export async function render(host, ctx, params, route) {
   // LIVE in-flight board runs, CURRENT-EPOCH-SCOPED. A run in flight for a
   // FOREIGN epoch must not light up this candidate's board/dot-plot, so the set
   // is gated on the live run belonging to the viewed epoch (mirrors gens.js).
-  const liveStatus = deriveLiveStatus({
-    heartbeat: state.heartbeat, activeRuns: state.activeRuns, activeTournament: state.activeTournament,
-  });
+  // The RAW set — every record, live or not. `liveness` (threaded alongside)
+  // is what decides whether they read as in-flight or as a past-tense note.
   const epochInflight = inflightForActiveEpoch(state.activeRuns, {
     heartbeat: state.heartbeat, activeTournament: state.activeTournament,
-    running: liveStatus.running, epochId,
+    running: true, epochId,
   });
-  if (structure === 'gauntlet' && liveStruct && epochInflight.length) structure = liveStruct;
+  if (structure === 'gauntlet' && liveStruct && liveness.live && epochInflight.length) structure = liveStruct;
 
   // the CHAMPION REIGN model (the "reign ribbon"): one bar per champion across
   // the epoch's rounds — shown on a candidate panel only when THAT generation
@@ -147,8 +151,8 @@ export async function render(host, ctx, params, route) {
   // Resolve each side's full panel data (cached). Side B only when comparing.
   // The primary side (A) honours the entry drill-down param; the compare side
   // (B) reads its lifecycle clean.
-  const sideA = await resolveCandidate(epochId, genId, genList, experiments, scalarByGen, championId, championScalar, allMatchups, params.entry || null, racingSt, epochInflight, liveProjected);
-  const sideB = cmpId ? await resolveCandidate(epochId, cmpId, genList, experiments, scalarByGen, championId, championScalar, allMatchups, null, racingSt, epochInflight, liveProjected) : null;
+  const sideA = await resolveCandidate(epochId, genId, genList, experiments, scalarByGen, championId, championScalar, allMatchups, params.entry || null, racingSt, epochInflight, liveProjected, liveness);
+  const sideB = cmpId ? await resolveCandidate(epochId, cmpId, genList, experiments, scalarByGen, championId, championScalar, allMatchups, null, racingSt, epochInflight, liveProjected, liveness) : null;
 
   // the per-CANDIDATE visibility rating (the server-joined lineage triple;
   // distinct from the per-PAIR gate ratingBlock below). Absent on the Rust
@@ -202,7 +206,7 @@ export async function render(host, ctx, params, route) {
 
 // Resolve one candidate's full panel data (all cached reads). `entryParam`
 // only applies to the primary (A) side's drill-down.
-async function resolveCandidate(epochId, genId, genList, experiments, scalarByGen, championId, championScalar, allMatchups, entryParam, racingSt, epochInflight, liveProjected) {
+async function resolveCandidate(epochId, genId, genList, experiments, scalarByGen, championId, championScalar, allMatchups, entryParam, racingSt, epochInflight, liveProjected, liveness) {
   const node = genList.find((g) => g.id === genId) || { id: genId, parent: null, promoted: null };
   const baseline = !node.parent;
   const exp = experiments.find((x) => x.generation_id === genId) || null;
@@ -309,7 +313,12 @@ async function resolveCandidate(epochId, genId, genList, experiments, scalarByGe
   // LIVE — this candidate's in-flight board runs (current-epoch-scoped set,
   // filtered to THIS gen). Drives the BOARD lifecycle node + the per-board
   // dot-plot's "N running" live indicators.
-  const inflight = inflightForEntryGen(epochInflight, null, genId);
+  const forThisGen = inflightForEntryGen(epochInflight, null, genId);
+  // These records are in-flight ONLY while liveness reads live. When the run
+  // was interrupted they are the boards that were mid-run when it stopped —
+  // one past-tense line, never a live table (issue #194 §3).
+  const inflight = liveness.live ? forThisGen : [];
+  const interruptedBoards = liveness.state === LIVENESS.INTERRUPTED ? forThisGen.length : 0;
 
   // CACHED-CHAMPION provenance (epoch-local): in fast mode the champion's
   // per-board scalars are REUSED from a prior epoch/run rather than re-executed
@@ -372,6 +381,7 @@ async function resolveCandidate(epochId, genId, genList, experiments, scalarByGe
     primaryDelta, championId, championScalar, scalarByGen, progression,
     championLoss, championSigma, candidateSigma, deltaSigma, gateExplain,
     entryParam, exps, judges, drillRow, drillHeader, inflight, cached, cachedProvenance,
+    interruptedBoards, endedAt: liveness.endedAt,
     projected, radar, generalization, scorecard,
   };
 }
@@ -704,6 +714,9 @@ function candidateDigest(s) {
     hgSession: (s.drillHeader && s.drillHeader.adk_session_id) || null,
     // LIVE in-flight board runs for this candidate — folded into the digest so a
     // beat that advances progress repaints, but a no-op heartbeat stays equal.
+    // the tri-state + the interrupted tally: the panel says something
+    // different in each state, so a state flip must repaint.
+    liveness: (s.endedAt || '') + '|' + (s.interruptedBoards || 0),
     inflight: Array.isArray(s.inflight) ? s.inflight.map((r) => {
       const pr = runProgressRatio(r);
       return [r.entry_id != null ? r.entry_id : null,
@@ -848,6 +861,17 @@ function paintCandidate(host, ctx, epochId, s, cmpId, isPrimary, narrow, structu
   // page. Rendered for ANY structure (active-runs is structure-agnostic); the
   // dot-plot below covers COMPLETED boards, this covers the ones still running.
   const inflight = Array.isArray(s.inflight) ? s.inflight : [];
+  // INTERRUPTED: say what was running when it stopped, in one past-tense line.
+  // No pulse, no progress bars — nothing here is still moving.
+  if (!inflight.length && s.interruptedBoards > 0) {
+    const when = shortDate(s.endedAt);
+    host.appendChild(section('Boards at interruption', el('div', { class: 'dn-panel' }, [
+      el('p', { class: 'dn-faint', style: 'margin:0;', text:
+        s.interruptedBoards + (s.interruptedBoards === 1 ? ' board was' : ' boards were')
+        + ' still running for this candidate when the run was interrupted'
+        + (when ? ' on ' + when : '') + '. Their scores were never committed.' }),
+    ])));
+  }
   if (inflight.length) {
     const liveCard = el('div', { class: 'dn-panel dn-board-inflight' });
     // a SCORED board-progress sub-bar (boards_done/boards_total) from the live

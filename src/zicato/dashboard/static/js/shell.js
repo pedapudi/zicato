@@ -32,7 +32,7 @@ import * as D from './data.js';
 import { invalidateLive, liveDataSignature } from './data.js';
 import { buildTree, treeDigest } from './tree.js';
 import { roundsForTree } from './rounds.js';
-import { deriveLiveStatus, liveStatusDigest, treeLiveSet, staleLabel, runStateLabel } from './livestatus.js';
+import { livenessFor, liveStatusDigest, treeLiveSet, staleLabel, runStateLabel, LIVENESS } from './livestatus.js';
 import { LiveController } from './live.js';
 import { buildSwatchDropdown, syncSwatchDropdowns } from './swatchdropdown.js';
 import { syncTypefaceDropdowns, syncFontSizeSegments } from './typefacedropdown.js';
@@ -873,14 +873,12 @@ async function renderTree(route) {
   // on the active rows. Gated on the structure-agnostic running verdict +, when
   // tagged, scoped to the viewed epoch. Folded into the digest so the pulse
   // re-stamps when the set changes — a steady beat with the same set is a no-op.
-  const status = deriveLiveStatus({
-    heartbeat: state.heartbeat,
-    activeRuns: state.activeRuns,
-    activeTournament: state.activeTournament,
-  });
+  const { status, liveness } = livenessFor(state);
   const routeEpochId = (route && route.params) ? route.params.epochId : null;
   const live = treeLiveSet({
-    activeRuns: state.activeRuns, running: status.running,
+    // The tri-state, not file presence — leftover active-run records must not
+    // leave tree rows pulsing months after the run died (issue #194 SS1).
+    activeRuns: state.activeRuns, running: liveness.live && status.running,
     epochId: routeEpochId != null ? routeEpochId : model.current,
   });
   const digest = treeDigest(model, route, _toggles, live);
@@ -927,31 +925,34 @@ function renderStatus() {
   // pill's LIVE/STALLED/SETTLED/DEAD verdict that rides right after it. It must
   // NOT also say "live" (two adjacent "live" markers read as a redundant bug);
   // "connected" names the transport without colliding with the run pill.
-  const conn = state.connected ? 'connected' : state.connecting ? 'connecting…' : 'offline';
-  const status = deriveLiveStatus({
-    heartbeat: state.heartbeat,
-    activeRuns: state.activeRuns,
-    activeTournament: state.activeTournament,
-    // the orchestrator progress cursor (RUNTIME-V2 Phase 4) — drives the
-    // four-state run pill; absent / -1 degrades to the timestamp verdict.
-    seq: state.lastSeq,
-    terminal: state.terminal,
-    lastSeqAdvanceAt: state.lastSeqAdvanceAt,
-  });
+  // TRANSPORT SURFACES ONLY WHEN BROKEN. A healthy socket is silence: the
+  // operator saw "connected / STALLED / · racing · rung 0 / · 7 units" — four
+  // status tokens, three truth sources, no hierarchy, and the tail of it
+  // contradicted the head. "connected" describes the BROWSER's socket and was
+  // read as a claim about the RUN. It now says nothing while it is fine.
+  const conn = state.connected ? '' : state.connecting ? 'connecting…' : 'disconnected — retrying';
+  // THE TRI-STATE (issue #194 SS1) — the one verdict every present-tense
+  // claim in the chrome consumes, so the pill cannot read LIVE against a
+  // workspace the server has already called interrupted. The four-state
+  // verdict rides alongside it; it only refines a LIVE run into LIVE vs
+  // STALLED and supplies the phase label.
+  const { status, liveness } = livenessFor(state);
   // The loop-control cluster gates on its OWN digest ({shown, paused}) —
   // paused is not part of the status digest, so it must render before the
   // status early-return below.
-  renderLoopControls(status);
-  const digest = liveStatusDigest(conn, status);
+  renderLoopControls(status, liveness);
+  const digest = liveStatusDigest(conn, status) + '|' + liveness.state;
   if (digest === _lastStatusDigest) return;
   _lastStatusDigest = digest;
 
   patchText(_statusTextEl || _statusEl, conn);
   patchClass(_statusEl, 'dt-connected', state.connected);
-  patchClass(_statusEl, 'dt-running', status.running);
+  // The transport DOT is the healthy socket's only trace; the word is empty.
+  patchClass(_statusEl, 'dt-transport-quiet', !conn);
+  patchClass(_statusEl, 'dt-running', liveness.live && status.running);
   // A frozen heartbeat (stale, not live) gets a distinct chrome class so the
   // dot/badge can read "not live" rather than borrowing the running accent.
-  patchClass(_statusEl, 'dt-stale', !status.running && !!status.heartbeatStale);
+  patchClass(_statusEl, 'dt-stale', !liveness.live && !!status.heartbeatStale);
 
   // The FOUR-STATE run pill — show the LIVE/STALLED/SETTLED/DEAD word only
   // while there is SOMETHING to report (a never-run workspace would read
@@ -960,12 +961,19 @@ function renderStatus() {
   if (_runStateEl) {
     const everSeen = !!(state.heartbeat || state.activeTournament
       || (state.activeRuns && state.activeRuns.length) || state.lastSeq >= 0);
-    const word = everSeen ? runStateLabel(status.runState) : '';
+    // The tri-state decides WHETHER the run is live; the four-state verdict
+    // only refines a live one into LIVE vs STALLED (alive, no progress).
+    // A not-live workspace reads its own word — never a borrowed LIVE.
+    const rs = liveness.live ? status.runState
+      : (liveness.state === LIVENESS.SETTLED ? 'settled' : 'dead');
+    const word = everSeen
+      ? (liveness.state === LIVENESS.INTERRUPTED ? 'INTERRUPTED' : runStateLabel(rs))
+      : '';
     if (_runStateTextEl) patchText(_runStateTextEl, word);
-    patchClass(_runStateEl, 'dt-rs-live', word ? status.runState === 'live' : false);
-    patchClass(_runStateEl, 'dt-rs-stalled', word ? status.runState === 'stalled' : false);
-    patchClass(_runStateEl, 'dt-rs-settled', word ? status.runState === 'settled' : false);
-    patchClass(_runStateEl, 'dt-rs-dead', word ? status.runState === 'dead' : false);
+    patchClass(_runStateEl, 'dt-rs-live', word ? rs === 'live' : false);
+    patchClass(_runStateEl, 'dt-rs-stalled', word ? rs === 'stalled' : false);
+    patchClass(_runStateEl, 'dt-rs-settled', word ? rs === 'settled' : false);
+    patchClass(_runStateEl, 'dt-rs-dead', word ? rs === 'dead' : false);
     patchClass(_runStateEl, 'dt-rs-on', !!word);
   }
 
@@ -973,16 +981,16 @@ function renderStatus() {
   // 0"); shown only while alive (LIVE / STALLED) so a settled/dead pill carries
   // no stale phase. The leading "· " is the in-pill separator.
   if (_runLabelEl) {
-    patchText(_runLabelEl, status.alive && status.label ? ('· ' + status.label) : '');
+    patchText(_runLabelEl, liveness.live && status.label ? ('· ' + status.label) : '');
   }
   if (_runCountEl) {
     const n = status.inFlight;
-    patchText(_runCountEl, status.alive && n > 0 ? ('· ' + n + (n === 1 ? ' unit' : ' units')) : '');
+    patchText(_runCountEl, liveness.live && n > 0 ? ('· ' + n + (n === 1 ? ' unit' : ' units')) : '');
   }
   // "· last seen Ns ago" inside the pill when the heartbeat has frozen (not
   // alive) — never a silent freeze; cleared while alive / when no heartbeat.
   if (_staleEl) {
-    patchText(_staleEl, (!status.alive && status.heartbeatStale)
+    patchText(_staleEl, (!liveness.live && status.heartbeatStale)
       ? ('· ' + staleLabel(status.heartbeatAgeMs)) : '');
   }
 }
@@ -1059,16 +1067,24 @@ async function fireLoopControl(action, body, pausedAfter) {
   renderStatus();
 }
 
-function renderLoopControls(status) {
+function renderLoopControls(status, liveness) {
   if (!_loopCtlHost) return;
   const canControl = !!(state.health && state.health.read_only === false);
   const serverPaused = !!(state.heartbeat && state.heartbeat.paused);
   // The optimistic override retires the moment the server agrees with it.
   if (_pausedOverride != null && serverPaused === _pausedOverride) _pausedOverride = null;
   const paused = _pausedOverride != null ? _pausedOverride : serverPaused;
-  // Visible while the loop is ALIVE (live/stalled pulse) — and while PAUSED
-  // even if the pulse held, so resume is always reachable. Hidden read-only.
-  const show = canControl && (!!(status && status.alive) || paused);
+  // Visible only against a LIVE loop on a writable workspace — pausing or
+  // skipping a round of a run that died in June does nothing, and offering
+  // it says the run is still going.
+  //
+  // The one exception is a PAUSED loop, which stays reachable regardless:
+  // `block_while_paused` blocks the orchestrator thread, starving the
+  // asyncio heartbeat beater, so a genuinely-paused run ages into
+  // `interrupted` — and resume must not become unreachable because of it.
+  // `paused` is the live pause-FLAG presence (re-read server-side on every
+  // runtime payload), not a value frozen into a dead heartbeat.
+  const show = canControl && (!!(liveness && liveness.live) || paused);
   const digest = (show ? 'S' : '-') + (paused ? 'P' : '-');
   if (digest === _lastLoopCtlDigest && (!show || _loopCtlHost.firstChild)) return;
   _lastLoopCtlDigest = digest;
@@ -1114,31 +1130,24 @@ function renderExecLink() {
 // directly (core/sse.js), this runs sub-second — push, not poll.
 function refreshLive() {
   if (!_live) return;
-  const status = deriveLiveStatus({
-    heartbeat: state.heartbeat,
-    activeRuns: state.activeRuns,
-    activeTournament: state.activeTournament,
-    seq: state.lastSeq,
-    terminal: state.terminal,
-    lastSeqAdvanceAt: state.lastSeqAdvanceAt,
-  });
+  const { status, liveness } = livenessFor(state);
   _live.update({
     status,
+    liveness,
     heartbeat: state.heartbeat,
     activeRuns: state.activeRuns,
     activeTournament: state.activeTournament,
     // the kill affordances render only on a writable workspace.
     canControl: !!(state.health && state.health.read_only === false),
   });
-  // The hero host follows the SAME orchestrator-alive gate as the hero itself
-  // (LIVE or STALLED) — NOT the narrower `running` — so the panel does not
-  // flicker out when `running` momentarily drops during a long reasoning call.
-  if (_heroHost) patchClass(_heroHost, 'dt-hero-live', !!status.alive);
+  // The host is always laid out (it carries the status band); the class only
+  // tints it while a run is genuinely in flight.
+  if (_heroHost) patchClass(_heroHost, 'dt-hero-live', liveness.live);
   // The AUTHORITATIVE round-pipeline stepper: fetched server-side (the reader
   // owns the phase-string inference) on each live tick, single-flight so a
   // burst of state:changed pulses never stacks fetches; the controller's
   // digest gate makes a re-served identical projection a zero-DOM no-op.
-  refreshPipeline(!!status.alive);
+  refreshPipeline(liveness.live);
 }
 
 let _pipeInFlight = false;

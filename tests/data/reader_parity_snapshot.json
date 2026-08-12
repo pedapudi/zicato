@@ -358,6 +358,9 @@
       "healthy": true
     },
     "heartbeat": null,
+    "liveness": {
+      "state": "settled"
+    },
     "lock": null,
     "run_log": {
       "cursor": null,
@@ -1278,6 +1281,9 @@
     "generated_at": "<masked>",
     "heartbeat": null,
     "lineage": null,
+    "liveness": {
+      "state": "settled"
+    },
     "lock": null,
     "paused": false
   },

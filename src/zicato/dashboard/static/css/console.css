@@ -2009,6 +2009,9 @@
   .dt-status-stale { color: var(--v2-ink-faint); font-style: italic; white-space: nowrap;
     text-transform: none; letter-spacing: normal; }
   .dt-status-stale:empty { display: none; }
+  /* the transport word collapses when the socket is healthy (it only speaks
+   * when broken); the dot alone carries "connected". */
+  .dt-status-text:empty { display: none; }
   .dt-run-label { color: var(--v2-good); text-transform: lowercase; letter-spacing: normal; white-space: nowrap; }
   .dt-run-label:empty { display: none; }
   .dt-run-count { color: var(--v2-ink-faint); text-transform: none; letter-spacing: normal; white-space: nowrap; }
@@ -2381,6 +2384,13 @@
     font-family: var(--v2-mono); font-size: calc(9.5px * var(--dt-font-scale, 1)); font-weight: 700; letter-spacing: 0.1em;
     padding: 2px 8px; border-radius: 10px; color: var(--v2-good);
     border: 1px solid var(--v2-good); background: color-mix(in srgb, var(--v2-good) 12%, transparent); }
+  /* Its past-tense sibling: the topology came off the live envelope, but the
+   * run that wrote it stopped before the tournament settled. Same shape, muted
+   * hue, no pulse — it is a record, not a claim about now. */
+  .dt-interrupted-pill { display: inline-flex; align-items: center; margin-left: 8px;
+    font-family: var(--v2-mono); font-size: calc(9.5px * var(--dt-font-scale, 1)); font-weight: 700; letter-spacing: 0.1em;
+    padding: 2px 8px; border-radius: 10px; color: var(--v2-ink-soft);
+    border: 1px dashed var(--v2-rule); background: transparent; }
 
   /* CACHED-champion provenance: a fast-mode champion whose per-board results
      were reused from a prior epoch/run (not re-executed this round). */
@@ -3137,16 +3147,40 @@
   .dn-elimflow-lane, .dn-elimflow-seg, .dn-elimflow-conv { transition: opacity 0.3s ease; }
 
   /* ---- the LIVE-RUN HERO (the animated home of a live run) ---- */
-  /* hidden until the controller flags a live run (the .dt-live-on class). */
-  .dt-hero-host { display: none; }
-  .dt-hero-host.dt-hero-live { display: block; }
-  .dt-live-hero { display: none; }
-  .dt-live-hero.dt-live-on {
-    display: block;
-    margin: 0; padding: 14px 40px 16px;
+  /* The host is ALWAYS present now — it carries the one-line status band in
+   * every state. `.dt-hero-live` only tints it; `.dt-live-on` is what opens
+   * the drawer beneath the band (live AND not collapsed by the operator). */
+  .dt-hero-host { display: block; }
+  .dt-live-hero {
+    display: block; margin: 0; padding: 0 40px;
     border-bottom: 1px solid var(--v2-rule);
+  }
+  .dt-live-hero.dt-live-live {
     background: color-mix(in srgb, var(--v2-good) 6%, var(--v2-paper));
   }
+  /* THE ONE-LINE BAND — the whole hero when nothing is running. */
+  .dt-live-band { display: flex; align-items: center; gap: 8px; min-height: 30px;
+    font-family: var(--v2-mono); font-size: calc(11px * var(--dt-font-scale, 1));
+    color: var(--v2-ink-soft); letter-spacing: 0.01em; }
+  /* A settled/interrupted band gets a still, muted dot — never the breathing
+   * one. The pulse is reserved for a run that is genuinely in flight. */
+  .dt-live-band-dot { width: 7px; height: 7px; border-radius: 50%; flex: none;
+    background: var(--v2-rule); }
+  .dt-live-band-interrupted .dt-live-band-dot { background: var(--v2-warn, var(--v2-ink-soft)); }
+  .dt-live-band-live .dt-live-band-dot { background: var(--v2-good);
+    box-shadow: 0 0 0 0 var(--v2-good); animation: dt-run-pulse 1.8s ease-out infinite; }
+  .dt-live-band-live .dt-live-band-text { color: var(--v2-good); }
+  .dt-live-band-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  /* the drawer toggle: present only while there is a drawer to toggle. */
+  .dt-live-band-toggle { display: none; }
+  .dt-live-band-toggle.dt-live-band-toggle-on { display: inline-block; margin-left: auto;
+    padding: 1px 7px; border: 1px solid var(--v2-rule); border-radius: 9px;
+    background: transparent; cursor: pointer; color: var(--v2-ink-soft);
+    font-family: var(--v2-mono); font-size: calc(10px * var(--dt-font-scale, 1)); }
+  .dt-live-band-toggle.dt-live-band-toggle-on:hover { color: var(--v2-ink); border-color: var(--v2-ink-soft); }
+  /* THE DRAWER — the full live surface, only while live and expanded. */
+  .dt-live-hero-body { display: none; }
+  .dt-live-hero.dt-live-on .dt-live-hero-body { display: block; padding: 4px 0 16px; }
   /* ── 1. THE STATUS HEADER — ONE muted metadata baseline ──
    * `● LIVE · racing · rung 2 of 2 · field of 2 · 7 units running`. No competing
    * big phase title: the LIVE pill + one muted mono metadata line on one row. */
@@ -3329,7 +3363,7 @@
   /* THE REDUCED-MOTION GATE — instant, no transitions, no animations. Every
    * live-run motion above collapses to a static state. */
   @media (prefers-reduced-motion: reduce) {
-    .dt-live-hero-dot { animation: none; }
+    .dt-live-hero-dot, .dt-live-band-live .dt-live-band-dot { animation: none; }
     .dt-live-enter { animation: none; }
     .dt-ticker-row { animation: none; }
     .dn-inflight-pulse { animation: none; }

@@ -16,6 +16,7 @@
 
 import { el, clearChildren } from '../core/dom.js';
 import { state } from '../core/state.js';
+import { livenessFor } from '../livestatus.js';
 import * as D from '../data.js';
 import * as svg from '../svg.js';
 import { gatedSwap, section, empty, stat, decisionFor, densityTokens, prText, metricsDigest, scoreFmt, pill, dataTable, deltaCell } from '../ui.js';
@@ -111,7 +112,11 @@ export async function render(host, ctx, params) {
   // active-runs feed carries its run_id / generation_id directly, so its live
   // transcript resolves by the (epoch, gen, entry) triple (the events.jsonl is
   // already growing on disk). Keyed by gen so a row can be matched to its run.
-  const inflight = inflightForEntry(state.activeRuns, entryId);
+  // Only while the run is actually live: an `active_runs` record left behind by
+  // a torn-down run would otherwise synthesise a permanent "running" row with a
+  // progress bar that never completes (issue #194 SS1).
+  const inflight = livenessFor(state).liveness.live
+    ? inflightForEntry(state.activeRuns, entryId) : [];
   const runningByGen = new Map();
   for (const r of inflight) {
     const g = r.generation_id;

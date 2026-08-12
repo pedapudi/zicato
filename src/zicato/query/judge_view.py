@@ -41,6 +41,7 @@ from zicato.query.run_log import (
     build_run_log,
 )
 from zicato.query.runtime_view import (
+    derive_liveness,
     read_active_runs_view,
     read_active_tournament_dict,
     read_heartbeat_dict,
@@ -881,6 +882,10 @@ def build_environment(
         "active_runs": read_active_runs_view(paths),
         "health_report": _gate_view.build_health_report(paths),
         "heartbeat": read_heartbeat_dict(paths),
+        # The served tri-state (runtime_view.derive_liveness) — the one
+        # answer to "is anything running?", so the environment feed and
+        # the SSE snapshot cannot disagree about it.
+        "liveness": derive_liveness(paths),
         "lock": read_lock_dict(paths),
         "run_log": build_run_log(paths, run_log_limit),
         "generated_at": _iso(_utc_now()),

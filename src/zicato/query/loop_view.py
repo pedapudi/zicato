@@ -25,13 +25,11 @@ so the floor still surfaces on a degraded read.
 
 from __future__ import annotations
 
-import datetime as _dt
 from typing import Any
 
 from zicato.query.paths import (
     WorkspacePaths,
     _iso,
-    _parse_iso,
     _read_json_value,
     _utc_now,
     coerce_float,
@@ -270,16 +268,6 @@ PIPELINE_STEPS: tuple[tuple[str, str], ...] = (
     ("gate", "gate"),
 )
 
-#: Heartbeat staleness window (mirrors the frontend's STALE_HEARTBEAT_MS —
-#: livestatus.js): a frozen heartbeat must never read as a live pipeline.
-_STALE_HEARTBEAT_S = 30.0
-
-#: Heartbeat-phase tokens that mean "the loop is at rest" — mirrors the
-#: frontend's IDLE_PHASES (livestatus.js) so the two liveness reads agree.
-_IDLE_HEADS = frozenset(
-    {"", "idle", "done", "complete", "completed", "finished", "stopped", "error"}
-)
-
 
 def _phase_round_index(segments: list[str]) -> int | None:
     """Extract the evolve-round index from phase segments, or ``None``."""
@@ -415,13 +403,17 @@ def build_round_pipeline(paths: WorkspacePaths) -> dict[str, Any]:
     The reader owns the phase-string inference the JS previously did —
     the stepper renders this verdict verbatim.
 
-    ``running`` is staleness-gated exactly like the frontend (a frozen /
-    untimestamped heartbeat is NOT live); the step projection is still
-    reported for a stale workspace so a post-mortem read stays honest.
+    ``running`` / ``stale`` are folded from the ONE served liveness
+    verdict (:func:`zicato.query.runtime_view.derive_liveness`), which
+    rides along as ``liveness``; the step projection is still reported
+    for a dead workspace so a post-mortem read stays honest.
     Best-effort: every input degrades independently — never raises.
     """
     # Deferred imports: this rides the SSE-adjacent read path, keep it lean.
     from zicato.query.runtime_view import (  # noqa: PLC0415
+        LIVENESS_INTERRUPTED,
+        LIVENESS_LIVE,
+        derive_liveness,
         read_active_runs_view,
         read_active_tournament_dict,
         read_heartbeat_dict,
@@ -460,23 +452,17 @@ def build_round_pipeline(paths: WorkspacePaths) -> dict[str, Any]:
         run_count=run_count,
     )
 
-    # Staleness gate (mirrors livestatus.js): fresh = a parseable heartbeat
-    # timestamp within the window. In-flight runs corroborate liveness on
-    # their own (per-run beaters are independent of the orchestrator beat).
-    fresh = False
-    if isinstance(hb, dict):
-        ts = _parse_iso(hb.get("last_heartbeat"))
-        if ts is not None:
-            age = (_utc_now() - ts) / _dt.timedelta(seconds=1)
-            fresh = 0 <= age <= _STALE_HEARTBEAT_S
-    head = segments[0] if segments else ""
-    tail_idle = any(seg in _IDLE_HEADS for seg in segments) if segments else True
-    phase_active = head not in _IDLE_HEADS and not tail_idle
-    running = (phase_active and fresh) or run_count > 0
+    # Liveness is NOT re-derived here — the pipeline reads the one served
+    # verdict (runtime_view.derive_liveness) so a post-mortem workspace
+    # cannot read "running" on this surface and "interrupted" on another.
+    # The step projection is still reported for a dead workspace (post-
+    # mortem honesty); only the present-tense flags gate off it.
+    liveness = derive_liveness(paths)
 
     return {
-        "running": running,
-        "stale": isinstance(hb, dict) and not fresh,
+        "running": liveness["state"] == LIVENESS_LIVE,
+        "stale": liveness["state"] == LIVENESS_INTERRUPTED,
+        "liveness": liveness,
         "phase": phase or None,
         "epoch_id": hb_epoch or None,
         "round_index": round_index,

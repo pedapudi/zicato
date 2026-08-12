@@ -20,6 +20,14 @@ export class AppState {
     // heartbeat.json — merged, never replaced (see setHeartbeat).
     this.heartbeat = null;
 
+    // The SERVER's liveness verdict — { state, last_heartbeat?, ended_at? }
+    // from runtime_view.derive_liveness, riding on /api/state + the SSE
+    // snapshot + /api/environment. It is the only reader that can see the
+    // terminal progress marker; freshness still ages on the client clock.
+    // Read it through livestatus.deriveLiveness, never raw. Null on a
+    // server that does not serve the block (the fold degrades).
+    this.liveness = null;
+
     // ── the orchestrator PROGRESS cursor (RUNTIME-V2 Phase 4) ────────
     // `lastSeq` is the highest progress `seq` seen (SSE frame or heartbeat)
     // — the TRUE liveness cursor: it advances ONLY on a genuine transition,
@@ -171,6 +179,7 @@ export class AppState {
   applySnapshot(snap) {
     if (!snap || typeof snap !== 'object') return;
     if (snap.heartbeat) this.setHeartbeat(snap.heartbeat);
+    if (snap.liveness && typeof snap.liveness === 'object') this.liveness = snap.liveness;
     if (snap.active_runs) this.activeRuns = snap.active_runs;
     if ('active_tournament' in snap) this.activeTournament = snap.active_tournament;
     if (Array.isArray(snap.past_tournaments)) this.pastTournaments = snap.past_tournaments;
@@ -205,6 +214,7 @@ export class AppState {
   applyEnvironment(env) {
     if (!env || typeof env !== 'object') return;
     if (env.heartbeat) this.setHeartbeat(env.heartbeat);
+    if (env.liveness && typeof env.liveness === 'object') this.liveness = env.liveness;
     if ('active_tournament' in env) this.activeTournament = env.active_tournament;
     if (env.tournaments && typeof env.tournaments === 'object') {
       this.bracket = env.tournaments;
