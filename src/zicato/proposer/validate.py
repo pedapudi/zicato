@@ -59,7 +59,7 @@ in a tree that would not apply.
    array (:data:`~zicato.proposer.structured.PATCHES_JSON_SCHEMA`), the
    cross-check pass (:func:`~zicato.proposer.structured.parse_patch_list` —
    mutation-id resolution, op/payload discrimination, ``min``/``max`` and
-   enum domains), the ``content_sha256`` pre-image guard (below), the
+   enum domains), the pre-image guard (below), the
    pre-apply surface check
    (:func:`zicato.mutation.validator.validate_patches`), the applier's own
    all-or-nothing apply into the scratch tree, and A1–A4
@@ -74,22 +74,33 @@ in a tree that would not apply.
    subprocess with a timeout — the same call the tournament makes before
    any entry executes, one expensive round earlier.
 
-The ``content_sha256`` pre-image guard
---------------------------------------
-A patch may carry an OPTIONAL ``content_sha256``: the SHA-256 of the
-mutation point's content **as the proposer read it**. When present it is
-compared against the live manifest, so a stale read — the proposer reasoned
-about a version of the point that the manifest no longer holds — is caught
-here instead of producing a confidently wrong rewrite. The field is
-validate-only: the ``Experiment`` schema is unchanged and
-:func:`~zicato.proposer.structured.parse_experiment_json` ignores the key
-like any other unknown one, so a proposer may leave it on the patches it
-finally emits.
+The pre-image guard
+-------------------
+:attr:`~zicato.core.mutation.MutationPoint.content_hash` has existed since
+the enumerator was written, and its docstring claimed "the patch applier
+checks this before applying a patch so a stale proposer round cannot
+clobber an already-rewritten region". **The applier never read it** — the
+field was written by the enumerator, rendered by the CLI and the dashboard,
+and checked by nothing. :func:`_pre_image_problems` is the check that
+docstring described, and this module is now its only reader.
+
+The comparison is between two enumerations zicato already computes: the
+manifest the proposal was drafted against
+(:attr:`ProposerToolContext.mutations`) and a fresh enumeration of the
+parent snapshot at validate time. A patched point whose ``content_hash``
+moved between them was rewritten under the proposer, so its draft is
+reasoning about text the tree no longer holds.
+
+Nothing is asked of the proposer, deliberately. An earlier revision made
+the pre-image a digest the model declared per patch; that made the guard
+opt-in (a model that omitted the field was simply not checked) and asked
+the model for arithmetic it has no reason to get right. ``Patch`` carries
+no pre-image field and must not grow one — issue #147 is explicit that the
+``Experiment`` schema does not change.
 """
 
 from __future__ import annotations
 
-import hashlib
 import json
 import re
 import shutil
@@ -103,6 +114,7 @@ from typing import Any
 import jsonschema
 
 from zicato.core.types import MutationPoint, Patch
+from zicato.mutation.enumerator import enumerate_mutations
 from zicato.proposer.structured import (
     PATCHES_JSON_SCHEMA,
     ExperimentParseError,
@@ -403,38 +415,55 @@ def run_load_probe(workspace_root: Path, scratch_root: Path) -> TierResult:
 
 
 def _pre_image_problems(
-    raw_patches: Sequence[Mapping[str, Any]],
-    mutations_by_id: Mapping[str, MutationPoint],
+    patches: Sequence[Patch],
+    drafted_against: Mapping[str, MutationPoint],
+    parent_root: Path,
 ) -> list[str]:
-    """Check every declared ``content_sha256`` against the live manifest.
+    """Reject patches whose target moved since the manifest was handed out.
 
-    A patch that declares the digest of the content it *believes* it is
-    replacing gets a stale read caught here. Patches without the field are
-    skipped — it is optional, and its absence means "I did not claim to
-    know the pre-image", not "the pre-image is empty".
+    THE actual pre-image guard, and the only thing in zicato that reads
+    :attr:`~zicato.core.mutation.MutationPoint.content_hash`. The bound
+    manifest (``drafted_against`` — :attr:`ProposerToolContext.mutations`)
+    is the enumeration the proposal was drafted against; a fresh
+    enumeration of ``parent_root`` is the tree as it stands now. A patched
+    point whose ``content_hash`` differs between the two is one the
+    proposer reasoned about in a version the tree no longer holds, and
+    rewriting it would clobber whatever changed it.
+
+    Nothing is asked of the proposer. An earlier revision of this module
+    made the pre-image a digest the model had to declare on each patch,
+    which was worse twice over: it made the guard opt-in (a model that
+    omitted the field simply was not checked), and it asked the model to
+    do arithmetic it has no reason to get right. Comparing two
+    enumerations zicato already computes needs no cooperation and no wire
+    change — ``Patch`` carries no pre-image field and must not grow one.
+
+    A point that has VANISHED from the fresh enumeration is left alone
+    here: A2 (:func:`~zicato.mutation.validator.validate_post_apply`)
+    reports that against the post-apply tree with a better message, and
+    double-reporting one fault as two costs the proposer a wasted fix.
     """
     problems: list[str] = []
-    for i, p_dict in enumerate(raw_patches):
-        declared = p_dict.get("content_sha256")
-        if declared is None:
+    try:
+        current = {p.id: p for p in enumerate_mutations([parent_root])}
+    except (OSError, ValueError, SyntaxError):
+        # Enumeration is best-effort here: the apply step re-enumerates and
+        # will fail loudly on a tree that cannot be walked. A guard that
+        # could not read the tree must not invent a staleness finding.
+        return []
+    for patch in patches:
+        drafted = drafted_against.get(patch.mutation_id)
+        live = current.get(patch.mutation_id)
+        if drafted is None or live is None:
             continue
-        if not isinstance(declared, str):
+        if drafted.content_hash != live.content_hash:
             problems.append(
-                f"patch[{i}]: content_sha256 must be a hex sha256 string, got "
-                f"{type(declared).__name__}"
-            )
-            continue
-        point = mutations_by_id.get(p_dict.get("mutation_id", ""))
-        if point is None:
-            # The mutation-id cross-check reports this; don't double-report.
-            continue
-        actual = hashlib.sha256(point.content.encode("utf-8")).hexdigest()
-        if declared.strip().lower() != actual:
-            problems.append(
-                f"patch[{i}]: stale pre-image for {point.id!r} — you declared "
-                f"content_sha256={declared.strip().lower()[:16]}… but the point's "
-                f"current content hashes to {actual[:16]}…; re-read the point "
-                f"(list_mutation_points / read_mutable_file) before patching it"
+                f"stale pre-image for {patch.mutation_id!r}: the manifest you "
+                f"drafted against has content_hash "
+                f"{drafted.content_hash[:16]}… but the parent snapshot now "
+                f"holds {live.content_hash[:16]}…. The point was rewritten "
+                f"under you; re-read it (list_mutation_points / "
+                f"read_mutable_file) and re-draft before patching it"
             )
     return problems
 
@@ -492,7 +521,10 @@ def _validate_against_context(
             patches = parse_patch_list(raw_patches, mutations_by_id)
         except ExperimentParseError as exc:
             structure_errors.append(str(exc))
-        structure_errors.extend(_pre_image_problems(raw_patches, mutations_by_id))
+        else:
+            structure_errors.extend(
+                _pre_image_problems(patches, mutations_by_id, ctx.generation_root.resolve())
+            )
 
     tiers["structure"] = {"ran": True, "errors": structure_errors, "notes": []}
     if structure_errors:
@@ -552,10 +584,9 @@ def validate_patches(patches_json: str) -> str:
     Pass the same ``patches`` array you intend to emit — a JSON array of
     patch objects, or the whole ``{"patches": [...]}`` object; both are
     accepted. Each patch object takes the usual ``mutation_id`` / ``op`` /
-    ``new_content`` | ``new_numeric`` | ``new_enum`` / ``rationale`` keys,
-    and MAY additionally carry ``content_sha256``: the SHA-256 of the
-    mutation point's current content as you read it, which is checked
-    against the live manifest so a stale read is caught immediately.
+    ``new_content`` | ``new_numeric`` | ``new_enum`` / ``rationale`` keys
+    and nothing else; there is no extra field to supply and no digest to
+    compute.
 
     The report is ``{"ok": bool, "errors": [...], "tiers": {...}}``.
     ``errors`` is the flat list to act on; ``tiers`` says which stage each
@@ -564,8 +595,10 @@ def validate_patches(patches_json: str) -> str:
     would not apply:
 
     1. **structure** — schema shape, mutation-id resolution, op/payload
-       discrimination, numeric range and enum domain, and the
-       ``content_sha256`` pre-image guard.
+       discrimination, numeric range and enum domain, and the pre-image
+       guard: a point whose content changed since the manifest you were
+       given was enumerated has been rewritten under you, so re-read it
+       and re-draft before patching it.
     2. **apply** — the patch set is applied all-or-nothing to a scratch
        copy of the parent snapshot, then checked against A1–A4: every
        touched ``.py`` file still parses, every patched ``mutation_id``

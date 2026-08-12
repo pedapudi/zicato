@@ -617,8 +617,8 @@ def parse_patch_list(
     required (and forbids the other two), ``set_numeric`` falls inside any
     declared ``min`` / ``max`` range, and ``set_enum`` lies in any declared
     enum domain. Unknown keys are ignored, matching the schema's deliberate
-    slack (see :data:`EXPERIMENT_JSON_SCHEMA`) — so a caller may attach its
-    own fields, as ``validate_patches`` does with ``content_sha256``.
+    slack (see :data:`EXPERIMENT_JSON_SCHEMA`), so a caller may attach its
+    own commentary fields without the parser objecting.
 
     Callers are responsible for the SHAPE pass first
     (:data:`PATCHES_JSON_SCHEMA` for a bare list,

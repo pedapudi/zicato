@@ -1,5 +1,41 @@
 # Changelog
 
+### A guarantee that was documented for years and never enforced
+
+`MutationPoint.content_hash`'s docstring said "the patch applier checks this
+before applying a patch so a stale proposer round cannot clobber an
+already-rewritten region." The applier never read it. The field was written by
+the enumerator, rendered by the CLI and the dashboard, and checked by nothing —
+a stale round could clobber a rewritten region exactly as if the sentence had
+never been written.
+
+`validate_patches` tier 1 is now that check, and this module is the field's
+only reader. It compares `content_hash` for each patched point between the
+manifest the proposal was drafted against and a fresh enumeration of the parent
+snapshot; a point whose hash moved was rewritten under the proposer, so the
+draft is reasoning about text that no longer exists. Caught there, a fix is one
+tool call; caught at derive time it would have been a failed round with no
+route back to the proposer that could fix it. A point that *vanished* rather
+than moved is still left to A2 — one fault should cost one fix, not two.
+
+This replaces the guard shipped in the previous entry, which asked the proposer
+to declare a `content_sha256` digest per patch. That was worse twice over: it
+made the guard opt-in, so a model that omitted the field was simply not checked
+— and the whole value of the guard is the case where the model does not know
+anything is wrong — and it asked the model for arithmetic it has no reason to
+get right. Comparing two enumerations zicato already computes needs no
+cooperation from the model and no change to the `Experiment` schema. `Patch`
+carries no pre-image field and must not grow one. The docstring now describes
+what actually checks it, and a test pins that the comparison has exactly one
+site, since "plenty of mentions, zero readers" is how it stayed wrong.
+
+`ProposerContext` also grows `generation_root` — the parent snapshot the round
+is about to patch, resolved once by the orchestrator instead of re-derived from
+the generation store's path convention by every consumer. It is a REQUIRED
+argument at the single `_propose_child` construction site rather than a
+defaulted field, because a field that defaults to `None` is precisely the shape
+that goes silently unpopulated while everything appears to keep working.
+
 ### The proposer can check its own patch, and ask the run corpus questions
 
 Three additions to the proposer's tool surface, all governed by one line now
@@ -23,7 +59,7 @@ exists to avoid — a violation cost a full retry round-trip, re-sending the
 entire manifest. The new tool applies a draft patch set to a scratch copy of
 the parent snapshot and reports what broke, in three tiers that stop at the
 first failure: **structure + apply** (the shape and cross-check passes, a new
-optional `content_sha256` pre-image guard that catches a stale read, then
+pre-image guard that catches a point rewritten under the draft, then
 A1–A4); **static analysis** (the workspace's declared linters, reported as
 the DELTA against the same checks on the unpatched tree, so a patch is never
 blamed for the tree's pre-existing lint debt); and a **load probe** that runs
