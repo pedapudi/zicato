@@ -685,7 +685,14 @@ export function verdictSentence(explain) {
   if (!decision || decision === 'pending') return null;
   const parts = [decision];
   if (explain.decidingLabel) parts.push(String(explain.decidingLabel).toLowerCase());
-  if (explain.regressed) parts.push('regressed ' + String(explain.regressed));
+  if (explain.regressed) {
+    // A monotonicity rule names something that REGRESSED; `primary_driver`
+    // names the judge that moved the round most, in EITHER direction. Saying
+    // "regressed" about the latter would be false on a promoted candidate,
+    // so the word follows the provenance the gate recorded.
+    const verb = explain.regressedFrom === 'driver' ? 'driver ' : 'regressed ';
+    parts.push(verb + String(explain.regressed));
+  }
   const margin = marginDistance(explain);
   if (margin) parts.push(margin);
   return parts.join(' · ');
@@ -743,16 +750,24 @@ function deriveGateExplain(gate) {
   const margin = svg.isNum(gate.margin) ? gate.margin : null;
   let regressed = (typeof gate.regressed_predicate === 'string' && gate.regressed_predicate) ? gate.regressed_predicate
     : ((typeof gate.regressed_namespace === 'string' && gate.regressed_namespace) ? gate.regressed_namespace : null);
-  // the gate's own primary_driver (a judge name) is the fallback regressed
-  // identifier when no monotonicity rule named one.
-  if (!regressed && gate.primary_driver && gate.primary_driver.judge) regressed = gate.primary_driver.judge;
+  // WHERE the named entry came from, because the two sources mean DIFFERENT
+  // things and a reader that conflates them lies about a promoted candidate:
+  // a monotonicity rule names something that actually REGRESSED, while
+  // `primary_driver` names the judge that moved the round MOST — in either
+  // direction. The fallback is kept (the name is the useful fact) but tagged,
+  // so the verdict sentence can say "regressed X" or "driver X" truthfully.
+  let regressedFrom = regressed ? 'rule' : null;
+  if (!regressed && gate.primary_driver && gate.primary_driver.judge) {
+    regressed = gate.primary_driver.judge;
+    regressedFrom = 'driver';
+  }
   return {
     decision,
     decidingRule: decidingId,
     decidingLabel: deciding ? (deciding.label || deciding.id || null) : (decidingId || null),
     // The deciding rule's raw detail string, scope-agnostic — display only.
     detail: deciding ? (deciding.detail || null) : null,
-    deltaScalar, margin, regressed,
+    deltaScalar, margin, regressed, regressedFrom,
     reason: gate.reason || null,
   };
 }
@@ -2234,8 +2249,10 @@ export function buildGateStack(s) {
   if (defences.length) {
     const card = el('div', { class: 'dn-panel dn-gate-defences' });
     for (const d of defences) card.appendChild(defenceRow(d));
+    // The caption must read true for the SEED too, which has no deciding round
+    // above it to point at — so it describes the rows, not their neighbours.
     card.appendChild(el('p', { class: 'dn-faint', style: 'font-size:11px;margin:8px 0 0;',
-      text: 'rounds this candidate defended as champion — the gate that decided IT is above · expand one for its full rule ladder' }));
+      text: 'rounds this candidate defended as champion · expand one for its full rule ladder' }));
     out.push(section(`Defended rounds · ${defences.length}`, card));
   }
   return out;

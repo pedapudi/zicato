@@ -118,6 +118,7 @@ def _ledger_rows(conn: sqlite3.Connection, epoch_id: str) -> list[dict[str, Any]
     )
     order: dict[str, int] = {}
     rounds: dict[str, int | None] = {}
+    parents: dict[str, str | None] = {}
     for position, row in enumerate(gen_rows):
         gid = _opt_text(_rget(row, "generation_id"))
         if gid is None:
@@ -126,6 +127,7 @@ def _ledger_rows(conn: sqlite3.Connection, epoch_id: str) -> list[dict[str, Any]
         raw_round = _rget(row, "round_index")
         stamped = isinstance(raw_round, int) and not isinstance(raw_round, bool)
         rounds[gid] = int(raw_round) if stamped else None
+        parents[gid] = _opt_text(_rget(row, "parent_generation_id"))
 
     sites: dict[str, list[str]] = {}
     for row in _query(
@@ -153,6 +155,12 @@ def _ledger_rows(conn: sqlite3.Connection, epoch_id: str) -> list[dict[str, Any]
         rows.append(
             {
                 "generation_id": gid,
+                # The seed's parent, carried so the renderer can reach the ONE
+                # shared decision classifier: a parentless generation is the
+                # BASELINE, not a candidate still racing. Without it a settled
+                # epoch's seed row — which records no tournament decision,
+                # because it never faced one — reads as in-flight forever.
+                "parent_generation_id": parents.get(gid),
                 "round_index": rounds.get(gid),
                 "core_idea": _opt_text(_rget(row, "hypothesis_core_idea")),
                 "mutation_ids": sites.get(gid, []),

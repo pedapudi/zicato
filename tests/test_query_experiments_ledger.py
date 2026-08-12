@@ -158,6 +158,7 @@ def test_ledger_row_shape_and_join(tmp_path: Path) -> None:
     assert set(rows) == {"v0", "v1", "v2", "v3"}
     assert set(rows["v2"]) == {
         "generation_id",
+        "parent_generation_id",
         "round_index",
         "core_idea",
         "mutation_ids",
@@ -184,6 +185,11 @@ def test_ledger_row_shape_and_join(tmp_path: Path) -> None:
     assert rows["v1"]["mutation_ids"] == ["prompt.audience"]
     # an experiment with no patch rows reads as an empty site list, not null.
     assert rows["v0"]["mutation_ids"] == []
+    # the parent is carried so the renderer can name the parentless SEED as the
+    # baseline rather than a candidate still racing (it recorded no decision
+    # because it never faced a gate).
+    assert rows["v2"]["parent_generation_id"] == "v0"
+    assert rows["v0"]["parent_generation_id"] is None
 
 
 def test_unsettled_experiment_keeps_its_row(tmp_path: Path) -> None:

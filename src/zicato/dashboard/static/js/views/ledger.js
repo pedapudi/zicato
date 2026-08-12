@@ -21,7 +21,7 @@
 
 import { el } from '../core/dom.js';
 import * as svg from '../svg.js';
-import { dataTable, deltaCell, empty, truncate, verdictPill } from '../ui.js';
+import { dataTable, decisionFor, deltaCell, empty, truncate, verdictPill } from '../ui.js';
 
 // How much of a core idea / rejection reason rides the row before it clips.
 const IDEA_CHARS = 96;
@@ -81,7 +81,11 @@ export function buildExperimentsLedger(ledger, opts) {
 
 function ledgerRow(r, epochId, o) {
   const gen = r.generation_id != null ? String(r.generation_id) : '';
-  const decision = (typeof r.decision === 'string' && r.decision) ? r.decision : 'pending';
+  // The ONE shared classifier owns the vocabulary: the server-stamped token
+  // when there is one, `baseline` for the parentless seed (which faced no
+  // gate and must not read as still racing), `pending` only when a candidate
+  // genuinely has not settled. Nothing is re-derived from the raw outcome.
+  const decision = decisionFor({ promoted: r.promoted, parent: r.parent_generation_id, exp: r });
   const delta = svg.isNum(r.scalar_score_delta) ? r.scalar_score_delta : null;
   const reason = (typeof r.rejection_reason === 'string' && r.rejection_reason) ? r.rejection_reason : null;
   return {

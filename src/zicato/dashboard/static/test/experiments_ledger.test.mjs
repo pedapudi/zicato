@@ -47,25 +47,25 @@ function ledgerFixture(overrides) {
     epoch_id: 'e0',
     experiments: [
       {
-        generation_id: 'v0', round_index: 0, core_idea: 'the seed', mutation_ids: [],
-        decision: 'promoted', promoted: true, rejection_reason: null,
+        generation_id: 'v0', parent_generation_id: null, round_index: 0, core_idea: 'the seed',
+        mutation_ids: [], decision: null, promoted: null, rejection_reason: null,
         scalar_score_delta: null, drift_loss_delta: null, pass_rate_delta: null,
       },
       {
-        generation_id: 'v2', round_index: 1, core_idea: LONG_IDEA,
+        generation_id: 'v2', parent_generation_id: 'v0', round_index: 1, core_idea: LONG_IDEA,
         mutation_ids: ['agent.temperature', 'prompt.audience', 'prompt.system', 'tools.search'],
         decision: 'rejected', promoted: false,
         rejection_reason: 'insufficient improvement: 0.7328 vs 0.7188 (margin 0.0200)',
         scalar_score_delta: 0.014, drift_loss_delta: 0.01, pass_rate_delta: -0.25,
       },
       {
-        generation_id: 'v1', round_index: 1, core_idea: 'trim the preamble',
+        generation_id: 'v1', parent_generation_id: 'v0', round_index: 1, core_idea: 'trim the preamble',
         mutation_ids: ['prompt.system'], decision: 'promoted', promoted: true,
         rejection_reason: null, scalar_score_delta: -0.08,
         drift_loss_delta: -0.06, pass_rate_delta: 0.1,
       },
       {
-        generation_id: 'v3', round_index: 2, core_idea: null, mutation_ids: [],
+        generation_id: 'v3', parent_generation_id: 'v1', round_index: 2, core_idea: null, mutation_ids: [],
         decision: null, promoted: null, rejection_reason: null,
         scalar_score_delta: null, drift_loss_delta: null, pass_rate_delta: null,
       },
@@ -97,6 +97,15 @@ test('ledger: the promoted row wears the champion treatment and its crown', () =
   const rows = rowsOf(mount(ledgerFixture()));
   assert(hasClass(rows[2], 'dn-board-champ'), 'a promoted experiment reads as the round’s winner');
   assert(!hasClass(rows[1], 'dn-board-champ'), 'a rejected experiment does not');
+});
+
+test('ledger: the SEED reads as the baseline, NOT as still racing (it faced no gate)', () => {
+  // The seed records no tournament decision because it never faced one. Routed
+  // through the shared classifier its PARENTLESSNESS is what names it — without
+  // that, a settled epoch's first row reads "racing…" forever.
+  const rows = rowsOf(mount(ledgerFixture()));
+  assertEqual(cellText(rows[0], 4), 'seed (v0)', 'the parentless seed is the baseline');
+  assert(cellText(rows[3], 4).includes('racing'), '...while a genuinely unsettled candidate still reads racing');
 });
 
 // ── 2. the core idea: clipped, expandable IN PLACE, expansion survives ──────

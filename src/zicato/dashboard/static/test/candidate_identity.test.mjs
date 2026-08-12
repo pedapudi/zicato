@@ -156,6 +156,7 @@ function explain(overrides) {
     deltaScalar: 0.014,
     margin: 0.02,
     regressed: 'q3_metrics_outline',
+    regressedFrom: 'rule',
   }, overrides || {});
 }
 
@@ -167,11 +168,36 @@ test('verdictSentence: decision · deciding rule · what regressed · how far fr
 
 test('verdictSentence: the margin clause is signed against the promote bar (short vs clear)', () => {
   const cleared = cand.verdictSentence(explain({
-    decision: 'promoted', decidingRule: null, decidingLabel: null, regressed: null,
+    decision: 'promoted', decidingRule: null, decidingLabel: null, regressed: null, regressedFrom: null,
     deltaScalar: -0.08, margin: 0.02,
   }));
   assertEqual(cleared, 'promoted · 0.060 clear of the 0.020 margin',
     'a Δ past the bar reads as CLEARED by the distance, not "short" of it');
+});
+
+test('verdictSentence: a PRIMARY DRIVER is called a driver, never "regressed"', () => {
+  // The bug this pins, caught on a real promoted candidate: when no
+  // monotonicity rule fires, deriveGateExplain falls back to the gate's
+  // primary_driver judge — the judge that moved the round MOST, in either
+  // direction. Printing "regressed <judge>" under a PROMOTED verdict asserts a
+  // regression that did not happen.
+  const promoted = cand.verdictSentence(explain({
+    decision: 'promoted', decidingRule: null, decidingLabel: null,
+    regressed: 'no_fabricated_numbers', regressedFrom: 'driver',
+    deltaScalar: -18.001, margin: 0.01,
+  }));
+  assertEqual(promoted, 'promoted · driver no_fabricated_numbers · 17.991 clear of the 0.010 margin',
+    'the primary driver is NAMED as the driver — the useful fact, told truthfully');
+  assert(cand.verdictSentence(explain()).includes('regressed q3_metrics_outline'),
+    '...while a rule-named entry still reads as the regression it was');
+});
+
+test('deriveGateExplain (via the dossier): tags WHERE the named entry came from', () => {
+  // pinned through the public sentence, since deriveGateExplain is internal:
+  // a gate that names a regressed predicate keeps "regressed"; a gate that
+  // only carries a primary_driver switches the word.
+  assert(cand.verdictSentence(explain({ regressedFrom: null })).includes('regressed '),
+    'an untagged (pre-feature) explain keeps the historical wording');
 });
 
 test('verdictSentence: every clause DROPS with its field — a shorter true sentence, never a fabricated one', () => {
