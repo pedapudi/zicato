@@ -501,3 +501,68 @@ def test_practice_review_renders_the_evidence_behind_its_verdict() -> None:
         "the recommended margin the check computed never reaches the report; "
         f"rendered={rendered!r}"
     )
+
+
+def test_the_report_names_each_judge_s_recommendation() -> None:
+    """``JudgeScorecard.recommendation`` reached NEITHER surface.
+
+    The same last-hop drop, one layer over: the scorecard record carries a
+    per-judge remedy as a first-class field, and both the report's
+    scorecard table and the dashboard's judge cards emitted every number
+    on the record and none of its prose. A card that reports a judge's
+    precision without its remedy leaves the operator to re-derive one from
+    the confusion matrix.
+
+    Rendered BENEATH the table rather than as a twelfth column — a
+    recommendation is a sentence, and the table is already eleven columns
+    of numbers — and only for judges that carry one, so a clean audit adds
+    no empty section.
+    """
+    from zicato.cli.commands.reflect import _render_report_md  # noqa: PLC0415
+
+    scorecards = [
+        {
+            "judge_name": "format.json",
+            "tp": 14,
+            "fp": 3,
+            "fn": 6,
+            "tn": 15,
+            "ambiguous": 3,
+            "precision": 0.824,
+            "recall": 0.7,
+            "f1": 0.757,
+            "self_consistency_kappa": 0.84,
+            "exercised": True,
+            "recommendation": "tighten 'format.json' — it fires on 3 well-formed payloads",
+        },
+        {
+            "judge_name": "safety.scope",
+            "tp": 2,
+            "fp": 0,
+            "fn": 1,
+            "tn": 20,
+            "ambiguous": 0,
+            "precision": 1.0,
+            "recall": 0.667,
+            "f1": 0.8,
+            "self_consistency_kappa": 0.91,
+            "exercised": True,
+            "recommendation": "",
+        },
+    ]
+
+    rendered = _render_report_md({"reflection_id": "r1"}, scorecards, [])
+
+    assert (
+        "tighten 'format.json'" in rendered
+    ), f"the judge's own recommendation never reaches the report; rendered={rendered!r}"
+    # A judge with no recommendation contributes no bullet.
+    assert "`safety.scope` —" not in rendered
+
+    # …and with NO judge carrying one, the section is absent entirely.
+    bare = _render_report_md(
+        {"reflection_id": "r1"},
+        [dict(scorecards[0], recommendation="")],
+        [],
+    )
+    assert "Recommendations:" not in bare
