@@ -567,6 +567,17 @@ non-empty error list):
 | A3 | For any point whose pre-apply `metadata` declared `required_placeholders`, each named placeholder (exact substring, braces included) survives in the patched content. | Prevents the proposer from silently dropping a `{user_message}` formatter the surrounding code injects. |
 | A4 | Top-level imports in every patched `.py` file are preserved — the post-apply import set must be a superset of the pre-apply set. The proposer may add imports but not silently remove them. | A dropped import breaks the snapshot at runtime, not at parse time. |
 
+Each post-apply error string is **prefixed with its check code** — `A1: `,
+`A2: `, `A3: `, `A4: ` — so a consumer counting per-check failure rates reads
+the code rather than parsing the prose. `classify_post_apply_error`
+(`zicato/mutation/validator.py`) is the one reader of that prefix, and the
+prose after it stays free to reword. The division is the same one
+`GateEvaluated` draws between its numeric fields and its presentational
+`rule_fired`: the code is the contract, the sentence is for humans. An error
+carrying no recognised code classifies as `None` (the honest unknown) rather
+than being attributed to a check that may not have run — see the proposer
+scorecard, [PROPOSER.md §6.1](PROPOSER.md).
+
 A3 is opt-in per mutation point via the `required_placeholders`
 metadata key on the marker; the validator never guesses placeholders
 for an unannotated span. It is format-agnostic — a placeholder is an

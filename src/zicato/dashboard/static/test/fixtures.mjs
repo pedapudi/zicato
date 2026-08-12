@@ -194,6 +194,39 @@ export const REFLECTION_LIST = { reflections: [
     decision_flip_p: null, n_findings: 0, n_judges: 5 },
 ] };
 
+// ---- proposer panel (query/proposer_view.py reader shapes) ----------
+//
+// Two epochs so the trend has something to trend, and one of them carries the
+// two honesty cases the panel must render distinctly: a NULL rate (nothing
+// observed) and a PROVISIONAL one (measured, but too thin to act on).
+export const PROPOSER_SCORECARD = {
+  found: true, epoch_id: EPOCH_ID, min_sample_n: 5, card: null,
+  epochs: [
+    { epoch_id: 'e0', proposer_agent_id: 'builtin:default', rounds: 8, proposals: 8,
+      promote_rate: { k: 2, n: 8, value: 0.25, provisional: false },
+      validation_failure_rate: { k: 3, n: 8, value: 0.375, provisional: false },
+      screen_veto_rate: { k: 0, n: 0, value: null, provisional: false },
+      margins: { n: 6, unmeasured: 0, achieved_median: 0.021, provisional: false } },
+    { epoch_id: EPOCH_ID, proposer_agent_id: 'dir:fancy', rounds: 3, proposals: 3,
+      promote_rate: { k: 1, n: 3, value: 0.3333, provisional: true },
+      validation_failure_rate: { k: 2, n: 3, value: 0.6667, provisional: true },
+      screen_veto_rate: { k: 1, n: 3, value: 0.3333, provisional: true },
+      margins: { n: 2, unmeasured: 1, achieved_median: null, provisional: true } },
+  ],
+};
+
+export const PROPOSER_RECOMMENDATIONS = { found: true, count: 1, pending: [
+  { finding_id: 'prec-9f3a12bc', epoch_id: 'e0', reflection_id: 'prefl-20260601T090000Z',
+    severity: 'critical', title: 'Post-apply check A4 fails on 38% of proposals',
+    detail: 'Three of eight proposal attempts dropped a top-level import.',
+    population: '8 proposal attempts across 8 rounds of epoch e0.',
+    measured: [{ metric: 'validator_failure_rate.A4', k: 3, n: 8, value: 0.375, provisional: false }],
+    compared_against: 'Banded prior epochs (A4): none',
+    remedy_safety: 'The edit writes markdown under the proposer dir’s skills/.',
+    remedy_kind: 'skill_add', remedy_path: 'skills/preserve-imports.md',
+    remedy_sha256: 'a1b2c3d4e5f6' },
+] };
+
 export const REFLECTION_SUMMARY = {
   reflection_id: REFLECTION_ID, epoch_id: EPOCH_ID, created_at: '2026-05-30T12:00:00Z',
   mode: 'reliability+validity', executed: true, found: true,
@@ -335,6 +368,10 @@ export function reflectionFixtureMap(opts) {
     [`/api/reflection/${REFLECTION_ID}/scorecards`]: REFLECTION_SCORECARDS,
     [`/api/reflection/${REFLECTION_ID}/practices`]: o.practices || REFLECTION_PRACTICES,
     [REFL_XRAY_PATH]: o.xray || REFLECTION_XRAY,
+    // The proposer panel shares the Instrument landing, so its two reads ride
+    // the same fixture map.
+    '/api/proposer/scorecard': o.proposerScorecard || PROPOSER_SCORECARD,
+    '/api/proposer/recommendations': o.proposerRecommendations || PROPOSER_RECOMMENDATIONS,
   };
   return F;
 }

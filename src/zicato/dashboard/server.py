@@ -432,6 +432,10 @@ def create_app(
         # Instrument-lens (board-reflection) surface — self-contained block so
         # the concurrent endpoints.py thinning (track U2) merges additively.
         Route("/api/reflections", handlers["api_reflections"]),
+        # The proposer panel's two reads, under the same lens: the scorecard
+        # trend and the pending-recommendation queue.
+        Route("/api/proposer/scorecard", handlers["api_proposer_scorecard"]),
+        Route("/api/proposer/recommendations", handlers["api_proposer_recommendations"]),
         Route(
             "/api/reflection/{reflection_id}/summary",
             handlers["api_reflection_summary"],

@@ -41,6 +41,15 @@ Post-apply checks (:func:`validate_post_apply`)
    preserved — the set of top-level import statements after apply must
    be a superset of the set before. A proposer is allowed to ADD imports
    but not silently remove them; the validator catches the latter.
+
+Each post-apply error string is PREFIXED with the stable check code it
+came from (``A1:`` … ``A4:``, the codes MUTATION-SURFACE.md §"post-apply"
+names). The prose after the code stays human-readable and free to
+reword; the code is the machine-readable half, so a consumer that counts
+per-check failure rates (the proposer scorecard) never regexes the
+sentence. :func:`classify_post_apply_error` is the ONE reader of that
+prefix — the same division of labour ``GateEvaluated`` draws between its
+numeric fields and its presentational ``rule_fired``.
 """
 
 from __future__ import annotations
@@ -69,6 +78,30 @@ _OP_RULES: dict[str, dict[str, object]] = {
 #: that sets a payload field foreign to its op (e.g. a ``replace`` patch
 #: that also populates ``new_numeric``).
 _ALL_PAYLOAD_FIELDS = ("new_content", "new_numeric", "new_enum")
+
+#: The post-apply check codes, in check order, as MUTATION-SURFACE.md
+#: §"post-apply" names them. Every string :func:`validate_post_apply`
+#: returns starts with one of these plus ``": "``.
+POST_APPLY_CHECKS: tuple[str, ...] = ("A1", "A2", "A3", "A4")
+
+#: The separator between a check code and its human-readable prose.
+_CODE_SEP = ": "
+
+
+def classify_post_apply_error(message: str) -> str | None:
+    """Return the post-apply check code ``message`` came from, or ``None``.
+
+    ``None`` is the HONEST unknown, not a bucket: a string that carries no
+    recognised prefix is either an error from some other producer (a
+    proposer parse failure, a credential lapse a best-of-N slot recorded)
+    or a validator error from a log written before the codes existed. A
+    consumer counts those separately rather than attributing them to a
+    check that may not have run.
+    """
+    code, sep, _rest = message.partition(_CODE_SEP)
+    if sep and code in POST_APPLY_CHECKS:
+        return code
+    return None
 
 
 def validate_patches(
@@ -278,25 +311,25 @@ def validate_post_apply(
     # :func:`ast.parse` produces false positives.
     for file_path in touched_files:
         if not file_path.exists():
-            errors.append(f"Touched file {file_path} does not exist post-apply")
+            errors.append(f"A1: Touched file {file_path} does not exist post-apply")
             continue
         try:
             text = file_path.read_text(encoding="utf-8")
         except OSError as exc:
-            errors.append(f"Could not read {file_path}: {exc}")
+            errors.append(f"A1: Could not read {file_path}: {exc}")
             continue
         if file_path.suffix != ".py":
             continue
         try:
             ast.parse(text)
         except SyntaxError as exc:
-            errors.append(f"Post-apply syntax error in {file_path}: {exc}")
+            errors.append(f"A1: Post-apply syntax error in {file_path}: {exc}")
 
     # Check 2: every patch's mutation id still resolves.
     for patch in patches:
         if patch.mutation_id not in post_by_id:
             errors.append(
-                f"Patch {patch.id!r}: mutation_id {patch.mutation_id!r} no longer "
+                f"A2: Patch {patch.id!r}: mutation_id {patch.mutation_id!r} no longer "
                 f"resolves in target_root"
             )
 
@@ -315,7 +348,7 @@ def validate_post_apply(
         for placeholder in placeholders:
             if placeholder not in post.content:
                 errors.append(
-                    f"Patch {patch.id!r}: required placeholder {placeholder!r} "
+                    f"A3: Patch {patch.id!r}: required placeholder {placeholder!r} "
                     f"missing from post-apply content of {patch.mutation_id!r}"
                 )
 
@@ -348,7 +381,9 @@ def validate_post_apply(
         missing = pre_imports - post_imports
         if missing:
             missing_str = ", ".join(sorted(missing))
-            errors.append(f"Post-apply file {file_path} dropped top-level imports: {missing_str}")
+            errors.append(
+                f"A4: Post-apply file {file_path} dropped top-level imports: {missing_str}"
+            )
 
     return errors
 
@@ -367,4 +402,10 @@ def check_forbidden_ids(patches: list[Patch], forbidden_ids: list[str]) -> list[
     return errors
 
 
-__all__ = ["validate_patches", "validate_post_apply", "check_forbidden_ids"]
+__all__ = [
+    "POST_APPLY_CHECKS",
+    "check_forbidden_ids",
+    "classify_post_apply_error",
+    "validate_patches",
+    "validate_post_apply",
+]

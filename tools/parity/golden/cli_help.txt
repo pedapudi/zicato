@@ -57,6 +57,8 @@ Advanced commands — off the happy path (inspection & debugging):
                         change.
   propose               Advanced: generate one Experiment for the next
                         generation.
+  proposer              Advanced: score, diagnose, and improve the proposer
+                        itself.
   reflect               Advanced: validate the evaluation contract (board
                         reflection).
   regenerate-report     Advanced: re-render `epochs/{id}/analysis.md` against
@@ -761,6 +763,105 @@ Options:
   --max-retries INTEGER RANGE  How many times to ask the proposer to fix a
                                malformed response.  [default: 2; 0<=x<=10]
   --help                       Show this message and exit.
+
+===== zicato proposer --help =====
+Usage: zicato proposer [OPTIONS] COMMAND [ARGS]...
+
+  Advanced: the proposer's scorecard and its recommend-only self-reflection.
+
+  The evolve loop improves the TARGET. This command surface improves the
+  PROPOSER — it reads the proposal-quality signals the loop already records,
+  diagnoses mechanism-level weaknesses, and drafts edits to the proposer dir for
+  the operator to apply at an epoch boundary.
+
+  Nothing here ever applies an edit on its own, and nothing here runs mid-epoch:
+  the proposer is frozen for its epoch, so a change to it is structurally an
+  epoch-boundary event.
+
+Options:
+  --help  Show this message and exit.
+
+Commands:
+  apply-recommendation  Write one drafted edit into the proposer dir (rolls the
+                        epoch).
+  recommendations       The pending queue: drafted, carries a diff, not yet
+                        applied.
+  reflect               Recommend-only: diagnose the proposer and draft edits to
+                        it.
+  scorecard             Per-epoch proposal quality + the trend.
+
+===== zicato proposer apply-recommendation --help =====
+Usage: zicato proposer apply-recommendation [OPTIONS] RECOMMENDATION_ID
+
+  Apply one recommendation's drafted edit to the proposer dir.
+
+  This is the operator's gate — the only path that writes a recommendation into
+  the proposer. Because the proposer dir folds into the contract hash, the edit
+  is contract drift: the next `zicato evolve` closes the current epoch and opens
+  a fresh one before proposing anything, and that new epoch's record carries
+  this recommendation id.
+
+Options:
+  --workspace TEXT              Workspace root.  [default: .zicato]
+  --epoch TEXT                  Epoch owning the recommendation.
+  --proposer-path TEXT          Proposer dir to write into (default: the
+                                workspace's registered one).
+  --show-diff / --no-show-diff  Print the remedy's unified diff before writing.
+                                [default: show-diff]
+  --help                        Show this message and exit.
+
+===== zicato proposer recommendations --help =====
+Usage: zicato proposer recommendations [OPTIONS]
+
+  List every drafted recommendation that has not been applied.
+
+  This is the same list the epoch boundary prints — the boundary is when
+  applying one is free, because the epoch is rolling anyway.
+
+Options:
+  --workspace TEXT  Workspace root.  [default: .zicato]
+  --json            Emit the raw records.
+  --help            Show this message and exit.
+
+===== zicato proposer reflect --help =====
+Usage: zicato proposer reflect [OPTIONS]
+
+  Diagnose the proposer from its own scorecard and draft edits to its skills.
+
+  Recommend-only, in the strong sense: this command has no code path to applying
+  anything. It reads aggregate mechanism evidence — never board content — and
+  writes findings whose remedy is a ready-to-apply diff. The operator applies
+  one, at an epoch boundary, with `zicato proposer apply-recommendation`.
+
+Options:
+  --workspace TEXT       Workspace root.  [default: .zicato]
+  --epoch TEXT           Epoch to reflect on (default: current).
+  --persist / --dry-run  Write the findings record, or derive and print it
+                         without touching disk.  [default: persist]
+  --draft-with-llm TEXT  Dotted path to an auxiliary call_llm used to REFINE
+                         each remedy's prose. Optional — the drafted edits are
+                         complete without it.
+  --model TEXT           Model name passed to --draft-with-llm's callable.
+  --json                 Emit the raw record.
+  --help                 Show this message and exit.
+
+===== zicato proposer scorecard --help =====
+Usage: zicato proposer scorecard [OPTIONS]
+
+  Render the proposer scorecard for one epoch, plus the cross-epoch trend.
+
+  A pure read over the round logs, epoch configs, and experiments the loop
+  already wrote — it starts no runs and spends no budget.
+
+Options:
+  --workspace TEXT       Workspace root.  [default: .zicato]
+  --epoch TEXT           Epoch to detail (default: current).
+  --trend / --no-trend   Also print the per-epoch trend table above the detail.
+                         [default: trend]
+  --limit INTEGER RANGE  How many of the most recent epochs the trend covers.
+                         [default: 10; x>=1]
+  --json                 Emit the raw card dicts.
+  --help                 Show this message and exit.
 
 ===== zicato reflect --help =====
 Usage: zicato reflect [OPTIONS] COMMAND [ARGS]...
