@@ -448,14 +448,24 @@ export function livenessBandText(liveness, status) {
 // An ISO stamp as a short "Jun 8" (or "Jun 8, 2025" across a year
 // boundary). Empty string when unparseable — callers drop the date rather
 // than print "Invalid Date".
+//
+// UTC, deliberately. Every timestamp zicato writes is UTC, epoch ids are
+// UTC-dated (`2026-06-07_e4`), and the run-log rows render the ISO stamp
+// verbatim (views/logs.js). Rendering this one date in the viewer's local
+// zone would put a workspace 7 hours west into a state where the band says
+// the run stopped "Jun 7" while the log line beside it reads
+// `2026-06-08T03:58:49Z` — the operator doing timezone arithmetic to
+// reconcile two surfaces is the same self-contradiction this whole change
+// set out to remove. It also means two people in different zones reading
+// one workspace name the same day.
 export function shortDate(iso, now = new Date()) {
   if (!iso) return '';
   const d = new Date(iso);
   if (isNaN(d.getTime())) return '';
   const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
                   'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-  const base = MONTHS[d.getMonth()] + ' ' + d.getDate();
-  return d.getFullYear() === now.getFullYear() ? base : base + ', ' + d.getFullYear();
+  const base = MONTHS[d.getUTCMonth()] + ' ' + d.getUTCDate();
+  return d.getUTCFullYear() === now.getUTCFullYear() ? base : base + ', ' + d.getUTCFullYear();
 }
 
 // Format a heartbeat age (ms) into a short "last seen Ns ago" affordance.

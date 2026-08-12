@@ -151,9 +151,12 @@ test('band: interrupted reads PAST TENSE with a date, and carries NO live-tense 
   const text = LS.livenessBandText(liveness, status);
   assert(/last run/.test(text), 'it says "last run", not a present-tense claim: ' + text);
   assert(/interrupted mid-round/.test(text), 'it names the interruption: ' + text);
-  // The date renders in the OPERATOR's local timezone, so a UTC 03:58 stamp
-  // reads Jun 7 or Jun 8 depending on where they are — either is the truth.
-  assert(/Jun [78]/.test(text), 'it dates it: ' + text);
+  // UTC, and PINNED — not "Jun 7 or Jun 8, depending where you are". The
+  // stop is 2026-06-08T03:58:49Z, so every viewer reads Jun 8, matching the
+  // ISO stamp the run-log row beside it renders verbatim. A local-zone
+  // rendering would put a US-west operator on Jun 7 and split one
+  // interruption across two dates on two surfaces.
+  assert(/Jun 8/.test(text), 'it dates it in UTC: ' + text);
   // THE ACCEPTANCE CASE. None of the stale FILE CONTENT may be rendered
   // present-tense beside the verdict — no unit count, no structure, no rung.
   assert(!/unit/.test(text), 'no unit count on a dead workspace: ' + text);
@@ -174,6 +177,19 @@ test('band: live reads the phase + the unit count — the ONE place they belong'
 test('band: a workspace that never ran says so, rather than dating a run that never happened', () => {
   const text = LS.livenessBandText({ state: 'settled', live: false, endedAt: null }, {});
   assertEqual(text, 'no run yet', 'nothing ran here and it says exactly that');
+});
+
+test('shortDate: UTC, so two surfaces cannot name different days for one stop', () => {
+  // 03:58Z is the PREVIOUS day for every viewer west of Greenwich. The
+  // console's other timestamp renderer (views/logs.js) slices the ISO stamp
+  // verbatim, so this must agree with it rather than with the viewer's clock.
+  assertEqual(LS.shortDate('2026-06-08T03:58:49Z', new Date('2026-08-09T12:00:00Z')), 'Jun 8');
+  // ...and 22:30Z is the SAME day for every viewer east of it.
+  assertEqual(LS.shortDate('2026-06-08T22:30:00Z', new Date('2026-08-09T12:00:00Z')), 'Jun 8');
+  // a prior year carries its year; the comparison is UTC on both sides.
+  assertEqual(LS.shortDate('2025-12-31T23:00:00Z', new Date('2026-01-01T02:00:00Z')), 'Dec 31, 2025');
+  assertEqual(LS.shortDate(''), '', 'no stamp ⇒ no date');
+  assertEqual(LS.shortDate('not-a-date'), '', 'an unparseable stamp ⇒ no date, never "Invalid Date"');
 });
 
 test('staleLabel: months read in DAYS — "last seen 1512h ago" is true and useless', () => {
