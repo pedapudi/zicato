@@ -31,20 +31,19 @@ import zicato.dashboard as _dashboard_pkg
 
 STATIC_DIR = Path(_dashboard_pkg.__file__).resolve().parent / "static"
 
-#: The source trees the grep-shaped pins actually scan.
-_SCANNED_ROOTS = (
-    STATIC_DIR / "js",
-    STATIC_DIR / "test",
-)
-
+#: Every text source under the dashboard's static tree. Deliberately the
+#: WHOLE tree rather than the two directories today's pins happen to scan
+#: (``js/`` and ``test/``): the guard should not need updating each time a
+#: pin widens, and a file the pins skip today is one they may scan
+#: tomorrow. This picks up the top-level ``app_T.js`` / ``index.html`` and
+#: the ``css/`` stylesheets as well.
 _SCANNED_SUFFIXES = (".js", ".mjs", ".css", ".html")
 
 
 def _scanned_files() -> list[Path]:
     return sorted(
         path
-        for root in _SCANNED_ROOTS
-        for path in root.rglob("*")
+        for path in STATIC_DIR.rglob("*")
         if path.is_file() and path.suffix in _SCANNED_SUFFIXES
     )
 
@@ -59,7 +58,15 @@ def test_the_scan_finds_files_to_check() -> None:
     files = _scanned_files()
     assert len(files) > 50, f"the scanned-source walk found only {len(files)} files"
     names = {path.name for path in files}
-    assert {"builder.js", "board.js", "builder.test.mjs"} <= names
+    # One from each corner of the tree: a view, the file that carried the
+    # byte, a node test, a stylesheet, and a top-level entry point.
+    assert {
+        "builder.js",
+        "board.js",
+        "builder.test.mjs",
+        "console.css",
+        "app_T.js",
+    } <= names
 
 
 def test_no_scanned_source_carries_a_nul_byte() -> None:
