@@ -133,6 +133,48 @@ test('mutations: the caption folds into the digest', async () => {
   assert(textOf(host).includes(CAPTION), 'repaints when only the provenance changed');
 });
 
+test('mutations: a version with no content prints the reason, not nothing', async () => {
+  // A set_numeric record whose constant sits outside the enumerated span has
+  // no faithful content to show. The old pane dropped the row entirely and
+  // told the operator the generation "did not patch this site" — which is
+  // false, and the payload says so.
+  const reason = 'set_numeric 0.42 — the constant sits outside the recorded span';
+  globalThis.fetch = async (path) => {
+    const body = (() => {
+      if (path.startsWith('/api/epoch')) return { epoch_id: EPOCH };
+      if (path === `/api/mutations/${EPOCH}`) return index(CAPTION);
+      if (path.startsWith(`/api/mutations/${EPOCH}/`)) {
+        const d = detail(CAPTION);
+        d.versions[0] = Object.assign({}, d.versions[0], {
+          op: 'set_numeric', content: null, note: reason, rationale: 'tighten the margin',
+        });
+        return d;
+      }
+      if (path.includes('/patches')) {
+        return { patches: [{ id: 'p1', mutation_id: 'researcher_instr', op: 'set_numeric', new_numeric: 0.42, new_content: null, rationale: 'tighten the margin' }] };
+      }
+      return null;
+    })();
+    if (body == null) return { ok: false, status: 404, json: async () => ({ error: 'nf' }) };
+    return { ok: true, json: async () => body };
+  };
+  data.invalidate();
+  globalThis.window.location = { hash: '', search: '' };
+  const host = globalThis.document.createElement('div');
+  await mutations.render(host, CTX, { epochId: EPOCH, mutId: 'researcher_instr' });
+  const text = textOf(host);
+  assert(text.includes(reason), 'the server reason is on screen');
+  assert(text.includes('tighten the margin'), 'and the patch still says what it wanted');
+  assert(!text.includes('did not patch this site'), 'and is not called an absent patch');
+});
+
+test('mutations: a records-sourced version is marked at its own block', async () => {
+  // GC never prunes v0, so an exact baseline beside a reconstructed
+  // challenger is the COMMON case — the block says which it is.
+  const host = await renderSurface(CAPTION, { mutId: 'researcher_instr' });
+  assert(textOf(host).includes('from records'), 'the block carries the provenance');
+});
+
 test('mutations: the diff column stops claiming v0 when the server will not', async () => {
   const pinned = { epochId: EPOCH, mutId: 'researcher_instr' };
   const fromRecords = await renderSurface(CAPTION, pinned);

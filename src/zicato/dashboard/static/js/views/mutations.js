@@ -94,6 +94,10 @@ export async function render(host, ctx, params) {
       baselineLen: d.baselineStr == null ? -1 : d.baselineStr.length,
       patched: d.pinnedSite ? [...d.patchesByGen.keys()] : null,
       note: d.note, baselineGen: d.baselineGen, surfaceError: d.surfaceError,
+      versions: (d.detail && Array.isArray(d.detail.versions))
+        ? d.detail.versions.map((v) => [v.generation_id, v.provenance, v.note || v.error || '',
+          v.content == null ? -1 : v.content.length])
+        : null,
     }),
     build: (d) => {
       const { epochId, gens, sites, patchedBySite, pinnedSite, detail, patchesByGen, baselineStr, note, baselineGen, surfaceError } = d;
@@ -212,21 +216,30 @@ function detailPane(site, pinnedGen, baselineStr, detail, patchesByGen, ctx, epo
     pane.appendChild(el('p', { class: 'dn-patch-note dn-faint', text: 'No baseline content recorded for this site — the diff needs both sides.' }));
   }
 
+  const versions = (detail && Array.isArray(detail.versions)) ? detail.versions : [];
   const touched = [...(patchesByGen.keys ? patchesByGen.keys() : [])];
   let any = false;
   for (const g of touched) {
     const patches = patchesByGen.get(g) || [];
     const patch = patches.find((p) => p.mutation_id === site.mutation_id || p.id === site.mutation_id);
+    const version = versions.find((x) => x.generation_id === g) || null;
     // challenger new content (STRING) from /patches; fall back to the detail's
-    // version content if the patches payload lacks it.
+    // version content if the patches payload lacks it (a value op carries no
+    // new_content, so the server's reconstruction is the only text there is).
     let newStr = patch && patch.new_content != null ? String(patch.new_content) : null;
-    if (newStr == null && detail && Array.isArray(detail.versions)) {
-      const v = detail.versions.find((x) => x.generation_id === g);
-      if (v && typeof v.content === 'string') newStr = v.content;
+    if (newStr == null && version && typeof version.content === 'string') newStr = version.content;
+    if (newStr == null) {
+      // No content for this generation — but the server said WHY (a value
+      // whose constant sits outside the recorded span; a marker the tree no
+      // longer enumerates). Print its reason rather than dropping the row.
+      const why = version ? String(version.note || version.error || '') : '';
+      if (!why) continue;
+      any = true;
+      pane.appendChild(genNoteBlock(g, patch, version, why, ctx, epochId));
+      continue;
     }
-    if (newStr == null) continue;
     any = true;
-    pane.appendChild(genDiffBlock(g, patch, baselineStr == null ? '' : baselineStr, newStr, site, ctx, epochId, baselineGen));
+    pane.appendChild(genDiffBlock(g, patch, baselineStr == null ? '' : baselineStr, newStr, site, ctx, epochId, baselineGen, version));
   }
   if (!any) {
     pane.appendChild(el('p', { class: 'dn-empty', text: single
@@ -236,17 +249,44 @@ function detailPane(site, pinnedGen, baselineStr, detail, patchesByGen, ctx, epo
   return pane;
 }
 
-function genDiffBlock(gen, patch, baselineStr, newStr, site, ctx, epochId, baselineGen) {
-  const block = el('div', { class: 'dn-patch-block' });
-  const op = String((patch && patch.op) || 'replace');
-  block.appendChild(el('div', { class: 'dn-patch-head' }, [
+// The head every per-generation block shares: the generation, its op, and —
+// when this ONE generation's content came from the records while another's did
+// not — which of the two it is. Per block, because the mixed case is the COMMON
+// one: GC never prunes v0, so an exact baseline routinely sits beside a
+// reconstructed challenger.
+function genBlockHead(gen, patch, version, ctx, epochId) {
+  const op = String((patch && patch.op) || (version && version.op) || 'replace');
+  const fromRecords = !!(version && version.provenance === 'records');
+  return el('div', { class: 'dn-patch-head' }, [
     el('a', { class: 'dn-mtx-genlink', href: ctx.href('candidate', { epochId, gen }), text: gen }),
     el('span', { class: 'dn-patch-op dn-mono', text: op }),
-  ]));
-  const rationale = patch && patch.rationale ? String(patch.rationale).trim() : '';
-  if (rationale) {
-    block.appendChild(el('p', { class: 'dn-patch-why' }, [el('span', { class: 'dn-patch-why-lead', text: 'Why. ' }), rationale]));
-  }
+    fromRecords ? el('span', { class: 'dn-faint dn-mono', text: ' · from records' }) : null,
+  ].filter(Boolean));
+}
+
+// The patch's own reason for existing. Kept beside a block that has no
+// content to show as much as one that does — "what was this trying to do"
+// survives in the record even when the changed text does not.
+function blockWhy(patch, version) {
+  const rationale = String((patch && patch.rationale) || (version && version.rationale) || '').trim();
+  if (!rationale) return null;
+  return el('p', { class: 'dn-patch-why' }, [el('span', { class: 'dn-patch-why-lead', text: 'Why. ' }), rationale]);
+}
+
+function genNoteBlock(gen, patch, version, why, ctx, epochId) {
+  const block = el('div', { class: 'dn-patch-block' });
+  block.appendChild(genBlockHead(gen, patch, version, ctx, epochId));
+  const why_ = blockWhy(patch, version);
+  if (why_) block.appendChild(why_);
+  block.appendChild(el('p', { class: 'dn-patch-note dn-faint', text: why }));
+  return block;
+}
+
+function genDiffBlock(gen, patch, baselineStr, newStr, site, ctx, epochId, baselineGen, version) {
+  const block = el('div', { class: 'dn-patch-block' });
+  block.appendChild(genBlockHead(gen, patch, version, ctx, epochId));
+  const why = blockWhy(patch, version);
+  if (why) block.appendChild(why);
   block.appendChild(svg.sideBySideDiff({
     baseline: baselineStr,
     challenger: newStr,
