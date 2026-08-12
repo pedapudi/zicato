@@ -78,6 +78,10 @@ export async function render(host, ctx) {
     live, cur: current,
     rows: rows.map((r) => [r.epoch_id, r.generation_count || 0, r.promoted_count || 0,
       svg.isNum(r.best_scalar) ? r.best_scalar.toFixed(3) : null, !!r.closed,
+      // WHICH generation set that floor (events_index `best_generation_id`) —
+      // rendered on the fleet card + as the overview tile's deep link, so it
+      // has to gate the swap: the same best_scalar can change hands.
+      r.best_generation_id == null ? null : String(r.best_generation_id),
       (trajByEpoch.get(r.epoch_id) || []).map((v) => v.toFixed(3))]),
     // the loop-communication stats are content-gated on their own rounded fold
     // so a no-op heartbeat (identical rates/verdicts/costs) churns no DOM.
@@ -100,7 +104,7 @@ export async function render(host, ctx) {
       el('p', { class: 'dn-lede', text: 'The workspace as a fleet — every epoch at a glance. Lower scalar (loss) is better.' }),
     ]));
 
-    nodes.push(overviewStrip(rows, live));
+    nodes.push(overviewStrip(rows, live, ctx));
 
     // The fleet of per-epoch console cards is the lead view — the workspace at
     // a glance, each card the per-epoch drill-in.
@@ -135,15 +139,23 @@ export async function render(host, ctx) {
       const ccard = el('div', { class: 'dn-panel dn-figpane dn-caltrend-pane' });
       ccard.appendChild(svg.calibrationTrend({
         points: calib.points, rolling_mean: calib.rolling_mean, trend_sign: calib.trend_sign,
+        // the SERVED readouts (build_calibration_trend): the latest scored
+        // fraction and how many generations carried claims. Read, never
+        // re-derived from `points` client-side.
+        latest_fraction: calib.latest_fraction, n_scored: calib.n_scored,
         responsive: true,
         onGen: (gid) => ctx.navigate && current != null && ctx.navigate('candidate', { epochId: current, gen: gid }),
       }));
       const tsign = svg.isNum(calib.trend_sign) ? calib.trend_sign : 0;
       const trendWord = tsign > 0 ? 'improving' : tsign < 0 ? 'regressing' : 'flat / too few';
       const rm = svg.isNum(calib.rolling_mean) ? Math.round(calib.rolling_mean * 100) + '%' : '—';
+      const lf = svg.isNum(calib.latest_fraction) ? Math.round(calib.latest_fraction * 100) + '%' : '—';
+      const ns = svg.isNum(calib.n_scored) ? calib.n_scored : null;
       ccard.appendChild(el('p', { class: 'dn-faint', style: 'font-size:11px;margin:8px 0 0;',
         text: 'diagnostic — does not affect the gate · proposer calibration ' + trendWord
-          + ' · epoch mean ' + rm + ' of claims landed · higher = better-calibrated' }));
+          + ' · epoch mean ' + rm + ' of claims landed · latest ' + lf
+          + (ns == null ? '' : ' · ' + ns + ' generation' + (ns === 1 ? '' : 's') + ' scored')
+          + ' · higher = better-calibrated' }));
       nodes.push(section('Calibration trend · proposer prediction accuracy (diagnostic)', ccard));
     }
 
@@ -153,27 +165,42 @@ export async function render(host, ctx) {
   });
 }
 
-function overviewStrip(rows, live) {
-  let gens = 0, promoted = 0, open = 0, best = null;
+function overviewStrip(rows, live, ctx) {
+  let gens = 0, promoted = 0, open = 0, best = null, bestRow = null;
   for (const r of rows) {
     gens += r.generation_count || 0;
     promoted += r.promoted_count || 0;
     if (!r.closed) open += 1;
-    if (svg.isNum(r.best_scalar)) best = best == null ? r.best_scalar : Math.min(best, r.best_scalar);
+    if (svg.isNum(r.best_scalar) && (best == null || r.best_scalar < best)) { best = r.best_scalar; bestRow = r; }
   }
+  // WHICH generation holds the fleet floor. `/api/workspace` names it
+  // (`best_generation_id` beside `best_scalar`); this tile is the one place the
+  // pairing can be a REAL link — inside a fleet card the value already sits in
+  // the card's own <a>, and an anchor cannot nest. So: the tile foot deep-links
+  // to that candidate's dossier, and each card names its own holder in text.
+  const bestFoot = (bestRow && bestRow.best_generation_id && ctx && ctx.href)
+    ? el('a', {
+        class: 'dn-tile-foot dn-tile-footlink dn-mono',
+        href: ctx.href('candidate', { epochId: bestRow.epoch_id, gen: String(bestRow.best_generation_id) }),
+        title: `${bestRow.best_generation_id} set the fleet floor in ${bestRow.epoch_id}`,
+      }, [String(bestRow.best_generation_id) + ' →'])
+    : null;
   return el('div', { class: 'dn-panel dn-row dn-overview' }, [
     statTile(String(rows.length), 'epochs', open + ' open'),
     statTile(String(gens), 'generations', promoted + ' promoted'),
-    statTile(fmt(best), 'best scalar', 'lowest across fleet'),
+    statTile(fmt(best), 'best scalar', bestFoot || 'lowest across fleet'),
     statTile(live ? 'LIVE' : 'IDLE', 'phase', live ? 'tournament running' : 'between rounds'),
   ]);
 }
 
+// `foot` is either a string or a ready-made node (the best-scalar deep link).
 function statTile(value, key, foot) {
+  const footNode = (foot && typeof foot === 'object' && foot.nodeType !== undefined)
+    ? foot : (foot ? el('span', { class: 'dn-tile-foot', text: foot }) : null);
   return el('div', { class: 'dn-tile' }, [
     el('span', { class: 'dn-tile-value', text: value }),
     el('span', { class: 'dn-tile-key', text: key }),
-    foot ? el('span', { class: 'dn-tile-foot', text: foot }) : null,
+    footNode,
   ].filter(Boolean));
 }
 
@@ -204,8 +231,13 @@ function fleetCard(row, isCurrent, ctx, sparkVals, live, loop, cost) {
   ]);
   const promo = promotionRateLabel(loop);
   const costLabel = costPerPromotionLabel(cost);
+  // "best" names its HOLDER: the generation `best_generation_id` that set this
+  // epoch's floor. Text, not a link — the whole card is already an <a> to the
+  // epoch, and nesting an anchor inside it is invalid; the fleet-wide deep link
+  // lives on the overview tile above.
+  const bestGen = row.best_generation_id == null ? null : String(row.best_generation_id);
   const stats = el('div', { class: 'dn-fleet-stats' }, [
-    miniStat('best', fmt(row.best_scalar), 'good'),
+    miniStat('best', fmt(row.best_scalar), 'good', bestGen),
     miniStat('gens', String(row.generation_count || 0)),
     miniStat('promoted', String(row.promoted_count || 0)),
     promo ? miniStat('promo rate', promo) : null,
@@ -243,11 +275,14 @@ export function heroPlaceholderText(loop) {
     : roundWord + ' · ' + promoted + ' promoted';
 }
 
-function miniStat(k, v, tone) {
+// `by` (optional) names WHO set the value — rendered as a muted suffix, e.g.
+// "best 70.9 · v2" for the generation that holds the epoch's floor.
+function miniStat(k, v, tone, by) {
   return el('div', { class: 'dn-mini' }, [
     el('span', { class: 'dn-mini-k', text: k }),
     el('span', { class: 'dn-mini-v' + (tone ? ' dn-good-t' : ''), text: v }),
-  ]);
+    by ? el('span', { class: 'dn-mini-by dn-faint dn-mono', title: by + ' set this floor', text: '· ' + by }) : null,
+  ].filter(Boolean));
 }
 
 // This epoch's REAL per-generation best-scalar trajectory, in generation

@@ -436,4 +436,158 @@ test('home view: a workspace with NO calibration data drops the trend (byte-iden
   assertEqual(allByClass(host, 'dn-caltrend').length, 0, 'no trend figure when nothing is scored');
 });
 
+// ── 10. THE SERVED READOUTS: `latest_fraction` + `n_scored` (A13) ───────────
+//
+// build_calibration_trend serves BOTH. The figure used to scan `points`
+// backwards to find the latest scored fraction and never printed it at all —
+// the duplicated-logic bug class. These pin that the SERVED value is what
+// renders, that `n_scored` reaches the operator, and that an absent field still
+// degrades honestly.
+
+function textOfClass(host, cls) {
+  const n = allByClass(host, cls)[0];
+  return n ? String(n.textContent) : null;
+}
+
+test('calibrationTrend: the end label reads the SERVED latest_fraction, NOT a client re-derivation', () => {
+  // A DELIBERATE divergence: the server says the latest scored fraction is 0.40
+  // while the last plotted point carries 0.80. A client that re-derives prints
+  // 80%; one that reads the payload prints 40%.
+  const diverged = trendFixture();
+  diverged.latest_fraction = 0.40;
+  const host = mountInto(svg.calibrationTrend(diverged));
+  assertEqual(textOfClass(host, 'dn-caltrend-latest'), '40%',
+    'the figure prints the SERVED latest_fraction (40%), never the re-derived 80%');
+});
+
+test('calibrationTrend: an absent latest_fraction degrades to the last scored point (honest fallback)', () => {
+  const pre = trendFixture();
+  delete pre.latest_fraction;   // a pre-field server
+  const host = mountInto(svg.calibrationTrend(pre));
+  assertEqual(textOfClass(host, 'dn-caltrend-latest'), '80%',
+    'with no served field the figure falls back to the last scored point (80%)');
+});
+
+test('calibrationTrend: n_scored renders as the figure caption (how much lineage the trend rests on)', () => {
+  const host = mountInto(svg.calibrationTrend(trendFixture()));
+  const cap = textOfClass(host, 'dn-caltrend-cap');
+  assert(cap && cap.includes('3 of 4'), 'the caption reads "3 of 4 generations scored", got: ' + cap);
+  // absent n_scored → no caption (byte-identical to the pre-field figure).
+  const pre = trendFixture();
+  delete pre.n_scored;
+  assertEqual(allByClass(mountInto(svg.calibrationTrend(pre)), 'dn-caltrend-cap').length, 0,
+    'a payload with no n_scored renders no caption');
+});
+
+test('calibrationTrendDigest: latest_fraction + n_scored are FOLDED (the render-without-digest trap)', () => {
+  const base = svg.calibrationTrendDigest(trendFixture());
+
+  // latest_fraction moves while EVERY plotted point stays equal — the exact
+  // case a digest blind to the field would fail to repaint.
+  const lf = trendFixture(); lf.latest_fraction = 0.40;
+  assert(svg.calibrationTrendDigest(lf) !== base, 'a changed latest_fraction flips the digest');
+
+  // n_scored moves alone (the caption changes) → must flip.
+  const ns = trendFixture(); ns.n_scored = 2;
+  assert(svg.calibrationTrendDigest(ns) !== base, 'a changed n_scored flips the digest');
+
+  // and a true no-op is still byte-identical.
+  assertEqual(svg.calibrationTrendDigest(trendFixture()), base, 'a no-op beat stays byte-identical');
+});
+
+test('home view: the calibration caption names the SERVED latest fraction + scored count', async () => {
+  data.invalidate();
+  globalThis.window.location = { hash: '', search: '' };
+  const served = trendFixture();
+  served.latest_fraction = 0.40;   // diverges from the last plotted point (0.80)
+  installFetch({
+    '/api/workspace': WS,
+    '/api/health-report': { epoch_id: 'e1', healthy: true, findings: [] },
+    '/api/score-trajectory': { points: [{ generation_id: 'v0', scalar: 41 }, { generation_id: 'v1', scalar: 40 }] },
+    '/api/calibration-trend': served,
+  });
+  const host = document.createElement('div');
+  await home.render(host, { navigate() {}, href: router.href }, {});
+  assert(host.textContent.includes('latest 40%'), 'the caption prints the SERVED latest fraction');
+  assert(host.textContent.includes('3 generations scored'), 'the caption prints n_scored');
+});
+
+// ── 11. `best_generation_id` — WHO set the floor (A14) ──────────────────────
+//
+// /api/workspace names the generation behind every `best_scalar`. The home view
+// rendered the number and never the name. The fleet-wide tile deep-links to that
+// candidate (it is the one spot not already inside the fleet card's own anchor);
+// each card names its own holder in text.
+
+const WS_BEST = {
+  current_epoch_id: 'e1',
+  epochs: [
+    { epoch_id: 'e0', generation_count: 5, promoted_count: 1, best_scalar: 42.1, best_generation_id: 'v4', closed: true, goal: 'baseline' },
+    { epoch_id: 'e1', generation_count: 6, promoted_count: 1, best_scalar: 34.2, best_generation_id: 'v7', closed: false, goal: 'tighten' },
+  ],
+  ledger: WS.ledger,
+};
+
+function homeBackend(ws) {
+  return {
+    '/api/workspace': ws,
+    '/api/health-report': { epoch_id: 'e1', healthy: true, findings: [] },
+    '/api/score-trajectory': { points: [{ generation_id: 'v0', scalar: 41 }, { generation_id: 'v1', scalar: 40 }] },
+    '/api/calibration-trend': { epoch_id: 'e1', points: [], rolling_mean: null, n_scored: 0, latest_fraction: null, trend_sign: 0 },
+  };
+}
+
+test('home view: the fleet-best tile DEEP-LINKS to the generation that set the floor', async () => {
+  data.invalidate();
+  globalThis.window.location = { hash: '', search: '' };
+  installFetch(homeBackend(WS_BEST));
+  const host = document.createElement('div');
+  await home.render(host, { navigate() {}, href: router.href }, {});
+  const link = allByClass(host, 'dn-tile-footlink')[0];
+  assert(link, 'the best-scalar tile carries a deep link to the holding generation');
+  assert(String(link.textContent).includes('v7'), 'it names v7 — the holder of the LOWEST scalar across the fleet');
+  const href = link.getAttribute('href');
+  // the candidate route is `#/e/<epoch>/gen/<gen>` (js/router.js).
+  assertEqual(href, '#/e/e1/gen/v7', 'the href routes to that candidate in its own epoch');
+});
+
+test('home view: each fleet card names its own best_generation_id beside the floor', async () => {
+  data.invalidate();
+  globalThis.window.location = { hash: '', search: '' };
+  installFetch(homeBackend(WS_BEST));
+  const host = document.createElement('div');
+  await home.render(host, { navigate() {}, href: router.href }, {});
+  const bys = allByClass(host, 'dn-mini-by').map((n) => String(n.textContent));
+  assert(bys.some((t) => t.includes('v4')), 'e0’s card names v4');
+  assert(bys.some((t) => t.includes('v7')), 'e1’s card names v7');
+  // a workspace with no such field renders no holder text (back-compat).
+  data.invalidate();
+  installFetch(homeBackend(WS));
+  const plain = document.createElement('div');
+  await home.render(plain, { navigate() {}, href: router.href }, {});
+  assertEqual(allByClass(plain, 'dn-mini-by').length, 0,
+    'a pre-field workspace renders no holder text (byte-identical to before)');
+});
+
+test('home view: best_generation_id is FOLDED into the digest (the floor changing hands repaints)', async () => {
+  data.invalidate();
+  globalThis.window.location = { hash: '', search: '' };
+  installFetch(homeBackend(WS_BEST));
+  const host = document.createElement('div');
+  const ctx = { navigate() {}, href: router.href };
+  await home.render(host, ctx, {});
+  const first = host.getAttribute('data-t-digest');
+
+  // the SAME best_scalar, a DIFFERENT holder — the exact case a digest blind to
+  // the field would refuse to repaint.
+  const handedOver = JSON.parse(JSON.stringify(WS_BEST));
+  handedOver.epochs[1].best_generation_id = 'v9';
+  data.invalidate();
+  installFetch(homeBackend(handedOver));
+  await home.render(host, ctx, {});
+  assert(host.getAttribute('data-t-digest') !== first,
+    'the floor changing hands (same scalar, new generation) flips the home digest');
+  assert(allByClass(host, 'dn-tile-footlink')[0].textContent.includes('v9'), 'the tile repainted with the new holder');
+});
+
 run();

@@ -309,6 +309,66 @@ def test_workspace_identity_mutation_point_count(phase1_workspace: Path) -> None
     assert ident["mutation_point_count"] >= 1
 
 
+def test_mutation_point_count_is_off_the_per_request_hot_path(
+    phase1_workspace: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The enumeration runs ONCE across a burst of identity builds.
+
+    ``/api/environment`` folds this in, and the dashboard hits that endpoint on
+    every heartbeat — many times a second. The enumerator opens and AST-parses
+    every file under every source root, so a per-request walk put a whole-tree
+    parse behind each heartbeat.
+    """
+    from zicato.query import judge_view
+
+    judge_view._MUTATION_COUNT_CACHE.clear()
+
+    calls = {"n": 0}
+    import zicato.mutation.enumerator as enumerator
+
+    inner = enumerator.enumerate_mutations
+
+    def counting(roots):
+        calls["n"] += 1
+        return inner(roots)
+
+    monkeypatch.setattr(enumerator, "enumerate_mutations", counting)
+
+    counts = [
+        build_workspace_identity(WorkspacePaths(phase1_workspace))["mutation_point_count"]
+        for _ in range(20)
+    ]
+    assert calls["n"] == 1
+    # The MEASURED value is served every time, not just on the walk.
+    assert counts == [counts[0]] * 20
+    assert counts[0] >= 1
+
+
+def test_mutation_point_count_is_re_walked_once_the_ttl_lapses(
+    phase1_workspace: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The staleness is BOUNDED — a cache that never expires would lie forever."""
+    from zicato.query import judge_view
+
+    judge_view._MUTATION_COUNT_CACHE.clear()
+    monkeypatch.setattr(judge_view, "_MUTATION_COUNT_TTL_S", 0.0)
+
+    calls = {"n": 0}
+    import zicato.mutation.enumerator as enumerator
+
+    inner = enumerator.enumerate_mutations
+
+    def counting(roots):
+        calls["n"] += 1
+        return inner(roots)
+
+    monkeypatch.setattr(enumerator, "enumerate_mutations", counting)
+
+    for _ in range(3):
+        build_workspace_identity(WorkspacePaths(phase1_workspace))
+    assert calls["n"] == 3
+
+
 def test_workspace_identity_degrades_when_config_absent(tmp_path: Path) -> None:
     ws = tmp_path / ".zicato"
     (ws / "runtime").mkdir(parents=True)

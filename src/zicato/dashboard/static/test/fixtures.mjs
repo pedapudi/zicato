@@ -220,7 +220,12 @@ export const REFLECTION_SUMMARY = {
         untested_judges: ['safety.scope'], fidelity_tiers: ['verbatim'] },
     },
     validity: { n_judges: 5, aggregate_f1: 0.81, untested_judges: ['safety.scope'] },
-    calibration: { promote_margin: 0.01, noise_floor_max_abs_delta: 0.018, margin_clears_floor: false },
+    // `noise_floor_delta_std` is the draw-count-stable A/A dispersion the
+    // recommendation actually scales (calibration.py); max_abs_delta is the
+    // K-inflated RANGE beside it. Both are written by the summary builder
+    // (cli/commands/reflect.py's calibration block), so both are on the wire.
+    calibration: { promote_margin: 0.01, noise_floor_max_abs_delta: 0.018,
+      noise_floor_delta_std: 0.0062, margin_clears_floor: false },
   },
   findings: [
     { finding_id: 'find-0a1b2c3d', pillar: 'calibration', severity: 'critical',

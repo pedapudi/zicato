@@ -488,3 +488,170 @@ def test_reflect_practices_in_group_help() -> None:
     result = _run(["reflect", "--help"])
     assert result.exit_code == 0
     assert "practices" in result.output
+
+
+# ---------------------------------------------------------------------------
+# The rendered report — every measured value the record carries reaches it
+# ---------------------------------------------------------------------------
+
+
+def _summary_fixture() -> dict:
+    """A bill of health with every pillar populated with distinct values."""
+    return {
+        "reflection_id": "r-1",
+        "noise_floor_max_abs_delta": 0.0810,
+        "noise_floor_delta_std": 0.0129,
+        "decision_flip_p": 0.25,
+        "pillars": {
+            "reliability": {"decision_flip": {"p_flip": 0.25}},
+            "calibration": {
+                "promote_margin": 0.0500,
+                "noise_floor_max_abs_delta": 0.0810,
+                "noise_floor_delta_std": 0.0129,
+                "margin_clears_floor": False,
+            },
+            "discrimination": {
+                "entry_differentiation": {
+                    "entries": [
+                        {"entry_id": "a", "differentiates": True, "n_candidates": 2},
+                        {"entry_id": "b", "differentiates": False, "n_candidates": 2},
+                        {"entry_id": "c", "differentiates": None, "n_candidates": 1},
+                    ]
+                },
+                "redundancy": {"redundant_clusters": [["a", "b"]]},
+                "coverage": {"uncovered_kinds": ["tool_misuse", "hallucination"]},
+            },
+            "validity": {"aggregate_f1": 0.5, "untested_judges": ["j_quiet"]},
+        },
+    }
+
+
+def test_report_surfaces_the_calibration_pillar_and_the_stable_floor() -> None:
+    """delta_std, the margin, and the clears-floor verdict all reach the text.
+
+    delta_std is the DRAW-COUNT-STABLE statistic and the range is K-inflated
+    (issue #112), so a report that printed only the range showed exactly the
+    number the calibration code says not to size a margin from.
+    """
+    from zicato.cli.commands.reflect import _render_report_md
+
+    md = _render_report_md(_summary_fixture(), [], [])
+
+    assert "0.0129" in md  # delta_std — the statistic to act on
+    assert "0.081" in md  # the range, still reported, still labelled
+    assert "K-inflated" in md and "draw-count-stable" in md
+    assert "promote margin: 0.05" in md
+    # margin_clears_floor is False in the fixture and must read as a failure.
+    assert "margin clears floor: NO" in md
+
+
+def test_report_summarises_discrimination_without_averaging_away_undecidables() -> None:
+    """1 of 2 decided entries move; the 1-candidate entry is NOT counted decided."""
+    from zicato.cli.commands.reflect import _render_report_md
+
+    md = _render_report_md(_summary_fixture(), [], [])
+
+    assert "1/2 entries differentiate" in md
+    assert "1 undecidable" in md
+    assert "1 redundant cluster(s)" in md
+    assert "2 uncovered drift kind(s)" in md
+
+
+def test_report_evidence_carries_the_chip_s_own_verdict_and_judge() -> None:
+    """The chip's verdict is rendered, never inferred from the finding's title.
+
+    The fixture is the exact trap: a finding TITLED "fires falsely" whose
+    evidence chip carries an FN span. Reading the verdict off the title would
+    mislabel it.
+    """
+    from zicato.cli.commands.reflect import _render_report_md
+
+    findings = [
+        {
+            "finding_id": "f-1",
+            "severity": "high",
+            "title": "j_loud fires falsely",
+            "detail": "",
+            "evidence": [
+                {
+                    "run_ref": "g1/entryA/0",
+                    "judge_name": "j_loud",
+                    "verdict": "fn",
+                    "span": "the planted violation nobody flagged",
+                }
+            ],
+        }
+    ]
+    md = _render_report_md(_summary_fixture(), [], findings)
+
+    assert "[FN] j_loud g1/entryA/0 — the planted violation nobody flagged" in md
+
+
+def test_report_scorecard_table_carries_the_dropped_metrics() -> None:
+    """fpr / severity_accuracy / disagreement_rate reach the table, and degrade.
+
+    They are tracked APART from precision/recall by construction: a judge can
+    score a clean f1 and still fire at the wrong severity or disagree with
+    itself, and dropping the columns hid both failure modes.
+    """
+    from zicato.cli.commands.reflect import _render_report_md
+
+    scorecards = [
+        {
+            "judge_name": "j_loud",
+            "tp": 3,
+            "fp": 2,
+            "fn": 1,
+            "tn": 4,
+            "ambiguous": 0,
+            "precision": 0.6,
+            "recall": 0.75,
+            "f1": 0.666,
+            "fpr": 0.3333,
+            "severity_accuracy": 0.25,
+            "disagreement_rate": 0.125,
+            "self_consistency_kappa": 0.5,
+            "exercised": True,
+            "recommendation": "tighten the trigger",
+        },
+        # An UNADJUDICATED judge: every optional metric is absent.
+        {
+            "judge_name": "j_quiet",
+            "tp": 0,
+            "fp": 0,
+            "fn": 0,
+            "tn": 0,
+            "ambiguous": 0,
+            "precision": None,
+            "recall": None,
+            "f1": None,
+            "fpr": None,
+            "severity_accuracy": None,
+            "disagreement_rate": None,
+            "self_consistency_kappa": None,
+            "exercised": False,
+        },
+    ]
+    md = _render_report_md(_summary_fixture(), scorecards, [])
+
+    header = next(line for line in md.splitlines() if line.startswith("| judge |"))
+    assert "FPR" in header and "sev acc" in header and "disagree" in header
+    row = next(line for line in md.splitlines() if line.startswith("| j_loud |"))
+    assert "0.333" in row and "0.250" in row and "0.125" in row
+    # Absent values degrade to the em dash, never to a fabricated 0.
+    quiet = next(line for line in md.splitlines() if line.startswith("| j_quiet |"))
+    assert quiet.count("—") == 7  # precision recall f1 fpr sev disagree κ
+    # The coordinator's per-judge recommendation list still works.
+    assert "- `j_loud` — tighten the trigger" in md
+
+
+def test_report_degrades_honestly_on_an_empty_summary() -> None:
+    """No pillars at all: every added line reads unmeasured, none fabricates."""
+    from zicato.cli.commands.reflect import _render_report_md
+
+    md = _render_report_md({"reflection_id": "r-0"}, [], [])
+
+    assert "noise floor (delta std, draw-count-stable): unmeasured" in md
+    assert "promote margin: unmeasured" in md
+    assert "margin clears floor: unmeasured" in md
+    assert "discrimination: unmeasured" in md

@@ -102,6 +102,46 @@ def _parse_board(path: Path) -> list[dict[str, Any]] | None:
     return entries
 
 
+def _parse_board_meta(path: Path) -> dict[str, Any] | None:
+    """The board's optional leading ``board_meta`` header, normalized.
+
+    BOARD-FORMAT §1.0: a board MAY open with a ``{"board_meta": true, ...}``
+    line carrying the board-wide ``disable_drift`` suppression list and the
+    ``judge_only`` flag; when present it MUST be the first line, so only the
+    first non-blank line is examined. Returns ``None`` when the header is
+    absent, unreadable, or **fully default** (an empty suppression list AND
+    ``judge_only`` false) — the writer emits no header at all for a default
+    board, so a default header and no header describe the SAME board, and
+    omitting the key keeps every such epoch's payload byte-identical to the
+    read that predates this block.
+
+    A sibling of :func:`_parse_board` rather than a second return value: that
+    reader's shape is shared with ``judge_view`` and the ``zicato.query``
+    export surface.
+    """
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError:
+        return None
+    for raw_line in text.splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        try:
+            obj = json.loads(line)
+        except json.JSONDecodeError:
+            return None
+        if not isinstance(obj, dict) or obj.get("board_meta") is not True:
+            return None  # the first line is an entry ⇒ this board has no header
+        kinds = obj.get("disable_drift")
+        disable_drift = [k for k in kinds if isinstance(k, str)] if isinstance(kinds, list) else []
+        judge_only = obj.get("judge_only") is True
+        if not disable_drift and not judge_only:
+            return None
+        return {"disable_drift": disable_drift, "judge_only": judge_only}
+    return None
+
+
 def _parse_mutations(path: Path) -> list[dict[str, Any]] | None:
     value = _read_json_value(path)
     if not isinstance(value, list):
@@ -813,6 +853,16 @@ def build_epoch_view(paths: WorkspacePaths, epoch_id: str | None = None) -> dict
         board if board is not None else [], _overfitting_block_from_scoring(scoring)
     )
 
+    # Board-level ``board_meta`` header (BOARD-FORMAT §1.0): the drift kinds
+    # suppressed for every entry + the judge-only flag. It is authored in the
+    # builder and folds into the contract hash, so a runtime surface that drops
+    # it draws a board that is scored differently from the one it shows.
+    # Omitted — like the ``tournament`` block below — when the header is absent
+    # or fully default, which is byte-identical to the pre-block read.
+    board_meta = _parse_board_meta(epoch_dir / "board.jsonl")
+    if board_meta is not None:
+        view["board_meta"] = board_meta
+
     # Tournament structure block (TOURNAMENT-DATA-MODEL.md §3.1). Echo the
     # epoch's resolved ``{structure, params}`` from the frozen
     # ``scoring.json`` so the Epoch view can name the structure without a
@@ -927,11 +977,17 @@ def build_epoch_analysis(paths: WorkspacePaths, epoch_id: str) -> dict[str, Any]
     Returns ``{epoch_id, analysis_md, analysis_html_inline,
     analysis_html_available}``. ``analysis_html_inline`` is the
     paper-styled HTML fragment (self-contained inline CSS, inline SVG
-    figures) the dashboard can drop directly into the Epoch view's
+    figures) the dashboard drops directly into the Epoch view's
     Analysis section — same renderer as the standalone ``analysis.html``
     so both surfaces look like a paper. The raw markdown ``analysis_md``
-    is still returned for backward compatibility with older frontends
-    that did their own minimal rendering.
+    is the FALLBACK, rendered client-side when the inline HTML is empty.
+
+    That order was inverted here for as long as the fields existed, and
+    the description was wrong in the direction that hid a cost: the
+    dashboard read only ``analysis_md`` and re-rendered markdown itself,
+    so the expensive server render this docstring called the primary path
+    was built and discarded on every request. The reader now prefers the
+    inline HTML, which is what makes the render worth doing.
 
     Best-effort (DQ3): a missing ``analysis.md`` reads as the empty
     string; a failed fragment render degrades to ``""``; never raises.

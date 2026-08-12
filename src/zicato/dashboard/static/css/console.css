@@ -919,6 +919,11 @@
   .dn-kind-tag { font-family: var(--v2-mono); font-size: calc(9px * var(--dt-font-scale, 1)); padding: 0 4px; border-radius: 3px; border: 1px solid var(--v2-rule); color: var(--v2-ink-soft); }
   .dn-kind-tag.dn-kind-multi_turn_scripted { border-color: var(--v2-accent); color: var(--v2-accent); }
   .dn-kind-tag.dn-kind-multi_turn_emulated { border-color: var(--v2-good); color: var(--v2-good); }
+  /* the two SYNTHETIC kinds — same scale, one step further out: adversarial is
+     the deliberately-known-bad probe (caution), clean is its paired control
+     (flat), so a trellis of five kinds reads as five, not three plus two blanks. */
+  .dn-kind-tag.dn-kind-synthetic_adversarial { border-color: var(--v2-caution); color: var(--v2-caution); }
+  .dn-kind-tag.dn-kind-synthetic_clean { border-color: var(--v2-flat); color: var(--v2-flat); }
   .dn-trellis-foot { display: flex; gap: 9px; flex-wrap: wrap; font-size: calc(9.5px * var(--dt-font-scale, 1)); margin-top: 4px; font-family: var(--v2-mono); }
   .dn-trellis-tags { color: var(--v2-ink-faint); }
   .dn-trellis-preview { font-size: calc(10px * var(--dt-font-scale, 1)); margin-top: 4px; font-style: italic; line-height: 1.3; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -1381,6 +1386,12 @@
   .dn-caltrend-dot.dn-good { fill: var(--v2-good); }
   .dn-caltrend-dot.dn-bad { fill: var(--v2-bad); }
   .dn-caltrend-noclaim { fill: none; stroke: var(--v2-ink-faint); stroke-width: 1; }
+  /* The SERVED readout: the latest scored fraction beside its dot, and how much
+     of the lineage it rests on. SVG <text> has no inherited default here — left
+     unstyled it paints browser-black, which is invisible against the dark theme. */
+  .dn-caltrend-latest { fill: var(--v2-ink); font-size: calc(10px * var(--dt-font-scale, 1));
+    font-weight: 600; }
+  .dn-caltrend-cap { fill: var(--v2-ink-faint); font-size: calc(9.5px * var(--dt-font-scale, 1)); }
 
   /* ===================  side-by-side mutation diff (fix #2)  =================== */
 
@@ -1580,6 +1591,11 @@
   .dn-bs-counts { font-family: var(--v2-mono); font-size: calc(12px * var(--dt-font-scale, 1)); margin-bottom: 8px; }
   .dn-bs-counts-main { color: var(--v2-ink); font-variant-numeric: tabular-nums; }
   .dn-bs-noholdout { margin-left: 6px; }
+  /* the board_meta header line, under the counts: judge-only reads as a real
+     state change (accent), drift suppression as faint provenance. */
+  .dn-bs-meta { display: flex; flex-wrap: wrap; gap: 4px 10px; font-family: var(--v2-mono);
+    font-size: calc(11px * var(--dt-font-scale, 1)); margin: -4px 0 8px; }
+  .dn-bs-meta-judgeonly { color: var(--v2-accent); }
   .dn-bs-grid { display: flex; flex-wrap: wrap; gap: 6px; }
   .dn-bs-chip {
     font-family: var(--v2-mono); font-size: calc(10.5px * var(--dt-font-scale, 1)); line-height: 1.4;
@@ -3482,7 +3498,7 @@
   .dn-bld-ef-label { font-size: calc(10.5px * var(--dt-font-scale, 1)); color: var(--v2-ink-soft); padding-top: 6px; }
   .dn-bld-ef-control { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
   .dn-bld-ef-hint { font-size: calc(9.5px * var(--dt-font-scale, 1)); color: var(--v2-ink-faint); }
-  .dn-bld-ef-jsonhint { font-family: var(--v2-mono); }
+  .dn-bld-ef-jsonhint, .dn-bld-ef-ctxhint { font-family: var(--v2-mono); }
   .dn-bld-ef-sublabel { font-size: calc(10.5px * var(--dt-font-scale, 1)); font-weight: 600; color: var(--v2-ink-soft); margin-top: 4px; }
   .dn-bld-area { font-family: var(--v2-mono); font-size: calc(11px * var(--dt-font-scale, 1)); width: 100%; box-sizing: border-box;
     border: 1px solid var(--v2-rule); border-radius: 4px; background: var(--v2-paper); color: var(--v2-ink); padding: 5px 7px; resize: vertical; }
@@ -4034,6 +4050,10 @@
     margin: 5px 0 0; line-height: 1.5; }
   .dn-instr-xwhy { font-size: calc(12.5px * var(--dt-font-scale, 1)); color: var(--v2-ink);
     margin: 4px 0 8px; line-height: 1.55; }
+  /* severity agreement — a second, quieter axis beside the verdict pill; the
+     tone comes from the shared dn-instr-t-* set, so only metrics live here. */
+  .dn-instr-xsevmatch { font-size: calc(11.5px * var(--dt-font-scale, 1));
+    margin: 0 0 8px; line-height: 1.5; }
   /* the ONE pill the lens keeps — the adjudication verdict (semantic state). */
   .dn-chip.dn-chip-instr-verdict-tp { color: var(--v2-good); border-color: var(--v2-good); }
   .dn-chip.dn-chip-instr-verdict-fp { color: var(--v2-bad); border-color: var(--v2-bad); }

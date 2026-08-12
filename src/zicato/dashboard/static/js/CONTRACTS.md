@@ -88,11 +88,31 @@ workspace }`. It is NOT in the environment payload.
 
 The drill-down / lazy endpoints (unchanged):
 - `GET /api/run-log?after=<cursor>` — append-only tail batch.
-- `GET /api/tournaments/{gen}` — per-matchup detail.
-- `GET /api/drift-movements/{gen}` — drift-kind movements (reuse landed builder).
+- `GET /api/tournaments/{gen}` — per-matchup detail. **NO client.** The
+  per-beat loader that used to pull it is deleted (§3); the Match-ups
+  surfaces read `/api/tournaments` (the bracket) + `/api/matchup-grid/...`
+  instead. Curl/operator surface only.
+- `GET /api/drift-movements/{gen}` — drift-kind movements. **NO client**
+  (same deletion). Curl/operator surface only.
 - `GET /api/score-trajectory` — same shape as `environment.score_trajectory`.
 - `GET /api/files...`, `GET /api/mutations/...` — Files view.
-- `GET /api/conversation/{run}`, `GET /api/matchup/{entry}/conversations`.
+- `GET /api/conversation/{run}` — the run_id-keyed transcript
+  (`D.conversation()`; `D.runTranscript()` is the preferred gen×entry read).
+- `GET /api/matchup/{entry_id}/conversations` — **NO client, by decision.**
+  It is a **curl / operator surface**, not a live drill-down: the champion-vs-
+  challenger transcript comparison the operator actually uses is the Board
+  view's inline side-by-side, which resolves each side through the
+  deterministic `(epoch, gen, entry)` triple (`D.runTranscript()`) rather
+  than an entry-keyed pair. Documented rather than wired so the next audit
+  reads this as deliberate.
+- `GET /api/epoch/{epoch_id}/journal.md` — **NO client, by decision.** The
+  raw `journal.md` bytes are a **curl / operator surface**; the dashboard
+  renders the same text from the `journal` field the `/api/epoch` payload
+  already carries, so a second fetch of the same file would be pure
+  duplication.
+- `GET /api/search` — **NO client and no CLI command:**
+  *unconsumed pending a search box.* Building one is new scope (a chrome-level
+  affordance + a results route), deliberately not taken on here.
 - `GET /api/matchup-grid/{epoch}/{champion}/{challenger}` — the
   per-entry A/B grid for a **completed** matchup, read straight off the
   persisted per-run loss files (NOT the SQLite index). `/api/tournaments/{gen}`
@@ -109,6 +129,8 @@ The drill-down / lazy endpoints (unchanged):
     "entry_grid": [ { "entry_id",
         "parent_drift_loss":num|null, "child_drift_loss":num|null,
         "parent_pass":bool|null, "child_pass":bool|null,
+        "parent_score":num|null, "child_score":num|null,   // continuous (#18)
+        "parent_metrics":obj|null, "child_metrics":obj|null, // precision/recall
         "delta":num|null,                       // child − champion drift loss
         "verdict": "improved"|"regressed"|"flat",
         "won_by": <genId>|null,                 // lower drift loss wins
@@ -120,11 +142,13 @@ The drill-down / lazy endpoints (unchanged):
   }
   ```
   `entry_grid` rows are sorted by entry id; an entry that ran on only
-  one side still appears (the absent side is `null`). The Tournament
-  view fetches this lazily for a non-live matchup and folds it into the
-  matchup-detail panel as the `entry_grid` / `scalar` fallback when the
-  index-sourced detail has neither. A malformed coordinate degrades to
-  an empty grid (HTTP 200), never a 500.
+  one side still appears (the absent side is `null`). The **Epoch
+  publication** view (`js/views/publication.js`) is the renderer: it
+  fetches one grid per decided matchup and paints the per-match-up
+  detail table (drift losses + Δ + verdict, the continuous `#18`
+  score/metrics columns, `won_by`, and a per-side harmonograf deep link
+  built from `parent_session_id` / `child_session_id`). A malformed
+  coordinate degrades to an empty grid (HTTP 200), never a 500.
 
 The Files-view endpoints in full:
 - `GET /api/files` — `{ epochs:[{ epoch_id, generations:[{ generation_id,
@@ -189,9 +213,6 @@ state.activeRuns []                     — active run records
 state.activeTournament | null
 state.pastTournaments []
 state.bracket                           — { champion_lineage, matchups }
-state.matchupDetail   Map<genId, detail>
-state.driftMovements  { genId: movements }
-state.selectedMatchup | null
 state.selectedEntry   | null
 state.healthReport
 state.lineage         { generations, experiments }
@@ -207,8 +228,16 @@ state.files / state.mutations         — Files-view scratch state
 
 Mutation methods: `applySnapshot(snap)`, `applyEnvironment(env)`,
 `setHeartbeat(hb)` (merge, never replace — keeps `harmonograf_url`),
-`setHealth(h)`, `setLogTail(t)`, `mergeLogTail(batch)`,
-`setMatchupDetail(gen, d)`. State changes publish on the bus (§5).
+`setHealth(h)`, `setLogTail(t)`, `mergeLogTail(batch)`. State changes
+publish on the bus (§5).
+
+**Deleted, deliberately:** `matchupDetail` / `driftMovements` /
+`selectedMatchup` and their loader `loadMatchupDetail()`. They cached
+`/api/tournaments/{gen}` (whole payload, `ab_grid` included) and
+`/api/drift-movements/{gen}` on EVERY SSE beat and **no view ever read
+either field** — two per-beat round-trips, both discarded. The beat path
+now makes exactly ONE consolidated `/api/environment` read; per-matchup
+detail is an on-demand drill-down through `js/data.js`.
 
 ## 4. The render spine — digest-gated, no-flash
 
@@ -377,8 +406,17 @@ harmonograf keys its session views by the **ADK session id** — the
 `sessionId` present on every goldfive event envelope. The backend
 surfaces this as `adk_session_id` on run-like records:
 - active-run rows from `/api/environment`;
+- the per-run header `/api/run/{epoch}/{gen}/{entry}/header`
+  (`D.runHeader()`) — the read the candidate drill-down's
+  `harmonografLink()` actually uses;
+- `entry_grid` rows from `/api/matchup-grid/{epoch}/{champion}/{challenger}`
+  (`parent_session_id` / `child_session_id`) — the per-board deep links in
+  the Epoch publication's per-match-up tables;
 - `ab_grid` cells from `/api/tournaments/{gen}` (`parent_adk_session_id`
-  / `child_adk_session_id`);
+  / `child_adk_session_id`) carry the ids too, but **no client fetches that
+  endpoint** (§ drill-down list above), so that path is reachable code over
+  unreachable data — it deep-links nothing today. `harmonografSessionId()`
+  still accepts those key names for back-compat;
 - `active_tournament.entries[]` rows — the runner stamps the run's
   `adk_session_id` onto the per-(entry × side) row the instant the run
   finishes (read from the run's `LossProfile`, never from `events.jsonl`

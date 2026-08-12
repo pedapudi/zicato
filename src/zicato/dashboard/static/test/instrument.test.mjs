@@ -13,7 +13,8 @@ installDom();
 const {
   router, tree, shell, data, EPOCH_ID,
   installFixtureMap, freshState, allByClass,
-  REFLECTION_ID, REFL_JUDGE, REFL_RUN_REF, REFLECTION_SUMMARY, REFLECTION_XRAY_UNAVAILABLE,
+  REFLECTION_ID, REFL_JUDGE, REFL_RUN_REF, REFLECTION_SUMMARY,
+  REFLECTION_XRAY, REFLECTION_XRAY_UNAVAILABLE,
   REFLECTION_PRACTICES, reflectionFixtureMap,
 } = await import('./fixtures.mjs');
 
@@ -205,6 +206,51 @@ test('render conformance: findings and judge scorecards show their recommendatio
     'the judge scorecard names its remedy');
 });
 
+// Issue #112: the promote-margin recommendation scales `delta_std` (the
+// draw-count-stable dispersion), NOT the max|Δ| RANGE, which inflates with the
+// calibration draw count K. A calibration card showing only the range shows the
+// one number the code says not to act on.
+test('calibration: the draw-count-stable delta_std reaches the pillar card', async () => {
+  fresh();
+  installFixtureMap(reflectionFixtureMap());
+  const host = document.createElement('div');
+  await instrument.render(host, CTX, { epochId: EPOCH_ID, reflectionId: REFLECTION_ID });
+  const t = textOf(host);
+  assert(t.includes('noise floor Δ std'), 'the delta_std row is labelled distinctly from the range');
+  assert(t.includes('0.0062'), 'the MEASURED delta_std number reaches the output');
+  assert(t.includes('0.0180'), 'the max|Δ| range is still shown beside it');
+});
+
+test('calibration: delta_std is FOLDED INTO THE BILL DIGEST — a moved value repaints', async () => {
+  fresh();
+  installFixtureMap(reflectionFixtureMap());
+  const host = document.createElement('div');
+  await instrument.render(host, CTX, { epochId: EPOCH_ID, reflectionId: REFLECTION_ID });
+  assert(textOf(host).includes('0.0062'), 'the first read paints the first delta_std');
+  // a re-calibration moves ONLY delta_std. If it is not in the digest the
+  // gated swap writes nothing and the stale number stays on screen.
+  const moved = JSON.parse(JSON.stringify(REFLECTION_SUMMARY));
+  moved.pillars.calibration.noise_floor_delta_std = 0.0099;
+  fresh(); // bust the data cache only — the host keeps its digest attribute
+  installFixtureMap(reflectionFixtureMap({ summary: moved }));
+  await instrument.render(host, CTX, { epochId: EPOCH_ID, reflectionId: REFLECTION_ID });
+  const t = textOf(host);
+  assert(t.includes('0.0099'), 'the moved delta_std repainted (the digest folded it)');
+  assert(!t.includes('0.0062'), 'the stale value is gone');
+});
+
+test('calibration: an absent delta_std renders NO row (never an "undefined")', async () => {
+  fresh();
+  const old = JSON.parse(JSON.stringify(REFLECTION_SUMMARY));
+  delete old.pillars.calibration.noise_floor_delta_std;
+  installFixtureMap(reflectionFixtureMap({ summary: old }));
+  const host = document.createElement('div');
+  await instrument.render(host, CTX, { epochId: EPOCH_ID, reflectionId: REFLECTION_ID });
+  const t = textOf(host);
+  assert(!t.includes('noise floor Δ std'), 'a record predating the statistic grows no row');
+  assert(!t.includes('undefined') && !t.includes('NaN'), 'and fabricates nothing in its place');
+});
+
 test('bill of health: metadata (fidelity) is a dn-faint caption, not per-row tags', async () => {
   fresh();
   installFixtureMap(reflectionFixtureMap());
@@ -345,6 +391,57 @@ test('x-ray: renders the span highlight + verbatim fidelity + verdict chip', asy
   assert(hasClass(host, 'dn-chip-instr-verdict-fp'), 'the FP verdict chip');
   assert(t.includes('independent-adjudicator'), 'the meta-judge model is shown');
   assert(t.includes('self-agreement'), 'adjudicator self-agreement is surfaced when present');
+});
+
+// Severity correctness is a SEPARATE axis from fire/silence: a judge that fires
+// on the right span at the wrong severity passes the 2×2 and still mis-weights
+// the loss. Only the AGGREGATE severity_accuracy had a surface before this.
+function tpXray(severityMatch) {
+  const x = JSON.parse(JSON.stringify(REFLECTION_XRAY));
+  x.adjudication.verdict = 'TP';
+  x.adjudication.adjudicated = 'should_fire';
+  x.adjudication.severity_match = severityMatch;
+  return x;
+}
+
+test('x-ray: a severity MISMATCH on a correct fire is named beside the verdict', async () => {
+  fresh();
+  installFixtureMap(reflectionFixtureMap({ xray: tpXray(false) }));
+  const host = document.createElement('div');
+  await instrument.render(host, CTX, { epochId: EPOCH_ID, reflectionId: REFLECTION_ID, judge: REFL_JUDGE, runRef: REFL_RUN_REF });
+  const line = allByClass(host, 'dn-instr-xsevmatch');
+  assertEqual(line.length, 1, 'one severity-agreement line');
+  const t = (line[0].textContent || '');
+  assert(t.includes('severity mismatch'), 'the disagreement is stated');
+  assert(t.includes('warning'), 'and names the severity the judge CLAIMED');
+  assert(t.includes('mis-weights the loss'), 'and why it matters despite the TP');
+  assert((line[0].getAttribute('class') || '').includes('dn-instr-t-bad'), 'a mismatch carries the bad tone');
+});
+
+test('x-ray: severity_match is FOLDED INTO THE X-RAY DIGEST — a flip repaints', async () => {
+  fresh();
+  installFixtureMap(reflectionFixtureMap({ xray: tpXray(true) }));
+  const host = document.createElement('div');
+  const p = { epochId: EPOCH_ID, reflectionId: REFLECTION_ID, judge: REFL_JUDGE, runRef: REFL_RUN_REF };
+  await instrument.render(host, CTX, p);
+  assert(textOf(host).includes('severity agrees'), 'agreement paints first');
+  // a re-adjudication flips ONLY the severity verdict — everything else holds.
+  fresh(); // bust the data cache only; the host keeps its digest attribute
+  installFixtureMap(reflectionFixtureMap({ xray: tpXray(false) }));
+  await instrument.render(host, CTX, p);
+  const t = textOf(host);
+  assert(t.includes('severity mismatch'), 'the flip repainted (the adj digest tuple folded it)');
+  assert(!t.includes('severity agrees'), 'the stale agreement is gone');
+});
+
+test('x-ray: a null severity_match renders NOTHING (it is scored on a TP only)', async () => {
+  fresh();
+  installFixtureMap(reflectionFixtureMap()); // the FP fixture: severity_match null
+  const host = document.createElement('div');
+  await instrument.render(host, CTX, { epochId: EPOCH_ID, reflectionId: REFLECTION_ID, judge: REFL_JUDGE, runRef: REFL_RUN_REF });
+  assert(!hasClass(host, 'dn-instr-xsevmatch'), 'no severity line on a non-TP adjudication');
+  const t = textOf(host);
+  assert(!t.includes('severity') || !t.includes('undefined'), 'and nothing is fabricated in its place');
 });
 
 test('x-ray: an unavailable transcript degrades honestly (no fabricated turns)', async () => {

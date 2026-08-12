@@ -4329,8 +4329,21 @@ export function metaLoopLedgerDigest(opts) {
 // and is DIAGNOSTIC — it NEVER feeds the gate (the caller captions it so).
 //
 // opts: { points:[{generation_id, score_fraction|null, total_claims, decision}],
-//         rolling_mean|null, trend_sign:-1|0|1, width, height, responsive,
-//         onGen(generation_id) }
+//         rolling_mean|null, latest_fraction|null, n_scored, trend_sign:-1|0|1,
+//         width, height, responsive, onGen(generation_id) }
+//
+// THE LATEST SCORED FRACTION IS SERVED. build_calibration_trend
+// (query/hypothesis_view.py) computes `latest_fraction` — the most recent
+// non-null fraction in LINEAGE order — and `n_scored`, the count of generations
+// that carried claims. This figure READS both; it does NOT re-derive the latest
+// fraction by scanning `points` backwards. That re-derivation was the
+// duplicated-logic bug class: the server orders the lineage, and a client scan
+// over a differently-ordered / filtered `points` array can disagree with the
+// number the same payload is reporting. The one backwards scan that remains
+// finds only the x POSITION of the last scored generation (pure geometry the
+// payload does not carry); the VALUE it labels comes from the server, with that
+// point's own fraction used ONLY as the fallback when a pre-field server omits
+// `latest_fraction`.
 //
 // DEGRADES: 0 points → an honest placeholder; a single point → a centred dot.
 export function calibrationTrend(opts) {
@@ -4403,8 +4416,11 @@ export function calibrationTrend(opts) {
 
   // the per-generation ticks: a scored gen is a solid dot, a no-claim gen is a
   // hollow tick on the midline. The LAST scored dot earns good/bad by trend sign.
+  // POSITION ONLY — the fraction it labels is the SERVED `latest_fraction`.
   let lastScoredI = -1;
   for (let i = pts.length - 1; i >= 0; i--) { if (isNum(pts[i].score_fraction)) { lastScoredI = i; break; } }
+  const latestFraction = isNum(o.latest_fraction) ? o.latest_fraction
+    : (lastScoredI >= 0 ? pts[lastScoredI].score_fraction : null);   // honest fallback
   const onGen = typeof o.onGen === 'function' ? o.onGen : null;
   pts.forEach((p, i) => {
     const f = isNum(p.score_fraction) ? p.score_fraction : null;
@@ -4431,6 +4447,30 @@ export function calibrationTrend(opts) {
     svg.appendChild(node);
   });
 
+  // THE SERVED READOUT: the latest scored fraction as an end label beside its
+  // dot, and `n_scored` as the figure's caption ("N of M scored"). Both come
+  // straight off the payload — the figure was previously silent about the one
+  // number the payload names, and about how much of the lineage it rests on.
+  if (isNum(latestFraction) && lastScoredI >= 0) {
+    const lx = x(lastScoredI);
+    const ly = y(Math.max(0, Math.min(1, latestFraction)));
+    // anchor inward when the dot sits at the right edge so the label stays in.
+    const rightish = lx > W - 40;
+    const lbl = svgEl('text', {
+      x: rightish ? lx - 5 : lx + 5, y: ly - 5, class: 'dn-caltrend-latest',
+      'text-anchor': rightish ? 'end' : 'start',
+    });
+    lbl.textContent = Math.round(latestFraction * 100) + '%';
+    svg.appendChild(lbl);
+  }
+  if (isNum(o.n_scored)) {
+    const cap = svgEl('text', {
+      x: padX, y: H - 1.5, class: 'dn-caltrend-cap', 'text-anchor': 'start',
+    });
+    cap.textContent = `${o.n_scored} of ${pts.length} generation${pts.length === 1 ? '' : 's'} scored`;
+    svg.appendChild(cap);
+  }
+
   return svg;
 }
 
@@ -4452,5 +4492,14 @@ export function calibrationTrendDigest(opts) {
       tc: isNum(p.total_claims) ? p.total_claims : 0,
       d: p.decision == null ? null : String(p.decision),
     }));
-  return digestOpts({ rm: isNum(o.rolling_mean) ? o.rolling_mean : null, ts: isNum(o.trend_sign) ? o.trend_sign : 0, p: pts });
+  return digestOpts({
+    rm: isNum(o.rolling_mean) ? o.rolling_mean : null,
+    ts: isNum(o.trend_sign) ? o.trend_sign : 0,
+    // the SERVED readouts the figure now paints — `latest_fraction` as the end
+    // label, `n_scored` as the caption. Blind to these, a payload whose latest
+    // fraction moved while every plotted point stayed equal would NOT repaint.
+    lf: isNum(o.latest_fraction) ? o.latest_fraction : null,
+    ns: isNum(o.n_scored) ? o.n_scored : null,
+    p: pts,
+  });
 }

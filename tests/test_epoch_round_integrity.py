@@ -1247,3 +1247,134 @@ def test_slot_index_is_additive_on_the_wire(tmp_path: Path) -> None:
     tagged = [e.event for e in events if isinstance(e.event, ProposalAttempted)]
     assert [a.slot_index for a in tagged] == [2, None]
     assert [a.errors for a in tagged] == [("boom",), ("boom",)]
+
+
+# ---------------------------------------------------------------------------
+# Attributable entry regressions on a PROMOTED duel — the post-hoc read
+# ---------------------------------------------------------------------------
+
+
+def _promoted_with_regression_events() -> list[RoundEvent]:
+    """A duel that PROMOTED while two entries regressed on their own evidence.
+
+    ``rule_fired`` is empty because no rule fired — that is the invariant on a
+    promotion, and it is why this observation had nowhere else to live in the
+    log.
+    """
+    events = _complete_events()
+    return [
+        GateEvaluated(
+            rule_fired="",
+            decision="promoted",
+            champion_scalar=0.42,
+            challenger_scalar=0.31,
+            margin_required=0.05,
+            attributable_regressions=("conv_citations", "conv_summary"),
+        )
+        if isinstance(e, GateEvaluated)
+        else e
+        for e in events
+    ]
+
+
+def test_promoted_regressions_reach_the_post_hoc_report(tmp_path: Path) -> None:
+    """The entry ids the gate observed and did not act on reach text AND JSON.
+
+    The live loop raises its own health finding for this, but the round log is
+    what an operator reads AFTER the run, and it dropped the observation
+    entirely: the round renders `complete` with an empty `rule_fired`, which
+    is exactly what a clean promotion looks like.
+    """
+    from zicato.cli.commands.epoch import epoch_grp
+
+    _write(tmp_path, 1, _promoted_with_regression_events())
+
+    verdict = round_integrity(tmp_path, EPOCH, 1)
+    # The verdict is unchanged — this is an observation, not a rule.
+    assert verdict.status == RoundStatus.COMPLETE
+    assert verdict.promoted_regressions == ("conv_citations", "conv_summary")
+    # And it stays OUT of the evidence trail, which justifies the status.
+    assert not any("conv_citations" in line for line in verdict.evidence)
+
+    runner = CliRunner()
+    args = ["rounds", "--workspace", str(tmp_path), "--epoch", EPOCH]
+    out = runner.invoke(epoch_grp, args).output
+    assert "conv_citations" in out and "conv_summary" in out
+    assert "promoted despite per-entry regression" in out
+
+    payload = json.loads(runner.invoke(epoch_grp, [*args, "--json"]).output)
+    assert payload["rounds"][0]["promoted_regressions"] == [
+        "conv_citations",
+        "conv_summary",
+    ]
+    # Additive only: the pre-existing shape is untouched.
+    assert payload["accepted"] is True
+    assert payload["counts"] == {"complete": 1, "settled_degraded": 0, "void": 0}
+
+
+def test_a_rejected_duel_s_regressions_are_not_reported(tmp_path: Path) -> None:
+    """Only PROMOTED duels carry the warning — a rejected challenger is discarded.
+
+    Nothing it regressed enters the lineage, so naming it here would be noise
+    on exactly the rounds where `rule_fired` already says what happened.
+    """
+    events: list[RoundEvent] = [
+        RoundOpened(contract_hash="sha256:contract-t0"),
+        CandidateSampled(i=1, n=1),
+        ExperimentMinted(experiment_id="exp-v1"),
+        PatchesApplied(generation_id="v1"),
+        GateEvaluated(
+            rule_fired="insufficient improvement: 0.01 < 0.05",
+            decision="rejected",
+            attributable_regressions=("conv_citations",),
+        ),
+        RoundClosed(),
+    ]
+    _write(tmp_path, 1, events)
+
+    verdict = round_integrity(tmp_path, EPOCH, 1)
+    assert verdict.status == RoundStatus.COMPLETE
+    assert verdict.promoted_regressions == ()
+
+
+def test_repeated_entry_across_duels_is_named_once(tmp_path: Path) -> None:
+    """A round with several promoted duels reports each entry once, in log order.
+
+    Repeating it would read as more distinct regressions than the log holds.
+    """
+    events: list[RoundEvent] = [
+        RoundOpened(contract_hash="sha256:contract-t0"),
+        CandidateSampled(i=1, n=2),
+        PatchesApplied(generation_id="v1"),
+        GateEvaluated(
+            rule_fired="",
+            decision="promoted",
+            attributable_regressions=("conv_citations",),
+        ),
+        GateEvaluated(
+            rule_fired="",
+            decision="promoted",
+            attributable_regressions=("conv_citations", "conv_body"),
+        ),
+        RoundClosed(),
+    ]
+    _write(tmp_path, 1, events)
+
+    assert round_integrity(tmp_path, EPOCH, 1).promoted_regressions == (
+        "conv_citations",
+        "conv_body",
+    )
+
+
+def test_an_ordinary_promotion_adds_no_warning_line(tmp_path: Path) -> None:
+    """No regressions ⇒ the report is byte-identical to before the field."""
+    from zicato.cli.commands.epoch import epoch_grp
+
+    _write(tmp_path, 1, _complete_events())
+    out = (
+        CliRunner()
+        .invoke(epoch_grp, ["rounds", "--workspace", str(tmp_path), "--epoch", EPOCH])
+        .output
+    )
+    assert "WARNING" not in out
+    assert round_integrity(tmp_path, EPOCH, 1).promoted_regressions == ()
