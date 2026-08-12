@@ -59,6 +59,30 @@ from zicato.tournament.worker_transport import _runtime_state, _stamp_replicate_
 log = logging.getLogger("zicato.tournament.runner")
 
 
+# A board unit is immutable under a fixed contract, but several matchups of one
+# racing rung need the SAME champion unit and look in the same event-loop turn —
+# so all of them see a cold cache and all of them launch a worker. This map
+# holds, per unit key, an event the running caller sets when its evaluation has
+# settled; a caller that finds an entry waits and then re-reads the cache
+# instead of launching its own worker. The on-disk cache stays the ONLY source
+# of reuse: a waiter reuses a result iff that result was persisted, so an infra
+# abort (deliberately never cached) is re-attempted rather than fanned out, and
+# a failed or cancelled evaluation leaves the waiter a correct MISS.
+# ``force_fresh`` evaluations never enter the map.
+_inflight_cacheable_units: dict[tuple[str, str, str, str, int], asyncio.Event] = {}
+
+
+def _cacheable_unit_key(
+    workspace_root: Path,
+    epoch_id: str,
+    generation_id: str,
+    entry_id: str,
+    replicate_index: int,
+) -> tuple[str, str, str, str, int]:
+    """Return the in-process single-flight key for one cacheable board unit."""
+    return (str(workspace_root.resolve()), epoch_id, generation_id, entry_id, replicate_index)
+
+
 async def _run_single(
     *,
     adapter: Any,
@@ -989,20 +1013,103 @@ async def _run_unit_cache_first(
     debugging). The cache is otherwise always-on — ``fast`` (the default)
     is simply "do not force fresh".
 
+    Several matchups of one round can need the SAME unit concurrently (a
+    racing rung's shared champion), and a cold cache answers MISS to all
+    of them. Such callers are coalesced: the first evaluates, the rest
+    wait for it and re-read the cache. Reuse still comes from the cache
+    alone, never from the running caller's in-memory result — so an infra
+    abort (deliberately never persisted) is re-attempted by the waiter
+    rather than fanned out across the rung, and a failed or cancelled
+    evaluation leaves the waiter a correct MISS to run itself.
+    ``force_fresh`` callers are never coalesced: a deliberate re-sampling
+    must not be answered by somebody else's run. Coalescing spans one
+    process, which is where the duplication is — the runner schedules
+    every matchup of a round in the parent, one subprocess worker per
+    board unit below it.
+
     ``provenance`` (when supplied) accumulates the per-generation
-    cached-vs-fresh tally for the round.
+    cached-vs-fresh tally for the round. It counts what each caller DID:
+    a coalesced waiter reuses a persisted result and launches no worker,
+    so it counts as cached — the tally stays a count of evaluations
+    performed, not of requests made.
     """
-    if not force_fresh:
-        cached = _resolve_cached_unit(
+
+    async def _evaluate() -> LossProfile:
+        return await _run_unit_after_cache_miss(
+            adapter=adapter,
+            generation=generation,
+            entry=entry,
+            weights=weights,
+            config=config,
+            workspace_root=workspace_root,
+            epoch_id=epoch_id,
+            side=side,
+            replicate_index=replicate_index,
+            match_id=match_id,
+            provenance=provenance,
+        )
+
+    if force_fresh:
+        return await _evaluate()
+
+    def _cached() -> LossProfile | None:
+        return _resolve_cached_unit(
             workspace_root=workspace_root,
             epoch_id=epoch_id,
             generation_id=generation.id,
             entry_id=entry.id,
             replicate_index=replicate_index,
         )
+
+    cached = _cached()
+    if cached is not None:
+        _record_provenance(provenance, generation.id, cached=True)
+        return cached
+
+    # Cold cache. Another caller in this process may already be evaluating this
+    # exact unit (the racing rung's shared champion); wait for it and re-read
+    # rather than launching a duplicate worker. Its result counts as a genuine
+    # cache hit — this caller ran nothing — but ONLY once it is on disk: a
+    # settled evaluation that persisted nothing (an infra abort, a failure, a
+    # cancellation) leaves the cache cold, so the loop falls through and this
+    # caller becomes the one that evaluates. The re-check is a plain loop over
+    # ``get`` because a settling caller pops its key before setting the event.
+    key = _cacheable_unit_key(workspace_root, epoch_id, generation.id, entry.id, replicate_index)
+    while (settled := _inflight_cacheable_units.get(key)) is not None:
+        await settled.wait()
+        cached = _cached()
         if cached is not None:
             _record_provenance(provenance, generation.id, cached=True)
             return cached
+
+    # No await between the miss above and claiming the key, so exactly one
+    # caller per unit key evaluates and the rest wait.
+    settled = asyncio.Event()
+    _inflight_cacheable_units[key] = settled
+    try:
+        return await _evaluate()
+    finally:
+        # Release the waiters on EVERY exit — return, raise, or cancellation —
+        # so a failed evaluation can never strand a sibling matchup.
+        _inflight_cacheable_units.pop(key, None)
+        settled.set()
+
+
+async def _run_unit_after_cache_miss(
+    *,
+    adapter: Any,
+    generation: Generation,
+    entry: BoardEntry,
+    weights: ScoringWeights,
+    config: RuntimeConfig,
+    workspace_root: Path,
+    epoch_id: str,
+    side: str,
+    replicate_index: int,
+    match_id: str,
+    provenance: dict[str, _UnitProvenance] | None,
+) -> LossProfile:
+    """Run and persist one board unit after cache reuse has been ruled out."""
 
     from zicato.telemetry.meta_loop import SPAN_WORKER, meta_span  # noqa: PLC0415
 
