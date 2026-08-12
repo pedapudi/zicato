@@ -40,13 +40,15 @@ import { roundsFromTimeline, roundModelDigest } from '../rounds.js';
 // single-epoch payload, so we trust it for the viewed epoch (mirrors
 // views/epoch.js's `liveForThisEpoch` guard). A run must also actually be
 // running for this to be true.
-function liveBelongsToEpoch(epochId) {
-  // THE STALE GATE (issue #194 SS1): the served tri-state, not file presence.
-  // This one flag feeds every live overlay on the rounds/standings surfaces —
-  // the projected scalars, the PROJ badges and progress bars, the in-flight
-  // round and its "racing" / "deciding..." pills — so gating it here is what
-  // keeps a dead workspace from claiming a round is still being decided.
-  if (!livenessFor(state).liveness.live) return false;
+// TWO SEPARATE QUESTIONS (issue #194 SS1). "Does this envelope describe the
+// epoch on screen?" is about SCOPE; "is anything running?" is about the CLOCK.
+// Conflating them is what let a workspace dead since June claim a round was
+// still being decided — and gating them TOGETHER would go too far the other
+// way, blanking the page: a run that was interrupted mid-round left its
+// topology only in the live envelope, and that topology is real evidence of
+// what happened. So the envelope is still ADOPTED for a scoped epoch; only the
+// present TENSE is gated on liveness.
+function envelopeBelongsToEpoch(epochId) {
   const at = state.activeTournament;
   const hb = state.heartbeat;
   const atEpoch = (at && at.epoch_id != null) ? at.epoch_id : null;
@@ -54,6 +56,13 @@ function liveBelongsToEpoch(epochId) {
   if (atEpoch != null) return String(atEpoch) === String(epochId);
   if (hbEpoch != null) return String(hbEpoch) === String(epochId);
   return true; // no epoch tag ⇒ legacy single-epoch payload, trust it.
+}
+
+// Is a run LIVE right now, for the epoch on screen? This is what every
+// present-tense claim consumes: the projected scalars, the PROJ badges and
+// progress bars, the in-flight round and its "racing" / "deciding…" pills.
+function liveBelongsToEpoch(epochId) {
+  return livenessFor(state).liveness.live && envelopeBelongsToEpoch(epochId);
 }
 
 export async function render(host, ctx, params) {
@@ -220,6 +229,9 @@ async function renderRoundDrilldown(host, ctx, id, ep, bracket, traj, rows, roun
   // the live PROJECTED standing for an in-flight round's challenger (current
   // epoch only) — falls back to the projected scalar when no settled one exists.
   const liveForThisEpoch = liveBelongsToEpoch(id);
+  // Scope, not clock: the envelope still supplies this round's TOPOLOGY after
+  // the run that wrote it died; `liveForThisEpoch` gates the present tense.
+  const envelopeIsThisEpoch = envelopeBelongsToEpoch(id);
   const liveAt = state.activeTournament;
   const liveProjected = (liveForThisEpoch && liveAt && liveAt.projected && typeof liveAt.projected === 'object') ? liveAt.projected : {};
   // the live envelope (this epoch only) so a still-proposing NEW round is drillable
@@ -259,11 +271,9 @@ async function renderRoundDrilldown(host, ctx, id, ep, bracket, traj, rows, roun
             champion_lineage: bracket && bracket.champion_lineage, source: 'index',
           }, false)
         : null);
-    // `liveForThisEpoch` already carries the tri-state gate (it is false
-    // unless liveness reads live), so no second running check is needed.
-    const liveRaw = liveForThisEpoch ? await D.activeTournament() : null;
+    const liveRaw = envelopeIsThisEpoch ? await D.activeTournament() : null;
     const resolved = resolveNonGauntletSt({
-      structure, epochId: id, liveRaw,
+      structure, epochId: id, liveRaw, live: liveForThisEpoch,
       heartbeat: state.heartbeat, activeRuns: state.activeRuns,
       params: (tournament && tournament.params) || {},
       completedRecord: recordSt,
@@ -356,6 +366,12 @@ async function renderConfiguredStructure(host, ctx, id, ep, bracket, structure, 
   // ladder. The caller passes `isLiveForThisEpoch`; recompute defensively when
   // it is omitted (a direct call).
   const liveForThisEpoch = isLiveForThisEpoch == null ? liveBelongsToEpoch(id) : !!isLiveForThisEpoch;
+  // The envelope is adopted for TOPOLOGY whenever it is this epoch's — even
+  // when the run that wrote it is long dead. An interrupted run's rungs exist
+  // nowhere else (no completed record was ever committed), and dropping them
+  // would replace the operator's only account of what happened with a blank
+  // page. `liveForThisEpoch` decides the TENSE it is described in.
+  const envelopeIsThisEpoch = envelopeBelongsToEpoch(id);
   // the LIVE topology (full {structure,phase,competitors,rounds,standings}) —
   // adopted ONLY for the active epoch's view. The progressive live builders, the
   // racing reconstruction, and the live-vs-record adoption decision ALL live in
@@ -364,7 +380,7 @@ async function renderConfiguredStructure(host, ctx, id, ep, bracket, structure, 
   // the COMPLETED per-tournament record here (the resolver is sync + I/O-free) and
   // hand it in as the recorded fallback the resolver uses when no live run is
   // adopted AND (for racing) the bracket reconstruction does not resolve.
-  const liveRaw = liveForThisEpoch ? await D.activeTournament() : null;
+  const liveRaw = envelopeIsThisEpoch ? await D.activeTournament() : null;
 
   // pre-fetch the settled record. RACING reads the SERVED racing-field payload
   // (`/api/epoch/{id}/racing-field` — the per-challenger join lives
@@ -392,15 +408,20 @@ async function renderConfiguredStructure(host, ctx, id, ep, bracket, structure, 
   }
 
   const resolved = resolveNonGauntletSt({
-    structure, epochId: id, liveRaw,
+    structure, epochId: id, liveRaw, live: liveForThisEpoch,
     heartbeat: state.heartbeat, activeRuns: state.activeRuns,
     params, completedRecord,
   });
   const shown = resolved.st;
-  const liveUsable = resolved.source === 'live';
+  // ADOPTED-FROM-THE-ENVELOPE and LIVE are now different things: the topology
+  // can come off the envelope while the run that wrote it is over.
+  const fromEnvelope = resolved.source === 'live';
+  const liveUsable = fromEnvelope && liveForThisEpoch;
+  const interrupted = fromEnvelope && !liveForThisEpoch;
   const shownStructure = (shown && shown.structure) || structure;
   const digest = JSON.stringify({
-    id, structure: shownStructure, tournamentId, live: liveUsable, st: structureDigest(shown),
+    id, structure: shownStructure, tournamentId, live: liveUsable,
+    interrupted, st: structureDigest(shown),
   });
   gatedSwap(host, digest, () => {
     const nodes = [];
@@ -409,9 +430,12 @@ async function renderConfiguredStructure(host, ctx, id, ep, bracket, structure, 
       el('div', { class: 'dt-structure-line' }, [
         structurePill(shownStructure, (shown && shown.structure_params) || params),
         liveUsable ? el('span', { class: 'dt-live-pill', text: 'LIVE' }) : null,
+        interrupted ? el('span', { class: 'dt-interrupted-pill', text: 'INTERRUPTED' }) : null,
       ].filter(Boolean)),
       el('p', { class: 'dn-lede', text: liveUsable
         ? 'A run is in flight — the live tournament fills in as runs land. In-flight competitors are shown racing, not rejected; the winner is not committed until the final gate.'
+        : interrupted
+        ? 'The run was interrupted before this tournament settled. What follows is how far it got — competitors still in contention when it stopped were never decided, and no winner was committed.'
         : 'The configured tournament structure for this epoch. Open a match or competitor for its candidate detail, promote gate, per-board scoring, and patch diff.' }),
     ]));
     if (!shown) {

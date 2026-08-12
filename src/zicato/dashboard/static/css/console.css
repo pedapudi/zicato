@@ -2384,6 +2384,13 @@
     font-family: var(--v2-mono); font-size: calc(9.5px * var(--dt-font-scale, 1)); font-weight: 700; letter-spacing: 0.1em;
     padding: 2px 8px; border-radius: 10px; color: var(--v2-good);
     border: 1px solid var(--v2-good); background: color-mix(in srgb, var(--v2-good) 12%, transparent); }
+  /* Its past-tense sibling: the topology came off the live envelope, but the
+   * run that wrote it stopped before the tournament settled. Same shape, muted
+   * hue, no pulse — it is a record, not a claim about now. */
+  .dt-interrupted-pill { display: inline-flex; align-items: center; margin-left: 8px;
+    font-family: var(--v2-mono); font-size: calc(9.5px * var(--dt-font-scale, 1)); font-weight: 700; letter-spacing: 0.1em;
+    padding: 2px 8px; border-radius: 10px; color: var(--v2-ink-soft);
+    border: 1px dashed var(--v2-rule); background: transparent; }
 
   /* CACHED-champion provenance: a fast-mode champion whose per-board results
      were reused from a prior epoch/run (not re-executed this round). */

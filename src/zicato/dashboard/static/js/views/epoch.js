@@ -131,14 +131,20 @@ export async function render(host, ctx, params) {
   // structure (a multi-challenger gauntlet has in-flight rounds too), not only
   // the non-gauntlet overview path.
   let liveInflight = null;
+  let liveEnvelope = null;
+  let liveIsLive = false;
   {
-    // The live envelope is fetched ONLY while the served tri-state reads
-    // live — active_tournament.json survives the process that wrote it, and
-    // overlaying it on a dead epoch is what produced the forever-"deciding"
-    // round (issue #194 SS1).
-    const liveRaw = livenessFor(state).liveness.live ? await D.activeTournament() : null;
-    const liveForThisEpoch = (liveRaw && liveRaw.epoch_id != null)
+    // SCOPE vs CLOCK (issue #194 §1). The envelope is read whenever it is this
+    // epoch's — an interrupted round's topology lives nowhere else, and
+    // dropping it would blank the page rather than tell the operator what
+    // happened. Liveness gates the present-tense OVERLAYS instead: the
+    // projected standings and the in-flight round both claim "right now".
+    liveIsLive = livenessFor(state).liveness.live;
+    const liveRaw = await D.activeTournament();
+    const belongs = (liveRaw && liveRaw.epoch_id != null)
       ? String(liveRaw.epoch_id) === String(epochId) : !!liveRaw;
+    if (belongs && liveRaw) liveEnvelope = liveRaw;
+    const liveForThisEpoch = belongs && liveIsLive;
     if (liveForThisEpoch && liveRaw && liveRaw.projected && typeof liveRaw.projected === 'object') liveProjected = liveRaw.projected;
     if (liveForThisEpoch && liveRaw) liveInflight = liveRaw;
   }
@@ -166,7 +172,9 @@ export async function render(host, ctx, params) {
     }
 
     const resolved = resolveNonGauntletSt({
-      structure, epochId, liveRaw: liveForThisEpoch ? liveRaw : null,
+      // The envelope supplies the topology whenever it is this epoch's; `live`
+      // tells the resolver which TENSE to hand it back in.
+      structure, epochId, liveRaw: liveEnvelope, live: liveIsLive,
       heartbeat: state.heartbeat, activeRuns: state.activeRuns,
       params: (tournament && tournament.params) || {},
       completedRecord,

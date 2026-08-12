@@ -766,8 +766,7 @@ def test_bundle_under_size_envelope() -> None:
     # panel stops measuring growth and starts blocking work. Raised to
     # 1.96 M — ~2% over the honest total, the same slack the rebase above
     # chose — so the remaining #194 sections land against a real ceiling.
-    assert total < 1_960_000, f"bundle is {total} chars, exceeds 1_960_000 envelope\n" + "\n".join(
-
+    #
     # LIVENESS TRUTH (§1) then adds the always-present one-line status band
     # and its CSS, the tri-state derivation, and the PAST-TENSE renderings
     # every stale surface falls back to — the interrupted pill and its lede,
@@ -776,6 +775,7 @@ def test_bundle_under_size_envelope() -> None:
     # boards-at-interruption line. ~+14 KB, partly offset by the per-view
     # staleness re-derivations it DELETES (every view now reads one helper).
     # It fits inside the 1.96 M ceiling §5 just set, so the line stands.
+    assert total < 1_960_000, f"bundle is {total} chars, exceeds 1_960_000 envelope\n" + "\n".join(
         f"  {name:40s} {size:>10,}" for name, size in sorted(sizes.items(), key=lambda kv: -kv[1])
     )
 

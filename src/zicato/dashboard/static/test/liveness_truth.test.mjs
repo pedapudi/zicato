@@ -301,6 +301,48 @@ test('THE ACCEPTANCE CASE: transport state surfaces ONLY when broken', () => {
     'a broken socket speaks, and says what happens next');
 });
 
+// ── 6. an interrupted run's topology is EVIDENCE, not noise ─────────────
+
+test('resolver: an interrupted run keeps its topology, in the PAST tense', async () => {
+  const STRUCT = await import('../js/views/structure.js');
+  // A racing envelope with real rungs — the only record this round ever left,
+  // because it was killed before any tournament record was committed.
+  const envelope = {
+    tournament_id: 't-june', epoch_id: '2026-06-07_e4', structure: 'racing',
+    phase: 'running',
+    competitors: [{ generation_id: 'v0', role: 'champion' }, { generation_id: 'v7' }],
+    rounds: [{ round_index: 0, matches: [{ match_id: 'rung0_m0', entrants: ['v0', 'v7'],
+      survivors: ['v7'], cut: [] }] }],
+  };
+  const args = { structure: 'racing', epochId: '2026-06-07_e4', liveRaw: envelope,
+                 heartbeat: {}, activeRuns: [], params: {}, completedRecord: null };
+
+  const dead = STRUCT.resolveNonGauntletSt(Object.assign({}, args, { live: false }));
+  assert(dead.st, 'the topology still resolves — a blank page would erase the only account of the round');
+  assertEqual(dead.source, 'live', 'it came off the envelope');
+  assertEqual(dead.st.live, false, 'but it is NOT flagged live');
+  assertEqual(dead.st.interrupted, true, 'it is flagged interrupted, so every figure can say so');
+
+  const alive = STRUCT.resolveNonGauntletSt(Object.assign({}, args, { live: true }));
+  assertEqual(alive.st.live, true, 'a genuinely live run is unchanged');
+  assert(!alive.st.interrupted, 'and carries no interrupted flag');
+});
+
+test('figures: an interrupted racing ladder reads "never decided", never "deciding…"', async () => {
+  const STRUCT = await import('../js/views/structure.js');
+  const st = {
+    structure: 'racing', live: false, interrupted: true,
+    competitors: [{ generation_id: 'v0', role: 'champion' }, { generation_id: 'v7' }],
+    rounds: [{ round_index: 0, matches: [{ match_id: 'rung0_m0', entrants: ['v0', 'v7'],
+      survivors: ['v7'], cut: [] }] }],
+  };
+  const model = STRUCT.racingModel(st);
+  assert(model, 'the racing model builds from the interrupted topology');
+  assertEqual(model.gateState, 'interrupted',
+    'the champion gate never committed — it is not "deciding", and not merely "pending"');
+  assertEqual(model.live, false, 'and nothing about it is live');
+});
+
 test('shell exports buildLoopControls unchanged (the gate moved, the affordance did not)', () => {
   assert(typeof shell.buildLoopControls === 'function', 'the control builder is still exported');
 });
