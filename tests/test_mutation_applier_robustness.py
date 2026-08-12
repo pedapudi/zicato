@@ -626,6 +626,56 @@ def test_non_utf8_py_file_does_not_escape_the_gate(tmp_path: Path) -> None:
     assert (tgt / "latin1.py").read_bytes() == b'GREETING = "caf\xe9"\n'
 
 
+def test_a_batch_cannot_edit_a_baseline_broken_file(tmp_path: Path) -> None:
+    """The invariant that lets the gate subtract the baseline unconditionally.
+
+    The gate forgives every file that was already broken, with no "but the
+    batch touched it" carve-out.  That is only sound because a batch cannot
+    reach into such a file at all: an unparseable file enumerates to zero
+    mutation points, so the pre-check rejects the patch before a single edit
+    lands.  "Already broken" and "this batch wrote it" stay disjoint, and the
+    forgiveness can never launder damage this round did.
+    """
+    src = tmp_path / "src"
+    _write(src / "broken.py", '# zicato:mutable id="inside"\nV = "a"\ndef f(:\n')
+
+    with pytest.raises(ValueError, match="does not resolve to an enumerated mutation point"):
+        apply_patches(src, [_patch(mutation_id="inside", new_content="b")], tmp_path / "tgt")
+    assert not (tmp_path / "tgt").exists()
+
+
+def test_gate_still_rejects_a_file_this_batch_broke(tmp_path: Path) -> None:
+    """The baseline must not blunt the guard for damage the round DID cause.
+
+    A tree carrying unrelated pre-existing breakage must still have its own
+    corruption caught: the forgiven file is skipped, the newly-broken one is
+    reported, and no snapshot survives.
+    """
+    src = tmp_path / "src"
+    tgt = tmp_path / "tgt"
+    _write(src / "fixture_broken.py", "def f(:\n    pass\n")
+    _write(
+        src / "tools.py",
+        """
+        def slug(topic):
+            # zicato:mutable:code id="slug_logic"
+            s = topic.lower()
+            # zicato:mutable:end
+            return s
+        """,
+    )
+
+    patches = [_patch(mutation_id="slug_logic", new_content="s = topic.lower((")]
+    with pytest.raises(ValueError, match="post-apply syntax") as excinfo:
+        apply_patches(src, patches, tgt)
+
+    message = str(excinfo.value)
+    assert "tools.py" in message
+    # The pre-existing breakage is not piled onto this round's report.
+    assert "fixture_broken.py" not in message
+    assert not tgt.exists()
+
+
 # ---------------------------------------------------------------------------
 # Filesystem (issue #4) — read-only source trees apply successfully.
 # ---------------------------------------------------------------------------
