@@ -310,8 +310,10 @@ def _create_epoch_from_contract(
     """Create an epoch from resolved contract inputs; return its id.
 
     A thin wrapper over :func:`zicato.epoch.lifecycle.new_epoch` that
-    loads the scoring weights from the live ``scoring.json`` and carries
-    the registered inner-harness identity into the contract hash.
+    loads the scoring weights from the live ``scoring.json`` and hands
+    the resolved contract over whole, so the epoch's stored hash equals
+    the hash :func:`ensure_epoch_for_contract` computed from the same
+    inputs — every component of it, including ones added later.
     """
     from zicato.epoch.lifecycle import new_epoch  # noqa: PLC0415
     from zicato.workspace_loader import scoring_weights_from_dict  # noqa: PLC0415
@@ -333,9 +335,7 @@ def _create_epoch_from_contract(
         weights=weights,
         auto_close_previous=False,  # ensure_epoch_for_contract closes explicitly
         aux_call_llm=aux_call_llm,
-        entrypoint=inputs.entrypoint,
-        mutable_trees=tuple(inputs.mutable_trees),
-        proposer_path=inputs.proposer_path,
+        contract=inputs,
     )
     return cfg.id
 

@@ -64,6 +64,7 @@ from zicato.workspace import WorkspaceLayout, list_epoch_ids
 
 if TYPE_CHECKING:
     from zicato.board.builder import Board
+    from zicato.epoch.contract import ContractInputs
     from zicato.proposer.brief import ProposerBrief
 
 # A callable shape compatible with goldfive's call_llm:
@@ -397,6 +398,7 @@ def new_epoch(
     auto_close_previous: bool = True,
     aux_call_llm: _AuxCallLLM | None = None,
     *,
+    contract: ContractInputs | None = None,
     entrypoint: str = "",
     mutable_trees: tuple[str, ...] = (),
     goal: str = "",
@@ -434,18 +436,28 @@ def new_epoch(
     from are this function's responsibility, not the caller's. Passing
     paths still works and copies the files verbatim.
 
-    ``entrypoint`` and ``mutable_trees`` carry the registered inner-
-    harness identity into the contract hash. They default to empty so
-    existing callers (and tests) keep working — an epoch created
-    without them simply hashes those two components as empty, which is
-    stable and back-compatible.
+    Carrying the registered contract components
+    -------------------------------------------
+    ``contract`` is the workspace's live contract as
+    :func:`zicato.epoch.contract.resolve_contract_inputs` resolved it.
+    Pass it and the epoch freezes EVERY registered component — the
+    inner-harness identity, the proposer dir, the external proposer, the
+    proposer's static checks — with its three file paths re-pointed at
+    the copies frozen above, so the stored hash is exactly the hash the
+    orchestrator recomputes from the live contract on the next
+    ``evolve``. Passing the whole resolved object rather than one
+    keyword per component is what keeps the two from drifting: a
+    component added to :class:`~zicato.epoch.contract.ContractInputs`
+    is carried without this function or its callers changing (issue
+    #186, where a hand-enumerated carryover silently froze
+    ``proposer_path=None`` on every hand-forced epoch).
 
-    ``proposer_path`` freezes the epoch's proposer dir
-    (``proposers/<name>/``) into the contract hash; ``None`` (the default)
-    is the built-in default proposer and canonicalizes to a stable form,
-    so existing callers that omit it keep their hashes back-compatible
-    except for the one-time roll that adding the proposer component
-    introduces.
+    ``entrypoint`` / ``mutable_trees`` / ``proposer_path`` are the
+    shorthand for callers with no registered workspace config to
+    resolve — chiefly tests. They build the same object. Combining them
+    with ``contract`` raises :class:`ValueError` rather than letting one
+    spelling quietly win, which is the failure mode this whole seam
+    exists to prevent.
 
     ``goal`` is a free-form operator-supplied statement of intent for
     the epoch. It is persisted into ``config.json`` and surfaced in
@@ -456,6 +468,15 @@ def new_epoch(
 
     Returns the constructed :class:`EpochConfig`.
     """
+    # Rejected before any directory is created, so a caller that mixes the
+    # two spellings gets an error rather than a half-written epoch.
+    if contract is not None and (entrypoint or mutable_trees or proposer_path is not None):
+        raise ValueError(
+            "new_epoch: pass either `contract` (the resolved live contract) or the "
+            "entrypoint/mutable_trees/proposer_path shorthand, not both — with both, "
+            "one spelling would silently lose"
+        )
+
     workspace_root.mkdir(parents=True, exist_ok=True)
 
     # 1. Auto-close previous if open.
@@ -497,17 +518,18 @@ def new_epoch(
     target_scoring = scoring_path(workspace_root, epoch_id)
     backend_for(workspace_root).write_json(scoring_key(epoch_id), scoring_to_dict(weights))
 
-    # 5. Contract hash over the frozen board/brief/scoring plus the
-    # registered inner-harness identity. Computed from the just-written
-    # frozen copies so the stored hash is exactly what a later
-    # ``resolve_contract_inputs`` over equivalent live files produces.
+    # 5. Contract hash over the frozen board/brief/scoring plus every
+    # registered component the caller carried in. Computed from the
+    # just-written frozen copies so the stored hash is exactly what a
+    # later ``resolve_contract_inputs`` over equivalent live files
+    # produces.
     from zicato.epoch.contract import (  # noqa: PLC0415
         ContractInputs,
         compute_contract_hash,
     )
 
-    contract_hash = compute_contract_hash(
-        ContractInputs(
+    if contract is None:
+        contract = ContractInputs(
             board_path=target_board,
             brief_path=target_brief,
             scoring_path=target_scoring,
@@ -515,7 +537,16 @@ def new_epoch(
             mutable_trees=tuple(mutable_trees),
             proposer_path=proposer_path,
         )
-    )
+    else:
+        from dataclasses import replace
+
+        contract = replace(
+            contract,
+            board_path=target_board,
+            brief_path=target_brief,
+            scoring_path=target_scoring,
+        )
+    contract_hash = compute_contract_hash(contract)
 
     # 6. Config + lineage. ``EpochConfig.brief_path`` carries the path
     # to the frozen proposer brief (the ``brief.md`` file).
@@ -539,7 +570,10 @@ def new_epoch(
         closed_at="",
         contract_hash=contract_hash,
         goal=goal,
-        proposer_path=proposer_path,
+        # Read off the hashed contract, not the shorthand parameter, so the
+        # proposer this epoch's rounds are built with is the one its hash
+        # was taken over.
+        proposer_path=contract.proposer_path,
         applied_proposer_recommendations=drain_staged_recommendations(workspace_root),
     )
     _write_config(workspace_root, cfg)
