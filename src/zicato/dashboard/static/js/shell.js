@@ -1235,7 +1235,12 @@ async function dispatchSettingsOverlay(route) {
   // view), reusing the normal renderer path, then paint settings into the panel.
   const under = _underlyingRoute || { view: 'home', params: {}, cmp: null };
   const underRenderer = RENDERERS[under.view] || RENDERERS.home;
-  const underKey = 'under|' + under.view + '|' + JSON.stringify(under.params || {}) + '|' + (under.cmp || '');
+  // The SAME key composition dispatch() uses for this route — so opening the
+  // overlay over a view that is already painted leaves its DOM untouched
+  // behind the scrim. A distinct 'under|'-prefixed key could never match the
+  // key the normal dispatch stamped, which forced a clear + re-render of an
+  // already-correct page on every first open.
+  const underKey = under.view + '|' + JSON.stringify(under.params || {}) + '|' + (under.cmp || '') + '|' + (under.follow ? 'f' : '');
   if (_lastViewKey !== underKey) {
     clearChildren(_viewHost);
     _lastViewKey = underKey;

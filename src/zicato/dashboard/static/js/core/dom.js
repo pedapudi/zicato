@@ -82,6 +82,12 @@ function toChildNode(c) {
 
 export function clearChildren(node) {
   while (node.firstChild) node.removeChild(node.firstChild);
+  // The render digest describes the CHILDREN gatedSwap painted; a host with
+  // no children must not claim them. Leaving the attribute behind makes the
+  // gate skip the next paint into the emptied host — the view then shows its
+  // loading placeholder forever (a never-paint, strictly worse than the
+  // extra repaint dropping the digest can cost).
+  if (node.removeAttribute) node.removeAttribute('data-t-digest');
 }
 
 // Set textContent only if it actually differs — avoids a layout/paint
