@@ -129,10 +129,11 @@ The board grades the two separately:
 - The **deliverable** predicates (`wrote_presentation_file`,
   `mentions_waffles`, `mentions_transformers`,
   `mentions_quarterly_metrics`, `has_slide_titles`,
-  `has_structured_outline`, `avoids_offtopic_raccoons`) read the deck on
-  disk — found by searching the run's output root for `index.html`,
-  under whatever slug the agent chose. A run that wrote no deck fails
-  them regardless of what its reply claimed.
+  `has_structured_outline`, `avoids_offtopic_raccoons`) read the durable
+  files named by `RunResult.artifacts`. Exactly one direct
+  `output/<slug>/index.html` identifies the deck; history snapshots are
+  ignored, and multiple direct decks fail as ambiguous. A run that wrote
+  no deck fails regardless of what its reply claimed.
 - The **conversation** predicates (`stayed_coherent_across_turns`,
   `addressed_picky_feedback`) read the transcript, because cross-turn
   memory and feedback handling live nowhere else.
@@ -154,8 +155,9 @@ The `regex`, `expected_text` and `json_schema` kinds match against
 `final_output` by construction, so an entry that grades the artifact
 must use the `predicate` kind. The worker discovers files only after the run;
 the board does not declare their names. During grading the predicate receives
-their sorted metadata and durable root through `RunResult.artifacts`, and the
-same tree remains beside `loss.json` after the temporary run directory is gone.
+their sorted metadata and durable root through `RunResult.artifacts`, reads only
+inventoried paths, and never consults ambient process state. The same tree
+remains beside `loss.json` after the temporary run directory is gone.
 
 Notes on individual entries:
 

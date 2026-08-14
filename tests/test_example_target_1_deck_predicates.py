@@ -1,27 +1,17 @@
-"""The target_1_presentation board grades the deck on disk, not the reply.
-
-The deliverable this target produces is a rendered webpage the agent writes
-through ``write_webpage``; the agent's closing chat message is a report
-*about* it. Grading the message instead of the file is invisible to every
-real improvement in the deck, and it is wrong in both directions — a run
-that wrote a good deck and summarised it tersely fails, and a run that wrote
-no file at all but narrated slide titles passes.
-
-Both directions are pinned below. The predicates resolve the run's output
-root from ``ZICATO_RUN_SCRATCH_DIR`` (the contract the tournament worker
-exports), so these tests point that variable at a tmp directory and lay out
-decks by hand — no model, no agent tree, no live call.
-"""
+"""The presentation board grades captured deck artifacts, not the reply."""
 
 from __future__ import annotations
 
 import asyncio
-import os
-from dataclasses import dataclass, field
+import shutil
+from collections.abc import Callable
+from dataclasses import dataclass
 from pathlib import Path
 
 import pytest
 
+from zicato.core.types import ArtifactSet
+from zicato.tournament.artifacts import capture_run_artifacts
 from zicato_examples.target_1_presentation.predicates import (
     avoids_offtopic_raccoons,
     deck_files,
@@ -35,14 +25,15 @@ from zicato_examples.target_1_presentation.predicates import (
 
 @dataclass
 class _Result:
-    """Minimal ``RunResult`` stand-in carrying just the transcript surface."""
-
     final_output: str = ""
-    transcript: tuple[str, ...] = field(default_factory=tuple)
+    transcript: tuple[str, ...] = ()
+    artifacts: ArtifactSet | None = None
+
+
+Capture = Callable[..., _Result]
 
 
 def _deck_html(title: str, slides: list[str]) -> str:
-    """A deck in the shape the web_developer is instructed to emit."""
     sections = "\n".join(
         f'  <section class="slide" id="slide-{n}"><h2>{text}</h2></section>'
         for n, text in enumerate(slides, start=1)
@@ -58,23 +49,40 @@ def _deck_html(title: str, slides: list[str]) -> str:
     )
 
 
-def _write_deck(root: Path, slug: str, html: str) -> Path:
-    """Lay a three-file deck down under ``<root>/output/<slug>/``."""
+def _write_deck(root: Path, slug: str, html: str) -> None:
     directory = root / "output" / slug
     directory.mkdir(parents=True, exist_ok=True)
     (directory / "index.html").write_text(html)
     (directory / "styles.css").write_text(".slide { display: none; }\n")
     (directory / "script.js").write_text("function next() {}\n")
-    return directory
 
 
 @pytest.fixture
-def scratch(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
-    """Point the run-output contract at a fresh per-test scratch directory."""
+def scratch(tmp_path: Path) -> Path:
     root = tmp_path / "scratch"
     root.mkdir()
-    monkeypatch.setenv("ZICATO_RUN_SCRATCH_DIR", str(root))
     return root
+
+
+@pytest.fixture
+def captured(tmp_path: Path) -> Capture:
+    sequence = iter(range(100))
+
+    def make(
+        scratch: Path,
+        *,
+        final_output: str = "",
+        transcript: tuple[str, ...] = (),
+        max_files: int = 1_000,
+    ) -> _Result:
+        artifacts = capture_run_artifacts(
+            scratch,
+            tmp_path / f"run-{next(sequence)}" / "loss.json",
+            max_files=max_files,
+        )
+        return _Result(final_output=final_output, transcript=transcript, artifacts=artifacts)
+
+    return make
 
 
 _WAFFLE_DECK = _deck_html(
@@ -87,39 +95,25 @@ _WAFFLE_DECK = _deck_html(
     ],
 )
 
-# What the coordinator actually reports back: a short confirmation that
-# names neither the topic nor a single slide. Observed shape — the June
-# runs' scored replies ran ~150 characters.
 _TERSE_REPLY = "The presentation has been created and reviewed. No critical issues remain."
 
 
-def test_narrated_slides_without_a_file_do_not_pass(scratch: Path) -> None:
-    """A reply that lists slides but wrote no deck must FAIL.
-
-    The failure this pins: the agent describes a deck in prose, never calls
-    ``write_webpage``, and the board scores it as a success because the word
-    it looks for is in the narration.
-    """
+def test_narrated_slides_without_a_file_do_not_pass(scratch: Path, captured: Capture) -> None:
     narration = (
         "Slide 1: Waffles — a brief introduction.\n"
         "Slide 2: A short history of waffles.\n"
         "Slide 3: Belgian vs American waffles.\n"
     )
-    result = _Result(final_output=narration)
+    result = captured(scratch, final_output=narration)
 
     assert wrote_presentation_file(result) is False
     assert mentions_waffles(result) is False
     assert has_slide_titles(result) is False
 
 
-def test_written_deck_passes_despite_a_terse_reply(scratch: Path) -> None:
-    """A real deck on disk must PASS even when the reply says nothing.
-
-    The mirror failure: the run did everything right, and the board scored
-    the coordinator's one-line confirmation instead of the artifact.
-    """
+def test_written_deck_passes_despite_a_terse_reply(scratch: Path, captured: Capture) -> None:
     _write_deck(scratch, "waffles", _WAFFLE_DECK)
-    result = _Result(final_output=_TERSE_REPLY)
+    result = captured(scratch, final_output=_TERSE_REPLY)
 
     assert wrote_presentation_file(result) is True
     assert mentions_waffles(result) is True
@@ -127,80 +121,52 @@ def test_written_deck_passes_despite_a_terse_reply(scratch: Path) -> None:
     assert has_structured_outline(result) is True
 
 
-def test_deck_is_found_under_any_slug(scratch: Path) -> None:
-    """Detection does not depend on the directory name the agent chose.
-
-    WHERE under the output root the deck landed is the file-findability
-    judge's business — the write/read slug agreement is this board's
-    designed difficulty and is graded as process drift. Whether a usable
-    deck exists at all is graded here, so an embellished slug must not
-    make a real deck invisible.
-    """
+def test_deck_is_found_under_any_slug(scratch: Path, captured: Capture) -> None:
     _write_deck(scratch, "the_wonderful_world_of_waffles_presentation", _WAFFLE_DECK)
 
-    assert mentions_waffles(_Result()) is True
+    assert mentions_waffles(captured(scratch)) is True
 
 
-def test_topical_predicates_read_the_deck_not_the_reply(scratch: Path) -> None:
-    """An off-topic deck fails even when the reply names the topic."""
+def test_topical_predicates_read_the_deck_not_the_reply(scratch: Path, captured: Capture) -> None:
     _write_deck(scratch, "waffles", _WAFFLE_DECK)
-    result = _Result(final_output="Here are your slides on transformers and attention.")
+    result = captured(scratch, final_output="Here are your slides on transformers and attention.")
 
     assert mentions_transformers(result) is False
     assert mentions_waffles(result) is True
 
 
-def test_unlinked_html_is_not_a_usable_deck(scratch: Path) -> None:
-    """The stylesheet / script links the developer MUST emit are graded.
-
-    ``web_developer_instruction`` requires both references "so the files
-    are connected properly". A page that renders none of its own CSS or JS
-    is not the deliverable, however good its markup.
-    """
+def test_unlinked_html_is_not_a_usable_deck(scratch: Path, captured: Capture) -> None:
     unlinked = _WAFFLE_DECK.replace('<link rel="stylesheet" href="styles.css">', "").replace(
         '<script src="script.js"></script>', ""
     )
     _write_deck(scratch, "waffles", unlinked)
 
-    assert wrote_presentation_file(_Result()) is False
+    assert wrote_presentation_file(captured(scratch)) is False
 
 
-def test_thin_deck_fails_the_slide_count(scratch: Path) -> None:
-    """Below three slides the artifact is too thin to be a deck."""
+def test_thin_deck_fails_the_slide_count(scratch: Path, captured: Capture) -> None:
     _write_deck(scratch, "waffles", _deck_html("Waffles", ["Only one slide"]))
 
-    assert wrote_presentation_file(_Result()) is True
-    assert has_slide_titles(_Result()) is False
+    result = captured(scratch)
+    assert wrote_presentation_file(result) is True
+    assert has_slide_titles(result) is False
 
 
-def test_newest_deck_wins_when_the_run_wrote_more_than_one(scratch: Path) -> None:
-    """A run that wrote under two slugs is graded on what it ended with.
-
-    Grading the union would credit a run for a deck it had already
-    abandoned; the deliverable is the one standing at the end of the run.
-    """
-    first = _write_deck(scratch, "waffles", _WAFFLE_DECK)
-    second = _write_deck(
+def test_multiple_direct_decks_fail_closed(scratch: Path, captured: Capture) -> None:
+    _write_deck(scratch, "waffles", _WAFFLE_DECK)
+    _write_deck(
         scratch,
         "transformers",
         _deck_html("Transformers", ["Attention", "Encoders", "Applications"]),
     )
-    os.utime(first / "index.html", (1_700_000_000, 1_700_000_000))
-    os.utime(second / "index.html", (1_700_000_100, 1_700_000_100))
 
-    assert mentions_transformers(_Result()) is True
-    assert mentions_waffles(_Result()) is False
+    result = captured(scratch)
+    assert deck_files(result) == {}
+    assert mentions_transformers(result) is False
+    assert mentions_waffles(result) is False
 
 
-def test_the_shipped_board_entry_grades_the_deck(scratch: Path) -> None:
-    """The whole seam, driven from ``board.jsonl``, not from an import.
-
-    Loads the real ``waffles_single`` entry and evaluates its expectation
-    through :func:`zicato.board.matchers.evaluate_expectation` — the same
-    call the tournament worker makes, in the same process that carries
-    ``ZICATO_RUN_SCRATCH_DIR``. Guards the dotted path in the board
-    against drifting away from the predicate that backs it.
-    """
+def test_the_shipped_board_entry_grades_the_deck(scratch: Path, captured: Capture) -> None:
     from zicato.board.jsonl import load_board
     from zicato.board.matchers import evaluate_expectation
 
@@ -213,34 +179,82 @@ def test_the_shipped_board_entry_grades_the_deck(scratch: Path) -> None:
     )
     entry = next(e for e in load_board(board_path) if e.id == "waffles_single")
     assert entry.expectation is not None
-    result = _Result(final_output=_TERSE_REPLY)
+    result = captured(scratch, final_output=_TERSE_REPLY)
 
     verdict = asyncio.run(evaluate_expectation(entry.expectation, result))
     assert verdict.passed is False
 
     _write_deck(scratch, "waffles", _WAFFLE_DECK)
+    result = captured(scratch, final_output=_TERSE_REPLY)
     verdict = asyncio.run(evaluate_expectation(entry.expectation, result))
     assert verdict.passed is True
 
 
-def test_raccoon_drift_is_graded_on_the_deck_and_never_vacuously(scratch: Path) -> None:
-    """The negative predicate needs a deck before it can credit suppression."""
-    assert avoids_offtopic_raccoons(_Result()) is False
+def test_raccoon_drift_is_graded_on_the_deck_and_never_vacuously(
+    scratch: Path, captured: Capture
+) -> None:
+    assert avoids_offtopic_raccoons(captured(scratch)) is False
 
     _write_deck(scratch, "waffles", _WAFFLE_DECK)
-    assert avoids_offtopic_raccoons(_Result()) is True
+    assert avoids_offtopic_raccoons(captured(scratch)) is True
 
     drifted = _deck_html("Waffles", ["Waffles", "History", "Raccoons like waffles too"])
     _write_deck(scratch, "waffles", drifted)
-    assert avoids_offtopic_raccoons(_Result()) is False
+    assert avoids_offtopic_raccoons(captured(scratch)) is False
 
 
-def test_no_output_root_is_a_clean_failure(scratch: Path) -> None:
-    """A run whose tools never fired fails without raising."""
-    assert deck_files() == {}
-    assert wrote_presentation_file(_Result()) is False
-    assert mentions_waffles(_Result()) is False
-    assert has_slide_titles(_Result()) is False
-    assert has_structured_outline(_Result()) is False
-    # Robustness: a result missing every attribute must not raise either.
+def test_only_inventoried_artifacts_are_gradeable(
+    scratch: Path,
+    captured: Capture,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    absent = _Result()
+    assert deck_files(absent) == {}
+    assert not any(
+        predicate(absent)
+        for predicate in (
+            wrote_presentation_file,
+            mentions_waffles,
+            has_slide_titles,
+            has_structured_outline,
+        )
+    )
     assert mentions_waffles(object()) is False
+
+    uninventoried = captured(scratch)
+    assert uninventoried.artifacts is not None
+    _write_deck(uninventoried.artifacts.root, "waffles", _WAFFLE_DECK)
+    assert wrote_presentation_file(uninventoried) is False
+
+    _write_deck(scratch, "waffles", _WAFFLE_DECK)
+    result = captured(scratch)
+    decoy = tmp_path / "decoy"
+    _write_deck(decoy, "transformers", _deck_html("Transformers", ["A", "B", "C"]))
+    monkeypatch.setenv("ZICATO_RUN_SCRATCH_DIR", str(decoy))
+
+    assert mentions_waffles(result) is True
+    assert mentions_transformers(result) is False
+    truncated = captured(scratch, max_files=0)
+    assert truncated.artifacts is not None and truncated.artifacts.truncated
+    assert wrote_presentation_file(truncated) is False
+
+
+def test_durable_artifacts_grade_after_scratch_cleanup(scratch: Path, captured: Capture) -> None:
+    _write_deck(scratch, "waffles", _WAFFLE_DECK)
+    result = captured(scratch)
+    shutil.rmtree(scratch)
+
+    assert mentions_waffles(result) is True
+
+
+def test_measurement_history_is_not_a_competing_deck(scratch: Path, captured: Capture) -> None:
+    _write_deck(scratch, "presentation", _WAFFLE_DECK)
+    history = scratch / "output" / "deck_history" / "turn_1"
+    history.mkdir(parents=True)
+    for name in ("index.html", "styles.css", "script.js"):
+        (history / name).write_text("transformer attention")
+    result = captured(scratch)
+
+    assert mentions_waffles(result) is True
+    assert mentions_transformers(result) is False
