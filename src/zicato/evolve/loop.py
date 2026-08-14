@@ -1,6 +1,6 @@
 """The N-round evolve loop split out of :mod:`zicato.orchestrator`.
 
-:func:`evolve_n_rounds` calls :func:`zicato.orchestrator.evolve_once` up to
+:func:`evolve_n_rounds` calls :func:`zicato.evolve.gauntlet.evolve_once` up to
 ``rounds`` times, with the four loop circuit-breakers modelled as a small
 :class:`StopPolicy` set:
 
@@ -16,13 +16,8 @@ lines and symbolic stop-reason strings. This is a behaviour-preserving
 move — :func:`evolve_n_rounds` keeps its exact signature and is re-exported
 from :mod:`zicato.orchestrator`.
 
-Orchestrator-resident collaborators (``evolve_once``,
-``ensure_epoch_for_contract``, ``_resolve_or_launch_harmonograf``,
-``block_while_paused`` and the rest) are resolved through the
-:mod:`zicato.orchestrator` module object at call time, exactly reproducing
-the module-global late binding the in-orchestrator loop relied on — so the
-test suite's monkeypatches of those names on the orchestrator module keep
-working.
+Collaborators are imported from their owning phase modules. Tests patch those
+owners directly; the dispatcher is not a private seam registry.
 """
 
 from __future__ import annotations
@@ -42,12 +37,7 @@ from zicato.runtime.resume import ResumePlan, prepare_resume
 from zicato.util import best_effort
 
 if TYPE_CHECKING:
-    # The outcome dataclass lives in the orchestrator; loop.py is reached
-    # only THROUGH the orchestrator (the re-export shim), so importing it
-    # here at runtime would form an import cycle. Annotations use the
-    # forward reference; the one runtime construction site resolves the
-    # class through the orchestrator module object.
-    from zicato.orchestrator import EvolveRoundOutcome
+    from zicato.evolve.round_api import EvolveRoundOutcome
 
 log = logging.getLogger("zicato.orchestrator")
 
@@ -252,7 +242,7 @@ def _budget_aborted_outcome(parent_generation_id: str, budget_s: int) -> EvolveR
     budget uses for its aborts — so journal readers and the CLI can
     recognise it.
     """
-    from zicato.orchestrator import EvolveRoundOutcome  # noqa: PLC0415
+    from zicato.evolve.round_api import EvolveRoundOutcome  # noqa: PLC0415
 
     return EvolveRoundOutcome(
         parent_generation_id=parent_generation_id,
@@ -291,8 +281,8 @@ async def _apply_rubric_replacement(
     rolled epoch when the brief drifted the contract; the current epoch if a
     no-op replacement somehow left the hash unchanged).
     """
-    from zicato import orchestrator as _orch  # noqa: PLC0415
     from zicato.epoch.contract import resolve_contract_inputs  # noqa: PLC0415
+    from zicato.evolve.epoching import ensure_epoch_for_contract  # noqa: PLC0415
 
     brief_path = resolve_contract_inputs(workspace_root).brief_path
     brief_path.parent.mkdir(parents=True, exist_ok=True)
@@ -304,9 +294,7 @@ async def _apply_rubric_replacement(
         brief_path,
     )
     # Re-resolve the epoch: the drifted contract hash rolls a fresh epoch.
-    # Resolved through the orchestrator module so a test monkeypatch of
-    # ``orch.ensure_epoch_for_contract`` is honoured.
-    return await _orch.ensure_epoch_for_contract(
+    return await ensure_epoch_for_contract(
         workspace_root,
         auto_epoch=auto_epoch,
         aux_call_llm=aux_call_llm,
@@ -498,13 +486,22 @@ async def evolve_n_rounds(
     finishing it would overrun the total budget). Callers that do not
     pass the list see no behavioural change.
     """
-    # Orchestrator-resident collaborators are resolved through the module
-    # object so the test suite's monkeypatches (orch.evolve_once,
-    # orch.ensure_epoch_for_contract, orch._resolve_or_launch_harmonograf,
-    # orch.block_while_paused, ...) are honoured — exactly the module-global
-    # late binding the in-orchestrator loop relied on.
-    from zicato import orchestrator as _orch  # noqa: PLC0415
     from zicato import workspace_loader  # noqa: PLC0415
+    from zicato.evolve.dashboard_projection import _mark_run_terminal  # noqa: PLC0415
+    from zicato.evolve.epoching import ensure_epoch_for_contract  # noqa: PLC0415
+    from zicato.evolve.gauntlet import evolve_once  # noqa: PLC0415
+    from zicato.evolve.ingest import index_preflight  # noqa: PLC0415
+    from zicato.evolve.lifecycle_services import (  # noqa: PLC0415
+        _build_meta_loop_emitter_safe,
+        _now_iso,
+        _resolve_or_launch_harmonograf,
+    )
+    from zicato.evolve.round_api import DEFERRED_INFRA_DECISION  # noqa: PLC0415
+    from zicato.runtime.control_consumer import (  # noqa: PLC0415
+        block_while_paused,
+        claim_rubric_replacement,
+        claim_skip_round,
+    )
 
     def _set_stop_reason(reason: str) -> None:
         if stop_reason_out is not None:
@@ -517,7 +514,7 @@ async def evolve_n_rounds(
     # Contract-hash auto-epoching — resolve the epoch ONCE up front.
     # An explicit --epoch wins and skips auto-rolling entirely.
     if epoch_id is None:
-        epoch_id = await _orch.ensure_epoch_for_contract(
+        epoch_id = await ensure_epoch_for_contract(
             workspace_root,
             auto_epoch=auto_epoch,
             aux_call_llm=auxiliary_call_llm,
@@ -581,7 +578,7 @@ async def evolve_n_rounds(
         "index self-heal preflight",
         on_error=lambda exc: log.debug("index self-heal preflight skipped: %s", exc),
     ):
-        log.info("%s", _orch.index_preflight(workspace_root))
+        log.info("%s", index_preflight(workspace_root))
     # Conservative crash-resume reconciliation (RUNTIME.md §4, ROBUSTNESS.md
     # §2.6) — runs ONCE, right after the lock is held and before any new
     # work. It clears the stale runtime/ state of a prior dead evolve and,
@@ -617,7 +614,7 @@ async def evolve_n_rounds(
     # block. The auto-launched URL is also pushed into ZICATO_HARMONOGRAF_URL
     # so per-board-run workers attach their per-run sinks to the same
     # server without any further plumbing.
-    harmonograf_url, harmonograf_handle = _orch._resolve_or_launch_harmonograf(workspace_root)
+    harmonograf_url, harmonograf_handle = _resolve_or_launch_harmonograf(workspace_root)
     # Meta-loop goldfive emitter. One per evolve invocation, stable
     # session id derived from the start ISO — the proposer + analyzer
     # call sites take it through ``evolve_once`` so their LLM calls
@@ -626,8 +623,8 @@ async def evolve_n_rounds(
     # goldfive proto stubs) returns an emitter with an empty sink list
     # and every emit is a no-op. The emitter is closed in the same
     # ``finally`` block that tears the harmonograf supervisor down.
-    evolve_started_at_iso = _orch._now_iso()
-    meta_loop_emitter = _orch._build_meta_loop_emitter_safe(
+    evolve_started_at_iso = _now_iso()
+    meta_loop_emitter = _build_meta_loop_emitter_safe(
         workspace_root, harmonograf_url, evolve_started_at_iso
     )
     # Bind the emitter as the ambient meta-loop emitter so the structural
@@ -717,9 +714,9 @@ async def evolve_n_rounds(
             # there is no in-flight round to abort, so it is archived as a
             # no-op rather than firing on the next round. (The live skip is
             # claimed at the top of evolve_once, the round it targets.)
-            _orch.block_while_paused(workspace_root)
-            _orch.claim_skip_round(workspace_root)
-            _rubric = _orch.claim_rubric_replacement(workspace_root)
+            block_while_paused(workspace_root)
+            claim_skip_round(workspace_root)
+            _rubric = claim_rubric_replacement(workspace_root)
             if _rubric is not None:
                 epoch_id = await _apply_rubric_replacement(
                     workspace_root,
@@ -740,7 +737,7 @@ async def evolve_n_rounds(
             beater.update(
                 epoch_id=epoch_id or "",
                 round_index=epoch_round_index,
-                round_started_at=_orch._now_iso(),
+                round_started_at=_now_iso(),
                 seq=round_start_seq,
                 phase=f"evolve_once:round_{epoch_round_index}",
             )
@@ -769,7 +766,7 @@ async def evolve_n_rounds(
                     kind=SPAN_ROUND,
                     meta={"round_index": _round_idx, "epoch_id": _epoch_id or ""},
                 ):
-                    return await _orch.evolve_once(
+                    return await evolve_once(
                         workspace_root=workspace_root,
                         epoch_id=_epoch_id,
                         harness_call_llm=harness_call_llm,
@@ -852,7 +849,7 @@ async def evolve_n_rounds(
                 eid = epoch_id or current_epoch_id(workspace_root)
                 if eid:
                     regenerate_in_progress_html(workspace_root, eid)
-            if outcome.tournament_decision == _orch.DEFERRED_INFRA_DECISION:
+            if outcome.tournament_decision == DEFERRED_INFRA_DECISION:
                 # Endpoint-outage deferral (WS-H): the round burned NO
                 # experiment — it persists un-outcomed on disk. Back off
                 # (exponential, capped) instead of re-proposing straight
@@ -950,7 +947,7 @@ async def evolve_n_rounds(
         # live tournament — even inside the heartbeat freshness window. Runs
         # on BOTH the clean and the error/interrupt path (a SIGKILL still
         # can't self-clean, which the frontend freshness gate covers).
-        _orch._mark_run_terminal(workspace_root)
+        _mark_run_terminal(workspace_root)
         await beater.stop()
         release_workspace_lock(lock)
         # Remove the operator-log handler + restore the logger level. Best-

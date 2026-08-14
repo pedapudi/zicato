@@ -72,7 +72,7 @@ or "the judge panel has gone silent".
 | `src/zicato/health/diagnostics.py` | `__all__` | export it |
 | `src/zicato/health/__init__.py` | re-export | package surface |
 | `src/zicato/config.py` | `HealthConfig` | a new threshold, if any |
-| `src/zicato/orchestrator.py` | `_assess_and_persist_loop_health` | new inputs, if any |
+| `src/zicato/evolve/round_prepare.py` | `_assess_and_persist_loop_health` | new inputs, if any |
 | `tests/test_health_diagnostics.py` | per-detector test | pin it |
 
 **Steps.**
@@ -829,7 +829,7 @@ is the contract pre-flight and the noise-floor calibration.
        never a contract input — writing it does not touch ``contract_hash``
        and never rolls the epoch. Re-running overwrites the prior record.
    ```
-3. **Gate + call it once at epoch open.** In `orchestrator.py`, add
+3. **Gate + call it once at epoch open.** In `evolve/round_prepare.py`, add
    `_maybe_<your_step>(...)` beside `_maybe_contract_preflight` /
    `_maybe_calibrate_noise_floor`, wrapped in `best_effort(...)`. Gate on a
    `config.json` knob (e.g. `workspace_config.get("<your_step>")`); return early
@@ -874,16 +874,17 @@ best-effort, persisted on the epoch record, provably never in the contract hash
 
 ---
 
-## Recipe 9 — Touch the orchestrator safely
+## Recipe 9 — Change the round pipeline safely
 
 **When to use.** Your change adds or edits a per-round step in the evolve loop —
 proposing, finalizing a generation, the end-of-round tail, field minting, or
-override application. The orchestrator is the riskiest file in the tree; this
-recipe is the seam map that keeps a change from landing on one pipeline only.
+override application. The strategy modules are the riskiest files in the tree;
+this recipe is the seam map that keeps a shared change from landing on one
+pipeline only.
 
 **Files touched.**
 
-| Seam (in `src/zicato/orchestrator.py`) | Owns | RoundLog duty |
+| Seam | Owns | RoundLog duty |
 |---|---|---|
 | `_propose_child` | builds the single `ProposerContext` both pipelines share; calls `proposer_agent.propose`; stamps `round_index` | emits `proposal_attempted`, `experiment_minted`, `patches_applied` (via `round_emitter`) |
 | `_finalize_generation` | the ONE write pipeline every round tail flows through (outcome + index dual-write + lineage + journal) | emits NOTHING itself — the caller emits `decision_recorded` / `round_closed` |
@@ -904,23 +905,12 @@ recipe is the seam map that keeps a change from landing on one pipeline only.
    gauntlet and the field paths BOTH call them. Inlining your step into one path
    is the exact shape of bugs #6 and #7 (12-bug-casebook.md §"Case 6" / §"Case
    7"): the gauntlet got a fix the field path did not.
-3. **Preserve the monkeypatch names.** The N-round loop lives in
-   `zicato.evolve.loop` and resolves these collaborators through the module
-   object at call time so the test suite's monkeypatches keep biting. The
-   `__all__` block says so explicitly:
-
-   ```python
-   # src/zicato/orchestrator.py — __all__ (excerpt)
-       # Collaborators the N-round loop (``zicato.evolve.loop``) resolves
-       # through THIS module object at call time so the test suite's
-       # monkeypatches keep biting. ... All must stay
-       # attributes of this module and reachable as exports for the loop's
-       # ``_orch.<name>`` access.
-   ```
-
-   Do not rename a seam, and do not turn a module-level function into a method or
-   a closure — a test that does `orch._mint_challenger_field = fake` must keep
-   working.
+3. **Patch the owner in tests.** A field-strategy test patches
+   `zicato.evolve.field`; a gate test patches `zicato.evolve.gate`; a loop test
+   patches `zicato.evolve.loop`. Do not add a forwarding function to the
+   dispatcher to preserve a private test seam. Module-level functions remain
+   important at worker boundaries, where dotted callable resolution requires
+   them (G9).
 4. **Emit the right RoundLog events at the right seam.** Follow the duty column:
    `_propose_child` emits the propose events; the DECISION site (the caller of
    `_finalize_generation`, e.g. `_persist_rejected_round`) emits
@@ -943,10 +933,9 @@ recipe is the seam map that keeps a change from landing on one pipeline only.
   and not the field path, mounting the wrong child tree (12-bug-casebook.md
   §"Case 6" and §"Case 7"). Edit the shared seam; if the gauntlet and field
   paths genuinely need different behaviour, branch INSIDE the seam, visibly.
-- ⚠️ **Renaming a seam silently breaks the loop's monkeypatch resolution.** The
-  loop does `_orch.<name>`; a rename that misses `__all__` (or turns the function
-  into something un-monkeypatchable) means the loop calls the real function while
-  a test thinks it patched it — a green test over untested code.
+- ⚠️ **Patch the owner, not the dispatcher.** A private dispatcher alias couples
+  a test to an integration accident. Patch the phase module's module-level
+  callable so the test exercises the real call path.
 - ⚠️ **RoundLog emission must never raise.** A round is authoritative in the
   canonical stores; the RoundLog is a durable trace, emitted best-effort
   (invariant D11). A `getattr` in the payload that throws would fail the round
@@ -957,11 +946,11 @@ recipe is the seam map that keeps a change from landing on one pipeline only.
 ```bash
 uv run pytest tests/test_orchestrator_decomposition.py tests/test_round_log_emission.py -q
 uv run pytest tests/test_convergence_known_answer.py -q     # the full loop — seam regressions surface here
-uv run mypy src/zicato/orchestrator.py
+uv run mypy src/zicato/orchestrator.py src/zicato/evolve/
 ```
 
 **Definition of done.** The step lives on the correct shared seam (never inlined
-into one pipeline), seam names are preserved for monkeypatching, RoundLog duties
+into one pipeline), tests patch phase owners, RoundLog duties
 are honored best-effort, the pure seams stayed pure, and both oracles (G4) pass.
 
 ---

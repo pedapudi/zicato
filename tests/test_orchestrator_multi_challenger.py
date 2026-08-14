@@ -744,9 +744,9 @@ def test_field_status_publishes_proposing_phase_live(
     )
 
     seen: list[tuple[str, str]] = []
-    import zicato.orchestrator as orch
+    import zicato.evolve.field as field
 
-    real = orch._propose_and_apply_challenger
+    real = field._propose_and_apply_challenger
 
     async def _wrapped(*args: object, **kwargs: object) -> object:
         on_status = kwargs.get("on_status")
@@ -759,7 +759,7 @@ def test_field_status_publishes_proposing_phase_live(
         kwargs["on_status"] = _tap
         return await real(*args, **kwargs)  # type: ignore[arg-type]
 
-    monkeypatch.setattr(orch, "_propose_and_apply_challenger", _wrapped)
+    monkeypatch.setattr(field, "_propose_and_apply_challenger", _wrapped)
 
     from zicato.orchestrator import evolve_once
 
@@ -889,7 +889,7 @@ def test_field_entries_seeds_one_row_per_competitor() -> None:
     competitor, deriving status + loss_summary from live standings when
     present and falling back to `queued` before any standings exist.
     """
-    from zicato.orchestrator import _field_entries
+    from zicato.evolve.dashboard_projection import _field_entries
 
     competitors = [
         {"generation_id": "v0", "seed": 1, "role": "champion"},

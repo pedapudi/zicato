@@ -200,6 +200,27 @@ def build_fixture_workspace(tmp_path: Path) -> Path:
                     },
                 )
 
+    _write_json(
+        ws / "lineage.json",
+        {
+            "epochs": [
+                {
+                    "id": spec["id"],
+                    "generations": [
+                        {
+                            "id": gid,
+                            "parent_id": None if gid == "v0" else "v0",
+                            "promoted": gi == 0,
+                            "created_at": spec["created_at"],
+                        }
+                        for gi, gid in enumerate(spec["gens"])
+                    ],
+                }
+                for spec in _EPOCHS
+            ]
+        },
+    )
+
     return ws
 
 

@@ -1,7 +1,7 @@
 // test/_trace_render_probe.mjs — the TERMINATION probe for the Traces surface.
 //
-// Not a *.test.mjs file (run-all.mjs skips it): it is the CHILD process the
-// traces suite spawns under a hard wall-clock timeout, so a non-terminating
+// Not a *.test.mjs file (run-all.mjs skips it): it is the isolated worker the
+// traces suite starts under a hard wall-clock timeout, so a non-terminating
 // render (an unbounded loop in the strip figure, the detail builders or the
 // episode-anchor wiring) FAILS BY TIMEOUT instead of hanging the suite forever.
 // A pure-JS spin hangs node identically to a browser, so this is the honest pin.

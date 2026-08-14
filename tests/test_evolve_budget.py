@@ -77,7 +77,7 @@ def _install_mock_evolve_once(
             await asyncio.sleep(per_round_sleep)
         return _make_outcome(round_index, decision)
 
-    monkeypatch.setattr(orch, "evolve_once", _mock_evolve_once)
+    monkeypatch.setattr("zicato.evolve.gauntlet.evolve_once", _mock_evolve_once)
 
 
 class _FakeClock:
@@ -124,8 +124,8 @@ def _install_clock_advancing_evolve_once(
         clock.advance(per_round_advance)
         return _make_outcome(round_index, decision)
 
-    monkeypatch.setattr(orch, "evolve_once", _mock_evolve_once)
-    monkeypatch.setattr(orch.time, "monotonic", clock.monotonic)
+    monkeypatch.setattr("zicato.evolve.gauntlet.evolve_once", _mock_evolve_once)
+    monkeypatch.setattr("zicato.evolve.loop.time.monotonic", clock.monotonic)
 
 
 async def _harness_call_llm(system: str, user: str, model: str) -> str:

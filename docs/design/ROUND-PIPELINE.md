@@ -17,6 +17,27 @@ round identity and already-resolved dependencies; it does not own mutable
 results. Phase outputs remain explicit values so evaluation and persistence do
 not communicate through hidden session state.
 
+## Module ownership
+
+`zicato.orchestrator` is the 118-line dispatch surface. It owns no phase logic.
+The executable round is divided by behavior:
+
+| Owner | Responsibility |
+|---|---|
+| `zicato.evolve.gauntlet` | single-challenger round strategy |
+| `zicato.evolve.field` | multi-challenger field strategy |
+| `zicato.evolve.decision_support` | shared decision inputs and outcome shaping |
+| `zicato.evolve.round_prepare` | calibration, preflight, and health assessment |
+| `zicato.evolve.round_baseline` | mutation snapshots and baseline lifecycle |
+| `zicato.evolve.round_reporting` | round log, health inputs, and report regeneration |
+| `zicato.evolve.persist` | outcome, lineage, marker, and journal ordering |
+
+The gauntlet dispatches to the field strategy only after the resolved selection
+strategy requests a field wider than one. The field module never imports the
+gauntlet module, so the two structures cannot accidentally share mutable
+strategy state. Shared behavior is imported from a narrow owner instead of
+copied between the strategies.
+
 ## Generation phase boundary
 
 `zicato.evolve.generation_phase` owns generation coordinates: champion-marker
@@ -30,11 +51,11 @@ allocation considers only `vN` identifiers. Snapshot paths always resolve via
 the configured generation store, and mutable subpaths fall back to the whole
 snapshot only when an adapter declares none.
 
-## Completion target
+## Structural constraint
 
-The orchestrator should become a dispatcher below 1,000 lines. Extraction must
-leave no replacement module above that threshold and must preserve the exact
-convergence and decision-procedure oracles. Remaining cohesive owners are the
-field evaluation strategy, round health/reporting, and baseline lifecycle. A
-move is complete only after its callers import the new owner directly and the
-old symbol is deleted.
+The dispatcher stays below 1,000 lines and owns no business decisions. Large
+tournament strategies may remain separate because combining their different
+tails would hide the crowning and persistence invariants. Supporting phase
+owners stay below 1,000 lines and expose named values rather than mutable bags
+of callbacks. Every structural change must preserve the exact convergence and
+decision-procedure oracles.

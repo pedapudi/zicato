@@ -633,7 +633,7 @@ fn write_index_db(paths: &reader::WorkspacePaths) {
 }
 
 #[tokio::test]
-async fn tournaments_endpoint_returns_bracket() {
+async fn analytical_routes_are_not_mounted() {
     let (_t, paths) = make_workspace();
     write_full_epoch(&paths, "2026-05-15_e0");
     write_index_db(&paths);
@@ -641,192 +641,14 @@ async fn tournaments_endpoint_returns_bracket() {
     let base = format!("http://{}", handle.addr);
     let client = reqwest::Client::new();
 
-    let resp = client
-        .get(format!("{base}/api/tournaments"))
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(resp.status(), 200);
-    let r: Value = resp.json().await.unwrap();
-
-    assert_eq!(r["epoch_id"], "2026-05-15_e0");
-    assert_eq!(
-        r["champion_lineage"],
-        serde_json::json!(["v0", "v2"]),
-        "got: {r}"
-    );
-    let matchups = r["matchups"].as_array().unwrap();
-    assert_eq!(matchups.len(), 2);
-    assert_eq!(matchups[0]["champion"], "v0");
-    assert_eq!(matchups[0]["challenger"], "v1");
-    assert_eq!(matchups[0]["decision"], "rejected");
-    assert_eq!(matchups[0]["delta_scalar"], 0.0);
-    assert_eq!(matchups[0]["rejection_reason"], "worse drift overall");
-    assert_eq!(matchups[0]["hypothesis_core_idea"], "tighten the planner");
-    assert_eq!(matchups[0]["ran_at"], "2026-05-15T01:00:00Z");
-    // No `note` when the index exists.
-    assert!(r.get("note").is_none());
-
-    let _ = shutdown.send(());
-}
-
-#[tokio::test]
-async fn tournaments_endpoint_notes_missing_index() {
-    let (_t, paths) = make_workspace();
-    write_full_epoch(&paths, "2026-05-15_e0");
-    // No index.db written.
-    let (handle, shutdown) = start_server(paths.clone(), true).await;
-    let base = format!("http://{}", handle.addr);
-    let client = reqwest::Client::new();
-
-    let resp = client
-        .get(format!("{base}/api/tournaments"))
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(resp.status(), 200);
-    let r: Value = resp.json().await.unwrap();
-    assert_eq!(r["epoch_id"], "2026-05-15_e0");
-    assert_eq!(r["champion_lineage"], serde_json::json!([]));
-    assert_eq!(r["matchups"], serde_json::json!([]));
-    assert_eq!(r["note"], "index not built; run zicato repair index");
-
-    let _ = shutdown.send(());
-}
-
-#[tokio::test]
-async fn tournament_detail_endpoint_returns_full_matchup() {
-    let (_t, paths) = make_workspace();
-    write_full_epoch(&paths, "2026-05-15_e0");
-    write_index_db(&paths);
-    let (handle, shutdown) = start_server(paths.clone(), true).await;
-    let base = format!("http://{}", handle.addr);
-    let client = reqwest::Client::new();
-
-    let resp = client
-        .get(format!("{base}/api/tournaments/v1"))
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(resp.status(), 200);
-    let r: Value = resp.json().await.unwrap();
-
-    assert_eq!(r["epoch_id"], "2026-05-15_e0");
-    assert_eq!(r["generation_id"], "v1");
-    assert_eq!(r["champion"], "v0");
-    assert_eq!(r["decision"], "rejected");
-    assert_eq!(r["rejection_reason"], "worse drift overall");
-    assert_eq!(r["ran_at"], "2026-05-15T01:00:00Z");
-    assert_eq!(r["parent_scalar"], 0.8);
-    assert_eq!(r["child_scalar"], 0.8);
-    assert_eq!(r["delta_scalar"], 0.0);
-
-    assert_eq!(r["hypothesis"]["core_idea"], "tighten the planner");
-    assert_eq!(r["hypothesis"]["why"], "planner overshoots");
-
-    let patches = r["patches"].as_array().unwrap();
-    assert_eq!(patches.len(), 1);
-    assert_eq!(patches[0]["patch_id"], "p1");
-    assert_eq!(patches[0]["op"], "replace");
-
-    let grid = r["ab_grid"].as_array().unwrap();
-    assert_eq!(grid.len(), 2);
-    // b1: parent 0.4 -> child 0.6 == regressed.
-    assert_eq!(grid[0]["entry_id"], "b1");
-    assert_eq!(grid[0]["parent_drift_loss"], 0.4);
-    assert_eq!(grid[0]["child_drift_loss"], 0.6);
-    assert_eq!(grid[0]["verdict"], "regressed");
-    // b2: parent 0.1 -> child 0.1 == flat.
-    assert_eq!(grid[1]["entry_id"], "b2");
-    assert_eq!(grid[1]["verdict"], "flat");
-
-    let _ = shutdown.send(());
-}
-
-#[tokio::test]
-async fn tournament_detail_missing_index_is_200() {
-    let (_t, paths) = make_workspace();
-    write_full_epoch(&paths, "2026-05-15_e0");
-    let (handle, shutdown) = start_server(paths.clone(), true).await;
-    let base = format!("http://{}", handle.addr);
-    let client = reqwest::Client::new();
-
-    let resp = client
-        .get(format!("{base}/api/tournaments/v1"))
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(resp.status(), 200);
-    let r: Value = resp.json().await.unwrap();
-    assert_eq!(r["generation_id"], "v1");
-    assert_eq!(r["note"], "index not built; run zicato repair index");
-    assert_eq!(r["patches"], serde_json::json!([]));
-    assert_eq!(r["ab_grid"], serde_json::json!([]));
-
-    let _ = shutdown.send(());
-}
-
-#[tokio::test]
-async fn health_report_endpoint_returns_latest_round() {
-    let (_t, paths) = make_workspace();
-    write_full_epoch(&paths, "2026-05-15_e0");
-    let health_dir = paths.epochs.join("2026-05-15_e0").join("health");
-    std::fs::create_dir_all(&health_dir).unwrap();
-    std::fs::write(
-        health_dir.join("round_1.json"),
-        r#"{"epoch_id":"2026-05-15_e0","healthy":true,"findings":[]}"#,
-    )
-    .unwrap();
-    let report = serde_json::json!({
-        "epoch_id": "2026-05-15_e0",
-        "healthy": false,
-        "checked_at": "2026-05-15T03:00:00Z",
-        "findings": [
-            {"code": "stalled_runs", "severity": "warn",
-             "summary": "two runs idle", "detail": "no progress in 10m"},
-        ],
-    });
-    std::fs::write(health_dir.join("round_7.json"), report.to_string()).unwrap();
-
-    let (handle, shutdown) = start_server(paths.clone(), true).await;
-    let base = format!("http://{}", handle.addr);
-    let client = reqwest::Client::new();
-
-    let resp = client
-        .get(format!("{base}/api/health-report"))
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(resp.status(), 200);
-    let r: Value = resp.json().await.unwrap();
-    assert_eq!(r["epoch_id"], "2026-05-15_e0");
-    assert_eq!(r["healthy"], false);
-    assert_eq!(r["checked_at"], "2026-05-15T03:00:00Z");
-    let findings = r["findings"].as_array().unwrap();
-    assert_eq!(findings.len(), 1);
-    assert_eq!(findings[0]["code"], "stalled_runs");
-    assert_eq!(findings[0]["severity"], "warn");
-
-    let _ = shutdown.send(());
-}
-
-#[tokio::test]
-async fn health_report_endpoint_healthy_when_no_report() {
-    let (_t, paths) = make_workspace();
-    write_full_epoch(&paths, "2026-05-15_e0");
-    let (handle, shutdown) = start_server(paths.clone(), true).await;
-    let base = format!("http://{}", handle.addr);
-    let client = reqwest::Client::new();
-
-    let resp = client
-        .get(format!("{base}/api/health-report"))
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(resp.status(), 200);
-    let r: Value = resp.json().await.unwrap();
-    assert_eq!(r["healthy"], true);
-    assert_eq!(r["findings"], serde_json::json!([]));
+    for path in [
+        "/api/tournaments",
+        "/api/tournaments/v1",
+        "/api/health-report",
+    ] {
+        let response = client.get(format!("{base}{path}")).send().await.unwrap();
+        assert_eq!(response.status(), 404, "{path}");
+    }
 
     let _ = shutdown.send(());
 }
@@ -1426,13 +1248,17 @@ async fn lineage_endpoint_includes_in_flight_generation() {
     });
     std::fs::write(gens.join("v2").join("experiment.json"), exp_v2.to_string()).unwrap();
 
-    // The legacy lineage.json knows only the promoted root.
+    // Canonical lineage owns every node's topology and tri-state decision.
     let lineage = serde_json::json!({
         "epochs": [{
             "id": "2026-05-15_e0",
             "generations": [
                 {"id": "v0", "parent_id": null, "promoted": true,
                  "created_at": "2026-05-15T09:00:00+00:00"},
+                {"id": "v1", "parent_id": "v0", "promoted": null,
+                 "created_at": "2026-05-15T10:00:00+00:00"},
+                {"id": "v2", "parent_id": "v0", "promoted": false,
+                 "created_at": "2026-05-15T11:00:00+00:00"},
             ],
         }],
     });
@@ -2092,6 +1918,14 @@ fn write_gen_snapshot(
             serde_json::json!({"parent_generation_id": parent}).to_string(),
         )
         .unwrap();
+        std::fs::write(
+            paths.lineage(),
+            serde_json::json!({"epochs": [{"id": epoch, "generations": [{
+                "id": gen, "parent_id": parent, "promoted": false
+            }]}]})
+            .to_string(),
+        )
+        .unwrap();
     }
     for (rel, contents) in files {
         let p = gen_dir.join("snapshot").join(rel);
@@ -2395,7 +2229,7 @@ async fn promotion_gate_alarms_on_a_decision_that_contradicts_the_scores() {
 async fn divergence_audit_flags_a_promoted_mismatch_end_to_end() {
     let (_t, paths) = make_workspace();
     // The shared index fixture marks v2 promoted=1. Make the CANONICAL side
-    // disagree: v2's experiment.json records a `rejected` outcome. The audit
+    // disagree: canonical lineage records v2 as rejected. The audit
     // must flag the promoted divergence.
     write_index_db(&paths);
     std::fs::write(paths.current_epoch_marker(), "2026-05-15_e0").unwrap();
@@ -2411,6 +2245,14 @@ async fn divergence_audit_flags_a_promoted_mismatch_end_to_end() {
         gen_dir.join("experiment.json"),
         serde_json::json!({"parent_generation_id": "v0", "outcome": {"decision": "rejected"}})
             .to_string(),
+    )
+    .unwrap();
+    std::fs::write(
+        paths.lineage(),
+        serde_json::json!({"epochs": [{"id": "2026-05-15_e0", "generations": [{
+            "id": "v2", "parent_id": "v0", "promoted": false
+        }]}]})
+        .to_string(),
     )
     .unwrap();
 

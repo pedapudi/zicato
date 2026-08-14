@@ -1171,9 +1171,14 @@ not the grand total. The real signal is the PROCESS EXIT CODE:
 ```
 — `src/zicato/dashboard/static/test/run-all.mjs`
 
-The runner prints an honest `TOTAL:` grand total (the harness counters are
-cumulative across files) and exits non-zero on ANY failure — belt and
-suspenders (the per-file exit-code signal OR the cumulative count).
+The runner gives every file a fresh worker and combines their reports into an
+honest `TOTAL:`. This isolation is load-bearing: render modules retain small
+digest caches, so importing every file into one module graph lets an earlier
+fixture change a later test. The parent alone sets the aggregate exit status.
+
+The Traces termination pin uses a worker with a hard timeout too. It therefore
+tests a fresh page-sized module graph without depending on permission to spawn
+an operating-system process.
 
 > ⚠️ TRAP — a green-looking tail line can hide a failing FILE. `make node-test`
 > is the canonical run and it propagates the exit code; if you ever run
@@ -1345,7 +1350,9 @@ as failures even when pytest exits zero. For server lifecycle changes, repeat
 the focused serial test with `-W error::RuntimeWarning`; parallel success alone
 can hide teardown races. A server thread owns its event loop through shutdown:
 after the application stops, cancel and gather remaining tasks, shut down async
-generators, then close the loop.
+generators, then close the loop. On Python 3.11, also close a coroutine when an
+already-closing task group rejects it; otherwise garbage collection reports a
+false-clean server exit as an un-awaited coroutine.
 
 > ✅ ALWAYS run `uv sync --all-extras` (never bare `uv sync`) when your
 > environment might be stale. Bare `uv sync` in zicato DELETES the dev tooling

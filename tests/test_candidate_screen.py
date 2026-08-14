@@ -563,7 +563,7 @@ def test_round_log_folds_candidate_screened_tally(tmp_path: Path) -> None:
 
 
 def test_screen_runner_not_built_unless_opted_in(tmp_path: Path) -> None:
-    from zicato.orchestrator import _build_candidate_screen_runner
+    from zicato.evolve.round_context import _build_candidate_screen_runner
 
     workspace_root, parent = _workspace(tmp_path)
     board = [_entry("e_a"), _entry("e_b")]
@@ -604,7 +604,7 @@ def test_screen_runner_closure_drives_the_engine(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     from zicato.core.types import ProposerQualityConfig
-    from zicato.orchestrator import _build_candidate_screen_runner
+    from zicato.evolve.round_context import _build_candidate_screen_runner
 
     workspace_root, parent = _workspace(tmp_path)
     board = [_entry("e_a"), _entry("e_b"), _entry("e_c")]

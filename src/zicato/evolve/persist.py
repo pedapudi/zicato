@@ -26,6 +26,7 @@ byte-identical.
 from __future__ import annotations
 
 import logging
+from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -41,10 +42,12 @@ from zicato.runtime.heartbeat import HeartbeatBeater
 from zicato.util import best_effort
 
 if TYPE_CHECKING:
-    from zicato.orchestrator import CallLLM, EvolveRoundOutcome, _RoundLogEmitter
+    from zicato.evolve.round_api import EvolveRoundOutcome
+    from zicato.evolve.round_reporting import _RoundLogEmitter
     from zicato.proposer.proposer import ProposerError
 
 log = logging.getLogger("zicato.orchestrator")
+CallLLM = Callable[[str, str, str], Awaitable[str]]
 
 
 def _finalize_generation(
@@ -163,11 +166,11 @@ async def _round_epilogue(
 
     Returns ``(health_summary, health_critical)`` for the round outcome.
     """
-    from zicato.orchestrator import (  # noqa: PLC0415
+    from zicato.evolve.round_prepare import (  # noqa: PLC0415
         _assess_and_persist_loop_health,
-        _regenerate_epoch_report,
         _warn_loop_no_signal,
     )
+    from zicato.evolve.round_reporting import _regenerate_epoch_report  # noqa: PLC0415
 
     health_summary, health_critical = _assess_and_persist_loop_health(
         workspace_root,
@@ -237,7 +240,7 @@ async def _persist_rejected_round(
     """
     from zicato.epoch import write_experiment  # noqa: PLC0415
     from zicato.evolve.generation_phase import round_number  # noqa: PLC0415
-    from zicato.orchestrator import EvolveRoundOutcome  # noqa: PLC0415
+    from zicato.evolve.round_api import EvolveRoundOutcome  # noqa: PLC0415
     from zicato.runtime import progress_log  # noqa: PLC0415
 
     write_experiment(workspace_root, epoch_id, next_id, experiment)
@@ -364,7 +367,7 @@ def _skipped_round_outcome(parent_generation_id: str, reason: str) -> EvolveRoun
     readers and the CLI recognise an operator skip distinctly from a budget
     cut or a real gate rejection.
     """
-    from zicato.orchestrator import EvolveRoundOutcome  # noqa: PLC0415
+    from zicato.evolve.round_api import EvolveRoundOutcome  # noqa: PLC0415
 
     suffix = f": {reason}" if reason else ""
     return EvolveRoundOutcome(

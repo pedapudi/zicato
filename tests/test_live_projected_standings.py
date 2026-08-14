@@ -26,7 +26,7 @@ from __future__ import annotations
 import asyncio
 from pathlib import Path
 
-from zicato.orchestrator import _overlay_projected_standings
+from zicato.evolve.dashboard_projection import _overlay_projected_standings
 from zicato.runtime.state import (
     ActiveTournament,
     read_active_tournament,
@@ -310,7 +310,7 @@ def test_publish_preserves_projected_while_carrying_live_progress(tmp_path: Path
     # map. A full envelope republish (one per scheduled batch) must carry the
     # new ``live_progress`` AND preserve the runner-written ``projected`` — the
     # two writers compose, neither clobbers the other (issue-#16 RMW contract).
-    from zicato.orchestrator import _publish_active_tournament  # noqa: PLC0415
+    from zicato.evolve.dashboard_projection import _publish_active_tournament  # noqa: PLC0415
 
     # The runner lands a board first → ``projected`` exists on disk.
     write_active_tournament(

@@ -302,7 +302,7 @@ def test_field_mounts_each_chosen_candidate_tree(
     assert outcome.child_scalar == EXPECTED_FLOOR
 
     from zicato.epoch.journal import read_experiment
-    from zicato.orchestrator import _diversity_signature
+    from zicato.evolve.propose_apply import _diversity_signature
 
     signatures = []
     for gid, chosen_content in zip(("v1", "v2"), slate_mocks.FIELD_CHOSEN_CONTENTS, strict=True):

@@ -411,7 +411,7 @@ def test_overlap_enforcement_absent_is_byte_compatible(
 
 
 def test_jaccard_overlap_math() -> None:
-    from zicato.orchestrator import _max_overlap_with_accepted
+    from zicato.evolve.propose_apply import _max_overlap_with_accepted
     from zicato.selection.diversity import jaccard
 
     assert jaccard(frozenset(), frozenset()) == 0.0

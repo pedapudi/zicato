@@ -43,7 +43,7 @@ name so records stay byte-identical.
 from __future__ import annotations
 
 import logging
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -62,11 +62,12 @@ from zicato.selection.diversity import jaccard
 from zicato.util import best_effort
 
 if TYPE_CHECKING:
-    from zicato.orchestrator import CallLLM, _RoundLogEmitter
+    from zicato.evolve.round_reporting import _RoundLogEmitter
     from zicato.proposer.agent import ProposerAgent
     from zicato.proposer.best_of_n import ScreenRunner
 
 log = logging.getLogger("zicato.orchestrator")
+CallLLM = Callable[[str, str, str], Awaitable[str]]
 
 
 @dataclass(frozen=True, slots=True)

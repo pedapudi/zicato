@@ -300,12 +300,12 @@ def test_an_operator_override_round_records_the_enum_not_the_wire_token(
     Driven through the real round rather than the helper, because the helper
     is not where the token enters the record.
     """
-    import zicato.orchestrator as orch
+    import zicato.evolve.gauntlet as gauntlet
     import zicato.runtime.control_consumer as cc
     from tests.test_pareto_frontier import _drive_round
 
     recorded: list[OutcomeRecord] = []
-    real_outcome_record = orch.OutcomeRecord
+    real_outcome_record = gauntlet.OutcomeRecord
 
     def _spy(*args: Any, **kwargs: Any) -> OutcomeRecord:
         record = real_outcome_record(*args, **kwargs)
@@ -317,8 +317,8 @@ def test_an_operator_override_round_records_the_enum_not_the_wire_token(
             decision="promoted", generation_id=generation_id, reason="operator says so"
         )
 
-    monkeypatch.setattr(orch, "OutcomeRecord", _spy)
-    monkeypatch.setattr(orch, "claim_gate_override", _force_promote)
+    monkeypatch.setattr(gauntlet, "OutcomeRecord", _spy)
+    monkeypatch.setattr(gauntlet, "claim_gate_override", _force_promote)
 
     _workspace, _epoch_id, outcome = _drive_round(
         monkeypatch,

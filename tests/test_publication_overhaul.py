@@ -474,7 +474,7 @@ async def test_round_report_regeneration_is_best_effort(
     """A wedge inside report generation during the round epilogue is swallowed
     — the freshness hook must NEVER abort the round."""
     import zicato.analyzer as analyzer_pkg
-    from zicato.orchestrator import _regenerate_epoch_report
+    from zicato.evolve.round_reporting import _regenerate_epoch_report
     from zicato.util.best_effort import best_effort_failures, reset_best_effort_failures
 
     async def _unused_llm(system: str, user: str, model: str) -> str:  # pragma: no cover

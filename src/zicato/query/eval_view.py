@@ -522,13 +522,9 @@ def _per_entry_flip_rates(
 def _lineage_nodes(paths: WorkspacePaths, epoch_id: str) -> dict[str, dict[str, Any]]:
     """The epoch's lineage nodes keyed by generation id (EVAL-VIEW.md §3.1 / F1).
 
-    The lineage view is THE promotion authority: it folds the canonical
-    :func:`promoted_tristate` of ``experiment.json`` **and** the ``lineage.json``
-    record the gate writes at settle time. Reading only the experiment record —
-    as this module used to — makes the matrix disagree with ``/api/lineage``
-    wherever the decision was journalled to lineage alone (every pre-stamp
-    workspace: ``outcome: null`` on disk, a settled promoted/rejected in
-    lineage), so settled rejections render as never-raced nulls.
+    The lineage view is THE promotion authority. ``lineage.json`` owns parent
+    and promoted state; experiment outcomes are journal detail, never a second
+    topology source.
     Best-effort (DQ3): an unreadable workspace yields ``{}`` and the caller
     falls back to the index bool.
     """
@@ -598,7 +594,7 @@ def _candidate_axis(paths: WorkspacePaths, epoch_id: str) -> list[dict[str, Any]
 
     # The generation graph the seed + spine are derived from: the index rows,
     # OVERLAID by the lineage nodes. Lineage is authoritative wherever it has a
-    # node (it folds experiment.json AND the settle-time lineage record); the
+    # node; the
     # index row carries a generation lineage never walked (DQ3 fallback).
     nodes: dict[str, dict[str, Any]] = {}
     for r in rows:

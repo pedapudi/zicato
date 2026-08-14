@@ -14,7 +14,7 @@ invocation and tears down in its ``finally`` block:
 * two tiny shared utilities — the UTC ISO clock (:func:`_now_iso`) and the
   heartbeat phase pusher (:func:`_beat`).
 
-Every name here is re-exported from :mod:`zicato.orchestrator` so no
+Callers import this owner directly so no
 caller import changes. This is a pure move; the behaviour is identical.
 """
 

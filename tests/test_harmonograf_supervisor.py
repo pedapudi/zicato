@@ -7,13 +7,16 @@ behaviour from the architectural target in the task description.
 
 from __future__ import annotations
 
+import asyncio
 import http.client
+import inspect
 import logging
 import os
 import socket
 import sys
 from collections.abc import Iterator
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -91,6 +94,32 @@ def test_missing_live_telemetry_names_install_profile(
 
     assert handle.url == ""
     assert "install zicato[observability]" in caplog.text
+
+
+def test_rejected_idle_coroutine_is_closed() -> None:
+    """A closing HTTP task group must not leak the coroutine it rejects."""
+    from hypercorn.asyncio.worker_context import AsyncioSingleTask
+
+    supervisor._close_rejected_idle_coroutines()
+    coroutine = None
+
+    async def idle() -> None:
+        return None
+
+    def action() -> object:
+        nonlocal coroutine
+        coroutine = idle()
+        return coroutine
+
+    class _ClosedGroup:
+        def create_task(self, _coroutine: object) -> None:
+            raise RuntimeError("closed")
+
+    task = AsyncioSingleTask()
+    with pytest.raises(RuntimeError, match="closed"):
+        asyncio.run(task.restart(SimpleNamespace(_task_group=_ClosedGroup()), action))
+
+    assert inspect.getcoroutinestate(coroutine) == inspect.CORO_CLOSED
 
 
 @pytest.fixture(scope="session")

@@ -13,9 +13,8 @@ unreadable database is logged at ``debug`` and swallowed. ``experiment.json``
 on disk stays canonical and ``zicato repair index`` can always rebuild the index
 from scratch, so a hiccup in this stage never aborts a round.
 
-Every name here is re-exported from :mod:`zicato.orchestrator` so no caller
-(``from zicato.orchestrator import _load_prior_experiments`` in the propose
-CLI, the dashboard projection's ``_index_db_path`` back-edge, …) breaks. The
+Callers import this owner directly; the dispatcher does not re-export private
+index helpers. The
 module logger is named ``zicato.orchestrator`` so the emitted ``debug``
 records are byte-identical to the pre-split ones.
 """

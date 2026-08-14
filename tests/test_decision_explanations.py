@@ -22,9 +22,9 @@ from pathlib import Path
 from typing import Any
 
 from zicato.core import ScoringWeights
+from zicato.evolve.decision_support import _field_failure_summary
 from zicato.evolve.loop import log_effective_concurrency
 from zicato.health.diagnostics import detect_placebo_promoted, detect_stalled_loop
-from zicato.orchestrator import _field_failure_summary
 from zicato.runtime_factory import resolve_parallelism
 from zicato.selection.standings_ext import uncertainty_blocks_promotion
 from zicato.tournament.gate import _namespace_regression_reason, evaluate_gate

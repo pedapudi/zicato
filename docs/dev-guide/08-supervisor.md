@@ -32,6 +32,7 @@
 > | S11 | The two loops (`heartbeat_loop`, `runs_loop`) are the only active code. Each is a pure-decision-function-plumbed `tokio::time::interval` select-loop; `runs_loop` applies its per-run triggers in a FIXED priority order (confirmed-death reap → kill-request → deadline → staleness), and every escalation is mirrored to the in-memory action ring AND — when configured — the ledger. |
 > | S12 | The live surface never blocks and never leaks write intermediates: the filesystem watcher drops `*.tmp` atomic-write intermediates and per-file-debounces; the SSE broker is a bounded broadcast that drops a slow client rather than blocking the watcher or other clients. |
 > | S13 | The supervisor holds NO cached state across ticks except the explicitly-carried trackers (`SeqLiveness`, the integrity de-dup sets, the ledger tail) and the process-lifetime counters. `WorkspacePaths` is read fresh every tick and is the Rust twin of `zicato.runtime.paths`. |
+> | S14 | The HTTP read surface is operational. Analytical tournament and health projections belong to `zicato.query`; the supervisor may inspect the index for alarms but never serves it as business truth. |
 
 ---
 
@@ -96,7 +97,6 @@ keep the loop body dumb.
 | `divergence.rs` | Integrity record #4: canonical-vs-index join auditor. |
 | `index_db.rs` | Read-only SQLite access; `EXPECTED_SCHEMA_VERSION` pin; best-effort row readers. |
 | `epoch.rs` | Assembles the current epoch's contract view for the dashboard. |
-| `tournaments.rs` | Bracket + matchup detail from the index. |
 | `run_log.rs` | Tails recent goldfive events for the log panel. |
 | `fold_stats.rs` | Cumulative torn-write / seq-gap counters over the tournament-log fold, surfaced on `/statusz`. |
 | `routes.rs` | HTTP handlers; the read-only 403 guard; control-marker writers. |
@@ -507,22 +507,10 @@ a cargo test asserts the constant equals the Python value, and a Python-side
 bump without the Rust bump reds `cargo test` — this is the canonical example
 of "when a Python change requires Rust parity" (§8.12).
 
-**Layer 3 — the null-degradation contract.** Every public reader is
-best-effort: a missing database, a missing table, or a malformed row
-degrades to an empty result, and the `Err` variants exist only to let a
-route attach a `note`. The route side honours it:
-
-```rust
-/// `GET /api/tournaments` — the bracket for the current epoch.
-///
-/// Always 200: a missing `index.db` yields an empty bracket with a
-/// `note`, and any query failure degrades to empty rather than 500.
-async fn api_tournaments(State(s): State<AppState>) -> Json<serde_json::Value> {
-    let view = crate::tournaments::build_bracket(&s.paths);
-    Json(serde_json::to_value(view).unwrap_or(serde_json::Value::Null))
-}
-```
-— `crates/supervisor/src/routes.rs`
+**Layer 3 — audit-only consumption.** Index rows feed the divergence and
+promotion-gate alarms. They do not feed dashboard decisions. A missing,
+stale, or malformed index makes those checks fail open with no attestation;
+the operational HTTP surface remains file-backed.
 
 **The API/static subset it serves.** The router (`routes.rs::router`)
 mounts two tiers. Unconditionally — the watchdog's own surface: `/statusz`,
@@ -530,17 +518,13 @@ mounts two tiers. Unconditionally — the watchdog's own surface: `/statusz`,
 get. Otherwise the full dashboard surface: the embedded static UI (`/`,
 `/static/*`, fallback asset resolution), the state APIs (`/api/state`,
 `/api/epoch`, `/api/lineage`, `/api/run-log`, `/api/active-runs`,
-`/api/active-tournament`, `/api/tournaments[/:generation_id]`,
-`/api/health-report`, `/api/heartbeat`, `/api/health`), the SSE stream
+`/api/active-tournament`, `/api/heartbeat`, `/api/health`), the SSE stream
 (`/events`, fed by the filesystem watcher), and the control POSTs (§8.11).
 
-**What degrades on the index being absent/stale** — the null-degradation
-contract for new endpoints: file-backed endpoints (heartbeat, active runs,
-active tournament, run log) keep working because they never touch the index;
-index-backed endpoints (tournaments, bracket detail, parts of the epoch
-view) return their empty shape with a `note`. A new endpoint you add MUST
-pick a side and degrade the same way — always 200, empty shape + `note` on
-missing data, `null` over 500.
+**What degrades on the index being absent/stale.** File-backed endpoints
+(heartbeat, active runs, active tournament, run log) keep working. Integrity
+audits report no claim when their index side cannot be read. Analytical
+endpoints are not mounted here; add them to `zicato.query`, not the supervisor.
 
 > ⛔ NEVER return a 500 from a supervisor GET because a workspace file or
 > the index is missing. The supervisor's contract is to run against a

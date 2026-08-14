@@ -26,6 +26,5 @@ pub mod sse;
 pub mod state;
 pub mod static_assets;
 pub mod statusz;
-pub mod tournaments;
 pub mod watchdog;
 pub mod watcher;

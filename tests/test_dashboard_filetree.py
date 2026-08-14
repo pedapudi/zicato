@@ -326,8 +326,8 @@ def test_files_diff_reconstructs_spans_for_a_pruned_generation(
     populated_workspace: Path, tmp_path: Path
 ) -> None:
     """The diff's real subject — what the patches changed — survives the prune."""
+    from zicato.evolve.round_baseline import _dump_mutations_snapshot
     from zicato.mutation.enumerator import enumerate_mutations
-    from zicato.orchestrator import _dump_mutations_snapshot
 
     store = DirectoryGenerationStore(populated_workspace)
     _dump_mutations_snapshot(

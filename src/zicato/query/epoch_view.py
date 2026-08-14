@@ -411,7 +411,9 @@ def build_epochs_summary(paths: WorkspacePaths) -> list[dict[str, Any]]:
     return out
 
 
-def _read_epoch_experiments(epoch_dir: Path) -> list[dict[str, Any]]:
+def _read_epoch_experiments(
+    epoch_dir: Path, lineage: dict[str, dict[str, Any]] | None = None
+) -> list[dict[str, Any]]:
     """Walk ``generations/*/experiment.json`` for the epoch.
 
     Returns a list of experiment records, one per generation that has an
@@ -460,6 +462,13 @@ def _read_epoch_experiments(epoch_dir: Path) -> list[dict[str, Any]]:
         # ``promoted``, stamped by the shared classifier so this feed can
         # never disagree with the lineage view.
         stamp_experiment_decision(record)
+        node = lineage.get(gen_dir.name) if lineage is not None else None
+        if node is not None:
+            promoted = node.get("promoted")
+            record["promoted"] = promoted if isinstance(promoted, bool) else None
+            record["decision"] = (
+                "promoted" if promoted is True else "rejected" if promoted is False else None
+            )
         experiments.append(record)
     return experiments
 
@@ -847,7 +856,12 @@ def _latest_holdout_summary(experiments: list[dict[str, Any]]) -> dict[str, Any]
     return None
 
 
-def build_epoch_view(paths: WorkspacePaths, epoch_id: str | None = None) -> dict[str, Any]:
+def build_epoch_view(
+    paths: WorkspacePaths,
+    epoch_id: str | None = None,
+    *,
+    lineage_view: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     """An epoch's full evaluation contract.
 
     ``epoch_id`` defaults to the CURRENT epoch (unchanged behaviour); given a
@@ -961,7 +975,16 @@ def build_epoch_view(paths: WorkspacePaths, epoch_id: str | None = None) -> dict
 
     # Experiment log: per-generation hypothesis + outcome + patch content,
     # each stamped with the canonical ``decision`` + tri-state ``promoted``.
-    view["experiments"] = _read_epoch_experiments(epoch_dir)
+    from zicato.query.lineage_view import build_lineage_view  # noqa: PLC0415
+
+    if lineage_view is None:
+        lineage_view = build_lineage_view(paths, epoch_id, include_ratings=False)
+    lineage = {
+        node["generation_id"]: node
+        for node in lineage_view.get("generations", [])
+        if isinstance(node, dict) and isinstance(node.get("generation_id"), str)
+    }
+    view["experiments"] = _read_epoch_experiments(epoch_dir, lineage)
 
     # The REIGNING champion — the end of the promoted spine (or the seed
     # while nothing is promoted). The ONE champion pointer the frontend

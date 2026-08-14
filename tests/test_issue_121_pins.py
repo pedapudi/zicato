@@ -388,7 +388,7 @@ def test_orchestrator_lifts_judge_erroring_onto_the_terminal(caplog: Any) -> Non
     import logging
     from dataclasses import dataclass, field
 
-    from zicato.orchestrator import _warn_erroring_judges
+    from zicato.evolve.round_prepare import _warn_erroring_judges
 
     @dataclass
     class _Finding:

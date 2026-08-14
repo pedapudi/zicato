@@ -195,6 +195,12 @@ def _populate_workspace(ws: Path) -> Path:
                             "promoted": True,
                             "created_at": "2026-05-16T04:00:00Z",
                         },
+                        {
+                            "id": "v1",
+                            "parent_id": "v0",
+                            "promoted": False,
+                            "created_at": "2026-05-16T04:25:00Z",
+                        },
                     ],
                 }
             ]
@@ -650,7 +656,7 @@ def test_lineage_shape(client: TestClient) -> None:
     assert "generations" in body
     gens = {g["generation_id"]: g for g in body["generations"]}
     assert set(gens) == {"v0", "v1"}
-    # v0 promoted via lineage.json, v1 rejected via experiment.json.
+    # lineage.json alone owns parent and promotion state.
     assert gens["v0"]["promoted"] is True
     assert gens["v1"]["promoted"] is False
     assert gens["v1"]["parent_generation_id"] == "v0"

@@ -257,7 +257,21 @@ def _seed(workspace: Path, *, with_calibration: bool = True) -> None:
     ]
     (edir / "board.jsonl").write_text("\n".join(json.dumps(r) for r in board), encoding="utf-8")
     (workspace / "lineage.json").write_text(
-        json.dumps({"epochs": [{"id": EPOCH, "generations": []}]}), encoding="utf-8"
+        json.dumps(
+            {
+                "epochs": [
+                    {
+                        "id": EPOCH,
+                        "generations": [
+                            {"id": "g0", "parent_id": None, "promoted": None},
+                            {"id": "g1", "parent_id": "g0", "promoted": True},
+                            {"id": "g2", "parent_id": "g0", "promoted": False},
+                        ],
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
     )
     (workspace / "current_epoch").write_text(EPOCH, encoding="utf-8")
 
@@ -313,7 +327,23 @@ def _seed_dead(workspace: Path) -> None:
     ]
     (edir / "board.jsonl").write_text("\n".join(json.dumps(r) for r in board), encoding="utf-8")
     (workspace / "lineage.json").write_text(
-        json.dumps({"epochs": [{"id": DEAD_EP, "generations": []}]}), encoding="utf-8"
+        json.dumps(
+            {
+                "epochs": [
+                    {
+                        "id": DEAD_EP,
+                        "generations": [
+                            {"id": "g0", "parent_id": None, "promoted": None},
+                            *(
+                                {"id": gid, "parent_id": "g0", "promoted": False}
+                                for gid in ("g1", "g2", "g3")
+                            ),
+                        ],
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
     )
     (workspace / "current_epoch").write_text(DEAD_EP, encoding="utf-8")
 
@@ -381,6 +411,23 @@ def test_matrix_tristate_promoted_null(tmp_path: Path) -> None:
     # null — never a collapsed False (the Class-B bug), never on the spine.
     _seed(tmp_path)
     _write_experiment(tmp_path, EPOCH, "g2", "g0", None)  # overwrite g2 → undecided
+    (tmp_path / "lineage.json").write_text(
+        json.dumps(
+            {
+                "epochs": [
+                    {
+                        "id": EPOCH,
+                        "generations": [
+                            {"id": "g0", "parent_id": None, "promoted": None},
+                            {"id": "g1", "parent_id": "g0", "promoted": True},
+                            {"id": "g2", "parent_id": "g0", "promoted": None},
+                        ],
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
     m = ev.build_eval_matrix(_paths(tmp_path), EPOCH)
     g2 = next(c for c in m["candidates"] if c["generation_id"] == "g2")
     assert g2["promoted"] is None

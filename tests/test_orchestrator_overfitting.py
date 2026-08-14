@@ -23,7 +23,7 @@ from zicato.board.split import HOLDOUT_TAG, split_board
 from zicato.core import BoardEntry, DriftCount, ExpectationResult, LossProfile, ScoringWeights
 from zicato.core.types import OverfittingConfig
 from zicato.core.workspace import loss_profile_path
-from zicato.orchestrator import _load_parent_losses, _render_loss_summary
+from zicato.evolve.decision_support import _load_parent_losses, _render_loss_summary
 from zicato.patterns import ALL_DETECTORS, DetectorInput, detect_patterns
 from zicato.proposer.prompts import render_user_prompt
 from zicato.telemetry.reducer import read_loss_profile, write_loss_profile
@@ -149,7 +149,7 @@ class _FakeResult:
 
 
 def test_generalization_fields_with_holdout() -> None:
-    from zicato.orchestrator import _generalization_fields
+    from zicato.evolve.decision_support import _generalization_fields
 
     fields = _generalization_fields(0.40, _FakeResult(holdout_child_scalar=0.55))
     assert fields["train_loss"] == 0.40
@@ -158,7 +158,7 @@ def test_generalization_fields_with_holdout() -> None:
 
 
 def test_generalization_fields_degrade_without_holdout() -> None:
-    from zicato.orchestrator import _generalization_fields
+    from zicato.evolve.decision_support import _generalization_fields
 
     fields = _generalization_fields(0.40, _FakeResult(holdout_child_scalar=None))
     assert fields["train_loss"] == 0.40

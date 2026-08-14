@@ -40,7 +40,7 @@ from zicato.evolve.containment import (
     containment_reason,
     mutable_basenames,
 )
-from zicato.orchestrator import _integrity_block_reason
+from zicato.evolve.gate import _integrity_block_reason
 
 # ---------------------------------------------------------------------------
 # check_containment — the supervisor's rule surface, mirrored
