@@ -146,6 +146,24 @@ async def test_drive_alternates_turns_and_stops_on_end_token() -> None:
     assert len(driver.audits) == 2
 
 
+async def test_drive_uses_dedicated_user_emulator_callable() -> None:
+    evaluation = _make_canned_aux(["wrong surface"])
+    emulator = _make_canned_aux(["dedicated user", "<<END>>"])
+    config = RuntimeConfig(
+        instance_id="test",
+        workspace_root=Path("/tmp/zicato-test"),
+        harness_call_llm=_unused_harness_llm,
+        auxiliary_call_llm=evaluation,
+        user_emulator_call_llm=emulator,
+    )
+    result = await EmulatedMultiTurnDriver().drive(
+        run_harness_turn=_make_canned_harness(["dedicated reply"]),
+        entry=_entry(),
+        config=config,
+    )
+    assert result.transcript == ("dedicated reply",)
+
+
 async def test_drive_hits_max_turns_cap() -> None:
     # Emulator never says <<END>>; we should loop exactly max_turns times.
     aux = _make_canned_aux(

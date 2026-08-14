@@ -1,23 +1,4 @@
-// js/views/settings.js — the Settings surface.
-//
-// A wide Console-IV view homing the read-mostly contract at-a-glance, the
-// models / LLM-endpoint config, and the EDITABLE appearance pickers (colour /
-// typeface / page scale / side-panel width — every visual + layout
-// preference). A left section rail drives ONE section host on the right.
-//
-// LAUNCHER, NOT EMBED: the tournament builder is its OWN first-class view now
-// (views/builder.js renders full-width at `#/builder`). Embedding it inside
-// this section-host nested it behind the settings rail — double rails + a
-// cramped centre. Settings therefore keeps only a LAUNCHER rail entry that
-// NAVIGATES to `#/builder` (an <a href> via the router) rather than rendering
-// the builder inside the host. One route-agnostic builder module still backs
-// every entry point: the top-bar nav entry, the `#/builder` deep-link, this
-// launcher, and the standalone `zicato dashboard --view builder` CLI.
-//
-// Render discipline: the chrome (rail + host) is built ONCE per mount and the
-// active section is swapped on selection; every section paints through a
-// digest gate so a steady `state:changed` heartbeat re-dispatch writes ZERO
-// DOM (no flash). Theme tokens only.
+// Settings: digest-gated contract, model-engine, and appearance sections.
 
 import { el, clearChildren } from '../core/dom.js';
 import {
@@ -55,30 +36,24 @@ import {
   applyTheme, applyTypeface, applyFontSize, applyScale, resetScale, applyRail,
 } from '../shell.js';
 
-// The in-host settings sections (each drives the section host). The tournament
-// builder is NOT one of them any more — it is a launcher (LAUNCHER below) that
-// navigates out to its own full-width `#/builder` view.
 const SECTIONS = [
   { id: 'contract', label: 'Contract', glyph: '◷' },
   { id: 'models', label: 'Models / LLM endpoints', glyph: '✦' },
   { id: 'appearance', label: 'Appearance', glyph: '◑' },
 ];
 
-// The launcher rail entry: a link OUT to the standalone tournament-builder view
-// (`#/builder`). It rides at the top of the rail so the builder stays the most
-// discoverable affordance, but it navigates rather than swapping a section.
 const LAUNCHER = { view: 'builder', label: 'Tournament builder', glyph: '⚒' };
 
-// The LLM roles the unified models section edits, in display order. The two
-// proposer-ensemble roles (WS-ENS) are OPTIONAL and fall back to auxiliary when
-// unset — a change here, like every models role, does NOT roll the epoch.
 const MODEL_ROLES = [
-  ['harness', 'Harness', 'The LLM the inner agent under evaluation runs on.'],
-  ['auxiliary', 'Auxiliary', 'Every zicato-internal consumer — emulator, proposer, analysis.'],
+  ['target', 'Target', 'The system under test.'],
+  ['evaluation', 'Evaluation', 'Default internal model work.'],
   ['builder', 'Builder', 'The tournament-builder copilot.'],
-  ['judge', 'Judge', 'In-run process judges / rubric matchers (falls back to auxiliary).'],
-  ['proposer_breadth', 'Proposer breadth', 'Best-of-N slate sampling — the exploratory ensemble half. A model spec steers the default proposer; a call_llm path applies only to text-shim/custom proposers. Falls back to auxiliary when unset.'],
-  ['proposer_depth', 'Proposer depth', 'Best-of-N critique + revise — the refine ensemble half. A model spec steers the default proposer; a call_llm path applies only to text-shim/custom proposers. Falls back to auxiliary when unset.'],
+  ['judge', 'Judge', 'Scores run behavior.'],
+  ['adjudicator', 'Adjudicator', 'Independently audits judges.'],
+  ['user_emulator', 'User emulator', 'Plays the user in multi-turn tasks.'],
+  ['proposer', 'Proposer', 'Default for candidate generation and refinement.'],
+  ['proposer_breadth', 'Proposer breadth', 'Optional sampling override.'],
+  ['proposer_depth', 'Proposer depth', 'Optional critique and revision override.'],
 ];
 const SECTION_IDS = SECTIONS.map((s) => s.id);
 // The default section a bare `#/settings` opens — sourced from the router so the
@@ -92,29 +67,17 @@ let _ctx = null;
 let _models = null;         // /settings/models secret-safe view (models section)
 let _modelsDirty = false;   // an unsaved local edit is pending (digest-gate seam)
 let _modelsStatus = '';     // last save outcome message (saved / error)
-// The SHARED swatch dropdown for the Appearance theme picker — built ONCE and
-// its node REUSED across re-renders (gatedSwap re-appends the same node), so we
-// never register a fresh instance per repaint. applyTheme keeps it in sync.
 let _themeDropdown = null;
-// The SHARED typeface grouped-popover for the Appearance typeface picker — built
-// ONCE and its node REUSED across re-renders, mirroring _themeDropdown.
-// applyTypeface keeps it in sync via syncTypefaceDropdowns.
 let _typeDropdown = null;
 
 function normaliseSection(id) {
   return SECTION_IDS.includes(id) ? id : DEFAULT_SECTION;
 }
 
-// NOTE: the product-status "research preview" mark is NOT a Settings card any
-// more. It is a quiet pill pinned NEXT TO the wordmark in the top bar (mounted
-// once in the shell — see shell.js's researchPreviewPill()), so it persists
-// across every view rather than leading the Settings surface.
-
 export async function render(host, ctx, params) {
   _ctx = ctx;
   _active = normaliseSection(params && params.section);
 
-  // Build the chrome ONCE per mount; thereafter swap only the section host.
   if (!host.firstChild) {
     clearChildren(host);
     const root = el('div', { class: 'dn-settings' });
@@ -132,8 +95,6 @@ export async function render(host, ctx, params) {
 function renderRail() {
   const digest = 'rail|' + _active;
   gatedSwap(_railHost, digest, () => {
-    // The LAUNCHER rides first: a link OUT to the standalone `#/builder` view
-    // (it never marks active — it is not an in-host section, it navigates away).
     const launcher = el('a', {
       class: 'dn-set-railitem dn-set-raillauncher',
       href: _ctx.href(LAUNCHER.view, {}),
@@ -145,7 +106,6 @@ function renderRail() {
     ]);
     const items = SECTIONS.map((s) => el('a', {
       class: 'dn-set-railitem' + (s.id === _active ? ' dn-set-railitem-active' : ''),
-      // each section rides the settings route so it is itself deep-linkable.
       href: _ctx.href('settings', { section: s.id }),
       'aria-current': s.id === _active ? 'page' : null,
     }, [
@@ -165,18 +125,6 @@ async function renderSection() {
   }
 }
 
-// ── Contract — read-mostly view of the current epoch ──────────────────
-//
-// LEADS with the builder's live-PREVIEW visualization (the per-structure
-// schematic + cost meter + train/holdout strip + validation diagnostics),
-// reused READ-ONLY and bound to the FROZEN contract /api/epoch returns. The
-// cost / validation are the SERVER envelope from the builder draft fetch (C6:
-// no client-side re-estimate) — the draft initializes from the live workspace,
-// so its cost/warnings describe the current contract; when the draft is
-// unavailable the cost panel degrades to an honest "unavailable" line. The
-// text roll-up follows below; each row links into the builder to edit, so this
-// surface stays strictly read-only.
-
 async function renderContract() {
   const ep = await data.epoch();
   const c = ep || {};
@@ -188,17 +136,10 @@ async function renderContract() {
   const scoring = (c.scoring && typeof c.scoring === 'object') ? c.scoring : {};
   const overfitting = scoring.overfitting || c.overfitting || {};
   const proposer = (c.proposer && typeof c.proposer === 'object') ? c.proposer : null;
-  // /api/epoch computes the train/holdout split SERVER-SIDE (the same slices the
-  // gate plays) — read its counts so the preview's cost + strip never re-derive
-  // the deterministic sha256 hash split client-side.
   const split = (c.board_split && typeof c.board_split === 'object') ? c.board_split : {};
   const trainCount = split.train_count != null ? split.train_count : board.length;
   const holdoutCount = split.holdout_count != null ? split.holdout_count : 0;
 
-  // The SERVER cost envelope + validation warnings — from the builder draft
-  // (C6: no client-side re-estimate). The draft initializes from the live
-  // workspace, so its cost/warnings describe the current contract; a failed
-  // fetch degrades the cost panel to an honest "unavailable" line.
   const draft = await getDraft();
   const cost = (draft && draft.cost && typeof draft.cost === 'object') ? draft.cost : null;
   const warnings = (draft && Array.isArray(draft.warnings)) ? draft.warnings : [];
@@ -207,8 +148,6 @@ async function renderContract() {
     epoch: c.epoch_id || null, board: board.length, structure, params,
     train: trainCount, hold: holdoutCount,
     briefLen: brief.length, margin: scoring.promote_margin,
-    // the holdout confirmation's own bounds fold in so pinning either one
-    // repaints the summary (they are additive, so both are usually absent).
     hMargin: scoring.holdout_margin != null ? scoring.holdout_margin : null,
     hBudget: scoring.holdout_entry_regression_budget || 0,
     mono: !!scoring.pass_rate_monotonicity,
@@ -289,15 +228,12 @@ function contractRow(label, value, linkView) {
 // indicator from the server's api_key_env_set boolean) — never a secret value.
 // A model/endpoint is runtime infra, so a change here does NOT roll the epoch.
 
-// The in-memory editable model of all four roles. Seeded from the server's
-// secret-safe view, mutated locally as the operator edits, POSTed on save.
 let _modelsEdit = null;
 
 function blankRoleEdit() {
   return { use_call_llm: false, call_llm: '', model: '', endpoint: '', api_key_env: '', api_key_env_set: false };
 }
 
-// Fold one server role spec (public, secret-safe) into the editable shape.
 function roleEditFromPublic(spec) {
   const s = spec || {};
   const useCallLlm = !!s.call_llm;
@@ -311,9 +247,6 @@ function roleEditFromPublic(spec) {
   };
 }
 
-// Project the editable shape back to the on-disk role spec the POST takes.
-// Emits ONLY the active form's keys (so the server stores a clean spec) and
-// NEVER a secret value — api_key_env is a NAME.
 function roleSpecFromEdit(edit) {
   if (edit.use_call_llm) {
     return edit.call_llm ? { call_llm: edit.call_llm } : {};
@@ -324,8 +257,10 @@ function roleSpecFromEdit(edit) {
 
 function seedModelsEdit() {
   const view = (_models && _models.models) || {};
-  _modelsEdit = {};
-  for (const [id] of MODEL_ROLES) _modelsEdit[id] = roleEditFromPublic(view[id]);
+  _modelsEdit = { engines: {}, roles: { ...(view.roles || {}) }, guide: view._guide || null };
+  for (const [name, spec] of Object.entries(view.engines || {})) {
+    _modelsEdit.engines[name] = roleEditFromPublic(spec);
+  }
 }
 
 async function renderModels() {
@@ -337,27 +272,55 @@ async function renderModels() {
     if (_models == null) return [empty('Could not load the models settings.')];
     return [
       section('Models / LLM endpoints',
-        el('p', { class: 'dn-lede', text: 'How every role reaches an LLM — harness, auxiliary, builder, judge, and the two best-of-N proposer-ensemble roles (breadth / depth). A model / endpoint is runtime INFRASTRUCTURE, not part of the evaluation contract, so a change here does NOT roll the epoch (unlike the Contract section).' }),
-        el('p', { class: 'dn-faint', text: 'For each role, either a call_llm dotted path or a model spec. Only the API-key environment-variable NAME is shown or edited — a secret value is never read or surfaced here.' }),
-        el('div', { class: 'dn-set-models' }, MODEL_ROLES.map(roleCard)),
+        el('p', { class: 'dn-lede', text: 'Define reusable engines once, then assign roles. Target and evaluation are the common path; advanced roles inherit evaluation unless overridden.' }),
+        el('p', { class: 'dn-faint', text: 'Only credential environment-variable names are stored. Use a stronger proposer and a smaller user emulator by mapping those roles to separate engines.' }),
+        el('div', { class: 'dn-set-models' }, Object.entries(_modelsEdit.engines).map(engineCard)),
+        addEngineButton(),
+        el('div', { class: 'dn-set-models' }, MODEL_ROLES.map(roleAssignment)),
         modelsActions()),
     ];
   });
 }
 
-function roleCard([id, label, hint]) {
-  const edit = _modelsEdit[id];
-  return el('div', { class: 'dn-set-modelcard', 'data-role': id }, [
+function engineCard([id, edit]) {
+  return el('div', { class: 'dn-set-modelcard', 'data-engine': id }, [
     el('div', { class: 'dn-set-modelhead' }, [
-      el('span', { class: 'dn-set-modelname', text: label }),
-      el('span', { class: 'dn-faint', text: hint }),
+      el('span', { class: 'dn-set-modelname', text: id }),
     ]),
     formToggle(id, edit),
     edit.use_call_llm ? callLlmForm(id, edit) : modelSpecForm(id, edit),
   ]);
 }
 
-// The call_llm ⟷ model-spec toggle — a two-button group per role.
+function addEngineButton() {
+  const button = el('button', { class: 'dn-linkbtn', type: 'button', text: '+ engine' });
+  button.addEventListener('click', () => {
+    let name = !_modelsEdit.engines.target ? 'target'
+      : (!_modelsEdit.engines.evaluation ? 'evaluation' : 'engine-1');
+    let n = 1; while (_modelsEdit.engines[name]) { n += 1; name = 'engine-' + n; }
+    _modelsEdit.engines[name] = blankRoleEdit(); markDirty();
+  });
+  return button;
+}
+
+function roleAssignment([id, label, hint]) {
+  const select = el('select', { class: 'dn-set-input', 'aria-label': label });
+  select.appendChild(el('option', { value: '', text: 'inherit default' }));
+  for (const name of Object.keys(_modelsEdit.engines)) {
+    select.appendChild(el('option', { value: name, text: name,
+      selected: _modelsEdit.roles[id] === name ? 'selected' : null }));
+  }
+  select.addEventListener('change', () => {
+    if (select.value) _modelsEdit.roles[id] = select.value;
+    else delete _modelsEdit.roles[id];
+    markDirty();
+  });
+  return el('label', { class: 'dn-set-modelcard' }, [
+    el('span', { class: 'dn-set-modelname', text: label }),
+    el('span', { class: 'dn-faint', text: hint }), select,
+  ]);
+}
+
 function formToggle(id, edit) {
   const mk = (useCallLlm, text) => {
     const on = edit.use_call_llm === useCallLlm;
@@ -390,9 +353,6 @@ function modelSpecForm(id, edit) {
   ]);
 }
 
-// The api_key_env field shows + edits ONLY the env-var NAME, plus a read-only
-// "set / unset" indicator derived from the server's api_key_env_set boolean.
-// There is no secret-value input path anywhere.
 function apiKeyEnvField(id, edit) {
   const indicator = el('span', {
     class: 'dn-set-keyflag ' + (edit.api_key_env_set ? 'dn-set-keyflag-set' : 'dn-set-keyflag-unset'),
@@ -438,8 +398,11 @@ function markDirty() {
 }
 
 async function onSaveModels() {
-  const payload = {};
-  for (const [id] of MODEL_ROLES) payload[id] = roleSpecFromEdit(_modelsEdit[id]);
+  const payload = { engines: {}, roles: _modelsEdit.roles };
+  for (const [name, edit] of Object.entries(_modelsEdit.engines)) {
+    payload.engines[name] = roleSpecFromEdit(edit);
+  }
+  if (_modelsEdit.guide) payload._guide = _modelsEdit.guide;
   const res = await saveModels(payload);
   if (res && res.error) {
     _modelsStatus = 'save failed: ' + res.error;

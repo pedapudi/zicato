@@ -48,14 +48,14 @@ const EPOCH = {
 // with an api_key_env_set boolean. NO secret value is ever present.
 const MODELS_VIEW = {
   models: {
-    harness: { call_llm: 'pkg.harness:call_llm' },
-    auxiliary: { model: 'house-model-x', endpoint: null, api_key_env: 'HOUSE_API_KEY', api_key_env_set: true },
-    builder: { model: 'builder-model', endpoint: 'https://endpoint.example', api_key_env: 'BUILDER_KEY', api_key_env_set: false },
-    judge: {},
-    proposer_breadth: {},
-    proposer_depth: {},
+    engines: {
+      target: { call_llm: 'pkg.harness:call_llm' },
+      evaluation: { model: 'house-model-x', endpoint: null, api_key_env: 'HOUSE_API_KEY', api_key_env_set: true },
+      builder: { model: 'builder-model', endpoint: 'https://endpoint.example', api_key_env: 'BUILDER_KEY', api_key_env_set: false },
+    },
+    roles: { builder: 'builder' },
   },
-  roles: ['harness', 'auxiliary', 'builder', 'judge', 'proposer_breadth', 'proposer_depth'],
+  roles: ['target', 'evaluation', 'builder', 'judge', 'adjudicator', 'user_emulator', 'proposer', 'proposer_breadth', 'proposer_depth'],
   rolls_epoch: false,
 };
 
@@ -73,14 +73,13 @@ function installFetch() {
       if (init && init.method === 'POST') {
         _lastModelsPost = JSON.parse(init.body);
         // echo a refreshed secret-safe view derived from the posted block.
-        const posted = _lastModelsPost.models || {};
-        const echo = {};
-        for (const id of MODELS_VIEW.roles) {
-          const s = posted[id] || {};
-          echo[id] = s.call_llm ? { call_llm: s.call_llm }
-            : (s.model ? { model: s.model, endpoint: s.endpoint || null, api_key_env: s.api_key_env || null, api_key_env_set: false } : {});
+        const posted = _lastModelsPost.models || { engines: {}, roles: {} };
+        const engines = {};
+        for (const [name, s] of Object.entries(posted.engines || {})) {
+          engines[name] = s.call_llm ? { call_llm: s.call_llm }
+            : { ...s, api_key_env_set: false };
         }
-        return jsonRes({ models: echo, roles: MODELS_VIEW.roles, rolls_epoch: false });
+        return jsonRes({ models: { engines, roles: posted.roles || {} }, roles: MODELS_VIEW.roles, rolls_epoch: false });
       }
       return jsonRes(MODELS_VIEW);
     }
@@ -387,28 +386,22 @@ test('settings: the Contract cost panel degrades to an honest "unavailable" line
   assertEqual(byClass(preview, 'dn-bld-cost-num').length, 0, 'no fabricated board-runs/round number is shown');
 });
 
-test('settings: the Models section renders every role, each editable (toggle + fields)', async () => {
+test('settings: named engines are edited once and roles are assignments', async () => {
   installFetch();
   const host = globalThis.document.createElement('div');
   await settings.render(host, ctx, { section: 'models' });
   await tick();
   const body = firstClass(host, 'dn-set-body');
-  // one card per role — harness · auxiliary · builder · judge · the two
-  // WS-ENS proposer-ensemble roles (breadth / depth).
-  const cards = byClass(body, 'dn-set-modelcard');
-  assertEqual(cards.length, 6, 'every role renders a card');
-  const roleIds = cards.map((c) => c.getAttribute('data-role'));
-  for (const id of ['harness', 'auxiliary', 'builder', 'judge', 'proposer_breadth', 'proposer_depth']) {
-    assert(roleIds.includes(id), 'the ' + id + ' role card renders');
-  }
-  // each card carries the call_llm ⟷ model-spec toggle.
+  const cards = byClass(body, 'dn-set-modelcard').filter((c) => c.getAttribute('data-engine'));
+  assertEqual(cards.length, 3, 'one editable card per engine');
   for (const c of cards) {
     assert(byClass(c, 'dn-set-typebtn').length === 2, 'each role has the form toggle');
   }
-  // harness arrived as a call_llm spec ⇒ its call_llm path input is shown.
-  const harness = cards.find((c) => c.getAttribute('data-role') === 'harness');
-  const harnessInput = byClass(harness, 'dn-set-input').find((i) => i.getAttribute('name') === 'harness-call_llm');
-  assert(harnessInput && harnessInput.getAttribute('value') === 'pkg.harness:call_llm', 'the harness call_llm path is editable and seeded');
+  const target = cards.find((c) => c.getAttribute('data-engine') === 'target');
+  const input = byClass(target, 'dn-set-input').find((i) => i.getAttribute('name') === 'target-call_llm');
+  assert(input && input.getAttribute('value') === 'pkg.harness:call_llm', 'target engine is seeded');
+  assert(body.textContent.includes('User emulator'), 'advanced role assignment is shown');
+  assert(body.textContent.includes('Proposer depth'), 'specific proposer override is shown');
 });
 
 test('settings: the Models section shows the api_key_env NAME + set/unset flag, never a secret', async () => {
@@ -421,7 +414,7 @@ test('settings: the Models section shows the api_key_env NAME + set/unset flag, 
   // The NAME is surfaced in the (editable) api_key_env input value.
   const keyInputs = byClass(body, 'dn-set-input').filter((i) => (i.getAttribute('name') || '').endsWith('-api_key_env'));
   const keyVals = keyInputs.map((i) => i.getAttribute('value'));
-  assert(keyVals.includes('HOUSE_API_KEY'), 'the auxiliary api_key_env NAME is shown');
+  assert(keyVals.includes('HOUSE_API_KEY'), 'the evaluation api_key_env NAME is shown');
   assert(keyVals.includes('BUILDER_KEY'), 'the builder api_key_env NAME is shown');
   const flags = byClass(body, 'dn-set-keyflag');
   const flagText = flags.map((f) => f.textContent);
@@ -433,18 +426,16 @@ test('settings: the Models section shows the api_key_env NAME + set/unset flag, 
   assert(!inputs.some((i) => (i.getAttribute('type') || '') === 'password'), 'no password / secret input exists');
 });
 
-test('settings: editing a Models role + saving round-trips through POST /settings/models (NAMES only)', async () => {
+test('settings: editing a named engine saves the engines/roles schema', async () => {
   installFetch();
   const host = globalThis.document.createElement('div');
   await settings.render(host, ctx, { section: 'models' });
   await tick();
   let body = firstClass(host, 'dn-set-body');
-  // edit the judge role's model spec — type a model id + an env-var NAME.
-  const judge = byClass(body, 'dn-set-modelcard').find((c) => c.getAttribute('data-role') === 'judge');
-  const modelInput = byClass(judge, 'dn-set-input').find((i) => i.getAttribute('name') === 'judge-model');
-  assert(modelInput, 'the judge model-spec input is present (model-spec is the default form)');
-  modelInput.setAttribute('value', 'judge-model-y');
-  modelInput.value = 'judge-model-y';
+  const evaluation = byClass(body, 'dn-set-modelcard').find((c) => c.getAttribute('data-engine') === 'evaluation');
+  const modelInput = byClass(evaluation, 'dn-set-input').find((i) => i.getAttribute('name') === 'evaluation-model');
+  modelInput.setAttribute('value', 'evaluation-model-y');
+  modelInput.value = 'evaluation-model-y';
   modelInput.dispatchEvent(makeEvent('input'));
   await tick();
   // Save is enabled once dirty; click it.
@@ -456,32 +447,21 @@ test('settings: editing a Models role + saving round-trips through POST /setting
   // the POST carried the edited model spec, an api_key_env NAME only, and never
   // any resolved secret value.
   assert(_lastModelsPost && _lastModelsPost.models, 'the POST carried a models block');
-  assertEqual(_lastModelsPost.models.judge.model, 'judge-model-y', 'the edited judge model id round-tripped');
-  assert(!('api_key_env_set' in _lastModelsPost.models.judge), 'the set/unset flag is a VIEW-only field, never posted');
+  assertEqual(_lastModelsPost.models.engines.evaluation.model, 'evaluation-model-y', 'the engine id round-tripped');
+  assert(!('api_key_env_set' in _lastModelsPost.models.engines.evaluation), 'the set flag is never posted');
   const flat = JSON.stringify(_lastModelsPost).toLowerCase();
   assert(!flat.includes('sk-'), 'no secret value crossed the POST boundary');
 });
 
-test('settings (WS-ENS): a proposer-ensemble role edits + saves through POST like any other role', async () => {
+test('settings: an advanced proposer role maps to a named engine', async () => {
   installFetch();
   const host = globalThis.document.createElement('div');
   await settings.render(host, ctx, { section: 'models' });
   await tick();
   let body = firstClass(host, 'dn-set-body');
-  // the proposer_breadth card starts as an empty spec (model-spec form default).
-  const breadth = byClass(body, 'dn-set-modelcard').find((c) => c.getAttribute('data-role') === 'proposer_breadth');
-  assert(breadth, 'the proposer_breadth role card renders');
-  // switch it to the call_llm path form and type a dotted path.
-  const toCallLlm = byClass(breadth, 'dn-set-typebtn').find((b) => b.getAttribute('data-form') === 'call_llm');
-  toCallLlm.dispatchEvent(makeEvent('click'));
-  await tick();
-  body = firstClass(host, 'dn-set-body');
-  const breadth2 = byClass(body, 'dn-set-modelcard').find((c) => c.getAttribute('data-role') === 'proposer_breadth');
-  const pathInput = byClass(breadth2, 'dn-set-input').find((i) => i.getAttribute('name') === 'proposer_breadth-call_llm');
-  assert(pathInput, 'the proposer_breadth call_llm path input is present after the toggle');
-  pathInput.setAttribute('value', 'pkg.breadth:fn');
-  pathInput.value = 'pkg.breadth:fn';
-  pathInput.dispatchEvent(makeEvent('input'));
+  const breadth = byClass(body, 'dn-set-modelcard').find((c) => c.textContent.includes('Proposer breadth'));
+  const select = byClass(breadth, 'dn-set-input')[0];
+  select.value = 'builder'; select.dispatchEvent(makeEvent('change'));
   await tick();
   body = firstClass(host, 'dn-set-body');
   const save = byClass(body, 'dn-linkbtn').find((b) => b.textContent.includes('Save'));
@@ -490,7 +470,7 @@ test('settings (WS-ENS): a proposer-ensemble role edits + saves through POST lik
   // the POST carried the proposer_breadth role's edited call_llm path — the
   // role round-trips exactly like harness/judge (no special-casing).
   assert(_lastModelsPost && _lastModelsPost.models, 'the POST carried a models block');
-  assertEqual(_lastModelsPost.models.proposer_breadth.call_llm, 'pkg.breadth:fn', 'the proposer_breadth call_llm path round-tripped');
+  assertEqual(_lastModelsPost.models.roles.proposer_breadth, 'builder', 'the override round-tripped');
 });
 
 test('settings: the EDITABLE builder is NO LONGER embedded — only a LAUNCHER (+ a read-only contract preview)', async () => {

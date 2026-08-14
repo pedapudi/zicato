@@ -507,6 +507,7 @@ class RuntimeConfig:
     propose_parallelism: int = 4
     judge_call_llm: CallLLM | None = None
     adjudicator_call_llm: CallLLM | None = None
+    user_emulator_call_llm: CallLLM | None = None
     proposer_breadth_call_llm: CallLLM | None = None
     proposer_depth_call_llm: CallLLM | None = None
     proposer_breadth_model: str | None = None
@@ -610,6 +611,14 @@ class RuntimeConfig:
         fall-back so every judge call site reads the same rule.
         """
         return self.judge_call_llm if self.judge_call_llm is not None else self.auxiliary_call_llm
+
+    def effective_user_emulator_call_llm(self) -> CallLLM:
+        """The user-emulator callable, or the evaluation default."""
+        return (
+            self.user_emulator_call_llm
+            if self.user_emulator_call_llm is not None
+            else self.auxiliary_call_llm
+        )
 
     def effective_adjudicator_call_llm(self) -> CallLLM:
         """The callable the reflection adjudicator runs on.

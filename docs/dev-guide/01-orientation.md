@@ -803,8 +803,12 @@ config/board/scoring/brief loaders (`load_workspace_config`,
 **`adapters/`, `adapter_factory.py`, `runtime_factory.py`,
 `models_config.py`, `config.py`, `import_path.py`, `aux_timeout.py`** —
 adapter construction from `config.json`, `RuntimeConfig` construction
-(model roles, `build_adk_model`), dotted-import resolution, the auxiliary
-call timeout wrapper.
+(named model engines, inherited roles, `build_adk_model`), dotted-import
+resolution, the auxiliary call timeout wrapper. The common configuration is
+two engines: `target` for the measured system and `evaluation` for internal
+work. `judge`, `user_emulator`, `builder`, and `proposer` inherit evaluation;
+`proposer_breadth` / `proposer_depth` may override the base proposer. See
+`docs/design/MODEL-CONFIG.md` for the schema and noun definitions.
 
 **`synthetic/`** — synthetic adversarial/clean board-entry support for
 dogfood target 2 (steering goldfive itself, where drift-count as loss

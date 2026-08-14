@@ -67,11 +67,55 @@ def test_model_spec_form_roundtrips() -> None:
     }
 
 
-def test_call_llm_wins_when_both_keys_present() -> None:
-    """A ``call_llm`` key takes precedence over a model-spec on the same role."""
-    spec = role_spec_from_dict({"call_llm": "pkg:fn", "model": "house-x"})
-    assert spec.uses_call_llm
-    assert spec.model is None
+def test_mixed_engine_forms_are_rejected() -> None:
+    with pytest.raises(ValueError, match="exactly one"):
+        role_spec_from_dict({"call_llm": "pkg:fn", "model": "house-x"})
+
+
+def test_endpoint_without_model_is_rejected() -> None:
+    with pytest.raises(ValueError, match="require model"):
+        role_spec_from_dict({"endpoint": "https://e.example"})
+
+
+def test_named_engines_resolve_defaults_and_overrides() -> None:
+    cfg = models_config_from_dict(
+        {
+            "engines": {
+                "target": {"call_llm": "pkg:target"},
+                "evaluation": {"call_llm": "pkg:evaluation"},
+                "strong": {"model": "strong"},
+                "small": {"model": "small"},
+            },
+            "roles": {"proposer": "strong", "user_emulator": "small"},
+        }
+    )
+    assert cfg.harness.call_llm == "pkg:target"
+    assert cfg.auxiliary.call_llm == "pkg:evaluation"
+    assert cfg.judge.call_llm == "pkg:evaluation"
+    assert cfg.proposer_breadth.model == "strong"
+    assert cfg.proposer_depth.model == "strong"
+    assert cfg.user_emulator.model == "small"
+
+
+def test_specific_proposer_pass_overrides_base_proposer() -> None:
+    cfg = models_config_from_dict(
+        {
+            "engines": {
+                "target": {"call_llm": "pkg:target"},
+                "evaluation": {"call_llm": "pkg:evaluation"},
+                "strong": {"model": "strong"},
+                "cheap": {"model": "cheap"},
+            },
+            "roles": {"proposer": "strong", "proposer_breadth": "cheap"},
+        }
+    )
+    assert cfg.proposer_breadth.model == "cheap"
+    assert cfg.proposer_depth.model == "strong"
+
+
+def test_unknown_engine_reference_is_rejected() -> None:
+    with pytest.raises(ValueError, match="unknown engine"):
+        models_config_from_dict({"engines": {}, "roles": {"judge": "missing"}})
 
 
 def test_models_config_roundtrips_all_roles() -> None:

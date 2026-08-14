@@ -610,6 +610,11 @@ async def _run_single(
                     models=_models,
                     fallback_callable=config.effective_judge_call_llm(),
                 ),
+                "user_emulator_role": _role_worker_spec(
+                    "user_emulator",
+                    models=_models,
+                    fallback_callable=config.effective_user_emulator_call_llm(),
+                ),
                 "sink_events_path": str(sink_path),
                 "loss_path": str(loss_path),
                 "result_path": str(result_path),

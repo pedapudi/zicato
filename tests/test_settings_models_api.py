@@ -128,6 +128,31 @@ def test_post_preserves_other_config_keys(client: TestClient, workspace: Path) -
     assert on_disk["instance_id"] == "default"
 
 
+def test_post_preserves_models_guide(client: TestClient, workspace: Path) -> None:
+    guide = {"nouns": {"engine": "reusable connection"}, "example": {"roles": {}}}
+    payload = {
+        "models": {
+            "engines": {
+                "target": {"call_llm": "pkg:target"},
+                "evaluation": {"call_llm": "pkg:evaluation"},
+            },
+            "roles": {},
+            "_guide": guide,
+        }
+    }
+    assert client.post("/settings/models", json=payload).status_code == 200
+    on_disk = json.loads((workspace / "config.json").read_text(encoding="utf-8"))
+    assert on_disk["models"]["_guide"] == guide
+
+
+def test_post_rejects_unknown_engine_reference(client: TestClient) -> None:
+    resp = client.post(
+        "/settings/models",
+        json={"models": {"engines": {}, "roles": {"judge": "missing"}}},
+    )
+    assert resp.status_code == 400
+
+
 def test_post_empty_models_drops_the_block(client: TestClient, workspace: Path) -> None:
     """All-unconfigured roles ⇒ the models block is removed (reads back default)."""
     resp = client.post("/settings/models", json={"models": {}})

@@ -48,6 +48,10 @@ zicato is the third member of an ecosystem:
 | Operator-driven steering | harmonograf | within one run |
 | **Inner-harness rewrites across runs** | **zicato** | **across generations** |
 
+Model connections use named `target` and `evaluation` engines. Advanced
+judge, emulator, builder, and proposer overrides are documented in
+[`MODEL-CONFIG.md`](docs/design/MODEL-CONFIG.md).
+
 Goldfive owns plans; zicato owns the prompts and structure that *produce* the
 plans. The two are complementary: goldfive handles "this run wandered, replan
 this run", zicato handles "this kind of run keeps wandering the same way,

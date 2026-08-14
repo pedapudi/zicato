@@ -852,6 +852,12 @@ async def _run(args: dict[str, Any]) -> None:
     judge_role = args.get("judge_role")
     if isinstance(judge_role, dict) and (judge_role.get("dotted") or judge_role.get("models_role")):
         judge_call_llm = _resolve_role_call_llm(judge_role, role="judge")
+    user_emulator_call_llm = None
+    emulator_role = args.get("user_emulator_role")
+    if isinstance(emulator_role, dict) and (
+        emulator_role.get("dotted") or emulator_role.get("models_role")
+    ):
+        user_emulator_call_llm = _resolve_role_call_llm(emulator_role, role="user_emulator")
 
     # Capture knobs (board reflection's capture fix). Runtime-only,
     # additive, NEVER contract-hashed. An ABSENT key — a legacy args file
@@ -882,6 +888,7 @@ async def _run(args: dict[str, Any]) -> None:
         auxiliary_call_llm=auxiliary_call_llm,
         seed=args.get("seed"),
         judge_call_llm=judge_call_llm,
+        user_emulator_call_llm=user_emulator_call_llm,
         inner_model=inner_model,
         persist_run_results=persist_run_results,
         persist_judge_io=persist_judge_io,

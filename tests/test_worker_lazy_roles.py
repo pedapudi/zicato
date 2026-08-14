@@ -44,6 +44,43 @@ _MODEL_SPEC = {
 }
 
 
+def test_named_proposer_and_emulator_routes_resolve_in_subprocess() -> None:
+    """The advanced role split survives a fresh interpreter boundary."""
+    source = """
+import asyncio
+from zicato.models_config import models_config_from_dict, resolve_text_call_llm
+cfg = models_config_from_dict({
+  'engines': {
+    'target': {'call_llm': 'tests._subprocess_worker_support:harness_call_llm'},
+    'evaluation': {'call_llm': 'tests._subprocess_worker_support:auxiliary_call_llm'},
+    'strong': {'call_llm': 'tests._subprocess_worker_support:harness_call_llm'},
+    'small': {'call_llm': 'tests._subprocess_worker_support:auxiliary_call_llm'}},
+  'roles': {'proposer': 'strong', 'user_emulator': 'small'}})
+async def run():
+  proposer = resolve_text_call_llm(cfg.proposer_depth, role='proposer_depth')
+  emulator = resolve_text_call_llm(cfg.user_emulator, role='user_emulator')
+  print(await proposer('', '', ''), await emulator('', '', ''))
+asyncio.run(run())
+"""
+    proc = subprocess.run(
+        [sys.executable, "-c", source],
+        capture_output=True,
+        text=True,
+        check=False,
+        env={
+            **os.environ,
+            "PYTHONPATH": os.pathsep.join(
+                [
+                    str(Path(__file__).resolve().parent.parent / "src"),
+                    str(Path(__file__).resolve().parent.parent),
+                ]
+            ),
+        },
+    )
+    assert proc.returncode == 0, proc.stderr
+    assert proc.stdout.strip() == "stub-harness-response stub-aux-response"
+
+
 # ---------------------------------------------------------------------------
 # 1. The deferral
 # ---------------------------------------------------------------------------
@@ -157,7 +194,7 @@ def test_malformed_spec_still_fails_eagerly() -> None:
     ``models`` block has to surface at worker startup, where it is
     debuggable.
     """
-    with pytest.raises(ValueError, match="neither a call_llm dotted path nor a model string"):
+    with pytest.raises(ValueError, match="exactly one of call_llm or model"):
         lazy_text_call_llm(role_spec_from_dict({}), role="auxiliary")
 
 

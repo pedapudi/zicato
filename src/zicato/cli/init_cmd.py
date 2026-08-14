@@ -84,6 +84,31 @@ def initialize_workspace(
         "instance_id": instance_id,
         "created_at": _utcnow_iso(),
         STORAGE_BACKEND_KEY: DEFAULT_STORAGE_BACKEND,
+        "models": {
+            "engines": {},
+            "roles": {},
+            "_guide": {
+                "nouns": {
+                    "engine": "reusable model plus transport and credential-variable name",
+                    "target": "system under test",
+                    "evaluation": "default for internal model work",
+                    "proposer": "creates candidate changes; may merit a stronger engine",
+                    "user_emulator": "plays the user; may use a smaller engine",
+                    "judge": "scores run behavior",
+                    "adjudicator": "independently audits judges",
+                    "builder": "interactive configuration assistant",
+                    "breadth/depth": "candidate sampling / critique and revision",
+                    "revision": (
+                        "operator-declared logical deployment identity, unlike a transport URL"
+                    ),
+                },
+                "override": "define named engines, then map roles; see docs/design/MODEL-CONFIG.md",
+                "example": {
+                    "engines": {"strong": {"model": "..."}, "small": {"model": "..."}},
+                    "roles": {"proposer": "strong", "user_emulator": "small"},
+                },
+            },
+        },
     }
     write_workspace_config(workspace_root, config)
 
