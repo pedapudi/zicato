@@ -6,7 +6,7 @@ Coverage:
   experiment for v0 with ``parent_generation_id=None`` (the seed has no
   in-epoch parent), ``outcome=None``, and is idempotent on a second call.
   A legacy on-disk ``""`` still reads back as ``None``.
-* :func:`zicato.orchestrator._ensure_baseline_snapshot` invokes the
+* :func:`zicato.evolve.round_baseline._ensure_baseline_snapshot` invokes the
   seed writer so a freshly-materialised v0 carries the marker.
 * :func:`zicato.analyzer.report_data.gather_epoch_report_data` returns
   v0 in its generations tuple when the marker is present;

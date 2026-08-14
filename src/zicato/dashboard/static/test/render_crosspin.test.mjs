@@ -56,15 +56,9 @@ test('crosspin: ratingModel — the integer register + the provisional threshold
   }
 });
 
-test('crosspin: decisionFor — an absent outcome is pending, never rejected', () => {
-  for (const c of CASES.decision_for) {
-    assertEqual(ui.decisionFor(c.spec), c.expect, JSON.stringify(c.spec));
-  }
-});
-
-test('crosspin: the verdict pill label', () => {
+test('crosspin: the verdict pill preserves the served label', () => {
   for (const c of CASES.verdict_label) {
-    assertEqual(ui.verdictPill(c.decision).textContent, c.expect, String(c.decision));
+    assertEqual(ui.verdictPill(c.decision, { label: c.expect }).textContent, c.expect, String(c.decision));
   }
 });
 

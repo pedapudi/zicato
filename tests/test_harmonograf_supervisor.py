@@ -21,7 +21,7 @@ from types import SimpleNamespace
 import pytest
 
 from zicato.config import IntegrationConfig
-from zicato.orchestrator import (
+from zicato.evolve.lifecycle_services import (
     _EnvVarRestorer,
     _LaunchedHandle,
     _NoopShutdownHandle,

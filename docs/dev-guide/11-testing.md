@@ -1360,6 +1360,35 @@ false-clean server exit as an un-awaited coroutine.
 > `dev` extra. A green checklist run on a `.venv` missing half its tools is a
 > false green.
 
+### Line-budget gate
+
+Run the report and enforcement from the repository root:
+
+```bash
+python tools/line_budget.py
+python tools/line_budget.py --check
+python tools/line_budget.py --ref f9052dd
+```
+
+`measure()` walks `git ls-files` for the worktree or `git ls-tree` for a
+reference and counts newline bytes, matching `wc -l`. `_excluded()` owns the
+narrow Markdown, lockfile, and generated-artifact exclusions; `_production()`
+owns the runtime subtotal. The report groups both by language and subsystem so
+movement is reviewable.
+
+`.line-budget.json` contains hard limits without an allowance. Keep the two
+independent one-line-overage assertions in `tests/test_line_budget.py`: one
+proves total `limit + 1` fails while production is unchanged; the other proves
+production `limit + 1` fails while total is unchanged. Run:
+
+```bash
+uv run pytest tests/test_line_budget.py -q
+python tools/line_budget.py --check
+```
+
+The stable measurement contract, final arithmetic, and ratchet policy live in
+`docs/design/LINE-BUDGET.md`; implementation mechanics live only here.
+
 ---
 
 ## 11.12 The two hard rules

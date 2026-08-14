@@ -11,12 +11,11 @@ def _report(*, total: int, production: int) -> Report:
     return Report(1, total, 1, production, {}, {})
 
 
-def _config(path: Path, *, total: int = 10, production: int = 5, overage=None) -> Path:
+def _config(path: Path, *, total: int = 10, production: int = 5) -> Path:
     path.write_text(
         json.dumps(
             {
                 "limits": {"total": total, "production": production},
-                "temporary_overage": overage,
             }
         )
     )
@@ -61,25 +60,11 @@ def test_measure_reports_language_subsystem_and_production(tmp_path: Path) -> No
     assert report.subsystems == {"src/zicato/core": 2, "tests": 1}
 
 
-def test_check_rejects_each_budget_independently(tmp_path: Path) -> None:
+def test_check_rejects_one_line_total_overage(tmp_path: Path) -> None:
     config = _config(tmp_path / "budget.json")
     assert check(_report(total=11, production=5), config) == ["total: 11 exceeds 10 by 1"]
+
+
+def test_check_rejects_one_line_production_overage(tmp_path: Path) -> None:
+    config = _config(tmp_path / "budget.json")
     assert check(_report(total=10, production=6), config) == ["production: 6 exceeds 5 by 1"]
-
-
-def test_documented_temporary_overage_is_admitted(tmp_path: Path) -> None:
-    config = _config(
-        tmp_path / "budget.json",
-        overage={"total": 2, "production": 1, "issue": "#223", "reason": "staging"},
-    )
-    assert check(_report(total=12, production=6), config) == []
-
-
-def test_undocumented_temporary_overage_is_rejected(tmp_path: Path) -> None:
-    config = _config(
-        tmp_path / "budget.json",
-        overage={"total": 2, "production": 1, "issue": "", "reason": ""},
-    )
-    assert check(_report(total=10, production=5), config) == [
-        "temporary_overage requires non-empty issue and reason"
-    ]

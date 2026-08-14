@@ -469,6 +469,7 @@ def _read_epoch_experiments(
             record["decision"] = (
                 "promoted" if promoted is True else "rejected" if promoted is False else None
             )
+            record["decision_label"] = node.get("decision_label")
         experiments.append(record)
     return experiments
 

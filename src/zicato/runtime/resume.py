@@ -133,7 +133,7 @@ def _latest_generation_id(workspace_root: Path, epoch_id: str) -> str | None:
     """Return the highest ``vN`` generation directory, or ``None``.
 
     Mirrors the liveness rule of
-    :func:`zicato.orchestrator._next_generation_id` and the directory
+    :func:`zicato.evolve.generation_phase.next_generation_id` and the directory
     store: a generation counts as present when its directory exists.
     Non-``vN`` names (none today) are ignored.
     """

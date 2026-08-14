@@ -4,7 +4,7 @@ The e2e transition-sequence oracle lives in
 ``tests/test_convergence_known_answer.py``; these tests pin the emission
 plumbing itself:
 
-* :class:`zicato.orchestrator._RoundLogEmitter` — the best-effort
+* :class:`zicato.evolve.round_reporting._RoundLogEmitter` — the best-effort
   discipline (a failing append / an unknown token can never raise) and the
   typed-event resolution through the wire token;
 * the best-of-N wrapper's ``candidate_sampled`` / ``critique_selected``

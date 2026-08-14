@@ -82,8 +82,8 @@ are what make the marks readable no matter which palette is active:
 The cardinal rule: **`good` and `bad` are earned by direction, never by
 identity.** A challenger is not red because it is a challenger; it is red only
 when it regressed or was cut. An unscored / in-flight candidate is *neutral*
-(pending), never `bad` (this is the "Class B" bug the code guards against in
-`ui.decisionFor` and `tree.js`).
+(pending), never `bad`. The server supplies both the decision token and its
+display label; browser views only choose the matching visual token.
 
 ### 2.2 The secondary tokens
 

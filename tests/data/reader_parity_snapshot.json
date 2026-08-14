@@ -265,6 +265,7 @@
       "experiments": [
         {
           "decision": "promoted",
+          "decision_label": "seed (v0)",
           "generation_id": "v0",
           "hypothesis": {
             "summary": "hyp e0 v0"
@@ -322,6 +323,8 @@
       "generations": [
         {
           "created_at": "2026-01-01T00:00:00Z",
+          "decision": "baseline",
+          "decision_label": "seed (v0)",
           "elo": null,
           "elo_games": null,
           "elo_se": null,
@@ -332,6 +335,8 @@
         },
         {
           "created_at": "2026-01-01T00:00:00Z",
+          "decision": "rejected",
+          "decision_label": "rejected",
           "elo": null,
           "elo_games": null,
           "elo_se": null,
@@ -342,6 +347,8 @@
         },
         {
           "created_at": "2026-03-01T00:00:00Z",
+          "decision": "baseline",
+          "decision_label": "seed (v0)",
           "elo": null,
           "elo_games": null,
           "elo_se": null,
@@ -461,6 +468,7 @@
     "experiments": [
       {
         "decision": "promoted",
+        "decision_label": "seed (v0)",
         "generation_id": "v0",
         "hypothesis": {
           "summary": "hyp e0 v0"
@@ -558,6 +566,7 @@
     "experiments": [
       {
         "decision": "promoted",
+        "decision_label": "seed (v0)",
         "generation_id": "v0",
         "hypothesis": {
           "summary": "hyp e1 v0"
@@ -573,6 +582,7 @@
       },
       {
         "decision": "rejected",
+        "decision_label": "rejected",
         "generation_id": "v1",
         "hypothesis": {
           "summary": "hyp e1 v1"
@@ -862,6 +872,8 @@
     "generations": [
       {
         "created_at": "2026-01-01T00:00:00Z",
+        "decision": "baseline",
+        "decision_label": "seed (v0)",
         "elo": null,
         "elo_games": null,
         "elo_se": null,
@@ -872,6 +884,8 @@
       },
       {
         "created_at": "2026-01-01T00:00:00Z",
+        "decision": "rejected",
+        "decision_label": "rejected",
         "elo": null,
         "elo_games": null,
         "elo_se": null,
@@ -882,6 +896,8 @@
       },
       {
         "created_at": "2026-03-01T00:00:00Z",
+        "decision": "baseline",
+        "decision_label": "seed (v0)",
         "elo": null,
         "elo_games": null,
         "elo_se": null,
@@ -1240,6 +1256,7 @@
       "experiments": [
         {
           "decision": "promoted",
+          "decision_label": "seed (v0)",
           "generation_id": "v0",
           "hypothesis": {
             "summary": "hyp e0 v0"

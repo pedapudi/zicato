@@ -31,12 +31,12 @@ const SC_OLD = '2026-06-01_e0';
 const SC_NEW = '2026-06-02_e1';
 function scopeFixture() {
   const lineage = [
-    { generation_id: 'v0', epoch_id: SC_OLD, parent_generation_id: '', promoted: true },
-    { generation_id: 'v1', epoch_id: SC_OLD, parent_generation_id: 'v0', promoted: true },
-    { generation_id: 'v2', epoch_id: SC_OLD, parent_generation_id: 'v1', promoted: false },
+    { generation_id: 'v0', epoch_id: SC_OLD, parent_generation_id: '', promoted: true, decision: 'baseline', decision_label: 'seed (v0)' },
+    { generation_id: 'v1', epoch_id: SC_OLD, parent_generation_id: 'v0', promoted: true, decision: 'promoted', decision_label: 'promoted' },
+    { generation_id: 'v2', epoch_id: SC_OLD, parent_generation_id: 'v1', promoted: false, decision: 'rejected', decision_label: 'rejected' },
     // e1: a seed v0 + an UNSCORED challenger v1 (promoted == null → pending).
-    { generation_id: 'v0', epoch_id: SC_NEW, parent_generation_id: '', promoted: true },
-    { generation_id: 'v1', epoch_id: SC_NEW, parent_generation_id: 'v0', promoted: null },
+    { generation_id: 'v0', epoch_id: SC_NEW, parent_generation_id: '', promoted: true, decision: 'baseline', decision_label: 'seed (v0)' },
+    { generation_id: 'v1', epoch_id: SC_NEW, parent_generation_id: 'v0', promoted: null, decision: 'pending', decision_label: 'undecided' },
   ];
   const F = { '/api/lineage': { generations: lineage } };
   // per-epoch scoped contract / trajectory / bracket (keyed by the ?epoch= path).
@@ -495,16 +495,6 @@ test('candidate view (Task B): an over-tolerance holdout gap reads the over-tole
   } finally {
     FIXTURE['/api/epoch'] = saved;
   }
-});
-
-test('Tier2 (Class B): decisionFor never defaults null/absent → rejected', () => {
-  assertEqual(ui.decisionFor({ promoted: null, parent: 'v0' }), 'pending', 'null + no resolved decision → pending');
-  assertEqual(ui.decisionFor({ promoted: true, parent: 'v0' }), 'promoted', 'promoted:true → promoted');
-  assertEqual(ui.decisionFor({ promoted: false, parent: 'v0' }), 'rejected', 'promoted:false → rejected');
-  assertEqual(ui.decisionFor({ parent: null }), 'baseline', 'no parent → baseline');
-  assertEqual(ui.decisionFor({ promoted: null, parent: 'v0', exp: { decision: 'rejected' } }), 'rejected', 'null + stamped negative decision → rejected');
-  assertEqual(ui.decisionFor({ promoted: null, parent: 'v0', gate: { decision: 'promoted' } }), 'promoted', 'null + resolved gate promote → promoted');
-  assertEqual(ui.decisionFor({}), 'baseline', 'empty (no parent) → baseline, never rejected');
 });
 
 // ====================================================================

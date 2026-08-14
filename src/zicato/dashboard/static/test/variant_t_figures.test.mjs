@@ -43,6 +43,23 @@ function roundsModelFor({ gens, scalarBy, bracket, structure, championId, projec
     '/api/epoch': { epoch_id: 'e-model', tournament: { structure } },
   };
   const timeline = roundTimelineFromFixtures(F, 'e-model');
+  const records = Array.isArray(bracket && bracket.tournaments)
+    ? bracket.tournaments : Object.values(bracket || {}).filter((t) => t && t.tournament_id);
+  const byTournament = new Map(records.map((t) => [String(t.tournament_id), t]));
+  for (const r of timeline.rounds || []) r.tournament = byTournament.get(String(r.tournament_id)) || null;
+  const livePhases = new Set(['proposing', 'applying', 'tournament']);
+  if (inflight && livePhases.has(inflight.phase) && Array.isArray(inflight.field_status)) {
+    const last = timeline.rounds[timeline.rounds.length - 1];
+    const same = last && last.round_index === inflight.round_index && !(last.challengers || []).length;
+    const winner = last && (last.challengers || []).find((c) => c.promoted);
+    const champion = same ? last.champion : { id: winner ? winner.id : championId, scalar: scalarBy.get(winner ? winner.id : championId) };
+    const liveRound = { round_index: inflight.round_index, champion,
+      challengers: inflight.field_status.map((f) => ({ id: f.generation_id, scalar: null, promoted: false, status: f.status })),
+      structure, gate: { kind: 'pending', gen: null }, tournament: null,
+      source: 'inflight', inflight: true, phase: inflight.phase };
+    if (same) timeline.rounds[timeline.rounds.length - 1] = liveRound;
+    else if (!last || inflight.round_index > last.round_index) timeline.rounds.push(liveRound);
+  }
   return rounds.roundsFromTimeline({ timeline, bracket, gens, scalarBy, structure, championId, projected, inflight });
 }
 

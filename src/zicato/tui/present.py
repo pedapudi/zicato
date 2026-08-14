@@ -202,32 +202,6 @@ def decision_of(rec: Any) -> str | None:
     return decision if isinstance(decision, str) and decision else None
 
 
-def decision_for(
-    *,
-    parent: Any = None,
-    promoted: Any = None,
-    exp: Any = None,
-    gate: Any = None,
-    baseline: Any = None,
-) -> str:
-    """``ui.js`` ``decisionFor`` — a generation's tri-state outcome as a label.
-
-    ``promoted`` is TRI-state: ``True`` (won the gate), ``False`` (lost), or
-    ``None`` (in-flight / not yet raced). Treating an absent outcome as
-    ``rejected`` was a real bug on the browser side; this never does it.
-    """
-    if baseline is True or (baseline is None and parent is None):
-        return "baseline"
-    if promoted is True:
-        return "promoted"
-    if promoted is False:
-        return "rejected"
-    resolved = decision_of(exp) or decision_of(gate)
-    if resolved in ("promoted", "rejected", "deferred"):
-        return resolved
-    return "pending"
-
-
 def verdict_label(decision: Any) -> str:
     """``ui.js`` ``verdictPill``'s label text for a decision token."""
     d = decision or "baseline"
@@ -478,7 +452,6 @@ __all__ = [
     "Progress",
     "Rating",
     "cost_per_promotion_label",
-    "decision_for",
     "decision_of",
     "fmt",
     "fmt_duration_ms",

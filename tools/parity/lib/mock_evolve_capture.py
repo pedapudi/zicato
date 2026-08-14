@@ -170,13 +170,13 @@ def drive_mock_evolve(monkeypatch, tmp_path: Path) -> tuple[Path, str]:
 
     monkeypatch.setattr(_proposer_agent_mod, "build_proposer_agent", _build_proposer)
 
-    import zicato.orchestrator as _orchestrator_mod
+    import zicato.evolve.lifecycle_services as _lifecycle_services
 
     def _no_launch(workspace_root: Path) -> tuple[str, object]:
         del workspace_root
-        return "", _orchestrator_mod._NoopShutdownHandle()
+        return "", _lifecycle_services._NoopShutdownHandle()
 
-    monkeypatch.setattr(_orchestrator_mod, "_resolve_or_launch_harmonograf", _no_launch)
+    monkeypatch.setattr(_lifecycle_services, "_resolve_or_launch_harmonograf", _no_launch)
 
     # 3) Pin the epoch-id date. ``_make_epoch_id`` stamps ``datetime.now(UTC)``
     #    into the epoch id, and that id is returned by ``rotation_seed`` to seed

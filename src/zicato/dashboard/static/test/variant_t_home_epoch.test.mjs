@@ -69,6 +69,19 @@ function installInflightFetch(fieldStatus) {
       matchups: [{ champion: 'v0', challenger: 'v1', decision: 'promoted', delta_scalar: -20, ran_at: 'a' }],
       tournaments: [] },
     '/api/score-trajectory': { points: [{ generation_id: 'v0', scalar: 100 }, { generation_id: 'v1', scalar: 80 }] },
+    [`/api/epoch/${INFLIGHT_EPOCH}/round-timeline`]: {
+      epoch_id: INFLIGHT_EPOCH, structure: 'gauntlet', source: 'round_index',
+      rounds: [
+        { round_index: 0, champion: { id: 'v0', scalar: 100, eval_mode: null, run_ref: null, from_record: false },
+          challengers: [{ id: 'v1', scalar: 80, promoted: true }], structure: 'gauntlet',
+          gate: { kind: 'promoted', gen: 'v1' }, tournament: null, source: 'round_index' },
+        { round_index: 1, champion: { id: 'v1', scalar: 80, eval_mode: null, run_ref: null, from_record: false },
+          challengers: fieldStatus.map((f) => ({ id: f.generation_id, scalar: null, promoted: false, status: f.status })),
+          structure: 'gauntlet', gate: { kind: 'pending', gen: null }, tournament: null,
+          source: 'inflight', inflight: true, phase: 'proposing' },
+      ],
+      waterfall: [],
+    },
     // the LIVE active-tournament envelope for round 1, still proposing.
     '/api/active-tournament': { epoch_id: INFLIGHT_EPOCH, structure: 'gauntlet', phase: 'proposing',
       round_index: 1, total_rounds: 2, structure_params: { field_size: 3 },

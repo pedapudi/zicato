@@ -884,7 +884,7 @@ def slot_integrity_proof(params: HarnessParams, workspace: Path) -> dict[str, An
     """
     from zicato.core.types import TournamentDecision, TournamentStructure
     from zicato.core.workspace import loss_profile_path
-    from zicato.orchestrator import _confirm_gauntlet_promotion  # noqa: PLC0415
+    from zicato.evolve.gate import _confirm_gauntlet_promotion  # noqa: PLC0415
     from zicato.selection.strategy import SelectionDecision
 
     checks: dict[str, Any] = {}

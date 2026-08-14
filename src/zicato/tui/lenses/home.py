@@ -234,11 +234,7 @@ def _champion_block(epoch: dict[str, Any], lineage: list[Any], ctx: LensContext)
         (e for e in experiments if isinstance(e, dict) and e.get("generation_id") == champion_id),
         {},
     )
-    decision = present.decision_for(
-        parent=record.get("parent_generation_id"),
-        promoted=record.get("promoted"),
-        exp=exp,
-    )
+    decision = present.decision_of(record) or present.decision_of(exp) or "pending"
     rows = [
         row(
             "champion",

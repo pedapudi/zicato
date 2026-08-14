@@ -73,9 +73,9 @@ function matrixFixture() {
   return {
     epoch_id: EPOCH, found: true,
     candidates: [
-      { generation_id: 'g0', round_index: 0, promoted: true, champion_spine: true, elo: 1503.2, elo_se: 44.1 },
-      { generation_id: 'g1', round_index: 1, promoted: false, champion_spine: false, elo: 1490.0, elo_se: 40.0 },
-      { generation_id: 'g2', round_index: 1, promoted: true, champion_spine: true, elo: 1520.0, elo_se: 39.0 },
+      { generation_id: 'g0', round_index: 0, promoted: true, decision: 'baseline', decision_label: 'seed (v0)', champion_spine: true, elo: 1503.2, elo_se: 44.1 },
+      { generation_id: 'g1', round_index: 1, promoted: false, decision: 'rejected', decision_label: 'rejected', champion_spine: false, elo: 1490.0, elo_se: 40.0 },
+      { generation_id: 'g2', round_index: 1, promoted: true, decision: 'promoted', decision_label: 'promoted', champion_spine: true, elo: 1520.0, elo_se: 39.0 },
     ],
     entries: [
       { entry_id: 'task_login', slice: 'train', tag: null, flip_rate: 0.2, flip_rate_measured: true, calibration_runs: 5, calibration_generation: 'g0' },
@@ -147,7 +147,7 @@ test('decision pill: a null (in-flight) candidate renders the pending pill, dist
   fresh();
   const F = matrixFixture();
   // g3: an in-flight candidate (promoted null) — never raced, not on the spine.
-  F.candidates.push({ generation_id: 'g3', round_index: 2, promoted: null, champion_spine: false });
+  F.candidates.push({ generation_id: 'g3', round_index: 2, promoted: null, decision: 'pending', decision_label: 'undecided', champion_spine: false });
   F.cells = F.cells.map((row) => [...row, null]); // its column is all-null cells
   installFixtureMap({ [EVALS_PATH]: F });
   const host = document.createElement('div');
@@ -167,6 +167,8 @@ test('digest: flipping a candidate promoted false→null changes the digest (no 
   // the stale rejected pill; the 3-state token forces a rebuild.
   const Fnull = matrixFixture();
   Fnull.candidates[1].promoted = null;
+  Fnull.candidates[1].decision = 'pending';
+  Fnull.candidates[1].decision_label = 'undecided';
   data.invalidate();
   installFixtureMap({ [EVALS_PATH]: Fnull });
   await evals.render(host, CTX, { epochId: EPOCH });

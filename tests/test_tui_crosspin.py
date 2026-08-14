@@ -63,21 +63,6 @@ def test_rating_model(cases: dict[str, Any]) -> None:
         assert got.text == case["expect"]["text"]
 
 
-def test_decision_for(cases: dict[str, Any]) -> None:
-    for case in cases["decision_for"]:
-        spec = case["spec"]
-        assert (
-            present.decision_for(
-                parent=spec.get("parent"),
-                promoted=spec.get("promoted"),
-                exp=spec.get("exp"),
-                gate=spec.get("gate"),
-                baseline=spec.get("baseline"),
-            )
-            == case["expect"]
-        ), case
-
-
 def test_verdict_label(cases: dict[str, Any]) -> None:
     for case in cases["verdict_label"]:
         assert present.verdict_label(case["decision"]) == case["expect"], case

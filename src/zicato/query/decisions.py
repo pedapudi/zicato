@@ -86,6 +86,20 @@ def promoted_tristate(raw: str | None) -> bool | None:
     return tok in PROMOTED_DECISIONS
 
 
+def decision_surface(parent: Any, promoted: Any) -> tuple[str, str]:
+    """Canonical decision token and renderer label for one lineage node."""
+    decision = (
+        "baseline"
+        if parent is None
+        else "promoted"
+        if promoted is True
+        else "rejected"
+        if promoted is False
+        else "pending"
+    )
+    return decision, {"baseline": "seed (v0)", "pending": "undecided"}.get(decision, decision)
+
+
 def stamp_experiment_decision(record: dict[str, Any]) -> None:
     """Stamp ``decision`` (canonical token) + ``promoted`` (tri-state) in place."""
     raw = experiment_decision(record)

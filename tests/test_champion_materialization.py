@@ -15,12 +15,12 @@ from pathlib import Path
 
 from zicato.core.types import LossProfile
 from zicato.core.workspace import loss_profile_path
-from zicato.index.ingest import ingest_run
-from zicato.index.query import loss_profiles_for_generation
-from zicato.orchestrator import (
+from zicato.evolve.round_baseline import (
     _materialize_carried_champion,
     _source_epoch_generation,
 )
+from zicato.index.ingest import ingest_run
+from zicato.index.query import loss_profiles_for_generation
 from zicato.telemetry.reducer import read_loss_profile, write_loss_profile
 
 
