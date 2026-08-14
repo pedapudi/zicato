@@ -475,6 +475,15 @@ throwaway checkout instead, with a contract shared by all backends
 - `cleanup()` is idempotent, best-effort, and crash-safety does NOT depend on
   it (the reaper handles orphans).
 
+The scratch tree is ephemeral; its observed contents are not. A successful
+worker inventories it before outcome grading and persists the copied tree plus
+manifest beside the run's loss slot (`artifacts/` and `artifacts.json`, or the
+replicate-suffixed equivalents). Graders consume `RunResult.artifacts`, while
+later readers consume the same canonical files. The board never predicts the
+filenames: inventory is deterministic filesystem work performed after the
+harness emits them. Checkout cleanup can then remove `run-scratch` without
+making the deliverable undiscoverable.
+
 Under git the checkout is a per-run `git worktree add --detach` immediately
 followed by unlinking the worktree's `.git` pointer file and pruning the
 registration — the run is left with a plain throwaway tree, no path back into

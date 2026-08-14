@@ -27,11 +27,14 @@ shape). The worker:
    any runtime write the agent does near its own code cannot pollute the
    canonical snapshot) — and drives the one entry under goldfive
    (mirroring the runner's old ``_drive_session``);
-3. computes the :class:`~zicato.core.LossProfile` via
+3. captures every regular file produced under the run scratch directory,
+   writes a deterministic artifact manifest, and exposes that inventory to
+   expectation evaluators;
+4. computes the :class:`~zicato.core.LossProfile` via
    :func:`zicato.telemetry.reducer.reduce_loss` and writes ``loss.json``;
-4. writes a result file (the :class:`~zicato.core.RunResult` plus the
+5. writes a result file (the :class:`~zicato.core.RunResult` plus the
    loss-profile path, runtime, and aborted flag) as JSON;
-5. on a clean exit removes its ``active_runs`` file.
+6. on a clean exit removes its ``active_runs`` file.
 
 Module-caching note
 -------------------
@@ -57,7 +60,7 @@ import logging
 import os
 import sys
 import time
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -662,9 +665,14 @@ def _write_result(
     its own cooperative budget; the parent additionally treats a missing
     or non-zero-exit result file as aborted (supervisor / parent kill).
     """
+    serialized_result = asdict(run_result) if run_result is not None else None
+    artifacts = run_result.artifacts if run_result is not None else None
+    if serialized_result is not None and artifacts is not None:
+        serialized_result["artifacts"]["root"] = str(artifacts.root)
+        serialized_result["artifacts"]["manifest_path"] = str(artifacts.manifest_path)
     payload = {
         "schema": "zicato.tournament_worker.result/1",
-        "run_result": asdict(run_result) if run_result is not None else None,
+        "run_result": serialized_result,
         "loss_profile_path": str(loss_path),
         "runtime_ms": int(runtime_ms),
         "aborted": bool(aborted),
@@ -727,6 +735,7 @@ async def _run(args: dict[str, Any]) -> None:
     # env var unset and the target falls back to its own default.
     from zicato.epoch.snapshot_scope import SCRATCH_DIR_ENV  # noqa: PLC0415
 
+    scratch_dir: Path | None = None
     scratch_raw = args.get("scratch_dir")
     if scratch_raw:
         scratch_dir = Path(scratch_raw)
@@ -976,6 +985,16 @@ async def _run(args: dict[str, Any]) -> None:
                     events_path,
                     reason=TERMINAL_REASON_WALL_CLOCK,
                 )
+
+    if scratch_dir is not None:
+        try:
+            from zicato.tournament.artifacts import capture_run_artifacts  # noqa: PLC0415
+
+            artifacts = capture_run_artifacts(scratch_dir, loss_path)
+            if run_result is not None:
+                run_result = replace(run_result, artifacts=artifacts)
+        except OSError as exc:
+            log.warning("run %s artifact capture failed: %s", run_id, exc)
 
     expectation_result = await _evaluate_expectation(entry, run_result, config)
 

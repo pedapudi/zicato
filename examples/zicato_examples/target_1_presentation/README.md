@@ -152,7 +152,10 @@ deck invisible for a naming reason.
 
 The `regex`, `expected_text` and `json_schema` kinds match against
 `final_output` by construction, so an entry that grades the artifact
-must use the `predicate` kind.
+must use the `predicate` kind. The worker discovers files only after the run;
+the board does not declare their names. During grading the predicate receives
+their sorted metadata and durable root through `RunResult.artifacts`, and the
+same tree remains beside `loss.json` after the temporary run directory is gone.
 
 Notes on individual entries:
 

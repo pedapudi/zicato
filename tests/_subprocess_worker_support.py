@@ -306,6 +306,49 @@ class CompletingAdapter:
         }
 
 
+class _ArtifactWritingSession:
+    """Write files with names known only at run time into the supplied scratch tree."""
+
+    async def run(self, entry: Any, sinks: Any, config: Any) -> Any:
+        del sinks, config
+        from zicato.core import RunResult  # noqa: PLC0415
+        from zicato.epoch.snapshot_scope import SCRATCH_DIR_ENV  # noqa: PLC0415
+
+        scratch = Path(os.environ[SCRATCH_DIR_ENV])
+        output = scratch / "reports" / entry.id
+        output.mkdir(parents=True)
+        (output / "summary.html").write_text("<h1>captured</h1>", encoding="utf-8")
+        (scratch / "render.bin").write_bytes(b"\x00\x01")
+        return RunResult(
+            run_id=f"artifacts-{entry.id}",
+            entry_id=entry.id,
+            final_output="done",
+            transcript=("done",),
+            runtime_ms=1,
+        )
+
+
+class ArtifactWritingAdapter:
+    name = "stub"
+
+    def load(self, generation_root: Path) -> _ArtifactWritingSession:
+        del generation_root
+        return _ArtifactWritingSession()
+
+    def mutation_points(self, source_roots: Any = None) -> list[Any]:
+        del source_roots
+        return []
+
+
+def artifact_inventory_is_visible(result: Any) -> bool:
+    """Predicate proving post-run graders receive the captured inventory."""
+    artifacts = result.artifacts
+    return artifacts is not None and [item.path for item in artifacts.files] == [
+        "render.bin",
+        f"reports/{result.entry_id}/summary.html",
+    ]
+
+
 class _ConfigProbeSession:
     """A session that records the WORKER process's resolved typed config.
 
@@ -455,6 +498,11 @@ def make_aborting_adapter() -> AbortingAdapter:
 def make_completing_adapter() -> CompletingAdapter:
     """Factory for the adapter whose session completes with a full RunResult."""
     return CompletingAdapter()
+
+
+def make_artifact_writing_adapter() -> ArtifactWritingAdapter:
+    """Factory for the adapter that emits arbitrary scratch files."""
+    return ArtifactWritingAdapter()
 
 
 def pid_marker_path() -> Path:

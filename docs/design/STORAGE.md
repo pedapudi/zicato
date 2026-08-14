@@ -287,7 +287,20 @@ Run output is *not* merely excluded from the copy — it is **routed
 elsewhere**. The tournament runner creates a per-run scratch directory
 outside every snapshot and exports it to the inner harness via the
 `ZICATO_RUN_SCRATCH_DIR` environment variable; a target writes its run
-output there. The adapter contract carries this: `HarnessAdapter`
+output there. After the harness returns and before outcome grading, the
+worker deterministically inventories every regular file beneath that directory,
+copies it into the canonical run directory, and attaches the typed inventory to
+`RunResult.artifacts`. The discovered output—not a list of filenames declared
+on the board—is the contract. Symlinks are never followed; file-count and byte
+bounds are recorded as truncation rather than silently changing the inventory.
+
+Replicate zero persists `artifacts/` plus `artifacts.json` beside `loss.json`;
+replicate `rN` uses `artifacts.rN/` plus `artifacts.rN.json`. The manifest has
+sorted relative paths, sizes, media types, and content hashes, with no absolute
+scratch paths or timestamps. It therefore survives scratch cleanup and is both
+grader-readable and reproducible from the filesystem source of truth.
+
+The adapter contract also carries snapshot hygiene: `HarnessAdapter`
 declares `run_output_names` (extra artifact names) and
 `mutable_subpaths(generation_root)` (the narrowed mutable surface the
 mutation enumerator walks — support code stays in the snapshot for the

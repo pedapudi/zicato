@@ -371,18 +371,24 @@ After step 6 the scratch directory looks like this:
             gen_score.json          # cached aggregate for fast-mode reuse
             snapshot/agent/agent.py # baseline copy of the registered tree
             runs/{entry_id}/events.jsonl
+            runs/{entry_id}/artifacts.json # generated inventory
+            runs/{entry_id}/artifacts/     # captured presentation files
           v1/
             experiment.json
             gen_score.json
             patches/{patch_id}.json
             snapshot/agent/agent.py # v0 + the researcher_instruction patch
             runs/{entry_id}/events.jsonl
+            runs/{entry_id}/artifacts.json
+            runs/{entry_id}/artifacts/
           v2/
             experiment.json
             gen_score.json
             patches/{patch_id}.json
             snapshot/agent/agent.py # v0 + the coordinator_instruction patch
             runs/{entry_id}/events.jsonl
+            runs/{entry_id}/artifacts.json
+            runs/{entry_id}/artifacts/
 ```
 
 Useful spot checks:

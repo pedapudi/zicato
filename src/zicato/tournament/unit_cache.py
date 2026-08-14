@@ -200,7 +200,8 @@ def run_result_to_payload(run_result: Any) -> dict[str, Any]:
         text, clipped = _clip_result_text(str(turn))
         clipped_any |= clipped
         transcript.append(text)
-    return {
+    artifacts = getattr(run_result, "artifacts", None)
+    payload = {
         "format_version": RUN_RESULT_FORMAT_VERSION,
         "run_id": str(run_result.run_id),
         "entry_id": str(run_result.entry_id),
@@ -211,6 +212,15 @@ def run_result_to_payload(run_result: Any) -> dict[str, Any]:
         "abort_reason": str(run_result.abort_reason),
         "clipped": clipped_any,
     }
+    if artifacts is not None:
+        payload["artifacts"] = {
+            "root": artifacts.root.name,
+            "manifest": artifacts.manifest_path.name,
+            "file_count": len(artifacts.files),
+            "total_bytes": artifacts.total_bytes,
+            "truncated": artifacts.truncated,
+        }
+    return payload
 
 
 def read_run_result(path: Path) -> dict[str, Any] | None:
