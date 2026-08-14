@@ -1,11 +1,11 @@
 ---
 name: zicato-mutation-audit
-description: Tier 2 run — audit the mutable surface of a registered inner harness with `zicato mutations` (per-id span/file/code points, --id glob, --kind, --show full, --format json, [forbidden] annotations) to decide and verify what the proposer may change before an evolve run. Use this when reviewing the mutation surface, confirming markers resolve, or checking which ids are off-limits.
+description: Tier 2 run — audit the mutable surface of a registered inner harness with `zicato inspect mutations` (per-id span/file/code points, --id glob, --kind, --show full, --format json, [forbidden] annotations) to decide and verify what the proposer may change before an evolve run. Use this when reviewing the mutation surface, confirming markers resolve, or checking which ids are off-limits.
 ---
 
 # zicato mutation audit — what the proposer may change
 
-`zicato mutations` lists the mutable spans in the registered inner harness. It
+`zicato inspect mutations` lists the mutable spans in the registered inner harness. It
 is off the happy path (`zicato evolve` enumerates these itself), but it is the
 right tool to **audit and confirm** the surface before you trust a run: every
 marker resolves cleanly, the right ids are exposed, and the off-limits ids are
@@ -65,7 +65,7 @@ roles is how you get a representative pre-flight verdict — see
 List the whole surface (human-readable table):
 
 ```sh
-.venv/bin/zicato mutations --workspace .zicato
+.venv/bin/zicato inspect mutations --workspace .zicato
 ```
 
 Each row is `id  kind  lines  file  preview`, with a footer like
@@ -83,13 +83,13 @@ warnings, no duplicate ids, the count matches what you expect.
 Inspect one role group in full, to read exactly what the proposer would rewrite:
 
 ```sh
-.venv/bin/zicato mutations --workspace .zicato --id 'coordinator_*' --show full
+.venv/bin/zicato inspect mutations --workspace .zicato --id 'coordinator_*' --show full
 ```
 
 Machine-readable dump (feed into review tooling, diff across registrations):
 
 ```sh
-.venv/bin/zicato mutations --workspace .zicato --format json
+.venv/bin/zicato inspect mutations --workspace .zicato --format json
 ```
 
 The JSON gives per-point `id`, `kind`, `file`, `source_root`,
@@ -109,11 +109,11 @@ Enforcement is mechanical and lives on the patch path, not in this listing:
 (`proposer/brief.py`) reject any patch whose `mutation_id` is in the set, matching
 on the **literal id**.
 
-`zicato mutations` does **not** read the brief and does **not** annotate
+`zicato inspect mutations` does **not** read the brief and does **not** annotate
 forbidden ids — its rows are the whole enumerated surface either way. What it is
 good for is getting the id spellings exactly right:
 
-1. Run `zicato mutations` (or `--id '<glob>'`) and copy the id verbatim out of
+1. Run `zicato inspect mutations` (or `--id '<glob>'`) and copy the id verbatim out of
    the listing.
 2. Paste it into the brief's `## Forbidden` list — a typo'd id silently forbids
    nothing, and nothing in the listing will tell you.

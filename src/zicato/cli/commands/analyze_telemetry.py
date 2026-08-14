@@ -1,7 +1,7 @@
-"""``zicato analyze-telemetry`` — manually run the decision-telemetry analyzer.
+"""``zicato inspect telemetry`` — manually run the decision-telemetry analyzer.
 
 ADVANCED / DEBUGGING — off the happy path. ``zicato evolve`` runs the
-analyzer as part of the loop. Run ``zicato analyze-telemetry`` by hand
+analyzer as part of the loop. Run ``zicato inspect telemetry`` by hand
 only to (re)generate a decision-telemetry insight for an epoch.
 
 Standalone command file. The auto-discovery layer in
@@ -18,7 +18,7 @@ The command wires together:
 * :func:`zicato.analyzer.insights.analyze_epoch_telemetry` for the
   analysis itself.
 
-The auxiliary callable resolution mirrors the ``zicato propose``
+The auxiliary callable resolution mirrors the ``zicato proposer propose``
 command's discipline: we read the workspace config's
 ``runtime.auxiliary_call_llm`` (or its legacy ``auxiliary_call_llm``
 sibling) and import the dotted path. A failure to resolve the callable
@@ -43,7 +43,7 @@ def _load_workspace_config(workspace_dir: Path) -> dict[str, Any]:
     config_path = workspace_dir / "config.json"
     if not config_path.exists():
         raise click.ClickException(
-            f"No workspace config at {config_path}. Run `zicato register` first."
+            f"No workspace config at {config_path}. Run `zicato epoch register` first."
         )
     try:
         loaded: dict[str, Any] = json.loads(config_path.read_text(encoding="utf-8"))
@@ -84,7 +84,7 @@ def _resolve_aux_llm(config: dict[str, Any]) -> Callable[[str, str, str], Awaita
         raise click.ClickException(
             "No auxiliary LLM callable is registered. Wire one into the "
             "workspace config under 'auxiliary_call_llm' (dotted import path) "
-            "before running `zicato analyze-telemetry`."
+            "before running `zicato inspect telemetry`."
         )
     mod_name, _, attr = str(dotted).rpartition(".")
     if not mod_name:

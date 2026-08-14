@@ -371,7 +371,7 @@ def field_tournaments_dir(workspace_root: Path, epoch_id: str) -> Path:
     pairings + the Copeland standings + the proposing field-status — which
     the per-challenger ``experiment.json`` audit cannot reconstruct on its
     own. The orchestrator writes that settled field structure here so the
-    analytical index can re-derive it on ``zicato reindex`` (the
+    analytical index can re-derive it on ``zicato repair index`` (the
     files-are-canonical rule) and the dashboard renders the ladder /
     bracket post-run rather than blank.
 

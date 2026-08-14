@@ -1,4 +1,4 @@
-"""Tests for the index read helpers (:mod:`zicato.index.query`) and ``zicato reindex``."""
+"""Tests for the index read helpers (:mod:`zicato.index.query`) and ``zicato repair index``."""
 
 from __future__ import annotations
 
@@ -133,7 +133,7 @@ def test_open_index_missing_db_raises_clear_error(tmp_path: Path) -> None:
     with pytest.raises(IndexNotBuiltError) as exc:
         open_index(missing)
     # The error message must point the operator at the fix.
-    assert "zicato reindex" in str(exc.value)
+    assert "zicato repair index" in str(exc.value)
 
 
 def test_index_not_built_error_is_filenotfound_subclass() -> None:
@@ -238,7 +238,7 @@ def test_index_counts_tolerates_missing_db(tmp_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
-# zicato reindex CLI
+# zicato repair index CLI
 # ---------------------------------------------------------------------------
 
 
@@ -263,9 +263,8 @@ def test_reindex_cli_creates_db(tmp_path: Path) -> None:
     assert (ws / "index.db").exists()
 
 
-def test_reindex_cli_registered_on_root() -> None:
-    # The auto-discovered CLI root must surface the reindex command.
+def test_reindex_cli_registered_under_repair() -> None:
     from zicato.cli.discovery import build_cli_root
 
     root = build_cli_root()
-    assert "reindex" in root.commands
+    assert "index" in root.commands["repair"].commands

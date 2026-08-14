@@ -206,7 +206,7 @@ pub fn build_bracket(paths: &WorkspacePaths) -> BracketView {
                 epoch_id,
                 champion_lineage: Vec::new(),
                 matchups: Vec::new(),
-                note: Some("index not built; run zicato reindex".to_string()),
+                note: Some("index not built; run zicato repair index".to_string()),
             };
         }
         Err(IndexError::StaleSchema { found, expected }) => {
@@ -219,7 +219,7 @@ pub fn build_bracket(paths: &WorkspacePaths) -> BracketView {
                 champion_lineage: Vec::new(),
                 matchups: Vec::new(),
                 note: Some(format!(
-                    "index schema v{found} != expected v{expected}; run zicato reindex"
+                    "index schema v{found} != expected v{expected}; run zicato repair index"
                 )),
             };
         }
@@ -277,7 +277,7 @@ pub fn build_matchup_detail(paths: &WorkspacePaths, generation_id: &str) -> Matc
             return MatchupDetail {
                 epoch_id,
                 generation_id: Some(generation_id.to_string()),
-                note: Some("index not built; run zicato reindex".to_string()),
+                note: Some("index not built; run zicato repair index".to_string()),
                 ..Default::default()
             };
         }
@@ -290,7 +290,7 @@ pub fn build_matchup_detail(paths: &WorkspacePaths, generation_id: &str) -> Matc
                 epoch_id,
                 generation_id: Some(generation_id.to_string()),
                 note: Some(format!(
-                    "index schema v{found} != expected v{expected}; run zicato reindex"
+                    "index schema v{found} != expected v{expected}; run zicato repair index"
                 )),
                 ..Default::default()
             };

@@ -102,7 +102,7 @@ def build_experiments_ledger(paths: WorkspacePaths, epoch_id: str | None = None)
                 "experiments": _ledger_rows(conn, epoch_id),
             }
     except (_IndexAbsent, sqlite3.Error):
-        return {**_empty_ledger(epoch_id), "note": "index not built; run zicato reindex"}
+        return {**_empty_ledger(epoch_id), "note": "index not built; run zicato repair index"}
 
 
 def _ledger_rows(conn: sqlite3.Connection, epoch_id: str) -> list[dict[str, Any]]:

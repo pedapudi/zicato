@@ -617,10 +617,10 @@ def _probe_context(
 
 
 def _resolve_champion(workspace_root: Path, epoch_id: str) -> Generation | None:
-    from zicato.orchestrator import _resolve_current_generation  # noqa: PLC0415
+    from zicato.evolve.generation_phase import current_generation  # noqa: PLC0415
 
     try:
-        champion_id = _resolve_current_generation(workspace_root, epoch_id)
+        champion_id = current_generation(workspace_root, epoch_id)
     except (FileNotFoundError, ValueError):
         return None
     if not champion_id:

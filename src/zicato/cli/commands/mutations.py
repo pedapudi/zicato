@@ -1,4 +1,4 @@
-"""``zicato mutations`` — audit the mutable surface in the registered inner harness.
+"""``zicato inspect mutations`` — audit the mutable surface in the registered inner harness.
 
 ADVANCED / DEBUGGING — off the happy path. ``zicato evolve`` enumerates
 the mutable surface internally when it proposes. Run ``zicato
@@ -32,7 +32,7 @@ def _load_source_roots(workspace_dir: Path) -> list[Path]:
     """Read ``workspace/config.json`` and return its declared source roots.
 
     Raises :class:`click.ClickException` when the config file is missing
-    or malformed — the message points the operator at ``zicato register``,
+    or malformed — the message points the operator at ``zicato epoch register``,
     which is the documented onramp for populating the workspace.
     """
 
@@ -40,7 +40,7 @@ def _load_source_roots(workspace_dir: Path) -> list[Path]:
     if not config_path.exists():
         raise click.ClickException(
             f"No workspace config at {config_path}. "
-            "Run `zicato register` to point this workspace at an inner harness."
+            "Run `zicato epoch register` to point this workspace at an inner harness."
         )
     try:
         data = json.loads(config_path.read_text(encoding="utf-8"))
@@ -49,7 +49,8 @@ def _load_source_roots(workspace_dir: Path) -> list[Path]:
     raw_roots = data.get("source_roots")
     if not raw_roots:
         raise click.ClickException(
-            f"{config_path} has no 'source_roots' field. Run `zicato register` to populate it."
+            f"{config_path} has no 'source_roots' field. "
+            "Run `zicato epoch register` to populate it."
         )
     return [Path(r) for r in raw_roots]
 

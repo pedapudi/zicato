@@ -132,7 +132,7 @@ zicato
                                                        optimization)
 ```
 
-zicato proposes patches to **goldfive's** prompts and thresholds.
+zicato proposer proposes patches to **goldfive's** prompts and thresholds.
 The presentation agent is the workload that exercises goldfive's
 steering.
 
@@ -178,10 +178,10 @@ markers are inert Python comments to goldfive's runtime.
 
 ### 2.4 The CLI surface for cross-repo registration
 
-`zicato register` accepts repeated `--mutable-tree` flags:
+`zicato epoch register` accepts repeated `--mutable-tree` flags:
 
 ```
-zicato register --adk presentation_agent_package.agent:root_agent \
+zicato epoch register --adk presentation_agent_package.agent:root_agent \
     --mutable-tree path/to/presentation_agent_package \
     --mutable-tree path/to/goldfive/goldfive
 ```
@@ -312,7 +312,7 @@ new fields and the per-kind weights live in `scoring.json` — adding
 
 ### 2.6 Why drift cannot be the loss (one more time)
 
-Said differently to make sure it lands: if zicato proposed a patch to
+Said differently to make sure it lands: if zicato proposer proposed a patch to
 goldfive's refine prompt that caused goldfive to never fire drift
 again, the drift count would go to zero and the patch would "win" on
 the drift signal. The patched goldfive would also be useless. Drift

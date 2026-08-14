@@ -403,7 +403,7 @@ uninterpretable while its harness is a structural null).
     isolates the proposer variable);
   - the workspace bootstrapped exactly as
     `examples/zicato_examples/target_0_convergence/RUN.md` steps 1–4
-    (init, adapter block, contract publish, `zicato mutations` sanity
+    (init, adapter block, contract publish, `zicato inspect mutations` sanity
     check: exactly one id, `style_rules`);
   - operator go-ahead recorded.
 - **Commands** (the RUN.md flow, live aux callable substituted):
@@ -411,7 +411,7 @@ uninterpretable while its harness is a structural null).
   ```bash
   zicato init --workspace .zicato
   # …RUN.md steps 2–3 (adapter block, board/scoring/brief publish)…
-  zicato mutations --workspace .zicato          # expect: style_rules only
+  zicato inspect mutations --workspace .zicato          # expect: style_rules only
   zicato evolve --workspace .zicato --rounds 3 --mode full \
       --harness-call-llm  zicato_examples.target_0_convergence.mocks:harness_llm \
       --auxiliary-call-llm <live aux dotted path>

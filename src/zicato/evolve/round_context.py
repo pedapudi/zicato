@@ -241,7 +241,7 @@ def _build_recombination_pair(
             from zicato.index.query import elo_for_epoch  # noqa: PLC0415
 
             # The canonical index location every consumer uses
-            # (``zicato reindex`` reconciles ``{workspace_root}/index.db``).
+            # (``zicato repair index`` reconciles ``{workspace_root}/index.db``).
             for row in elo_for_epoch(_index_db_path(workspace_root), epoch_id):
                 if row["elo"] is not None:
                     elo_by_gid[str(row["generation_id"])] = float(row["elo"])

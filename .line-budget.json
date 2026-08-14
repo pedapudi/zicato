@@ -1,0 +1,19 @@
+{
+  "baseline": {
+    "ref": "f9052dd",
+    "raw_non_markdown": 425755,
+    "total": 408547,
+    "production": 197588
+  },
+  "limits": {
+    "total": 408547,
+    "production": 197588,
+    "note": "Initial simplification-program ceiling; ratchet at program completion."
+  },
+  "temporary_overage": {
+    "total": 400,
+    "production": 0,
+    "issue": "#221",
+    "reason": "Temporary room for the checker, focused tests, and CI wiring; remove by #218 completion."
+  }
+}

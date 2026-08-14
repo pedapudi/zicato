@@ -70,7 +70,7 @@ Build it in Phase 0 and run it at the end of every sub-step.
   after each step:
   - `.zicato/**/loss.json`, `gen_score.json`, `experiment.json`, `lineage.json`
   - the SQLite `index.db` rows (export to a stable text dump; the index is a
-    derived projection so it must reproduce exactly after `zicato reindex`)
+    derived projection so it must reproduce exactly after `zicato repair index`)
   - analyzer report markdown + HTML, `report_figures` SVG output
   - dashboard JSON envelopes (`/api/state`, `/api/epoch`, `/api/tournaments`,
     `/api/round/.../gate`, per-judge endpoints) captured from a fixture workspace

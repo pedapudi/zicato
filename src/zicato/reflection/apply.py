@@ -13,7 +13,7 @@ This module lives in :mod:`zicato.reflection` — NOT the CLI — precisely beca
 the CLI must not import the builder directly (the import-linter ``cli -> dashboard
 -> builder`` declared-edge contract), whereas ``zicato.reflection`` is a library
 already permitted the builder edge (R3's ``findings`` signature validation).
-``zicato reflect apply`` calls in here; the builder dependency stays on the
+``zicato inspect reflection apply`` calls in here; the builder dependency stays on the
 reflection side of the boundary.
 """
 

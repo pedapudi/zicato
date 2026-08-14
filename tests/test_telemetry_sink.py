@@ -344,8 +344,8 @@ def test_resolve_harmonograf_url_env_beats_config(
 # Vendored-dependency smoke tests
 #
 # harmonograf_client is wired in via [tool.uv.sources] (git + subdirectory)
-# so the lazy import inside zicato.telemetry.sink resolves automatically
-# in every standard install. These tests guard that wiring: if the
+# so the lazy import inside zicato.telemetry.sink resolves in the complete
+# development profile. These tests guard that wiring: if the
 # dependency is dropped, mistyped, or the upstream layout shifts, they
 # fail with a clear message rather than the sink silently degrading to
 # JSONL-only at runtime.
@@ -355,10 +355,8 @@ def test_resolve_harmonograf_url_env_beats_config(
 def test_harmonograf_client_importable() -> None:
     """harmonograf_client must resolve in the test venv.
 
-    The package is now a hard dependency (declared in pyproject.toml +
-    pinned via [tool.uv.sources]). The lazy import in
-    zicato.telemetry.sink keeps a try/except around it for defensive
-    reasons, but the standard `uv sync` install must produce a venv where
+    The package belongs to an optional profile and is pinned via
+    [tool.uv.sources]. The complete development install must produce a venv where
     `from harmonograf_client import Client, HarmonografSink` succeeds.
     Treat any drop of that wiring as a test failure.
     """

@@ -1,4 +1,4 @@
-"""``zicato reindex`` — full rebuild of the SQLite analytical index.
+"""``zicato repair index`` — full rebuild of the SQLite analytical index.
 
 ADVANCED / FORENSIC — off the happy path, and no longer part of routine
 operation. Reindexing is automatic: ``zicato evolve`` builds an absent or
@@ -7,7 +7,7 @@ the dashboard builds an absent one when it boots
 (``docs/design/ANALYTICAL-INDEX.md`` §5).
 
 The index (``.zicato/index.db``) is derived data: a queryable projection of
-the canonical workspace files. ``zicato reindex`` re-derives every row by
+the canonical workspace files. ``zicato repair index`` re-derives every row by
 walking every epoch / generation / run under the workspace, into a scratch
 file that is renamed into place on success — so a rebuild that FAILS leaves
 the existing index untouched rather than destroying it.
@@ -108,7 +108,7 @@ def reindex_generations_cmd(workspace: str) -> None:
     except the seed). Walks lineage.json + every experiment.json and
     rewrites only the parent_generation_id and promoted flag of each
     `generations` row. The rest of the index is left alone — use
-    `zicato reindex` for a full rebuild.
+    `zicato repair index` for a full rebuild.
 
     Idempotent. Read-only against workspace files.
     """

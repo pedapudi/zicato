@@ -67,7 +67,7 @@ PY=/home/sunil/git/zicato/.venv/bin/python
 $PY -m zicato.cli init --workspace .zicato
 
 # 2. Declare the deterministic adapter + the mutable tree + the
-#    skills-only proposer dir. `zicato register`'s --adk flag covers only
+#    skills-only proposer dir. `zicato epoch register`'s --adk flag covers only
 #    the ADK adapter kind today, so the generic import-kind adapter block
 #    is written into config.json directly (the same shape the adapter
 #    factory and the subprocess worker both reconstruct):

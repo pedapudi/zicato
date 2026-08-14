@@ -51,7 +51,7 @@ workspace. `evolve` orchestrates the loop for you.
 - **round** — one propose → apply → tournament → promote/reject cycle.
 - **champion / challenger** — the tournament roles (the pair being compared). **parent / child** — the same pair named by lineage. Use champion/challenger for tournament framing, parent/child for lineage.
 - **experiment** — the artifact carrying a mandatory **hypothesis** (written before the run), the patches, and the **outcome** (written after).
-- **mutation point** — a span, bracketed region, or whole file the proposer may edit, marked `zicato:mutable id="..."` in a comment. Markers live in `.py` files and in any allowlisted text file (markdown, YAML, TOML, …). `zicato mutations` audits the surface.
+- **mutation point** — a span, bracketed region, or whole file the proposer may edit, marked `zicato:mutable id="..."` in a comment. Markers live in `.py` files and in any allowlisted text file (markdown, YAML, TOML, …). `zicato inspect mutations` audits the surface.
 - **scalar / loss** — lower is better; a weighted drift-derived loss plus per-task pass/fail. Per-judge drift folds in weighted by `judge_name`.
 - **proposer brief** — the operator's brief to the proposer (`brief.md`): the goal, constraints, and `## Forbidden` mutation ids.
 
@@ -87,7 +87,7 @@ These override convenience. Violating them is a defect.
 4. **The filesystem is canonical; the index is derived.** `.zicato/`
    JSONL/JSON files are the source of truth; `index.db` is a
    rebuildable SQLite projection. Never hand-edit the index; after a
-   hand-edit of a canonical file, run `zicato reindex`.
+   hand-edit of a canonical file, run `zicato repair index`.
 5. **Contract edits roll epochs.** Editing `board.jsonl`, `brief.md`,
    `scoring.json`, the registered harness, or the proposer (a
    `proposers/<name>/` dir or one of its skills) changes the evaluation

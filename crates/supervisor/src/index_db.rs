@@ -1,6 +1,6 @@
 //! Read-only access to the SQLite analytical index (`.zicato/index/index.db`).
 //!
-//! The index is built by the Python side (`zicato reindex`). The
+//! The index is built by the Python side (`zicato repair index`). The
 //! supervisor never writes to it: every connection is opened with
 //! `SQLITE_OPEN_READ_ONLY` and tolerates a WAL sidecar.
 //!

@@ -1837,7 +1837,7 @@ stays a pure prompt-assembler and never reads the index itself).
 - the read is **best-effort end to end**: a missing `zicato.index` module, a
   never-built database, any exception ⇒ `[]` at debug level
   (`_load_prior_experiments`) and the prompt simply omits the section.
-  `experiment.json` on disk stays canonical; `zicato reindex` rebuilds.
+  `experiment.json` on disk stays canonical; `zicato repair index` rebuilds.
 
 Rendering (`render_prior_experiments_block`) groups by decision into
 advisory blocks — promoted ("build on these"), rejected ("do NOT re-propose
@@ -2076,7 +2076,7 @@ the proposer's default is 0).
 
 ---
 
-## 5.14 The standalone `zicato propose` command
+## 5.14 The standalone `zicato proposer propose` command
 
 `src/zicato/cli/commands/propose.py` — ADVANCED / DEBUGGING, off the happy
 path (`zicato evolve` proposes internally every round). Run it by hand to
@@ -2098,7 +2098,7 @@ it:
   disk — that is the CLI's job"), which is why the engine is testable with
   stub callables and no tmpdir bookkeeping.
 
-> ⚠️ TRAP — do not conclude "my proposer change works" from `zicato propose`
+> ⚠️ TRAP — do not conclude "my proposer change works" from `zicato proposer propose`
 > alone. It bypasses the agent selector, the wrapper, the screen, and the
 > validate hook. The e2e truth is
 > `tests/test_best_of_n_tree_integrity.py` +

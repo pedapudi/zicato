@@ -413,9 +413,9 @@ def test_presentation_racing_field_rejects_when_no_arm_beats_champion(
     assert outcome.tournament_decision == "rejected"
 
     # Champion stands — the promoted head is still v0 (no marker advance).
-    from zicato.orchestrator import _resolve_current_generation
+    from zicato.evolve.generation_phase import current_generation
 
-    assert _resolve_current_generation(workspace, epoch_id) == "v0"
+    assert current_generation(workspace, epoch_id) == "v0"
 
     gens = workspace / "epochs" / epoch_id / "generations"
     for gid in _CHALLENGER_IDS:

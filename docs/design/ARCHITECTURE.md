@@ -96,10 +96,13 @@ What the extra actually buys is three things: the ADK adapter path
 in-run process judges (a board's `judges` are handed to goldfive as
 additional judges; without it they are inert), and the default `goldfive`
 telemetry dialect — the only dialect that yields drift kinds and plan
-revisions. Note that `harmonograf-client`, a hard dependency, requires
-goldfive transitively, so a standard install still resolves it; the extra is
-what makes the requirement *declared*, and the import surface is what makes
-it genuinely optional.
+revisions. The live telemetry client and server are part of the
+`observability` profile, so a base install does not resolve their transitive
+graph. The import surface and package metadata both make the dependency
+boundary real.
+
+Installation profiles and their capability guarantees are specified in
+[`INSTALL-PROFILES.md`](INSTALL-PROFILES.md).
 
 What that does *not* imply is that your target must be a goldfive
 application. The adapter protocol is deliberately framework-neutral — it
@@ -311,7 +314,7 @@ specific harness framework. The adapter implementer is the
 inner-harness author; zicato treats the adapter as the only handle on
 the system under test.
 
-**Consumes.** A registration (`zicato register --adk path:agent
+**Consumes.** A registration (`zicato epoch register --adk path:agent
 [--mutable-tree <path>]` for the ADK adapter; one entrypoint per
 adapter kind). The registration captures the agent factory and the
 list of source roots that contain mutation-point annotations.
@@ -803,7 +806,7 @@ instead of walking files.
 **Contracts.**
 
 - **Files are canonical; the index is derived.** The index holds
-  no fact not also on disk. `zicato reindex` reconstructs it
+  no fact not also on disk. `zicato repair index` reconstructs it
   exactly from the filesystem; it is disposable.
 - **Canonical-file-first dual-write.** The orchestrator writes
   the canonical file, then the index row. The index can only
@@ -902,16 +905,16 @@ automatically.
 
 | Subcommand | What it does |
 |---|---|
-| `zicato register --adk path:agent --mutable-tree <path>` | Register an inner harness via an adapter. |
+| `zicato epoch register --adk path:agent --mutable-tree <path>` | Register an inner harness via an adapter. |
 | `zicato board add/list/remove` | Edit the current epoch's board by hand. |
-| `zicato mutations` | Audit the current mutation surface — every span, every file marker. |
-| `zicato propose` | Run the proposer; emit one `Experiment`. |
-| `zicato tournament PARENT CHILD` | Run the tournament between two generations in isolation. |
+| `zicato inspect mutations` | Audit the current mutation surface — every span, every file marker. |
+| `zicato proposer propose` | Run the proposer; emit one `Experiment`. |
+| `zicato tournament run PARENT CHILD` | Run the tournament between two generations in isolation. |
 | `zicato epoch new/close/list/switch/set-goal` | Manage epochs manually (the escape hatch from auto-epoching). |
-| `zicato reindex` / `zicato reindex-generations` | Rebuild (or reconcile just the `generations` table of) the `.zicato/index.db` analytical index. |
+| `zicato repair index` / `zicato repair generations` | Rebuild (or reconcile just the `generations` table of) the `.zicato/index.db` analytical index. |
 | `zicato health` | Report whether the evolve loop has real optimization signal (loop-health diagnostics). |
-| `zicato analyze-telemetry` | (Re)run the decision-telemetry analyzer for an epoch. |
-| `zicato regenerate-report` | Re-render an epoch's `analysis.md` / `analysis.html` from on-disk data. |
+| `zicato inspect telemetry` | (Re)run the decision-telemetry analyzer for an epoch. |
+| `zicato repair report` | Re-render an epoch's `analysis.md` / `analysis.html` from on-disk data. |
 | `zicato dashboard` | Serve the dashboard for an existing workspace (evolve auto-spawns it; this is the standalone form). |
 | `zicato repair-*` | Targeted index/file migration helpers (`repair-epoch-goals`, `repair-judge-losses`, `repair-tournament-fk`, `repair-v0-baseline`). |
 
@@ -998,7 +1001,7 @@ The full design lives in seven documents:
 | The six-layer defense model (`asyncio.wait_for` → cancellation → subprocess workers → watchdog → circuit breaker → atomic writes) and what each catches | [ROBUSTNESS.md](ROBUSTNESS.md) |
 | Loop-health diagnostics — detectors for a degenerate / toothless evaluation, the `LoopHealth` report, `zicato health` | [LOOP-HEALTH.md](LOOP-HEALTH.md) |
 | v0 directory-backed storage today, plus the v0+1 git-backed roadmap (G0-G10) for blob dedup + `git log` / `git diff` / `git bisect` over generations | [STORAGE.md](STORAGE.md) |
-| The `.zicato/index.db` SQLite analytical index — schema, the files-canonical / index-derived discipline, `zicato reindex` | [ANALYTICAL-INDEX.md](ANALYTICAL-INDEX.md) |
+| The `.zicato/index.db` SQLite analytical index — schema, the files-canonical / index-derived discipline, `zicato repair index` | [ANALYTICAL-INDEX.md](ANALYTICAL-INDEX.md) |
 
 The runtime layer ships in phases (see [ROBUSTNESS.md](ROBUSTNESS.md)
 §4 and [RUNTIME.md](RUNTIME.md) §8 for the exact what-ships boundary).
@@ -1088,7 +1091,7 @@ The one non-text file is `.zicato/index.db` — the **analytical
 index**. It is *not* canonical: it is a derived, fully-rebuildable
 SQLite projection of the files above, a cache that makes cross-run
 `GROUP BY` / `JOIN` queries fast without a file-walk. It holds no
-fact not also on disk; `zicato reindex` reconstructs it exactly. The
+fact not also on disk; `zicato repair index` reconstructs it exactly. The
 filesystem stays the source of truth; the index is a sidecar. See
 [ANALYTICAL-INDEX.md](ANALYTICAL-INDEX.md).
 
@@ -1193,7 +1196,7 @@ thing that needs to change to adopt zicato for it".
 | The six-layer defense model against hangs and crashes | [ROBUSTNESS.md](ROBUSTNESS.md) |
 | Loop-health diagnostics — detectors for a degenerate evaluation, `zicato health` | [LOOP-HEALTH.md](LOOP-HEALTH.md) |
 | Git-backed storage roadmap (G0-G10) + migration tooling | [STORAGE.md](STORAGE.md) |
-| The `.zicato/index.db` SQLite analytical index — schema, discipline, `zicato reindex` | [ANALYTICAL-INDEX.md](ANALYTICAL-INDEX.md) |
+| The `.zicato/index.db` SQLite analytical index — schema, discipline, `zicato repair index` | [ANALYTICAL-INDEX.md](ANALYTICAL-INDEX.md) |
 | CLI reference, every subcommand | [CLI.md](CLI.md) |
 | Why each major decision was made the way it was | [RATIONALE.md](RATIONALE.md) |
 | Glossary | [VOCABULARY.md](VOCABULARY.md) |

@@ -16,7 +16,6 @@ import importlib
 import json
 import subprocess
 import sys
-import types
 
 import pytest
 
@@ -41,9 +40,21 @@ def test_all_lists_exactly_the_declared_surface() -> None:
     assert set(zicato._EXPORTS) <= set(dir(zicato))
 
 
-def test_round_log_export_is_the_module() -> None:
-    assert isinstance(zicato.round_log, types.ModuleType)
-    assert zicato.round_log.__name__ == "zicato.epoch.round_log"
+def test_root_surface_is_deliberately_small() -> None:
+    assert set(zicato._EXPORTS) == {
+        "CallLLM",
+        "EvolveRoundOutcome",
+        "HarnessAdapter",
+        "RunnableHarness",
+        "ScoringWeights",
+        "ZicatoConfig",
+        "evolve_n_rounds",
+        "evolve_once",
+        "load_board",
+        "load_config",
+        "load_workspace_config",
+        "recommended_scaffold_weights",
+    }
 
 
 def test_unknown_attribute_raises_attribute_error() -> None:

@@ -83,7 +83,7 @@ def build_bracket(paths: WorkspacePaths, epoch_id: str | None = None) -> dict[st
             "epoch_id": epoch_id,
             "champion_lineage": [],
             "matchups": [],
-            "note": "index not built; run zicato reindex",
+            "note": "index not built; run zicato repair index",
         }
     except sqlite3.Error:
         return {"epoch_id": epoch_id, "champion_lineage": [], "matchups": []}
@@ -467,7 +467,7 @@ def build_matchup_detail(paths: WorkspacePaths, generation_id: str) -> dict[str,
             "delta_scalar": None,
             "patches": [],
             "ab_grid": [],
-            "note": "index not built; run zicato reindex",
+            "note": "index not built; run zicato repair index",
         }
     except sqlite3.Error:
         return {
@@ -492,7 +492,7 @@ def build_matchup_detail(paths: WorkspacePaths, generation_id: str) -> dict[str,
 # ``build_matchup_detail`` above sources its ``ab_grid`` from the SQLite
 # analytical index. That index is a best-effort dual-write: a completed
 # tournament whose index was never (re)built — or a workspace inspected
-# before ``zicato reindex`` ran — carries no ``loss_profiles`` rows, so
+# before ``zicato repair index`` ran — carries no ``loss_profiles`` rows, so
 # the matchup-detail panel renders "No per-entry grid recorded" and a
 # finished tournament loses its per-board outcomes.
 #

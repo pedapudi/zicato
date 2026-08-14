@@ -35,7 +35,7 @@ builds an absent or wrong-schema index (atomically — a failed build leaves
 the existing one untouched), and
 :func:`zicato.index.ingest.heal_index` re-projects only the epochs whose
 persisted cursors disagree with the workspace. Both run at ``evolve`` start;
-the dashboard runs only the former. ``zicato reindex`` remains the explicit
+the dashboard runs only the former. ``zicato repair index`` remains the explicit
 forensic rebuild. See ``docs/design/ANALYTICAL-INDEX.md`` §5.
 """
 

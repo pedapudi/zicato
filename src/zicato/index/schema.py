@@ -63,7 +63,7 @@ class IndexSchemaNewerError(RuntimeError):
     this build does not understand, and the down-stamp would corrupt the
     version signal for the newer build). The index is derived and always
     rebuildable, so the recovery is cheap — upgrade zicato, or delete the
-    database and run ``zicato reindex``.
+    database and run ``zicato repair index``.
     """
 
 
@@ -305,7 +305,7 @@ CREATE TABLE IF NOT EXISTS schema_meta (
 #: entry is ``(table, column, ddl_type)``; :func:`_migrate_inplace`
 #: adds whichever of these are absent so an existing v1 file becomes
 #: queryable under v2 without a full rebuild. The full rebuild path
-#: (``zicato reindex``) drops the file and re-applies the v2 CREATE
+#: (``zicato repair index``) drops the file and re-applies the v2 CREATE
 #: TABLE statements above, so this migration only matters on
 #: incremental opens against a pre-existing file.
 _V2_ADDED_COLUMNS: tuple[tuple[str, str, str], ...] = (
@@ -319,7 +319,7 @@ _V2_ADDED_COLUMNS: tuple[tuple[str, str, str], ...] = (
 #: Columns added in v3 (the configurable-tournament-structure feature).
 #: Same incremental-open ALTER pattern as :data:`_V2_ADDED_COLUMNS`: a
 #: pre-existing v2 database gains these as ``NULL`` columns on open; a
-#: full ``zicato reindex`` drops the file and re-applies the v3 CREATE
+#: full ``zicato repair index`` drops the file and re-applies the v3 CREATE
 #: TABLE statement above, then re-derives the columns
 #: (``"gauntlet"`` for runs that predate the feature).
 _V3_ADDED_COLUMNS: tuple[tuple[str, str, str], ...] = (
@@ -337,7 +337,7 @@ _V3_ADDED_COLUMNS: tuple[tuple[str, str, str], ...] = (
 #: board run to its rung/matchup. Same incremental-open ALTER pattern as
 #: the earlier waves: a pre-existing v3 database gains these as ``NULL``
 #: columns on open (legacy runs stay untagged — the field is simply
-#: absent), and a full ``zicato reindex`` re-derives what it can from
+#: absent), and a full ``zicato repair index`` re-derives what it can from
 #: each run's ``loss.json`` (which now carries ``match_id`` for new runs).
 _V4_ADDED_COLUMNS: tuple[tuple[str, str, str], ...] = (
     ("runs", "match_id", "TEXT"),
@@ -350,7 +350,7 @@ _V4_ADDED_COLUMNS: tuple[tuple[str, str, str], ...] = (
 #: are persisted alongside the settled bracket so a completed epoch's
 #: candidate-generation step survives for post-hoc viewing (the same
 #: incremental-open ALTER pattern as the earlier waves; legacy rows gain
-#: it as ``NULL``, a full ``zicato reindex`` re-derives what it can).
+#: it as ``NULL``, a full ``zicato repair index`` re-derives what it can).
 _V5_ADDED_COLUMNS: tuple[tuple[str, str, str], ...] = (
     ("tournaments", "field_status_json", "TEXT"),
 )
@@ -365,7 +365,7 @@ _V5_ADDED_COLUMNS: tuple[tuple[str, str, str], ...] = (
 #: a fresh evaluation. Same incremental-open ALTER pattern as the earlier
 #: waves: a pre-existing v5 database gains these as ``NULL`` columns on
 #: open (legacy rows read as not-cached — ``cached IS NULL`` is treated as
-#: fresh), and a full ``zicato reindex`` re-derives them from each run's
+#: fresh), and a full ``zicato repair index`` re-derives them from each run's
 #: ``loss.json`` (which now carries the provenance for materialised runs).
 _V6_ADDED_COLUMNS: tuple[tuple[str, str, str], ...] = (
     ("loss_profiles", "cached", "INTEGER"),
@@ -381,7 +381,7 @@ _V6_ADDED_COLUMNS: tuple[tuple[str, str, str], ...] = (
 #: that round}``. Same incremental-open ALTER pattern as the earlier
 #: waves: a pre-existing v6 database gains the column as ``NULL`` on open
 #: (legacy generations read as ``round_index IS NULL`` — birth round
-#: unknown), and a full ``zicato reindex`` re-derives it from
+#: unknown), and a full ``zicato repair index`` re-derives it from
 #: ``lineage.json`` (which now carries ``round_index`` per generation).
 _V7_ADDED_COLUMNS: tuple[tuple[str, str, str], ...] = (("generations", "round_index", "INTEGER"),)
 
@@ -398,7 +398,7 @@ _V7_ADDED_COLUMNS: tuple[tuple[str, str, str], ...] = (("generations", "round_in
 #: open ALTER pattern as the earlier waves: a pre-existing v7 database
 #: gains these as ``NULL`` columns on open (legacy rows read as
 #: ``champion_eval_mode IS NULL`` — mode unknown, treat as ``"full"``),
-#: and a full ``zicato reindex`` re-derives them from each experiment's
+#: and a full ``zicato repair index`` re-derives them from each experiment's
 #: resolved outcome.
 _V8_ADDED_COLUMNS: tuple[tuple[str, str, str], ...] = (
     ("tournaments", "champion_eval_mode", "TEXT"),
@@ -416,7 +416,7 @@ _V8_ADDED_COLUMNS: tuple[tuple[str, str, str], ...] = (
 #: incremental-open ALTER pattern as the earlier waves: a pre-existing v8
 #: database gains the column as ``NULL`` on open (legacy rows + every cleanly-
 #: reduced non-aborted run read as ``abort_cause IS NULL``), and a full
-#: ``zicato reindex`` re-derives it from each run's ``loss.json`` (which now
+#: ``zicato repair index`` re-derives it from each run's ``loss.json`` (which now
 #: carries the cause for aborted runs).
 _V9_ADDED_COLUMNS: tuple[tuple[str, str, str], ...] = (("loss_profiles", "abort_cause", "TEXT"),)
 
@@ -430,7 +430,7 @@ _V9_ADDED_COLUMNS: tuple[tuple[str, str, str], ...] = (("loss_profiles", "abort_
 #: :func:`zicato.index.elo.fold_elo_into_index`. Same incremental-open
 #: ALTER pattern as the earlier waves: a pre-existing v9 database gains the
 #: columns as ``NULL`` on open (a generation reads as ``elo IS NULL`` —
-#: rating not yet computed), and a full ``zicato reindex`` re-derives them
+#: rating not yet computed), and a full ``zicato repair index`` re-derives them
 #: from the ingested ``tournaments`` rows after the tournaments land.
 _V10_ADDED_COLUMNS: tuple[tuple[str, str, str], ...] = (
     ("generations", "elo", "REAL"),
@@ -445,7 +445,7 @@ _V10_ADDED_COLUMNS: tuple[tuple[str, str, str], ...] = (
 #: the earlier waves these are WHOLE NEW TABLES, not new columns, so the
 #: ``CREATE TABLE IF NOT EXISTS`` pass in :func:`apply_schema` materialises
 #: them on any open — a pre-existing v10 database simply gains the two empty
-#: tables, and a full ``zicato reindex`` re-derives their rows from each
+#: tables, and a full ``zicato repair index`` re-derives their rows from each
 #: reflection's persisted ``plan.json`` / ``scorecards.json`` / ``findings.json``
 #: (files canonical; the index is a projection, so a reflection is readable
 #: with no index at all). The generations ``elo`` / ``elo_games`` stubs are
@@ -463,7 +463,7 @@ _V11_ADDED_TABLES: tuple[str, ...] = ("reflections", "judge_scorecards")
 #: time from the ingested ``tournaments`` rows. Same incremental-open ALTER
 #: pattern as the earlier waves: a pre-existing v11 (or older) database gains
 #: the column as ``NULL`` on open (a generation reads as ``elo_se IS NULL`` —
-#: uncertainty not yet computed), and the next ``zicato reindex`` re-derives it
+#: uncertainty not yet computed), and the next ``zicato repair index`` re-derives it
 #: after the tournaments land. The fold writes ``elo_se`` only when the column
 #: is present, so a v10/v11 index that has ``elo`` but not yet this column still
 #: folds its two older rating columns.
@@ -507,7 +507,7 @@ def apply_schema(conn: sqlite3.Connection) -> None:
     When the file pre-dates :data:`SCHEMA_VERSION` (e.g. a v1 database
     opened by a v2-aware writer), the missing columns are added in
     place via ``ALTER TABLE`` so the incremental writer can proceed
-    without forcing the operator to run ``zicato reindex`` first.
+    without forcing the operator to run ``zicato repair index`` first.
 
     Both the ``user_version`` pragma and the ``schema_meta`` table are
     stamped with :data:`SCHEMA_VERSION`.
@@ -560,7 +560,7 @@ def raise_if_newer(current: int) -> None:
         raise IndexSchemaNewerError(
             f"index database schema is v{current}, newer than this build's "
             f"v{SCHEMA_VERSION}; refusing to re-stamp it down. Upgrade "
-            "zicato, or delete the index database and run `zicato reindex` "
+            "zicato, or delete the index database and run `zicato repair index` "
             "(the index is derived — a rebuild loses nothing)."
         )
 
@@ -685,7 +685,7 @@ def _migrate_inplace(conn: sqlite3.Connection) -> None:
     # adds the ``generations.elo_se`` rating-uncertainty column. v13 adds
     # another WHOLE table (``pareto_frontier``), so it needs no ALTER either —
     # an existing v12 file gains the empty table on open, and the next
-    # ``zicato reindex`` fills it from each epoch's canonical record. v14 adds
+    # ``zicato repair index`` fills it from each epoch's canonical record. v14 adds
     # a third WHOLE table (``ingest_cursors``); an existing v13 file gains it
     # empty, which reads as "every epoch diverged" and so heals itself on the
     # first ``heal_index`` pass.

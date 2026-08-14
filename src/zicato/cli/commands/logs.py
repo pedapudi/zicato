@@ -1,4 +1,4 @@
-"""``zicato logs`` — read the structured operator-log streams.
+"""``zicato inspect logs`` — read the structured operator-log streams.
 
 ADVANCED — off the happy path. Every ``zicato evolve`` (and ``zicato
 reflect run``) invocation writes one structured JSONL stream under

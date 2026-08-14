@@ -26,7 +26,7 @@ consume. It is observability, never an input.
 
 ## 1. The stream
 
-One file per `zicato evolve` (and per `zicato reflect run`, the other
+One file per `zicato evolve` (and per `zicato inspect reflection run`, the other
 long-running command) invocation:
 
 ```
@@ -211,10 +211,10 @@ can ever race a live worker writing a sibling file (there are none).
 
 ## 5. Surfaces
 
-### `zicato logs`
+### `zicato inspect logs`
 
 ```
-zicato logs [--workspace .zicato] [--invocation latest|<id>]
+zicato inspect logs [--workspace .zicato] [--invocation latest|<id>]
             [--level INFO] [--limit 200] [--follow]
 ```
 

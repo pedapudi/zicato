@@ -437,7 +437,7 @@ def test_repair_epoch_goals_is_idempotent(
 def test_repair_epoch_goals_cli_command(
     workspace: Path, board_file: Path, brief_file: Path
 ) -> None:
-    """The ``zicato repair-epoch-goals`` CLI surface drives the repair."""
+    """The ``zicato repair epoch-goals`` CLI surface drives the repair."""
     cfg = new_epoch(workspace, "alpha", board_file, brief_file, ScoringWeights())
     # Strip the goal key so the repair has work to do.
     config_path = workspace / "epochs" / cfg.id / "config.json"

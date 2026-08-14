@@ -516,7 +516,7 @@ def set_goal_cmd(epoch_id: str, goal: str, workspace: str) -> None:
 
     Idempotent — writes the supplied goal into ``config.json`` and
     refreshes the ``epochs.goal`` index column. The rest of the index
-    is left alone (use ``zicato reindex`` for a full rebuild).
+    is left alone (use ``zicato repair index`` for a full rebuild).
     """
     ws = _resolve_workspace(workspace)
     try:

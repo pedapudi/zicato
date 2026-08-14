@@ -182,7 +182,7 @@ def test_evolve_once_runs_without_index_sibling(
     """With no zicato.index sibling installed the round still completes.
 
     The dual-write is best-effort; an ImportError is caught and the loop
-    runs index-free (``zicato reindex`` can rebuild later).
+    runs index-free (``zicato repair index`` can rebuild later).
     """
     workspace, epoch_id = _bootstrap_workspace(tmp_path)
     _install_stub_adapter_factory(monkeypatch)
@@ -376,7 +376,7 @@ def test_the_preflight_fills_in_the_lineage_derived_columns(
     — ``generations.created_at`` and ``generations.round_index`` — land empty
     on the live write and stay that way until something walks the files again.
     Before this feature that meant "until an operator happened to run
-    ``zicato reindex``". Now the next round's preflight fills them in.
+    ``zicato repair index``". Now the next round's preflight fills them in.
     """
     import sqlite3
 

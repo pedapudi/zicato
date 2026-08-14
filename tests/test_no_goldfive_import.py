@@ -4,9 +4,9 @@ goldfive is an optional extra (``pip install zicato[goldfive]``). Nothing
 on the path from ``import zicato`` through board load/save and
 ``zicato --help`` may reach ``import goldfive``.
 
-A minimal venv would not prove that: the dev environment always installs
-goldfive (``uv sync --all-extras``) and ``harmonograf-client`` pulls it in
-transitively even without the extra. So each test runs a child interpreter
+A minimal venv would not prove that: the development environment installs all
+extras, including dependencies that resolve goldfive transitively. Each test
+therefore runs a child interpreter
 whose ``sys.meta_path`` refuses ``goldfive``, installed before zicato is
 imported — a module-scope ``from goldfive import ...`` added to a core
 module turns these red with the offending traceback.
@@ -250,6 +250,18 @@ def test_goldfive_is_declared_as_an_extra() -> None:
     assert "goldfive" in extras["goldfive"]
     # The ADK adapter path is where goldfive is load-bearing.
     assert any(d.split("[")[0].strip() == "goldfive" for d in extras["adk"]), extras["adk"]
+
+
+def test_base_install_excludes_observability_dependencies() -> None:
+    pyproject = tomllib.loads((REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+    project = pyproject["project"]
+    base = {d.split("[")[0].strip() for d in project["dependencies"]}
+    extras = project["optional-dependencies"]
+    telemetry = {"harmonograf-client", "harmonograf-server"}
+
+    assert base.isdisjoint(telemetry)
+    assert telemetry <= {d.split("[")[0].strip() for d in extras["observability"]}
+    assert telemetry <= {d.split("[")[0].strip() for d in extras["all"]}
 
 
 def test_mirror_matches_goldfive() -> None:

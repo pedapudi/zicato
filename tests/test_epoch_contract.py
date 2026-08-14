@@ -768,7 +768,7 @@ def test_resolve_contract_inputs_raises_without_config(tmp_path: Path) -> None:
 
     workspace = tmp_path / ".zicato"
     workspace.mkdir()
-    with pytest.raises(FileNotFoundError, match="zicato register"):
+    with pytest.raises(FileNotFoundError, match="zicato epoch register"):
         resolve_contract_inputs(workspace)
 
 

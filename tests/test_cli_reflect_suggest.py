@@ -1,4 +1,4 @@
-"""``zicato reflect suggest`` CLI — the WS-SURFACE round-trip (EVAL-SYNTHESIS.md §6).
+"""``zicato inspect reflection suggest`` CLI — the WS-SURFACE round-trip (EVAL-SYNTHESIS.md §6).
 
 Exercises the surface end to end with MOCKED synth/admit seams (the three
 workstreams build in parallel against the doc shapes, so the CLI is driven by
@@ -174,7 +174,9 @@ def test_suggest_default_spends_nothing_and_persists(
     spy = _AdmitSpy()
     monkeypatch.setattr(sug_mod, "resolve_admit", lambda: spy)
 
-    result = _run(["reflect", "suggest", "--workspace", str(ws), "--reflection", _REFLECTION_ID])
+    result = _run(
+        ["inspect", "reflection", "suggest", "--workspace", str(ws), "--reflection", _REFLECTION_ID]
+    )
     assert result.exit_code == 0, result.output
     # Plan mode: the admission seam (the only live-spend surface) is NEVER consulted.
     assert spy.calls == 0
@@ -197,7 +199,16 @@ def test_suggest_probe_consults_admission_seam(
     monkeypatch.setattr(sug_mod, "resolve_admit", lambda: spy)
 
     result = _run(
-        ["reflect", "suggest", "--workspace", str(ws), "--reflection", _REFLECTION_ID, "--probe"]
+        [
+            "inspect",
+            "reflection",
+            "suggest",
+            "--workspace",
+            str(ws),
+            "--reflection",
+            _REFLECTION_ID,
+            "--probe",
+        ]
     )
     assert result.exit_code == 0, result.output
     assert spy.calls == 1  # the probe tier consults admission (the spend)
@@ -215,9 +226,11 @@ def test_report_renders_persisted_suggestions(
     ws, epoch_id = workspace
     _seed_synth(monkeypatch)
     monkeypatch.setattr(sug_mod, "resolve_admit", lambda: None)
-    _run(["reflect", "suggest", "--workspace", str(ws), "--reflection", _REFLECTION_ID])
+    _run(
+        ["inspect", "reflection", "suggest", "--workspace", str(ws), "--reflection", _REFLECTION_ID]
+    )
 
-    result = _run(["reflect", "report", _REFLECTION_ID, "--workspace", str(ws)])
+    result = _run(["inspect", "reflection", "report", _REFLECTION_ID, "--workspace", str(ws)])
     assert result.exit_code == 0, result.output
     assert "Eval suggestions" in result.output
     assert "regression_entry" in result.output
@@ -230,10 +243,14 @@ def test_apply_entry_suggestion_carries_the_entry_with_provenance(
     ws, epoch_id = workspace
     _seed_synth(monkeypatch)
     monkeypatch.setattr(sug_mod, "resolve_admit", lambda: None)
-    _run(["reflect", "suggest", "--workspace", str(ws), "--reflection", _REFLECTION_ID])
+    _run(
+        ["inspect", "reflection", "suggest", "--workspace", str(ws), "--reflection", _REFLECTION_ID]
+    )
 
     before = board_path(ws, epoch_id).read_bytes()
-    result = _run(["reflect", "apply", _REFLECTION_ID, "sug-entry01", "--workspace", str(ws)])
+    result = _run(
+        ["inspect", "reflection", "apply", _REFLECTION_ID, "sug-entry01", "--workspace", str(ws)]
+    )
     assert result.exit_code == 0, result.output
     assert "add_board_entry" in result.output
     assert "staged suggestion sug-entry01" in result.output
@@ -265,7 +282,9 @@ def test_apply_judge_suggestion_carries_the_judge(
     ws, epoch_id = workspace
     _seed_synth(monkeypatch)
     monkeypatch.setattr(sug_mod, "resolve_admit", lambda: None)
-    _run(["reflect", "suggest", "--workspace", str(ws), "--reflection", _REFLECTION_ID])
+    _run(
+        ["inspect", "reflection", "suggest", "--workspace", str(ws), "--reflection", _REFLECTION_ID]
+    )
 
     from zicato.reflection.apply import apply_suggestion_to_draft
 
@@ -306,7 +325,9 @@ def test_apply_duplicate_entry_renders_cleanly(
     )
     monkeypatch.setattr(sug_mod, "resolve_synthesize", lambda: (lambda *a, **k: [dup]))
     monkeypatch.setattr(sug_mod, "resolve_admit", lambda: None)
-    _run(["reflect", "suggest", "--workspace", str(ws), "--reflection", _REFLECTION_ID])
+    _run(
+        ["inspect", "reflection", "suggest", "--workspace", str(ws), "--reflection", _REFLECTION_ID]
+    )
 
     from zicato.reflection.apply import FindingNotActionableError, apply_suggestion_to_draft
 
@@ -319,7 +340,9 @@ def test_apply_duplicate_entry_renders_cleanly(
         )
     assert "could not be staged" in str(excinfo.value)
 
-    result = _run(["reflect", "apply", _REFLECTION_ID, "sug-dup001", "--workspace", str(ws)])
+    result = _run(
+        ["inspect", "reflection", "apply", _REFLECTION_ID, "sug-dup001", "--workspace", str(ws)]
+    )
     assert result.exit_code != 0
     assert "could not be staged" in result.stderr
     assert result.exception is None or isinstance(result.exception, SystemExit)

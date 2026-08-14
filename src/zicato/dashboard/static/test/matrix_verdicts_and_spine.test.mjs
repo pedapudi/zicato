@@ -73,7 +73,7 @@ function setClock(kind) {
     s.heartbeat = { epoch_id: EPOCH, phase: 'tournament:round_0:racing-final', ts: Date.now() - 1000 };
     s.activeTournament = { epoch_id: EPOCH, structure: 'racing', phase: 'running' };
     s.activeRuns = [{ run_id: 'r0', entry_id: 'e', generation_id: 'v7', last_progress_ts: Date.now() - 500 }];
-    s.liveness = { state: 'live' };
+    s.liveness = { state: 'live', epoch_id: EPOCH };
   } else {
     s.heartbeat = { epoch_id: EPOCH, phase: 'tournament:round_0:racing-final', ts: JUNE };
     s.activeTournament = { epoch_id: EPOCH, structure: 'racing', phase: 'running' };
@@ -153,6 +153,7 @@ test('evals matrix: liveness for ANOTHER epoch does not lend this one the presen
   setClock('live');
   coreState.state.activeTournament = { epoch_id: 'some-other-epoch', structure: 'racing', phase: 'running' };
   coreState.state.heartbeat = Object.assign({}, coreState.state.heartbeat, { epoch_id: 'some-other-epoch' });
+  coreState.state.liveness = { state: 'live', epoch_id: 'some-other-epoch' };
   installFixtureMap({ [EVALS_PATH]: e4Matrix() });
   const host = document.createElement('div');
   await evals.render(host, CTX, { epochId: EPOCH });

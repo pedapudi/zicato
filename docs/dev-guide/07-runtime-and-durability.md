@@ -74,7 +74,7 @@ Three consequences an agent extending zicato must internalize:
    answer when the database is absent, stale, or mid-rebuild. See
    08-supervisor.md §"The read-only SQLite discipline" for the Rust side's
    contract.
-3. **`zicato reindex` is the recovery story.** It is a drop-and-rebuild:
+3. **`zicato repair index` is the recovery story.** It is a drop-and-rebuild:
    delete `index.db`, walk every epoch / generation / run under `.zicato/`,
    re-derive every row. Because ingestion is upsert-idempotent (every write
    is `INSERT ... ON CONFLICT DO UPDATE` on the natural primary key), running
@@ -126,7 +126,7 @@ Read the except clauses carefully — this is the doctrine's teeth:
 - **`except Exception` swallows everything** — schema mismatch, disk full,
   a locked database, a bug in your new ingest column. All of it is logged at
   `debug` and dropped, because the canonical file was already written and
-  `zicato reindex` can always reconstruct the row (invariant D2).
+  `zicato repair index` can always reconstruct the row (invariant D2).
 - The one thing the pattern does *not* protect is the index itself lying:
   that is why the *reader* side has its own version tripwires (§7.11 and
   08-supervisor.md).
@@ -138,7 +138,7 @@ Read the except clauses carefully — this is the doctrine's teeth:
 
 > ⛔ NEVER write a datum into `index.db` that has no canonical file source.
 > `rebuild_index` walks files; a row only you produced live will silently
-> vanish on the next `zicato reindex`, and the vanish will look like a bug in
+> vanish on the next `zicato repair index`, and the vanish will look like a bug in
 > someone else's code.
 
 > ✅ ALWAYS make new ingest writes upsert-idempotent (`ON CONFLICT DO
@@ -155,7 +155,7 @@ path, and it is a refusal, not a crash of the loop (the outer dual-write
         raise IndexSchemaNewerError(
             f"index database schema is v{current}, newer than this build's "
             f"v{SCHEMA_VERSION}; refusing to re-stamp it down. Upgrade "
-            "zicato, or delete the index database and run `zicato reindex` "
+            "zicato, or delete the index database and run `zicato repair index` "
             "(the index is derived — a rebuild loses nothing)."
         )
 ```
@@ -165,10 +165,10 @@ An older writer must never re-stamp a newer database DOWN (invariant D12).
 The recovery is always cheap because of D1: delete the file, `zicato
 reindex`.
 
-### 7.1.2 `zicato reindex` — the drop-and-rebuild
+### 7.1.2 `zicato repair index` — the drop-and-rebuild
 
 ```
-$ zicato reindex
+$ zicato repair index
 ```
 
 Backed by `zicato.index.ingest.rebuild_index` (see
@@ -204,7 +204,7 @@ deciding *where a new datum belongs* and *what happens to it in a crash*.
 | Runtime state | `runtime/heartbeat.json`, `runtime/lock.json`, `runtime/active_runs/*.json`, `runtime/active_tournament.events.jsonl`, `runtime/progress.events.jsonl`, `runtime/dashboard.json`, `runtime/inconclusive/*.json` | Canonical but EPHEMERAL — describes the live process, not history | Orchestrator + each run's worker (own file each) | Rust supervisor, dashboard, `prepare_resume` (which deletes it) | Discarded wholesale on restart by `clear_runtime_state`; the supervisor treats absence as "never booted". |
 | Control protocol | `runtime/control/` (flags, targeted files, payload file), `runtime/control_log/` (audit sidecars) | Canonical commands + canonical audit trail | Dashboard / CLI / operator `touch` write; orchestrator consumes; supervisor writes `kill_requests/` markers on POST | Orchestrator safe-points; supervisor's kill loop | Claim-once move semantics; consume writes the audit log BEFORE deleting the source, so a crash mid-consume duplicates observably rather than losing (D10). |
 | RoundLog | `epochs/{e}/rounds/{n}/round_log.jsonl` | Canonical durable trace of one round's decisions (but emission is best-effort — D11) | Orchestrator's `_RoundLogEmitter` (single writer) | `fold_round_record` consumers: dashboard round timeline, tests, post-hoc analysis | Append-only, torn-tail tolerant (D4); survives resume (it lives under `epochs/`, never under `runtime/`). |
-| SQLite index | `index.db` | **Derived** — the only non-canonical store | Live dual-writes + `zicato reindex` | Python query layer (`zicato.query`), Rust supervisor (read-only) | Disposable. Delete + `zicato reindex` is always safe. |
+| SQLite index | `index.db` | **Derived** — the only non-canonical store | Live dual-writes + `zicato repair index` | Python query layer (`zicato.query`), Rust supervisor (read-only) | Disposable. Delete + `zicato repair index` is always safe. |
 | Supervisor audit ledger | `<--ledger-dir>/audit_ledger.jsonl` — deliberately OUTSIDE the orchestrator's trees | Canonical, supervisor-owned (the orchestrator must not be able to rewrite it) | Rust supervisor only (`AuditLedger::append`) | `/statusz`, `/api/audit/verify`, operators | Hash-chained; torn tail truncated at open; fsync per append. See 08-supervisor.md §"The hash-chained ledger". |
 | Ephemeral checkouts | `${TMPDIR}/ztw-snap-{run_id}-*/` | Neither — throwaway working copies | `GenerationStore.checkout_ephemeral` | The one worker that mounted it | Discarded on clean run-end; orphans reaped by the supervisor's prefix-guarded crash-GC (D6). |
 

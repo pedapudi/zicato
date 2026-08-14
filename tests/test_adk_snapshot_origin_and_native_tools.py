@@ -329,7 +329,7 @@ def test_load_from_a_snapshot_relative_entrypoint_still_works(
 
 
 def test_register_accepts_an_out_of_tree_entrypoint_with_a_notice(tmp_path: Path) -> None:
-    """``zicato register`` ACCEPTS the dependency shape, and says what verifies it.
+    """``zicato epoch register`` ACCEPTS the dependency shape, and says what verifies it.
 
     An entrypoint outside every mutable tree is the legitimate "mutate a
     dependency" registration, so refusing it (as the entrypoint-only rule did)

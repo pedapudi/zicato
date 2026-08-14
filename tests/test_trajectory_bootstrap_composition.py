@@ -105,7 +105,8 @@ def test_full_chain_unmocked_bootstrap_to_builder_draft(tmp_path: Path) -> None:
     # 1–4: real import → real mine → REAL bootstrap synthesis → persist.
     result = _run(
         [
-            "reflect",
+            "inspect",
+            "reflection",
             "suggest",
             "--workspace",
             str(ws),
@@ -170,7 +171,8 @@ def test_full_chain_is_goldfive_optional(tmp_path: Path) -> None:
 
     result = _run(
         [
-            "reflect",
+            "inspect",
+            "reflection",
             "suggest",
             "--workspace",
             str(ws),

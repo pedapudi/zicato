@@ -3,7 +3,7 @@
 Sound experiment design opens with **pre-registration**: before spending a
 byte of budget, write down the candidates, entries, replicate count,
 adjudicator, and checks the run will take. This mirrors zicato's mandatory
-pre-run hypothesis discipline — ``zicato reflect --pre-register`` writes the
+pre-run hypothesis discipline — ``zicato inspect reflection --pre-register`` writes the
 plan and STOPS for review, so the loss can never be p-hacked to whatever the
 run happened to show (BOARD-REFLECTION.md §"the protocol").
 

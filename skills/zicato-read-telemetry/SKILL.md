@@ -108,8 +108,8 @@ that's the `flat_drift_signal` critical in
 ### Regenerate the analyzer insight out of band
 
 ```sh
-.venv/bin/zicato analyze-telemetry --workspace .zicato            # current epoch, latest
-.venv/bin/zicato analyze-telemetry --epoch <id> --round <N>       # named round
+.venv/bin/zicato inspect telemetry --workspace .zicato            # current epoch, latest
+.venv/bin/zicato inspect telemetry --epoch <id> --round <N>       # named round
 ```
 
 `evolve` runs the analyzer per round automatically; reach for this only to
@@ -125,9 +125,9 @@ subprocesses append to the SAME file, so a parallel round's records land in one
 stream. At most 20 streams are retained, oldest pruned first.
 
 ```sh
-.venv/bin/zicato logs --workspace .zicato --list             # streams, newest first
-.venv/bin/zicato logs --workspace .zicato --follow           # tail the latest
-.venv/bin/zicato logs --workspace .zicato --invocation <stamp>-<pid> --level WARNING
+.venv/bin/zicato inspect logs --workspace .zicato --list             # streams, newest first
+.venv/bin/zicato inspect logs --workspace .zicato --follow           # tail the latest
+.venv/bin/zicato inspect logs --workspace .zicato --invocation <stamp>-<pid> --level WARNING
 ```
 
 Capture floor is INFO (override with `ZICATO_LOG_LEVEL`); `--level` re-filters on
@@ -188,7 +188,7 @@ entry's `wall_clock_budget_seconds`.
 
 - **Files are canonical, index is derived.** Trace runs from `events.jsonl` /
   `loss.json`, not `index.db` (the index lags to generation boundaries and is
-  rebuildable via `zicato reindex`).
+  rebuildable via `zicato repair index`).
 - Cite only flags in real `--help` (`analyze-telemetry`: `--workspace`,
   `--epoch`, `--round`).
 - Never start a live `evolve` to produce telemetry — read existing run

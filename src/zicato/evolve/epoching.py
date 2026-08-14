@@ -349,18 +349,16 @@ def _promoted_head_snapshot(workspace_root: Path, epoch_id: str) -> Path | None:
     that was never run, or when the snapshot directory is absent — the
     caller then falls back to seeding from the registered mutable trees.
     """
-    # The generation-coordinate resolvers still live in the orchestrator;
-    # imported lazily here to keep the move pure and avoid an import cycle.
-    from zicato.orchestrator import (  # noqa: PLC0415
-        _resolve_current_generation,
-        _snapshot_root,
+    from zicato.evolve.generation_phase import (  # noqa: PLC0415
+        current_generation,
+        snapshot_root,
     )
 
     try:
-        head = _resolve_current_generation(workspace_root, epoch_id)
+        head = current_generation(workspace_root, epoch_id)
     except FileNotFoundError:
         return None
-    snap = _snapshot_root(workspace_root, epoch_id, head)
+    snap = snapshot_root(workspace_root, epoch_id, head)
     if not snap.exists() or not any(snap.iterdir()):
         return None
     return snap

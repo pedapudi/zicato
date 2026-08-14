@@ -343,7 +343,7 @@ known-answer test with zero live spend.
 
 ## 6. Surfaces
 
-- **`zicato reflect suggest`** — a new `reflect` CLI mode, sibling of
+- **`zicato inspect reflection suggest`** — a new `reflect` CLI mode, sibling of
   `run` / `report` / `apply` / `practices` (`cli/commands/reflect.py`,
   auto-discovered). Mines episodes (§2), synthesises suggestions (§3), runs
   admission (§5, endpoint-gated for the live probes; a `--no-probe` cheap

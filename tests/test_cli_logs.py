@@ -1,4 +1,4 @@
-"""Tests for ``zicato logs`` — the operator-log tail CLI.
+"""Tests for ``zicato inspect logs`` — the operator-log tail CLI.
 
 Subprocess-free: drives the command through :class:`click.testing.CliRunner`
 against a hand-built ``.zicato/logs/`` stream. Covers the tail, the level

@@ -39,13 +39,7 @@ from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING
 
-from zicato.core.scoring_config import (
-    ExperimentMemoryConfig,
-    LadderConfig,
-    OverfittingConfig,
-    ProposerQualityConfig,
-    ScoringWeights,
-)
+from zicato.core.scoring_config import omit_at_default_fields
 
 if TYPE_CHECKING:  # pragma: no cover - typing-only import
     from zicato.proposer.external import ExternalProposerConfig
@@ -434,54 +428,10 @@ _SCORING_PLUGIN_SPEC_FIELDS: frozenset[str] = frozenset(
     {"scalar_fn", "drift_reducer", "outcome_summarizer_spec"}
 )
 
-#: The contract dataclasses whose field metadata declares the omit-at-default
-#: knobs. The canonicalizer's omit set is a FLAT set of field names checked at
-#: every recursion level, so the derivation walks each class and unions the
-#: names its metadata flags — a nested-field flag (e.g. ``ProposerQualityConfig``
-#: knobs) participates exactly like a top-level one.
-_CONTRACT_KNOB_DATACLASSES: tuple[type, ...] = (
-    ScoringWeights,
-    OverfittingConfig,
-    LadderConfig,
-    ProposerQualityConfig,
-    ExperimentMemoryConfig,
-)
-
-
-def _derive_omit_at_default_fields() -> frozenset[str]:
-    """Derive the omit-at-default field-name set from the field metadata.
-
-    Finding 3 (REIMPLEMENTATION.md): the omit set is DERIVED from the
-    declarative ``omit_at_default`` flag on each field
-    (:func:`zicato.core.scoring_config._knob`) rather than hand-maintained in
-    a literal here. Adding an additive, default-off knob is then ONE field
-    declaration; the frozen-literal guard test
-    (``tests/test_knob_registry.py``) pins the derived set so a metadata typo
-    can never silently move the contract hash.
-
-    A field listed here was added AFTER the parity goldens were captured;
-    emitting it unconditionally would inject a new key into the scoring hash
-    and roll EVERY existing epoch (and red the CONTRACT-HASH parity gate) the
-    moment the field exists. Omitting it at the default keeps an unset
-    contract byte-identical to one that predates the field, while a NON-default
-    value still appears in the canonical form and rolls the epoch — exactly
-    like any other weight change. Only purely-additive, default-off fields
-    carry the flag.
-    """
-    from dataclasses import fields as _fields
-
-    names: set[str] = set()
-    for cls in _CONTRACT_KNOB_DATACLASSES:
-        for f in _fields(cls):
-            if f.metadata.get("omit_at_default"):
-                names.add(f.name)
-    return frozenset(names)
-
-
 #: ``ScoringWeights`` (+ nested config) fields OMITTED from the canonical
 #: scoring dict when they hold their dataclass default — DERIVED from field
-#: metadata (see :func:`_derive_omit_at_default_fields`).
-_SCORING_OMIT_AT_DEFAULT_FIELDS: frozenset[str] = _derive_omit_at_default_fields()
+#: metadata at import time; no generated source is checked in.
+_SCORING_OMIT_AT_DEFAULT_FIELDS: frozenset[str] = omit_at_default_fields()
 
 
 def scoring_to_canon(weights: object) -> dict[str, object]:
@@ -736,7 +686,7 @@ def resolve_contract_inputs(workspace_root: Path) -> ContractInputs:
 
     * ``contract.board_path`` / ``contract.brief_path`` /
       ``contract.scoring_path`` — the canonical contract source paths
-      recorded by ``zicato register``. The proposer-brief path is also
+      recorded by ``zicato epoch register``. The proposer-brief path is also
       accepted under its legacy ``contract.rubric_path`` key so
       workspaces registered before the rename keep resolving. When the
       ``contract`` key is absent (a workspace registered before
@@ -753,13 +703,13 @@ def resolve_contract_inputs(workspace_root: Path) -> ContractInputs:
     ------
     FileNotFoundError
         When ``config.json`` is missing. The message suggests running
-        ``zicato register``.
+        ``zicato epoch register``.
     """
     config_path = workspace_root / "config.json"
     if not config_path.exists():
         raise FileNotFoundError(
             f"no config.json under {workspace_root}; run "
-            f"`zicato register` to record the evaluation contract before "
+            f"`zicato epoch register` to record the evaluation contract before "
             "evolving"
         )
     config = json.loads(config_path.read_text(encoding="utf-8"))

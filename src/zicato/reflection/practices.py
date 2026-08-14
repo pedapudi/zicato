@@ -615,7 +615,7 @@ def check_loss_monoculture(*, weights: Any, corpus_stats: dict[str, Any] | None)
             evidence={"needs": "corpus_stats.term_contributions"},
             rationale=rationale,
             unmeasured_reason=(
-                "no measured per-term loss contributions — run `zicato reflect run`"
+                "no measured per-term loss contributions — run `zicato inspect reflection run`"
             ),
         )
     abs_by_term = {str(t): abs(float(v)) for t, v in contributions.items()}
@@ -1055,7 +1055,7 @@ def check_weight_revisit(
             evidence={"needs": "scorecards"},
             rationale=rationale,
             unmeasured_reason=(
-                "no judge scorecards — run `zicato reflect run --adjudicator-call-llm`"
+                "no judge scorecards — run `zicato inspect reflection run --adjudicator-call-llm`"
             ),
         )
     per_judge = dict(getattr(weights, "per_judge_weights", {}) or {})

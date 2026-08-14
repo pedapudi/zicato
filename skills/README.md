@@ -59,7 +59,7 @@ mental model (epochs/rounds) + a discriminating contract (board + judges
 | Skill | What it does |
 |---|---|
 | `zicato-evolve` | Drive the meta-loop: choose rounds / mode / wall-clock budget / stop conditions, launch with the dashboard, report the URL. Enforces the live-run gate. The flagship operating skill. |
-| `zicato-mutation-audit` | Audit the mutable surface with `zicato mutations`: enumerate span/file/code mutation points, preview current text, copy exact ids for the brief's `## Forbidden` list, decide what the proposer is allowed to change. |
+| `zicato-mutation-audit` | Audit the mutable surface with `zicato inspect mutations`: enumerate span/file/code mutation points, preview current text, copy exact ids for the brief's `## Forbidden` list, decide what the proposer is allowed to change. |
 
 ### Tier 3 — Observe a run in flight
 | Skill | What it does |
@@ -67,20 +67,20 @@ mental model (epochs/rounds) + a discriminating contract (board + judges
 | `zicato-watch-dashboard` | Open and read the live "Console IV" dashboard: navigate Environment (fleet) → Epoch (champion-spine round timeline + loss-floor waterfall) → Generations/round Match-ups → Boards → Mutation surface → Publication, plus the three epoch-scoped lenses — **Evals** (`#/evals`, the outcomes transpose: entries × candidates, shaded by evidence), **Instrument** (the board-reflection bill of health, judge audit, adjudication x-ray) and **Traces** (imported foreign trajectories + the board entries they motivated); read the structure's match-up figure (racing survival funnel / swiss ladder / elim flow / gauntlet Δ-lanes); tell whether the loop improved; screenshot with browser-use. |
 | `zicato-diagnose-health` | Run `zicato health`, interpret the degeneracy detectors (degenerate scoring, no-expectations, dead-judge, …), and recommend the contract fix for a toothless loop. |
 | `zicato-audit-board` | **Audit a board for HARNESS correctness, not candidate quality** (alias: `board-doctor`). The build → known-baseline-run → audit-the-RUN-for-mechanics loop, and the audit checklist: GT winnability, graded-artifact fidelity (catch the summary-proxy bug), judge-fire counts, scalar-ranking sanity, determinism. Copy-paste jq/`zicato health` recipes grounded in the real `loss.json` / `gen_score.json` / `board.jsonl` fields. Run before trusting any verdict, tournament, or evolution result; deliberately ignores efficacy. Defers schema to `zicato-author-board`, weights to `zicato-tune-scoring`, automated degeneracy to `zicato-diagnose-health`. |
-| `zicato-read-telemetry` | Trace a run through its harmonograf session and `events.jsonl`/`loss.json` (and the `telemetry_dialect` that produced it); tail an invocation's structured log with `zicato logs`; relate the meta-loop session (zicato itself) to the per-board sessions (the system under test). |
+| `zicato-read-telemetry` | Trace a run through its harmonograf session and `events.jsonl`/`loss.json` (and the `telemetry_dialect` that produced it); tail an invocation's structured log with `zicato inspect logs`; relate the meta-loop session (zicato itself) to the per-board sessions (the system under test). |
 
 ### Tier 4 — Understand outcomes
 | Skill | What it does |
 |---|---|
-| `zicato-analyze-epoch` | Close an epoch (`zicato epoch close`) and read its analysis: `analysis.md` + `journal.md` on disk, the hypothesis-vs-outcome ledger; re-render with `zicato regenerate-report` / `analyze-telemetry`. |
-| `zicato-tournament-forensics` | Explain a single promote/reject (`zicato tournament PARENT CHILD`): verdict transparency, the per-entry A/B grid, the mutation heatmap, the score trajectory, and cost. |
+| `zicato-analyze-epoch` | Close an epoch (`zicato epoch close`) and read its analysis: `analysis.md` + `journal.md` on disk, the hypothesis-vs-outcome ledger; re-render with `zicato repair report` / `analyze-telemetry`. |
+| `zicato-tournament-forensics` | Explain a single promote/reject (`zicato tournament run PARENT CHILD`): verdict transparency, the per-entry A/B grid, the mutation heatmap, the score trajectory, and cost. |
 | `zicato-lineage` | Read lineage across epochs and generations (`zicato epoch list` / `lineage.json`); compare champion vs challenger; drive the side-by-side conversation diff for a board entry. |
 
 ### Tier 5 — Manual control & forensics
 | Skill | What it does |
 |---|---|
-| `zicato-step-loop` | Drive individual loop stages for debugging a single round: `zicato propose` to create a candidate generation, `zicato tournament PARENT CHILD` to score it, `zicato analyze-telemetry` for the decision analysis. (`evolve` orchestrates these internally; there is no standalone `run`/`patch apply`.) |
-| `zicato-index-ops` | Rebuild the SQLite analytical index (`zicato reindex`, `zicato reindex-generations`) and run cross-run read-only SQL against `.zicato/index.db` — the schema table-by-table, including what the index deliberately does NOT hold (replicates). |
+| `zicato-step-loop` | Drive individual loop stages for debugging a single round: `zicato proposer propose` to create a candidate generation, `zicato tournament run PARENT CHILD` to score it, `zicato inspect telemetry` for the decision analysis. (`evolve` orchestrates these internally; there is no standalone `run`/`patch apply`.) |
+| `zicato-index-ops` | Rebuild the SQLite analytical index (`zicato repair index`, `zicato repair generations`) and run cross-run read-only SQL against `.zicato/index.db` — the schema table-by-table, including what the index deliberately does NOT hold (replicates). |
 
 ### Tier 6 — Strategy
 | Skill | What it does |

@@ -189,7 +189,7 @@ def _ingest_frontier_into_index(workspace_root: Path, epoch_id: str) -> None:
     """Best-effort live index dual-write of the epoch's frontier projection.
 
     The workspace file is canonical and the index table is a pure projection
-    of it — ``zicato reindex`` re-derives every row — so a failure here costs
+    of it — ``zicato repair index`` re-derives every row — so a failure here costs
     a stale table until the next rebuild, never any evidence.
     """
     try:

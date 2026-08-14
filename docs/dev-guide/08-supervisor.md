@@ -1341,7 +1341,7 @@ This is S8 and the null-degradation contract (§8.9) meeting at the scan layer: 
 stale or absent index degrades the notary to "scanned, no contradiction", never a
 false alarm and never a crash. `EXPECTED_SCHEMA_VERSION = 10` is the cross-
 language pin — bump it in lockstep with the Python `SCHEMA_VERSION` (07-runtime-
-and-durability.md §"`zicato reindex`"), and a cargo test in this module reds if
+and-durability.md §"`zicato repair index`"), and a cargo test in this module reds if
 they drift (§8.12's canonical "Python change requires Rust parity" example).
 
 ### 8.20.3 The diff-containment mutable surface (record #2)

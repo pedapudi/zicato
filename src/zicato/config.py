@@ -82,7 +82,7 @@ the secrets boundary (operator-NAMED ``api_key_env`` variables and the
 ``runtime.worker_env_passthrough`` allowlist), goldfive's own
 ``GOLDFIVE_AGENT_CALL_TIMEOUT_MS``, and two CI/test toggles. The set is
 enumerated (with role labels) by :func:`describe_env_vars` and surfaced
-by ``zicato config env``.
+by ``zicato inspect environment``.
 """
 
 from __future__ import annotations
@@ -228,7 +228,7 @@ class DashboardConfig:
         Filesystem path to the bundled dashboard static-asset directory,
         or empty string to fall back to the in-tree
         ``zicato/dashboard/static`` directory. Operators set it with
-        ``zicato dashboard --static-dir`` / ``zicato builder
+        ``zicato dashboard --static-dir`` / ``zicato dashboard --view builder
         --static-dir``. Useful for installed wheels that relocate the
         bundle and for tests.
     """
@@ -515,7 +515,7 @@ _MERITED_ENV_VARS: tuple[EnvVarInfo, ...] = (
 def describe_env_vars() -> tuple[EnvVarInfo, ...]:
     """Return the merited set of environment variables zicato touches.
 
-    The introspection helper behind ``zicato config env``. Since the
+    The introspection helper behind ``zicato inspect environment``. Since the
     env-var rationalization, NO environment variable is a configuration
     knob — operator knobs live on CLI flags and in the workspace
     ``config.json`` — so this describes only the deliberately-kept

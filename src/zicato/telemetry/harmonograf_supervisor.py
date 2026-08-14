@@ -27,30 +27,8 @@ warning and returns a no-op handle whose ``url`` is the empty string.
 The live console is an additive convenience; evolve must continue
 without it on a degraded install.
 
-Why harmonograf-server is a *hard* dep (task #204 Part B audit)
----------------------------------------------------------------
-
-After #202 brought harmonograf-server in as a hard dependency, the
-transitive footprint is:
-
-* harmonograf-server-only deps (not used by any other zicato dep):
-  hypercorn, h2, priority, wsproto, sonora, intervaltree, grpcio-tools,
-  rich, markdown-it-py — plus harmonograf-server itself.
-* On a Python 3.12 / Linux install the disk footprint of those
-  *exclusive* deps is ~11 MB (~7.5 MB of which is grpcio-tools, kept
-  because harmonograf-server pulls it for proto generation).
-* Other deps the server pulls (aiosqlite, aiohttp, grpcio, h11,
-  pygments) are also pulled by zicato's first-class deps
-  (google-adk, pytest, harmonograf-client) so they cost zicato nothing
-  extra.
-
-11 MB is well under the 30 MB threshold the task identified as the
-trigger for moving harmonograf-server to an optional extra. The
-auto-launch behaviour is what makes zicato's "open the URL and watch
-the live console" promise work out of the box — pushing it to an
-extra would silently degrade every fresh install to JSONL-only
-telemetry. Decision: keep as a hard dep (option i). Revisit when the
-exclusive footprint crosses ~30 MB.
+The server and streaming client belong to the ``observability`` extra. A base
+install records canonical JSONL telemetry and otherwise runs the same loop.
 """
 
 from __future__ import annotations
@@ -239,8 +217,8 @@ def start_harmonograf(
         from harmonograf_server.main import Harmonograf  # noqa: PLC0415
     except ImportError as exc:
         log.warning(
-            "harmonograf auto-launch skipped: harmonograf_server not "
-            "installed (%s); evolve continues with JSONL-only telemetry",
+            "live telemetry unavailable: install zicato[observability] (%s); "
+            "evolve continues with JSONL-only telemetry",
             exc,
         )
         return _noop_handle()
@@ -303,6 +281,14 @@ def start_harmonograf(
             try:
                 inner_loop = state.get("loop")
                 if inner_loop is not None and not inner_loop.is_closed():
+                    pending = asyncio.all_tasks(inner_loop)
+                    for task in pending:
+                        task.cancel()
+                    if pending:
+                        inner_loop.run_until_complete(
+                            asyncio.gather(*pending, return_exceptions=True)
+                        )
+                    inner_loop.run_until_complete(inner_loop.shutdown_asyncgens())
                     inner_loop.close()
             except Exception:  # noqa: BLE001 — best-effort
                 pass
@@ -378,7 +364,7 @@ def _resolve_data_dir(workspace_root: Path) -> Path:
 # A live ``zicato evolve`` auto-launches a harmonograf server that dies
 # with the run. The persisted sessions, however, live on in
 # ``<workspace>/.harmonograf/harmonograf.db``. A standalone ``zicato
-# dashboard`` / ``zicato builder`` wants to surface those persisted
+# dashboard`` / ``zicato dashboard --view builder`` wants to surface those persisted
 # sessions for a post-mortem execution view — but the evolve-launched
 # server is gone, so there is no URL to deep-link into.
 #

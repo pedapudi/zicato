@@ -7,7 +7,7 @@
 > meter, its statistical pre-flight, its margin-vs-floor validate, and its
 > fork/compare slots; (2) the **CLI** — the auto-discovered `click` command
 > tree, the flag → pin → config-knob → worker-propagation layer, `zicato config
-> env`, and the generated `CLI.md`; (3) the **library facade** — the ~37-name
+> env`, and the generated `CLI.md`; (3) the **library facade** — the small
 > lazy `zicato` surface, the five import-linter contracts, the TID251 bans, and
 > how a name (or a driver edge) is added; and (4) **packaging** — the wheel, the
 > extras, the uv workspace member, and the supervisor-binary build hook.
@@ -59,7 +59,7 @@ consume it and each other along two — and only two — declared edges:
 |---|---|---|---|
 | CLI | `src/zicato/cli/` | `zicato = "zicato.cli:main"` (`pyproject.toml` `[project.scripts]`) | the `zicato` executable; an auto-discovered `click` group |
 | Dashboard | `src/zicato/dashboard/` | `zicato dashboard` / auto-launched by `evolve` | the Starlette HTTP server + SSE stream (08/09) |
-| Builder | `src/zicato/builder/` | mounted by the dashboard at `/builder/*` + `zicato builder` | the deterministic contract-editing backend |
+| Builder | `src/zicato/builder/` | mounted by the dashboard at `/builder/*` + `zicato dashboard --view builder` | the deterministic contract-editing backend |
 
 The two allowed driver→driver edges are `cli → dashboard` (the CLI launches the
 server and resolves its static bundle) and `dashboard → builder` (`server.py`
@@ -563,7 +563,7 @@ never an exception for a workspace that simply is not ready:
             available=False,
             reason=(
                 "preflight requires a registered target: no current epoch under "
-                "this workspace (run `zicato register` / `zicato epoch new` first)"
+                "this workspace (run `zicato epoch register` / `zicato epoch new` first)"
             ),
         )
 ```
@@ -718,7 +718,7 @@ becoming) the live contract. It returns an `ApplyResult` carrying `confirmed`,
   touching the workspace. `rolled` is always `False` for a dry run.
 - **Confirm (`confirm=True`).** `_write_contract` writes the draft to the
   workspace's LIVE contract source paths — the same `board.jsonl` / `brief.md` /
-  `scoring.json` (and proposer dir) that `zicato register` / `zicato epoch new`
+  `scoring.json` (and proposer dir) that `zicato epoch register` / `zicato epoch new`
   publish, recorded under `config.json`'s `contract` key. The result recomputes
   the hash from the now-written live contract and sets `rolled=diff.rolls_epoch`.
 
@@ -931,14 +931,15 @@ mirrored across seven hand-kept sites, and the omit-at-default set was a
 hand-maintained literal a typo could silently corrupt. Finding 3 makes the
 **field declaration the source of truth**.
 
-Each participating field on `ScoringWeights` and its nested config dataclasses
-carries `dataclasses.field(metadata=_knob(...))`
-(`core/scoring_config.py::_knob`) declaring:
+Each field on `ScoringWeights` and its nested config dataclasses is exposed by
+`core/scoring_config.py::contract_knobs()`. The registry is derived at import
+time from `dataclasses.fields()`; no generated source is checked in. Fields
+carry `dataclasses.field(metadata=_knob(...))` declaring:
 
 - **`omit_at_default: bool`** — the field is dropped from the contract
   canonical form while it holds its default. The canonicalizer's omit set
-  (`epoch/contract.py::_SCORING_OMIT_AT_DEFAULT_FIELDS`) is now **derived** from
-  this flag by `_derive_omit_at_default_fields()` rather than hand-maintained.
+  (`epoch/contract.py::_SCORING_OMIT_AT_DEFAULT_FIELDS`) is **derived** by
+  `omit_at_default_fields()` rather than hand-maintained.
   `test_knob_registry.py::test_derived_omit_set_equals_frozen_literal` pins the
   derived set to a frozen literal, so a metadata typo reds THAT test (loudly,
   per-field) instead of silently moving the CONTRACT hash for every epoch.
@@ -947,7 +948,8 @@ carries `dataclasses.field(metadata=_knob(...))`
   it differs from the field name (e.g. `screen_entries` is the `entries` arg of
   `set_screening`).
 
-The registry-driven completeness guard,
+The canonicalizer and the registry-driven completeness guard both consume the
+same runtime registry. The latter,
 `test_knob_registry.py::test_every_builder_op_knob_is_fully_wired`, walks the
 metadata and asserts every `builder_op` knob is wired through all **five**
 remaining touchpoints — (a) the op signature, (b) the API dispatch entry, (c)
@@ -958,7 +960,8 @@ naming exactly which touchpoint is missing for which knob (e.g. *"knob
 'genealogy' … is missing touchpoint (b): an API dispatch entry"*).
 
 > ✅ **The new discipline for adding an omit-at-default / proposer-quality knob:
-> declare the field + its `_knob(...)` metadata, then let the guard test tell
+> declare the field + its `_knob(...)` metadata, then let the runtime registry
+> feed canonicalization and let the guard test tell
 > you every remaining touchpoint.** Run `test_every_builder_op_knob_is_fully_wired`
 > and fix each named gap until it is green; you do not have to remember the five
 > sites, the test enumerates the ones you missed. The ops are **not**
@@ -1255,7 +1258,7 @@ interpreter reads the args file and re-pins before it touches config:
 > args-file write silently drops or corrupts it and the worker runs on the
 > default. Pin the primitive, resolve the object worker-side.
 
-### 10.10.2 The merited env-var set — `zicato config env`
+### 10.10.2 The merited env-var set — `zicato inspect environment`
 
 The env vars zicato *does* touch are a small MERITED set — each a
 process-boundary contract, never a knob — introspectable via `zicato config
@@ -1332,14 +1335,11 @@ in `--help`, and CLI.md matches the binary.
 zicato is a library first. The public surface is declared in
 `src/zicato/__init__.py` as a **lazy facade**: a dict mapping each public name to
 its home module, resolved on first access by a module-level `__getattr__`. There
-are **37 lazy exports** (the `_EXPORTS` dict), and `__all__` is
-`["__version__", *sorted(_EXPORTS)]` — 38 names counting `__version__`.
+The surface is limited to evolve entry points, harness protocols, board/config
+loaders, and scoring types. `__all__` is derived from `_EXPORTS`.
 
-> ⚠️ TRAP — the facade is `__init__.py`, and the count is 37, not 36. Older prose
-> (including 14-goals-and-roadmap.md §"the boundary") calls it "the 36-name lazy
-> facade (`zicato/api.py`)"; both are stale — there is no `src/zicato/api.py`,
-> and the current tree exports 37 names. If you cite the count, cite
-> `len(zicato._EXPORTS)`.
+Advanced APIs live in their owning subpackages. Removed root exports have no
+forwarding aliases.
 
 ### 10.11.1 The laziness contract
 
@@ -1384,12 +1384,10 @@ in `tests/test_public_api.py`:
         assert exported is expected, (...)
 ```
 
-The `TYPE_CHECKING` block at the bottom of `__init__.py` re-imports all 37 names
+The `TYPE_CHECKING` block at the bottom of `__init__.py` re-imports every name
 in redundant-alias form (`from … import X as X`) so mypy and IDEs see the surface
 that `__getattr__` provides only at runtime. Because it is under
 `if TYPE_CHECKING:`, none of it runs at import time — laziness is preserved.
-`round_log` is the one export whose attribute is `None` (the *module object*
-itself is the export), pinned by its own test.
 
 ### 10.11.2 How to add a public name
 
@@ -1408,11 +1406,9 @@ touch-points, and the tests catch a half-done addition:
    mypy.
 
 > ✅ ALWAYS put a name on the facade ONLY if it is a genuine driver-facing seam.
-> The facade is the *declared* public surface — the evolve loop, the epoch
-> lifecycle, the board/scoring layer, the storage seams, the harness-adapter
-> contract, the health diagnostics. An internal helper does not belong here; it
-> is reachable at its home module for code that legitimately imports deep. The
-> facade is what the three drivers and embedding applications are promised.
+> The facade is the *declared* public surface: the evolve loop, harness
+> protocols, board/config loaders, and scoring types. Other APIs remain
+> reachable at their owning subpackages. Do not add forwarding aliases.
 
 ### 10.11.3 The five import-linter contracts
 
@@ -1484,11 +1480,11 @@ public `zicato.storage` face.
 zicato is a hatchling-built wheel with a `src/` layout. Four packaging facts an
 extender touches:
 
-**Extras.** `[project.optional-dependencies]` declares three: `adk`
-(`google-adk[extensions]`, `goldfive[adk]` — the tool-using proposer path),
-`dashboard` (`starlette`, `uvicorn`, `watchdog` — the ASGI server + SSE file
-watcher), and `dev` (the full test/lint toolchain plus `zicato-examples`). The
-memory rule from 01-orientation.md §G2 restated: **always `uv sync
+**Extras.** Narrow profiles expose individual integrations. `observability`
+composes the browser, builder route, terminal renderer, and live telemetry;
+`all` installs every shipped runtime feature. The base retains the core loop
+and JSONL telemetry. `docs/design/INSTALL-PROFILES.md` is the profile contract.
+The memory rule from 01-orientation.md §G2 restated: **always `uv sync
 --all-extras`** — a bare `uv sync` deletes dev tooling from `.venv`.
 
 **The uv workspace member.** The vendored dogfood targets under `examples/` are a

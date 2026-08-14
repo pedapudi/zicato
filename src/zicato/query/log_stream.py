@@ -2,7 +2,7 @@
 
 Files-canonical (LOGGING.md §3): the ``.zicato/logs/<stamp>-<pid>.jsonl``
 files are the source of truth, and this module is the single parser both
-the ``zicato logs`` CLI and the dashboard ``/api/logs`` endpoint read
+the ``zicato inspect logs`` CLI and the dashboard ``/api/logs`` endpoint read
 through. ``build_log_view`` mirrors ``query/run_log.build_run_log``: a
 tail with a monotone line cursor for append-only follow.
 """

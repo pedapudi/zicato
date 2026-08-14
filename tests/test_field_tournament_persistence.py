@@ -272,7 +272,7 @@ def test_persist_writes_durable_snapshot_and_dual_writes(tmp_path: Path) -> None
 
 
 def test_rebuild_index_rederives_field_row_from_snapshot(tmp_path: Path) -> None:
-    """``zicato reindex`` must reconstruct the field row from the snapshot file."""
+    """``zicato repair index`` must reconstruct the field row from the snapshot file."""
     from zicato.core.types import ScoringWeights
     from zicato.epoch.lifecycle import new_epoch
 

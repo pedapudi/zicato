@@ -19,8 +19,8 @@ Findings
   evidence · FP turn 4
 
 Recommendation queue
-retire_entry(entry_id)                zicato reflect apply refl-2026-07-04 f-dead-entry
-tighten_judge(judge_name, scope)      zicato reflect apply refl-2026-07-04 f-judge-fp
+retire_entry(entry_id)                zicato inspect reflection apply refl-2026-07-04 f-dead-entry
+tighten_judge(judge_name, scope)      zicato inspect reflection apply refl-2026-07-04 f-judge-fp
 copy an apply line and run it yourself — this console applies nothing
 
 Judge audit

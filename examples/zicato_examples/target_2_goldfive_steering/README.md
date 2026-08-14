@@ -78,7 +78,7 @@ Target 2 is the dogfood case that exercises the "mutable surface lives
 in a different repo from the entrypoint" path. Use `--mutable-tree`:
 
 ```
-zicato register \
+zicato epoch register \
   --adk zicato_examples.target_2_goldfive_steering.agent_under_test:agent \
   --mutable-tree /home/sunil/git/goldfive/goldfive
 ```

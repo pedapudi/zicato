@@ -1,7 +1,7 @@
 # `zicato tui` — the Console in the terminal
 
 Zicato's interactive surface used to be the browser dashboard alone. The
-terminal surface was command-shaped (`zicato reflect`, `zicato epoch rounds`,
+terminal surface was command-shaped (`zicato inspect reflection`, `zicato epoch rounds`,
 `zicato health`) — right for scripting, wrong for *review*: watching a live
 round, triaging reflection findings, reading a candidate's gate evidence,
 deciding on a recommendation.
@@ -176,7 +176,7 @@ not onto addresses:
 
 **Applying a recommendation is something the operator does, not the console.**
 The Instrument lens's recommendation queue PRINTS the exact invocation
-(`zicato reflect apply <reflection> <finding>`) for the operator to run. v1 does
+(`zicato inspect reflection apply <reflection> <finding>`) for the operator to run. v1 does
 not even shell out: there is no execution path in this build at all, which is
 the smallest surface to trust and to review. (The service refuses control POSTs
 under `read_only` regardless — the same conclusion from the other direction.)
@@ -200,7 +200,7 @@ four-absence vocabulary, the current routes table, and the removal of
 | --- | --- | --- |
 | **Candidate** dossier | no per-candidate gate evidence in the terminal; the standings row + drawer carry the Δscalar, decision and rating instead | the four gate rules with pass/fail and margins, `deciding_rule`, the Bradley–Terry pre-gate (θ̂ whiskers, `p_stronger`), facet table, per-board rows, per-judge losses, lineage strip, operator-override provenance |
 | **Board** status | no view of whether the instrument can still measure | train/holdout split, rotation cadence + `refresh_recommended`, holdout budget, MDE + power, dead / noisiest / insufficient entries, redundancy clusters, the per-entry outcome heat-strip |
-| **Health** + logs | loop-health findings and the log tail stay in `zicato health` / `zicato logs` | health findings (severity, detector, summary **and `detail` — see below**), service identity, heartbeat phase/paused, the cursor-based log tail |
+| **Health** + logs | loop-health findings and the log tail stay in `zicato health` / `zicato inspect logs` | health findings (severity, detector, summary **and `detail` — see below**), service identity, heartbeat phase/paused, the cursor-based log tail |
 
 `/e/<epoch>/gen/<gen>` still resolves: it lands on the Standings row it would
 have opened from and the status band says `candidate is not in this build`. An
@@ -216,7 +216,7 @@ the browser side, and the terminal Health lens must not replicate it.
 
 | not in v1 | consequence | where it lives |
 | --- | --- | --- |
-| the tournament **builder** | authoring stays in the browser | `#/builder`, `zicato builder` |
+| the tournament **builder** | authoring stays in the browser | `#/builder`, `zicato dashboard --view builder` |
 | **settings** (contract / models / appearance) | read-only review only | `#/settings` |
 | **publication** (the epoch paper) | no formatted report | `#/e/<id>/paper` |
 | **traces** (imported foreign trajectories) | trace review stays in the browser | `#/e/<id>/traces` |
@@ -245,7 +245,7 @@ only the source that exists.
 Every lens returns a `View` for every input; none raises at the UI.
 
 - **No service** → the lens says so and prints the command that starts one.
-- **No index** → the served `note` ("index not built; run zicato reindex") is
+- **No index** → the served `note` ("index not built; run zicato repair index") is
   printed, rather than an empty table implying "no data".
 - **A lens bug** → the panel degrades with the exception name; the operator
   keeps their session.
@@ -294,3 +294,7 @@ zicato/tui/
 Textual is the only dependency the `tui` extra buys — the service client is
 stdlib `urllib`, so a terminal install stays small and can review a workspace
 from a machine that could not serve one.
+
+The broader `observability` profile installs both renderers, their service, and
+live execution telemetry. The `all` profile adds every other runtime feature;
+see [`INSTALL-PROFILES.md`](INSTALL-PROFILES.md).

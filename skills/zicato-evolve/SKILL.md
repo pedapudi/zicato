@@ -136,8 +136,8 @@ reads). Tail it live or after the fact — this is where the fast-mode replicate
 warning and the pre-flight verdict land:
 
 ```sh
-.venv/bin/zicato logs --workspace .zicato --follow            # latest invocation
-.venv/bin/zicato logs --workspace .zicato --list              # pick an older one
+.venv/bin/zicato inspect logs --workspace .zicato --follow            # latest invocation
+.venv/bin/zicato inspect logs --workspace .zicato --list              # pick an older one
 ```
 
 To re-serve the dashboard for a finished or in-flight workspace (post-mortem):

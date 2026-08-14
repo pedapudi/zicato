@@ -10,7 +10,7 @@ the instrument itself — the design of record is
 One engine, three surfaces
 --------------------------
 
-The dedicated ``zicato reflect`` mode, the default-on evolve pre-flight
+The dedicated ``zicato inspect reflection`` mode, the default-on evolve pre-flight
 (:mod:`zicato.epoch.preflight`), and the continuous passive tier are the
 **same analysis at three cadences and cost points**, so this package is one
 engine behind three surfaces:

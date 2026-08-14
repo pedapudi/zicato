@@ -67,7 +67,7 @@ of `NOTES.md` after the sentinel.
 
 ## 2. Wire a workspace and audit the surface
 
-`zicato register`'s `--adk` flag covers only the ADK adapter kind, so
+`zicato epoch register`'s `--adk` flag covers only the ADK adapter kind, so
 the generic `import`-kind block is written into `config.json` directly —
 the same shape the adapter factory and the subprocess worker both
 reconstruct. This is the target-0 pattern.

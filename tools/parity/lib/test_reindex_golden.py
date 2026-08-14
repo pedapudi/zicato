@@ -1,7 +1,7 @@
 """Parity REINDEX-DUMP gate.
 
 The SQLite analytical index is a *pure projection* of the canonical
-workspace files (``zicato reindex`` drops ``index.db`` and re-derives every
+workspace files (``zicato repair index`` drops ``index.db`` and re-derives every
 row). A behavior-preserving refactor must keep that projection
 byte-identical.
 

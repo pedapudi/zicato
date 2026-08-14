@@ -138,7 +138,7 @@ def test_per_judge_trend_never_creates_index_db(tmp_path: Path) -> None:
         "epoch_id": EPOCH,
         "generations": [],
         "judges": [],
-        "note": "index not built; run zicato reindex",
+        "note": "index not built; run zicato repair index",
     }
     assert not paths.index_db.exists()
 

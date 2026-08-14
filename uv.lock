@@ -7018,8 +7018,6 @@ version = "0.3.0"
 source = { editable = "." }
 dependencies = [
     { name = "click" },
-    { name = "harmonograf-client" },
-    { name = "harmonograf-server" },
     { name = "jsonschema" },
 ]
 
@@ -7027,6 +7025,17 @@ dependencies = [
 adk = [
     { name = "goldfive" },
     { name = "google-adk", extra = ["extensions"] },
+]
+all = [
+    { name = "goldfive" },
+    { name = "google-adk", extra = ["extensions"] },
+    { name = "harmonograf-client" },
+    { name = "harmonograf-server" },
+    { name = "mcp" },
+    { name = "starlette" },
+    { name = "textual" },
+    { name = "uvicorn" },
+    { name = "watchdog" },
 ]
 dashboard = [
     { name = "starlette" },
@@ -7057,6 +7066,14 @@ goldfive = [
 mcp = [
     { name = "mcp" },
 ]
+observability = [
+    { name = "harmonograf-client" },
+    { name = "harmonograf-server" },
+    { name = "starlette" },
+    { name = "textual" },
+    { name = "uvicorn" },
+    { name = "watchdog" },
+]
 tui = [
     { name = "textual" },
 ]
@@ -7066,12 +7083,17 @@ requires-dist = [
     { name = "click", specifier = ">=8.1" },
     { name = "goldfive", marker = "extra == 'goldfive'", git = "https://github.com/pedapudi/goldfive.git?rev=ed44eaaf93215a5d4ae122293c39fbd04ff204d6" },
     { name = "goldfive", extras = ["adk"], marker = "extra == 'adk'", git = "https://github.com/pedapudi/goldfive.git?rev=ed44eaaf93215a5d4ae122293c39fbd04ff204d6" },
+    { name = "goldfive", extras = ["adk"], marker = "extra == 'all'", git = "https://github.com/pedapudi/goldfive.git?rev=ed44eaaf93215a5d4ae122293c39fbd04ff204d6" },
     { name = "google-adk", extras = ["extensions"], marker = "extra == 'adk'" },
-    { name = "harmonograf-client", git = "https://github.com/pedapudi/harmonograf.git?subdirectory=client&rev=bd0175551ad5a7a79c29ce3937fcc7d8827e46f6" },
-    { name = "harmonograf-server", git = "https://github.com/pedapudi/harmonograf.git?subdirectory=server&rev=bd0175551ad5a7a79c29ce3937fcc7d8827e46f6" },
+    { name = "google-adk", extras = ["extensions"], marker = "extra == 'all'" },
+    { name = "harmonograf-client", marker = "extra == 'all'", git = "https://github.com/pedapudi/harmonograf.git?subdirectory=client&rev=bd0175551ad5a7a79c29ce3937fcc7d8827e46f6" },
+    { name = "harmonograf-client", marker = "extra == 'observability'", git = "https://github.com/pedapudi/harmonograf.git?subdirectory=client&rev=bd0175551ad5a7a79c29ce3937fcc7d8827e46f6" },
+    { name = "harmonograf-server", marker = "extra == 'all'", git = "https://github.com/pedapudi/harmonograf.git?subdirectory=server&rev=bd0175551ad5a7a79c29ce3937fcc7d8827e46f6" },
+    { name = "harmonograf-server", marker = "extra == 'observability'", git = "https://github.com/pedapudi/harmonograf.git?subdirectory=server&rev=bd0175551ad5a7a79c29ce3937fcc7d8827e46f6" },
     { name = "httpx", marker = "extra == 'dev'", specifier = ">=0.27" },
     { name = "import-linter", marker = "extra == 'dev'", specifier = ">=2.0" },
     { name = "jsonschema", specifier = ">=4.20" },
+    { name = "mcp", marker = "extra == 'all'", specifier = ">=1.0" },
     { name = "mcp", marker = "extra == 'dev'", specifier = ">=1.0" },
     { name = "mcp", marker = "extra == 'mcp'", specifier = ">=1.0" },
     { name = "mypy", marker = "extra == 'dev'", specifier = ">=1.10" },
@@ -7080,19 +7102,27 @@ requires-dist = [
     { name = "pytest-asyncio", marker = "extra == 'dev'", specifier = ">=0.23" },
     { name = "pytest-xdist", marker = "extra == 'dev'", specifier = ">=3.5" },
     { name = "ruff", marker = "extra == 'dev'", specifier = "==0.5.7" },
+    { name = "starlette", marker = "extra == 'all'", specifier = ">=0.40" },
     { name = "starlette", marker = "extra == 'dashboard'", specifier = ">=0.40" },
     { name = "starlette", marker = "extra == 'dev'", specifier = ">=0.40" },
+    { name = "starlette", marker = "extra == 'observability'", specifier = ">=0.40" },
+    { name = "textual", marker = "extra == 'all'", specifier = "==8.2.8" },
     { name = "textual", marker = "extra == 'dev'", specifier = "==8.2.8" },
+    { name = "textual", marker = "extra == 'observability'", specifier = "==8.2.8" },
     { name = "textual", marker = "extra == 'tui'", specifier = "==8.2.8" },
     { name = "types-jsonschema", marker = "extra == 'dev'" },
     { name = "types-protobuf", marker = "extra == 'dev'" },
+    { name = "uvicorn", marker = "extra == 'all'", specifier = ">=0.30" },
     { name = "uvicorn", marker = "extra == 'dashboard'", specifier = ">=0.30" },
     { name = "uvicorn", marker = "extra == 'dev'", specifier = ">=0.30" },
+    { name = "uvicorn", marker = "extra == 'observability'", specifier = ">=0.30" },
+    { name = "watchdog", marker = "extra == 'all'", specifier = ">=4.0" },
     { name = "watchdog", marker = "extra == 'dashboard'", specifier = ">=4.0" },
     { name = "watchdog", marker = "extra == 'dev'", specifier = ">=4.0" },
+    { name = "watchdog", marker = "extra == 'observability'", specifier = ">=4.0" },
     { name = "zicato-examples", marker = "extra == 'dev'", editable = "examples" },
 ]
-provides-extras = ["goldfive", "adk", "dashboard", "tui", "mcp", "dev"]
+provides-extras = ["goldfive", "adk", "dashboard", "tui", "observability", "mcp", "all", "dev"]
 
 [[package]]
 name = "zicato-examples"

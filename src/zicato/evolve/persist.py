@@ -15,9 +15,9 @@ orchestrator re-imports every name, so its internal call sites (``evolve_once``,
 
 Back-edges into the orchestrator that are NOT part of this stage are resolved
 through the orchestrator module object at CALL time (the established
-``zicato.evolve.*`` idiom): ``_set_current_generation`` (monkeypatched by the
+``zicato.evolve.*`` idiom): the generation-head writer,
 holdout test, so it must be re-read on each call), the health-assessment
-helpers, ``_regenerate_epoch_report``, ``_round_n_from_generation_id``, and the
+helpers, ``_regenerate_epoch_report``, the generation-number helper, and the
 ``EvolveRoundOutcome`` public dataclass still defined in the orchestrator. The
 module logger keeps the ``zicato.orchestrator`` name so records stay
 byte-identical.
@@ -91,7 +91,7 @@ def _finalize_generation(
         append_to_lineage,
         update_experiment_outcome,
     )
-    from zicato.orchestrator import _set_current_generation  # noqa: PLC0415
+    from zicato.evolve.generation_phase import set_current_generation  # noqa: PLC0415
 
     finalised = update_experiment_outcome(workspace_root, epoch_id, generation_id, outcome)
     # Live index dual-write: experiment.json now carries the outcome —
@@ -111,7 +111,7 @@ def _finalize_generation(
             child_scalar=lineage_child_scalar,
         )
     if advance_current_generation:
-        _set_current_generation(workspace_root, epoch_id, generation_id)
+        set_current_generation(workspace_root, epoch_id, generation_id)
     if journal:
         append_journal_entry(workspace_root, epoch_id, finalised)
     return finalised
@@ -236,10 +236,8 @@ async def _persist_rejected_round(
     patch set that survives validation within its bounded retry budget.
     """
     from zicato.epoch import write_experiment  # noqa: PLC0415
-    from zicato.orchestrator import (  # noqa: PLC0415
-        EvolveRoundOutcome,
-        _round_n_from_generation_id,
-    )
+    from zicato.evolve.generation_phase import round_number  # noqa: PLC0415
+    from zicato.orchestrator import EvolveRoundOutcome  # noqa: PLC0415
     from zicato.runtime import progress_log  # noqa: PLC0415
 
     write_experiment(workspace_root, epoch_id, next_id, experiment)
@@ -280,7 +278,7 @@ async def _persist_rejected_round(
         workspace_root=workspace_root,
         epoch_id=epoch_id,
         board=board,
-        round_n=_round_n_from_generation_id(next_id) or round_index,
+        round_n=round_number(next_id) or round_index,
         analyzer_round=None,
         mutations=[],
         auxiliary_call_llm=auxiliary_call_llm,

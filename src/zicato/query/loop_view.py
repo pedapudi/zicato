@@ -141,7 +141,7 @@ def build_optimization_trajectory(paths: WorkspacePaths, epoch_id: str) -> dict[
     try:
         traj = optimization_trajectory(paths.index_db, epoch_id)
     except IndexUnavailableError:
-        return _empty_trajectory(paths, epoch_id, "index not built; run zicato reindex")
+        return _empty_trajectory(paths, epoch_id, "index not built; run zicato repair index")
     except Exception:  # noqa: BLE001 — best-effort, mirrors sibling readers
         return _empty_trajectory(paths, epoch_id, "index unreadable")
 
@@ -249,7 +249,7 @@ def build_tournament_cost(paths: WorkspacePaths, epoch_id: str) -> dict[str, Any
     try:
         return dict(tournament_cost(paths.index_db, epoch_id))
     except IndexUnavailableError:
-        return _empty_cost(epoch_id, "index not built; run zicato reindex")
+        return _empty_cost(epoch_id, "index not built; run zicato repair index")
     except Exception:  # noqa: BLE001 — best-effort, mirrors sibling readers
         return _empty_cost(epoch_id, "index unreadable")
 

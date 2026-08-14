@@ -30,27 +30,6 @@ classifiers = [
     "Programming Language :: Python :: 3.12",
 ]
 dependencies = [
-    # Core is intentionally light; storage / telemetry / LLMs are pluggable.
-    # goldfive is NOT here — see the `goldfive` extra below.
-    # harmonograf_client ships the live-streaming sink the telemetry
-    # layer attaches to every inner-harness run when
-    # ZICATO_HARMONOGRAF_URL is set. It is imported lazily (see
-    # telemetry/sink.py) so the package is still import-safe without it
-    # installed; declaring it here ensures the sink resolves
-    # automatically in every standard install — operators no longer need
-    # a separate "install harmonograf-client" step to get the live view.
-    # (zicato's meta-loop activity is surfaced through heartbeats +
-    # journal/lineage + the post-run reducer, not goldfive Events; the
-    # harmonograf view stays the per-run execution view by design.)
-    "harmonograf-client",
-    # harmonograf_server is the in-process console server zicato auto-
-    # launches at evolve startup (see
-    # zicato.telemetry.harmonograf_supervisor). Bound to a free
-    # localhost port unless ZICATO_HARMONOGRAF_URL /
-    # config.integration.harmonograf_url opts in to an external instance.
-    # Imported lazily so a degraded install (missing dep) only disables
-    # the live console; evolve still runs.
-    "harmonograf-server",
     "click >= 8.1",
     "jsonschema >= 4.20",
 ]
@@ -62,9 +41,8 @@ dependencies = [
 # tests/test_no_goldfive_import.py proves the import surface against an
 # interpreter that cannot import goldfive. The extra buys the ADK
 # adapter path, the in-run process judges, and the default `goldfive`
-# telemetry dialect. NOTE: harmonograf-client requires goldfive
-# transitively, so a standard install still resolves it — the extra is
-# what makes the requirement declared rather than incidental.
+# telemetry dialect. The observability profile also resolves goldfive
+# transitively; the base profile does not.
 goldfive = ["goldfive"]
 adk = ["google-adk[extensions]", "goldfive[adk]"]
 # The standalone dashboard service: a Starlette/ASGI app served by
@@ -83,6 +61,15 @@ dashboard = [
 tui = [
     "textual == 8.2.8",
 ]
+# Every operator-facing live view: browser, terminal, and execution telemetry.
+observability = [
+    "starlette >= 0.40",
+    "uvicorn >= 0.30",
+    "watchdog >= 4.0",
+    "textual == 8.2.8",
+    "harmonograf-client",
+    "harmonograf-server",
+]
 # The Model Context Protocol server that exposes the proposer tool
 # registry (zicato.proposer.mcp_server) to a proposer that is NOT an
 # in-process ADK agent — an external agent process, an operator's own
@@ -91,6 +78,19 @@ tui = [
 # import in that module is lazy, so importing it without the extra is
 # safe and only building/serving a server needs the dependency.
 mcp = ["mcp >= 1.0"]
+# Complete runtime profile. Keep this explicit so wheel metadata alone defines
+# the profile and installers need no project-specific composition rules.
+all = [
+    "goldfive[adk]",
+    "google-adk[extensions]",
+    "starlette >= 0.40",
+    "uvicorn >= 0.30",
+    "watchdog >= 4.0",
+    "textual == 8.2.8",
+    "harmonograf-client",
+    "harmonograf-server",
+    "mcp >= 1.0",
+]
 dev = [
     "pytest >= 8",
     "pytest-asyncio >= 0.23",

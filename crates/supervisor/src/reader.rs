@@ -76,7 +76,7 @@ impl WorkspacePaths {
         self.workspace.join("lineage.json")
     }
 
-    /// SQLite analytical index built by `zicato reindex`
+    /// SQLite analytical index built by `zicato repair index`
     /// (`<workspace>/index.db`). May be absent.
     pub fn index_db(&self) -> PathBuf {
         self.workspace.join("index.db")

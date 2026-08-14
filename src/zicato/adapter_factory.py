@@ -40,7 +40,7 @@ def make_adapter_from_config(workspace_config: Mapping[str, Any]) -> Any:
       honestly in ``config.json`` instead of relying on a test-side
       factory monkeypatch.
 
-    Backwards-compatibility hook: the older ``zicato register`` flow
+    Backwards-compatibility hook: the older ``zicato epoch register`` flow
     persists ``config['adk_entrypoint']`` + ``config['mutable_trees']``
     at the workspace-config top level. When ``config['adapter']`` is
     absent but those legacy keys are present, we treat that as
@@ -67,7 +67,7 @@ def make_adapter_from_config(workspace_config: Mapping[str, Any]) -> Any:
     """
     adapter_dict = workspace_config.get("adapter")
     if adapter_dict is None:
-        # Legacy fallback — `zicato register` writes these top-level keys.
+        # Legacy fallback — `zicato epoch register` writes these top-level keys.
         legacy_entry = workspace_config.get("adk_entrypoint")
         if legacy_entry:
             adapter_dict = {

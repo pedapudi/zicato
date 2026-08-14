@@ -29,16 +29,14 @@ from __future__ import annotations
 
 import inspect
 import re
-from dataclasses import fields
 from pathlib import Path
 
 import zicato.dashboard as _dashboard_pkg
 from zicato.builder import api as builder_api
 from zicato.builder import copilot_tools, operations
-from zicato.epoch.contract import (
-    _CONTRACT_KNOB_DATACLASSES,
-    _SCORING_OMIT_AT_DEFAULT_FIELDS,
-)
+from zicato.core.scoring_config import contract_knobs, omit_at_default_fields
+
+_SCORING_OMIT_AT_DEFAULT_FIELDS = omit_at_default_fields()
 
 # ---------------------------------------------------------------------------
 # Guard 1 — the derived omit set must equal the pinned frozen literal.
@@ -129,12 +127,10 @@ def _knob_registry() -> dict[str, tuple[str, str, str]]:
     SUBKEY within it; ``subkey`` is ``""`` for a plain argument.
     """
     registry: dict[str, tuple[str, str, str]] = {}
-    for cls in _CONTRACT_KNOB_DATACLASSES:
-        for f in fields(cls):
-            op = f.metadata.get("builder_op")
-            if op:
-                arg, _, subkey = (f.metadata.get("builder_arg") or f.name).partition(".")
-                registry[f"{cls.__name__}.{f.name}"] = (op, arg, subkey)
+    for knob in contract_knobs():
+        if knob.builder_op:
+            arg, _, subkey = knob.builder_arg.partition(".")
+            registry[knob.key] = (knob.builder_op, arg, subkey)
     return registry
 
 
@@ -295,11 +291,9 @@ def test_every_contract_knob_is_exposed_or_explicitly_exempt() -> None:
     named in :data:`_NO_BUILDER_OP_KNOBS` with the reason.
     """
     unexplained: list[str] = []
-    for cls in _CONTRACT_KNOB_DATACLASSES:
-        for f in fields(cls):
-            key = f"{cls.__name__}.{f.name}"
-            if not f.metadata.get("builder_op") and key not in _NO_BUILDER_OP_KNOBS:
-                unexplained.append(key)
+    for knob in contract_knobs():
+        if not knob.builder_op and knob.key not in _NO_BUILDER_OP_KNOBS:
+            unexplained.append(knob.key)
     assert not unexplained, (
         "contract knob(s) with no builder op and no recorded exemption: "
         f"{sorted(unexplained)}. Either wire the knob through a builder op "
@@ -309,12 +303,7 @@ def test_every_contract_knob_is_exposed_or_explicitly_exempt() -> None:
     )
     # And the exemption list may not rot: an entry for a field that no
     # longer exists (or has since GAINED an op) is stale.
-    live = {
-        f"{cls.__name__}.{f.name}"
-        for cls in _CONTRACT_KNOB_DATACLASSES
-        for f in fields(cls)
-        if not f.metadata.get("builder_op")
-    }
+    live = {knob.key for knob in contract_knobs() if not knob.builder_op}
     stale = set(_NO_BUILDER_OP_KNOBS) - live
     assert not stale, (
         f"stale _NO_BUILDER_OP_KNOBS entries {sorted(stale)} — the field was "

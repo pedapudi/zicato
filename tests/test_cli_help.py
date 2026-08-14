@@ -77,8 +77,8 @@ def test_help_has_happy_path_and_advanced_sections() -> None:
     assert result.exit_code == 0, result.output
     out = result.output
 
-    happy_marker = "Happy path"
-    advanced_marker = "Advanced commands"
+    happy_marker = "Primary commands"
+    advanced_marker = "Advanced namespaces"
     assert happy_marker in out
     assert advanced_marker in out
     # The happy-path section must come first.
@@ -97,21 +97,8 @@ def test_happy_path_section_lists_init_then_evolve() -> None:
     # above the advanced section.
     init_at = out.index("\n  init")
     evolve_at = out.index("\n  evolve")
-    advanced_at = out.index("Advanced commands")
+    advanced_at = out.index("Advanced namespaces")
     assert init_at < evolve_at < advanced_at
-
-
-def test_help_epilog_carries_usage_examples() -> None:
-    """The root help epilog shows a worked ``zicato init`` / ``evolve`` example."""
-    runner = CliRunner()
-    result = runner.invoke(build_cli_root(), ["--help"])
-    assert result.exit_code == 0, result.output
-    out = result.output
-    # A concrete, copy-pasteable example for each happy-path command.
-    assert "zicato init" in out
-    assert "zicato evolve" in out
-    assert "--harness-call-llm" in out
-    assert "--auxiliary-call-llm" in out
 
 
 def test_help_explains_auto_epoching() -> None:
@@ -122,20 +109,6 @@ def test_help_explains_auto_epoching() -> None:
     out = result.output.lower()
     assert "contract" in out
     assert "epoch" in out
-
-
-def test_advanced_commands_are_marked_advanced() -> None:
-    """Every advanced command's short help flags it as off the happy path.
-
-    The ``help`` alias is exempt — it is a help affordance, not an
-    advanced workflow command.
-    """
-    root = build_cli_root()
-    for name, cmd in root.commands.items():
-        if name in HAPPY_PATH_COMMANDS or name == "help":
-            continue
-        short = cmd.get_short_help_str(limit=200)
-        assert "Advanced" in short, f"{name!r} short help is not marked Advanced: {short!r}"
 
 
 def test_advanced_command_summaries_are_not_truncated() -> None:
@@ -176,56 +149,7 @@ def test_every_command_has_a_help_screen() -> None:
                 ), f"{name} {sub_name} --help failed: {sub_result.output}"
 
 
-# ---------------------------------------------------------------------------
-# 2. The `help` command
-# ---------------------------------------------------------------------------
-
-
-def test_help_command_is_registered() -> None:
-    """``zicato help`` exists as a command."""
-    root = build_cli_root()
-    assert "help" in root.commands
-
-
-def test_help_command_with_no_args_renders_root_help() -> None:
-    """``zicato help`` with no argument renders the same screen as ``--help``."""
-    root = build_cli_root()
-    runner = CliRunner()
-    via_command = runner.invoke(root, ["help"])
-    via_flag = runner.invoke(root, ["--help"])
-    assert via_command.exit_code == 0, via_command.output
-    # The body of the two help screens matches (both list the happy path).
-    assert "Happy path" in via_command.output
-    assert "Advanced commands" in via_command.output
-    # Same command sections appear in both.
-    for name in root.commands:
-        assert name in via_command.output
-    assert "Happy path" in via_flag.output
-
-
-def test_help_command_for_a_specific_command() -> None:
-    """``zicato help evolve`` renders evolve's own help."""
-    root = build_cli_root()
-    runner = CliRunner()
-    result = runner.invoke(root, ["help", "evolve"])
-    assert result.exit_code == 0, result.output
-    # evolve's option surface shows up.
-    assert "--harness-call-llm" in result.output
-    assert "--no-auto-epoch" in result.output
-
-
-def test_help_command_for_unknown_command_errors() -> None:
-    """``zicato help bogus`` exits non-zero with a directional message."""
-    root = build_cli_root()
-    runner = CliRunner()
-    result = runner.invoke(root, ["help", "does-not-exist"])
-    assert result.exit_code != 0
-    assert "does-not-exist" in result.output
-
-
-# ---------------------------------------------------------------------------
-# 3. evolve resolves the contract and auto-epochs on a contract change
-# ---------------------------------------------------------------------------
+# Evolve resolves the contract and auto-epochs on a contract change.
 
 
 def _install_cli_capture(monkeypatch: pytest.MonkeyPatch, captured: dict[str, Any]) -> None:

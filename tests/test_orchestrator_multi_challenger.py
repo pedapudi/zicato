@@ -378,9 +378,9 @@ def test_swiss_field_rejects_when_no_challenger_beats_champion(
     assert outcome.child_scalar > outcome.parent_scalar, "challenger loss is above the champion's"
     assert outcome.rejection_reason, "a rejection carries the gate's reason"
     # Champion stands — the promoted head is still v0 (no marker advance).
-    from zicato.orchestrator import _resolve_current_generation
+    from zicato.evolve.generation_phase import current_generation
 
-    assert _resolve_current_generation(workspace, epoch_id) == "v0"
+    assert current_generation(workspace, epoch_id) == "v0"
 
     gens = workspace / "epochs" / epoch_id / "generations"
     for gid in ("v1", "v2"):
@@ -962,7 +962,8 @@ def test_field_override_promotes_a_non_winner(
     _queue_override(workspace, "promote", "v2", reason="prefer the diverse idea", structure="swiss")
     _queue_override(workspace, "reject", "v1", reason="too risky")
 
-    from zicato.orchestrator import _resolve_current_generation, evolve_once
+    from zicato.evolve.generation_phase import current_generation
+    from zicato.orchestrator import evolve_once
 
     outcome = asyncio.run(
         evolve_once(
@@ -975,7 +976,7 @@ def test_field_override_promotes_a_non_winner(
 
     assert outcome.tournament_decision == "promoted"
     # The operator-promoted candidate is the head, not the lower-loss v1.
-    assert _resolve_current_generation(workspace, epoch_id) == "v2"
+    assert current_generation(workspace, epoch_id) == "v2"
 
     gens = workspace / "epochs" / epoch_id / "generations"
     v2_oc = json.loads((gens / "v2" / "experiment.json").read_text())["outcome"]
@@ -1019,7 +1020,8 @@ def test_field_override_multi_promote_advances_two(
     _queue_override(workspace, "promote", "v1", reason="train leader")
     _queue_override(workspace, "promote", "v3", reason="co-leader worth keeping")
 
-    from zicato.orchestrator import _resolve_current_generation, evolve_once
+    from zicato.evolve.generation_phase import current_generation
+    from zicato.orchestrator import evolve_once
 
     outcome = asyncio.run(
         evolve_once(
@@ -1032,7 +1034,7 @@ def test_field_override_multi_promote_advances_two(
 
     assert outcome.tournament_decision == "promoted"
     # The PRIMARY head is the lowest-scalar promoted candidate (v1, loss 0.5).
-    assert _resolve_current_generation(workspace, epoch_id) == "v1"
+    assert current_generation(workspace, epoch_id) == "v1"
 
     gens = workspace / "epochs" / epoch_id / "generations"
     v1_oc = json.loads((gens / "v1" / "experiment.json").read_text())["outcome"]
@@ -1078,7 +1080,8 @@ def test_field_override_rejects_every_challenger_champion_stands(
     _queue_override(workspace, "reject", "v1", reason="regression risk")
     _queue_override(workspace, "reject", "v2", reason="regression risk")
 
-    from zicato.orchestrator import _resolve_current_generation, evolve_once
+    from zicato.evolve.generation_phase import current_generation
+    from zicato.orchestrator import evolve_once
 
     outcome = asyncio.run(
         evolve_once(
@@ -1091,7 +1094,7 @@ def test_field_override_rejects_every_challenger_champion_stands(
 
     assert outcome.tournament_decision == "rejected"
     # The champion stands — no challenger advanced.
-    assert _resolve_current_generation(workspace, epoch_id) == "v0"
+    assert current_generation(workspace, epoch_id) == "v0"
 
     gens = workspace / "epochs" / epoch_id / "generations"
     for gid in ("v1", "v2"):

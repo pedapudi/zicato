@@ -1,4 +1,4 @@
-"""Tests for ``zicato.mutation.validator`` and the ``zicato mutations`` CLI."""
+"""Tests for ``zicato.mutation.validator`` and the ``zicato inspect mutations`` CLI."""
 
 from __future__ import annotations
 

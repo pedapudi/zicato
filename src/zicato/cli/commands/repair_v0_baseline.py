@@ -1,4 +1,4 @@
-"""``zicato repair-v0-baseline`` — backfill the synthetic v0 experiment.json.
+"""``zicato repair v0-baseline`` — backfill the synthetic v0 experiment.json.
 
 ADVANCED / DEBUGGING — off the happy path. Fresh workspaces created by a
 recent ``zicato evolve`` already carry a synthetic ``experiment.json``

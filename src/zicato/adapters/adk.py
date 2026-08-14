@@ -289,7 +289,7 @@ def entrypoint_snapshot_origin_error(
     wrapped in the caller's error type.
 
     Import-free by construction: pure path math, no ``importlib``, so
-    ``zicato register`` still works in an environment where the target's own
+    ``zicato epoch register`` still works in an environment where the target's own
     runtime deps are not installed.
     """
     trees = list(mutable_trees)
@@ -2057,7 +2057,7 @@ class ADKHarnessAdapter:
             f"relative to a mutable tree: a "
             f"snapshot copies each tree under its basename, so the entrypoint's "
             f"top-level module must be one of {expected!r} "
-            f"(`zicato register --adk <tree_basename>.<module>:<symbol> "
+            f"(`zicato epoch register --adk <tree_basename>.<module>:<symbol> "
             f"--mutable-tree <tree>`)."
         )
 

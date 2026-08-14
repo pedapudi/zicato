@@ -152,7 +152,7 @@ timer.
 * **The full render with LLM prose happens at epoch close** — as today. The
   close seam runs the bounded auxiliary-LLM prose pass, producing the finished
   paper and dropping the LIVING DRAFT stamp.
-* **`zicato regenerate-report` is unchanged** — the manual backfill still runs
+* **`zicato repair report` is unchanged** — the manual backfill still runs
   the full render (or `--no-llm` for deterministic-only).
 
 The dashboard tab picks up the refresh through the normal SSE path under the

@@ -47,6 +47,7 @@ from zicato.core.workspace import (
     experiment_json_path,
     generation_dir,
 )
+from zicato.evolve import generation_phase
 from zicato.evolve.dashboard_projection import (
     _clear_active_tournament,
     _field_entries,
@@ -372,7 +373,7 @@ async def evolve_once(
     # returns ``None`` and the round runs normally.
     _skip_reason = claim_skip_round(workspace_root)
     if _skip_reason is not None:
-        parent_for_skip = _safe_resolve_parent(workspace_root, resolved_epoch_id)
+        parent_for_skip = generation_phase.safe_parent(workspace_root, resolved_epoch_id)
         log.warning(
             "evolve: round %d skipped by operator (skip_round); reason=%s",
             round_index,
@@ -439,6 +440,16 @@ async def evolve_once(
     # We do nothing more here.
     if config.instance_id != instance_id:
         config = replace(config, instance_id=instance_id)
+    session = generation_phase.RoundSession(
+        workspace_root=workspace_root,
+        epoch_id=resolved_epoch_id,
+        round_index=round_index,
+        total_rounds=total_rounds,
+        instance_id=instance_id,
+        adapter=adapter,
+        config=config,
+        weights=weights,
+    )
     # Per-round token budget (WS-H): mint a FRESH ledger for this round and
     # rebind it onto the config, so every runner seam that already receives
     # the config — the full/fast board-unit schedulers, the candidate
@@ -497,12 +508,12 @@ async def evolve_once(
     # manual ``zicato baseline`` invocation, but materialising it on
     # demand here keeps the CLI surface narrow.
     _ensure_baseline_snapshot(workspace_root, resolved_epoch_id, workspace_config)
-    parent_id = _resolve_current_generation(workspace_root, resolved_epoch_id)
+    parent_id = generation_phase.current_generation(workspace_root, resolved_epoch_id)
     parent_gen = Generation(
         id=parent_id,
         epoch_id=resolved_epoch_id,
         parent_id=None,
-        snapshot_root=_snapshot_root(workspace_root, resolved_epoch_id, parent_id),
+        snapshot_root=generation_phase.snapshot_root(workspace_root, resolved_epoch_id, parent_id),
         created_at=_now_iso(),
         promoted=True,
     )
@@ -587,7 +598,9 @@ async def evolve_once(
         _warn_margin_below_noise_floor(workspace_root, resolved_epoch_id)
 
     # --- 3. Mutations ---
-    mutations = enumerate_mutations(_resolve_mutable_trees(adapter, parent_gen.snapshot_root))
+    mutations = enumerate_mutations(
+        generation_phase.mutable_trees(session.adapter, parent_gen.snapshot_root)
+    )
     if not mutations:
         raise RuntimeError(
             f"no mutation points enumerated under {parent_gen.snapshot_root}; "
@@ -788,7 +801,7 @@ async def evolve_once(
     # --- 6. Propose ---
     # When resuming an interrupted round in place (runtime/resume.py), reuse
     # the SAME generation id the prior run minted — its directory still
-    # exists, so ``_next_generation_id`` would otherwise skip past it to a
+    # exists, so ``generation_phase.next_generation_id`` would otherwise skip past it to a
     # fresh vN+1 and orphan the completed loss.json units. Every other path
     # (cold start, discarded partial, post-resume rounds) picks the next
     # fresh id exactly as before.
@@ -799,7 +812,7 @@ async def evolve_once(
     ):
         next_id = resume_plan.resume_generation_id
     else:
-        next_id = _next_generation_id(workspace_root, resolved_epoch_id)
+        next_id = generation_phase.next_generation_id(workspace_root, resolved_epoch_id)
     from zicato.runtime import progress_log  # noqa: PLC0415
 
     _beat(
@@ -976,7 +989,7 @@ async def evolve_once(
         )
         validation_errors = list(proposer_validation_failed.attempts)
         child_snapshot = last_child_snapshot.get(
-            "path", _snapshot_root(workspace_root, resolved_epoch_id, next_id)
+            "path", generation_phase.snapshot_root(workspace_root, resolved_epoch_id, next_id)
         )
     else:
         assert experiment is not None  # narrowed: no ProposerError above
@@ -1506,8 +1519,8 @@ async def evolve_once(
         workspace_root=workspace_root,
         epoch_id=resolved_epoch_id,
         board=board,
-        round_n=_round_n_from_generation_id(next_id) or round_index,
-        analyzer_round=_round_n_from_generation_id(next_id),
+        round_n=generation_phase.round_number(next_id) or round_index,
+        analyzer_round=generation_phase.round_number(next_id),
         mutations=mutations,
         auxiliary_call_llm=auxiliary_call_llm,
         auxiliary_model=str(workspace_config.get("auxiliary_model", "")),
@@ -1688,10 +1701,10 @@ async def _evolve_multi_challenger(
     field_status: list[dict[str, Any]] = []
     # Mint ids monotonically from the highest existing vN so every
     # challenger gets a distinct id even when a proposer attempt fails
-    # before it derives a snapshot (so _next_generation_id can't re-pick
+    # before it derives a snapshot (so generation_phase.next_generation_id can't re-pick
     # the same vN). The first id matches what the gauntlet path would mint.
-    base_id = _next_generation_id(workspace_root, epoch_id)
-    base_n = _round_n_from_generation_id(base_id)
+    base_id = generation_phase.next_generation_id(workspace_root, epoch_id)
+    base_n = generation_phase.round_number(base_id)
     custom_judge_names = _declared_custom_judge_names(board, weights)
     # Experiment memory: the settled cross-round digest, computed ONCE
     # before the field is minted (it does not change as siblings apply).
@@ -2073,7 +2086,7 @@ async def _evolve_multi_challenger(
         id=parent_id,
         epoch_id=epoch_id,
         parent_id=None,
-        snapshot_root=_snapshot_root(workspace_root, epoch_id, parent_id),
+        snapshot_root=generation_phase.snapshot_root(workspace_root, epoch_id, parent_id),
         created_at=_now_iso(),
         promoted=True,
     )
@@ -2264,7 +2277,7 @@ async def _evolve_multi_challenger(
     # resolves (issue #16). The runtime ``active_tournament`` envelope above
     # is ephemeral (cleared on crash, overwritten next round); only the
     # durable ``tournaments/field-*.json`` record is queryable by the index,
-    # ``zicato reindex``, and any external consumer. Opening it here in
+    # ``zicato repair index``, and any external consumer. Opening it here in
     # ``in_progress`` state — with the competitor field + proposing status
     # but no resolved bracket yet — means the in-flight round is visible to
     # EVERY store the moment its challengers are minted, not only at settle.
@@ -2805,12 +2818,12 @@ async def _evolve_multi_challenger(
             child_scalar=float(gen_agg["scalar"]) if gen_agg else None,
         )
     if promoted_id is not None:
-        _set_current_generation(workspace_root, epoch_id, promoted_id)
+        generation_phase.set_current_generation(workspace_root, epoch_id, promoted_id)
         # The marker MUST now name the crowned generation — a write that did
         # not stick (e.g. a read-only workspace) would leave a settled
         # ``promoted`` bracket whose champion never advanced. Re-read and
         # raise rather than diverge silently (issue #20 acceptance #3).
-        _crowned_head = _resolve_current_generation(workspace_root, epoch_id)
+        _crowned_head = generation_phase.current_generation(workspace_root, epoch_id)
         if _crowned_head != promoted_id:
             raise RuntimeError(
                 "crowning invariant violated: bracket promoted "
@@ -2846,8 +2859,8 @@ async def _evolve_multi_challenger(
         workspace_root=workspace_root,
         epoch_id=epoch_id,
         board=board,
-        round_n=_round_n_from_generation_id(applied[0].generation_id) or round_index,
-        analyzer_round=_round_n_from_generation_id(applied[0].generation_id),
+        round_n=generation_phase.round_number(applied[0].generation_id) or round_index,
+        analyzer_round=generation_phase.round_number(applied[0].generation_id),
         mutations=mutations,
         auxiliary_call_llm=auxiliary_call_llm,
         auxiliary_model=auxiliary_model,
@@ -3027,7 +3040,7 @@ def _defer_round_infra_outage(
     health_summary, health_critical = _assess_and_persist_loop_health(
         workspace_root,
         epoch_id,
-        _round_n_from_generation_id(next_id) or round_index,
+        generation_phase.round_number(next_id) or round_index,
         board,
         infra_outage=(infra_aborted, infra_threshold),
     )
@@ -3100,137 +3113,6 @@ def _generalization_fields_from_scalars(
         "holdout_loss": holdout_loss,
         "generalization_gap": holdout_loss - train_loss,
     }
-
-
-def _round_n_from_generation_id(generation_id: str) -> int | None:
-    """Map a ``vN`` generation id back to ``N`` for the analyzer's filename.
-
-    Returns ``None`` (which makes the analyzer write
-    ``insights/latest.md`` instead of a numbered round) for any
-    generation id that doesn't follow the ``vN`` convention. Defensive
-    against future schema changes; the orchestrator's own
-    ``_next_generation_id`` always picks ``vN`` so this is a no-op on
-    healthy inputs.
-    """
-
-    if generation_id.startswith("v") and generation_id[1:].isdigit():
-        return int(generation_id[1:])
-    return None
-
-
-def _current_generation_marker(workspace_root: Path, epoch_id: str) -> Path:
-    return WorkspaceLayout.from_root(workspace_root).current_generation_marker(epoch_id)
-
-
-def _resolve_current_generation(workspace_root: Path, epoch_id: str) -> str:
-    """Return the id of the promoted lineage head for this epoch.
-
-    Reads ``epochs/{epoch}/current_generation`` if present; otherwise
-    falls back to the highest-numbered ``vN`` subdirectory under
-    ``generations/``. Raises :class:`FileNotFoundError` when neither
-    path resolves — that's a sign the operator hasn't established a
-    baseline generation yet.
-    """
-    marker = _current_generation_marker(workspace_root, epoch_id)
-    if marker.exists():
-        text = marker.read_text(encoding="utf-8").strip()
-        if text:
-            return text
-    gens_root = WorkspaceLayout.from_root(workspace_root).generations_dir(epoch_id)
-    if not gens_root.exists():
-        raise FileNotFoundError(f"no generations under {gens_root}; the epoch has no baseline yet")
-    candidates = [p.name for p in gens_root.iterdir() if p.is_dir()]
-    if not candidates:
-        raise FileNotFoundError(f"no generations under {gens_root}; the epoch has no baseline yet")
-
-    def _key(name: str) -> tuple[int, int, str]:
-        if name.startswith("v") and name[1:].isdigit():
-            return (0, int(name[1:]), name)
-        return (1, 0, name)
-
-    return sorted(candidates, key=_key)[-1]
-
-
-def _safe_resolve_parent(workspace_root: Path, epoch_id: str | None) -> str:
-    """Best-effort resolve the lineage head for a synthetic abort outcome.
-
-    Used only on the within-round budget-abort path, where we need *a*
-    ``parent_generation_id`` for the fabricated :class:`EvolveRoundOutcome`
-    but the round was cancelled before it resolved its own parent. Any
-    resolution failure (no baseline yet, missing epoch) degrades to the
-    empty string rather than masking the real budget-abort message with
-    an unrelated traceback.
-    """
-    if not epoch_id:
-        return ""
-    try:
-        return _resolve_current_generation(workspace_root, epoch_id)
-    except (FileNotFoundError, OSError):
-        return ""
-
-
-def _set_current_generation(workspace_root: Path, epoch_id: str, generation_id: str) -> None:
-    marker = _current_generation_marker(workspace_root, epoch_id)
-    marker.parent.mkdir(parents=True, exist_ok=True)
-    marker.write_text(generation_id + "\n", encoding="utf-8")
-
-
-def _snapshot_root(workspace_root: Path, epoch_id: str, generation_id: str) -> Path:
-    """Return a generation's source-tree path via the :class:`GenerationStore` seam.
-
-    Generation source trees are a pluggable store
-    (``docs/design/STORAGE.md`` §4-§5); this resolves the coordinate
-    through the workspace's :class:`~zicato.epoch.genstore.GenerationStore`
-    rather than hard-coding the directory layout. The default store is
-    the directory-snapshot backend, so the resolved path is unchanged
-    (``generations/{id}/snapshot/``) — but a git backend would resolve
-    it to a worktree at this one seam.
-    """
-    from zicato.epoch.genstore import default_generation_store  # noqa: PLC0415
-
-    return default_generation_store(workspace_root).snapshot_root(epoch_id, generation_id)
-
-
-def _next_generation_id(workspace_root: Path, epoch_id: str) -> str:
-    """Pick a fresh ``vN`` id one above the highest existing.
-
-    Generation presence comes from the
-    :class:`~zicato.epoch.genstore.GenerationStore` seam — the directory
-    backend reports the same on-disk ``vN`` directories as before.
-    """
-    from zicato.epoch.genstore import default_generation_store  # noqa: PLC0415
-
-    store = default_generation_store(workspace_root)
-    max_n = -1
-    for gid in store.list_generations(epoch_id):
-        if gid.startswith("v") and gid[1:].isdigit():
-            n = int(gid[1:])
-            if n > max_n:
-                max_n = n
-    return f"v{max_n + 1}"
-
-
-def _resolve_mutable_trees(adapter: Any, snapshot_root: Path) -> list[Path]:
-    """Resolve the mutable surface for a generation snapshot.
-
-    The **mutable surface** is the set of sub-trees the proposer may
-    rewrite — narrower than the whole snapshot, which also carries
-    support code the worker executes but the proposer never edits. An
-    adapter declares it via :meth:`HarnessAdapter.mutable_subpaths`,
-    which re-bases the adapter's mutable-tree declaration onto this
-    concrete ``snapshot_root``.
-
-    Falls back to ``[snapshot_root]`` — the whole tree — only when the
-    adapter has no ``mutable_subpaths`` method (a non-conforming or
-    legacy adapter). Mutation enumeration walks exactly the returned
-    paths.
-    """
-    resolver = getattr(adapter, "mutable_subpaths", None)
-    if callable(resolver):
-        subpaths = resolver(snapshot_root)
-        if subpaths:
-            return list(subpaths)
-    return [snapshot_root]
 
 
 def _load_parent_losses(
@@ -4664,7 +4546,7 @@ def _ensure_baseline_snapshot(
             raise RuntimeError(
                 "evolve_once: workspace_config has no 'mutable_trees' / "
                 "'source_roots' — cannot seed a v0 baseline snapshot. "
-                "Run `zicato register --mutable-tree ...` first."
+                "Run `zicato epoch register --mutable-tree ...` first."
             )
         # seed_generation copies each registered tree under its basename
         # and raises FileNotFoundError for a missing source — the same
@@ -4686,7 +4568,7 @@ def _ensure_baseline_snapshot(
         promoted=True,
     )
     append_to_lineage(workspace_root, epoch_id, baseline_gen, parent_id=None)
-    _set_current_generation(workspace_root, epoch_id, "v0")
+    generation_phase.set_current_generation(workspace_root, epoch_id, "v0")
 
     # Synthetic ``experiment.json`` for v0 so every downstream consumer
     # (the analyzer report data loader, the index dual-write, the
@@ -4987,13 +4869,12 @@ __all__ = [
     # through THIS module object at call time so the test suite's
     # monkeypatches keep biting. Some are no longer referenced in the
     # orchestrator body (the loop moved out); others (``claim_skip_round``,
-    # ``_safe_resolve_parent``) are still used here too. All must stay
+    # ``safe_parent``) are still used here too. All must stay
     # attributes of this module and reachable as exports for the loop's
     # ``_orch.<name>`` access.
     "_build_meta_loop_emitter_safe",
     "_mark_run_terminal",
     "_resolve_or_launch_harmonograf",
-    "_safe_resolve_parent",
     "block_while_paused",
     "claim_rubric_replacement",
     "claim_skip_round",

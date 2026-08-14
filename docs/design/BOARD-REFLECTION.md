@@ -46,7 +46,7 @@
 > at emit time — margin → `set_gate {promote_margin: 2.5× floor}`, judge-pruning
 > → `set_weights {per_judge_weights: {j: 0.0}}`), plus the scripted-double
 > adjudicators (`zicato/testing/adjudicators.py`).
-> **Shipped since (the surfaces, R4)**: the `zicato reflect` CLI
+> **Shipped since (the surfaces, R4)**: the `zicato inspect reflection` CLI
 > (`cli/commands/reflect.py`, auto-discovered) — `run` (build the corpus by
 > referencing the lineage's artifacts with zero LLM, analyse the four pillars,
 > adjudicate when an independent meta-judge is supplied, and persist
@@ -57,7 +57,7 @@
 > budget), `report`, and `apply` (fork a BUILDER DRAFT + stage the finding's
 > `proposed_op` — never the sealed contract; `reflection/apply.py`); the index
 > projection (schema v11 additive — the `reflections` + `judge_scorecards`
-> tables, upserted at finalize AND re-derived by `zicato reindex`, with
+> tables, upserted at finalize AND re-derived by `zicato repair index`, with
 > tolerant readers that degrade on a stale/absent index — files canonical, the
 > index a projection); the dashboard-free `query/reflection_view.py`
 > (bill-of-health summary, scorecards, transcript x-ray, and the
@@ -245,7 +245,7 @@ calls**: it is a pure read over the contract (`board` / `scoring` / `epoch`), th
 operating history (`experiments`, the persisted `noise_floor` / `preflight`), and
 the reflection artifacts (`scorecards` / the corpus term-contributions) when a
 `reflect run` produced them. It therefore rides the same passive, always-free tier
-as continuous reflection — and a dedicated `zicato reflect practices` runs the
+as continuous reflection — and a dedicated `zicato inspect reflection practices` runs the
 contract+history checks on **any** epoch instantly, with no corpus at all.
 
 **Composition, not re-derivation.** Where a loop-health detector or an analysis
@@ -518,7 +518,7 @@ Grounded in the **adjudicated transcript**, not in any pre-authored label:
 ## The `reflect` command surface
 
 ```
-zicato reflect [--workspace PATH]
+zicato inspect reflection [--workspace PATH]
   --epoch EPOCH_ID                 # contract to validate (default: current)
   --candidate GEN_ID ...           # default: champion + recent lineage slice
   --entries ENTRY_ID ...           # default: whole board
@@ -530,8 +530,8 @@ zicato reflect [--workspace PATH]
   --max-wall-clock-seconds N       # budget ceiling
   --output PATH                    # report destination
 
-zicato reflect report <reflection_id>            # render a stored reflection report
-zicato reflect apply  <reflection_id> <finding_id>  # fork a BUILDER DRAFT + apply the finding's
+zicato inspect reflection report <reflection_id>            # render a stored reflection report
+zicato inspect reflection apply  <reflection_id> <finding_id>  # fork a BUILDER DRAFT + apply the finding's
                                                  # proposed_op; the operator seals via the
                                                  # builder (sealing rolls the epoch)
 ```
@@ -611,7 +611,7 @@ at three cadences and cost points**, so: one engine, three surfaces.
 - **`reflection/` engine** — pure analyzers (the four pillars over the observation
   corpus) + an active scheduler that reuses the tournament runner to *produce* the
   corpus and an independent meta-judge to *adjudicate* it.
-- **`zicato reflect`** — the deep active validation + report; also the builder's
+- **`zicato inspect reflection`** — the deep active validation + report; also the builder's
   "validate" action.
 - **evolve preflight** — the cheap subset (above), default-on.
 - **continuous passive** — offline re-analysis feeding the dashboard + loop-health.
@@ -665,7 +665,7 @@ Seven improvement decisions, settled during the implementation program:
    (see the capture section), not in a new frame taxonomy the log's three
    parsers would all have to learn.
 
-**Apply path**: `zicato reflect apply <finding_id>` forks a **builder draft**
+**Apply path**: `zicato inspect reflection apply <finding_id>` forks a **builder draft**
 and applies the finding's `proposed_op` to it; the operator reviews and seals
 through the builder. Reflection never edits the sealed contract directly —
 the recommend-only invariant holds end-to-end.

@@ -14,7 +14,7 @@ This document specifies:
 - The AST resolution rules that map a marker to a source location.
 - The shape of `MutationPoint` and the
   `HarnessAdapter.mutation_points()` protocol method.
-- The `zicato mutations` audit CLI.
+- The `zicato inspect mutations` audit CLI.
 - The applier's validator constraints.
 - The interaction with the proposer brief's `## Forbidden` list.
 
@@ -369,7 +369,7 @@ its `:file` / `:code` forms resolve by line position alone.
    applier, which re-resolves the exact literal node at apply time so a
    replacement never eats the `NAME =` in front of it (§6).
 5. A span marker with **no literal beneath it** is dropped silently; the
-   `zicato mutations` listing is where the operator sees the id missing.
+   `zicato inspect mutations` listing is where the operator sees the id missing.
 
 **Duplicate ids** are not rejected at enumeration — the enumerator emits
 one point per marker and does not dedupe. They are rejected at
@@ -468,7 +468,7 @@ adapter-instrumented goldfive checkout it wraps (target 2 — see
 The CLI exposes this with the `--mutable-tree` flag on `register`:
 
 ```
-zicato register --adk agent_package.agent:root_agent \
+zicato epoch register --adk agent_package.agent:root_agent \
     --mutable-tree path/to/agent_package \
     --mutable-tree path/to/another/package
 ```
@@ -499,7 +499,7 @@ Two in-tree targets bracket the range. Target 0
 (`examples/zicato_examples/target_0_convergence`) is a deterministic policy
 with no LLM at all, whose entire surface is one marked module-level string
 constant. Target 2 is goldfive — a library, registered with
-`zicato register --mutable-tree <checkout>/goldfive` while the entrypoint
+`zicato epoch register --mutable-tree <checkout>/goldfive` while the entrypoint
 stays outside every tree.
 
 Nor is the surface Python-only. The native marker pass walks `*.py` **and**
@@ -596,7 +596,7 @@ patches by id and rewrites within an enumerated point, but only the
 operator's markers define what the surface is. A2 enforces that every
 patched id still resolves after the rewrite.
 
-## 7. The `zicato mutations` CLI
+## 7. The `zicato inspect mutations` CLI
 
 The audit command — `Advanced: audit the mutable surface the proposer
 may change`. It resolves the registered adapter from the workspace,
@@ -605,7 +605,7 @@ enumerates this surface itself every round; this command exists to let
 an operator audit what the proposer is allowed to change.
 
 ```
-$ zicato mutations
+$ zicato inspect mutations
 [span]   researcher_instruction
          agent.py:18-18
          "You research the user's question by ..."
@@ -638,12 +638,12 @@ source root. Filter by id glob (`--id`) when you want a subset.
 The intended workflow is:
 
 1. Operator marks new mutation points in the inner harness's source.
-2. Operator runs `zicato mutations` to confirm every marker resolves
+2. Operator runs `zicato inspect mutations` to confirm every marker resolves
    cleanly (no warnings, no duplicate ids).
 3. Operator runs `zicato evolve` and the proposer addresses patches
    against the surface they just confirmed.
 
-`zicato mutations` is also the right place to confirm the exact id
+`zicato inspect mutations` is also the right place to confirm the exact id
 spellings before adding one to the proposer brief's `## Forbidden`
 list — the forbidden-id check (`check_forbidden_ids`) matches on the
 literal id, so the operator can copy the id straight out of the
@@ -664,7 +664,7 @@ The recommended workflow for marking up an inner harness:
 3. Add a span marker on the line above with a meaningful id. The id
    should encode the role and the role's part: `coordinator.routing`,
    `researcher.instruction`, `writer.tools.summarize.description`.
-4. Run `zicato mutations` and confirm the marker resolves.
+4. Run `zicato inspect mutations` and confirm the marker resolves.
 
 For a whole module of related strings (a `prompts.py`), add one file
 marker at the top of the file. Span markers within it become optional.

@@ -163,7 +163,7 @@ A few specifics:
   is the promoted final generation from the previous epoch (or the
   initial-registered source for the first epoch).
 - `v0` carries a **synthetic seed `experiment.json`** (written by
-  `write_seed_experiment`; `zicato repair-v0-baseline` backfills it
+  `write_seed_experiment`; `zicato repair v0-baseline` backfills it
   for older workspaces) so every generation directory has a uniform
   shape. Every subsequent generation carries a real proposer
   `experiment.json`.
@@ -415,7 +415,7 @@ auxiliary callable is available (e.g. `zicato epoch close` run by hand
 without one wired through), the close path writes a deterministic stub
 `analysis.md` — the journal snapshot plus a `_no auxiliary LLM was
 supplied_` placeholder — that the operator can later re-render with
-`zicato regenerate-report`. The LLM pass receives:
+`zicato repair report`. The LLM pass receives:
 
 - The full `journal.md` for the epoch.
 - The list of all `experiment.json` files (hypothesis + outcome).
@@ -466,8 +466,8 @@ The operator closes an epoch with `zicato epoch close [EPOCH_ID]`
    timestamp in `lineage.json`.
 
 To re-render an existing epoch's report against the current on-disk
-data, use `zicato regenerate-report` (deterministic figures/tables
-always; `--no-llm` skips the prose pass). `zicato analyze-telemetry`
+data, use `zicato repair report` (deterministic figures/tables
+always; `--no-llm` skips the prose pass). `zicato inspect telemetry`
 (re)runs the decision-telemetry analyzer for an epoch out of band.
 
 If the operator starts a new epoch (`zicato epoch new`) without
@@ -950,7 +950,7 @@ the bytes inside those trees are not.
 
 ### 10.2 Canonical contract paths
 
-`zicato register` records the canonical contract source paths in
+`zicato epoch register` records the canonical contract source paths in
 `.zicato/config.json` under a `contract` key. The default convention
 (used when the operator does not override) is the operator's project
 root, alongside the `.zicato/` directory:

@@ -352,7 +352,7 @@ def build_practice_review(paths: WorkspacePaths, reflection_id: str) -> dict[str
     """The practice review for one reflection — FILE-first, DQ3 same-shape degrade.
 
     Projects the canonical ``practices.json`` (the ``PracticeReview.to_json``
-    shape: ``{checks, verdict_counts}``) written by ``zicato reflect run``. An
+    shape: ``{checks, verdict_counts}``) written by ``zicato inspect reflection run``. An
     unknown reflection, or one that predates the practice review (no
     ``practices.json``), degrades to a same-shape empty payload with
     ``found: False`` rather than raising — the file is canonical and this reader

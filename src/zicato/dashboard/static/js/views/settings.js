@@ -12,7 +12,7 @@
 // NAVIGATES to `#/builder` (an <a href> via the router) rather than rendering
 // the builder inside the host. One route-agnostic builder module still backs
 // every entry point: the top-bar nav entry, the `#/builder` deep-link, this
-// launcher, and the standalone `zicato builder` CLI.
+// launcher, and the standalone `zicato dashboard --view builder` CLI.
 //
 // Render discipline: the chrome (rail + host) is built ONCE per mount and the
 // active section is swapped on selection; every section paints through a

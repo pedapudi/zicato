@@ -471,7 +471,7 @@ def test_the_scratch_sweep_reclaims_dead_builds_and_spares_live_ones(
 
 
 def test_rebuild_index_still_produces_a_from_scratch_database(tmp_path: Path) -> None:
-    """The refactor onto temp-then-rename must not weaken ``zicato reindex``."""
+    """The refactor onto temp-then-rename must not weaken ``zicato repair index``."""
     ws = _make_workspace(tmp_path)
     db = rebuild_index(ws)
     conn = sqlite3.connect(str(db))
@@ -963,7 +963,7 @@ def test_a_newer_index_is_reported_at_warning_not_buried(
     assert "SKIPPED" in line and "newer zicato" in line
     warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
     assert warnings, "a downgrade must not be silent at WARNING"
-    assert "reindex" in warnings[0].getMessage(), "the message must name the recovery"
+    assert "repair index" in warnings[0].getMessage(), "the message must name the recovery"
 
 
 def test_the_dashboard_startup_skips_while_an_evolve_holds_the_lock(

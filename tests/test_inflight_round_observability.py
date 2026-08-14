@@ -13,7 +13,7 @@ but were absent from EVERY queryable store:
   round-grouping (which treats ``round_index`` as the authoritative birth
   round) mis-attributed every later round to round 0;
 * no durable ``tournaments/field-*.json`` record existed for the in-flight
-  round, so the index / ``zicato reindex`` / any external tool saw only the
+  round, so the index / ``zicato repair index`` / any external tool saw only the
   last settled round.
 
 The holistic fix makes every queryable store reflect the in-flight round

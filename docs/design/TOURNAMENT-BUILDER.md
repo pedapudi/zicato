@@ -6,7 +6,7 @@
 > (`dashboard/static/js/variants/T/views/builder.js` + `…/builder/*`); the
 > launch surfaces are the dashboard's first-class `#/builder` view, a launcher
 > rail entry in the Settings drawer (`…/views/settings.js`), and the standalone
-> `zicato builder` CLI (`zicato/cli/commands/builder.py`). The whole stack is exercised by the
+> `zicato dashboard --view builder` CLI (`zicato/cli/commands/builder.py`). The whole stack is exercised by the
 > test suite (`tests/test_builder_*.py`, the JS `builder.test.mjs` /
 > `settings.test.mjs`, `tests/test_cli_builder.py`). Operator-facing how-to
 > lives in the two builder skills.
@@ -66,7 +66,7 @@ keeps only a **launcher** to it:
 |---|---|---|
 | **First-class view** | top-bar nav → **builder**, or `#/builder` | The flagship home. `#/builder` resolves to the builder view directly and paints full-width in the main host. The same route-agnostic `builder.render(host)` backs every door. |
 | **Settings launcher** | top-bar **⚙ settings** → *Tournament builder* rail entry | The Settings drawer (`views/settings.js`) is a section rail (Tournament builder · Contract · Models · Appearance) over one body host. The *Tournament builder* entry is a **launcher** — it does not swap a section; it navigates OUT to `#/builder` so the builder always renders full-width. |
-| **Standalone CLI** | `zicato builder` | Boots the same dashboard service as `zicato dashboard` and prints the builder deep-link (`http://127.0.0.1:<port>/#/builder`) so the browser opens on the builder. Loopback-only, same bind rule as `zicato dashboard` / `zicato evolve`. |
+| **Standalone CLI** | `zicato dashboard --view builder` | Boots the same dashboard service as `zicato dashboard` and prints the builder deep-link (`http://127.0.0.1:<port>/#/builder`) so the browser opens on the builder. Loopback-only, same bind rule as `zicato dashboard` / `zicato evolve`. |
 
 Settings does **not** reimplement the builder; it launches it. Its **Contract**
 section is a **read-only at-a-glance** of the current epoch's contract that
@@ -227,4 +227,4 @@ top-bar selection.
 | The train/holdout split + anti-overfitting the board section configures | [`OVERFITTING.md`](OVERFITTING.md) |
 | How the gate weights + margin become the scalar loss the tournament consumes | [`SCORING.md`](SCORING.md) |
 | The dashboard shell the builder + Settings panel live inside | [`DASHBOARD.md`](DASHBOARD.md) |
-| The `zicato builder` / `zicato dashboard` commands | [`CLI.md`](CLI.md) |
+| The `zicato dashboard --view builder` / `zicato dashboard` commands | [`CLI.md`](CLI.md) |

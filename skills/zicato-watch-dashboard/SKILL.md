@@ -70,7 +70,7 @@ type without rescaling figures; a **color theme** swatch dropdown (16 themes,
 monokai default) and a **typeface** picker (Technical default) re-skin without
 re-render. **Settings** opens as a routed right-side **drawer overlay** that
 paints over the current view (not a full page); the **tournament builder** is
-its own first-class view at `#/builder` (and the standalone `zicato builder`
+its own first-class view at `#/builder` (and the standalone `zicato dashboard --view builder`
 CLI deep-links there).
 
 ## 3. The per-structure Match-ups figure (consistency matters)

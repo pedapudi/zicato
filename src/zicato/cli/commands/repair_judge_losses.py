@@ -1,4 +1,4 @@
-"""``zicato repair-judge-losses`` — backfill per_judge_loss into existing runs.
+"""``zicato repair judge-losses`` — backfill per_judge_loss into existing runs.
 
 ADVANCED / DEBUGGING — off the happy path. Used to repair workspaces
 whose ``loss.json`` files predate the per-judge-loss promotion fix:
@@ -12,7 +12,7 @@ re-derives ``per_judge_loss`` by replaying the run's ``events.jsonl``
 through the reducer's per-judge attribution path, rewrites the
 ``loss.json`` with the populated field, and re-ingests the updated
 profile into the analytical index so ``judge_losses`` rows land
-without needing a full ``zicato reindex``.
+without needing a full ``zicato repair index``.
 
 The repair is idempotent — running it twice on a workspace whose
 loss.json already carries ``per_judge_loss`` is a no-op (the
@@ -224,7 +224,7 @@ def _rederive_per_judge_loss(
     show_default=True,
     help=(
         "Re-ingest each rewritten run into index.db so the judge_losses "
-        "table is populated without a full `zicato reindex`."
+        "table is populated without a full `zicato repair index`."
     ),
 )
 def repair_judge_losses_cmd(workspace: str, reingest: bool) -> None:

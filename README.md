@@ -81,6 +81,13 @@ and custom in-run process judges, and the default `goldfive` telemetry
 dialect. (`tests/test_no_goldfive_import.py` proves the property against an
 interpreter that cannot import goldfive, so it does not rot.)
 
+The base install keeps the evolve loop and canonical JSONL telemetry while
+leaving operator interfaces optional. Install `zicato[observability]` for the
+dashboard, builder route, terminal renderer, and live execution telemetry, or
+`zicato[all]` for every shipped runtime feature. See
+[`INSTALL-PROFILES.md`](docs/design/INSTALL-PROFILES.md) for the smaller
+interface-specific profiles and degraded behavior.
+
 That is an install-time fact, not a constraint on your target. Which
 telemetry zicato consumes is chosen per epoch by `scoring.json`'s
 `telemetry_dialect`: the default `goldfive` dialect is the only one that
@@ -114,7 +121,7 @@ The full design lives under [`docs/design/`](docs/design/). Read
 `ARCHITECTURE.md` first; everything else assumes it.
 
 - [`docs/design/ARCHITECTURE.md`](docs/design/ARCHITECTURE.md) — top-level: what zicato is, the meta-loop diagram, every component, the cadence comparison against goldfive and harmonograf.
-- [`docs/design/MUTATION-SURFACE.md`](docs/design/MUTATION-SURFACE.md) — annotated mutation points: span, region, and file markers in Python and in any allowlisted text file, AST resolution, the `MutationPoint` shape, validator constraints, the `zicato mutations` audit CLI.
+- [`docs/design/MUTATION-SURFACE.md`](docs/design/MUTATION-SURFACE.md) — annotated mutation points: span, region, and file markers in Python and in any allowlisted text file, AST resolution, the `MutationPoint` shape, validator constraints, the `zicato inspect mutations` audit CLI.
 - [`docs/design/BOARD-FORMAT.md`](docs/design/BOARD-FORMAT.md) — JSONL board entry schema: common fields, the three entry kinds (single-turn, multi-turn scripted, multi-turn emulated), the five expectation kinds.
 - [`docs/design/EPOCHS-AND-JOURNALING.md`](docs/design/EPOCHS-AND-JOURNALING.md) — epoch lifecycle, the `Experiment` artifact (hypothesis + patches + outcome), `journal.md` and the closing analysis pass, cross-epoch lineage.
 - [`docs/design/TELEMETRY.md`](docs/design/TELEMETRY.md) — capturing goldfive's `goldfive.v1.Event` stream via its `JSONLPersistenceSink`, the post-run reducer, the `LossProfile` shape, the emulator's `zicato:emulator` audit lane.
@@ -130,7 +137,7 @@ The full design lives under [`docs/design/`](docs/design/). Read
 - [`docs/design/ROBUSTNESS.md`](docs/design/ROBUSTNESS.md) — the six-layer defense model (asyncio timeouts → cancellation → subprocess workers → watchdog → circuit breaker → atomic writes), what each layer catches, failure-mode tables, the GIL discussion that makes subprocess isolation non-negotiable, phasing.
 - [`docs/design/LOOP-HEALTH.md`](docs/design/LOOP-HEALTH.md) — loop-health diagnostics: detecting a running-but-meaningless loop (a degenerate, toothless evaluation), the five detectors and severities, the `LoopHealth` report, the `zicato health` CLI, and how the orchestrator surfaces critical findings.
 - [`docs/design/STORAGE.md`](docs/design/STORAGE.md) — the pluggable `StorageBackend` (file + memory backends) and the `GenerationStore` protocol with both directory and git backends shipping; the v0 directory-snapshot layout; the three-storage-concerns split; and the still-roadmap operator git CLI (`zicato repo` / `log` / `diff` / `show` / `bisect` / `blame`, `workspace migrate-to-git`).
-- [`docs/design/ANALYTICAL-INDEX.md`](docs/design/ANALYTICAL-INDEX.md) — the `.zicato/index.db` SQLite analytical index: why cross-run views are queries not file-walks, the files-canonical / index-derived discipline, `zicato reindex`, and the eleven-table schema (SCHEMA_VERSION 12, incl. the visibility-rating `generations.elo*` columns).
+- [`docs/design/ANALYTICAL-INDEX.md`](docs/design/ANALYTICAL-INDEX.md) — the `.zicato/index.db` SQLite analytical index: why cross-run views are queries not file-walks, the files-canonical / index-derived discipline, `zicato repair index`, and the eleven-table schema (SCHEMA_VERSION 12, incl. the visibility-rating `generations.elo*` columns).
 - [`docs/design/CLI.md`](docs/design/CLI.md) — full CLI reference: every subcommand, every flag, exit codes, scripting hints.
 - [`docs/design/RATIONALE.md`](docs/design/RATIONALE.md) — the "why" behind every major decision: annotated mutation points, per-epoch contract, mandatory hypothesis, collusion-proof emulator, drift taxonomy as features.
 - [`docs/design/VOCABULARY.md`](docs/design/VOCABULARY.md) — glossary of load-bearing terms (epoch, generation, run, round, experiment, hypothesis, outcome, loss profile, pattern, tournament, lineage, rubric).
