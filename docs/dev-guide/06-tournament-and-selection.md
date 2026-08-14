@@ -749,7 +749,9 @@ Two properties are load-bearing far beyond this module:
   `run-scratch` dir; the worker exports its path as `SCRATCH_DIR_ENV` so a
   target routes run output OUTSIDE its own source tree. A stray write that
   ignores the scratch dir still only pollutes the *throwaway* checkout — a
-  belt-and-braces second layer.
+  belt-and-braces second layer. When the harness returns, the worker captures
+  regular files from this tree into the canonical run directory before either
+  grading or checkout cleanup. Filenames need not be known in advance.
 
 The worker mounts the checkout's `working_dir` (whose basename equals the
 canonical `snapshot_root`'s basename, so `__file__`-derived paths inside the
@@ -820,7 +822,14 @@ in `_run`:
    into one `harness_loaded` event per generation.
 6. Drive the entry under the worker's OWN cooperative `asyncio.wait_for(budget)`
    — the first of three defence lines (§6.4).
-7. Evaluate the expectation, `reduce_loss` → `loss.json`, stamp the abort
+7. Close the sinks, then call `capture_run_artifacts(scratch_dir, loss_path)`.
+   Capture sorts relative paths, copies only regular files without following
+   symlinks, hashes the bytes, atomically replaces the replicate's artifact
+   tree, and writes its manifest. It attaches the resulting `ArtifactSet` to
+   `RunResult` before `evaluate_expectation`, so a predicate can grade
+   arbitrary produced files. Capture is bounded at 1,000 files and 100 MiB per
+   run; skipped entries and truncation are explicit manifest data.
+8. Evaluate the expectation, `reduce_loss` → `loss.json`, stamp the abort
    provenance (`abort_cause=BUDGET_ABORT_CAUSE` on a budget abort), write the
    result file (atomically, tmp→fsync→replace), remove the `active_runs` file
    on a clean exit.

@@ -29,6 +29,8 @@ from zicato.core.types import (
     DIALECT_GOLDFIVE,
     DIALECT_TRANSCRIPT,
     KNOWN_TELEMETRY_DIALECTS,
+    ArtifactFile,
+    ArtifactSet,
     BoardEntry,
     BoardEntryKind,
     CallLLM,
@@ -127,6 +129,8 @@ __all__ = [
     "BUDGET_ABORT_CAUSE",
     "is_infra_abort_cause",
     # run record / lineage
+    "ArtifactFile",
+    "ArtifactSet",
     "RunRecord",
     "RunResult",
     # hypothesis / experiment

@@ -220,6 +220,47 @@ def test_worker_runs_entry_end_to_end(tmp_path: Path) -> None:
     assert not active_run_path(workspace, run_id).exists()
 
 
+def test_worker_captures_unknown_files_before_grading(tmp_path: Path) -> None:
+    workspace = tmp_path / ".zicato"
+    workspace.mkdir()
+    generation = _generation(workspace)
+    entry = _entry()
+    args_path = tmp_path / "args.json"
+    result_path = tmp_path / "result.json"
+    scratch = tmp_path / "scratch"
+    _write_args_file(
+        args_path,
+        workspace=workspace,
+        generation=generation,
+        entry=entry,
+        result_path=result_path,
+        adapter_factory="tests._subprocess_worker_support:make_artifact_writing_adapter",
+    )
+    payload = json.loads(args_path.read_text(encoding="utf-8"))
+    payload["scratch_dir"] = str(scratch)
+    payload["entry"]["expectation"] = {
+        "kind": "predicate",
+        "spec": "tests._subprocess_worker_support:artifact_inventory_is_visible",
+    }
+    args_path.write_text(json.dumps(payload), encoding="utf-8")
+
+    proc = _spawn_worker_blocking(args_path)
+
+    assert proc.returncode == 0, proc.stderr.decode()
+    loss_path = loss_profile_path(workspace, "e0", generation.id, entry.id)
+    manifest_path = loss_path.with_name("artifacts.json")
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    assert [item["path"] for item in manifest["files"]] == [
+        "render.bin",
+        "reports/entry_a/summary.html",
+    ]
+    assert (loss_path.parent / "artifacts" / "reports" / "entry_a" / "summary.html").exists()
+    result = json.loads(result_path.read_text(encoding="utf-8"))
+    assert result["run_result"]["artifacts"]["manifest_path"] == str(manifest_path)
+    loss = json.loads(loss_path.read_text(encoding="utf-8"))
+    assert loss["expectation_result"]["passed"] is True
+
+
 def test_worker_penalises_aborted_run_in_loss_json(tmp_path: Path) -> None:
     """A run whose adapter returns an aborted RunResult is scored worst-case.
 

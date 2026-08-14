@@ -15,6 +15,27 @@ from pathlib import Path
 
 
 @dataclass(frozen=True, slots=True)
+class ArtifactFile:
+    """One regular file captured from a run's writable artifact root."""
+
+    path: str
+    size: int
+    sha256: str
+    media_type: str
+
+
+@dataclass(frozen=True, slots=True)
+class ArtifactSet:
+    """Deterministic inventory of files a harness produced during one run."""
+
+    root: Path
+    manifest_path: Path
+    files: tuple[ArtifactFile, ...]
+    total_bytes: int
+    truncated: bool = False
+
+
+@dataclass(frozen=True, slots=True)
 class RunRecord:
     """Persistence-side record of one run.
 
@@ -92,6 +113,10 @@ class RunResult:
         ``True`` iff the runner force-terminated this run.
     abort_reason:
         Short symbolic reason when :attr:`aborted` is true.
+    artifacts:
+        Files discovered under the worker-provided run scratch directory,
+        captured before that temporary directory is removed. ``None`` only
+        for legacy callers that did not run through artifact capture.
     """
 
     run_id: str
@@ -101,3 +126,4 @@ class RunResult:
     runtime_ms: int
     aborted: bool = False
     abort_reason: str = ""
+    artifacts: ArtifactSet | None = None

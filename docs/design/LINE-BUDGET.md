@@ -16,10 +16,10 @@ owns the exact classifications.
 
 The baseline and final ratchet use the same metric:
 
-| Measurement | Baseline (`f9052dd`) | Final limit | Reduction |
+| Measurement | Baseline (`f9052dd`) | Current limit | Reduction |
 |---|---:|---:|---:|
-| Total | 408,547 | 407,445 | 1,102 |
-| Production | 197,588 | 196,526 | 1,062 |
+| Total | 408,547 | 407,844 | 703 |
+| Production | 197,588 | 196,761 | 827 |
 
 The earlier raw count of 425,755 included lockfiles and generated artifacts and
 is retained in `.line-budget.json` for provenance; it is not the enforced
@@ -36,3 +36,10 @@ Minification, concatenation, moving implementation into excluded paths,
 checked-in generated replacements, or weakening tests do not qualify as
 simplification. Any classification change receives the same review as a budget
 increase.
+
+## Deliberate increases
+
+| Change | Previous | Delta | New | Reason |
+|---|---:|---:|---:|---|
+| Durable run-artifact capture (total) | 407,445 | +399 | 407,844 | Issue #12: deterministic inventory, persistence, grading contract, and regression coverage for emitted files. |
+| Durable run-artifact capture (production) | 196,526 | +235 | 196,761 | Issue #12: bounded capture implementation and typed artifact surface. |
