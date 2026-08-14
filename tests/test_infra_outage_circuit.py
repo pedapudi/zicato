@@ -300,6 +300,7 @@ def _promoted_outcome(round_idx: int) -> EvolveRoundOutcome:
 def test_loop_backs_off_exponentially_and_reconciles(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
+    import zicato.evolve.gauntlet as gauntlet
     import zicato.evolve.loop as loop_mod
     import zicato.orchestrator as orch
 
@@ -320,7 +321,7 @@ def test_loop_backs_off_exponentially_and_reconciles(
             return _deferred_outcome(round_index)
         return _promoted_outcome(round_index)
 
-    monkeypatch.setattr(orch, "evolve_once", _mock_evolve_once)
+    monkeypatch.setattr(gauntlet, "evolve_once", _mock_evolve_once)
 
     sleeps: list[float] = []
 

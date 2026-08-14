@@ -1529,7 +1529,7 @@ def test_field_threads_the_pair_to_slot_zero_only() -> None:
     """The field path's slot-0-only rule: identical mints across the field
     would collapse into field-diversity soft-rejects, so exactly one slot
     per round may carry the pair."""
-    from zicato.orchestrator import _recombine_pair_for_slot
+    from zicato.evolve.round_context import _recombine_pair_for_slot
 
     pair = _rec_pair()
     assert _recombine_pair_for_slot(pair, 0) is pair

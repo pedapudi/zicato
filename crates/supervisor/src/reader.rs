@@ -320,25 +320,6 @@ pub struct LineageView {
     pub generations: Vec<LineageGeneration>,
 }
 
-/// Pull a decision string out of an `experiment.json` value. The Python
-/// side records the tournament outcome either as a bare `outcome` string
-/// or nested under `outcome.decision` / `outcome.tournament_decision`.
-fn experiment_decision(exp: &serde_json::Value) -> Option<String> {
-    let outcome = exp.get("outcome")?;
-    if outcome.is_null() {
-        return None;
-    }
-    if let Some(s) = outcome.as_str() {
-        return Some(s.to_string());
-    }
-    outcome
-        .get("decision")
-        .or_else(|| outcome.get("tournament_decision"))
-        .or_else(|| outcome.get("verdict"))
-        .and_then(|v| v.as_str())
-        .map(str::to_string)
-}
-
 /// Fallback metadata for one generation, harvested from the legacy
 /// `lineage.json` (which lists only promoted generations).
 #[derive(Debug, Clone, Default)]
@@ -348,24 +329,13 @@ struct LegacyGenMeta {
     promoted: Option<bool>,
 }
 
-/// Map a decision string to a `promoted` flag. An unrecognised decision
-/// is treated as resolved-but-not-promoted rather than in-flight.
-fn decision_to_promoted(decision: &str) -> bool {
-    matches!(
-        decision.trim().to_ascii_lowercase().as_str(),
-        "promoted" | "promote" | "accepted" | "accept" | "win" | "won"
-    )
-}
-
 /// Build the directory-derived lineage view for `GET /api/lineage`.
 ///
 /// Walks `epochs/{id}/generations/*` and emits one node per generation
 /// directory — promoted, rejected, *and* not-yet-resolved. Per node:
 ///
-///   * `parent_generation_id` — from the generation's `experiment.json`,
-///     falling back to `lineage.json` (the root `v0` has no experiment).
-///   * `promoted` — `Some(bool)` once the `experiment.json` outcome /
-///     `lineage.json` records a decision, `None` while in flight.
+///   * `parent_generation_id` and `promoted` — from `lineage.json`, the
+///     single topology and promotion authority.
 ///   * `created_at` — `experiment.json` `proposed_at`, else `lineage.json`
 ///     `created_at`, else the directory's filesystem creation time.
 ///
@@ -446,22 +416,8 @@ pub fn build_lineage_view(paths: &WorkspacePaths) -> LineageView {
             // proposed; absent for the root `v0`.
             let experiment = read_json::<serde_json::Value>(&gen_path.join("experiment.json"));
 
-            let parent_generation_id = experiment
-                .as_ref()
-                .and_then(|e| {
-                    e.get("parent_generation_id")
-                        .and_then(|v| v.as_str())
-                        .map(str::to_string)
-                })
-                .or_else(|| legacy.and_then(|m| m.parent_id.clone()));
-
-            // promoted: a recorded decision -> Some(bool); no decision and
-            // no experiment metadata at all -> still in flight (None).
-            let promoted = experiment
-                .as_ref()
-                .and_then(experiment_decision)
-                .map(|d| decision_to_promoted(&d))
-                .or_else(|| legacy.and_then(|m| m.promoted));
+            let parent_generation_id = legacy.and_then(|m| m.parent_id.clone());
+            let promoted = legacy.and_then(|m| m.promoted);
 
             let created_at = experiment
                 .as_ref()

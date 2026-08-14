@@ -362,13 +362,14 @@ def test_explicit_epoch_skips_auto_roll(tmp_path: Path) -> None:
     # Drift the contract — would trigger a roll if the hook ran.
     files["brief"].write_text("# changed proposer brief\n")
 
+    import zicato.evolve.epoching as epoching
     import zicato.orchestrator as orch
 
     async def _boom(*args: object, **kwargs: object) -> str:
         raise AssertionError("ensure_epoch_for_contract should be skipped")
 
-    original = orch.ensure_epoch_for_contract
-    orch.ensure_epoch_for_contract = _boom  # type: ignore[assignment]
+    original = epoching.ensure_epoch_for_contract
+    epoching.ensure_epoch_for_contract = _boom  # type: ignore[assignment]
     try:
         with pytest.raises(Exception) as excinfo:  # noqa: PT011
             asyncio.run(
@@ -383,7 +384,7 @@ def test_explicit_epoch_skips_auto_roll(tmp_path: Path) -> None:
         # The failure must NOT be our sentinel — the hook was skipped.
         assert "ensure_epoch_for_contract should be skipped" not in str(excinfo.value)
     finally:
-        orch.ensure_epoch_for_contract = original  # type: ignore[assignment]
+        epoching.ensure_epoch_for_contract = original  # type: ignore[assignment]
 
     # Still exactly one epoch — no roll.
     assert len(list_epochs(workspace)) == 1

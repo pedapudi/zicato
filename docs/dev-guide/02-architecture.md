@@ -6,9 +6,9 @@
 
 This chapter narrates one evolve round exactly as the code at this tree
 runs it — post-decomposition, meaning after the orchestrator's god-function
-era was broken into named seams under `src/zicato/evolve/` and the
-orchestrator-resident helpers. Read it with
-`src/zicato/orchestrator.py` and `src/zicato/evolve/loop.py` open. Every
+era was broken into named seams under `src/zicato/evolve/`. Read it with
+`src/zicato/evolve/gauntlet.py`, `src/zicato/evolve/field.py`, and
+`src/zicato/evolve/loop.py` open. Every
 step names the symbol that owns it; if you cannot find a step's symbol,
 the code has moved and this chapter needs an erratum.
 
@@ -64,17 +64,10 @@ OS process) and why the dashboard can render a run that already crashed.
 
 ## 2. `evolve_n_rounds` — the loop around the round
 
-`evolve_n_rounds` lives in `src/zicato/evolve/loop.py` and is re-exported
-from `zicato.orchestrator`. Signature-stable; the CLI's `zicato evolve`
-is a thin shell over it.
-
-> ✅ **ALWAYS** resolve orchestrator-resident collaborators through the
-> module object (`from zicato import orchestrator as _orch;
-> _orch.evolve_once(...)`) inside loop-level code. This late binding is
-> what makes the suite's `monkeypatch.setattr(orch, "evolve_once", …)`
-> patches take effect — `loop.py`'s module docstring calls it out
-> explicitly ("exactly reproducing the module-global late binding the
-> in-orchestrator loop relied on").
+`evolve_n_rounds` lives in `src/zicato/evolve/loop.py` and is exported from
+`zicato.orchestrator`. Signature-stable; the CLI's `zicato evolve` is a thin
+shell over it. Loop collaborators are imported from their owning modules;
+tests patch those owners directly.
 
 ### 2.1 Startup, in order
 
@@ -268,7 +261,7 @@ Ctrl-C), the `finally` in `evolve_n_rounds` runs, in this order:
 
 ## 3. `evolve_once` — the gauntlet path
 
-`evolve_once` (`src/zicato/orchestrator.py`) is ONE round. Its docstring
+`evolve_once` (`src/zicato/evolve/gauntlet.py`) is ONE round. Its docstring
 enumerates the classic thirteen steps; the code has grown numbered
 sub-steps (0, 2a, 5a′, 10b″ …) between them. This section walks the real
 sequence. The gauntlet (field size 1 — one champion, one challenger, one
@@ -364,7 +357,7 @@ frozen contract hash:
 round_log = _RoundLogEmitter(workspace_root, resolved_epoch_id, round_index)
 round_log.emit("round_opened", {"contract_hash": _epoch_cfg.contract_hash or ""})
 ```
-*(src/zicato/orchestrator.py, `evolve_once` step 0b)*
+*(src/zicato/evolve/gauntlet.py, `evolve_once` step 0b)*
 
 The event vocabulary is CLOSED and typed — one frozen dataclass per
 transition, registered in `EVENT_TYPES`
@@ -439,7 +432,7 @@ every downstream proposer input flows through it:
     train_seed = rotation_seed(weights.overfitting, resolved_epoch_id)
     train_ids, _holdout_ids = split_board(board, weights.overfitting, seed=train_seed)
 ```
-*(src/zicato/orchestrator.py, `evolve_once` step 4 — excerpt)*
+*(src/zicato/evolve/gauntlet.py, `evolve_once` step 4 — excerpt)*
 
 Everything the proposer will see is computed from the TRAIN slice only:
 `_load_parent_losses` (the champion's per-entry loss profiles),
@@ -469,7 +462,7 @@ stall detector attributes the wall-clock honestly.
     if strategy.field_size() > 1:
         return await _evolve_multi_challenger(...)
 ```
-*(src/zicato/orchestrator.py, `evolve_once` step 5b — excerpt)*
+*(src/zicato/evolve/gauntlet.py, `evolve_once` step 5b — excerpt)*
 
 Board-aware structures (racing) get the epoch's entry ids as default
 `board_ids`; board-agnostic ones ignore them. Field size 1 falls through
@@ -659,7 +652,7 @@ the in-progress generation), and the duel runs:
             ...
             force_fresh=resumed_experiment is None,
 ```
-*(src/zicato/orchestrator.py, `evolve_once` step 10 — excerpt)*
+*(src/zicato/evolve/gauntlet.py, `evolve_once` step 10 — excerpt)*
 
 `--mode full` re-samples BOTH sides for noise; a resumed round
 cache-reads both sides so the interrupted round's completed units are
@@ -856,7 +849,7 @@ Final heartbeat (`PROMOTE`/`REJECT` progress transition),
 When `strategy.field_size() > 1`, `evolve_once` hands everything it has
 computed (mutations, patterns, summaries, the screen runner, the
 proposer agent, the open RoundLog) to `_evolve_multi_challenger`
-(`src/zicato/orchestrator.py`). Steps 1–5 of §3 are SHARED — the field
+(`src/zicato/evolve/field.py`). Steps 1–5 of §3 are SHARED — the field
 path re-derives only the train split (it receives the raw board). What
 follows is what differs.
 
@@ -1012,7 +1005,7 @@ recheck) before it is returned. The orchestrator supplies the closures:
     # whole round draw from ONE global cap.
     round_unit_semaphore = asyncio.Semaphore(max(1, int(config.parallelism)))
 ```
-*(src/zicato/orchestrator.py, `_evolve_multi_challenger` — excerpt)*
+*(src/zicato/evolve/field.py, `evolve_field_round` — excerpt)*
 
   Each matchup scores on the train board (a racing rung's `board_subset`
   is intersected inside `run_matchup`), caches both sides' aggregates
@@ -1118,7 +1111,7 @@ ordered — [outcomes-then-invariant-then-lineage]:
             "bracket the champion pointer / lineage contradict"
         )
 ```
-*(src/zicato/orchestrator.py, `_evolve_multi_challenger` — excerpt)*
+*(src/zicato/evolve/field.py, `evolve_field_round` — excerpt)*
 
    (plus: the promoted id must name a challenger that actually applied
    this round);
@@ -1439,12 +1432,12 @@ types frozen (`frozen=True, slots=True`); state transitions go through
 | `SelectionDecision` (`selection/strategy.py`) | `promoted_generation_id`, `decision`, `reason`, `matchups`, `crowning_matchup_id`, `standings` | the strategy (`champion()`), re-written by holdout/override re-resolution into `effective_decision` | field tail (outcomes, lineage, envelopes), round summary | the settled field record + `ActiveTournament` |
 | `OutcomeRecord` (`core/experiment.py`) | decision + reason, deltas, `structure`/`final_rank`/`match_record`, `champion_eval_mode`, `holdout` block, `train_loss`/`holdout_loss`/`generalization_gap`, `operator_override(+reason)`, `evidence` | the round tails (gauntlet step 11; field per-challenger loop; rejected/soft-reject tails) | journal, index, dashboard decision surface, gap detector | onto `experiment.json` via `_finalize_generation` → `update_experiment_outcome` |
 | `PriorExperiment` (`core/experiment.py`) | `core_idea`, `modulating`, `decision` (incl. `"in_flight"`), banded delta, `same_contract`, `prediction_accuracy` | `_load_prior_experiments` (index) + the field loop (siblings) | the proposer's memory section | never persisted — a render-time projection |
-| `EvolveRoundOutcome` (`orchestrator.py`) | parent/child ids, decision (incl. `deferred_infra`), reason, scalars + delta, health summary/critical | every `evolve_once` return path | `evolve_n_rounds` stop policies, the CLI summary | not persisted (the journal/experiment carry the durable truth) |
+| `EvolveRoundOutcome` (`evolve/round_api.py`) | parent/child ids, decision (incl. `deferred_infra`), reason, scalars + delta, health summary/critical | every `evolve_once` return path | `evolve_n_rounds` stop policies, the CLI summary | not persisted (the journal/experiment carry the durable truth) |
 | `ResumePlan` (`runtime/resume.py`) | `classification`, `resumes_in_place`, `resume_generation_id`, `resume_experiment` | `prepare_resume` at loop start / after a deferral | `evolve_once` steps 6/6r, cache-read decisions | derived from the workspace; not persisted |
 | `Standing` (`selection/strategy.py`) | `generation_id`, `rank`, `scalar`, wins/losses, `status`, `role` | the strategy's standings view | dashboard leaderboard, `final_rank` on OutcomeRecords | inside the settled field record |
-| `_AppliedChallenger` (`orchestrator.py`, private) | generation id + snapshot + experiment + `Generation` | `_propose_and_apply_challenger` | the field loop (`by_id`, lineage, outcomes) | not persisted (its parts are) |
-| `_CrowningHoldout` (`orchestrator.py`, private) | post-holdout promoted id, reason override, holdout block, train/holdout scalar pair, champion-oriented `crowning_delta_scalar` | `_confirm_crowning_on_holdout` (pure) | override re-resolution, integrity block, OutcomeRecord stamping | not persisted (its parts are) |
-| `_FieldMintDecision` (`orchestrator.py`, private) | `action` ∈ accept / reject_duplicate / reject_overlap, overlap + peer index | `_mint_challenger_field` (pure) | the field loop's soft-reject branches | not persisted (soft-reject reasons land on experiment.json) |
+| `_AppliedChallenger` (`evolve/propose_apply.py`, private) | generation id + snapshot + experiment + `Generation` | `_propose_and_apply_challenger` | the field loop (`by_id`, lineage, outcomes) | not persisted (its parts are) |
+| `_CrowningHoldout` (`evolve/gate.py`, private) | post-holdout promoted id, reason override, holdout block, train/holdout scalar pair, champion-oriented `crowning_delta_scalar` | `_confirm_crowning_on_holdout` (pure) | override re-resolution, integrity block, OutcomeRecord stamping | not persisted (its parts are) |
+| `_FieldMintDecision` (`evolve/propose_apply.py`, private) | `action` ∈ accept / reject_duplicate / reject_overlap, overlap + peer index | `_mint_challenger_field` (pure) | the field loop's soft-reject branches | not persisted (soft-reject reasons land on experiment.json) |
 | `GateOverride` (`runtime/control_consumer.py`) | forced `decision`, operator `reason` | the operator via control files; claimed at safe points | override application + provenance stamping | archived to `control_log/`; provenance on records |
 
 Reading the table column-wise gives you the three persistence planes:
@@ -1464,8 +1457,8 @@ The decomposition rule this codebase converged on, and the one you must
 follow:
 
 > ✅ **ALWAYS** put a NEW round step into an existing seam or extract a
-> new one. ⛔ **NEVER** inline a new step into `evolve_once` /
-> `_evolve_multi_challenger` bodies directly. The two pipelines share
+> new one. ⛔ **NEVER** copy a shared step into both `evolve_once` and
+> `evolve_field_round`. The two pipelines share
 > steps by CALLING THE SAME FUNCTION — the god-function era proved that
 > "the same code, twice, inline" guarantees the two copies drift (the
 > epilogue and the propose plumbing were both near-verbatim duplicated
@@ -1479,15 +1472,15 @@ The seams, and what each owns:
 | `ensure_epoch_for_contract`, `_create_epoch_from_contract`, `_promoted_head_snapshot`, component-hash bookkeeping | `evolve/epoching.py` | the roll-at-evolve-time decision (03 covers it) | loop start, rubric replacement |
 | `build_post_apply_validator` | `evolve/round.py` | the propose-time apply+validate hook (beat → derive all-or-nothing → validate; retryable findings) | gauntlet step 6, every field slot |
 | `check_patch_manifest_and_forbidden` | `evolve/round.py` | manifest + forbidden-ids cross-check | both pipelines |
-| `_propose_child` | `orchestrator.py` | the ONE `ProposerContext` build + propose + RoundLog proposal events + round-index stamp | gauntlet, `_propose_and_apply_challenger` |
-| `_build_candidate_screen_runner` | `orchestrator.py` | the per-round screen closure (one panel per round) | both pipelines via `ProposerContext.screen_candidates` |
-| `_finalize_generation` | `orchestrator.py` | the ONE outcome→index→lineage→marker→journal write pipeline | every round tail (gauntlet, field, rejected, soft-reject) |
-| `_round_epilogue` | `orchestrator.py` | health + analyzer + report regeneration | both pipelines + the rejected tail (`run_analyzer=False`) |
-| `_persist_rejected_round` | `orchestrator.py` | the validation-reject tail | gauntlet (the field's equivalent is per-slot narrowing) |
-| `_defer_round_infra_outage` | `orchestrator.py` | the deferral tail (no caches, no journal, health WARNING) | gauntlet (field-side infra handling rides run_matchup losses) |
-| `_mint_challenger_field`, `_apply_field_overrides`, `_confirm_crowning_on_holdout` | `orchestrator.py` | the PURE field decisions (diversity, overrides, holdout re-resolution) — I/O stays at the call site | field path; unit-testable without e2e |
-| `_gauntlet_decision_from_result`, `_confirm_gauntlet_promotion`, `_integrity_block_reason` | `orchestrator.py` | verdict routing, evidence confirmation, opt-in blocking | gauntlet (field has driver-native equivalents) |
-| `_RoundLogEmitter`, `_emit_tournament_units`, `_emit_gate_evaluated` | `orchestrator.py` | best-effort RoundLog emission | both pipelines |
+| `_propose_child` | `evolve/propose_apply.py` | the ONE `ProposerContext` build + propose + RoundLog proposal events + round-index stamp | gauntlet, `_propose_and_apply_challenger` |
+| `_build_candidate_screen_runner` | `evolve/round_context.py` | the per-round screen closure (one panel per round) | both pipelines via `ProposerContext.screen_candidates` |
+| `_finalize_generation` | `evolve/persist.py` | the ONE outcome→index→lineage→marker→journal write pipeline | every round tail (gauntlet, field, rejected, soft-reject) |
+| `_round_epilogue` | `evolve/persist.py` | health + analyzer + report regeneration | both pipelines + the rejected tail (`run_analyzer=False`) |
+| `_persist_rejected_round` | `evolve/persist.py` | the validation-reject tail | gauntlet (the field's equivalent is per-slot narrowing) |
+| `_defer_round_infra_outage` | `evolve/decision_support.py` | the deferral tail (no caches, no journal, health WARNING) | gauntlet (field-side infra handling rides run_matchup losses) |
+| `_mint_challenger_field`, `_apply_field_overrides`, `_confirm_crowning_on_holdout` | `evolve/propose_apply.py`, `evolve/gate.py` | the PURE field decisions (diversity, overrides, holdout re-resolution) — I/O stays at the call site | field path; unit-testable without e2e |
+| `_gauntlet_decision_from_result`, `_confirm_gauntlet_promotion`, `_integrity_block_reason` | `evolve/gate.py` | verdict routing, evidence confirmation, opt-in blocking | gauntlet (field has driver-native equivalents) |
+| `_RoundLogEmitter`, `_emit_tournament_units`, `_emit_gate_evaluated` | `evolve/round_reporting.py` | best-effort RoundLog emission | both pipelines |
 | lifecycle services (`_beat`, `_now_iso`, `_resolve_or_launch_harmonograf`, `_build_meta_loop_emitter_safe`, env restorer, launch handles) | `evolve/lifecycle_services.py` | heartbeat/harmonograf/emitter plumbing | loop + both pipelines |
 | placebo minting + cadence | `evolve/placebo.py` + `_mint_placebo_challenger`/`_maybe_run_placebo_arm_gauntlet` | the control arm | both pipelines |
 | containment check | `evolve/containment.py` | the Python mirror of the supervisor's diff-containment rule | `_integrity_block_reason` (both pipelines) |
@@ -1495,10 +1488,9 @@ The seams, and what each owns:
 
 Two mechanical rules keep the seams honest:
 
-- **Re-export from the orchestrator.** Every extracted name is re-exported
-  from `zicato.orchestrator` (see the import block at its top) so the
-  test suite's `orch.<name>` monkeypatches and external callers keep
-  working. If you extract, re-export.
+- **Import the owner.** Tests and internal callers import the phase module that
+  owns a seam. The dispatcher exposes the public round entry points; it is not
+  a registry for private helpers.
 - **Pure decision / I/O split.** Where a decision has more than one
   branch worth testing, the decision is a pure function
   (`_mint_challenger_field`, `_apply_field_overrides`,

@@ -633,7 +633,7 @@ def _confirm(
     fast_mode: bool,
     budget: int,
 ) -> tuple[Any, dict[str, Any] | None]:
-    from zicato.orchestrator import _confirm_gauntlet_promotion
+    from zicato.evolve.gate import _confirm_gauntlet_promotion
 
     spec = TournamentStructure(
         structure="gauntlet",
@@ -1022,7 +1022,7 @@ def _screen_runner_for(
 ) -> Any:
     """One trial's real orchestrator-built screen closure over _NoisyWorld."""
     from zicato.core.types import ProposerQualityConfig
-    from zicato.orchestrator import _build_candidate_screen_runner
+    from zicato.evolve.round_context import _build_candidate_screen_runner
 
     snap = tmp_path / "champion_snapshot"
     if not snap.exists():

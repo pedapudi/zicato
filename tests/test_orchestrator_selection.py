@@ -11,7 +11,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from zicato.core.types import TournamentStructure
-from zicato.orchestrator import _gauntlet_decision_from_result
+from zicato.evolve.gate import _gauntlet_decision_from_result
 from zicato.tournament.gate import GateOutcome
 from zicato.tournament.runner import TournamentResult
 

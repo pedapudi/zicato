@@ -71,7 +71,7 @@ def _publish_active_tournament(
     Never raises — a live-state write failure must not abort the round.
     """
     try:
-        from zicato.orchestrator import _now_iso  # noqa: PLC0415
+        from zicato.evolve.lifecycle_services import _now_iso  # noqa: PLC0415
         from zicato.runtime.state import (  # noqa: PLC0415
             ActiveTournament,
             read_active_tournament,
@@ -474,7 +474,8 @@ def _persist_field_tournament(
     """
     if len(competitors) < 3:
         return
-    from zicato.orchestrator import _index_db_path, _now_iso  # noqa: PLC0415
+    from zicato.evolve.ingest import _index_db_path  # noqa: PLC0415
+    from zicato.evolve.lifecycle_services import _now_iso  # noqa: PLC0415
 
     crowning_delta: float | None = None
     for r in reversed(rounds):
@@ -557,7 +558,7 @@ def _settle_active_tournament(
     sees the final bracket / leaderboard. Never raises.
     """
     try:
-        from zicato.orchestrator import _now_iso  # noqa: PLC0415
+        from zicato.evolve.lifecycle_services import _now_iso  # noqa: PLC0415
         from zicato.runtime.state import (  # noqa: PLC0415
             ActiveTournament,
             TournamentPhase,

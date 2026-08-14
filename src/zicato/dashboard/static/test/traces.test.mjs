@@ -15,7 +15,7 @@
 // builder-inbox hrefs, the digest no-op pin, every empty state, the XSS guard,
 // and the #/e/<e>/traces router round-trip.
 
-import { fileURLToPath } from 'node:url';
+import { Worker } from 'node:worker_threads';
 import { installDom, test, run, assert, assertEqual, makeEvent } from './harness.mjs';
 
 installDom();
@@ -464,7 +464,7 @@ test('style: svg.dn-strip-hero caps max-WIDTH at the viewBox width — the figur
 // A non-terminating render (an unbounded loop in the strip figure, the detail
 // builders, or the episode-anchor focus wiring over an UNPOSITIONED episode)
 // hangs node exactly as it hangs a browser, so the pin runs the real payloads
-// through the real builders in a CHILD process under a hard wall-clock timeout:
+// through the real builders in an isolated worker under a hard wall-clock timeout:
 // a spin fails BY TIMEOUT here instead of hanging the suite forever.
 //
 // No such loop was ever found in this tree (the unresponsive-page report that
@@ -473,16 +473,18 @@ test('style: svg.dn-strip-hero caps max-WIDTH at the viewBox width — the figur
 // past product defect.
 // ====================================================================
 test('termination: the real list + detail + dense-lane renders complete under a hard timeout', async () => {
-  const { spawnSync } = await import('node:child_process');
-  const probe = fileURLToPath(new URL('./_trace_render_probe.mjs', import.meta.url));
   const budgetMs = 20_000;                       // ~60× the observed ~0.3 s run
   const t0 = Date.now();
-  const r = spawnSync(process.execPath, [probe], { timeout: budgetMs, encoding: 'utf8' });
+  const worker = new Worker(new URL('./_trace_render_probe.mjs', import.meta.url));
+  const status = await new Promise((resolve) => {
+    const timeout = setTimeout(() => resolve('timeout'), budgetMs);
+    worker.once('error', (error) => { clearTimeout(timeout); resolve(error); });
+    worker.once('exit', (code) => { clearTimeout(timeout); resolve(code); });
+  });
+  if (status === 'timeout') await worker.terminate();
   const ms = Date.now() - t0;
-  assert(r.signal !== 'SIGTERM' && r.error === undefined,
-    `the render probe did not terminate within ${budgetMs} ms (a spin in the Traces render path): ${r.signal || (r.error && r.error.message)}`);
-  assertEqual(r.status, 0, `the render probe exited clean (stderr: ${(r.stderr || '').slice(0, 400)})`);
-  assert((r.stdout || '').includes('ok'), 'the probe rendered every surface');
+  assert(status !== 'timeout', `the render probe did not terminate within ${budgetMs} ms (a spin in the Traces render path)`);
+  assertEqual(status, 0, `the render probe exited clean (${status instanceof Error ? status.message : status})`);
   assert(ms < budgetMs, `completed in ${ms} ms`);
 });
 

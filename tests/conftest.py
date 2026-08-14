@@ -218,13 +218,13 @@ def _stub_harmonograf_launch(
     if module_name in _REAL_HARMONOGRAF_LAUNCH_MODULES:
         return
 
-    import zicato.orchestrator as orchestrator_mod
+    from zicato.evolve import lifecycle_services
 
     def _no_launch(workspace_root: Path) -> tuple[str, Any]:
         del workspace_root
-        return "", orchestrator_mod._NoopShutdownHandle()
+        return "", lifecycle_services._NoopShutdownHandle()
 
-    monkeypatch.setattr(orchestrator_mod, "_resolve_or_launch_harmonograf", _no_launch)
+    monkeypatch.setattr(lifecycle_services, "_resolve_or_launch_harmonograf", _no_launch)
 
 
 # ---------------------------------------------------------------------------

@@ -411,7 +411,7 @@ def test_collect_epoch_health_inputs_reads_persisted_losses(tmp_path: Path) -> N
     """
     from zicato.core.types import BoardEntry, DriftCount, LossProfile
     from zicato.core.workspace import loss_profile_path
-    from zicato.orchestrator import _collect_epoch_health_inputs
+    from zicato.evolve.round_reporting import _collect_epoch_health_inputs
 
     workspace = tmp_path / ".zicato"
     epoch_id = "e0"
@@ -573,7 +573,7 @@ def _duel(decision: str, regressions: tuple[str, ...]) -> _FakeResult:
 
 
 def test_promoted_regressions_are_threaded_with_their_evidence() -> None:
-    from zicato.orchestrator import _promoted_entry_regressions
+    from zicato.evolve.round_reporting import _promoted_entry_regressions
 
     detail = _promoted_entry_regressions(_duel("promoted", ("e0",)))
     assert detail == {
@@ -587,20 +587,20 @@ def test_promoted_regressions_are_threaded_with_their_evidence() -> None:
 
 
 def test_a_rejected_duel_threads_nothing() -> None:
-    from zicato.orchestrator import _promoted_entry_regressions
+    from zicato.evolve.round_reporting import _promoted_entry_regressions
 
     assert _promoted_entry_regressions(_duel("rejected", ("e0",))) is None
 
 
 def test_a_clean_promotion_threads_nothing() -> None:
-    from zicato.orchestrator import _promoted_entry_regressions
+    from zicato.evolve.round_reporting import _promoted_entry_regressions
 
     assert _promoted_entry_regressions(_duel("promoted", ())) is None
 
 
 def test_an_unexpected_result_shape_is_tolerated() -> None:
     """A health input never fails a round."""
-    from zicato.orchestrator import _promoted_entry_regressions
+    from zicato.evolve.round_reporting import _promoted_entry_regressions
 
     assert _promoted_entry_regressions(object()) is None
     assert (

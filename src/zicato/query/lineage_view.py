@@ -5,10 +5,6 @@ from __future__ import annotations
 import datetime as _dt
 from typing import Any
 
-from zicato.query.decisions import (
-    experiment_decision,
-    promoted_tristate,
-)
 from zicato.query.paths import (
     WorkspacePaths,
     _iso,
@@ -107,19 +103,11 @@ def build_lineage_view(
                 experiment = _read_json_value(gen_dir / "experiment.json")
                 experiment = experiment if isinstance(experiment, dict) else None
 
-                parent = None
-                if experiment is not None:
-                    parent = experiment.get("parent_generation_id")
-                if not isinstance(parent, str):
-                    parent = meta.get("parent_id")
-
-                promoted: bool | None = None
-                if experiment is not None:
-                    promoted = promoted_tristate(experiment_decision(experiment))
-                if promoted is None:
-                    legacy_promoted = meta.get("promoted")
-                    if isinstance(legacy_promoted, bool):
-                        promoted = legacy_promoted
+                # lineage.json is the single authority for topology and gate
+                # outcome. experiment.json remains proposal metadata only.
+                parent = meta.get("parent_id")
+                promoted = meta.get("promoted")
+                promoted = promoted if isinstance(promoted, bool) else None
 
                 # The evolve-round that MINTED this generation (its birth round
                 # within the epoch's outer loop). A separate stamp writes this to

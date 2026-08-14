@@ -94,12 +94,6 @@ pub fn router(state: AppState) -> Router {
             .route("/api/run-log", get(api_run_log))
             .route("/api/active-runs", get(api_active_runs))
             .route("/api/active-tournament", get(api_active_tournament))
-            .route("/api/tournaments", get(api_tournaments))
-            .route(
-                "/api/tournaments/:generation_id",
-                get(api_tournament_detail),
-            )
-            .route("/api/health-report", get(api_health_report))
             .route("/api/heartbeat", get(api_heartbeat))
             .route("/api/health", get(api_health))
             .route("/events", get(events))
@@ -302,46 +296,6 @@ async fn api_active_tournament(State(s): State<AppState>) -> Json<serde_json::Va
             .map(|t| serde_json::to_value(t).unwrap_or(serde_json::Value::Null))
             .unwrap_or(serde_json::Value::Null),
     )
-}
-
-/// `GET /api/tournaments` — the bracket for the current epoch.
-///
-/// Always 200: a missing `index.db` yields an empty bracket with a
-/// `note`, and any query failure degrades to empty rather than 500.
-async fn api_tournaments(State(s): State<AppState>) -> Json<serde_json::Value> {
-    let view = crate::tournaments::build_bracket(&s.paths);
-    Json(serde_json::to_value(view).unwrap_or(serde_json::Value::Null))
-}
-
-/// `GET /api/tournaments/:generation_id` — full matchup detail for one
-/// challenger generation.
-///
-/// Always 200: an invalid id, a missing `index.db`, or missing rows all
-/// degrade to an empty/`null` payload.
-async fn api_tournament_detail(
-    State(s): State<AppState>,
-    AxumPath(generation_id): AxumPath<String>,
-) -> Json<serde_json::Value> {
-    if !is_safe_id(&generation_id) {
-        // Treat a malformed id as "no such matchup" rather than erroring.
-        let empty = serde_json::json!({
-            "epoch_id": crate::reader::read_current_epoch(&s.paths),
-            "generation_id": generation_id,
-            "patches": [],
-            "ab_grid": [],
-        });
-        return Json(empty);
-    }
-    let detail = crate::tournaments::build_matchup_detail(&s.paths, &generation_id);
-    Json(serde_json::to_value(detail).unwrap_or(serde_json::Value::Null))
-}
-
-/// `GET /api/health-report` — the latest loop-health report.
-///
-/// Always 200: no report yields `{healthy:true, findings:[]}`.
-async fn api_health_report(State(s): State<AppState>) -> Json<serde_json::Value> {
-    let report = crate::tournaments::build_health_report(&s.paths);
-    Json(serde_json::to_value(report).unwrap_or(serde_json::Value::Null))
 }
 
 async fn api_heartbeat(State(s): State<AppState>) -> Json<serde_json::Value> {

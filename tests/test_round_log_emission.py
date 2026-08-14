@@ -22,7 +22,7 @@ import pytest
 
 from zicato.core.types import Experiment, HypothesisSpec, ProposerQualityConfig
 from zicato.epoch.round_log import RoundLog, fold_round_record
-from zicato.orchestrator import _RoundLogEmitter
+from zicato.evolve.round_reporting import _RoundLogEmitter
 from zicato.proposer.agent import ProposerContext
 from zicato.proposer.best_of_n import BestOfNProposerAgent
 
@@ -118,7 +118,7 @@ class TestHarnessLoadedEmission:
         from types import SimpleNamespace
 
         from zicato._tournament_worker import _record_harness_load
-        from zicato.orchestrator import _emit_harness_loaded
+        from zicato.evolve.round_reporting import _emit_harness_loaded
 
         (tmp_path / "epochs").mkdir()
         # The worker sees a per-run EPHEMERAL snapshot root; what it records is
@@ -148,7 +148,7 @@ class TestHarnessLoadedEmission:
         from types import SimpleNamespace
 
         from zicato._tournament_worker import _record_harness_load
-        from zicato.orchestrator import _emit_harness_loaded
+        from zicato.evolve.round_reporting import _emit_harness_loaded
 
         (tmp_path / "epochs").mkdir()
         # An adapter exposing neither an entrypoint_file nor a tree status
@@ -257,9 +257,9 @@ class TestTreeImportStatusRecord:
     ) -> None:
         """The worker's record folds through the round log AND loop health."""
         from zicato._tournament_worker import _verify_trees_after_run
+        from zicato.evolve.round_reporting import _emit_harness_loaded
         from zicato.health.diagnostics import detect_tree_never_imported
         from zicato.health.inputs import epoch_tree_import_gaps
-        from zicato.orchestrator import _emit_harness_loaded
 
         (tmp_path / "epochs" / "e1" / "generations" / "v1").mkdir(parents=True)
         _verify_trees_after_run(
@@ -290,8 +290,8 @@ class TestTreeImportStatusRecord:
         """
         from zicato._tournament_worker import _verify_trees_after_run
         from zicato.core.workspace import harness_load_path
+        from zicato.evolve.round_reporting import _emit_harness_loaded
         from zicato.health.inputs import epoch_tree_import_gaps
-        from zicato.orchestrator import _emit_harness_loaded
         from zicato.storage import atomic_write_json, read_json
 
         (tmp_path / "epochs" / "e1" / "generations" / "v1").mkdir(parents=True)

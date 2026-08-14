@@ -527,7 +527,7 @@ def test_pause_blocks_then_resumes_between_rounds(
         calls.append(round_index)
         return _mock_outcome(round_index)
 
-    monkeypatch.setattr(orch, "evolve_once", _mock_evolve_once)
+    monkeypatch.setattr("zicato.evolve.gauntlet.evolve_once", _mock_evolve_once)
 
     # Pause is active before the loop starts.
     write_command(workspace, ControlCommand(name=CMD_PAUSE_EPOCH))
@@ -552,7 +552,7 @@ def test_pause_blocks_then_resumes_between_rounds(
     def _patched_block(ws: Path, **_k: Any) -> int:
         return real_block(ws, sleep=_fake_sleep, max_polls=20)
 
-    monkeypatch.setattr(orch, "block_while_paused", _patched_block)
+    monkeypatch.setattr("zicato.runtime.control_consumer.block_while_paused", _patched_block)
 
     outcomes = asyncio.run(
         orch.evolve_n_rounds(
@@ -585,7 +585,7 @@ def test_rubric_replacement_rolls_the_epoch(
         seen_epochs.append(epoch_id)
         return _mock_outcome(round_index)
 
-    monkeypatch.setattr(orch, "evolve_once", _mock_evolve_once)
+    monkeypatch.setattr("zicato.evolve.gauntlet.evolve_once", _mock_evolve_once)
 
     # Queue the rubric replacement BEFORE the loop starts so it fires at the
     # top of round 0's between-rounds safe point.

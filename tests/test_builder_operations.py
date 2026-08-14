@@ -825,7 +825,7 @@ def test_preflight_measures_draft_contract_against_target0(tmp_path) -> None:
     )
     # Seed v0 so there is a champion tree to probe.
     from zicato import workspace_loader
-    from zicato.orchestrator import _ensure_baseline_snapshot
+    from zicato.evolve.round_baseline import _ensure_baseline_snapshot
 
     _ensure_baseline_snapshot(ws, cfg.id, workspace_loader.load_workspace_config(ws))
 

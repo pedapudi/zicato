@@ -350,7 +350,7 @@ def test_the_index_preflight_never_aborts_a_run(
     def _boom(_workspace_root: Path) -> str:
         raise RuntimeError("index preflight exploded")
 
-    monkeypatch.setattr(orch, "index_preflight", _boom)
+    monkeypatch.setattr("zicato.evolve.ingest.index_preflight", _boom)
 
     outcomes = asyncio.run(
         orch.evolve_n_rounds(

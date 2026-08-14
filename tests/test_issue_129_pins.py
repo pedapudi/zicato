@@ -81,8 +81,8 @@ from pathlib import Path
 from zicato.analyzer.report_data import EpochReportData, GenerationView, _cumulate_scalar
 from zicato.analyzer.report_sections import _render_campaign_callout, render_score_sparkline
 from zicato.cli.commands.reflect import _render_practice_section
+from zicato.evolve.round_prepare import _summarise_loop_health
 from zicato.health.diagnostics import HealthFinding, LoopHealth
-from zicato.orchestrator import _summarise_loop_health
 from zicato.tournament.detail import optimization_trajectory
 
 EPOCH = "2026-07_e0"

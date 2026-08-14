@@ -14,6 +14,8 @@ recipes, regression mechanics, and current module paths belong in
   weakens an assertion.
 - Browser and terminal fixtures originate from the same query-model spellings.
 - Golden changes identify the intentional interface change that caused them.
+- Browser test files run in isolated module graphs. Render caches model one
+  page; sharing them across fixture files creates order-dependent evidence.
 
 ## Clean teardown
 
@@ -22,6 +24,8 @@ or threads behind. The owner of an event loop stops the application, cancels
 and gathers remaining tasks, shuts down asynchronous generators, and only then
 closes the loop. Focused lifecycle tests run serially with runtime warnings
 promoted to errors; the full suite still runs in its normal parallel mode.
+If a closing task group rejects a newly created coroutine, its caller closes
+that coroutine immediately rather than leaving cleanup to garbage collection.
 
 ## Completion evidence
 

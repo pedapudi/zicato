@@ -336,7 +336,7 @@ def test_ensure_baseline_snapshot_writes_v0_marker(tmp_path: Path) -> None:
     """Fresh v0 materialisation drops a synthetic experiment.json into v0/."""
     from zicato.core.types import ScoringWeights
     from zicato.epoch.lifecycle import new_epoch
-    from zicato.orchestrator import _ensure_baseline_snapshot
+    from zicato.evolve.round_baseline import _ensure_baseline_snapshot
 
     ws = tmp_path / ".zicato"
     ws.mkdir()

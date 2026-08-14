@@ -418,7 +418,7 @@ def propose_cmd(
     # standalone propose path too so the debug command matches the loop.
     # Best-effort — a missing / stale index yields an empty list and the
     # prompt section is omitted.
-    from zicato.orchestrator import _load_prior_experiments  # noqa: PLC0415
+    from zicato.evolve.ingest import _load_prior_experiments  # noqa: PLC0415
 
     prior = _load_prior_experiments(workspace_dir, epoch_id)
 

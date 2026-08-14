@@ -17,7 +17,8 @@ roll-at-evolve-time decision and its supporting helpers:
   :func:`_component_diff_label`) and the v0-seed marker path
   (:func:`_roll_seed_marker`).
 
-Every name here is re-exported from :mod:`zicato.orchestrator` so no
+Public epoch resolution is exported by :mod:`zicato.orchestrator`; private
+helpers stay here so no
 caller import changes. This is a pure move; the behaviour is identical.
 """
 

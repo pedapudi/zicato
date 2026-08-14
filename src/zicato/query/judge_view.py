@@ -882,10 +882,18 @@ def build_environment(
     # JSON file per generation, so that second build was the single largest
     # cost in this reader (cProfile: 84% of build_environment, ncalls=2).
     generations = build_lineage_view(paths)
+    epoch_id = read_current_epoch(paths)
+    epoch_generations = {
+        "generations": [
+            node
+            for node in generations.get("generations", [])
+            if isinstance(node, dict) and node.get("epoch_id") == epoch_id
+        ]
+    }
     return {
         "workspace": build_workspace_identity(paths),
-        "epoch_id": read_current_epoch(paths),
-        "epoch": build_epoch_view(paths),
+        "epoch_id": epoch_id,
+        "epoch": build_epoch_view(paths, lineage_view=epoch_generations),
         "epochs": build_epochs_summary(paths),
         "active_tournament": read_active_tournament_dict(paths),
         "tournaments": build_bracket(paths),

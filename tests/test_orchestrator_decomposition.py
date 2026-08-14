@@ -22,7 +22,8 @@ from __future__ import annotations
 import asyncio
 from typing import Any
 
-import zicato.orchestrator as orch
+import zicato.evolve.gate as gate
+import zicato.evolve.propose_apply as propose_apply
 from zicato.core.types import Experiment, Generation, HypothesisSpec, TournamentDecision
 from zicato.runtime.control_consumer import GateOverride
 from zicato.selection.strategy import MatchupResult, SelectionDecision
@@ -57,7 +58,7 @@ def _experiment(gen_id: str, modulating: tuple[str, ...], core_idea: str) -> Exp
 class TestMintChallengerField:
     def test_accepts_a_distinct_challenger(self) -> None:
         exp = _experiment("v1", ("m1",), "tighten the summary")
-        decision = orch._mint_challenger_field(exp, [], [], None)
+        decision = propose_apply._mint_challenger_field(exp, [], [], None)
         assert decision.action == "accept"
 
     def test_rejects_exact_inflight_duplicate(self) -> None:
@@ -65,25 +66,25 @@ class TestMintChallengerField:
         # Same modulating id-set (order-insensitive) + case/whitespace-
         # normalized core idea as a minted sibling ⇒ duplicate.
         siblings = [(frozenset({"m2", "m1"}), "tighten the summary")]
-        decision = orch._mint_challenger_field(exp, siblings, [], None)
+        decision = propose_apply._mint_challenger_field(exp, siblings, [], None)
         assert decision.action == "reject_duplicate"
 
     def test_same_ids_different_idea_is_not_a_duplicate(self) -> None:
         exp = _experiment("v2", ("m1",), "a genuinely different idea")
         siblings = [(frozenset({"m1"}), "tighten the summary")]
-        decision = orch._mint_challenger_field(exp, siblings, [], None)
+        decision = propose_apply._mint_challenger_field(exp, siblings, [], None)
         assert decision.action == "accept"
 
     def test_empty_modulating_set_never_duplicates(self) -> None:
         exp = _experiment("v2", (), "tighten the summary")
         siblings = [(frozenset(), "tighten the summary")]
-        decision = orch._mint_challenger_field(exp, siblings, [], None)
+        decision = propose_apply._mint_challenger_field(exp, siblings, [], None)
         assert decision.action == "accept"
 
     def test_overlap_soft_reject_fires_above_tolerance(self) -> None:
         exp = _experiment("v3", ("m1", "m2"), "idea three")
         accepted = [frozenset({"m1", "m2", "m3"})]  # Jaccard 2/3 ≈ 0.667
-        decision = orch._mint_challenger_field(exp, [], accepted, 0.5)
+        decision = propose_apply._mint_challenger_field(exp, [], accepted, 0.5)
         assert decision.action == "reject_overlap"
         assert decision.overlap_peer_index == 0
         assert abs(decision.overlap - 2 / 3) < 1e-9
@@ -92,26 +93,26 @@ class TestMintChallengerField:
         # Strictly-greater-than semantics: overlap == tolerance is kept.
         exp = _experiment("v3", ("m1", "m2"), "idea three")
         accepted = [frozenset({"m1", "m2", "m3"})]
-        decision = orch._mint_challenger_field(exp, [], accepted, 2 / 3)
+        decision = propose_apply._mint_challenger_field(exp, [], accepted, 2 / 3)
         assert decision.action == "accept"
 
     def test_overlap_check_skipped_without_tolerance(self) -> None:
         exp = _experiment("v3", ("m1",), "idea three")
         accepted = [frozenset({"m1"})]  # identical set — overlap 1.0
-        decision = orch._mint_challenger_field(exp, [], accepted, None)
+        decision = propose_apply._mint_challenger_field(exp, [], accepted, None)
         assert decision.action == "accept"
 
     def test_empty_candidate_set_never_overlap_rejected(self) -> None:
         exp = _experiment("v3", (), "idea three")
         accepted = [frozenset({"m1"})]
-        decision = orch._mint_challenger_field(exp, [], accepted, 0.0)
+        decision = propose_apply._mint_challenger_field(exp, [], accepted, 0.0)
         assert decision.action == "accept"
 
     def test_duplicate_takes_precedence_over_overlap(self) -> None:
         exp = _experiment("v3", ("m1",), "same idea")
         siblings = [(frozenset({"m1"}), "same idea")]
         accepted = [frozenset({"m1"})]
-        decision = orch._mint_challenger_field(exp, siblings, accepted, 0.0)
+        decision = propose_apply._mint_challenger_field(exp, siblings, accepted, 0.0)
         assert decision.action == "reject_duplicate"
 
 
@@ -158,7 +159,7 @@ def _decision(
 class TestApplyFieldOverrides:
     def test_no_overrides_is_identity(self, tmp_path: Any) -> None:
         decision = _decision("v2")
-        promoted_id, promoted_ids, provenance, effective = orch._apply_field_overrides(
+        promoted_id, promoted_ids, provenance, effective = gate._apply_field_overrides(
             workspace_root=tmp_path,
             decision=decision,
             promoted_id="v2",
@@ -173,7 +174,7 @@ class TestApplyFieldOverrides:
 
     def test_no_overrides_no_promotion(self, tmp_path: Any) -> None:
         decision = _decision(None, reason="gate: margin not cleared")
-        promoted_id, promoted_ids, provenance, effective = orch._apply_field_overrides(
+        promoted_id, promoted_ids, provenance, effective = gate._apply_field_overrides(
             workspace_root=tmp_path,
             decision=decision,
             promoted_id=None,
@@ -189,7 +190,7 @@ class TestApplyFieldOverrides:
         # No operator override, but the holdout flipped the crown: the
         # effective decision must describe the post-confirmation truth.
         decision = _decision("v2", reason="promoted: gate cleared")
-        promoted_id, promoted_ids, _prov, effective = orch._apply_field_overrides(
+        promoted_id, promoted_ids, _prov, effective = gate._apply_field_overrides(
             workspace_root=tmp_path,
             decision=decision,
             promoted_id=None,  # demoted by the holdout before overrides
@@ -208,7 +209,7 @@ class TestApplyFieldOverrides:
         overrides = {
             "v2": GateOverride(decision="rejected", generation_id="v2", reason="known flake")
         }
-        promoted_id, promoted_ids, provenance, effective = orch._apply_field_overrides(
+        promoted_id, promoted_ids, provenance, effective = gate._apply_field_overrides(
             workspace_root=tmp_path,
             decision=decision,
             promoted_id="v2",
@@ -235,7 +236,7 @@ class TestApplyFieldOverrides:
             "v3": GateOverride(decision="promoted", generation_id="v3", reason="ship both"),
             "v4": GateOverride(decision="promoted", generation_id="v4", reason="ship both"),
         }
-        promoted_id, promoted_ids, provenance, effective = orch._apply_field_overrides(
+        promoted_id, promoted_ids, provenance, effective = gate._apply_field_overrides(
             workspace_root=tmp_path,
             decision=decision,
             promoted_id="v2",
@@ -258,7 +259,7 @@ class TestApplyFieldOverrides:
         overrides = {
             "v3": GateOverride(decision="promoted", generation_id="v3", reason="also good"),
         }
-        promoted_id, promoted_ids, _prov, effective = orch._apply_field_overrides(
+        promoted_id, promoted_ids, _prov, effective = gate._apply_field_overrides(
             workspace_root=tmp_path,
             decision=decision,
             promoted_id="v2",
@@ -296,10 +297,10 @@ class TestConfirmCrowningOnHoldout:
         decision: SelectionDecision,
         confirm_fn: Any,
         tmp_path: Any,
-    ) -> orch._CrowningHoldout:
+    ) -> gate._CrowningHoldout:
         gens = {gid: _gen(gid) for gid in ("v0", "v2")}
         return asyncio.run(
-            orch._confirm_crowning_on_holdout(
+            gate._confirm_crowning_on_holdout(
                 decision=decision,
                 parent_id="v0",
                 champion_gen=gens["v0"],

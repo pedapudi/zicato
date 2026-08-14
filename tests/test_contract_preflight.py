@@ -323,7 +323,7 @@ def _seed_baseline(workspace: Path, epoch_id: str) -> object:
     from zicato import workspace_loader
     from zicato.core.types import Generation
     from zicato.evolve.generation_phase import current_generation, snapshot_root
-    from zicato.orchestrator import _ensure_baseline_snapshot
+    from zicato.evolve.round_baseline import _ensure_baseline_snapshot
 
     workspace_config = workspace_loader.load_workspace_config(workspace)
     _ensure_baseline_snapshot(workspace, epoch_id, workspace_config)

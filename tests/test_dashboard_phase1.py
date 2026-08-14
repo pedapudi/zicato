@@ -132,6 +132,23 @@ def phase1_workspace(tmp_path: Path) -> Path:
             },
         )
 
+    _write_json(
+        ws / "lineage.json",
+        {
+            "epochs": [
+                {
+                    "id": e0,
+                    "generations": [
+                        {"id": "v0", "parent_id": None, "promoted": True},
+                        {"id": "v1", "parent_id": "v0", "promoted": True},
+                        {"id": "v1a", "parent_id": "v0", "promoted": False},
+                        {"id": "v2", "parent_id": "v1", "promoted": True},
+                    ],
+                }
+            ]
+        },
+    )
+
     # Build the analytical index with judge_losses + tournament_id FK
     # + epochs.goal + epochs.parent_epoch_id (the schema v2 shape).
     _build_index(ws / "index.db", e0, e1, source_root)

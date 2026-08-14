@@ -628,6 +628,14 @@ mod tests {
                 serde_json::json!({"parent_generation_id": parent}).to_string(),
             )
             .unwrap();
+            std::fs::write(
+                p.lineage(),
+                serde_json::json!({"epochs": [{"id": "e1", "generations": [{
+                    "id": gen, "parent_id": parent, "promoted": false
+                }]}]})
+                .to_string(),
+            )
+            .unwrap();
         }
         let snap = gen_dir.join("snapshot");
         for (rel, contents) in files {

@@ -36,6 +36,9 @@
 > | DQ10 | **`current_champion` is the reigning spine end** — the LAST promoted generation — never the first-scored or the highest-scored; a decision surface names its `deciding_rule`. |
 > | DQ11 | **A payload-shape change is a clean break.** Server and client change in the same commit, client-side coalescers are deleted, the node `mock_server` parity pin and the goldens are updated together. |
 > | DQ12 | **An id path param is validated by `_is_safe_id` before it touches the workspace.** A malformed coordinate degrades to the empty shape at HTTP 200 — never a 500, never a traversal. |
+> | DQ13 | **Every JSON GET has a declared query contract.** `query.contracts.ENDPOINT_PAYLOADS` is the exhaustive inventory. |
+> | DQ14 | **Lineage owns topology.** `lineage.json` alone supplies parent and tri-state promotion; experiment outcomes are journal detail. |
+> | DQ15 | **Composite readers share walks.** `build_environment` performs one lineage walk and hands its scoped feed to the epoch and trajectory builders. |
 
 ---
 
@@ -50,6 +53,7 @@ server + the JS). Nothing in the library knows the driver exists.
 | `src/zicato/query/__init__.py` | the package face — re-exports every reader; the "library, not driver" module docstring | 341 lines |
 | `src/zicato/query/paths.py` | `WorkspacePaths` (the `.zicato/` layout), the coercers `coerce_float` / `to_snake` / `_opt_bool`, `_resolve_epoch_id` (the traversal guard), epoch enumeration re-exports | 274 lines |
 | `src/zicato/query/decisions.py` | THE one decision classifier: `canonical_decision`, `promoted_tristate`, `stamp_experiment_decision`, `PROMOTED_DECISIONS` | 94 lines |
+| `src/zicato/query/contracts.py` | typed envelopes and the exhaustive JSON endpoint registry | — |
 | `src/zicato/query/_sqlite.py` | `_open_index` (read-only `mode=ro`), `_query` (swallow-to-`[]`), `_opt_json`, `_IndexAbsent` | 41 lines |
 | `src/zicato/query/runtime_view.py` | `build_snapshot`, `read_heartbeat_dict` (the `ts` int-ms stamp), `normalize_entry_status` (the four-bucket canon), `read_active_runs_view`, `read_paused` | 438 lines |
 | `src/zicato/query/loop_view.py` | `build_optimization_trajectory` (the uncertainty-honest verdict), `build_tournament_cost`, `build_round_pipeline` + `PIPELINE_STEPS` (the server-owned stepper projection) | 435 lines |

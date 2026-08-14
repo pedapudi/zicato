@@ -209,6 +209,21 @@ def _gauntlet_workspace(tmp_path: Path) -> Path:
         gens_dir / "v2" / "experiment.json",
         {"parent_generation_id": "v0", "outcome": {"tournament_decision": "promoted"}},
     )
+    _write_json(
+        ws / "lineage.json",
+        {
+            "epochs": [
+                {
+                    "id": EPOCH,
+                    "generations": [
+                        {"id": "v0", "parent_id": None, "promoted": True},
+                        {"id": "v1", "parent_id": "v0", "promoted": False},
+                        {"id": "v2", "parent_id": "v0", "promoted": True},
+                    ],
+                }
+            ]
+        },
+    )
     conn = sqlite3.connect(ws / "index.db")
     _index_schema(conn)
     conn.executescript(

@@ -45,7 +45,7 @@ def _seed_workspace(tmp_path: Path) -> Path:
     ws.mkdir(parents=True, exist_ok=True)
     (ws / "current_epoch").write_text(EPOCH, encoding="utf-8")
     gens = ws / "epochs" / EPOCH / "generations"
-    # v0: the seed (no parent, no decision recorded).
+    # v0: the promoted seed (no parent).
     _write_json(gens / "v0" / "experiment.json", {"parent_generation_id": None})
     # v1: promoted challenger.
     _write_json(
@@ -64,6 +64,23 @@ def _seed_workspace(tmp_path: Path) -> Path:
     )
     # v4: still in flight (no outcome at all).
     _write_json(gens / "v4" / "experiment.json", {"parent_generation_id": "v3"})
+    _write_json(
+        ws / "lineage.json",
+        {
+            "epochs": [
+                {
+                    "id": EPOCH,
+                    "generations": [
+                        {"id": "v0", "parent_id": None, "promoted": True},
+                        {"id": "v1", "parent_id": "v0", "promoted": True},
+                        {"id": "v2", "parent_id": "v1", "promoted": False},
+                        {"id": "v3", "parent_id": "v1", "promoted": True},
+                        {"id": "v4", "parent_id": "v3", "promoted": None},
+                    ],
+                }
+            ]
+        },
+    )
     # A second epoch with one generation (for the ?epoch= scoping test).
     _write_json(
         ws / "epochs" / OTHER / "generations" / "w0" / "experiment.json",
@@ -122,12 +139,12 @@ def test_epoch_experiments_are_stamped(tmp_path: Path) -> None:
     # An in-flight record is stamped tri-state None, never False (Class B).
     assert by_gen["v4"]["decision"] is None
     assert by_gen["v4"]["promoted"] is None
-    assert by_gen["v0"]["decision"] is None
-    assert by_gen["v0"]["promoted"] is None
+    assert by_gen["v0"]["decision"] == "promoted"
+    assert by_gen["v0"]["promoted"] is True
 
 
 def test_epoch_experiments_agree_with_lineage(tmp_path: Path) -> None:
-    """The two feeds share ONE classifier — they can never disagree."""
+    """Every operator feed uses lineage as its one decision authority."""
     ws = _seed_workspace(tmp_path)
     view = build_epoch_view(WorkspacePaths(ws))
     lineage = build_lineage_view(WorkspacePaths(ws), EPOCH)

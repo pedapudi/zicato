@@ -273,7 +273,7 @@ def test_full_matchup_runs_champion_and_reports_full_mode(monkeypatch, tmp_path)
 
 def test_resolve_round_champion_mode():
     """The round-level provenance collapses the champion's cached/fresh tally."""
-    from zicato.orchestrator import _resolve_round_champion_mode
+    from zicato.evolve.gate import _resolve_round_champion_mode
 
     # fast not requested → always full (regardless of the tally).
     assert _resolve_round_champion_mode(6, 0, fast_requested=False) == "full"

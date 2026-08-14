@@ -344,6 +344,16 @@ mod tests {
             exp["parent_generation_id"] = serde_json::json!(parent);
         }
         std::fs::write(dir.join("experiment.json"), exp.to_string()).unwrap();
+        std::fs::write(
+            p.lineage(),
+            serde_json::json!({"epochs": [{"id": "e1", "generations": [{
+                "id": gen,
+                "parent_id": parent,
+                "promoted": decision == "promoted"
+            }]}]})
+            .to_string(),
+        )
+        .unwrap();
     }
 
     const HASH_A: &str = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";

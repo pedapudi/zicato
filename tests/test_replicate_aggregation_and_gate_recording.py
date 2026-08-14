@@ -596,7 +596,7 @@ def _emitted_gate_event(
     and not just the dataclass shape.
     """
     from zicato.epoch.round_log import EVENT_TYPES
-    from zicato.orchestrator import _emit_gate_evaluated
+    from zicato.evolve.round_reporting import _emit_gate_evaluated
 
     captured: list[Any] = []
 

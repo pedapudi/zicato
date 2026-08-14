@@ -55,6 +55,39 @@ log = logging.getLogger(__name__)
 _DEFAULT_SHUTDOWN_GRACE_S: float = 5.0
 
 
+def _close_rejected_idle_coroutines() -> None:
+    """Backport safe task creation for the embedded HTTP server.
+
+    Python 3.11 leaves a coroutine open when ``TaskGroup.create_task`` rejects
+    work during shutdown. A late keep-alive update can hit that edge while the
+    server task group is closing. Newer runtimes close it; mirror that behavior
+    here until the minimum runtime advances.
+    """
+    from hypercorn.asyncio.worker_context import AsyncioSingleTask  # noqa: PLC0415
+
+    if getattr(AsyncioSingleTask.restart, "_zicato_safe", False):
+        return
+
+    async def restart(self: Any, task_group: Any, action: Any) -> None:
+        async with self._lock:
+            if self._handle is not None:
+                self._handle.cancel()
+                try:
+                    await self._handle
+                except asyncio.CancelledError:
+                    pass
+
+            coroutine = action()
+            try:
+                self._handle = task_group._task_group.create_task(coroutine)
+            except BaseException:
+                coroutine.close()
+                raise
+
+    restart._zicato_safe = True  # type: ignore[attr-defined]
+    AsyncioSingleTask.restart = restart  # type: ignore[method-assign]
+
+
 def _pick_free_port() -> int:
     """Bind to ``('127.0.0.1', 0)`` and return the OS-assigned port.
 
@@ -215,6 +248,8 @@ def start_harmonograf(
         # already has in zicato.telemetry.sink._make_harmonograf_sink.
         from harmonograf_server.config import ServerConfig  # noqa: PLC0415
         from harmonograf_server.main import Harmonograf  # noqa: PLC0415
+
+        _close_rejected_idle_coroutines()
     except ImportError as exc:
         log.warning(
             "live telemetry unavailable: install zicato[observability] (%s); "

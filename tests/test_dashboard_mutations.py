@@ -232,7 +232,7 @@ def _record_surface(ws: Path, epoch_id: str, roots: list[Path]) -> None:
     dashboard reads what that writer produces, and a fixture that spelled
     the record itself could keep passing while the two drifted apart.
     """
-    from zicato.orchestrator import _dump_mutations_snapshot
+    from zicato.evolve.round_baseline import _dump_mutations_snapshot
 
     _dump_mutations_snapshot(ws, epoch_id, list(enumerate_mutations(roots)))
 

@@ -312,12 +312,8 @@ const _failures = [];
 
 export function test(name, fn) { _tests.push({ name, fn }); }
 
-// The CUMULATIVE totals across every run() call in this process. run-all.mjs
-// imports every *.test.mjs file in sequence and they SHARE this harness module,
-// so these counters aggregate across all files. The per-file "X passed, Y failed"
-// line printed by run() is the batch count for THAT file only — never the grand
-// total. run-all.mjs reads these to print an HONEST grand total at the very end.
-// `fileCount` is bumped once per run() so the report can name the file count too.
+// Totals for this isolated test-file worker. run-all.mjs combines the workers'
+// reports; direct file execution still receives the same local summary.
 let _fileCount = 0;
 export function totals() {
   return { passed: _passed, failed: _failed, files: _fileCount, failures: _failures.slice() };
@@ -338,7 +334,20 @@ export function assertDeep(actual, expected, msg) {
   if (a !== b) throw new Error(`deep-equal failed: ${a} !== ${b}` + (msg ? ` — ${msg}` : ''));
 }
 
-export async function run() {
+const _runs = new Set();
+
+export function run() {
+  const pending = _run();
+  _runs.add(pending);
+  pending.finally(() => _runs.delete(pending));
+  return pending;
+}
+
+export async function waitForRuns() {
+  await Promise.all(_runs);
+}
+
+async function _run() {
   // Drain the queue: each test file calls run() once, and the harness
   // module is shared across files when run-all imports them in turn —
   // so a run() consumes (and clears) only the tests registered since
