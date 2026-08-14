@@ -46,7 +46,7 @@ def test_fresh_build_has_v9_columns() -> None:
 def test_pre_v9_database_is_detected_as_stale() -> None:
     # A pre-v9 index stamped at v8 must read back below SCHEMA_VERSION so a
     # consumer detects it as stale and asks the operator to run
-    # ``zicato reindex`` (which rebuilds with the new column).
+    # ``zicato repair index`` (which rebuilds with the new column).
     conn = sqlite3.connect(":memory:")
     conn.execute("PRAGMA user_version = 8")
     conn.commit()

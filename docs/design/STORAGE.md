@@ -57,7 +57,7 @@ three of the five.
 | **2. Telemetry** | **JSONL** — `events.jsonl`, one append-only file per run, written by goldfive's `JSONLPersistenceSink`. | The access pattern is append-while-running, tail-for-the-log-panel, stream-to-SSE, replay-once-in-the-reducer. JSONL wins every one. Events are never queried *across* runs — the reduced `LossProfile` is (and that goes in the index). A row-per-event table would add write contention during the run for no query benefit. This is **goldfive's format**; zicato consumes it and does not re-schematize it. |
 | **3. Generation source trees** | **Directory snapshots (default) or git — selected by config.** Behind the `GenerationStore` protocol (§5) either way. | The data is intrinsically file-shaped. The directory backend is a full `copytree` per generation — correct, simple, the default. The git backend (§7) adds blob dedup across generations and `diff`/`log`/`blame`/`bisect` for free; it is a *second* `GenerationStore` implementation behind the same protocol, not a different design. Both keep the source tree code-only via the shared artifact-exclusion policy (`snapshot_scope`, §5.2.1). |
 | **4. Lineage / experiments / journals** | **Files** — JSON records + per-patch JSON files + markdown, through `StorageBackend` (the file backend). | These are the typed canonical record. They are small, human-readable in a pager, diffable, and edited at generation granularity by a single writer (the orchestrator) per epoch. Files keep them inspectable and keep the store of record uniform with runtime state. They are *projected* into the index (kind 5) for cross-run queries. |
-| **5. The analytical index** | **A real database — SQLite today, DuckDB an evaluated option (§6).** Derived, disposable, rebuilt from kinds 1-4. | A relational index is exactly the right shape for cross-run aggregates ("loss across runs × generations × epochs"). This is the one place a real DB genuinely fits. It is **never canonical** — `zicato reindex` reconstructs it from the files, so it carries no information not already on disk. |
+| **5. The analytical index** | **A real database — SQLite today, DuckDB an evaluated option (§6).** Derived, disposable, rebuilt from kinds 1-4. | A relational index is exactly the right shape for cross-run aggregates ("loss across runs × generations × epochs"). This is the one place a real DB genuinely fits. It is **never canonical** — `zicato repair index` reconstructs it from the files, so it carries no information not already on disk. |
 
 The principle, unchanged from the earlier memo and now stated as the
 spine of the design: **a real DB only for the derived cross-run index;
@@ -304,7 +304,7 @@ add-on to the stated design**:
 - The index is **continuously maintained** by the orchestrator's
   dual-write as the loop runs — the dashboard never shows stale
   analytics mid-epoch.
-- `zicato reindex` is the **batch rebuild / repair** path: drop and
+- `zicato repair index` is the **batch rebuild / repair** path: drop and
   reconstruct from the files. It is the recovery mechanism (a behind
   or corrupt index), not the normal update path.
 - The ordering rule that makes the non-transactional dual-write safe
@@ -589,7 +589,7 @@ when the git backend ships (§7).
 | The `.zicato/index.db` analytical index — schema, dual-write discipline, `reindex` | [ANALYTICAL-INDEX.md](ANALYTICAL-INDEX.md) |
 | Subprocess-isolated tournament runs (why the store of record is files-canonical) | [ROBUSTNESS.md](ROBUSTNESS.md) |
 | `MutationPoint.id` references that patches carry | [MUTATION-SURFACE.md](MUTATION-SURFACE.md) |
-| CLI surface (`zicato reindex`, and the future `zicato repo` / `log` / `diff`) | [CLI.md](CLI.md) |
+| CLI surface (`zicato repair index`, and the future `zicato repo` / `log` / `diff`) | [CLI.md](CLI.md) |
 | Why the canonical layer is filesystem-native | [RATIONALE.md](RATIONALE.md) §7 |
 | The generalized tournament record for configurable structures (§5.4) | [TOURNAMENT-DATA-MODEL.md](TOURNAMENT-DATA-MODEL.md) |
 | The rejected overlayfs/reflink/hardlink materialization alternatives §7 supersedes | [GENERATION-ISOLATION.md](GENERATION-ISOLATION.md) |

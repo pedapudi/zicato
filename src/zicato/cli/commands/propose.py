@@ -1,7 +1,7 @@
-"""``zicato propose`` — generate a new :class:`Experiment` for the next generation.
+"""``zicato proposer propose`` — generate a new :class:`Experiment` for the next generation.
 
 ADVANCED / DEBUGGING — off the happy path. ``zicato evolve`` proposes
-an experiment internally on every round. Run ``zicato propose`` by hand
+an experiment internally on every round. Run ``zicato proposer propose`` by hand
 only to generate (and inspect) a single experiment without running the
 tournament.
 
@@ -73,7 +73,7 @@ def _load_workspace_config(workspace_dir: Path) -> dict[str, Any]:
     config_path = workspace_dir / "config.json"
     if not config_path.exists():
         raise click.ClickException(
-            f"No workspace config at {config_path}. Run `zicato register` first."
+            f"No workspace config at {config_path}. Run `zicato epoch register` first."
         )
     try:
         loaded: dict[str, Any] = json.loads(config_path.read_text(encoding="utf-8"))
@@ -143,7 +143,7 @@ def _load_mutations(workspace_dir: Path, epoch_id: str, parent_gen: str) -> list
     Prefers a cached ``mutations.json`` under the generation directory.
     Falls back to importing :mod:`zicato.mutation` and re-enumerating
     against the workspace's source roots. When neither path works,
-    raises a click error pointing the operator at ``zicato mutations``.
+    raises a click error pointing the operator at ``zicato inspect mutations``.
     """
 
     gen_dir = generation_dir(workspace_dir, epoch_id, parent_gen)
@@ -173,7 +173,7 @@ def _load_mutations(workspace_dir: Path, epoch_id: str, parent_gen: str) -> list
     except ImportError as exc:
         raise click.ClickException(
             "No cached mutations.json and zicato.mutation is unavailable. "
-            "Run `zicato mutations --format=json > "
+            "Run `zicato inspect mutations --format=json > "
             f"{cache_path}` first."
         ) from exc
     config = _load_workspace_config(workspace_dir)

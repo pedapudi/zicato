@@ -38,6 +38,20 @@ def test_pyproject_dev_extra_includes_pre_commit() -> None:
     assert any(d.replace(" ", "").startswith("pre-commit") for d in dev), dev
 
 
+def test_install_profiles_cover_shipped_interfaces() -> None:
+    data = tomllib.loads((ROOT / "pyproject.toml").read_text())
+    extras = data["project"]["optional-dependencies"]
+
+    def names(profile: str) -> set[str]:
+        return {item.split("[")[0].split()[0] for item in extras[profile]}
+
+    assert names("dashboard") <= names("observability")
+    assert names("tui") <= names("observability")
+    assert names("observability") <= names("all")
+    assert names("mcp") <= names("all")
+    assert {"goldfive", "google-adk"} <= names("all")
+
+
 def test_makefile_has_targets() -> None:
     content = (ROOT / "Makefile").read_text()
     for target in (

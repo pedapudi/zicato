@@ -172,7 +172,7 @@ def test_recommendation_queue_prints_the_command_and_runs_nothing() -> None:
     assert queued
     for row in queued:
         assert row.action is None
-        assert "zicato reflect apply refl-2026-07-04 " in row.text
+        assert "zicato inspect reflection apply refl-2026-07-04 " in row.text
 
 
 def test_no_row_anywhere_carries_an_executable_action() -> None:

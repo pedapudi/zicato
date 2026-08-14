@@ -239,7 +239,7 @@ def _resolve_proposer_path(workspace_root: Path, epoch_id: str) -> Path | None:
 
 
 def _render_findings(reflection: Any) -> str:
-    """Render one pass's findings the way ``zicato reflect`` renders its own."""
+    """Render one pass's findings the way ``zicato inspect reflection`` renders its own."""
     if not reflection.findings:
         return (
             f"Proposer reflection {reflection.reflection_id} · epoch {reflection.epoch_id}\n"
@@ -435,7 +435,7 @@ def apply_recommendation_cmd(
         raise click.ClickException(
             "this workspace has no proposer dir (it runs the built-in default proposer), "
             "so there is nothing to write a skill into. Create one and register it with "
-            "`zicato register --proposer-path PATH`, or pass --proposer-path here."
+            "`zicato epoch register --proposer-path PATH`, or pass --proposer-path here."
         )
 
     if show_diff:

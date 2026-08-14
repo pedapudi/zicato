@@ -42,7 +42,7 @@ Three properties this engine buys over the sequential margin-K Elo it replaced:
   path-dependent — each update is applied to the *current* rating, so the same
   multiset of games processed in a different order yields different final
   ratings. The BT fit gives one answer regardless of ordering, so a full
-  ``zicato reindex`` — or any re-derivation — reproduces identical ratings with
+  ``zicato repair index`` — or any re-derivation — reproduces identical ratings with
   no reliance on a stable game-ordering pass.
 * **Uncertainty.** The Fisher information yields a per-generation standard error
   (``elo_se``). The ridge prior keeps the information matrix positive-definite,
@@ -323,7 +323,7 @@ def compute_elo(
     Pure and **order-independent**: the result depends only on the *set* of
     de-duplicated observations (the win/loss tally per pairing plus the ranked
     survivor/cut sets), never on the order they are passed. A re-run — or a full
-    ``zicato reindex`` — reproduces identical ratings with no reliance on an
+    ``zicato repair index`` — reproduces identical ratings with no reliance on an
     observation-ordering pass. This is the property the batch MLE buys over the
     sequential margin-K Elo it replaced (that fold's rating was path-dependent:
     each update landed on the running rating, so a different fold order gave a
@@ -779,7 +779,7 @@ def fold_elo_into_index(conn: sqlite3.Connection) -> dict[str, EloRating]:
     column, and nothing gate-side ever reads them back (Elo is for visibility,
     never the gate).
 
-    Idempotent + order-independent: a re-run (or a full ``zicato reindex``,
+    Idempotent + order-independent: a re-run (or a full ``zicato repair index``,
     which calls this after the tournaments are ingested) recomputes the same
     ratings and rewrites the same cells. Returns the computed ratings for the
     caller to inspect / log.

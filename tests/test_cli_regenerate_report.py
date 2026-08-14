@@ -1,4 +1,4 @@
-"""Tests for the ``zicato regenerate-report`` subcommand.
+"""Tests for the ``zicato repair report`` subcommand.
 
 The command re-renders ``epochs/{id}/analysis.md`` against the current
 on-disk data — primarily a backfill entrypoint for workspaces whose

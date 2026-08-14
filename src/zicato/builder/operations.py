@@ -1963,7 +1963,7 @@ async def preflight(
             available=False,
             reason=(
                 "preflight requires a registered target: no current epoch under "
-                "this workspace (run `zicato register` / `zicato epoch new` first)"
+                "this workspace (run `zicato epoch register` / `zicato epoch new` first)"
             ),
         )
 
@@ -1975,13 +1975,13 @@ async def preflight(
             reason=f"preflight requires a registered target: {exc}",
         )
 
-    from zicato.orchestrator import (  # noqa: PLC0415
-        _resolve_current_generation,
-        _snapshot_root,
+    from zicato.evolve.generation_phase import (  # noqa: PLC0415
+        current_generation,
+        snapshot_root,
     )
 
     try:
-        champion_id = _resolve_current_generation(workspace_root, epoch_id)
+        champion_id = current_generation(workspace_root, epoch_id)
     except FileNotFoundError:
         return PreflightResult(
             available=False,
@@ -2016,7 +2016,7 @@ async def preflight(
         id=champion_id,
         epoch_id=epoch_id,
         parent_id=None,
-        snapshot_root=_snapshot_root(workspace_root, epoch_id, champion_id),
+        snapshot_root=snapshot_root(workspace_root, epoch_id, champion_id),
         created_at="",
         promoted=True,
     )

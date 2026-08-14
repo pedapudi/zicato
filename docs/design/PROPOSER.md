@@ -49,7 +49,7 @@ proposers/<name>/
 - `agent.py` — an OPTIONAL custom proposer agent. Its *presence* selects the
   tier-(b) custom-agent path (§2); its *contents* are part of the contract.
 
-A workspace points at a proposer dir with `zicato register --proposer-path
+A workspace points at a proposer dir with `zicato epoch register --proposer-path
 PATH` (§5). When no proposer dir is configured the proposer is the **built-in
 default agent** — a tool-using ADK agent that owns the read-only proposer
 tool registry and runs on ADK's own `Runner`
@@ -1107,7 +1107,7 @@ contract inputs; either rolling the epoch is independent of the other.
 
 ## 5. Configuring it — `register --proposer-path`
 
-`zicato register --proposer-path PATH` records `contract.proposer_path` in
+`zicato epoch register --proposer-path PATH` records `contract.proposer_path` in
 `.zicato/config.json` (absolutised, like the other contract source paths).
 `resolve_contract_inputs` reads it back on every `evolve`, resolves a relative
 spelling against the project root (the workspace's parent), and feeds it into
@@ -1131,7 +1131,7 @@ A `config.json` sketch (other keys elided):
 }
 ```
 
-Derive the exact flag surface from `zicato register --help` (the design CLI
+Derive the exact flag surface from `zicato epoch register --help` (the design CLI
 docs are known to drift); as of writing the flag is `--proposer-path PATH`.
 
 ---

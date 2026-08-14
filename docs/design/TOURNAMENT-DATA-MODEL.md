@@ -427,7 +427,7 @@ All of the above rides on the **existing storage seams**:
   key helper, no new file.
 - The `tournaments` table change is a schema migration in
   `index/schema.py` + an ingest change in `index/ingest.py`; the index
-  is fully rebuildable (`zicato reindex`), so the migration is "drop and
+  is fully rebuildable (`zicato repair index`), so the migration is "drop and
   re-derive" on the rebuild path and an ADDITIVE column-add on the
   incremental-open path (exactly the v2 pattern).
 

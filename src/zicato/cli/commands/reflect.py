@@ -1,7 +1,7 @@
-"""``zicato reflect`` — board-reflection CLI (Measurement System Analysis).
+"""``zicato inspect reflection`` — board-reflection CLI (Measurement System Analysis).
 
 ADVANCED / DEBUGGING — off the happy path. ``zicato evolve`` runs the cheap
-contract pre-flight (Board-reflection v1) automatically; ``zicato reflect`` is
+contract pre-flight (Board-reflection v1) automatically; ``zicato inspect reflection`` is
 the deep, operator-driven validation of the evaluation contract itself: it runs
 the four-pillar analysis over an observation corpus and emits ranked,
 evidence-linked findings, each carrying a proposed contract edit
@@ -10,15 +10,15 @@ evidence-linked findings, each carrying a proposed contract edit
 Three subcommands, auto-discovered (:mod:`zicato.cli.discovery` mounts this
 group with zero wiring elsewhere):
 
-* ``zicato reflect run`` — build the corpus, analyse it, adjudicate (when a
+* ``zicato inspect reflection run`` — build the corpus, analyse it, adjudicate (when a
   meta-judge is supplied), and persist the reflection. ``--pre-register`` writes
   the plan and STOPS; ``--passive`` / ``--no-llm-adjudication`` run the cheap
   zero-LLM tier (reliability + discrimination + coverage only); the default
   (adjudication requested) REFUSES without ``--adjudicator-call-llm`` — the
   live-run gate never silently spends budget.
-* ``zicato reflect report`` — render a stored reflection's report (Markdown, or
+* ``zicato inspect reflection report`` — render a stored reflection's report (Markdown, or
   ``--json`` for the raw dict).
-* ``zicato reflect apply`` — carry a finding's proposed edit to a BUILDER DRAFT
+* ``zicato inspect reflection apply`` — carry a finding's proposed edit to a BUILDER DRAFT
   (never the sealed contract); the operator seals it through the builder, which
   is the gated step that rolls the epoch.
 
@@ -104,11 +104,11 @@ def _resolve_candidates(
     champion's lineage parent surfaced for the decision-flip pillar.
     """
     from zicato.epoch.lineage import load_lineage  # noqa: PLC0415
-    from zicato.orchestrator import _resolve_current_generation  # noqa: PLC0415
+    from zicato.evolve.generation_phase import current_generation  # noqa: PLC0415
 
     champion_id: str | None = None
     try:
-        champion_id = _resolve_current_generation(workspace_root, epoch_id)
+        champion_id = current_generation(workspace_root, epoch_id)
     except (FileNotFoundError, ValueError):
         champion_id = None
 
@@ -613,7 +613,9 @@ def _reflect_execute(
 
         ingest_reflection(workspace_root, None, resolved_epoch, reflection_id)
     except Exception as exc:  # noqa: BLE001 — index is a projection; never fatal
-        click.echo(f"warning: index projection failed ({exc}); run `zicato reindex`.", err=True)
+        click.echo(
+            f"warning: index projection failed ({exc}); run `zicato repair index`.", err=True
+        )
 
     # --- Report -------------------------------------------------------------
     report_md = _render_report_md(
@@ -886,7 +888,9 @@ def _render_report_md(
         op = f.get("proposed_op")
         if op:
             lines.append(f"- proposed op: `{op.get('op')}` {json.dumps(op.get('args', {}))}")
-            lines.append(f"- apply with: `zicato reflect apply {rid} {f.get('finding_id')}`")
+            lines.append(
+                f"- apply with: `zicato inspect reflection apply {rid} {f.get('finding_id')}`"
+            )
         for ev in f.get("evidence", []):
             span = str(ev.get("span") or "")[:80]
             # The chip's OWN verdict and judge, never inferred from the
@@ -1108,7 +1112,7 @@ def suggest_cmd(
     live admission probes SPEND real champion budget and are endpoint-gated —
     they run ONLY under ``--probe`` (default OFF: plan-mode shows what they would
     spend, spending nothing). Suggestions persist beside ``findings.json`` and
-    render through ``zicato reflect report``. Recommend-only: apply stages a
+    render through ``zicato inspect reflection report``. Recommend-only: apply stages a
     builder draft, never the sealed contract.
 
     ``--from-trajectories <dir>`` bootstraps the instrument from a directory of
@@ -1209,8 +1213,8 @@ def suggest_cmd(
     click.echo(f"persisted {len(suggestions)} suggestion(s) under reflection {rid}")
     click.echo(sug_mod.render_suggestions_table(suggestions))
     click.echo(
-        f"review: `zicato reflect report {rid}`; "
-        f"stage: `zicato reflect apply {rid} <suggestion_id>`"
+        f"review: `zicato inspect reflection report {rid}`; "
+        f"stage: `zicato inspect reflection apply {rid} <suggestion_id>`"
     )
 
 

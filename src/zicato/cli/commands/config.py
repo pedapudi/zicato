@@ -6,7 +6,7 @@ ADVANCED — off the happy path. Operator knobs live on CLI flags (each
 ``models`` block, ``harmonograf_url``). No environment variable is a
 configuration knob.
 
-``zicato config env`` prints the small MERITED set of environment
+``zicato inspect environment`` prints the small MERITED set of environment
 variables zicato still deliberately touches — each one a
 process-boundary contract (harness contract, internal handoff, secrets
 boundary, external integration, CI/test toggle), sourced from
@@ -79,20 +79,7 @@ def render_env_report() -> str:
     return "\n".join(lines)
 
 
-@click.group(
-    name="config",
-    short_help="Advanced: introspect zicato's configuration surface.",
-)
-def config_group() -> None:
-    """Introspect zicato's configuration surface.
-
-    Operator knobs are CLI flags and workspace config.json blocks — not
-    environment variables. The subcommands here make that surface
-    discoverable without grepping the tree.
-    """
-
-
-@config_group.command(name="env")
+@click.command(name="environment")
 @click.option(
     "--json",
     "as_json",
@@ -121,4 +108,4 @@ def config_env_cmd(as_json: bool) -> None:
     click.echo(render_env_report())
 
 
-__all__ = ["config_group", "render_env_report"]
+__all__ = ["config_env_cmd", "render_env_report"]

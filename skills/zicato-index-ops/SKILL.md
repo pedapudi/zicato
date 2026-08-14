@@ -1,6 +1,6 @@
 ---
 name: zicato-index-ops
-description: Rebuild the derived SQLite analytical index (`zicato reindex`) and run read-only SQL against `.zicato/index.db` for cross-run analytics. Use when the index looks stale after a hand-edit, or when you want to query loss/tournament/judge history across many runs.
+description: Rebuild the derived SQLite analytical index (`zicato repair index`) and run read-only SQL against `.zicato/index.db` for cross-run analytics. Use when the index looks stale after a hand-edit, or when you want to query loss/tournament/judge history across many runs.
 ---
 
 # zicato index-ops (the analytical index)
@@ -35,7 +35,7 @@ $Z reindex-generations
 
 > Both commands take **only** `--workspace`. There is no `--verify` integrity
 > check and no per-epoch reindex; a rebuild is always whole-workspace. Verify
-> with `.venv/bin/zicato reindex --help` before scripting a flag.
+> with `.venv/bin/zicato repair index --help` before scripting a flag.
 
 A cheap stand-in for a `--verify`: copy the workspace, reindex the copy, and
 `diff` the two `index.db` files (binary) or compare row counts from the SQL
@@ -44,7 +44,7 @@ behaviour does not exist.
 
 ## Schema (`src/zicato/index/schema.py`, SCHEMA_VERSION 12)
 
-`PRAGMA user_version` is authoritative; a mismatch means run `zicato reindex`.
+`PRAGMA user_version` is authoritative; a mismatch means run `zicato repair index`.
 (The version number rises as columns are added — read `SCHEMA_VERSION` in
 `schema.py` rather than trusting any number here.) Tables and their key columns:
 
@@ -98,7 +98,7 @@ behaviour does not exist.
 - **judge_scorecards** — (`reflection_id`,`judge_name`) PK, the confusion counts
   `tp`/`fp`/`fn`/`tn`/`ambiguous`, `precision`, `recall`, `f1`,
   `severity_accuracy`, `disagreement_rate`, `kappa`, `exercised`,
-  `redundant_with_json`. Both tables are written by `zicato reflect run` (board
+  `redundant_with_json`. Both tables are written by `zicato inspect reflection run` (board
   reflection), not by the evolve loop — empty in a workspace that never reflected.
 
 ## Read-only queries

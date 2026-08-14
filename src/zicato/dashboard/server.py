@@ -151,7 +151,7 @@ def _ensure_index_at_startup(paths: WorkspacePaths) -> None:
     except IndexSchemaNewerError as exc:
         log.warning(
             "index: %s — the analytical views render from a stale index. "
-            "Recover with: delete the workspace index.db and run `zicato reindex`, "
+            "Recover with: delete the workspace index.db and run `zicato repair index`, "
             "or serve this workspace with the newer zicato that wrote it.",
             exc,
         )

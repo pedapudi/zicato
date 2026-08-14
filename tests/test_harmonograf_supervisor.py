@@ -8,8 +8,10 @@ behaviour from the architectural target in the task description.
 from __future__ import annotations
 
 import http.client
+import logging
 import os
 import socket
+import sys
 from collections.abc import Iterator
 from pathlib import Path
 
@@ -75,6 +77,20 @@ def _boots_or_uses_live_server(func: object) -> object:
     the full suite still runs them by default.
     """
     return pytest.mark.slow(pytest.mark.integration(func))
+
+
+def test_missing_live_telemetry_names_install_profile(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    monkeypatch.setitem(sys.modules, "harmonograf_server.config", None)
+
+    with caplog.at_level(logging.WARNING, logger=supervisor.__name__):
+        handle = start_harmonograf(tmp_path)
+
+    assert handle.url == ""
+    assert "install zicato[observability]" in caplog.text
 
 
 @pytest.fixture(scope="session")

@@ -906,9 +906,9 @@ async def run_contract_preflight(
     """
     from zicato.board.split import rotation_seed, split_board  # noqa: PLC0415
     from zicato.core.loss import is_infra_abort_cause  # noqa: PLC0415
+    from zicato.evolve.generation_phase import mutable_trees  # noqa: PLC0415
     from zicato.mutation.applier import apply_patches  # noqa: PLC0415
     from zicato.mutation.enumerator import enumerate_mutations  # noqa: PLC0415
-    from zicato.orchestrator import _resolve_mutable_trees  # noqa: PLC0415
     from zicato.tournament.calibration import (  # noqa: PLC0415
         recommended_promote_margin,
     )
@@ -926,7 +926,7 @@ async def run_contract_preflight(
     # learning about it costs nothing — whereas learning about it after (a)
     # has burned K champion evaluations charges the operator real budget for a
     # typo. Behaviour is otherwise identical: nothing here reads the floor.
-    points = enumerate_mutations(_resolve_mutable_trees(adapter, generation.snapshot_root))
+    points = enumerate_mutations(mutable_trees(adapter, generation.snapshot_root))
     if not points:
         raise ValueError(
             f"contract pre-flight: no mutation points enumerated under "

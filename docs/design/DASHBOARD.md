@@ -161,7 +161,7 @@ foreground until interrupted (Ctrl-C):
 The auto-spawn case is the common one and gets the simplest entry
 point: no command, just `evolve` doing it for you.
 
-> **Builder focus.** `zicato builder` is the same service launched focused on
+> **Builder focus.** `zicato dashboard --view builder` is the same service launched focused on
 > the tournament builder (it prints the `#/builder` deep-link); the builder is
 > also reachable inside any running dashboard via the top-bar ⚙ Settings entry.
 > See [`TOURNAMENT-BUILDER.md`](TOURNAMENT-BUILDER.md).
@@ -298,10 +298,10 @@ different cadences:
 | Tier | Files | Written | Read for |
 |---|---|---|---|
 | **Canonical, live** | `runtime/active_tournament.json`, `runtime/heartbeat.json`, `runtime/active_runs/*.json`, `lineage.json`, per-run `events.jsonl` | Live — the moment state changes, by the orchestrator or the worker that owns the file | The live dashboard: anything that must reflect *right now* |
-| **Derived, lagging** | `index.db` (SQLite) | Dual-written at **generation/round boundaries** only (see [ANALYTICAL-INDEX.md §2.3](ANALYTICAL-INDEX.md#23-the-orchestrator-dual-writes-live)); fully rebuildable via `zicato reindex` | Resolved historical / analytical queries: closed decisions, cross-run aggregates |
+| **Derived, lagging** | `index.db` (SQLite) | Dual-written at **generation/round boundaries** only (see [ANALYTICAL-INDEX.md §2.3](ANALYTICAL-INDEX.md#23-the-orchestrator-dual-writes-live)); fully rebuildable via `zicato repair index` | Resolved historical / analytical queries: closed decisions, cross-run aggregates |
 
 `index.db` is a **derived analytical cache**. It is rebuilt from
-the canonical files by `zicato reindex`, and during a live run it
+the canonical files by `zicato repair index`, and during a live run it
 is only refreshed at generation boundaries — so mid-round it does
 not yet contain the in-flight generation or the in-progress
 decision. It is the right source for *resolved* data (closed

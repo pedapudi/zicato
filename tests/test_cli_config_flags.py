@@ -4,7 +4,7 @@ Six operator knobs that used to be ``ZICATO_*`` environment variables
 are now ``zicato evolve`` flags (``--parallelism``,
 ``--harness-call-timeout-ms``, ``--aux-call-timeout``,
 ``--supervisor-binary``, ``--harmonograf-url``) plus ``--static-dir`` on
-``zicato dashboard`` / ``zicato builder`` (covered in their own test
+``zicato dashboard`` / ``zicato dashboard --view builder`` (covered in their own test
 files). The evolve flags land on the typed config tree via
 :func:`zicato.config.pin_overrides`; these tests prove:
 

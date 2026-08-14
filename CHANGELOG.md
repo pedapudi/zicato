@@ -318,7 +318,7 @@ round and the reason — never deleted.
 Surfaces: one INFO line and one additive `frontier_updated` round-log
 event, both only when membership moved, plus an additive `pareto_frontier`
 table in the analytical index (schema v13; the workspace file stays
-canonical and `zicato reindex` re-derives every row). No UI and no new CLI
+canonical and `zicato repair index` re-derives every row). No UI and no new CLI
 command yet. Proposer exposure, frontier recombination, and slate steering
 are registered as deferred generator-arsenal work in
 `docs/design/PARETO-FRONTIER.md` §8 — they are what turn a record into a
@@ -740,7 +740,7 @@ canonical pinned deterministic contract).
   contract a run will use is previewed in place. Settings also carries a
   launcher into the standalone builder.
 - The **tournament builder is its own first-class view** (`#/builder`),
-  reachable from the Settings launcher and from the `zicato builder` CLI
+  reachable from the Settings launcher and from the `zicato dashboard --view builder` CLI
   command (which boots the dashboard focused on the builder deep-link).
 - **Live racing hero redesigned**: a metadata baseline strip, a full-width
   scalar track with a rung stepper, dense champion-gate rows, and a
@@ -843,7 +843,7 @@ canonical pinned deterministic contract).
   on-disk bytes moved; every `epoch/` signature is unchanged.
 - Continuous indexing promoted from an add-on to the stated design: the
   orchestrator's live dual-write keeps `index.db` current as the loop
-  runs; `zicato reindex` is the batch rebuild / repair path. The
+  runs; `zicato repair index` is the batch rebuild / repair path. The
   canonical-file-first ordering rule is documented as load-bearing.
 
 ### Robustness
@@ -901,7 +901,7 @@ against a live model landed in this cycle.
 - `.zicato/index.db` — a derived, queryable index of cross-run data
   (epochs / generations / experiments / patches / runs / loss_profiles /
   metric_counts / tournaments). Files stay canonical; the index is
-  rebuildable via `zicato reindex` and dual-written live by the
+  rebuildable via `zicato repair index` and dual-written live by the
   orchestrator. The Rust supervisor reads it via rusqlite.
 - Generation source trees are NOT in SQLite (git, per the roadmap);
   per-run event capture stays JSONL. SQLite is the analytical layer only.
@@ -1051,7 +1051,7 @@ dedicated LLM analyzer.
 - Orchestrator invokes the analyzer best-effort after every round;
   proposer embeds the latest insights into its user prompt so the next
   proposal is informed by the cross-run patterns.
-- CLI: `zicato analyze-telemetry [--workspace ...] [--epoch ...] [--round N]`.
+- CLI: `zicato inspect telemetry [--workspace ...] [--epoch ...] [--round N]`.
 
 ### Goldfive companion PRs (separate repo, awaiting merge)
 - [pedapudi/goldfive#440](https://github.com/pedapudi/goldfive/pull/440)

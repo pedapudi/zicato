@@ -146,7 +146,7 @@ class HarnessAdapter(Protocol):
         to execute the harness but that the proposer never edits.
 
         Mutation enumeration walks only the returned sub-paths. The
-        orchestrator's ``_resolve_mutable_trees`` consults this instead
+        generation prepare phase consults this instead
         of defaulting to ``[generation_root]``.
 
         Each returned path MUST be inside ``generation_root`` (the

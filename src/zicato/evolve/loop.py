@@ -803,7 +803,9 @@ async def evolve_n_rounds(
                         # asyncio.wait_for raises the builtin TimeoutError
                         # (asyncio.TimeoutError is an alias of it on 3.11+).
                         assert max_wall_clock_seconds is not None
-                        parent_id = _orch._safe_resolve_parent(workspace_root, epoch_id)
+                        from zicato.evolve.generation_phase import safe_parent  # noqa: PLC0415
+
+                        parent_id = safe_parent(workspace_root, epoch_id)
                         outcome = _budget_aborted_outcome(parent_id, max_wall_clock_seconds)
                         outcomes.append(outcome)
                         log.warning(

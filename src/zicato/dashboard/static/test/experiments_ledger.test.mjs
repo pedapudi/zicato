@@ -196,7 +196,7 @@ test('ledger: an empty epoch and an UNBUILT INDEX read differently — never one
   assert(empty.textContent.includes('No experiments recorded'), 'an empty epoch says so');
   assert(!empty.textContent.includes('reindex'), '...and does not blame the index');
 
-  const noIndex = mount({ epoch_id: 'e0', experiments: [], note: 'index not built; run zicato reindex' });
+  const noIndex = mount({ epoch_id: 'e0', experiments: [], note: 'index not built; run zicato repair index' });
   assert(noIndex.textContent.includes('index not built'), 'an unbuilt index is NAMED, not silently empty');
 
   assertEqual(ledgerMod.buildExperimentsLedger(null), null,
@@ -227,7 +227,7 @@ test('ledgerDigest: EXPANDING a row does not change the digest (an expand must n
 });
 
 test('ledgerDigest: the served note is folded — an index appearing repaints the panel', () => {
-  const cold = ledgerMod.ledgerDigest({ epoch_id: 'e0', experiments: [], note: 'index not built; run zicato reindex' });
+  const cold = ledgerMod.ledgerDigest({ epoch_id: 'e0', experiments: [], note: 'index not built; run zicato repair index' });
   const warm = ledgerMod.ledgerDigest({ epoch_id: 'e0', experiments: [] });
   assert(JSON.stringify(cold) !== JSON.stringify(warm), 'the note is part of what is rendered, so it gates');
 });

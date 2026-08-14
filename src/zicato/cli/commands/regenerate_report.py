@@ -1,4 +1,4 @@
-"""``zicato regenerate-report`` — re-render one epoch's ``analysis.md``.
+"""``zicato repair report`` — re-render one epoch's ``analysis.md``.
 
 ADVANCED / DEBUGGING — off the happy path. ``zicato evolve`` regenerates
 the comprehensive analysis report (``epochs/{id}/analysis.md`` and its

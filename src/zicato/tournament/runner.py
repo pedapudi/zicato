@@ -420,7 +420,7 @@ async def _run_single(
     :func:`run_tournament`, or an ad-hoc caller). The worker — which
     writes ``loss.json`` — does not know it, so the runner stamps it onto
     the :class:`LossProfile` after the run settles AND rewrites
-    ``loss.json`` with the tag so a later full ``zicato reindex`` (which
+    ``loss.json`` with the tag so a later full ``zicato repair index`` (which
     re-reads ``loss.json``) re-derives the same provenance. The aborted
     profiles synthesised on a killed/crashed run carry it too.
 

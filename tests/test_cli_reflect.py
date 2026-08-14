@@ -1,4 +1,4 @@
-"""``zicato reflect`` CLI — discovery, run / report / apply over a fixture.
+"""``zicato inspect reflection`` CLI — discovery, run / report / apply over a fixture.
 
 Exercises the surfaces end to end with the R3 scripted-double adjudicators
 (zero live endpoints, G3): the group appears in ``--help``; ``--pre-register``
@@ -161,7 +161,7 @@ def _run(args: list[str]) -> object:
 def test_reflect_in_advanced_help() -> None:
     result = _run(["--help"])
     assert result.exit_code == 0
-    assert "reflect" in result.output
+    assert "inspect", "reflection" in result.output
 
 
 # ---------------------------------------------------------------------------
@@ -173,7 +173,8 @@ def test_pre_register_writes_plan_and_stops(workspace: tuple[Path, str]) -> None
     ws, epoch_id = workspace
     result = _run(
         [
-            "reflect",
+            "inspect",
+            "reflection",
             "run",
             "--workspace",
             str(ws),
@@ -205,7 +206,8 @@ def test_active_without_adjudicator_refuses(workspace: tuple[Path, str]) -> None
     ws, epoch_id = workspace
     result = _run(
         [
-            "reflect",
+            "inspect",
+            "reflection",
             "run",
             "--workspace",
             str(ws),
@@ -237,7 +239,8 @@ def test_active_run_with_scripted_adjudicator(
     ws, epoch_id = workspace
     result = _run(
         [
-            "reflect",
+            "inspect",
+            "reflection",
             "run",
             "--workspace",
             str(ws),
@@ -285,7 +288,8 @@ def test_passive_run_is_zero_llm(workspace: tuple[Path, str], doubles_module: st
     counter = sys.modules[doubles_module].counter
     result = _run(
         [
-            "reflect",
+            "inspect",
+            "reflection",
             "run",
             "--workspace",
             str(ws),
@@ -319,7 +323,8 @@ def test_report_renders(workspace: tuple[Path, str], doubles_module: str) -> Non
     ws, epoch_id = workspace
     _run(
         [
-            "reflect",
+            "inspect",
+            "reflection",
             "run",
             "--workspace",
             str(ws),
@@ -334,12 +339,12 @@ def test_report_renders(workspace: tuple[Path, str], doubles_module: str) -> Non
         ]
     )
     rid = next(iter((ws / "epochs" / epoch_id / "reflections").iterdir())).name
-    result = _run(["reflect", "report", rid, "--workspace", str(ws)])
+    result = _run(["inspect", "reflection", "report", rid, "--workspace", str(ws)])
     assert result.exit_code == 0, result.output
     assert "Reflection report" in result.output
     assert "Findings" in result.output
 
-    js = _run(["reflect", "report", rid, "--workspace", str(ws), "--json"])
+    js = _run(["inspect", "reflection", "report", rid, "--workspace", str(ws), "--json"])
     assert js.exit_code == 0
     payload = json.loads(js.output)
     assert "summary" in payload and "findings" in payload
@@ -366,7 +371,8 @@ def test_apply_forks_draft_and_leaves_contract_unchanged(
     ws, epoch_id = workspace
     _run(
         [
-            "reflect",
+            "inspect",
+            "reflection",
             "run",
             "--workspace",
             str(ws),
@@ -387,7 +393,17 @@ def test_apply_forks_draft_and_leaves_contract_unchanged(
 
     before = _contract_bytes(ws, epoch_id)
     result = _run(
-        ["reflect", "apply", rid, finding_id, "--workspace", str(ws), "--epoch", epoch_id]
+        [
+            "inspect",
+            "reflection",
+            "apply",
+            rid,
+            finding_id,
+            "--workspace",
+            str(ws),
+            "--epoch",
+            epoch_id,
+        ]
     )
     assert result.exit_code == 0, result.output
     assert "builder draft slot" in result.output
@@ -430,7 +446,17 @@ def test_apply_non_actionable_finding_errors(workspace: tuple[Path, str]) -> Non
         encoding="utf-8",
     )
     result = _run(
-        ["reflect", "apply", rid, "f-untested", "--workspace", str(ws), "--epoch", epoch_id]
+        [
+            "inspect",
+            "reflection",
+            "apply",
+            rid,
+            "f-untested",
+            "--workspace",
+            str(ws),
+            "--epoch",
+            epoch_id,
+        ]
     )
     assert result.exit_code != 0
     assert "no proposed_op" in result.output or "recommendation only" in result.output
@@ -445,7 +471,8 @@ def test_passive_run_persists_practices(workspace: tuple[Path, str], doubles_mod
     ws, epoch_id = workspace
     result = _run(
         [
-            "reflect",
+            "inspect",
+            "reflection",
             "run",
             "--workspace",
             str(ws),
@@ -472,7 +499,18 @@ def test_passive_run_persists_practices(workspace: tuple[Path, str], doubles_mod
 
 def test_reflect_practices_subcommand_no_corpus(workspace: tuple[Path, str]) -> None:
     ws, epoch_id = workspace
-    result = _run(["reflect", "practices", "--workspace", str(ws), "--epoch", epoch_id, "--json"])
+    result = _run(
+        [
+            "inspect",
+            "reflection",
+            "practices",
+            "--workspace",
+            str(ws),
+            "--epoch",
+            epoch_id,
+            "--json",
+        ]
+    )
     assert result.exit_code == 0, result.output
     payload = json.loads(result.output)
     assert len(payload["checks"]) == 11
@@ -485,7 +523,7 @@ def test_reflect_practices_subcommand_no_corpus(workspace: tuple[Path, str]) -> 
 
 
 def test_reflect_practices_in_group_help() -> None:
-    result = _run(["reflect", "--help"])
+    result = _run(["inspect", "reflection", "--help"])
     assert result.exit_code == 0
     assert "practices" in result.output
 

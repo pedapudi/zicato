@@ -115,7 +115,7 @@ To read one round's full hypothesis+outcome ledger row, open that generation's
 ## 3. Re-render the report against current data
 
 ```sh
-.venv/bin/zicato regenerate-report --workspace .zicato [--epoch <id>] [--no-llm]
+.venv/bin/zicato repair report --workspace .zicato [--epoch <id>] [--no-llm]
 ```
 
 Re-renders `analysis.md` / `analysis.html` from the current on-disk files.
@@ -128,7 +128,7 @@ regardless, so `--no-llm` is the safe, budget-free repair.
 ## 4. (Re)run the decision-telemetry analyzer
 
 ```sh
-.venv/bin/zicato analyze-telemetry --workspace .zicato [--epoch <id>] [--round N]
+.venv/bin/zicato inspect telemetry --workspace .zicato [--epoch <id>] [--round N]
 ```
 
 Runs the decision-telemetry analyzer for an epoch out of band, writing an

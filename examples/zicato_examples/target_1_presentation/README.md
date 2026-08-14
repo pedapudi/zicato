@@ -94,7 +94,7 @@ the editable span. The ids are:
 | `find_presentation_files_tool_description` | `tool_description` | docstring on `find_presentation_files` |
 | `patch_file_tool_description` | `tool_description` | docstring on `patch_file` |
 
-The audit CLI (`zicato mutations`, see `docs/design/MUTATION-SURFACE.md`)
+The audit CLI (`zicato inspect mutations`, see `docs/design/MUTATION-SURFACE.md`)
 walks these markers and renders them in a table. Until that command is
 implemented you can preview the surface with:
 
@@ -279,13 +279,13 @@ zicato epoch new e0 \
     --target zicato_examples.target_1_presentation.agent
 
 # Inspect the mutation surface the proposer will see
-zicato mutations
+zicato inspect mutations
 
 # Run a single board entry under the seed generation
 zicato run waffles_single --generation v0
 
 # Kick off a tournament round
-zicato propose
+zicato proposer propose
 zicato tournament
 ```
 

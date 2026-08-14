@@ -5,14 +5,14 @@ Public entry points:
 * :func:`rebuild_index` — the canonical "rebuild from files" path.
   Re-derives every row by walking every epoch / generation / run under
   ``.zicato/``, into a scratch file that is renamed over ``index.db``
-  on success. Backs ``zicato reindex``.
+  on success. Backs ``zicato repair index``.
 * :func:`ensure_index` — builds the index when it is absent, older than
   :data:`~zicato.index.schema.SCHEMA_VERSION`, or unreadable, and does
   nothing otherwise. Runs at ``evolve`` start and at dashboard start.
 * :func:`validate_index` / :func:`heal_index` — compare each epoch's
   persisted cursor against cheap workspace signals and re-project only
   the epochs that diverged. Runs at ``evolve`` start. Together with
-  ``ensure_index`` these are why routine ``zicato reindex`` is not a
+  ``ensure_index`` these are why routine ``zicato repair index`` is not a
   thing an operator should ever have to do
   (``docs/design/ANALYTICAL-INDEX.md`` §5).
 * :func:`ingest_run` — incrementally upserts one run's ``runs`` /
@@ -697,7 +697,7 @@ def _upsert_reflection(
     reliability pillar — a passive/ingest-only pass over a workspace with no
     persisted floor). ``verdict_counts`` is the corpus-wide TP/FP/FN/TN/ambiguous
     tally, stored as JSON. Every write is a keyed upsert so a re-ingest (or a
-    ``zicato reindex`` after the file was rewritten) is idempotent.
+    ``zicato repair index`` after the file was rewritten) is idempotent.
     """
     conn.execute(
         "INSERT INTO reflections("
@@ -2216,7 +2216,7 @@ def ingest_run(
 
     This is the live-dual-write entry point: the orchestrator calls it
     the moment a run's loss profile lands (R9-4), so the index tracks
-    in-progress epochs without waiting for a full ``zicato reindex``.
+    in-progress epochs without waiting for a full ``zicato repair index``.
 
     Idempotent — calling it twice for the same run produces the same
     rows (every write is a keyed upsert; ``metric_counts`` is
@@ -2286,7 +2286,7 @@ def ingest_field_tournament(
     ``standings`` / ``field_status`` / the crowning verdict). This is the
     live dual-write companion to :func:`ingest_experiment`: the
     orchestrator calls it at settle time so the swiss / elim ladder is in
-    the index immediately, without waiting for a full ``zicato reindex``.
+    the index immediately, without waiting for a full ``zicato repair index``.
 
     A no-op for a degenerate two-competitor (gauntlet) field. Idempotent —
     the write is a keyed upsert on the field-level ``tournament_id``. When
@@ -2312,9 +2312,9 @@ def ingest_reflection(
     """Incrementally upsert one reflection's ``reflections`` + scorecard rows.
 
     The live dual-write companion to :func:`ingest_experiment` for the
-    board-reflection projection: ``zicato reflect run`` calls it at finalize
+    board-reflection projection: ``zicato inspect reflection run`` calls it at finalize
     (the moment ``findings.json`` lands) so the Instrument lens sees the new
-    reflection immediately, without a full ``zicato reindex``. Reads the
+    reflection immediately, without a full ``zicato repair index``. Reads the
     reflection's canonical files (``plan.json`` / ``scorecards.json`` /
     ``findings.json`` / ``summary.json``) and projects them; a reflection with
     no readable ``plan.json`` is silently skipped. Idempotent — every write is

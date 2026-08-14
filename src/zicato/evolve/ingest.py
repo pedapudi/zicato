@@ -10,7 +10,7 @@ proposer (prior-experiment memory + mutation track records).
 The index is a pure projection (Part II design principle 1): every write and
 read here is best-effort — a missing :mod:`zicato.index` sibling or an
 unreadable database is logged at ``debug`` and swallowed. ``experiment.json``
-on disk stays canonical and ``zicato reindex`` can always rebuild the index
+on disk stays canonical and ``zicato repair index`` can always rebuild the index
 from scratch, so a hiccup in this stage never aborts a round.
 
 Every name here is re-exported from :mod:`zicato.orchestrator` so no caller
@@ -168,7 +168,7 @@ def index_preflight(workspace_root: Path) -> str:
     except IndexSchemaNewerError as exc:
         log.warning(
             "index: %s — this run reads a stale index (no build, no heal). "
-            "Recover with: delete the workspace index.db and run `zicato reindex`, "
+            "Recover with: delete the workspace index.db and run `zicato repair index`, "
             "or run this workspace with the newer zicato that wrote it.",
             exc,
         )
@@ -263,7 +263,7 @@ def _ingest_experiment_into_index(
     lands in parallel); the import is lazy and any failure — a missing
     module, a schema mismatch, an I/O error — is logged at ``debug``
     level and swallowed. ``experiment.json`` on disk stays canonical and
-    ``zicato reindex`` can always rebuild the index from scratch.
+    ``zicato repair index`` can always rebuild the index from scratch.
     """
     try:
         from zicato.index.ingest import ingest_experiment  # noqa: PLC0415

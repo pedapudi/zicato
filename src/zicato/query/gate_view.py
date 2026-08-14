@@ -179,7 +179,7 @@ def build_score_trajectory(
                 }
                 for g in ordered
             ],
-            "note": "index not built; run zicato reindex",
+            "note": "index not built; run zicato repair index",
         }
     except sqlite3.Error:
         return {"epoch_id": epoch_id, "points": []}
@@ -326,7 +326,7 @@ def build_drift_movements(paths: WorkspacePaths, generation_id: str) -> dict[str
                 "movements": movements,
             }
     except _IndexAbsent:
-        return {**empty, "note": "index not built; run zicato reindex"}
+        return {**empty, "note": "index not built; run zicato repair index"}
     except sqlite3.Error:
         return empty
 

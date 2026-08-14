@@ -791,7 +791,7 @@ loop is:
 3. `evolve` notices the contract changed and rolls the epoch for you.
 
 `zicato board add` / `list` / `remove`, `zicato epoch new` / `close`,
-`zicato propose`, `zicato tournament`, and the rest are **advanced /
+`zicato proposer propose`, `zicato tournament`, and the rest are **advanced /
 debug** commands — the manual escape hatches for when you want to drive
 one stage in isolation. They are fully documented in [CLI.md](CLI.md),
 but a first-time operator authoring a board only needs the builder,

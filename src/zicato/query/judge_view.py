@@ -145,7 +145,7 @@ def build_per_judge_trend(paths: WorkspacePaths, epoch_id: str) -> dict[str, Any
         # carries the actionable degrade note. The generations spine still
         # renders (field-by-field degrade) — a built-but-empty index gets no
         # note, only a genuinely un-built one.
-        out["note"] = "index not built; run zicato reindex"
+        out["note"] = "index not built; run zicato repair index"
     return out
 
 
@@ -168,7 +168,7 @@ def build_per_judge_for_generation(
             "epoch_id": epoch_id,
             "generation_id": generation_id,
             "judges": [],
-            "note": "index not built; run zicato reindex",
+            "note": "index not built; run zicato repair index",
         }
     judges = [
         {
@@ -382,7 +382,7 @@ def build_per_judge_comparison(
             "challenger": challenger_id,
             "judges": [],
             "primary_driver": None,
-            "note": "index not built; run zicato reindex",
+            "note": "index not built; run zicato repair index",
         }
 
     by_judge: dict[str, dict[str, float | None]] = {}
@@ -475,7 +475,7 @@ def build_per_judge_for_run(paths: WorkspacePaths, run_id: str) -> dict[str, Any
     try:
         rows = judge_losses_for_run(paths.index_db, run_id)
     except Exception:  # noqa: BLE001
-        return {"run_id": run_id, "judges": [], "note": "index not built; run zicato reindex"}
+        return {"run_id": run_id, "judges": [], "note": "index not built; run zicato repair index"}
     judges = [
         {
             "judge_name": r["judge_name"],

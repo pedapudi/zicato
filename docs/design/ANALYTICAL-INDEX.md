@@ -28,7 +28,7 @@ This document covers:
 - The discipline: files canonical, index derived, dual-write +
   full rebuild (§2).
 - The full schema — thirteen tables (§3).
-- `zicato reindex` / `zicato reindex-generations` — the rebuild
+- `zicato repair index` / `zicato repair generations` — the rebuild
   commands (§4).
 - Self-healing: the index maintains itself (§5).
 - Where SQLite is and is NOT used in zicato (§6).
@@ -107,7 +107,7 @@ The cost of the cross-run question drops from
 ### 1.3 What the index is NOT
 
 - **Not the source of truth.** Every table is derived. If
-  `index.db` is deleted, `zicato reindex` reconstructs it exactly
+  `index.db` is deleted, `zicato repair index` reconstructs it exactly
   from the filesystem. Nothing is lost.
 - **Not a write target for orchestration logic.** The
   orchestrator never *reads back* a decision from the index. The
@@ -146,7 +146,7 @@ file lands first; the table is downstream.
 
 ### 2.2 The index is derived and fully rebuildable
 
-`zicato reindex` (§4) drops every table and reconstructs the
+`zicato repair index` (§4) drops every table and reconstructs the
 whole database by walking the filesystem. This is the
 correctness backstop:
 
@@ -218,7 +218,7 @@ a round's rows.
 Only the orchestrator (`zicato evolve`, and the one-shot
 subcommands `analyze` / `tournament` when run standalone) writes
 `index.db`. The Rust supervisor opens the database **read-only**
-(§7). `zicato reindex` / `zicato reindex-generations` are writers,
+(§7). `zicato repair index` / `zicato repair generations` are writers,
 expected to run off the happy path while no `evolve` is in flight;
 they are not part of the live loop. SQLite's own file locking plus
 the WAL-mode posture (§6) are the concurrency backstop, consistent
@@ -281,7 +281,7 @@ Schema versioning is stamped two ways by `apply_schema`: the SQLite
 client) and a one-row `schema_meta` table (a human-legible mirror,
 not part of the cross-language contract). A consumer that opens a
 database whose `user_version` does not equal `SCHEMA_VERSION` should
-treat the index as stale and run `zicato reindex`.
+treat the index as stale and run `zicato repair index`.
 
 ### 3.1 `epochs`
 
@@ -317,7 +317,7 @@ One row per generation directory under any epoch.
 
 Primary key `(epoch_id, generation_id)`. The `parent_generation_id`
 and `promoted` columns are exactly the two that the targeted
-`zicato reindex-generations` repair rewrites (§4.3) — they are the
+`zicato repair generations` repair rewrites (§4.3) — they are the
 fields a buggy live dual-write was observed to leave stale. The `elo*`
 columns are a **read-only analytics fold** (`src/zicato/index/elo.py`),
 re-derived from scratch at every reindex and read only by the display
@@ -501,16 +501,16 @@ raw per-judge *counts*, `judge_losses` carries the per-judge
 attribution panels read this table directly rather than
 re-deriving the weighting from counts × weights.
 
-## 4. `zicato reindex`
+## 4. `zicato repair index`
 
-`zicato reindex` rebuilds `index.db` from the filesystem. It is
+`zicato repair index` rebuilds `index.db` from the filesystem. It is
 the correctness backstop for the whole index design. It is an
 advanced / off-the-happy-path command — `zicato evolve` keeps the
 index current via the live dual-write, so an operator reaches for
 `reindex` only to repair a behind-or-corrupt index.
 
 ```
-zicato reindex [--workspace <path>]
+zicato repair index [--workspace <path>]
 ```
 
 `--workspace` is the **only** flag (default `.zicato`). There is no
@@ -536,7 +536,7 @@ operator reaches for `reindex` only in the situations §5.4 names.
    indexed.
 
 ```
-$ zicato reindex
+$ zicato repair index
 [reindex] workspace: /home/op/myagent/.zicato
 [reindex] indexed 2 epochs, 13 generations, 130 runs
 ```
@@ -569,12 +569,12 @@ table is created by the ordinary `CREATE TABLE IF NOT EXISTS` pass),
 so incremental writes proceed without forcing a rebuild. A full
 `reindex` drops the file and re-applies the v2 DDL outright.
 
-### 4.3 `zicato reindex-generations` — targeted repair
+### 4.3 `zicato repair generations` — targeted repair
 
 Alongside the full rebuild, zicato ships a narrow repair command:
 
 ```
-zicato reindex-generations [--workspace <path>]
+zicato repair generations [--workspace <path>]
 ```
 
 It reconciles **only** the `generations` table from disk. It was
@@ -585,7 +585,7 @@ buggy live dual-write — `parent_generation_id` left NULL and
 `parent_generation_id` and `promoted` columns of each `generations`
 row; the rest of the index is untouched. It is idempotent and
 read-only against the workspace files. For anything broader, use the
-full `zicato reindex`.
+full `zicato repair index`.
 
 ### 4.4 Reindex on resume
 
@@ -603,7 +603,7 @@ SSE frame after restart.
 
 ## 5. Self-healing: the index maintains itself
 
-`zicato reindex` (§4) is the *forensic* tool. Nothing on the happy
+`zicato repair index` (§4) is the *forensic* tool. Nothing on the happy
 path should ever require an operator to run it. This section
 specifies the three mechanisms that make that true, the literal
 seam signatures they add, the cursor schema they persist, and the
@@ -717,7 +717,7 @@ Ctrl-C — left the operator with a schema-only file and every table
 empty, along the very path they had run to *recover* a bad index.
 Under temp-then-rename a failed build leaves the existing database
 byte-untouched. `rebuild_index` is refactored onto the same helper:
-`zicato reindex` keeps its behaviour (a full re-derivation from the
+`zicato repair index` keeps its behaviour (a full re-derivation from the
 files) minus the destroy-on-failure hazard.
 
 The frontier-projection guard added earlier — warn and skip on a
@@ -911,7 +911,7 @@ second, and the orchestrator appends to `lineage.json` *after* the
 index takes from lineage, `created_at` and `round_index`, land empty
 on the live write and stay that way. Nothing errors; the round simply
 leaves a generation with an unknown birth round. Before this feature
-they stayed empty until an operator happened to run `zicato reindex`.
+they stayed empty until an operator happened to run `zicato repair index`.
 Now the next round's preflight sees the epoch's
 `lineage_generations_count` move and fills them in. It is also why an
 epoch reads as diverged at the *end* of a run: that is the dual-write
@@ -971,13 +971,13 @@ evolve run; retrying would reintroduce the contention the rule
 exists to avoid. The dashboard renders its degraded empty state for
 one page load and picks the index up on its next start.
 
-`zicato reindex` remains an explicit operator action and is not
+`zicato repair index` remains an explicit operator action and is not
 lock-gated — it is the forensic tool, run deliberately off the
 happy path, and §2.4 already states the expectation that it runs
 while no `evolve` is in flight. What changed is that it is no
 longer *destructive* when it fails (§5.1).
 
-### 5.4 What still requires `zicato reindex`
+### 5.4 What still requires `zicato repair index`
 
 Routine reindexing is now automatic. Four situations still call for
 the explicit command:
@@ -1110,7 +1110,7 @@ Properties of the supervisor's read path:
   workspace, or one where `reindex` has never run), the
   supervisor degrades: the live panels driven by
   `.zicato/runtime/` still render; the analytical panels show a
-  "run `zicato reindex`" placeholder. The dashboard never hard-
+  "run `zicato repair index`" placeholder. The dashboard never hard-
   fails on a missing index.
 
 Why the supervisor reads the index rather than walking the
@@ -1136,7 +1136,7 @@ processes.
 | `experiment.json` / `gen_score.json` the index derives from | [EPOCHS-AND-JOURNALING.md §3](EPOCHS-AND-JOURNALING.md#3-the-experiment) |
 | The tournament analytics the index backs | [TOURNAMENT.md §4](TOURNAMENT.md#4-tournament-detail-analytics) |
 | The supervisor binary that reads the index | [RUNTIME.md](RUNTIME.md), [DASHBOARD.md](DASHBOARD.md) |
-| `zicato reindex` in the CLI reference | [CLI.md](CLI.md) |
+| `zicato repair index` in the CLI reference | [CLI.md](CLI.md) |
 | The workspace lock the heal/build rule defers to | [RUNTIME.md](RUNTIME.md) |
 | The component map placing the index in the meta-loop | [ARCHITECTURE.md](ARCHITECTURE.md) |
 </content>

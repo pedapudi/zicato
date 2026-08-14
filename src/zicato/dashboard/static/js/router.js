@@ -72,7 +72,7 @@ export function parseRoute(hash) {
   // `#/builder` is the tournament builder's OWN first-class view (promoted out
   // of Settings). The same route-agnostic builder module backs every entry
   // point — the top-bar nav entry, this deep-link, the Settings launcher, and
-  // the standalone `zicato builder` CLI (which deep-links here) — but it now
+  // the standalone `zicato dashboard --view builder` CLI (which deep-links here) — but it now
   // renders FULL-WIDTH in the main view host rather than nested in Settings.
   if (parts[0] === 'builder') return { view: 'builder', params: {}, cmp };
   // `#/logs` is the workspace-level operator-log pane (LOGGING.md) — a peer of

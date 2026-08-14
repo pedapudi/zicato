@@ -7,7 +7,7 @@ read-only, visibility-only: the rating and its uncertainty never gate
 promotion. This pins the fresh-build shape, the SCHEMA_VERSION bump, and the
 additive v11 -> v12 in-place migration (the same pattern as the earlier
 waves): an existing v11 database gains the column as NULL on open (uncertainty
-not yet computed — the next ``zicato reindex`` derives it); a full rebuild
+not yet computed — the next ``zicato repair index`` derives it); a full rebuild
 re-applies the v12 CREATE TABLE.
 
 Also pins the fold's stale-schema guard: on a database that has ``elo`` but

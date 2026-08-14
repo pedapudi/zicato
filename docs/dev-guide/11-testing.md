@@ -1326,7 +1326,10 @@ uv run pytest tests/test_convergence_known_answer.py \
 # 9. Rust supervisor (if you touched a two-language contract).
 cargo test -p zicato-supervisor
 
-# 10. Vendor scan — nothing in git may reference the model vendor (the
+# 10. Simplification budgets — reports language and subsystem totals too.
+python tools/line_budget.py --check
+
+# 11. Vendor scan — nothing in git may reference the model vendor (the
 #     durable repo rule). Scan the staged diff for the vendor's name and any
 #     product / model identifiers; VENDOR must be your local pattern, kept
 #     out of the tree. The diff must be clean.
@@ -1336,6 +1339,13 @@ git diff --cached | grep -riE "$VENDOR" && echo "VENDOR LEAK" || echo "clean"
 `make check` collapses steps 3–5 + 2 + 7 into one target
 (`lint import-lint typecheck test node-test`, parallelizable with `-j5`);
 run the parity gates and oracles alongside it.
+
+Treat `RuntimeWarning`, unclosed-resource output, and pending-task destruction
+as failures even when pytest exits zero. For server lifecycle changes, repeat
+the focused serial test with `-W error::RuntimeWarning`; parallel success alone
+can hide teardown races. A server thread owns its event loop through shutdown:
+after the application stops, cancel and gather remaining tasks, shut down async
+generators, then close the loop.
 
 > ✅ ALWAYS run `uv sync --all-extras` (never bare `uv sync`) when your
 > environment might be stale. Bare `uv sync` in zicato DELETES the dev tooling

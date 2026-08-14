@@ -153,7 +153,7 @@ def test_measure_noise_floor_deterministic_adapter_is_zero(tmp_path: Path) -> No
 
     from zicato import adapter_factory, runtime_factory, workspace_loader
     from zicato.core.types import Generation
-    from zicato.orchestrator import _resolve_current_generation, _snapshot_root
+    from zicato.evolve.generation_phase import current_generation, snapshot_root
 
     workspace_config = workspace_loader.load_workspace_config(workspace)
     adapter = adapter_factory.make_adapter_from_config(workspace_config)
@@ -163,12 +163,12 @@ def test_measure_noise_floor_deterministic_adapter_is_zero(tmp_path: Path) -> No
         harness_call_llm=t0_mocks.harness_llm,
         auxiliary_call_llm=t0_mocks.aux_llm,
     )
-    champion_id = _resolve_current_generation(workspace, epoch_id)
+    champion_id = current_generation(workspace, epoch_id)
     champion = Generation(
         id=champion_id,
         epoch_id=epoch_id,
         parent_id=None,
-        snapshot_root=_snapshot_root(workspace, epoch_id, champion_id),
+        snapshot_root=snapshot_root(workspace, epoch_id, champion_id),
         created_at="",
         promoted=True,
     )

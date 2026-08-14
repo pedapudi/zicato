@@ -177,7 +177,7 @@ def test_margin_finding_never_proposes_an_op_that_lowers_the_margin() -> None:
     already clearing 2.5x the dispersion the gate actually thresholds. Here
     ``2.5 x 0.01 = 0.025`` is BELOW the live ``promote_margin=0.05``, so
     emitting it verbatim would give the operator a one-command
-    ``zicato reflect apply`` that HALVES the promote margin under a headline
+    ``zicato inspect reflection apply`` that HALVES the promote margin under a headline
     promising to raise it. The finding must report the disagreement and carry
     no op at all.
     """

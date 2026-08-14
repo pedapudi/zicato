@@ -196,7 +196,7 @@ def enforce_forbidden(
 
     The check is strict equality on :attr:`Patch.mutation_id`; globbing
     is intentionally NOT supported here. Operators who want to forbid a
-    family of ids should enumerate them (the CLI's ``zicato mutations``
+    family of ids should enumerate them (the CLI's ``zicato inspect mutations``
     listing is the obvious source).
     """
 

@@ -187,7 +187,7 @@ Point the workspace at the proposer dir with `register` (off the happy path —
 `evolve` resolves the contract itself, but `register` pins the path):
 
 ```sh
-.venv/bin/zicato register \
+.venv/bin/zicato epoch register \
     --adk my_pkg.agent:root_agent \
     --mutable-tree src/my_pkg \
     --proposer-path proposers/fancy
@@ -195,7 +195,7 @@ Point the workspace at the proposer dir with `register` (off the happy path —
 
 This writes `contract.proposer_path` into `.zicato/config.json` (absolutised),
 which `evolve` reads back on every run. Derive the exact flag from
-`zicato register --help` — the design CLI docs are known to drift. An absent
+`zicato epoch register --help` — the design CLI docs are known to drift. An absent
 `--proposer-path` leaves the workspace on the built-in default proposer.
 
 ## Editing the proposer rolls the epoch (same as editing the brief)

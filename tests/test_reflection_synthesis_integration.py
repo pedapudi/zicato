@@ -112,7 +112,9 @@ def test_unmocked_round_trip_suggest_persists_and_applies(tmp_path: Path) -> Non
     ws, epoch = _seed_workspace(tmp_path)
 
     # NO monkeypatch of resolve_synthesize / resolve_admit — the real seams run.
-    result = _run(["reflect", "suggest", "--workspace", str(ws), "--reflection", _REFLECTION_ID])
+    result = _run(
+        ["inspect", "reflection", "suggest", "--workspace", str(ws), "--reflection", _REFLECTION_ID]
+    )
     assert result.exit_code == 0, result.output
 
     persisted = json.loads(
@@ -140,7 +142,15 @@ def test_unmocked_round_trip_suggest_persists_and_applies(tmp_path: Path) -> Non
     # contract stays byte-unchanged.
     before = board_path(ws, epoch).read_bytes()
     applied = _run(
-        ["reflect", "apply", _REFLECTION_ID, reg["suggestion_id"], "--workspace", str(ws)]
+        [
+            "inspect",
+            "reflection",
+            "apply",
+            _REFLECTION_ID,
+            reg["suggestion_id"],
+            "--workspace",
+            str(ws),
+        ]
     )
     assert applied.exit_code == 0, applied.output
     assert "add_board_entry" in applied.output
@@ -206,7 +216,16 @@ def test_unmocked_probe_measures_against_the_fixture_runner(tmp_path: Path, monk
     monkeypatch.setattr(runner_mod, "_run_single", stub)
 
     result = _run(
-        ["reflect", "suggest", "--workspace", str(ws), "--reflection", _REFLECTION_ID, "--probe"]
+        [
+            "inspect",
+            "reflection",
+            "suggest",
+            "--workspace",
+            str(ws),
+            "--reflection",
+            _REFLECTION_ID,
+            "--probe",
+        ]
     )
     assert result.exit_code == 0, result.output
 

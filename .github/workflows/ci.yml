@@ -6,6 +6,15 @@ on:
   pull_request:
 
 jobs:
+  line-budget:
+    name: line budget
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Report and enforce line budgets
+        run: python tools/line_budget.py --check
+
   lint-and-test:
     runs-on: ubuntu-latest
     strategy:

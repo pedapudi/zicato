@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import math
 from collections.abc import Mapping
-from dataclasses import dataclass, field
+from dataclasses import MISSING, dataclass, field, fields
 from typing import Any
 
 from zicato.core.tournament import (
@@ -1343,6 +1343,62 @@ class ScoringWeights:
         if raw_scope is not None and raw_scope not in ("per_entry", "aggregate"):
             data = {**data, "pass_rate_monotonicity_scope": cls().pass_rate_monotonicity_scope}
         return jsonable_to_dataclass(cls, data)
+
+
+CONTRACT_KNOB_TYPES: tuple[type, ...] = (
+    ScoringWeights,
+    OverfittingConfig,
+    LadderConfig,
+    ProposerQualityConfig,
+    ExperimentMemoryConfig,
+)
+
+
+@dataclass(frozen=True, slots=True)
+class ContractKnob:
+    """One runtime-derived scoring-contract field declaration."""
+
+    owner: type
+    name: str
+    default: object
+    omit_at_default: bool
+    builder_op: str | None
+    builder_arg: str
+
+    @property
+    def key(self) -> str:
+        return f"{self.owner.__name__}.{self.name}"
+
+
+def contract_knobs() -> tuple[ContractKnob, ...]:
+    """Return the scoring contract's field registry in declaration order."""
+
+    knobs: list[ContractKnob] = []
+    for owner in CONTRACT_KNOB_TYPES:
+        for declared in fields(owner):
+            if declared.default is not MISSING:
+                default = declared.default
+            elif declared.default_factory is not MISSING:
+                default = declared.default_factory()
+            else:
+                default = MISSING
+            knobs.append(
+                ContractKnob(
+                    owner=owner,
+                    name=declared.name,
+                    default=default,
+                    omit_at_default=bool(declared.metadata.get("omit_at_default")),
+                    builder_op=declared.metadata.get("builder_op"),
+                    builder_arg=declared.metadata.get("builder_arg") or declared.name,
+                )
+            )
+    return tuple(knobs)
+
+
+def omit_at_default_fields() -> frozenset[str]:
+    """Names omitted from canonical scoring while equal to their defaults."""
+
+    return frozenset(knob.name for knob in contract_knobs() if knob.omit_at_default)
 
 
 def recommended_scaffold_weights() -> ScoringWeights:

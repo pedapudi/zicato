@@ -470,7 +470,7 @@ CREATE TABLE IF NOT EXISTS pareto_frontier (
 ```
 
 The workspace file is canonical and the table is a pure projection of it:
-`zicato reindex` re-derives every row from `pareto_frontier.json`, and the
+`zicato repair index` re-derives every row from `pareto_frontier.json`, and the
 frontier is fully readable with no index at all. A best-effort incremental
 upsert runs at the settle seam so a live index does not go stale, mirroring
 `ingest_reflection`.

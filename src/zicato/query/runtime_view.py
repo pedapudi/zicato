@@ -7,6 +7,7 @@ import json
 from pathlib import Path
 from typing import Any
 
+from zicato.query.contracts import LivenessPayload, SnapshotPayload
 from zicato.query.epoch_view import build_epoch_view
 from zicato.query.paths import (
     WorkspacePaths,
@@ -530,8 +531,8 @@ def _progress_tail(paths: WorkspacePaths) -> tuple[bool, bool, str | None]:
         return (False, False, None)
 
 
-def derive_liveness(paths: WorkspacePaths, *, now: _dt.datetime | None = None) -> dict[str, Any]:
-    """THE liveness verdict — ``{state, last_heartbeat?, ended_at?}``.
+def derive_liveness(paths: WorkspacePaths, *, now: _dt.datetime | None = None) -> LivenessPayload:
+    """THE liveness verdict, including the live epoch when known.
 
     One derivation, read by every live surface, so "is anything running?"
     has exactly one answer. Liveness is a property of the CLOCK, not of
@@ -588,11 +589,18 @@ def derive_liveness(paths: WorkspacePaths, *, now: _dt.datetime | None = None) -
         state = LIVENESS_INTERRUPTED
         ended_at = last_heartbeat or tail_ts
 
-    out: dict[str, Any] = {"state": state}
+    out: LivenessPayload = {"state": state}
     if isinstance(last_heartbeat, str) and last_heartbeat:
         out["last_heartbeat"] = last_heartbeat
     if isinstance(ended_at, str) and ended_at:
         out["ended_at"] = ended_at
+    if state == LIVENESS_LIVE:
+        tournament = read_active_tournament_dict(paths)
+        epoch_id = (tournament.get("epoch_id") if isinstance(tournament, dict) else None) or (
+            hb.get("epoch_id") if hb else None
+        )
+        if isinstance(epoch_id, str) and epoch_id:
+            out["epoch_id"] = epoch_id
     return out
 
 
@@ -601,7 +609,7 @@ def derive_liveness(paths: WorkspacePaths, *, now: _dt.datetime | None = None) -
 # ---------------------------------------------------------------------------
 
 
-def build_snapshot(paths: WorkspacePaths) -> dict[str, Any]:
+def build_snapshot(paths: WorkspacePaths) -> SnapshotPayload:
     """The full ``/api/state`` snapshot, mirroring the Rust ``Snapshot``.
 
     ``paused`` (the operator pause-flag presence) rides top-level too —

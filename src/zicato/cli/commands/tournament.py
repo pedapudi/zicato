@@ -14,7 +14,7 @@ Two modes:
 
 Usage::
 
-    zicato tournament PARENT CHILD [--workspace .zicato] [--epoch ID] \\
+    zicato tournament run PARENT CHILD [--workspace .zicato] [--epoch ID] \\
         [--mode full|fast]
 
 PARENT and CHILD are generation ids under the (resolved) epoch — the

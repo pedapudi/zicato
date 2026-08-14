@@ -107,6 +107,7 @@ def test_fresh_heartbeat_on_an_active_phase_is_live(tmp_path: Path) -> None:
     # A live run has not ended, so it reports no end.
     assert "ended_at" not in out
     assert out["last_heartbeat"] == _iso(NOW - _dt.timedelta(seconds=1))
+    assert out["epoch_id"] == "e0"
 
 
 def test_the_june_workspace_shape_is_interrupted(tmp_path: Path) -> None:

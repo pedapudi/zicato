@@ -454,7 +454,7 @@ def _persist_field_tournament(
     standings, competitors, proposing field-status, the crowning verdict —
     to its durable ``tournaments/field-*.json`` snapshot AND dual-writes it
     into the analytical index as ONE field-level ``tournaments`` row. The
-    snapshot is the canonical source (so ``zicato reindex`` re-derives the
+    snapshot is the canonical source (so ``zicato repair index`` re-derives the
     row); the dual-write puts the swiss / elim ladder in the index.
 
     ``state`` carries the explicit ``in_progress`` → ``settled`` lifecycle

@@ -65,7 +65,7 @@ class InstrumentLens:
                 InstrumentLens.title,
                 "no reflection has been run for this workspace",
                 hint=(
-                    "run one with `zicato reflect run` — it diagnoses and recommends; "
+                    "run one with `zicato inspect reflection run` — it diagnoses and recommends; "
                     "it never edits the contract"
                 ),
             )
@@ -269,7 +269,7 @@ def _apply_command(f: dict[str, Any], reflection_id: str) -> str | None:
     finding_id = f.get("finding_id")
     if not op or not finding_id:
         return None
-    return f"zicato reflect apply {reflection_id} {finding_id}"
+    return f"zicato inspect reflection apply {reflection_id} {finding_id}"
 
 
 def _queue_block(findings: list[dict[str, Any]], reflection_id: str) -> Block:

@@ -12,6 +12,12 @@ orchestrator-resident helpers. Read it with
 step names the symbol that owns it; if you cannot find a step's symbol,
 the code has moved and this chapter needs an erratum.
 
+The decomposition contract is specified in
+`docs/design/ROUND-PIPELINE.md`. The prepare phase creates an immutable
+`zicato.evolve.generation_phase.RoundSession`; that module also owns champion,
+snapshot, next-id, and mutable-tree coordinates. Import those operations from
+their owner directly—there are intentionally no orchestrator forwarding seams.
+
 ---
 
 ## 1. The process topology
@@ -1216,7 +1222,7 @@ unique (`conv-<generation>-<entry>` in the example harness; the index's
 
 **After the wait:** the runner stamps `match_id` onto the settled
 `LossProfile` AND rewrites `loss.json` with the tag (so a later full
-`zicato reindex`, which re-reads `loss.json`, re-derives the same
+`zicato repair index`, which re-reads `loss.json`, re-derives the same
 provenance), keys the ActiveTournament grid update on `(entry_id,
 side)` — each entry has TWO rows, one per side; keying on `entry_id`
 alone lands parent transitions on the child row — and dual-writes the

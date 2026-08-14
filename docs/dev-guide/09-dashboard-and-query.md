@@ -550,7 +550,7 @@ loop-view is the model — note the two distinct degrade notes:
     try:
         traj = optimization_trajectory(paths.index_db, epoch_id)
     except IndexUnavailableError:
-        return _empty_trajectory(paths, epoch_id, "index not built; run zicato reindex")
+        return _empty_trajectory(paths, epoch_id, "index not built; run zicato repair index")
     except Exception:  # noqa: BLE001 — best-effort, mirrors sibling readers
         return _empty_trajectory(paths, epoch_id, "index unreadable")
 ```
@@ -672,7 +672,7 @@ def _query(conn: sqlite3.Connection, sql: str, params: tuple[Any, ...]) -> list[
 — `src/zicato/query/_sqlite.py`
 
 `_IndexAbsent` is raised on a missing file so a reader can distinguish
-"never built" (attach the `run zicato reindex` note) from "unreadable"
+"never built" (attach the `run zicato repair index` note) from "unreadable"
 (attach the generic note) — the two degrade notes in §9.3.1.
 
 ### 9.3.5 The composite reads
@@ -2059,7 +2059,7 @@ def build_promotion_cadence(paths: WorkspacePaths, epoch_id: str) -> dict[str, A
     try:
         rows = _cadence_rows(paths.index_db, epoch_id)   # or off the lineage
     except IndexUnavailableError:
-        return {"epoch_id": epoch_id, "cadence": [], "note": "index not built; run zicato reindex"}
+        return {"epoch_id": epoch_id, "cadence": [], "note": "index not built; run zicato repair index"}
     except Exception:  # noqa: BLE001 — best-effort, mirrors sibling readers
         return {"epoch_id": epoch_id, "cadence": [], "note": "index unreadable"}
     return {"epoch_id": epoch_id, "cadence": rows}

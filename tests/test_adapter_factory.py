@@ -66,7 +66,7 @@ def test_make_adapter_adk_without_mutable_trees(
 def test_make_adapter_legacy_register_keys(
     fake_adk_module: dict[str, Any],
 ) -> None:
-    """A config from `zicato register` (pre-factory) still works."""
+    """A config from `zicato epoch register` (pre-factory) still works."""
     config = {
         "adk_entrypoint": "my_pkg.agent:root",
         "mutable_trees": ["/tmp/tree_a"],

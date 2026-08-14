@@ -26,10 +26,10 @@ inherited a script or a note using the old names, translate it:
 | Old form | Real CLI | Notes |
 |---|---|---|
 | `zicato run --generation vN --entry <id> [--tail]` | *(none)* | No standalone runner. Runs happen *inside* `tournament` / `evolve`, which execute every board entry against each generation. |
-| `zicato analyze` | `zicato analyze-telemetry` | Decision-telemetry analyzer for the current epoch. |
-| `zicato propose --output <file>` | `zicato propose` | No `--output`; it writes `experiment.json` into the next generation dir itself. |
+| `zicato analyze` | `zicato inspect telemetry` | Decision-telemetry analyzer for the current epoch. |
+| `zicato proposer propose --output <file>` | `zicato proposer propose` | No `--output`; it writes `experiment.json` into the next generation dir itself. |
 | `zicato patch apply --experiment <file> --as vN` | *(none)* | No separate apply step. `propose` creates the candidate generation and writes its experiment in one shot; `tournament` / `evolve` apply patches internally. |
-| `zicato tournament vN vM` | `zicato tournament PARENT CHILD` | Positional generation ids. |
+| `zicato tournament run vN vM` | `zicato tournament run PARENT CHILD` | Positional generation ids. |
 
 Always confirm with `.venv/bin/zicato <cmd> --help` before relying on a flag.
 
@@ -84,7 +84,7 @@ All paths are under `.zicato/epochs/<epoch>/`:
 - `journal.md` — appended at each promote/reject.
 
 Read these between stages rather than re-running. After any hand-edit of a
-canonical file, run `zicato reindex` so `index.db` re-derives (see
+canonical file, run `zicato repair index` so `index.db` re-derives (see
 `zicato-index-ops`).
 
 ## When NOT to use this skill

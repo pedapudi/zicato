@@ -1,10 +1,10 @@
-"""``zicato register`` — record adapter entrypoint and mutable trees.
+"""``zicato epoch register`` — record adapter entrypoint and mutable trees.
 
 ADVANCED / DEBUGGING — off the happy path. ``zicato evolve`` resolves
 and uses the evaluation contract on its own; you only run ``register``
 by hand to set the contract paths up front or to inspect/change them.
 
-After ``zicato init`` creates the workspace, ``zicato register``
+After ``zicato init`` creates the workspace, ``zicato epoch register``
 records *which* agent to run and *which* source trees the proposer is
 allowed to mutate. The entrypoint follows the common Python convention
 ``module.path:symbol``; mutable trees are filesystem roots (one or
@@ -210,7 +210,7 @@ def register_cmd(
     config = read_workspace_config(workspace_root)
     config["adk_entrypoint"] = entrypoint
     # ``mutable_trees`` and ``source_roots`` are the same concept under
-    # two historical names: ``zicato mutations`` and ``zicato propose``
+    # two historical names: ``zicato inspect mutations`` and ``zicato proposer propose``
     # read ``source_roots``; the adapter factory reads ``mutable_trees``.
     # Writing both keeps the readers consistent without forcing a
     # workspace-format migration.

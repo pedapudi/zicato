@@ -32,7 +32,7 @@ is allowed to rewrite. It merges into `config.json` (preserves the keys `init`
 wrote).
 
 ```sh
-.venv/bin/zicato register --workspace .zicato \
+.venv/bin/zicato epoch register --workspace .zicato \
     --adk my_pkg.agent:root_agent \
     --mutable-tree ./my_pkg
 ```
@@ -70,7 +70,7 @@ not at register time. Point the two flags at two distinct callables.
 Confirm every marker resolves cleanly before running the loop:
 
 ```sh
-.venv/bin/zicato mutations --workspace .zicato
+.venv/bin/zicato inspect mutations --workspace .zicato
 ```
 
 You should see one row per `# zicato:mutable id="..."` marker, no warnings, no

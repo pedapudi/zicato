@@ -1,4 +1,4 @@
-"""``zicato reflect suggest --from-trajectories`` — WS-WIRE (TRAJECTORY-BOOTSTRAP.md §6).
+"""``zicato inspect reflection suggest --from-trajectories`` — WS-WIRE (TRAJECTORY-BOOTSTRAP.md §6).
 
 The trajectory-bootstrap surface on ``reflect suggest``: a directory of foreign
 agent trace files is imported (format-sniffed + reduced through the existing
@@ -142,7 +142,8 @@ def test_missing_trajectory_dir_is_an_honest_exit0(
 
     result = _run(
         [
-            "reflect",
+            "inspect",
+            "reflection",
             "suggest",
             "--workspace",
             str(ws),
@@ -169,7 +170,8 @@ def test_empty_trajectory_dir_is_an_honest_exit0(
 
     result = _run(
         [
-            "reflect",
+            "inspect",
+            "reflection",
             "suggest",
             "--workspace",
             str(ws),
@@ -197,7 +199,8 @@ def test_invalid_bytes_dir_survives_exit0(
 
     result = _run(
         [
-            "reflect",
+            "inspect",
+            "reflection",
             "suggest",
             "--workspace",
             str(ws),
@@ -222,7 +225,8 @@ def test_mixed_format_dir_imports_persists_and_mines(
 
     result = _run(
         [
-            "reflect",
+            "inspect",
+            "reflection",
             "suggest",
             "--workspace",
             str(ws),
@@ -304,7 +308,8 @@ def test_plan_mode_spends_nothing_with_the_new_flag(
 
     result = _run(
         [
-            "reflect",
+            "inspect",
+            "reflection",
             "suggest",
             "--workspace",
             str(ws),
@@ -330,7 +335,8 @@ def test_report_renders_foreign_source_provenance(
     monkeypatch.setattr(sug_mod, "resolve_admit", lambda: None)
     _run(
         [
-            "reflect",
+            "inspect",
+            "reflection",
             "suggest",
             "--workspace",
             str(ws),
@@ -341,6 +347,6 @@ def test_report_renders_foreign_source_provenance(
         ]
     )
 
-    result = _run(["reflect", "report", _REFLECTION_ID, "--workspace", str(ws)])
+    result = _run(["inspect", "reflection", "report", _REFLECTION_ID, "--workspace", str(ws)])
     assert result.exit_code == 0, result.output
     assert "foreign source: adk_run.jsonl (adk_events)" in result.output

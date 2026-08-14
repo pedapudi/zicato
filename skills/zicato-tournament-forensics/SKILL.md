@@ -19,7 +19,7 @@ Always call the CLI from the project venv: `.venv/bin/zicato ...`. See
 ## Re-score a pair in isolation
 
 ```sh
-.venv/bin/zicato tournament PARENT CHILD \
+.venv/bin/zicato tournament run PARENT CHILD \
     --workspace .zicato [--epoch <id>] [--mode full|fast] [--skip-regression]
 ```
 

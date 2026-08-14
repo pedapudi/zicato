@@ -75,7 +75,7 @@ def tui_cmd(
     docs/design/TUI.md.)
 
     READ-ONLY. The console mutates nothing and runs nothing: the Instrument
-    lens prints the exact `zicato reflect apply ...` line for you to run.
+    lens prints the exact `zicato inspect reflection apply ...` line for you to run.
     """
     # Lazy import: the console pulls in Textual (the `tui` extra). Importing it
     # here keeps `zicato --help` fast and means an install without the extra

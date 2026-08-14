@@ -335,39 +335,8 @@ export function deriveLiveStatus(
   };
 }
 
-// ── the TRI-STATE every present-tense surface consumes ───────────────
-//
-// THE BUG this fixes (issue #194 §1): liveness was read off FILE PRESENCE.
-// A workspace dead since June still holds a heartbeat naming a round, an
-// `active_tournament.json` reading `phase: "running"`, and seven
-// `active_runs` records — so every view opened with `LIVE · racing · 7
-// units running`, 100%-forever progress bars, and "deciding…" figures, two
-// months after the process died.
-//
-// One derivation, three words:
-//   live        — something is pulsing right now.
-//   settled     — the loop reached an end (it appended a terminal progress
-//                 event, or its heartbeat is parked on an at-rest phase).
-//   interrupted — it stopped mid-flight and never recorded an end.
-//
-// The SERVER derives this tri-state (runtime_view.derive_liveness) and
-// serves it as `liveness` on /api/state, /api/environment and the SSE
-// snapshot. THE SERVER'S VERDICT IS THE ANSWER — it is the only reader that
-// can see the terminal progress event log, and the only one that ages the
-// per-run records rather than counting them. This function does not
-// re-derive it.
-//
-// The client's one contribution is DEMOTION. A served payload is a
-// photograph: if the stream dies mid-run, "live" would stay on the page
-// forever. So the client's own ageing (`deriveLiveStatus().alive`, the
-// existing hero-visibility gate) can only ever pull a `live` verdict DOWN
-// to `interrupted` — never push a dead workspace up to live. That is what
-// keeps this from becoming a second staleness brain.
-//
-// With no `liveness` block at all (an older server, or the Rust supervisor,
-// which does not serve it yet) the four-state verdict maps in directly:
-// SETTLED → settled, LIVE/STALLED → live, DEAD → interrupted. That is
-// byte-for-byte today's behaviour.
+// The server owns this tri-state. Client ageing may demote a stale `live`
+// photograph, but never promotes a terminal verdict.
 export const LIVENESS = Object.freeze({
   LIVE: 'live', SETTLED: 'settled', INTERRUPTED: 'interrupted',
 });
@@ -401,6 +370,7 @@ export function deriveLiveness({ liveness, status } = {}) {
     live: state === LIVENESS.LIVE,
     endedAt,
     lastHeartbeat: served ? (served.last_heartbeat || null) : null,
+    epochId: served ? (served.epoch_id || null) : null,
   };
 }
 
@@ -423,28 +393,14 @@ export function livenessFor(appState, now = Date.now()) {
   return { status, liveness: deriveLiveness({ liveness: s.liveness, status }) };
 }
 
-// Is a run LIVE right now FOR THE EPOCH ON SCREEN? Two questions folded into
-// one answer (issue #194 §1): the CLOCK (`livenessFor` — is the loop running
-// at all) and the SCOPE (does the live envelope describe THIS epoch — a closed
-// e0 must not borrow e1's present tense). Keyed off the active tournament's
-// epoch id, falling back to the heartbeat's; when NEITHER live signal carries
-// an epoch tag it is a legacy single-epoch payload, so it is trusted for the
-// viewed epoch. A null `epochId` asks the unscoped question.
-//
-// This is what every present-tense VERDICT consumes: a pill that says "racing…"
-// is claiming this candidate is in a race right now, and only a live-for-this-
-// epoch loop makes that true.
+// The server owns both clock and epoch scope. An absent epoch id is the legacy
+// single-epoch shape and remains trusted; the browser only compares identity.
 export function epochIsLive(appState, epochId, now = Date.now()) {
   const s = appState || {};
-  if (!livenessFor(s, now).liveness.live) return false;
+  const verdict = livenessFor(s, now).liveness;
+  if (!verdict.live) return false;
   if (epochId == null) return true;
-  const at = s.activeTournament;
-  const hb = s.heartbeat;
-  const atEpoch = (at && at.epoch_id != null) ? String(at.epoch_id) : null;
-  const hbEpoch = (hb && hb.epoch_id != null) ? String(hb.epoch_id) : null;
-  if (atEpoch != null) return atEpoch === String(epochId);
-  if (hbEpoch != null) return hbEpoch === String(epochId);
-  return true;
+  return verdict.epochId == null || String(verdict.epochId) === String(epochId);
 }
 
 // The one-line status band's text. Live surfaces the phase + in-flight

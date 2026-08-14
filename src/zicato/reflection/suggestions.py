@@ -458,7 +458,7 @@ def render_suggestions_table(suggestions: list[Suggestion]) -> str:
             f"{i:>2}. [{s.suggestion_type}] {s.subject} -> {s.target_slice}\n"
             f"    {s.summary}\n"
             f"    admission: {format_admission(s.admission)}\n"
-            f"    apply: zicato reflect apply <reflection_id> {s.suggestion_id}"
+            f"    apply: zicato inspect reflection apply <reflection_id> {s.suggestion_id}"
         )
     return "\n".join(lines)
 
@@ -468,7 +468,7 @@ def render_suggestions_md(suggestions: list[Suggestion]) -> list[str]:
     ranked = rank_suggestions(suggestions)
     lines: list[str] = [f"## Eval suggestions ({len(ranked)})"]
     if not ranked:
-        lines.append("(none — run `zicato reflect suggest` to synthesise)")
+        lines.append("(none — run `zicato inspect reflection suggest` to synthesise)")
         lines.append("")
         return lines
     for s in ranked:
@@ -489,7 +489,8 @@ def render_suggestions_md(suggestions: list[Suggestion]) -> list[str]:
             lines.append(f"- foreign source: {src} ({dialect}) — trajectory bootstrap")
         if s.proposed_op:
             lines.append(
-                f"- apply with: `zicato reflect apply {{reflection_id}} {s.suggestion_id}`"
+                "- apply with: `zicato inspect reflection apply "
+                f"{{reflection_id}} {s.suggestion_id}`"
             )
         else:
             lines.append("- apply: recommendation only (no mechanical op — an authoring decision)")

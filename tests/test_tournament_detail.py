@@ -317,7 +317,7 @@ def test_assemble_lineage_links_epochs(index_db: Path) -> None:
 
 def test_assemble_bracket_missing_db_raises() -> None:
     """A missing database raises a clear, operator-actionable error."""
-    with pytest.raises(IndexUnavailableError, match="zicato reindex"):
+    with pytest.raises(IndexUnavailableError, match="zicato repair index"):
         assemble_bracket("/nonexistent/path/index.db", EPOCH)
 
 

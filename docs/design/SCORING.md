@@ -308,7 +308,7 @@ obliterating the other. The shipped defaults are equal (`drift_weight =
 pass_weight = 1.0`), which keeps the two axes commensurate during early
 dogfood.
 
-`zicato tournament v3 v4` prints the tournament result — both
+`zicato tournament run v3 v4` prints the tournament result — both
 generations' aggregates and the gate verdict — as a JSON object.
 
 ### 4.1 Default weights and the calibration problem

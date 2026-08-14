@@ -13,7 +13,7 @@ Coverage:
   :func:`zicato.analyzer.report_sections._promoted_lineage` walks
   ``v0 -> v1`` and the per-board outcomes table renders non-empty
   content (the bug-reproduction case before the fix).
-* The ``zicato repair-v0-baseline`` CLI subcommand backfills a
+* The ``zicato repair v0-baseline`` CLI subcommand backfills a
   pre-existing workspace whose v0 directory has no marker, and is a
   no-op on re-run.
 """
@@ -285,7 +285,7 @@ def test_per_board_outcomes_non_empty_after_backfill(tmp_path: Path) -> None:
 
 
 def test_repair_v0_baseline_cli_writes_missing_marker(tmp_path: Path) -> None:
-    """``zicato repair-v0-baseline`` writes the marker into an existing v0."""
+    """``zicato repair v0-baseline`` writes the marker into an existing v0."""
     ws, epoch = _bootstrap_workspace_without_v0_marker(tmp_path)
     exp_path = ws / "epochs" / epoch / "generations" / "v0" / "experiment.json"
     assert not exp_path.exists()

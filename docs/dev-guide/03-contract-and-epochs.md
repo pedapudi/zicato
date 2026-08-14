@@ -59,7 +59,7 @@
 | File | What lives there | Approx. size |
 |---|---|---|
 | `src/zicato/epoch/contract.py` | `ContractInputs`, every `_canon_*`, `compute_contract_hash` / `compute_component_hashes`, `resolve_contract_inputs`, `_SCORING_OMIT_AT_DEFAULT_FIELDS`, `scoring_to_canon`, `round_floats` | 776 lines |
-| `src/zicato/core/scoring_config.py` | `ScoringWeights` + the nested config dataclasses (`OverfittingConfig`, `LadderConfig`, `ProposerQualityConfig`, `ExperimentMemoryConfig`), `to_json`/`from_json`, `recommended_scaffold_weights` | 896 lines |
+| `src/zicato/core/scoring_config.py` | `ScoringWeights` + nested config dataclasses, the runtime-derived contract-knob registry, `to_json`/`from_json`, `recommended_scaffold_weights` | — |
 | `src/zicato/core/epoch.py` | `EpochConfig` (the frozen contract record) and `Generation` (one lineage node) | 177 lines |
 | `src/zicato/epoch/lifecycle.py` | `new_epoch`, `close_epoch` / `close_epoch_async`, `load_epoch` / `list_epochs`, `switch_epoch`, `set_epoch_goal` / `set_epoch_noise_floor` / `set_epoch_preflight`, `scoring_to_dict` | 769 lines |
 | `src/zicato/evolve/epoching.py` | `ensure_epoch_for_contract` (the auto-roll), `_create_epoch_from_contract`, the per-component sub-hash bookkeeping | 349 lines |
@@ -176,7 +176,7 @@ agent proposes, and under what self-imposed checks.
 `runtime.proposer_agent`, and `contract.proposer_static_checks`. A relative
 `proposer_path` is absolutized against the workspace's *parent* (the operator's
 project root). A missing `config.json` raises `FileNotFoundError` telling the
-operator to run `zicato register`.
+operator to run `zicato epoch register`.
 
 > ⚠️ TRAP — the live contract files sit NEXT TO the `.zicato/` directory (the
 > operator's project root), not inside it. `_default_contract_path` resolves
@@ -382,6 +382,13 @@ default-off knob *nested* on `OverfittingConfig` or `ProposerQualityConfig`
 (`random_baseline_every_n`, `screen_entries`, `screen_veto_only`,
 `process_exemplars`) be omitted at its default: the same `_SCORING_OMIT_AT_DEFAULT_FIELDS`
 name check runs at every recursion depth (§3.4).
+
+The flat omit set is not a second registry. `contract_knobs()` walks every
+declared scoring field once at import time, preserving its owner, default,
+omit rule, and builder mapping. `omit_at_default_fields()` projects the omit
+set from those records, and the builder completeness guards consume the same
+records. Generated equivalents are runtime values only; no derived source is
+committed.
 
 > ⚠️ TRAP — a nested config dataclass folds into the scoring hash the moment it
 > becomes a `ScoringWeights` field, whether you intended it or not. That is the
@@ -1568,7 +1575,7 @@ comparison.
 
 ## 3.13 One epoch, create to roll (worked trace)
 
-The full sequence under stock defaults — `zicato register` has recorded the
+The full sequence under stock defaults — `zicato epoch register` has recorded the
 contract in `config.json`, and the operator runs `zicato evolve` — annotated
 with the file that owns each step. Read this once before your first
 contract-adjacent change; every trap in this chapter appears in situ here.

@@ -771,7 +771,7 @@ a canonical file; the index row is a projection (07-runtime-and-durability.md
   An operator on an older build gets a clear refusal, not silent
   misinterpretation. Do not add a down-migration — the recovery is `zicato
   reindex`, not a schema downgrade.
-- ⚠️ **A row with no canonical file source vanishes on `zicato reindex`.** The
+- ⚠️ **A row with no canonical file source vanishes on `zicato repair index`.** The
   index is derived (invariant D1); if your column has no file to re-derive from,
   it disappears on the next rebuild and the vanish looks like someone else's bug.
   Land the fact in a canonical record first.

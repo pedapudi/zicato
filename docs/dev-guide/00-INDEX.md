@@ -160,10 +160,11 @@ bash tools/parity.sh                                   # 6. the 6 parity gates (
 make node-test ; echo "node exit: $?"                  # 7. the JS behaviour suite (G5/G10)
 uv run pytest tests/test_convergence_known_answer.py \
              tests/test_decision_procedure_power.py -q # 8. the two oracles (G4)
-git log -p <base>..HEAD | grep -icE "$pat"    # 9. vendor scan (G1): assemble $pat per 01-orientation §G1 → 0
+python tools/line_budget.py --check                      # 9. simplification budgets
+git log -p <base>..HEAD | grep -icE "$pat"    # 10. vendor scan (G1): assemble $pat per 01-orientation §G1 → 0
 ```
 
-> ✅ **ALWAYS** end at rung 9. It is the cheapest rung and the one whose failure is
+> ✅ **ALWAYS** end at rung 10. It is the cheapest rung and the one whose failure is
 > least recoverable — a vendor leak in a pushed commit means a history rewrite.
 
 ---

@@ -1,4 +1,4 @@
-# zicato reflection-/instrument-lens visualization study
+# zicato inspect reflection-/instrument-lens visualization study
 
 A set of standalone, self-contained, theme-adaptive study pages (one HTML file
 per reflection **surface**) that explore how the Console dashboard could draw

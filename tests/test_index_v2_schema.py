@@ -8,7 +8,7 @@ Covers:
 * the ingest paths populating both new fields,
 * the ``runs_for_tournament`` / ``loss_profiles_for_tournament`` /
   ``epoch_ancestry`` query helpers,
-* the ``zicato repair-tournament-fk`` repair command + its idempotency.
+* the ``zicato repair tournament-fk`` repair command + its idempotency.
 
 The fixtures here mirror the chain workspace builder used in
 ``test_index_ingest.py`` but with two epochs so cross-epoch ancestry
@@ -511,7 +511,7 @@ def test_backfill_tournament_fk_upgrades_v1_db_in_place(tmp_path: Path) -> None:
 
 
 def test_repair_tournament_fk_cli_command(tmp_path: Path) -> None:
-    """The ``zicato repair-tournament-fk`` CLI command wires through to the helper."""
+    """The ``zicato repair tournament-fk`` CLI command wires through to the helper."""
     ws, _, _ = _build_two_epoch_workspace(tmp_path)
     rebuild_index(ws)
     runner = CliRunner()

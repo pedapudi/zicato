@@ -46,7 +46,7 @@ class TestIndexRefuseOnNewer:
             message = str(excinfo.value)
             assert f"v{SCHEMA_VERSION + 1}" in message
             assert f"v{SCHEMA_VERSION}" in message
-            assert "reindex" in message
+            assert "repair index" in message
             # The newer stamp was NOT overwritten down.
             assert read_schema_version(conn) == SCHEMA_VERSION + 1
         finally:

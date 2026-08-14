@@ -14,7 +14,7 @@ Design rules encoded here:
   carry a ``NULL`` ``outcome_json``. Every function degrades gracefully:
   it returns a record with empty / ``None`` sub-fields rather than
   raising. The *only* hard error is a missing database file — that is an
-  operator-actionable condition (run ``zicato reindex``).
+  operator-actionable condition (run ``zicato repair index``).
 * **Frozen dataclasses out.** All return shapes are
   ``frozen=True, slots=True`` dataclasses (or dicts of JSON-native
   values) so the supervisor / CLI can ``asdict`` and emit them straight
@@ -344,12 +344,12 @@ def _open(db_path: str | Path) -> sqlite3.Connection:
     on top); otherwise opens the SQLite file directly with stdlib.
 
     Raises :class:`IndexUnavailableError` if the database file does not
-    exist — the caller should be pointed at ``zicato reindex``.
+    exist — the caller should be pointed at ``zicato repair index``.
     """
     path = Path(db_path)
     if not path.exists():
         raise IndexUnavailableError(
-            f"analytical index not found at {path} — run `zicato reindex` "
+            f"analytical index not found at {path} — run `zicato repair index` "
             f"to build it before querying tournament detail"
         )
     open_index = _try_import_open_index()

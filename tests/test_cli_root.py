@@ -15,13 +15,13 @@ def test_build_cli_root_returns_click_group() -> None:
     assert root.name == "zicato"
 
 
-def test_root_help_lists_init_and_register() -> None:
+def test_root_help_lists_primary_and_grouped_registration() -> None:
     runner = CliRunner()
     result = runner.invoke(build_cli_root(), ["--help"])
     assert result.exit_code == 0, result.output
-    # Both built-in bootstrap commands must appear in --help.
     assert "init" in result.output
-    assert "register" in result.output
+    assert "epoch" in result.output
+    assert "register" not in result.output
 
 
 def test_root_unknown_command_exits_nonzero() -> None:

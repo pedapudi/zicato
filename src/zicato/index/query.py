@@ -62,7 +62,7 @@ def open_index(db_path: Path) -> sqlite3.Connection:
     ------
     IndexNotBuiltError
         If ``db_path`` does not exist. The message suggests
-        ``zicato reindex``.
+        ``zicato repair index``.
 
     Notes
     -----
@@ -74,7 +74,7 @@ def open_index(db_path: Path) -> sqlite3.Connection:
     if not db_path.exists():
         raise IndexNotBuiltError(
             f"zicato index database not found at {db_path}; "
-            "run `zicato reindex` to build it from the workspace files"
+            "run `zicato repair index` to build it from the workspace files"
         )
     conn = sqlite3.connect(str(db_path))
     conn.row_factory = sqlite3.Row
@@ -952,7 +952,7 @@ def elo_for_epoch(db_path: Path, epoch_id: str) -> list[sqlite3.Row]:
     v12: a legacy index opened read-only without the migration still loads
     each row with all three fields present-but-null (``elo IS NULL`` =
     rating not yet computed; ``elo_se IS NULL`` on a pre-v12 file =
-    uncertainty not yet computed; run ``zicato reindex`` to derive them). A
+    uncertainty not yet computed; run ``zicato repair index`` to derive them). A
     generation that never played a settled duel also reads NULL (no games,
     no rating). A never-indexed workspace yields ``[]``.
     """

@@ -175,7 +175,7 @@ EVIDENCE_REPLICATE_BASE: int = 4000
 > already-reserved base. Pick a fresh base ≥ 5000, add it to this table, and
 > add its constant next to the others. A collision means an auxiliary draw
 > either *reads* a canonical sample it should not (silent contamination) or
-> *writes over* one that crash-resume and `zicato reindex` key on. This is
+> *writes over* one that crash-resume and `zicato repair index` key on. This is
 > exactly the class of bug Case 8 documents.
 
 ### 6.1.2 The replicate index reaches the harness through `context`

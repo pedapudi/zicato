@@ -321,7 +321,7 @@ proposer may edit, marked in the target's source with a
 allowlisted text file — markdown, YAML, TOML, shell — where the `:code`
 region and `:file` forms apply and any conventional comment leader is
 accepted. Typed as `MutationPoint`; enumerated by `enumerate_mutations`
-(`src/zicato/mutation/enumerator.py`); audited by `zicato mutations`.
+(`src/zicato/mutation/enumerator.py`); audited by `zicato inspect mutations`.
 The set of *registered mutable trees* (which subtrees are mutable at all)
 is contract identity; the *content* of those trees is not.
 
@@ -548,7 +548,7 @@ sequence is pinned by the convergence oracle and reproduced in
 
 **index** — the derived SQLite analytical index `.zicato/index.db`
 (`src/zicato/index/`): schema + ingest + query. Rebuildable at any time
-by `zicato reindex`; dual-written live (best-effort) as rounds run. Files
+by `zicato repair index`; dual-written live (best-effort) as rounds run. Files
 are canonical; the index is a projection.
 
 **heartbeat / progress log** — the liveness surface under
@@ -731,7 +731,7 @@ contract input — see `docs/design/PROPOSER.md`.
 enumerator (one walk over every marker-carrying file, with Python
 specialized by an AST context that supplies the docstring-line set and
 the span resolver), applier (patches → child tree), validator (post-apply
-checks). The `zicato mutations` CLI audits it.
+checks). The `zicato inspect mutations` CLI audits it.
 
 **`board/`** — the typed board-authoring API (Predicate/Rubric/Judge
 builders), the JSONL loader/saver, and `split.py` (the train/holdout
@@ -1259,7 +1259,7 @@ Not numbered because they are operator-facing (from `AGENTS.md`), but you
 will hit them constantly:
 
 - **Files are canonical; the index is derived.** Never hand-edit
-  `index.db`; after hand-editing a canonical file, run `zicato reindex`.
+  `index.db`; after hand-editing a canonical file, run `zicato repair index`.
 - **Contract edits roll epochs.** Editing `board.jsonl`, `brief.md`,
   `scoring.json`, the registered harness identity, or the proposer dir
   mid-epoch rolls the epoch on the next `evolve` (that is the design —

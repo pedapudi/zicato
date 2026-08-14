@@ -125,7 +125,7 @@ def validate_proposed_op(op_name: str, args: dict[str, Any]) -> dict[str, Any]:
 def _finding_id(pillar: str, subject: str, kind: str) -> str:
     """Content-stable finding id (independent of ranking order).
 
-    Deterministic so ``zicato reflect apply <finding_id>`` resolves the same
+    Deterministic so ``zicato inspect reflection apply <finding_id>`` resolves the same
     finding across re-derivations of an immutable reflection.
     """
     digest = hashlib.sha256(f"{pillar}|{subject}|{kind}".encode()).hexdigest()[:8]

@@ -263,7 +263,7 @@ def test_absent_index_degrades_with_a_note(tmp_path: Path) -> None:
     assert ledger == {
         "epoch_id": EPOCH,
         "experiments": [],
-        "note": "index not built; run zicato reindex",
+        "note": "index not built; run zicato repair index",
     }
 
 

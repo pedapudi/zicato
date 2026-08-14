@@ -1,4 +1,4 @@
-"""Tests for ``zicato config env`` — the merited env-var report.
+"""Tests for ``zicato inspect environment`` — the merited env-var report.
 
 The command surfaces :func:`zicato.config.describe_env_vars` (which,
 since the env-var rationalization, describes only the deliberately-kept
@@ -14,23 +14,25 @@ import json
 
 from click.testing import CliRunner
 
-from zicato.cli.commands.config import config_group, render_env_report
+from zicato.cli.commands.config import config_env_cmd, render_env_report
 from zicato.cli.discovery import build_cli_root
 from zicato.config import describe_env_vars
 
 
-def test_config_is_registered_root_command() -> None:
-    """``zicato config`` shows up in the root group's --help."""
+def test_environment_report_is_grouped_under_inspect() -> None:
     runner = CliRunner()
     result = runner.invoke(build_cli_root(), ["--help"])
     assert result.exit_code == 0, result.output
-    assert "config" in result.output
+    assert "inspect" in result.output
+    assert "config" not in build_cli_root().commands
+    result = runner.invoke(build_cli_root(), ["inspect", "environment", "--help"])
+    assert result.exit_code == 0, result.output
 
 
 def test_config_env_reports_the_merited_set() -> None:
     """The report names every merited variable under its role label."""
     runner = CliRunner()
-    result = runner.invoke(config_group, ["env"])
+    result = runner.invoke(config_env_cmd)
     assert result.exit_code == 0, result.output
 
     # Every described variable (and only those) appears.
@@ -85,7 +87,7 @@ def test_config_env_golden_text_shape() -> None:
 def test_config_env_json_output() -> None:
     """``--json`` emits the same set machine-readably."""
     runner = CliRunner()
-    result = runner.invoke(config_group, ["env", "--json"])
+    result = runner.invoke(config_env_cmd, ["--json"])
     assert result.exit_code == 0, result.output
     payload = json.loads(result.output)
     assert isinstance(payload, list)

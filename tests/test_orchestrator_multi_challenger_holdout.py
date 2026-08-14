@@ -392,7 +392,8 @@ def test_holdout_regression_flips_a_bracket_leaders_win_to_reject(
         pass_by_gen={"v0": True, "v1": True, "v2": True},
     )
 
-    from zicato.orchestrator import _resolve_current_generation, evolve_once
+    from zicato.evolve.generation_phase import current_generation
+    from zicato.orchestrator import evolve_once
 
     outcome = asyncio.run(
         evolve_once(
@@ -406,7 +407,7 @@ def test_holdout_regression_flips_a_bracket_leaders_win_to_reject(
     assert outcome.tournament_decision == "rejected", structure
     assert "holdout_not_confirmed" in outcome.rejection_reason
     # Champion stands — the promoted head is still v0.
-    assert _resolve_current_generation(workspace, epoch_id) == "v0"
+    assert current_generation(workspace, epoch_id) == "v0"
     # The bracket leader (the survivor that reached the gate) records the
     # holdout cause + the gap that exposed it.
     leader = outcome.proposed_generation_id
@@ -543,7 +544,8 @@ def test_settled_promotion_agrees_with_champion_and_lineage(
         pass_by_gen={"v0": True, "v1": True, "v2": True},
     )
 
-    from zicato.orchestrator import _resolve_current_generation, evolve_once
+    from zicato.evolve.generation_phase import current_generation
+    from zicato.orchestrator import evolve_once
 
     outcome = asyncio.run(
         evolve_once(
@@ -557,7 +559,7 @@ def test_settled_promotion_agrees_with_champion_and_lineage(
     assert outcome.tournament_decision == "promoted", structure
     crowned = outcome.proposed_generation_id
     # The champion pointer advanced AND lineage marks the crowned gen promoted.
-    assert _resolve_current_generation(workspace, epoch_id) == crowned
+    assert current_generation(workspace, epoch_id) == crowned
     assert _lineage_promoted(workspace, epoch_id, crowned) is True
     # The durable FIELD bracket records the SAME promotion — no contradiction.
     bracket = _field_bracket(workspace, epoch_id, "v1")
@@ -592,7 +594,8 @@ def test_holdout_flip_persists_a_rejected_bracket_not_a_phantom_promotion(
         pass_by_gen={"v0": True, "v1": True, "v2": True},
     )
 
-    from zicato.orchestrator import _resolve_current_generation, evolve_once
+    from zicato.evolve.generation_phase import current_generation
+    from zicato.orchestrator import evolve_once
 
     outcome = asyncio.run(
         evolve_once(
@@ -605,7 +608,7 @@ def test_holdout_flip_persists_a_rejected_bracket_not_a_phantom_promotion(
 
     assert outcome.tournament_decision == "rejected", structure
     # Champion stands.
-    assert _resolve_current_generation(workspace, epoch_id) == "v0"
+    assert current_generation(workspace, epoch_id) == "v0"
     leader = outcome.proposed_generation_id
     assert _lineage_promoted(workspace, epoch_id, leader) is False
     # The durable bracket reflects the holdout flip — NOT a phantom promotion.
@@ -641,7 +644,9 @@ def test_crowning_invariant_raises_when_champion_pointer_cannot_advance(
     # The crowning write becomes a no-op, so current_generation stays v0 even
     # though the bracket settled a promotion — exactly the silent divergence
     # the fail-loud guard must catch.
-    monkeypatch.setattr(_orch, "_set_current_generation", lambda *a, **k: None)
+    monkeypatch.setattr(
+        "zicato.evolve.generation_phase.set_current_generation", lambda *a, **k: None
+    )
 
     with pytest.raises(RuntimeError, match="crowning invariant violated"):
         asyncio.run(

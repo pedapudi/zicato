@@ -269,13 +269,13 @@ def audit_cmd(
 
     # Resolve the current champion generation through the same seams the
     # orchestrator uses (marker file / highest vN + the GenerationStore).
-    from zicato.orchestrator import (  # noqa: PLC0415
-        _resolve_current_generation,
-        _snapshot_root,
+    from zicato.evolve.generation_phase import (  # noqa: PLC0415
+        current_generation,
+        snapshot_root,
     )
 
     try:
-        champion_id = _resolve_current_generation(workspace_root, resolved_epoch)
+        champion_id = current_generation(workspace_root, resolved_epoch)
     except FileNotFoundError as exc:
         raise click.ClickException(
             f"{exc} — run at least one `zicato evolve` round (or seed a "
@@ -287,7 +287,7 @@ def audit_cmd(
         id=champion_id,
         epoch_id=resolved_epoch,
         parent_id=None,
-        snapshot_root=_snapshot_root(workspace_root, resolved_epoch, champion_id),
+        snapshot_root=snapshot_root(workspace_root, resolved_epoch, champion_id),
         created_at="",
         promoted=True,
     )
@@ -461,13 +461,13 @@ def preflight_cmd(
         auxiliary_call_llm=auxiliary_call_llm,
     )
 
-    from zicato.orchestrator import (  # noqa: PLC0415
-        _resolve_current_generation,
-        _snapshot_root,
+    from zicato.evolve.generation_phase import (  # noqa: PLC0415
+        current_generation,
+        snapshot_root,
     )
 
     try:
-        champion_id = _resolve_current_generation(workspace_root, resolved_epoch)
+        champion_id = current_generation(workspace_root, resolved_epoch)
     except FileNotFoundError as exc:
         raise click.ClickException(
             f"{exc} — run at least one `zicato evolve` round (or seed a "
@@ -479,7 +479,7 @@ def preflight_cmd(
         id=champion_id,
         epoch_id=resolved_epoch,
         parent_id=None,
-        snapshot_root=_snapshot_root(workspace_root, resolved_epoch, champion_id),
+        snapshot_root=snapshot_root(workspace_root, resolved_epoch, champion_id),
         created_at="",
         promoted=True,
     )

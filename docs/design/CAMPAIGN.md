@@ -1187,7 +1187,7 @@ zicato init --workspace .zicato
 # basename, so the entrypoint's top-level module is `agent`, not
 # `zicato_examples` — the installed-package form would silently run the
 # INSTALLED copy and score no-ops (issue #110), and `register` refuses it:
-zicato register --workspace .zicato \
+zicato epoch register --workspace .zicato \
     --adk agent.agent:root_agent \
     --mutable-tree "$EX/agent"
 
@@ -1209,7 +1209,7 @@ zicato board preflight --workspace .zicato --runs 2 \
 
 # With the epoch open, inspect the mutation surface + eyeball the cost
 # meter BEFORE spending (no run yet):
-zicato mutations --workspace .zicato
+zicato inspect mutations --workspace .zicato
 
 # GATED: only after §6.0 explicit operator go-ahead -----------------------
 zicato evolve --workspace .zicato --rounds 3 \
@@ -1223,7 +1223,7 @@ zicato epoch rounds --workspace .zicato --verify
 
 # After the loop settles AND the cell is accepted:
 zicato epoch close   --workspace .zicato          # → analysis.md / analysis.html
-zicato reflect run   --workspace .zicato          # MSA pass over the eval contract
+zicato inspect reflection run   --workspace .zicato          # MSA pass over the eval contract
 ```
 
 - **A1–A4, A6, A7, ABLATION, PEXEMPLAR** are identical except the `--scoring`

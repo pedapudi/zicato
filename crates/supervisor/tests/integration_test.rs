@@ -689,7 +689,7 @@ async fn tournaments_endpoint_notes_missing_index() {
     assert_eq!(r["epoch_id"], "2026-05-15_e0");
     assert_eq!(r["champion_lineage"], serde_json::json!([]));
     assert_eq!(r["matchups"], serde_json::json!([]));
-    assert_eq!(r["note"], "index not built; run zicato reindex");
+    assert_eq!(r["note"], "index not built; run zicato repair index");
 
     let _ = shutdown.send(());
 }
@@ -759,7 +759,7 @@ async fn tournament_detail_missing_index_is_200() {
     assert_eq!(resp.status(), 200);
     let r: Value = resp.json().await.unwrap();
     assert_eq!(r["generation_id"], "v1");
-    assert_eq!(r["note"], "index not built; run zicato reindex");
+    assert_eq!(r["note"], "index not built; run zicato repair index");
     assert_eq!(r["patches"], serde_json::json!([]));
     assert_eq!(r["ab_grid"], serde_json::json!([]));
 

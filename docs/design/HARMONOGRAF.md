@@ -25,7 +25,7 @@ contract is enforced through `<ws>/.harmonograf/server.json`:
   Otherwise it launches a fresh server (`start_harmonograf`) bound to the
   workspace db, rewrites `server.json`, and returns `launched=True`.
 * Every launcher routes through this helper: `zicato dashboard` /
-  `zicato builder` (`dashboard/server.py:_ensure_workspace_harmonograf`)
+  `zicato dashboard --view builder` (`dashboard/server.py:_ensure_workspace_harmonograf`)
   AND a live `zicato evolve` (`orchestrator.py:_resolve_or_launch_harmonograf`).
   Because all paths consult `server.json` first, no two processes ever
   open the same sqlite file: whoever wins the race writes the record, the
@@ -49,6 +49,11 @@ Failure isolation is absolute: a missing `harmonograf_server` dep, a
 port-bind failure, or any startup exception yields a **no-op handle**
 (`web_url=""`) and a logged WARNING. Evolve and the dashboard always
 continue — harmonograf is additive, never load-bearing.
+
+The client and server are installed by the `observability` and `all` profiles,
+not by the base wheel. A base installation therefore follows this failure path
+by design and records JSONL telemetry. The warning names the profile that
+enables the live view; see [`INSTALL-PROFILES.md`](INSTALL-PROFILES.md).
 
 ## 2. Session taxonomy
 

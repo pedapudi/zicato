@@ -476,7 +476,7 @@ clearly-separated, epoch-tagged block after the same-epoch blocks.)
     contributes no sibling entry (there is no hypothesis to share).
   - Add a `prior_experiments` keyword to `_propose_and_apply_challenger`
     and thread it into its inner `propose_experiment(...)` call (~line 1155).
-- **Standalone `propose` CLI path (~line 1326 region / `zicato propose`).**
+- **Standalone `propose` CLI path (~line 1326 region / `zicato proposer propose`).**
   If the standalone propose command calls `propose_experiment` directly,
   pass `prior_experiments=_load_prior_experiments(...)` there too so the
   debug command matches the loop. (Verify the exact call site; if
