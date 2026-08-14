@@ -6,7 +6,7 @@
     "production": 197588
   },
   "limits": {
-    "total": 407844,
+    "total": 407830,
     "production": 196761,
     "note": "Final measured limits; see docs/design/LINE-BUDGET.md."
   }

@@ -50,9 +50,8 @@ therefore use the ``predicate`` kind.
 from __future__ import annotations
 
 # zicato:grading — operator-owned pass/fail contract; never a proposer mutation point.
-import os
 import re
-from pathlib import Path
+from pathlib import PurePosixPath
 from typing import Any
 
 
@@ -80,17 +79,8 @@ def _transcript(result: Any) -> tuple[str, ...]:
 # Resolution deliberately does NOT go through the agent module.
 # ``_slugify_topic`` / ``_topic_output_dir`` there are proposer mutation
 # points, so grading through them would let a patch redirect the grader to
-# whatever path it chose. This module resolves the run's output ROOT
-# independently and then searches beneath it for the deck.
-#
-# The root is the per-run scratch directory the tournament worker exports
-# (the contract pinned in ``zicato/epoch/snapshot_scope.py`` as
-# SCRATCH_DIR_ENV), duplicated here as a bare string so the operator's
-# grading code keeps no import dependency on zicato internals. The worker
-# hands every run a fresh scratch directory and evaluates the expectation
-# before discarding it, so one run can never be graded on another's deck.
-# Standing in for it outside a tournament is the ``output/`` directory next
-# to the agent module, which is where a bare standalone run writes.
+# whatever path it chose. The worker inventories the run's output before
+# grading and hands that immutable file set to every predicate.
 #
 # The search is slug-agnostic. WHICH directory under the root the agent
 # filed the deck in is the write/read slug question this board exists to
@@ -98,15 +88,6 @@ def _transcript(result: Any) -> tuple[str, ...]:
 # — grading it a second time here would double-count it and would make a
 # perfectly good deck invisible for a naming reason.
 # ---------------------------------------------------------------------------
-
-#: Per-run scratch directory the tournament worker exports; mirrors
-#: :data:`zicato.epoch.snapshot_scope.SCRATCH_DIR_ENV`.
-_SCRATCH_DIR_ENV = "ZICATO_RUN_SCRATCH_DIR"
-
-#: Directory the agent's tools write run output under, relative to the
-#: resolved base. Fixed by the agent's ``_output_base`` and not part of its
-#: mutable surface.
-_OUTPUT_DIRNAME = "output"
 
 #: The deck's entry file. Its presence is what makes a directory a deck.
 _DECK_ENTRY_FILE = "index.html"
@@ -122,47 +103,46 @@ _SLIDE_ELEMENT = re.compile(r"""(?:class|id)\s*=\s*["'][^"']*\bslide""", re.IGNO
 _LIST_ITEM = re.compile(r"<li\b", re.IGNORECASE)
 
 
-def _output_root() -> Path:
-    """Return the directory this run's presentation output is written under."""
-    scratch = os.environ.get(_SCRATCH_DIR_ENV)
-    if scratch:
-        return Path(scratch) / _OUTPUT_DIRNAME
-    return Path(__file__).parent / "agent" / _OUTPUT_DIRNAME
-
-
-def deck_files() -> dict[str, str]:
+def deck_files(result: Any) -> dict[str, str]:
     """Return the deck this run wrote as ``{filename: contents}``.
 
-    Empty when the run wrote no deck at all — no output root, or no
-    ``index.html`` anywhere beneath it. A deck missing its stylesheet or
-    script yields those entries as empty strings rather than omitting
-    them, so callers can tell "absent file" from "absent deck".
-
-    When a run wrote under more than one slug the NEWEST ``index.html``
-    wins (ties broken by path, so the choice is deterministic). Grading the
-    union would credit a run for a deck it had already abandoned; the
-    deliverable is the one standing at the end of the run.
-
-    Never raises: an unreadable tree yields ``{}``.
+    Only files named by ``result.artifacts.files`` are gradeable. Exactly one
+    direct ``output/<slug>/index.html`` must exist; history snapshots and
+    ambiguous multiple deliverables fail closed. Never raises.
     """
-    root = _output_root()
-    try:
-        entries = sorted(root.rglob(_DECK_ENTRY_FILE))
-        newest = max(entries, key=lambda p: (p.stat().st_mtime, str(p)), default=None)
-    except OSError:
+    artifacts = getattr(result, "artifacts", None)
+    root = getattr(artifacts, "root", None)
+    inventory = getattr(artifacts, "files", ()) or ()
+    if root is None:
         return {}
-    if newest is None:
+
+    paths: set[str] = set()
+    entries: list[PurePosixPath] = []
+    for item in inventory:
+        raw = getattr(item, "path", "")
+        if not isinstance(raw, str):
+            continue
+        path = PurePosixPath(raw)
+        if not raw or path.is_absolute() or path.as_posix() != raw or ".." in path.parts:
+            continue
+        paths.add(raw)
+        if len(path.parts) == 3 and path.parts[0] == "output" and path.name == _DECK_ENTRY_FILE:
+            entries.append(path)
+    if len(entries) != 1:
         return {}
+
+    directory = entries[0].parent
     files: dict[str, str] = {}
-    for name in _DECK_FILES:
-        try:
-            files[name] = (newest.parent / name).read_text(errors="replace")
-        except OSError:
-            files[name] = ""
+    try:
+        for name in _DECK_FILES:
+            relative = (directory / name).as_posix()
+            files[name] = (root / relative).read_text(errors="replace") if relative in paths else ""
+    except (OSError, TypeError):
+        return {}
     return files
 
 
-def _usable_deck() -> dict[str, str]:
+def _usable_deck(result: Any) -> dict[str, str]:
     """Return the deck's files, or ``{}`` unless they form a usable deck.
 
     A usable deck is real markup (an ``<html`` tag, not a stub) that
@@ -174,7 +154,7 @@ def _usable_deck() -> dict[str, str]:
     Every predicate below opens on this, so a run that wrote nothing
     usable fails them all rather than being graded on its reply.
     """
-    files = deck_files()
+    files = deck_files(result)
     html = files.get(_DECK_ENTRY_FILE, "").lower()
     if "<html" not in html or "styles.css" not in html or "script.js" not in html:
         return {}
@@ -194,11 +174,9 @@ def _slide_count(files: dict[str, str]) -> int:
 def wrote_presentation_file(result: Any) -> bool:
     """The run left a usable presentation file on disk.
 
-    The base detectability check for this target. Ignores ``result``: the
-    deliverable is the file, and the reply cannot substitute for it.
+    The deliverable is the captured file, and the reply cannot substitute for it.
     """
-    del result
-    return bool(_usable_deck())
+    return bool(_usable_deck(result))
 
 
 def has_slide_titles(result: Any) -> bool:
@@ -207,8 +185,7 @@ def has_slide_titles(result: Any) -> bool:
     Three is the floor below which the artifact is too thin to qualify as
     a deck.
     """
-    del result
-    return _slide_count(_usable_deck()) >= 3
+    return _slide_count(_usable_deck(result)) >= 3
 
 
 def mentions_waffles(result: Any) -> bool:
@@ -218,8 +195,7 @@ def mentions_waffles(result: Any) -> bool:
     single-turn entry — the cheapest end-to-end check on the board: if it
     fails, the tree is broken.
     """
-    del result
-    return "waffle" in _deck_text(_usable_deck())
+    return "waffle" in _deck_text(_usable_deck(result))
 
 
 def mentions_transformers(result: Any) -> bool:
@@ -230,8 +206,7 @@ def mentions_transformers(result: Any) -> bool:
     ``"decoder"`` — the entry asks for a non-ML-audience deck, so a
     correct deck may use the lay term but explain the mechanism.
     """
-    del result
-    text = _deck_text(_usable_deck())
+    text = _deck_text(_usable_deck(result))
     return any(k in text for k in ("transformer", "attention", "encoder", "decoder"))
 
 
@@ -241,8 +216,7 @@ def mentions_quarterly_metrics(result: Any) -> bool:
     Topical check for the metrics-deck entry; accepts ``"q3"``,
     ``"quarter"``, ``"quarterly"``, or the literal word ``"metrics"``.
     """
-    del result
-    text = _deck_text(_usable_deck())
+    text = _deck_text(_usable_deck(result))
     return any(k in text for k in ("q3", "quarter", "metrics"))
 
 
@@ -253,8 +227,7 @@ def has_structured_outline(result: Any) -> bool:
     items — the two shapes an outlined deck takes. Used by the
     metrics-deck entry, where structure is what the entry asks for.
     """
-    del result
-    files = _usable_deck()
+    files = _usable_deck(result)
     if _slide_count(files) >= 3:
         return True
     return len(_LIST_ITEM.findall(files.get(_DECK_ENTRY_FILE, ""))) >= 3
@@ -270,8 +243,7 @@ def avoids_offtopic_raccoons(result: Any) -> bool:
     vacuously — there is no suppression to credit when there is nothing on
     disk.
     """
-    del result
-    files = _usable_deck()
+    files = _usable_deck(result)
     return bool(files) and "raccoon" not in _deck_text(files)
 
 
