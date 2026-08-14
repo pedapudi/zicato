@@ -511,53 +511,10 @@ export function decisionOf(rec) {
   return (typeof d === 'string' && d) ? d : null;
 }
 
-// The ONE place that turns a generation's tri-state outcome into a decision
-// label. `promoted` is tri-state in lineage AND on the stamped experiment
-// records: `true` (won the gate), `false` (lost), or `null`/absent
-// (in-flight / not yet raced). The Class-B bug was treating an ABSENT outcome
-// as `'rejected'` ("dead branch") on candidates that have not raced yet — so
-// this NEVER defaults null/absent to rejected:
-//   * no parent                          → 'baseline' (the seed / loss floor)
-//   * promoted === true                  → 'promoted'
-//   * promoted === false                 → 'rejected'
-//   * a stamped exp/gate `decision`      → that token, verbatim
-//   * otherwise (promoted == null, no stamped decision) → 'pending'
-export function decisionFor(spec) {
-  const s = spec || {};
-  // A seed (no parent) defines the loss floor — it is the baseline, never a
-  // verdict. An explicit `baseline:true` also forces it.
-  if (s.baseline === true || (s.baseline == null && s.parent == null)) return 'baseline';
-  if (s.promoted === true) return 'promoted';
-  if (s.promoted === false) return 'rejected';
-  // promoted is null/absent — defer to the SERVER-STAMPED decision token.
-  const resolved = decisionOf(s.exp) || decisionOf(s.gate);
-  if (resolved === 'promoted') return 'promoted';
-  if (resolved === 'rejected') return 'rejected';
-  if (resolved === 'deferred') return 'deferred';
-  // genuinely unresolved (in-flight / not yet raced) → pending, NOT rejected.
-  return 'pending';
-}
-
-// The verdict pill. `opts.live === false` puts the PENDING label in the past
-// tense — "racing…" is a claim about right now, and a workspace whose loop
-// stopped in June is not racing anything (issue #194 §1 / #207 §2). The
-// VOCABULARY is not forked: the decision token and its `dn-pending` class are
-// unchanged, so the pill still reads as the one shipped in-contention state;
-// only the WORD moves to what actually happened — the run ended undecided.
-// Liveness is the CALLER's to know (it is per-epoch, and the pill has no app
-// state), so the default stays present-tense and every site that renders a
-// settled epoch passes it explicitly.
-export function verdictLabel(decision, opts) {
-  const d = decision || 'baseline';
-  const live = !opts || opts.live !== false;
-  if (d === 'baseline') return 'seed (v0)';
-  if (d === 'pending') return live ? 'racing…' : 'undecided';
-  return d;
-}
-
 export function verdictPill(decision, opts) {
   const d = decision || 'baseline';
-  return el('span', { class: `dn-pill dn-${d}`, text: verdictLabel(d, opts) });
+  const label = opts && opts.label ? opts.label : d;
+  return el('span', { class: `dn-pill dn-${d}`, text: label });
 }
 
 // ---- operator-override provenance (the overrideChip primitive) -------

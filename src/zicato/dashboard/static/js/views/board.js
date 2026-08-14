@@ -19,7 +19,7 @@ import { state } from '../core/state.js';
 import { livenessFor } from '../livestatus.js';
 import * as D from '../data.js';
 import * as svg from '../svg.js';
-import { gatedSwap, section, empty, stat, decisionFor, densityTokens, prText, metricsDigest, scoreFmt, pill, dataTable, deltaCell } from '../ui.js';
+import { gatedSwap, section, empty, stat, densityTokens, prText, metricsDigest, scoreFmt, pill, dataTable, deltaCell } from '../ui.js';
 import { splitFrame, captureScroll, restoreScroll } from '../compare.js';
 import * as facets from '../facets.js';
 import { buildTurnNode, dedupConsecutiveTurns, reconcileTurns } from '../turns.js';
@@ -108,8 +108,8 @@ export async function render(host, ctx, params, route) {
   // whose entries declare none, so `[]` here is the honest read, not a failure).
   const entryJudges = (ep.board_judges && ep.board_judges[entryId]) || [];
   const genList = rows0.length
-    ? rows0.map((g) => ({ id: g.generation_id, parent: g.parent_generation_id || null, promoted: g.promoted == null ? null : !!g.promoted }))
-    : (Array.isArray(ep.experiments) ? ep.experiments.map((x) => ({ id: x.generation_id, parent: x.parent_generation_id || null, promoted: x.promoted === true })) : []);
+    ? rows0.map((g) => ({ id: g.generation_id, parent: g.parent_generation_id || null, promoted: g.promoted == null ? null : !!g.promoted, decision: g.decision }))
+    : (Array.isArray(ep.experiments) ? ep.experiments.map((x) => ({ id: x.generation_id, parent: x.parent_generation_id || null, promoted: x.promoted === true, decision: x.decision })) : []);
 
   const scalarByGen = new Map();
   if (traj && Array.isArray(traj.points)) for (const p of traj.points) if (svg.isNum(p.scalar)) scalarByGen.set(p.generation_id, p.scalar);
@@ -161,7 +161,7 @@ export async function render(host, ctx, params, route) {
     const live = runningByGen.get(g.id) || null;
     seenGens.add(g.id);
     rows.push({
-      gen: g.id, promoted: g.promoted, parent: g.parent,
+      gen: g.id, promoted: g.promoted, parent: g.parent, decision: g.decision,
       loss: r && svg.isNum(r.drift_loss) ? r.drift_loss : NaN,
       pass: r ? r.pass_fail : null,
       // continuous per-entry outcome + its precision/recall decomposition (#18);
@@ -193,6 +193,7 @@ export async function render(host, ctx, params, route) {
     const meta = genList.find((x) => x.id === g) || null;
     rows.push({
       gen: g, promoted: meta ? meta.promoted : null, parent: meta ? meta.parent : null,
+      decision: meta ? meta.decision : 'pending',
       loss: NaN, pass: null, timeout: false,
       runId: live.run_id || null, ran: false, running: true,
       progress: progressRatio(live),
@@ -674,7 +675,7 @@ function transcriptColumn(sel, conv, championId, side) {
   const role = sel.gen === championId ? 'champion' : (sel.parent ? 'challenger' : 'seed');
   // Class B: the pill's COLOUR follows the candidate's decision, so an unscored
   // challenger reads pending (neutral), never rejected.
-  const pillCls = decisionFor({ promoted: sel.promoted, parent: sel.parent });
+  const pillCls = sel.decision || 'pending';
   col.appendChild(el('div', { class: 'dn-xscript-head' }, [
     el('span', { class: 'dn-mono', text: sel.gen + (sel.promoted ? ' ♛' : '') }),
     pill(pillCls, role),

@@ -421,8 +421,8 @@ and never re-derives rungs / survivors / the crowned winner.
 
 **Round timeline (ex-`rounds.js` four-endpoint join).** The client used to
 JOIN `/api/epoch` + `/api/lineage` + `/api/score-trajectory` +
-`/api/tournaments` to reconstruct the round model. Now the server does it
-and the client overlays only the LIVE in-flight round from its SSE state:
+`/api/tournaments` to reconstruct the round model. Now the server owns both
+settled and LIVE rounds; the client only renames fields for the renderer:
 
 ```python
 """rounds_view — the epoch ROUND TIMELINE, served (not joined client-side).
@@ -430,9 +430,9 @@ and the client overlays only the LIVE in-flight round from its SSE state:
 The frontend used to derive this model by JOINING four endpoints
 (``/api/epoch`` + ``/api/lineage`` + ``/api/score-trajectory`` +
 ``/api/tournaments``) in ``rounds.js``. This reader is that join moved
-server-side: ``GET /api/epoch/{id}/round-timeline`` serves the SETTLED
-rounds + the loss-floor waterfall; the client only overlays the LIVE
-in-flight round from its SSE state (a live overlay, not a re-derivation).
+server-side: ``GET /api/epoch/{id}/round-timeline`` serves settled rounds,
+the LIVE in-flight field, embedded tournament records, projected standings,
+and the loss-floor waterfall. The client performs no decision-bearing join.
 """
 ```
 — `src/zicato/query/rounds_view.py` (module docstring)

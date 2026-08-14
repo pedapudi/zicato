@@ -350,6 +350,29 @@ def test_round_timeline_prefers_round_index_stamp(tmp_path: Path) -> None:
     assert rounds[0]["gate"] == {"kind": "promoted", "gen": "v2"}
 
 
+def test_round_timeline_owns_live_field_overlay(tmp_path: Path) -> None:
+    ws = _gauntlet_workspace(tmp_path)
+    _write_json(
+        ws / "runtime" / "active_tournament.json",
+        {
+            "epoch_id": EPOCH,
+            "round_index": 2,
+            "phase": "proposing:round_2:v3",
+            "field_status": [
+                {"generation_id": "v3", "status": "applied"},
+                {"generation_id": "v4", "status": "proposing"},
+            ],
+            "projected_standings": {"v3": {"scalar": 0.25, "boards_done": 2, "boards_total": 4}},
+        },
+    )
+
+    live = build_round_timeline(WorkspacePaths(ws), EPOCH)["rounds"][-1]
+    assert live["inflight"] is True
+    assert live["gate"] == {"kind": "pending", "gen": None}
+    assert [c["status"] for c in live["challengers"]] == ["applied", "proposing"]
+    assert live["challengers"][0]["boards_done"] == 2
+
+
 def test_round_timeline_endpoint_and_empty_degrade(tmp_path: Path, static_dir: Path) -> None:
     ws = _gauntlet_workspace(tmp_path)
     client = TestClient(create_app(ws, static_dir, read_only=True))

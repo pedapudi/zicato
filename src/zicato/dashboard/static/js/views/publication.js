@@ -28,7 +28,7 @@ import { state } from '../core/state.js';
 import * as D from '../data.js';
 import * as svg from '../svg.js';
 import { harmonografIsLive, harmonografMini } from '../core/harmonograf.js';
-import { gatedSwap, empty, subhead, renderMarkdown, decisionFor, verdictLabel, densityTokens, dataTable, deltaCell } from '../ui.js';
+import { gatedSwap, empty, subhead, renderMarkdown, densityTokens, dataTable, deltaCell } from '../ui.js';
 import { epochIsLive } from '../livestatus.js';
 
 // Parse analysis_md into { eyebrow, title, meta:[{label,value}], abstract,
@@ -104,7 +104,7 @@ export async function render(host, ctx, params) {
     ? analysis.analysis_html_inline : '';
 
   const gens = rows.length
-    ? rows.map((g) => ({ id: g.generation_id, parent: g.parent_generation_id || null, promoted: g.promoted == null ? null : !!g.promoted })) : [];
+    ? rows.map((g) => ({ id: g.generation_id, parent: g.parent_generation_id || null, promoted: g.promoted == null ? null : !!g.promoted, decision: g.decision, decisionLabel: g.decision_label })) : [];
   const scalarByGen = new Map();
   if (traj && Array.isArray(traj.points)) for (const p of traj.points) if (svg.isNum(p.scalar)) scalarByGen.set(p.generation_id, p.scalar);
   const matchups = (bracket && Array.isArray(bracket.matchups)) ? bracket.matchups : [];
@@ -260,7 +260,7 @@ function figureFor(name, figures) {
 // BAR CHART, side by side (not two redundant blocks).
 function aggregateScoresFigure(gens, scalarByGen, epochLive) {
   const fig = el('figure', { class: 'dn-paper-fig dn-scores-fig' });
-  const items = gens.map((g) => ({ id: g.id, label: g.id, promoted: g.promoted, parent: g.parent, value: scalarByGen.get(g.id) }))
+  const items = gens.map((g) => ({ id: g.id, label: g.id, promoted: g.promoted, parent: g.parent, decision: g.decision, decisionLabel: g.decisionLabel, value: scalarByGen.get(g.id) }))
     .filter((it) => svg.isNum(it.value));
   if (!items.length) {
     fig.appendChild(el('figcaption', { class: 'dn-paper-figcap dn-faint', text: 'Figure · aggregate generation scores (no trajectory data yet).' }));
@@ -282,10 +282,8 @@ function aggregateScoresFigure(gens, scalarByGen, epochLive) {
       // that says "racing…" is describing a race that finished. The pill's own
       // liveness-aware vocabulary decides it; this table only re-skins the two
       // labels it renders differently (the ♛ and the short "seed").
-      const dec = decisionFor({ promoted: it.promoted, parent: it.parent });
-      const label = dec === 'promoted' ? 'promoted ♛'
-        : dec === 'baseline' ? 'seed'
-          : verdictLabel(dec, { live: epochLive });
+      const dec = it.decision || 'pending';
+      const label = dec === 'promoted' ? it.decisionLabel + ' ♛' : it.decisionLabel;
       return [
         { class: 'dn-mono', text: it.label },
         { class: 'dn-num dn-mono', text: svg.fmt(it.value, 2) },

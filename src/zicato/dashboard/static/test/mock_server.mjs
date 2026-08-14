@@ -112,6 +112,7 @@ export function roundTimelineFromFixtures(F, epochId) {
         structure,
         gate,
         tournament_id: (ref && ref.tournament_id != null) ? String(ref.tournament_id) : null,
+        tournament: ref,
         source,
       };
       if (promoted) carried = promoted.id;

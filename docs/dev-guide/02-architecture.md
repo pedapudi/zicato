@@ -17,6 +17,10 @@ The decomposition contract is specified in
 `zicato.evolve.generation_phase.RoundSession`; that module also owns champion,
 snapshot, next-id, and mutable-tree coordinates. Import those operations from
 their owner directly—there are intentionally no orchestrator forwarding seams.
+The gauntlet and field drivers each retain one ordered asynchronous entry point;
+supporting concerns live in sub-1,000-line owners. Do not split a driver solely
+to meet a file-size aesthetic: extract only a phase with a typed result that
+actually shortens the driver's live-local set.
 
 ---
 

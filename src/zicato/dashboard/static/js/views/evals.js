@@ -32,7 +32,7 @@
 import { el, svgEl } from '../core/dom.js';
 import { state } from '../core/state.js';
 import * as D from '../data.js';
-import { section, empty, gatedSwap, verdictPill, decisionFor } from '../ui.js';
+import { section, empty, gatedSwap, verdictPill } from '../ui.js';
 import { epochIsLive } from '../livestatus.js';
 import { CROWN, fmt } from '../svg.js';
 import { harmonografMini, harmonografIsLive } from '../core/harmonograf.js';
@@ -478,7 +478,7 @@ function roundGroupRow(candidates) {
 // A candidate column header: the champion-spine crown + the gen id + the served
 // decision verdict pill (reusing the shipped dn-pill vocabulary — NO new chip).
 //
-// The decision comes from the SHARED classifier (`decisionFor`), not from a
+// The decision comes from the server-owned candidate payload, not from a
 // local re-reading of `promoted`. This column used to derive it inline, and the
 // inline derivation could not see the seed or the settle-time lineage record —
 // so an epoch whose challengers were all rejected in June rendered six columns
@@ -505,8 +505,8 @@ function candidateHeader(ctx, epochId, c, epochLive) {
   // (it faced no gate, so it never WON one), promoted → dn-promoted, rejected →
   // dn-rejected, null (in-flight / never raced) → the shipped 'pending' pill —
   // NEVER collapse a null into rejected (the Class-B bug).
-  const decision = decisionFor({ baseline: seed, promoted: c.promoted });
-  kids.push(verdictPill(decision, { live: epochLive }));
+  const decision = c.decision || 'pending';
+  kids.push(verdictPill(decision, { live: epochLive, label: c.decision_label }));
   return el('th', {
     class: 'dn-mtx-gen dn-evalmtx-gen' + (spine ? ' dn-evalmtx-spine' : ''),
     scope: 'col', 'data-gen': String(c.generation_id),

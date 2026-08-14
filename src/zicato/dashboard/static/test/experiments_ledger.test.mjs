@@ -48,25 +48,25 @@ function ledgerFixture(overrides) {
     experiments: [
       {
         generation_id: 'v0', parent_generation_id: null, round_index: 0, core_idea: 'the seed',
-        mutation_ids: [], decision: null, promoted: null, rejection_reason: null,
+        mutation_ids: [], decision: 'baseline', decision_label: 'seed (v0)', promoted: null, rejection_reason: null,
         scalar_score_delta: null, drift_loss_delta: null, pass_rate_delta: null,
       },
       {
         generation_id: 'v2', parent_generation_id: 'v0', round_index: 1, core_idea: LONG_IDEA,
         mutation_ids: ['agent.temperature', 'prompt.audience', 'prompt.system', 'tools.search'],
-        decision: 'rejected', promoted: false,
+        decision: 'rejected', decision_label: 'rejected', promoted: false,
         rejection_reason: 'insufficient improvement: 0.7328 vs 0.7188 (margin 0.0200)',
         scalar_score_delta: 0.014, drift_loss_delta: 0.01, pass_rate_delta: -0.25,
       },
       {
         generation_id: 'v1', parent_generation_id: 'v0', round_index: 1, core_idea: 'trim the preamble',
-        mutation_ids: ['prompt.system'], decision: 'promoted', promoted: true,
+        mutation_ids: ['prompt.system'], decision: 'promoted', decision_label: 'promoted', promoted: true,
         rejection_reason: null, scalar_score_delta: -0.08,
         drift_loss_delta: -0.06, pass_rate_delta: 0.1,
       },
       {
         generation_id: 'v3', parent_generation_id: 'v1', round_index: 2, core_idea: null, mutation_ids: [],
-        decision: null, promoted: null, rejection_reason: null,
+        decision: 'pending', decision_label: 'undecided', promoted: null, rejection_reason: null,
         scalar_score_delta: null, drift_loss_delta: null, pass_rate_delta: null,
       },
     ],
@@ -105,7 +105,7 @@ test('ledger: the SEED reads as the baseline, NOT as still racing (it faced no g
   // that, a settled epoch's first row reads "racing…" forever.
   const rows = rowsOf(mount(ledgerFixture()));
   assertEqual(cellText(rows[0], 4), 'seed (v0)', 'the parentless seed is the baseline');
-  assert(cellText(rows[3], 4).includes('racing'), '...while a genuinely unsettled candidate still reads racing');
+  assertEqual(cellText(rows[3], 4), 'undecided', 'the unsettled label is served verbatim');
 });
 
 // ── 2. the core idea: clipped, expandable IN PLACE, expansion survives ──────
@@ -181,7 +181,7 @@ test('ledger: absent fields degrade to "—" PER COLUMN — an unsettled row nev
   assertEqual(cellText(v3, 3), '—', 'no sites reads as a dash');
   assertEqual(cellText(v3, 5), '—', 'no Δ reads as a dash, never a fabricated 0');
   assertEqual(cellText(v3, 6), '—', 'no reason reads as a dash');
-  assert(cellText(v3, 4).includes('racing'), 'an undecided experiment reads as still racing, NOT rejected');
+  assertEqual(cellText(v3, 4), 'undecided', 'an undecided experiment preserves its served label');
 });
 
 test('ledger: the generation links to its dossier when the caller supplies a route', () => {

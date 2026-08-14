@@ -203,7 +203,7 @@ def resolve_harmonograf_url(
     Empty-string semantics changed in #202: before, the orchestrator
     treated an empty URL as "JSONL-only telemetry" and shipped no live
     console; now the evolve loop's
-    :func:`zicato.orchestrator._resolve_or_launch_harmonograf` auto-
+    :func:`zicato.evolve.lifecycle_services._resolve_or_launch_harmonograf` auto-
     launches an in-process server in that case and writes the resulting
     URL back into ``ZICATO_HARMONOGRAF_URL`` so subsequent callers of
     this function (the tournament runner, the per-board worker) re-

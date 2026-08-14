@@ -12,7 +12,7 @@ explicit ``detail["recommendation"]`` telling the operator what to do.
 The collection layer is in good shape.
 
 The gap is the **render** hop, and specifically the loss of the
-recommendation. :func:`zicato.orchestrator._summarise_loop_health` builds
+recommendation. :func:`zicato.evolve.round_prepare._summarise_loop_health` builds
 the operator-facing one-liner from a ``_text`` helper that accepts only
 *string* attributes (``message`` / ``summary`` / ``detail`` /
 ``description``) and returns the first non-empty one. ``detail`` is a
@@ -23,7 +23,7 @@ the line the operator reads. The same renderer also shows only
 count.
 
 The evidence does survive to the per-round health JSON (via
-:func:`zicato.orchestrator._loop_health_to_json`, which uses
+:func:`zicato.evolve.round_prepare._loop_health_to_json`, which uses
 ``dataclasses.asdict``), and a handful of findings get bespoke
 terminal warnings (``_warn_dead_judges`` and siblings) that do inline
 their detail. So this is a surfacing gap on the generic path, not a

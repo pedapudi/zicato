@@ -38,6 +38,15 @@ gauntlet module, so the two structures cannot accidentally share mutable
 strategy state. Shared behavior is imported from a narrow owner instead of
 copied between the strategies.
 
+The two strategy modules are deliberately not generic phase containers. Each
+has one asynchronous entry point and owns one complete tournament structure.
+Their long control flows preserve the visible order of heartbeat transitions,
+RoundLog events, cache writes, gate evaluation, and settlement. Moving arbitrary
+line ranges into generic helpers would reduce file size without reducing state
+or coupling. A further extraction is justified only when it introduces a typed
+phase result that removes locals from the strategy, not when it merely forwards
+the same argument set.
+
 ## Generation phase boundary
 
 `zicato.evolve.generation_phase` owns generation coordinates: champion-marker
@@ -59,3 +68,9 @@ tails would hide the crowning and persistence invariants. Supporting phase
 owners stay below 1,000 lines and expose named values rather than mutable bags
 of callbacks. Every structural change must preserve the exact convergence and
 decision-procedure oracles.
+
+`RoundSession` is the typed prepare result shared with generation-coordinate
+helpers. Terminal strategy output is `EvolveRoundOutcome`; intermediate
+cross-strategy records (`_AppliedChallenger`, `_CrowningHoldout`) are immutable
+dataclasses owned by propose/apply and gate respectively. Dictionaries remain
+only at serialization and external payload boundaries.

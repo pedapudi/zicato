@@ -143,18 +143,12 @@ def render(report: Report) -> str:
 def check(report: Report, config_path: Path = CONFIG) -> list[str]:
     config = json.loads(config_path.read_text())
     limits = config["limits"]
-    overage = config.get("temporary_overage")
-    allowance = {"total": 0, "production": 0}
-    if overage:
-        if not overage.get("issue") or not overage.get("reason"):
-            return ["temporary_overage requires non-empty issue and reason"]
-        allowance.update({key: int(overage.get(key, 0)) for key in allowance})
     errors = []
     for key, actual in (
         ("total", report.lines),
         ("production", report.production_lines),
     ):
-        ceiling = int(limits[key]) + allowance[key]
+        ceiling = int(limits[key])
         if actual > ceiling:
             errors.append(f"{key}: {actual:,} exceeds {ceiling:,} by {actual - ceiling:,}")
     return errors

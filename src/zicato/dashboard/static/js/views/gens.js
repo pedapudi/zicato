@@ -27,7 +27,7 @@ import { el } from '../core/dom.js';
 import { state } from '../core/state.js';
 import * as D from '../data.js';
 import * as svg from '../svg.js';
-import { gatedSwap, section, empty, verdictPill, decisionFor, decisionOf, dataTable, deltaCell, ratingCellEl, ratingTripleDigest, coreIdeaLine } from '../ui.js';
+import { gatedSwap, section, empty, verdictPill, decisionOf, dataTable, deltaCell, ratingCellEl, ratingTripleDigest, coreIdeaLine } from '../ui.js';
 import { renderStructure, structurePill, structureDigest, isNonGauntlet, normalizeStructure, resolveNonGauntletSt } from './structure.js';
 import { epochIsLive } from '../livestatus.js';
 import { roundsFromTimeline, roundModelDigest } from '../rounds.js';
@@ -123,8 +123,8 @@ export async function render(host, ctx, params) {
   // the visibility rating triple rides the lineage rows (server-joined; the
   // Rust view / experiments fallback simply omit it -> unrated, renders '—').
   const gens = rows.length
-    ? rows.map((g) => ({ id: g.generation_id, parent: g.parent_generation_id || null, promoted: g.promoted == null ? null : !!g.promoted, elo: g.elo, elo_se: g.elo_se, elo_games: g.elo_games }))
-    : experiments.map((x) => ({ id: x.generation_id, parent: x.parent_generation_id || null, promoted: x.promoted == null ? null : !!x.promoted }));
+    ? rows.map((g) => ({ id: g.generation_id, parent: g.parent_generation_id || null, promoted: g.promoted == null ? null : !!g.promoted, decision: g.decision, decisionLabel: g.decision_label, elo: g.elo, elo_se: g.elo_se, elo_games: g.elo_games }))
+    : experiments.map((x) => ({ id: x.generation_id, parent: x.parent_generation_id || null, promoted: x.promoted == null ? null : !!x.promoted, decision: x.decision, decisionLabel: x.decision_label }));
 
   const scalarByGen = new Map();
   if (traj && Array.isArray(traj.points)) for (const p of traj.points) if (svg.isNum(p.scalar)) scalarByGen.set(p.generation_id, p.scalar);
@@ -196,7 +196,7 @@ export async function render(host, ctx, params) {
           const sc = scalarByGen.get(g.id);
           const baseline = !g.parent;
           // Class B: an unscored candidate is PENDING, not rejected.
-          const decision = decisionFor({ promoted: g.promoted, parent: g.parent });
+          const decision = g.decision || 'pending';
           const delta = (svg.isNum(sc) && svg.isNum(champScalar) && !baseline) ? sc - champScalar : null;
           return {
             class: g.promoted ? 'dn-board-champ' : '',
@@ -207,7 +207,7 @@ export async function render(host, ctx, params) {
               ].filter(Boolean) },
               // the pending pill reads "racing…" only while THIS epoch's loop is
               // running; on a settled / interrupted epoch it reads "undecided".
-              { el: verdictPill(decision, { live: isLiveForThisEpoch }) },
+              { el: verdictPill(decision, { live: isLiveForThisEpoch, label: g.decisionLabel }) },
               { class: 'dn-mono', text: g.parent || 'seed' },
               { class: 'dn-num dn-mono', text: svg.isNum(sc) ? svg.fmt(sc, 1) : '—' },
               // the visibility rating (server-joined; never the gate).

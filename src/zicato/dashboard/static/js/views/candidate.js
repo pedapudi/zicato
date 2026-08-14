@@ -30,7 +30,7 @@ import * as D from '../data.js';
 import * as svg from '../svg.js';
 import { attachHovercard } from '../hovercard.js';
 import { lifecycleDag, rungProgression } from '../dag.js';
-import { gatedSwap, section, subhead, empty, stat, verdictPill, pill, overrideChip, overrideDigest, decisionFor, decisionOf, densityTokens, prText, metricsDigest, truncate, hovercardBody, dataTable, deltaCell, ratingModel, ratingTripleDigest } from '../ui.js';
+import { gatedSwap, section, subhead, empty, stat, verdictPill, pill, overrideChip, overrideDigest, decisionOf, densityTokens, prText, metricsDigest, truncate, hovercardBody, dataTable, deltaCell, ratingModel, ratingTripleDigest } from '../ui.js';
 import { comparePicker, splitFrame } from '../compare.js';
 import { candidateProgression, inflightForActiveEpoch, inflightForEntryGen, runProgressRatio, liveMatchupsForCandidate, liveBelongsToEpoch, resolveNonGauntletSt, racingModel, structureDigest, normalizeStructure } from './structure.js';
 import { roundsFromTimeline, reignModel } from '../rounds.js';
@@ -58,8 +58,8 @@ export async function render(host, ctx, params, route) {
   ]);
   const experiments = Array.isArray(ep.experiments) ? ep.experiments : [];
   const genList = rows.length
-    ? rows.map((g) => ({ id: g.generation_id, parent: g.parent_generation_id || null, promoted: g.promoted == null ? null : !!g.promoted }))
-    : experiments.map((x) => ({ id: x.generation_id, parent: x.parent_generation_id || null, promoted: x.promoted == null ? null : !!x.promoted }));
+    ? rows.map((g) => ({ id: g.generation_id, parent: g.parent_generation_id || null, promoted: g.promoted == null ? null : !!g.promoted, decision: g.decision, decisionLabel: g.decision_label }))
+    : experiments.map((x) => ({ id: x.generation_id, parent: x.parent_generation_id || null, promoted: x.promoted == null ? null : !!x.promoted, decision: x.decision, decisionLabel: x.decision_label }));
   const allIds = genList.map((g) => g.id);
   const genId = (params.gen && allIds.includes(params.gen)) ? params.gen : (allIds[allIds.length - 1] || params.gen || null);
 
@@ -217,7 +217,7 @@ async function resolveCandidate(epochId, genId, genList, experiments, scalarByGe
   const exp = experiments.find((x) => x.generation_id === genId) || null;
   // Class B: an unscored candidate (promoted == null, no resolved outcome) is
   // PENDING, never "rejected/dead branch".
-  const decision = decisionFor({ promoted: node.promoted, parent: node.parent, exp });
+  const decision = node.decision || (exp && exp.decision) || 'pending';
   const mpts = exp && exp.hypothesis && Array.isArray(exp.hypothesis.mutation_points) ? exp.hypothesis.mutation_points.length
     : (exp && Array.isArray(exp.mutation_points) ? exp.mutation_points.length : null);
 
@@ -980,7 +980,7 @@ function paintCandidate(host, ctx, epochId, s, cmpId, isPrimary, narrow, structu
     deltaStat,
     ratingStat,
     stat(node.parent || 'seed', 'parent'),
-    el('div', { class: 'dn-stat' }, [verdictPill(baseline ? 'baseline' : s.decision, { live: s.live })]),
+    el('div', { class: 'dn-stat' }, [verdictPill(s.decision, { live: s.live, label: s.node.decisionLabel })]),
   ]));
 
   // ── WHAT THIS CANDIDATE IS (§4) — its idea, before its numbers ──

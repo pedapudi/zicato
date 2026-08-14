@@ -3,12 +3,12 @@
 The Phase-4 decomposition split the multi-challenger driver's inline
 decisions into unit-testable helpers on :mod:`zicato.orchestrator`:
 
-* :func:`~zicato.orchestrator._mint_challenger_field` — the field-diversity
+* :func:`~zicato.evolve.propose_apply._mint_challenger_field` — the field-diversity
   accept / soft-reject verdict, separated from its persistence I/O;
-* :func:`~zicato.orchestrator._apply_field_overrides` — the operator-override
+* :func:`~zicato.evolve.gate._apply_field_overrides` — the operator-override
   head re-resolution (promoted set, primary head, provenance, effective
   decision);
-* :func:`~zicato.orchestrator._confirm_crowning_on_holdout` — the crowning
+* :func:`~zicato.evolve.gate._confirm_crowning_on_holdout` — the crowning
   holdout confirmation's decision shape (with the runner's confirm callable
   injected).
 

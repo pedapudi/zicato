@@ -10,8 +10,8 @@ The frontend used to derive this model by JOINING four endpoints
 (``/api/epoch`` + ``/api/lineage`` + ``/api/score-trajectory`` +
 ``/api/tournaments``) in ``rounds.js``. This reader is that join moved
 server-side: ``GET /api/epoch/{id}/round-timeline`` serves the SETTLED
-rounds + the loss-floor waterfall; the client only overlays the LIVE
-in-flight round from its SSE state (a live overlay, not a re-derivation).
+rounds, the LIVE in-flight round, and the loss-floor waterfall. The client
+only renames fields for its renderer.
 
 SOURCE PRIORITY (degrades gracefully when ``round_index`` is absent):
   (1) per-generation ``round_index`` (the authoritative birth-round stamp);
@@ -33,6 +33,7 @@ from zicato.query.paths import (
     WorkspacePaths,
     _resolve_epoch_id,
 )
+from zicato.query.runtime_view import read_active_tournament_dict
 from zicato.query.tournament_view import build_bracket
 
 
@@ -198,6 +199,7 @@ def build_round_timeline(paths: WorkspacePaths, epoch_id: str | None = None) -> 
                         if isinstance(ref, dict) and ref.get("tournament_id") is not None
                         else None
                     ),
+                    "tournament": ref if isinstance(ref, dict) else None,
                     "source": source,
                 }
             )
@@ -206,6 +208,70 @@ def build_round_timeline(paths: WorkspacePaths, epoch_id: str | None = None) -> 
         return out
 
     def _payload(rounds: list[dict[str, Any]], source: str) -> dict[str, Any]:
+        active = read_active_tournament_dict(paths)
+        if isinstance(active, dict) and active.get("epoch_id") in (None, epoch_id):
+            phase = str(active.get("phase") or "").split(":", 1)[0].lower()
+            field = active.get("field_status")
+            if phase in {"proposing", "applying"} and isinstance(field, list):
+                ids = [
+                    str(row["generation_id"])
+                    for row in field
+                    if isinstance(row, dict) and row.get("generation_id")
+                ]
+                seen = {str(c["id"]) for r in rounds for c in r.get("challengers", [])}
+                if ids and not seen.intersection(ids):
+                    last = rounds[-1] if rounds else None
+                    winner = next(
+                        (c for c in (last or {}).get("challengers", []) if c.get("promoted")), None
+                    )
+                    champion_id = (winner or (last or {}).get("champion") or {}).get(
+                        "id"
+                    ) or seed_id
+                    projected = active.get("projected_standings")
+                    projected = projected if isinstance(projected, dict) else {}
+                    status = {
+                        str(row.get("generation_id")): row.get("status")
+                        for row in field
+                        if isinstance(row, dict)
+                    }
+                    live = {
+                        "round_index": active.get("round_index", len(rounds)),
+                        "champion": {
+                            "id": champion_id,
+                            "scalar": _scalar_of(champion_id),
+                            "eval_mode": None,
+                            "run_ref": None,
+                            "from_record": False,
+                        },
+                        "challengers": [
+                            {
+                                "id": gid,
+                                "scalar": (projected.get(gid) or {}).get("scalar")
+                                if isinstance(projected.get(gid), dict)
+                                else _scalar_of(gid),
+                                "promoted": _promoted_of(gid),
+                                "status": status.get(gid) or "proposing",
+                                "projected": gid in projected,
+                                "boards_done": (projected.get(gid) or {}).get("boards_done")
+                                if isinstance(projected.get(gid), dict)
+                                else None,
+                                "boards_total": (projected.get(gid) or {}).get("boards_total")
+                                if isinstance(projected.get(gid), dict)
+                                else None,
+                            }
+                            for gid in ids
+                        ],
+                        "structure": structure,
+                        "gate": {"kind": "pending", "gen": None},
+                        "tournament_id": None,
+                        "tournament": None,
+                        "source": "inflight",
+                        "inflight": True,
+                        "phase": active.get("phase"),
+                    }
+                    same = last is not None and last.get("round_index") == live["round_index"]
+                    replace = same and last is not None and not last.get("challengers")
+                    rounds = [*rounds[:-1], live] if replace else [*rounds, live]
         return {
             "epoch_id": epoch_id,
             "structure": structure,

@@ -20,7 +20,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from zicato.core.types import TournamentStructure
-from zicato.orchestrator import (
+from zicato.evolve.dashboard_projection import (
     _overlay_projected_live_progress,
     _serialise_rounds,
     _serialise_standings,

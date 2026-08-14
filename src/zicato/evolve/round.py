@@ -2,7 +2,7 @@
 
 The orchestrator runs TWO evolve pipelines — the gauntlet single-duel path
 (:func:`zicato.orchestrator.evolve_once`) and the multi-challenger field
-(:func:`zicato.orchestrator._evolve_multi_challenger`). Their *tails*
+(:func:`zicato.evolve.field.evolve_field_round`). Their *tails*
 diverge deeply (one challenger vs an N-wide strategy-driven field, a single
 ``run_tournament`` vs ``resolve_tournament`` with live structure publishing,
 one persisted experiment vs N with crowning invariants, an operator-gate

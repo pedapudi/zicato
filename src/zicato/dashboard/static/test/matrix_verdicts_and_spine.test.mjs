@@ -86,15 +86,15 @@ function setClock(kind) {
 
 // The e4 matrix as the FIXED server now serves it: the seed on the spine, the
 // challengers settled-rejected, and one candidate genuinely undecided.
-function e4Matrix() {
+function e4Matrix(pendingLabel = 'undecided') {
   const cell = (pass) => ({ drift_loss: pass ? 0.2 : 0.9, pass_ratio: pass ? 1 : 0, pass_fail: pass,
     replicates: 2, cached: false, latest_run_id: 'r', evidence: 'replicated' });
   return {
     epoch_id: EPOCH, found: true,
     candidates: [
-      { generation_id: 'v0', round_index: 0, promoted: true, seed: true, champion_spine: true },
-      { generation_id: 'v3', round_index: 0, promoted: false, seed: false, champion_spine: false },
-      { generation_id: 'v7', round_index: 0, promoted: null, seed: false, champion_spine: false },
+      { generation_id: 'v0', round_index: 0, promoted: true, decision: 'baseline', decision_label: 'seed (v0)', seed: true, champion_spine: true },
+      { generation_id: 'v3', round_index: 0, promoted: false, decision: 'rejected', decision_label: 'rejected', seed: false, champion_spine: false },
+      { generation_id: 'v7', round_index: 0, promoted: null, decision: 'pending', decision_label: pendingLabel, seed: false, champion_spine: false },
     ],
     entries: [
       { entry_id: 'waffles_single', slice: 'train', tag: null, flip_rate: null,
@@ -109,26 +109,15 @@ function e4Matrix() {
 // 1 — the pill vocabulary is tense-bound
 // ════════════════════════════════════════════════════════════════════
 
-test('verdictPill: pending reads "racing…" live and "undecided" settled — same class, one vocabulary', () => {
-  assertEqual(ui.verdictPill('pending').textContent, 'racing…', 'the default stays present-tense');
-  assertEqual(ui.verdictPill('pending', { live: true }).textContent, 'racing…', 'live is explicit too');
-  assertEqual(ui.verdictPill('pending', { live: false }).textContent, 'undecided',
-    'a settled context says what happened, not what is happening');
-  // The DECISION token and its class are untouched — only the word moves. A
-  // forked vocabulary would have had to invent a colour for "undecided".
-  const settled = ui.verdictPill('pending', { live: false }).getAttribute('class');
-  assertEqual(settled, ui.verdictPill('pending', { live: true }).getAttribute('class'),
-    'both tenses carry the shipped dn-pending class');
-  // Every other decision is a settled fact already; liveness cannot touch it.
-  for (const d of ['promoted', 'rejected', 'deferred']) {
-    assertEqual(ui.verdictPill(d, { live: false }).textContent, d, d + ' reads the same either way');
-  }
-  assertEqual(ui.verdictPill('baseline', { live: false }).textContent, 'seed (v0)', 'the seed is the seed');
+test('verdictPill preserves server-owned labels without consulting liveness', () => {
+  assertEqual(ui.verdictPill('pending', { label: 'racing…' }).textContent, 'racing…', 'live label');
+  assertEqual(ui.verdictPill('pending', { label: 'undecided' }).textContent, 'undecided', 'settled label');
+  assertEqual(ui.verdictPill('baseline', { label: 'seed (v0)' }).textContent, 'seed (v0)', 'seed label');
 });
 
 test('evals matrix: an INTERRUPTED epoch reads "undecided", never "racing…"', async () => {
   setClock('interrupted');
-  installFixtureMap({ [EVALS_PATH]: e4Matrix() });
+  installFixtureMap({ [EVALS_PATH]: e4Matrix('undecided') });
   const host = document.createElement('div');
   await evals.render(host, CTX, { epochId: EPOCH });
   const text = textOf(host);
@@ -142,7 +131,7 @@ test('evals matrix: an INTERRUPTED epoch reads "undecided", never "racing…"', 
 
 test('evals matrix: a LIVE epoch keeps the present tense', async () => {
   setClock('live');
-  installFixtureMap({ [EVALS_PATH]: e4Matrix() });
+  installFixtureMap({ [EVALS_PATH]: e4Matrix('racing…') });
   const host = document.createElement('div');
   await evals.render(host, CTX, { epochId: EPOCH });
   assert(/racing…/.test(textOf(host)), 'an undecided candidate in a running epoch IS racing');
@@ -154,7 +143,7 @@ test('evals matrix: liveness for ANOTHER epoch does not lend this one the presen
   coreState.state.activeTournament = { epoch_id: 'some-other-epoch', structure: 'racing', phase: 'running' };
   coreState.state.heartbeat = Object.assign({}, coreState.state.heartbeat, { epoch_id: 'some-other-epoch' });
   coreState.state.liveness = { state: 'live', epoch_id: 'some-other-epoch' };
-  installFixtureMap({ [EVALS_PATH]: e4Matrix() });
+  installFixtureMap({ [EVALS_PATH]: e4Matrix('undecided') });
   const host = document.createElement('div');
   await evals.render(host, CTX, { epochId: EPOCH });
   assert(/undecided/.test(textOf(host)), 'a race in e5 does not make e4 racing');
@@ -162,7 +151,7 @@ test('evals matrix: liveness for ANOTHER epoch does not lend this one the presen
 
 test('evals matrix: the SEED column reads "seed (v0)", not "promoted"', async () => {
   setClock('interrupted');
-  installFixtureMap({ [EVALS_PATH]: e4Matrix() });
+  installFixtureMap({ [EVALS_PATH]: e4Matrix('undecided') });
   const host = document.createElement('div');
   await evals.render(host, CTX, { epochId: EPOCH });
   const crowns = allByClass(host, 'dn-evalmtx-crown');
@@ -174,13 +163,13 @@ test('evals matrix: the SEED column reads "seed (v0)", not "promoted"', async ()
 
 test('digest: the render repaints when the loop stops — no stale "racing…" left on screen', async () => {
   setClock('live');
-  installFixtureMap({ [EVALS_PATH]: e4Matrix() });
+  installFixtureMap({ [EVALS_PATH]: e4Matrix('racing…') });
   const host = document.createElement('div');
   await evals.render(host, CTX, { epochId: EPOCH });
   assert(/racing…/.test(textOf(host)), 'live first');
-  // The loop dies. Same payload, same filters — only the clock moved.
+  // The loop dies and the server changes the presentation-ready label.
   setClock('interrupted');
-  installFixtureMap({ [EVALS_PATH]: e4Matrix() });
+  installFixtureMap({ [EVALS_PATH]: e4Matrix('undecided') });
   await evals.render(host, CTX, { epochId: EPOCH });
   assert(/undecided/.test(textOf(host)), 'the gate let the repaint through');
   assert(!/racing…/.test(textOf(host)), 'and the present-tense claim is gone');

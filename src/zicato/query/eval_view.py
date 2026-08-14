@@ -630,6 +630,8 @@ def _candidate_axis(paths: WorkspacePaths, epoch_id: str) -> list[dict[str, Any]
                 "seed": gid == seed,
                 # The reign: the promoted chain anchored at the seed (§3.1).
                 "champion_spine": gid in spine,
+                "decision": nodes[gid].get("decision"),
+                "decision_label": nodes[gid].get("decision_label"),
                 "elo": coerce_float(_row_get(r, "elo")),
                 "elo_se": coerce_float(_row_get(r, "elo_se")),
             }

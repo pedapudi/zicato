@@ -5,6 +5,7 @@ from __future__ import annotations
 import datetime as _dt
 from typing import Any
 
+from zicato.query.decisions import decision_surface
 from zicato.query.paths import (
     WorkspacePaths,
     _iso,
@@ -149,6 +150,10 @@ def build_lineage_view(
                     "promoted": promoted,
                     "created_at": created_at,
                 }
+                if meta:
+                    node["decision"], node["decision_label"] = decision_surface(parent, promoted)
+                else:
+                    node["decision"], node["decision_label"] = "pending", "undecided"
                 # Only surface round_index when the stamp is present, so a
                 # pre-feature payload stays byte-identical (the key is absent,
                 # not null) and the dashboard's lineage fallback kicks in.

@@ -198,7 +198,7 @@ def _stub_harmonograf_launch(
     """Stub the evolve harmonograf auto-launch to a no-op for the loop suite.
 
     ``orchestrator.evolve_n_rounds`` calls
-    :func:`zicato.orchestrator._resolve_or_launch_harmonograf`, which — when
+    :func:`zicato.evolve.lifecycle_services._resolve_or_launch_harmonograf`, which — when
     ``ZICATO_HARMONOGRAF_URL`` is unset — spawns a *real* in-process
     harmonograf server and health-polls it (~5s) once per evolve. The
     orchestrator/evolve test suites are about the tournament/lineage loop,

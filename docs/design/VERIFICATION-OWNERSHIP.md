@@ -19,13 +19,10 @@ recipes, regression mechanics, and current module paths belong in
 
 ## Clean teardown
 
-Successful exit is insufficient if a server leaves tasks, coroutines, sockets,
-or threads behind. The owner of an event loop stops the application, cancels
-and gathers remaining tasks, shuts down asynchronous generators, and only then
-closes the loop. Focused lifecycle tests run serially with runtime warnings
-promoted to errors; the full suite still runs in its normal parallel mode.
-If a closing task group rejects a newly created coroutine, its caller closes
-that coroutine immediately rather than leaving cleanup to garbage collection.
+Successful exit is insufficient if a service leaves tasks, coroutines, sockets,
+threads, or child processes behind. Focused lifecycle tests treat warnings as
+errors, and the normal parallel suite must remain clean. Cleanup mechanics and
+the serial verification recipe live in the development guide.
 
 ## Completion evidence
 

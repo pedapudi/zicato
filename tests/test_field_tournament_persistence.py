@@ -6,7 +6,7 @@ field-status — which the per-challenger ``experiment.json`` audit cannot
 reconstruct on its own. These tests pin the persistence path end to end:
 
 * the orchestrator's settled-structure serialisers + the durable snapshot
-  writer (:func:`zicato.orchestrator._persist_field_tournament`),
+  writer (:func:`zicato.evolve.dashboard_projection._persist_field_tournament`),
 * the index ingest of that record
   (:func:`zicato.index.ingest.ingest_field_tournament` +
   ``rebuild_index`` from the snapshot file),
@@ -27,12 +27,12 @@ from pathlib import Path
 
 from zicato.core.types import TournamentStructure
 from zicato.core.workspace import field_tournament_path
-from zicato.index.ingest import ingest_field_tournament, rebuild_index
-from zicato.orchestrator import (
+from zicato.evolve.dashboard_projection import (
     _persist_field_tournament,
     _serialise_rounds,
     _serialise_standings,
 )
+from zicato.index.ingest import ingest_field_tournament, rebuild_index
 from zicato.query import (
     WorkspacePaths,
     build_bracket,

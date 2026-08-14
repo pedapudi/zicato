@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ast
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -21,6 +22,29 @@ def test_round_session_is_immutable() -> None:
     session = RoundSession(Path("."), "e1", 2, 5, "worker", object(), object(), object())
     with pytest.raises(AttributeError):
         session.epoch_id = "e2"  # type: ignore[misc]
+
+
+def test_round_pipeline_structure_stays_bounded() -> None:
+    src = Path(__file__).parents[1] / "src" / "zicato"
+    assert len((src / "orchestrator.py").read_text().splitlines()) < 1_000
+    for name in (
+        "decision_support.py",
+        "round_api.py",
+        "round_baseline.py",
+        "round_prepare.py",
+        "round_reporting.py",
+    ):
+        assert len((src / "evolve" / name).read_text().splitlines()) < 1_000
+
+    entries = {"gauntlet.py": "evolve_once", "field.py": "evolve_field_round"}
+    for name, expected in entries.items():
+        tree = ast.parse((src / "evolve" / name).read_text())
+        public_async = [
+            node.name
+            for node in tree.body
+            if isinstance(node, ast.AsyncFunctionDef) and not node.name.startswith("_")
+        ]
+        assert public_async == [expected]
 
 
 def test_generation_head_prefers_marker_then_falls_back_to_highest_vn(tmp_path: Path) -> None:

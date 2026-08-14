@@ -951,7 +951,7 @@ def _fold_projected_into_live_progress(
     Returns ``(rounds, changed)`` — ``rounds`` is a deep-ish copy with the
     fold applied in place, ``changed`` is ``True`` iff any lane's rounded
     value actually moved (the anti-flash gate). Mirrors the orchestrator's
-    :func:`zicato.orchestrator._overlay_projected_live_progress` merge so
+    :func:`zicato.evolve.dashboard_projection._overlay_projected_live_progress` merge so
     the live-arrived render converges to a fresh republish + overlay:
 
     * ``boards_done`` ← the projected row's ``boards_done`` (champion lane:
