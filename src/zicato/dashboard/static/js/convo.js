@@ -60,6 +60,7 @@ export function mountConversationPane(host, spec, opts) {
     endedAt: s.endedAt || null,
     turns: [],
     annotations: [],
+    execution: null,
     unseen: 0,
     following: false,
     stream,
@@ -144,6 +145,7 @@ export function mountConversationPane(host, spec, opts) {
       pane.turns = [];
       pane.annotations = [];
     }
+    if (delta.execution) pane.execution = delta.execution;
     const spliced = spliceTurns(pane.turns, delta.turns);
     if (spliced.gap) {
       // Turns went missing between our cursor and this delta — splicing would
@@ -155,6 +157,7 @@ export function mountConversationPane(host, spec, opts) {
       if (whole == null) return;
       pane.turns = spliceTurns([], whole.turns).turns;
       pane.annotations = mergeAnnotations([], whole.annotations);
+      pane.execution = whole.execution || pane.execution;
     } else {
       pane.turns = spliced.turns;
       pane.annotations = mergeAnnotations(pane.annotations, delta.annotations);
@@ -168,7 +171,7 @@ export function mountConversationPane(host, spec, opts) {
 
   // ---- rendering ------------------------------------------------------
   function render() {
-    const out = reconcileTurns(scroller, pane.turns, pane.annotations);
+    const out = reconcileTurns(scroller, pane.turns, pane.annotations, pane.execution);
     // Turns that landed while the reader was scrolled up are a BACKLOG, not a
     // reason to move them. Only a tailing reader has their view advanced (which
     // reconcileTurns already did).

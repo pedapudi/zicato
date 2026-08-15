@@ -2042,6 +2042,23 @@ normalization so the transcript speaks the one stable vocabulary. The
 endpoints import it behind a guarded `try/except` so the whole server still
 starts if it is unavailable in a stripped install.
 
+The transcript reader also owns the conversation execution outline. Turns carry
+`activity_ids`; the top-level `execution` object carries the referenced nodes,
+explicit roots, unresolved identifiers, and a fidelity value. Agent edges come
+only from `invocation_id` and `parent_invocation_id`. Delegation observations
+have no stable call or parent identifier, so the reader emits them as
+turn-scoped tool roots with `fidelity: "turn"`. Missing parents and cycles stay
+visible as unresolved records. The query reader also projects the durable
+`artifacts.json` inventory as parentless run-scoped nodes. It never assigns a
+file to an invocation without a recorded producer identifier.
+
+`static/js/turns.js` follows these identifiers without deriving topology. An
+unattached running root renders in a run-level rail until a conversation turn
+owns it. Execution state is part of the per-turn digest, so a node status change
+patches its owning turn while unrelated DOM nodes remain intact (G10). The full
+contract and its current data limits are documented in
+`docs/design/CONVERSATION-EXECUTION.md`.
+
 ---
 
 ## 9.15 Recipe: add a reader + endpoint + panel end-to-end

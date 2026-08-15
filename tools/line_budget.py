@@ -15,6 +15,7 @@ ROOT = Path(__file__).resolve().parents[1]
 CONFIG = ROOT / ".line-budget.json"
 LOCKFILES = {"Cargo.lock", "uv.lock", "package-lock.json", "npm-shrinkwrap.json"}
 GENERATED = (
+    "artifacts/visual-inspection/",
     "docs/presentation/contact-sheet.png",
     "docs/presentation/index.html",
     "docs/presentation/slides/",

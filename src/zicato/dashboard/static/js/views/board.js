@@ -749,7 +749,7 @@ function reconcileTranscript(hostEl, side, sel, conv) {
   const scroller = col.querySelector('[data-scroll-side="' + side + '"]');
   if (!scroller) return; // err / wait / nosel column — no scroller to fill.
 
-  const out = reconcileTurns(scroller, (conv && conv.turns) || [], conv && conv.annotations);
+  const out = reconcileTurns(scroller, (conv && conv.turns) || [], conv && conv.annotations, conv && conv.execution);
 
   // The streaming caption reads "streaming — through turn N" while running; the
   // caption shell exists only on a running column, so it is gone once complete.
