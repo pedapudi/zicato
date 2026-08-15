@@ -11,7 +11,7 @@ from starlette.testclient import TestClient
 from zicato.core.types import ScoringWeights
 from zicato.dashboard.server import create_app
 from zicato.epoch.lifecycle import new_epoch
-from zicato.workspace.config_io import write_workspace_config
+from zicato.workspace.config_io import read_workspace_config, write_workspace_config
 
 
 @pytest.fixture()
@@ -67,8 +67,25 @@ def test_builder_config_endpoint(client: TestClient) -> None:
     body = resp.json()
     assert "chat_enabled" in body
     assert body["chat_enabled"] is False  # no models.builder role
-    assert "agent" in body
+    assert "agent" not in body
     assert "skills" in body
+
+
+def test_builder_config_enables_chat_from_named_role(workspace: Path, tmp_path: Path) -> None:
+    config = read_workspace_config(workspace)
+    config["models"] = {
+        "engines": {"build": {"model": "builder-model"}},
+        "roles": {"builder": "build"},
+    }
+    write_workspace_config(workspace, config)
+    static = tmp_path / "configured-static"
+    static.mkdir()
+
+    with TestClient(create_app(workspace, static, read_only=False)) as configured:
+        body = configured.get("/builder/config").json()
+
+    assert body["chat_enabled"] is True
+    assert "agent" not in body
 
 
 def test_builder_draft_inits_from_live(client: TestClient) -> None:
