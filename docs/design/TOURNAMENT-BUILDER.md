@@ -141,38 +141,25 @@ dispatches on `frame.type`:
 
 ---
 
-## 3. `builder.json` — the copilot's own config
+## 3. Builder presentation and model configuration
 
-The builder backend owns its **own** config file
-(`zicato/builder/config.py`), distinct from the workspace `config.json` and the
-per-epoch `scoring.json`. It is read-only to the builder (B1a never writes it),
-found at `<workspace>/builder.json` or `<workspace>/.zicato/builder.json`, and
-records how the copilot reaches a model:
+The copilot uses the workspace's named `models.builder` role. This is the sole
+model source, including endpoint, credential-variable name, and custom callable;
+the Settings model editor documents and validates it with the other roles.
+
+The separate read-only `builder.json` now contains only presentation concerns:
 
 ```jsonc
 {
-  "agent": {
-    "model": "house-model-x",        // empty ⇒ chat disabled, form-only
-    "endpoint": null,                 // null ⇒ provider default
-    "api_key_env": "HOUSE_API_KEY",   // the NAME of the env var, never the key
-    "call_llm": null                  // optional dotted-path override
-  },
   "skills": ["zicato-build-tournament", "zicato-build-board"],
   "theme": null
 }
 ```
 
-**Secret safety is structural.** `to_public_dict` — the only surface the REST
-layer serializes — carries the API-key *environment-variable name* through but
-never resolves it, so a credential can never leak to the UI. The Settings
-drawer's *Models* section (which generalised the former read-only "Builder
-assistant" read-out into an editable per-role config for harness · auxiliary ·
-**builder** · judge, backed by the secret-safe `GET/POST /settings/models`)
-surfaces exactly that for the builder role: the model name, the endpoint, and
-the `api_key_env` **name** plus a set/unset indicator — never a secret value
-(`api_key_env` is a NAME). An absent or empty-model `builder.json` simply
-disables chat; the form keeps working. A model / endpoint is runtime infra, so
-editing it here does **not** roll the epoch.
+`GET /builder/config` exposes these values plus a `chat_enabled` flag derived
+from `models.builder`; it does not expose engine details. An absent builder role
+disables chat while the form keeps working. Engine edits remain runtime infra
+and do not roll the epoch.
 
 ---
 

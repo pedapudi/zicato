@@ -20,11 +20,7 @@ Public surface:
 
 from __future__ import annotations
 
-from zicato.builder.config import (
-    BuilderAgentConfig,
-    BuilderConfig,
-    load_builder_config,
-)
+from zicato.builder.config import BuilderConfig, load_builder_config
 from zicato.builder.draft import (
     ContractDiff,
     DraftStore,
@@ -32,7 +28,6 @@ from zicato.builder.draft import (
 )
 
 __all__ = [
-    "BuilderAgentConfig",
     "BuilderConfig",
     "load_builder_config",
     "ContractDiff",

@@ -18,6 +18,7 @@ import pytest
 
 from zicato.models_config import (
     MODEL_ROLES,
+    PUBLIC_MODEL_ROLES,
     ModelsConfig,
     RoleSpec,
     models_config_from_dict,
@@ -132,12 +133,13 @@ def test_distinct_engine_names_allow_identical_transport_fields() -> None:
     assert cfg.auxiliary.revision == "evaluation-r1"
 
 
-def test_same_named_engine_cannot_cross_target_boundary() -> None:
+@pytest.mark.parametrize("role", PUBLIC_MODEL_ROLES[1:])
+def test_same_named_engine_cannot_cross_target_boundary(role: str) -> None:
     with pytest.raises(ValueError, match="must not use the target engine"):
         models_config_from_dict(
             {
                 "engines": {"shared": {"model": "same"}},
-                "roles": {"target": "shared", "evaluation": "shared"},
+                "roles": {"target": "shared", role: "shared"},
             }
         )
 

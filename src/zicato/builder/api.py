@@ -31,6 +31,7 @@ from starlette.routing import Route
 
 from zicato.builder import operations as ops
 from zicato.builder.config import load_builder_config
+from zicato.builder.copilot import builder_chat_enabled
 from zicato.builder.draft import DraftStore, TournamentDraft
 from zicato.core.types import (
     JudgeMode,
@@ -381,7 +382,13 @@ def make_builder_endpoints(
 
     async def builder_config(_request: Request) -> JSONResponse:
         cfg = load_builder_config(root)
-        return JSONResponse({**cfg.to_public_dict(), "vocab": _builder_vocab()})
+        return JSONResponse(
+            {
+                **cfg.to_public_dict(),
+                "chat_enabled": builder_chat_enabled(root),
+                "vocab": _builder_vocab(),
+            }
+        )
 
     async def builder_draft(request: Request) -> JSONResponse:
         session = request.query_params.get("session") or _DEFAULT_SESSION

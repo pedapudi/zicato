@@ -28,7 +28,7 @@ from typing import Any
 
 import pytest
 
-from zicato.builder.config import BuilderAgentConfig, BuilderConfig
+from zicato.builder.config import BuilderConfig
 from zicato.builder.copilot import CHAT_DISABLED_MESSAGE, run_copilot
 from zicato.builder.draft import DraftStore
 from zicato.core.types import ScoringWeights
@@ -36,7 +36,7 @@ from zicato.epoch.lifecycle import new_epoch
 from zicato.workspace.config_io import write_workspace_config
 
 
-def _seed_workspace(tmp_path: Path) -> Path:
+def _seed_workspace(tmp_path: Path, *, builder_model: bool = False) -> Path:
     """Create a workspace with a 4-entry live board the draft inits from."""
     ws = tmp_path / ".zicato"
     ws.mkdir()
@@ -59,6 +59,16 @@ def _seed_workspace(tmp_path: Path) -> Path:
             "adk_entrypoint": "pkg.mod:agent",
             "mutable_trees": [],
             "source_roots": [],
+            **(
+                {
+                    "models": {
+                        "engines": {"build": {"model": "builder-copilot-model"}},
+                        "roles": {"builder": "build"},
+                    }
+                }
+                if builder_model
+                else {}
+            ),
             "contract": {
                 "board_path": str(board.resolve()),
                 "rubric_path": str(brief.resolve()),
@@ -93,8 +103,7 @@ async def _collect(gen: Any) -> list[dict[str, Any]]:
 @pytest.mark.asyncio
 async def test_graceful_degrade_no_model_yields_single_error(tmp_path: Path) -> None:
     ws = _seed_workspace(tmp_path)
-    config = BuilderConfig()  # empty model ⇒ chat disabled
-    assert config.chat_enabled is False
+    config = BuilderConfig()
     store = DraftStore()
 
     frames = await _collect(
@@ -169,7 +178,7 @@ def _copilot_agent_with_script(script: list[Any]) -> Any:
 async def test_two_tool_rounds_mutate_shared_draft_and_stream_patches(tmp_path: Path) -> None:
     ws = _seed_workspace(tmp_path)
     store = DraftStore()
-    config = BuilderConfig(agent=BuilderAgentConfig(model="builder-copilot-model"))
+    config = BuilderConfig()
 
     agent = _copilot_agent_with_script(
         [
@@ -230,7 +239,7 @@ async def test_form_get_draft_reflects_copilot_edit(tmp_path: Path) -> None:
 
     ws = _seed_workspace(tmp_path)
     store = DraftStore()
-    config = BuilderConfig(agent=BuilderAgentConfig(model="builder-copilot-model"))
+    config = BuilderConfig()
 
     agent = _copilot_agent_with_script(
         [
@@ -263,7 +272,7 @@ async def test_form_get_draft_reflects_copilot_edit(tmp_path: Path) -> None:
 async def test_copilot_apply_tool_only_dry_runs(tmp_path: Path) -> None:
     ws = _seed_workspace(tmp_path)
     store = DraftStore()
-    config = BuilderConfig(agent=BuilderAgentConfig(model="builder-copilot-model"))
+    config = BuilderConfig()
 
     # Read the live contract config + board BEFORE the run to compare after.
     from zicato.workspace.config_io import read_workspace_config
@@ -301,9 +310,9 @@ async def test_copilot_apply_tool_only_dry_runs(tmp_path: Path) -> None:
 
 
 def test_skills_injected_into_instruction(tmp_path: Path) -> None:
-    ws = _seed_workspace(tmp_path)
+    ws = _seed_workspace(tmp_path, builder_model=True)
     store = DraftStore()
-    config = BuilderConfig(agent=BuilderAgentConfig(model="builder-copilot-model"))
+    config = BuilderConfig()
     draft = store.get("s", ws)
 
     agent = build_copilot_agent(config, draft, ws)
@@ -316,18 +325,17 @@ def test_skills_injected_into_instruction(tmp_path: Path) -> None:
     assert "Current draft" in instruction
 
 
-def test_model_resolves_from_builder_config_model_string(tmp_path: Path) -> None:
-    ws = _seed_workspace(tmp_path)
+def test_model_resolves_from_named_builder_role(tmp_path: Path) -> None:
+    ws = _seed_workspace(tmp_path, builder_model=True)
     store = DraftStore()
-    config = BuilderConfig(agent=BuilderAgentConfig(model="some-model-string"))
+    config = BuilderConfig()
     draft = store.get("s", ws)
 
     agent = build_copilot_agent(config, draft, ws)
 
-    # A bare model string is passed straight through to the LlmAgent.
     model = agent.model
     model_str = model if isinstance(model, str) else getattr(model, "model", None)
-    assert model_str == "some-model-string"
+    assert model_str == "builder-copilot-model"
 
 
 def test_default_builder_tools_registry_covers_every_op() -> None:

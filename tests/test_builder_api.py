@@ -66,7 +66,7 @@ def test_builder_config_endpoint(client: TestClient) -> None:
     assert resp.status_code == 200
     body = resp.json()
     assert "chat_enabled" in body
-    assert body["chat_enabled"] is False  # no builder.json → empty model
+    assert body["chat_enabled"] is False  # no models.builder role
     assert "agent" in body
     assert "skills" in body
 

@@ -253,7 +253,7 @@ def models_config_from_dict(raw: Any) -> ModelsConfig:
             return engines.get(name, RoleSpec())
 
         target = selected("target")
-        for isolated_role in ("evaluation", "user_emulator"):
+        for isolated_role in PUBLIC_MODEL_ROLES[1:]:
             if not target.is_empty and selected_name("target") == selected_name(isolated_role):
                 raise ValueError(
                     f"models.roles.{isolated_role} must not use the target engine; "

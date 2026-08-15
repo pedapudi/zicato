@@ -13,22 +13,7 @@ sits ON TOP of the B1a backend: the copilot's tools
 operations the form's REST ``op`` calls, mutating the SAME session draft —
 one source of truth.
 
-How the model is resolved (from ``builder.json``)
-------------------------------------------------
-:func:`build_copilot_agent` resolves the agent's model from
-:class:`~zicato.builder.config.BuilderAgentConfig`:
-
-* if ``agent.call_llm`` (a dotted path) is set, it is imported and used as
-  the agent's ``model=`` directly — the escape hatch for a fully custom
-  model object / factory; else
-* the agent's ``model=`` is built from ``agent.model`` (the common case: a
-  model string ADK understands) via the SINGLE ADK-model-from-spec builder
-  :func:`zicato.models_config.build_adk_model`. When ``agent.endpoint`` /
-  ``agent.api_key_env`` are also set, that builder routes through ADK's
-  ``LiteLlm`` so a custom endpoint / API-key env var is honoured; with
-  neither, the bare model string is handed to ``LlmAgent`` (ADK resolves
-  it to its native provider). This module no longer constructs ``LiteLlm``
-  itself — the one construction site is ``build_adk_model``.
+The model comes from the workspace's single ``models.builder`` role.
 
 The streaming SSE schema (B2 consumes this)
 ------------------------------------------
@@ -72,14 +57,12 @@ from zicato.builder.copilot_tools import (
 )
 from zicato.builder.draft import DraftStore, TournamentDraft
 from zicato.core.types import ProposerSkill
-from zicato.import_path import import_dotted_path
 
 #: The clear, single error frame returned when the copilot cannot run —
-#: no model configured in ``builder.json`` or the optional ADK extra is not
+#: no ``models.builder`` role or the optional ADK extra is not
 #: installed. The form / REST path keeps working untouched in either case.
 CHAT_DISABLED_MESSAGE = (
-    "configure builder.json agent.model (and install the adk extra) to "
-    "enable the build assistant"
+    "configure models.builder (and install the adk extra) to " "enable the build assistant"
 )
 
 #: Stable ADK app / user coordinates for a copilot run. The copilot is
@@ -195,60 +178,14 @@ def _render_draft_summary(draft: TournamentDraft) -> str:
     return json.dumps(summary, default=str, indent=2)
 
 
-def _resolve_model(config: BuilderConfig, workspace_root: Path | None = None) -> Any:
-    """Resolve the agent ``model=`` for the copilot.
+def _builder_model(workspace_root: Path) -> Any:
+    from zicato.models_config import load_models_config, resolve_builder_model
+    from zicato.workspace_loader import load_workspace_config
 
-    Resolution order:
-
-    * the workspace ``models.builder`` role (when configured) WINS — a model
-      change is runtime infra, not the contract, so it never rolls the epoch;
-      resolved via :func:`zicato.models_config.resolve_builder_model`. Else
-      fall back to ``builder.json`` ``agent`` (backward-compat):
-    * ``agent.call_llm`` (dotted path) set ⇒ import it and use it directly
-      (a custom model object, or a factory the caller pre-resolved).
-    * else build from ``agent.model``: when ``endpoint`` / ``api_key_env``
-      are set, route through ADK's ``LiteLlm`` (so a custom endpoint /
-      API-key env var is honoured); otherwise hand the bare model string to
-      ``LlmAgent`` (ADK resolves it to its native provider).
-
-    Raises :class:`ValueError` when neither a ``call_llm`` path nor a model
-    string is configured — but callers gate on
-    :attr:`BuilderConfig.chat_enabled` first, so this is a guard, not the
-    common path.
-    """
-    if workspace_root is not None:
-        from zicato.models_config import load_models_config, resolve_builder_model
-        from zicato.workspace_loader import load_workspace_config
-
-        try:
-            models = load_models_config(load_workspace_config(workspace_root))
-        except (FileNotFoundError, ValueError):
-            models = None
-        if models is not None and not models.builder.is_empty:
-            return resolve_builder_model(models.builder)
-
-    agent_cfg = config.agent
-    if agent_cfg.call_llm:
-        return import_dotted_path(agent_cfg.call_llm, label="builder agent.call_llm")
-    if not agent_cfg.model:
-        raise ValueError("builder.json agent.model is empty; chat is disabled")
-    # The model-spec branch shares THE single ADK-model-from-spec builder
-    # (:func:`zicato.models_config.build_adk_model`) so ``builder.json``'s
-    # ``agent`` and the unified ``models.*`` roles reach a provider through one
-    # code path: ``endpoint`` / ``api_key_env`` set ⇒ a ``LiteLlm`` honouring a
-    # custom base URL + API-key env var; neither set ⇒ the bare model string
-    # handed back for ADK to resolve natively. Behaviour is identical to the
-    # former inline construction; the duplication is gone.
-    from zicato.models_config import RoleSpec, build_adk_model
-
-    return build_adk_model(
-        RoleSpec(
-            model=agent_cfg.model,
-            endpoint=agent_cfg.endpoint,
-            api_key_env=agent_cfg.api_key_env,
-        ),
-        role="builder",
-    )
+    spec = load_models_config(load_workspace_config(workspace_root)).builder
+    if spec.is_empty:
+        raise ValueError("models.builder is not configured")
+    return resolve_builder_model(spec)
 
 
 def build_copilot_agent(
@@ -263,7 +200,7 @@ def build_copilot_agent(
     (loaded by name from :attr:`BuilderConfig.skills`) plus a compact
     summary of the CURRENT draft. Its tools are
     :data:`~zicato.builder.copilot_tools.DEFAULT_BUILDER_TOOLS`, and its
-    ``model=`` is resolved by :func:`_resolve_model`. ADK is imported
+    ``model=`` is resolved by :func:`_builder_model`. ADK is imported
     lazily here so the module stays importable without the extra.
     """
     from google.adk.agents import LlmAgent
@@ -277,7 +214,7 @@ def build_copilot_agent(
 
     return LlmAgent(
         name="zicato_builder_copilot",
-        model=_resolve_model(config, workspace_root),
+        model=_builder_model(workspace_root),
         instruction=instruction,
         tools=list(DEFAULT_BUILDER_TOOLS),
     )
@@ -290,12 +227,10 @@ def _adk_available() -> bool:
     return importlib.util.find_spec("google.adk") is not None
 
 
-def _models_builder_configured(workspace_root: Path) -> bool:
+def builder_chat_enabled(workspace_root: Path) -> bool:
     """Return ``True`` iff the workspace ``models.builder`` role is configured.
 
-    A configured ``models.builder`` enables the copilot even when
-    ``builder.json`` carries no model (the unified config supersedes it), so
-    the chat gate consults it alongside :attr:`BuilderConfig.chat_enabled`.
+    Invalid or absent workspace configuration disables chat cleanly.
     """
     from zicato.models_config import load_models_config
     from zicato.workspace_loader import load_workspace_config
@@ -318,7 +253,7 @@ async def run_copilot(
 ) -> AsyncIterator[dict[str, Any]]:
     """Run the copilot for one operator message, yielding SSE frame dicts.
 
-    Graceful degrade: when chat is disabled (no model in ``builder.json``)
+    Graceful degrade: when chat is disabled (no ``models.builder`` role)
     OR the ADK extra is not importable AND no ``agent`` was injected, yields
     a single ``{"type": "error", "message": CHAT_DISABLED_MESSAGE}`` and
     stops — the form / REST path is untouched.
@@ -334,10 +269,7 @@ async def run_copilot(
     :class:`~zicato.testing.adk_fake.FakeADKModel`) bypasses model
     resolution and disk loading entirely.
     """
-    if agent is None and (
-        not (config.chat_enabled or _models_builder_configured(workspace_root))
-        or not _adk_available()
-    ):
+    if agent is None and (not builder_chat_enabled(workspace_root) or not _adk_available()):
         yield {"type": "error", "message": CHAT_DISABLED_MESSAGE}
         return
 

@@ -68,7 +68,7 @@ forbidden** — §10.11 is the enforcement.
 
 | File | What lives there | Size |
 |---|---|---|
-| `src/zicato/builder/config.py` | `BuilderConfig` / `BuilderAgentConfig` / `load_builder_config` — `builder.json` | ~210 lines |
+| `src/zicato/builder/config.py` | `BuilderConfig` / `load_builder_config` — builder skills and theme | ~60 lines |
 | `src/zicato/builder/draft.py` | `TournamentDraft` (the mutable editable contract), `DraftStore` (sessions + named slots), `ContractDiff` | ~450 lines |
 | `src/zicato/builder/operations.py` | **THE mutation surface** — every `set_*` op, `estimate_cost`, `validate`, `compare_drafts`, `preflight`, `apply`, and their result dataclasses | ~1,600 lines |
 | `src/zicato/builder/api.py` | `_dispatch_op` + the Starlette routes (`builder_routes`) | ~490 lines |
@@ -177,45 +177,16 @@ see, nor hide one it would (see 03-contract-and-epochs.md §"The contract hash")
 > `structure`/`overfitting` into that OR or you double-count and a
 > structure-only edit reports two rolls.
 
-### 10.1.2 `builder.json` — the builder's own config, and secret safety
+### 10.1.2 One model source; builder-only presentation config
 
-The builder owns its OWN configuration file, distinct from the workspace
-`config.json` and the per-epoch `scoring.json`: `builder.json` records how the
-copilot (B1b) reaches a model, which builder skills it composes, and an optional
-UI theme. It lives at `<workspace>/builder.json` or
-`<workspace>/.zicato/builder.json`; absent ⇒ every field defaults, the model is
-empty, and chat is disabled. `BuilderConfig.chat_enabled` is simply
-`bool(agent.model)`.
-
-The load-bearing property here is **secret safety**. The config records only the
-*name* of the environment variable that holds the API key, never the value, and
-the one surface the REST layer serializes is guaranteed not to resolve it:
-
-```python
-# src/zicato/builder/config.py — BuilderAgentConfig.to_public_dict
-    def to_public_dict(self) -> dict[str, Any]:
-        """Serialize for the UI — carries the env-var *name*, never a secret.
-
-        Only :attr:`api_key_env` (a variable name) is emitted; the
-        variable's value is never read here, so no credential can leak.
-        """
-        return {
-            "model": self.model,
-            "endpoint": self.endpoint,
-            "api_key_env": self.api_key_env,
-            "call_llm": self.call_llm,
-        }
-```
-
-This is the same secrets-boundary posture as the merited env-var set (§10.10.2):
-the operator NAMES the variable in config; the credential stays in the
-environment and is read only at the point of use, never serialized to the UI.
-
-> ⛔ NEVER add an API key, token, or other secret VALUE to `builder.json` or any
-> `to_public_dict`. The builder's contract is that config carries the env-var
-> *name* only. A field that resolves and returns a secret leaks it to the
-> dashboard the moment `GET /builder/config` is served — and `builder.json` is a
-> file operators commit.
+The copilot model comes only from the workspace `models.builder` role; endpoint,
+credential-variable name, and custom callable therefore use the same validation
+and secret boundary as every other role. `builder.json` is deliberately narrower:
+it may select builder skills and an optional UI theme. It lives at
+`<workspace>/builder.json` or `<workspace>/.zicato/builder.json`; absent fields
+default. `GET /builder/config` derives `chat_enabled` from `models.builder` and
+never serializes engine credentials. This removes the former ambiguity between
+two model settings while leaving form editing available without a model.
 
 ### 10.1.3 The two front doors — the REST surface and the copilot
 

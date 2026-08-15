@@ -5,7 +5,7 @@
 // each `tool` shows as a subtle step, each `patch` is handed to onPatch (which
 // applies it to the SHARED draft so the FORM updates live) and tags the bubble
 // with an `edited: …` chip. A typing indicator shows while streaming; `error`
-// frames (incl. the graceful-degrade "configure builder.json" message) render
+// frames (including the graceful-degrade configuration message) render
 // cleanly. When chat_enabled is false the input is disabled with a hint.
 //
 // RESIZE: a drag handle on the pane's LEFT edge sets the width live
@@ -40,7 +40,6 @@ export class BuilderChat {
 
   _build() {
     const enabled = !!this._config.chat_enabled;
-    const model = (this._config.agent && this._config.agent.model) || '';
 
     // the LEFT-edge drag handle (resizes the pane; the work column reflows).
     this._handle = el('div', {
@@ -62,14 +61,14 @@ export class BuilderChat {
     const header = el('div', { class: 'dn-bld-chat-head' }, [
       this._collapseBtn,
       el('span', { class: 'dn-bld-chat-title', text: 'copilot' }),
-      el('span', { class: 'dn-bld-chat-model dn-mono', title: model || 'no model configured', text: model || 'no model' }),
+      el('span', { class: 'dn-bld-chat-model dn-mono', text: 'builder role' }),
     ]);
 
     this._log = el('div', { class: 'dn-bld-chat-log', role: 'log', 'aria-live': 'polite', 'aria-label': 'Copilot conversation' });
     if (!enabled) {
       this._log.appendChild(el('div', { class: 'dn-bld-chat-degrade' }, [
         el('p', { text: 'The copilot is unavailable — no model is configured.' }),
-        el('p', { class: 'dn-faint', text: 'Set agent.model in builder.json to enable chat. Form editing works without it.' }),
+        el('p', { class: 'dn-faint', text: 'Assign the models.builder role in Settings to enable chat. Form editing works without it.' }),
       ]));
     } else {
       this._log.appendChild(el('p', { class: 'dn-faint dn-bld-chat-hint', text: 'Ask the copilot to shape the contract — it edits the same draft the form does.' }));
@@ -77,7 +76,7 @@ export class BuilderChat {
 
     this._input = el('textarea', {
       class: 'dn-bld-chat-input', rows: '2', 'aria-label': 'Message the copilot',
-      placeholder: enabled ? 'Message the copilot…' : 'Chat disabled — configure builder.json',
+      placeholder: enabled ? 'Message the copilot…' : 'Chat disabled — configure models.builder',
     });
     if (!enabled) this._input.setAttribute('disabled', 'disabled');
     this._send = el('button', { class: 'dn-bld-chat-send', type: 'button', text: 'Send' });
