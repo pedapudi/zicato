@@ -1,18 +1,3 @@
-"""The pi RPC transport (issue #147 phase 2), against a stub JSONL peer.
-
-Every test here launches a real subprocess and speaks the real protocol —
-``tests/_pi_stub_peer.py`` answers as ``pi``'s ``docs/rpc.md`` says pi
-answers — so the framing, the command correlation, the terminating-tool
-event sequence and the process lifecycle are all covered without a Node
-runtime or a credential. Real-pi coverage is the opt-in ``pi`` marker
-lane (``tests/test_proposer_pi_envelope.py``).
-
-The claim under test throughout is the one the transport exists to make:
-**a retry is a follow-up message on a live session**, not a cold restart.
-The stub writes one record file per launch, so "how many processes did
-this propose use" is an assertion rather than an assumption.
-"""
-
 from __future__ import annotations
 
 import json
@@ -21,8 +6,9 @@ from typing import Any
 
 import pytest
 
-from zicato.core.types import Experiment, MutationPoint, ProposerSpec
+from zicato.core.types import Experiment, MutationPoint, ProposerQualityConfig, ProposerSpec
 from zicato.proposer.agent import ProposerContext
+from zicato.proposer.best_of_n import NativeSlateAdapter, wrap_with_proposer_quality
 from zicato.proposer.external import ExternalProposerConfig
 from zicato.proposer.pi_agent import PiProposerAgent
 from zicato.proposer.proposer import ProposerError
@@ -45,7 +31,6 @@ _MUTATIONS = (
 
 
 def _experiment_args(mutation_id: str = "router__sp") -> dict[str, Any]:
-    """The arguments a terminating ``propose_experiment`` call carries."""
     return {
         "hypothesis": {
             "core_idea": "tighten the router preamble",
@@ -65,6 +50,14 @@ def _experiment_args(mutation_id: str = "router__sp") -> dict[str, Any]:
             }
         ],
     }
+
+
+def _candidate(name: str, content: str) -> dict[str, Any]:
+    candidate = _experiment_args()
+    candidate["hypothesis"]["core_idea"] = name
+    candidate["hypothesis"]["why"] = f"because {name}"
+    candidate["patches"][0]["new_content"] = content
+    return candidate
 
 
 async def _never_called(system: str, user: str, model: str) -> str:
@@ -124,9 +117,6 @@ def _launches(records: Path) -> list[dict[str, Any]]:
     return [json.loads(path.read_text(encoding="utf-8")) for path in found]
 
 
-# -- the happy path ----------------------------------------------------------
-
-
 @pytest.mark.asyncio
 async def test_a_terminating_tool_call_becomes_an_experiment(
     agent: PiProposerAgent, workspace: Path, tmp_path: Path, records: Path
@@ -144,7 +134,6 @@ async def test_a_terminating_tool_call_becomes_an_experiment(
 async def test_the_prompt_is_the_engine_prompt(
     agent: PiProposerAgent, workspace: Path, tmp_path: Path, records: Path
 ) -> None:
-    """``render_user_prompt`` reaches pi verbatim — same prompt, new transport."""
     _script(tmp_path, [{"emit": _experiment_args()}])
 
     await agent.propose(_context(workspace))
@@ -152,19 +141,51 @@ async def test_the_prompt_is_the_engine_prompt(
     prompt = _launches(records)[0]["prompts"][0]
     assert "router__sp" in prompt
     assert "loss=2.3" in prompt
-    # The system prompt is a launch flag, not a message.
     argv = _launches(records)[0]["argv"]
     assert "# Proposer brief" in argv[argv.index("--system-prompt") + 1]
 
 
-# -- retries ride the live session -------------------------------------------
+@pytest.mark.asyncio
+async def test_best_of_n_generation_and_review_share_one_session(
+    agent: PiProposerAgent, workspace: Path, tmp_path: Path, records: Path
+) -> None:
+    candidates = [_candidate("small", "a"), _candidate("different", "b"), _candidate("best", "c")]
+    _script(
+        tmp_path,
+        [{"emit": item} for item in candidates]
+        + [{"select": {"index": 2, "rationale": "best grounded change"}}],
+    )
+    events: list[tuple[str, dict[str, Any]]] = []
+    wrapped = wrap_with_proposer_quality(agent, ProposerQualityConfig(best_of_n=3))
+
+    assert isinstance(wrapped, NativeSlateAdapter)
+    chosen = await wrapped.propose(
+        _context(workspace, round_event_emitter=lambda kind, fields: events.append((kind, fields)))
+    )
+
+    launches = _launches(records)
+    assert len(launches) == 1
+    assert len(launches[0]["prompts"]) == 4
+    assert chosen.hypothesis.core_idea == "best"
+    audited = next(fields for kind, fields in events if kind == "critique_selected")
+    assert [item["core_idea"] for item in audited["slate"]] == ["small", "different", "best"]
+    assert audited["index"] == 2
+    assert audited["rationale"] == "best grounded change"
+
+
+def test_native_slate_rejects_stage_model_overrides(agent: PiProposerAgent) -> None:
+    with pytest.raises(ValueError, match="remove unsupported role override.*proposer_review"):
+        wrap_with_proposer_quality(
+            agent,
+            ProposerQualityConfig(best_of_n=3),
+            depth_model="separate-review-model",
+        )
 
 
 @pytest.mark.asyncio
 async def test_a_retry_is_a_follow_up_on_one_process(
     agent: PiProposerAgent, workspace: Path, tmp_path: Path, records: Path
 ) -> None:
-    """An unresolvable mutation id costs a message, not a restart."""
     _script(
         tmp_path,
         [{"emit": _experiment_args("not_in_the_manifest")}, {"emit": _experiment_args()}],
@@ -183,16 +204,12 @@ async def test_a_retry_is_a_follow_up_on_one_process(
 async def test_settling_without_the_tool_is_an_empty_response(
     agent: PiProposerAgent, workspace: Path, tmp_path: Path, records: Path
 ) -> None:
-    """A turn that never calls the tool routes into the engine's repair turn."""
     _script(tmp_path, [{"emit": None}, {"emit": _experiment_args()}])
 
     experiment = await agent.propose(_context(workspace))
 
     assert isinstance(experiment, Experiment)
     assert len(_launches(records)[0]["prompts"]) == 2
-
-
-# -- failure paths -----------------------------------------------------------
 
 
 @pytest.mark.asyncio
@@ -209,7 +226,6 @@ async def test_a_rejected_prompt_exhausts_the_budget(
 async def test_no_model_refuses_to_launch(
     agent: PiProposerAgent, workspace: Path, tmp_path: Path, records: Path
 ) -> None:
-    """The collusion guard: pi's own default must never get to decide."""
     _script(tmp_path, [{"emit": _experiment_args()}])
 
     with pytest.raises(ProposerError, match="no model on the ProposerContext"):
@@ -235,14 +251,10 @@ async def test_a_missing_binary_is_a_proposer_error(
         await agent.propose(_context(workspace))
 
 
-# -- per-challenger hygiene --------------------------------------------------
-
-
 @pytest.mark.asyncio
 async def test_the_agent_dir_is_isolated_and_removed(
     agent: PiProposerAgent, workspace: Path, tmp_path: Path, records: Path
 ) -> None:
-    """A fresh dir per invocation, under the workspace, gone afterwards."""
     _script(tmp_path, [{"emit": _experiment_args()}])
 
     await agent.propose(_context(workspace))
@@ -259,7 +271,6 @@ async def test_the_agent_dir_is_isolated_and_removed(
 async def test_concurrent_challengers_get_disjoint_dirs(
     agent: PiProposerAgent, workspace: Path, tmp_path: Path, records: Path
 ) -> None:
-    """Best-of-N runs N slots under ONE generation id, so the id is not a key."""
     import asyncio
 
     _script(tmp_path, [{"emit": _experiment_args()}] * 4)

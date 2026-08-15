@@ -759,6 +759,20 @@ contract is `best_of_n = 3` with `critique_enabled = True`
 proposer (scripted/deterministic proposers do). Changing any knob rolls the
 epoch — a proposer that samples a slate proposes under a different rule.
 
+An inner proposer may implement `NativeSlateProposer.propose_slate`. In that
+case the wrapper returns `NativeSlateAdapter`, and the proposer owns the
+session boundary while reusing the same screen, selector, event, and mount
+machinery. Pi uses this seam to keep all samples, the critique, retries, and
+the optional revise in one process. Its critique asks the warm session to use
+the structured `select_candidate` tool; Python range-checks the index, so
+free-form parsing cannot select the wrong candidate.
+Stage-specific generate/review model overrides are rejected on this path,
+because honoring either would silently break the one-session claim.
+That session belongs to exactly one proposal slate and is never shared across
+board entries, runs, challengers, or rounds. Its sole input remains the
+restricted `ProposerContext`; this capability does not extend to target,
+emulator, judge, or adjudicator roles.
+
 The full `propose` flow when N > 1:
 
 ```

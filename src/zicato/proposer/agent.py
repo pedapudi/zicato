@@ -54,6 +54,7 @@ from zicato.core.types import (
     MutationPoint,
     Pattern,
     PriorExperiment,
+    ProposerQualityConfig,
     ProposerSpec,
 )
 from zicato.proposer.proposer import ExperimentValidator, propose_experiment
@@ -276,6 +277,14 @@ class ProposerAgent(Protocol):
     """
 
     async def propose(self, ctx: ProposerContext) -> Experiment: ...
+
+
+class NativeSlateProposer(ProposerAgent, Protocol):
+    """A proposer that can keep best-of-N work inside its own session."""
+
+    async def propose_slate(
+        self, ctx: ProposerContext, config: ProposerQualityConfig
+    ) -> Experiment: ...
 
 
 @dataclass(frozen=True)

@@ -105,6 +105,29 @@ const proposeExperiment = defineTool({
 	},
 });
 
+const selectCandidate = defineTool({
+	name: "select_candidate",
+	label: "Select Candidate",
+	description: "Finish a slate-review turn by selecting one candidate and explaining why.",
+	promptSnippet: "Select one candidate from the supplied numbered slate",
+	promptGuidelines: [
+		"Use select_candidate only when asked to review a candidate slate.",
+		"The index must name a supplied candidate; do not invent or revise one.",
+	],
+	parameters: Type.Object({
+		index: Type.Integer({ minimum: 0, description: "Zero-based candidate index" }),
+		rationale: Type.String({ description: "Concise reason this candidate is strongest" }),
+	}),
+
+	async execute(_toolCallId, params) {
+		return {
+			content: [{ type: "text", text: `Candidate ${params.index} selected.` }],
+			terminate: true,
+		};
+	},
+});
+
 export default function (pi: ExtensionAPI) {
 	pi.registerTool(proposeExperiment);
+	pi.registerTool(selectCandidate);
 }

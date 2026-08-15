@@ -609,6 +609,27 @@ of a cold restart that re-sends the whole manifest. The tier differs in
 its transport, not its semantics, which is what makes it an honest A/B
 baseline against the shim.
 
+When `best_of_n > 1`, pi advertises the optional native-slate capability.
+Zicato still owns the visibility envelope, screening, deterministic fallback,
+and final tree mount, but generation, comparison, and a screen-triggered
+revision all occur as turns in that challenger's one conversation. The review
+turn uses the bounded `select_candidate` tool; an absent or out-of-range index
+degrades to the deterministic selector. The round log
+retains the ordinary `candidate_sampled` events and enriches
+`critique_selected` with candidate summaries and the review rationale, making
+the in-session decision inspectable without board identities.
+
+The session boundary is one proposal slate: it is never shared across board
+entries, runs, challengers, or rounds. Pi receives only `ProposerContext`'s
+restricted aggregates and mutation surface—never board entries. This
+capability belongs only to the proposer seam; emulator, judge, adjudicator,
+and target adapters retain their own structured/text execution contracts.
+
+Stage-specific proposer model overrides are intentionally rejected for this
+path: a separate generation or review model would require another process and
+would contradict the native-session contract. They remain supported by the
+generic best-of-N wrapper for proposers without this capability.
+
 The envelope is the other half, and it is enforced by what the proposer is
 shown. A default coding-agent session has `bash`, `read` and `grep`
 pointed at the working directory; a proposer with those can read the board
