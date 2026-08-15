@@ -42,6 +42,7 @@ import re
 import socket
 import tempfile
 import threading
+import time
 from collections.abc import Awaitable
 from pathlib import Path
 from typing import Any
@@ -355,6 +356,26 @@ def start_harmonograf(
             "evolve continues with JSONL-only telemetry"
         )
         return _noop_handle()
+
+    # ``app.start()`` resolving does not guarantee the web listener is
+    # accepting yet — the HTTP server binds asynchronously behind it, so a
+    # consumer that dereferences ``url`` immediately (the operator e2e did)
+    # races a connection-refused window. The handle's contract is that
+    # ``url`` ACCEPTS, so poll the socket, bounded, before returning it.
+    deadline = time.monotonic() + 10.0
+    while True:
+        try:
+            with socket.create_connection(("127.0.0.1", web_port), timeout=1.0):
+                break
+        except OSError:
+            if time.monotonic() >= deadline:
+                log.warning(
+                    "harmonograf web port %d never accepted within 10s; "
+                    "evolve continues with JSONL-only telemetry",
+                    web_port,
+                )
+                return _noop_handle()
+            time.sleep(0.05)
 
     url = f"http://127.0.0.1:{web_port}"
     log.info("harmonograf auto-launched at %s (grpc %d)", url, grpc_port)
