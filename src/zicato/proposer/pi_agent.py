@@ -1,57 +1,7 @@
-"""The pi coding-agent proposer: one RPC subprocess per challenger.
+"""Process-backed proposer with a bounded RPC and tool envelope.
 
-The first implementation of the external-proposer seam
-(:mod:`zicato.proposer.external`). pi is a Node program; this module is
-the Python side of the wire, and ``integrations/pi/`` is the pinned
-runtime plus the one extension we author.
-
-**The transport is the whole trick.** ``pi --mode rpc`` speaks strict-LF
-JSONL over stdin/stdout, so the session outlives a single message — and
-that is exactly the shape
-:func:`~zicato.proposer.proposer.propose_experiment` already wants. Its
-bounded-retry loop calls ``aux_call_llm(system, user, model)`` once per
-attempt, feeding each failure back as the next attempt's prompt.
-:meth:`PiRpcSession.call` satisfies that signature by sending the user
-prompt into the *live* session and returning the arguments of the
-terminating ``propose_experiment`` tool call as JSON text. So a retry is a
-follow-up message on a warm conversation rather than a cold restart that
-re-sends the whole manifest — and every downstream behaviour (the
-forbidden-id enforcement, the post-apply validation hook, the meta-loop
-bookends, ``revise_feedback``, the repair-turn prompt) is the engine's,
-unchanged and unduplicated. This tier differs from the text shim in its
-transport, not its semantics, which is what makes it an honest A/B
-baseline.
-
-**The envelope is the other half.** A default pi session has ``bash``,
-``read`` and ``grep`` pointed at the working directory; a proposer with
-those can read the board and the holdout slice, and nothing would warn.
-So the launch is negative-flag-first (:data:`SANCTIONED_FLAGS`): built-in
-tools off, extension/skill/prompt-template discovery off, context files
-off, project-local files untrusted, offline. The agent dir is a fresh
-isolated tree under the workspace with credentials copied into it
-deliberately, never the operator's own — which also means no packages and
-no cross-round memory. cwd is an empty directory outside every snapshot,
-because the snapshot is the system under test and reading it ambiently
-would be both an unhashed contract input and an injection path from the
-thing being rewritten into the thing rewriting it. The single sanctioned
-tool is :data:`SANCTIONED_TOOLS`, and ``tests/test_proposer_pi_envelope.py``
-asserts that set the way contract-hash stability is asserted.
-
-**The model is threaded, never inferred.** ``--model`` carries
-:attr:`~zicato.proposer.agent.ProposerContext.model` — the resolved
-auxiliary or ensemble-role model the rest of the proposer stack uses. An
-empty one is a hard failure rather than a fallback, because pi's own
-configured default deciding would mean the run is not the run the
-contract describes.
-
-Registering a tool server (the MCP surface of issue #147 phases 3-5) does
-not touch the transport. Three overrides, no edits:
-:meth:`PiProposerAgent.tool_flags` returns the server's launch flags,
-:meth:`PiProposerAgent.tool_env` returns the per-LAUNCH variables that
-point it at this challenger's round context, and the tool names it exposes
-go in :data:`SANCTIONED_TOOLS`. That constant is read by the launch AND by
-the contract identity, so a widened tool surface rolls the epoch by
-construction.
+Retries and native best-of-N turns share one process. The design, visibility
+constraints, and extension contract live in ``docs/design/PROPOSER.md``.
 """
 
 from __future__ import annotations
@@ -65,13 +15,14 @@ import os
 import shutil
 import tempfile
 from collections import deque
-from collections.abc import Mapping
-from dataclasses import dataclass
+from collections.abc import Awaitable, Callable, Mapping
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from zicato.core.types import Experiment, ProposerSpec
+from zicato.core.types import Experiment, ProposerQualityConfig, ProposerSpec
 from zicato.proposer.agent import ProposerContext, propose_via_engine
+from zicato.proposer.best_of_n import BestOfNProposerAgent
 from zicato.proposer.external import ExternalProposerConfig
 from zicato.proposer.prompts import render_system_prompt
 from zicato.proposer.proposer import ProposerError
@@ -81,34 +32,15 @@ if TYPE_CHECKING:  # pragma: no cover - typing-only import
 
 log = logging.getLogger("zicato.proposer.pi")
 
-#: The tools the proposer may call. Exactly one: the terminating
-#: structured-output tool that ends its turn with the experiment. Read by
-#: the launch, by the contract identity, and by the envelope assertion.
-SANCTIONED_TOOLS: tuple[str, ...] = ("propose_experiment",)
+#: Contract-hashed, envelope-tested structured output tools.
+SANCTIONED_TOOLS: tuple[str, ...] = ("propose_experiment", "select_candidate")
 
 #: Extension files we author, loaded explicitly by path. Hashed by BYTES
 #: into the contract identity: they are edited in place, so they have no
 #: version to record.
 SANCTIONED_EXTENSIONS: tuple[str, ...] = ("propose-experiment.ts",)
 
-#: The launch envelope. Every flag is load-bearing:
-#:
-#: * ``--mode rpc`` — the live session the retry loop rides on;
-#: * ``--no-session`` — no session file. Cross-round persistence would be
-#:   an unhashed side channel around the overfitting envelope, carrying
-#:   raw observations across rounds and epoch boundaries with none of the
-#:   banding the governed channels apply;
-#: * ``--no-builtin-tools`` — no ``bash`` / ``read`` / ``grep`` / ``edit``.
-#:   The visibility envelope is enforced by what the proposer is shown;
-#: * ``--no-extensions`` — no ambient extension discovery (explicit ``-e``
-#:   paths still load, which is how ours does);
-#: * ``--no-skills`` / ``--no-prompt-templates`` — pi has its own skills
-#:   mechanism. ``proposers/<name>/skills/*.md`` is the hashed one; a
-#:   second, unhashed one is how generations stop being comparable with no
-#:   signal that anything changed;
-#: * ``--no-context-files`` / ``--no-approve`` — no ``AGENTS.md``, no
-#:   project-local ``.pi/`` from the working directory;
-#: * ``--offline`` — no startup network operations.
+#: No ambient tools, state, extensions, skills, context files, or startup IO.
 SANCTIONED_FLAGS: tuple[str, ...] = (
     "--mode",
     "rpc",
@@ -138,23 +70,11 @@ _TERMINATE_GRACE_S = 5.0
 
 
 class PiTransportError(RuntimeError):
-    """The pi subprocess failed to produce a usable turn.
-
-    Raised by :meth:`PiRpcSession.call`, where
-    :func:`~zicato.proposer.proposer.propose_experiment` treats it like any
-    other failed attempt: the message becomes the next attempt's feedback.
-    A malformed *experiment* is not this error — that is the engine's
-    :class:`~zicato.proposer.structured.ExperimentParseError` path.
-    """
+    """The subprocess failed to produce a usable turn."""
 
 
 def resolve_pi_bin(config: ExternalProposerConfig) -> Path:
-    """Resolve the pi executable: ``runtime.pi_bin``, else the pinned install.
-
-    The default is ``integrations/pi/node_modules/.bin/pi`` — the binary
-    ``npm install`` materializes from the exact version pinned there. The
-    knob exists for dev clones and for operators who install pi elsewhere.
-    """
+    """Resolve the explicit executable or pinned install."""
     override = config.options.get("pi_bin")
     if override:
         return Path(override).expanduser()
@@ -167,19 +87,7 @@ def _integration_dir(config: ExternalProposerConfig) -> Path:
 
 
 def resolve_pi_version(config: ExternalProposerConfig) -> str:
-    """The version of the pi install that will actually be launched.
-
-    Read from the ``package.json`` beside the resolved binary — the
-    RESOLVED version, not the one a config file asked for — falling back
-    to the pin in ``integrations/pi/package.json`` when the binary is not
-    materialized (contract hashing happens on machines that never run
-    ``npm install``). Both are deterministic and offline; neither launches
-    a process, because this runs on the contract-hash path.
-
-    A pi upgrade therefore rolls the epoch, which is the coarse backstop
-    behind the finer signals in :meth:`PiProposerAgent.contract_identity`.
-    The standing rule stays: do not upgrade pi mid-tournament.
-    """
+    """Resolve the installed version, or the offline dependency pin."""
     binary = resolve_pi_bin(config)
     if binary.exists():
         # node_modules/.bin/pi is a symlink into the package's dist/.
@@ -210,11 +118,7 @@ def build_pi_argv(
     extensions: tuple[Path, ...],
     extra_tool_flags: tuple[str, ...] = (),
 ) -> list[str]:
-    """The exact command line. Pure, so the envelope test can assert it.
-
-    ``extra_tool_flags`` is the tool-registration seam: an MCP server is
-    appended here, never by editing the flag set above.
-    """
+    """Build the envelope-tested command line."""
     argv = [str(binary), *SANCTIONED_FLAGS, "--model", model, "--system-prompt", system_prompt]
     for extension in extensions:
         argv += ["--extension", str(extension)]
@@ -223,23 +127,7 @@ def build_pi_argv(
 
 
 def build_pi_env(agent_dir: Path, extra: Mapping[str, str] | None = None) -> dict[str, str]:
-    """The child environment: the operator's, with pi's own vars overridden.
-
-    Inheriting the parent environment is deliberate — provider credentials
-    configured as environment variables are how most operators authenticate,
-    and cutting them would just move the secret into a file. What is NOT
-    inherited is pi's own state: the agent dir, the session dir and the
-    package dir all point inside a fresh per-challenger tree, so the
-    process cannot reach the operator's installed packages, memory
-    extensions or saved trust decisions.
-
-    ``extra`` is the other half of the tool-registration seam
-    (:meth:`PiProposerAgent.tool_env`): per-LAUNCH variables, so concurrent
-    challengers can each point a tool server at their own round context
-    without writing to the shared process environment. It is applied
-    BEFORE the pi-state overrides, so a tool server cannot relax the
-    envelope by setting ``PI_OFFLINE`` or redirecting the agent dir.
-    """
+    """Inherit credentials but isolate all process-owned state."""
     env = dict(os.environ)
     if extra:
         env.update(extra)
@@ -251,15 +139,7 @@ def build_pi_env(agent_dir: Path, extra: Mapping[str, str] | None = None) -> dic
 
 
 def prepare_agent_dir(workspace_root: Path) -> Path:
-    """Mint a fresh, isolated pi agent dir and provision credentials into it.
-
-    Fresh per invocation (best-of-N runs N slots concurrently under one
-    generation id, so the generation is not a unique key), under
-    ``<workspace>/.pi-proposer/``. ``auth.json`` — and only ``auth.json`` —
-    is copied from the operator's real agent dir: the process is cut off
-    from that dir precisely so that everything it gets from there is
-    something we chose to give it.
-    """
+    """Create an isolated agent directory containing only credentials."""
     base = workspace_root / ".pi-proposer"
     base.mkdir(parents=True, exist_ok=True)
     agent_dir = Path(tempfile.mkdtemp(prefix="challenger-", dir=base))
@@ -272,11 +152,7 @@ def prepare_agent_dir(workspace_root: Path) -> Path:
 
 
 class PiRpcSession:
-    """One live ``pi --mode rpc`` conversation, driven as an LLM callable.
-
-    :meth:`call` has the ``aux_call_llm`` signature, so the engine's
-    bounded-retry loop drives this session without knowing it is one.
-    """
+    """One live RPC conversation exposed as a text callable."""
 
     def __init__(self, proc: asyncio.subprocess.Process, system_prompt: str) -> None:
         self._proc = proc
@@ -284,6 +160,7 @@ class PiRpcSession:
         self._next_id = 0
         self._stderr_tail: deque[str] = deque(maxlen=_STDERR_TAIL_LINES)
         self._stderr_task: asyncio.Task[None] | None = None
+        self.selection_rationale = ""
 
     @classmethod
     async def launch(
@@ -294,12 +171,7 @@ class PiRpcSession:
         env: Mapping[str, str],
         system_prompt: str,
     ) -> PiRpcSession:
-        """Spawn the subprocess and start draining its stderr.
-
-        Returns as soon as the process exists; whether it came up usable is
-        established by the first command sent to it, which reports the exit
-        status and the captured stderr when it did not.
-        """
+        """Spawn the subprocess and start draining stderr."""
         try:
             proc = await asyncio.create_subprocess_exec(
                 *argv,
@@ -319,31 +191,13 @@ class PiRpcSession:
         return session
 
     async def resolved_model(self) -> str:
-        """The model id the running process actually resolved.
-
-        The collusion guard's live half: we pass ``--model``, and this is
-        what the process says it heard. A mismatch is worth knowing about
-        because a contract that records one model while the run uses
-        another is a silently invalid comparison.
-        """
+        """Return the model id reported by the process."""
         response = await self._command({"type": "get_state"})
         model = (response.get("data") or {}).get("model") or {}
         return str(model.get("id", ""))
 
     async def call(self, system: str, user: str, model: str) -> str:
-        """Send one user prompt; return the emitted experiment as JSON text.
-
-        Matches the ``aux_call_llm`` signature the engine calls. ``system``
-        and ``model`` were fixed at launch (they are process-level flags),
-        so they are checked rather than used — a divergence means the
-        caller composed a different prompt than the one the process is
-        running under, which would make every attempt after the first a
-        different proposer.
-
-        Returns the empty string when the turn settled without calling
-        ``propose_experiment``. That is not an error here: it is exactly
-        the empty-response case the engine's repair turn already targets.
-        """
+        """Send one prompt and return structured experiment JSON."""
         del model  # threaded at launch; see the module docstring
         if system != self._system_prompt:
             raise PiTransportError(
@@ -360,6 +214,23 @@ class PiRpcSession:
             # usable for the next attempt rather than burning the budget.
             await self._abort()
             raise
+
+    async def select(self, system: str, user: str, count: int) -> int | None:
+        """Choose one candidate with the session's structured review tool."""
+        message = (
+            f"{system}\n\n{user}\n\n"
+            "Review only. Call select_candidate with the strongest listed candidate."
+        )
+        response = await self._command({"type": "prompt", "message": message})
+        if not response.get("success", False):
+            raise PiTransportError(f"pi rejected the review: {response.get('error', '(no error)')}")
+        selection = await self._await_tool("select_candidate")
+        try:
+            index = int(selection["index"])
+            self.selection_rationale = str(selection["rationale"])
+        except (KeyError, TypeError, ValueError):
+            return None
+        return index if 0 <= index < count else None
 
     async def aclose(self) -> None:
         """Terminate the subprocess and stop draining its stderr."""
@@ -401,24 +272,20 @@ class PiRpcSession:
 
     async def _await_experiment(self) -> str:
         """Consume events until the turn settles; return the tool arguments."""
-        emitted = ""
+        return json.dumps(await self._await_tool("propose_experiment"))
+
+    async def _await_tool(self, name: str) -> dict[str, Any]:
+        emitted: dict[str, Any] = {}
         while True:
             event = await self._read()
             kind = event.get("type")
-            if kind == "tool_execution_start" and event.get("toolName") in SANCTIONED_TOOLS:
-                emitted = json.dumps(event.get("args") or {})
+            if kind == "tool_execution_start" and event.get("toolName") == name:
+                emitted = event.get("args") or {}
             elif kind == "agent_settled":
                 return emitted
 
     async def _abort(self) -> None:
-        """Best-effort: tell the running turn to stop.
-
-        Fire-and-forget by design. This runs while the calling task is
-        being cancelled, so awaiting a correlated response would be a
-        second suspension point inside a cancellation — and it is not
-        needed: the next command reads until it sees its OWN request id,
-        so the abort's response and any trailing events are skipped.
-        """
+        """Best-effort cancellation without awaiting a second response."""
         with contextlib.suppress(Exception):
             await self._send({"type": "abort"})
 
@@ -548,6 +415,31 @@ class PiProposerAgent:
 
     async def propose(self, ctx: ProposerContext) -> Experiment:
         """Drive one challenger's proposal through a live pi session."""
+        return await self._run_session(ctx, lambda session: self._propose_one(session, ctx))
+
+    async def propose_slate(
+        self, ctx: ProposerContext, config: ProposerQualityConfig
+    ) -> Experiment:
+        """Generate and review a slate in one process with one conversation."""
+
+        async def run(session: PiRpcSession) -> Experiment:
+            inner = _SessionProposer(self.spec, session)
+            slate = _PiBestOfNProposerAgent(
+                inner=inner, config=config, session=session, candidates=inner.candidates
+            )
+            return await slate.propose(ctx)
+
+        return await self._run_session(ctx, run)
+
+    async def _propose_one(self, session: PiRpcSession, ctx: ProposerContext) -> Experiment:
+        return await propose_via_engine(spec=self.spec, ctx=ctx, aux_call_llm=session.call)
+
+    async def _run_session(
+        self,
+        ctx: ProposerContext,
+        run: Callable[[PiRpcSession], Awaitable[Experiment]],
+    ) -> Experiment:
+        """Launch once, run either proposal capability, then scrub credentials."""
         if not ctx.model:
             raise ProposerError(
                 [
@@ -597,10 +489,84 @@ class PiProposerAgent:
                         ctx.model,
                         resolved,
                     )
-                return await propose_via_engine(spec=self.spec, ctx=ctx, aux_call_llm=session.call)
+                return await run(session)
         finally:
             # The dir holds a copy of the operator's credentials.
             shutil.rmtree(agent_dir, ignore_errors=True)
+
+
+@dataclass
+class _SessionProposer:
+    spec: ProposerSpec
+    session: PiRpcSession
+    candidates: list[Experiment] = field(default_factory=list)
+
+    async def propose(self, ctx: ProposerContext) -> Experiment:
+        candidate = await propose_via_engine(
+            spec=self.spec, ctx=ctx, aux_call_llm=self.session.call
+        )
+        self.candidates.append(candidate)
+        return candidate
+
+
+@dataclass
+class _PiBestOfNProposerAgent(BestOfNProposerAgent):
+    session: PiRpcSession | None = None
+    candidates: list[Experiment] = field(default_factory=list)
+
+    async def propose(self, ctx: ProposerContext) -> Experiment:
+        emitter = ctx.round_event_emitter
+        if emitter is None:
+            return await super().propose(ctx)
+
+        def emit(kind: str, fields: dict[str, Any]) -> None:
+            if kind == "critique_selected":
+                fields = {
+                    **fields,
+                    "slate": [
+                        {
+                            "index": i,
+                            "core_idea": item.hypothesis.core_idea,
+                            "mutation_ids": list(item.hypothesis.modulating),
+                        }
+                        for i, item in enumerate(self.candidates)
+                    ],
+                    "rationale": self.session.selection_rationale if self.session else "",
+                }
+            emitter(kind, fields)
+
+        return await super().propose(replace(ctx, round_event_emitter=emit))
+
+    async def _mint_recombined(self, ctx: ProposerContext) -> Experiment | None:
+        candidate = await super()._mint_recombined(ctx)
+        if candidate is not None:
+            self.candidates.append(candidate)
+        return candidate
+
+    async def _merge_recombined(
+        self, ctx: ProposerContext
+    ) -> tuple[Experiment | None, tuple[str, ...]]:
+        candidate, errors = await super()._merge_recombined(ctx)
+        if candidate is not None:
+            self.candidates.append(candidate)
+        return candidate, errors
+
+    async def _critique(
+        self,
+        aux_call_llm: Callable[[str, str, str], Awaitable[str]],
+        candidates: list[Experiment],
+        ctx: ProposerContext,
+        screen_note: str = "",
+    ) -> int | None:
+        assert self.session is not None
+        session = self.session
+
+        async def native_review(system: str, user: str, model: str) -> str:
+            del model
+            choice = await session.select(system, user, len(candidates))
+            return "" if choice is None else str(choice)
+
+        return await super()._critique(native_review, candidates, ctx, screen_note)
 
 
 def _sha256_file(path: Path) -> str:

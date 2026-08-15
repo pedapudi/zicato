@@ -16,6 +16,7 @@ import pytest
 
 from zicato.epoch.round_log import (
     CandidateSampled,
+    CritiqueSelected,
     DecisionRecorded,
     EvidenceReplicated,
     ExperimentMinted,
@@ -257,6 +258,20 @@ def test_candidate_sampled_recombined_flag_round_trips_and_folds(tmp_path):
     record = fold_round_record(events)
     assert record.proposal.candidates_sampled == 3
     assert record.proposal.recombined_sampled == 1
+
+
+def test_critique_slate_and_rationale_round_trip(tmp_path):
+    log = RoundLog(tmp_path, "epoch-01", 8)
+    event = CritiqueSelected(
+        index=1,
+        reason="critique",
+        slate=({"index": 0, "core_idea": "small"}, {"index": 1, "core_idea": "best"}),
+        rationale="best grounded change",
+    )
+    log.append(event)
+    decoded = log.read()[0].event
+    assert isinstance(decoded, CritiqueSelected)
+    assert (decoded.slate[1]["core_idea"], decoded.rationale) == ("best", event.rationale)
 
 
 def test_pre_recombine_log_decodes_with_flag_defaulted(tmp_path):

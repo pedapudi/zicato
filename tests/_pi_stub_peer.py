@@ -137,7 +137,17 @@ def main() -> int:
 
         _emit({"id": request_id, "type": "response", "command": "prompt", "success": True})
         _emit({"type": "agent_start"})
+        selection = turn.get("select")
         emitted = turn.get("emit")
+        if selection is not None:
+            _emit(
+                {
+                    "type": "tool_execution_start",
+                    "toolCallId": f"call-{request_id}",
+                    "toolName": "select_candidate",
+                    "args": selection,
+                }
+            )
         if emitted is not None:
             _emit(
                 {

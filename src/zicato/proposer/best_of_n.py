@@ -100,43 +100,12 @@ minimal-diff key would systematically starve the union — its diff is
 larger than either parent's by construction; a VETOED one stays an
 ordinary slate member and every existing path is unchanged.
 
-Ensemble proposer roles (WS-ENS; breadth + depth)
--------------------------------------------------
-The two propose-step call CLASSES may run on distinct models (AlphaEvolve's
-breadth+depth proposer ensemble): the exploratory SLATE SAMPLING uses the
-"breadth" role, and the self-CRITIQUE selection call + the screen-informed
-REVISE re-sample use the "depth" role. Both are resolved into
-:class:`BestOfNProposerAgent` by :func:`wrap_with_proposer_quality` from the
-:class:`~zicato.core.runtime.RuntimeConfig` (its
-``proposer_breadth_call_llm`` / ``proposer_depth_call_llm`` PLUS the parallel
-``proposer_breadth_model`` / ``proposer_depth_model`` name strings — set from a
-``models.proposer_breadth`` / ``models.proposer_depth`` block). BOTH default
-to ``None``, and the wrapper then resolves each per-propose to
-``ctx.aux_call_llm`` (and leaves ``ctx.model`` at its own value) — the exact
-same auxiliary callable + model string the sampling + critique always used —
-so an unconfigured ensemble is byte-identical.
-
-The seam is the WRAPPER, not :class:`ProposerContext`: the context mirrors
-:func:`~zicato.proposer.proposer.propose_experiment`'s inputs one-for-one and
-the role bindings are proposer INFRASTRUCTURE, not propose inputs, so they live
-on the wrapper (the only code that distinguishes the two call classes) and the
-sampling/revise seam swaps BOTH ``ctx.aux_call_llm`` AND ``ctx.model`` via
-``dataclasses.replace`` at the call site. The dual swap is deliberate: the
-DEFAULT ADK tool-using proposer binds to ``ctx.model`` (a model string) and
-never reads ``ctx.aux_call_llm``, so a spec-configured role must move the model
-string to reach it; a callable-only role (no model name — a bare ``call_llm``
-dotted path or an injected test callable) leaves ``ctx.model`` untouched and so
-steers ONLY the proposers that read ``ctx.aux_call_llm`` (the text-shim /
-custom path) plus the wrapper's own critique/revise. Matches the
-``judge_call_llm`` precedent on the callable side; the model-string thread is
-what makes the default proposer honor the role.
-
-The collusion identity-guard does NOT apply between breadth and depth: both
-are proposer-side roles in ONE trust domain (inside the same
-overfitting-visibility envelope). The guard exists only for
-evaluator-vs-evaluated separation (harness vs auxiliary; judge vs
-adjudicator); breadth and depth are two halves of one proposer and may be
-the same callable.
+Ensemble proposer roles
+-----------------------
+The generic wrapper may use separate generation and review roles. Both live in
+one proposer trust domain. Session-native proposers own both stages and reject
+those overrides. Configuration and routing details live in
+``docs/design/PROPOSER.md``.
 
 Overfitting discipline (LOAD-BEARING)
 -------------------------------------
@@ -160,10 +129,10 @@ import asyncio
 import logging
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, replace
-from typing import Any
+from typing import Any, cast
 
 from zicato.core.types import CallLLM, Experiment, ProposerQualityConfig
-from zicato.proposer.agent import ProposerAgent, ProposerContext
+from zicato.proposer.agent import NativeSlateProposer, ProposerAgent, ProposerContext
 
 # EDIT_CLASS_HINTS moved to :mod:`zicato.proposer.hints` (its canonical home,
 # alongside the failure-mode-conditioned FAILURE_MODE_HINTS and the pure
@@ -174,6 +143,17 @@ from zicato.proposer.proposer import ProposerError
 from zicato.scoring.diff_complexity import diff_char_size as _diff_size
 
 log = logging.getLogger("zicato.proposer.best_of_n")
+
+
+@dataclass(frozen=True)
+class NativeSlateAdapter:
+    """Route best-of-N through a proposer's session-aware capability."""
+
+    inner: NativeSlateProposer
+    config: ProposerQualityConfig
+
+    async def propose(self, ctx: ProposerContext) -> Experiment:
+        return await self.inner.propose_slate(ctx, self.config)
 
 
 @dataclass(frozen=True, slots=True)
@@ -601,24 +581,9 @@ class BestOfNProposerAgent:
 
     inner: ProposerAgent
     config: ProposerQualityConfig
-    #: WS-ENS ensemble roles. ``None`` (the default) ⇒ the corresponding call
-    #: class runs on ``ctx.aux_call_llm`` — byte-identical to the pre-ensemble
-    #: wrapper (see :meth:`_breadth_call_llm` / :meth:`_depth_call_llm`).
-    #: ``breadth`` steers the slate SAMPLING, ``depth`` the CRITIQUE + REVISE.
-    #: NO distinctness guard binds them — both are proposer-side (one trust
-    #: domain); the module docstring's "Ensemble proposer roles" note explains
-    #: why the collusion guard is inapplicable here.
+    #: Optional generic-wrapper generation and review routes.
     breadth_call_llm: CallLLM | None = None
     depth_call_llm: CallLLM | None = None
-    #: The role MODEL-NAME strings that ride ALONGSIDE the callables above.
-    #: Set (from a workspace ``models.proposer_{breadth,depth}`` *model spec*)
-    #: they are swapped onto ``ctx.model`` at the sampling/revise sites so the
-    #: DEFAULT ADK proposer — which binds to ``ctx.model`` (a string) and never
-    #: reads ``ctx.aux_call_llm`` — actually reaches the role's endpoint. Left
-    #: ``None`` (the role absent, OR configured as a bare ``call_llm`` dotted
-    #: path / injected as a raw callable) ⇒ ``ctx.model`` is replaced with its
-    #: OWN value, byte-identical; a callable-only role then steers only the
-    #: proposers that DO read ``ctx.aux_call_llm`` (the text-shim / custom path).
     breadth_model: str | None = None
     depth_model: str | None = None
     #: WS-CONC slate-gather concurrency cap — the ``asyncio.Semaphore`` size
@@ -632,41 +597,19 @@ class BestOfNProposerAgent:
     propose_parallelism: int = 1
 
     def _breadth_call_llm(self, ctx: ProposerContext) -> CallLLM:
-        """The SLATE-SAMPLING callable: the breadth role, else ``ctx.aux_call_llm``.
-
-        Falls back to the CONTEXT's auxiliary callable (not a config-level
-        one) because the context is the propose-time source of truth for the
-        auxiliary surface, and returning that exact object keeps an
-        unconfigured ensemble byte-identical (a counting-double sees the SAME
-        callable the pre-ensemble wrapper sampled on).
-        """
+        """Resolve the generic wrapper's generation callable."""
         return self.breadth_call_llm if self.breadth_call_llm is not None else ctx.aux_call_llm
 
     def _depth_call_llm(self, ctx: ProposerContext) -> CallLLM:
-        """The CRITIQUE + REVISE callable: the depth role, else ``ctx.aux_call_llm``.
-
-        Mirrors :meth:`_breadth_call_llm`; the byte-identical default is the
-        very object the critique/revise always used.
-        """
+        """Resolve the generic wrapper's review callable."""
         return self.depth_call_llm if self.depth_call_llm is not None else ctx.aux_call_llm
 
     def _breadth_model(self, ctx: ProposerContext) -> str:
-        """The SLATE-SAMPLING model name: the breadth model, else ``ctx.model``.
-
-        Threaded onto ``ctx.model`` alongside :meth:`_breadth_call_llm` so the
-        default ADK proposer (which binds to the model STRING, not the callable)
-        honors a spec-configured breadth role. Absent a breadth model name the
-        context's own ``ctx.model`` is returned unchanged — byte-identical.
-        """
+        """Resolve the generic wrapper's generation model."""
         return self.breadth_model if self.breadth_model is not None else ctx.model
 
     def _depth_model(self, ctx: ProposerContext) -> str:
-        """The REVISE model name: the depth model, else ``ctx.model``.
-
-        Mirrors :meth:`_breadth_model` for the screen-informed revise re-sample.
-        The critique call needs no ``ctx.model`` swap — it invokes the depth
-        callable directly (see :meth:`_select_over`).
-        """
+        """Resolve the generic wrapper's review model."""
         return self.depth_model if self.depth_model is not None else ctx.model
 
     async def propose(self, ctx: ProposerContext) -> Experiment:
@@ -1563,6 +1506,19 @@ def wrap_with_proposer_quality(
     """
     if config.best_of_n <= 1:
         return inner
+    native = getattr(inner, "propose_slate", None)
+    if callable(native):
+        overrides = {
+            "proposer_generate": breadth_call_llm or breadth_model,
+            "proposer_review": depth_call_llm or depth_model,
+        }
+        configured = ", ".join(name for name, value in overrides.items() if value is not None)
+        if configured:
+            raise ValueError(
+                f"{type(inner).__name__} owns its best-of-N session; "
+                f"remove unsupported role override(s): {configured}"
+            )
+        return NativeSlateAdapter(cast(NativeSlateProposer, inner), config)
     return BestOfNProposerAgent(
         inner=inner,
         config=config,
@@ -1578,6 +1534,7 @@ __all__ = [
     "CALIBRATION_TRUST_BAR",
     "EDIT_CLASS_HINTS",
     "BestOfNProposerAgent",
+    "NativeSlateAdapter",
     "CandidateScreenResult",
     "ScreenRunner",
     "recent_prediction_accuracy",

@@ -169,6 +169,8 @@ class CritiqueSelected:
     TYPE: ClassVar[str] = "critique_selected"
     index: int = 0
     reason: str = ""
+    slate: tuple[dict[str, Any], ...] = ()
+    rationale: str = ""
 
 
 @dataclass(frozen=True, slots=True)
