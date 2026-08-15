@@ -5,6 +5,12 @@ description: The tournament-builder copilot's guide to helping an operator assem
 
 # Building a zicato tournament (copilot guide)
 
+The copilot's model comes exclusively from `models.roles.builder` (falling
+back to the named `evaluation` engine). `builder.json` selects only builder
+skills and theme; do not put model, endpoint, credential, or `call_llm` fields
+there. If no builder engine resolves, chat is disabled while the deterministic
+form remains available.
+
 This skill is for the **tournament-builder copilot** — the agent that sits
 beside an operator in the builder GUI and helps them assemble a whole
 evaluation **contract**: a tournament structure, its params, the board and its
@@ -34,7 +40,7 @@ control alone. Surface BOTH on every change — never let the operator `apply`
 a draft without having seen them:
 
 1. **COST — how many board-runs this contract will spend per round.** Runs are
-   the expensive unit (each is a full inner-harness execution under the
+   the expensive unit (each is a full target execution under the
    wall-clock budget). A rough model:
 
    ```
@@ -141,7 +147,8 @@ contract-clean lever for pure *reasoning* changes, but it drops the default's
 tools) versus a **custom ADK agent** (its own `model=` + the read-only tool
 registry — when the operator wants to own the model or curate the tool subset
 while keeping tools). Remind the operator of the Design-A model rule: a custom
-proposer's model must differ from the harness model. Set it with `set_proposer`.
+proposer's model must differ from the optional target-side model. Set it with
+`set_proposer`; named engine overrides live under `models.roles.proposer`.
 Editing the proposer or any of its skills rolls the epoch.
 
 ### 6. The gate

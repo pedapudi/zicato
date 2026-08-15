@@ -5,7 +5,7 @@ description: Read how the harness got here across epochs and generations — lis
 
 # zicato lineage — read the tree across epochs and generations
 
-The **lineage** is how the inner harness evolved: a shallow DAG of epochs joined
+The **lineage** is how the target evolved: a shallow DAG of epochs joined
 by baselining edges. Within an epoch the *promoted* generations form a linear
 spine; a multi-challenger round also mints sibling challengers that all fork
 from the same champion, so the epoch is a fan whose winners are that spine.

@@ -6,7 +6,7 @@ description: Close an epoch and read its retrospective — run the LLM analysis 
 # zicato analyze-epoch — close an epoch and read its analysis
 
 An **epoch** is the unit of evaluation contract (one frozen board + proposer
-brief + scoring + inner-harness identity). Within it, the gauntlet runs round
+brief + scoring + target-adapter identity). Within it, the gauntlet runs round
 after round, journaling each round. *Closing* an epoch runs the retrospective
 LLM analysis pass and writes the per-epoch `analysis.md`. This skill is the
 read/close side of an epoch — to drive the loop see `skills/zicato-evolve`; to
@@ -50,7 +50,7 @@ deltas, hypothesis-match line, modulating mutation points, the decision).
 `analysis.md` aggregates the whole epoch into an academic-paper-style
 publication with fixed sections — the data-bearing ones templated
 deterministically from the workspace, the prose ones written by one bounded
-auxiliary-LLM call:
+evaluation-engine call:
 
 ```
 ## Abstract                                  (prose)
@@ -77,11 +77,11 @@ auxiliary-LLM call:
   `LIVING DRAFT` line becomes "closed". Nothing is chmod'ed — a closed epoch is
   read-only by convention, not by permissions.
 - **The CLI close does NOT run the LLM prose pass**: `zicato epoch close` wires
-  no auxiliary callable, so it leaves an existing `analysis.md` in place
+  no evaluation callable, so it leaves an existing `analysis.md` in place
   (re-stamped) and writes a *stub* only when none exists yet. It is `evolve`'s
   auto-close — which rolls the contract with the aux callable in hand — that
   runs the full prose render. To get the prose pass by hand after a manual
-  close, use `regenerate-report` (step 3)
+  close, use `regenerate-report` with an evaluation callable (step 3)
   ([EPOCHS-AND-JOURNALING.md §5.1](../../docs/design/EPOCHS-AND-JOURNALING.md#51-closing-manual-primary-auto-close-fallback)).
 
 **A closed epoch is read-only.** Its board, brief, scoring, and generation

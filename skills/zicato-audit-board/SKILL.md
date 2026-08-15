@@ -342,7 +342,7 @@ but it is inherently project-specific — see "Recommendations" below.)
   (see [`zicato-author-board`](../zicato-author-board/SKILL.md) /
   [`zicato-tune-scoring`](../zicato-tune-scoring/SKILL.md)).
 - **Re-run (don't edit)** when only the determinism check fails and the run was
-  nondeterministic by nature (e.g. a `rubric` matcher on the aux LLM): raise
+  nondeterministic by nature (e.g. a `rubric` matcher on the judge engine): raise
   `replicates` or `promote_margin` rather than treating one noisy verdict as a
   board defect.
 

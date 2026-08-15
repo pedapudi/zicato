@@ -151,7 +151,7 @@ distinction:
 | Session kind | What it traces | `session_id` shape | Telemetry file |
 |---|---|---|---|
 | **meta-loop** (the tool itself) | zicato's *own* proposer + judge LLM calls — the orchestrator deciding what to mutate and how to score | `zicato-meta-loop-<sanitized-evolve-start-iso>` (one stable id per evolve invocation) | `.zicato/runtime/meta_loop_events.jsonl` |
-| **per-board-run** (the system under test) | one run of the inner harness against one board entry | `<gen_id>--<entry_id>` | the per-run `events.jsonl` above |
+| **per-board-run** (the system under test) | one target run against one board entry and replicate | `<gen_id>--<entry_id>` | the per-run `events.jsonl` above |
 
 The meta-loop session is "zicato thinking about the system under test"; the
 per-board-run sessions are "the system under test running". They bucket as
@@ -179,10 +179,14 @@ browser.
 Multi-turn runs emit the user-emulator's per-turn LLM calls on a dedicated
 lane named **`zicato:emulator`** (bracketed `emulator_turn`, carrying the
 emulator `model` and previews). The lane name is the discriminator: anything
-on `zicato:emulator` is the emulator's work, anything on the inner-harness
+on `zicato:emulator` is the emulator's work, anything on the target
 lane is the agent's. This is why a multi-turn entry's wall-clock can exceed
 the agent's own thinking time — the emulator's LLM time counts toward the
 entry's `wall_clock_budget_seconds`.
+
+Session scope is one generation × board entry × replicate. Separate board
+entries and replicates must never share a target or emulator session. Several
+turns share state only when they are steps of one compound board entry.
 
 ## Guardrails
 

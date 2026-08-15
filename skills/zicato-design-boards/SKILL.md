@@ -1,6 +1,6 @@
 ---
 name: zicato-design-boards
-description: Design a discriminating zicato board — not the JSON syntax (that is zicato-author-board) but the principles: coverage of the behaviors you care about, entries that actually separate champion from challenger (avoid all-pass/all-fail), weighting, when to use single-turn vs scripted-multi-turn vs emulated-multi-turn, the board_meta/disable_drift/judge_only header, and the emulator collusion rule. Use when deciding WHAT belongs on a board, or when a loop runs clean but promotes nothing.
+description: "Design a discriminating zicato board: behavioral coverage, entries that separate champion from challenger, weighting, entry kinds, board_meta controls, emulator isolation, and one-session-per-run boundaries. Use when deciding what belongs on a board or when a loop runs clean but promotes nothing."
 ---
 
 # Designing a zicato board
@@ -169,19 +169,26 @@ are default):
   on). See [`zicato-design-judges`](../zicato-design-judges/SKILL.md) for what
   the judges then measure.
 
-## The emulator collusion rule (design implication)
+## Emulator isolation and session scope
 
-A `multi_turn_emulated` entry runs its user-persona on the **auxiliary**
-callable, never the inner-harness callable. zicato hard-errors at startup
-(`assert_distinct_callables`, identity `is` check) if the two are the same
-object — a shared callable lets the emulator and the harness collude through
-shared process state, and the persona could leak the answer the entry is
-supposed to be testing. By construction the emulator sees *only* the persona
+A `multi_turn_emulated` entry runs its user persona through the
+`user_emulator` role, which inherits `evaluation`, never `target`. Use an
+explicit `user_emulator` engine override when emulator cost or capability
+should differ from judging and proposing. Target and emulator engines must be
+isolated: shared state could leak the answer the entry is supposed to test.
+By construction the emulator sees *only* the persona
 (`goal` / `constraints` / `stop_when`) and the user-facing transcript —
 never the entry's expectation or harness internals. The design implication for
 you: write the persona to *withhold the answer* (`constraints: "Never tell the
 agent the exact answer you want"`), so the entry tests whether the harness can
 *reach* the goal, not whether it can read it off the persona.
+
+The board is a collection of independent runs, not a session. Each generation
+× entry × replicate receives a fresh target session and, when applicable,
+a separate emulator session. A multi-turn entry may preserve state across its
+own turns. If cross-turn persistence is the behavior being measured, encode
+the whole workflow as one compound entry; never obtain it by sharing a session
+between entries or replicates.
 
 ## Smells — a board that can't tell candidates apart
 

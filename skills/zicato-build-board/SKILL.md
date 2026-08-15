@@ -1,6 +1,6 @@
 ---
 name: zicato-build-board
-description: The board-builder copilot's deep board-craft guide — designing board entries, judges, and the weighted loss through a GUI as a DRAFT applied on confirmation. Use when a copilot is helping an operator design a board, declare judges, shape the loss to express an objective, hold out a slice, or fix a toothless eval. Covers entries (single/multi-turn, expectations, tags incl. holdout, weight), judges (declared/in-run, judge_name, per_judge_weights, board_meta, the collusion-guarded emulator), and how the loss knobs combine to express an objective. Defers the exact scalar formula to SCORING.md, the schema to BOARD-FORMAT.md, anti-overfitting to OVERFITTING.md, discrimination diagnosis to LOOP-HEALTH.md.
+description: The board-builder copilot's deep board-craft guide — designing board entries, judges, emulator isolation, one-session-per-run boundaries, and weighted loss through a GUI as a DRAFT applied on confirmation. Use when a copilot helps design a board, declare judges, shape the objective, hold out a slice, or fix a toothless eval.
 ---
 
 # Building a zicato board (copilot guide)
@@ -31,7 +31,7 @@ skill is how the copilot *operates the builder* over those principles. See
 
 ## Board entries — the unit the copilot edits
 
-Each board entry is one task the inner harness runs. Three live kinds; pick the
+Each board entry is one task the target runs. Three live kinds; pick the
 cheapest that carries the behavior's signal (full table and cost/noise trade in
 [`zicato-design-boards`](../zicato-design-boards/SKILL.md)):
 
@@ -87,7 +87,7 @@ What the copilot sets on each judge:
 - **`name`** — a stable, board-unique slug. It becomes goldfive's `judge_name`,
   and **`per_judge_weights` keys on it** — choose it deliberately, because the
   loss weighting reaches the judge by this name.
-- **`mode`** — `inline` (a natural-language criterion graded by the aux LLM) or
+- **`mode`** — `inline` (a natural-language criterion graded by the `judge` role) or
   `python` (a dotted path to a deterministic process-judge callable).
 - **`body`** — the criterion text (`inline`) or the dotted path (`python`).
 - **`severity`** — `info` / `warning` / `critical`; scales how hard a violation
@@ -114,15 +114,19 @@ header (set when non-default):
   to measure the bare, un-steered harness, or when evolving the steerer-free
   path; your judges and expectations then carry the entire signal.
 
-**The collusion guard (design constraint the copilot must respect):** every
-grader — rubric matcher, inline/aux judge, the user-emulator — runs on the
-**auxiliary** callable, distinct from the **harness** callable that runs the
-system under test (zicato hard-errors on an identity match). The emulator sees
+**Isolation constraint:** graders use the `judge` role and the emulator uses
+`user_emulator`; both inherit `evaluation` and remain distinct from the
+optional `target` engine. The emulator sees
 only the persona + the user-facing transcript, never the entry's expectation.
 The implication for board craft: write personas to *withhold the answer* (so
-the entry tests whether the harness can *reach* the goal, not read it off the
-persona), and never author a judge that reaches into harness state — judge only
-the observable stream.
+the entry tests whether the target can *reach* the goal, not read it off the
+persona), and never author a judge that reaches into target state — judge only
+the observable stream. Give `user_emulator` a smaller named engine when
+appropriate; this changes its connection, not its constrained text protocol.
+
+Each generation × entry × replicate is a fresh run and session boundary.
+Never share one session across a board. Encode intentional stateful turns as a
+single compound entry.
 
 ## The weighted loss — shape it to express an objective
 

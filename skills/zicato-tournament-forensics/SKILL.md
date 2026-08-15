@@ -45,7 +45,7 @@ Always call the CLI from the project venv: `.venv/bin/zicato ...`. See
   (`TournamentDecision`); branch scripts on that JSON, not on the exit code.
 
 > **WARNING — this is a live, budget-spending run** in `full` mode (it executes
-> the inner harness over every board entry, twice). Per the project rules, do
+> the target over every board entry, twice). Per the project rules, do
 > NOT run a live tournament without the user's explicit go-ahead. For *reading*
 > an already-settled decision, inspect the artifacts (below) instead of
 > re-running. There is **no `--no-record-outcome` flag** — a live re-run records
