@@ -805,8 +805,10 @@ config/board/scoring/brief loaders (`load_workspace_config`,
 adapter construction from `config.json`, `RuntimeConfig` construction
 (named model engines, inherited roles, `build_adk_model`), dotted-import
 resolution, the auxiliary call timeout wrapper. The common configuration is
-two engines: `target` for the measured system and `evaluation` for internal
-work. `judge`, `user_emulator`, `builder`, and `proposer` inherit evaluation;
+two engines: `target` supplies an optional target LLM to a model-capable
+adapter, while `evaluation` serves internal work. The target itself is
+adapter-defined and may consume no model. `judge`, `user_emulator`, `builder`,
+and `proposer` inherit evaluation;
 `proposer_generate` / `proposer_review` may override the base proposer. See
 `docs/design/MODEL-CONFIG.md` for the schema and noun definitions.
 

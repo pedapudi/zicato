@@ -45,12 +45,12 @@ const SECTIONS = [
 const LAUNCHER = { view: 'builder', label: 'Tournament builder', glyph: '⚒' };
 
 const MODEL_ROLES = [
-  ['target', 'Target', 'The system under test.'],
+  ['target', 'Target LLM (optional)', 'Model injected only when the target adapter supports it.'],
   ['evaluation', 'Evaluation', 'Default internal model work.'],
   ['builder', 'Builder', 'The tournament-builder copilot.'],
-  ['judge', 'Judge', 'Scores run behavior.'],
-  ['adjudicator', 'Adjudicator', 'Independently audits judges.'],
-  ['user_emulator', 'User emulator', 'Plays the user in multi-turn tasks.'],
+  ['judge', 'Judge', 'Constrained scoring role; not a proposer session.'],
+  ['adjudicator', 'Adjudicator', 'Independently audits judges; must not reuse the judge.'],
+  ['user_emulator', 'User emulator', 'Constrained text role for multi-turn tasks.'],
   ['proposer', 'Proposer', 'Default for candidate generation and refinement.'],
   ['proposer_generate', 'Proposer generate', 'Generates candidate alternatives.'],
   ['proposer_review', 'Proposer review', 'Critiques, selects, and revises candidates.'],
@@ -262,8 +262,8 @@ async function renderModels() {
     if (_models == null) return [empty('Could not load the models settings.')];
     return [
       section('Models / LLM endpoints',
-        el('p', { class: 'dn-lede', text: 'Define reusable engines once, then assign roles. Target and evaluation are the common path; advanced roles inherit evaluation unless overridden.' }),
-        el('p', { class: 'dn-faint', text: 'Only credential environment-variable names are stored. Use a stronger proposer and a smaller user emulator by mapping those roles to separate engines.' }),
+        el('p', { class: 'dn-lede', text: 'Define reusable engines once, then assign roles. The target is adapter-defined and may need no LLM; target config is only its optional model assignment.' }),
+        el('p', { class: 'dn-faint', text: 'Only credential-variable names are stored. Model specs support native proposers; call_llm paths steer text/custom consumers only. Role assignment never changes the role protocol.' }),
         el('div', { class: 'dn-set-models' }, Object.entries(_modelsEdit.engines).map(engineCard)),
         addEngineButton(),
         el('div', { class: 'dn-set-models' }, MODEL_ROLES.map(roleAssignment)),

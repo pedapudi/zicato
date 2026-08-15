@@ -1,9 +1,12 @@
 # Model engines and roles
 
 Zicato separates an **engine**—a reusable model connection—from the **role**
-that uses it. Most workspaces need two engines:
+that uses it. The target itself is adapter-defined and may be a library, rule
+engine, deterministic program, or agent system; it need not consume an LLM.
+When its adapter does accept a model assignment, the `target` role is the
+target LLM (`target_llm`). Most model-backed workspaces need two engines:
 
-- `target` runs the system under test.
+- `target` supplies the optional target LLM to the adapter.
 - `evaluation` is the default for Zicato's internal model work.
 
 `config.json` stores credentials by environment-variable name, never value:
@@ -46,8 +49,10 @@ callable is silently translated into a native model.
 - **Engine**: a named, reusable connection: logical model id plus optional
   transport URL and credential-variable name.
 - **Role**: the job for which an engine is selected.
-- **Target**: the model inside the system being measured. It must not share an
-  engine with evaluator-side roles.
+- **Target**: the adapter-defined system being measured; it may consume no LLM.
+- **Target LLM (`target` role)**: the optional model assignment injected into
+  a model-capable target adapter. It must not share a named engine with
+  evaluator-side roles.
 - **Evaluation**: the default internal engine. Judge, user emulator, proposer,
   and builder inherit it unless overridden.
 - **Judge**: scores run behavior.
@@ -104,6 +109,22 @@ For example, cheap sampling with strong critique is:
 Every other advanced role (`builder`, `judge`, `adjudicator`, and
 `user_emulator`) falls directly back to `evaluation`.
 
+## Execution capabilities
+
+| Configuration / consumer | What executes | Native tools or session? |
+|---|---|---|
+| Model-form `target` | Adapter receives a native model object when supported; text-only adapters receive the derived callable | Adapter-defined; native tool calling is preserved where supported |
+| `call_llm`-form `target` | Text callable | No native tool binding; a tool-requiring adapter rejects the text shim |
+| Model-form proposer | Model id plus derived text callable | Built-in native proposer and native proposer session use the model id; custom text proposer uses the callable |
+| `call_llm`-form proposer | Imported text callable | Custom/text proposer only; it cannot stand in for a native model or native proposer session |
+| Inherited role | Same engine and capability as its inheritance source | No conversion is attempted |
+| Judge / user emulator | Constrained text or structured call | Not a native proposer session merely because their engine is changed |
+| Adjudicator | Constrained text or structured call, separate from the judge | Must be independently configured when adjudication is active; a judge cannot audit itself |
+
+Engine substitution selects a connection; it does not change a role's
+execution protocol. In particular, assigning a model to a judge, adjudicator,
+or user emulator does not turn that role into a native proposer session.
+
 ## Logical identity and transport
 
 An engine name plus optional `revision` identifies an operator-chosen logical deployment. `endpoint`
@@ -119,6 +140,14 @@ argument files, logs, or dashboard responses.
 The settings response includes effective role-to-engine resolution and whether
 each mapping was explicit or inherited. A scrubbed tournament worker receives
 only the credential variables named by configured engines.
+
+## Session scope
+
+A harness session belongs to exactly one run: one generation × board entry ×
+replicate. A session never spans a board or leaks state into another entry or
+replicate. When a workflow intentionally needs several stateful turns, model it
+as one compound board entry (for example, a multi-turn emulated entry); its
+turns share that run's session while separate entries remain isolated.
 
 ## Validation
 

@@ -48,8 +48,9 @@ zicato is the third member of an ecosystem:
 | Operator-driven steering | harmonograf | within one run |
 | **Inner-harness rewrites across runs** | **zicato** | **across generations** |
 
-Model connections use named `target` and `evaluation` engines. Advanced
-judge, emulator, builder, and proposer overrides are documented in
+Model-backed adapters use named `target` and `evaluation` engines; a target is
+adapter-defined and may consume no LLM at all. Advanced judge, emulator,
+builder, and proposer overrides and execution capabilities are documented in
 [`MODEL-CONFIG.md`](docs/design/MODEL-CONFIG.md).
 
 Goldfive owns plans; zicato owns the prompts and structure that *produce* the

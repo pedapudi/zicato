@@ -129,6 +129,11 @@ gate, and later evolve rounds.
 ```
 — `src/zicato/tournament/unit_cache.py` (module docstring)
 
+The harness session has exactly this scope: one generation × entry ×
+replicate. It never spans the board. A workflow that intentionally needs
+state across several turns is represented as one compound entry, whose turns
+share the run session; separate entries and replicates remain isolated.
+
 Read that literally. A generation is immutable and belongs to exactly one
 epoch/contract; a board entry is fixed by the contract; a replicate index
 selects one noise draw. So the tuple names a value that can be computed once

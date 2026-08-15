@@ -90,12 +90,13 @@ def initialize_workspace(
             "_guide": {
                 "nouns": {
                     "engine": "reusable model plus transport and credential-variable name",
-                    "target": "system under test",
+                    "target": "adapter-defined system under test; may use no LLM",
+                    "target_llm": "optional model injected by the target role",
                     "evaluation": "default for internal model work",
                     "proposer": "creates candidate changes; may merit a stronger engine",
-                    "user_emulator": "plays the user; may use a smaller engine",
-                    "judge": "scores run behavior",
-                    "adjudicator": "independently audits judges",
+                    "user_emulator": "constrained text role playing the user",
+                    "judge": "constrained text/structured role scoring behavior",
+                    "adjudicator": "independent constrained role auditing judges",
                     "builder": "interactive configuration assistant",
                     "proposer_generate/review": "candidate generation / critique and revision",
                     "revision": (
