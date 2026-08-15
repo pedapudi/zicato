@@ -501,7 +501,7 @@ goldfive = { git = "https://github.com/pedapudi/goldfive.git", rev = "ed44eaaf93
 # rev is pinned for reproducibility; bump it when zicato needs a newer
 # harmonograf-client. The repo is public on GitHub, so this resolves
 # both locally and in CI with the default token — no secret required.
-harmonograf-client = { git = "https://github.com/pedapudi/harmonograf.git", subdirectory = "client", rev = "a13a032fc05d97e88cc268b2a495676d44ed9c33" }
+harmonograf-client = { git = "https://github.com/pedapudi/harmonograf.git", subdirectory = "client", rev = "ff78e20d4632bcb68da93a8263fc83a6ee733c4b" }
 # harmonograf-server is the same monorepo, server subdirectory. Pinned
 # to the same rev as the client so the two never skew. zicato auto-
 # launches its own harmonograf-server bound to a free localhost port at
@@ -509,4 +509,4 @@ harmonograf-client = { git = "https://github.com/pedapudi/harmonograf.git", subd
 # operator no longer needs to keep a separate harmonograf process
 # running; setting ``ZICATO_HARMONOGRAF_URL`` / ``integration.harmonograf_url``
 # opts back into an external instance.
-harmonograf-server = { git = "https://github.com/pedapudi/harmonograf.git", subdirectory = "server", rev = "a13a032fc05d97e88cc268b2a495676d44ed9c33" }
+harmonograf-server = { git = "https://github.com/pedapudi/harmonograf.git", subdirectory = "server", rev = "ff78e20d4632bcb68da93a8263fc83a6ee733c4b" }
