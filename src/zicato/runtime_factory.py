@@ -149,6 +149,12 @@ def make_runtime_config(
     user_emulator: CallLLM | None = None
     if not models.user_emulator.is_empty:
         user_emulator = resolve_text_call_llm(models.user_emulator, role="user_emulator")
+    proposer: CallLLM | None = None
+    proposer_model: str | None = None
+    if not models.proposer.is_empty:
+        proposer = resolve_text_call_llm(models.proposer, role="proposer")
+        if not models.proposer.uses_call_llm:
+            proposer_model = models.proposer.model
 
     # WS-ENS ensemble proposer roles: ``models.proposer_breadth`` steers the
     # best-of-N SLATE SAMPLING and ``models.proposer_depth`` the CRITIQUE +
@@ -320,10 +326,12 @@ def make_runtime_config(
         judge_call_llm=judge,
         adjudicator_call_llm=adjudicator,
         user_emulator_call_llm=user_emulator,
+        proposer_call_llm=proposer,
         proposer_breadth_call_llm=proposer_breadth,
         proposer_depth_call_llm=proposer_depth,
         proposer_breadth_model=proposer_breadth_model,
         proposer_depth_model=proposer_depth_model,
+        proposer_model=proposer_model,
         scrub_worker_env=scrub_worker_env,
         worker_env_passthrough=worker_env_passthrough,
         diversity_tolerance=diversity_tolerance,

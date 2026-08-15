@@ -177,65 +177,12 @@ class RuntimeConfig:
         (:func:`zicato.core.workspace.assert_distinct_callables`) — a
         judge cannot grade its own homework.
     proposer_breadth_call_llm:
-        Optional LLM callable used by the best-of-N proposer's SLATE
-        SAMPLING (WS-ENS ensemble roles — the "breadth" of AlphaEvolve's
-        proposer ensemble). ``None`` (the default) ⇒ sampling falls back
-        to :attr:`auxiliary_call_llm` (today's behavior, byte-identical),
-        so an absent role changes nothing. When set (from a workspace
-        ``models.proposer_breadth`` block) it points the exploratory
-        slate samples at a separate endpoint/model — typically a cheaper,
-        higher-temperature model that generates many diverse candidates.
-
-        Live read path: the orchestrator threads this onto
-        :class:`~zicato.proposer.best_of_n.BestOfNProposerAgent`, which
-        swaps it onto ``ctx.aux_call_llm`` at the sampling site, FALLING
-        BACK to the context's own ``ctx.aux_call_llm`` when ``None``. The
-        default ADK proposer does not read ``ctx.aux_call_llm`` at all —
-        the callable steers only proposers that DO (the text-shim / custom
-        path); :attr:`proposer_breadth_model` carries the model-name string
-        that makes the DEFAULT proposer honor a spec-configured role.
-
-        NO collusion identity-guard applies between this and
-        :attr:`proposer_depth_call_llm`: both are PROPOSER-SIDE roles in
-        the SAME trust domain (the proposer stack, inside one
-        overfitting-visibility envelope). The collusion guard exists only
-        to keep an EVALUATOR distinct from the thing it evaluates (harness
-        vs auxiliary; judge vs adjudicator) — breadth and depth are two
-        halves of one proposer and may freely be the same callable.
+        Optional callable for `proposer_generate`; falls back to the base
+        proposer, then evaluation. It may equal the review callable.
     proposer_depth_call_llm:
-        Optional LLM callable used by the best-of-N proposer's DEPTH
-        passes — the self-CRITIQUE selection call and the screen-informed
-        REVISE re-sample (and the future LLM-guided recombination merge).
-        ``None`` (the default) ⇒ these fall back to
-        :attr:`auxiliary_call_llm` (today's behavior, byte-identical).
-        When set (from ``models.proposer_depth``) it points the
-        refine/critique step at a separate endpoint/model — typically a
-        stronger, lower-temperature model that judges + repairs the slate.
-
-        Live read path: mirrors :attr:`proposer_breadth_call_llm` — the
-        wrapper routes the critique call through this callable directly and
-        swaps it onto ``ctx.aux_call_llm`` for the revise re-sample,
-        falling back to the context's ``ctx.aux_call_llm`` when ``None``.
-        :attr:`proposer_depth_model` carries the paired model string. See
-        the no-collusion-guard note on :attr:`proposer_breadth_call_llm`.
+        Optional callable for `proposer_review`, with the same inheritance.
     proposer_breadth_model:
-        Optional MODEL-NAME string paired with
-        :attr:`proposer_breadth_call_llm`: the resolved model name when the
-        breadth role was configured via a ``models.proposer_breadth`` *model
-        spec*. ``None`` when the role is absent OR was given as a bare
-        ``call_llm`` dotted path (no model name) / injected as a raw
-        callable (the test seam). The orchestrator threads it onto
-        :class:`~zicato.proposer.best_of_n.BestOfNProposerAgent`, which
-        swaps it onto ``ctx.model`` at the sampling site so the DEFAULT ADK
-        proposer — which binds the model STRING, not ``ctx.aux_call_llm`` —
-        reaches the role's endpoint. ``None`` ⇒ ``ctx.model`` keeps its own
-        value (byte-identical).
-    proposer_depth_model:
-        Optional MODEL-NAME string paired with
-        :attr:`proposer_depth_call_llm`, mirroring
-        :attr:`proposer_breadth_model` for the DEPTH revise re-sample.
-        (The critique call passes ``ctx.model`` straight to the depth
-        callable, so no ``ctx.model`` swap is needed there.)
+        Model id paired with generate for native and process-backed proposers.
     seed:
         Optional integer seed for any zicato-internal random number
         generators. Adapters may or may not honor it for the inner
@@ -508,10 +455,12 @@ class RuntimeConfig:
     judge_call_llm: CallLLM | None = None
     adjudicator_call_llm: CallLLM | None = None
     user_emulator_call_llm: CallLLM | None = None
+    proposer_call_llm: CallLLM | None = None
     proposer_breadth_call_llm: CallLLM | None = None
     proposer_depth_call_llm: CallLLM | None = None
     proposer_breadth_model: str | None = None
     proposer_depth_model: str | None = None
+    proposer_model: str | None = None
     scrub_worker_env: bool = False
     worker_env_passthrough: tuple[str, ...] = ()
     diversity_tolerance: float | None = None
@@ -617,6 +566,14 @@ class RuntimeConfig:
         return (
             self.user_emulator_call_llm
             if self.user_emulator_call_llm is not None
+            else self.auxiliary_call_llm
+        )
+
+    def effective_proposer_call_llm(self) -> CallLLM:
+        """The base proposer callable, or the evaluation default."""
+        return (
+            self.proposer_call_llm
+            if self.proposer_call_llm is not None
             else self.auxiliary_call_llm
         )
 

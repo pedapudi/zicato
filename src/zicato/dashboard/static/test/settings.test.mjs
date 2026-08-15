@@ -55,7 +55,7 @@ const MODELS_VIEW = {
     },
     roles: { builder: 'builder' },
   },
-  roles: ['target', 'evaluation', 'builder', 'judge', 'adjudicator', 'user_emulator', 'proposer', 'proposer_breadth', 'proposer_depth'],
+  roles: ['target', 'evaluation', 'builder', 'judge', 'adjudicator', 'user_emulator', 'proposer', 'proposer_generate', 'proposer_review'],
   rolls_epoch: false,
 };
 
@@ -401,7 +401,7 @@ test('settings: named engines are edited once and roles are assignments', async 
   const input = byClass(target, 'dn-set-input').find((i) => i.getAttribute('name') === 'target-call_llm');
   assert(input && input.getAttribute('value') === 'pkg.harness:call_llm', 'target engine is seeded');
   assert(body.textContent.includes('User emulator'), 'advanced role assignment is shown');
-  assert(body.textContent.includes('Proposer depth'), 'specific proposer override is shown');
+  assert(body.textContent.includes('Proposer review'), 'specific proposer override is shown');
 });
 
 test('settings: the Models section shows the api_key_env NAME + set/unset flag, never a secret', async () => {
@@ -459,7 +459,7 @@ test('settings: an advanced proposer role maps to a named engine', async () => {
   await settings.render(host, ctx, { section: 'models' });
   await tick();
   let body = firstClass(host, 'dn-set-body');
-  const breadth = byClass(body, 'dn-set-modelcard').find((c) => c.textContent.includes('Proposer breadth'));
+  const breadth = byClass(body, 'dn-set-modelcard').find((c) => c.textContent.includes('Proposer generate'));
   const select = byClass(breadth, 'dn-set-input')[0];
   select.value = 'builder'; select.dispatchEvent(makeEvent('change'));
   await tick();
@@ -470,7 +470,7 @@ test('settings: an advanced proposer role maps to a named engine', async () => {
   // the POST carried the proposer_breadth role's edited call_llm path — the
   // role round-trips exactly like harness/judge (no special-casing).
   assert(_lastModelsPost && _lastModelsPost.models, 'the POST carried a models block');
-  assertEqual(_lastModelsPost.models.roles.proposer_breadth, 'builder', 'the override round-tripped');
+  assertEqual(_lastModelsPost.models.roles.proposer_generate, 'builder', 'the override round-tripped');
 });
 
 test('settings: the EDITABLE builder is NO LONGER embedded — only a LAUNCHER (+ a read-only contract preview)', async () => {

@@ -97,7 +97,7 @@ def initialize_workspace(
                     "judge": "scores run behavior",
                     "adjudicator": "independently audits judges",
                     "builder": "interactive configuration assistant",
-                    "breadth/depth": "candidate sampling / critique and revision",
+                    "proposer_generate/review": "candidate generation / critique and revision",
                     "revision": (
                         "operator-declared logical deployment identity, unlike a transport URL"
                     ),

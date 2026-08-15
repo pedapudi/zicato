@@ -20,7 +20,6 @@ MODEL_ROLES: tuple[str, ...] = (
     "judge",
     "adjudicator",
     "user_emulator",
-    "proposer",
     "proposer_breadth",
     "proposer_depth",
 )
@@ -33,8 +32,8 @@ PUBLIC_MODEL_ROLES: tuple[str, ...] = (
     "adjudicator",
     "user_emulator",
     "proposer",
-    "proposer_breadth",
-    "proposer_depth",
+    "proposer_generate",
+    "proposer_review",
 )
 
 _PUBLIC_TO_INTERNAL = {"target": "harness", "evaluation": "auxiliary"}
@@ -46,8 +45,8 @@ _DEFAULT_ENGINE = {
     "adjudicator": "evaluation",
     "user_emulator": "evaluation",
     "proposer": "evaluation",
-    "proposer_breadth": "proposer",
-    "proposer_depth": "proposer",
+    "proposer_generate": "proposer",
+    "proposer_review": "proposer",
 }
 
 
@@ -59,6 +58,7 @@ class RoleSpec:
     model: str | None = None
     endpoint: str | None = None
     api_key_env: str | None = None
+    revision: str | None = None
 
     @property
     def is_empty(self) -> bool:
@@ -73,12 +73,16 @@ class RoleSpec:
     def to_dict(self) -> dict[str, Any]:
         """Serialize without resolving credential values."""
         if self.uses_call_llm:
-            return {"call_llm": self.call_llm}
+            return {
+                "call_llm": self.call_llm,
+                **({"revision": self.revision} if self.revision else {}),
+            }
         if self.model:
             return {
                 "model": self.model,
                 "endpoint": self.endpoint,
                 "api_key_env": self.api_key_env,
+                **({"revision": self.revision} if self.revision else {}),
             }
         return {}
 
@@ -99,7 +103,7 @@ def role_spec_from_dict(raw: Any) -> RoleSpec:
     """Parse and strictly validate one engine."""
     if not isinstance(raw, Mapping):
         raise ValueError("model engine must be an object")
-    unknown = set(raw) - {"call_llm", "model", "endpoint", "api_key_env"}
+    unknown = set(raw) - {"call_llm", "model", "endpoint", "api_key_env", "revision"}
     if unknown:
         raise ValueError(f"unknown model engine keys: {sorted(unknown)}")
     call_llm = _opt_str(raw.get("call_llm"))
@@ -109,7 +113,7 @@ def role_spec_from_dict(raw: Any) -> RoleSpec:
     if call_llm:
         if raw.get("endpoint") is not None or raw.get("api_key_env") is not None:
             raise ValueError("call_llm cannot be combined with endpoint or api_key_env")
-        return RoleSpec(call_llm=call_llm)
+        return RoleSpec(call_llm=call_llm, revision=_opt_str(raw.get("revision")))
     endpoint = _opt_str(raw.get("endpoint"))
     api_key_env = _opt_str(raw.get("api_key_env"))
     if not model and (endpoint or api_key_env):
@@ -120,6 +124,7 @@ def role_spec_from_dict(raw: Any) -> RoleSpec:
         model=model,
         endpoint=endpoint,
         api_key_env=api_key_env,
+        revision=_opt_str(raw.get("revision")),
     )
 
 
@@ -139,6 +144,7 @@ class ModelsConfig:
     engines: tuple[tuple[str, RoleSpec], ...] = ()
     assignments: tuple[tuple[str, str], ...] = ()
     guide: Any = None
+    named: bool = False
 
     def role(self, name: str) -> RoleSpec:
         """Return the :class:`RoleSpec` for ``name`` (one of :data:`MODEL_ROLES`)."""
@@ -148,7 +154,7 @@ class ModelsConfig:
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize the configured schema."""
-        if self.engines or self.guide is not None or self.assignments:
+        if self.named:
             out = {
                 "engines": {name: spec.to_dict() for name, spec in self.engines},
                 "roles": dict(self.assignments),
@@ -167,7 +173,7 @@ class ModelsConfig:
 
     def to_public_dict(self) -> dict[str, Any]:
         """Serialize engine definitions and effective role provenance."""
-        if self.engines or self.guide is not None or self.assignments:
+        if self.named:
             return {
                 "engines": {name: spec.to_public_dict() for name, spec in self.engines},
                 "roles": dict(self.assignments),
@@ -176,6 +182,16 @@ class ModelsConfig:
                     role: {
                         "engine": self.engine_for(role),
                         "inherited": role not in dict(self.assignments),
+                        "source": (
+                            role
+                            if role in dict(self.assignments)
+                            else (
+                                "proposer"
+                                if role in {"proposer_generate", "proposer_review"}
+                                and "proposer" in dict(self.assignments)
+                                else "evaluation"
+                            )
+                        ),
                     }
                     for role in PUBLIC_MODEL_ROLES
                 },
@@ -188,7 +204,7 @@ class ModelsConfig:
             raise ValueError(f"unknown model role {public_role!r}")
         assigned = dict(self.assignments)
         name = assigned.get(public_role)
-        if name is None and public_role in {"proposer_breadth", "proposer_depth"}:
+        if name is None and public_role in {"proposer_generate", "proposer_review"}:
             name = assigned.get("proposer")
         name = name or _DEFAULT_ENGINE[public_role]
         if name == "proposer":
@@ -197,7 +213,7 @@ class ModelsConfig:
 
 
 def models_config_from_dict(raw: Any) -> ModelsConfig:
-    """Parse a models block, including the prior direct-role shape."""
+    """Parse the named-engine models schema."""
     if raw is None:
         return ModelsConfig()
     if not isinstance(raw, Mapping):
@@ -225,7 +241,7 @@ def models_config_from_dict(raw: Any) -> ModelsConfig:
 
         def selected_name(public_role: str) -> str:
             name = assignments.get(public_role)
-            if name is None and public_role in {"proposer_breadth", "proposer_depth"}:
+            if name is None and public_role in {"proposer_generate", "proposer_review"}:
                 name = assignments.get("proposer")
             name = name or _DEFAULT_ENGINE[public_role]
             if name == "proposer":
@@ -238,8 +254,7 @@ def models_config_from_dict(raw: Any) -> ModelsConfig:
 
         target = selected("target")
         for isolated_role in ("evaluation", "user_emulator"):
-            other = selected(isolated_role)
-            if not target.is_empty and target == other:
+            if not target.is_empty and selected_name("target") == selected_name(isolated_role):
                 raise ValueError(
                     f"models.roles.{isolated_role} must not use the target engine; "
                     "evaluated and evaluator-side engines must be distinct"
@@ -253,40 +268,22 @@ def models_config_from_dict(raw: Any) -> ModelsConfig:
             adjudicator=selected("adjudicator"),
             user_emulator=selected("user_emulator"),
             proposer=selected("proposer"),
-            proposer_breadth=selected("proposer_breadth"),
-            proposer_depth=selected("proposer_depth"),
+            proposer_breadth=selected("proposer_generate"),
+            proposer_depth=selected("proposer_review"),
             engines=tuple(engines.items()),
             assignments=tuple(assignments.items()),
             guide=raw.get("_guide"),
+            named=True,
         )
-    unknown = set(raw) - set(MODEL_ROLES)
-    if unknown:
-        raise ValueError(f"unknown models keys: {sorted(unknown)}")
-
-    def legacy(name: str) -> RoleSpec:
-        value = raw.get(name)
-        return RoleSpec() if value is None else role_spec_from_dict(value)
-
-    return ModelsConfig(
-        harness=legacy("harness"),
-        auxiliary=legacy("auxiliary"),
-        builder=legacy("builder"),
-        judge=legacy("judge"),
-        adjudicator=legacy("adjudicator"),
-        user_emulator=legacy("user_emulator"),
-        proposer=legacy("proposer"),
-        proposer_breadth=legacy("proposer_breadth"),
-        proposer_depth=legacy("proposer_depth"),
+    raise ValueError(
+        "direct models.<role> configuration is no longer supported; move each "
+        "connection under models.engines and map public names in models.roles "
+        "(see docs/design/MODEL-CONFIG.md)"
     )
 
 
 def load_models_config(workspace_config: Mapping[str, Any]) -> ModelsConfig:
     return models_config_from_dict(workspace_config.get("models"))
-
-
-# ---------------------------------------------------------------------------
-# Resolution
-# ---------------------------------------------------------------------------
 
 
 def resolve_text_call_llm(spec: RoleSpec, *, role: str) -> CallLLM:

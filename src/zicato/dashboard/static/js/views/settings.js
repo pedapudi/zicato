@@ -52,8 +52,8 @@ const MODEL_ROLES = [
   ['adjudicator', 'Adjudicator', 'Independently audits judges.'],
   ['user_emulator', 'User emulator', 'Plays the user in multi-turn tasks.'],
   ['proposer', 'Proposer', 'Default for candidate generation and refinement.'],
-  ['proposer_breadth', 'Proposer breadth', 'Optional sampling override.'],
-  ['proposer_depth', 'Proposer depth', 'Optional critique and revision override.'],
+  ['proposer_generate', 'Proposer generate', 'Generates candidate alternatives.'],
+  ['proposer_review', 'Proposer review', 'Critiques, selects, and revises candidates.'],
 ];
 const SECTION_IDS = SECTIONS.map((s) => s.id);
 // The default section a bare `#/settings` opens — sourced from the router so the
@@ -64,9 +64,9 @@ let _active = DEFAULT_SECTION;
 let _railHost = null;
 let _sectionHost = null;
 let _ctx = null;
-let _models = null;         // /settings/models secret-safe view (models section)
-let _modelsDirty = false;   // an unsaved local edit is pending (digest-gate seam)
-let _modelsStatus = '';     // last save outcome message (saved / error)
+let _models = null;
+let _modelsDirty = false;
+let _modelsStatus = '';
 let _themeDropdown = null;
 let _typeDropdown = null;
 
@@ -217,21 +217,10 @@ function contractRow(label, value, linkView) {
   ]);
 }
 
-// ── Models / LLM endpoints — EDITABLE per-role config (NAMES only) ────
-//
-// Generalises the former "Builder assistant" read-out into an EDITABLE
-// section for EVERY role (harness · auxiliary · builder · judge ·
-// proposer_breadth · proposer_depth), backed by the
-// secret-safe GET/POST /settings/models. Each role toggles between the
-// `call_llm` dotted-path form and the `{model, endpoint, api_key_env}` form;
-// only the api_key_env NAME is ever shown/edited (plus a "set / unset"
-// indicator from the server's api_key_env_set boolean) — never a secret value.
-// A model/endpoint is runtime infra, so a change here does NOT roll the epoch.
-
 let _modelsEdit = null;
 
 function blankRoleEdit() {
-  return { use_call_llm: false, call_llm: '', model: '', endpoint: '', api_key_env: '', api_key_env_set: false };
+  return { use_call_llm: false, call_llm: '', model: '', revision: '', endpoint: '', api_key_env: '', api_key_env_set: false };
 }
 
 function roleEditFromPublic(spec) {
@@ -241,6 +230,7 @@ function roleEditFromPublic(spec) {
     use_call_llm: useCallLlm,
     call_llm: s.call_llm || '',
     model: s.model || '',
+    revision: s.revision || '',
     endpoint: s.endpoint || '',
     api_key_env: s.api_key_env || '',
     api_key_env_set: !!s.api_key_env_set,
@@ -249,10 +239,10 @@ function roleEditFromPublic(spec) {
 
 function roleSpecFromEdit(edit) {
   if (edit.use_call_llm) {
-    return edit.call_llm ? { call_llm: edit.call_llm } : {};
+    return edit.call_llm ? { call_llm: edit.call_llm, ...(edit.revision ? { revision: edit.revision } : {}) } : {};
   }
   if (!edit.model) return {};
-  return { model: edit.model, endpoint: edit.endpoint || null, api_key_env: edit.api_key_env || null };
+  return { model: edit.model, revision: edit.revision || null, endpoint: edit.endpoint || null, api_key_env: edit.api_key_env || null };
 }
 
 function seedModelsEdit() {
@@ -342,12 +332,14 @@ function formToggle(id, edit) {
 function callLlmForm(id, edit) {
   return el('div', { class: 'dn-set-modelform' }, [
     textField(id + '-call_llm', 'call_llm', edit.call_llm, 'pkg.mod:fn', (v) => { edit.call_llm = v; markDirty(); }),
+    textField(id + '-revision', 'revision', edit.revision, 'deployment revision', (v) => { edit.revision = v; markDirty(); }),
   ]);
 }
 
 function modelSpecForm(id, edit) {
   return el('div', { class: 'dn-set-modelform' }, [
     textField(id + '-model', 'model', edit.model, 'model id', (v) => { edit.model = v; markDirty(); }),
+    textField(id + '-revision', 'revision', edit.revision, 'deployment revision', (v) => { edit.revision = v; markDirty(); }),
     textField(id + '-endpoint', 'endpoint', edit.endpoint, 'provider default', (v) => { edit.endpoint = v; markDirty(); }),
     apiKeyEnvField(id, edit),
   ]);
@@ -422,17 +414,6 @@ function redrawModels() {
   }
 }
 
-// ── Appearance — the EDITABLE colour / typeface / scale / rail pickers ─
-//
-// Every appearance preference is editable INLINE here, wired to the SAME
-// mechanism the top-bar controls drive: applyTheme / applyTypeface / applyScale
-// / applyRail stamp the app root, persist to the one ui.js localStorage store,
-// AND sync the top-bar pickers. So editing a pref here updates the top bar (and
-// vice-versa) and persists identically — one source of truth, not a fork. The
-// former read-only "Dashboard" roll-up (page scale + side-panel width) is folded
-// in here as the editable Layout block, so Appearance is the single home for
-// every visual/layout preference and the Dashboard section is retired.
-
 function renderAppearance() {
   const color = readColor();
   const type = readType();
@@ -451,7 +432,6 @@ function renderAppearance() {
   ]);
 }
 
-// A labelled appearance row: a label cell + the live control cell.
 function appRow(label, control) {
   return el('div', { class: 'dn-set-approw' }, [
     el('span', { class: 'dn-set-k', text: label }),
@@ -459,11 +439,6 @@ function appRow(label, control) {
   ]);
 }
 
-// COLOUR THEME — the SAME swatch dropdown the top bar renders (the shared
-// component, NOT a fork): each option shows its colour swatch strip + name, so
-// settings and the top bar look identical and share one store. Built ONCE and
-// its node reused across re-renders; choosing applies via applyTheme (which
-// stamps the root, persists, AND syncs every live dropdown — top bar + here).
 function themePicker(current) {
   if (!_themeDropdown) {
     _themeDropdown = buildSwatchDropdown(current, (id) => { applyTheme(id); });
@@ -473,13 +448,6 @@ function themePicker(current) {
   return _themeDropdown.node;
 }
 
-// TYPEFACE — the SAME grouped-popover the top bar renders (the shared component,
-// NOT a fork): a trigger + a grouped listbox of the operator's finalized 12
-// faces (4 per mode), each row a micro-preview in its real faces, PLUS the
-// compact S/M/L text-size segmented control in the popover footer. Built ONCE
-// and its node REUSED across re-renders; choosing a face applies via
-// applyTypeface and choosing a size via applyFontSize (each stamps the root,
-// persists, AND syncs every live instance — top bar + here).
 function typefacePicker(current, currentSize) {
   if (!_typeDropdown) {
     _typeDropdown = buildTypefaceDropdown(current, (id) => { applyTypeface(id); }, {
@@ -491,8 +459,6 @@ function typefacePicker(current, currentSize) {
   return _typeDropdown.node;
 }
 
-// PAGE SCALE — a native range + a % readout + a reset, wired to applyScale /
-// resetScale (whole-page zoom; root + persist + top-bar pill sync).
 function scalePicker(current) {
   const range = el('input', {
     class: 'dn-set-range', type: 'range',
@@ -524,8 +490,6 @@ function scalePicker(current) {
   return el('div', { class: 'dn-set-rangewrap' }, [range, out, reset]);
 }
 
-// SIDE-PANEL WIDTH — a native range + a px readout, wired to applyRail (the same
-// grid-column + persist the rail-drag handle uses).
 function railPicker(current) {
   const range = el('input', {
     class: 'dn-set-range', type: 'range',

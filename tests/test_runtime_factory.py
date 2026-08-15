@@ -330,6 +330,22 @@ def _install_models_callables(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setitem(sys.modules, "fake_models_mod", mod)
 
 
+def _models(**specs: dict[str, object]) -> dict[str, object]:
+    public = {
+        "harness": "target",
+        "auxiliary": "evaluation",
+        "proposer_breadth": "proposer_generate",
+        "proposer_depth": "proposer_review",
+    }
+    engines = {public.get(role, role): spec for role, spec in specs.items()}
+    roles = {
+        public.get(role, role): public.get(role, role)
+        for role in specs
+        if role not in {"harness", "auxiliary"}
+    }
+    return {"engines": engines, "roles": roles}
+
+
 def test_models_block_resolves_harness_and_auxiliary_dotted(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -342,10 +358,10 @@ def test_models_block_resolves_harness_and_auxiliary_dotted(
                 "harness_call_llm": "fake_models_mod.judge_fn",
                 "auxiliary_call_llm": "fake_models_mod.judge_fn",
             },
-            "models": {
-                "harness": {"call_llm": "fake_models_mod:harness_fn"},
-                "auxiliary": {"call_llm": "fake_models_mod:aux_fn"},
-            },
+            "models": _models(
+                harness={"call_llm": "fake_models_mod:harness_fn"},
+                auxiliary={"call_llm": "fake_models_mod:aux_fn"},
+            ),
         },
         workspace_root=tmp_path,
     )
@@ -365,7 +381,7 @@ def test_models_block_falls_back_to_runtime_when_role_absent(
                 "auxiliary_call_llm": "fake_models_mod.aux_fn",
             },
             # empty models block ⇒ both roles fall through to runtime.*
-            "models": {},
+            "models": {"engines": {}, "roles": {}},
         },
         workspace_root=tmp_path,
     )
@@ -382,7 +398,7 @@ def test_explicit_callable_kwarg_beats_models_block(
     """An explicit callable kwarg wins over a configured ``models`` role."""
     _install_models_callables(monkeypatch)
     cfg = make_runtime_config(
-        {"models": {"harness": {"call_llm": "fake_models_mod:harness_fn"}}},
+        {"models": _models(harness={"call_llm": "fake_models_mod:harness_fn"})},
         workspace_root=tmp_path,
         harness_call_llm=_stub_aux,  # the kwarg wins
         auxiliary_call_llm=_stub_harness,
@@ -403,14 +419,14 @@ def test_models_harness_endpoint_spec_builds_inner_model(
     monkeypatch.setenv("OPENAI_API_KEY", "sk-dummy")
     cfg = make_runtime_config(
         {
-            "models": {
-                "harness": {
+            "models": _models(
+                harness={
                     "model": "openai/gemma-4-26B-A4B-it-FP8",
                     "endpoint": "http://kossel.lan:8080/v1",
                     "api_key_env": "OPENAI_API_KEY",
                 },
-                "auxiliary": {"call_llm": "fake_models_mod:aux_fn"},
-            }
+                auxiliary={"call_llm": "fake_models_mod:aux_fn"},
+            )
         },
         workspace_root=tmp_path,
     )
@@ -425,10 +441,10 @@ def test_dotted_harness_role_leaves_inner_model_none(
     _install_models_callables(monkeypatch)
     cfg = make_runtime_config(
         {
-            "models": {
-                "harness": {"call_llm": "fake_models_mod:harness_fn"},
-                "auxiliary": {"call_llm": "fake_models_mod:aux_fn"},
-            }
+            "models": _models(
+                harness={"call_llm": "fake_models_mod:harness_fn"},
+                auxiliary={"call_llm": "fake_models_mod:aux_fn"},
+            )
         },
         workspace_root=tmp_path,
     )
@@ -442,11 +458,11 @@ def test_models_judge_role_resolves_and_overrides_auxiliary(
     _install_models_callables(monkeypatch)
     cfg = make_runtime_config(
         {
-            "models": {
-                "harness": {"call_llm": "fake_models_mod:harness_fn"},
-                "auxiliary": {"call_llm": "fake_models_mod:aux_fn"},
-                "judge": {"call_llm": "fake_models_mod:judge_fn"},
-            }
+            "models": _models(
+                harness={"call_llm": "fake_models_mod:harness_fn"},
+                auxiliary={"call_llm": "fake_models_mod:aux_fn"},
+                judge={"call_llm": "fake_models_mod:judge_fn"},
+            )
         },
         workspace_root=tmp_path,
     )
@@ -464,10 +480,10 @@ def test_models_collusion_guard_fires_when_harness_equals_auxiliary(
     with pytest.raises(RuntimeError, match="must be distinct"):
         make_runtime_config(
             {
-                "models": {
-                    "harness": {"call_llm": "fake_models_mod:harness_fn"},
-                    "auxiliary": {"call_llm": "fake_models_mod:harness_fn"},
-                }
+                "models": _models(
+                    harness={"call_llm": "fake_models_mod:harness_fn"},
+                    auxiliary={"call_llm": "fake_models_mod:harness_fn"},
+                )
             },
             workspace_root=tmp_path,
         )
@@ -523,12 +539,12 @@ def test_proposer_roles_resolve_from_models_block(
     _install_proposer_role_callables(monkeypatch)
     cfg = make_runtime_config(
         {
-            "models": {
-                "harness": {"call_llm": "fake_models_mod:harness_fn"},
-                "auxiliary": {"call_llm": "fake_models_mod:aux_fn"},
-                "proposer_breadth": {"call_llm": "fake_proposer_roles_mod:breadth_fn"},
-                "proposer_depth": {"call_llm": "fake_proposer_roles_mod:depth_fn"},
-            }
+            "models": _models(
+                harness={"call_llm": "fake_models_mod:harness_fn"},
+                auxiliary={"call_llm": "fake_models_mod:aux_fn"},
+                proposer_breadth={"call_llm": "fake_proposer_roles_mod:breadth_fn"},
+                proposer_depth={"call_llm": "fake_proposer_roles_mod:depth_fn"},
+            )
         },
         workspace_root=tmp_path,
     )
@@ -544,6 +560,54 @@ def test_proposer_roles_resolve_from_models_block(
     assert cfg.proposer_depth_model is None
 
 
+def test_base_proposer_role_routes_text_callable(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _install_models_callables(monkeypatch)
+    _install_proposer_role_callables(monkeypatch)
+    cfg = make_runtime_config(
+        {
+            "models": _models(
+                harness={"call_llm": "fake_models_mod:harness_fn"},
+                auxiliary={"call_llm": "fake_models_mod:aux_fn"},
+                proposer={"call_llm": "fake_proposer_roles_mod:breadth_fn"},
+            )
+        },
+        workspace_root=tmp_path,
+    )
+    assert cfg.effective_proposer_call_llm() is cfg.proposer_call_llm
+    assert cfg.proposer_call_llm is not cfg.auxiliary_call_llm
+    assert cfg.proposer_model is None
+
+
+def test_base_proposer_model_is_available_to_native_and_process_agents(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _install_models_callables(monkeypatch)
+
+    def resolve(spec: object, *, role: str):  # type: ignore[no-untyped-def]
+        del spec
+        return _stub_harness if role == "harness" else _stub_aux
+
+    monkeypatch.setattr("zicato.runtime_factory.resolve_text_call_llm", resolve)
+    cfg = make_runtime_config(
+        {
+            "models": {
+                "engines": {
+                    "target": {"call_llm": "fake_models_mod:harness_fn"},
+                    "evaluation": {"call_llm": "fake_models_mod:aux_fn"},
+                    "strong": {"model": "house-strong"},
+                },
+                "roles": {"proposer": "strong"},
+            }
+        },
+        workspace_root=tmp_path,
+    )
+    assert cfg.proposer_model == "house-strong"
+    assert cfg.proposer_breadth_model == "house-strong"
+    assert cfg.proposer_depth_model == "house-strong"
+
+
 def test_proposer_roles_model_spec_captures_model_name(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
@@ -555,20 +619,20 @@ def test_proposer_roles_model_spec_captures_model_name(
     monkeypatch.setenv("OPENAI_API_KEY", "sk-dummy")
     cfg = make_runtime_config(
         {
-            "models": {
-                "harness": {"call_llm": "fake_models_mod:harness_fn"},
-                "auxiliary": {"call_llm": "fake_models_mod:aux_fn"},
-                "proposer_breadth": {
+            "models": _models(
+                harness={"call_llm": "fake_models_mod:harness_fn"},
+                auxiliary={"call_llm": "fake_models_mod:aux_fn"},
+                proposer_breadth={
                     "model": "openai/breadth-model",
                     "endpoint": "http://kossel.lan:8080/v1",
                     "api_key_env": "OPENAI_API_KEY",
                 },
-                "proposer_depth": {
+                proposer_depth={
                     "model": "openai/depth-model",
                     "endpoint": "http://kossel.lan:8080/v1",
                     "api_key_env": "OPENAI_API_KEY",
                 },
-            }
+            )
         },
         workspace_root=tmp_path,
     )
@@ -592,13 +656,13 @@ def test_proposer_roles_no_collusion_guard_between_breadth_and_depth(
     _install_proposer_role_callables(monkeypatch)
     cfg = make_runtime_config(
         {
-            "models": {
-                "harness": {"call_llm": "fake_models_mod:harness_fn"},
-                "auxiliary": {"call_llm": "fake_models_mod:aux_fn"},
+            "models": _models(
+                harness={"call_llm": "fake_models_mod:harness_fn"},
+                auxiliary={"call_llm": "fake_models_mod:aux_fn"},
                 # deliberately the SAME callable for both proposer roles.
-                "proposer_breadth": {"call_llm": "fake_proposer_roles_mod:breadth_fn"},
-                "proposer_depth": {"call_llm": "fake_proposer_roles_mod:breadth_fn"},
-            }
+                proposer_breadth={"call_llm": "fake_proposer_roles_mod:breadth_fn"},
+                proposer_depth={"call_llm": "fake_proposer_roles_mod:breadth_fn"},
+            )
         },
         workspace_root=tmp_path,
     )

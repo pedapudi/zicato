@@ -807,7 +807,7 @@ adapter construction from `config.json`, `RuntimeConfig` construction
 resolution, the auxiliary call timeout wrapper. The common configuration is
 two engines: `target` for the measured system and `evaluation` for internal
 work. `judge`, `user_emulator`, `builder`, and `proposer` inherit evaluation;
-`proposer_breadth` / `proposer_depth` may override the base proposer. See
+`proposer_generate` / `proposer_review` may override the base proposer. See
 `docs/design/MODEL-CONFIG.md` for the schema and noun definitions.
 
 **`synthetic/`** — synthetic adversarial/clean board-entry support for

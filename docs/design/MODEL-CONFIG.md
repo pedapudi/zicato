@@ -14,6 +14,7 @@ that uses it. Most workspaces need two engines:
     "engines": {
       "target": {
         "model": "target-model",
+        "revision": "deployment-2026-08-14",
         "endpoint": "http://target-host:8080/v1",
         "api_key_env": "TARGET_MODEL_KEY"
       },
@@ -33,6 +34,13 @@ is sufficient. Engines may instead contain a `call_llm` import path, but a
 single engine cannot mix `call_llm` with `model`, `endpoint`, or
 `api_key_env`. An endpoint or credential name also requires `model`.
 
+A model-form proposer engine supplies both the text callable and model id, so
+the built-in native proposer, custom text proposers, and process-backed
+proposers all honor it. A `call_llm`-form proposer override can steer only
+custom/text proposers; native and process-backed proposers require a model id
+and retain the evaluation model. This capability distinction is explicit—no
+callable is silently translated into a native model.
+
 ## Nouns
 
 - **Engine**: a named, reusable connection: logical model id plus optional
@@ -49,8 +57,8 @@ single engine cannot mix `call_llm` with `model`, `endpoint`, or
   good place for a smaller engine.
 - **Proposer**: creates candidate changes. It often benefits from a stronger
   engine than routine evaluation.
-- **Proposer breadth**: generates the best-of-N candidate slate.
-- **Proposer depth**: critiques, selects, and revises candidates.
+- **Proposer generate**: generates the best-of-N candidate alternatives.
+- **Proposer review**: critiques, selects, and revises candidates.
 - **Builder**: assists an operator while editing the evaluation contract; it
   does not run tournament units.
 
@@ -78,7 +86,7 @@ engine while assigning a smaller engine to the user emulator:
 
 The proposer precedence is deliberately narrow:
 
-1. `proposer_breadth` or `proposer_depth`, when present;
+1. `proposer_generate` or `proposer_review`, when present;
 2. `proposer`;
 3. `evaluation`.
 
@@ -88,7 +96,7 @@ For example, cheap sampling with strong critique is:
 {
   "roles": {
     "proposer": "strong",
-    "proposer_breadth": "small"
+    "proposer_generate": "small"
   }
 }
 ```
@@ -98,11 +106,13 @@ Every other advanced role (`builder`, `judge`, `adjudicator`, and
 
 ## Logical identity and transport
 
-An engine name identifies an operator-chosen logical deployment. `endpoint`
+An engine name plus optional `revision` identifies an operator-chosen logical deployment. `endpoint`
 is only its transport address: moving the same deployment does not necessarily
 change what is evaluated, while changing model weights behind a stable URL
-does. Record deployment revisions in operational change control and use a new
-engine name when the logical deployment changes. Credential values are read
+does. Change `revision` when a named deployment changes; use distinct engine
+names for the target and evaluator trust domains even when their transport
+fields happen to match. Isolation checks names, not duplicated connection
+fields. Credential values are read
 only when an engine is resolved and are not written to workspace files, worker
 argument files, logs, or dashboard responses.
 
@@ -116,3 +126,8 @@ Configuration loading rejects unknown keys, unknown engine references, mixed
 engine forms, endpoint-only engines, unset named credentials at resolution,
 and target/evaluator engine reuse. These are configuration errors rather than
 silent fallbacks.
+
+The earlier direct `models.<role>` shape is rejected with a migration message;
+there is no compatibility alias. The separate `runtime.harness_call_llm` and
+`runtime.auxiliary_call_llm` fields remain only as the low-level CLI/library
+callable seam for deterministic harnesses that do not configure `models`.

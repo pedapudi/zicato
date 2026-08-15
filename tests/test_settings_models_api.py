@@ -15,7 +15,7 @@ import pytest
 from starlette.testclient import TestClient
 
 from zicato.dashboard.server import create_app
-from zicato.models_config import MODEL_ROLES
+from zicato.models_config import PUBLIC_MODEL_ROLES
 from zicato.workspace.config_io import write_workspace_config
 
 _SECRET = "sk-leak-canary-value"
@@ -31,12 +31,15 @@ def workspace(tmp_path: Path) -> Path:
         {
             "instance_id": "default",
             "models": {
-                "harness": {"call_llm": "pkg.harness:fn"},
-                "auxiliary": {
-                    "model": "house-x",
-                    "endpoint": None,
-                    "api_key_env": _ENV_NAME,
+                "engines": {
+                    "target": {"call_llm": "pkg.harness:fn"},
+                    "evaluation": {
+                        "model": "house-x",
+                        "endpoint": None,
+                        "api_key_env": _ENV_NAME,
+                    },
                 },
+                "roles": {},
             },
         },
     )
@@ -62,12 +65,11 @@ def test_get_returns_secret_safe_view_with_set_flag(
     models = body["models"]
     # EVERY role is present (even the unconfigured ones) — including the two
     # WS-ENS proposer-ensemble roles.
-    assert set(models.keys()) == set(MODEL_ROLES)
-    assert {"proposer_breadth", "proposer_depth"} <= set(models.keys())
-    assert models["harness"]["call_llm"] == "pkg.harness:fn"
+    assert set(body["roles"]) == set(PUBLIC_MODEL_ROLES)
+    assert models["engines"]["target"]["call_llm"] == "pkg.harness:fn"
     # The model-spec role carries the NAME + a set flag, NEVER the value.
-    assert models["auxiliary"]["api_key_env"] == _ENV_NAME
-    assert models["auxiliary"]["api_key_env_set"] is True
+    assert models["engines"]["evaluation"]["api_key_env"] == _ENV_NAME
+    assert models["engines"]["evaluation"]["api_key_env_set"] is True
     assert _SECRET not in resp.text
 
 
@@ -76,54 +78,61 @@ def test_get_set_flag_false_when_env_unset(
 ) -> None:
     monkeypatch.delenv(_ENV_NAME, raising=False)
     body = client.get("/settings/models").json()
-    assert body["models"]["auxiliary"]["api_key_env_set"] is False
+    assert body["models"]["engines"]["evaluation"]["api_key_env_set"] is False
 
 
 def test_post_persists_models_block_names_only(client: TestClient, workspace: Path) -> None:
     payload = {
         "models": {
-            "harness": {"call_llm": "pkg.harness:fn"},
-            "judge": {"model": "judge-x", "endpoint": None, "api_key_env": _ENV_NAME},
+            "engines": {
+                "target": {"call_llm": "pkg.harness:fn"},
+                "evaluation": {"call_llm": "pkg.evaluation:fn"},
+                "judge": {"model": "judge-x", "endpoint": None, "api_key_env": _ENV_NAME},
+            },
+            "roles": {"judge": "judge"},
         }
     }
     resp = client.post("/settings/models", json=payload)
     assert resp.status_code == 200
     # The on-disk config.json now carries the models block — NAMES only.
     on_disk = json.loads((workspace / "config.json").read_text(encoding="utf-8"))
-    assert on_disk["models"]["judge"]["model"] == "judge-x"
-    assert on_disk["models"]["judge"]["api_key_env"] == _ENV_NAME
+    assert on_disk["models"]["engines"]["judge"]["model"] == "judge-x"
+    assert on_disk["models"]["engines"]["judge"]["api_key_env"] == _ENV_NAME
     assert _SECRET not in json.dumps(on_disk)
     # The echoed view is secret-safe + flags the epoch is NOT rolled.
     body = resp.json()
     assert body["rolls_epoch"] is False
-    assert "api_key_env_set" in body["models"]["judge"]
+    assert "api_key_env_set" in body["models"]["engines"]["judge"]
 
 
-def test_post_round_trips_proposer_ensemble_roles(client: TestClient, workspace: Path) -> None:
-    """The WS-ENS proposer_breadth / proposer_depth roles persist + echo like
-    any other role (a call_llm path and a model spec, NAMES only)."""
+def test_post_round_trips_proposer_generate_review(client: TestClient, workspace: Path) -> None:
     payload = {
         "models": {
-            "proposer_breadth": {"call_llm": "pkg.breadth:fn"},
-            "proposer_depth": {"model": "depth-x", "endpoint": None, "api_key_env": _ENV_NAME},
+            "engines": {
+                "generate": {"call_llm": "pkg.generate:fn"},
+                "review": {"model": "review-x", "endpoint": None, "api_key_env": _ENV_NAME},
+            },
+            "roles": {"proposer_generate": "generate", "proposer_review": "review"},
         }
     }
     resp = client.post("/settings/models", json=payload)
     assert resp.status_code == 200
     on_disk = json.loads((workspace / "config.json").read_text(encoding="utf-8"))
-    assert on_disk["models"]["proposer_breadth"]["call_llm"] == "pkg.breadth:fn"
-    assert on_disk["models"]["proposer_depth"]["model"] == "depth-x"
-    assert on_disk["models"]["proposer_depth"]["api_key_env"] == _ENV_NAME
+    assert on_disk["models"]["roles"]["proposer_generate"] == "generate"
+    assert on_disk["models"]["engines"]["review"]["model"] == "review-x"
     assert _SECRET not in json.dumps(on_disk)
     # The echoed secret-safe view carries both roles.
     echoed = resp.json()["models"]
-    assert echoed["proposer_breadth"]["call_llm"] == "pkg.breadth:fn"
-    assert "api_key_env_set" in echoed["proposer_depth"]
+    assert echoed["roles"]["proposer_review"] == "review"
+    assert "api_key_env_set" in echoed["engines"]["review"]
 
 
 def test_post_preserves_other_config_keys(client: TestClient, workspace: Path) -> None:
     """Writing the models block leaves every other config.json key intact."""
-    client.post("/settings/models", json={"models": {"harness": {"call_llm": "pkg:fn"}}})
+    client.post(
+        "/settings/models",
+        json={"models": {"engines": {"target": {"call_llm": "pkg:fn"}}, "roles": {}}},
+    )
     on_disk = json.loads((workspace / "config.json").read_text(encoding="utf-8"))
     assert on_disk["instance_id"] == "default"
 
@@ -155,10 +164,10 @@ def test_post_rejects_unknown_engine_reference(client: TestClient) -> None:
 
 def test_post_empty_models_drops_the_block(client: TestClient, workspace: Path) -> None:
     """All-unconfigured roles ⇒ the models block is removed (reads back default)."""
-    resp = client.post("/settings/models", json={"models": {}})
+    resp = client.post("/settings/models", json={"models": {"engines": {}, "roles": {}}})
     assert resp.status_code == 200
     on_disk = json.loads((workspace / "config.json").read_text(encoding="utf-8"))
-    assert "models" not in on_disk
+    assert on_disk["models"] == {"engines": {}, "roles": {}}
 
 
 def test_post_missing_models_object_is_400(client: TestClient) -> None:
