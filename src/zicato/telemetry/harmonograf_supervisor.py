@@ -202,6 +202,7 @@ def start_harmonograf(
     workspace_root: Path,
     *,
     log_level: str = "WARNING",
+    readiness_timeout_s: float = 10.0,
 ) -> HarmonografHandle:
     """Launch an in-process harmonograf server bound to a free port.
 
@@ -357,35 +358,40 @@ def start_harmonograf(
         )
         return _noop_handle()
 
-    # ``app.start()`` resolving does not guarantee the web listener is
-    # accepting yet — the HTTP server binds asynchronously behind it, so a
-    # consumer that dereferences ``url`` immediately (the operator e2e did)
-    # races a connection-refused window. The handle's contract is that
-    # ``url`` ACCEPTS, so poll the socket, bounded, before returning it.
-    deadline = time.monotonic() + 10.0
-    while True:
-        try:
-            with socket.create_connection(("127.0.0.1", web_port), timeout=1.0):
-                break
-        except OSError:
-            if time.monotonic() >= deadline:
-                log.warning(
-                    "harmonograf web port %d never accepted within 10s; "
-                    "evolve continues with JSONL-only telemetry",
-                    web_port,
-                )
-                return _noop_handle()
-            time.sleep(0.05)
-
+    # The server is now RUNNING on its thread, so from this point every
+    # failure path must stop it — build the real handle first and let its
+    # idempotent shutdown() own that, whatever happens below.
     url = f"http://127.0.0.1:{web_port}"
-    log.info("harmonograf auto-launched at %s (grpc %d)", url, grpc_port)
-    return HarmonografHandle(
+    handle = HarmonografHandle(
         url=url,
         grpc_port=grpc_port,
         app=state["app"],
         loop=state["loop"],
         thread=thread,
     )
+
+    # ``app.start()`` resolving does not guarantee the web listener is
+    # serving yet — the HTTP server binds asynchronously behind it, so a
+    # consumer that dereferences ``url`` immediately raced a
+    # connection-refused window. The handle's contract is that ``url``
+    # SERVES: poll ``/healthz`` (the same positive proof the reuse path
+    # demands — a bare TCP accept can come from a half-bound listener)
+    # until it answers, bounded, before returning the handle.
+    deadline = time.monotonic() + readiness_timeout_s
+    while not _harmonograf_healthz_ok("127.0.0.1", web_port, timeout_s=1.0):
+        if time.monotonic() >= deadline:
+            log.warning(
+                "harmonograf web port %d never answered /healthz within %.1fs; "
+                "stopping it; evolve continues with JSONL-only telemetry",
+                web_port,
+                readiness_timeout_s,
+            )
+            handle.shutdown()
+            return _noop_handle()
+        time.sleep(0.05)
+
+    log.info("harmonograf auto-launched at %s (grpc %d)", url, grpc_port)
+    return handle
 
 
 def _resolve_data_dir(workspace_root: Path) -> Path:

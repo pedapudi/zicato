@@ -18,8 +18,8 @@ The baseline and final ratchet use the same metric:
 
 | Measurement | Baseline (`f9052dd`) | Current limit | Reduction |
 |---|---:|---:|---:|
-| Total | 408,547 | 407,812 | 735 |
-| Production | 197,588 | 196,382 | 1,206 |
+| Total | 408,547 | 407,879 | 668 |
+| Production | 197,588 | 196,388 | 1,200 |
 
 The earlier raw count of 425,755 included lockfiles and generated artifacts and
 is retained in `.line-budget.json` for provenance; it is not the enforced
@@ -45,3 +45,5 @@ increase.
 | Durable run-artifact capture (production) | 196,526 | +235 | 196,761 | Issue #12: bounded capture implementation and typed artifact surface. |
 | Harmonograf web-port readiness (total) | 407,791 | +21 | 407,812 | Launch handle must not be returned before its web listener accepts; fixes the alternating connection-refused e2e failures. |
 | Harmonograf web-port readiness (production) | 196,361 | +21 | 196,382 | Bounded accept-poll in the launcher; degrades to the JSONL-only handle on timeout. |
+| Harmonograf readiness hardening (total) | 407,812 | +67 | 407,879 | Timeout path now stops the launched server before returning the no-op handle; /healthz replaces the TCP probe; two deterministic timeout regressions. |
+| Harmonograf readiness hardening (production) | 196,382 | +6 | 196,388 | Handle-first construction and shutdown-on-timeout in the launcher. |

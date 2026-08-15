@@ -641,3 +641,64 @@ def test_resolve_harmonograf_url_pure_resolver(
         )
         == "http://pinned/"
     )
+
+
+@_boots_or_uses_live_server
+def test_readiness_timeout_stops_the_server_and_returns_noop(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A launch whose web listener never proves healthy is STOPPED, not leaked.
+
+    The probe is forced to fail so the readiness deadline always expires:
+    the launcher must tear the just-started server down (the worker thread
+    unparks only on request_stop, so its exit IS the proof the app received
+    it) and hand back the no-op handle.
+    """
+    import threading
+    import time as _time
+
+    from zicato.telemetry import harmonograf_supervisor as supervisor
+
+    monkeypatch.setattr(supervisor, "_harmonograf_healthz_ok", lambda *a, **k: False)
+    # Scope the leak check to the thread THIS launch creates — a sibling
+    # test's (daemon) supervisor thread may legitimately still exist.
+    before = {t.ident for t in threading.enumerate()}
+    handle = start_harmonograf(tmp_path, readiness_timeout_s=0.2)
+
+    assert handle.url == "", "a launch that never became ready must return the no-op handle"
+    assert handle.grpc_port == 0
+    deadline = _time.monotonic() + 15.0
+    while _time.monotonic() < deadline:
+        if not any(
+            t.name == "zicato-harmonograf-supervisor" and t.ident not in before and t.is_alive()
+            for t in threading.enumerate()
+        ):
+            break
+        _time.sleep(0.05)
+    else:
+        raise AssertionError("the harmonograf worker thread outlived the readiness timeout")
+
+
+@_boots_or_uses_live_server
+def test_workspace_launch_timeout_writes_no_record(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A timed-out launch must not persist a server.json for later reuse."""
+    import functools
+
+    from zicato.telemetry import harmonograf_supervisor as supervisor
+
+    (tmp_path / ".zicato").mkdir()
+    monkeypatch.setattr(supervisor, "_harmonograf_healthz_ok", lambda *a, **k: False)
+    monkeypatch.setattr(
+        supervisor,
+        "start_harmonograf",
+        functools.partial(start_harmonograf, readiness_timeout_s=0.2),
+    )
+
+    handle = supervisor.ensure_workspace_harmonograf(tmp_path)
+
+    assert handle.web_url == ""
+    assert not (
+        tmp_path / ".harmonograf" / "server.json"
+    ).exists(), "a server that never became ready must leave no reusable record"
