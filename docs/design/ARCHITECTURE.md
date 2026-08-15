@@ -783,6 +783,14 @@ loop in zicato becomes degenerate at a different level. See
 full argument and [RATIONALE.md](RATIONALE.md) for why this is
 *configured*, not *defaulted*.
 
+The `CallLLM` return remains answer text. A backend that emits separate private
+reasoning and answer channels can opt into `zicato.reasoning` before registering
+its callable. That adapter performs one bounded, reasoning-disabled fallback
+only when the backend explicitly reports answer-budget exhaustion; it never
+uses private reasoning as answer text. See
+[REASONING-AWARE-CALLS.md](REASONING-AWARE-CALLS.md). A flattened text callable
+cannot recover the channel boundary and is not eligible for this adaptation.
+
 ### 4.11 Analytical index
 
 **Responsibility.** Make cross-run questions fast. The

@@ -1305,9 +1305,10 @@ in `--help`, and CLI.md matches the binary.
 
 zicato is a library first. The public surface is declared in
 `src/zicato/__init__.py` as a **lazy facade**: a dict mapping each public name to
-its home module, resolved on first access by a module-level `__getattr__`. There
-The surface is limited to evolve entry points, harness protocols, board/config
-loaders, and scoring types. `__all__` is derived from `_EXPORTS`.
+its home module, resolved on first access by a module-level `__getattr__`. The
+surface is limited to evolve entry points, harness protocols, board/config
+loaders, and scoring types. The reasoning-aware model boundary is an advanced
+API at `zicato.reasoning`. `__all__` is derived from `_EXPORTS`.
 
 Advanced APIs live in their owning subpackages. Removed root exports have no
 forwarding aliases.
