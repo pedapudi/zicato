@@ -286,7 +286,12 @@ def resolve_harmonograf_grpc_target(url: str) -> str:
     return _harmonograf_grpc_target(url)
 
 
-def _make_harmonograf_sink(url: str, *, grpc_target: str | None = None) -> Any | None:
+def _make_harmonograf_sink(
+    url: str,
+    *,
+    grpc_target: str | None = None,
+    metadata: dict[str, str] | None = None,
+) -> Any | None:
     """Build a goldfive-compatible harmonograf sink for ``url``.
 
     The concrete sink ships in harmonograf's client library
@@ -318,7 +323,10 @@ def _make_harmonograf_sink(url: str, *, grpc_target: str | None = None) -> Any |
         return None
     try:
         target = grpc_target if grpc_target else resolve_harmonograf_grpc_target(url)
-        client = Client(name="zicato", server_addr=target)
+        client_kwargs: dict[str, Any] = {"name": "zicato", "server_addr": target}
+        if metadata:
+            client_kwargs["metadata"] = metadata
+        client = Client(**client_kwargs)
         return HarmonografSink(client)
     except Exception as exc:  # noqa: BLE001 — never hard-fail a run on this
         log.warning(

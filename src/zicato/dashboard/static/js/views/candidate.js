@@ -34,7 +34,12 @@ import { gatedSwap, section, subhead, empty, stat, verdictPill, pill, overrideCh
 import { comparePicker, splitFrame } from '../compare.js';
 import { candidateProgression, inflightForActiveEpoch, inflightForEntryGen, runProgressRatio, liveMatchupsForCandidate, liveBelongsToEpoch, resolveNonGauntletSt, racingModel, structureDigest, normalizeStructure } from './structure.js';
 import { roundsFromTimeline, reignModel } from '../rounds.js';
-import { harmonografIsLive, harmonografLink, harmonografMini } from '../core/harmonograf.js';
+import {
+  harmonografIsLive,
+  harmonografLink,
+  harmonografMini,
+  harmonografTournamentLink,
+} from '../core/harmonograf.js';
 import * as facets from '../facets.js';
 
 export async function render(host, ctx, params, route) {
@@ -185,7 +190,8 @@ export async function render(host, ctx, params, route) {
         : (sideA.baseline
           ? 'The seed candidate (no parent) — it defines the loss floor for the epoch. Use “compare with…” to split this pane and read two candidates side by side.'
           : `Born from ${sideA.node.parent} by a patch; faced the board; met the champion at the gate. Use “compare with…” to read two candidates side by side.`) }),
-    ]));
+      liveForThisEpoch && at ? harmonografTournamentLink(at.tournament_id) : null,
+    ].filter(Boolean)));
 
     // the compare affordance — sets the cmp route param (URL-encoded).
     nodes.push(el('div', { class: 'dt-cmp-bar' }, [

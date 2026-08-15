@@ -61,6 +61,21 @@ test('harmonograf builders: a live run with an adk_session_id deep-links /#/sess
   assert(link.textContent.includes('Open this run in harmonograf'), 'the label renders');
 });
 
+test('harmonograf builders: exact metadata filters open the ordinary session picker', () => {
+  setLive(true);
+  const href = harmonograf.harmonografFilterUrl({
+    'zicato.tournament_id': 'tour/42',
+    'zicato.side': 'child',
+  });
+  const parsed = new URL(href.replace('/#/', '/'));
+  assertEqual(parsed.searchParams.get('metadata.zicato.tournament_id'), 'tour/42');
+  assertEqual(parsed.searchParams.get('metadata.zicato.side'), 'child');
+
+  const link = harmonograf.harmonografTournamentLink('tour/42');
+  assert(link, 'the tournament trace link renders');
+  assert(link.getAttribute('href').includes('/#/sessions?'), 'it uses generic filtered navigation');
+});
+
 test('harmonograf builders: NOTHING renders when the loop is not live', () => {
   setLive(false);
   assert(!harmonograf.harmonografIsLive(), 'no run in flight reads as not-live');

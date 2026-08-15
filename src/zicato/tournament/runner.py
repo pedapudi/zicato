@@ -591,6 +591,24 @@ async def _run_single(
                 **entry_dict.get("context", {}),
                 _GENERATION_ID_CONTEXT_KEY: generation.id,
             }
+            harmonograf_metadata = {
+                "zicato.epoch_id": epoch_id,
+                "zicato.generation_id": generation.id,
+                "zicato.entry_id": entry.id,
+                "zicato.side": side,
+                "zicato.replicate": str(_entry_replicate_index(entry)),
+                "zicato.trace_kind": "target",
+            }
+            runtime = _runtime_state()
+            if runtime is not None:
+                try:
+                    active = runtime[0].read_active_tournament(workspace_root)
+                    if active is not None:
+                        harmonograf_metadata["zicato.tournament_id"] = active.tournament_id
+                except Exception:  # noqa: BLE001 — telemetry labels are optional
+                    pass
+            if match_id:
+                harmonograf_metadata["zicato.match_id"] = match_id
             args_payload = {
                 "workspace_root": str(workspace_root),
                 "epoch_id": epoch_id,
@@ -622,6 +640,7 @@ async def _run_single(
                 "seed": config.seed,
                 "harmonograf_url": (_hg_url := _resolve_harmonograf_url(workspace_root)),
                 "harmonograf_grpc": _resolve_harmonograf_grpc(workspace_root, _hg_url),
+                "harmonograf_metadata": harmonograf_metadata,
                 "weights": _weights_spec(weights),
                 # Process-pinned config overrides (CLI flags such as
                 # --harness-call-timeout-ms / --aux-call-timeout, pinned

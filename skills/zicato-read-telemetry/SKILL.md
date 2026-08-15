@@ -151,7 +151,7 @@ distinction:
 | Session kind | What it traces | `session_id` shape | Telemetry file |
 |---|---|---|---|
 | **meta-loop** (the tool itself) | zicato's *own* proposer + judge LLM calls — the orchestrator deciding what to mutate and how to score | `zicato-meta-loop-<sanitized-evolve-start-iso>` (one stable id per evolve invocation) | `.zicato/runtime/meta_loop_events.jsonl` |
-| **per-board-run** (the system under test) | one target run against one board entry and replicate | `<gen_id>--<entry_id>` | the per-run `events.jsonl` above |
+| **per-board-run** (the system under test) | one target run against one board entry and replicate | event-stream session id (also persisted as `adk_session_id`) | the per-run `events.jsonl` above |
 
 The meta-loop session is "zicato thinking about the system under test"; the
 per-board-run sessions are "the system under test running". They bucket as
@@ -173,6 +173,14 @@ run directory to its harmonograf view: read `adk_session_id` from the run,
 then open `<harmonograf_url>/#/session/<that_id>`. See
 [zicato-watch-dashboard](../zicato-watch-dashboard/SKILL.md) for driving the
 browser.
+
+For a live tournament, **Open tournament traces** opens the same session
+picker filtered by the exact `zicato.tournament_id` session label. Switch
+among the matching sessions there; each Activity/Graph/Trajectory view still
+shows one target execution. Harmonograf's filter is generic—the label names
+and their tournament meaning belong to zicato. Session labels contain only
+coordinates (`epoch`, tournament, matchup, generation, entry, side,
+replicate, trace kind), never prompts or expected answers.
 
 ### The emulator lane
 

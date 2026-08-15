@@ -433,7 +433,10 @@ def _verify_trees_after_run(
 
 
 def _build_sinks(
-    events_path: Path, harmonograf_url: str, harmonograf_grpc: str = ""
+    events_path: Path,
+    harmonograf_url: str,
+    harmonograf_grpc: str = "",
+    harmonograf_metadata: dict[str, str] | None = None,
 ) -> tuple[list[Any], Any]:
     """Build the per-run sink list: canonical JSONL plus optional harmonograf.
 
@@ -481,7 +484,11 @@ def _build_sinks(
             # the browser-facing gRPC-Web port in ``harmonograf_url``). An
             # empty target falls back to deriving from the web URL — the
             # external-harmonograf single-port path.
-            extra = _make_harmonograf_sink(harmonograf_url, grpc_target=harmonograf_grpc or None)
+            extra = _make_harmonograf_sink(
+                harmonograf_url,
+                grpc_target=harmonograf_grpc or None,
+                metadata=harmonograf_metadata,
+            )
             if extra is not None:
                 sinks.append(extra)
     return sinks, tracker
@@ -725,6 +732,9 @@ async def _run(args: dict[str, Any]) -> None:
     result_path = Path(args["result_path"])
     harmonograf_url = str(args.get("harmonograf_url", "") or "")
     harmonograf_grpc = str(args.get("harmonograf_grpc", "") or "")
+    harmonograf_metadata = {
+        str(key): str(value) for key, value in (args.get("harmonograf_metadata") or {}).items()
+    }
 
     # Export the per-run scratch directory so the inner harness routes
     # its run output OUTSIDE the generation snapshot. Without this a
@@ -895,7 +905,9 @@ async def _run(args: dict[str, Any]) -> None:
         judge_io_sink=judge_io_sink,
     )
 
-    sinks, tracker = _build_sinks(events_path, harmonograf_url, harmonograf_grpc)
+    sinks, tracker = _build_sinks(
+        events_path, harmonograf_url, harmonograf_grpc, harmonograf_metadata
+    )
     adapter = _build_adapter(adapter_spec)
 
     run_result: RunResult | None = None

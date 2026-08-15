@@ -148,6 +148,32 @@ proposer/judge timeline of the evolution itself. Built by
 `harmonografMetaUrl()` / `harmonografMetaLink()` in `core/harmonograf.js`,
 keyed on `state.heartbeat.harmonograf_meta_session`.
 
+### 3c. Tournament navigation is a metadata filter, not a new trace type
+
+Each target-run client stamps non-sensitive session labels:
+
+| label | value |
+|---|---|
+| `zicato.epoch_id` | evaluation-contract epoch |
+| `zicato.tournament_id` | current runtime tournament, when present |
+| `zicato.match_id` | strategy matchup, when present |
+| `zicato.generation_id` | generation under test |
+| `zicato.entry_id` | board entry |
+| `zicato.side` | `parent` or `child` |
+| `zicato.replicate` | replicate index |
+| `zicato.trace_kind` | `target` |
+
+The candidate view's **Open tournament traces** link initializes
+Harmonograf's ordinary session picker with an exact
+`zicato.tournament_id` predicate. Harmonograf assigns no meaning to that key:
+it implements only generic session-metadata filtering and continues to render
+one selected session at a time. Zicato owns the tournament vocabulary and the
+mapping from a tournament to the filter URL. Independent target executions
+are never overlaid onto a synthetic shared clock.
+
+These labels are navigation provenance only. Prompts, expected answers,
+responses, and filesystem paths must not be placed in session metadata.
+
 ## 4. State plumbing — how the ids reach the frontend
 
 `/api/state` (the merged heartbeat) carries:

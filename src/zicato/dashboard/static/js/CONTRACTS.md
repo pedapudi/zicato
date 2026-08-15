@@ -460,7 +460,7 @@ navigates. The router emits `route:changed` on the bus.
 Built from `ZICATO_HARMONOGRAF_URL` surfaced on the heartbeat as
 `harmonograf_url`. Exports `harmonografBase()`, `harmonografRunUrl(rec)`,
 `harmonografLink(run, label)`, `harmonografMini(target, label, aria)`,
-`harmonografGenLink(genId)`, `harmonografSessionId(rec)`, `deriveRunId(rec)`,
+`harmonografGenLink(genId)`, `harmonografSessionId(rec)`,
 and the **zicato-level** builders `harmonografMetaSession()`,
 `harmonografMetaUrl()`, `harmonografMetaLink(label, aria)`.
 
@@ -496,8 +496,10 @@ surfaces this as `adk_session_id` on run-like records:
   finishes (read from the run's `LossProfile`, never from `events.jsonl`
   in the SSE hot path). Empty string until the side's run completes.
 
-Session path: `/#/session/<adk_session_id>`. No harmonograf-side change
-is required — the integration is complete.
+Session path: `/#/session/<adk_session_id>`. Filtered navigation uses the
+generic `/#/sessions?metadata.<key>=<value>` picker route. Zicato stamps
+namespaced coordinates and constructs that URL; Harmonograf does not know
+what a tournament or board means.
 
 **Zicato-level (meta-loop) surface.** Beyond the per-run links, the top
 bar (`js/shell.js`) carries a single liveness-gated `execution ↗`
@@ -510,18 +512,9 @@ post-mortem). `harmonografMetaUrl()` resolves
 `<harmonograf_url>/#/session/<harmonograf_meta_session>`, gated on the same
 liveness rule as the per-run links. See `docs/design/HARMONOGRAF.md` §2b/§3b.
 
-The Tournament view surfaces these as visible jump-off links: one
-tournament-overall link in the hall head, and one per board side on the
-board card (deep-linked by that side's `adk_session_id`, falling back to
-the bare base while the run is still in flight).
+The live candidate view surfaces one tournament-overall filtered-picker link;
+per-run and A/B-grid links continue to deep-link the exact session id.
 
-`harmonografSessionId(rec)` resolution order:
-1. `rec.adk_session_id` / `rec.child_adk_session_id` /
-   `rec.parent_adk_session_id` — the real ADK session id (preferred).
-2. `rec.session_id` / `rec.session` / `rec.harmonograf_session` —
-   legacy aliases for back-compat.
-3. bare `harmonograf_url` fallback when no session id is present.
-
-`deriveRunId(rec)` returns the synthetic `${generation}--${entry}`
-string for callers that need the run-id directly; it is no longer
-used for session resolution.
+`harmonografSessionId(rec)` accepts `adk_session_id`,
+`child_adk_session_id`, or `parent_adk_session_id`. Missing identity returns
+null; synthetic run ids are never substituted.

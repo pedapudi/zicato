@@ -29,7 +29,9 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 from pathlib import Path
+from urllib.request import urlopen
 
 import pytest
 
@@ -157,6 +159,16 @@ def test_operator_sees_harmonograf_at_both_levels(workspace: Path) -> None:
         pytest.skip(f"harmonograf server did not launch: {handle.reason!r}")
     try:
         assert handle.grpc_target, "a launched server must expose a gRPC target"
+
+        # The installed server package must carry the console, not merely its
+        # health endpoint. Pin the root document and one hashed asset.
+        with urlopen(f"{handle.web_url}/", timeout=5) as response:  # noqa: S310
+            assert response.headers.get_content_type() == "text/html"
+            html = response.read().decode()
+        asset = re.search(r'(?:src|href)="(/assets/[^"]+)"', html)
+        assert asset, "the console document must reference a packaged asset"
+        with urlopen(f"{handle.web_url}{asset.group(1)}", timeout=5) as response:  # noqa: S310
+            assert response.status == 200
 
         # 2. Emit BOTH sessions through the REAL client/sink paths.
         board_sid = "adk-e2e-board-0001"

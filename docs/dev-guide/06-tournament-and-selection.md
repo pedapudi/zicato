@@ -822,7 +822,9 @@ in `_run`:
 4. Start the `RunHeartbeatBeater` daemon thread — it bumps `last_progress`
    every ~3s and keeps beating through GIL-releasing LLM waits, so the
    supervisor's staleness watchdog does not false-positive on a slow model call.
-5. Build sinks (`JSONLPersistenceSink` + optional harmonograf), build the
+5. Build sinks (`JSONLPersistenceSink` + optional harmonograf), stamping the
+   latter with exact epoch/tournament/matchup/generation/entry/side/replicate
+   session labels for filtered operator navigation; build the
    adapter, `session = adapter.load(snapshot_root)`. `load` fails CLOSED when a
    MUTABLE TREE could not be what runs (issue #110): every registered tree's
    top-level name must resolve under `snapshot_root` — already imported, or
