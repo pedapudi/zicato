@@ -1,38 +1,4 @@
-"""Build a :class:`RuntimeConfig` from a workspace config dict.
-
-Centralises the lookup-and-validate step that every entry point (CLI
-tournament command, the orchestrator's ``evolve`` loop, tests with
-real callables) wants to perform exactly once before handing the
-config to the runner. Importantly, it routes through
-:func:`zicato.core.workspace.assert_distinct_callables` so the
-two-callable invariant on :class:`RuntimeConfig` is enforced at
-construction.
-
-Resolution rules:
-
-* If the caller supplies a ``harness_call_llm`` / ``auxiliary_call_llm``
-  Python callable, that wins — both the ``models`` block and the config's
-  dotted path are ignored.
-* Otherwise, when the workspace config carries a ``models.{harness,
-  auxiliary}`` role spec, it is resolved (a dotted-path callable, or a
-  model spec built into a callable — see :mod:`zicato.models_config`).
-* Otherwise the factory imports the dotted path the workspace config
-  stores under ``runtime.harness_call_llm`` / ``runtime.auxiliary_call_llm``.
-  Missing keys raise :class:`ValueError`.
-* The judge callable is resolved from ``models.judge`` when present; absent,
-  it is left ``None`` so judges fall back to the auxiliary callable (today's
-  behavior, via :meth:`RuntimeConfig.effective_judge_call_llm`).
-* The WS-ENS proposer-ensemble callables are resolved the same way from
-  ``models.proposer_breadth`` (best-of-N slate sampling) and
-  ``models.proposer_depth`` (critique + revise); absent, both stay ``None``
-  and the best-of-N wrapper falls back to the auxiliary callable
-  (byte-identical). No distinctness guard applies — both are proposer-side.
-* The instance id, workspace root, and seed are read from the config's
-  ``runtime`` sub-dict (with ``instance_id`` defaulting to ``"default"``).
-
-A model/endpoint is runtime INFRASTRUCTURE, not part of the evaluation
-contract, so a change to the ``models`` block does not roll the epoch.
-"""
+"""Resolve workspace model roles and runtime controls."""
 
 from __future__ import annotations
 
@@ -177,6 +143,18 @@ def make_runtime_config(
     judge: CallLLM | None = None
     if not models.judge.is_empty:
         judge = resolve_text_call_llm(models.judge, role="judge")
+    adjudicator: CallLLM | None = None
+    if not models.adjudicator.is_empty:
+        adjudicator = resolve_text_call_llm(models.adjudicator, role="adjudicator")
+    user_emulator: CallLLM | None = None
+    if not models.user_emulator.is_empty:
+        user_emulator = resolve_text_call_llm(models.user_emulator, role="user_emulator")
+    proposer: CallLLM | None = None
+    proposer_model: str | None = None
+    if not models.proposer.is_empty:
+        proposer = resolve_text_call_llm(models.proposer, role="proposer")
+        if not models.proposer.uses_call_llm:
+            proposer_model = models.proposer.model
 
     # WS-ENS ensemble proposer roles: ``models.proposer_breadth`` steers the
     # best-of-N SLATE SAMPLING and ``models.proposer_depth`` the CRITIQUE +
@@ -346,10 +324,14 @@ def make_runtime_config(
         parallelism=parallelism,
         propose_parallelism=propose_parallelism,
         judge_call_llm=judge,
+        adjudicator_call_llm=adjudicator,
+        user_emulator_call_llm=user_emulator,
+        proposer_call_llm=proposer,
         proposer_breadth_call_llm=proposer_breadth,
         proposer_depth_call_llm=proposer_depth,
         proposer_breadth_model=proposer_breadth_model,
         proposer_depth_model=proposer_depth_model,
+        proposer_model=proposer_model,
         scrub_worker_env=scrub_worker_env,
         worker_env_passthrough=worker_env_passthrough,
         diversity_tolerance=diversity_tolerance,

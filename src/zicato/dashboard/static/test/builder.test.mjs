@@ -409,14 +409,13 @@ test('chat pane: graceful-degrade disables the input when chat_enabled is false'
   const send = chat.node.querySelectorAll('[class]').filter((n) => n.classList.contains('dn-bld-chat-send'))[0];
   assert(input.hasAttribute('disabled'), 'the input is disabled');
   assert(send.hasAttribute('disabled'), 'the send button is disabled');
-  // the degrade hint names the config file, never a vendor.
-  assert(chat.node.textContent.includes('builder.json'), 'the degrade hint points at builder.json');
+  assert(chat.node.textContent.includes('models.builder'), 'the degrade hint points at the builder role');
 });
 
-test('chat pane: header shows the configured model NAME only', () => {
+test('chat pane: header identifies the configured role without engine details', () => {
   const chat = new BuilderChat({ config: { chat_enabled: true, agent: { model: 'house-model-x' } } });
   const m = chat.node.querySelectorAll('[class]').filter((n) => n.classList.contains('dn-bld-chat-model'))[0];
-  assertEqual(m.textContent, 'house-model-x', 'the model name is shown');
+  assertEqual(m.textContent, 'builder role', 'the role is shown');
 });
 
 test('chat pane: resize clamps to [min,max] + persists + reflows the host via onWidthChange', () => {

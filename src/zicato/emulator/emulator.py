@@ -127,7 +127,9 @@ class EmulatedMultiTurnDriver:
         # same client in two distinct closures is the operator's
         # responsibility and passes this check.
         try:
-            assert_distinct_callables(config.harness_call_llm, config.auxiliary_call_llm)
+            assert_distinct_callables(
+                config.harness_call_llm, config.effective_user_emulator_call_llm()
+            )
         except RuntimeError as exc:
             raise EmulationCollusionError(str(exc)) from exc
 
@@ -160,7 +162,9 @@ class EmulatedMultiTurnDriver:
             user_prompt = build_emulator_user_prompt(tuple(agent_transcript))
             try:
                 emulator_output = await asyncio.wait_for(
-                    config.auxiliary_call_llm(system_prompt, user_prompt, _DEFAULT_EMULATOR_MODEL),
+                    config.effective_user_emulator_call_llm()(
+                        system_prompt, user_prompt, _DEFAULT_EMULATOR_MODEL
+                    ),
                     timeout=aux_call_timeout_s(),
                 )
             except TimeoutError:

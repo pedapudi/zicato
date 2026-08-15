@@ -791,8 +791,10 @@ async def evolve_once(
                 mutations=mutations,
                 brief=brief,
                 loss_summary=loss_summary,
-                auxiliary_call_llm=auxiliary_call_llm,
-                auxiliary_model=str(workspace_config.get("auxiliary_model", "")),
+                auxiliary_call_llm=config.effective_proposer_call_llm(),
+                auxiliary_model=(
+                    config.proposer_model or str(workspace_config.get("auxiliary_model", ""))
+                ),
                 max_proposer_retries=max_proposer_retries,
                 workspace_root=workspace_root,
                 validate_experiment=_validate_experiment_post_apply,

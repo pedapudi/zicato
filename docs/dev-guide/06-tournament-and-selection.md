@@ -129,6 +129,11 @@ gate, and later evolve rounds.
 ```
 — `src/zicato/tournament/unit_cache.py` (module docstring)
 
+The harness session has exactly this scope: one generation × entry ×
+replicate. It never spans the board. A workflow that intentionally needs
+state across several turns is represented as one compound entry, whose turns
+share the run session; separate entries and replicates remain isolated.
+
 Read that literally. A generation is immutable and belongs to exactly one
 epoch/contract; a board entry is fixed by the contract; a replicate index
 selects one noise draw. So the tuple names a value that can be computed once
@@ -670,8 +675,9 @@ into one of two shapes:
 
 - `{"dotted": "module:qualname"}` — the legacy / unconfigured role: the resolved
   callable's re-importable path (subject to the closure check of §6.3.1).
-- `{"models_role": {…}}` — a configured `models.<role>` block's secret-free
-  spec. The worker re-resolves it with `resolve_text_call_llm` in its own
+- `{"models_role": {…}}` — the selected named engine's secret-free spec. The
+  worker resolves role inheritance before transport, then re-resolves the
+  engine with `resolve_text_call_llm` in its own
   interpreter (reading any `api_key_env` from the worker's OWN `os.environ`),
   which lets a model-spec role — whose resolved callable is a **closure** that
   cannot cross the boundary — reach the worker anyway. The worker side:
@@ -689,6 +695,8 @@ into one of two shapes:
 
 This is the elegant escape from the closure ban: a role whose live callable is a
 closure is transported as its *declarative spec*, and rebuilt on the far side.
+The user-emulator role crosses by the same path, so an explicit smaller emulator
+engine cannot collapse back onto the evaluation engine in a subprocess.
 
 ### 6.3.5 The weights serde — one field-enumerating round-trip
 

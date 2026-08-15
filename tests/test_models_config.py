@@ -18,6 +18,7 @@ import pytest
 
 from zicato.models_config import (
     MODEL_ROLES,
+    PUBLIC_MODEL_ROLES,
     ModelsConfig,
     RoleSpec,
     models_config_from_dict,
@@ -67,28 +68,85 @@ def test_model_spec_form_roundtrips() -> None:
     }
 
 
-def test_call_llm_wins_when_both_keys_present() -> None:
-    """A ``call_llm`` key takes precedence over a model-spec on the same role."""
-    spec = role_spec_from_dict({"call_llm": "pkg:fn", "model": "house-x"})
-    assert spec.uses_call_llm
-    assert spec.model is None
+def test_mixed_engine_forms_are_rejected() -> None:
+    with pytest.raises(ValueError, match="exactly one"):
+        role_spec_from_dict({"call_llm": "pkg:fn", "model": "house-x"})
 
 
-def test_models_config_roundtrips_all_roles() -> None:
-    raw = {
-        "harness": {"call_llm": "pkg:harness"},
-        "auxiliary": {"model": "aux-x", "endpoint": None, "api_key_env": None},
-        "builder": {"model": "build-x"},
-        "judge": {"call_llm": "pkg:judge"},
-    }
-    cfg = models_config_from_dict(raw)
-    out = cfg.to_dict()
-    assert out["harness"] == {"call_llm": "pkg:harness"}
-    assert out["auxiliary"] == {"model": "aux-x", "endpoint": None, "api_key_env": None}
-    assert out["builder"] == {"model": "build-x", "endpoint": None, "api_key_env": None}
-    assert out["judge"] == {"call_llm": "pkg:judge"}
-    # Re-parsing the serialized form is a fixpoint.
-    assert models_config_from_dict(out).to_dict() == out
+def test_endpoint_without_model_is_rejected() -> None:
+    with pytest.raises(ValueError, match="require model"):
+        role_spec_from_dict({"endpoint": "https://e.example"})
+
+
+def test_named_engines_resolve_defaults_and_overrides() -> None:
+    cfg = models_config_from_dict(
+        {
+            "engines": {
+                "target": {"call_llm": "pkg:target"},
+                "evaluation": {"call_llm": "pkg:evaluation"},
+                "strong": {"model": "strong"},
+                "small": {"model": "small"},
+            },
+            "roles": {"proposer": "strong", "user_emulator": "small"},
+        }
+    )
+    assert cfg.harness.call_llm == "pkg:target"
+    assert cfg.auxiliary.call_llm == "pkg:evaluation"
+    assert cfg.judge.call_llm == "pkg:evaluation"
+    assert cfg.proposer_breadth.model == "strong"
+    assert cfg.proposer_depth.model == "strong"
+    assert cfg.user_emulator.model == "small"
+
+
+def test_specific_proposer_pass_overrides_base_proposer() -> None:
+    cfg = models_config_from_dict(
+        {
+            "engines": {
+                "target": {"call_llm": "pkg:target"},
+                "evaluation": {"call_llm": "pkg:evaluation"},
+                "strong": {"model": "strong"},
+                "cheap": {"model": "cheap"},
+            },
+            "roles": {"proposer": "strong", "proposer_generate": "cheap"},
+        }
+    )
+    assert cfg.proposer_breadth.model == "cheap"
+    assert cfg.proposer_depth.model == "strong"
+
+
+def test_unknown_engine_reference_is_rejected() -> None:
+    with pytest.raises(ValueError, match="unknown engine"):
+        models_config_from_dict({"engines": {}, "roles": {"judge": "missing"}})
+
+
+def test_distinct_engine_names_allow_identical_transport_fields() -> None:
+    cfg = models_config_from_dict(
+        {
+            "engines": {
+                "target": {"model": "same", "revision": "target-r1"},
+                "evaluation": {"model": "same", "revision": "evaluation-r1"},
+            },
+            "roles": {},
+        }
+    )
+    assert cfg.harness.revision == "target-r1"
+    assert cfg.auxiliary.revision == "evaluation-r1"
+
+
+@pytest.mark.parametrize("role", PUBLIC_MODEL_ROLES[1:])
+def test_same_named_engine_cannot_cross_target_boundary(role: str) -> None:
+    with pytest.raises(ValueError, match="must not use the target engine"):
+        models_config_from_dict(
+            {
+                "engines": {"shared": {"model": "same"}},
+                "roles": {"target": "shared", role: "shared"},
+            }
+        )
+
+
+def test_direct_role_schema_has_actionable_migration_error() -> None:
+    with pytest.raises(ValueError, match="models.engines"):
+        models_config_from_dict({"harness": {"call_llm": "pkg:harness"}})
 
 
 def test_unknown_role_lookup_raises() -> None:
@@ -96,28 +154,11 @@ def test_unknown_role_lookup_raises() -> None:
         ModelsConfig().role("nonsense")
 
 
-def test_proposer_ensemble_roles_parse_and_roundtrip() -> None:
-    """WS-ENS: proposer_breadth / proposer_depth parse, serialize, and are in
-    the canonical role set (so the public view + settings surface them)."""
-    assert "proposer_breadth" in MODEL_ROLES
-    assert "proposer_depth" in MODEL_ROLES
-    raw = {
-        "proposer_breadth": {"call_llm": "pkg:breadth"},
-        "proposer_depth": {"model": "depth-x", "endpoint": None, "api_key_env": None},
-    }
-    cfg = models_config_from_dict(raw)
-    assert cfg.proposer_breadth.call_llm == "pkg:breadth"
-    assert cfg.proposer_depth.model == "depth-x"
-    out = cfg.to_dict()
-    assert out["proposer_breadth"] == {"call_llm": "pkg:breadth"}
-    assert out["proposer_depth"] == {"model": "depth-x", "endpoint": None, "api_key_env": None}
-    # Absent roles serialize to nothing (clean on-disk form).
-    assert "harness" not in out
-    assert models_config_from_dict(out).to_dict() == out
-    # The public view always emits BOTH proposer roles, even unconfigured.
-    pub = ModelsConfig().to_public_dict()
-    assert "proposer_breadth" in pub
-    assert "proposer_depth" in pub
+def test_public_proposer_role_names_are_generate_and_review() -> None:
+    from zicato.models_config import PUBLIC_MODEL_ROLES
+
+    assert "proposer_generate" in PUBLIC_MODEL_ROLES
+    assert "proposer_review" in PUBLIC_MODEL_ROLES
 
 
 # ---------------------------------------------------------------------------

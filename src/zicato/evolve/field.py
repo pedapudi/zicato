@@ -180,7 +180,8 @@ async def evolve_field_round(
     )
     from zicato.tournament.runner import confirm_crowning_holdout, run_matchup  # noqa: PLC0415
 
-    auxiliary_model = str(workspace_config.get("auxiliary_model", ""))
+    auxiliary_call_llm = config.effective_proposer_call_llm()
+    auxiliary_model = config.proposer_model or str(workspace_config.get("auxiliary_model", ""))
     field_n = strategy.field_size()
     # WS8: a direct caller (tests) may not thread the opened emitter; bind
     # one so every emit below is uniformly best-effort. ``evolve_once`` (the
