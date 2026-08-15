@@ -174,6 +174,41 @@ def test_make_run_sinks_attaches_harmonograf_when_env_set(
     assert constructed["server_addr"] == "127.0.0.1:7531"
 
 
+def test_harmonograf_sink_passes_session_index_metadata(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import sys
+    import types
+
+    from zicato.telemetry.sink import _make_harmonograf_sink
+
+    constructed: dict[str, object] = {}
+
+    class _StubClient:
+        def __init__(self, *, name: str, server_addr: str, metadata: dict[str, str]) -> None:
+            constructed.update(name=name, server_addr=server_addr, metadata=metadata)
+
+    class _StubHarmonografSink:
+        def __init__(self, client: object) -> None:
+            self.client = client
+
+    stub_mod = types.ModuleType("harmonograf_client")
+    stub_mod.Client = _StubClient  # type: ignore[attr-defined]
+    stub_mod.HarmonografSink = _StubHarmonografSink  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "harmonograf_client", stub_mod)
+
+    sink = _make_harmonograf_sink(
+        "http://127.0.0.1:7531",
+        metadata={"zicato.tournament_id": "tour-42", "zicato.side": "child"},
+    )
+
+    assert sink is not None
+    assert constructed["metadata"] == {
+        "zicato.tournament_id": "tour-42",
+        "zicato.side": "child",
+    }
+
+
 def test_make_run_sinks_strips_url_scheme_for_grpc_target(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:

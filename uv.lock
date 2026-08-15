@@ -2221,7 +2221,7 @@ wheels = [
 [[package]]
 name = "harmonograf-client"
 version = "0.0.0"
-source = { git = "https://github.com/pedapudi/harmonograf.git?subdirectory=client&rev=bd0175551ad5a7a79c29ce3937fcc7d8827e46f6#bd0175551ad5a7a79c29ce3937fcc7d8827e46f6" }
+source = { git = "https://github.com/pedapudi/harmonograf.git?subdirectory=client&rev=ff78e20d4632bcb68da93a8263fc83a6ee733c4b#ff78e20d4632bcb68da93a8263fc83a6ee733c4b" }
 dependencies = [
     { name = "goldfive" },
     { name = "grpcio" },
@@ -2232,7 +2232,7 @@ dependencies = [
 [[package]]
 name = "harmonograf-server"
 version = "0.0.1"
-source = { git = "https://github.com/pedapudi/harmonograf.git?subdirectory=server&rev=bd0175551ad5a7a79c29ce3937fcc7d8827e46f6#bd0175551ad5a7a79c29ce3937fcc7d8827e46f6" }
+source = { git = "https://github.com/pedapudi/harmonograf.git?subdirectory=server&rev=ff78e20d4632bcb68da93a8263fc83a6ee733c4b#ff78e20d4632bcb68da93a8263fc83a6ee733c4b" }
 dependencies = [
     { name = "aiosqlite" },
     { name = "goldfive" },
@@ -7086,10 +7086,10 @@ requires-dist = [
     { name = "goldfive", extras = ["adk"], marker = "extra == 'all'", git = "https://github.com/pedapudi/goldfive.git?rev=ed44eaaf93215a5d4ae122293c39fbd04ff204d6" },
     { name = "google-adk", extras = ["extensions"], marker = "extra == 'adk'" },
     { name = "google-adk", extras = ["extensions"], marker = "extra == 'all'" },
-    { name = "harmonograf-client", marker = "extra == 'all'", git = "https://github.com/pedapudi/harmonograf.git?subdirectory=client&rev=bd0175551ad5a7a79c29ce3937fcc7d8827e46f6" },
-    { name = "harmonograf-client", marker = "extra == 'observability'", git = "https://github.com/pedapudi/harmonograf.git?subdirectory=client&rev=bd0175551ad5a7a79c29ce3937fcc7d8827e46f6" },
-    { name = "harmonograf-server", marker = "extra == 'all'", git = "https://github.com/pedapudi/harmonograf.git?subdirectory=server&rev=bd0175551ad5a7a79c29ce3937fcc7d8827e46f6" },
-    { name = "harmonograf-server", marker = "extra == 'observability'", git = "https://github.com/pedapudi/harmonograf.git?subdirectory=server&rev=bd0175551ad5a7a79c29ce3937fcc7d8827e46f6" },
+    { name = "harmonograf-client", marker = "extra == 'all'", git = "https://github.com/pedapudi/harmonograf.git?subdirectory=client&rev=ff78e20d4632bcb68da93a8263fc83a6ee733c4b" },
+    { name = "harmonograf-client", marker = "extra == 'observability'", git = "https://github.com/pedapudi/harmonograf.git?subdirectory=client&rev=ff78e20d4632bcb68da93a8263fc83a6ee733c4b" },
+    { name = "harmonograf-server", marker = "extra == 'all'", git = "https://github.com/pedapudi/harmonograf.git?subdirectory=server&rev=ff78e20d4632bcb68da93a8263fc83a6ee733c4b" },
+    { name = "harmonograf-server", marker = "extra == 'observability'", git = "https://github.com/pedapudi/harmonograf.git?subdirectory=server&rev=ff78e20d4632bcb68da93a8263fc83a6ee733c4b" },
     { name = "httpx", marker = "extra == 'dev'", specifier = ">=0.27" },
     { name = "import-linter", marker = "extra == 'dev'", specifier = ">=2.0" },
     { name = "jsonschema", specifier = ">=4.20" },

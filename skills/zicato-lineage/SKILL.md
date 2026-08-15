@@ -165,6 +165,9 @@ view**, linked by a per-run drill-down
    harmonograf dies with the run, so the link is gated on liveness, not merely
    on a known URL). The competition view never renders a turn timeline; the
    execution view never renders a bracket — the drill-down stitches them.
+   During a live tournament, **Open tournament traces** opens Harmonograf's
+   ordinary picker with the opaque session metadata filtered to that
+   tournament; select either side or board execution there.
 
 The diff is *champion side vs challenger side* of the same board entry, so it is
 exactly the parent/child (= champion/challenger) pair from the lineage edge,
