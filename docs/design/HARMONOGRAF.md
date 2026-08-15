@@ -20,7 +20,7 @@ contract is enforced through `<ws>/.harmonograf/server.json`:
 
 * `telemetry/harmonograf_supervisor.py:ensure_workspace_harmonograf`
   is the **only** launch path. It reads `server.json`; if it names a
-  server whose pid is alive **and** whose web port answers a TCP connect,
+  server whose pid is alive and whose `/healthz` endpoint answers,
   it REUSES it (`launched=False`, caller must not shut it down).
   Otherwise it launches a fresh server (`start_harmonograf`) bound to the
   workspace db, rewrites `server.json`, and returns `launched=True`.
@@ -44,6 +44,12 @@ two — dialing the web port over native gRPC — silently drops all
 telemetry, so the split is load-bearing (see `telemetry/sink.py`
 `resolve_harmonograf_grpc_target` and the internal `ZICATO_HARMONOGRAF_GRPC`
 handoff — set by the auto-launch lifecycle, not by operators).
+
+Harmonograf owns listener readiness. Its async `start()` returns only after
+native gRPC is listening and `/healthz` answers, and it rolls back partial
+startup before raising. Zicato supplies the worker thread and converts that
+async lifecycle into a synchronous owning handle. If the synchronous handoff
+times out, the worker closes itself when its delayed startup finishes.
 
 Failure isolation is absolute: a missing `harmonograf_server` dep, a
 port-bind failure, or any startup exception yields a **no-op handle**

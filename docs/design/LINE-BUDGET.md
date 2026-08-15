@@ -18,8 +18,8 @@ The baseline and final ratchet use the same metric:
 
 | Measurement | Baseline (`f9052dd`) | Current limit | Reduction |
 |---|---:|---:|---:|
-| Total | 408,547 | 407,879 | 668 |
-| Production | 197,588 | 196,388 | 1,200 |
+| Total | 408,547 | 407,861 | 686 |
+| Production | 197,588 | 196,382 | 1,206 |
 
 The earlier raw count of 425,755 included lockfiles and generated artifacts and
 is retained in `.line-budget.json` for provenance; it is not the enforced

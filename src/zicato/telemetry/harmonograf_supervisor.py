@@ -42,12 +42,17 @@ import re
 import socket
 import tempfile
 import threading
-import time
 from collections.abc import Awaitable
 from pathlib import Path
 from typing import Any
 
 log = logging.getLogger(__name__)
+
+_STARTUP_HANDOFF_TIMEOUT_S = 30.0
+
+
+def _wait_for_startup_handoff(ready: threading.Event) -> bool:
+    return ready.wait(timeout=_STARTUP_HANDOFF_TIMEOUT_S)
 
 
 # Default grace period (seconds) for shutdown — matches harmonograf's own
@@ -202,7 +207,6 @@ def start_harmonograf(
     workspace_root: Path,
     *,
     log_level: str = "WARNING",
-    readiness_timeout_s: float = 10.0,
 ) -> HarmonografHandle:
     """Launch an in-process harmonograf server bound to a free port.
 
@@ -293,6 +297,7 @@ def start_harmonograf(
     # Harmonograf app instance (for request_stop). Both are set inside
     # the worker's startup coroutine before it parks on the stop event.
     ready = threading.Event()
+    abandoned = threading.Event()
     state: dict[str, Any] = {"loop": None, "app": None, "error": None}
 
     def _serve() -> None:
@@ -306,6 +311,9 @@ def start_harmonograf(
                 await app.start()
                 state["app"] = app
                 ready.set()
+                # A caller that timed out cannot own this server.
+                if abandoned.is_set():
+                    app.request_stop()
                 # Park until shutdown() flips the stop event.
                 await app._stop_event.wait()  # noqa: SLF001 — request_stop is the public flip
                 await app.stop()
@@ -339,10 +347,20 @@ def start_harmonograf(
     # Bounded wait — harmonograf's start() is fast (sub-second on a warm
     # cache); a 30s ceiling is conservative and bails out fast if
     # something is wedged (port permission denied, sqlite init blew up).
-    if not ready.wait(timeout=30.0):
+    if not _wait_for_startup_handoff(ready):
+        abandoned.set()
+        # Cover a worker that passed its abandonment check just before timeout.
+        late_app = state.get("app")
+        late_loop = state.get("loop")
+        if late_app is not None and late_loop is not None:
+            try:
+                late_loop.call_soon_threadsafe(late_app.request_stop)
+            except RuntimeError:
+                pass  # the worker already exited
         log.warning(
-            "harmonograf auto-launch did not signal ready within 30s; "
-            "evolve continues with JSONL-only telemetry"
+            "harmonograf auto-launch did not signal ready within %.1fs; "
+            "evolve continues with JSONL-only telemetry",
+            _STARTUP_HANDOFF_TIMEOUT_S,
         )
         return _noop_handle()
     if state.get("error") is not None:
@@ -358,40 +376,16 @@ def start_harmonograf(
         )
         return _noop_handle()
 
-    # The server is now RUNNING on its thread, so from this point every
-    # failure path must stop it — build the real handle first and let its
-    # idempotent shutdown() own that, whatever happens below.
+    # Harmonograf.start() owns listener readiness and partial-startup rollback.
     url = f"http://127.0.0.1:{web_port}"
-    handle = HarmonografHandle(
+    log.info("harmonograf auto-launched at %s (grpc %d)", url, grpc_port)
+    return HarmonografHandle(
         url=url,
         grpc_port=grpc_port,
         app=state["app"],
         loop=state["loop"],
         thread=thread,
     )
-
-    # ``app.start()`` resolving does not guarantee the web listener is
-    # serving yet — the HTTP server binds asynchronously behind it, so a
-    # consumer that dereferences ``url`` immediately raced a
-    # connection-refused window. The handle's contract is that ``url``
-    # SERVES: poll ``/healthz`` (the same positive proof the reuse path
-    # demands — a bare TCP accept can come from a half-bound listener)
-    # until it answers, bounded, before returning the handle.
-    deadline = time.monotonic() + readiness_timeout_s
-    while not _harmonograf_healthz_ok("127.0.0.1", web_port, timeout_s=1.0):
-        if time.monotonic() >= deadline:
-            log.warning(
-                "harmonograf web port %d never answered /healthz within %.1fs; "
-                "stopping it; evolve continues with JSONL-only telemetry",
-                web_port,
-                readiness_timeout_s,
-            )
-            handle.shutdown()
-            return _noop_handle()
-        time.sleep(0.05)
-
-    log.info("harmonograf auto-launched at %s (grpc %d)", url, grpc_port)
-    return handle
 
 
 def _resolve_data_dir(workspace_root: Path) -> Path:
