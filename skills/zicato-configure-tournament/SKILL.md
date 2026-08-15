@@ -141,9 +141,7 @@ step *down* from the recommendation — it drops the evidence gate and the scree
 # A real multi-round run: persistent workspace, ≥2 rounds, deliberate mode.
 .venv/bin/zicato evolve --workspace .zicato \
     --rounds 4 \
-    --mode fast \
-    --harness-call-llm   my_pkg.llms:harness \
-    --auxiliary-call-llm my_pkg.llms:aux
+    --mode fast
 ```
 
 When a real field exists and a single duel is too noisy, escalate to a field
@@ -156,8 +154,7 @@ exact flags from `zicato evolve --help`). Example: race eight candidates:
     --tournament-structure racing \
     --tournament-param field_size=8 \
     --tournament-param eta=2 \
-    --tournament-param board_fraction=0.25 \
-    --harness-call-llm my_pkg.llms:harness --auxiliary-call-llm my_pkg.llms:aux
+    --tournament-param board_fraction=0.25
 ```
 
 `--mode` (real flag, `fast` default): **`fast`** is cache-first — every
@@ -176,7 +173,7 @@ that is what `full` is for.
 
 ## 5. Cost / runtime estimator
 
-The expensive unit is a **board-run** (one full inner-harness execution of one
+The expensive unit is a **board-run** (one full target execution of one
 entry under its `wall_clock_budget_seconds`). A rough model:
 
 ```

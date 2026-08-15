@@ -1,6 +1,6 @@
 ---
 name: zicato-design-judges
-description: Design zicato judges and expectations — the principles behind the syntax. The two expectation families (predicate/rubric and the matcher kinds), OUTCOME expectations vs in-run PROCESS judges, the drift kinds and how drift telemetry becomes loss, severity, the weighting knobs (per_judge_weights/default_judge_weight, per_kind_weights, severity_weights, namespace_weights), the collusion guard (judge/aux callable distinct from the harness callable), and judge_only mode. Use when deciding WHAT to measure and how it should weigh — not the JSON (that is zicato-author-board) or the weight values (zicato-tune-scoring).
+description: Design zicato judges and expectations — outcome vs process checks, matcher kinds, drift-to-loss, severity and weighting, judge/adjudicator engine roles, isolation from the target, and judge_only mode. Use when deciding WHAT to measure and how it should weigh — not the JSON (zicato-author-board) or weight values (zicato-tune-scoring).
 ---
 
 # Designing zicato judges and expectations
@@ -50,7 +50,7 @@ alone). It is the compiled form of two authoring families: **Predicate** and
 | `expected_text` | exact substring | deterministic | case- and whitespace-significant; brittle — prefer `regex` or `predicate` |
 | `regex` | `re` pattern (`re.search`) | deterministic | anchor with `^`/`$`; easy to make accidentally all-pass |
 | `json_schema` | inline JSON Schema | deterministic | output parsed as JSON then validated; non-JSON fails |
-| `rubric` | JSON `{"rubric": <text>, "threshold": <float\|null>, "scale": [lo,hi]}` | LLM-as-judge via the **auxiliary** callable | use for fuzzy quality you can't code; `threshold: null` = advisory (always passes, records the score) |
+| `rubric` | JSON `{"rubric": <text>, "threshold": <float\|null>, "scale": [lo,hi]}` | LLM-as-judge via the **judge** role | use for fuzzy quality you can't code; `threshold: null` = advisory (always passes, records the score) |
 
 `reads` selects the slice graded: `final_output` (the last reply; the single-
 turn default) or `conversation_end` (the whole transcript — a `single_turn`
@@ -58,7 +58,7 @@ entry reading `conversation_end` is rejected). Design choice: prefer a
 deterministic matcher (`predicate`/`regex`/`json_schema`) whenever the behavior
 *can* be checked in code — deterministic matchers add zero noise to the
 pass-rate signal. Reserve `rubric` for genuinely fuzzy quality, and remember a
-rubric runs on the aux LLM, so it costs a call and carries run-to-run variance.
+rubric runs on the judge engine, so it costs a call and carries run-to-run variance.
 
 ## Judges — in-run PROCESS checks
 
@@ -67,7 +67,7 @@ goldfive `custom` drift tagged with the judge's `name`. Two modes:
 
 - **`inline`** — `body` is a natural-language criterion the process judge
   evaluates the run against ("Each revision visibly responds to the
-  stakeholder's most recent feedback"). Graded by the aux LLM.
+  stakeholder's most recent feedback"). Graded by the judge engine.
 - **`python`** — `body` is a dotted import path to a process-judge callable.
   Deterministic; use it when the process property is checkable in code.
 
@@ -76,7 +76,7 @@ sets how hard the violation weighs (see severity weighting below). `name` is a
 stable slug, board-unique, and becomes goldfive's `judge_name` — the key
 `per_judge_weights` uses, so choose it deliberately.
 
-An aux-backed judge's model is resolved **lazily** — the spec *shape* is still
+A model-backed judge engine is resolved **lazily** — the spec *shape* is still
 validated at worker startup, but the ADK import and model construction happen
 on the role's first actual call. Because every judge boundary swallows
 exceptions by hard contract, a judge whose model cannot resolve would otherwise
@@ -178,24 +178,27 @@ into the multi-objective scalar. Decide *what to measure and at what severity*
 here; pick the *numbers* in
 [`zicato-tune-scoring`](../zicato-tune-scoring/SKILL.md).
 
-## The collusion guard — judge/aux callable ≠ harness callable
+## Judge, adjudicator, and target isolation
 
-Everything that grades a run — the rubric matcher, every `inline`/aux-backed
-judge, the user-emulator, the proposer, the analysis pass — runs on the
-**auxiliary** callable (`--auxiliary-call-llm`). The inner system under test
-runs on the **harness** callable (`--harness-call-llm`). zicato hard-errors at
-startup (`assert_distinct_callables`, an identity `is` check) if the two are
-the same object: a shared callable lets the judge and the harness collude
-through shared process state — the judge could perceive the harness's
-internals, or the harness could shape the judge's verdict. The rubric matcher
-*never sees* the harness callable by construction; the guard makes that
-structural. Design implication: always wire two distinct callables, and never
-implement a judge that reaches into the harness's state — judge only the
-observable event stream / output.
+The `judge` role inherits `evaluation`; override it when grading needs a
+different engine. The `adjudicator` independently audits judge decisions and
+also inherits `evaluation`, but active adjudication must use an engine
+independent of the judge it audits. Neither role may share the target engine.
+Judge only the bounded observable event stream or output; never reach into
+target state.
 
-(Identity comparison is intentional: two distinct callables wrapping the same
-underlying endpoint pass the check; keeping them genuinely independent is the
-operator's responsibility.)
+These are constrained text or structured-response roles. Assigning them a
+model-form engine does not turn them into Pi sessions or grant repository
+tools. That narrow protocol is intentional: a judge should return a bounded
+verdict, and an adjudicator should audit a frozen evidence package. A future
+agentic auditor would be a separate implementation with a declared, read-only
+tool surface and explicit visibility policy, not an engine substitution.
+
+For channel-emitting backends, the opt-in reasoning-aware `call_llm` adapter
+returns answer content only and may make one bounded reasoning-disabled
+fallback when the backend explicitly reports answer exhaustion. Private
+reasoning is never substituted for an answer, logged, or persisted. Native
+tool runtimes do not pass through this text boundary.
 
 ## `judge_only` mode — measure without steering
 

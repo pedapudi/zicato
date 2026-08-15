@@ -1,6 +1,6 @@
 ---
 name: zicato-design-proposer
-description: Configure zicato's proposer — the agent that proposes each round's mutation. The DEFAULT (no proposer dir) is a tool-using ADK agent that owns the read-only tool registry and runs on ADK's own Runner. Two opt-in customizations: a skill-composed text-shim proposer (drop skills/*.md, no code, runs single-shot on --auxiliary-call-llm) and a custom ADK agent (proposers/<name>/agent.py with its OWN model= and the read-only tool registry). Use when you want to steer HOW the proposer reasons (add a skill), or own the model / curate the tools (custom agent). Explains when each suffices, the Design-A model rule (a custom proposer's model should differ from the harness model), the read-only tools, and that editing the proposer or a skill ROLLS THE EPOCH — same as editing the brief.
+description: Configure zicato's proposer — the agent that proposes each round's mutation. Covers the base proposer engine, generic proposer_generate/proposer_review stages, native slate ownership, text versus native capabilities, target isolation, and the built-in, skill-composed, and custom-agent paths. Editing the proposer or a skill ROLLS THE EPOCH, like editing the brief.
 ---
 
 # Designing a zicato proposer
@@ -9,7 +9,7 @@ The **proposer** is the agent that, each round, reads the epoch's brief +
 mutation manifest + loss patterns + prior experiments and emits the next
 `Experiment` (`{hypothesis, patches}`) for the tournament to judge. It is a
 **first-class evaluation-contract input** — alongside the board, brief,
-scoring, and inner-harness identity. Configuring a proposer dir, or editing one
+scoring, and target identity. Configuring a proposer dir, or editing one
 of its skills, **rolls the epoch** (see "Editing the proposer rolls the epoch"
 below).
 
@@ -32,7 +32,8 @@ Spec: [PROPOSER.md](../../docs/design/PROPOSER.md),
 
 The DEFAULT — **no proposer dir configured at all** — is a built-in
 **tool-using ADK agent**: it owns the full read-only tool registry and runs on
-ADK's own `Runner`, bound per round to the workspace's auxiliary model. So out
+ADK's own `Runner`, bound per round to the workspace's `proposer` engine (which
+inherits `evaluation`). So out
 of the box the proposer already greps the mutable surface, reads the parent
 snapshot, and consults the journal / analyzer insights while it reasons. You
 need configure NOTHING to get a capable proposer.
@@ -42,7 +43,7 @@ an `agent.py`* selects which customization you get:
 
 | You want to… | Customization | What you ship |
 |---|---|---|
-| Steer HOW the proposer reasons (grounding rules, house style, a checklist) over the text shim, without code | **(a) skill-composed (text shim)** | One or more `skills/*.md`, NO `agent.py`. Runs single-shot on `--auxiliary-call-llm`; your skill bodies are injected into the system prompt. (This is the text-shim engine — it does NOT have tools.) |
+| Steer HOW the proposer reasons (grounding rules, house style, a checklist) over the text shim, without code | **(a) skill-composed (text shim)** | One or more `skills/*.md`, NO `agent.py`. Runs single-shot on the `proposer` engine's text-call seam; your skill bodies are injected into the system prompt. (This does NOT have native tools.) |
 | OWN the model the proposer runs on, curate its tool subset, or write a bespoke instruction | **(b) custom ADK agent** | A `proposers/<name>/agent.py` exposing a module-level `agent` — a native ADK `LlmAgent` with its OWN `model=` and `tools=` from the read-only registry. |
 
 **Prefer the default.** The default already has tools, so reach for a
@@ -85,15 +86,16 @@ the epoch.
 
 ## (b) Write a custom ADK agent — the Design-A model rule
 
-A tool-using proposer is a **native ADK `LlmAgent` with its OWN `model=`**, run
-on ADK's own `Runner` — NOT through the `--auxiliary-call-llm` text shim. The
-reason is concrete: the auxiliary callable is `(system, user, model) -> str`,
+A tool-using custom proposer is a **native ADK `LlmAgent` with its OWN
+`model=`**, run on ADK's own `Runner` — NOT through the configured `call_llm`
+text seam. The
+reason is concrete: the text callable is `(system, user, model) -> str`,
 text-in / text-out, and **cannot express the function-calls a tool-using agent
 needs**. So a proposer that wants to call tools must own its model and run on
 ADK. This is "Design A" — see [PROPOSER.md §3](../../docs/design/PROPOSER.md).
 
-**THE MODEL RULE (load-bearing):** the proposer's `model=` **MUST differ from
-the harness model.** The proposer runs on its own model, so the `is`-identity
+**THE MODEL RULE (load-bearing):** the proposer's model **MUST differ from
+the target-side model.** The proposer runs on its own model, so the `is`-identity
 collusion guard does not cover it — model-distinctness is YOUR responsibility.
 A proposer scored on the same model it is mutating-and-judging risks collusion.
 zicato emits a soft WARNING on a discoverable match but does not hard-gate it;
@@ -117,7 +119,7 @@ corrupt the tree the round is about to patch. A custom agent opts in with:
 
 ```python
 from zicato.proposer.tools import DEFAULT_PROPOSER_TOOLS
-agent = LlmAgent(name="my_proposer", model=...,  # MUST differ from harness model
+agent = LlmAgent(name="my_proposer", model=...,  # MUST differ from target-side model
                  instruction="...", tools=list(DEFAULT_PROPOSER_TOOLS))
 ```
 
@@ -142,17 +144,75 @@ frozen contract, so every knob here **rolls the epoch**.
 | `best_of_n` | `3` | Sample N candidate experiments per propose-step. Pin `1` for the historical single-sample proposer (scripted/mock proposers do). |
 | `critique_enabled` | `true` | The self-critique pass that selects the best of the slate. Sees ONLY the same restricted prompt context the proposer sees. |
 | `recombine` | `false` | Offer a recombination slot in the slate — union two prior patches instead of proposing fresh. |
-| `recombine_merge` | `"mechanical"` | `mechanical` unions the patches directly; `llm` spends one auxiliary merge call (the depth role). |
+| `recombine_merge` | `"mechanical"` | `mechanical` unions the patches directly; `llm` spends one proposer review call. |
 | `genealogy` | `0` | Rounds of candidate-genealogy context handed to the proposer. Carries lineage only, never board data. |
 | `calibration_feedback` | `0` | Rounds of per-claim-type hit/miss/unresolved COUNTS — did its own predictions land — fed back into the prompt. |
 | `process_exemplars` | `0` | Number of process exemplars included. |
 | `screen_entries` / `screen_veto_only` | `0` / `false` | Pre-tournament candidate screening (tryouts); `zicato-tune-scoring` owns the values. |
 
-The slate also splits across two **ensemble roles**: `breadth` steers the slate
-sampling, `depth` the critique + revise calls. Both default to the auxiliary
-role, and can be pointed at separate models via a `models.proposer_breadth` /
-`models.proposer_depth` block. The collusion identity-guard deliberately does
-NOT apply between them — they are two halves of one proposer.
+### Base role, generic stages, and native slates
+
+`proposer` is the engine for the proposal process. It inherits `evaluation`.
+Two optional roles exist only for a zicato-managed best-of-N wrapper:
+
+- `proposer_generate` runs the repeated candidate-generation calls.
+- `proposer_review` compares the structured slate, selects a candidate, and
+  performs a screen-triggered repair when necessary.
+
+They resolve narrowly:
+
+```text
+proposer_generate -> proposer -> evaluation
+proposer_review   -> proposer -> evaluation
+```
+
+For example, generate alternatives economically but review them strongly:
+
+```json
+{
+  "models": {
+    "engines": {
+      "evaluation": {"model": "general-model"},
+      "fast": {"model": "fast-model"},
+      "strong": {"model": "strong-model"}
+    },
+    "roles": {
+      "proposer": "strong",
+      "proposer_generate": "fast"
+    }
+  }
+}
+```
+
+These are implementation stages, not reasoning-effort settings. With
+`best_of_n: 4`, generate normally makes four calls; review normally makes one
+selection call and zero or one repair call.
+
+A proposer with **native slate capability**, including Pi, owns generation,
+comparison, and repair inside one isolated proposal session. The generic
+wrapper does not surround it, so `proposer_generate` and `proposer_review` do
+not apply; configuring either is an error rather than a silently ignored
+override. Native slate proposers use `proposer` for the whole session and must
+persist an auditable structured candidate slate plus selection rationale. In
+the implementation this is `NativeSlateProposer.propose_slate`; Pi selects
+through the bounded `select_candidate` tool, with an invalid or absent index
+falling back to the deterministic selector. Zicato still owns screening and
+the final chosen-tree mount.
+
+One continuous proposal session is not allowed to inspect or host a board.
+The proposer receives only the restricted, aggregated contract view. Board
+entry identities, prompts, holdout data, and raw outcomes remain outside that
+session.
+
+### Engine form is a capability choice
+
+A model-form proposer engine supplies a model id and derived text callable.
+Native and process-backed proposers use its model id; text proposers use its
+callable. A `call_llm`-form engine supplies only an imported text callable. It
+can steer a custom/text proposer but cannot replace a native tool runtime or a
+Pi session. Zicato must reject an incompatible override instead of pretending
+that conversion is possible. See
+[`MODEL-CONFIG.md`](../../docs/design/MODEL-CONFIG.md).
 
 ## The failure-mode feedback channel (what every proposer reads)
 
@@ -228,9 +288,9 @@ and `zicato-manage-epochs-and-rounds`.
 - **Go custom-agent to OWN the model, curate the tool subset, or write a
   bespoke instruction** while keeping tools. That is the whole reason the
   custom-agent path exists.
-- **Set a custom proposer's model distinct from the harness model.** It is your
-  responsibility, not a hard gate. (The built-in default reuses the auxiliary
-  model on purpose — that smell test is skipped for it.)
+- **Set a custom proposer's model distinct from the target-side model.** It is your
+  responsibility, not a hard gate. (The built-in default inherits the
+  `evaluation` engine on purpose — that smell test is skipped for it.)
 - **Treat a skill edit like a brief edit** — it rolls the epoch, so batch
   proposer changes with your other contract edits.
 - **Never start a live `zicato evolve` to test a proposer without the

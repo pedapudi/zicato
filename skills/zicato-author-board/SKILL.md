@@ -1,11 +1,11 @@
 ---
 name: zicato-author-board
-description: Write or extend a zicato board.jsonl (the per-epoch evaluation contract) — entry kinds, the single expectation, judges, the board_meta/disable_drift header, the emulator two-callable rule. Use when adding tasks, expectations, or process judges to a zicato target, or hand-editing a frozen board.
+description: Write or extend a zicato board.jsonl (the per-epoch evaluation contract) — entry kinds, the single expectation, judges, the board_meta/disable_drift header, emulator isolation, and the one-session-per-run boundary. Use when adding tasks, expectations, or process judges to a zicato target, or hand-editing a frozen board.
 ---
 
 # Authoring a zicato `board.jsonl`
 
-A **board** is the per-epoch list of tasks the inner harness is scored against.
+A **board** is the per-epoch list of tasks the target is scored against.
 It is one JSONL file: an optional `board_meta` header line followed by one
 entry per line. The board is part of the **evaluation contract** — changing it
 rolls the epoch (see "Mid-epoch protection" below).
@@ -109,7 +109,7 @@ rejected). The five `kind`s:
 | `expected_text` | exact substring | Case- and whitespace-significant. |
 | `regex` | a `re` pattern | Matched with `re.search`; anchor with `^`/`$`. |
 | `json_schema` | inline JSON Schema | Output is parsed as JSON then validated. |
-| `rubric` | JSON string `{"rubric": <text>, "threshold": <float\|null>, "scale": [lo, hi]}` | LLM-graded via the auxiliary callable; `threshold: null` = advisory (always passes, records score). |
+| `rubric` | JSON string `{"rubric": <text>, "threshold": <float\|null>, "scale": [lo, hi]}` | LLM-graded via the `judge` role; `threshold: null` = advisory (always passes, records score). |
 
 ```jsonc
 {"kind": "regex", "spec": "(?is)slide\\s+\\d", "reads": "final_output"}
@@ -164,15 +164,35 @@ the agent told, not the tool round-trips it ran. Worked example:
 `examples/zicato_examples/target_1_presentation/judges.py` (`file_findability`).
 See `zicato-design-judges`.
 
-## The emulator two-callable rule
+## Emulator role and session boundary
 
-`multi_turn_emulated` entries run the user-emulator on the **auxiliary**
-callable (`--auxiliary-call-llm`), never the inner-harness callable
-(`--harness-call-llm`). zicato hard-errors at startup if the two are the same
-object (`assert_distinct_callables`, identity `is` check) — sharing one risks
-the emulator and harness colluding through shared state. The persona is the
-only runtime input the emulator sees; harness internals and the entry's
-expectation are withheld by construction. Always wire two distinct callables.
+`multi_turn_emulated` entries use the `user_emulator` role, which inherits the
+`evaluation` engine. It never inherits the optional target-side LLM. A common
+cost-conscious override assigns a smaller engine explicitly:
+
+```json
+{
+  "models": {
+    "engines": {"small": {"model": "economical-model"}},
+    "roles": {"user_emulator": "small"}
+  }
+}
+```
+
+The target and emulator trust domains must be distinct. The persona is the
+only private instruction the emulator sees; target internals and the entry's
+expectation are withheld. A `call_llm` engine provides a constrained text
+emulator. Selecting another model engine does not turn the emulator into a Pi
+or tool-using session; that would require a separate restricted emulator
+implementation with no repository tools, one fresh session per run, and an
+auditable transcript.
+
+A session belongs to one run: one generation × board entry × replicate.
+Never host a whole board in one model session. Shared state across entries
+leaks answers, makes results order-dependent, and invalidates replicate
+independence. If persistence is the behavior under test, encode the entire
+stateful sequence as one compound multi-turn entry; its turns may share that
+single run's session.
 
 ## Validate
 

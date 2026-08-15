@@ -1,11 +1,11 @@
 ---
 name: zicato-mutation-audit
-description: Tier 2 run — audit the mutable surface of a registered inner harness with `zicato inspect mutations` (per-id span/file/code points, --id glob, --kind, --show full, --format json, [forbidden] annotations) to decide and verify what the proposer may change before an evolve run. Use this when reviewing the mutation surface, confirming markers resolve, or checking which ids are off-limits.
+description: Tier 2 run — audit the mutable surface of a registered target with `zicato inspect mutations` (per-id span/file/code points, --id glob, --kind, --show full, --format json, [forbidden] annotations) to decide and verify what the proposer may change before an evolve run. Use this when reviewing the mutation surface, confirming markers resolve, or checking which ids are off-limits.
 ---
 
 # zicato mutation audit — what the proposer may change
 
-`zicato inspect mutations` lists the mutable spans in the registered inner harness. It
+`zicato inspect mutations` lists the mutable spans in the registered target. It
 is off the happy path (`zicato evolve` enumerates these itself), but it is the
 right tool to **audit and confirm** the surface before you trust a run: every
 marker resolves cleanly, the right ids are exposed, and the off-limits ids are
@@ -17,7 +17,7 @@ Always invoke via `.venv/bin/zicato`. Requires a registered workspace (see
 
 ## How the surface is defined
 
-Each mutable location is a comment-form marker in the inner harness source:
+Each mutable location is a comment-form marker in the target source:
 
 ```python
 # zicato:mutable id="researcher_instruction" role="system_instruction"
