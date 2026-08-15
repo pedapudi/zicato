@@ -698,6 +698,14 @@ closure is transported as its *declarative spec*, and rebuilt on the far side.
 The user-emulator role crosses by the same path, so an explicit smaller emulator
 engine cannot collapse back onto the evaluation engine in a subprocess.
 
+A reasoning-aware callable (`zicato.reasoning`) follows the dotted branch when
+it is operator-provided. Define it with the module-level decorator form so the
+decorated name, not an inner closure, is what `_callable_dotted_path` sees and
+what the worker imports. The wrapper's raw backend must expose separate answer
+and private-reasoning channels plus a real reasoning-control switch; flattened
+text cannot be repaired after crossing `CallLLM`. The complete contract and a
+worker-safe example live in `docs/design/REASONING-AWARE-CALLS.md`.
+
 ### 6.3.5 The weights serde — one field-enumerating round-trip
 
 The scoring weights cross via a single serde, and its history is a warning:
