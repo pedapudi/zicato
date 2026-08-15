@@ -660,6 +660,9 @@ def test_readiness_timeout_stops_the_server_and_returns_noop(
     from zicato.telemetry import harmonograf_supervisor as supervisor
 
     monkeypatch.setattr(supervisor, "_harmonograf_healthz_ok", lambda *a, **k: False)
+    # Scope the leak check to the thread THIS launch creates — a sibling
+    # test's (daemon) supervisor thread may legitimately still exist.
+    before = {t.ident for t in threading.enumerate()}
     handle = start_harmonograf(tmp_path, readiness_timeout_s=0.2)
 
     assert handle.url == "", "a launch that never became ready must return the no-op handle"
@@ -667,7 +670,7 @@ def test_readiness_timeout_stops_the_server_and_returns_noop(
     deadline = _time.monotonic() + 15.0
     while _time.monotonic() < deadline:
         if not any(
-            t.name == "zicato-harmonograf-supervisor" and t.is_alive()
+            t.name == "zicato-harmonograf-supervisor" and t.ident not in before and t.is_alive()
             for t in threading.enumerate()
         ):
             break
