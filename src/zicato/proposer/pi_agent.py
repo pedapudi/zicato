@@ -127,13 +127,18 @@ def build_pi_argv(
 
 
 def build_pi_env(agent_dir: Path, extra: Mapping[str, str] | None = None) -> dict[str, str]:
-    """Inherit credentials but isolate all process-owned state."""
+    """Inherit credentials but isolate all process-owned state.
+
+    The agent dir is that isolation: themes, model list, sessions and trust
+    decisions all hang off it. Pi's shipped assets are a separate root it
+    resolves itself, and pointing that root at per-run state leaves it with
+    no assets at all, so ``PI_PACKAGE_DIR`` is the operator's to set.
+    """
     env = dict(os.environ)
     if extra:
         env.update(extra)
     env["PI_CODING_AGENT_DIR"] = str(agent_dir)
     env["PI_CODING_AGENT_SESSION_DIR"] = str(agent_dir / "sessions")
-    env["PI_PACKAGE_DIR"] = str(agent_dir / "packages")
     env["PI_OFFLINE"] = "1"
     return env
 

@@ -24,7 +24,6 @@ its authority lives in Python.
 from __future__ import annotations
 
 import json
-import os
 import shutil
 import subprocess
 from pathlib import Path
@@ -47,6 +46,7 @@ from zicato.proposer.pi_agent import (
     SANCTIONED_TOOLS,
     PiProposerAgent,
     build_pi_argv,
+    build_pi_env,
     resolve_pi_bin,
     resolve_pi_version,
 )
@@ -111,11 +111,11 @@ def test_the_environment_isolates_pis_own_state(launch: dict[str, Any]) -> None:
     env = launch["env"]
     agent_dir = Path(env["PI_CODING_AGENT_DIR"])
     assert env["PI_OFFLINE"] == "1"
-    # Sessions and packages resolve INSIDE the per-challenger dir, so no
-    # installed package, memory extension or saved trust decision from the
-    # operator's own agent dir is reachable.
+    # Sessions resolve INSIDE the per-challenger dir, and every other piece
+    # of pi's own state — installed packages, memory extensions, saved trust
+    # decisions — hangs off the agent dir, so none of the operator's is
+    # reachable.
     assert Path(env["PI_CODING_AGENT_SESSION_DIR"]).is_relative_to(agent_dir)
-    assert Path(env["PI_PACKAGE_DIR"]).is_relative_to(agent_dir)
 
 
 def test_the_working_directory_is_outside_every_snapshot(launch: dict[str, Any]) -> None:
@@ -222,12 +222,24 @@ def test_a_tool_server_reaches_the_launch_without_editing_the_transport(
 
 def test_a_tool_server_cannot_relax_the_envelope(tmp_path: Path) -> None:
     """The pi-state variables are applied last, on purpose."""
-    from zicato.proposer.pi_agent import build_pi_env
-
     env = build_pi_env(tmp_path, {"PI_OFFLINE": "0", "PI_CODING_AGENT_DIR": "/home/operator/.pi"})
 
     assert env["PI_OFFLINE"] == "1"
     assert env["PI_CODING_AGENT_DIR"] == str(tmp_path)
+
+
+def test_shipped_asset_resolution_is_left_to_pi(tmp_path: Path, monkeypatch: Any) -> None:
+    """``PI_PACKAGE_DIR`` names pi's installed assets, not per-run state.
+
+    Pointed into the per-challenger tree it named a themes directory and a
+    ``package.json`` nobody creates, and pi exited on that read before the
+    RPC session opened (issue #238).
+    """
+    monkeypatch.delenv("PI_PACKAGE_DIR", raising=False)
+    assert "PI_PACKAGE_DIR" not in build_pi_env(tmp_path)
+
+    monkeypatch.setenv("PI_PACKAGE_DIR", "/opt/pi/packages")
+    assert build_pi_env(tmp_path)["PI_PACKAGE_DIR"] == "/opt/pi/packages"
 
 
 # -- the tool contract must not drift from its Python authority --------------
@@ -312,14 +324,9 @@ def test_real_pi_offers_exactly_the_sanctioned_tools(tmp_path: Path) -> None:
     )
     argv += ["--extension", str(INTEGRATION_DIR / "envelope-probe.ts")]
 
-    env = dict(os.environ)
-    env.update(
-        {
-            "PI_CODING_AGENT_DIR": str(agent_dir),
-            "PI_OFFLINE": "1",
-            "ZICATO_PI_ENVELOPE_PROBE": str(probe),
-        }
-    )
+    # The real builder: an env this lane assembles itself would only prove
+    # that pi can start, not that the proposer's own launch can.
+    env = build_pi_env(agent_dir, {"ZICATO_PI_ENVELOPE_PROBE": str(probe)})
     subprocess.run(  # noqa: S603 - a pinned in-tree binary
         argv,
         cwd=cwd,
