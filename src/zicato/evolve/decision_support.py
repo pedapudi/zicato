@@ -232,23 +232,106 @@ def _load_parent_losses(
     board: list[Any],
     read_loss_profile: Callable[[Path], Any],
 ) -> list[Any]:
-    """Read every ``loss.json`` under the parent generation's runs/.
+    """Read ONE champion loss profile per board entry, in board order.
 
-    Returns the list in board order so detectors that care about
-    ordering see a stable view. Missing per-entry loss files are
-    skipped silently — the parent might be ``v0`` with no telemetry
-    yet on a freshly-initialised epoch.
+    Board order keeps the view stable for detectors that care about ordering.
+    Per entry the resolution is:
+
+    1. The canonical duel slot ``runs/<entry>/loss.json`` (replicate 0) when it
+       exists. It is a draw under the round's own conditions, so it always wins.
+    2. Otherwise the champion's A/A calibration draws
+       (``loss.r1000.json``, ``loss.r1001.json``, …), FOLDED across draws into
+       one profile. The contract pre-flight writes them by running the champion
+       over the whole board before the epoch's first duel exists, which is
+       exactly when step 1 finds nothing; without this the proposer opens every
+       epoch with an empty baseline channel. Folding rather than picking keeps
+       one profile per entry, so the outcome marginals' denominator stays "runs
+       on the board" and detector counts do not multiply — and the draws differ
+       by construction, which is why the band exists at all. The folded
+       profile carries the first draw's ``aa-calibration:0`` ``match_id``, so a
+       calibration-sourced baseline reads as what it is.
+    3. Neither ⇒ the entry is skipped silently. A freshly-initialised epoch
+       whose pre-flight is off genuinely has no champion telemetry.
+
+    No other replicate band is read. The pre-flight's DELIBERATELY-DEGRADED
+    probes cache in this same directory under the champion's own generation id
+    (:data:`zicato.epoch.preflight.PREFLIGHT_REPLICATE_BASE`), so a
+    ``glob("loss*.json")`` would tell the proposer the champion fails in ways
+    its real code does not; discovery goes through the reserved-base filter
+    (:func:`zicato.tournament.unit_cache.own_code_board_draws`) and the
+    calibration band is then selected by name. The band is enumerated from
+    disk, never counted: draws accumulate across re-runs as cache hits, so what
+    is persisted is a high-water mark and not the current run count.
+
+    Holdout entries are never opened: the caller passes the TRAIN slice, and
+    the calibration draws covering the full board are read one entry at a time
+    (G8).
     """
+    from zicato.core.workspace import loss_profile_path  # noqa: PLC0415
+
+    # Nothing under evolve/ imports the unit cache today; the reserved-base
+    # filter and the replicate fold both live there because that module owns
+    # the (generation, entry, replicate) key this reader is inverting.
+    from zicato.tournament.calibration import (  # noqa: PLC0415
+        CALIBRATION_REPLICATE_BASE,
+        CALIBRATION_REPLICATE_SPAN,
+    )
+    from zicato.tournament.unit_cache import (  # noqa: PLC0415
+        _average_losses,
+        own_code_board_draws,
+    )
+
+    def _read(path: Path) -> Any | None:
+        try:
+            return read_loss_profile(path)
+        except (OSError, ValueError, KeyError):
+            return None
+
+    canonical: dict[str, Any] = {}
+    uncovered: list[Any] = []
+    for entry in board:
+        lpath = loss_profile_path(workspace_root, epoch_id, parent_id, entry.id)
+        profile = _read(lpath) if lpath.exists() else None
+        if profile is None:
+            uncovered.append(entry)
+        else:
+            canonical[entry.id] = profile
+
+    # One board map per calibration draw index, so the fold is a single
+    # `_average_losses` call over board-shaped runs rather than a per-entry
+    # singleton wrap (which would fold nothing). `_average_losses` takes its
+    # entry set from the FIRST map, which is sound here because every
+    # calibration draw covers the WHOLE board (a draw that aborts raises
+    # NoiseFloorInconclusive and persists nothing), so the lowest draw index
+    # covers every entry any later draw does — and being lowest, it is also
+    # the replicate whose provenance the folded profiles carry.
+    band_end = CALIBRATION_REPLICATE_BASE + CALIBRATION_REPLICATE_SPAN
+    draws: dict[int, dict[str, Any]] = {}
+    for entry in uncovered:
+        run_dir = loss_profile_path(workspace_root, epoch_id, parent_id, entry.id).parent
+        for index, path in own_code_board_draws(run_dir):
+            if not CALIBRATION_REPLICATE_BASE <= index < band_end:
+                continue
+            profile = _read(path)
+            if profile is not None:
+                draws.setdefault(index, {})[entry.id] = profile
+    folded = _average_losses([draws[index] for index in sorted(draws)]) if draws else {}
+    if folded:
+        log.info(
+            "proposer baseline: %d board entr(y/ies) have no duel replicate; "
+            "folded %d A/A calibration draw(s) for %d of them",
+            len(uncovered),
+            len(draws),
+            len(folded),
+        )
+
     losses: list[Any] = []
     for entry in board:
-        from zicato.core.workspace import loss_profile_path  # noqa: PLC0415
-
-        lpath = loss_profile_path(workspace_root, epoch_id, parent_id, entry.id)
-        if lpath.exists():
-            try:
-                losses.append(read_loss_profile(lpath))
-            except (OSError, ValueError, KeyError):
-                continue
+        resolved = canonical.get(entry.id)
+        if resolved is None:
+            resolved = folded.get(entry.id)
+        if resolved is not None:
+            losses.append(resolved)
     return losses
 
 
@@ -343,8 +426,29 @@ def _render_process_exemplars_block(
     return ""
 
 
-def _render_loss_summary(losses: list[Any]) -> str:
-    """Render a short human-readable loss summary for the proposer prompt."""
+#: How many per-channel terms the loss summary reports. The summary is one
+#: orienting line, not a decomposition: past a handful of terms the ones the
+#: contract weights most stop standing out, which is the defect this cap
+#: exists to avoid re-introducing.
+_LOSS_SUMMARY_TERMS_PER_CHANNEL: int = 4
+
+
+def _render_loss_summary(losses: list[Any], priorities: Any = None) -> str:
+    """Render a short human-readable loss summary for the proposer prompt.
+
+    ``priorities`` is the round's :class:`~zicato.proposer.prompts
+    .MetricPriorities`. When supplied, the summary reports only terms the
+    contract actually scores, each channel in weight order: a
+    ``drift_weight=0.0`` contract no longer leads with a ``drift_loss_mean``
+    that contributes nothing to the scalar, and a heavily-weighted judge is
+    named rather than summed away into the aggregate drift term. ``None`` (the
+    default, and every caller that holds no weights) renders the unfiltered
+    form byte-for-byte.
+
+    The genuinely-empty sentinels are unchanged: no losses is still a baseline
+    round, and a contract whose scored terms have no measurement yet says so
+    rather than reporting an unweighted number to fill the line.
+    """
     if not losses:
         return "(no prior loss data; this is a baseline round)"
     drift_total = sum(getattr(loss, "drift_loss", 0.0) for loss in losses)
@@ -355,4 +459,153 @@ def _render_loss_summary(losses: list[Any]) -> str:
         pass_part = f", pass_rate={pass_rate:.2f} over {len(pass_eligible)} entries"
     else:
         pass_part = ""
-    return f"drift_loss_mean={drift_mean:.3f} over {len(losses)} runs" + pass_part
+    if priorities is None:
+        return f"drift_loss_mean={drift_mean:.3f} over {len(losses)} runs" + pass_part
+
+    parts: list[str] = []
+    # The drift term covers the whole judge namespace as well, so it is
+    # score-bearing exactly when some judge or kind survived the zero filter.
+    if priorities.drift_kinds or priorities.judges:
+        parts.append(f"drift_loss_mean={drift_mean:.3f} over {len(losses)} runs")
+    if priorities.pass_rate_weight and pass_eligible:
+        parts.append(pass_part.lstrip(", "))
+    parts.extend(
+        _mean_named_terms(losses, priorities.judges, _judge_loss_values),
+    )
+    parts.extend(
+        _mean_named_terms(losses, priorities.namespace_metrics, _unified_metric_values),
+    )
+    return ", ".join(parts) or "(the terms this contract scores have no measurement yet)"
+
+
+def _judge_loss_values(loss: Any) -> dict[str, float]:
+    """One run's per-judge drift attribution, by judge name.
+
+    Reads ``weighted_loss`` — the contribution the aggregate ``drift_loss``
+    already sums in — so a named judge's number and the drift mean beside it
+    are on the same footing. The ``""`` catch-all bucket for unattributed
+    ``custom`` drifts is not a judge and is skipped.
+    """
+    return {
+        str(jl.judge_name): float(jl.weighted_loss)
+        for jl in getattr(loss, "per_judge_loss", ()) or ()
+        if getattr(jl, "judge_name", "")
+    }
+
+
+def _unified_metric_values(loss: Any) -> dict[str, float]:
+    """One run's merged namespaced metric view, by metric name."""
+    metrics = getattr(loss, "unified_metrics", None)
+    if metrics is None:
+        return {}
+    return {str(mc.name): float(mc.count) for mc in metrics()}
+
+
+def _mean_named_terms(
+    losses: list[Any],
+    targets: tuple[Any, ...],
+    values_of: Callable[[Any], dict[str, float]],
+) -> list[str]:
+    """``name=mean`` for the top scored ``targets`` that the runs measured.
+
+    ``targets`` arrives in the contract's own weight order, so truncating to
+    :data:`_LOSS_SUMMARY_TERMS_PER_CHANNEL` keeps the terms the contract cares
+    about most. A target no run reported is omitted rather than printed as
+    zero — an unmeasured term and a measured-zero term are different findings.
+    """
+    per_name: dict[str, list[float]] = {}
+    for loss in losses:
+        for name, value in values_of(loss).items():
+            per_name.setdefault(name, []).append(value)
+    rendered: list[str] = []
+    for target in targets:
+        samples = per_name.get(target.name)
+        if not samples:
+            continue
+        rendered.append(f"{target.name}={sum(samples) / len(samples):.3f}")
+        if len(rendered) == _LOSS_SUMMARY_TERMS_PER_CHANNEL:
+            break
+    return rendered
+
+
+def build_metric_priorities(board: list[Any], weights: Any, losses: list[Any]) -> Any:
+    """Resolve what the frozen contract scores, per channel, weight-ordered.
+
+    The prompt-side half of "the operator already answered what to work on".
+    Every target is resolved through the SAME rules the scalar uses
+    (:func:`zicato.scoring.builtins._kind_multiplier`,
+    :func:`zicato.scoring.builtins.builtin_scalar`), and anything the contract
+    weights at zero is dropped, so a target the prompt names can always move
+    the score. Returns a :class:`~zicato.proposer.prompts.MetricPriorities`.
+
+    Two resolutions are worth stating because they are easy to get wrong:
+
+    * Custom judges report under the single ``custom`` drift kind, so their
+      contribution flows through ``drift_loss`` and is then multiplied by
+      ``drift_weight``. ``drift_weight=0.0`` therefore zeroes the entire judge
+      namespace, and every judge drops out — the same way it drops out of the
+      scalar.
+    * Namespace metric NAMES come from the round's own loss profiles, because
+      only the data knows whether this board reports ``cost:tokens_spent`` or
+      ``rubric:slide_structure``. A round with no losses names the weighted
+      namespace prefixes instead of inventing metric names, which is why this
+      rides the same change as the baseline-loss reader.
+
+    This does NOT touch the validator's accept-list
+    (``_declared_custom_judge_names``): that set stays permissive, so a
+    zero-weight judge the prompt no longer advertises is still parsed without
+    a burned retry.
+    """
+    from zicato.core.drift_kinds import GOLDFIVE_DRIFT_KINDS  # noqa: PLC0415
+    from zicato.proposer.prompts import MetricPriorities, ScoredTarget  # noqa: PLC0415
+
+    drift_weight = float(getattr(weights, "drift_weight", 0.0) or 0.0)
+    per_kind = dict(getattr(weights, "per_kind_weights", None) or {})
+    per_judge = dict(getattr(weights, "per_judge_weights", None) or {})
+    default_judge = float(getattr(weights, "default_judge_weight", 1.0))
+
+    def _ranked(targets: list[Any]) -> tuple[Any, ...]:
+        return tuple(sorted(targets, key=lambda t: (-abs(t.weight), t.name)))
+
+    judge_names: set[str] = set(str(name) for name in per_judge)
+    for entry in board:
+        for judge in getattr(entry, "judges", ()) or ():
+            name = getattr(judge, "name", None)
+            if name:
+                judge_names.add(str(name))
+    judges = [
+        ScoredTarget(name, drift_weight * float(per_judge.get(name, default_judge)))
+        for name in sorted(judge_names)
+    ]
+
+    drift_kinds = [
+        # The `custom` kind is the judges' own channel — it resolves through
+        # per_judge_weights, never per_kind_weights — so it is named there.
+        ScoredTarget(kind, drift_weight * float(per_kind.get(kind, 1.0)))
+        for kind in sorted(GOLDFIVE_DRIFT_KINDS)
+        if kind != "custom" and not kind.startswith("custom:")
+    ]
+
+    namespace_weights = dict(getattr(weights, "namespace_weights", None) or {})
+    observed: set[str] = set()
+    for loss in losses:
+        metrics = getattr(loss, "unified_metrics", None)
+        if metrics is not None:
+            observed.update(str(mc.name) for mc in metrics())
+    namespace_metrics: list[Any] = []
+    for namespace, weight in namespace_weights.items():
+        # The drift namespace is excluded from the scalar's namespace sum —
+        # the drift component already owns that axis — so naming it here would
+        # double-advertise the drift-kind channel above.
+        if namespace == "drift:" or not float(weight):
+            continue
+        names = sorted(name for name in observed if name.startswith(namespace))
+        for name in names or [namespace]:
+            namespace_metrics.append(ScoredTarget(name, float(weight)))
+
+    return MetricPriorities(
+        judges=_ranked([t for t in judges if t.weight]),
+        drift_kinds=_ranked([t for t in drift_kinds if t.weight]),
+        pass_rate_weight=float(getattr(weights, "pass_weight", 0.0) or 0.0),
+        namespace_metrics=_ranked(namespace_metrics),
+    )

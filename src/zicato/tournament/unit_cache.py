@@ -7,7 +7,10 @@ and reused everywhere — every pairing, every round, every structure, the
 gate, and later evolve rounds. This module owns that universal,
 structure-agnostic cache:
 
-* the per-replicate ``loss.json`` path mapping (:func:`_unit_loss_path`);
+* the per-replicate ``loss.json`` path mapping (:func:`_unit_loss_path`)
+  and its inverse, the reserved-base filter that says which persisted
+  slots are draws of the generation's OWN code over the real board
+  (:func:`is_own_code_board_draw`, :func:`own_code_board_draws`);
 * the read/write of a cached unit (:func:`_resolve_cached_unit`,
   :func:`_persist_unit_loss`);
 * the budget-skip synthesis that records an un-run unit as a
@@ -34,6 +37,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -138,6 +142,83 @@ def _unit_loss_path(
     if replicate_index <= 0:
         return canonical
     return canonical.with_name(f"loss.r{replicate_index}.json")
+
+
+#: Persisted per-replicate loss filename → replicate index. The canonical
+#: replicate-0 slot is plain ``loss.json`` and does not match.
+_LOSS_REPLICATE_RE = re.compile(r"^loss\.r(\d+)\.json$")
+
+
+def is_own_code_board_draw(replicate_index: int) -> bool:
+    """Whether a slot under ``generations/<gen>/runs/`` is a full-board draw of
+    THAT generation's own, unmodified code.
+
+    The replicate-index namespace is partitioned by owner (G7's reserved-base
+    ledger, rolled up at
+    :data:`zicato.selection.evidence_gate.EVIDENCE_REPLICATE_BASE`). Several
+    owners cache under a REAL generation id, and only some of them ran that
+    generation's real code over the real board. A reader that wants "what does
+    this generation actually do" must therefore filter by base, not glob.
+
+    This is an ALLOW-LIST: an index no owner has claimed answers ``False``, so
+    a band added later lands EXCLUDED until someone deliberately admits it
+    here. Getting that default wrong is how a degraded probe would reach a
+    reader as champion behaviour.
+
+    Admitted
+        * ``0`` — the canonical tournament duel (``loss.json``).
+        * ``1..999`` — the same duel's further replicates
+          (``replicate_base + r``, :mod:`zicato.tournament.scheduling`): the
+          same snapshot and the same board, drawn again.
+        * ``1000..1999`` — A/A noise-floor calibration
+          (:data:`zicato.tournament.calibration.CALIBRATION_REPLICATE_BASE` +
+          :data:`~zicato.tournament.calibration.CALIBRATION_REPLICATE_SPAN`).
+        * ``4000..4999`` — evidence gate, both sides fresh
+          (:data:`zicato.selection.evidence_gate.EVIDENCE_REPLICATE_BASE`).
+        * ``5000..5999`` — board reflection
+          (:data:`zicato.reflection.corpus.REFLECTION_REPLICATE_BASE`).
+        * ``6000..6999`` — eval-synthesis admission probes
+          (:data:`zicato.reflection.admission.SYNTHESIS_REPLICATE_BASE`).
+
+    Refused
+        * ``2000..2999`` — the contract pre-flight's DELIBERATELY-DEGRADED
+          probes (:data:`zicato.epoch.preflight.PREFLIGHT_REPLICATE_BASE`).
+          The probe patches the champion's snapshot and runs it under the
+          champion's OWN generation id, so these slots sit in the champion's
+          run directory while describing code the champion does not have.
+        * ``3000..3999`` — the candidate screen
+          (:data:`zicato.epoch.screen.SCREEN_REPLICATE_BASE`). Real code, but
+          fast-mode draws over a rotating panel SUBSET rather than the board.
+        * every unclaimed index.
+    """
+    if 0 <= replicate_index <= 1999:
+        return True
+    if 2000 <= replicate_index <= 3999:
+        return False
+    return 4000 <= replicate_index <= 6999
+
+
+def own_code_board_draws(run_dir: Path) -> list[tuple[int, Path]]:
+    """Every persisted own-code full-board loss slot under ONE run dir, ascending.
+
+    ``loss.json`` → replicate 0; ``loss.r{n}.json`` → replicate ``n``. Only
+    slots :func:`is_own_code_board_draw` admits are returned, so a caller
+    reading "what did this generation do" can iterate the result without
+    re-deriving the base ledger — and cannot pick up a degraded pre-flight
+    probe cached beside the real draws.
+    """
+    found: list[tuple[int, Path]] = []
+    canonical = run_dir / "loss.json"
+    if canonical.exists():
+        found.append((0, canonical))
+    if run_dir.is_dir():
+        for path in run_dir.iterdir():
+            match = _LOSS_REPLICATE_RE.match(path.name)
+            if match:
+                index = int(match.group(1))
+                if is_own_code_board_draw(index):
+                    found.append((index, path))
+    return sorted(found)
 
 
 #: ``format_version`` stamped onto every persisted ``result.json``. Readers

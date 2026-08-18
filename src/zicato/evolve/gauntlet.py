@@ -84,6 +84,7 @@ from zicato.evolve.decision_support import (
     _render_loss_summary,
     _render_process_exemplars_block,
     _token_clip_state,
+    build_metric_priorities,
 )
 from zicato.evolve.round_api import EvolveRoundOutcome, _declared_custom_judge_names
 from zicato.evolve.round_baseline import (
@@ -486,8 +487,18 @@ async def evolve_once(
     )
     patterns = detect_patterns(detector_input, detectors=ALL_DETECTORS)
 
-    # --- 5. Loss summary ---
-    loss_summary = _render_loss_summary(losses)
+    # --- 5. What this contract scores, and the loss summary that reports it ---
+    # The operator already answered "what should this round work on" by setting
+    # the scoring weights; resolving them here — the one place the frozen
+    # contract, the board and the round's own losses are all in scope — is what
+    # lets the prompt pass that answer along. The weights themselves stay on
+    # this side: only the BANDED render crosses into ProposerContext, because a
+    # raw coefficient hands every custom proposer agent the objective function.
+    from zicato.proposer.prompts import render_metric_priorities_block  # noqa: PLC0415
+
+    metric_priorities = build_metric_priorities(board, weights, losses)
+    metric_priorities_block = render_metric_priorities_block(metric_priorities)
+    loss_summary = _render_loss_summary(losses, metric_priorities)
 
     # --- 5a. Outcome-marginal failure-mode profile (issue #18 cap 2) ---
     # Aggregate the SAME train-slice ``losses`` (holdout already excluded
@@ -630,6 +641,7 @@ async def evolve_once(
             patterns=patterns,
             loss_summary=loss_summary,
             failure_profile=failure_profile,
+            metric_priorities=metric_priorities_block,
             process_exemplars=process_exemplars_block,
             genealogy=genealogy_items,
             calibration=calibration_summary,
@@ -803,6 +815,7 @@ async def evolve_once(
                 prior_experiments=tuple(prior),
                 restrict_visibility=weights.overfitting.restrict_proposer_visibility,
                 failure_profile=failure_profile,
+                metric_priorities=metric_priorities_block,
                 process_exemplars=process_exemplars_block,
                 genealogy=genealogy_items,
                 calibration=calibration_summary,

@@ -145,6 +145,41 @@ def _run_rounds(workspace: Path, epoch_id: str, rounds: int = 1) -> list:
     )
 
 
+def test_run_count_may_not_walk_out_of_the_reserved_calibration_block() -> None:
+    """Draw ``j`` caches at ``CALIBRATION_REPLICATE_BASE + j``.
+
+    A run count wider than the block would squat the contract pre-flight's
+    range in both directions: a later ``board preflight`` reads these clean
+    A/A draws as its own cached degraded probes, and every reader of the
+    calibration band reads the pre-flight's degraded probes as champion
+    behaviour. The mirror of the pre-flight's own probe-sample guard.
+    """
+    import pytest
+
+    from zicato.tournament.calibration import CALIBRATION_REPLICATE_SPAN
+
+    def _measure(runs: int) -> None:
+        asyncio.run(
+            measure_noise_floor(
+                adapter=None,
+                generation=None,  # type: ignore[arg-type]
+                board=[],
+                weights=None,  # type: ignore[arg-type]
+                config=None,  # type: ignore[arg-type]
+                workspace_root=Path("."),
+                epoch_id="e0",
+                runs=runs,
+            )
+        )
+
+    with pytest.raises(ValueError, match="reserved replicate block"):
+        _measure(CALIBRATION_REPLICATE_SPAN + 1)
+    # The existing lower bound is unmoved, and the widest in-block count is
+    # refused by neither guard.
+    with pytest.raises(ValueError, match="at least 2 runs"):
+        _measure(1)
+
+
 def test_measure_noise_floor_deterministic_adapter_is_zero(tmp_path: Path) -> None:
     """K fresh draws of the same generation, through the real board-unit
     workers — the deterministic target scores identically every draw."""

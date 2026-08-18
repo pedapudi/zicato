@@ -137,6 +137,23 @@ class ProposerContext:
     #: banded by its renderer; the agents only forward it. Empty (the
     #: default) omits the section, byte-identical to before this surface.
     failure_profile: str = ""
+    #: Pre-rendered, BANDED statement of what the frozen contract scores —
+    #: built by the orchestrator from the epoch's
+    #: :class:`~zicato.core.scoring_config.ScoringWeights` via
+    #: :func:`~zicato.evolve.decision_support.build_metric_priorities` and
+    #: :func:`~zicato.proposer.prompts.render_metric_priorities_block`. When
+    #: non-empty it REPLACES the flat membership list in
+    #: ``## Valid expectation targets``: targets are ordered by weight within
+    #: each channel and anything the contract weights at zero is absent, so a
+    #: round is not spent improving a metric that cannot move the score.
+    #: BANDED, never the raw coefficients — the weights stay orchestrator-side,
+    #: because handing an agent the objective function invites optimising the
+    #: shape of the score instead of the behaviour the board measures. The
+    #: validator's accept-list is untouched, so a target dropped from the
+    #: prompt is still parsed without a burned retry. Empty (the default —
+    #: every caller that holds no weights) renders the membership form
+    #: byte-identically.
+    metric_priorities: str = ""
     #: Pre-rendered, train-slice-only, REDACTED process-exemplar block —
     #: the opt-in ``proposer_quality.process_exemplars`` channel
     #: (``docs/design/PROCESS-EXEMPLARS.md``). Built by the orchestrator,
@@ -351,6 +368,7 @@ async def propose_via_engine(
         skills=spec.skills,
         restrict_visibility=ctx.restrict_visibility,
         failure_profile=ctx.failure_profile,
+        metric_priorities=ctx.metric_priorities,
         process_exemplars=ctx.process_exemplars,
         genealogy=ctx.genealogy,
         calibration=ctx.calibration,

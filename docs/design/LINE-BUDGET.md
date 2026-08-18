@@ -18,8 +18,8 @@ The baseline and final ratchet use the same metric:
 
 | Measurement | Baseline (`f9052dd`) | Current limit | Net reduction |
 |---|---:|---:|---:|
-| Total | 408,547 | 408,900 | -353 |
-| Production | 197,588 | 196,725 | 863 |
+| Total | 408,547 | 409,913 | -1,366 |
+| Production | 197,588 | 197,312 | 276 |
 
 The earlier raw count of 425,755 included lockfiles and generated artifacts and
 is retained in `.line-budget.json` for provenance; it is not the enforced
@@ -57,3 +57,5 @@ increase.
 | Pi shipped-asset root (production) | 196,434 | +5 | 196,439 | Issue #238: the env-builder docstring stating which root is process state, so the variable is not re-added. |
 | Proposer input capture (total) | 408,150 | +750 | 408,900 | Issue #244: the locked append-only writer and tolerant reader, four capture sites, and the concurrency, retry, and degrade regressions. |
 | Proposer input capture (production) | 196,439 | +286 | 196,725 | Issue #244: the capture module, per-site wiring, the slot coordinate, and the path accessors. |
+| Proposer baseline losses and metric priorities (total) | 408,900 | +1,013 | 409,913 | Issues #243 and #247: the shared reserved-base filter and its allow-list regression, the calibration-band fallback and its degraded-probe and holdout regressions, the priority renderer, and the contract-priority suite. |
+| Proposer baseline losses and metric priorities (production) | 196,725 | +587 | 197,312 | Issues #243 and #247: the own-code draw filter, the folded calibration read, the priority resolver and renderer, the calibration span guard, and the per-site wiring of the rendered block. |

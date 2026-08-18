@@ -235,6 +235,26 @@ def test_passive_ingest_reserved_base_allowlist_excludes_degraded_probes(tmp_pat
     assert 3000 not in ingested
 
 
+def test_reserved_base_filter_is_an_allowlist() -> None:
+    """An unclaimed index answers False, so a band added later starts EXCLUDED.
+
+    The filter is shared with the proposer's baseline reader, where admitting
+    an unattributed slot by default would let a future degraded-probe band
+    reach the prompt as champion behaviour.
+    """
+    from zicato.tournament.unit_cache import is_own_code_board_draw
+
+    # Every claimed own-code base, at both ends of its block.
+    for index in (0, 1, 999, 1000, 1999, 4000, 4999, 5000, 5999, 6000, 6999):
+        assert is_own_code_board_draw(index), index
+    # The pre-flight's degraded probes and the screen's panel-subset draws.
+    for index in (2000, 2999, 3000, 3001, 3999):
+        assert not is_own_code_board_draw(index), index
+    # Unclaimed above the ledger, and defensively below it.
+    for index in (7000, 10_000, -1):
+        assert not is_own_code_board_draw(index), index
+
+
 def test_observation_run_json_round_trip() -> None:
     obs = ObservationRun(
         reflection_id="refl-x",

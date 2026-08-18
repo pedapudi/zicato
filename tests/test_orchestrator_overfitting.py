@@ -137,6 +137,110 @@ def test_small_board_degrades_to_the_full_board(tmp_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
+# The baseline round's champion losses come from the pre-flight's A/A band
+# ---------------------------------------------------------------------------
+
+
+def _write_replicate_loss(tmp_path: Path, entry_id: str, replicate: int, loss: LossProfile) -> None:
+    canonical = loss_profile_path(tmp_path, _EPOCH, _PARENT, entry_id)
+    canonical.parent.mkdir(parents=True, exist_ok=True)
+    write_loss_profile(loss, canonical.with_name(f"loss.r{replicate}.json"))
+
+
+def _degraded_loss(entry_id: str) -> LossProfile:
+    """A pre-flight probe result: the champion's snapshot deliberately broken.
+
+    Distinctive kind + a loss an order of magnitude above the clean draws, so
+    any leak into the proposer's view is unmistakable in either surface.
+    """
+    profile = _loss(entry_id, drift_count=99)
+    return type(profile)(
+        **{
+            **{f.name: getattr(profile, f.name) for f in profile.__dataclass_fields__.values()},
+            "drift_counts": (DriftCount(kind="task_failed_fatal", severity="critical", count=99),),
+            "pass_fail": False,
+        }
+    )
+
+
+def test_baseline_round_reads_the_calibration_band_not_the_degraded_probes(
+    tmp_path: Path,
+) -> None:
+    # The shape of an epoch's FIRST round: the contract pre-flight has run the
+    # champion over the board (A/A draws at 1000+) and probed it degraded
+    # (2000+), but no duel has written replicate 0 yet.
+    board = _board()
+    for entry in board:
+        _write_replicate_loss(tmp_path, entry.id, 1000, _loss(entry.id, drift_count=2))
+        _write_replicate_loss(tmp_path, entry.id, 1001, _loss(entry.id, drift_count=4))
+        _write_replicate_loss(tmp_path, entry.id, 2000, _degraded_loss(entry.id))
+    weights = ScoringWeights()
+
+    train_ids, _holdout = split_board(board, weights.overfitting)
+    train_board = [e for e in board if e.id in set(train_ids)]
+    losses = _load_parent_losses(tmp_path, _EPOCH, _PARENT, train_board, read_loss_profile)
+
+    # One folded profile per train entry — not one per draw, so the outcome
+    # marginals' denominator stays "runs on the board".
+    assert len(losses) == len(train_board)
+    # The fold is the MEAN of the two calibration draws (2 and 4), which also
+    # proves the degraded 99 never entered the arithmetic.
+    assert [loss.drift_loss for loss in losses] == [3.0] * len(train_board)
+    assert all(loss.pass_fail is True for loss in losses)
+    assert all(
+        kind not in {"task_failed_fatal"}
+        for loss in losses
+        for kind in (dc.kind for dc in loss.drift_counts)
+    )
+    # Provenance reads as the calibration draw it is, not as a duel.
+    assert all(loss.match_id == "" or "aa-calibration" in loss.match_id for loss in losses)
+
+    # The detectors now have a non-empty slice to work on — the baseline
+    # channel this round used to open empty — and it describes the champion's
+    # real code only. (The prompt's own vocabulary block names every valid
+    # drift kind by construction, so the check is on the detected patterns.)
+    detected = detect_patterns(
+        DetectorInput(losses=losses, entries={e.id: e for e in train_board}, events_paths={}),
+        detectors=ALL_DETECTORS,
+    )
+    assert detected
+    assert all("task_failed_fatal" not in f"{p.summary} {p.detail}" for p in detected)
+    assert "SECRET_HOLDOUT_ENTRY" not in _assemble_prompt(tmp_path, board, weights)
+
+
+def test_duel_replicate_zero_wins_over_the_calibration_band(tmp_path: Path) -> None:
+    # From round 1 on, replicate 0 exists again: it is a draw under the
+    # round's own conditions, so it takes precedence entry by entry.
+    board = _board()
+    _write_losses(tmp_path, board)  # drift_count=3 at replicate 0
+    for entry in board:
+        _write_replicate_loss(tmp_path, entry.id, 1000, _loss(entry.id, drift_count=50))
+    weights = ScoringWeights()
+
+    train_ids, _holdout = split_board(board, weights.overfitting)
+    train_board = [e for e in board if e.id in set(train_ids)]
+    losses = _load_parent_losses(tmp_path, _EPOCH, _PARENT, train_board, read_loss_profile)
+
+    assert [loss.drift_loss for loss in losses] == [3.0] * len(train_board)
+
+
+def test_calibration_fallback_never_opens_a_holdout_entry(tmp_path: Path) -> None:
+    # The calibration band covers the FULL board, so the guarantee has to come
+    # from the reader iterating the train slice — not from what is on disk.
+    board = _board()
+    for entry in board:
+        _write_replicate_loss(tmp_path, entry.id, 1000, _loss(entry.id, drift_count=2))
+    weights = ScoringWeights()
+
+    train_ids, holdout_ids = split_board(board, weights.overfitting)
+    assert "SECRET_HOLDOUT_ENTRY" in holdout_ids
+    train_board = [e for e in board if e.id in set(train_ids)]
+    losses = _load_parent_losses(tmp_path, _EPOCH, _PARENT, train_board, read_loss_profile)
+
+    assert {loss.entry_id for loss in losses} == set(train_ids)
+
+
+# ---------------------------------------------------------------------------
 # Per-generation train/holdout loss + gap fields (OVERFITTING.md §12 #5)
 # ---------------------------------------------------------------------------
 

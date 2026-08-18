@@ -107,6 +107,7 @@ async def propose_experiment(
     skills: tuple[ProposerSkill, ...] = (),
     restrict_visibility: bool = False,
     failure_profile: str = "",
+    metric_priorities: str = "",
     process_exemplars: str = "",
     genealogy: tuple[GenealogyItem, ...] = (),
     calibration: CalibrationSummary | None = None,
@@ -241,6 +242,14 @@ async def propose_experiment(
         this engine only forwards it. Empty (the default) omits the section,
         so a caller that supplies no profile renders a byte-identical prompt
         to before this surface existed.
+    metric_priorities:
+        Optional pre-rendered, BANDED statement of what the frozen contract
+        scores (:func:`~zicato.proposer.prompts.render_metric_priorities_block`).
+        When non-empty it replaces the flat membership list in
+        ``## Valid expectation targets`` with the contract's own weight
+        ordering, zero-weight targets absent. This engine only forwards it;
+        the validator's accept-list is unaffected. Empty (the default) renders
+        the membership form byte-identically.
     process_exemplars:
         Optional pre-rendered, train-slice-only, REDACTED process-exemplar
         block (the opt-in ``proposer_quality.process_exemplars`` channel —
@@ -385,6 +394,7 @@ async def propose_experiment(
             restrict_visibility=restrict_visibility,
             custom_judge_names=custom_judge_names or frozenset(),
             failure_profile=failure_profile,
+            metric_priorities=metric_priorities,
             process_exemplars=process_exemplars,
             genealogy=genealogy,
             calibration=calibration,
