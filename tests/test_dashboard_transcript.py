@@ -997,6 +997,88 @@ def test_execution_cycle_is_unresolved_not_hidden(tmp_path: Path) -> None:
     assert all(node["fidelity"] == "unresolved" for node in execution["nodes"])
 
 
+def test_delegation_nests_under_its_stated_invocation(tmp_path: Path) -> None:
+    lines = [
+        _camel(
+            "agentInvocationStarted",
+            {"agentName": "coordinator", "invocationId": "root"},
+            runId="r",
+            sequence="0",
+            emittedAt="2026-05-16T00:00:00Z",
+        ),
+        _camel(
+            "delegationObserved",
+            {"fromAgent": "coordinator", "toAgent": "worker", "invocationId": "root"},
+            runId="r",
+            sequence="1",
+            emittedAt="2026-05-16T00:00:01Z",
+        ),
+        _camel(
+            "agentInvocationStarted",
+            {"agentName": "worker", "invocationId": "child", "parentInvocationId": "root"},
+            runId="r",
+            sequence="2",
+            emittedAt="2026-05-16T00:00:02Z",
+        ),
+        # The boundary event attributes the child to the host agent (a real
+        # producer trait): only its stated reason may be consumed, never its
+        # agent_name.
+        _camel(
+            "invocationBoundaryExited",
+            {"agentName": "coordinator", "invocationId": "child", "reason": "error:Boom"},
+            runId="r",
+            sequence="3",
+            emittedAt="2026-05-16T00:00:03Z",
+        ),
+        _camel(
+            "agentInvocationCompleted",
+            {"agentName": "coordinator", "invocationId": "root", "summary": "wrapped up"},
+            runId="r",
+            sequence="4",
+            emittedAt="2026-05-16T00:00:04Z",
+        ),
+    ]
+
+    execution = reconstruct_transcript(_write(tmp_path, lines)).execution
+    nodes = {node["node_id"]: node for node in execution["nodes"]}
+
+    assert execution["fidelity"] == "exact"
+    assert execution["root_ids"] == ["root"]
+    assert (nodes["tool:r:1"]["parent_id"], nodes["tool:r:1"]["fidelity"]) == ("root", "exact")
+    assert (nodes["child"]["name"], nodes["child"]["status"]) == ("worker", "failed")
+    assert nodes["child"]["summary"] == "error:Boom"
+    assert (nodes["root"]["status"], nodes["root"]["summary"]) == ("completed", "wrapped up")
+    # Chronological within the tree: the delegation precedes the invocation
+    # it observed.
+    assert [node["node_id"] for node in execution["nodes"]] == ["root", "tool:r:1", "child"]
+
+
+def test_invocation_cancelled_states_cancellation(tmp_path: Path) -> None:
+    lines = [
+        _camel(
+            "agentInvocationStarted",
+            {"agentName": "coordinator", "invocationId": "root"},
+            runId="r",
+            sequence="0",
+        ),
+        _camel(
+            "invocationCancelled",
+            {
+                "invocationId": "root",
+                "reason": "drift",
+                "detail": "steering cancelled the dispatch",
+            },
+            runId="r",
+            sequence="1",
+        ),
+    ]
+
+    execution = reconstruct_transcript(_write(tmp_path, lines)).execution
+
+    assert execution["nodes"][0]["status"] == "cancelled"
+    assert execution["nodes"][0]["summary"] == "steering cancelled the dispatch"
+
+
 def _find_real_events_file() -> Path | None:
     matches = sorted(glob.glob("/tmp/zicato-tournament3/.zicato/**/events.jsonl", recursive=True))
     for candidate in matches:

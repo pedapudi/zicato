@@ -709,8 +709,8 @@ hands off to the execution view:
   compare side's (the matchup's other generation), via
   `/api/run/.../transcript` and `/api/matchup/{entry_id}/conversations`;
 - the **conversation execution outline** — explicit agent invocation branches
-  and turn-scoped tool observations beneath their owning turns, with unresolved
-  records retained at run scope; see
+  with delegation observations nested under their stated invocations, beneath
+  their owning turns, with unresolved records retained at run scope; see
   [CONVERSATION-EXECUTION.md](CONVERSATION-EXECUTION.md);
 - **drift annotations** inline on the transcript turns;
 - the **harmonograf deep-link** — "Open in harmonograf," a handoff URL

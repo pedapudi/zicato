@@ -72,6 +72,30 @@ test('unattached roots and unresolved records render honestly at run scope', () 
   assert(unresolved[0].textContent.includes('researcher'));
   assert(unresolved[0].textContent.includes('checker'));
 });
+test('deep agent and tool mixtures render at full stated depth in stream order', () => {
+  const deep = { fidelity: 'exact', root_ids: ['a1'], unresolved_ids: [], nodes: [
+    { node_id: 'a1', kind: 'agent', parent_id: null, name: 'coordinator', status: 'completed', start_source_index: 0 },
+    { node_id: 't1', kind: 'tool', parent_id: 'a1', name: 'researcher', status: 'observed', start_source_index: 1 },
+    { node_id: 'a2', kind: 'agent', parent_id: 'a1', name: 'researcher', status: 'completed', start_source_index: 2 },
+    { node_id: 't2', kind: 'tool', parent_id: 'a2', name: 'archivist', status: 'observed', start_source_index: 3 },
+    { node_id: 'a3', kind: 'agent', parent_id: 'a2', name: 'archivist', status: 'failed', summary: 'error:Boom', start_source_index: 4 },
+  ] };
+  const tree = buildExecutionOutline(deep, ['a1']);
+  assertEqual(allByClass(tree, 'dn-exec-node').length, 5);
+  const leaf = tree.querySelector('[data-node-id="a3"]');
+  let depth = 0;
+  for (let up = leaf.parentNode; up && up !== tree; up = up.parentNode) {
+    if (up.classList && up.classList.contains('dn-exec-children')) depth += 1;
+  }
+  assertEqual(depth, 2, 'grandchild nests two rails deep');
+  const siblings = allByClass(tree.querySelector('[data-node-id="a1"]'), 'dn-exec-node')
+    .filter((node) => {
+      const owner = node.parentNode && node.parentNode.parentNode;
+      return owner && owner.getAttribute && owner.getAttribute('data-node-id') === 'a1';
+    })
+    .map((node) => node.getAttribute('data-node-id'));
+  assertEqual(siblings.join(','), 't1,a2', 'a delegation precedes the invocation it observed');
+});
 test('a running root without a conversation turn remains visible at run scope', () => {
   const scroller = document.createElement('div');
   const execution = { fidelity: 'exact', root_ids: ['worker'], unresolved_ids: [], nodes: [
@@ -81,4 +105,4 @@ test('a running root without a conversation turn remains visible at run scope', 
   assertEqual(allByClass(scroller, 'dn-exec-unresolved-title')[0].textContent, 'Run activity');
   assertEqual(scroller.querySelector('[data-node-id="worker"]').dataset.status, 'running');
 });
-run();
+await run();

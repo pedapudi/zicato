@@ -328,8 +328,9 @@ def test_build_run_transcript_failure_degrades_same_shape(tmp_path: Path) -> Non
 # ---------------------------------------------------------------------------
 # transcript_view — the PARTIAL (in-flight) reconstruction path, wired through
 # the REAL reconstructor (exactly as the /api/run/.../transcript endpoint injects
-# it). Pins: a growing events.jsonl surfaces more turns across reads; a torn tail
-# direct reconstruction (partial_ok does not perturb a completed run).
+# it). Pins: a growing events.jsonl surfaces more turns across reads; a torn
+# tail is tolerated; a settled run's served body matches a direct
+# reconstruction (partial_ok does not perturb a completed run).
 # ---------------------------------------------------------------------------
 
 

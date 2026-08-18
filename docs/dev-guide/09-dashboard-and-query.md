@@ -2045,9 +2045,12 @@ starts if it is unavailable in a stripped install.
 The transcript reader also owns the conversation execution outline. Turns carry
 `activity_ids`; the top-level `execution` object carries the referenced nodes,
 explicit roots, unresolved identifiers, and a fidelity value. Agent edges come
-only from `invocation_id` and `parent_invocation_id`. Delegation observations
-have no stable call or parent identifier, so the reader emits them as
-turn-scoped tool roots with `fidelity: "turn"`. Missing parents and cycles stay
+only from `invocation_id` and `parent_invocation_id`; statuses come from the
+stated lifecycle events (`agent_invocation_completed`,
+`invocation_boundary_exited`, `invocation_cancelled`). A delegation
+observation nests under the delegating invocation its event names; without a
+resolvable id it stays a turn-scoped tool root with `fidelity: "turn"`.
+Missing parents and cycles stay
 visible as unresolved records. The query reader also projects the durable
 `artifacts.json` inventory as parentless run-scoped nodes. It never assigns a
 file to an invocation without a recorded producer identifier.

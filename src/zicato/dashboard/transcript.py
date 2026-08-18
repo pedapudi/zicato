@@ -221,13 +221,30 @@ class Transcript:
         }
 
 
+# Kinds that carry an invocation_id and therefore state execution structure.
+_EXECUTION_KINDS = {
+    "agent_invocation_started",
+    "agent_invocation_completed",
+    "invocation_boundary_exited",
+    "invocation_cancelled",
+}
+
+
 def _execution_topology(events: list[dict[str, Any]]) -> dict[str, Any]:
-    """Build only invocation relationships stated by canonical events."""
+    """Build only invocation relationships and statuses stated by canonical events.
+
+    Statuses are last-writer-wins in stream order: a completion event marks
+    ``completed``; a boundary exit restates the terminal reason (``completed``,
+    ``cancelled``, anything else ``failed`` with the reason surfaced); an
+    explicit cancel marks ``cancelled``. Names come only from the invocation
+    start / completion events — the boundary events attribute nested
+    invocations to the host agent, so their ``agent_name`` is never consumed.
+    """
 
     nodes: dict[str, dict[str, Any]] = {}
     for source_index, event in enumerate(events):
         kind, payload = _kind_and_payload(event)
-        if kind not in {"agent_invocation_started", "agent_invocation_completed"}:
+        if kind not in _EXECUTION_KINDS:
             continue
         node_id = payload.get("invocation_id")
         if not isinstance(node_id, str) or not node_id:
@@ -251,13 +268,26 @@ def _execution_topology(events: list[dict[str, Any]]) -> dict[str, Any]:
             name = payload.get("agent_name")
             node["name"] = name if isinstance(name, str) and name else None
             node["start_source_index"] = source_index
-        else:
-            outcome = str(payload.get("outcome") or "completed").lower()
-            node["status"] = outcome if outcome in {"failed", "cancelled"} else "completed"
-            node["summary"] = _clip(str(payload.get("summary") or ""))
+        elif kind == "agent_invocation_completed":
+            node["status"] = "completed"
+            summary = _clip(str(payload.get("summary") or ""))
+            if summary:
+                node["summary"] = summary
             if node["name"] is None:
                 name = payload.get("agent_name")
                 node["name"] = name if isinstance(name, str) and name else None
+        elif kind == "invocation_boundary_exited":
+            reason = str(payload.get("reason") or "completed")
+            if reason in ("completed", "cancelled"):
+                node["status"] = reason
+            else:
+                node["status"] = "failed"
+                if not node["summary"]:
+                    node["summary"] = _clip(reason)
+        else:  # invocation_cancelled
+            node["status"] = "cancelled"
+            if not node["summary"]:
+                node["summary"] = _clip(str(payload.get("detail") or payload.get("reason") or ""))
 
     known = set(nodes)
     unresolved_ids: list[str] = []
@@ -271,13 +301,28 @@ def _execution_topology(events: list[dict[str, Any]]) -> dict[str, Any]:
             unresolved_ids.append(node_id)
     for node_id in unresolved_ids:
         nodes[node_id]["fidelity"] = "unresolved"
-    root_ids = [node_id for node_id, node in nodes.items() if node["parent_id"] is None]
-    return {
-        "fidelity": "partial" if unresolved_ids else "exact" if nodes else "unavailable",
-        "nodes": sorted(nodes.values(), key=lambda node: node["start_source_index"]),
-        "root_ids": root_ids,
+    execution = {
+        "fidelity": "unavailable",
+        "nodes": list(nodes.values()),
+        "root_ids": [],
         "unresolved_ids": unresolved_ids,
     }
+    _finalize_execution(execution)
+    return execution
+
+
+def _finalize_execution(execution: dict[str, Any]) -> None:
+    """Order nodes chronologically and restate roots and overall fidelity."""
+
+    nodes = execution["nodes"]
+    nodes.sort(key=lambda node: node["start_source_index"])
+    execution["root_ids"] = [n["node_id"] for n in nodes if n["parent_id"] is None]
+    if not nodes:
+        execution["fidelity"] = "unavailable"
+    elif execution["unresolved_ids"] or any(n["fidelity"] == "turn" for n in nodes):
+        execution["fidelity"] = "partial"
+    else:
+        execution["fidelity"] = "exact"
 
 
 # Event kinds that become margin annotations rather than conversation turns.
@@ -535,6 +580,7 @@ def reconstruct_transcript(events_path: Path, *, partial_ok: bool = True) -> Tra
     transcript = Transcript()
     transcript.event_count = len(events)
     transcript.execution = _execution_topology(events)
+    agent_ids = {node["node_id"] for node in transcript.execution["nodes"]}
     if not events:
         # Missing / empty file → empty transcript. An empty file from a
         # run that has not emitted anything yet is "not complete".
@@ -698,20 +744,24 @@ def reconstruct_transcript(events_path: Path, *, partial_ok: bool = True) -> Tra
                 current.kind = kind
                 tool_node_id = f"tool:{rid or 'run'}:{src_idx}"
                 current.activity_ids.append(tool_node_id)
+                # ``delegation_observed`` states the DELEGATING invocation's
+                # id; an id matching a known invocation is an explicit parent
+                # edge, never an inference. Without one the observation stays
+                # turn-scoped.
+                host = payload.get("invocation_id")
+                parent_id = host if isinstance(host, str) and host in agent_ids else None
                 transcript.execution["nodes"].append(
                     {
                         "node_id": tool_node_id,
                         "kind": "tool",
-                        "parent_id": None,
+                        "parent_id": parent_id,
                         "name": str(tool_call.get("name") or "tool"),
                         "status": "observed",
                         "start_source_index": src_idx,
                         "summary": "",
-                        "fidelity": "turn",
+                        "fidelity": "exact" if parent_id else "turn",
                     }
                 )
-                transcript.execution["root_ids"].append(tool_node_id)
-                transcript.execution["fidelity"] = "partial"
                 sub = str(tool_call.get("name") or "")
                 if sub:
                     pending_calls[sub] = current
@@ -724,6 +774,7 @@ def reconstruct_transcript(events_path: Path, *, partial_ok: bool = True) -> Tra
         _flush()
 
     transcript.turns = [t for t in transcript.turns if t.text or t.tool_calls or t.tool_results]
+    _finalize_execution(transcript.execution)
 
     # Anchor early annotations to the first visible turn.
     if transcript.turns:

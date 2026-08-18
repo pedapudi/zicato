@@ -25,19 +25,32 @@ An agent node receives a parent only when an invocation event states both
 kept in `unresolved_ids`. The reader never infers a parent from timestamps,
 event order, task names, or matching text.
 
+A node's status is the last statement in stream order among the invocation
+lifecycle events: `agent_invocation_completed` marks `completed`;
+`invocation_boundary_exited` restates the terminal reason (`completed`,
+`cancelled`, or anything else as `failed` with the reason surfaced as the
+summary); `invocation_cancelled` marks `cancelled`. A node's name comes only
+from the invocation start and completion events — the boundary events
+attribute nested invocations to the host agent, so their `agent_name` is not
+consumed.
+
 A delegation observation becomes a tool node associated with its conversation
-turn. The event does not carry a stable tool-call identifier or a parent
-invocation identifier. The node therefore has `fidelity: "turn"`, no parent,
-and the stable identity `tool:<run-id>:<source-index>`. This records when the
-tool appeared without claiming a causal relationship that the event stream
-cannot prove.
+turn, with the stable identity `tool:<run-id>:<source-index>` (the event
+carries no per-call identifier). The event does state the delegating
+invocation's id: when that id names a known agent node, the tool node takes it
+as an explicit parent and nests beneath the invocation that made the call,
+with `fidelity: "exact"`. Without a resolvable id the node stays parentless
+with `fidelity: "turn"` — the observation is recorded without claiming a
+relationship the stream did not state. Deep mixtures follow from these two
+edges alone: a sub-agent's own delegations carry that sub-invocation's id, so
+agent → tool → agent chains render at their full stated depth.
 
 The fidelity values have these meanings:
 
 | Value | Meaning |
 |---|---|
-| `exact` | Every displayed agent edge comes from explicit invocation identifiers. |
-| `partial` | The outline includes turn-scoped tools or unresolved agent records. |
+| `exact` | Every displayed edge comes from explicit invocation identifiers. |
+| `partial` | The outline includes parentless turn-scoped tools or unresolved agent records. |
 | `unavailable` | The run contains no supported execution records. |
 
 Nodes that have no conversation-turn anchor appear under **Run activity**.
