@@ -7,13 +7,17 @@ hall" — and the cache-first evaluation of each unit:
 * :class:`_IncrementalScorer` — folds a settled board unit's losses into
   a running partial aggregate so the live dashboard climbs as a round
   runs;
-* :func:`_run_full_board_unit` — runs one entry's champion + challenger
-  concurrently;
+* :func:`_run_full_board_unit` / :func:`_run_fast_board_unit` — run one
+  entry as a board unit (champion + challenger concurrently in full mode,
+  challenger alone in fast mode);
 * :func:`_run_board_units_full` / :func:`_run_board_units_full_budgeted`
   / :func:`_run_board_units_fast` — the full / wall-clock-budgeted / fast
   board-unit schedulers, bounded by :func:`_effective_unit_semaphore`;
 * :func:`_run_unit_cache_first` — the single cache-first choke point
   through which EVERY board unit is evaluated;
+* :func:`_run_replicate_slots_full` / :func:`_run_replicate_slots_fast` —
+  the overlapped replicate-slot schedulers, which run every slot of a
+  matchup against ONE semaphore rather than one slot at a time;
 * :func:`_run_replicated` — the replication loop that averages N paired
   runs.
 
@@ -33,8 +37,9 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+from collections.abc import Awaitable, Callable
 from pathlib import Path
-from typing import Any
+from typing import Any, TypeVar
 
 from zicato.core import (
     BoardEntry,
@@ -59,6 +64,11 @@ from zicato.tournament.unit_cache import (
 from zicato.tournament.worker_transport import _runtime_state, _stamp_replicate_index
 
 log = logging.getLogger("zicato.tournament.runner")
+
+# One board unit's result: a (champion, challenger) pair in full mode, a
+# challenger LossProfile in fast mode. The replicate-slot chains schedule
+# either without reading it.
+_UnitResultT = TypeVar("_UnitResultT")
 
 
 # A board unit is immutable under a fixed contract, but several matchups of one
@@ -387,6 +397,51 @@ async def _run_full_board_unit(
     if scorer is not None:
         await scorer.record(champion_loss=parent_result, challenger_loss=child_result)
     return parent_result, child_result
+
+
+async def _run_fast_board_unit(
+    *,
+    adapter: Any,
+    child_gen: Generation,
+    entry: BoardEntry,
+    weights: ScoringWeights,
+    config: RuntimeConfig,
+    workspace_root: Path,
+    epoch_id: str,
+    scorer: _IncrementalScorer | None = None,
+    match_id: str = "",
+    replicate_index: int = 0,
+    force_fresh: bool = False,
+    provenance: dict[str, _UnitProvenance] | None = None,
+) -> LossProfile:
+    """Run ONE board entry as a fast-mode board unit (challenger only).
+
+    The fast-mode twin of :func:`_run_full_board_unit`: fast mode reuses
+    the champion's cached aggregate, so a unit is the challenger run
+    alone. ``scorer`` — when supplied — is folded the instant the run
+    settles, BEFORE the unit returns, so a finished board's score
+    materialises while sibling boards are still in flight.
+
+    The side label is ``child`` for the rare case an ActiveTournament file
+    does exist, and a benign no-op otherwise.
+    """
+    child_loss = await _run_unit_cache_first(
+        adapter=adapter,
+        generation=child_gen,
+        entry=entry,
+        weights=weights,
+        config=config,
+        workspace_root=workspace_root,
+        epoch_id=epoch_id,
+        side=Side.CHILD,
+        replicate_index=replicate_index,
+        match_id=match_id,
+        force_fresh=force_fresh,
+        provenance=provenance,
+    )
+    if scorer is not None:
+        await scorer.record(challenger_loss=child_loss)
+    return child_loss
 
 
 def _skip_unit_side(
@@ -938,27 +993,22 @@ async def _run_board_units_fast(
                     provenance=provenance,
                 )
                 return skipped_loss
-            child_loss = await _run_unit_cache_first(
+            # Scored the instant it settles — concurrently with the sibling
+            # board units still running.
+            return await _run_fast_board_unit(
                 adapter=adapter,
-                generation=child_gen,
+                child_gen=child_gen,
                 entry=entry,
                 weights=weights,
                 config=config,
                 workspace_root=workspace_root,
                 epoch_id=epoch_id,
-                # Fast mode runs only the challenger; the side label is
-                # "child" for the rare case an ActiveTournament file does
-                # exist, and a benign no-op otherwise.
-                side=Side.CHILD,
-                replicate_index=replicate_index,
+                scorer=scorer,
                 match_id=match_id,
+                replicate_index=replicate_index,
                 force_fresh=force_fresh,
                 provenance=provenance,
             )
-            # Score this board unit the instant it settles — concurrently
-            # with the sibling board units still running.
-            await scorer.record(challenger_loss=child_loss)
-            return child_loss
 
     results = await asyncio.gather(
         *(_bounded(entry) for entry in board),
@@ -1198,6 +1248,277 @@ async def _run_unit_after_cache_miss(
     return loss
 
 
+def _overlap_replicate_slots(config: RuntimeConfig, matchup_deadline: float | None) -> bool:
+    """Whether a matchup's replicate slots may run overlapped.
+
+    The barrier between two replicate slots carries exactly one decision:
+    whether to LAUNCH the next slot at all. Two knobs make that decision —
+    the matchup wall-clock deadline and the per-round token budget — and
+    each reads what the previous slot spent, so each needs the previous
+    slot to have settled first. With neither knob engaged every slot runs
+    in full, the boundary carries no decision, and the slots may overlap so
+    a permit freed by a finished unit is taken by the next slot's unit
+    instead of idling until the whole slot drains.
+
+    When either knob IS engaged the sequential loop stays exactly as it is.
+    Overlapping there would launch slots the budget was meant to stop,
+    folding synthesised worst-case skip losses into entries that measured
+    cleanly.
+    """
+    return matchup_deadline is None and config.token_ledger is None
+
+
+async def _run_entry_replicate_chains(
+    *,
+    slot_boards: list[list[BoardEntry]],
+    match_id: str,
+    replicate_base: int,
+    semaphore: asyncio.Semaphore,
+    run_unit: Callable[[BoardEntry, int], Awaitable[_UnitResultT]],
+) -> list[list[_UnitResultT]]:
+    """Run every entry's replicate slots as one chain, all chains at once.
+
+    The fan-out is inverted relative to the sequential path: instead of one
+    gather per replicate slot over the entries, there is one chain per
+    ENTRY, and a chain runs that entry's slots in order. Every unit still
+    takes ``semaphore``, so ``parallelism`` board units remain the ceiling —
+    the overlap changes WHICH unit takes a freed permit, never how many
+    exist.
+
+    Running an entry's own slots in order is the ordering rule the overlap
+    is built on: no unit of ``(entry, slot N+1)`` starts before
+    ``(entry, slot N)`` has settled. It keeps a matchup's in-flight units
+    distinct in ``(generation, entry, replicate)`` — the key the run
+    identity, the unit cache, and the in-process coalescing map all use —
+    and it costs nothing the sequential path did not already cost: both cap
+    the concurrency at ``min(parallelism, board size)``.
+
+    ``slot_boards`` holds one board per slot (the replicate index stamped
+    onto each entry's context), all in the SAME entry order;
+    ``slot_boards[offset][position]`` is therefore entry ``position`` as
+    slot ``offset`` must run it. ``run_unit`` receives that entry and its
+    absolute replicate index (``replicate_base + offset``).
+
+    A failing unit ends its own chain and is re-raised — in board order —
+    only after every chain has settled (``return_exceptions=True``), never
+    by cancelling a sibling chain: a cancelled sibling would orphan a
+    subprocess worker mid-run and skip its cleanup.
+
+    Returns the results ENTRY-major (``[position][offset]``); the caller
+    transposes to whatever shape it folds.
+    """
+    from zicato.telemetry.meta_loop import SPAN_MATCHUP, meta_span  # noqa: PLC0415
+
+    board_size = len(slot_boards[0]) if slot_boards else 0
+
+    async def _chain(position: int) -> list[_UnitResultT]:
+        results: list[_UnitResultT] = []
+        for offset, slot_board in enumerate(slot_boards):
+            entry = slot_board[position]
+            # Matchup span before the semaphore, so the gap to the first
+            # worker child reads as the queue wait (HARMONOGRAF.md §7) — the
+            # same bracket the sequential schedulers put around a unit.
+            _mu_meta = {"entry_id": entry.id, "match_id": match_id}
+            async with (
+                meta_span(entry.id, kind=SPAN_MATCHUP, meta=_mu_meta),
+                semaphore,
+            ):
+                results.append(await run_unit(entry, replicate_base + offset))
+        return results
+
+    chains = await asyncio.gather(
+        *(_chain(position) for position in range(board_size)),
+        return_exceptions=True,
+    )
+    settled: list[list[_UnitResultT]] = []
+    for chain in chains:
+        if isinstance(chain, BaseException):
+            raise chain
+        settled.append(chain)
+    return settled
+
+
+async def _run_replicate_slots_full(
+    *,
+    adapter: Any,
+    parent_gen: Generation,
+    child_gen: Generation,
+    board: list[BoardEntry],
+    weights: ScoringWeights,
+    config: RuntimeConfig,
+    workspace_root: Path,
+    epoch_id: str,
+    match_id: str,
+    replicate_base: int,
+    replicate_count: int,
+    force_fresh: bool,
+    parent_force_fresh: bool | None,
+    provenance: dict[str, _UnitProvenance] | None,
+    unit_semaphore: asyncio.Semaphore | None,
+) -> list[tuple[dict[str, LossProfile], dict[str, LossProfile]]]:
+    """Run every full-mode replicate slot of a matchup, slots overlapped.
+
+    The overlapped counterpart of calling :func:`_run_board_units_full`
+    once per slot. ONE semaphore and ONE scorer span all the slots:
+
+    * the semaphore, because once the slots overlap a per-slot semaphore
+      would let R slots run ``R × parallelism`` units at once;
+    * the scorer, because two scorers writing disjoint subsets of the same
+      live partial aggregate make the dashboard scalar jump up and down.
+
+    The shared scorer projects over ``len(board) * replicate_count`` units,
+    so its live scalar is the aggregate OF ALL REPLICATE UNITS SEEN SO FAR,
+    not of the settled fold: the fold (:func:`_average_losses`) folds an
+    entry's replicates first — majority-voting ``pass_fail`` — and only
+    then aggregates. The live ``pass_rate`` therefore approaches the mean
+    of the per-replicate verdicts rather than the settled majority vote,
+    and does not converge to the settled number. That is deliberate: the
+    live projection is a progress signal, the settled fold is the
+    authority, and the racing path already tolerates the same looseness in
+    its per-duel scorers.
+
+    Returns the per-slot ``(left_losses, right_losses)`` maps in SLOT
+    order — replicate 0 first — which is what the fold's
+    representative-replicate rule reads.
+    """
+    semaphore = _effective_unit_semaphore(unit_semaphore, config)
+    scorer = _IncrementalScorer(
+        weights,
+        workspace_root,
+        champion_id=parent_gen.id,
+        challenger_id=child_gen.id,
+        board_total=len(board) * replicate_count,
+    )
+    slot_boards = [
+        _stamp_replicate_index(board, replicate_base + offset) for offset in range(replicate_count)
+    ]
+
+    async def _unit(entry: BoardEntry, replicate_index: int) -> tuple[LossProfile, LossProfile]:
+        return await _run_full_board_unit(
+            adapter=adapter,
+            parent_gen=parent_gen,
+            child_gen=child_gen,
+            entry=entry,
+            weights=weights,
+            config=config,
+            workspace_root=workspace_root,
+            epoch_id=epoch_id,
+            scorer=scorer,
+            match_id=match_id,
+            replicate_index=replicate_index,
+            force_fresh=force_fresh,
+            parent_force_fresh=parent_force_fresh,
+            provenance=provenance,
+        )
+
+    chains = await _run_entry_replicate_chains(
+        slot_boards=slot_boards,
+        match_id=match_id,
+        replicate_base=replicate_base,
+        semaphore=semaphore,
+        run_unit=_unit,
+    )
+
+    runs: list[tuple[dict[str, LossProfile], dict[str, LossProfile]]] = []
+    for offset in range(replicate_count):
+        left_losses: dict[str, LossProfile] = {}
+        right_losses: dict[str, LossProfile] = {}
+        for entry, chain in zip(board, chains, strict=True):
+            left_losses[entry.id], right_losses[entry.id] = chain[offset]
+        runs.append((left_losses, right_losses))
+    return runs
+
+
+async def _run_replicate_slots_fast(
+    *,
+    adapter: Any,
+    child_gen: Generation,
+    board: list[BoardEntry],
+    weights: ScoringWeights,
+    config: RuntimeConfig,
+    workspace_root: Path,
+    epoch_id: str,
+    match_id: str = "",
+    replicate_base: int = 0,
+    replicate_count: int = 1,
+    force_fresh: bool = False,
+    provenance: dict[str, _UnitProvenance] | None = None,
+    unit_semaphore: asyncio.Semaphore | None = None,
+) -> list[dict[str, LossProfile]]:
+    """Run every fast-mode replicate slot of a round, slots overlapped.
+
+    The fast-mode twin of :func:`_run_replicate_slots_full`: one
+    challenger run per unit, one shared semaphore and one shared scorer
+    across the slots, the same per-entry slot chains. The shared semaphore
+    matters most here — the fast round supplies none of its own, so a
+    per-slot semaphore would be a fresh ``Semaphore(parallelism)`` per
+    slot and the overlapped slots would run ``R × parallelism`` units at
+    once.
+
+    Returns the per-slot challenger loss maps in SLOT order (replicate 0
+    first); see :func:`_run_replicate_slots_full` on what the shared
+    scorer's live scalar means.
+    """
+    semaphore = _effective_unit_semaphore(unit_semaphore, config)
+    scorer = _IncrementalScorer(
+        weights,
+        workspace_root,
+        challenger_id=child_gen.id,
+        board_total=len(board) * replicate_count,
+    )
+    slot_boards = [
+        _stamp_replicate_index(board, replicate_base + offset) for offset in range(replicate_count)
+    ]
+
+    async def _unit(entry: BoardEntry, replicate_index: int) -> LossProfile:
+        return await _run_fast_board_unit(
+            adapter=adapter,
+            child_gen=child_gen,
+            entry=entry,
+            weights=weights,
+            config=config,
+            workspace_root=workspace_root,
+            epoch_id=epoch_id,
+            scorer=scorer,
+            match_id=match_id,
+            replicate_index=replicate_index,
+            force_fresh=force_fresh,
+            provenance=provenance,
+        )
+
+    chains = await _run_entry_replicate_chains(
+        slot_boards=slot_boards,
+        match_id=match_id,
+        replicate_base=replicate_base,
+        semaphore=semaphore,
+        run_unit=_unit,
+    )
+
+    runs: list[dict[str, LossProfile]] = []
+    for offset in range(replicate_count):
+        losses: dict[str, LossProfile] = {}
+        for entry, chain in zip(board, chains, strict=True):
+            losses[entry.id] = chain[offset]
+        runs.append(losses)
+    return runs
+
+
+def _fold_replicate_runs(
+    runs: list[tuple[dict[str, LossProfile], dict[str, LossProfile]]],
+) -> tuple[dict[str, LossProfile], dict[str, LossProfile]]:
+    """Fold a matchup's per-slot loss maps into one pair of maps.
+
+    ``runs`` is SLOT-major — replicate 0 first — because
+    :func:`~zicato.tournament.unit_cache._average_losses` carries the
+    fields it cannot fold from the first map it is given, and that
+    representative has to be replicate 0 rather than whichever slot
+    happened to settle first. A single slot returns its maps unfolded.
+    """
+    if len(runs) == 1:
+        return runs[0][0], runs[0][1]
+    return _average_losses([r[0] for r in runs]), _average_losses([r[1] for r in runs])
+
+
 async def _run_replicated(
     *,
     adapter: Any,
@@ -1226,9 +1547,15 @@ async def _run_replicated(
     (true only when a strict majority of replicates passed), which keeps
     the pass-rate monotonicity rule meaningful under replication.
 
-    The board-unit runner is reused verbatim — replication is a thin loop
-    over it — so the per-run subprocess isolation, scoring, and failure
-    surfacing are unchanged.
+    The board unit is the same unit either way — same subprocess
+    isolation, same cache slotting, same failure surfacing — but the slots
+    are scheduled one of two ways. With neither budget knob engaged they
+    run OVERLAPPED (:func:`_run_replicate_slots_full`): all slots at once
+    against one shared semaphore, so a permit a finished unit frees is
+    taken by the next slot's unit rather than idling until the whole slot
+    drains. With a knob engaged the slots run one at a time, because the
+    boundary between them is where the knob's stop-launching decision is
+    made — see :func:`_overlap_replicate_slots`.
 
     Cache-first board-unit evaluation (structure-agnostic)
     ------------------------------------------------------
@@ -1312,6 +1639,33 @@ async def _run_replicated(
     )
 
     runs: list[tuple[dict[str, LossProfile], dict[str, LossProfile]]] = []
+
+    # With more than one slot and neither budget knob engaged, the slots run
+    # OVERLAPPED against one shared semaphore: a permit freed by a finished
+    # unit goes to the next slot's unit instead of idling until the whole
+    # slot drains (see _overlap_replicate_slots for why the sequential loop
+    # below is kept for the budgeted paths).
+    if replicate_count > 1 and _overlap_replicate_slots(config, matchup_deadline):
+        runs = await _run_replicate_slots_full(
+            adapter=adapter,
+            parent_gen=left_gen,
+            child_gen=right_gen,
+            board=board,
+            weights=weights,
+            config=config,
+            workspace_root=workspace_root,
+            epoch_id=epoch_id,
+            match_id=match_id,
+            replicate_base=replicate_base,
+            replicate_count=replicate_count,
+            force_fresh=force_fresh,
+            parent_force_fresh=None,
+            provenance=provenance,
+            unit_semaphore=unit_semaphore,
+        )
+        left_folded, right_folded = _fold_replicate_runs(runs)
+        return left_folded, right_folded, mode, provenance
+
     for replicate_offset in range(replicate_count):
         # Each replicate keys a distinct cache slot; the same board-unit
         # runner handles champion + challenger cache-first, so an existing
@@ -1355,11 +1709,8 @@ async def _run_replicated(
         )
         runs.append((left_losses, right_losses))
 
-    if len(runs) == 1:
-        return runs[0][0], runs[0][1], mode, provenance
-    left_avg = _average_losses([r[0] for r in runs])
-    right_avg = _average_losses([r[1] for r in runs])
-    return left_avg, right_avg, mode, provenance
+    left_folded, right_folded = _fold_replicate_runs(runs)
+    return left_folded, right_folded, mode, provenance
 
 
 __all__ = [
@@ -1368,7 +1719,10 @@ __all__ = [
     "_run_board_units_fast",
     "_run_board_units_full",
     "_run_board_units_full_budgeted",
+    "_run_fast_board_unit",
     "_run_full_board_unit",
+    "_run_replicate_slots_fast",
+    "_run_replicate_slots_full",
     "_run_replicated",
     "_run_unit_cache_first",
 ]

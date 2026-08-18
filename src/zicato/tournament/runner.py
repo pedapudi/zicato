@@ -64,10 +64,12 @@ from zicato.tournament.regression import run_regression_suite
 from zicato.tournament.scheduling import (  # noqa: F401
     _effective_unit_semaphore,
     _IncrementalScorer,
+    _overlap_replicate_slots,
     _run_board_units_fast,
     _run_board_units_full,
     _run_board_units_full_budgeted,
     _run_full_board_unit,
+    _run_replicate_slots_fast,
     _run_replicated,
     _run_unit_cache_first,
     _token_budget_spent,
@@ -1184,11 +1186,14 @@ async def run_fast_mode(
     same :func:`~zicato.tournament.unit_cache._average_losses` every other
     path uses. ``1`` (this function's own default; the orchestrator threads
     the structure's resolved value) is the historical single-run path,
-    byte-identical to before the knob existed. A spent per-round token
-    budget stops scheduling further slots and the fold settles over the
-    completed ones, matching :func:`_run_replicated` — the alternative is
-    averaging synthesised worst-case skips into entries that already
-    measured cleanly.
+    byte-identical to before the knob existed. With no token ledger bound
+    the slots run OVERLAPPED against one shared semaphore
+    (:func:`~zicato.tournament.scheduling._run_replicate_slots_fast`), as
+    on the full path. With one bound they run one at a time: a spent
+    per-round token budget stops scheduling further slots and the fold
+    settles over the completed ones, matching :func:`_run_replicated` —
+    the alternative is averaging synthesised worst-case skips into entries
+    that already measured cleanly.
 
     The asymmetry is deliberate and is NOT variance reduction on both
     sides: the champion remains ONE frozen cached draw no matter how high
@@ -1309,46 +1314,65 @@ async def run_fast_mode(
         # ``parallelism`` run subprocesses at once (one challenger run
         # per unit).
         #
-        # Replicate slots are sequential, mirroring ``_run_replicated``:
-        # each slot keys a distinct per-unit cache slot, so an already-
-        # evaluated replicate is reused and only missing slots run. The
-        # index is stamped onto each entry's context as run provenance for
-        # the harness under test (a seeded harness varies its noise draw by
-        # it); slot 0 is left untouched, byte-identical to before.
+        # Each replicate slot keys a distinct per-unit cache slot, so an
+        # already-evaluated replicate is reused and only missing slots run.
+        # The index is stamped onto each entry's context as run provenance
+        # for the harness under test (a seeded harness varies its noise draw
+        # by it); slot 0 is left untouched, byte-identical to before.
         replicate_count = max(1, replicates)
         replicate_runs: list[dict[str, LossProfile]] = []
-        for replicate_index in range(replicate_count):
-            # Per-round token budget (WS-H): stop scheduling FURTHER
-            # replicate slots once the budget is spent, exactly as
-            # ``_run_replicated`` does. Without this the spent budget makes
-            # the remaining slots' units SKIPS — synthesised worst-case
-            # budget-exceeded losses, persisted to their cache slots — which
-            # the fold then averages into entries that already measured
-            # cleanly, degrading the challenger for the rest of the epoch on
-            # units that were never attempted. Settling with the completed
-            # slots is the honest reading. Slot 0 always enters the loop (its
-            # own between-unit checks skip-record if the budget was already
-            # spent) so the return shape is intact. Inert with the knob off.
-            if replicate_index > 0 and _token_budget_spent(config):
-                log.warning(
-                    "fast-mode round: per-round token budget reached after %d/%d "
-                    "replicate slot(s); settling with the completed replicates",
-                    replicate_index,
-                    replicate_count,
-                )
-                break
-            replicate_runs.append(
-                await _run_board_units_fast(
-                    adapter=adapter,
-                    child_gen=child_gen,
-                    board=_stamp_replicate_index(board, replicate_index),
-                    weights=weights,
-                    config=config,
-                    workspace_root=workspace_root,
-                    epoch_id=epoch_id,
-                    replicate_index=replicate_index,
-                )
+        if replicate_count > 1 and _overlap_replicate_slots(config, None):
+            # No budget knob is engaged, so no decision sits on the boundary
+            # between two slots and they run OVERLAPPED against ONE shared
+            # semaphore — a permit freed by a finished unit is taken by the
+            # next slot's unit instead of idling until the whole slot drains.
+            # The scheduler mints that one semaphore (this round supplies
+            # none), which is what keeps ``parallelism`` the ceiling.
+            replicate_runs = await _run_replicate_slots_fast(
+                adapter=adapter,
+                child_gen=child_gen,
+                board=board,
+                weights=weights,
+                config=config,
+                workspace_root=workspace_root,
+                epoch_id=epoch_id,
+                replicate_count=replicate_count,
             )
+        else:
+            for replicate_index in range(replicate_count):
+                # Per-round token budget (WS-H): stop scheduling FURTHER
+                # replicate slots once the budget is spent, exactly as
+                # ``_run_replicated`` does — and the reason a bound ledger
+                # keeps the slots sequential at all. Without this the spent
+                # budget makes the remaining slots' units SKIPS — synthesised
+                # worst-case budget-exceeded losses, persisted to their cache
+                # slots — which the fold then averages into entries that
+                # already measured cleanly, degrading the challenger for the
+                # rest of the epoch on units that were never attempted.
+                # Settling with the completed slots is the honest reading.
+                # Slot 0 always enters the loop (its own between-unit checks
+                # skip-record if the budget was already spent) so the return
+                # shape is intact. Inert with the knob off.
+                if replicate_index > 0 and _token_budget_spent(config):
+                    log.warning(
+                        "fast-mode round: per-round token budget reached after %d/%d "
+                        "replicate slot(s); settling with the completed replicates",
+                        replicate_index,
+                        replicate_count,
+                    )
+                    break
+                replicate_runs.append(
+                    await _run_board_units_fast(
+                        adapter=adapter,
+                        child_gen=child_gen,
+                        board=_stamp_replicate_index(board, replicate_index),
+                        weights=weights,
+                        config=config,
+                        workspace_root=workspace_root,
+                        epoch_id=epoch_id,
+                        replicate_index=replicate_index,
+                    )
+                )
         if len(replicate_runs) == 1:
             child_losses = replicate_runs[0]
         else:
