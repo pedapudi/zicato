@@ -291,6 +291,7 @@ def test_build_run_transcript_stamps_coordinates(tmp_path: Path) -> None:
     events = ws / "epochs" / EPOCH / "generations" / GEN / "runs" / ENTRY / "events.jsonl"
     events.parent.mkdir(parents=True)
     events.write_text('{"runId": "r1"}\n', encoding="utf-8")
+    _write_json(events.parent / "artifacts.json", {"files": [{"path": "report.html", "size": 42}]})
     payload = {"run_id": "", "turns": [{"role": "user"}], "annotations": [], "event_count": 1}
     out = build_run_transcript(
         WorkspacePaths(ws), EPOCH, GEN, ENTRY, reconstruct=_fake_reconstruct(payload)
@@ -301,6 +302,12 @@ def test_build_run_transcript_stamps_coordinates(tmp_path: Path) -> None:
     assert out["entry_id"] == ENTRY
     assert out["run_id"] == ENTRY  # reducer produced no run_id -> directory-name fallback
     assert out["turns"] == [{"role": "user"}]
+    artifact = out["execution"]["nodes"][0]
+    assert (artifact["kind"], artifact["name"], artifact["summary"]) == (
+        "artifact",
+        "report.html",
+        "42 bytes",
+    )
 
 
 def test_build_run_transcript_failure_degrades_same_shape(tmp_path: Path) -> None:
@@ -321,9 +328,9 @@ def test_build_run_transcript_failure_degrades_same_shape(tmp_path: Path) -> Non
 # ---------------------------------------------------------------------------
 # transcript_view — the PARTIAL (in-flight) reconstruction path, wired through
 # the REAL reconstructor (exactly as the /api/run/.../transcript endpoint injects
-# it). Pins: a growing events.jsonl surfaces more turns across reads; a torn tail
-# line is tolerated (never raises); a settled run's served body is identical to a
-# direct reconstruction (partial_ok does not perturb a completed run).
+# it). Pins: a growing events.jsonl surfaces more turns across reads; a torn
+# tail is tolerated; a settled run's served body matches a direct
+# reconstruction (partial_ok does not perturb a completed run).
 # ---------------------------------------------------------------------------
 
 

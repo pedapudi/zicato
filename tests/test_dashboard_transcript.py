@@ -1,13 +1,3 @@
-"""Tests for the dashboard conversation-reconstruction module.
-
-Synthetic ``events.jsonl`` fixtures exercise the two goldfive envelope
-shapes (camelCase top-level payload key vs. normalized ``{kind, payload}``),
-both timestamp encodings (RFC-3339 string vs. proto ``{seconds, nanos}``),
-turn grouping, tool call/result pairing, annotation anchoring, malformed /
-truncated line tolerance, and the missing-file path. A final test runs the
-parser against a real tournament telemetry file when one is present.
-"""
-
 from __future__ import annotations
 
 import glob
@@ -22,10 +12,6 @@ from zicato.dashboard.transcript import (
     Turn,
     reconstruct_transcript,
 )
-
-# ---------------------------------------------------------------------------
-# Fixture helpers
-# ---------------------------------------------------------------------------
 
 
 def _write(tmp_path: Path, lines: list[str], name: str = "events.jsonl") -> Path:
@@ -52,11 +38,6 @@ def _normalized(kind: str, payload: dict, **envelope) -> str:
     return json.dumps(obj)
 
 
-# ---------------------------------------------------------------------------
-# Missing / empty file
-# ---------------------------------------------------------------------------
-
-
 def test_missing_file_yields_empty_transcript(tmp_path: Path) -> None:
     t = reconstruct_transcript(tmp_path / "does_not_exist.jsonl")
     assert isinstance(t, Transcript)
@@ -76,11 +57,6 @@ def test_empty_file_yields_empty_transcript(tmp_path: Path) -> None:
     assert t.complete is False
 
 
-# ---------------------------------------------------------------------------
-# Basic agent messages + ordering
-# ---------------------------------------------------------------------------
-
-
 def test_agent_messages_and_turn_ordering(tmp_path: Path) -> None:
     lines = [
         _camel(
@@ -90,7 +66,6 @@ def test_agent_messages_and_turn_ordering(tmp_path: Path) -> None:
             sequence="0",
             emittedAt="2026-05-16T00:00:00Z",
         ),
-        # Two consecutive same-agent reasoning events -> one turn.
         _camel(
             "goldfiveLlmCallStart",
             {"name": "judge_reasoning", "inputPreview": "first thought", "targetAgentId": "alpha"},
@@ -109,7 +84,6 @@ def test_agent_messages_and_turn_ordering(tmp_path: Path) -> None:
             sequence="2",
             emittedAt="2026-05-16T00:00:02Z",
         ),
-        # Different agent -> new turn.
         _camel(
             "goldfiveLlmCallStart",
             {"name": "judge_reasoning", "inputPreview": "beta thought", "targetAgentId": "beta"},
@@ -131,7 +105,6 @@ def test_agent_messages_and_turn_ordering(tmp_path: Path) -> None:
     assert t.event_count == 5
     assert t.complete is True
 
-    # user(run_started), agent(alpha merged), agent(beta), system(run_completed)
     assert [turn.role for turn in t.turns] == ["user", "agent", "agent", "system"]
     assert t.turns[0].text == "Build a thing"
 
@@ -141,22 +114,11 @@ def test_agent_messages_and_turn_ordering(tmp_path: Path) -> None:
     assert t.turns[2].agent == "beta"
     assert t.turns[3].text == "done"
 
-    # Turns are seq-ordered.
     seqs = [turn.seq for turn in t.turns]
     assert seqs == sorted(seqs)
 
 
 def test_run_started_and_goal_derived_prompt_not_duplicated(tmp_path: Path) -> None:
-    """The user prompt renders ONCE when run_started + goal_derived repeat it.
-
-    goldfive emits the prompt twice for a trivially-derived goal: once as
-    ``run_started.goal_summary`` (the raw request) and again as
-    ``goal_derived.goals[*].summary`` (the framework's derived goal, identical
-    text for a single-task board). Both map to a user turn and merge into one,
-    so the prompt used to render twice (separated by a blank line). The merge
-    must dedup the identical segment.
-    """
-
     prompt = "Outline a deck on quarterly metrics for Q3."
     lines = [
         _camel(
@@ -183,8 +145,6 @@ def test_run_started_and_goal_derived_prompt_not_duplicated(tmp_path: Path) -> N
     ]
     t = reconstruct_transcript(_write(tmp_path, lines))
 
-    # run_started + goal_derived collapse into ONE user turn carrying the
-    # prompt exactly once — not "<prompt>\n\n<prompt>".
     assert [turn.role for turn in t.turns] == ["user", "system"]
     user = t.turns[0]
     assert user.text == prompt
@@ -192,9 +152,6 @@ def test_run_started_and_goal_derived_prompt_not_duplicated(tmp_path: Path) -> N
 
 
 def test_distinct_goal_derived_text_still_appended(tmp_path: Path) -> None:
-    """The dedup is exact-segment only — a genuinely different derived goal
-    still joins the user turn (no over-eager collapse of distinct content)."""
-
     lines = [
         _camel(
             "runStarted",
@@ -219,18 +176,7 @@ def test_distinct_goal_derived_text_still_appended(tmp_path: Path) -> None:
 
 
 def test_conversation_started_without_sequence_sorts_first(tmp_path: Path) -> None:
-    # goldfive's persistence sink emits ``conversation_started`` OUTSIDE
-    # the per-run sequence stream: the event carries only an
-    # ``emittedAt`` timestamp and no ``sequence`` field. The reconstructed
-    # transcript must surface that synthetic "conversation started" turn
-    # at the START of the rendered order (chronological), not the END
-    # (which is what a naïve sequence-first / sequence-less-sorts-last
-    # ordering produces). The downstream conversation view renders
-    # turns in the order this module yields them, so this is the
-    # authoritative test for the invariant.
     lines = [
-        # The real sink writes conversation_started with no `sequence`
-        # field — modelled exactly here.
         _camel(
             "conversationStarted",
             {"conversationId": "c1"},
@@ -272,9 +218,6 @@ def test_conversation_started_without_sequence_sorts_first(tmp_path: Path) -> No
     ]
     t = reconstruct_transcript(_write(tmp_path, lines))
 
-    # The synthetic "conversation started" turn sits FIRST in the
-    # transcript — not at the tail. The rest of the events follow in
-    # their natural chronological order.
     assert t.turns, "transcript must produce at least one turn"
     first = t.turns[0]
     assert first.role == "system"
@@ -283,7 +226,6 @@ def test_conversation_started_without_sequence_sorts_first(tmp_path: Path) -> No
         f"got role={first.role!r} kind={first.kind!r} text={first.text!r}"
     )
 
-    # Real-event order is preserved after the synthetic frame.
     roles = [turn.role for turn in t.turns]
     assert roles == [
         "system",
@@ -291,21 +233,13 @@ def test_conversation_started_without_sequence_sorts_first(tmp_path: Path) -> No
         "agent",
         "system",
     ], f"expected [system, user, agent, system] but got {roles}"
-    # The agent turn carries content from the two consecutive llm-call
-    # events, in their emitted order.
     agent_text = t.turns[2].text
     assert "first thought" in agent_text and "final thought" in agent_text
     assert agent_text.index("first thought") < agent_text.index("final thought")
-    # The terminal run_completed turn sits LAST, not the conversation
-    # frame.
     assert t.turns[-1].text == "done"
 
 
 def test_conversation_started_first_even_when_listed_late(tmp_path: Path) -> None:
-    # Same as above but with the conversation_started line appearing in
-    # the MIDDLE of the file (an unlikely append order, but a robust
-    # test). The reconstructor must still float it to the top because
-    # its timestamp precedes every numbered event.
     lines = [
         _camel(
             "runStarted",
@@ -334,7 +268,6 @@ def test_conversation_started_first_even_when_listed_late(tmp_path: Path) -> Non
 
 
 def test_ordering_by_sequence_not_file_order(tmp_path: Path) -> None:
-    # Lines written out of sequence order; reconstruction reorders by seq.
     lines = [
         _camel(
             "runStarted",
@@ -363,15 +296,7 @@ def test_ordering_by_sequence_not_file_order(tmp_path: Path) -> None:
     assert t.turns[0].text == "first"
 
 
-# ---------------------------------------------------------------------------
-# source_index — the live-follow append cursor (issue #194 §2)
-# ---------------------------------------------------------------------------
-
-
 def test_source_index_is_the_parsed_position_not_the_sequence(tmp_path: Path) -> None:
-    """The cursor counts FILE positions, so out-of-order sequences do not
-    move it — that is what makes it monotone over an append-only file even
-    when a multi-run stream restarts its sequence numbering."""
     lines = [
         _camel("runStarted", {"goalSummary": "g"}, runId="r", sequence="5"),
         _camel(
@@ -383,15 +308,12 @@ def test_source_index_is_the_parsed_position_not_the_sequence(tmp_path: Path) ->
     ]
     t = reconstruct_transcript(_write(tmp_path, lines))
 
-    # Sorted by sequence (the agent turn leads), but each turn remembers the
-    # LINE it came from: the agent turn is file position 1.
     assert [turn.text for turn in t.turns] == ["later text", "g"]
     assert [turn.source_index for turn in t.turns] == [1, 0]
     assert t.event_count == 2
 
 
 def test_merged_turn_carries_the_highest_source_index_it_absorbed(tmp_path: Path) -> None:
-    """A turn that keeps growing must keep re-qualifying for the delta."""
     lines = [
         _camel("goldfiveLlmCallStart", {"inputPreview": "thinking"}, runId="r", sequence="0"),
         _camel("goldfiveLlmCallEnd", {"decisionSummary": "done"}, runId="r", sequence="1"),
@@ -403,8 +325,6 @@ def test_merged_turn_carries_the_highest_source_index_it_absorbed(tmp_path: Path
 
 
 def test_unparseable_line_takes_no_source_index_position(tmp_path: Path) -> None:
-    """A skipped line must not consume a cursor position, or every later
-    turn would sit one past where the follower expects it."""
     lines = [
         _camel("runStarted", {"goalSummary": "g"}, runId="r", sequence="0"),
         "{ not json",
@@ -421,22 +341,7 @@ def test_unparseable_line_takes_no_source_index_position(tmp_path: Path) -> None
     assert t.event_count == 2
 
 
-# ---------------------------------------------------------------------------
-# Multi-run grouping (multi_turn_emulated board entries)
-# ---------------------------------------------------------------------------
-
-
 def _run_group(run_id: str, base_secs: int, prompt: str, reply: str) -> list[str]:
-    """Synthesize the canonical 4-event shape of one goldfive run.
-
-    ``conversation_started`` (no ``sequence``, lifecycle frame from the
-    persistence sink) + ``run_started`` (seq=0) + a single
-    ``goldfive_llm_call_end`` (seq=1, the agent's reply) +
-    ``run_completed`` (seq=2). The four events all carry the same
-    ``runId``. The base second offsets the lifecycle timestamps so the
-    test can build groups with interleaved-yet-distinct chronologies.
-    """
-
     def _ts(offset: float) -> str:
         secs = base_secs + offset
         whole = int(secs)
@@ -479,19 +384,6 @@ def _run_group(run_id: str, base_secs: int, prompt: str, reply: str) -> list[str
 def test_multi_run_events_group_per_run_id_and_sort_by_min_emitted_at(
     tmp_path: Path,
 ) -> None:
-    # Bug #172: a ``multi_turn_emulated`` board entry writes N goldfive
-    # runs (one per emulated user turn) into one events file. Each run
-    # has its own ``conversation_started`` lifecycle frame (no
-    # sequence). A flat sort lifted ALL of them to the top, then
-    # interleaved the sequenced events. The fix groups events by
-    # ``run_id`` first, then sorts groups by min-emittedAt, then within
-    # each group applies the original "seq=None first, then by sequence"
-    # ordering.
-    #
-    # Three runs, written deliberately OUT OF chronological order in
-    # the file: run_b begins at T=10, run_a begins at T=0, run_c begins
-    # at T=20. The grouping logic must reorder the GROUPS so the
-    # rendered output reads run_a → run_b → run_c.
     lines = (
         _run_group("run_b", base_secs=10, prompt="prompt B", reply="reply B")
         + _run_group("run_a", base_secs=0, prompt="prompt A", reply="reply A")
@@ -499,38 +391,27 @@ def test_multi_run_events_group_per_run_id_and_sort_by_min_emitted_at(
     )
     t = reconstruct_transcript(_write(tmp_path, lines))
 
-    # Three lifecycle "conversation started" turns appear — one per
-    # run — NOT three stacked at the top followed by interleaved bodies.
     cs_turns = [turn for turn in t.turns if turn.text == "conversation started"]
     assert len(cs_turns) == 3, (
         f"expected exactly 3 conversation_started turns (one per run), " f"got {len(cs_turns)}"
     )
 
-    # The flat ``turns`` list groups each run's turns CONTIGUOUSLY, in
-    # chronological run order. Every turn carries the 1-based
-    # ``run_index`` of its group.
     indices = [turn.run_index for turn in t.turns]
     assert indices == sorted(indices), (
         f"run_index must be non-decreasing across the flat turn list, " f"got {indices}"
     )
-    # Specifically: 1,1,1,1, 2,2,2,2, 3,3,3,3 (four turns per group:
-    # conversation_started + run_started + agent reply + run_completed).
     assert (
         indices == [1] * 4 + [2] * 4 + [3] * 4
     ), f"expected four turns per run group in run-index order, got {indices}"
 
-    # Each run group starts with its own conversation_started frame.
     assert t.turns[0].text == "conversation started"
     assert t.turns[4].text == "conversation started"
     assert t.turns[8].text == "conversation started"
 
-    # And each group's run_id is the one of the goldfive run that owns it.
     assert t.turns[0].run_id == "run_a"
     assert t.turns[4].run_id == "run_b"
     assert t.turns[8].run_id == "run_c"
 
-    # The user prompts appear in run order (A, then B, then C),
-    # interleaved CORRECTLY with the agent replies, not scrambled.
     user_prompts = [turn.text for turn in t.turns if turn.role == "user"]
     assert user_prompts == [
         "prompt A",
@@ -542,14 +423,10 @@ def test_multi_run_events_group_per_run_id_and_sort_by_min_emitted_at(
     ]
     assert agent_replies == ["reply A", "reply B", "reply C"]
 
-    # The transcript-level run_id picks the chronologically earliest run.
     assert t.run_id == "run_a"
 
 
 def test_single_run_events_emit_run_index_one_on_every_turn(tmp_path: Path) -> None:
-    # Single-run files (the common case) must collapse to a single
-    # group; every turn carries ``run_index == 1`` and the prior
-    # "conversation_started first" invariant holds verbatim.
     lines = _run_group("only_run", base_secs=0, prompt="hi", reply="hello")
     t = reconstruct_transcript(_write(tmp_path, lines))
 
@@ -559,19 +436,12 @@ def test_single_run_events_emit_run_index_one_on_every_turn(tmp_path: Path) -> N
         f"got {[turn.run_index for turn in t.turns]}"
     )
     assert all(turn.run_id == "only_run" for turn in t.turns)
-    # And the "conversation started" frame is FIRST, same as before.
     assert t.turns[0].text == "conversation started"
 
 
 def test_multi_run_delegation_does_not_leak_across_run_boundaries(
     tmp_path: Path,
 ) -> None:
-    # A delegation in run 1 must never match an
-    # ``agent_invocation_completed`` from run 2: a multi-run grouping
-    # that left state shared across runs would scramble tool-call
-    # pairing too. Construct two runs where each has its own
-    # coordinator → worker delegation and assert the calls pair within
-    # their OWN run.
     def _delegating_run(run_id: str, base_secs: int, work: str) -> list[str]:
         def _ts(offset: float) -> str:
             secs = base_secs + offset
@@ -629,19 +499,12 @@ def test_multi_run_delegation_does_not_leak_across_run_boundaries(
     )
     t = reconstruct_transcript(_write(tmp_path, lines))
 
-    # The coordinator turn for r1 has a tool-result paired to its OWN
-    # work ("done alpha"), not r2's "done beta".
     r1_coord = next(turn for turn in t.turns if turn.run_index == 1 and turn.agent == "coordinator")
     r2_coord = next(turn for turn in t.turns if turn.run_index == 2 and turn.agent == "coordinator")
     assert len(r1_coord.tool_results) == 1
     assert r1_coord.tool_results[0]["result"] == "done alpha"
     assert len(r2_coord.tool_results) == 1
     assert r2_coord.tool_results[0]["result"] == "done beta"
-
-
-# ---------------------------------------------------------------------------
-# Tool call + result pairing
-# ---------------------------------------------------------------------------
 
 
 def test_tool_call_and_result_pairing(tmp_path: Path) -> None:
@@ -653,7 +516,6 @@ def test_tool_call_and_result_pairing(tmp_path: Path) -> None:
             sequence="0",
             emittedAt="2026-05-16T00:00:00Z",
         ),
-        # Coordinator delegates to a sub-agent: a tool call.
         _camel(
             "delegationObserved",
             {
@@ -666,7 +528,6 @@ def test_tool_call_and_result_pairing(tmp_path: Path) -> None:
             sequence="1",
             emittedAt="2026-05-16T00:00:01Z",
         ),
-        # Sub-agent completes: its result pairs back to the call.
         _camel(
             "agentInvocationCompleted",
             {"agentName": "worker", "summary": "work finished", "taskId": "t1"},
@@ -684,7 +545,6 @@ def test_tool_call_and_result_pairing(tmp_path: Path) -> None:
     ]
     t = reconstruct_transcript(_write(tmp_path, lines))
 
-    # Find the coordinator turn that issued the delegation.
     coord = next(turn for turn in t.turns if turn.agent == "coordinator")
     assert len(coord.tool_calls) == 1
     call = coord.tool_calls[0]
@@ -695,11 +555,6 @@ def test_tool_call_and_result_pairing(tmp_path: Path) -> None:
     result = coord.tool_results[0]
     assert result["name"] == "worker"
     assert result["result"] == "work finished"
-
-
-# ---------------------------------------------------------------------------
-# Drift + steering annotations
-# ---------------------------------------------------------------------------
 
 
 def test_drift_detection_becomes_annotation(tmp_path: Path) -> None:
@@ -750,7 +605,6 @@ def test_drift_detection_becomes_annotation(tmp_path: Path) -> None:
     ann = drift[0]
     assert "off_topic" in ann.summary
     assert "wandered off" in ann.summary
-    # Anchored to the agent turn that preceded it (seq 1).
     assert ann.anchor_seq == 1
     assert ann.detail["event_kind"] == "drift_detected"
     assert ann.detail["id"] == "drift-1"
@@ -794,14 +648,8 @@ def test_steering_decision_becomes_annotation(tmp_path: Path) -> None:
     assert steering[0].anchor_seq == 1
 
 
-# ---------------------------------------------------------------------------
-# Envelope-shape and timestamp variety
-# ---------------------------------------------------------------------------
-
-
 def test_camelcase_and_snakecase_keys_both_accepted(tmp_path: Path) -> None:
     lines = [
-        # camelCase top-level payload key.
         _camel(
             "runStarted",
             {"goalSummary": "camel goal"},
@@ -809,7 +657,6 @@ def test_camelcase_and_snakecase_keys_both_accepted(tmp_path: Path) -> None:
             sequence="0",
             emittedAt="2026-05-16T00:00:00Z",
         ),
-        # Normalized {kind, payload} shape with snake_case payload fields.
         _normalized(
             "goldfive_llm_call_start",
             {
@@ -821,8 +668,6 @@ def test_camelcase_and_snakecase_keys_both_accepted(tmp_path: Path) -> None:
             sequence=1,
             emitted_at="2026-05-16T00:00:01Z",
         ),
-        # Normalized shape using snake_case envelope, camelCase payload
-        # (defensive: producers are inconsistent).
         _normalized(
             "task_completed",
             {"taskId": "t1", "summary": "task output text"},
@@ -840,7 +685,6 @@ def test_camelcase_and_snakecase_keys_both_accepted(tmp_path: Path) -> None:
 
 
 def test_proto_and_rfc3339_timestamps_both_parsed(tmp_path: Path) -> None:
-    # 1778906336 seconds == 2026-05-16T04:38:56 UTC.
     lines = [
         _camel(
             "runStarted",
@@ -859,19 +703,12 @@ def test_proto_and_rfc3339_timestamps_both_parsed(tmp_path: Path) -> None:
     ]
     t = reconstruct_transcript(_write(tmp_path, lines))
 
-    # RFC-3339 string passes through verbatim.
     assert t.turns[0].ts == "2026-05-16T04:38:56.123456Z"
-    # Proto {seconds, nanos} is rendered to an RFC-3339 string.
     proto_turn = t.turns[1]
     assert proto_turn.ts is not None
     assert proto_turn.ts.startswith("2026-05-16T04:38:56")
     assert proto_turn.ts.endswith("Z")
     assert ".5" in proto_turn.ts  # 500_000_000 nanos -> .5
-
-
-# ---------------------------------------------------------------------------
-# Malformed / truncated tolerance
-# ---------------------------------------------------------------------------
 
 
 def test_truncated_final_line_tolerated(tmp_path: Path) -> None:
@@ -889,16 +726,13 @@ def test_truncated_final_line_tolerated(tmp_path: Path) -> None:
         sequence="1",
         emittedAt="2026-05-16T00:00:01Z",
     )
-    # A writer caught mid-flush leaves a half-written final line.
     truncated = '{"runCompleted": {"outcomeSumm'
     path = tmp_path / "events.jsonl"
     path.write_text(good + "\n" + good2 + "\n" + truncated, encoding="utf-8")
 
     t = reconstruct_transcript(path, partial_ok=True)
-    # The two good lines parsed; the bad final line was skipped.
     assert t.event_count == 2
     assert any(turn.text == "thought" for turn in t.turns)
-    # No terminal event seen AND a truncated tail -> not complete.
     assert t.complete is False
 
 
@@ -922,7 +756,6 @@ def test_malformed_interior_line_skipped_not_fatal(tmp_path: Path) -> None:
         ),
     ]
     t = reconstruct_transcript(_write(tmp_path, lines))
-    # Only the two dict lines counted.
     assert t.event_count == 2
     assert t.complete is True
     assert t.turns[-1].text == "ok"
@@ -950,14 +783,7 @@ def test_in_progress_run_without_terminal_is_incomplete(tmp_path: Path) -> None:
     assert t.event_count == 2
 
 
-# ---------------------------------------------------------------------------
-# Annotation anchoring edge case
-# ---------------------------------------------------------------------------
-
-
 def test_annotation_before_any_turn_anchors_to_first_turn(tmp_path: Path) -> None:
-    # A plan_submitted before any conversation content: its anchor must
-    # not dangle as None once turns exist.
     lines = [
         _normalized(
             "plan_submitted",
@@ -979,11 +805,6 @@ def test_annotation_before_any_turn_anchors_to_first_turn(tmp_path: Path) -> Non
     assert len(plan_anns) == 1
     assert t.turns  # there is at least one turn
     assert plan_anns[0].anchor_seq == t.turns[0].seq
-
-
-# ---------------------------------------------------------------------------
-# Serialization
-# ---------------------------------------------------------------------------
 
 
 def test_to_dict_is_json_serializable(tmp_path: Path) -> None:
@@ -1030,7 +851,6 @@ def test_to_dict_is_json_serializable(tmp_path: Path) -> None:
     t = reconstruct_transcript(_write(tmp_path, lines))
     d = t.to_dict()
 
-    # Round-trips through JSON cleanly.
     encoded = json.dumps(d)
     decoded = json.loads(encoded)
     assert decoded["run_id"] == "r"
@@ -1039,7 +859,6 @@ def test_to_dict_is_json_serializable(tmp_path: Path) -> None:
     assert isinstance(decoded["turns"], list)
     assert isinstance(decoded["annotations"], list)
 
-    # Turn / Annotation shapes match the documented contract.
     turn_keys = {
         "seq",
         "ts",
@@ -1051,9 +870,8 @@ def test_to_dict_is_json_serializable(tmp_path: Path) -> None:
         "tool_results",
         "run_id",
         "run_index",
-        # The live-follow append cursor (issue #194 §2): the highest
-        # parsed-event index folded into this turn.
         "source_index",
+        "activity_ids",
     }
     for turn in decoded["turns"]:
         assert set(turn.keys()) == turn_keys
@@ -1061,14 +879,204 @@ def test_to_dict_is_json_serializable(tmp_path: Path) -> None:
     for ann in decoded["annotations"]:
         assert set(ann.keys()) == ann_keys
 
-    # Nested to_dict() also works in isolation.
     assert Turn().to_dict()["tool_calls"] == []
+    assert Turn().to_dict()["activity_ids"] == []
     assert Annotation().to_dict()["detail"] == {}
 
 
-# ---------------------------------------------------------------------------
-# Real telemetry (skipped when no tournament file is present)
-# ---------------------------------------------------------------------------
+def test_execution_topology_uses_only_explicit_invocation_parents(tmp_path: Path) -> None:
+    lines = [
+        _camel(
+            "agentInvocationStarted",
+            {
+                "agentName": "coordinator",
+                "invocationId": "root",
+                "taskId": "task-root",
+            },
+            runId="r",
+            sequence="0",
+            emittedAt="2026-05-16T00:00:00Z",
+        ),
+        _camel(
+            "agentInvocationStarted",
+            {
+                "agentName": "researcher",
+                "invocationId": "child",
+                "parentInvocationId": "root",
+                "taskId": "task-child",
+            },
+            runId="r",
+            sequence="1",
+            emittedAt="2026-05-16T00:00:01Z",
+        ),
+        _camel(
+            "agentInvocationStarted",
+            {
+                "agentName": "detached",
+                "invocationId": "orphan",
+                "parentInvocationId": "absent",
+            },
+            runId="r",
+            sequence="2",
+            emittedAt="2026-05-16T00:00:02Z",
+        ),
+        _camel(
+            "agentInvocationCompleted",
+            {
+                "agentName": "researcher",
+                "invocationId": "child",
+                "summary": "evidence gathered",
+                "taskId": "task-child",
+            },
+            runId="r",
+            sequence="3",
+            emittedAt="2026-05-16T00:00:03Z",
+        ),
+    ]
+
+    transcript = reconstruct_transcript(_write(tmp_path, lines))
+    execution = transcript.execution
+    nodes = {node["node_id"]: node for node in execution["nodes"]}
+
+    assert execution["fidelity"] == "partial"
+    assert execution["root_ids"] == ["root"]
+    assert execution["unresolved_ids"] == ["orphan"]
+    assert nodes["child"] == {
+        "node_id": "child",
+        "kind": "agent",
+        "parent_id": "root",
+        "name": "researcher",
+        "status": "completed",
+        "start_source_index": 1,
+        "summary": "evidence gathered",
+        "fidelity": "exact",
+    }
+    assert nodes["orphan"]["parent_id"] == "absent"
+    assert nodes["orphan"]["fidelity"] == "unresolved"
+    assert transcript.turns[0].activity_ids == ["child"]
+
+
+def test_observed_tool_is_turn_scoped_without_inferred_parent(tmp_path: Path) -> None:
+    lines = [
+        _camel(
+            "delegationObserved",
+            {"fromAgent": "lead", "toAgent": "worker", "taskId": "task-1"},
+            runId="r",
+            sequence="0",
+            emittedAt="2026-05-16T00:00:00Z",
+        )
+    ]
+
+    transcript = reconstruct_transcript(_write(tmp_path, lines))
+    node = transcript.execution["nodes"][0]
+
+    assert transcript.execution["fidelity"] == "partial"
+    assert transcript.execution["root_ids"] == ["tool:r:0"]
+    assert transcript.turns[0].activity_ids == ["tool:r:0"]
+    assert node["kind"] == "tool"
+    assert node["parent_id"] is None
+    assert node["status"] == "observed"
+    assert node["fidelity"] == "turn"
+
+
+def test_execution_cycle_is_unresolved_not_hidden(tmp_path: Path) -> None:
+    lines = [
+        _camel(
+            "agentInvocationStarted",
+            {"agentName": name, "invocationId": name, "parentInvocationId": parent},
+            runId="r",
+            sequence=str(index),
+        )
+        for index, (name, parent) in enumerate((("a", "b"), ("b", "a")))
+    ]
+
+    execution = reconstruct_transcript(_write(tmp_path, lines)).execution
+
+    assert execution["root_ids"] == []
+    assert execution["unresolved_ids"] == ["a", "b"]
+    assert all(node["fidelity"] == "unresolved" for node in execution["nodes"])
+
+
+def test_delegation_nests_under_its_stated_invocation(tmp_path: Path) -> None:
+    lines = [
+        _camel(
+            "agentInvocationStarted",
+            {"agentName": "coordinator", "invocationId": "root"},
+            runId="r",
+            sequence="0",
+            emittedAt="2026-05-16T00:00:00Z",
+        ),
+        _camel(
+            "delegationObserved",
+            {"fromAgent": "coordinator", "toAgent": "worker", "invocationId": "root"},
+            runId="r",
+            sequence="1",
+            emittedAt="2026-05-16T00:00:01Z",
+        ),
+        _camel(
+            "agentInvocationStarted",
+            {"agentName": "worker", "invocationId": "child", "parentInvocationId": "root"},
+            runId="r",
+            sequence="2",
+            emittedAt="2026-05-16T00:00:02Z",
+        ),
+        # The boundary event attributes the child to the host agent (a real
+        # producer trait): only its stated reason may be consumed, never its
+        # agent_name.
+        _camel(
+            "invocationBoundaryExited",
+            {"agentName": "coordinator", "invocationId": "child", "reason": "error:Boom"},
+            runId="r",
+            sequence="3",
+            emittedAt="2026-05-16T00:00:03Z",
+        ),
+        _camel(
+            "agentInvocationCompleted",
+            {"agentName": "coordinator", "invocationId": "root", "summary": "wrapped up"},
+            runId="r",
+            sequence="4",
+            emittedAt="2026-05-16T00:00:04Z",
+        ),
+    ]
+
+    execution = reconstruct_transcript(_write(tmp_path, lines)).execution
+    nodes = {node["node_id"]: node for node in execution["nodes"]}
+
+    assert execution["fidelity"] == "exact"
+    assert execution["root_ids"] == ["root"]
+    assert (nodes["tool:r:1"]["parent_id"], nodes["tool:r:1"]["fidelity"]) == ("root", "exact")
+    assert (nodes["child"]["name"], nodes["child"]["status"]) == ("worker", "failed")
+    assert nodes["child"]["summary"] == "error:Boom"
+    assert (nodes["root"]["status"], nodes["root"]["summary"]) == ("completed", "wrapped up")
+    # Chronological within the tree: the delegation precedes the invocation
+    # it observed.
+    assert [node["node_id"] for node in execution["nodes"]] == ["root", "tool:r:1", "child"]
+
+
+def test_invocation_cancelled_states_cancellation(tmp_path: Path) -> None:
+    lines = [
+        _camel(
+            "agentInvocationStarted",
+            {"agentName": "coordinator", "invocationId": "root"},
+            runId="r",
+            sequence="0",
+        ),
+        _camel(
+            "invocationCancelled",
+            {
+                "invocationId": "root",
+                "reason": "drift",
+                "detail": "steering cancelled the dispatch",
+            },
+            runId="r",
+            sequence="1",
+        ),
+    ]
+
+    execution = reconstruct_transcript(_write(tmp_path, lines)).execution
+
+    assert execution["nodes"][0]["status"] == "cancelled"
+    assert execution["nodes"][0]["summary"] == "steering cancelled the dispatch"
 
 
 def _find_real_events_file() -> Path | None:
@@ -1087,17 +1095,12 @@ def test_reconstructs_a_real_tournament_file() -> None:
 
     t = reconstruct_transcript(real)
     assert isinstance(t, Transcript)
-    # A real file always has a run_id and a positive event count.
     assert t.run_id
     assert t.event_count > 0
-    # It produces at least some conversation content.
     assert t.turns
-    # Turns are seq-ordered (None-seq turns, if any, sort last).
     seqs = [turn.seq for turn in t.turns if turn.seq is not None]
     assert seqs == sorted(seqs)
-    # Every annotation anchors to a real turn seq or stays None.
     turn_seqs = {turn.seq for turn in t.turns}
     for ann in t.annotations:
         assert ann.anchor_seq is None or ann.anchor_seq in turn_seqs
-    # The whole thing serializes.
     json.dumps(t.to_dict())

@@ -70,6 +70,7 @@ export function createTranscriptStream(coords, opts) {
       return {
         turns: Array.isArray(body.turns) ? body.turns : [],
         annotations: Array.isArray(body.annotations) ? body.annotations : [],
+        execution: body.execution || null,
         reset,
       };
     },

@@ -1,33 +1,7 @@
-"""Conversation reconstruction from a goldfive ``events.jsonl`` file.
+"""Pure, tolerant conversation reconstruction from an ``events.jsonl`` file.
 
-The dashboard renders a champion run and a challenger run side by side as
-two conversation transcripts. This module is the parser that turns one
-goldfive ``JSONLPersistenceSink`` file into an ordered transcript:
-
-* :class:`Turn` — one conversational step (a user prompt, an agent
-  message, a tool call + its result).
-* :class:`Annotation` — a margin note anchored near a turn (a drift
-  detection, a steering decision, a judge verdict, a plan revision).
-* :class:`Transcript` — the whole reconstruction plus run metadata.
-
-Design constraints:
-
-* Pure. The only I/O is reading the file the caller hands in. No network,
-  no model calls.
-* Tolerant. Each line is an independent JSON object; a malformed or
-  truncated line is skipped, never fatal. A missing file yields an empty
-  transcript. This mirrors the reducer's plain-JSON fallback and the
-  supervisor's run-log tailer, both of which parse the same growing file.
-* Two envelope shapes. goldfive's persistence sink writes camelCase keys
-  (``MessageToJson`` default) with the payload kind as a top-level
-  envelope key (``goldfiveLlmCallStart`` alongside ``eventId`` /
-  ``runId`` / ``sequence`` / ``emittedAt``). The reducer's proto-reparse
-  path instead writes a normalized ``{kind, payload, emitted_at, ...}``
-  shape with proto ``{seconds, nanos}`` timestamps. Both occur, sometimes
-  interleaved in one file; both are handled here.
-
-Key normalization (camelCase -> snake_case) is reused from
-:mod:`zicato.analyzer.aggregator` rather than re-implemented.
+Both persisted camel-case envelopes and normalized ``{kind, payload}`` events
+are accepted. Malformed lines are skipped so growing runs remain readable.
 """
 
 from __future__ import annotations
@@ -43,13 +17,7 @@ from zicato.query.paths import to_snake
 __all__ = ["Annotation", "Transcript", "Turn", "reconstruct_transcript"]
 
 
-# ---------------------------------------------------------------------------
-# Envelope handling
-# ---------------------------------------------------------------------------
-
-# Top-level envelope keys that are NOT the payload kind in the camelCase
-# shape. Anything else at the top level is the payload oneof key. Stored
-# snake_cased so the lookup is shape-agnostic.
+# Snake-cased envelope fields that cannot be the payload kind.
 _ENVELOPE_KEYS = {
     "event_id",
     "run_id",
@@ -63,14 +31,7 @@ _ENVELOPE_KEYS = {
 
 
 def _snake_deep(value: Any) -> Any:
-    """Recursively snake_case every dict key in ``value``.
-
-    The aggregator's ``_snake_keys`` is shallow — sufficient there because
-    its absorbers only read scalar payload fields. Transcript
-    reconstruction reaches into nested payloads (plan tasks, drift detail,
-    timestamp ``{seconds, nanos}`` sub-objects), so the conversion must
-    descend. Scalars and lists pass through with their elements converted.
-    """
+    """Recursively snake-case keys because transcript payloads are nested."""
 
     if isinstance(value, dict):
         return {to_snake(k): _snake_deep(v) for k, v in value.items()}
@@ -80,14 +41,7 @@ def _snake_deep(value: Any) -> Any:
 
 
 def _iter_events(path: Path) -> tuple[list[dict[str, Any]], bool]:
-    """Read ``path`` and return ``(events, last_line_ok)``.
-
-    Each element of ``events`` is a fully snake_cased JSON object. Blank
-    lines are skipped. A line that fails to parse is skipped; if it is the
-    final line of the file it is reported via ``last_line_ok=False`` so
-    the caller can flag a possibly-truncated in-progress run. A missing or
-    unreadable file yields ``([], True)``.
-    """
+    """Return parsed events and whether the final nonblank line was valid."""
 
     events: list[dict[str, Any]] = []
     last_line_ok = True
@@ -97,7 +51,6 @@ def _iter_events(path: Path) -> tuple[list[dict[str, Any]], bool]:
     except OSError:
         return [], True
 
-    # Trailing blank lines do not count as truncation.
     while raw_lines and not raw_lines[-1].strip():
         raw_lines.pop()
 
@@ -108,7 +61,6 @@ def _iter_events(path: Path) -> tuple[list[dict[str, Any]], bool]:
         try:
             obj = json.loads(stripped)
         except json.JSONDecodeError:
-            # A bad final line is the classic "writer mid-flush" case.
             if idx == len(raw_lines) - 1:
                 last_line_ok = False
             continue
@@ -118,12 +70,7 @@ def _iter_events(path: Path) -> tuple[list[dict[str, Any]], bool]:
 
 
 def _kind_and_payload(event: dict[str, Any]) -> tuple[str, dict[str, Any]]:
-    """Resolve ``(kind, payload)`` for one snake_cased event envelope.
-
-    Shape 2 (``{kind, payload, ...}``) wins when an explicit ``kind`` key
-    is present. Otherwise the first non-envelope top-level key is the
-    payload oneof key and its value the payload (shape 1).
-    """
+    """Resolve normalized and top-level-oneof envelope shapes."""
 
     explicit = event.get("kind")
     if isinstance(explicit, str) and explicit:
@@ -135,7 +82,6 @@ def _kind_and_payload(event: dict[str, Any]) -> tuple[str, dict[str, Any]]:
             continue
         if isinstance(value, dict):
             return key, value
-        # A scalar payload key (rare) still identifies the kind.
         return key, {}
     return "", {}
 
@@ -155,12 +101,7 @@ def _seq_of(event: dict[str, Any]) -> int | None:
 
 
 def _norm_ts(value: Any) -> str | None:
-    """Normalize a timestamp to an RFC-3339 string.
-
-    Accepts the two shapes goldfive emits: an RFC-3339 string (camelCase
-    ``MessageToJson`` path) and a proto ``{seconds, nanos}`` object (the
-    reducer's proto-reparse path). Anything unrecognized yields ``None``.
-    """
+    """Normalize an RFC-3339 string or proto ``{seconds, nanos}`` timestamp."""
 
     if value is None:
         return None
@@ -177,7 +118,6 @@ def _norm_ts(value: Any) -> str | None:
         except (TypeError, ValueError):
             return None
         dt = datetime.fromtimestamp(secs, tz=UTC)
-        # Render with nanosecond precision, trimmed, RFC-3339 'Z' suffix.
         iso = dt.strftime("%Y-%m-%dT%H:%M:%S")
         if nsecs:
             iso += f".{nsecs:09d}".rstrip("0")
@@ -185,39 +125,9 @@ def _norm_ts(value: Any) -> str | None:
     return None
 
 
-# ---------------------------------------------------------------------------
-# Data model
-# ---------------------------------------------------------------------------
-
-
 @dataclass
 class Turn:
-    """One conversational step in the reconstructed transcript.
-
-    Consecutive raw events attributed to the same agent collapse into a
-    single turn; a tool call and its matching result land in the same
-    turn's ``tool_calls`` / ``tool_results`` lists.
-
-    ``source_index`` is the HIGHEST parsed-event index folded into this
-    turn — the append cursor the live-follow delta filters on. It counts
-    positions in the parsed-event list (blank / unparseable lines never
-    take a position), NOT the per-run ``sequence``: a multi-run events
-    file restarts ``sequence`` at 0 inside every ``runId`` group, so a
-    sequence-keyed cursor is not monotone over the file, while the parsed
-    index always is (the file is append-only). ``-1`` marks a turn built
-    with no index attribution.
-
-    ``run_index`` is the 1-based ordinal of the goldfive run this turn
-    belongs to within a multi-run events file. ``multi_turn_emulated``
-    board entries spawn N goldfive runs (one per emulated user turn) and
-    write them into a single events stream; every run has a distinct
-    ``runId``. The reconstructor groups events by ``runId`` first, then
-    sorts the groups chronologically (by min ``emittedAt`` of each
-    group). The 1-based ordinal lets the renderer emit a visible
-    boundary between groups so the operator can see "turn 2 of a
-    multi-turn entry" at a glance. Single-run files emit
-    ``run_index == 1`` for every turn (no boundary fires).
-    """
+    """One step; ``source_index`` is its live cursor and ``run_index`` its run group."""
 
     seq: int | None = None
     ts: str | None = None
@@ -230,6 +140,7 @@ class Turn:
     run_id: str | None = None
     run_index: int = 1
     source_index: int = -1
+    activity_ids: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -244,6 +155,7 @@ class Turn:
             "run_id": self.run_id,
             "run_index": self.run_index,
             "source_index": self.source_index,
+            "activity_ids": list(self.activity_ids),
         }
 
 
@@ -289,6 +201,14 @@ class Transcript:
     run_id: str | None = None
     event_count: int = 0
     complete: bool = False
+    execution: dict[str, Any] = field(
+        default_factory=lambda: {
+            "fidelity": "unavailable",
+            "nodes": [],
+            "root_ids": [],
+            "unresolved_ids": [],
+        }
+    )
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -297,16 +217,115 @@ class Transcript:
             "complete": self.complete,
             "turns": [t.to_dict() for t in self.turns],
             "annotations": [a.to_dict() for a in self.annotations],
+            "execution": self.execution,
         }
 
 
-# ---------------------------------------------------------------------------
-# Event classification
-# ---------------------------------------------------------------------------
+# Kinds that carry an invocation_id and therefore state execution structure.
+_EXECUTION_KINDS = {
+    "agent_invocation_started",
+    "agent_invocation_completed",
+    "invocation_boundary_exited",
+    "invocation_cancelled",
+}
 
-# Event kinds whose payload becomes a margin annotation rather than a
-# conversation turn. These are the drift / steering / judge observability
-# events from the goldfive Event taxonomy.
+
+def _execution_topology(events: list[dict[str, Any]]) -> dict[str, Any]:
+    """Build only invocation relationships and statuses stated by canonical events.
+
+    Statuses are last-writer-wins in stream order: a completion event marks
+    ``completed``; a boundary exit restates the terminal reason (``completed``,
+    ``cancelled``, anything else ``failed`` with the reason surfaced); an
+    explicit cancel marks ``cancelled``. Names come only from the invocation
+    start / completion events — the boundary events attribute nested
+    invocations to the host agent, so their ``agent_name`` is never consumed.
+    """
+
+    nodes: dict[str, dict[str, Any]] = {}
+    for source_index, event in enumerate(events):
+        kind, payload = _kind_and_payload(event)
+        if kind not in _EXECUTION_KINDS:
+            continue
+        node_id = payload.get("invocation_id")
+        if not isinstance(node_id, str) or not node_id:
+            continue
+        node = nodes.setdefault(
+            node_id,
+            {
+                "node_id": node_id,
+                "kind": "agent",
+                "parent_id": None,
+                "name": None,
+                "status": "running",
+                "start_source_index": source_index,
+                "summary": "",
+                "fidelity": "exact",
+            },
+        )
+        if kind == "agent_invocation_started":
+            parent = payload.get("parent_invocation_id")
+            node["parent_id"] = parent if isinstance(parent, str) and parent else None
+            name = payload.get("agent_name")
+            node["name"] = name if isinstance(name, str) and name else None
+            node["start_source_index"] = source_index
+        elif kind == "agent_invocation_completed":
+            node["status"] = "completed"
+            summary = _clip(str(payload.get("summary") or ""))
+            if summary:
+                node["summary"] = summary
+            if node["name"] is None:
+                name = payload.get("agent_name")
+                node["name"] = name if isinstance(name, str) and name else None
+        elif kind == "invocation_boundary_exited":
+            reason = str(payload.get("reason") or "completed")
+            if reason in ("completed", "cancelled"):
+                node["status"] = reason
+            else:
+                node["status"] = "failed"
+                if not node["summary"]:
+                    node["summary"] = _clip(reason)
+        else:  # invocation_cancelled
+            node["status"] = "cancelled"
+            if not node["summary"]:
+                node["summary"] = _clip(str(payload.get("detail") or payload.get("reason") or ""))
+
+    known = set(nodes)
+    unresolved_ids: list[str] = []
+    for node_id, node in nodes.items():
+        parent = node["parent_id"]
+        seen = {node_id}
+        while parent in known and parent not in seen:
+            seen.add(parent)
+            parent = nodes[parent]["parent_id"]
+        if parent is not None and (parent not in known or parent in seen):
+            unresolved_ids.append(node_id)
+    for node_id in unresolved_ids:
+        nodes[node_id]["fidelity"] = "unresolved"
+    execution = {
+        "fidelity": "unavailable",
+        "nodes": list(nodes.values()),
+        "root_ids": [],
+        "unresolved_ids": unresolved_ids,
+    }
+    _finalize_execution(execution)
+    return execution
+
+
+def _finalize_execution(execution: dict[str, Any]) -> None:
+    """Order nodes chronologically and restate roots and overall fidelity."""
+
+    nodes = execution["nodes"]
+    nodes.sort(key=lambda node: node["start_source_index"])
+    execution["root_ids"] = [n["node_id"] for n in nodes if n["parent_id"] is None]
+    if not nodes:
+        execution["fidelity"] = "unavailable"
+    elif execution["unresolved_ids"] or any(n["fidelity"] == "turn" for n in nodes):
+        execution["fidelity"] = "partial"
+    else:
+        execution["fidelity"] = "exact"
+
+
+# Event kinds that become margin annotations rather than conversation turns.
 _ANNOTATION_KINDS = {
     "drift_detected": "drift",
     "steering_decision_made": "steering",
@@ -321,8 +340,6 @@ _ANNOTATION_KINDS = {
     "refine_attempted": "steering",
 }
 
-# Kinds that mark run / conversation lifecycle. They become low-noise
-# "system" turns so the transcript has visible start / end anchors.
 _SYSTEM_KINDS = {
     "run_started",
     "run_completed",
@@ -331,7 +348,6 @@ _SYSTEM_KINDS = {
     "conversation_ended",
 }
 
-# Terminal kinds — their presence means the file is not truncated.
 _TERMINAL_KINDS = {"run_completed", "run_aborted", "conversation_ended"}
 
 _TRUNC = " … [truncated]"
@@ -415,11 +431,6 @@ def _annotation_summary(kind: str, payload: dict[str, Any]) -> str:
         if isinstance(val, str) and val:
             return _clip(val, 512)
     return kind
-
-
-# ---------------------------------------------------------------------------
-# Turn extraction
-# ---------------------------------------------------------------------------
 
 
 def _agent_of(payload: dict[str, Any]) -> str | None:
@@ -568,25 +579,15 @@ def reconstruct_transcript(events_path: Path, *, partial_ok: bool = True) -> Tra
 
     transcript = Transcript()
     transcript.event_count = len(events)
+    transcript.execution = _execution_topology(events)
+    agent_ids = {node["node_id"] for node in transcript.execution["nodes"]}
     if not events:
         # Missing / empty file → empty transcript. An empty file from a
         # run that has not emitted anything yet is "not complete".
         transcript.complete = False
         return transcript
 
-    # --- group events by run_id -----------------------------------------
-    # ``multi_turn_emulated`` board entries spawn one goldfive run per
-    # emulated user turn and write them into one events file. Each run
-    # owns its own ``runId`` and its own ``conversation_started`` /
-    # ``run_completed`` lifecycle frames; the per-run sequence numbering
-    # restarts at 0 inside each group. A flat sort over the merged stream
-    # would interleave the runs (and lift every ``conversation_started``
-    # frame to the top — see bug #172). Grouping first preserves
-    # per-run-id contiguity in the rendered transcript.
-    #
-    # Events without a ``run_id`` (a malformed line, or a future stream
-    # variant) fall into a single anonymous group keyed on ``None`` so
-    # they still render in chronological order.
+    # Group before sorting because each run restarts its sequence at zero.
     groups: dict[str | None, list[tuple[int, dict[str, Any]]]] = {}
     insertion_order: list[str | None] = []
     for idx, event in enumerate(events):
@@ -600,9 +601,6 @@ def reconstruct_transcript(events_path: Path, *, partial_ok: bool = True) -> Tra
         bucket.append((idx, event))
 
     def _min_ts_of(bucket: list[tuple[int, dict[str, Any]]]) -> str:
-        # The group's chronological anchor is the earliest emitted_at
-        # across all of its events. Missing timestamps sort last within a
-        # group but never relocate the group itself.
         best: str | None = None
         for _idx, event in bucket:
             ts = _norm_ts(event.get("emitted_at"))
@@ -615,10 +613,7 @@ def reconstruct_transcript(events_path: Path, *, partial_ok: bool = True) -> Tra
     def _within_group_key(
         item: tuple[int, dict[str, Any]],
     ) -> tuple[int, int, str, int]:
-        # Same shape as the prior flat sort key, applied per-group:
-        # events without ``sequence`` (the lifecycle ``conversation_started``
-        # frame) sort FIRST in timestamp order; sequenced events follow
-        # in sequence order with emitted_at breaking ties.
+        # Sequence-less lifecycle frames precede the sequenced stream.
         idx, event = item
         seq = _seq_of(event)
         ts = _norm_ts(event.get("emitted_at")) or ""
@@ -629,20 +624,12 @@ def reconstruct_transcript(events_path: Path, *, partial_ok: bool = True) -> Tra
             idx,
         )
 
-    # Order the groups by their min-emittedAt anchor. Ties (a tied
-    # min-ts is vanishingly rare in practice — distinct goldfive runs
-    # write distinct lifecycle timestamps) fall back to first-seen
-    # insertion order for stability.
     insertion_index: dict[str | None, int] = {rid: i for i, rid in enumerate(insertion_order)}
     ordered_run_ids: list[str | None] = sorted(
         groups.keys(),
         key=lambda rid: (_min_ts_of(groups[rid]), insertion_index[rid]),
     )
 
-    # The transcript-level run_id is the FIRST group's run id (matches
-    # the single-run case verbatim; for a multi-run stream it surfaces
-    # the chronologically earliest run, which is the natural "primary"
-    # label for the column header).
     transcript.run_id = next(
         (rid for rid in ordered_run_ids if rid is not None),
         None,
@@ -650,15 +637,9 @@ def reconstruct_transcript(events_path: Path, *, partial_ok: bool = True) -> Tra
 
     saw_terminal = False
     last_turn_seq: int | None = None
-    # Pending tool calls keyed by sub-agent name so a completion can be
-    # matched back to the delegating turn that called it.
+    # Reset this map at each run boundary to prevent cross-run pairing.
     pending_calls: dict[str, Turn] = {}
 
-    # Walk each group in chronological order. The grouping state (current
-    # open turn, pending tool-call map) is RESET at each group boundary —
-    # a delegation in run 1 is never matched against an
-    # ``agent_invocation_completed`` from run 2, and run 2's first event
-    # always opens a fresh turn rather than extending run 1's last.
     for run_index, rid in enumerate(ordered_run_ids, start=1):
         bucket = sorted(groups[rid], key=_within_group_key)
 
@@ -681,7 +662,6 @@ def reconstruct_transcript(events_path: Path, *, partial_ok: bool = True) -> Tra
             if kind in _TERMINAL_KINDS:
                 saw_terminal = True
 
-            # --- annotations -------------------------------------------
             if kind in _ANNOTATION_KINDS:
                 transcript.annotations.append(
                     Annotation(
@@ -695,20 +675,13 @@ def reconstruct_transcript(events_path: Path, *, partial_ok: bool = True) -> Tra
                 )
                 continue
 
-            # --- conversation turns ------------------------------------
             mapped = _conversation_event(kind, payload)
             if mapped is None:
-                # Boundary / lifecycle bookkeeping events with no content
-                # (agent_invocation_started, invocation_boundary_*,
-                # task_started, task_transitioned, ...) are not turns.
-                # They still update the agent context for following
-                # content.
                 continue
 
             role, agent_hint, text, tool_call, tool_result = mapped
             agent = agent_hint or _agent_of(payload)
 
-            # A delegation result: try to attach to the calling turn.
             if kind == "agent_invocation_completed" and agent:
                 caller = pending_calls.pop(agent, None)
                 if caller is not None:
@@ -719,17 +692,11 @@ def reconstruct_transcript(events_path: Path, *, partial_ok: bool = True) -> Tra
                             "task_id": payload.get("task_id"),
                         }
                     )
-                    # The caller turn just changed — re-stamp it so a
-                    # follower past that turn's old index still receives it.
                     if src_idx > caller.source_index:
                         caller.source_index = src_idx
-                    # The sub-agent's own summary still deserves a turn
-                    # so the side-by-side view shows what it produced.
                     if not text:
                         continue
 
-            # Decide whether this extends the current turn or opens a
-            # new one.
             same_turn = (
                 current is not None
                 and current.role == role
@@ -752,28 +719,22 @@ def reconstruct_transcript(events_path: Path, *, partial_ok: bool = True) -> Tra
                 )
             else:
                 assert current is not None
-                # Keep the earliest seq/ts as the turn's anchor.
                 if current.seq is None:
                     current.seq = seq
                 if current.ts is None:
                     current.ts = ts
                 if not current.agent and agent:
                     current.agent = agent
-                # …but the LATEST source index: a merged turn is "new" to a
-                # follower until every event it absorbed is past their cursor.
                 if src_idx > current.source_index:
                     current.source_index = src_idx
 
             assert current is not None
+            if kind == "agent_invocation_completed":
+                invocation_id = payload.get("invocation_id")
+                if isinstance(invocation_id, str) and invocation_id:
+                    current.activity_ids.append(invocation_id)
             if text:
-                # Dedup exact-duplicate segments before appending. goldfive emits
-                # the user's prompt TWICE for a trivially-derived goal — once as
-                # ``run_started.goal_summary`` (the raw request) and again as
-                # ``goal_derived.goals[*].summary`` (the framework's derived
-                # goal, identical text for a single-task board). Both map to a
-                # user turn and merge into one, so the prompt rendered twice.
-                # Skipping an incoming segment already present keeps the prompt
-                # (and any other accidental identical adjacency) shown once.
+                # Run start and trivial goal derivation can repeat the prompt.
                 segments = current.text.split("\n\n") if current.text else []
                 if text not in segments:
                     current.text = _clip((current.text + "\n\n" + text) if current.text else text)
@@ -781,6 +742,26 @@ def reconstruct_transcript(events_path: Path, *, partial_ok: bool = True) -> Tra
             if tool_call is not None:
                 current.tool_calls.append(tool_call)
                 current.kind = kind
+                tool_node_id = f"tool:{rid or 'run'}:{src_idx}"
+                current.activity_ids.append(tool_node_id)
+                # ``delegation_observed`` states the DELEGATING invocation's
+                # id; an id matching a known invocation is an explicit parent
+                # edge, never an inference. Without one the observation stays
+                # turn-scoped.
+                host = payload.get("invocation_id")
+                parent_id = host if isinstance(host, str) and host in agent_ids else None
+                transcript.execution["nodes"].append(
+                    {
+                        "node_id": tool_node_id,
+                        "kind": "tool",
+                        "parent_id": parent_id,
+                        "name": str(tool_call.get("name") or "tool"),
+                        "status": "observed",
+                        "start_source_index": src_idx,
+                        "summary": "",
+                        "fidelity": "exact" if parent_id else "turn",
+                    }
+                )
                 sub = str(tool_call.get("name") or "")
                 if sub:
                     pending_calls[sub] = current
@@ -792,13 +773,10 @@ def reconstruct_transcript(events_path: Path, *, partial_ok: bool = True) -> Tra
 
         _flush()
 
-    # Drop content-free turns (a delegation that produced no text and
-    # was fully absorbed into a caller's tool_results leaves an empty
-    # shell).
     transcript.turns = [t for t in transcript.turns if t.text or t.tool_calls or t.tool_results]
+    _finalize_execution(transcript.execution)
 
-    # Re-anchor annotations whose anchor was minted before any turn:
-    # pin them to the first turn instead of leaving a dangling None.
+    # Anchor early annotations to the first visible turn.
     if transcript.turns:
         first_seq = transcript.turns[0].seq
         for ann in transcript.annotations:
@@ -808,10 +786,6 @@ def reconstruct_transcript(events_path: Path, *, partial_ok: bool = True) -> Tra
     if saw_terminal:
         transcript.complete = True
     else:
-        # No terminal event: the run looks in progress. A truncated
-        # final line reinforces that. ``partial_ok`` does not change the
-        # verdict (the transcript is still returned either way) — it
-        # documents that the caller expects and tolerates this state.
         transcript.complete = False
     if not last_line_ok:
         transcript.complete = False

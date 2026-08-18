@@ -22,6 +22,7 @@ raises.
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Any
 
@@ -33,11 +34,45 @@ from zicato.query.events_index import (
 from zicato.query.paths import WorkspacePaths
 from zicato.query.run_log import clamp_run_log_limit
 
-#: What the follow pane actually renders: the events.jsonl reconstruction.
-#: A distinct token beside the reflection ladder's ``verbatim`` / ``result``
-#: / ``preview`` tiers (:mod:`zicato.reflection.corpus`) — the pane captions
-#: the tier of the bytes it drew, and this tier is neither of those.
+#: The follow pane renders an events reconstruction rather than verbatim capture.
 FIDELITY_EVENTS = "events"
+
+
+def _empty_execution() -> dict[str, Any]:
+    return {
+        "fidelity": "unavailable",
+        "nodes": [],
+        "root_ids": [],
+        "unresolved_ids": [],
+    }
+
+
+def _add_run_artifacts(payload: dict[str, Any], events_path: Path) -> None:
+    """Add the durable artifact inventory at run scope without inferring producers."""
+    try:
+        manifest = json.loads((events_path.parent / "artifacts.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return
+    files = manifest.get("files") if isinstance(manifest, dict) else None
+    execution = payload.setdefault("execution", _empty_execution())
+    for item in files if isinstance(files, list) else []:
+        path = item.get("path") if isinstance(item, dict) else None
+        if not isinstance(path, str) or not path:
+            continue
+        node_id = f"artifact:{path}"
+        execution["nodes"].append(
+            {
+                "node_id": node_id,
+                "kind": "artifact",
+                "parent_id": None,
+                "name": path,
+                "status": "captured",
+                "summary": f"{item.get('size', 0)} bytes",
+                "fidelity": "run",
+            }
+        )
+        execution["root_ids"].append(node_id)
+        execution["fidelity"] = "partial"
 
 
 def resolve_conversation(
@@ -48,17 +83,7 @@ def resolve_conversation(
     entry: str | None = None,
     epoch: str | None = None,
 ) -> Path | None:
-    """Resolve a conversation's ``events.jsonl`` — gen×entry-FIRST.
-
-    The deterministic triple is the primary key: when the caller supplies
-    ``gen``/``entry`` (and optionally ``epoch``), resolve straight to
-    ``generations/<gen>/runs/<entry>/events.jsonl`` — strict to that
-    entry's own run dir, with the ``run_id`` only a disambiguator. This
-    inverts the prior run_id-first order, which kept failing on reused /
-    index-only run_ids. Falls back to the opaque run_id lookup only when
-    the triple is absent or resolves to nothing (a pure-run_id caller
-    with no coordinates). Returns ``None`` when nothing resolves.
-    """
+    """Resolve by deterministic generation and entry before opaque run id."""
     events_path: Path | None = None
     if gen and entry:
         events_path = resolve_transcript_events(paths, epoch or "", gen, entry, run_id=run_id)
@@ -91,6 +116,7 @@ def empty_run_transcript(
         "run_id": run_id,
         "turns": [],
         "annotations": [],
+        "execution": _empty_execution(),
         "event_count": 0,
         "complete": False,
     }
@@ -109,25 +135,7 @@ def build_run_transcript(
     match_id: str | None = None,
     reconstruct: Any = None,
 ) -> dict[str, Any]:
-    """The transcript for one ``(epoch, gen, entry)`` run, coordinates stamped.
-
-    Powers the L4 conversation diff: the focused-run side fetches the
-    transcript via this reader, and the compare side fetches it again
-    with the picker's selected generation. Returns the reconstructor's
-    ``Transcript.to_dict()`` shape plus the resolved coordinates.
-
-    PRIMARY resolution is the deterministic triple —
-    ``generations/<gen>/runs/<entry>/events.jsonl``, strict to this
-    entry's OWN run directory (never a sibling's). An optional ``run_id``
-    / ``match_id`` disambiguator selects a specific rung when a
-    gen×entry has multiple runs (successive-halving re-races); without
-    one we DEFAULT to the entry's own canonical events file.
-
-    ``reconstruct`` is the injected transcript reconstructor (the query
-    layer never imports the dashboard); ``None`` degrades to the
-    unavailable shape. Every failure path answers the same-shaped empty
-    payload (DQ3) — absent run, failed reconstruction, no reconstructor.
-    """
+    """Build one coordinate-stamped transcript with a same-shaped degrade (DQ3)."""
     if reconstruct is None:
         return empty_run_transcript(
             epoch_id,
@@ -159,22 +167,14 @@ def build_run_transcript(
             run_id=resolved_run_id,
             error=f"transcript failed: {exc}",
         )
-    # The documented STAMPING step: the reconstructor sets its own run_id
-    # from the events stream; surface the directory-name run_id explicitly
-    # when the reducer produced no value (empty file), then stamp the
-    # resolved coordinates so the frontend labels the column without a
-    # second lookup.
     if not payload.get("run_id"):
         payload["run_id"] = resolved_run_id
     payload["epoch_id"] = epoch_id
     payload["generation_id"] = generation_id
     payload["entry_id"] = entry_id
+    payload.setdefault("execution", _empty_execution())
+    _add_run_artifacts(payload, events_path)
     return payload
-
-
-# ---------------------------------------------------------------------------
-# The live-follow delta — cursor-append over a growing events.jsonl
-# ---------------------------------------------------------------------------
 
 
 def empty_run_transcript_delta(
@@ -200,6 +200,7 @@ def empty_run_transcript_delta(
         "cursor": 0,
         "turns": [],
         "annotations": [],
+        "execution": _empty_execution(),
         "turn_total": 0,
         "event_count": 0,
         "complete": False,
@@ -214,14 +215,7 @@ def empty_run_transcript_delta(
 
 
 def _verbatim_capture_exists(events_path: Path) -> bool:
-    """Does a valid ``result.json`` sit beside this run's events file?
-
-    The fidelity caption's second half: the pane always renders the events
-    reconstruction, but the operator deserves to know when the higher-tier
-    verbatim capture was retained on disk. Uses the tournament's own
-    tolerant reader, so a missing / truncated / wrong-version file reads
-    ``False`` rather than raising.
-    """
+    """Report whether a valid higher-fidelity ``result.json`` exists."""
     from zicato.tournament.unit_cache import read_run_result  # noqa: PLC0415
 
     return read_run_result(events_path.parent / "result.json") is not None
@@ -239,42 +233,7 @@ def build_run_transcript_delta(
     match_id: str | None = None,
     reconstruct: Any = None,
 ) -> dict[str, Any]:
-    """The APPEND-ONLY slice of one run's transcript past ``after``.
-
-    The live conversation pane's read. Resolution, coordinate stamping and
-    the same-shape degrade are :func:`build_run_transcript`'s; what differs
-    is that the caller carries a cursor and gets back only what changed,
-    so following a running unit never re-sends a settled conversation.
-
-    THE CURSOR is the count of PARSED events consumed — the value returned
-    as ``cursor``, fed back as the next ``after``. It is deliberately not
-    the goldfive ``sequence`` the run-log's cursor prefers: a
-    ``multi_turn_emulated`` entry writes several goldfive runs into one
-    events file and each restarts ``sequence`` at 0, so sequence is not
-    monotone over the file while the parsed-event count always is. The
-    run-log's other conventions carry over unchanged — a clamped
-    ``limit``, and ``after=None`` (or negative) meaning "from the top".
-
-    Because the cursor is a COUNT it sits one past the last index it
-    covers, so the filter is inclusive: a turn is IN the delta when its
-    ``source_index`` reaches ``after`` — which covers the two ways a
-    transcript changes as a run streams: a
-    brand-new turn lands, or the open final turn absorbs another event and
-    grows (goldfive's ``llmCallStart`` → ``llmCallEnd`` merge). Each
-    returned turn carries the ``turn_index`` it occupies in the full
-    reconstruction, so the client splices rather than guesses. Replaying
-    the same cursor therefore yields an EMPTY delta — the file has not
-    grown, no ``source_index`` can exceed it.
-
-    TORN LINES are tolerated exactly as the reconstructor tolerates them:
-    a half-written final line takes no position in the parsed list, so the
-    cursor never advances past it and the completed line arrives whole on
-    a later poll.
-
-    A delta longer than ``limit`` turns answers its TAIL with ``truncated``
-    set — a follower that far behind has a gap it cannot splice, and the
-    honest instruction is to re-read the full transcript.
-    """
+    """Return the bounded transcript changes at or beyond a parsed-event cursor."""
     if reconstruct is None:
         return empty_run_transcript_delta(
             epoch_id,
@@ -304,10 +263,8 @@ def build_run_transcript_delta(
             error=f"transcript failed: {exc}",
         )
 
-    # The cursor COUNTS events consumed, so it is one past the last index
-    # it covers: a turn is new when it absorbed an event AT or past it. A
-    # negative / absent cursor means "from the top", mirroring the
-    # run-log's treatment of a missing ``after`` as the initial paint.
+    _add_run_artifacts(full, events_path)
+
     floor = after if isinstance(after, int) and after > 0 else 0
     cap = clamp_run_log_limit(limit)
 
@@ -333,6 +290,7 @@ def build_run_transcript_delta(
         "cursor": int(full.get("event_count") or 0),
         "turns": delta_turns,
         "annotations": delta_anns,
+        "execution": full.get("execution") or _empty_execution(),
         "turn_total": len(all_turns),
         "event_count": int(full.get("event_count") or 0),
         "complete": bool(full.get("complete")),
