@@ -336,19 +336,44 @@ class WorkspaceLayout:
         """
         return self.run_dir(epoch_id, generation_id, entry_id) / "result.json"
 
-    def events(self, epoch_id: str, generation_id: str, entry_id: str) -> Path:
-        """One run's goldfive event JSONL (``events.jsonl``)."""
-        return self.run_dir(epoch_id, generation_id, entry_id) / "events.jsonl"
+    def events(
+        self, epoch_id: str, generation_id: str, entry_id: str, replicate_index: int = 0
+    ) -> Path:
+        """One board unit's goldfive event JSONL.
 
-    def events_prev(self, epoch_id: str, generation_id: str, entry_id: str) -> Path:
-        """The ONE retained predecessor of a run's ``events.jsonl``.
+        The canonical (replicate 0) slot is ``events.jsonl``; replicate
+        ``r>0`` maps to the sibling ``events.r{r}.jsonl``, exactly
+        mirroring how :meth:`loss` relates to ``loss.r{n}.json`` and
+        :meth:`result` to ``result.r{n}.json``.
+
+        Before issue #250 this method took no replicate, so every
+        replicate of a unit resolved to the one canonical file and each
+        draw truncated the one before it.
+        """
+        run = self.run_dir(epoch_id, generation_id, entry_id)
+        if replicate_index <= 0:
+            return run / "events.jsonl"
+        return run / f"events.r{replicate_index}.jsonl"
+
+    def events_prev(
+        self, epoch_id: str, generation_id: str, entry_id: str, replicate_index: int = 0
+    ) -> Path:
+        """The ONE retained predecessor of a board unit's events JSONL.
 
         Written by :func:`zicato.telemetry.sink.archive_prior_events`
         when a re-measurement is about to truncate the events file
         (issue #122). Exactly one generation of history is kept, so the
         archive is bounded no matter how many rounds a champion defends.
+
+        Keyed per replicate like :meth:`events`, so one replicate's
+        archive can no longer be overwritten by a DIFFERENT replicate.
+        Its job is now only what issue #122 named: retaining the previous
+        ROUND's draw of this same unit.
         """
-        return self.run_dir(epoch_id, generation_id, entry_id) / "events.prev.jsonl"
+        run = self.run_dir(epoch_id, generation_id, entry_id)
+        if replicate_index <= 0:
+            return run / "events.prev.jsonl"
+        return run / f"events.r{replicate_index}.prev.jsonl"
 
     def loss_archive(self, epoch_id: str, generation_id: str, entry_id: str) -> Path:
         """One run's displaced-loss archive (``loss.archive.jsonl``).

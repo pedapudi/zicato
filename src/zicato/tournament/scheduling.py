@@ -44,6 +44,7 @@ from zicato.core import (
     ScoringWeights,
     Side,
     is_infra_abort_cause,
+    run_id_for_unit,
 )
 from zicato.tournament.scoring import aggregate_generation_score
 from zicato.tournament.unit_cache import (
@@ -1130,7 +1131,9 @@ async def _run_unit_after_cache_miss(
     # stamped on close so a harmonograf user can cross-jump into the run's own
     # trace (HARMONOGRAF.md §7). Nests under the matchup span via the ambient
     # context var.
-    run_id = f"{generation.id}--{entry.id}"
+    # Built through the one choke point so the span's run id matches the id
+    # the runner and the worker use — including its replicate segment.
+    run_id = run_id_for_unit(generation.id, entry.id, replicate_index)
     async with meta_span(
         run_id,
         kind=SPAN_WORKER,

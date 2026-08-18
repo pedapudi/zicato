@@ -78,8 +78,15 @@ def make_run_sink_path(
     epoch_id: str,
     generation_id: str,
     entry_id: str,
+    replicate_index: int = 0,
 ) -> Path:
-    """Return the per-run ``events.jsonl`` path and ensure its parent exists.
+    """Return one board unit's events JSONL path, parent directory ensured.
+
+    ``replicate_index`` selects the unit's own slot: 0 is the canonical
+    ``events.jsonl`` and ``r>0`` is ``events.r{r}.jsonl``. Passing the
+    real index is what stops one replicate from truncating another's raw
+    telemetry (issue #250); the default of 0 keeps every single-replicate
+    caller unchanged.
 
     The path itself is computed by
     :func:`zicato.core.workspace.events_jsonl_path` so the layout stays
@@ -93,14 +100,27 @@ def make_run_sink_path(
     without constructing a sink, and the reducer needs to read the same
     path the sink wrote to. Both call this helper.
     """
-    path = events_jsonl_path(workspace_root, epoch_id, generation_id, entry_id)
+    path = events_jsonl_path(workspace_root, epoch_id, generation_id, entry_id, replicate_index)
     path.parent.mkdir(parents=True, exist_ok=True)
     return path
 
 
-#: The one retained predecessor of a run's ``events.jsonl``. See
-#: :func:`archive_prior_events`.
+#: The one retained predecessor of a run's CANONICAL (replicate 0)
+#: ``events.jsonl``. A replicate ``r>0`` archives to ``events.r{r}.prev.jsonl``
+#: instead — see :func:`events_prev_path_for` and :func:`archive_prior_events`.
 EVENTS_PREV_FILENAME = "events.prev.jsonl"
+
+
+def events_prev_path_for(path: Path) -> Path:
+    """Return the archive path for an events JSONL, keeping its replicate.
+
+    ``events.jsonl`` archives to ``events.prev.jsonl`` and
+    ``events.r2.jsonl`` to ``events.r2.prev.jsonl``. Deriving the archive
+    name FROM the source path (rather than from a fixed filename) is what
+    keeps one replicate's archive out of another replicate's way — the
+    per-replicate half of issue #250.
+    """
+    return path.with_name(f"{path.stem}.prev.jsonl")
 
 
 def archive_prior_events(path: Path) -> None:
@@ -126,7 +146,7 @@ def archive_prior_events(path: Path) -> None:
     if not path.is_file():
         return
     try:
-        path.replace(path.with_name(EVENTS_PREV_FILENAME))
+        path.replace(events_prev_path_for(path))
     except OSError as exc:  # pragma: no cover — unwritable workspace
         log.debug("events archive skipped for %s: %s", path, exc)
 
@@ -385,6 +405,7 @@ def make_run_sinks(
 __all__ = [
     "archive_prior_events",
     "EVENTS_PREV_FILENAME",
+    "events_prev_path_for",
     "make_run_sink_path",
     "make_run_sink",
     "make_run_sinks",

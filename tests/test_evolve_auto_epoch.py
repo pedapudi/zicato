@@ -210,8 +210,9 @@ def _install_telemetry_stubs(
         epoch_id: str,
         generation_id: str,
         entry_id: str,
+        replicate_index: int = 0,
     ) -> Path:
-        del epoch_id, generation_id, entry_id
+        del epoch_id, generation_id, entry_id, replicate_index
         return workspace_root / "events.jsonl"
 
     sink_mod.make_run_sink_path = make_run_sink_path  # type: ignore[attr-defined]

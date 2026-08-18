@@ -471,11 +471,16 @@ async def _run_single(
        file — that too.
     """
     sink_module, reducer_module = _telemetry_helpers()
+    # The events sink is keyed per REPLICATE, like the loss slot below it.
+    # Without the index every replicate of this unit resolves to the one
+    # canonical ``events.jsonl``, and because the worker opens that sink with
+    # ``mode="write"`` each replicate truncates its predecessor (issue #250).
     sink_path = sink_module.make_run_sink_path(
         workspace_root=workspace_root,
         epoch_id=epoch_id,
         generation_id=generation.id,
         entry_id=entry.id,
+        replicate_index=_entry_replicate_index(entry),
     )
     # The worker writes its loss into the run's REPLICATE-keyed cache slot
     # (the stamped replicate index; see _stamp_replicate_index). Replicate

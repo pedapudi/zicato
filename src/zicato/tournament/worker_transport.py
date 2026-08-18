@@ -121,8 +121,41 @@ def _now_iso_utc() -> str:
     return datetime.now(UTC).isoformat()
 
 
+def _run_id_from_parts(generation_id: str, entry_id: str, replicate_index: int) -> str:
+    """Build the run id of ONE board unit from its three identity parts.
+
+    The run id names a board unit — ``(generation, entry, replicate)`` —
+    and NOT merely the ``(generation, entry)`` pair. It keys the run's
+    ``runtime/active_runs/{run_id}.json`` record, the supervisor's
+    kill-request marker, and the run's telemetry span. Two units that
+    share a run id therefore share those artifacts, and the later writer
+    silently replaces the earlier one (issue #250).
+
+    Replicate 0 returns the historical ``{generation_id}--{entry_id}``
+    string, so every single-replicate path — the seed scoring, the
+    gauntlet, replicate 0 of a replicated matchup — is byte-identical to
+    a world before the replicate segment existed. Replicate ``r>0``
+    appends ``--r{r}``, exactly mirroring how
+    :func:`~zicato.tournament.unit_cache._unit_loss_path` relates
+    ``loss.json`` to its ``loss.r{r}.json`` siblings.
+
+    Nothing splits a run id back into its parts, so the extra segment is
+    additive for every consumer.
+    """
+    canonical = f"{generation_id}--{entry_id}"
+    if replicate_index <= 0:
+        return canonical
+    return f"{canonical}--r{replicate_index}"
+
+
 def _run_id_for(generation: Generation, entry: BoardEntry) -> str:
-    return f"{generation.id}--{entry.id}"
+    """Return the run id of the board unit ``entry`` names under ``generation``.
+
+    The replicate index rides on the entry's own context (stamped by
+    :func:`_stamp_replicate_index`), so this needs no extra argument and
+    every existing call site becomes replicate-correct unchanged.
+    """
+    return _run_id_from_parts(generation.id, entry.id, _entry_replicate_index(entry))
 
 
 #: ``BoardEntry.context`` key under which the board-level ``disable_drift``
@@ -919,6 +952,7 @@ __all__ = [
     "_resolve_harmonograf_url",
     "_role_worker_spec",
     "_run_id_for",
+    "_run_id_from_parts",
     "_runtime_state",
     "scrubbed_worker_env",
     "_stamp_disable_drift",

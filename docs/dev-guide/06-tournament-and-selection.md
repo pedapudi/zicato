@@ -1131,10 +1131,19 @@ worker and skip its `finally` cleanup); both sides are allowed to finish, and
 only then is a champion-side failure — then a challenger-side one — re-raised.
 And **nothing is shared** between the two sides: each `_run_single` spawns its
 own subprocess worker, each pointed at its own distinct `ztw-snap-*` ephemeral
-checkout, each writing a distinct `run_id` (`{generation_id}--{entry_id}`, and
-the two generations differ), so the snapshot checkout, the `active_runs` file,
-and the `loss.json` are all per-side. This is why `parallelism` counts board
-units, not subprocesses: one full-mode unit is TWO concurrent workers.
+checkout, each writing a distinct `run_id` (`run_id_for_unit`, and the two
+generations differ), so the snapshot checkout, the `active_runs` file, and the
+`loss.json` are all per-side. This is why `parallelism` counts board units, not
+subprocesses: one full-mode unit is TWO concurrent workers.
+
+> ⛔ The run id names a board unit — `(generation, entry, replicate)` — not a
+> `(generation, entry)` pair. Build it ONLY through
+> `zicato.core.workspace.run_id_for_unit`; replicate 0 returns the historical
+> `{generation_id}--{entry_id}` and `r>0` appends `--r{r}`. It keys the
+> `active_runs` record, the supervisor's kill-request marker, and the run's
+> telemetry span, so two units sharing an id share those artifacts and the
+> later writer wins (issue #250). Three call sites hand-rolled the f-string
+> before that fix.
 
 The `scorer.record(...)` fold happens the instant BOTH runs of a unit settle,
 BEFORE the unit returns — so a finished board's score materialises while sibling

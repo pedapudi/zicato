@@ -133,9 +133,16 @@ def read_gen_score_history(
 
 
 def read_events_history(
-    layout: WorkspaceLayout, epoch_id: str, generation_id: str, entry_id: str
+    layout: WorkspaceLayout,
+    epoch_id: str,
+    generation_id: str,
+    entry_id: str,
+    replicate_index: int = 0,
 ) -> list[list[dict[str, Any]]]:
-    """One run's retained raw telemetry, oldest measurement first.
+    """One board unit's retained raw telemetry, oldest measurement first.
+
+    ``replicate_index`` selects the unit's own slot; the default of 0
+    reads the canonical files, which is what every existing caller wants.
 
     Returns one element per retained events file — the archived
     predecessor (``events.prev.jsonl``, when a re-measurement displaced
@@ -147,8 +154,8 @@ def read_events_history(
     """
     out: list[list[dict[str, Any]]] = []
     for path in (
-        layout.events_prev(epoch_id, generation_id, entry_id),
-        layout.events(epoch_id, generation_id, entry_id),
+        layout.events_prev(epoch_id, generation_id, entry_id, replicate_index),
+        layout.events(epoch_id, generation_id, entry_id, replicate_index),
     ):
         try:
             text = path.read_text(encoding="utf-8")

@@ -74,6 +74,7 @@ from zicato.core import (
     ScoringWeights,
     validate_board_entry,
 )
+from zicato.core.workspace import run_id_for_unit
 from zicato.import_path import import_dotted_path
 from zicato.judge_runtime.error_register import judge_error_snapshot
 from zicato.util import best_effort, now_iso
@@ -734,7 +735,11 @@ async def _run(args: dict[str, Any]) -> None:
         os.environ[SCRATCH_DIR_ENV] = str(scratch_dir)
 
     entry = validate_board_entry(args["entry"])
-    run_id = f"{generation_id}--{entry.id}"
+    # Built through the SAME choke point the parent used, so the worker's
+    # ``active_runs`` record and kill-request marker land on the id the
+    # parent will later clear — including this unit's replicate segment
+    # (issue #250). The replicate index rides on the entry's own context.
+    run_id = run_id_for_unit(generation_id, entry.id, _entry_replicate_index_from_context(entry))
     weights = _weights_from_args(args)
     budget_s = float(entry.wall_clock_budget_seconds)
 
@@ -1127,6 +1132,22 @@ async def _run(args: dict[str, Any]) -> None:
         state_mod.remove_active_run(workspace_root, run_id)
 
 
+def _entry_replicate_index_from_context(entry: BoardEntry) -> int:
+    """Read the replicate index stamped onto an entry's context, or ``0``.
+
+    The worker deliberately imports nothing from :mod:`zicato.tournament`,
+    so it cannot reuse that package's ``_entry_replicate_index``. This is
+    the same read: an absent key is replicate 0 (every single-replicate
+    path) and a malformed value reads as 0 rather than raising inside a
+    scoring run.
+    """
+    raw = dict(entry.context).get("replicate_index", "0")
+    try:
+        return max(0, int(raw or 0))
+    except (TypeError, ValueError):
+        return 0
+
+
 def _weights_from_args(args: dict[str, Any]) -> ScoringWeights:
     """Reconstruct :class:`ScoringWeights` from the serialised args.
 
@@ -1169,7 +1190,18 @@ def _install_worker_log_stream_from_args(args: dict[str, Any]) -> None:
         generation_id = str(args.get("generation_id") or "") or None
         entry = args.get("entry")
         entry_id = str(entry.get("id")) if isinstance(entry, dict) and entry.get("id") else None
-        run_id = f"{generation_id}--{entry_id}" if generation_id and entry_id else None
+        replicate_index = 0
+        if isinstance(entry, dict):
+            raw_replicate = (entry.get("context") or {}).get("replicate_index", "0")
+            try:
+                replicate_index = max(0, int(raw_replicate or 0))
+            except (TypeError, ValueError):
+                replicate_index = 0
+        run_id = (
+            run_id_for_unit(generation_id, entry_id, replicate_index)
+            if generation_id and entry_id
+            else None
+        )
         install_worker_log_stream(
             path,
             epoch_id=epoch_id,
