@@ -64,6 +64,19 @@ class CollectionPayload(ObjectPayload, total=False):
     recommendations: list[dict[str, Any]]
 
 
+class ExecutionPlanPayload(ObjectPayload, total=False):
+    """The epoch's loop as one tree of stages, steps, and work units.
+
+    ``stages`` holds the recursive plan nodes (:meth:`~zicato.query.PlanNode.payload`);
+    ``board`` carries the frozen board's digest and entry count, which is what
+    a client needs to fetch the board ONCE instead of receiving a copy of each
+    entry on every unit node.
+    """
+
+    board: dict[str, Any]
+    stages: list[dict[str, Any]]
+
+
 class DetailPayload(ObjectPayload, total=False):
     summary: dict[str, Any]
     contract: dict[str, Any]
@@ -154,3 +167,4 @@ ENDPOINT_PAYLOADS.update(
         )
     }
 )
+ENDPOINT_PAYLOADS["/api/epoch/{epoch_id}/execution-plan"] = ExecutionPlanPayload

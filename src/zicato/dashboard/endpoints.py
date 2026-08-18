@@ -317,6 +317,29 @@ def _make_epoch_endpoints(paths: WorkspacePaths) -> dict[str, Any]:
             )
         return JSONResponse(query.build_round_timeline(paths, epoch_id))
 
+    async def api_epoch_execution_plan(request: Request) -> JSONResponse:
+        """The epoch's whole loop as one tree — stages, steps, work units.
+
+        ``GET /api/epoch/{epoch_id}/execution-plan``. What ran, under which
+        candidate, in which round, and what each step decided — joined
+        server-side (:func:`zicato.query.build_execution_plan`) so a reader
+        answers "what is this run doing" without joining four endpoints. A
+        malformed id degrades to the empty plan shape (HTTP 200).
+        """
+        epoch_id = request.path_params["epoch_id"]
+        if not _is_safe_id(epoch_id):
+            return JSONResponse(
+                {
+                    "epoch_id": epoch_id,
+                    "generated_at": _now_iso(),
+                    "board": {"digest": "", "entry_count": 0},
+                    "note": "unknown epoch",
+                    "stages": [],
+                },
+                status_code=200,
+            )
+        return JSONResponse(query.build_execution_plan(paths, epoch_id))
+
     async def api_epoch_experiments_ledger(request: Request) -> JSONResponse:
         """The epoch's EXPERIMENTS LEDGER — one row per experiment.
 
@@ -499,6 +522,7 @@ def _make_epoch_endpoints(paths: WorkspacePaths) -> dict[str, Any]:
         "api_epoch_cost": api_epoch_cost,
         "api_epoch_racing_field": api_epoch_racing_field,
         "api_epoch_round_timeline": api_epoch_round_timeline,
+        "api_epoch_execution_plan": api_epoch_execution_plan,
         "api_epoch_experiments_ledger": api_epoch_experiments_ledger,
         "api_contract_diff": api_contract_diff,
         "api_score_trajectory": api_score_trajectory,

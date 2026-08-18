@@ -264,6 +264,12 @@ def capture_snapshot(ws: Path) -> dict[str, Any]:
         snap[f"score_trajectory::{eid}"] = sr.build_score_trajectory(paths, eid)
         snap[f"calibration_trend::{eid}"] = sr.build_calibration_trend(paths, eid)
         snap[f"per_judge_trend::{eid}"] = sr.build_per_judge_trend(paths, eid)
+        # The execution plan is served by the Python service alone; the
+        # Rust supervisor answers its standard empty shape until it grows
+        # the route (DQ8). Pinning the plan here — including for the EMPTY
+        # fixture epoch, which is the shape a client paints in that case —
+        # is what keeps the two servers' answers from skewing silently.
+        snap[f"execution_plan::{eid}"] = sr.build_execution_plan(paths, eid)
 
     # --- per-generation scoped ---------------------------------------------
     # (champion v0, challenger v1) is the matchup the e1 epoch carries; the
