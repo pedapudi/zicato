@@ -244,32 +244,48 @@ async function resolveCandidate(epochId, genId, genList, experiments, scalarByGe
   // gets no verdict colour and no Δ-vs-champion treatment.
   const facetScores = facetRows(pe && pe.facet_scores);
 
-  // The CHAMPION's per-board loss on the SAME boards/slice — so each lifecycle
-  // circle, and the Σ node, can show candidate-vs-champion · Δ (the comparison
-  // the gate actually performs). Matched by entry_id. When the candidate IS the
-  // champion (or there is no champion / no parent), there is nothing to compare.
-  let championLoss = {}, championSigma = null;
+  // The SERVER's per-entry champion-vs-candidate join for this round
+  // (`/api/matchup-grid`): one row per board entry carrying both sides' score
+  // and drift loss, the movement between them, the candidate's replicate
+  // spread, and which channel decided the entry. DQ1 — the join, the slice
+  // restriction and the verdict are the server's; this view only renders them.
+  // Absent when the candidate IS the champion, or has no champion to compare
+  // against (a seed), in which case there is nothing to join.
+  const compare = {};
+  let championSigma = null, candidateSigma = null, gridDriftPresent = null;
   if (championId && championId !== genId && !baseline) {
-    const champPe = await D.perEntry(epochId, championId);
-    const champEntries = (champPe && Array.isArray(champPe.entries)) ? champPe.entries : [];
-    // representative (last) champion loss per entry_id — the racing-final /
-    // full-board run, mirroring the lifecycle node's representative pick.
-    const champByEntry = new Map();
-    for (const ce of champEntries) {
-      if (ce && ce.entry_id != null && svg.isNum(ce.drift_loss)) champByEntry.set(ce.entry_id, ce.drift_loss);
+    const grid = await D.matchupGrid(epochId, championId, genId);
+    const gridRows = (grid && Array.isArray(grid.entry_grid)) ? grid.entry_grid : [];
+    gridDriftPresent = grid ? grid.drift_present !== false : null;
+    for (const r of gridRows) {
+      if (!r || r.entry_id == null) continue;
+      compare[r.entry_id] = {
+        deltaScore: svg.isNum(r.delta_score) ? r.delta_score : null,
+        champScore: svg.isNum(r.parent_score) ? r.parent_score : null,
+        candScore: svg.isNum(r.child_score) ? r.child_score : null,
+        se: svg.isNum(r.score_se) ? r.score_se : null,
+        replicates: svg.isNum(r.score_replicates) ? r.score_replicates : 0,
+        champDrift: svg.isNum(r.parent_drift_loss) ? r.parent_drift_loss : null,
+        decidedBy: r.decided_by || null,
+      };
+      // The drift Σ pair is summed over the entries BOTH sides ran — the rows
+      // the server paired — so the two sums cover the same boards and their Δ
+      // is a like-for-like comparison rather than a slice artefact.
+      if (svg.isNum(r.parent_drift_loss) && svg.isNum(r.child_drift_loss)) {
+        championSigma = (championSigma || 0) + r.parent_drift_loss;
+        candidateSigma = (candidateSigma || 0) + r.child_drift_loss;
+      }
     }
-    // restrict to the candidate's slice (its sampled boards) so Σ aligns.
-    const sliceIds = new Set(entries.filter((e) => e && e.entry_id != null).map((e) => e.entry_id));
-    let cs = 0, any = false;
-    for (const id of sliceIds) {
-      if (champByEntry.has(id)) { championLoss[id] = champByEntry.get(id); cs += champByEntry.get(id); any = true; }
-    }
-    championSigma = any ? cs : null;
   }
-  // the candidate's Σ over its own slice (matches the lifecycle total).
-  let candidateSigma = null;
-  for (const e of entries) if (e && svg.isNum(e.drift_loss)) candidateSigma = (candidateSigma || 0) + e.drift_loss;
+  if (candidateSigma == null) {
+    for (const e of entries) if (e && svg.isNum(e.drift_loss)) candidateSigma = (candidateSigma || 0) + e.drift_loss;
+  }
   const deltaSigma = (svg.isNum(candidateSigma) && svg.isNum(championSigma)) ? candidateSigma - championSigma : null;
+  // Does the drift channel carry information in this workspace at all? The
+  // matchup grid answers for the pair; a seed with no matchup falls back to its
+  // own generation's per-entry answer. Either way the figure hides the drift
+  // readouts rather than painting a column of structural zeroes.
+  const driftPresent = gridDriftPresent != null ? gridDriftPresent : (pe ? pe.drift_present !== false : true);
 
   // the candidate's PATH through the tournament rungs (rung 0 → rung 1 →
   // racing-final, each Δ + survived/cut) — a pure projection of the SERVED
@@ -393,7 +409,7 @@ async function resolveCandidate(epochId, genId, genList, experiments, scalarByGe
     // falsifiable claims and the sites it patched. Null for the seed.
     proposal: buildProposalModel(exp),
     primaryDelta, championId, championScalar, scalarByGen, progression,
-    championLoss, championSigma, candidateSigma, deltaSigma, gateExplain,
+    compare, driftPresent, championSigma, candidateSigma, deltaSigma, gateExplain,
     entryParam, exps, judges, drillRow, drillHeader, inflight, cached, cachedProvenance,
     interruptedBoards, endedAt: liveness.endedAt,
     projected, radar, generalization, scorecard,
@@ -828,7 +844,19 @@ function candidateDigest(s) {
     verdict: verdictSentence(s.gateExplain),
     // the candidate-vs-champion comparison + gate-rule explanation surfaced on
     // the lifecycle DAG — part of the digest so a change repaints (no flashing).
-    champLoss: s.championLoss ? Object.keys(s.championLoss).sort().map((k) => [k, s.championLoss[k].toFixed(3)]) : null,
+    // Every per-entry field the lifecycle figure paints, in one stable-ordered
+    // list: a settling replicate or a newly-scored entry repaints, a no-op
+    // heartbeat re-emits the identical list and the DOM survives.
+    compare: s.compare ? Object.keys(s.compare).sort().map((k) => {
+      const c = s.compare[k];
+      return [k, c.decidedBy,
+        svg.isNum(c.deltaScore) ? c.deltaScore.toFixed(4) : null,
+        svg.isNum(c.champScore) ? c.champScore.toFixed(4) : null,
+        svg.isNum(c.candScore) ? c.candScore.toFixed(4) : null,
+        svg.isNum(c.se) ? c.se.toFixed(4) : null, c.replicates,
+        svg.isNum(c.champDrift) ? c.champDrift.toFixed(3) : null];
+    }) : null,
+    driftPresent: s.driftPresent,
     candSigma: svg.isNum(s.candidateSigma) ? s.candidateSigma.toFixed(3) : null,
     champSigma: svg.isNum(s.championSigma) ? s.championSigma.toFixed(3) : null,
     deltaSigma: svg.isNum(s.deltaSigma) ? s.deltaSigma.toFixed(3) : null,
@@ -1067,7 +1095,8 @@ function paintCandidate(host, ctx, epochId, s, cmpId, isPrimary, narrow, structu
     deltaScalar: s.primaryDelta, patchPoints: s.mpts, entries: s.entries,
     // candidate-vs-champion comparison (so the circles + Σ explain the Δ the
     // gate sees) and the gate-rule explanation (which of the 3 rules decided).
-    championId, championLoss: s.championLoss, championSigma: s.championSigma,
+    championId, compare: s.compare, driftPresent: s.driftPresent,
+    championSigma: s.championSigma,
     candidateSigma: s.candidateSigma, deltaSigma: s.deltaSigma, gateExplain: s.gateExplain,
     // height is NO LONGER passed: lifecycleDag now DERIVES its viewBox height
     // from the (deduped) board-node count × a fixed row pitch, so the seed/
@@ -1206,16 +1235,29 @@ function paintCandidate(host, ctx, epochId, s, cmpId, isPrimary, narrow, structu
     ]));
   }
   if (s.entries.length) {
-    // the per-board champion value comes from s.championLoss (the champion's
-    // per-board drift_loss on the SAME slice, matched by entry_id; absent for the
-    // seed / when the candidate IS the champion → a candidate-only row, no ○).
-    const champByEntry = s.championLoss || {};
+    // WHICH CHANNEL the dumbbell's axis reads — the same fall-through the server
+    // resolves a per-entry verdict on: the continuous score when the board is
+    // scored (higher is better), the drift loss otherwise (lower is better).
+    // Both sides of every row come from the server's per-entry join (`s.compare`,
+    // matched by entry_id); a row the champion never ran, and the seed's rows,
+    // carry no ○.
+    const scoreAxis = s.entries.some((e) => svg.isNum(e.score));
+    const cmpOf = (id) => (s.compare && s.compare[id]) || null;
+    const axisValue = (e) => (scoreAxis ? (svg.isNum(e.score) ? e.score : null) : (svg.isNum(e.drift_loss) ? e.drift_loss : null));
+    const axisChamp = (id) => {
+      const c = cmpOf(id);
+      if (!c) return null;
+      const v = scoreAxis ? c.champScore : c.champDrift;
+      return svg.isNum(v) ? v : null;
+    };
     const rows = s.entries
-      .filter((e) => svg.isNum(e.drift_loss))
-      .sort((a, b) => b.drift_loss - a.drift_loss)
+      .filter((e) => svg.isNum(axisValue(e)))
+      // worst first on either channel: the lowest score, or the highest loss.
+      .sort((a, b) => (scoreAxis ? axisValue(a) - axisValue(b) : axisValue(b) - axisValue(a)))
       .map((e) => ({
-        label: e.entry_id, value: e.drift_loss, id: e.entry_id,
-        champ: svg.isNum(champByEntry[e.entry_id]) ? champByEntry[e.entry_id] : null,
+        label: e.entry_id, value: axisValue(e), id: e.entry_id,
+        champ: axisChamp(e.entry_id),
+        se: cmpOf(e.entry_id) ? cmpOf(e.entry_id).se : null,
         pass: e.pass_fail, timeout: !!e.wall_clock_budget_exceeded,
         // continuous per-entry outcome + its precision/recall decomposition (#18);
         // null/absent on a bool-only entry, where the row falls back to ✓/✗.
@@ -1229,8 +1271,11 @@ function paintCandidate(host, ctx, epochId, s, cmpId, isPrimary, narrow, structu
     // the foot — NOT the per-row comparator (that's the dumbbell).
     scoreCard.appendChild(perBoardDumbbell({
       width: narrow ? 480 : 720, rowHeight: dt.dotRow, labelWidth: narrow ? 160 : 200, rows,
-      championId,
-      aggregate: svg.isNum(championScalar) ? { value: championScalar, label: `champion ${championId}` } : null,
+      championId, higherBetter: scoreAxis,
+      // The aggregate tick is the champion's SCALAR — a loss. It belongs beside
+      // a loss axis and would be off-scale beside a score axis, so it is only
+      // drawn on the drift channel.
+      aggregate: !scoreAxis && svg.isNum(championScalar) ? { value: championScalar, label: `champion ${championId}` } : null,
       // click a row (board name, either dot, AND the Δ) → the board drill-down for
       // THIS exact run: the board view opens its inline transcript for the gen.
       onClick: (it) => ctx.navigate('board', { epochId, entry: it.entry_id || it.id, gen: it.gen || genId }),
@@ -1240,8 +1285,9 @@ function paintCandidate(host, ctx, epochId, s, cmpId, isPrimary, narrow, structu
       anyPaired ? el('span', null, [el('i', { class: 'dotpred', style: 'border-color:var(--v2-ink-faint);' }), `champion ${championId} ○`]) : null,
       el('span', null, [el('i', { class: 'dotact', style: 'background:var(--v2-good);' }), 'candidate ● · improved']),
       el('span', null, [el('i', { class: 'dotact', style: 'background:var(--v2-bad);' }), 'candidate ● · regressed']),
-      svg.isNum(championScalar) ? el('span', null, [el('i', { class: 'spine', style: 'border-color:var(--v2-ink-faint);border-top-style:dashed;' }), `champ aggregate ${svg.fmt(championScalar, 1)}`]) : null,
-      el('span', { class: 'dn-faint', text: '⏱ timeout · Δ = candidate − champion · dim tag = rung/round it ran in · click → drill-down' }),
+      !scoreAxis && svg.isNum(championScalar) ? el('span', null, [el('i', { class: 'spine', style: 'border-color:var(--v2-ink-faint);border-top-style:dashed;' }), `champ aggregate ${svg.fmt(championScalar, 1)}`]) : null,
+      el('span', { class: 'dn-faint', text: (scoreAxis ? 'axis = per-entry score, higher is better · ± = replicate spread, -- when unmeasured · ' : 'axis = drift loss, lower is better · ')
+        + '⏱ timeout · Δ = candidate − champion · dim tag = rung/round it ran in · click → drill-down' }),
     ].filter(Boolean)));
     // per-generation MEAN continuous outcome (#18) — a board-level score
     // summary beneath the per-board rows; higher is better. Absent on the
@@ -1530,10 +1576,15 @@ function perBoardDumbbell(opts) {
   const deltaW = 54;       // the Δ value column, just left of the glyph — wide
                            // enough for a two-digit, signed, 2dp Δ ("−48.00")
                            // so it never collides with the score readout.
+  // Which way the axis reads. `higherBetter` = the axis IS the continuous score
+  // (a gain moves right); otherwise it is the drift loss (a gain moves left).
+  const higherBetter = !!o.higherBetter;
   // CONTINUOUS-SCORE column (#18): a 0→1 mini-bar + score readout, only
   // reserved when AT LEAST ONE row carries a score; a wholly bool-only
   // dumbbell keeps the pre-score geometry (zero-width score column) so its
-  // layout is byte-identical to today.
+  // layout is byte-identical to today. It stays even when the AXIS plots the
+  // score: the axis is a RELATIVE spread across the rows shown, the bar is the
+  // absolute level on the 0→1 scale, and a row can be top of a weak field.
   const anyScored = rows.some((r) => r && svg.isNum(r.score));
   const scoreW = anyScored ? 92 : 0;
   const footH = 16;        // the faint aggregate-tick caption band at the foot
@@ -1566,10 +1617,11 @@ function perBoardDumbbell(opts) {
     const paired = svg.isNum(r.champ);
     const dx = X(r.value);
     const cx = paired ? X(r.champ) : null;
-    // good when the candidate is BETTER (lower loss) than the champion on THIS
-    // board; bad when worse; neutral when unpaired (seed) or exactly equal.
-    const better = paired ? (r.value < r.champ) : null;
-    const worse = paired ? (r.value > r.champ) : null;
+    // good when the candidate is BETTER than the champion on THIS board — a
+    // higher score, or a lower loss; bad when worse; neutral when unpaired
+    // (seed) or exactly equal.
+    const better = paired ? (higherBetter ? r.value > r.champ : r.value < r.champ) : null;
+    const worse = paired ? (higherBetter ? r.value < r.champ : r.value > r.champ) : null;
     const dirCls = better ? 'dn-good' : worse ? 'dn-bad' : 'dn-flat';
     const g = svgEl('g', { class: 'dn-dumbbell-row', tabindex: o.onClick ? '0' : null });
 
@@ -1597,10 +1649,13 @@ function perBoardDumbbell(opts) {
     // candidate marker — FILLED ● coloured by the per-board verdict.
     const candDot = svgEl('circle', { cx: dx, cy, r: 4, class: 'dn-dumbbell-cand ' + dirCls });
     const prTip = prText(r.metrics);
-    const scoreTip = svg.isNum(r.score) ? ` · score ${svg.fmt(r.score, 2)}${prTip ? ' · ' + prTip : ''}` : '';
+    const scoreTip = (!higherBetter && svg.isNum(r.score)) ? ` · score ${svg.fmt(r.score, 2)}` : '';
+    // The replicate spread belongs with the score readout: it says how much of
+    // the Δ is readable. `--` when a single draw measured no spread.
+    const seTip = higherBetter ? ` · ${svg.isNum(r.se) ? '±' + r.se.toFixed(3) : '-- (one replicate)'}` : '';
     attachHovercard(candDot, (paired
       ? `${r.label}: candidate ${svg.fmt(r.value, 2)} vs champ ${svg.fmt(r.champ, 2)} (Δ ${svg.fmtSigned(r.value - r.champ, 2)})`
-      : `${r.label}: candidate ${svg.fmt(r.value, 2)}`) + scoreTip);
+      : `${r.label}: candidate ${svg.fmt(r.value, 2)}`) + scoreTip + seTip + (prTip ? ' · ' + prTip : ''));
     g.appendChild(candDot);
 
     // CONTINUOUS SCORE (#18): a 0→1 mini-bar + the score number, then the
@@ -1611,16 +1666,18 @@ function perBoardDumbbell(opts) {
       const sbx = x1 + 6;                 // bar left, just past the value axis
       const sbw = 44;                     // FIXED bar width — the readout sits to
                                           // its right, both INSIDE the score column
-      const sf = Math.max(0, Math.min(1, r.score));
-      const barY = cy - 3;
-      g.appendChild(svgEl('rect', { x: sbx, y: barY, width: sbw, height: 6, rx: 2, class: 'dn-score-track' }));
-      g.appendChild(svgEl('rect', { x: sbx, y: barY, width: Math.max(1, sbw * sf), height: 6, rx: 2, class: 'dn-score-fill ' + dirCls }));
-      // the readout is RIGHT-anchored at the score column's right edge so it
-      // stays WITHIN the column instead of spilling into the Δ column to its
-      // right (that overlap rendered the colliding "1.0048.00").
-      const sv = svgEl('text', { x: x1 + scoreW - 4, y: cy + 3, class: 'dn-score-val', 'text-anchor': 'end' });
-      sv.textContent = svg.fmt(r.score, 2);
-      g.appendChild(sv);
+      {
+        const sf = Math.max(0, Math.min(1, r.score));
+        const barY = cy - 3;
+        g.appendChild(svgEl('rect', { x: sbx, y: barY, width: sbw, height: 6, rx: 2, class: 'dn-score-track' }));
+        g.appendChild(svgEl('rect', { x: sbx, y: barY, width: Math.max(1, sbw * sf), height: 6, rx: 2, class: 'dn-score-fill ' + dirCls }));
+        // the readout is RIGHT-anchored at the score column's right edge so it
+        // stays WITHIN the column instead of spilling into the Δ column to its
+        // right (that overlap rendered the colliding "1.0048.00").
+        const sv = svgEl('text', { x: x1 + scoreW - 4, y: cy + 3, class: 'dn-score-val', 'text-anchor': 'end' });
+        sv.textContent = svg.fmt(r.score, 2);
+        g.appendChild(sv);
+      }
       const pr = prText(r.metrics);
       if (pr) {
         const prt = svgEl('text', { x: sbx, y: cy + 11, class: 'dn-score-pr', 'text-anchor': 'start' });

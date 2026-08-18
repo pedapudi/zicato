@@ -387,6 +387,75 @@ export function reflectionFixtureMap(opts) {
 // `/api/epoch?epoch=<id>` etc.; for a single-epoch fixture (every existing
 // test) `<id>` is the current epoch, so the scoped read is byte-identical to
 // the base — the fallback serves it from the base fixture, unchanged.
+// The per-entry A/B grid the dashboard service derives from the two sides' loss
+// files (query/tournament_view.build_matchup_grid). Derived here from the two
+// per-entry fixtures by the same rules, so a fixture map does not have to
+// hand-write a grid that is already implied by the rows it declares:
+//
+//   * one row per entry either side ran, sorted by entry id;
+//   * `verdict` / `won_by` / `decided_by` resolve on the first channel that
+//     SEPARATES the two sides — score (higher better), then the pass predicate,
+//     then drift (lower better); a tie falls through to the next channel;
+//   * `drift_present` is true when either side recorded a non-zero drift loss.
+//
+// A per-entry fixture row may declare `score_replicates` / `score_se` to pin the
+// replicate spread; absent, the grid reports the single draw the row itself is.
+function matchupGridFromFixtures(F, epochId, championId, challengerId) {
+  const sideOf = (gen) => {
+    const pe = lookupFixture(F, `/api/generation/${epochId}/${gen}/per-entry`);
+    const out = new Map();
+    if (pe && Array.isArray(pe.entries)) for (const r of pe.entries) out.set(r.entry_id, r);
+    return out;
+  };
+  const parent = sideOf(championId);
+  const child = sideOf(challengerId);
+  const num = (v) => (typeof v === 'number' && Number.isFinite(v) ? v : null);
+  const ids = [...new Set([...parent.keys(), ...child.keys()])].sort();
+  const entry_grid = ids.map((id) => {
+    const p = parent.get(id) || null;
+    const c = child.get(id) || null;
+    const pd = p ? num(p.drift_loss) : null;
+    const cd = c ? num(c.drift_loss) : null;
+    const ps = p ? num(p.score) : null;
+    const cs = c ? num(c.score) : null;
+    const pb = p && typeof p.pass_fail === 'boolean' ? p.pass_fail : null;
+    const cb = c && typeof c.pass_fail === 'boolean' ? c.pass_fail : null;
+    const channels = [
+      ['score', ps, cs],
+      ['pass', pb == null ? null : (pb ? 1 : 0), cb == null ? null : (cb ? 1 : 0)],
+      ['drift', pd == null ? null : -pd, cd == null ? null : -cd],
+    ];
+    let verdict = 'flat', won_by = null, decided_by = null;
+    for (const [name, pr, cr] of channels) {
+      if (pr == null || cr == null) continue;
+      if (decided_by == null) decided_by = name;   // the channel it was READ on
+      if (cr === pr) continue;                     // a tie separates nothing
+      decided_by = name;
+      if (cr > pr) { verdict = 'improved'; won_by = challengerId; }
+      else { verdict = 'regressed'; won_by = championId; }
+      break;
+    }
+    return {
+      entry_id: id,
+      parent_drift_loss: pd, child_drift_loss: cd,
+      parent_pass: pb, child_pass: cb,
+      parent_score: ps, child_score: cs,
+      parent_metrics: (p && p.metrics) || null, child_metrics: (c && c.metrics) || null,
+      delta: pd != null && cd != null ? cd - pd : null,
+      delta_score: ps != null && cs != null ? cs - ps : null,
+      score_replicates: c && typeof c.score_replicates === 'number' ? c.score_replicates : (cs != null ? 1 : 0),
+      score_se: c ? num(c.score_se) : null,
+      verdict, won_by, decided_by,
+    };
+  });
+  return {
+    epoch_id: epochId, champion: championId, challenger: challengerId,
+    entry_grid, scalar: null, source: 'loss_files',
+    drift_present: entry_grid.some((r) => (r.parent_drift_loss != null && r.parent_drift_loss !== 0)
+      || (r.child_drift_loss != null && r.child_drift_loss !== 0)),
+  };
+}
+
 export function lookupFixture(F, path) {
   if (Object.prototype.hasOwnProperty.call(F, path)) return F[path];
   // The two SERVED joins (round timeline + racing field) are derived from the
@@ -398,6 +467,10 @@ export function lookupFixture(F, path) {
   if (m) return roundTimelineFromFixtures(F, decodeURIComponent(m[1]));
   m = /^\/api\/epoch\/([^/?]+)\/racing-field$/.exec(path);
   if (m) return racingFieldFromFixtures(F, decodeURIComponent(m[1]));
+  m = /^\/api\/matchup-grid\/([^/?]+)\/([^/?]+)\/([^/?]+)$/.exec(path);
+  if (m) {
+    return matchupGridFromFixtures(F, decodeURIComponent(m[1]), decodeURIComponent(m[2]), decodeURIComponent(m[3]));
+  }
   const q = path.indexOf('?');
   if (q >= 0) {
     const base = path.slice(0, q);

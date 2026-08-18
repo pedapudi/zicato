@@ -90,13 +90,26 @@ export async function render(host, ctx, params) {
   if (traj && Array.isArray(traj.points)) for (const p of traj.points) if (svg.isNum(p.scalar)) scalarByGen.set(p.generation_id, p.scalar);
 
   const perEntries = await Promise.all(gens.map((g) => D.perEntry(epochId, g.id)));
-  const lossLookup = new Map();
+  // WHICH CHANNEL the entries × generations heatmap paints. The continuous
+  // per-entry score when the board is scored, the drift loss when the adapter
+  // emits a drift stream, and nothing at all when neither is populated — a grid
+  // of structurally-zero cells is not a measurement.
+  const anyScore = perEntries.some((pe) => pe && Array.isArray(pe.entries) && pe.entries.some((r) => svg.isNum(r.score)));
+  // The drift channel's presence is the SERVER's answer, and only the server's:
+  // a payload that does not carry the flag predates it, so the pre-feature
+  // behaviour (drift shown) stands rather than the view guessing "absent" and
+  // hiding a real measurement.
+  const driftKnown = perEntries.some((pe) => pe && typeof pe.drift_present === 'boolean');
+  const driftPresent = !driftKnown || perEntries.some((pe) => pe && pe.drift_present === true);
+  const heatChannel = anyScore ? 'score' : driftPresent ? 'drift' : null;
+  const cellLookup = new Map();
   const entryIds = new Set();
   gens.forEach((g, i) => {
     const pe = perEntries[i];
     if (pe && Array.isArray(pe.entries)) for (const r of pe.entries) {
       entryIds.add(r.entry_id);
-      if (svg.isNum(r.drift_loss)) lossLookup.set(`${r.entry_id}|${g.id}`, r.drift_loss);
+      const v = heatChannel === 'score' ? r.score : heatChannel === 'drift' ? r.drift_loss : null;
+      if (svg.isNum(v)) cellLookup.set(`${r.entry_id}|${g.id}`, v);
     }
   });
   for (const b of board) { if (b.entry_id) entryIds.add(b.entry_id); }
@@ -249,7 +262,8 @@ export async function render(host, ctx, params) {
     gens: gens.map((g) => [g.id, g.parent, g.promoted, svg.isNum(g.round_index) ? g.round_index : null, scalarByGen.has(g.id) ? scalarByGen.get(g.id).toFixed(3) : null]),
     rounds: roundModelDigest(epochRounds),
     waterfall: waterfallSteps(timeline).map((s) => [s.round_index, svg.isNum(s.from) ? s.from.toFixed(2) : null, svg.isNum(s.to) ? s.to.toFixed(2) : null, s.promoted, s.gen]),
-    loss: [...lossLookup.entries()].sort(),
+    heatChannel,
+    cell: [...cellLookup.entries()].sort(),
     board: board.map((b) => [b.entry_id, b.kind, b.weight, b.budget_s]),
     boardStatus: boardStatusDigest(boardStatus),
     // loop-communication panels: content-gated on their own rounded folds so
@@ -469,23 +483,31 @@ export async function render(host, ctx, params) {
     const cols = gens.map((g) => ({ id: g.id, label: g.id }));
     const hmt = densityTokens();
     const hmCard = el('div', { class: 'dn-measure-card dn-figpane' }, [
-      el('div', { class: 'dn-measure-head', text: 'Board entries × generations · drift loss' }),
+      el('div', { class: 'dn-measure-head', text: 'Board entries × generations · '
+        + (heatChannel === 'score' ? 'score' : heatChannel === 'drift' ? 'drift loss' : 'no measured channel') }),
     ]);
-    if (rows.length && cols.length) {
+    if (rows.length && cols.length && heatChannel) {
       // The heatmap draws at its INTRINSIC cell size (viewBox + 'meet'): the
       // band column bounds it, it never inflates to fill one.
       hmCard.appendChild(svg.heatmap({
         rows, cols, cellW: Math.round(hmt.heatCell * 1.6), cellH: hmt.heatCell,
-        value: (r, c) => (lossLookup.has(`${r}|${c}`) ? lossLookup.get(`${r}|${c}`) : null),
+        value: (r, c) => (cellLookup.has(`${r}|${c}`) ? cellLookup.get(`${r}|${c}`) : null),
         // fix #7: a cell routes to the PER-BOARD cross-candidate view, keyed by
         // the entry id (the row) — NOT to an arbitrary candidate.
         onClick: (rId) => ctx.navigate('board', { epochId, entry: rId }),
       }));
       hmCard.appendChild(figCaption([
-        'cell = drift loss for one board entry in one generation · denser ink = more drift',
+        heatChannel === 'score'
+          ? 'cell = score for one board entry in one generation · denser ink = a higher score'
+          : 'cell = drift loss for one board entry in one generation · denser ink = more drift',
         'click a row → that board across every candidate',
         'the small-multiples trellis lives in Boards',
       ]));
+    } else if (!heatChannel && rows.length && cols.length) {
+      // Honest-empty: the runs exist, but neither channel carries a value. The
+      // heatmap would otherwise paint a uniform grid that reads as a real,
+      // flat measurement.
+      hmCard.appendChild(empty('No measured per-entry channel: this board records no continuous score, and the adapter emits no drift stream.'));
     } else {
       hmCard.appendChild(empty('No per-entry loss profiles yet (the index may not be built).'));
     }

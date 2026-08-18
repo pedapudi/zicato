@@ -26,6 +26,7 @@ from zicato.query.paths import (
     read_current_epoch,
 )
 from zicato.query.ratings import RATING_FIELDS, rating_by_generation
+from zicato.query.replicate_scores import replicate_scores, standard_error
 from zicato.query.runtime_view import read_active_tournament_dict
 from zicato.workspace import read_gen_score
 
@@ -583,6 +584,15 @@ def _read_run_loss_files(
             # loss.json (the field did not exist) — surfaced so the gate
             # breakdown can show which transform / plugin shaped drift_loss.
             "scoring_provenance": str(prov) if isinstance(prov, str) and prov else None,
+            # Did this run OBSERVE drift at all? An adapter that emits no drift
+            # stream still writes a structural ``drift_loss`` of 0.0 with an
+            # empty ``drift_counts``, which is indistinguishable on the wire
+            # from a run that watched for drift and saw none. Either a recorded
+            # drift event or a non-zero loss proves the channel carries signal;
+            # nothing else does. Internal to this module — the endpoint serves
+            # the matchup-wide ``drift_present`` derived from it.
+            "drift_observed": bool(loss.get("drift_counts"))
+            or bool(coerce_float(drift) not in (None, 0.0)),
         }
         sid = loss.get("adk_session_id")
         if isinstance(sid, str) and sid:
@@ -601,21 +611,67 @@ def _read_gen_score(paths: WorkspacePaths, epoch_id: str, generation_id: str) ->
     return read_gen_score(layout_of(paths), epoch_id, generation_id)
 
 
-def _grid_won_by(
-    parent: float | None, child: float | None, champion: str, challenger: str
-) -> str | None:
-    """Which side won one board entry — lower drift loss wins.
+def _entry_outcome(
+    row: dict[str, Any], champion: str, challenger: str
+) -> tuple[str, str | None, str | None]:
+    """Resolve ONE board entry's outcome against the signal the contract carries.
 
-    Returns the challenger id when it beat the champion on this entry,
-    the champion id when it lost, ``None`` on a tie or missing data.
+    Returns ``(verdict, won_by, decided_by)``. The channels are tried in the
+    order the evaluation contract defines an entry's outcome, and the first one
+    that SEPARATES the two sides decides:
+
+    1. ``"score"`` — the continuous per-entry outcome, HIGHER is better.
+    2. ``"pass"`` — the entry's pass predicate, passing beats failing.
+    3. ``"drift"`` — the drift loss, LOWER is better.
+
+    A channel populated on both sides but equal on them has not separated
+    anything, so resolution falls through to the next one: two entries that both
+    fail their predicate are still told apart by their drift losses, exactly as
+    before this fall-through existed. When no channel separates them the entry is
+    ``"flat"`` and ``decided_by`` names the first channel it was READ on, so the
+    client knows which quantity the tie is a tie in.
+
+    Resolution is per row (DQ3): a board where only some entries carry a
+    continuous score, or a champion generation scored before the ``score`` field
+    existed, degrades entry by entry rather than dropping the entry or falling
+    back to one channel for the whole grid. ``decided_by`` is ``None`` only when
+    no channel is populated on both sides.
     """
-    if parent is None or child is None:
-        return None
-    if child < parent:
-        return challenger
-    if child > parent:
-        return champion
-    return None
+    ordered: tuple[tuple[str, float | None, float | None], ...] = (
+        ("score", _rank_score(row.get("parent_score")), _rank_score(row.get("child_score"))),
+        ("pass", _rank_pass(row.get("parent_pass")), _rank_pass(row.get("child_pass"))),
+        (
+            "drift",
+            _rank_drift(row.get("parent_drift_loss")),
+            _rank_drift(row.get("child_drift_loss")),
+        ),
+    )
+    read_on: str | None = None
+    for channel, parent_rank, child_rank in ordered:
+        if parent_rank is None or child_rank is None:
+            continue
+        if read_on is None:
+            read_on = channel
+        if child_rank > parent_rank:
+            return "improved", challenger, channel
+        if child_rank < parent_rank:
+            return "regressed", champion, channel
+    return "flat", None, read_on
+
+
+# The three channel readers below all return a HIGHER-IS-BETTER rank, so
+# :func:`_entry_outcome` compares them with one rule and the sign conventions
+# (score up = better, drift down = better) are stated exactly once.
+def _rank_score(value: Any) -> float | None:
+    return float(value) if isinstance(value, int | float) and not isinstance(value, bool) else None
+
+
+def _rank_pass(value: Any) -> float | None:
+    return float(value) if isinstance(value, bool) else None
+
+
+def _rank_drift(value: Any) -> float | None:
+    return -float(value) if isinstance(value, int | float) and not isinstance(value, bool) else None
 
 
 def build_matchup_grid(
@@ -637,10 +693,13 @@ def build_matchup_grid(
     Returns::
 
         {
-          "epoch_id", "champion", "challenger",
+          "epoch_id", "champion", "challenger", "drift_present",
           "entry_grid": [ { entry_id, parent_drift_loss, child_drift_loss,
-                            parent_pass, child_pass, delta, verdict,
-                            won_by, parent_session_id?, child_session_id? } ],
+                            parent_pass, child_pass,
+                            parent_score, child_score, delta_score,
+                            score_replicates, score_se,
+                            delta, verdict, won_by, decided_by,
+                            parent_session_id?, child_session_id? } ],
           "scalar": { parent, child, delta, components } | null,
           "source": "loss_files"
         }
@@ -650,6 +709,20 @@ def build_matchup_grid(
     block is composed from the ``gen_score.json`` aggregates — its
     ``components`` is the challenger-minus-champion delta of each
     ``scalar_components`` term so the breakdown shows what moved.
+
+    Each row's ``verdict`` / ``won_by`` resolve against the signal the
+    contract actually carries rather than against drift alone, and
+    ``decided_by`` names the channel that resolved them (see
+    :func:`_entry_outcome`). ``delta_score`` is the per-entry movement on
+    the continuous channel, challenger − champion with HIGHER BETTER — the
+    entry-level counterpart of the generation-level
+    ``scalar.mean_score.delta`` below, and the quantity the promote gate
+    aggregates. Rows carrying a ``delta_score`` are exactly the entries both
+    sides ran, so summing that column reproduces the gate's comparison on
+    the shared board slice; an entry only one side ran contributes ``None``
+    and therefore nothing, which is the same restriction the gate applies.
+    ``drift_present`` says whether the drift channel carries information at
+    all in this workspace, so a client hides it instead of guessing.
     """
     base: dict[str, Any] = {
         "epoch_id": epoch_id,
@@ -657,6 +730,7 @@ def build_matchup_grid(
         "challenger": challenger_id,
         "entry_grid": [],
         "scalar": None,
+        "drift_present": False,
         "source": "loss_files",
     }
     if not epoch_id or not challenger_id:
@@ -676,6 +750,15 @@ def build_matchup_grid(
             if isinstance(parent_drift, int | float) and isinstance(child_drift, int | float)
             else None
         )
+        parent_score = p.get("score") if p else None
+        child_score = c.get("score") if c else None
+        child_replicates = replicate_scores(paths, epoch_id, challenger_id, entry_id) if c else []
+        if not child_replicates and isinstance(child_score, int | float):
+            # The replicate enumeration is best-effort — a pruned run dir or an
+            # unreadable sibling file yields nothing. The canonical loss.json
+            # this row's score came from is still one draw, so never report zero
+            # draws beside a served score.
+            child_replicates = [float(child_score)]
         row: dict[str, Any] = {
             "entry_id": entry_id,
             "parent_drift_loss": parent_drift,
@@ -686,20 +769,52 @@ def build_matchup_grid(
             # precision/recall decomposition. ``None`` for a pre-score
             # loss.json, so a bool-only entry carries score/metrics ==
             # None and renders by its pass bit exactly as before.
-            "parent_score": p.get("score") if p else None,
-            "child_score": c.get("score") if c else None,
+            "parent_score": parent_score,
+            "child_score": child_score,
             "parent_metrics": p.get("metrics") if p else None,
             "child_metrics": c.get("metrics") if c else None,
             "delta": delta,
-            "verdict": _verdict(parent_drift, child_drift),
-            "won_by": _grid_won_by(parent_drift, child_drift, champion_id, challenger_id),
+            # The per-entry movement on the CONTINUOUS channel, challenger −
+            # champion, HIGHER IS BETTER (the opposite sign convention to
+            # ``delta``, which is a loss). ``None`` unless both sides carry a
+            # score, so an entry the champion never ran, or a generation scored
+            # before the field existed, degrades to null on this row alone.
+            "delta_score": (
+                child_score - parent_score
+                if isinstance(parent_score, int | float) and isinstance(child_score, int | float)
+                else None
+            ),
+            # How many qualifying replicate draws the CHALLENGER has on this
+            # entry, and the standard error of their mean score. This is the
+            # candidate's own measurement precision on the entry — it does NOT
+            # fold in the champion side, which is often a single cached draw —
+            # so it bounds how much of ``delta_score`` is readable, not the
+            # delta's full variance. ``score_se`` is null below two draws:
+            # one draw measures no spread and must never render as ±0.000.
+            "score_replicates": len(child_replicates),
+            "score_se": standard_error(child_replicates),
         }
+        verdict, won_by, decided_by = _entry_outcome(row, champion_id, challenger_id)
+        row["verdict"] = verdict
+        row["won_by"] = won_by
+        row["decided_by"] = decided_by
         if p and p.get("adk_session_id"):
             row["parent_session_id"] = p["adk_session_id"]
         if c and c.get("adk_session_id"):
             row["child_session_id"] = c["adk_session_id"]
         entry_grid.append(row)
     base["entry_grid"] = entry_grid
+    # Does the drift channel carry information for THIS matchup? True when any
+    # run on either side recorded a drift event or a non-zero drift loss. An
+    # adapter that emits no drift stream produces a structural 0.0 on every
+    # entry, which reads on the wire exactly like a clean run — so the honest
+    # answer for that workspace is "absent", and a client hides the drift
+    # columns rather than painting a column of zeroes that mean nothing.
+    base["drift_present"] = any(
+        cell.get("drift_observed")
+        for side in (parent_losses, child_losses)
+        for cell in side.values()
+    )
 
     parent_score = _read_gen_score(paths, epoch_id, champion_id) if champion_id else {}
     child_score = _read_gen_score(paths, epoch_id, challenger_id)

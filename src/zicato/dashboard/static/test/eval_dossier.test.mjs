@@ -106,10 +106,12 @@ function statPairs(host) {
 test('trajectory: trajectorySeries keeps ONLY the champion-spine cells, in round order, NaN for a never-ran cell', () => {
   const s = board.trajectorySeries(DOSSIER_FULL);
   assertDeep(s.gens, ['g0', 'g2', 'g5'], 'g1 (off-spine) is excluded; spine gens kept in round order');
-  // the known answer: g0=0.62, g2=0.31, and g5 never ran → NaN (the pen lifts).
-  assertEqual(s.loss[0], 0.62, 'g0 drift loss');
-  assertEqual(s.loss[1], 0.31, 'g2 drift loss');
-  assert(Number.isNaN(s.loss[2]), 'g5 never ran → NaN, never a fabricated point');
+  // this dossier is bool-only (no per-cell score), so the series reads the drift
+  // channel. the known answer: g0=0.62, g2=0.31, g5 never ran → NaN (pen lifts).
+  assertEqual(s.channel, 'drift', 'an unscored entry falls through to the drift channel');
+  assertEqual(s.values[0], 0.62, 'g0 drift loss');
+  assertEqual(s.values[1], 0.31, 'g2 drift loss');
+  assert(Number.isNaN(s.values[2]), 'g5 never ran → NaN, never a fabricated point');
   assertDeep(s.passRatio.slice(0, 2), [0.0, 1.0], 'pass ratios carry through for the ran cells');
 });
 

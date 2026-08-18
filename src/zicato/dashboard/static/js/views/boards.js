@@ -46,15 +46,29 @@ export async function render(host, ctx, params) {
 
   const perEntries = await Promise.all(gens.map((g) => D.perEntry(epochId, g.id)));
   const rowByGenEntry = new Map();
-  const allLoss = [];
   gens.forEach((g, i) => {
     const pe = perEntries[i];
     if (pe && Array.isArray(pe.entries)) for (const r of pe.entries) {
       rowByGenEntry.set(`${g.id}|${r.entry_id}`, r);
-      if (svg.isNum(r.drift_loss)) allLoss.push(r.drift_loss);
     }
   });
-  const domain = allLoss.length ? svg.extent(allLoss) : null;
+  // WHICH CHANNEL the trellis bars read. The continuous per-entry score when the
+  // board is scored (higher is better), the drift loss otherwise. The server
+  // says whether the drift channel carries information at all: an adapter that
+  // emits no drift stream writes a structural 0.000 on every entry, and a
+  // trellis of empty bars states nothing about any candidate.
+  const scored = [...rowByGenEntry.values()].some((r) => svg.isNum(r.score));
+  // The drift channel's presence is the SERVER's answer, and only the server's:
+  // a payload that does not carry the flag predates it, so the pre-feature
+  // behaviour (drift shown) stands rather than the view guessing "absent" and
+  // hiding a real measurement.
+  const driftKnown = perEntries.some((pe) => pe && typeof pe.drift_present === 'boolean');
+  const driftPresent = !driftKnown || perEntries.some((pe) => pe && pe.drift_present === true);
+  const channel = scored ? 'score' : driftPresent ? 'drift' : 'pass';
+  const valueOf = (r) => (channel === 'score' ? r.score : channel === 'drift' ? r.drift_loss : NaN);
+  const allValues = [];
+  for (const r of rowByGenEntry.values()) if (svg.isNum(valueOf(r))) allValues.push(valueOf(r));
+  const domain = allValues.length ? svg.extent(allValues) : null;
 
   // LIVE — in-flight board runs, CURRENT-EPOCH-SCOPED. A foreign-epoch run must
   // not light up this trellis, so the set is gated on the live run belonging to
@@ -78,23 +92,26 @@ export async function render(host, ctx, params) {
     inflightByEntry.set(eid, cur);
   }
 
-      return { epochId, board, gens, rowByGenEntry, domain, inflightByEntry };
+      return { epochId, board, gens, rowByGenEntry, domain, channel, valueOf, inflightByEntry };
     },
     digest: (d) => JSON.stringify({
       epochId: d.epochId,
       board: d.board.map((b) => [b.entry_id, b.kind, b.weight, b.budget_s]),
       gens: d.gens.map((g) => g.id),
-      loss: [...d.rowByGenEntry.entries()].map(([k, r]) => [k, svg.isNum(r.drift_loss) ? r.drift_loss.toFixed(3) : null, r.pass_fail, !!r.wall_clock_budget_exceeded]).sort(),
+      channel: d.channel,
+      value: [...d.rowByGenEntry.entries()].map(([k, r]) => [k, svg.isNum(d.valueOf(r)) ? d.valueOf(r).toFixed(3) : null, r.pass_fail, !!r.wall_clock_budget_exceeded]).sort(),
       // LIVE in-flight per entry — folded in so a beat that advances progress
       // repaints the lit cells, but a no-op heartbeat leaves the digest equal.
       inflight: [...d.inflightByEntry.entries()].map(([eid, v]) => [eid, v.count, v.hasProgress ? v.sumProgress.toFixed(2) : null]).sort(),
     }),
     build: (d) => {
-    const { epochId, board, gens, rowByGenEntry, domain, inflightByEntry } = d;
+    const { epochId, board, gens, rowByGenEntry, domain, channel, valueOf, inflightByEntry } = d;
     const nodes = [];
     nodes.push(el('div', { class: 'dn-pagehead' }, [
       el('h1', { class: 'dn-h1', text: `Boards · ${epochId}` }),
-      el('p', { class: 'dn-lede', text: 'The fixed task board for this epoch as small-multiples — one card per entry, every candidate’s drift loss on a shared scale. Open a card for the per-board cross-candidate view + inline transcripts.' }),
+      el('p', { class: 'dn-lede', text: 'The fixed task board for this epoch as small-multiples — one card per entry, every candidate’s '
+        + (channel === 'score' ? 'score (higher is better)' : channel === 'drift' ? 'drift loss (lower is better)' : 'pass outcome')
+        + ' on a shared scale. Open a card for the per-board cross-candidate view + inline transcripts.' }),
     ]));
 
     // The kind counters partition the WHOLE vocabulary. They used to test
@@ -110,7 +127,10 @@ export async function render(host, ctx, params) {
       ...(synthetic ? [stat(String(synthetic), 'synthetic')] : []),
     ]));
 
-    nodes.push(section('Board trellis · drift loss across candidates', trellis(board, gens, rowByGenEntry, domain, epochId, ctx, inflightByEntry)));
+    const trellisTitle = channel === 'score' ? 'Board trellis · score across candidates'
+      : channel === 'drift' ? 'Board trellis · drift loss across candidates'
+      : 'Board trellis · pass outcome across candidates';
+    nodes.push(section(trellisTitle, trellis(board, gens, rowByGenEntry, domain, valueOf, epochId, ctx, inflightByEntry, channel)));
     return nodes;
     },
   });
@@ -137,8 +157,10 @@ export function trellisCaption(b) {
   });
 }
 
-function trellis(board, gens, rowByGenEntry, domain, epochId, ctx, inflightByEntry) {
+function trellis(board, gens, rowByGenEntry, domain, valueOf, epochId, ctx, inflightByEntry, channel) {
   if (!board.length) return el('div', { class: 'dn-panel' }, [empty('No board entries recorded.')]);
+  const channelLabel = channel === 'score' ? 'score, higher is better'
+    : channel === 'drift' ? 'drift loss, lower is better' : 'pass outcome';
   const dt = densityTokens();
   const sorted = board.slice().sort((a, b) => {
     const ka = KIND_ORDER[a.kind] ?? 9; const kb = KIND_ORDER[b.kind] ?? 9;
@@ -153,7 +175,7 @@ function trellis(board, gens, rowByGenEntry, domain, epochId, ctx, inflightByEnt
     const eid = b.entry_id;
     const bars = genIds.map((g) => {
       const r = rowByGenEntry.get(`${g}|${eid}`);
-      return { label: g, value: r && svg.isNum(r.drift_loss) ? r.drift_loss : NaN, fail: r ? r.pass_fail === false : false, timeout: r ? !!r.wall_clock_budget_exceeded : false };
+      return { label: g, value: r && svg.isNum(valueOf(r)) ? valueOf(r) : NaN, fail: r ? r.pass_fail === false : false, timeout: r ? !!r.wall_clock_budget_exceeded : false };
     });
     const cells = genIds.map((g) => {
       const r = rowByGenEntry.get(`${g}|${eid}`);
@@ -186,7 +208,7 @@ function trellis(board, gens, rowByGenEntry, domain, epochId, ctx, inflightByEnt
   const card = el('div', { class: 'dn-panel' });
   card.appendChild(grid);
   card.appendChild(el('div', { class: 'dn-legend' }, [
-    el('span', null, [el('i', { class: 'spine' }), 'one bar per candidate · drift loss (shared scale)']),
+    el('span', null, [el('i', { class: 'spine' }), 'one bar per candidate · ' + channelLabel + ' (shared scale)']),
     el('span', null, [el('i', { class: 'dotact' }), 'pass']),
     el('span', null, [el('i', { class: 'dotpred', style: 'border-color:var(--v2-bad);' }), 'fail']),
     el('span', { class: 'dn-faint', text: '⏱ timeout · click a board → that entry across every candidate' }),

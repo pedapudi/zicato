@@ -402,7 +402,7 @@ test('candidate view: the per-board figure renders the champion○ → candidate
   assertEqual(conns.length, 2, 'a champ→candidate connector per board (the dumbbell bar)');
   assertEqual(deltas.length, 2, 'a per-board Δ (candidate − champion) per board');
   // the champion ○ uses the REAL per-board champion value (v0: waffles 60.5,
-  // picky 105.5 — both come through s.championLoss, so the ○ is positioned by
+  // picky 105.5 — both come through the SERVED matchup grid, so the ○ is positioned by
   // the actual champion-on-this-board loss, recoverable as cand − Δ).
   const champCx = champDots.map((n) => parseFloat(n.getAttribute('cx')));
   const candCx = candDots.map((n) => parseFloat(n.getAttribute('cx')));

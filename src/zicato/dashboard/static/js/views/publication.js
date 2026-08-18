@@ -127,17 +127,21 @@ export async function render(host, ctx, params) {
     htmlLen: inlineHtml.length,
     gens: gens.map((g) => [g.id, g.parent, g.promoted, scalarByGen.has(g.id) ? scalarByGen.get(g.id).toFixed(3) : null]),
     // every entry_grid field the per-match-up table RENDERS folds here: the two
-    // drift losses + verdict as before, PLUS the continuous #18 score pair,
-    // their precision/recall metrics, `won_by`, and the two session ids that
-    // decide whether a harmonograf deep link paints.
-    grids: grids.map((gr) => gr && Array.isArray(gr.entry_grid) ? gr.entry_grid.map((r) => [
-      r.entry_id, r.parent_drift_loss, r.child_drift_loss, r.verdict,
+    // drift losses + verdict, the continuous #18 score pair and their Δ, the
+    // replicate spread, the precision/recall metrics, `won_by`, `decided_by`,
+    // and the two session ids that decide whether a harmonograf deep link
+    // paints — plus the grid-level `drift_present`, which decides whether the
+    // drift columns exist at all.
+    grids: grids.map((gr) => gr ? [gr.drift_present !== false, Array.isArray(gr.entry_grid) ? gr.entry_grid.map((r) => [
+      r.entry_id, r.parent_drift_loss, r.child_drift_loss, r.verdict, r.decided_by || null,
       svg.isNum(r.parent_score) ? r.parent_score.toFixed(3) : null,
       svg.isNum(r.child_score) ? r.child_score.toFixed(3) : null,
+      svg.isNum(r.delta_score) ? r.delta_score.toFixed(4) : null,
+      svg.isNum(r.score_se) ? r.score_se.toFixed(4) : null,
       metricsDigest(r.parent_metrics), metricsDigest(r.child_metrics),
       r.won_by == null ? null : String(r.won_by),
       r.parent_session_id || null, r.child_session_id || null,
-    ]) : null),
+    ]) : null] : null),
     // the harmonograf deep links are liveness-gated (core/harmonograf.js), so a
     // server coming up / a run ending must repaint the link column. Same fold
     // the candidate dossier uses (`hgLive`).
@@ -326,11 +330,13 @@ export function metricsDigest(metrics) { return prText(metrics); }
 // round (the brief mandates this in the paper).
 //
 // The table honours the FULL entry_grid row contract (query/tournament_view.py
-// build_matchup_grid): the drift-loss pair + Δ + verdict, the CONTINUOUS #18
-// score pair with its precision/recall decomposition, the `won_by` side, and a
-// per-side harmonograf deep link off `parent_session_id` / `child_session_id`.
-// A pre-score loss.json carries score/metrics == null, so a bool-only board
-// renders exactly as it did before the columns existed.
+// build_matchup_grid): the continuous score pair with its Δ (positive = better)
+// and replicate spread, the drift-loss pair with its Δ (positive = worse) when
+// the workspace has a drift stream at all, the precision/recall decomposition,
+// and the server's `verdict` / `won_by` / `decided_by` — the last naming which
+// channel resolved the row, so the tone rides only the column that decided it.
+// Each block of columns appears only when its channel carries values, so a
+// bool-only board renders exactly as it did before the columns existed.
 function appendMatchupDetail(article, figures) {
   const { matchups, grids, ctx, epochId } = figures;
   const sec = el('section', { class: 'dn-paper-matchups' });
@@ -344,30 +350,49 @@ function appendMatchupDetail(article, figures) {
     // the continuous-score columns only appear when SOMETHING on this grid was
     // scored — a bool-only board must not grow four empty columns.
     const scored = rows.some((r) => svg.isNum(r.parent_score) || svg.isNum(r.child_score));
+    // The DRIFT columns are dropped when the server reports the channel absent:
+    // an adapter that emits no drift stream writes a structural 0.0 on every
+    // entry, and three columns of zeroes beside a Δ of 0.0 say nothing.
+    const showDrift = grid.drift_present !== false;
+    const anySe = rows.some((r) => svg.isNum(r.score_se));
     const anyMetrics = rows.some((r) => prText(r.parent_metrics) || prText(r.child_metrics));
     const anySession = rows.some((r) => r.parent_session_id || r.child_session_id);
     sec.appendChild(subhead(`${m.champion} → ${m.challenger}${m.decision ? ' · ' + m.decision : ''}`));
-    const columns = [{ label: 'board entry' }, { label: m.champion, class: 'dn-num' },
-      { label: m.challenger, class: 'dn-num' }, { label: 'Δ', class: 'dn-num' }];
-    if (scored) columns.push({ label: 'score ' + m.champion, class: 'dn-num' }, { label: 'score ' + m.challenger, class: 'dn-num' });
+    const columns = [{ label: 'board entry' }];
+    if (showDrift) {
+      columns.push({ label: 'loss ' + m.champion, class: 'dn-num' },
+        { label: 'loss ' + m.challenger, class: 'dn-num' }, { label: 'Δ loss', class: 'dn-num' });
+    }
+    if (scored) {
+      columns.push({ label: 'score ' + m.champion, class: 'dn-num' },
+        { label: 'score ' + m.challenger, class: 'dn-num' }, { label: 'Δ score', class: 'dn-num' });
+      if (anySe) columns.push({ label: '± se', class: 'dn-num' });
+    }
     if (anyMetrics) columns.push({ label: 'precision / recall' });
-    columns.push({ label: 'verdict' }, { label: 'won by' });
+    columns.push({ label: 'verdict' }, { label: 'won by' }, { label: 'decided by' });
     if (anySession) columns.push({ label: 'trace' });
     const tbl = dataTable({
       class: 'dn-md-table',
       columns,
       rows: rows.map((r) => {
-        const d = svg.isNum(r.delta) ? r.delta : (svg.isNum(r.child_drift_loss) && svg.isNum(r.parent_drift_loss) ? r.child_drift_loss - r.parent_drift_loss : NaN);
         const vCls = r.verdict === 'improved' ? 'dn-good-t' : r.verdict === 'regressed' ? 'dn-bad-t' : '';
-        const cells = [
-          { class: 'dn-mono', text: r.entry_id },
-          { class: 'dn-num dn-mono', text: svg.isNum(r.parent_drift_loss) ? svg.fmt(r.parent_drift_loss, 1) : '—' },
-          { class: 'dn-num dn-mono', text: svg.isNum(r.child_drift_loss) ? svg.fmt(r.child_drift_loss, 1) : '—' },
-          { class: 'dn-num dn-mono ' + vCls, text: svg.isNum(d) ? svg.fmtSigned(d, 1) : '—' },
-        ];
+        const cells = [{ class: 'dn-mono', text: r.entry_id }];
+        if (showDrift) {
+          const d = svg.isNum(r.delta) ? r.delta : NaN;
+          cells.push({ class: 'dn-num dn-mono', text: svg.isNum(r.parent_drift_loss) ? svg.fmt(r.parent_drift_loss, 1) : '—' });
+          cells.push({ class: 'dn-num dn-mono', text: svg.isNum(r.child_drift_loss) ? svg.fmt(r.child_drift_loss, 1) : '—' });
+          // Δ loss keeps the LOSS convention: positive = worse, so the verdict
+          // tone only rides the column that decided the row.
+          cells.push({ class: 'dn-num dn-mono ' + (r.decided_by === 'drift' ? vCls : ''), text: svg.isNum(d) ? svg.fmtSigned(d, 1) : '—' });
+        }
         if (scored) {
           cells.push({ class: 'dn-num dn-mono', text: svg.isNum(r.parent_score) ? svg.fmt(r.parent_score, 2) : '—' });
           cells.push({ class: 'dn-num dn-mono', text: svg.isNum(r.child_score) ? svg.fmt(r.child_score, 2) : '—' });
+          // Δ score runs the other way: positive = better.
+          cells.push({ class: 'dn-num dn-mono ' + (r.decided_by === 'score' ? vCls : ''), text: svg.isNum(r.delta_score) ? svg.fmtSigned(r.delta_score, 3) : '—' });
+          // Replicate spread on the challenger's score. `--`, never ±0.000: a
+          // single draw measured no spread and must not imply a precision.
+          if (anySe) cells.push({ class: 'dn-num dn-mono dn-faint', text: svg.isNum(r.score_se) ? '±' + r.score_se.toFixed(3) : '--' });
         }
         if (anyMetrics) {
           // champion / challenger precision-recall, in that order.
@@ -376,11 +401,14 @@ function appendMatchupDetail(article, figures) {
           cells.push({ class: 'dn-mono dn-faint', text: (pp || '—') + '  →  ' + (cp || '—') });
         }
         cells.push({ class: vCls, text: r.verdict || '—' });
-        // `won_by` is the SERVER's call (lower drift loss wins); rendered, never
-        // re-derived from the two losses.
+        // `verdict` / `won_by` / `decided_by` are the SERVER's call — it resolves
+        // the entry against the channel the contract populates (score, then the
+        // pass predicate, then drift) and names which one decided. Rendered,
+        // never re-derived here from the numbers in the row.
         const wonCls = r.won_by == null ? 'dn-faint'
           : (String(r.won_by) === String(m.challenger) ? 'dn-good-t' : '');
         cells.push({ class: 'dn-mono ' + wonCls, text: r.won_by == null ? '—' : String(r.won_by) });
+        cells.push({ class: 'dn-mono dn-faint', text: r.decided_by || '—' });
         if (anySession) {
           const links = [];
           const pl = r.parent_session_id
