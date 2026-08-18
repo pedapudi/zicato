@@ -18,8 +18,8 @@ The baseline and final ratchet use the same metric:
 
 | Measurement | Baseline (`f9052dd`) | Current limit | Net reduction |
 |---|---:|---:|---:|
-| Total | 408,547 | 410,555 | -2,008 |
-| Production | 197,588 | 197,475 | 113 |
+| Total | 408,547 | 411,536 | -2,989 |
+| Production | 197,588 | 197,858 | -270 |
 
 The earlier raw count of 425,755 included lockfiles and generated artifacts and
 is retained in `.line-budget.json` for provenance; it is not the enforced
@@ -61,3 +61,5 @@ increase.
 | Proposer baseline losses and metric priorities (production) | 196,725 | +587 | 197,312 | Issues #243 and #247: the own-code draw filter, the folded calibration read, the priority resolver and renderer, the calibration span guard, and the per-site wiring of the rendered block. |
 | Unit provenance (total) | 409,913 | +642 | 410,555 | Issues #242 + #245: attempt-slot records, the wall-clock span, the attributed not-completed penalty, and the provenance regression module. |
 | Unit provenance (production) | 197,312 | +163 | 197,475 | Issues #242 + #245: the three OUTPUT-only loss fields, worker stamping, attempt recording, and the carried-champion attempt guard. |
+| Patch diff against the recorded parent (total) | 410,555 | +981 | 411,536 | Issue #253: the lineage-resolved baseline with a pickable base and context expansion, plus the truncation, per-column-room, record-vs-tree, and reconstruction-caption regressions. |
+| Patch diff against the recorded parent (production) | 197,475 | +383 | 197,858 | Issue #253: the diff view's baseline resolution, the base picker, the expansion machinery, and the reconstructed_against flag on mutation detail. |
