@@ -210,10 +210,8 @@ function reconcileRunActivity(scroller, turns, execution) {
   const unresolved = new Set(Array.isArray(index.source.unresolved_ids) ? index.source.unresolved_ids : []);
   const roots = Array.isArray(index.source.root_ids) ? index.source.root_ids : [];
   const ids = [...roots, ...unresolved].filter((id, index, all) => !attached.has(id) && all.indexOf(id) === index);
-  const sig = ids.map(String).join('|') + ':' + ids.map((id) => {
-    const node = index.byId.get(id);
-    return node ? [node.status, node.summary, node.fidelity].join('~') : 'missing';
-  }).join('|');
+  // Recursive: an error on a node nested under an unattached root must repaint the rail.
+  const sig = ids.map((id) => executionNodeSig(id, index, new Set())).join('|');
   if (scroller._executionUnresolvedSig === sig) return;
   if (scroller._executionUnresolvedNode) scroller.removeChild(scroller._executionUnresolvedNode);
   scroller._executionUnresolvedNode = null;

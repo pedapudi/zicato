@@ -96,6 +96,40 @@ test('deep agent and tool mixtures render at full stated depth in stream order',
     .map((node) => node.getAttribute('data-node-id'));
   assertEqual(siblings.join(','), 't1,a2', 'a delegation precedes the invocation it observed');
 });
+test('errors carry their status class and stated reason on branch, leaf, and tool nodes', () => {
+  const errored = { fidelity: 'exact', root_ids: ['a1'], unresolved_ids: [], nodes: [
+    { node_id: 'a1', kind: 'agent', parent_id: null, name: 'coordinator', status: 'failed', summary: 'error:Boom', start_source_index: 0 },
+    { node_id: 't1', kind: 'tool', parent_id: 'a1', name: 'writer', status: 'failed', summary: 'write refused', start_source_index: 1 },
+    { node_id: 'a2', kind: 'agent', parent_id: 'a1', name: 'checker', status: 'cancelled', summary: 'steering cancelled', start_source_index: 2 },
+  ] };
+  const tree = buildExecutionOutline(errored, ['a1']);
+  const branch = tree.querySelector('[data-node-id="a1"]');
+  assert(branch.classList.contains('dn-exec-failed'), 'failed branch carries its status class');
+  assertEqual(branch.getAttribute('data-status'), 'failed');
+  assert(branch.textContent.includes('error:Boom'), 'branch shows the stated reason');
+  const tool = tree.querySelector('[data-node-id="t1"]');
+  assert(tool.classList.contains('dn-exec-failed'), 'failed tool leaf carries its status class');
+  assert(tool.textContent.includes('write refused'));
+  const cancelled = tree.querySelector('[data-node-id="a2"]');
+  assert(cancelled.classList.contains('dn-exec-cancelled'));
+  assert(cancelled.textContent.includes('steering cancelled'));
+});
+test('an error nested under an unattached running root repaints the run rail', () => {
+  const scroller = document.createElement('div');
+  const base = { fidelity: 'exact', root_ids: ['root'], unresolved_ids: [], nodes: [
+    { node_id: 'root', kind: 'agent', parent_id: null, name: 'coordinator', status: 'running', start_source_index: 0 },
+    { node_id: 'child', kind: 'agent', parent_id: 'root', name: 'worker', status: 'running', start_source_index: 1 },
+  ] };
+  reconcileTurns(scroller, [], [], base);
+  assertEqual(scroller.querySelector('[data-node-id="child"]').dataset.status, 'running');
+  const failed = structuredClone(base);
+  failed.nodes[1].status = 'failed';
+  failed.nodes[1].summary = 'error:Boom';
+  reconcileTurns(scroller, [], [], failed);
+  const child = scroller.querySelector('[data-node-id="child"]');
+  assertEqual(child.dataset.status, 'failed');
+  assert(child.textContent.includes('error:Boom'), 'the stated reason reaches the rail');
+});
 test('a running root without a conversation turn remains visible at run scope', () => {
   const scroller = document.createElement('div');
   const execution = { fidelity: 'exact', root_ids: ['worker'], unresolved_ids: [], nodes: [
