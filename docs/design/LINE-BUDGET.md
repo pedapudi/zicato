@@ -18,8 +18,8 @@ The baseline and final ratchet use the same metric:
 
 | Measurement | Baseline (`f9052dd`) | Current limit | Net reduction |
 |---|---:|---:|---:|
-| Total | 408,547 | 414,906 | -6,359 |
-| Production | 197,588 | 199,628 | -2,040 |
+| Total | 408,547 | 415,633 | -7,086 |
+| Production | 197,588 | 199,938 | -2,350 |
 
 The earlier raw count of 425,755 included lockfiles and generated artifacts and
 is retained in `.line-budget.json` for provenance; it is not the enforced
@@ -67,3 +67,5 @@ increase.
 | Per-entry outcomes on the configured signal (production) | 197,858 | +530 | 198,388 | Issue #246: delta_score/score_se/drift_present on the matchup grid and per-entry readers plus the channel-aware figure. |
 | Pre-spend workspace gate (total) | 412,609 | +2,297 | 414,906 | Issue #240: the check package (shared workspace view, validators, report), the gate at both spend boundaries, the structural unbound-span-marker collector, the reconstructible stub adapter the parity capture now runs the gate against, and the severity, probe-environment, probe-timeout, model-role, and advisory-tier regressions. |
 | Pre-spend workspace gate (production) | 198,388 | +1,240 | 199,628 | Issue #240: the validators and their lazily-built workspace view, the shared `duplicate_mutation_ids` helper, `make_adapter_from_spec`, the process-group-bounded adapter probe, and the enumerator's unbound-marker collector. |
+| Replicate-keyed run identity (total) | 414,906 | +727 | 415,633 | Issue #250: replicate-suffixed run ids and events files, the single-producer args payload, the per-replicate transcript readers, and the collision/telemetry pins. |
+| Replicate-keyed run identity (production) | 199,628 | +310 | 199,938 | Issue #250: the legible reserved-prefix id, per-replicate sink paths, and the any_unit_transcript reader shared by the three proposer-channel consumers. |
