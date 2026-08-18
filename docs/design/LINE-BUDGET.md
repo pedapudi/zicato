@@ -16,10 +16,10 @@ owns the exact classifications.
 
 The baseline and final ratchet use the same metric:
 
-| Measurement | Baseline (`f9052dd`) | Current limit | Reduction |
+| Measurement | Baseline (`f9052dd`) | Current limit | Net reduction |
 |---|---:|---:|---:|
-| Total | 408,547 | 408,150 | 397 |
-| Production | 197,588 | 196,439 | 1,149 |
+| Total | 408,547 | 408,900 | -353 |
+| Production | 197,588 | 196,725 | 863 |
 
 The earlier raw count of 425,755 included lockfiles and generated artifacts and
 is retained in `.line-budget.json` for provenance; it is not the enforced
@@ -55,3 +55,5 @@ increase.
 | Parity macOS bash 3.2 compatibility (total) | 408,136 | +2 | 408,138 | Empty-array-safe expansions plus a glob-safe comma-list split in tools/parity.sh; the ladder now runs on a stock macOS shell. |
 | Pi shipped-asset root (total) | 408,138 | +12 | 408,150 | Issue #238: the recurrence guard — a test pinning that the launcher leaves shipped-asset resolution to pi, and the live envelope lane rebuilt through the real env builder. |
 | Pi shipped-asset root (production) | 196,434 | +5 | 196,439 | Issue #238: the env-builder docstring stating which root is process state, so the variable is not re-added. |
+| Proposer input capture (total) | 408,150 | +750 | 408,900 | Issue #244: the locked append-only writer and tolerant reader, four capture sites, and the concurrency, retry, and degrade regressions. |
+| Proposer input capture (production) | 196,439 | +286 | 196,725 | Issue #244: the capture module, per-site wiring, the slot coordinate, and the path accessors. |
