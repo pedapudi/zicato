@@ -17,9 +17,11 @@ Resolution rules
   a concrete span.
 * A ``# zicato:mutable:file id="..."`` comment declares the whole file
   mutable; the span is the entire file (1..N lines).
-* If a span marker has no string literal beneath it, the marker is
-  silently ignored. (Operators get feedback through the audit CLI when an
-  id is missing from the listing.)
+* If a span marker has no string literal beneath it, the marker
+  contributes no point. Operators get feedback through the audit CLI when
+  an id is missing from the listing, and any caller that needs the fact
+  structurally (rather than out of the log) wraps the walk in
+  :func:`collect_unbound_span_markers`.
 
 Numeric / enum mutation points
 ------------------------------
@@ -69,7 +71,10 @@ from __future__ import annotations
 import ast
 import hashlib
 import logging
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Iterator, Mapping
+from contextlib import contextmanager
+from contextvars import ContextVar
+from dataclasses import dataclass
 from pathlib import Path
 
 from zicato.core.types import MutationPoint
@@ -118,6 +123,52 @@ TEXT_SCAN_SKIP_DIRS: frozenset[str] = frozenset(
 #: megabyte ``.jsonl`` dataset in a mutable tree is data, not surface, and
 #: reading it on every re-enumeration would dominate the apply loop.
 MAX_TEXT_FILE_BYTES = 2_000_000
+
+
+@dataclass(frozen=True, slots=True)
+class UnboundSpanMarker:
+    """A span marker that resolved to no literal, so it yields no point.
+
+    ``reason`` is one of ``"not_a_python_file"`` (a bare span marker in a
+    file with no AST to bind to) or ``"no_string_literal"`` (a Python file
+    where no string literal follows the marker). Both leave a file that
+    still looks annotated while contributing nothing to the surface.
+    """
+
+    id: str
+    file: Path
+    line: int
+    reason: str
+
+
+_unbound_span_markers: ContextVar[list[UnboundSpanMarker] | None] = ContextVar(
+    "zicato_unbound_span_markers", default=None
+)
+
+
+@contextmanager
+def collect_unbound_span_markers() -> Iterator[list[UnboundSpanMarker]]:
+    """Collect the unbound span markers seen by walks inside this block.
+
+    The enumerator names these defects in its log, and a log is the wrong
+    place for a caller that has to make a decision about them. The list
+    yielded here is filled as the walk proceeds and is complete when the
+    block exits. Collection is per-context, so concurrent walks in
+    different tasks do not see each other's markers.
+    """
+    collected: list[UnboundSpanMarker] = []
+    token = _unbound_span_markers.set(collected)
+    try:
+        yield collected
+    finally:
+        _unbound_span_markers.reset(token)
+
+
+def _record_unbound_span_marker(marker: UnboundSpanMarker) -> None:
+    """Add ``marker`` to the active collection, if any caller asked for one."""
+    collected = _unbound_span_markers.get()
+    if collected is not None:
+        collected.append(marker)
 
 
 def _content_hash(text: str) -> str:
@@ -379,10 +430,30 @@ def _scan_markers(
                 parsed.id,
                 file_path.name,
             )
+            _record_unbound_span_marker(
+                UnboundSpanMarker(
+                    id=parsed.id,
+                    file=file_path,
+                    line=marker_line,
+                    reason="not_a_python_file",
+                )
+            )
             idx += 1
             continue
         span = span_resolver(marker_line)
         if span is None:
+            # A span marker in a Python file with no string literal beneath
+            # it. Silent in the log by design — an operator mid-edit hits
+            # this constantly — but recorded structurally so a caller that
+            # must decide about it does not have to parse prose.
+            _record_unbound_span_marker(
+                UnboundSpanMarker(
+                    id=parsed.id,
+                    file=file_path,
+                    line=marker_line,
+                    reason="no_string_literal",
+                )
+            )
             idx += 1
             continue
         line_start, line_end = span
@@ -533,6 +604,8 @@ def enumerate_mutations(source_roots: list[Path]) -> list[MutationPoint]:
 __all__ = [
     "MAX_TEXT_FILE_BYTES",
     "TEXT_SCAN_SKIP_DIRS",
+    "UnboundSpanMarker",
+    "collect_unbound_span_markers",
     "enumerate_mutations",
     "is_text_mutation_candidate",
 ]

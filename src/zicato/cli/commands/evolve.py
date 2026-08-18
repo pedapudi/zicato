@@ -567,12 +567,14 @@ def _import_callable(dotted: str, *, kind: str) -> Any:
     return fn
 
 
-def _validate_before_spending(workspace_root: Path, epoch: str | None, *, dry_run: bool) -> None:
-    """Render the public workspace gate for ``--dry-run`` and stop.
+def _dry_run_and_exit(workspace_root: Path, epoch: str | None) -> None:
+    """Report the workspace gate's verdict and exit without spending.
 
     Normal evolve execution is gated inside ``evolve_n_rounds``, the
     public spend boundary shared by CLI and library callers. This helper
-    exists only because ``--dry-run`` exits before entering that loop.
+    exists only because ``--dry-run`` exits before entering that loop, so
+    it runs the validators itself — over ONE context, which is also what
+    the summary line's board and surface sizes are read from.
 
     Without an explicit ``--epoch`` the loop auto-epochs, freezing
     whatever the live contract files now say — so those are what gets
@@ -582,26 +584,26 @@ def _validate_before_spending(workspace_root: Path, epoch: str | None, *, dry_ru
     from zicato.check import (  # noqa: PLC0415
         CheckContext,
         WorkspaceCheckError,
+        build_report,
         render_report,
-        require_workspace_valid,
     )
 
-    try:
-        require_workspace_valid(workspace_root, epoch_id=epoch, live_contract=epoch is None)
-    except WorkspaceCheckError as exc:
-        click.echo(render_report(exc.report), nl=False)
-        raise click.ClickException(str(exc)) from exc
+    with CheckContext(workspace_root, epoch_id=epoch, live_contract=epoch is None) as ctx:
+        report = build_report(ctx)
+        entries, points = len(ctx.board), len(ctx.surface)
+        shown_epoch = ctx.epoch_id or "no epoch"
 
-    if dry_run:  # always true at the only call site; explicit for direct tests
-        with CheckContext(workspace_root, epoch_id=epoch, live_contract=epoch is None) as ctx:
-            entries, points = len(ctx.board), len(ctx.surface)
-            shown_epoch = ctx.epoch_id or "no epoch"
-        click.echo(
-            f"\ndry run: {shown_epoch}, "
-            f"{entries} board {'entry' if entries == 1 else 'entries'}, "
-            f"{points} mutation {'point' if points == 1 else 'points'}. Nothing was spent."
-        )
-        raise SystemExit(0)
+    if report.findings:
+        click.echo(render_report(report), nl=False)
+    if report.blocking:
+        raise click.ClickException(str(WorkspaceCheckError(report)))
+
+    click.echo(
+        f"\ndry run: {shown_epoch}, "
+        f"{entries} board {'entry' if entries == 1 else 'entries'}, "
+        f"{points} mutation {'point' if points == 1 else 'points'}. Nothing was spent."
+    )
+    raise SystemExit(0)
 
 
 @click.command(
@@ -886,10 +888,10 @@ def evolve_cmd(
     harness_call_llm = _import_callable(harness_dotted, kind="harness_call_llm")
     auxiliary_call_llm = _import_callable(auxiliary_dotted, kind="auxiliary_call_llm")
 
-    # ``--dry-run`` exits through the same validator as the public loop.
+    # ``--dry-run`` exits through the same validators as the public loop.
     # Normal execution is gated inside ``evolve_n_rounds`` itself.
     if dry_run:
-        _validate_before_spending(workspace_root, epoch, dry_run=True)
+        _dry_run_and_exit(workspace_root, epoch)
 
     # Lazy import — the orchestrator is heavy. We keep it out of
     # `zicato --help` time.

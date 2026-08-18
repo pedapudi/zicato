@@ -1,6 +1,6 @@
 # Changelog
 
-### `zicato evolve` gates a workspace before it spends a round
+### `evolve` gates a workspace before it spends a round
 
 Integrating a new target had no cheap way to prove the wiring works. The
 cheapest instrument that touched the target was a statistical one, and a wiring
@@ -8,40 +8,64 @@ defect and an unmeasurable contract look the same from there: flat and
 saturated. So a duplicated mutation id, or an adapter no worker can rebuild,
 first showed up after a round had already been spent.
 
-`evolve` now reports every defect it can prove, before round zero, and refuses
-to run when it finds one:
+Both public spend boundaries — `evolve_n_rounds` and the single-round
+`evolve_once` — now report every defect they can prove before doing anything,
+and refuse to start when a defect would make the round unmeasurable:
 
 - a mutation id that resolves to more than one point, across the whole surface
   rather than only the ids a patch happens to target;
-- a mutation surface the proposer cannot edit — no roots, a missing tree, a
-  tree that enumerates to nothing, a span marker that binds to no literal;
+- a mutation surface the proposer cannot edit: no roots at all, an adapter that
+  raises while resolving them, or a surface that enumerates to zero points;
 - an adapter that does not rebuild and load in a fresh interpreter, which is
   how every tournament worker builds it;
-- an invalid board or scoring contract — unreadable data, a
-  `per_judge_weights` key no entry declares, or a predicate or process judge
-  whose dotted path does not import. Drift-only boards remain valid: their
-  loss signal comes from runtime telemetry rather than pass/fail expectations.
+- a configured model role that cannot resolve in a worker — a `call_llm` dotted
+  path that does not import, or a model spec naming an `api_key_env` variable
+  that is not set;
+- a board or scoring contract that cannot be read, or a predicate or process
+  judge whose dotted path does not import. Drift-only boards remain valid:
+  their loss signal comes from runtime telemetry rather than pass/fail
+  expectations.
+
+A second tier is reported without stopping the run: a declared mutable tree
+that does not exist or contributes no point, and a span marker that binds to no
+string literal. Each says something true — the operator declared something that
+contributes nothing — but none of them makes a round unmeasurable, and every
+one of those workspaces runs correctly today. Refusing them would turn
+stale-annotation hygiene into a stopped run.
 
 The gate runs on every `evolve`, with no flag — a gate people have to remember
-is a gate people forget. `--dry-run` stops there even when the workspace is
-clean, printing the epoch, the board size, and the surface size without
-spending anything.
+is a gate people forget. A multi-round invocation pays for it once. `--dry-run`
+stops there even when the workspace is clean, printing the epoch, the board
+size, and the surface size without spending anything.
 
 Three things it checks that a separate, approximate command could not. It
-constructs the adapter and uses its canonical worker specification; it reads
-the exact adapter-scoped surface under the contract's declared marker syntax,
-materialising an ephemeral v0 snapshot on a fresh workspace; and without an
-explicit `--epoch` it reads the LIVE contract files, because auto-epoching is
-about to freeze whatever they now say. Checking the frozen copy there would
-validate the contract the last round ran.
+constructs the adapter, uses its canonical worker specification, and probes it
+under the same environment a worker would be given — so a workspace that scrubs
+the worker environment catches an adapter needing a dropped variable here
+rather than in every worker. It reads the exact adapter-scoped surface under
+the contract's declared marker syntax, materialising an ephemeral v0 snapshot
+on a fresh workspace. And without an explicit `--epoch` it reads the LIVE
+contract files, because auto-epoching is about to freeze whatever they now say;
+checking the frozen copy there would validate the contract the last round ran.
 
 No model is called and no board entry runs, so the cost does not scale with the
-board or the target.
+board or the target. Proving that a credential is *accepted* and a model id
+exists needs a round trip, which this gate does not make; that half of the
+reachability check is tracked separately.
 
 The duplicate-id detection inside `validate_patches` now shares one
 `duplicate_mutation_ids` helper with the gate. Its behaviour is unchanged: it
 still reports only the ids a batch targets, because its job is to reject one
 batch and an unrelated duplicate elsewhere must not block a clean one.
+
+Two seams became public in the process, since the gate has to build what a
+worker builds: `adapter_factory.make_adapter_from_spec` reconstructs an adapter
+from the serialised spec that crosses a process boundary (sharing its `import`
+branch with `make_adapter_from_config`, so the two constructions cannot drift),
+and `worker_transport.adapter_worker_spec` / `scrubbed_worker_env` lost their
+leading underscores. The mutation enumerator gained
+`collect_unbound_span_markers`, which returns unbound span markers as
+structured facts rather than leaving them only in a log line.
 
 ### A racing rung could eliminate half the field without evaluating anything
 

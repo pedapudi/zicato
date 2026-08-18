@@ -512,10 +512,13 @@ async def evolve_n_rounds(
         _set_stop_reason("completed")
         return []
 
-    # This public function is the spend boundary used by the CLI and by
-    # library callers. Keep the mandatory gate here so no caller can bypass
-    # it by skipping a command-layer helper. It must precede auto-epoching:
-    # resolving contract drift may call the auxiliary model.
+    # One of the two public spend boundaries (``evolve_once`` is the other,
+    # and gates itself the same way). Keeping the gate here rather than in a
+    # command-layer helper is what makes it unbypassable: a library caller
+    # reaches it without going through the CLI. It must precede
+    # auto-epoching, because resolving contract drift may call the auxiliary
+    # model. Every round below is then handed ``workspace_checked=True``, so
+    # a multi-round invocation pays for the gate exactly once.
     # Imported per call, not at module scope. Suites that drive this loop
     # against a deliberately minimal fixture workspace patch
     # ``zicato.check.require_workspace_valid``; hoisting this import would
@@ -796,6 +799,7 @@ async def evolve_n_rounds(
                         total_rounds=rounds,
                         meta_loop_emitter=meta_loop_emitter,
                         resume_plan=_resume_plan,
+                        workspace_checked=True,
                     )
 
             try:

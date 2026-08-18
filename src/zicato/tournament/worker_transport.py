@@ -7,7 +7,7 @@ those workers:
 
 * the wire-spec builders that serialise a run's inputs into the
   JSON args file the worker re-parses (:func:`_role_worker_spec`,
-  :func:`_adapter_spec`, :func:`_weights_spec`, :func:`_entry_to_dict`,
+  :func:`adapter_worker_spec`, :func:`_weights_spec`, :func:`_entry_to_dict`,
   :func:`_callable_dotted_path`, plus the board-level context stampers
   :func:`_stamp_disable_drift` / :func:`_stamp_judge_only`);
 * the per-run ephemeral snapshot checkout (:func:`_checkout_run_snapshot`
@@ -546,7 +546,7 @@ def _api_key_env_names(models: Any) -> list[str]:
     return names
 
 
-def _scrubbed_worker_env(
+def scrubbed_worker_env(
     *,
     models: Any,
     extra_env_keys: tuple[str, ...] = (),
@@ -576,11 +576,11 @@ def _scrubbed_worker_env(
     return {key: source[key] for key in wanted if key in source}
 
 
-def _adapter_spec(adapter: Any) -> dict[str, Any]:
+def adapter_worker_spec(adapter: Any) -> dict[str, Any]:
     """Serialise a harness adapter into a JSON-friendly spec dict.
 
     The worker reconstructs the adapter from this dict (see
-    :func:`zicato._tournament_worker._build_adapter`). Resolution order:
+    :func:`zicato._tournament_worker.build_adapter`). Resolution order:
 
     1. If the adapter exposes a ``worker_spec()`` method, its return
        value is used verbatim — the adapter knows best how to make
@@ -902,7 +902,7 @@ __all__ = [
     "_SIGTERM_TO_SIGKILL_GRACE_S",
     "_WORKER_ESSENTIAL_ENV_KEYS",
     "_aborted_loss_profile",
-    "_adapter_spec",
+    "adapter_worker_spec",
     "_api_key_env_names",
     "_callable_dotted_path",
     "_checkout_run_snapshot",
@@ -920,7 +920,7 @@ __all__ = [
     "_role_worker_spec",
     "_run_id_for",
     "_runtime_state",
-    "_scrubbed_worker_env",
+    "scrubbed_worker_env",
     "_stamp_disable_drift",
     "_stamp_judge_only",
     "_stamp_replicate_index",

@@ -1,7 +1,8 @@
 """Tests for the pre-spend wiring gate ``evolve`` runs before round 0.
 
-Every finding is provable from the workspace alone and every one of
-them stops the loop; there is no advisory tier.
+Every finding is provable from the workspace alone. A finding that
+proves the round cannot be measured stops the loop; a finding that
+proves only that something declared contributes nothing is advisory.
 """
 
 from __future__ import annotations
@@ -17,7 +18,9 @@ from click.testing import CliRunner
 from zicato.check import CheckContext, WorkspaceCheckError, build_report
 from zicato.cli.commands.evolve import evolve_cmd
 from zicato.core.types import ScoringWeights
+from zicato.evolve.loop import evolve_n_rounds
 from zicato.mutation.validator import duplicate_mutation_ids
+from zicato.tournament.worker_transport import _WORKER_ESSENTIAL_ENV_KEYS
 
 _EPOCH = "ep_test"
 _DEFAULTS = ScoringWeights()
@@ -35,6 +38,8 @@ class _TestAdapter:
     def mutable_subpaths(self, generation_root: Path) -> list[Path]:
         if self.mode == "narrow":
             return [generation_root / "bundle" / "editable"]
+        if self.mode == "broken_subpaths":
+            raise RuntimeError("no roots for you")
         return [generation_root]
 
     def load(self, generation_root: Path) -> object:
@@ -93,11 +98,13 @@ def _workspace(
     config = dict(config or {})
     if trees:
         registered = [str(root.parent / name) for name in trees]
-        config["mutable_trees"] = registered
-        if isinstance(adapter := config.get("adapter"), dict):
+        adapter = config.get("adapter")
+        if isinstance(adapter, dict):
             config["adapter"] = {**adapter, "mutable_trees": registered}
-    elif isinstance(adapter := config.get("adapter"), dict) and adapter.get("mutable_trees"):
-        config["mutable_trees"] = list(adapter["mutable_trees"])
+        else:
+            # No adapter block at all: the pre-factory shape, where the
+            # trees live at the config top level.
+            config["mutable_trees"] = registered
     (root / "config.json").write_text(json.dumps(config), encoding="utf-8")
     if scoring is not None or board is not None:
         epoch = root / "epochs" / _EPOCH
@@ -120,9 +127,21 @@ def _models(engines: dict | None = None, **roles: str) -> dict:
     }
 
 
-def _codes(root: Path, **kwargs: object) -> set[str]:
-    with CheckContext(root, **kwargs) as ctx:  # type: ignore[arg-type]
+def _codes(root: Path, *, live_contract: bool = True, **kwargs: object) -> set[str]:
+    """Codes from one gate run, defaulting to the live-contract path.
+
+    ``live_contract=True`` is what ``evolve_n_rounds`` passes whenever no
+    explicit ``--epoch`` was given, which is the common path; the frozen
+    variant is asked for by name.
+    """
+    with CheckContext(root, live_contract=live_contract, **kwargs) as ctx:  # type: ignore[arg-type]
         return {f.code for f in build_report(ctx).findings}
+
+
+def _findings(root: Path, *, live_contract: bool = True, **kwargs: object) -> dict[str, bool]:
+    """Map each reported code to whether it stops the run."""
+    with CheckContext(root, live_contract=live_contract, **kwargs) as ctx:  # type: ignore[arg-type]
+        return {f.code: f.blocking for f in build_report(ctx).findings}
 
 
 def _entry(entry_id: str, **extra: object) -> dict:
@@ -337,7 +356,16 @@ def test_a_drift_only_board_is_a_valid_evaluation_contract(tmp_path: Path) -> No
     assert "no_expectations" not in _codes(root)
 
 
-def test_a_weight_for_a_judge_no_entry_declares_is_a_hard_stop(tmp_path: Path) -> None:
+def test_a_weight_naming_no_board_judge_is_not_a_defect(tmp_path: Path) -> None:
+    """``per_judge_weights`` is not scoped to board judges.
+
+    ``scoring.builtins`` resolves telemetry ``custom:<name>`` kinds through
+    the same mapping, so a key legitimately names an in-harness process
+    judge that no board entry declares; the empty-string key weights the
+    bare ``custom`` kind; and ``reflection.findings`` recommends a
+    ``{name: 0.0}`` entry as the reversible way to retire a judge. Every
+    one of those workspaces runs correctly, so none may be reported.
+    """
     judged = _entry(
         "judged",
         judges=[
@@ -345,16 +373,19 @@ def test_a_weight_for_a_judge_no_entry_declares_is_a_hard_stop(tmp_path: Path) -
         ],
     )
     root = _workspace(
-        tmp_path / ".zicato", board=[judged], scoring={"per_judge_weights": {"ghost": 2.0}}
+        tmp_path / ".zicato",
+        board=[judged],
+        scoring={"per_judge_weights": {"in_harness_judge": 2.0, "": 1.0, "retired": 0.0}},
     )
     codes = _codes(root)
-    assert "weight_for_absent_judge" in codes
+    assert "weight_for_absent_judge" not in codes
     assert "no_expectations" not in codes
 
 
 def test_an_unreadable_board_is_reported_once(tmp_path: Path) -> None:
+    """The parse failure, not the empty board it leaves behind."""
     root = _workspace(tmp_path / ".zicato", board=[], scoring={})
-    (root / "epochs" / _EPOCH / "board.jsonl").write_text("{not json", encoding="utf-8")
+    (root.parent / "board.jsonl").write_text("{not json", encoding="utf-8")
     codes = _codes(root)
     assert "board_unreadable" in codes
     assert "empty_board" not in codes
@@ -365,17 +396,38 @@ def test_an_unreadable_board_is_reported_once(tmp_path: Path) -> None:
     ["{not json", "[]", json.dumps({"pass_exponent": 2})],
 )
 def test_malformed_scoring_is_a_hard_stop(tmp_path: Path, contents: str) -> None:
+    """Both contract paths: the live file evolve auto-epochs, and the frozen one."""
     root = _workspace(tmp_path / ".zicato", board=[_entry("drift-only")], scoring={})
-    (root / "epochs" / _EPOCH / "scoring.json").write_text(contents, encoding="utf-8")
+    (root.parent / "scoring.json").write_text(contents, encoding="utf-8")
     assert "scoring_unreadable" in _codes(root)
 
+    (root / "epochs" / _EPOCH / "scoring.json").write_text(contents, encoding="utf-8")
+    assert "scoring_unreadable" in _codes(root, live_contract=False)
 
-def test_a_span_marker_that_binds_to_nothing_is_a_hard_stop(tmp_path: Path) -> None:
-    """The enumerator already detects this — into a log nobody reads first.
 
-    A bare span marker binds to a Python string literal, so one in a
-    text file contributes no point. The file still looks marked up.
+# --- advisory: a declared thing that contributes nothing --------------------
+
+
+@pytest.mark.parametrize(
+    ("filename", "body", "reason"),
+    [
+        # A bare span marker in a file with no AST to bind to.
+        ("notes.md", '<!-- zicato:mutable id="orphan" -->\nsome text\n', "not Python"),
+        # A span marker in a Python file with no literal beneath it.
+        ("tail.py", '# zicato:mutable id="orphan"\nCOUNT = 3\n', "no string literal"),
+    ],
+)
+def test_a_span_marker_that_binds_to_nothing_is_advisory(
+    tmp_path: Path, filename: str, body: str, reason: str
+) -> None:
+    """Both ways a span marker fails to bind, and neither stops the run.
+
+    The file still looks marked up while contributing no point, which is
+    worth saying. It is not worth refusing a workspace over: the run is
+    unaffected beyond having one fewer mutation point than the markup
+    suggests, and these workspaces run today.
     """
+    del reason
     root = _workspace(
         tmp_path / ".zicato",
         config={
@@ -387,13 +439,39 @@ def test_a_span_marker_that_binds_to_nothing_is_a_hard_stop(tmp_path: Path) -> N
         },
         trees={"harness": _MUTABLE.format(point_id="real")},
     )
-    notes = tmp_path / "harness" / "notes.md"
-    notes.write_text('<!-- zicato:mutable id="orphan" -->\nsome text\n', encoding="utf-8")
-    assert "unbound_span_marker" in _codes(root)
+    (tmp_path / "harness" / filename).write_text(body, encoding="utf-8")
+    assert _findings(root)["unbound_span_marker"] is False
 
 
-def test_a_tree_contributing_no_point_is_named_individually(tmp_path: Path) -> None:
-    """One dead tree among live ones is a stale path, not an empty surface."""
+def test_an_unbound_marker_is_reported_from_enumerator_facts(tmp_path: Path) -> None:
+    """The id, the location, and the reason — not a scrape of a log line."""
+    root = _workspace(
+        tmp_path / ".zicato",
+        config={
+            "adapter": {
+                "kind": "adk",
+                "entrypoint": _VALID_ADK_ENTRYPOINT,
+                "mutable_trees": [],
+            }
+        },
+        trees={"harness": _MUTABLE.format(point_id="real")},
+    )
+    (tmp_path / "harness" / "notes.md").write_text(
+        '<!-- zicato:mutable id="orphan" -->\nsome text\n', encoding="utf-8"
+    )
+    with CheckContext(root, live_contract=True) as ctx:
+        finding = next(f for f in build_report(ctx).findings if f.code == "unbound_span_marker")
+    assert finding.detail["mutation_id"] == "orphan"
+    assert finding.detail["location"].endswith("notes.md:1")
+    assert "not Python" in finding.detail["reason"]
+
+
+def test_a_tree_contributing_no_point_is_advisory(tmp_path: Path) -> None:
+    """One dead tree among live ones is a stale path, not an empty surface.
+
+    The proposer still has surface to edit, so the loop still learns and
+    the run must not be refused.
+    """
     root = tmp_path / ".zicato"
     live = tmp_path / "live"
     dead = tmp_path / "dead"
@@ -411,9 +489,53 @@ def test_a_tree_contributing_no_point_is_named_individually(tmp_path: Path) -> N
             }
         },
     )
-    codes = _codes(root)
-    assert "tree_enumerates_to_nothing" in codes
-    assert "empty_mutation_surface" not in codes
+    findings = _findings(root)
+    assert findings["tree_enumerates_to_nothing"] is False
+    assert "empty_mutation_surface" not in findings
+
+
+def test_a_missing_declared_tree_is_advisory(tmp_path: Path) -> None:
+    """A stale path alongside a live one does not stop a run that works."""
+    root = tmp_path / ".zicato"
+    live = tmp_path / "live"
+    live.mkdir()
+    (live / "a.py").write_text(_MUTABLE.format(point_id="p"), encoding="utf-8")
+    _workspace(
+        root,
+        config={
+            "adapter": {
+                "kind": "adk",
+                "entrypoint": _VALID_ADK_ENTRYPOINT,
+                "mutable_trees": [str(live), str(tmp_path / "gone")],
+            }
+        },
+    )
+    assert _findings(root)["missing_mutable_tree"] is False
+
+
+def test_advisories_alone_do_not_raise(tmp_path: Path) -> None:
+    """The whole point of the tier: these workspaces still start."""
+    from zicato.check import require_workspace_valid
+
+    root = _workspace(
+        tmp_path / ".zicato",
+        config={
+            "adapter": {
+                "kind": "adk",
+                "entrypoint": _VALID_ADK_ENTRYPOINT,
+                "mutable_trees": [],
+            }
+        },
+        board=[_entry("e1", expectation={"kind": "expected_text", "spec": "hi"})],
+        scoring={},
+        trees={"harness": _MUTABLE.format(point_id="p")},
+    )
+    (tmp_path / "harness" / "notes.md").write_text(
+        '<!-- zicato:mutable id="orphan" -->\nsome text\n', encoding="utf-8"
+    )
+    report = require_workspace_valid(root, live_contract=True)
+    assert [f.code for f in report.advisories] == ["unbound_span_marker"]
+    assert report.blocking == ()
 
 
 def test_a_predicate_that_does_not_import_is_a_hard_stop(tmp_path: Path) -> None:
@@ -562,3 +684,252 @@ def test_dry_run_rejects_an_unresolvable_llm_callable(tmp_path: Path) -> None:
     )
     assert result.exit_code != 0
     assert "no_such_module" in result.output
+
+
+# --- the probe runs the way a worker would ---------------------------------
+
+
+def test_the_probe_runs_under_the_scrubbed_worker_env(tmp_path: Path) -> None:
+    """Worker-equivalence, in the direction that matters.
+
+    A workspace that opts into ``runtime.scrub_worker_env`` gives its
+    workers a minimal explicit env. An adapter needing a variable the
+    scrub drops must fail here, not in every worker mid-round — so the
+    probe is handed the same composed env rather than inheriting the
+    orchestrator's.
+    """
+    root = _workspace(
+        tmp_path / ".zicato",
+        config={
+            "adapter": {
+                "kind": "import",
+                "factory": "tests.test_check_gate:_make_test_adapter",
+            },
+            "runtime": {"scrub_worker_env": True, "worker_env_passthrough": ["EXTRA_TARGET_VAR"]},
+        },
+        trees={"harness": _MUTABLE.format(point_id="p")},
+    )
+    with CheckContext(root, live_contract=True) as ctx:
+        env = ctx.worker_env
+    assert env is not None
+    assert "EXTRA_TARGET_VAR" not in env  # named but unset: never invented
+    assert set(env) <= {*_WORKER_ESSENTIAL_ENV_KEYS, "EXTRA_TARGET_VAR"}
+
+
+def test_an_unscrubbed_workspace_inherits_the_environment(tmp_path: Path) -> None:
+    """The default is full inheritance, and the probe must match it."""
+    root = _workspace(
+        tmp_path / ".zicato",
+        config={
+            "adapter": {
+                "kind": "import",
+                "factory": "tests.test_check_gate:_make_test_adapter",
+            }
+        },
+        trees={"harness": _MUTABLE.format(point_id="p")},
+    )
+    with CheckContext(root, live_contract=True) as ctx:
+        assert ctx.worker_env is None
+
+
+def test_a_probe_that_never_returns_is_bounded(tmp_path: Path, monkeypatch) -> None:
+    """The bound holds even when a grandchild inherits the output pipes.
+
+    ``subprocess.run(timeout=...)`` keeps waiting on those pipes after the
+    timeout fires, so the gate would hang for as long as the grandchild
+    lives. The probe gets its own process group and the group is killed.
+    """
+    import time
+
+    from zicato.check import validators
+
+    monkeypatch.setattr(validators, "_IMPORT_TIMEOUT_S", 1)
+    monkeypatch.setattr(
+        validators,
+        "_IMPORT_PROBE",
+        # Leave a grandchild holding stdout/stderr, then hang.
+        "import subprocess, sys, time\n"
+        "subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(30)'])\n"
+        "time.sleep(30)\n",
+    )
+    root = _workspace(
+        tmp_path / ".zicato",
+        config={
+            "adapter": {
+                "kind": "import",
+                "factory": "tests.test_check_gate:_make_test_adapter",
+            }
+        },
+        trees={"harness": _MUTABLE.format(point_id="p")},
+    )
+    started = time.monotonic()
+    assert "adapter_import_timeout" in _codes(root)
+    assert time.monotonic() - started < 20
+
+
+# --- configured model roles must resolve in a worker -----------------------
+
+
+def test_a_role_whose_credential_is_unset_is_a_hard_stop(tmp_path: Path, monkeypatch) -> None:
+    """A configured role wins over the CLI callable, and fails in the worker.
+
+    ``build_adk_model`` raises when the named variable is unset, and a
+    scrubbed worker env can only forward a variable the orchestrator's
+    own environment already holds — so absence here is absence there.
+    """
+    monkeypatch.delenv("ZICATO_TEST_MISSING_KEY", raising=False)
+    root = _workspace(
+        tmp_path / ".zicato",
+        config={
+            "adapter": {
+                "kind": "adk",
+                "entrypoint": _VALID_ADK_ENTRYPOINT,
+                "mutable_trees": [],
+            },
+            "models": _models(
+                engines={
+                    "target": {
+                        "model": "some-model",
+                        "endpoint": "https://example.invalid",
+                        "api_key_env": "ZICATO_TEST_MISSING_KEY",
+                    }
+                },
+                target="target",
+            ),
+        },
+        trees={"harness": _MUTABLE.format(point_id="p")},
+    )
+    findings = _findings(root)
+    assert findings["model_role_credential_unset"] is True
+
+
+def test_a_role_whose_credential_is_set_is_clean(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("ZICATO_TEST_PRESENT_KEY", "not-a-real-secret")
+    root = _workspace(
+        tmp_path / ".zicato",
+        config={
+            "adapter": {
+                "kind": "adk",
+                "entrypoint": _VALID_ADK_ENTRYPOINT,
+                "mutable_trees": [],
+            },
+            "models": _models(
+                engines={
+                    "target": {
+                        "model": "some-model",
+                        "endpoint": "https://example.invalid",
+                        "api_key_env": "ZICATO_TEST_PRESENT_KEY",
+                    }
+                },
+                target="target",
+            ),
+        },
+        trees={"harness": _MUTABLE.format(point_id="p")},
+    )
+    assert "model_role_credential_unset" not in _codes(root)
+
+
+def test_a_role_call_llm_that_does_not_import_is_a_hard_stop(tmp_path: Path) -> None:
+    root = _workspace(
+        tmp_path / ".zicato",
+        config={
+            "adapter": {
+                "kind": "adk",
+                "entrypoint": _VALID_ADK_ENTRYPOINT,
+                "mutable_trees": [],
+            },
+            "models": _models(
+                engines={"target": {"call_llm": "no_such_module:call_llm"}},
+                target="target",
+            ),
+        },
+        trees={"harness": _MUTABLE.format(point_id="p")},
+    )
+    assert "model_role_unresolvable" in _codes(root)
+
+
+def test_an_unconfigured_role_is_not_reported(tmp_path: Path) -> None:
+    """It falls back to the callable the caller passed, which the CLI resolves."""
+    root = _workspace(
+        tmp_path / ".zicato",
+        config={
+            "adapter": {
+                "kind": "adk",
+                "entrypoint": _VALID_ADK_ENTRYPOINT,
+                "mutable_trees": [],
+            }
+        },
+        trees={"harness": _MUTABLE.format(point_id="p")},
+    )
+    codes = _codes(root)
+    assert not any(code.startswith("model_role") for code in codes)
+
+
+# --- an adapter that cannot resolve its roots names the cause ---------------
+
+
+def test_an_adapter_that_raises_resolving_roots_names_the_cause(tmp_path: Path) -> None:
+    """Reporting the empty surface alone would name the symptom, not the fix."""
+    root = _workspace(
+        tmp_path / ".zicato",
+        config={
+            "adapter": {
+                "kind": "import",
+                "factory": "tests.test_check_gate:_make_test_adapter",
+                "args": ["broken_subpaths"],
+            }
+        },
+        trees={"harness": _MUTABLE.format(point_id="p")},
+    )
+    with CheckContext(root, live_contract=True) as ctx:
+        finding = next(
+            f for f in build_report(ctx).findings if f.code == "mutable_trees_unresolvable"
+        )
+    assert "no roots for you" in finding.detail["error"]
+
+
+# --- the exported single-round entry point is a spend boundary too ---------
+
+
+def test_evolve_once_gates_its_own_workspace(tmp_path: Path) -> None:
+    """``zicato.orchestrator.evolve_once`` spends a full round on its own.
+
+    Gating only ``evolve_n_rounds`` would leave the exported single-round
+    call as a way past the gate for a library caller — and it is the call
+    the mock-evolve parity capture drives.
+    """
+    from zicato.orchestrator import evolve_once
+
+    root = _workspace(tmp_path / ".zicato", config={"models": _models()})
+    with pytest.raises(WorkspaceCheckError):
+        asyncio.run(
+            evolve_once(
+                workspace_root=root,
+                harness_call_llm=_harness_call_llm,
+                auxiliary_call_llm=_auxiliary_call_llm,
+            )
+        )
+
+
+def test_a_multi_round_invocation_pays_for_the_gate_once(tmp_path: Path, monkeypatch) -> None:
+    """The loop gates up front and tells each round it already did."""
+    import zicato.check
+
+    calls: list[object] = []
+    real = zicato.check.require_workspace_valid
+    monkeypatch.setattr(
+        zicato.check,
+        "require_workspace_valid",
+        lambda *a, **k: (calls.append(a), real(*a, **k))[1],
+    )
+    root = _workspace(tmp_path / ".zicato", config={"models": _models()})
+    with pytest.raises(WorkspaceCheckError):
+        asyncio.run(
+            evolve_n_rounds(
+                rounds=3,
+                workspace_root=root,
+                harness_call_llm=_harness_call_llm,
+                auxiliary_call_llm=_auxiliary_call_llm,
+            )
+        )
+    assert len(calls) == 1

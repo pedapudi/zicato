@@ -80,13 +80,24 @@ tests patch those owners directly.
    `"consecutive_rejections"`, `"degenerate_health"`,
    `"wall_clock_budget_between_rounds"`, or
    `"wall_clock_budget_mid_round"`.
-2. **Mandatory workspace gate.** The public loop calls
+2. **Mandatory workspace gate.** The loop calls
    `zicato.check.require_workspace_valid(...)` before auto-epoching or any
    model call. It checks the live contract when no explicit epoch is pinned,
    reconstructs the adapter through the same worker-spec seam as tournament
-   workers, and enumerates the adapter-scoped snapshot under the contract's
-   mutation syntax. Library callers and the CLI therefore share one spend
-   boundary; `--dry-run` invokes the same gate before exiting.
+   workers — under the same environment a worker would be given — and
+   enumerates the adapter-scoped snapshot under the contract's mutation
+   syntax. `evolve_once` gates itself the same way, because it is exported
+   and spends a full round on its own; the loop passes it
+   `workspace_checked=True` so a multi-round invocation pays once. Library
+   callers and the CLI therefore share the same spend boundaries;
+   `--dry-run` runs the same validators before exiting.
+
+   Findings come in two severities. A finding that proves the round cannot
+   produce a valid measurement raises `WorkspaceCheckError`. A finding that
+   proves only that something declared contributes nothing — a stale tree
+   path, a span marker binding to no literal — is advisory: reported and
+   logged, never a refusal, because those workspaces run correctly today.
+   The severity of a code is fixed in `check.validators.ADVISORY_CODES`.
 3. **Contract-hash auto-epoching, ONCE.** When `epoch_id is None` and
    `auto_epoch` is true, `_orch.ensure_epoch_for_contract(...)` resolves
    (and, on drift, rolls) the epoch; the resolved id is pinned for every

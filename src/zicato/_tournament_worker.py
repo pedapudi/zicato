@@ -232,35 +232,16 @@ def _load_args(args_path: Path) -> dict[str, Any]:
     return args
 
 
-def _build_adapter(spec: dict[str, Any]) -> Any:
+def build_adapter(spec: dict[str, Any]) -> Any:
     """Reconstruct a harness adapter from its serialised spec dict.
 
-    Two spec shapes are understood:
-
-    * ``{"kind": "adk", "entrypoint": ..., "mutable_trees": [...]}`` — the
-      production shape; reconstructs an
-      :class:`~zicato.adapters.adk.ADKHarnessAdapter` directly (without
-      going through :func:`zicato.adapter_factory.make_adapter_from_config`,
-      so the worker needs no full workspace-config dict).
-    * ``{"kind": "import", "factory": "module:callable", "args": [...]}``
-      — a generic shape for any non-ADK adapter. The dotted path is
-      imported and called with the optional positional ``args`` to
-      produce the adapter object. The runner does not emit this shape
-      today, but it keeps the worker decoupled from a single concrete
-      adapter implementation.
+    Thin alias for :func:`zicato.adapter_factory.make_adapter_from_spec`,
+    kept because the worker's own call site and every test that patches
+    adapter reconstruction refer to it by this name on this module.
     """
-    kind = spec.get("kind")
-    if kind == "adk":
-        from zicato.adapters.adk import ADKHarnessAdapter  # noqa: PLC0415
+    from zicato.adapter_factory import make_adapter_from_spec  # noqa: PLC0415
 
-        entrypoint = str(spec["entrypoint"])
-        raw_trees = spec.get("mutable_trees") or []
-        trees = [Path(t) for t in raw_trees] if raw_trees else None
-        return ADKHarnessAdapter(entrypoint=entrypoint, mutable_trees=trees)
-    if kind == "import":
-        factory = _import_callable(str(spec["factory"]))
-        return factory(*spec.get("args", []))
-    raise ValueError(f"worker cannot reconstruct adapter kind {kind!r}")
+    return make_adapter_from_spec(spec)
 
 
 #: Schema token of the per-generation harness-load provenance file.
@@ -908,7 +889,7 @@ async def _run(args: dict[str, Any]) -> None:
     sinks, tracker = _build_sinks(
         events_path, harmonograf_url, harmonograf_grpc, harmonograf_metadata
     )
-    adapter = _build_adapter(adapter_spec)
+    adapter = build_adapter(adapter_spec)
 
     run_result: RunResult | None = None
     runtime_ms = 0

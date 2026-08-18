@@ -117,8 +117,9 @@ def duplicate_mutation_ids(points: Sequence[MutationPoint]) -> dict[str, list[st
     Shared by two callers with deliberately different scopes.
     :func:`validate_patches` intersects this with the ids a batch
     actually targets — its job is to reject one batch, and an unrelated
-    duplicate elsewhere in the tree must not block a clean one.
-    ``zicato check`` reports the whole surface, before any spend.
+    duplicate elsewhere in the tree must not block a clean one. The
+    pre-spend workspace gate (:mod:`zicato.check`) reports the whole
+    surface, before any spend.
     """
     locations: dict[str, list[str]] = {}
     for point in points:

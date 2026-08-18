@@ -32,7 +32,6 @@ from zicato.core.types import (
     DriftCount,
     ExpectationResult,
     LossProfile,
-    RunResult,
 )
 from zicato.epoch.lifecycle import new_epoch
 
@@ -146,38 +145,34 @@ def _bootstrap_workspace(tmp_path: Path) -> tuple[Path, str]:
 
 def _install_stub_adapter_factory(
     monkeypatch: pytest.MonkeyPatch,
+    *,
+    bypass_workspace_gate: bool = True,
 ) -> None:
-    """Replace zicato.adapter_factory with one that dispatches kind='stub'."""
+    """Replace zicato.adapter_factory with one that dispatches kind='stub'.
 
-    class _StubSession:
-        async def run(self, entry: BoardEntry, sinks: list[Any], config: Any) -> RunResult:
-            del sinks, config
-            return RunResult(
-                run_id=f"r-{entry.id}",
-                entry_id=entry.id,
-                final_output="hello world",
-                transcript=("hello world",),
-                runtime_ms=100,
-            )
-
-    class _StubAdapter:
-        name = "stub"
-
-        def load(self, snapshot_root: Path) -> _StubSession:
-            del snapshot_root
-            return _StubSession()
-
-        def mutation_points(self, source_roots: list[Path] | None = None) -> list[Any]:
-            del source_roots
-            return []
+    ``bypass_workspace_gate`` patches out the pre-spend gate
+    (:mod:`zicato.check`). Most suites here drive the loop against a
+    deliberately minimal fixture workspace that has no reason to satisfy
+    a real workspace's invariants, and want to exercise orchestration
+    below the gate. Pass ``False`` when the fixture workspace is meant to
+    be valid and the gate is part of what is under test; the adapter
+    itself is reconstructible either way, and
+    :func:`~tests._stub_adapter.stub_adapter_pythonpath` is what a
+    subprocess needs to reach it.
+    """
+    from tests._stub_adapter import make_stub_adapter
+    from zicato.adapter_factory import make_adapter_from_spec
 
     fake_factory = types.ModuleType("zicato.adapter_factory")
 
     def make_adapter_from_config(workspace_config: dict[str, Any]) -> Any:
         del workspace_config
-        return _StubAdapter()
+        return make_stub_adapter()
 
     fake_factory.make_adapter_from_config = make_adapter_from_config  # type: ignore[attr-defined]
+    # The spec-shaped builder is not stubbed: it is how a worker (and the
+    # gate's probe) rebuilds the adapter, and it must stay the real one.
+    fake_factory.make_adapter_from_spec = make_adapter_from_spec  # type: ignore[attr-defined]
     monkeypatch.setitem(sys.modules, "zicato.adapter_factory", fake_factory)
     # Re-bind on the zicato namespace so `from zicato import adapter_factory`
     # picks up the stub.
@@ -185,9 +180,8 @@ def _install_stub_adapter_factory(
     import zicato.check
 
     monkeypatch.setattr(zicato, "adapter_factory", fake_factory, raising=False)
-    # This fixture's local adapter is deliberately not subprocess-importable;
-    # tests using it exercise loop orchestration below the workspace gate.
-    monkeypatch.setattr(zicato.check, "require_workspace_valid", lambda *a, **k: None)
+    if bypass_workspace_gate:
+        monkeypatch.setattr(zicato.check, "require_workspace_valid", lambda *a, **k: None)
 
 
 def _install_telemetry_stubs(

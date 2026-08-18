@@ -134,6 +134,7 @@ def drive_mock_evolve(monkeypatch, tmp_path: Path) -> tuple[Path, str]:
     if str(_REPO_ROOT) not in sys.path:
         sys.path.insert(0, str(_REPO_ROOT))
 
+    from tests._stub_adapter import stub_adapter_pythonpath
     from tests.test_example_target_1_racing import (
         _CHALLENGER_IDS,
         _bootstrap_racing_workspace,
@@ -189,7 +190,15 @@ def drive_mock_evolve(monkeypatch, tmp_path: Path) -> tuple[Path, str]:
     monkeypatch.setattr(_lifecycle_mod, "_today", lambda: "2026-01-01")
 
     workspace, epoch_id = _bootstrap_racing_workspace(tmp_path)
-    _install_stub_adapter_factory(monkeypatch)
+    # 4) Run through the REAL pre-spend workspace gate rather than patching
+    #    it out. This capture drives ``evolve_once``, which gates itself, so
+    #    a byte-identical result across a change to the gate is only
+    #    meaningful if the gate actually ran. Satisfying it costs one thing:
+    #    the gate rebuilds the adapter in a subprocess the way a tournament
+    #    worker does, so that subprocess must be able to import the stub
+    #    adapter's module wherever this capture was started from.
+    monkeypatch.setenv("PYTHONPATH", stub_adapter_pythonpath())
+    _install_stub_adapter_factory(monkeypatch, bypass_workspace_gate=False)
     _install_telemetry_stubs(
         monkeypatch,
         canned_loss_by_gen={"v0": 2.0, "v1": 0.4, "v2": 0.8, "v3": 1.2, "v4": 1.6},

@@ -65,12 +65,6 @@ def _install_cli_capture(monkeypatch: pytest.MonkeyPatch, captured: dict[str, An
 
     monkeypatch.setattr(orch_mod, "evolve_n_rounds", _fake_evolve_n_rounds)
 
-    # The pre-spend wiring gate is patched out: these fixtures exercise
-    # flag plumbing, not workspace wiring, so the gate would refuse them.
-    import zicato.cli.commands.evolve as ev
-
-    monkeypatch.setattr(ev, "_validate_before_spending", lambda *a, **k: None)
-
 
 def _invoke_evolve(
     monkeypatch: pytest.MonkeyPatch,

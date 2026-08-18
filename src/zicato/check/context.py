@@ -12,7 +12,6 @@ that one ``cached_property`` here and nothing anywhere else.
 from __future__ import annotations
 
 import json
-import logging
 import shutil
 from functools import cached_property
 from pathlib import Path
@@ -22,6 +21,7 @@ from typing import Any
 from zicato.core.types import BoardEntry, MutationPoint, ScoringWeights
 from zicato.core.workspace import board_path, scoring_path
 from zicato.epoch.lifecycle import current_epoch_id
+from zicato.mutation.enumerator import UnboundSpanMarker
 from zicato.workspace_loader import load_workspace_config
 
 
@@ -155,9 +155,27 @@ class CheckContext:
 
     @cached_property
     def registered_trees(self) -> tuple[Path, ...]:
-        """The source roots the baseline seeder will copy into ``v0``."""
-        raw = self.config.get("mutable_trees") or self.config.get("source_roots") or []
+        """The source roots the baseline seeder will copy into ``v0``.
+
+        Reads the current shape first — ``config["adapter"]["mutable_trees"]``,
+        which is where :func:`~zicato.adapter_factory.make_adapter_from_config`
+        looks — then falls back to the top-level keys the older
+        ``zicato epoch register`` flow persisted.
+        """
+        adapter = self.config.get("adapter")
+        raw: Any = None
+        if isinstance(adapter, dict):
+            raw = adapter.get("mutable_trees")
+        if not raw:
+            raw = self.config.get("mutable_trees") or self.config.get("source_roots") or []
         return tuple(Path(str(entry)) for entry in raw)
+
+    @cached_property
+    def models(self) -> Any:
+        """The workspace's configured model roles."""
+        from zicato.models_config import load_models_config  # noqa: PLC0415
+
+        return load_models_config(self.config)
 
     @cached_property
     def adapter(self) -> Any | None:
@@ -177,11 +195,11 @@ class CheckContext:
     @cached_property
     def _adapter_or_error(self) -> tuple[Any | None, dict[str, Any] | None, str | None]:
         from zicato.adapter_factory import make_adapter_from_config  # noqa: PLC0415
-        from zicato.tournament.worker_transport import _adapter_spec  # noqa: PLC0415
+        from zicato.tournament.worker_transport import adapter_worker_spec  # noqa: PLC0415
 
         try:
             adapter = make_adapter_from_config(self.config)
-            return adapter, _adapter_spec(adapter), None
+            return adapter, adapter_worker_spec(adapter), None
         except Exception as exc:  # noqa: BLE001 — any construction failure is the defect
             return None, None, str(exc)
 
@@ -234,16 +252,30 @@ class CheckContext:
     @cached_property
     def mutable_trees(self) -> tuple[Path, ...]:
         """The roots runtime gives the mutation enumerator."""
+        return self._mutable_trees_or_error[0]
+
+    @cached_property
+    def mutable_trees_error(self) -> str | None:
+        """Why the adapter could not resolve its roots, or ``None``.
+
+        An adapter that raises during root resolution has an empty
+        surface *and* a cause, and only the cause tells the operator what
+        to fix. Reporting the empty surface alone would name the symptom.
+        """
+        return self._mutable_trees_or_error[1]
+
+    @cached_property
+    def _mutable_trees_or_error(self) -> tuple[tuple[Path, ...], str | None]:
         snapshot = self.generation_snapshot
         adapter = self.adapter
         if snapshot is None or adapter is None:
-            return ()
+            return (), None
         from zicato.evolve.generation_phase import mutable_trees  # noqa: PLC0415
 
         try:
-            return tuple(mutable_trees(adapter, snapshot))
-        except Exception:
-            return ()
+            return tuple(mutable_trees(adapter, snapshot)), None
+        except Exception as exc:  # noqa: BLE001 — any resolution failure is the defect
+            return (), f"{type(exc).__name__}: {exc}"
 
     @cached_property
     def surface(self) -> tuple[MutationPoint, ...]:
@@ -252,37 +284,38 @@ class CheckContext:
         Uses the same adapter-resolved roots and declared syntax table as
         generation preparation.
         """
-        return self._surface_and_warnings[0]
+        return self._surface_and_unbound[0]
 
     @cached_property
-    def surface_warnings(self) -> tuple[str, ...]:
-        """Enumerator warnings captured during the single surface walk."""
-        return self._surface_and_warnings[1]
+    def unbound_span_markers(self) -> tuple[UnboundSpanMarker, ...]:
+        """Span markers the single surface walk resolved to no literal.
+
+        Structural facts from the enumerator itself, not a scrape of its
+        log: each carries the id, the file, the line, and which of the
+        two ways it failed to bind.
+        """
+        return self._surface_and_unbound[1]
 
     @cached_property
-    def _surface_and_warnings(self) -> tuple[tuple[MutationPoint, ...], tuple[str, ...]]:
-        from zicato.mutation.enumerator import enumerate_mutations  # noqa: PLC0415
+    def _surface_and_unbound(
+        self,
+    ) -> tuple[tuple[MutationPoint, ...], tuple[UnboundSpanMarker, ...]]:
+        from zicato.mutation.enumerator import (  # noqa: PLC0415
+            collect_unbound_span_markers,
+            enumerate_mutations,
+        )
         from zicato.mutation.markers import swap_syntax_table  # noqa: PLC0415
 
         trees = [tree for tree in self.mutable_trees if tree.exists()]
         if not trees or self.scoring_error is not None:
             return (), ()
 
-        records: list[logging.LogRecord] = []
-
-        class _Capture(logging.Handler):
-            def emit(self, record: logging.LogRecord) -> None:
-                records.append(record)
-
-        logger = logging.getLogger("zicato.mutation.enumerator")
-        handler = _Capture(level=logging.WARNING)
-        logger.addHandler(handler)
-        try:
-            with swap_syntax_table(self.scoring.mutation_surface):
-                points = tuple(enumerate_mutations(trees))
-        finally:
-            logger.removeHandler(handler)
-        return points, tuple(record.getMessage() for record in records)
+        with (
+            collect_unbound_span_markers() as unbound,
+            swap_syntax_table(self.scoring.mutation_surface),
+        ):
+            points = tuple(enumerate_mutations(trees))
+        return points, tuple(unbound)
 
     @cached_property
     def board(self) -> tuple[BoardEntry, ...]:
@@ -316,6 +349,33 @@ class CheckContext:
     def adapter_spec(self) -> dict[str, Any] | None:
         """The canonical worker spec emitted by the constructed adapter."""
         return self._adapter_or_error[1]
+
+    @cached_property
+    def worker_env(self) -> dict[str, str] | None:
+        """The environment a tournament worker would be given, or ``None``.
+
+        ``None`` means inherit the orchestrator's environment, which is
+        what a worker gets unless the operator opted into
+        ``runtime.scrub_worker_env``. Built through the runtime's own
+        composition seam rather than reconstructed here, so a probe run
+        under it is worker-equivalent by construction: an adapter that
+        needs a variable the scrub drops fails the check instead of
+        failing in every worker, mid-round.
+        """
+        from zicato.tournament.worker_transport import (  # noqa: PLC0415
+            scrubbed_worker_env,
+        )
+
+        # The two knobs are read straight from the ``runtime`` block rather
+        # than through ``make_runtime_config``, which also imports the
+        # workspace's call_llm dotted paths — work this check has no use for
+        # and whose failure is a different defect. Both reads mirror
+        # ``runtime_factory``.
+        runtime = self.config.get("runtime")
+        if not isinstance(runtime, dict) or not runtime.get("scrub_worker_env", False):
+            return None
+        passthrough = tuple(str(name) for name in runtime.get("worker_env_passthrough") or ())
+        return scrubbed_worker_env(models=self.models, extra_env_keys=passthrough)
 
 
 __all__ = ["CheckContext"]
