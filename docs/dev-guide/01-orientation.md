@@ -146,7 +146,7 @@ Use this table to jump; the subsections below carry the definitions.
 | generation source tree | `GenerationStore` | `src/zicato/epoch/genstore.py` (+ `git_genstore.py`, the default) |
 | round (evolve round) | `Generation.round_index` / `Experiment.round_index` | `src/zicato/core/` |
 | stage (inner round) | `RoundRecord.stage_index` | `src/zicato/selection/strategy.py` |
-| run | `RunRecord` / `LossProfile` | `src/zicato/core/lineage.py`, `src/zicato/core/loss.py` |
+| run | `LossProfile` | `src/zicato/core/loss.py` |
 | board / board entry | `BoardEntry` | `src/zicato/core/board.py` (type) / `src/zicato/board/jsonl.py` (I/O) |
 | expectation / predicate / rubric | `Expectation`, `ExpectationKind` | `src/zicato/core/board.py` |
 | judge | `JudgeSpec` | `src/zicato/core/board.py` (type) / `src/zicato/judge_runtime/` (bridge) |

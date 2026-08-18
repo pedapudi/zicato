@@ -578,9 +578,10 @@ def test_worker_replicate_slot_gets_replicate_named_artifacts(tmp_path: Path) ->
 @pytest.mark.slow
 @pytest.mark.integration
 def test_worker_knobs_off_writes_no_new_files_and_identical_loss(tmp_path: Path) -> None:
-    """The byte-identical pin: knobs OFF adds no files; loss.json bytes match a
-    knobs-ON run's exactly (the stub run is deterministic, so the artifacts are
-    the ONLY delta the knobs may introduce)."""
+    """The scored-loss pin: knobs OFF adds no files, and every scored field of
+    loss.json matches a knobs-ON run's (the stub run is deterministic, so the
+    artifacts are the ONLY delta the knobs may introduce). The run's wall-clock
+    span is excluded — it measures the execution, not the knobs."""
     on_ws = tmp_path / "on" / ".zicato"
     off_ws = tmp_path / "off" / ".zicato"
     on_ws.mkdir(parents=True)
@@ -609,8 +610,15 @@ def test_worker_knobs_off_writes_no_new_files_and_identical_loss(tmp_path: Path)
     assert "judge_io.jsonl" in on_files
     # Knobs off: the run dir holds EXACTLY the pre-capture file set.
     assert off_files == sorted(set(on_files) - {"result.json", "judge_io.jsonl"})
-    # ... and the loss the run scored is byte-identical either way.
-    assert off_loss.read_bytes() == on_loss.read_bytes()
+    # ... and the loss the run scored is identical either way, apart from the
+    # wall-clock span, which is a measurement of the run rather than an effect
+    # of the knobs and so differs between any two executions.
+    on_profile = json.loads(on_loss.read_text(encoding="utf-8"))
+    off_profile = json.loads(off_loss.read_text(encoding="utf-8"))
+    for profile in (on_profile, off_profile):
+        assert profile.pop("started_at")
+        assert profile.pop("ended_at")
+    assert off_profile == on_profile
     # The worker-result file the parent reads back is shape-identical too
     # (the loss path differs only by the per-test workspace prefix).
     on_result = json.loads((tmp_path / "on_result.json").read_text(encoding="utf-8"))

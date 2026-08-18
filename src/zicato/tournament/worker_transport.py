@@ -817,6 +817,13 @@ def _aborted_loss_profile(
         pass_fail=(False if entry.expectation is not None else None),
         match_id=match_id,
         abort_cause=abort_cause,
+        # Provenance twin of the worker's own stamp: this profile carries the
+        # same worst-case penalty the reducer applies to a not-completed run,
+        # so it must name its cause the same way. Here the cause and the
+        # cache signal happen to coincide — both are the parent's observation
+        # — but a reader of ``not_completed_reason`` sees an attributed
+        # penalty on either synthesis path.
+        not_completed_reason=abort_cause,
     )
 
 

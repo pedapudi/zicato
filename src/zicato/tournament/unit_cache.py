@@ -15,6 +15,9 @@ structure-agnostic cache:
   :func:`_persist_unit_loss`);
 * the budget-skip synthesis that records an un-run unit as a
   cache-eligible budget-exceeded loss (:func:`_skipped_unit_loss`);
+* the sibling attempt files that keep a unit's non-final executions —
+  the ones the canonical slot does not survive to show
+  (:func:`record_unit_attempt`);
 * the per-generation cached-vs-fresh provenance tally
   (:class:`_UnitProvenance`, :func:`_record_provenance`);
 * the replicate fold that collapses N paired runs into one per-entry
@@ -415,6 +418,109 @@ def _persist_unit_loss(
     except OSError as exc:  # noqa: BLE001 — cache persist is best-effort
         log.debug(
             "unit-loss cache persist skipped for %s/%s r%d: %s",
+            generation_id,
+            entry_id,
+            replicate_index,
+            exc,
+        )
+
+
+#: Matches the ``.a{n}`` infix an attempt sibling carries (see
+#: :func:`_next_attempt_path`), anchored at the end of the file stem so it
+#: cannot collide with a replicate slot.
+_ATTEMPT_SLOT_RE = re.compile(r"\.a\d+$")
+
+
+def is_unit_attempt_slot(path: Path) -> bool:
+    """``True`` iff ``path`` names an attempt sibling, not a scoring slot.
+
+    The guard for any reader that reaches a run directory by GLOB rather
+    than by exact name: an attempt file is provenance about an execution
+    that was superseded, so it must never be read as a replicate's
+    measurement.
+    """
+    return bool(_ATTEMPT_SLOT_RE.search(path.stem))
+
+
+def _next_attempt_path(loss_path: Path) -> Path:
+    """The next free attempt sibling of a canonical loss slot.
+
+    ``loss.json`` → ``loss.a1.json``, ``loss.a2.json``, …; a replicate slot
+    keeps its own series (``loss.r2.json`` → ``loss.r2.a1.json``), so an
+    attempt is never confused with a replicate. The ``.a{n}`` infix sits
+    where no reader of a replicate slot looks: every one of them matches
+    ``loss.json`` exactly or parses the ``r{digits}`` between ``loss.`` and
+    ``.json`` (:func:`zicato.reflection.corpus._discover_replicate_losses`,
+    :func:`zicato.query.eval_view._cell_evidence_replicate_index`), and
+    ``r2.a1`` is not digits. Attempts therefore never enter scoring,
+    reflection ingest, or the evidence count.
+
+    The index is one past however many siblings already exist, so a unit
+    that failed twice reads back as ``a1``, ``a2``, then the canonical file.
+    """
+    stem = loss_path.stem
+    existing = sum(1 for _ in loss_path.parent.glob(f"{stem}.a*.json"))
+    return loss_path.with_name(f"{stem}.a{existing + 1}.json")
+
+
+def record_unit_attempt(
+    *,
+    workspace_root: Path,
+    epoch_id: str,
+    generation_id: str,
+    entry_id: str,
+    replicate_index: int,
+    loss: LossProfile | None = None,
+) -> None:
+    """Record ONE non-final execution of a board unit beside its cache slot.
+
+    A board unit is evaluated at most once for SCORING, but it can be
+    executed more than once: an infra abort is deliberately not cached so
+    the next need re-attempts it, and ``--mode full`` re-measures a unit
+    every round. Only the last execution survives in the canonical slot, so
+    without this record a unit that failed twice and then passed is
+    indistinguishable from one that passed first time — the difference
+    between a healthy harness and a flaky one.
+
+    Two callers, one for each way an execution stops being the final one:
+
+    * ``loss`` supplied — the execution just settled and its profile will
+      NOT be persisted (the infra-abort path). Nothing durable exists for
+      it yet, so the profile is written to the attempt slot. It carries its
+      own ``abort_cause`` / ``not_completed_reason``, which is the record of
+      why the attempt failed; no ``result.json`` twin is copied, because on
+      this path any twin on disk belongs to an EARLIER execution of the
+      slot, not to this one.
+    * ``loss`` omitted — the canonical slot is about to be overwritten by a
+      re-run (the ``force_fresh`` path). Both the persisted profile and its
+      ``result.json`` twin are copied aside first; copied rather than moved
+      so the slot keeps answering cache reads unchanged if the re-run never
+      writes. The profile alone also reaches ``loss.archive.jsonl`` (see
+      :func:`archive_outgoing_unit_loss`); the attempt slot is what keeps
+      its ``result.json`` twin and gives the execution an addressable pair.
+
+    Provenance only: nothing here is a scoring input, and best-effort
+    throughout — a failed write must never cost a round.
+    """
+    path = _unit_loss_path(workspace_root, epoch_id, generation_id, entry_id, replicate_index)
+    try:
+        if loss is not None:
+            _, reducer_module = _telemetry_helpers()
+            writer = getattr(reducer_module, "write_loss_profile", None)
+            if not callable(writer):
+                return
+            writer(loss, _next_attempt_path(path))
+            return
+        if not path.exists():
+            return
+        attempt_path = _next_attempt_path(path)
+        attempt_path.write_bytes(path.read_bytes())
+        result_path = unit_result_path(path)
+        if result_path.exists():
+            unit_result_path(attempt_path).write_bytes(result_path.read_bytes())
+    except OSError as exc:  # noqa: BLE001 — attempt records are best-effort
+        log.debug(
+            "unit attempt record skipped for %s/%s r%d: %s",
             generation_id,
             entry_id,
             replicate_index,
@@ -942,13 +1048,17 @@ def _average_losses(
     ``runtime_ms``, ``plan_revisions``, ``task_failure_ratio``,
     ``turns_completed``, ``memory_failure_count``, ``context_loss_count``,
     ``adk_session_id``, ``cached`` / ``source_epoch`` / ``source_run``,
-    ``scoring_provenance``, ``wall_clock_budget_exceeded``, ``abort_cause``
+    ``scoring_provenance``, ``wall_clock_budget_exceeded``, ``abort_cause``,
+    ``not_completed_reason``, ``started_at`` / ``ended_at``
         Neither the scalar nor the gate reads them. They describe ONE
-        execution (its duration, its abort, which cache slot it came from)
-        and have no meaningful fold, so they report the representative
-        replicate. Consumers that count per-round infra aborts across a
-        duel therefore see replicate 0's provenance only — see the
-        follow-up note on ``_count_infra_aborted_runs``.
+        execution (its duration, its wall-clock span, its abort and why,
+        which cache slot it came from) and have no meaningful fold, so they
+        report the representative replicate. A folded span in particular
+        would be a fiction: N replicates are N disjoint spans, and a reader
+        wanting the true extent reads the per-replicate ``loss.r{n}.json``
+        files the fold left untouched. Consumers that count per-round infra
+        aborts across a duel therefore see replicate 0's provenance only —
+        see the follow-up note on ``_count_infra_aborted_runs``.
 
     ``dataclasses.replace`` keeps the profile shape intact, so a field
     added to :class:`LossProfile` later defaults to pass-through and this
@@ -1001,8 +1111,10 @@ __all__ = [
     "_skipped_unit_loss",
     "_unit_loss_path",
     "archive_outgoing_unit_loss",
+    "is_unit_attempt_slot",
     "read_run_result",
     "read_unit_loss_history",
+    "record_unit_attempt",
     "run_result_to_payload",
     "unit_result_path",
 ]

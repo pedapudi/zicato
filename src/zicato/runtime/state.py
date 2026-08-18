@@ -259,7 +259,7 @@ class ActiveRun:
     Fields
     ------
     run_id:
-        Unique id of the run (matches :class:`zicato.core.types.RunRecord.run_id`).
+        Unique id of the run (matches :attr:`zicato.core.LossProfile.run_id`).
     pid:
         OS process id of the **run's own worker process** — the
         ``python -m zicato._tournament_worker`` subprocess executing this

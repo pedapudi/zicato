@@ -497,6 +497,39 @@ class LossProfile:
     # this field existed, and every freshly-reduced (non-aborted) run, omits
     # it. OUTPUT only — never a contract field, never enters the contract hash.
     abort_cause: str | None = None
+    # Not-completed provenance — WHY the reducer scored this run worst-case
+    # (``run_not_completed``: the heavy fixed penalty plus a
+    # ``task_failure_ratio`` floored to 1.0). The value is the adapter's own
+    # :attr:`RunResult.abort_reason`: ``"harness_exception:{type}"``,
+    # ``"unsupported_kind:{kind}"``, an emulator abort, the worker's
+    # wall-clock reason, or a custom adapter string. Without it the penalty
+    # is unattributable — the profile carries a large ``drift_loss`` with an
+    # empty ``drift_counts`` and nothing naming its cause.
+    #
+    # Distinct from :attr:`abort_cause`, which is the CACHE-eligibility
+    # signal (:func:`is_infra_abort_cause` reads any non-budget value as an
+    # infra abort and suppresses the persist). An adapter-returned reason
+    # belongs here and NEVER there: stamping it on ``abort_cause`` would
+    # stop a crashing run's worst-case loss from ever being cached, turning
+    # a scored failure into "no evidence". ``None`` (the back-compat
+    # default) means the run completed, or the profile predates the field.
+    # OUTPUT only — never a contract field, never enters the contract hash.
+    not_completed_reason: str | None = None
+    # Wall-clock span of the run that produced this profile — ISO-8601 UTC
+    # strings (:func:`datetime.datetime.now` under ``UTC``), stamped by the
+    # worker around the drive of the board unit. :attr:`runtime_ms` gives a
+    # duration but no position, so two units cannot be ordered against each
+    # other, placed on a timeline, or shown as concurrent; these fields
+    # supply the position. ``None`` (the back-compat default) means no span
+    # was measured — the profile predates the fields, or it is a synthesised
+    # worst-case for a run that never reported one (a killed worker, a unit
+    # skipped for budget). NOT "epoch zero", which is why the default is not
+    # ``""``/``0``. A cached unit carries the times of the run that produced
+    # it (nothing rewrites them), which is what makes ``cached`` readable as
+    # "did not run this round". OUTPUT only — never contract fields, never
+    # enter the contract hash.
+    started_at: str | None = None
+    ended_at: str | None = None
 
     def unified_metrics(self) -> tuple[MetricCount, ...]:
         """Return the merged metric view across drift_counts + metric_counts.

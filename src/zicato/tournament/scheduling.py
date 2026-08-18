@@ -53,6 +53,7 @@ from zicato.tournament.unit_cache import (
     _resolve_cached_unit,
     _skipped_unit_loss,
     _UnitProvenance,
+    record_unit_attempt,
 )
 from zicato.tournament.worker_transport import _runtime_state, _stamp_replicate_index
 
@@ -1050,6 +1051,17 @@ async def _run_unit_cache_first(
         )
 
     if force_fresh:
+        # The re-run's worker writes straight over the slot's loss.json and
+        # its result.json twin, so the measurement being superseded has to be
+        # copied aside HERE — before the run, the only point at which both
+        # files still describe the previous execution.
+        record_unit_attempt(
+            workspace_root=workspace_root,
+            epoch_id=epoch_id,
+            generation_id=generation.id,
+            entry_id=entry.id,
+            replicate_index=replicate_index,
+        )
         return await _evaluate()
 
     def _cached() -> LossProfile | None:
@@ -1160,6 +1172,17 @@ async def _run_unit_after_cache_miss(
             entry.id,
             replicate_index,
             loss.abort_cause,
+        )
+        # The profile is discarded for scoring, but the EXECUTION happened.
+        # Keep it as an attempt record so the re-attempt that follows is
+        # readable as a retry rather than as the unit's only run.
+        record_unit_attempt(
+            workspace_root=workspace_root,
+            epoch_id=epoch_id,
+            generation_id=generation.id,
+            entry_id=entry.id,
+            replicate_index=replicate_index,
+            loss=loss,
         )
     else:
         _persist_unit_loss(

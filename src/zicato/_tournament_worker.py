@@ -76,7 +76,7 @@ from zicato.core import (
 )
 from zicato.import_path import import_dotted_path
 from zicato.judge_runtime.error_register import judge_error_snapshot
-from zicato.util import best_effort
+from zicato.util import best_effort, now_iso
 
 log = logging.getLogger("zicato._tournament_worker")
 
@@ -913,6 +913,15 @@ async def _run(args: dict[str, Any]) -> None:
     run_result: RunResult | None = None
     runtime_ms = 0
     budget_exceeded = False
+    # Wall-clock position of this board unit (LossProfile.started_at /
+    # ended_at). Wall clock, not the monotonic clock ``runtime_ms`` measures:
+    # a duration is comparable within one process, a position has to be
+    # comparable across the round's workers. The span opens before the
+    # adapter loads — loading the harness is part of the unit's occupancy of
+    # a worker slot — and closes in the ``finally`` below, so it is stamped
+    # on every exit including the budget timeout.
+    started_at = now_iso()
+    ended_at = started_at
     try:
         session = adapter.load(snapshot_root)
         _record_harness_load(
@@ -965,6 +974,10 @@ async def _run(args: dict[str, Any]) -> None:
             snapshot_root=snapshot_root,
         )
     finally:
+        # Closes the wall-clock span opened before the adapter load. First
+        # statement of the block: everything below is bookkeeping (sink
+        # close, terminal-event fallback), not the unit running.
+        ended_at = now_iso()
         # Stop the heartbeat thread before closing sinks so the thread
         # does not try to bump a run record that is about to be removed.
         with best_effort(
@@ -1039,6 +1052,18 @@ async def _run(args: dict[str, Any]) -> None:
         weights,
         run_not_completed=run_not_completed,
     )
+    # Stamp the unit's wall-clock position (issue #242) — every profile the
+    # worker writes carries one, aborted or not.
+    loss = replace(loss, started_at=started_at, ended_at=ended_at)
+    # Attribute the worst-case penalty ``run_not_completed`` just bought
+    # (issue #245): the reducer adds a heavy fixed term and floors
+    # ``task_failure_ratio``, which lands as a large ``drift_loss`` next to an
+    # empty ``drift_counts``. The adapter's own reason is the only record of
+    # WHY, and it goes here rather than on ``abort_cause`` — that field
+    # decides cache eligibility, and any non-budget value there would stop
+    # this scored failure from being persisted at all.
+    if run_not_completed and run_result is not None:
+        loss = replace(loss, not_completed_reason=run_result.abort_reason or None)
     # Stamp the abort provenance so loop-health + the cache layer can tell a
     # genuine wall-clock-budget exhaustion (the worker's own cooperative
     # ``asyncio.wait_for`` fired) from an infra abort (a parent/supervisor

@@ -1437,6 +1437,11 @@ def loss_profile_from_dict(d: dict[str, Any]) -> LossProfile:
             str(d["scoring_provenance"]) if d.get("scoring_provenance") is not None else None
         ),
         abort_cause=(str(d["abort_cause"]) if d.get("abort_cause") is not None else None),
+        not_completed_reason=(
+            str(d["not_completed_reason"]) if d.get("not_completed_reason") is not None else None
+        ),
+        started_at=(str(d["started_at"]) if d.get("started_at") is not None else None),
+        ended_at=(str(d["ended_at"]) if d.get("ended_at") is not None else None),
     )
 
 

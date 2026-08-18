@@ -97,7 +97,6 @@ from zicato.core.experiment import (
 from zicato.core.lineage import (
     ArtifactFile,
     ArtifactSet,
-    RunRecord,
     RunResult,
 )
 
@@ -181,7 +180,6 @@ __all__ = [
     # Run record / lineage
     "ArtifactFile",
     "ArtifactSet",
-    "RunRecord",
     "RunResult",
     # Hypothesis / experiment
     "DriftDirection",
