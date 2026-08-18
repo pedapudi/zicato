@@ -12,6 +12,8 @@
 //   #/e/<epochId>/gens                          → Rounds landing (all rounds)
 //   #/e/<epochId>/gen/<gen>[/<entry>]           → Candidate (lifecycle + gate)
 //   #/e/<epochId>/gen/<gen>/diff[/<mutId>]      → that candidate's patch diff
+//     …with an optional `~base=<gen>` picking WHICH version the diff is
+//     taken against (the candidate's recorded parent when absent).
 //   #/e/<epochId>/boards                        → Boards group (trellis)
 //   #/e/<epochId>/board/<entry>[/<gen>]         → per-board + inline transcript
 //   #/e/<epochId>/mutations[/<mutId>]           → Mutation surface + diff
@@ -93,7 +95,11 @@ export function parseRoute(hash) {
     }
     case 'gen': {
       const gen = parts[3] || null;
-      if (parts[4] === 'diff') return { view: 'diff', params: { epochId, gen, mutId: parts[5] || null }, cmp };
+      if (parts[4] === 'diff') {
+        // `~base=<gen>` picks the LEFT side of the patch diff. Absent, the
+        // view takes the candidate's own recorded parent.
+        return { view: 'diff', params: { epochId, gen, mutId: parts[5] || null, base: extra.base || null }, cmp };
+      }
       return { view: 'candidate', params: { epochId, gen, entry: parts[4] || null }, cmp };
     }
     case 'boards':
@@ -193,6 +199,9 @@ export function href(view, params, opts) {
   const o = opts || {};
   // the compare target rides only on the candidate split.
   if (o.cmp && view === 'candidate') return base + '~cmp=' + enc(o.cmp);
+  // the picked baseline rides the same suffix, so a chosen comparison is
+  // deep-linkable and a cold load hydrates it.
+  if (view === 'diff' && p.base) return base + '~base=' + enc(p.base);
   // the follow flag rides only on a board route that has a candidate selected
   // — there is no conversation to follow without one.
   if (o.follow && view === 'board' && p.gen) return base + '~follow=1';
