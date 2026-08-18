@@ -347,7 +347,7 @@ def test_an_attempt_record_never_reads_as_a_replicate(tmp_path: Path) -> None:
     each reach a run directory by scan; an attempt file must not enter any of
     them, or a discarded execution would become a scoring draw.
     """
-    from zicato.query.eval_view import _cell_evidence_replicate_index
+    from zicato.query.replicate_scores import replicate_index
     from zicato.tournament.unit_cache import _LOSS_REPLICATE_RE, own_code_board_draws
 
     run_dir = tmp_path / "runs" / "entry_a"
@@ -363,7 +363,7 @@ def test_an_attempt_record_never_reads_as_a_replicate(tmp_path: Path) -> None:
     ]
     for attempt in ("loss.a1.json", "loss.r1000.a1.json"):
         assert _LOSS_REPLICATE_RE.match(attempt) is None
-        assert _cell_evidence_replicate_index(attempt) is None
+        assert replicate_index(attempt) is None
         assert is_unit_attempt_slot(run_dir / attempt) is True
     for slot in ("loss.json", "loss.r1000.json"):
         assert is_unit_attempt_slot(run_dir / slot) is False
