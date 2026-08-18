@@ -3362,7 +3362,12 @@ export function sideBySideDiff(opts) {
   wrap.appendChild(head);
 
   const body = el('div', { class: 'dn-sxs-body', role: 'list' });
-  let ln = 0; let rn = 0;
+  // Gutters count from the caller's first line number when it has one (the
+  // patch diff's context expansion shows a slice of a file, so the gutter
+  // must read as the FILE's lines, not the slice's). Default 1 = the old
+  // span-relative numbering every other caller already gets.
+  let ln = (Number.isFinite(o.leftStart) ? o.leftStart : 1) - 1;
+  let rn = (Number.isFinite(o.rightStart) ? o.rightStart : 1) - 1;
   for (const r of rows) {
     const cls = r.type === 'same' ? '' : (r.type === 'del' ? ' dn-sxs-changed' : (r.type === 'add' ? ' dn-sxs-changed' : ' dn-sxs-changed'));
     const lhsText = r.left != null ? r.left : '';

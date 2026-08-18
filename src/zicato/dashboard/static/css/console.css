@@ -2404,6 +2404,16 @@
     font-size: calc(10.5px * var(--dt-font-scale, 1)); }
   .dn-basepick.dn-basepick-picked { background: color-mix(in srgb, var(--v2-accent) 10%, var(--v2-panel)); }
   .dn-basepick.dn-basepick-picked .dn-basepick-hint { color: var(--v2-accent); }
+  /* CONTEXT EXPANSION — the bars above and below a span diff. Quiet until
+     hovered: the diff is the content, these only reach for more of it. */
+  .dn-sxs-xbar { display: flex; gap: 8px; align-items: center; }
+  .dn-sxs-xbar:empty { display: none; }
+  .dn-sxs-xbtn { font-family: var(--v2-mono); font-size: calc(10px * var(--dt-font-scale, 1));
+    color: var(--v2-ink-faint); background: var(--v2-rule-soft); border: 1px solid var(--v2-rule);
+    border-radius: 3px; padding: 1px 8px; cursor: pointer; }
+  .dn-sxs-xbtn:hover { color: var(--v2-paper); background: var(--v2-accent); border-color: var(--v2-accent); }
+  .dn-sxs-xbtn[disabled] { opacity: 0.45; cursor: default; pointer-events: none; }
+  .dn-sxs-xnote { font-family: var(--v2-mono); font-size: calc(10px * var(--dt-font-scale, 1)); }
   /* a RUNNING candidate row — its loss is not scored yet; the live link reads
      "watch live →" and tints with the good/live accent (theme-aware). */
   .dn-board-table tr.dn-board-running td { background: color-mix(in srgb, var(--v2-good) 7%, transparent); }

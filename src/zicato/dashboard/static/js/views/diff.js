@@ -103,6 +103,10 @@ export async function render(host, ctx, params) {
   // Sites where the picked baseline disagrees with the parent — the blocks
   // whose diff is NOT purely this candidate's own change.
   const mixedById = new Map();
+  // Where each side's span SITS in its own file — the anchor the context
+  // expansion grows from. Absent whenever either side came from records
+  // rather than a tree: there is no file to expand into.
+  const spanById = new Map();
   let detailNote = '';
   ids.forEach((id, i) => {
     const d = details[i];
@@ -132,6 +136,13 @@ export async function render(host, ctx, params) {
       ? (typeof parentSrc.content === 'string' ? parentSrc.content : null)
       : ((d && d.baseline && typeof d.baseline.content === 'string') ? d.baseline.content : null);
     mixedById.set(id, Boolean(pickedBase && str != null && parentStr != null && str !== parentStr));
+
+    // The candidate's own entry gives the RIGHT side's line span; the chain
+    // link (or the v0 baseline) gives the LEFT side's.
+    const mine = byGen.get(genId) || null;
+    const leftAnchor = src || (d && d.baseline) || null;
+    const leftGen = src ? src.generation_id : ((d && d.baseline && d.baseline.generation_id) || null);
+    spanById.set(id, anchorPair(leftAnchor, leftGen, mine, genId));
     if (!detailNote && d && d.provenance_note) detailNote = String(d.provenance_note);
   });
 
@@ -197,6 +208,7 @@ export async function render(host, ctx, params) {
         const site = siteById.get(mid) || { mutation_id: mid };
         body.appendChild(patchBlock(genId, p, baselineById.get(mid), site, ctx, epochId, baselineGenById.get(mid), {
           mixed: mixedById.get(mid) === true, parent: recordedParent,
+          span: spanById.get(mid) || null, epochId,
         }));
       }
     } else if (fileEntries.length) {
@@ -267,13 +279,141 @@ function patchBlock(genId, patch, baselineStr, site, ctx, epochId, baselineGen, 
       ? `No content recorded for this site in ${baselineGen} — showing the challenger side only.`
       : 'No baseline content recorded for this site — showing the challenger side only.' }));
   }
-  block.appendChild(svg.sideBySideDiff({
+  block.appendChild(expandableDiff({
     baseline: baselineStr == null ? '' : baselineStr,
     challenger: String(patch.new_content == null ? '' : patch.new_content),
     leftLabel: baselineGen ? `baseline · ${baselineGen}` : 'baseline · from records',
     rightLabel: `challenger new · ${genId}`,
+    span: o.span,
+    epochId: o.epochId,
   }));
   return block;
+}
+
+//: One expand click reveals this many more lines on that side of the span.
+const CONTEXT_STEP = 20;
+
+// The two anchors an expansion grows from — one per column — or null when
+// either side cannot be placed in a file. A records-sourced entry carries no
+// line numbers (its tree is gone), and a span with no file cannot be read
+// back, so both cases yield null and the caller renders no control.
+function anchorPair(left, leftGen, right, rightGen) {
+  const anchor = (side, gen) => {
+    const start = side && side.line_start;
+    const end = side && side.line_end;
+    const path = side && side.file;
+    if (!path || !gen || !Number.isFinite(start) || !Number.isFinite(end)) return null;
+    return { gen, path: String(path), start, end };
+  };
+  const a = anchor(left, leftGen);
+  const b = anchor(right, rightGen);
+  return (a && b) ? { left: a, right: b } : null;
+}
+
+// A side-by-side span diff that can GROW into the file around it.
+//
+// The span is what the patch record holds and is always what renders first.
+// The surrounding lines exist only in the generations' source trees, so the
+// controls appear only when both sides can be read back from a tree — a
+// generation GC pruned has a span and no file, and advertising an expansion
+// that cannot run is worse than not offering it (issue #253 follow-up).
+//
+// Each click reveals CONTEXT_STEP more lines on that side; the second control
+// goes to the file's edge. A bar disappears once its side is fully expanded.
+function expandableDiff(o) {
+  const span = o.span || null;
+  const wrap = el('div', { class: 'dn-sxs-expand' });
+  const top = el('div', { class: 'dn-sxs-xbar' });
+  const host = el('div', { class: 'dn-sxs-xhost' });
+  const bottom = el('div', { class: 'dn-sxs-xbar' });
+  wrap.appendChild(top);
+  wrap.appendChild(host);
+  wrap.appendChild(bottom);
+
+  // up/down: lines revealed beyond the span. files: the two texts, fetched
+  // once on the first expand and reused after.
+  const state = { up: 0, down: 0, left: null, right: null, busy: false };
+
+  const paintDiff = () => {
+    while (host.firstChild) host.removeChild(host.firstChild);
+    const slice = (lines, anchor) => lines
+      .slice(Math.max(0, anchor.start - 1 - state.up), Math.min(lines.length, anchor.end + state.down))
+      .join('\n');
+    const grown = state.left && state.right && (state.up || state.down);
+    host.appendChild(svg.sideBySideDiff({
+      baseline: grown ? slice(state.left, span.left) : o.baseline,
+      challenger: grown ? slice(state.right, span.right) : o.challenger,
+      leftLabel: o.leftLabel,
+      rightLabel: o.rightLabel,
+      leftStart: span ? Math.max(1, span.left.start - state.up) : undefined,
+      rightStart: span ? Math.max(1, span.right.start - state.up) : undefined,
+    }));
+  };
+
+  if (!span) { paintDiff(); return wrap; }
+
+  const roomUp = () => (state.left ? Math.min(span.left.start, span.right.start) - 1 - state.up : Infinity);
+  const roomDown = () => (state.left
+    ? Math.min(state.left.length - span.left.end, state.right.length - span.right.end) - state.down
+    : Infinity);
+
+  const paintBars = () => {
+    for (const [bar, dir, room] of [[top, 'up', roomUp()], [bottom, 'down', roomDown()]]) {
+      while (bar.firstChild) bar.removeChild(bar.firstChild);
+      if (state.left && room <= 0) continue;
+      const arrow = dir === 'up' ? '↑' : '↓';
+      bar.appendChild(el('button', {
+        type: 'button', class: 'dn-sxs-xbtn', disabled: state.busy ? 'disabled' : null,
+        'aria-label': `expand ${CONTEXT_STEP} lines ${dir}`,
+        onclick: () => grow(dir, CONTEXT_STEP),
+        text: `${arrow} ${CONTEXT_STEP} lines`,
+      }));
+      bar.appendChild(el('button', {
+        type: 'button', class: 'dn-sxs-xbtn dn-sxs-xbtn-all', disabled: state.busy ? 'disabled' : null,
+        'aria-label': `expand to the ${dir === 'up' ? 'start' : 'end'} of the file`,
+        onclick: () => grow(dir, Infinity),
+        text: dir === 'up' ? '⤒ file start' : '⤓ file end',
+      }));
+    }
+  };
+
+  const note = (text) => {
+    while (bottom.firstChild) bottom.removeChild(bottom.firstChild);
+    while (top.firstChild) top.removeChild(top.firstChild);
+    bottom.appendChild(el('span', { class: 'dn-faint dn-sxs-xnote', text }));
+  };
+
+  async function grow(dir, by) {
+    if (state.busy) return;
+    state.busy = true;
+    paintBars();
+    if (!state.left) {
+      const [a, b] = await Promise.all([
+        D.fileContent(o.epochId, span.left.gen, span.left.path),
+        D.fileContent(o.epochId, span.right.gen, span.right.path),
+      ]);
+      const text = (r) => ((r && typeof r.content === 'string' && !r.error) ? r.content : null);
+      if (text(a) == null || text(b) == null) {
+        // The tree answered for the span but not for the file. Say that
+        // instead of leaving a control that does nothing.
+        state.busy = false;
+        note('The surrounding file is not readable for one of these generations — the span above is all its records hold.');
+        return;
+      }
+      state.left = text(a).replace(/\r\n/g, '\n').split('\n');
+      state.right = text(b).replace(/\r\n/g, '\n').split('\n');
+    }
+    const room = dir === 'up' ? roomUp() : roomDown();
+    const step = Math.max(0, Math.min(by === Infinity ? room : by, room));
+    if (dir === 'up') state.up += step; else state.down += step;
+    state.busy = false;
+    paintDiff();
+    paintBars();
+  }
+
+  paintDiff();
+  paintBars();
+  return wrap;
 }
 
 // The lede names the generation the LEFT column actually is, so neither the
