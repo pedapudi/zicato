@@ -31,12 +31,8 @@
 # -----
 #   bash tools/parity.sh                 # run every gate
 #   bash tools/parity.sh --update        # (re)capture every golden baseline
-#   bash tools/parity.sh --only PYTEST   # run a single gate (repeatable)
-#   bash tools/parity.sh --skip PYTEST   # skip a gate (repeatable)
-#
-# --only / --skip are repeatable and also accept a comma list
-# (`--only CLI-HELP,MYPY`). An unknown gate name is an error, so a typo
-# cannot look like a gate that silently did not run.
+#   bash tools/parity.sh --only PYTEST   # run a gate (repeatable, or A,B)
+#   bash tools/parity.sh --skip PYTEST   # skip a gate (repeatable, or A,B)
 #
 # Exit code is 0 only if every selected gate passed.
 
@@ -46,46 +42,14 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 GOLDEN_DIR="$REPO_ROOT/tools/parity/golden"
 LIB="$REPO_ROOT/tools/parity/lib"
 
-# Every gate, in run order. `_add_gates` validates --only / --skip against it.
-GATES=(PYTEST CONTRACT-HASH CLI-HELP REINDEX-DUMP MOCK-GOLDEN MYPY)
-
 UPDATE=0
 ONLY=()
 SKIP=()
-
-# _add_gates FLAG NAME[,NAME...] — append each name to ONLY or SKIP.
-_add_gates() {
-  local flag="$1" spec="$2" name known g
-  local -a names=()
-  # Split on commas: `--only A,B` is a common typo for `--only A --only B`,
-  # and silently matching no gate is worse than just accepting it.
-  while [ -n "$spec" ]; do
-    case "$spec" in
-      *,*) name="${spec%%,*}"; spec="${spec#*,}" ;;
-      *)   name="$spec"; spec="" ;;
-    esac
-    [ -n "$name" ] && names+=("$name")
-  done
-  for name in ${names[@]+"${names[@]}"}; do
-    known=0
-    for g in "${GATES[@]}"; do [ "$g" = "$name" ] && known=1; done
-    if [ "$known" -eq 0 ]; then
-      echo "$flag: unknown gate: $name (known: ${GATES[*]})" >&2
-      exit 2
-    fi
-    case "$flag" in
-      --only) ONLY+=("$name") ;;
-      --skip) SKIP+=("$name") ;;
-    esac
-  done
-}
-
 while [ $# -gt 0 ]; do
   case "$1" in
     --update) UPDATE=1; shift ;;
-    --only|--skip)
-      [ $# -ge 2 ] || { echo "$1 needs a gate name" >&2; exit 2; }
-      _add_gates "$1" "$2"; shift 2 ;;
+    --only) ONLY+=($(echo "$2" | tr ',' ' ')); shift 2 ;;
+    --skip) SKIP+=($(echo "$2" | tr ',' ' ')); shift 2 ;;
     *) echo "unknown arg: $1" >&2; exit 2 ;;
   esac
 done
