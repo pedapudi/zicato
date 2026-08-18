@@ -301,7 +301,9 @@ test('render: the panel mounts in the CONTRACT region — before any result sect
   await board.render(host, ctxReal(), PARAMS);
   const heads = allTags(host, 'h2').map((h) => h.textContent);
   const judges = heads.findIndex((t) => /^Judges/.test(t));
-  const loss = heads.findIndex((t) => /Per-candidate loss/.test(t));
+  // the per-candidate section is named for the channel it plots (score / drift
+  // loss / pass outcome), so match the stem rather than one channel's wording.
+  const loss = heads.findIndex((t) => /^Per-candidate /.test(t));
   assert(judges >= 0, 'the Judges section rendered: ' + heads.join(' | '));
   assert(loss >= 0 && judges < loss, 'what grades a run is part of the question, so it precedes the answers');
   assert(/no built-in judge emits user_steer/.test(textOf(host)), 'the served suppression story reached the page');

@@ -38,18 +38,7 @@ from zicato.query.paths import (
     coerce_float,
     layout_of,
 )
-
-# Which replicate-index ranges count as EVIDENCE FOR A MATRIX CELL (EVAL-VIEW.md
-# §2.1 / §4.1). The board unit's replicate slots are reserved by purpose: real
-# duel replicates count up from 0 (r0 = the canonical loss.json, plus the
-# holdout-ladder confirmation re-runs, which reuse the low duel slots), the
-# evidence-gate's paired draws sit at 4000+ (EVIDENCE_REPLICATE_BASE). Those two
-# ranges are FRESH measurements of THIS cell, so they raise its evidence tier.
-# EXCLUDED: A/A calibration at 1000+ (that is the champion NOISE-FLOOR trace — it
-# feeds the flip badge, not the cell), the contract pre-flight at 2000+, the
-# pre-tournament candidate screen at 3000+ (an ephemeral veto probe), and
-# reflection draws at 5000+ (a meta-evaluation of the judges, not the candidate).
-_CELL_EVIDENCE_REPLICATE_RANGES: tuple[tuple[int, int], ...] = ((0, 1000), (4000, 5000))
+from zicato.query.replicate_scores import cell_replicate_draws
 
 # The live MDE ladder's operating characteristics (EVAL-VIEW.md §4.3, pinned to
 # CAMPAIGN.md §3): the two-sample form at α=.05 / power .80 (with a relaxed α=.10
@@ -333,58 +322,6 @@ def _opt_score_val(value: Any) -> float | None:
     return f
 
 
-def _cell_evidence_replicate_index(name: str) -> int | None:
-    """The replicate index of a ``loss.json`` / ``loss.r<N>.json`` file, else ``None``.
-
-    ``loss.json`` is replicate 0 (the canonical worker output); ``loss.r<N>.json``
-    is replicate ``N`` (the sibling slot :func:`_unit_loss_path` writes). Any
-    other filename is not a replicate loss file.
-    """
-    if name == "loss.json":
-        return 0
-    if name.startswith("loss.r") and name.endswith(".json"):
-        mid = name[len("loss.r") : -len(".json")]
-        if mid.isdigit():
-            return int(mid)
-    return None
-
-
-def _cell_replicate_draws(
-    paths: WorkspacePaths, epoch_id: str, gen: str, entry_id: str
-) -> list[Any]:
-    """The qualifying per-replicate loss profiles for ONE cell (EVAL-VIEW.md §4.1).
-
-    The DURABLE evidence source for a matrix cell's replicate count / tier: the
-    ``loss.json`` + ``loss.r<N>.json`` files that actually exist under the run
-    dir, filtered to the ranges that count as fresh evidence FOR THE CELL
-    (:data:`_CELL_EVIDENCE_REPLICATE_RANGES` — real duel + evidence-gate draws;
-    NOT the calibration/screen/reflection slots). This replaces the
-    ``loss_profiles`` row count, which is always 1 (the table's PK is
-    ``run_id`` = one row per ``(gen, entry)``). Best-effort: an unreadable file
-    is skipped; a pruned/absent run dir yields ``[]`` (the caller then falls
-    back to the index row).
-    """
-    from zicato.core.workspace import loss_profile_path  # noqa: PLC0415
-    from zicato.telemetry.reducer import read_loss_profile  # noqa: PLC0415
-
-    run_dir = loss_profile_path(paths.root, epoch_id, gen, entry_id).parent
-    if not run_dir.is_dir():
-        return []
-    draws: list[Any] = []
-    for child in sorted(run_dir.iterdir()):
-        if not child.is_file():
-            continue
-        idx = _cell_evidence_replicate_index(child.name)
-        if idx is None or not any(lo <= idx < hi for lo, hi in _CELL_EVIDENCE_REPLICATE_RANGES):
-            continue
-        try:
-            profile = read_loss_profile(child)
-        except (OSError, ValueError, KeyError, json.JSONDecodeError):
-            continue
-        draws.append(profile)
-    return draws
-
-
 def _score_from_loss_json(row: Any) -> float | None:
     """Lift the continuous ``score`` out of the row's ``loss_json`` blob.
 
@@ -656,7 +593,8 @@ def _aggregate_cell(rows: list[Any], draws: list[Any] | None = None) -> dict[str
     """Fold ONE (entry, candidate) cell (§3.1 aggregation).
 
     EVIDENCE + replicate count come from the DURABLE replicate FILES
-    (:func:`_cell_replicate_draws`, EVAL-VIEW.md §4.1 / F3) — the ``loss.json`` +
+    (:func:`zicato.query.replicate_scores.cell_replicate_draws`, EVAL-VIEW.md
+    §4.1 / F3) — the ``loss.json`` +
     ``loss.r<N>.json`` that actually exist — NOT the ``loss_profiles`` row count,
     which is always 1 (the table's PK is ``run_id`` = one row per (gen, entry)).
     ``pass_ratio`` / ``pass_fail`` / ``drift_loss`` / ``score`` are averaged over
@@ -833,7 +771,7 @@ def build_eval_matrix(paths: WorkspacePaths, epoch_id: str | None = None) -> dic
                 continue
             by_entry.setdefault(eid, []).append(r)
         for eid, rows in by_entry.items():
-            cell = _aggregate_cell(rows, _cell_replicate_draws(paths, resolved, gen, eid))
+            cell = _aggregate_cell(rows, cell_replicate_draws(paths, resolved, gen, eid))
             if cell is not None:
                 cell_by[(eid, gen)] = cell
             if eid not in seen_set:
@@ -1107,7 +1045,7 @@ def build_eval_dossier(
     for cand in candidates:
         gen = cand["generation_id"]
         rows = per_candidate_rows.get(gen, [])
-        cell = _aggregate_cell(rows, _cell_replicate_draws(paths, resolved, gen, entry_id))
+        cell = _aggregate_cell(rows, cell_replicate_draws(paths, resolved, gen, entry_id))
         bits = [_opt_bool(_row_get(r, "pass_fail")) for r in rows]
         verdict = majority_verdict(bits)
         trajectory.append(
@@ -1117,6 +1055,12 @@ def build_eval_dossier(
                 "champion_spine": cand["champion_spine"],
                 "seed": cand["seed"],
                 "drift_loss": cell["drift_loss"] if cell else None,
+                # The continuous per-entry outcome, averaged over the same
+                # replicate draws as ``drift_loss``. ``None`` on a bool-only
+                # board, so the trajectory figure falls back to drift exactly
+                # as before. Carried so a reader plotting this entry's history
+                # can use the channel the contract actually populates.
+                "score": cell["score"] if cell else None,
                 "pass_ratio": cell["pass_ratio"] if cell else None,
                 "replicates": cell["replicates"] if cell else 0,
                 "cached": cell["cached"] if cell else False,

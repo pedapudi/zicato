@@ -217,7 +217,7 @@ test('trajectory: a ONE-GENERATION spine is a real trajectory — the seed is sp
   const series = board.trajectorySeries(d);
   assertEqual(series.gens.length, 1, 'the spine is [v0]');
   assertEqual(series.gens[0], 'v0', 'and its one point IS the seed');
-  assertEqual(series.loss[0], 90.5, "carrying the seed's own reading on this entry");
+  assertEqual(series.values[0], 90.5, "carrying the seed's own reading on this entry");
   const host = renderSections(d);
   const text = textOf(host);
   assert(!/No champion-spine trajectory/.test(text),

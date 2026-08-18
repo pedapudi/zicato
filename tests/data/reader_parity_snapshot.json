@@ -953,18 +953,23 @@
   "matchup_grid::e1::v0::v1": {
     "challenger": "v1",
     "champion": "v0",
+    "drift_present": true,
     "entry_grid": [
       {
         "child_drift_loss": 0.31,
         "child_metrics": null,
         "child_pass": true,
         "child_score": 0.9,
+        "decided_by": "drift",
         "delta": 0.010000000000000009,
+        "delta_score": 0.0,
         "entry_id": "t1",
         "parent_drift_loss": 0.3,
         "parent_metrics": null,
         "parent_pass": true,
         "parent_score": 0.9,
+        "score_replicates": 1,
+        "score_se": null,
         "verdict": "regressed",
         "won_by": "v0"
       },
@@ -973,12 +978,16 @@
         "child_metrics": null,
         "child_pass": true,
         "child_score": 0.9,
+        "decided_by": "drift",
         "delta": 0.010000000000000009,
+        "delta_score": 0.0,
         "entry_id": "t2",
         "parent_drift_loss": 0.3,
         "parent_metrics": null,
         "parent_pass": true,
         "parent_score": 0.9,
+        "score_replicates": 1,
+        "score_se": null,
         "verdict": "regressed",
         "won_by": "v0"
       }
@@ -1066,6 +1075,7 @@
     ]
   },
   "per_entry_for_generation::e0::v0": {
+    "drift_present": false,
     "entries": [],
     "epoch_id": "e0",
     "facet_scores": {
@@ -1077,6 +1087,7 @@
     "tournament_id": null
   },
   "per_entry_for_generation::e1::v0": {
+    "drift_present": false,
     "entries": [],
     "epoch_id": "e1",
     "facet_scores": {
@@ -1088,6 +1099,7 @@
     "tournament_id": null
   },
   "per_entry_for_generation::e1::v1": {
+    "drift_present": false,
     "entries": [],
     "epoch_id": "e1",
     "facet_scores": {

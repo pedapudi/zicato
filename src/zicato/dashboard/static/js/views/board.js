@@ -200,6 +200,32 @@ export async function render(host, ctx, params, route) {
     });
   }
 
+  // WHICH CHANNEL this entry reads on. The same fall-through the server resolves
+  // a per-entry verdict on: the continuous score when the entry is scored
+  // (higher is better), the drift loss when the adapter emits a drift stream
+  // (lower is better), and the bare pass predicate when neither is populated.
+  // `primary` is the row's reading on that channel — every figure and column
+  // below plots it, so none of them can disagree about what it is showing.
+  const scoreChannel = rows.some((r) => svg.isNum(r.score));
+  // The drift channel's presence is the SERVER's answer, and only the server's:
+  // a payload that does not carry the flag predates it, so the pre-feature
+  // behaviour (drift shown) stands rather than the view guessing "absent" and
+  // hiding a real measurement.
+  const driftKnown = perEntries.some((pe) => pe && typeof pe.drift_present === 'boolean');
+  const driftPresent = !driftKnown || perEntries.some((pe) => pe && pe.drift_present === true);
+  const channel = scoreChannel ? 'score' : driftPresent ? 'drift' : 'pass';
+  const channelLabel = channel === 'score' ? 'score' : channel === 'drift' ? 'drift loss' : 'pass outcome';
+  for (const r of rows) {
+    r.primary = channel === 'score' ? r.score : channel === 'drift' ? (svg.isNum(r.loss) ? r.loss : null) : null;
+    // carried on the ROW so a panel handed one row alone still names the
+    // quantity it is printing.
+    r.channelLabel = channelLabel;
+  }
+  // worst-first on either channel: the lowest score, or the highest loss.
+  const worstFirst = (a, b) => (channel === 'score'
+    ? (svg.isNum(a.primary) ? a.primary : Infinity) - (svg.isNum(b.primary) ? b.primary : Infinity)
+    : (svg.isNum(b.primary) ? b.primary : -1) - (svg.isNum(a.primary) ? a.primary : -1));
+
   // The FACET slices this entry feeds, and how each candidate scores on them.
   // Both halves ride on the per-entry payload already fetched above: the entry
   // row names its facets, and each candidate's `facet_scores` carries that
@@ -224,7 +250,7 @@ export async function render(host, ctx, params, route) {
   const champ = genList.find((g) => g.promoted) || genList.find((g) => !g.parent) || null;
   const championId = champ ? champ.id : null;
   const champRow = rows.find((r) => r.gen === championId);
-  const champLoss = champRow && svg.isNum(champRow.loss) ? champRow.loss : null;
+  const champPrimary = champRow && svg.isNum(champRow.primary) ? champRow.primary : null;
 
   // fix #5 — resolve the two transcripts to show side by side: the SELECTED
   // candidate and the CHAMPION on the same board. If the selection IS the
@@ -234,7 +260,7 @@ export async function render(host, ctx, params, route) {
     leftSel = rows.find((r) => r.gen === selGen) || null;
     let rightGen = championId && championId !== selGen ? championId : null;
     if (!rightGen) {
-      const others = rows.filter((r) => r.gen !== selGen && svg.isNum(r.loss)).sort((a, b) => b.loss - a.loss);
+      const others = rows.filter((r) => r.gen !== selGen && svg.isNum(r.primary)).sort(worstFirst);
       rightGen = others.length ? others[0].gen : null;
     }
     rightSel = rightGen ? rows.find((r) => r.gen === rightGen) || null : null;
@@ -266,7 +292,8 @@ export async function render(host, ctx, params, route) {
     // rows fold the continuous score + its precision/recall metrics (#18) so a
     // scored board repaints when a score moves; a bool-only row contributes
     // null for both (back-compat: digest unchanged vs the pre-score path).
-    rows: rows.map((r) => [r.gen, svg.isNum(r.loss) ? r.loss.toFixed(3) : null, r.pass, r.timeout, r.promoted, r.runId, !!r.running, !!r.cached, r.sourceEpoch || null, svg.isNum(r.score) ? r.score.toFixed(3) : null, metricsDigest(r.metrics)]),
+    channel,
+    rows: rows.map((r) => [r.gen, svg.isNum(r.primary) ? r.primary.toFixed(3) : null, r.pass, r.timeout, r.promoted, r.runId, !!r.running, !!r.cached, r.sourceEpoch || null, svg.isNum(r.score) ? r.score.toFixed(3) : null, metricsDigest(r.metrics)]),
     inflight: inflight.map((r) => {
       const pr = progressRatio(r);
       return [r.generation_id || null, r.run_id || null, pr != null ? pr.toFixed(2) : null];
@@ -298,8 +325,8 @@ export async function render(host, ctx, params, route) {
   // loss lands), which is where the final transcript cleanly replaces the partial.
   const xscriptDigest = JSON.stringify({
     epochId, entryId, selGen, champ: championId,
-    left: leftSel ? [leftSel.gen, !!leftSel.running, leftSel.promoted, columnStateSig(leftSel, leftConv), svg.isNum(leftSel.loss) ? leftSel.loss.toFixed(1) : null] : null,
-    right: rightSel ? [rightSel.gen, !!rightSel.running, rightSel.promoted, columnStateSig(rightSel, rightConv), svg.isNum(rightSel.loss) ? rightSel.loss.toFixed(1) : null] : null,
+    left: leftSel ? [leftSel.gen, !!leftSel.running, leftSel.promoted, columnStateSig(leftSel, leftConv), svg.isNum(leftSel.primary) ? leftSel.primary.toFixed(3) : null] : null,
+    right: rightSel ? [rightSel.gen, !!rightSel.running, rightSel.promoted, columnStateSig(rightSel, rightConv), svg.isNum(rightSel.primary) ? rightSel.primary.toFixed(3) : null] : null,
   });
 
   // Persistent sub-hosts: created ONCE under `host`, reused every render so the
@@ -372,29 +399,31 @@ export async function render(host, ctx, params, route) {
     // sorted comparative dot-plot, worst-first, champion reference rule.
     const scoreCard = el('div', { class: 'dn-panel' });
     const items = rows
-      .filter((r) => svg.isNum(r.loss))
-      .sort((a, b) => b.loss - a.loss)
-      .map((r) => ({ label: r.gen + (r.promoted ? ' ♛' : ''), value: r.loss, id: r.gen, pass: r.pass, timeout: r.timeout }));
+      .filter((r) => svg.isNum(r.primary))
+      .sort(worstFirst)
+      .map((r) => ({ label: r.gen + (r.promoted ? ' ♛' : ''), value: r.primary, id: r.gen, pass: r.pass, timeout: r.timeout }));
     if (items.length) {
       const bdt = densityTokens();
       scoreCard.appendChild(svg.valueDotPlot({
         width: 560, rowHeight: bdt.dotRow, labelWidth: 140, items,
-        reference: champLoss != null ? { value: champLoss, label: `champion ${championId}` } : null,
+        reference: champPrimary != null ? { value: champPrimary, label: `champion ${championId}` } : null,
         // fix #5: select → INLINE transcript on THIS view (same entry, +gen).
         // TOGGLE: clicking the already-selected candidate's dot collapses it
         // (drop the gen) — kept consistent with the breakdown-row button.
         onClick: (it) => ctx.navigate('board', it.id === selGen ? { epochId, entry: entryId } : { epochId, entry: entryId, gen: it.id }),
       }));
       scoreCard.appendChild(el('div', { class: 'dn-legend' }, [
-        champLoss != null ? el('span', null, [el('i', { class: 'spine', style: 'border-color:var(--v2-ink-faint);border-top-style:dashed;' }), `champion ${championId} = ${svg.fmt(champLoss, 1)}`]) : null,
+        champPrimary != null ? el('span', null, [el('i', { class: 'spine', style: 'border-color:var(--v2-ink-faint);border-top-style:dashed;' }), `champion ${championId} = ${svg.fmt(champPrimary, channel === 'score' ? 2 : 1)}`]) : null,
         el('span', null, [el('i', { class: 'dotact' }), 'pass']),
         el('span', null, [el('i', { class: 'dotpred', style: 'border-color:var(--v2-bad);' }), 'fail']),
-        el('span', { class: 'dn-faint', text: '⏱ timeout · click a candidate → its transcript inline (vs champion)' }),
+        el('span', { class: 'dn-faint', text: (channel === 'score' ? 'score, higher is better · ' : channel === 'drift' ? 'drift loss, lower is better · ' : '') + '⏱ timeout · click a candidate → its transcript inline (vs champion)' }),
       ].filter(Boolean)));
     } else {
-      scoreCard.appendChild(empty('No candidate has a scored run for this entry yet.'));
+      scoreCard.appendChild(empty(channel === 'pass'
+        ? 'This entry records no continuous score, and the adapter emits no drift stream — its candidates carry a pass verdict only.'
+        : 'No candidate has a scored run for this entry yet.'));
     }
-    nodes.push(section('Per-candidate loss · sorted worst-first, vs champion', scoreCard));
+    nodes.push(section(`Per-candidate ${channelLabel} · sorted worst-first, vs champion`, scoreCard));
 
     // The facet slices this entry feeds, each candidate's SCALAR across them —
     // placed directly under the per-candidate loss it extends: that section
@@ -454,13 +483,13 @@ export async function render(host, ctx, params, route) {
     const tbl = dataTable({
       class: 'dn-board-table',
       columns: [
-        { label: 'candidate' }, { label: 'drift loss', class: 'dn-num' }, { label: 'predicate' },
+        { label: 'candidate' }, { label: channelLabel, class: 'dn-num' }, { label: 'predicate' },
         anyLive ? { label: 'progress' } : null,
         anyScored ? { label: 'score', class: 'dn-num' } : null,
         anyScored ? { label: 'P / R' } : null,
         { label: 'budget' }, { label: 'transcript' },
       ],
-      rows: rows.slice().sort((a, b) => (svg.isNum(b.loss) ? b.loss : -1) - (svg.isNum(a.loss) ? a.loss : -1)).map((r) => {
+      rows: rows.slice().sort(worstFirst).map((r) => {
         const isSel = r.gen === selGen;
         // A RUNNING candidate is selectable too: its events.jsonl is already
         // growing on disk, so its (epoch, gen, entry) transcript resolves live.
@@ -474,7 +503,7 @@ export async function render(host, ctx, params, route) {
               r.cached ? el('span', { class: 'dn-cached-badge-mark', title: r.sourceEpoch ? 'cached · from ' + r.sourceEpoch : 'cached champion result',
                 text: r.sourceEpoch ? ' cached · ' + r.sourceEpoch : ' cached' }) : null,
             ] },
-            { class: 'dn-num dn-mono', text: svg.isNum(r.loss) ? svg.fmt(r.loss, 1) : (r.running ? 'running' : '—') },
+            { class: 'dn-num dn-mono', text: svg.isNum(r.primary) ? svg.fmt(r.primary, channel === 'score' ? 2 : 1) : (r.running ? 'running' : '—') },
             { class: passClass(r.pass), text: r.running && !r.ran ? 'live' : passLabel(r.pass) },
             // live-gated progress column (C4): a running row shows its board
             // progress bar; a settled row leaves an em-dash. Absent entirely
@@ -685,7 +714,7 @@ function transcriptColumn(sel, conv, championId, side) {
       el('span', { class: 'dn-inflight-pulse', 'aria-hidden': 'true' }),
       el('span', { text: 'live' }),
     ]) : null,
-    el('span', { class: 'dn-faint dn-mono', text: svg.isNum(sel.loss) ? ' · loss ' + svg.fmt(sel.loss, 1) : '' }),
+    el('span', { class: 'dn-faint dn-mono', text: svg.isNum(sel.primary) ? ' · ' + (sel.channelLabel || 'value') + ' ' + svg.fmt(sel.primary, 2) : '' }),
   ].filter(Boolean)));
 
   // The transcript is keyed on the (epoch, gen, entry) triple, NOT the per-entry
@@ -965,21 +994,34 @@ export function judgesDigest(roster, entryJudges) {
 export function trajectorySeries(dossier) {
   const traj = (dossier && Array.isArray(dossier.trajectory)) ? dossier.trajectory : [];
   const spine = traj.filter((t) => t && t.champion_spine);
+  // WHICH CHANNEL the trajectory plots: the continuous score when the entry is
+  // scored (higher is better), the drift loss otherwise (lower is better). The
+  // series is named `values` and carries its own direction, so the figure never
+  // has to assume a sign convention.
+  const scored = spine.some((t) => svg.isNum(t.score));
   return {
     gens: spine.map((t) => t.generation_id),
-    loss: spine.map((t) => (svg.isNum(t.drift_loss) ? t.drift_loss : NaN)),
+    channel: scored ? 'score' : 'drift',
+    values: spine.map((t) => {
+      const v = scored ? t.score : t.drift_loss;
+      return svg.isNum(v) ? v : NaN;
+    }),
     passRatio: spine.map((t) => (svg.isNum(t.pass_ratio) ? t.pass_ratio : NaN)),
   };
 }
 
 // The trajectory figure — the shipped sparkline grammar (aspect-locked
-// responsive per the house rule), drift loss along the spine, end dot coloured
-// by whether the instrument improved (lower = better). Honest-empty when no
-// spine cell ran.
+// responsive per the house rule), the entry's reading along the champion spine,
+// end dot coloured by whether the instrument improved. The reading is the
+// continuous score (higher better) when the entry is scored and the drift loss
+// (lower better) otherwise, so the figure states the direction it is drawn in.
+// Honest-empty when no spine cell ran.
 function trajectoryFigure(dossier) {
   const card = el('div', { class: 'dn-panel' });
   const series = trajectorySeries(dossier);
-  if (!series.loss.some((v) => svg.isNum(v))) {
+  const scored = series.channel === 'score';
+  const channelName = scored ? 'score' : 'drift loss';
+  if (!series.values.some((v) => svg.isNum(v))) {
     // The empty state carries the SERVER's reason (issue #207 §3): "no spine",
     // "the spine never ran this entry" and "the loss records are gone" are three
     // different facts about the workspace, and only the reader that walked the
@@ -995,11 +1037,11 @@ function trajectoryFigure(dossier) {
   // in a wide empty frame, which reads as a broken chart rather than as the one
   // fact it carries. So the seed-only reign states its reading as a number and
   // says the reign never moved (issue #207 §3).
-  const drawn = series.loss.filter((v) => svg.isNum(v));
+  const drawn = series.values.filter((v) => svg.isNum(v));
   if (drawn.length === 1) {
-    const i = series.loss.findIndex((v) => svg.isNum(v));
+    const i = series.values.findIndex((v) => svg.isNum(v));
     card.appendChild(el('div', { class: 'dn-row' }, [
-      stat(svg.fmt(series.loss[i], 2), 'drift loss · ' + series.gens[i]),
+      stat(svg.fmt(series.values[i], 2), channelName + ' · ' + series.gens[i]),
       stat('1', 'generation on the spine'),
     ]));
     card.appendChild(el('div', { class: 'dn-legend' }, [
@@ -1008,11 +1050,13 @@ function trajectoryFigure(dossier) {
     return card;
   }
   card.appendChild(svg.sparkline({
-    values: series.loss, responsive: true, markers: true, minSpan: 1, padY: 0.18,
-    goodDirection: 'down',
+    values: series.values, responsive: true, markers: true, minSpan: 1, padY: 0.18,
+    goodDirection: scored ? 'up' : 'down',
   }));
   card.appendChild(el('div', { class: 'dn-legend' }, [
-    el('span', { class: 'dn-faint', text: 'drift loss along the champion spine · round order · lower is better · the end dot turns green when the instrument’s reading improved across the reign' }),
+    el('span', { class: 'dn-faint', text: channelName + ' along the champion spine · round order · '
+      + (scored ? 'higher is better' : 'lower is better')
+      + ' · the end dot turns green when the instrument’s reading improved across the reign' }),
   ]));
   return card;
 }

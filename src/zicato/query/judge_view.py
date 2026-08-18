@@ -195,11 +195,13 @@ def build_per_entry_for_generation(
     """Per-entry breakdown of one generation, scoped via tournament_id FK.
 
     Returns ``{epoch_id, generation_id, tournament_id, mean_score,
-    facet_scores, entries: [{entry_id, run_id, drift_loss, pass_fail,
-    runtime_ms, wall_clock_budget_exceeded, match_id, rung}]}``.
+    drift_present, facet_scores, entries: [{entry_id, run_id, drift_loss,
+    pass_fail, runtime_ms, wall_clock_budget_exceeded, match_id, rung}]}``.
 
     ``mean_score`` is the generation's cached board-level mean, read off
-    ``gen_score.json``.
+    ``gen_score.json``. ``drift_present`` says whether the drift channel
+    carries information for this generation at all, so a client hides the
+    drift readouts instead of rendering a column of structural zeroes.
 
     ``facet_scores`` is ``{facets: {name: {scalar, mean_score,
     scored_count, entry_count}}, overall: {...} | None}`` — this candidate
@@ -276,6 +278,21 @@ def build_per_entry_for_generation(
         value = row["match_id"]
         return value if isinstance(value, str) and value else None
 
+    def _drift_observed(row: Any, drift_loss: float | None) -> bool:
+        # Did this run OBSERVE drift at all? An adapter that emits no drift
+        # stream still records a structural 0.0 with an empty ``drift_counts``,
+        # which is indistinguishable on the wire from a run that watched for
+        # drift and saw none. Either a recorded drift event or a non-zero loss
+        # proves the channel carries signal; nothing else does. Mirrors the
+        # matchup grid's predicate, sourced from the same persisted field —
+        # here off the index's verbatim ``loss_json`` blob, with the row's
+        # ``drift_loss`` column as the fallback for a blob-less stale index.
+        if "loss_json" in _row_keys(row):
+            lj = _opt_json(row["loss_json"])
+            if isinstance(lj, dict) and lj.get("drift_counts"):
+                return True
+        return drift_loss not in (None, 0.0)
+
     def _score_metrics_of(row: Any) -> tuple[float | None, dict[str, float] | None]:
         # The continuous per-entry outcome + its precision/recall
         # decomposition (#18) live in the raw ``loss_json`` blob the index
@@ -292,15 +309,18 @@ def build_per_entry_for_generation(
 
     entry_facets = facets_by_entry(paths, epoch_id)
     entries = []
+    drift_present = False
     for r in rows:
         match_id = _match_id_of(r)
         entry_score, entry_metrics = _score_metrics_of(r)
+        entry_drift = coerce_float(r["drift_loss"])
+        drift_present = drift_present or _drift_observed(r, entry_drift)
         entries.append(
             {
                 "entry_id": r["entry_id"],
                 "run_id": r["run_id"],
                 "generation_id": r["generation_id"],
-                "drift_loss": (coerce_float(r["drift_loss"])),
+                "drift_loss": entry_drift,
                 "pass_fail": _opt_bool(r["pass_fail"]),
                 # Continuous per-entry outcome + precision/recall (#18),
                 # parsed from the row's loss_json blob. ``None`` for a
@@ -345,6 +365,11 @@ def build_per_entry_for_generation(
         "generation_id": generation_id,
         "tournament_id": tournament_id,
         "mean_score": gen_mean_score,
+        # Does the drift channel carry information for this generation? False
+        # when every run recorded a structural zero with no drift events — the
+        # adapter emits no drift stream, so the per-entry ``drift_loss`` column
+        # means nothing and a client hides it rather than painting zeroes.
+        "drift_present": drift_present,
         # This candidate re-aggregated per ``facet:`` board tag, plus the
         # same aggregate over every entry as the ``overall`` row to compare
         # against (BOARD-FORMAT.md §1.4). Computed server-side: DQ1 keeps

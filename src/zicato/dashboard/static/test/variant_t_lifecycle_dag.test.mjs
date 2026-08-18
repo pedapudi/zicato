@@ -787,10 +787,15 @@ test('lifecycle BOARD circle: exposes the champion comparison (champion loss + s
     { entry_id: 'picky_stakeholder_emulated', drift_loss: 642.5, pass_fail: false },
   ];
   // the champion scored LOWER on both boards → the challenger's Δ is positive
-  // (worse) on each, even though one of its raw losses (60.5) is identical.
-  const championLoss = { waffles_single: 60.5, picky_stakeholder_emulated: 105.5 };
+  // (worse) on each, even though one of its raw losses (60.5) is identical. The
+  // per-entry comparison is the SERVER's join (`/api/matchup-grid`), handed to
+  // the figure as `compare`; nothing here is derived from a second fetch.
+  const compare = {
+    waffles_single: { champDrift: 60.5 },
+    picky_stakeholder_emulated: { champDrift: 105.5 },
+  };
   const svgNode = dag.lifecycleDag({ genId: 'v1', parentId: 'v0', entries, decision: 'rejected', height: 360,
-    championId: 'v0', championLoss });
+    championId: 'v0', compare });
   const nodes = boardNodesOf(svgNode);
   const byKey = {}; for (const n of nodes) byKey[n.getAttribute('data-key')] = n;
 
@@ -816,7 +821,7 @@ test('lifecycle BOARD circle: exposes the champion comparison (champion loss + s
   // an EVEN board (identical loss) is neither worse nor better.
   const even = dag.lifecycleDag({ genId: 'v1', parentId: 'v0',
     entries: [{ entry_id: 'b', drift_loss: 60.5, pass_fail: false }], decision: 'rejected',
-    championId: 'v0', championLoss: { b: 60.5 } });
+    championId: 'v0', compare: { b: { champDrift: 60.5 } } });
   const evCmp = childByClass(boardNodesOf(even)[0], 'ezn-board-cmp');
   assert((evCmp.getAttribute('class') || '').includes('ezn-cmp-even'), 'an equal-loss board is coloured even (neither worse nor better)');
 });
@@ -911,7 +916,7 @@ test('lifecycle DAG: de-crowded to ONE concise key line + a "?" info hovercard (
   const howto = hovercardTextOf(info);
   assert(/parent → patch → board/.test(howto), 'the hovercard carries the parent→patch→board walkthrough');
   assert(/3-rule test/.test(howto), 'the hovercard carries the 3-rule gate detail');
-  assert(/per-run losses/.test(howto), 'the hovercard carries the hover/click affordance detail');
+  assert(/per-run values/.test(howto), 'the hovercard carries the hover/click affordance detail');
 
   // a baseline (seed) has no gate, so no key + no info affordance.
   const seed = dag.lifecycleDag({ genId: 'v0', parentId: null, baseline: true, entries, decision: 'baseline', height: 360 });
@@ -964,7 +969,7 @@ test('lifecycle DAG: the key line clears the node row at a SINGLE board node (no
 test('lifecycle DAG: the key line clears the node row with MANY board nodes (no overlap at the bottom-most node)', () => {
   const entries = Array.from({ length: 7 }, (_, i) => ({ entry_id: 'b' + i, drift_loss: 10 + i, pass_fail: i % 2 }));
   const svgNode = dag.lifecycleDag({ genId: 'v1', parentId: 'v0', entries, decision: 'rejected',
-    championId: 'v0', championLoss: { b0: 5, b6: 9 } });
+    championId: 'v0', compare: { b0: { champDrift: 5 }, b6: { champDrift: 9 } } });
   const ky = keyLineYOf(svgNode);
   assert(ky != null, 'a many-node DAG carries the key line');
   const lowest = lowestNodeBottomOf(svgNode);
@@ -1015,7 +1020,7 @@ test('hovercard: the per-board dot-plot dot + reference rule use the hovercard, 
 test('hovercard: NO native <title> remains on the interactive marks of the lifecycle DAG, heatmap, or dot-plot', () => {
   const dagSvg = dag.lifecycleDag({ genId: 'v1', parentId: 'v0',
     entries: [{ entry_id: 'b', drift_loss: 10, pass_fail: false }], decision: 'rejected',
-    championId: 'v0', championLoss: { b: 5 }, candidateSigma: 10, championSigma: 5, deltaSigma: 5 });
+    championId: 'v0', compare: { b: { champDrift: 5 } }, candidateSigma: 10, championSigma: 5, deltaSigma: 5 });
   const hm = svg.heatmap({ rows: [{ id: 'r', label: 'r' }], cols: [{ id: 'c', label: 'c' }], value: () => 1 });
   const dp = svg.valueDotPlot({ items: [{ label: 'x', value: 1 }], reference: { value: 2, label: 'ref' } });
   for (const [name, root] of [['DAG', dagSvg], ['heatmap', hm], ['dot-plot', dp]]) {

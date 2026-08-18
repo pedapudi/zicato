@@ -154,14 +154,21 @@ The drill-down / lazy endpoints (unchanged):
   ```jsonc
   {
     "epoch_id", "champion", "challenger",
+    "drift_present": bool,       // false ⇒ hide every drift readout
     "entry_grid": [ { "entry_id",
         "parent_drift_loss":num|null, "child_drift_loss":num|null,
         "parent_pass":bool|null, "child_pass":bool|null,
         "parent_score":num|null, "child_score":num|null,   // continuous (#18)
         "parent_metrics":obj|null, "child_metrics":obj|null, // precision/recall
         "delta":num|null,                       // child − champion drift loss
+                                                //   POSITIVE = worse
+        "delta_score":num|null,                 // child − champion score
+                                                //   POSITIVE = better
+        "score_replicates":int,                 // challenger's draws on this entry
+        "score_se":num|null,                    // null below two draws
         "verdict": "improved"|"regressed"|"flat",
-        "won_by": <genId>|null,                 // lower drift loss wins
+        "won_by": <genId>|null,
+        "decided_by": "score"|"pass"|"drift"|null,
         "parent_session_id"?, "child_session_id"? } ],
     "scalar": { "parent":num|null, "child":num|null, "delta":num|null,
         "components": { <component>: num } } | null,  // delta of each
@@ -170,13 +177,51 @@ The drill-down / lazy endpoints (unchanged):
   }
   ```
   `entry_grid` rows are sorted by entry id; an entry that ran on only
-  one side still appears (the absent side is `null`). The **Epoch
-  publication** view (`js/views/publication.js`) is the renderer: it
-  fetches one grid per decided matchup and paints the per-match-up
-  detail table (drift losses + Δ + verdict, the continuous `#18`
-  score/metrics columns, `won_by`, and a per-side harmonograf deep link
-  built from `parent_session_id` / `child_session_id`). A malformed
+  one side still appears (the absent side is `null`).
+
+  **The verdict is the server's, and it names its channel.** `verdict` /
+  `won_by` resolve on the first channel that SEPARATES the two sides —
+  the continuous `score` (higher better), then the pass predicate, then
+  the drift loss (lower better) — and `decided_by` says which one did.
+  A channel populated but equal on both sides has separated nothing, so
+  resolution falls through to the next; when none separates them the
+  entry is `"flat"` and `decided_by` names the channel it was read on.
+  Resolution is per ROW, so a champion generation scored before the
+  `score` field existed degrades on that row alone. Clients render these
+  three fields; they never re-derive a verdict from the numbers beside
+  them.
+
+  **`delta_score` sums over the shared slice.** Only entries both sides
+  ran carry one, which is the same restriction the promote gate applies,
+  so summing (or averaging) the column reproduces the gate's comparison
+  instead of a client-defined slice.
+
+  **`drift_present`** is true when any run on either side recorded a
+  drift event or a non-zero drift loss. An adapter that emits no drift
+  stream writes a structural `0.000` everywhere, which reads on the wire
+  exactly like a clean run — so a client told `false` HIDES the drift
+  columns rather than painting zeroes. A payload that omits the field
+  predates it: treat the absence as unknown and keep showing drift.
+
+  **`score_se`** is the sample standard deviation of the challenger's
+  replicate scores over the square root of their count — the
+  candidate's own measurement precision on the entry, NOT the delta's
+  full variance (the champion side is frequently a single cached draw).
+  It is `null` below two draws and renders as `--`, never `±0.000`.
+
+  The **Epoch publication** view (`js/views/publication.js`) and the
+  **candidate dossier** (`js/views/candidate.js`, which feeds the
+  lifecycle figure in `js/dag.js`) are the renderers. The dossier reads
+  ONE grid for its champion comparison — it does not fetch the
+  champion's per-entry rows to join and slice them itself. A malformed
   coordinate degrades to an empty grid (HTTP 200), never a 500.
+- `GET /api/generation/{epoch}/{generation}/per-entry` also carries
+  `drift_present` — the same flag, scoped to one generation: true when
+  any of its runs recorded a drift event or a non-zero drift loss. The
+  Boards trellis, the epoch heatmap and the per-board drill-down read it
+  to decide whether the drift channel is worth painting; each also
+  prefers a per-entry `score` over drift when the board carries one, so
+  a figure never plots a quantity the verdict beside it did not use.
 
 Every one of these reads can outlive the tree it describes: snapshot GC
 prunes generation source trees and keeps the records. So each response

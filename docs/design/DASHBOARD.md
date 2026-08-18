@@ -359,7 +359,9 @@ What it encodes:
 - **y-position encodes the scalar** (the drift-derived loss; lower is
   better). So the ribbon *is* the optimization trajectory — a falling
   ribbon is a loop that is winning, a flat ribbon is a loop that has
-  stalled, a rising tail is a regression.
+  stalled, a rising tail is a regression. This is the generation-level
+  aggregate and it is always a loss; the per-entry figures below read
+  whichever channel the contract populates, on their own conventions.
 - **Promoted generations** sit on the main trace (the spine of the
   ribbon). **Rejected challengers branch off their parent** as short
   stubs that do not continue the trace — a visual record of every bet
@@ -485,6 +487,35 @@ ladder. This is the per-entry detail behind the gate's aggregate
 verdict; it reads from the same paired per-entry deltas the gate
 consumes (`/api/matchup-grid/...` for the grid,
 `/api/round/.../gate` for the gate-aligned breakdown).
+
+**The per-entry channel.** An entry's outcome is defined on whichever
+channel the evaluation contract populates, and every per-entry figure
+plots the same one the server resolved the entry's verdict on. The
+resolution order is the **continuous score** (higher is better), then
+the entry's **pass predicate**, then the **drift loss** (lower is
+better); the first channel that separates champion from challenger
+decides, and `/api/matchup-grid/...` names it per row as `decided_by`.
+
+Two consequences bind every figure below:
+
+- **Sign conventions are never mixed in one readout.** A score delta of
+  `+0.585` is a gain; a loss delta of `+0.585` is a regression. Each
+  figure states the convention of the channel it painted.
+- **A channel with nothing in it is hidden, not drawn as zeroes.** An
+  adapter that emits no drift stream still records a structural
+  `drift_loss` of `0.000` on every entry, which is indistinguishable on
+  the wire from a run that watched for drift and saw none. The server
+  answers this directly — `drift_present` on the matchup grid and on
+  `/api/generation/.../per-entry` — and a client that is told the
+  channel is absent drops it rather than painting a column of zeroes
+  and letting the reader infer a measurement that was never taken.
+
+Where more than one replicate ran, the grid also serves
+`score_replicates` and `score_se`, the sample standard deviation of the
+challenger's replicate scores over the square root of their count. A
+single draw measures no spread, so `score_se` is `null` there and the
+figures render `--` — never `±0.000`, which would claim a precision the
+run does not have.
 
 **Facet slices.** When board entries carry `facet:{name}` tags
 (BOARD-FORMAT.md §1.4), two screens report those slices. Each facet is
