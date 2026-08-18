@@ -489,6 +489,23 @@ def _is_fresh(stamp: Any, now: _dt.datetime) -> bool:
     return (now - ts).total_seconds() <= STALE_HEARTBEAT_S
 
 
+def fresh_run_count(runs: list[dict[str, Any]], now: _dt.datetime | None = None) -> int:
+    """In-flight records still BEATING — not the record count on disk.
+
+    ``active_runs/*.json`` outlives the process that wrote it (the file is
+    removed on a clean run-end, so a killed worker's record lingers), so the
+    count of files is not a count of workers. Each record carries the
+    per-run beater's ``last_progress``; age it exactly like the heartbeat.
+    Mirrors the client's ``freshRunCount`` (``livestatus.js``), with one
+    deliberate divergence: an untimestamped record counts as NOT fresh here
+    (``_is_fresh``'s rule), because both Python readers of this tally run on
+    one server and must agree, and the real producer always stamps
+    ``started_at``.
+    """
+    now = now or _utc_now()
+    return sum(1 for r in runs if _is_fresh(r.get("last_progress") or r.get("started_at"), now))
+
+
 def _on_disk_heartbeat(paths: WorkspacePaths) -> dict[str, Any] | None:
     """The RAW heartbeat record, or ``None`` when the file is absent.
 
@@ -571,9 +588,7 @@ def derive_liveness(paths: WorkspacePaths, *, now: _dt.datetime | None = None) -
     # before the progress log existed records a clean end.
     at_rest = hb is not None and bool(str(phase or "").strip()) and not is_active_phase(phase)
 
-    pulse = _is_fresh(last_heartbeat, now) or any(
-        _is_fresh(r.get("last_progress") or r.get("started_at"), now) for r in runs
-    )
+    pulse = _is_fresh(last_heartbeat, now) or fresh_run_count(runs, now) > 0
 
     if terminal or at_rest:
         state = LIVENESS_SETTLED

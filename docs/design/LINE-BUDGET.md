@@ -18,8 +18,8 @@ The baseline and final ratchet use the same metric:
 
 | Measurement | Baseline (`f9052dd`) | Current limit | Net reduction |
 |---|---:|---:|---:|
-| Total | 408,547 | 418,286 | -9,739 |
-| Production | 197,588 | 201,407 | -3,819 |
+| Total | 408,547 | 418,360 | -9,813 |
+| Production | 197,588 | 201,427 | -3,839 |
 
 The earlier raw count of 425,755 included lockfiles and generated artifacts and
 is retained in `.line-budget.json` for provenance; it is not the enforced
@@ -73,3 +73,5 @@ increase.
 | Execution-plan reader (production) | 199,938 | +1,091 | 201,029 | Issue #241 (partial): query/execution_plan.py, the endpoint registration, and the shared indexed enumerator. |
 | Replicate-slot overlap (total) | 417,426 | +860 | 418,286 | Issue #251: entry-chained slot overlap behind the no-budget predicate, the shared scorer, and the deterministic utilisation/Rule-B/budget-path regressions. |
 | Replicate-slot overlap (production) | 201,029 | +378 | 201,407 | Issue #251: the overlap predicate, entry chains, the two path wrappers, and the fast-mode shared semaphore. |
+| Fresh in-flight tally (total) | 418,286 | +74 | 418,360 | Issue #268: the shared fresh_run_count helper, the aged pipeline tally, and the two-reader agreement pins. |
+| Fresh in-flight tally (production) | 201,407 | +20 | 201,427 | Issue #268: fresh_run_count in runtime_view, shared by derive_liveness and the round pipeline. |

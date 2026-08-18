@@ -555,6 +555,60 @@ def test_build_round_pipeline_live_tournament(tmp_path: Path) -> None:
     assert out["in_flight"] == 2
 
 
+def test_in_flight_counts_beating_records_not_files(tmp_path: Path) -> None:
+    """A dead unit's lingering active_runs record is not in flight (#268).
+
+    The record outlives the worker that wrote it, so the tally must age
+    ``last_progress`` exactly as the liveness readers do — file presence is
+    not a claim that anything runs.
+    """
+    ws = _pipeline_workspace(tmp_path, phase="tournament:round_0:v1", runs=1)
+    stale = (
+        (_dt.datetime.now(_dt.UTC) - _dt.timedelta(minutes=10)).isoformat().replace("+00:00", "Z")
+    )
+    (ws / "runtime" / "active_runs" / "dead.json").write_text(
+        json.dumps(
+            {
+                "run_id": "dead",
+                "pid": 999,
+                "started_at": stale,
+                "last_progress": stale,
+                "wall_clock_budget_seconds": 180,
+                "deadline": stale,
+                "events_jsonl_path": str(ws / "events.jsonl"),
+                "entry_id": "entry_dead",
+                "generation_id": "v1",
+                "epoch_id": EPOCH,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    out = build_round_pipeline(WorkspacePaths(ws))
+
+    assert out["in_flight"] == 1
+    assert {s["id"]: s for s in out["steps"]}["run"]["detail"] == "1 unit in flight"
+
+
+def test_in_flight_tally_agrees_with_the_liveness_reader(tmp_path: Path) -> None:
+    """One rule serves both Python readers of the in-flight truth (#268).
+
+    The pipeline's tally and ``derive_liveness``'s pulse age the same
+    records the same way; a fixture whose only fresh signal is one beating
+    run must read as exactly one unit in flight AND as live.
+    """
+    from zicato.query.runtime_view import derive_liveness, fresh_run_count, read_active_runs_view
+
+    ws = _pipeline_workspace(tmp_path, phase="tournament:round_0:v1", runs=1)
+    paths = WorkspacePaths(ws)
+
+    out = build_round_pipeline(paths)
+    runs = read_active_runs_view(paths)
+
+    assert out["in_flight"] == fresh_run_count(runs) == 1
+    assert derive_liveness(paths)["state"] == "live"
+
+
 def test_build_round_pipeline_stale_heartbeat_not_running(tmp_path: Path) -> None:
     ws = _pipeline_workspace(tmp_path, phase="tournament:round_0:v1", fresh=False)
     out = build_round_pipeline(WorkspacePaths(ws))
