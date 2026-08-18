@@ -894,7 +894,9 @@ turns a gate RED (V8):
 
 Usage: `bash tools/parity.sh` runs every gate; `--only GATE` / `--skip GATE`
 scope it; `--update` re-captures every golden. Exit code is 0 only if every
-selected gate passed.
+selected gate passed. Both scoping flags repeat (`--only A --only B`) and
+also take a comma list (`--only A,B`); an unknown gate name exits 2 with a
+message, so a typo cannot pass for a gate that ran.
 
 ### 11.7.1 PYTEST
 
