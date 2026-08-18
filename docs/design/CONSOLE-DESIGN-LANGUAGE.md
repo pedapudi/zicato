@@ -335,6 +335,13 @@ See BOARD-REFLECTION.md §"UI language" and dev-guide ch. 09 §9.7.7.
   side, **each in its own digest-gated host** so one side changing never
   rebuilds the other. Champion-vs-challenger transcripts read side by side
   inline on the board view.
+- **The picked BASELINE.** The patch diff is taken against the candidate's
+  recorded parent. A *"baseline"* picker — the same select, carrying the accent
+  because it is that page's one control — sets a `~base=<gen>` suffix on the
+  hash and moves the LEFT column to that generation; the right column and the
+  rows stay the candidate's own. The parent is the default and carries no
+  suffix, so the default view keeps one canonical URL, and a non-default choice
+  tints the strip rather than changing the diff quietly.
 
 ## 6. Render discipline — digest-gating
 
