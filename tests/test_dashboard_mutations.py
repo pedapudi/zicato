@@ -434,6 +434,45 @@ def test_set_numeric_reconstruction_matches_the_applier(tmp_path: Path) -> None:
     assert from_records["content"] == from_tree["content"]
 
 
+def test_value_reconstruction_names_the_text_it_substituted_into(tmp_path: Path) -> None:
+    """A value op's reconstruction carries v0's text, and must say so.
+
+    ``set_numeric`` / ``set_enum`` record a VALUE, so reconstructing means
+    writing it into the baseline span. What a generation BETWEEN v0 and
+    this one wrote at the site is therefore absent, and the entry names
+    the generation whose text is actually on screen. A ``replace`` record
+    carries its own text and takes no such flag.
+    """
+    ws = _value_workspace(
+        tmp_path,
+        """
+        # zicato:mutable id="strategy"
+        STRATEGY = "greedy"
+        """,
+        _value_patch("p1", "strategy", "set_enum", new_enum="balanced"),
+    )
+    assert "reconstructed_against" not in _detail(ws, tmp_path, "strategy")["versions"][0]
+
+    _prune_trees(ws, "e1", "v0", "v1")
+    assert _detail(ws, tmp_path / "b", "strategy")["versions"][0]["reconstructed_against"] == "v0"
+
+
+def test_replace_reconstruction_carries_its_own_text(tmp_path: Path) -> None:
+    """A ``replace`` record IS the content, so nothing was substituted into."""
+    ws = _value_workspace(
+        tmp_path,
+        """
+        # zicato:mutable id="strategy"
+        STRATEGY = "greedy"
+        """,
+        _value_patch("p1", "strategy", "replace", new_content='STRATEGY = "balanced"'),
+    )
+    _prune_trees(ws, "e1", "v0", "v1")
+    version = _detail(ws, tmp_path, "strategy")["versions"][0]
+    assert version["provenance"] == "records"
+    assert "reconstructed_against" not in version
+
+
 def test_set_numeric_outside_the_span_says_so(tmp_path: Path) -> None:
     """The applier's target can sit outside the span; then there is nothing to show."""
     ws = _value_workspace(
