@@ -57,6 +57,39 @@ def replicate_index(name: str) -> int | None:
     return None
 
 
+def cell_replicate_draws_indexed(
+    paths: WorkspacePaths, epoch_id: str, generation_id: str, entry_id: str
+) -> list[tuple[int, LossProfile]]:
+    """The qualifying draws for ONE cell as ``(replicate index, profile)``, ascending.
+
+    THE enumeration; :func:`cell_replicate_draws` is this without the
+    indices. A reader that must NAME a draw (the execution plan renders one
+    node per replicate) needs the index the filename carries, and deriving
+    it a second time is how two surfaces start disagreeing about which
+    files count.
+    """
+    from zicato.core.workspace import loss_profile_path  # noqa: PLC0415
+    from zicato.telemetry.reducer import read_loss_profile  # noqa: PLC0415
+
+    run_dir = loss_profile_path(paths.root, epoch_id, generation_id, entry_id).parent
+    if not run_dir.is_dir():
+        return []
+    draws: list[tuple[int, LossProfile]] = []
+    for child in sorted(run_dir.iterdir()):
+        if not child.is_file():
+            continue
+        idx = replicate_index(child.name)
+        if idx is None or not any(lo <= idx < hi for lo, hi in CELL_EVIDENCE_REPLICATE_RANGES):
+            continue
+        try:
+            profile = read_loss_profile(child)
+        except (OSError, ValueError, KeyError, json.JSONDecodeError):
+            continue
+        draws.append((idx, profile))
+    draws.sort(key=lambda pair: pair[0])
+    return draws
+
+
 def cell_replicate_draws(
     paths: WorkspacePaths, epoch_id: str, generation_id: str, entry_id: str
 ) -> list[LossProfile]:
@@ -68,25 +101,8 @@ def cell_replicate_draws(
     index row count, which is always 1 (that table's key is ``run_id`` = one row
     per ``(generation, entry)``).
     """
-    from zicato.core.workspace import loss_profile_path  # noqa: PLC0415
-    from zicato.telemetry.reducer import read_loss_profile  # noqa: PLC0415
-
-    run_dir = loss_profile_path(paths.root, epoch_id, generation_id, entry_id).parent
-    if not run_dir.is_dir():
-        return []
-    draws: list[LossProfile] = []
-    for child in sorted(run_dir.iterdir()):
-        if not child.is_file():
-            continue
-        idx = replicate_index(child.name)
-        if idx is None or not any(lo <= idx < hi for lo, hi in CELL_EVIDENCE_REPLICATE_RANGES):
-            continue
-        try:
-            profile = read_loss_profile(child)
-        except (OSError, ValueError, KeyError, json.JSONDecodeError):
-            continue
-        draws.append(profile)
-    return draws
+    indexed = cell_replicate_draws_indexed(paths, epoch_id, generation_id, entry_id)
+    return [profile for _, profile in indexed]
 
 
 def _finite_score(value: Any) -> float | None:

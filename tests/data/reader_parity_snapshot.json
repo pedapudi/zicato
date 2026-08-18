@@ -715,6 +715,190 @@
       "goal": "Name sorts first, created last — the bug mirror."
     }
   ],
+  "execution_plan::e0": {
+    "board": {
+      "digest": "aaaef18030ad0c8d981d02460f8a11d9eb11e5d420816759d44276f08fa2d916",
+      "entry_count": 2
+    },
+    "epoch_id": "e0",
+    "generated_at": "<masked>",
+    "note": "",
+    "stages": [
+      {
+        "children": [
+          {
+            "children": [],
+            "coordinates": {
+              "epoch_id": "e0",
+              "generation_id": "v0"
+            },
+            "duration_ms": null,
+            "ended_at": null,
+            "id": "e:e0/baseline/v0",
+            "kind": "board_sweep",
+            "label": "Board sweep — v0",
+            "outcome": {
+              "entries_without_units": [
+                "t1",
+                "t2"
+              ],
+              "unit_count": 0
+            },
+            "progress": {
+              "done": 0,
+              "total": 2
+            },
+            "provenance": "partial",
+            "purpose": "Every board entry executed against one candidate.",
+            "started_at": null,
+            "status": "skipped"
+          }
+        ],
+        "coordinates": {
+          "epoch_id": "e0"
+        },
+        "duration_ms": null,
+        "ended_at": null,
+        "id": "e:e0/baseline",
+        "kind": "baseline",
+        "label": "Baseline",
+        "outcome": {
+          "generation_ids": [
+            "v0"
+          ]
+        },
+        "progress": {
+          "done": 1,
+          "total": 1
+        },
+        "provenance": "partial",
+        "purpose": "Evaluate the incoming champion before the loop proposes anything.",
+        "started_at": null,
+        "status": "skipped"
+      }
+    ]
+  },
+  "execution_plan::e1": {
+    "board": {
+      "digest": "aaaef18030ad0c8d981d02460f8a11d9eb11e5d420816759d44276f08fa2d916",
+      "entry_count": 2
+    },
+    "epoch_id": "e1",
+    "generated_at": "<masked>",
+    "note": "",
+    "stages": [
+      {
+        "children": [
+          {
+            "children": [],
+            "coordinates": {
+              "epoch_id": "e1",
+              "generation_id": "v0"
+            },
+            "duration_ms": null,
+            "ended_at": null,
+            "id": "e:e1/baseline/v0",
+            "kind": "board_sweep",
+            "label": "Board sweep — v0",
+            "outcome": {
+              "entries_without_units": [
+                "t1",
+                "t2"
+              ],
+              "unit_count": 0
+            },
+            "progress": {
+              "done": 0,
+              "total": 2
+            },
+            "provenance": "partial",
+            "purpose": "Every board entry executed against one candidate.",
+            "started_at": null,
+            "status": "skipped"
+          },
+          {
+            "children": [],
+            "coordinates": {
+              "epoch_id": "e1",
+              "generation_id": "v1"
+            },
+            "duration_ms": null,
+            "ended_at": null,
+            "id": "e:e1/baseline/v1",
+            "kind": "board_sweep",
+            "label": "Board sweep — v1",
+            "outcome": {
+              "entries_without_units": [
+                "t1",
+                "t2"
+              ],
+              "unit_count": 0
+            },
+            "progress": {
+              "done": 0,
+              "total": 2
+            },
+            "provenance": "partial",
+            "purpose": "Every board entry executed against one candidate.",
+            "started_at": null,
+            "status": "skipped"
+          }
+        ],
+        "coordinates": {
+          "epoch_id": "e1"
+        },
+        "duration_ms": null,
+        "ended_at": null,
+        "id": "e:e1/baseline",
+        "kind": "baseline",
+        "label": "Baseline",
+        "outcome": {
+          "generation_ids": [
+            "v0",
+            "v1"
+          ]
+        },
+        "progress": {
+          "done": 2,
+          "total": 2
+        },
+        "provenance": "partial",
+        "purpose": "Evaluate the incoming champion before the loop proposes anything.",
+        "started_at": null,
+        "status": "skipped"
+      }
+    ]
+  },
+  "execution_plan::e2": {
+    "board": {
+      "digest": "aaaef18030ad0c8d981d02460f8a11d9eb11e5d420816759d44276f08fa2d916",
+      "entry_count": 2
+    },
+    "epoch_id": "e2",
+    "generated_at": "<masked>",
+    "note": "",
+    "stages": [
+      {
+        "children": [],
+        "coordinates": {
+          "epoch_id": "e2"
+        },
+        "duration_ms": null,
+        "ended_at": null,
+        "id": "e:e2/baseline",
+        "kind": "baseline",
+        "label": "Baseline",
+        "outcome": {
+          "generation_ids": []
+        },
+        "progress": null,
+        "provenance": "exact",
+        "purpose": "Evaluate the incoming champion before the loop proposes anything.",
+        "started_at": null,
+        "status": "skipped"
+      }
+    ]
+  },
   "gate_breakdown::e1::v0::v1": {
     "challenger": "v1",
     "challenger_scalar": 0.49,

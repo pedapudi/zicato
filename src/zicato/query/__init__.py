@@ -83,6 +83,10 @@ from zicato.query.events_index import (
     read_run_result,
     resolve_transcript_events,
 )
+from zicato.query.execution_plan import (
+    PlanNode,
+    build_execution_plan,
+)
 from zicato.query.gate_view import (
     _build_scalar_decomposition,
     _drift_counts_for_generation,
@@ -265,6 +269,7 @@ from zicato.query.transcript_view import (
 )
 
 __all__ = [
+    "PlanNode",
     "RUN_LOG_DEFAULT_LIMIT",
     "RUN_LOG_MAX_LIMIT",
     "SEARCH_LIMIT_PER_CATEGORY",
@@ -364,6 +369,7 @@ __all__ = [
     "build_drift_movements",
     "build_environment",
     "build_epoch_view",
+    "build_execution_plan",
     "build_epochs_summary",
     "build_calibration_trend",
     "build_expectation_outcomes_for_run",

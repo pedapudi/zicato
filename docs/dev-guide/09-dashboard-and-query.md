@@ -728,6 +728,7 @@ chapter leans on:
 | `build_round_pipeline` | `/api/live/pipeline` | `{running, stale, phase, steps[], active_step, decision, in_flight}` | every input degrades independently (§9.11) |
 | `build_racing_field` | `/api/epoch/{id}/racing-field` | `{present, structure, rounds[], standings, champion_lineage}` | `{present: false}` (§9.2.5) |
 | `build_round_timeline` | `/api/epoch/{id}/round-timeline` | `{rounds[], waterfall[]}` | empty rounds list |
+| `build_execution_plan` | `/api/epoch/{id}/execution-plan` | `{board:{digest, entry_count}, stages[]}` — the loop as one tree: baseline + per-round propose/apply/run/gate/decide steps from the round log, work units from the per-unit loss files (never from the log's `unit_completed` aggregate), each node stating `status` and `exact`/`partial` provenance | empty stages list + `note` |
 | `build_per_entry_for_generation` | `/api/generation/{e}/{g}/per-entry` | `{tournament_id, mean_score, facet_scores, entries[]}`; `facet_scores` is `{facets: {name: {scalar, mean_score, scored_count, entry_count, ran_count}}, overall}` — the candidate re-aggregated per `facet:` board tag at the epoch's frozen weights, so a facet scalar is comparable to the `overall` row | `{facets: {}, overall: null}` (always present) |
 | `build_snapshot` | `/api/state`, SSE `snapshot` | see above | each field independently `None` |
 | `read_active_runs_view` | `/api/active-runs` | `[{run_id, progress, elapsed_seconds, budget_seconds, …}]` | `[]` |
