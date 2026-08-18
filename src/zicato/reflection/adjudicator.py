@@ -308,11 +308,15 @@ def observation_to_judge_context(obs: ObservationRun, judge_name: str) -> tuple[
         if found is not None:
             return found
 
+    from zicato.workspace import is_events_file  # noqa: PLC0415
+
     events_path: Path | None = None
-    if obs.transcript_ref and obs.transcript_ref.endswith("events.jsonl"):
+    if obs.transcript_ref and is_events_file(obs.transcript_ref):
         events_path = Path(obs.transcript_ref)
     elif loss_path is not None:
-        events_path = loss_path.parent / "events.jsonl"
+        from zicato.tournament.unit_cache import unit_events_path  # noqa: PLC0415
+
+        events_path = unit_events_path(loss_path)
     found = _preview_context(events_path)
     if found is not None:
         return found

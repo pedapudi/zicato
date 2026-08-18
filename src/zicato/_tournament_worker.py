@@ -735,11 +735,7 @@ async def _run(args: dict[str, Any]) -> None:
         os.environ[SCRATCH_DIR_ENV] = str(scratch_dir)
 
     entry = validate_board_entry(args["entry"])
-    # Built through the SAME choke point the parent used, so the worker's
-    # ``active_runs`` record and kill-request marker land on the id the
-    # parent will later clear — including this unit's replicate segment
-    # (issue #250). The replicate index rides on the entry's own context.
-    run_id = run_id_for_unit(generation_id, entry.id, _entry_replicate_index_from_context(entry))
+    run_id = run_id_for_unit(generation_id, entry.id, _replicate_index(entry.context))
     weights = _weights_from_args(args)
     budget_s = float(entry.wall_clock_budget_seconds)
 
@@ -1132,19 +1128,11 @@ async def _run(args: dict[str, Any]) -> None:
         state_mod.remove_active_run(workspace_root, run_id)
 
 
-def _entry_replicate_index_from_context(entry: BoardEntry) -> int:
-    """Read the replicate index stamped onto an entry's context, or ``0``.
-
-    The worker deliberately imports nothing from :mod:`zicato.tournament`,
-    so it cannot reuse that package's ``_entry_replicate_index``. This is
-    the same read: an absent key is replicate 0 (every single-replicate
-    path) and a malformed value reads as 0 rather than raising inside a
-    scoring run.
-    """
-    raw = dict(entry.context).get("replicate_index", "0")
+def _replicate_index(context: Any) -> int:
+    """Read a stamped replicate index, tolerating absent/malformed context."""
     try:
-        return max(0, int(raw or 0))
-    except (TypeError, ValueError):
+        return max(0, int(dict(context or {}).get("replicate_index", "0") or 0))
+    except (TypeError, ValueError, AttributeError):
         return 0
 
 
@@ -1190,13 +1178,7 @@ def _install_worker_log_stream_from_args(args: dict[str, Any]) -> None:
         generation_id = str(args.get("generation_id") or "") or None
         entry = args.get("entry")
         entry_id = str(entry.get("id")) if isinstance(entry, dict) and entry.get("id") else None
-        replicate_index = 0
-        if isinstance(entry, dict):
-            raw_replicate = (entry.get("context") or {}).get("replicate_index", "0")
-            try:
-                replicate_index = max(0, int(raw_replicate or 0))
-            except (TypeError, ValueError):
-                replicate_index = 0
+        replicate_index = _replicate_index(entry.get("context")) if isinstance(entry, dict) else 0
         run_id = (
             run_id_for_unit(generation_id, entry_id, replicate_index)
             if generation_id and entry_id

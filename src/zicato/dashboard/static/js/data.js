@@ -555,8 +555,13 @@ export function calibrationTrend(epochId) {
 export function expectations(epochId, genId, entryId) {
   return cachedJson(`/api/run/${enc(epochId)}/${enc(genId)}/${enc(entryId)}/expectations`);
 }
-export function perJudgeForRun(epochId, genId, entryId) {
-  return cachedJson(`/api/run/${enc(epochId)}/${enc(genId)}/${enc(entryId)}/per-judge`);
+export function perJudgeForRun(epochId, genId, entryId, runId, replicateIndex) {
+  let url = `/api/run/${enc(epochId)}/${enc(genId)}/${enc(entryId)}/per-judge`;
+  const q = [];
+  if (runId) q.push(`run=${enc(runId)}`);
+  if (replicateIndex != null) q.push(`replicate=${enc(replicateIndex)}`);
+  if (q.length) url += `?${q.join('&')}`;
+  return cachedJson(url);
 }
 // Per-run header (runtime/tokens/turns/...) AND the run's adk_session_id —
 // the latter is what the harmonograf deep-link keys its session view on

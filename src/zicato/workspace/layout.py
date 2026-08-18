@@ -16,8 +16,25 @@ byte-identical to the inline joins it replaces.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from pathlib import Path
+
+_REPLICATE_EVENTS_RE = re.compile(r"^events\.r([1-9]\d*)\.jsonl$")
+
+
+def events_replicate_index(path: Path | str) -> int | None:
+    """Return a current events file's replicate index; archives are ``None``."""
+    name = Path(path).name
+    if name == "events.jsonl":
+        return 0
+    match = _REPLICATE_EVENTS_RE.match(name)
+    return int(match.group(1)) if match else None
+
+
+def is_events_file(path: Path | str) -> bool:
+    """Whether ``path`` is ``events.jsonl`` or a current ``events.rN.jsonl``."""
+    return events_replicate_index(path) is not None
 
 
 @dataclass(frozen=True)
@@ -339,17 +356,7 @@ class WorkspaceLayout:
     def events(
         self, epoch_id: str, generation_id: str, entry_id: str, replicate_index: int = 0
     ) -> Path:
-        """One board unit's goldfive event JSONL.
-
-        The canonical (replicate 0) slot is ``events.jsonl``; replicate
-        ``r>0`` maps to the sibling ``events.r{r}.jsonl``, exactly
-        mirroring how :meth:`loss` relates to ``loss.r{n}.json`` and
-        :meth:`result` to ``result.r{n}.json``.
-
-        Before issue #250 this method took no replicate, so every
-        replicate of a unit resolved to the one canonical file and each
-        draw truncated the one before it.
-        """
+        """One replicate's events JSONL; replicate 0 is canonical."""
         run = self.run_dir(epoch_id, generation_id, entry_id)
         if replicate_index <= 0:
             return run / "events.jsonl"
@@ -358,18 +365,7 @@ class WorkspaceLayout:
     def events_prev(
         self, epoch_id: str, generation_id: str, entry_id: str, replicate_index: int = 0
     ) -> Path:
-        """The ONE retained predecessor of a board unit's events JSONL.
-
-        Written by :func:`zicato.telemetry.sink.archive_prior_events`
-        when a re-measurement is about to truncate the events file
-        (issue #122). Exactly one generation of history is kept, so the
-        archive is bounded no matter how many rounds a champion defends.
-
-        Keyed per replicate like :meth:`events`, so one replicate's
-        archive can no longer be overwritten by a DIFFERENT replicate.
-        Its job is now only what issue #122 named: retaining the previous
-        ROUND's draw of this same unit.
-        """
+        """The retained predecessor of one replicate's events JSONL."""
         run = self.run_dir(epoch_id, generation_id, entry_id)
         if replicate_index <= 0:
             return run / "events.prev.jsonl"

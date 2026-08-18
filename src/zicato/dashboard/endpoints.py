@@ -574,18 +574,31 @@ def _make_judge_run_endpoints(paths: WorkspacePaths) -> dict[str, Any]:
     async def api_per_judge_for_run_by_entry(request: Request) -> JSONResponse:
         """Per-judge breakdown for one run, addressed by (epoch, gen, entry).
 
-        The L4 dashboard view routes by board-entry id; the index keys
-        every per-judge row by run id. This resolves the run id from the
-        run directory's ``loss.json`` (or falls back to the directory
-        name) and delegates to :func:`build_per_judge_for_run`.
+        Optional ``?run=`` or ``?replicate=`` selects an exact sibling
+        ``loss.rN.json``; no selector retains the canonical replicate-0
+        response. Resolution and same-shaped degradation live in
+        :func:`build_per_judge_for_entry`.
         """
         epoch_id = request.path_params["epoch_id"]
         generation_id = request.path_params["generation_id"]
         entry_id = request.path_params["entry_id"]
         if not _is_safe_id(epoch_id) or not _is_safe_id(generation_id) or not _is_safe_id(entry_id):
             return JSONResponse({"run_id": None, "judges": []}, status_code=200)
-        run_id = query.resolve_run_id_for_entry(paths, epoch_id, generation_id, entry_id)
-        return JSONResponse(query.build_per_judge_for_run(paths, run_id))
+        run_q = request.query_params.get("run")
+        run_q = run_q if (run_q and _is_safe_id(run_q)) else None
+        replicate_q = _int_query(request, "replicate")
+        if replicate_q is not None:
+            replicate_q = max(0, replicate_q)
+        return JSONResponse(
+            query.build_per_judge_for_entry(
+                paths,
+                epoch_id,
+                generation_id,
+                entry_id,
+                run_id=run_q,
+                replicate_index=replicate_q,
+            )
+        )
 
     async def api_run_expectations(request: Request) -> JSONResponse:
         """Expectation outcomes for one run (L4)."""

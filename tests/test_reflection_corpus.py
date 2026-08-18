@@ -41,7 +41,7 @@ from zicato.reflection.corpus import (
     run_corpus,
 )
 from zicato.reflection.plan import new_plan, read_plan
-from zicato.tournament.unit_cache import _unit_loss_path, unit_result_path
+from zicato.tournament.unit_cache import _unit_loss_path, unit_events_path, unit_result_path
 
 EPOCH = "epoch-1"
 CREATED_AT = "2026-07-01T00:00:00+00:00"
@@ -196,9 +196,11 @@ def test_passive_ingest_references_artifacts_never_copies(tmp_path: Path) -> Non
 def test_passive_ingest_picks_up_calibration_replicate_slots(tmp_path: Path) -> None:
     """loss.r1000 (a free A/A calibration replicate) is ingested too."""
     workspace = tmp_path / ".zicato"
-    _write_loss(workspace, "v1", "entryA", 0, _loss(generation_id="v1", entry_id="entryA"))
-    _write_loss(workspace, "v1", "entryA", 1000, _loss(generation_id="v1", entry_id="entryA"))
-    _write_loss(workspace, "v1", "entryA", 1001, _loss(generation_id="v1", entry_id="entryA"))
+    for replicate in (0, 1000, 1001):
+        loss_path = _write_loss(
+            workspace, "v1", "entryA", replicate, _loss(generation_id="v1", entry_id="entryA")
+        )
+        unit_events_path(loss_path).write_text("{}\n", encoding="utf-8")
 
     runs = ingest_lineage(
         workspace_root=workspace,
@@ -209,6 +211,8 @@ def test_passive_ingest_picks_up_calibration_replicate_slots(tmp_path: Path) -> 
         weights=ScoringWeights(),
     )
     assert sorted(o.replicate for o in runs) == [0, 1000, 1001]
+    refs = {o.replicate: Path(o.transcript_ref or "").name for o in runs}
+    assert refs == {0: "events.jsonl", 1000: "events.r1000.jsonl", 1001: "events.r1001.jsonl"}
 
 
 def test_passive_ingest_reserved_base_allowlist_excludes_degraded_probes(tmp_path: Path) -> None:

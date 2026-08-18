@@ -549,13 +549,53 @@ def test_endpoint_per_judge_for_run(phase1_client: TestClient) -> None:
     assert any(j["judge_name"] == "critic_A" for j in body["judges"])
 
 
-def test_endpoint_per_judge_for_run_by_entry(phase1_client: TestClient) -> None:
+def test_endpoint_per_judge_for_run_by_entry(
+    phase1_client: TestClient, phase1_workspace: Path
+) -> None:
     r = phase1_client.get("/api/run/2026-05-16_e0/v1/entry_alpha/per-judge")
     assert r.status_code == 200
     body = r.json()
     # The entry's loss.json carries run_id "run_v1"; the endpoint
     # resolves it and returns the same shape as the run_id-keyed route.
     assert body["run_id"] == "run_v1"
+
+    replicate_loss = (
+        phase1_workspace
+        / "epochs"
+        / "2026-05-16_e0"
+        / "generations"
+        / "v1"
+        / "runs"
+        / "entry_alpha"
+        / "loss.r1.json"
+    )
+    _write_json(
+        replicate_loss,
+        {
+            "run_id": "run_v1_r1",
+            "per_judge_loss": [
+                {
+                    "judge_name": "replicate-only",
+                    "weighted_loss": 0.75,
+                    "raw_loss": 1.5,
+                    "weight": 0.5,
+                }
+            ],
+        },
+    )
+    replicate = phase1_client.get("/api/run/2026-05-16_e0/v1/entry_alpha/per-judge?replicate=1")
+    assert replicate.status_code == 200
+    assert replicate.json() == {
+        "run_id": "run_v1_r1",
+        "judges": [
+            {
+                "judge_name": "replicate-only",
+                "weighted_loss": 0.75,
+                "raw_loss": 1.5,
+                "weight": 0.5,
+            }
+        ],
+    }
 
 
 def test_environment_workspace_is_structured(phase1_client: TestClient) -> None:

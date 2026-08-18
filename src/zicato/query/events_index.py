@@ -7,6 +7,7 @@ import sqlite3
 from pathlib import Path
 from typing import Any
 
+from zicato.core.workspace import replicate_index_from_run_id
 from zicato.query._sqlite import open_index_ro_or_none
 from zicato.query.decisions import (
     experiment_decision,
@@ -28,7 +29,7 @@ from zicato.query.paths import (
     list_epoch_ids,
     read_current_epoch,
 )
-from zicato.workspace import iter_epochs
+from zicato.workspace import events_replicate_index, is_events_file, iter_epochs
 
 # ---------------------------------------------------------------------------
 # Run-directory discovery — for the conversation / matchup endpoints
@@ -62,10 +63,78 @@ def _run_id_of_events_file(events_path: Path) -> str | None:
 # Cache: workspace epochs dir → {run_id: events.jsonl path}. The board-run
 # layout names run directories by ENTRY id, not run id, so the only way to
 # map a run id to its events file is to read the ``runId`` field out of
-# each ``events.jsonl``. We do that scan once per workspace and memoize it,
-# keyed on the epochs-dir path plus its current mtime so a new generation
-# (which bumps the dir mtime) invalidates a stale map.
-_RUN_ID_INDEX_CACHE: dict[str, tuple[float, dict[str, Path]]] = {}
+# each current events file. Cache each file independently: a live append keeps
+# the already-discovered id, while a new, replaced, truncated, or previously
+# empty file is reparsed. This avoids reopening the entire workspace on every
+# event appended by an in-progress run.
+_RunIdFileState = tuple[int, int, int, int, str | None]
+_RunIdIndexState = tuple[dict[str, _RunIdFileState], dict[str, Path]]
+_RUN_ID_INDEX_CACHE: dict[str, _RunIdIndexState] = {}
+
+
+def _current_events_files(epochs: Path) -> list[Path]:
+    """Every current replicate events file, excluding ``*.prev.jsonl``."""
+    return sorted(
+        path for path in epochs.glob("*/generations/*/runs/*/events*.jsonl") if is_events_file(path)
+    )
+
+
+def _run_id_file_state(path: Path, cached: _RunIdFileState | None) -> _RunIdFileState | None:
+    """Return metadata + id, retaining a resolved id across pure appends."""
+    try:
+        stat = path.stat()
+    except OSError:
+        return None
+    identity = (stat.st_dev, stat.st_ino, stat.st_mtime_ns, stat.st_size)
+    if cached is not None:
+        old_dev, old_ino, old_mtime, old_size, run_id = cached
+        unchanged = identity == (old_dev, old_ino, old_mtime, old_size)
+        appended = (
+            run_id is not None
+            and (stat.st_dev, stat.st_ino) == (old_dev, old_ino)
+            and stat.st_size > old_size
+        )
+        if unchanged or appended:
+            return (*identity, run_id)
+    return (*identity, _run_id_of_events_file(path))
+
+
+def _replicate_events_in_run(run_dir: Path) -> list[Path]:
+    """Return the run directory's current replicate event files."""
+    return sorted(path for path in run_dir.glob("events*.jsonl") if is_events_file(path))
+
+
+def _loss_twin(events_path: Path) -> Path | None:
+    """Return the loss sibling carrying the same replicate index."""
+    replicate_index = events_replicate_index(events_path)
+    if replicate_index is None:
+        return None
+    if replicate_index == 0:
+        return events_path.with_name("loss.json")
+    return events_path.with_name(f"loss.r{replicate_index}.json")
+
+
+def _nested_events_for_disambiguator(run_dir: Path, disambiguator: str) -> Path | None:
+    """Resolve one legacy nested-rung transcript inside an entry run dir."""
+    direct = run_dir / disambiguator / "events.jsonl"
+    if direct.exists():
+        return direct
+    if not run_dir.is_dir():
+        return None
+    for child in sorted(run_dir.iterdir()):
+        if not child.is_dir():
+            continue
+        events = child / "events.jsonl"
+        if not events.exists():
+            continue
+        if _run_id_of_events_file(events) == disambiguator:
+            return events
+        loss = _read_json_value(child / "loss.json")
+        if isinstance(loss, dict) and (
+            loss.get("run_id") == disambiguator or loss.get("match_id") == disambiguator
+        ):
+            return events
+    return None
 
 
 def _build_run_id_index(paths: WorkspacePaths) -> dict[str, Path]:
@@ -73,28 +142,55 @@ def _build_run_id_index(paths: WorkspacePaths) -> dict[str, Path]:
 
     Matches on the ``runId`` carried inside each events file rather than on
     the run-directory name (which is the board ENTRY id, not the run id).
-    Results are cached per workspace, invalidated when the epochs dir mtime
-    changes.
+    Results are cached per file. Appending to a stream whose id is already
+    known reuses that id without reopening the file; new/replaced/truncated
+    streams and previously-empty streams are parsed on demand.
     """
     epochs = paths.epochs
     cache_key = str(epochs)
-    try:
-        mtime = epochs.stat().st_mtime
-    except OSError:
+    if not epochs.is_dir():
         return {}
-
-    cached = _RUN_ID_INDEX_CACHE.get(cache_key)
-    if cached is not None and cached[0] == mtime:
-        return cached[1]
+    events_files = _current_events_files(epochs)
+    cached_entry = _RUN_ID_INDEX_CACHE.get(cache_key)
+    cached = cached_entry[0] if cached_entry is not None else {}
 
     index: dict[str, Path] = {}
-    if epochs.is_dir():
-        for events_path in epochs.glob("*/generations/*/runs/*/events.jsonl"):
-            rid = _run_id_of_events_file(events_path)
-            if rid and rid not in index:
-                index[rid] = events_path
-    _RUN_ID_INDEX_CACHE[cache_key] = (mtime, index)
+    current: dict[str, _RunIdFileState] = {}
+    for events_path in events_files:
+        path_key = str(events_path)
+        state = _run_id_file_state(events_path, cached.get(path_key))
+        if state is None:
+            continue
+        current[path_key] = state
+        rid = state[-1]
+        if rid and rid not in index:
+            index[rid] = events_path
+    _RUN_ID_INDEX_CACHE[cache_key] = (current, index)
     return index
+
+
+def _find_run_events_in_index(paths: WorkspacePaths, run_id: str) -> Path | None:
+    """Fast lookup that touches only a cached run's own file on live appends."""
+    cache_key = str(paths.epochs)
+    cached = _RUN_ID_INDEX_CACHE.get(cache_key)
+    if cached is not None:
+        states, index = cached
+        events_path = index.get(run_id)
+        if events_path is not None:
+            path_key = str(events_path)
+            state = _run_id_file_state(events_path, states.get(path_key))
+            if state is not None and state[-1] == run_id:
+                states[path_key] = state
+                return events_path
+            index.pop(run_id, None)
+            if state is None:
+                states.pop(path_key, None)
+            else:
+                states[path_key] = state
+                discovered = state[-1]
+                if discovered:
+                    index.setdefault(discovered, events_path)
+    return _build_run_id_index(paths).get(run_id)
 
 
 # Cache: workspace epochs dir → {run_id: gen×entry events.jsonl path}. In
@@ -107,7 +203,7 @@ def _build_run_id_index(paths: WorkspacePaths) -> dict[str, Path]:
 # gen×entry it belongs to (the run directory it lives under). Mapping every
 # such ``run_id`` to its gen×entry ``events.jsonl`` lets a transcript-less
 # reuse run_id resolve to the one real transcript for that pair. Memoized
-# on the epochs-dir mtime, like the run-id index above.
+# on the epochs-dir mtime (the reuse records are settled, not live streams).
 _REUSE_RUN_ID_INDEX_CACHE: dict[str, tuple[float, dict[str, Path]]] = {}
 
 
@@ -187,7 +283,7 @@ def find_run_events_path(paths: WorkspacePaths, run_id: str) -> Path | None:
 
     # Fall back to the run-id → events.jsonl index (matches the canonical
     # board-run layout, where the run directory is named by entry id).
-    indexed = _build_run_id_index(paths).get(run_id)
+    indexed = _find_run_events_in_index(paths, run_id)
     if indexed is not None and indexed.exists():
         return indexed
 
@@ -236,24 +332,23 @@ def resolve_transcript_events(
 ) -> Path | None:
     """PRIMARY transcript resolver: ``(epoch, gen, entry)`` → events.jsonl.
 
-    The deterministic triple is the primary key — the events file lives at
-    ``epochs/<epoch>/generations/<gen>/runs/<entry>/events.jsonl`` and the
-    pane always knows all three coordinates. A ``run_id`` / ``match_id`` is
-    only a DISAMBIGUATOR: when a gen×entry has MULTIPLE runs (e.g.
-    successive-halving racing re-races a champion across rungs, each rung
-    landing in its own sub-directory), the disambiguator selects a specific
-    rung's events file. With no disambiguator we DEFAULT to the entry's own
-    ``runs/<entry>/events.jsonl`` — the gen×entry's one canonical transcript.
+    The deterministic triple is the primary key. A ``run_id`` / ``match_id``
+    disambiguates both sibling replicate files (``events.rN.jsonl``) and the
+    nested directories used by successive-halving reruns. With no
+    disambiguator the canonical replicate-0 ``events.jsonl`` remains the
+    default.
 
     Resolution, strict to this entry's own run directory (never a sibling's):
 
-    1. Default: ``generations/<gen>/runs/<entry>/events.jsonl`` for the
-       requested ``epoch_id`` (then any epoch carrying that generation, since
-       a generation id is unique workspace-wide).
-    2. Disambiguator: when ``run_id`` / ``match_id`` is given, prefer a
-       nested ``runs/<entry>/<disambiguator>/events.jsonl`` (or any nested
-       run dir whose own ``runId`` / loss.json ``run_id`` / ``match_id``
-       matches) before falling back to (1).
+    1. Locate ``generations/<gen>/runs/<entry>`` in the requested
+       ``epoch_id`` (then any epoch carrying that generation, since a
+       generation id is unique workspace-wide).
+    2. Disambiguator: a ``match_id`` first selects the legacy nested-rung
+       layout; a ``run_id`` first selects an exact sibling
+       ``events.rN.jsonl`` by validated runtime id, event ``runId``, or its
+       matching loss record. Each then falls back to the other layout.
+    3. Default or unmatched disambiguator: return canonical
+       ``events.jsonl`` (replicate 0).
 
     Returns ``None`` only when no events.jsonl exists for this gen×entry at
     all — the genuine-absence case the honest "could not be reconstructed"
@@ -281,25 +376,42 @@ def resolve_transcript_events(
 
     disambiguator = run_id or match_id
     if disambiguator:
-        # A specific rung was requested. First a directly-named nested dir,
-        # then any nested run dir whose events/loss carry the disambiguator.
-        nested = run_dir / disambiguator / "events.jsonl"
-        if nested.exists():
-            return nested
-        if run_dir.is_dir():
-            for child in sorted(run_dir.iterdir()):
-                if not child.is_dir():
-                    continue
-                ev = child / "events.jsonl"
-                if not ev.exists():
-                    continue
-                if _run_id_of_events_file(ev) == disambiguator:
-                    return ev
-                loss = _read_json_value(child / "loss.json")
-                if isinstance(loss, dict) and (
-                    loss.get("run_id") == disambiguator or loss.get("match_id") == disambiguator
-                ):
-                    return ev
+        # A match id is a rung coordinate. Prefer the deliberately-supported
+        # legacy nested layout before looking at top-level loss metadata: the
+        # canonical replicate's loss can carry the same match id and must not
+        # shadow the rung's own transcript.
+        if match_id:
+            nested = _nested_events_for_disambiguator(run_dir, match_id)
+            if nested is not None:
+                return nested
+
+        # Replicates share the entry directory, so resolve their sibling file
+        # before considering the nested-directory layout used by racing.
+        if run_id:
+            replicate_index = replicate_index_from_run_id(generation_id, entry_id, run_id)
+            if replicate_index is not None:
+                exact = (
+                    run_dir / "events.jsonl"
+                    if replicate_index == 0
+                    else run_dir / f"events.r{replicate_index}.jsonl"
+                )
+                if exact.exists():
+                    return exact
+        for events in _replicate_events_in_run(run_dir):
+            if run_id and _run_id_of_events_file(events) == run_id:
+                return events
+            loss_path = _loss_twin(events)
+            loss = _read_json_value(loss_path) if loss_path is not None else None
+            if isinstance(loss, dict) and (
+                (run_id and loss.get("run_id") == run_id)
+                or (match_id and loss.get("match_id") == match_id)
+            ):
+                return events
+
+        if run_id:
+            nested = _nested_events_for_disambiguator(run_dir, run_id)
+            if nested is not None:
+                return nested
         # Disambiguator did not match a specific rung — fall through to the
         # entry's own canonical events file rather than 404-ing.
 

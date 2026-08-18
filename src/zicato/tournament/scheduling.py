@@ -320,8 +320,8 @@ async def _run_full_board_unit(
     in its OWN subprocess worker, each pointed at its OWN per-run
     ephemeral snapshot checkout (a distinct ``ztw-snap-*`` temp tree,
     see :func:`zicato.tournament.worker_transport._checkout_run_snapshot`)
-    and writing to a distinct ``run_id`` (``{generation_id}--{entry_id}``,
-    and the two generations differ). So nothing — snapshot checkout,
+    and writing to a distinct ``run_id`` (via ``run_id_for_unit``; the two
+    generations differ). So nothing — snapshot checkout,
     ``active_runs`` state file, ``loss.json`` — is shared between the
     champion and challenger of the same entry.
 
@@ -1131,8 +1131,6 @@ async def _run_unit_after_cache_miss(
     # stamped on close so a harmonograf user can cross-jump into the run's own
     # trace (HARMONOGRAF.md §7). Nests under the matchup span via the ambient
     # context var.
-    # Built through the one choke point so the span's run id matches the id
-    # the runner and the worker use — including its replicate segment.
     run_id = run_id_for_unit(generation.id, entry.id, replicate_index)
     async with meta_span(
         run_id,

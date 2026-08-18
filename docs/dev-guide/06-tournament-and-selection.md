@@ -1139,11 +1139,12 @@ subprocesses: one full-mode unit is TWO concurrent workers.
 > ⛔ The run id names a board unit — `(generation, entry, replicate)` — not a
 > `(generation, entry)` pair. Build it ONLY through
 > `zicato.core.workspace.run_id_for_unit`; replicate 0 returns the historical
-> `{generation_id}--{entry_id}` and `r>0` appends `--r{r}`. It keys the
+> `{generation_id}--{entry_id}` and `r>0` uses an opaque `rN.<digest>` id. It keys the
 > `active_runs` record, the supervisor's kill-request marker, and the run's
 > telemetry span, so two units sharing an id share those artifacts and the
 > later writer wins (issue #250). Three call sites hand-rolled the f-string
-> before that fix.
+> before that fix. The opaque namespace contains no `--`, so it cannot collide
+> with any historical replicate-0 id and existing board entry ids remain valid.
 
 The `scorer.record(...)` fold happens the instant BOTH runs of a unit settle,
 BEFORE the unit returns — so a finished board's score materialises while sibling

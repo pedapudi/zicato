@@ -46,7 +46,7 @@ from zicato.testing.adjudicators import (
     ScriptedTable,
     SpanQuoting,
 )
-from zicato.tournament.unit_cache import _unit_loss_path
+from zicato.tournament.unit_cache import _unit_loss_path, unit_events_path
 
 EPOCH = "epoch-1"
 REFL = "refl-oracle"
@@ -432,16 +432,16 @@ def test_preview_fidelity_rides_through(tmp_path: Path) -> None:
 
     workspace = tmp_path / ".zicato"
     # A loss with NO judge_io and NO result.json — only an events.jsonl preview.
-    loss_path = _write_loss(workspace, "v1", "entryA", 0, drift=False)
+    loss_path = _write_loss(workspace, "v1", "entryA", 5000, drift=False)
     (judge_io_path_for_loss(loss_path)).unlink(missing_ok=True)
-    events_path = loss_path.parent / "events.jsonl"
+    events_path = unit_events_path(loss_path)
     make_synthetic_events_jsonl(events_path, drift_events=[("off_topic", "warning")])
 
     obs = ObservationRun(
         reflection_id=REFL,
         candidate_id="v1",
         entry_id="entryA",
-        replicate=0,
+        replicate=5000,
         scalar=0.0,
         drift_loss=0.0,
         pass_fail=True,

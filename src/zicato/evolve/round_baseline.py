@@ -289,7 +289,7 @@ def _materialize_carried_champion(
     the canonical ``{generation_id}--{entry_id}`` form so the cache-first
     runner finds it as a hit.
     """
-    from zicato.core.workspace import run_dir  # noqa: PLC0415
+    from zicato.core.workspace import run_dir, run_id_for_unit  # noqa: PLC0415
     from zicato.tournament.unit_cache import is_unit_attempt_slot  # noqa: PLC0415
 
     try:
@@ -321,6 +321,7 @@ def _materialize_carried_champion(
                 if is_unit_attempt_slot(src_loss):
                     continue
                 try:
+                    replicate = 0 if src_loss.name == "loss.json" else int(src_loss.stem[6:])
                     profile = read_loss_profile(src_loss)
                 except (OSError, ValueError, KeyError, json.JSONDecodeError) as exc:
                     log.debug("materialise champion: unreadable %s: %s", src_loss, exc)
@@ -329,8 +330,7 @@ def _materialize_carried_champion(
                     profile,
                     generation_id=generation_id,
                     epoch_id=epoch_id,
-                    run_id=f"{generation_id}--{entry_id}"
-                    + ("" if src_loss.name == "loss.json" else f"--{src_loss.stem}"),
+                    run_id=run_id_for_unit(generation_id, entry_id, replicate),
                     cached=True,
                     source_epoch=source_epoch,
                     source_run=profile.run_id,

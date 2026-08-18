@@ -346,7 +346,7 @@ fn newest_epoch_events(paths: &WorkspacePaths) -> Option<PathBuf> {
         .into_iter()
         .filter_map(Result::ok)
     {
-        if entry.file_name() != "events.jsonl" {
+        if !is_events_file(entry.path()) {
             continue;
         }
         let mtime = entry
@@ -359,6 +359,24 @@ fn newest_epoch_events(paths: &WorkspacePaths) -> Option<PathBuf> {
         }
     }
     newest.map(|(_, p)| p)
+}
+
+fn is_events_file(path: &Path) -> bool {
+    let Some(name) = path.file_name().and_then(|value| value.to_str()) else {
+        return false;
+    };
+    if name == "events.jsonl" {
+        return true;
+    }
+    let Some(index) = name
+        .strip_prefix("events.r")
+        .and_then(|value| value.strip_suffix(".jsonl"))
+    else {
+        return false;
+    };
+    !index.is_empty()
+        && !index.starts_with('0')
+        && index.chars().all(|ch| ch.is_ascii_digit())
 }
 
 /// Assemble `GET /api/run-log`. Never fails: a missing/absent log file
@@ -510,5 +528,26 @@ mod tests {
         let log = build_run_log(&p, 40);
         assert_eq!(log.events.len(), 1);
         assert_eq!(log.events[0].kind, "task_completed");
+    }
+
+    #[test]
+    fn fallback_discovers_replicate_events_but_not_archives() {
+        let (_t, p) = ws();
+        let run = p.epochs.join("e0/generations/v0/runs/entry");
+        std::fs::create_dir_all(&run).unwrap();
+        std::fs::write(
+            run.join("events.r7.jsonl"),
+            "{\"sequence\":7,\"runCompleted\":{}}\n",
+        )
+        .unwrap();
+        std::fs::write(
+            run.join("events.r8.prev.jsonl"),
+            "{\"sequence\":99,\"runFailed\":{}}\n",
+        )
+        .unwrap();
+
+        let log = build_run_log(&p, 40);
+        assert_eq!(log.events.len(), 1);
+        assert_eq!(log.events[0].seq, Some(7));
     }
 }

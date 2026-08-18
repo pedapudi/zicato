@@ -258,6 +258,16 @@ def unit_result_path(loss_path: Path) -> Path:
     return loss_path.with_name("result.json")
 
 
+def unit_events_path(loss_path: Path) -> Path:
+    """Map one replicate's loss path to its events JSONL twin."""
+    name = loss_path.name
+    if name.startswith("loss.r") and name.endswith(".json"):
+        replicate = name[len("loss.r") : -len(".json")]
+        if replicate.isdigit() and int(replicate) > 0:
+            return loss_path.with_name(f"events.r{replicate}.jsonl")
+    return loss_path.with_name("events.jsonl")
+
+
 def _clip_result_text(text: str) -> tuple[str, bool]:
     """Clip one ``result.json`` text field; return ``(text, was_clipped)``."""
     if len(text) <= RUN_RESULT_CLIP_CHARS:
@@ -1116,5 +1126,6 @@ __all__ = [
     "read_unit_loss_history",
     "record_unit_attempt",
     "run_result_to_payload",
+    "unit_events_path",
     "unit_result_path",
 ]

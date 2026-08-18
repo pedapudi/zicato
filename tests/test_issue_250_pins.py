@@ -1,184 +1,178 @@
-"""Regression pins for issue #250 — the run identity was not replicate-keyed.
-
-A board unit is ``(generation, entry, replicate)``. Before this fix the run
-id and the events file were keyed by ``(generation, entry)`` only, so the
-replicates of one unit shared both:
-
-* ``runtime/active_runs/{run_id}.json`` — each worker writes it with its own
-  pid, so two replicates in flight leave the supervisor tracking one of them
-  and the first to finish deletes the record for both;
-* the kill-request marker, keyed the same way;
-* ``runs/<entry>/events.jsonl`` — the worker opens the sink with
-  ``mode="write"``, so each replicate TRUNCATED the one before it. With the
-  one-predecessor archive of issue #122 absorbing a second draw, a
-  3-replicate unit kept the raw telemetry of its last two draws only.
-
-The loss slot was already replicate-keyed (casebook Case 1). This is the
-same invariant applied to the artifacts Case 1 left behind: any persisted
-artifact consumed under a keyed scheme must be WRITTEN through that scheme.
-
-Replicate 0 keeps every canonical name, so a single-replicate workspace is
-byte-identical to one from before the fix.
-"""
+"""Unit-level regression pins for replicate-keyed run artifacts (#250)."""
 
 from __future__ import annotations
 
+import json
+import os
 from pathlib import Path
 
-from zicato.workspace import WorkspaceLayout
+import pytest
 
-# NOTE: the symbols this fix ADDS (``run_id_for_unit``, ``events_prev_path_for``,
-# the ``replicate_index`` parameters) are imported inside the tests that use
-# them, never at module scope. A module-level import would make the whole file
-# fail to COLLECT against the pre-fix tree, and an ImportError proves only that
-# a new name is absent — not that the old behaviour was wrong. The data-loss
-# test below drives only production APIs this fix did not change, so it
-# collects and runs against the pre-fix tree and fails on its assertion. That
-# is the red state the casebook requires.
+import zicato.query.events_index as events_index_module
+from zicato.core import (
+    BoardEntry,
+    events_jsonl_path,
+    replicate_index_from_run_id,
+    run_id_for_unit,
+)
+from zicato.query.events_index import find_run_events_path, resolve_transcript_events
+from zicato.query.paths import WorkspacePaths
+from zicato.query.run_log import locate_events_file
+from zicato.telemetry.sink import events_prev_path_for
+from zicato.tournament.unit_cache import unit_events_path
+from zicato.tournament.worker_transport import _run_id_for, _stamp_replicate_index
+from zicato.workspace import WorkspaceLayout, events_replicate_index, is_events_file
 
 EPOCH = "2026-08-18_alpha"
 GEN = "v3"
 ENTRY = "conv_summary"
 
 
-def test_replicate_0_run_id_is_the_historical_string() -> None:
-    """Replicate 0 keeps ``{generation}--{entry}`` exactly."""
-    from zicato.core.workspace import run_id_for_unit
+def _entry(entry_id: str = ENTRY) -> BoardEntry:
+    return BoardEntry(id=entry_id, kind="single_turn", wall_clock_budget_seconds=60, input="x")
 
+
+def test_run_id_is_replicate_keyed_and_r0_is_historical() -> None:
     assert run_id_for_unit(GEN, ENTRY) == f"{GEN}--{ENTRY}"
-    assert run_id_for_unit(GEN, ENTRY, 0) == f"{GEN}--{ENTRY}"
+    assert len({run_id_for_unit(GEN, ENTRY, r) for r in range(3)}) == 3
+    assert run_id_for_unit(GEN, ENTRY, 1).startswith("r1.")
+    assert replicate_index_from_run_id(GEN, ENTRY, run_id_for_unit(GEN, ENTRY, 1)) == 1
+    assert replicate_index_from_run_id(GEN, "different", run_id_for_unit(GEN, ENTRY, 1)) is None
 
 
-def test_replicates_of_one_unit_get_distinct_run_ids() -> None:
-    """The collision itself: r0 and r1 of ONE unit must not share an id."""
-    from zicato.core.workspace import run_id_for_unit
-
-    r0 = run_id_for_unit(GEN, ENTRY, 0)
-    r1 = run_id_for_unit(GEN, ENTRY, 1)
-    r2 = run_id_for_unit(GEN, ENTRY, 2)
-    assert len({r0, r1, r2}) == 3
-    assert r1 == f"{GEN}--{ENTRY}--r1"
+def test_legacy_suffix_entry_remains_valid_and_cannot_collide() -> None:
+    legacy = _entry(f"{ENTRY}--r1")
+    legacy.validate()
+    assert run_id_for_unit(GEN, legacy.id) != run_id_for_unit(GEN, ENTRY, 1)
 
 
-def test_replicates_of_one_unit_get_distinct_active_run_records(tmp_path: Path) -> None:
-    """Two replicates in flight must not share one ``active_runs`` file.
-
-    This is the fault that let the first worker to finish delete the
-    supervisor's only record of its still-running sibling.
-    """
-    from zicato.core.workspace import run_id_for_unit
-    from zicato.runtime.paths import active_run_path
-
-    paths = {active_run_path(tmp_path, run_id_for_unit(GEN, ENTRY, r)) for r in (0, 1, 2)}
-    assert len(paths) == 3
-
-
-def test_replicates_of_one_unit_get_distinct_events_files(tmp_path: Path) -> None:
-    """Each replicate owns its raw telemetry; r0 keeps the canonical name."""
-    from zicato.core.workspace import events_jsonl_path
-
-    r0 = events_jsonl_path(tmp_path, EPOCH, GEN, ENTRY, 0)
-    r1 = events_jsonl_path(tmp_path, EPOCH, GEN, ENTRY, 1)
-    assert r0.name == "events.jsonl"
-    assert r1.name == "events.r1.jsonl"
-    assert r0.parent == r1.parent  # the replicate lives in the NAME, not the path
-    assert r0 != r1
-
-
-def test_events_archive_stays_within_its_own_replicate(tmp_path: Path) -> None:
-    """One replicate's ``.prev`` archive cannot displace another's.
-
-    ``archive_prior_events`` retains exactly one predecessor (issue #122).
-    Keyed per replicate, that predecessor is the previous ROUND's draw of
-    this same unit — which is what #122 intended — rather than a different
-    replicate of the same round.
-    """
-    from zicato.telemetry.sink import events_prev_path_for
-
+def test_events_and_archives_are_replicate_keyed(tmp_path: Path) -> None:
     layout = WorkspaceLayout(tmp_path)
-    prev0 = layout.events_prev(EPOCH, GEN, ENTRY, 0)
-    prev1 = layout.events_prev(EPOCH, GEN, ENTRY, 1)
-    assert prev0.name == "events.prev.jsonl"
-    assert prev1.name == "events.r1.prev.jsonl"
-    assert prev0 != prev1
-    # The sink derives the archive name from the source path, so the two
-    # agree with the layout.
-    assert events_prev_path_for(layout.events(EPOCH, GEN, ENTRY, 0)) == prev0
-    assert events_prev_path_for(layout.events(EPOCH, GEN, ENTRY, 1)) == prev1
+    r0 = events_jsonl_path(tmp_path, EPOCH, GEN, ENTRY)
+    r1 = events_jsonl_path(tmp_path, EPOCH, GEN, ENTRY, 1)
+    assert (r0.name, r1.name) == ("events.jsonl", "events.r1.jsonl")
+    assert events_prev_path_for(r0) == layout.events_prev(EPOCH, GEN, ENTRY)
+    assert events_prev_path_for(r1) == layout.events_prev(EPOCH, GEN, ENTRY, 1)
+    assert unit_events_path(r1.with_name("loss.r1.json")) == r1
+    assert (events_replicate_index(r0), events_replicate_index(r1)) == (0, 1)
+    assert is_events_file(r1) and not is_events_file(events_prev_path_for(r1))
 
 
-def test_every_run_id_producer_agrees(tmp_path: Path) -> None:
-    """The parent, the scheduler's span, and the worker must build one id.
-
-    Three call sites hand-rolled ``f"{generation_id}--{entry_id}"`` before
-    this fix. A worker that disagreed with its parent about the id would
-    write an ``active_runs`` record the parent never clears.
-    """
-    from zicato._tournament_worker import _entry_replicate_index_from_context
-    from zicato.core import BoardEntry
-    from zicato.core.workspace import run_id_for_unit
-    from zicato.tournament.worker_transport import _run_id_for, _stamp_replicate_index
-
-    del tmp_path
-
+def test_parent_run_id_producer_uses_the_canonical_helper() -> None:
     class _Gen:
         id = GEN
 
-    entry = BoardEntry(id=ENTRY, kind="single_turn", wall_clock_budget_seconds=60, input="x")
-    stamped = _stamp_replicate_index([entry], 2)[0]
-
-    parent_id = _run_id_for(_Gen(), stamped)  # type: ignore[arg-type]
-    worker_id = run_id_for_unit(GEN, stamped.id, _entry_replicate_index_from_context(stamped))
-    assert parent_id == worker_id == f"{GEN}--{ENTRY}--r2"
+    stamped = _stamp_replicate_index([_entry()], 2)[0]
+    assert _run_id_for(_Gen(), stamped) == run_id_for_unit(GEN, ENTRY, 2)  # type: ignore[arg-type]
 
 
-def test_every_replicate_keeps_its_own_raw_telemetry(tmp_path: Path) -> None:
-    """The DATA LOSS pin: a replicated unit keeps one events file per draw.
-
-    Drives the production API that the fix did not change — ``run_matchup``
-    at ``replicates=2`` through REAL subprocess workers — and then reads the
-    run directory. Before the fix both replicates resolved to the one
-    canonical ``events.jsonl``, the worker opened it with ``mode="write"``,
-    and replicate 1 truncated replicate 0. So this test compiles against the
-    pre-fix tree and fails on the assertion, which is the red state the
-    casebook requires.
-    """
-    import asyncio
-
-    from tests.test_decision_procedure_power import (
-        BASE_TOKENS,
-        NAIVE_WEIGHTS,
-        _board,
-        _real_gen,
-        _worker_config,
+def test_replicate_events_resolve_real_event_and_runtime_identities(tmp_path: Path) -> None:
+    paths = WorkspacePaths(tmp_path)
+    run = WorkspaceLayout(tmp_path).run_dir(EPOCH, GEN, ENTRY)
+    run.mkdir(parents=True)
+    r0, r1 = run / "events.jsonl", run / "events.r1.jsonl"
+    r0.write_text(json.dumps({"runId": "goldfive-r0"}) + "\n")
+    r1.write_text(json.dumps({"runId": "goldfive-r1"}) + "\n")
+    os.utime(r0, ns=(1_000_000_000, 1_000_000_000))
+    os.utime(r1, ns=(2_000_000_000, 2_000_000_000))
+    assert find_run_events_path(paths, "goldfive-r1") == r1
+    assert (
+        resolve_transcript_events(paths, EPOCH, GEN, ENTRY, run_id=run_id_for_unit(GEN, ENTRY, 1))
+        == r1
     )
-    from zicato.tournament.runner import run_matchup
-    from zicato_examples.target_0_convergence.harness import make_noisy_adapter
+    assert resolve_transcript_events(paths, EPOCH, GEN, ENTRY, run_id="goldfive-r1") == r1
+    assert locate_events_file(paths) == r1
 
-    workspace = tmp_path / "ws"
-    workspace.mkdir()
-    subset = ("conv_summary",)
-    asyncio.run(
-        run_matchup(
-            adapter=make_noisy_adapter({"noise_sigma": 0.35}),
-            left_gen=_real_gen(workspace, "aa-left", BASE_TOKENS),
-            right_gen=_real_gen(workspace, "aa-right", BASE_TOKENS),
-            board=list(_board()),
-            weights=NAIVE_WEIGHTS,
-            config=_worker_config(workspace, seed=7),
-            workspace_root=workspace,
-            epoch_id="e0",
-            board_subset=subset,
-            replicates=2,
-            match_id="issue-250",
-        )
-    )
 
-    run = WorkspaceLayout(workspace).run_dir("e0", "aa-right", "conv_summary")
-    events = sorted(p.name for p in run.glob("events*.jsonl"))
-    assert "events.jsonl" in events, f"replicate 0 lost its telemetry: {events}"
-    assert "events.r1.jsonl" in events, f"replicate 1 lost its telemetry: {events}"
-    # Both draws are real measurements, not one file copied twice.
-    r0 = (run / "events.jsonl").read_text(encoding="utf-8")
-    r1 = (run / "events.r1.jsonl").read_text(encoding="utf-8")
-    assert r0.strip() and r1.strip()
+def test_match_id_prefers_legacy_nested_rung_over_replicate_loss(tmp_path: Path) -> None:
+    """A top-level loss tag must not shadow its legacy nested-rung transcript."""
+    paths = WorkspacePaths(tmp_path)
+    run = WorkspaceLayout(tmp_path).run_dir(EPOCH, GEN, ENTRY)
+    run.mkdir(parents=True)
+    canonical = run / "events.jsonl"
+    canonical.write_text(json.dumps({"runId": "canonical"}) + "\n")
+    (run / "loss.json").write_text(json.dumps({"run_id": "canonical", "match_id": "rung0"}))
+    nested = run / "rung0" / "events.jsonl"
+    nested.parent.mkdir()
+    nested.write_text(json.dumps({"runId": "nested-rung"}) + "\n")
+
+    assert resolve_transcript_events(paths, EPOCH, GEN, ENTRY, match_id="rung0") == nested
+
+
+def test_run_id_index_does_not_reparse_identified_files_on_append(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Live appends retain per-file ids; only newly discovered files are read."""
+    paths = WorkspacePaths(tmp_path)
+    run = WorkspaceLayout(tmp_path).run_dir(EPOCH, GEN, ENTRY)
+    run.mkdir(parents=True)
+    r0, r1 = run / "events.jsonl", run / "events.r1.jsonl"
+    r0.write_text(json.dumps({"runId": "goldfive-r0"}) + "\n")
+    r1.write_text(json.dumps({"runId": "goldfive-r1"}) + "\n")
+
+    original = events_index_module._run_id_of_events_file
+    opened: list[Path] = []
+    scans: list[Path] = []
+
+    def counted(path: Path) -> str | None:
+        opened.append(path)
+        return original(path)
+
+    original_scan = events_index_module._current_events_files
+
+    def counted_scan(epochs: Path) -> list[Path]:
+        scans.append(epochs)
+        return original_scan(epochs)
+
+    monkeypatch.setattr(events_index_module, "_run_id_of_events_file", counted)
+    monkeypatch.setattr(events_index_module, "_current_events_files", counted_scan)
+    assert find_run_events_path(paths, "goldfive-r0") == r0
+    assert opened == [r0, r1]
+    assert scans == [paths.epochs]
+
+    opened.clear()
+    scans.clear()
+    with r0.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps({"runId": "goldfive-r0", "sequence": 1}) + "\n")
+    assert find_run_events_path(paths, "goldfive-r0") == r0
+    assert opened == []
+    assert scans == []
+
+    opened.clear()
+    r2 = run / "events.r2.jsonl"
+    r2.write_text(json.dumps({"runId": "goldfive-r2"}) + "\n")
+    assert find_run_events_path(paths, "goldfive-r2") == r2
+    assert opened == [r2]
+
+    # Replacement must invalidate the retained id even when the path is the
+    # same; production archives the old inode before opening a fresh sink.
+    opened.clear()
+    r1.replace(run / "events.r1.prev.jsonl")
+    r1.write_text(json.dumps({"runId": "goldfive-r1-new"}) + "\n")
+    assert find_run_events_path(paths, "goldfive-r1-new") == r1
+    assert opened == [r1]
+
+    # An empty live file is unresolved, so its first append is reparsed once.
+    opened.clear()
+    r3 = run / "events.r3.jsonl"
+    r3.touch()
+    assert find_run_events_path(paths, "not-yet-written") is None
+    assert opened == [r3]
+    opened.clear()
+    r3.write_text(json.dumps({"runId": "goldfive-r3"}) + "\n")
+    assert find_run_events_path(paths, "goldfive-r3") == r3
+    assert opened == [r3]
+
+
+def test_sse_reports_replicate_events_growth(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from zicato.dashboard.sse import ChangeBroker
+
+    broker = ChangeBroker(WorkspacePaths(tmp_path))
+    reported: list[Path] = []
+    monkeypatch.setattr(broker, "_schedule_state_change", lambda _kind: None)
+    monkeypatch.setattr(broker, "_report_events_growth", reported.append)
+    path = tmp_path / "events.r3.jsonl"
+    broker._on_path_changed(str(path))
+    assert reported == [path]

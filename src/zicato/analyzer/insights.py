@@ -41,6 +41,7 @@ from zicato.analyzer.prompts import (
 )
 from zicato.aux_timeout import aux_call_timeout_s
 from zicato.core.workspace import epoch_dir
+from zicato.workspace import is_events_file
 
 if TYPE_CHECKING:  # pragma: no cover - typing-only import
     from zicato.telemetry.meta_loop import MetaLoopEmitter
@@ -60,8 +61,8 @@ def _collect_events_jsonl_paths(workspace_root: Path, epoch_id: str) -> list[Pat
     if not root.exists():
         return []
     out: list[Path] = []
-    for path in sorted(root.glob("*/runs/*/events.jsonl")):
-        if path.is_file():
+    for path in sorted(root.glob("*/runs/*/events*.jsonl")):
+        if path.is_file() and is_events_file(path):
             out.append(path)
     return out
 

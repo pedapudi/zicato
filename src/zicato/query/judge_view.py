@@ -8,6 +8,7 @@ import time
 from pathlib import Path
 from typing import Any
 
+from zicato.core.workspace import replicate_index_from_run_id
 from zicato.query import gate_view as _gate_view
 from zicato.query._sqlite import (
     _opt_json,
@@ -463,30 +464,108 @@ def build_per_judge_comparison(
     }
 
 
+def _entry_loss_path(
+    paths: WorkspacePaths,
+    epoch_id: str,
+    generation_id: str,
+    entry_id: str,
+    *,
+    run_id: str | None = None,
+    replicate_index: int | None = None,
+) -> Path:
+    """Resolve one entry's exact replicate loss path, defaulting to r0."""
+    canonical = layout_of(paths).loss(epoch_id, generation_id, entry_id)
+    run_dir = canonical.parent
+    if run_id:
+        inferred = replicate_index_from_run_id(generation_id, entry_id, run_id)
+        if inferred is not None:
+            return canonical if inferred == 0 else canonical.with_name(f"loss.r{inferred}.json")
+        for candidate in sorted(run_dir.glob("loss*.json")):
+            loss = _read_json_value(candidate)
+            if isinstance(loss, dict) and loss.get("run_id") == run_id:
+                return candidate
+    if replicate_index is not None and replicate_index > 0:
+        return canonical.with_name(f"loss.r{replicate_index}.json")
+    return canonical
+
+
 def resolve_run_id_for_entry(
-    paths: WorkspacePaths, epoch_id: str, generation_id: str, entry_id: str
+    paths: WorkspacePaths,
+    epoch_id: str,
+    generation_id: str,
+    entry_id: str,
+    *,
+    run_id: str | None = None,
+    replicate_index: int | None = None,
 ) -> str:
-    """Recover the canonical ``run_id`` for one ``(epoch, gen, entry)`` run.
+    """Recover the persisted run id for one entry replicate.
 
     The L4 dashboard view routes by board-entry id; the index keys every
-    per-judge row by run id. The entry's own ``loss.json`` carries the
-    canonical id — the key the ``judge_losses`` table is bound to. Falls
-    back to the run-directory name (``entry_id``) when the file is
-    missing / malformed, so the caller always has a lookup key (DQ3 —
-    never raises). Feeds :func:`build_per_judge_for_run`.
+    per-judge row by run id. ``run_id`` can select either the validated
+    runtime identity or the goldfive id persisted inside a loss sibling;
+    ``replicate_index`` is the coordinate-only alternative. With neither,
+    replicate 0 remains byte-compatible. Missing data degrades to the
+    requested run id or entry id (DQ3 — never raises).
     """
-    loss_path = (
-        paths.epochs / epoch_id / "generations" / generation_id / "runs" / entry_id / "loss.json"
+    loss_path = _entry_loss_path(
+        paths,
+        epoch_id,
+        generation_id,
+        entry_id,
+        run_id=run_id,
+        replicate_index=replicate_index,
     )
-    try:
-        loss = json.loads(loss_path.read_text(encoding="utf-8"))
-        if isinstance(loss, dict):
-            raw_run = loss.get("run_id")
-            if isinstance(raw_run, str) and raw_run:
-                return raw_run
-    except (FileNotFoundError, OSError, json.JSONDecodeError, ValueError):
-        pass
-    return entry_id  # Best-effort fallback: directory name.
+    loss = _read_json_value(loss_path)
+    if isinstance(loss, dict):
+        raw_run = loss.get("run_id")
+        if isinstance(raw_run, str) and raw_run:
+            return raw_run
+    return run_id or entry_id
+
+
+def build_per_judge_for_entry(
+    paths: WorkspacePaths,
+    epoch_id: str,
+    generation_id: str,
+    entry_id: str,
+    *,
+    run_id: str | None = None,
+    replicate_index: int | None = None,
+) -> dict[str, Any]:
+    """Per-judge breakdown for an exactly selected entry replicate."""
+    loss_path = _entry_loss_path(
+        paths,
+        epoch_id,
+        generation_id,
+        entry_id,
+        run_id=run_id,
+        replicate_index=replicate_index,
+    )
+    loss = _read_json_value(loss_path)
+    resolved_run_id = resolve_run_id_for_entry(
+        paths,
+        epoch_id,
+        generation_id,
+        entry_id,
+        run_id=run_id,
+        replicate_index=replicate_index,
+    )
+    if not isinstance(loss, dict):
+        return {"run_id": resolved_run_id, "judges": []}
+    raw_judges = loss.get("per_judge_loss")
+    if not isinstance(raw_judges, list):
+        return build_per_judge_for_run(paths, resolved_run_id)
+    judges = [
+        {
+            "judge_name": str(row.get("judge_name", "")),
+            "weighted_loss": coerce_float(row.get("weighted_loss")),
+            "raw_loss": coerce_float(row.get("raw_loss")),
+            "weight": coerce_float(row.get("weight")),
+        }
+        for row in raw_judges
+        if isinstance(row, dict) and row.get("judge_name")
+    ]
+    return {"run_id": resolved_run_id, "judges": judges}
 
 
 def build_per_judge_for_run(paths: WorkspacePaths, run_id: str) -> dict[str, Any]:

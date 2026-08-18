@@ -1,128 +1,15 @@
-"""Tournament runner: full A/B and fast inline keep/discard.
+"""Tournament execution across isolated per-board-unit subprocesses.
 
-Two entry points:
+Schedulers in :mod:`zicato.tournament.scheduling` apply one concurrency
+cap across matchups and route every ``(generation, entry, replicate)``
+through the unit cache. A cache miss reaches :func:`_run_single`, which
+creates an ephemeral checkout, passes a replicate-keyed events/loss slot
+to ``python -m zicato._tournament_worker``, enforces the budget, and
+always cleans up runtime state. Full mode runs both sides concurrently;
+fast mode reuses the champion and runs only the challenger.
 
-* :func:`run_tournament` (full mode) — runs every board entry under
-  BOTH parent and child generations.
-
-Board-unit parallelism
-----------------------
-The unit of scheduling is a **board unit**: one per board entry. A
-board unit owns the runs for a single board entry and is the thing the
-:attr:`RuntimeConfig.parallelism` knob counts — ``parallelism`` is "how
-many boards run in parallel", NOT how many subprocesses run in parallel.
-
-* In **full mode** a board unit runs the **champion (parent)** run AND
-  the **challenger (child)** run **simultaneously**: both
-  :func:`_run_single` calls start together under one
-  :func:`asyncio.gather`, and the unit does not finish until both have.
-  The champion and challenger of the same entry therefore execute
-  concurrently — each in its OWN subprocess worker, each pointed at its
-  OWN per-run ephemeral snapshot copy, so there is no shared-state
-  collision between the two sides of one entry.
-* In **fast mode** a board unit runs **only the challenger (child)**.
-  The champion's cached aggregate (``gen_score.json``) is reused, so the
-  champion run is not executed at all. Fast mode degrades to a full
-  board unit for the rare entry-set with no cached champion aggregate —
-  but that fallback is decided by the caller (the orchestrator picks
-  :func:`run_tournament` vs :func:`run_fast_mode`), not inside a unit.
-
-The board units themselves play concurrently — the "tournament hall"
-model, many boards in progress at once — bounded by a single
-:class:`asyncio.Semaphore` sized from :attr:`RuntimeConfig.parallelism`.
-Concurrency is safe because every run is fully isolated: each
-board-entry run executes in its OWN subprocess worker (see below)
-writing to a per-run ``active_runs/{run_id}.json`` + ``events.jsonl`` +
-``loss.json``, keyed on a unique ``run_id`` of
-``{generation_id}--{entry_id}``.
-
-Cross-matchup parallelism (one global cap per round)
-----------------------------------------------------
-A non-gauntlet structure (swiss / elim / racing) schedules SEVERAL
-matchups of a round concurrently (the selection driver fans the round's
-batch out under one :func:`asyncio.gather`). Each :func:`run_matchup`
-accepts an OPTIONAL ``unit_semaphore``: when the orchestrator passes one
-shared semaphore to every matchup of a round, all of that round's board
-units across all its concurrent matchups draw from ONE global
-concurrency cap, instead of each matchup minting its own
-``Semaphore(parallelism)`` (which let N concurrent matchups run
-``N × parallelism`` units at once and re-pay worker-spawn + snapshot
-overhead serially per matchup). When ``unit_semaphore`` is ``None`` —
-every direct/gauntlet caller — each board-unit runner mints its own, so
-the single-matchup path is byte-identical to before.
-
-Set ``parallelism=1`` to run one board unit at a time. Note this is NOT
-the same as "one subprocess at a time": with ``parallelism=1`` in full
-mode a single board unit still spawns the champion and challenger
-subprocesses CONCURRENTLY (2 workers). In general, P board units in
-full mode means up to ``2 * P`` run subprocesses alive at once; in fast
-mode up to ``P`` (challenger-only). The real-world ceiling on
-``parallelism`` is almost always the LLM endpoint's own concurrency
-limit — size it against ``2 * parallelism`` for full mode.
-
-Per-run ephemeral checkouts
----------------------------
-The canonical generation source tree is treated as **immutable code**:
-it is what ``derive_generation`` derives the next generation from, so
-anything written into it accumulates across every generation and would
-eventually exhaust the disk. A target agent, however, may legitimately
-write near its own code — runtime ``output/``, scratch files, caches —
-and a meta-harness must be robust to that. So :func:`_run_single` never
-points a worker at the canonical tree directly. Instead it asks the
-workspace's :class:`~zicato.epoch.genstore.GenerationStore` for a
-per-run **ephemeral checkout** (the directory backend copies the
-KB-sized snapshot; the git backend checks out a per-run ``git
-worktree``), points the worker at THAT, and discards it once the run
-finishes — on a clean exit, an abort, or a crash. Every runtime write
-the agent makes therefore lands in the throwaway per-run directory; the
-canonical tree stays code-only and small. The run's telemetry
-(``events.jsonl`` / ``loss.json``) is unaffected — it is keyed on the
-workspace's ``runs/{entry_id}/`` layout, not on the working copy.
-
-* :func:`run_fast_mode` — autoresearch-style inline keep/discard.
-  Only the child is run; comparison is against a previously-computed
-  ``parent_historical_agg`` dict. Cheaper but skips the controlled-
-  experiment guarantee (the world may have drifted since the parent
-  was scored). Same gate logic applies.
-
-The regression-suite gate (see :mod:`zicato.tournament.regression`)
-runs BEFORE the scoring gate when
-:attr:`ScoringWeights.regression_gate_enabled` is true. A failing
-regression suite hard-rejects the candidate, shadowing any drift_loss /
-pass_rate improvement: a patch that breaks the snapshot's own tests
-cannot promote even when its scoring signal looks perfect.
-
-Subprocess isolation ("L3")
----------------------------
-Each board-entry run executes in its OWN OS process — a
-``python -m zicato._tournament_worker`` subprocess (see
-:mod:`zicato._tournament_worker`). :func:`_run_single` serialises one
-run's inputs to a temp args file, spawns the worker, and waits on it
-bounded by the entry's wall-clock budget plus a small grace margin
-(:data:`_PARENT_BUDGET_GRACE_S`). The worker keeps its own cooperative
-``asyncio.wait_for`` budget as the first line of defence; the parent's
-SIGTERM-then-SIGKILL escalation is the second; an independent supervisor
-watchdog — keyed on the worker's own pid stamped into
-``active_runs/{run_id}.json`` — is the third. A wedged run can therefore
-be killed without taking down the whole ``evolve``. A worker that
-vanished without a result file (the supervisor SIGKILLed it) is recorded
-as a normal aborted run, not a crash; the tournament continues.
-
-The runner LAZY-imports :mod:`zicato.telemetry` per-call so the
-package keeps loading cheaply even before the telemetry layer is
-wired up. It uses two telemetry helpers:
-
-* ``zicato.telemetry.sink.make_run_sink_path(workspace_root, epoch_id,
-  generation_id, entry_id) -> Path`` — returns the events JSONL path
-  the worker's sink writes to. Must be deterministic.
-* ``zicato.telemetry.reducer.read_loss_profile(path) -> LossProfile`` —
-  reads back the ``loss.json`` the worker produced.
-
-The actual ``session.run`` driving (rich
-:class:`~zicato.adapters.RunnableHarness` ``run(entry, sinks, config)``
-shape and the legacy ``run(entry, sink_path)`` stub shape) now lives
-inside the worker, not the runner — see
-:func:`zicato._tournament_worker._drive_session`.
+Detailed invariants and call topology live in
+``docs/dev-guide/06-tournament-and-selection.md``.
 """
 
 from __future__ import annotations
@@ -471,10 +358,6 @@ async def _run_single(
        file — that too.
     """
     sink_module, reducer_module = _telemetry_helpers()
-    # The events sink is keyed per REPLICATE, like the loss slot below it.
-    # Without the index every replicate of this unit resolves to the one
-    # canonical ``events.jsonl``, and because the worker opens that sink with
-    # ``mode="write"`` each replicate truncates its predecessor (issue #250).
     sink_path = sink_module.make_run_sink_path(
         workspace_root=workspace_root,
         epoch_id=epoch_id,

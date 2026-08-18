@@ -46,6 +46,7 @@ that already pass the inner dir, and tests that build a synthetic
 
 from __future__ import annotations
 
+import hashlib
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -209,29 +210,43 @@ def proposer_staged_recommendations_path(workspace_root: Path) -> Path:
 
 
 def run_id_for_unit(generation_id: str, entry_id: str, replicate_index: int = 0) -> str:
-    """Return the run id of ONE board unit.
+    """Identify ``(generation, entry, replicate)`` for runtime artifacts.
 
-    A board unit is ``(generation, entry, replicate)``, so its run id
-    must carry all three parts. The run id keys the run's
-    ``runtime/active_runs/{run_id}.json`` record, the supervisor's
-    kill-request marker, and the run's telemetry span. Two units that
-    share a run id share those artifacts, and the later writer silently
-    replaces the earlier one (issue #250).
-
-    Replicate 0 returns the historical ``{generation_id}--{entry_id}``
-    string, so every single-replicate path is byte-identical to a world
-    before the replicate segment existed. Replicate ``r>0`` appends
-    ``--r{r}``, mirroring how ``loss.json`` relates to its
-    ``loss.r{r}.json`` siblings.
-
-    This is the ONE place a run id is built. The runner, the scheduler's
-    telemetry span, and the worker subprocess all route through it, so
-    the three cannot drift apart.
+    Replicate 0 keeps the historical ``generation--entry`` form. Replicate
+    ``r>0`` uses an opaque ``rN.<digest>`` id with no ``--`` substring, so it
+    cannot collide with ANY historical r0 id and no entry-id suffix needs to
+    be reserved. The digest input is length-framed, making the two identity
+    components unambiguous before hashing.
     """
     canonical = f"{generation_id}--{entry_id}"
     if replicate_index <= 0:
         return canonical
-    return f"{canonical}--r{replicate_index}"
+    generation_bytes = generation_id.encode("utf-8")
+    entry_bytes = entry_id.encode("utf-8")
+    framed = (
+        len(generation_bytes).to_bytes(8, "big")
+        + generation_bytes
+        + len(entry_bytes).to_bytes(8, "big")
+        + entry_bytes
+    )
+    return f"r{replicate_index}.{hashlib.sha256(framed).hexdigest()}"
+
+
+def replicate_index_from_run_id(generation_id: str, entry_id: str, run_id: str) -> int | None:
+    """Recover a unit's replicate index from its validated runtime run id."""
+    if run_id == run_id_for_unit(generation_id, entry_id):
+        return 0
+    prefix, separator, _digest = run_id.partition(".")
+    if separator != "." or not prefix.startswith("r") or not prefix[1:].isdigit():
+        return None
+    replicate_index = int(prefix[1:])
+    if replicate_index <= 0:
+        return None
+    return (
+        replicate_index
+        if run_id == run_id_for_unit(generation_id, entry_id, replicate_index)
+        else None
+    )
 
 
 def run_dir(
@@ -240,14 +255,7 @@ def run_dir(
     generation_id: str,
     entry_id: str,
 ) -> Path:
-    """Return the directory holding one run's artifacts.
-
-    A run is one ``(epoch, generation, board_entry)`` triple; its
-    directory holds the events JSONL and the reducer's loss profile. The
-    directory is shared by every replicate of that unit — the replicate
-    dimension lives in the FILE names inside it (``loss.r{r}.json``,
-    ``result.r{r}.json``, ``events.r{r}.jsonl``), never in the path.
-    """
+    """Return the directory holding one entry's replicate artifacts."""
     return _layout(workspace_root).run_dir(epoch_id, generation_id, entry_id)
 
 
@@ -258,18 +266,7 @@ def events_jsonl_path(
     entry_id: str,
     replicate_index: int = 0,
 ) -> Path:
-    """Path to the goldfive event JSONL for one board unit.
-
-    Replicate 0 is the canonical ``events.jsonl``; replicate ``r>0`` is
-    the sibling ``events.r{r}.jsonl``. Before issue #250 every replicate
-    of a unit shared the canonical file, and because the worker opens the
-    sink with ``mode="write"`` each replicate TRUNCATED its predecessor —
-    so a 3-replicate unit kept only the last two draws' raw telemetry.
-
-    The default of 0 keeps every reader that wants the canonical file
-    (the proposer's redacted query, the judge-loss repair command,
-    decision support) unchanged.
-    """
+    """Path to one replicate's events; replicate 0 is ``events.jsonl``."""
     return _layout(workspace_root).events(epoch_id, generation_id, entry_id, replicate_index)
 
 
@@ -515,6 +512,7 @@ __all__ = [
     "run_dir",
     "events_jsonl_path",
     "run_id_for_unit",
+    "replicate_index_from_run_id",
     "loss_profile_path",
     "run_result_path",
     "experiment_json_path",

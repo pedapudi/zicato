@@ -716,7 +716,7 @@ run without touching anything else. The schema (`ActiveRun` in
 
 | Field | Meaning | Consumer that depends on it |
 |---|---|---|
-| `run_id` | unique run id — `{generation}--{entry}` for replicate 0, `{generation}--{entry}--r{r}` for `r>0`, so two replicates of one unit never share a record | everything |
+| `run_id` | unique run id — `{generation}--{entry}` for replicate 0, opaque `rN.<digest>` for `r>0`; the namespaces are disjoint without reserving user entry ids | everything |
 | `pid` | the WORKER's own pid (`os.getpid()` stamped by the worker) | supervisor kill paths |
 | `pid_start_time` | the worker's `/proc` start-time token — pid-reuse immunity (D9) | `signal::is_same_process` in the supervisor |
 | `pgid` | the worker's own process group (spawned with `start_new_session`, so `pgid == pid`) | group-kill upgrade (`resolve_kill_target`) |

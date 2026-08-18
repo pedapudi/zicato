@@ -139,19 +139,7 @@ def read_events_history(
     entry_id: str,
     replicate_index: int = 0,
 ) -> list[list[dict[str, Any]]]:
-    """One board unit's retained raw telemetry, oldest measurement first.
-
-    ``replicate_index`` selects the unit's own slot; the default of 0
-    reads the canonical files, which is what every existing caller wants.
-
-    Returns one element per retained events file — the archived
-    predecessor (``events.prev.jsonl``, when a re-measurement displaced
-    one) followed by the current ``events.jsonl`` — each element being
-    that file's parsed JSONL records. A unit measured once yields a
-    single element; a unit never measured yields ``[]``.
-
-    Best-effort: unreadable files and malformed lines are skipped.
-    """
+    """One replicate's retained telemetry, oldest measurement first."""
     out: list[list[dict[str, Any]]] = []
     for path in (
         layout.events_prev(epoch_id, generation_id, entry_id, replicate_index),
