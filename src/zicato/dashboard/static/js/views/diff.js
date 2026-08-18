@@ -75,10 +75,13 @@ export async function render(host, ctx, params) {
   };
   const knownGens = new Set(gens.map((g) => g.generation_id));
   const recordedParent = parentOf.get(genId) || null;
-  // A picked baseline must be a generation that exists and is not the
-  // candidate itself; anything else falls back to the parent rather than
-  // rendering a diff against nothing.
-  const pickedBase = (askedBase && askedBase !== genId && knownGens.has(askedBase)) ? askedBase : null;
+  // A picked baseline must be a generation that exists, is not the candidate
+  // itself, and is not the recorded parent — picking the parent IS the
+  // default view, and treating it as a pick would tint the strip and claim
+  // "picked, not v3" while showing v3. Anything else falls back to the parent
+  // rather than rendering a diff against nothing.
+  const pickedBase = (askedBase && askedBase !== genId && askedBase !== recordedParent
+    && knownGens.has(askedBase)) ? askedBase : null;
   const baseGen = pickedBase || recordedParent;
   const chain = baseGen ? chainOf(baseGen) : [];
   // The parent's chain as well, always. The RIGHT column is fixed — it is the
@@ -103,6 +106,10 @@ export async function render(host, ctx, params) {
   // Sites where the picked baseline disagrees with the parent — the blocks
   // whose diff is NOT purely this candidate's own change.
   const mixedById = new Map();
+  // Sites whose left column is a value substituted into ANOTHER generation's
+  // span text (the server says which), so the column carries that
+  // generation's authority for everything but the value itself.
+  const againstById = new Map();
   // Where each side's span SITS in its own file — the anchor the context
   // expansion grows from. Absent whenever either side came from records
   // rather than a tree: there is no file to expand into.
@@ -129,6 +136,7 @@ export async function render(host, ctx, params) {
       : ((d && d.baseline && typeof d.baseline.content === 'string') ? d.baseline.content : null);
     baselineById.set(id, str);
     baselineGenById.set(id, src ? src.generation_id : ((d && d.baseline && d.baseline.generation_id) || null));
+    againstById.set(id, (src && src.reconstructed_against) ? String(src.reconstructed_against) : null);
     // Same read against the parent. A difference means the block below shows
     // more than this candidate wrote.
     const parentSrc = nearest(parentChain);
@@ -157,10 +165,13 @@ export async function render(host, ctx, params) {
   const digest = JSON.stringify({
     epochId, genId, pinned, fileNote, detailNote,
     base: baseGen || '',
+    // The picked/default distinction paints the strip, so it gates the
+    // repaint in its own right rather than riding on `base`.
+    picked: pickedBase || '',
     picker: gens.map((g) => g.generation_id).join(','),
     fileParent: (fileDiff && fileDiff.parent_generation_id) || '',
     patches: myPatches.map((p) => [p.mutation_id || p.id, p.op, String(p.new_content || '').length, (p.rationale || '').length]),
-    baselines: ids.map((id) => [id, baselineById.get(id) == null ? -1 : baselineById.get(id).length, baselineGenById.get(id) || '', mixedById.get(id) ? 1 : 0]),
+    baselines: ids.map((id) => [id, baselineById.get(id) == null ? -1 : baselineById.get(id).length, baselineGenById.get(id) || '', mixedById.get(id) ? 1 : 0, againstById.get(id) || '']),
     files: fileEntries.map((f) => [f.path || f.file, String(f.old_content || '').length, String(f.new_content || '').length, f.reconstructed ? 1 : 0, f.note || '']),
   });
 
@@ -208,6 +219,7 @@ export async function render(host, ctx, params) {
         const site = siteById.get(mid) || { mutation_id: mid };
         body.appendChild(patchBlock(genId, p, baselineById.get(mid), site, ctx, epochId, baselineGenById.get(mid), {
           mixed: mixedById.get(mid) === true, parent: recordedParent,
+          against: againstById.get(mid) || null,
           span: spanById.get(mid) || null, epochId,
         }));
       }
@@ -267,8 +279,14 @@ function patchBlock(genId, patch, baselineStr, site, ctx, epochId, baselineGen, 
   // that is actually affected, not as a blanket page warning.
   if (o.mixed) {
     block.appendChild(el('p', { class: 'dn-patch-note dn-faint', text: o.parent
-      ? `${baselineGen || 'this baseline'} and ${o.parent} differ at this site, so these lines include what came between them — not ${genId}’s change alone. Diff against ${o.parent} for that.`
-      : `These lines include what earlier generations wrote at this site — not ${genId}’s change alone.` }));
+      ? `${baselineGen || 'this baseline'} and ${o.parent} hold different text at this site, so these lines carry that difference too — not ${genId}’s change alone. Diff against ${o.parent} for that.`
+      : `These lines carry what another generation wrote at this site — not ${genId}’s change alone.` }));
+  }
+  // The left column's text is not that generation's own: the server had no
+  // tree for it and substituted the recorded value into another generation's
+  // span. Say whose text is on screen, at the block it applies to.
+  if (o.against) {
+    block.appendChild(el('p', { class: 'dn-patch-note dn-faint', text: `The left column is reconstructed from records: ${baselineGen || 'that generation'}’s recorded value written into ${o.against}’s text. Anything a generation between them wrote at this site is not in it.` }));
   }
   const rationale = patch && patch.rationale ? String(patch.rationale).trim() : '';
   if (rationale) {
@@ -282,7 +300,9 @@ function patchBlock(genId, patch, baselineStr, site, ctx, epochId, baselineGen, 
   block.appendChild(expandableDiff({
     baseline: baselineStr == null ? '' : baselineStr,
     challenger: String(patch.new_content == null ? '' : patch.new_content),
-    leftLabel: baselineGen ? `baseline · ${baselineGen}` : 'baseline · from records',
+    leftLabel: baselineGen
+      ? `baseline · ${baselineGen}${o.against ? ` · reconstructed from ${o.against}` : ''}`
+      : 'baseline · from records',
     rightLabel: `challenger new · ${genId}`,
     span: o.span,
     epochId: o.epochId,
@@ -310,6 +330,14 @@ function anchorPair(left, leftGen, right, rightGen) {
   return (a && b) ? { left: a, right: b } : null;
 }
 
+// The span as the TREE holds it, against the span as the RECORD holds it.
+// A joined slice of lines and a recorded string spell the trailing newline
+// differently; nothing else may differ.
+function sameSpan(lines, anchor, recorded) {
+  const norm = (s) => String(s == null ? '' : s).replace(/\r\n/g, '\n').replace(/\n+$/, '');
+  return norm(lines.slice(anchor.start - 1, anchor.end).join('\n')) === norm(recorded);
+}
+
 // A side-by-side span diff that can GROW into the file around it.
 //
 // The span is what the patch record holds and is always what renders first.
@@ -318,8 +346,12 @@ function anchorPair(left, leftGen, right, rightGen) {
 // generation GC pruned has a span and no file, and advertising an expansion
 // that cannot run is worse than not offering it (issue #253 follow-up).
 //
-// Each click reveals CONTEXT_STEP more lines on that side; the second control
-// goes to the file's edge. A bar disappears once its side is fully expanded.
+// Each click reveals CONTEXT_STEP more lines in that direction; the second
+// control goes to the file's edge. Each column stops at its OWN edge, and the
+// bar disappears once both have reached it. The expansion also requires the
+// two sources to agree: the span rendered first is the patch record's, the
+// surrounding lines are the tree's, and the bars withdraw rather than swap one
+// for the other when they disagree.
 function expandableDiff(o) {
   const span = o.span || null;
   const wrap = el('div', { class: 'dn-sxs-expand' });
@@ -352,9 +384,14 @@ function expandableDiff(o) {
 
   if (!span) { paintDiff(); return wrap; }
 
-  const roomUp = () => (state.left ? Math.min(span.left.start, span.right.start) - 1 - state.up : Infinity);
+  // How much is still unseen — on the side that still has the MOST, not the
+  // least. The slice already clamps each column at its own file edge, so the
+  // shorter side simply stops growing while the longer one keeps going; a
+  // Math.min here would instead retire the bar with lines still unread on the
+  // other column.
+  const roomUp = () => (state.left ? Math.max(span.left.start, span.right.start) - 1 - state.up : Infinity);
   const roomDown = () => (state.left
-    ? Math.min(state.left.length - span.left.end, state.right.length - span.right.end) - state.down
+    ? Math.max(state.left.length - span.left.end, state.right.length - span.right.end) - state.down
     : Infinity);
 
   const paintBars = () => {
@@ -392,16 +429,33 @@ function expandableDiff(o) {
         D.fileContent(o.epochId, span.left.gen, span.left.path),
         D.fileContent(o.epochId, span.right.gen, span.right.path),
       ]);
-      const text = (r) => ((r && typeof r.content === 'string' && !r.error) ? r.content : null);
+      // A TRUNCATED or BINARY read is not the file: the endpoint caps an
+      // inline read, so the last line of a truncated body is a cut, not the
+      // file's end, and expanding "to file end" into one would label the cut
+      // as the end. Both are the error path.
+      const text = (r) => ((r && typeof r.content === 'string' && !r.error && !r.truncated && !r.binary)
+        ? r.content : null);
       if (text(a) == null || text(b) == null) {
-        // The tree answered for the span but not for the file. Say that
+        // The tree answered for the span but not for the whole file. Say that
         // instead of leaving a control that does nothing.
         state.busy = false;
-        note('The surrounding file is not readable for one of these generations — the span above is all its records hold.');
+        note('The surrounding file is not readable in full for one of these generations — the span above is all this view can show.');
         return;
       }
-      state.left = text(a).replace(/\r\n/g, '\n').split('\n');
-      state.right = text(b).replace(/\r\n/g, '\n').split('\n');
+      const left = text(a).replace(/\r\n/g, '\n').split('\n');
+      const right = text(b).replace(/\r\n/g, '\n').split('\n');
+      // The span on screen came from the patch RECORD; these lines come from
+      // the TREE. They describe the same lines, so a disagreement means the
+      // two sources have drifted and an expanded slice would quietly replace
+      // the record's text with the tree's under the same labels. Keep the
+      // record and say why the expansion stopped.
+      if (!sameSpan(left, span.left, o.baseline) || !sameSpan(right, span.right, o.challenger)) {
+        state.busy = false;
+        note('The tree’s text at this span no longer matches the patch record — the span above is the record, and the surrounding lines cannot be shown under it.');
+        return;
+      }
+      state.left = left;
+      state.right = right;
     }
     const room = dir === 'up' ? roomUp() : roomDown();
     const step = Math.max(0, Math.min(by === Infinity ? room : by, room));

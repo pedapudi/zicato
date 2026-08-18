@@ -30,6 +30,10 @@ const V3_SPAN = ['RESEARCHER = """v3"""', 'CITE = True'];
 const V5_SPAN = ['RESEARCHER = """v5"""', 'CITE = True'];
 const V3_FILE = [...HEAD, ...V3_SPAN, ...TAIL].join('\n');
 const V5_FILE = [...HEAD, ...V5_SPAN, ...TAIL].join('\n');
+// The same span two lines into the LEFT file: the two columns then have very
+// different amounts above them.
+const SHORT_HEAD = ['pre_1 = 1', 'pre_2 = 2'];
+const V3_SHORT_FILE = [...SHORT_HEAD, ...V3_SPAN, ...TAIL].join('\n');
 
 const LINEAGE = { generations: [
   { generation_id: 'v0', parent_generation_id: null, epoch_id: EPOCH },
@@ -47,6 +51,9 @@ function version(gen, span, opts) {
 
 function install(opts) {
   const o = opts || {};
+  // The LEFT side's file and where its span sits in it; the right side keeps
+  // the shared fixture.
+  const left = o.left || { file: V3_FILE, start: 21, end: 22 };
   globalThis.fetch = async (path) => {
     const body = (() => {
       if (path.startsWith('/api/epoch')) return { epoch_id: EPOCH };
@@ -58,11 +65,15 @@ function install(opts) {
         epoch_id: EPOCH, mutation_id: SITE, file: PATH, line_start: 21, line_end: 22,
         provenance_note: '',
         baseline: { generation_id: 'v0', content: 'seed\n', provenance: 'snapshot', file: PATH, line_start: 21, line_end: 22 },
-        versions: o.versions || [version('v3', V3_SPAN), version('v5', V5_SPAN)],
+        versions: o.versions || [
+          version('v3', V3_SPAN, { line_start: left.start, line_end: left.end }),
+          version('v5', V5_SPAN),
+        ],
       };
       if (path.includes('/content')) {
         if (o.contentError) return { path: PATH, error: 'file not found' };
-        return { path: PATH, content: path.includes('/v5/') ? V5_FILE : V3_FILE, binary: false, truncated: false };
+        const content = path.includes('/v5/') ? V5_FILE : left.file;
+        return { path: PATH, content, binary: Boolean(o.binary), truncated: Boolean(o.truncated) };
       }
       if (path.includes('/patches')) return { patches: [
         { id: 'p5', mutation_id: SITE, op: 'replace', new_content: V5_SPAN.join('\n'), rationale: 'why' },
@@ -157,4 +168,39 @@ test('expand: a tree that cannot serve the file says so', async () => {
   assertEqual(buttons(host).length, 0, 'and the dead control is withdrawn');
 });
 
-run();
+test('expand: a truncated or binary read is not the file', async () => {
+  // The read endpoint caps an inline body, so the last line of a truncated
+  // read is a CUT. Expanding into one would label that cut "file end".
+  for (const flag of ['truncated', 'binary']) {
+    const host = await renderDiff({ [flag]: true });
+    await click(buttons(host)[0]);
+    assert(textOf(host).includes('not readable in full'), `${flag}: the limit is stated`);
+    assertEqual(buttons(host).length, 0, `${flag}: and no edge is claimed`);
+  }
+});
+
+test('expand: the shorter column does not retire the bar for the longer one', async () => {
+  // v3's span sits two lines into its file, v5's twenty. One click must take
+  // each column as far as ITS file allows, not stop both at two.
+  const host = await renderDiff({ left: { file: V3_SHORT_FILE, start: 3, end: 4 } });
+  await click(buttons(host)[0]);
+  const text = textOf(host);
+  assert(text.includes('head_1 = 1'), 'the right column reached its own file start');
+  assert(text.includes('pre_1 = 1'), 'and the left column reached its own');
+  assert(!buttons(host).some((b) => b.textContent.includes('↑')), 'only now is the up bar retired');
+});
+
+test('expand: a tree that disagrees with the record keeps the record', async () => {
+  // The file's span text differs from what the patch record holds. Growing
+  // into it would swap one source for the other under unchanged labels.
+  const drifted = [...HEAD, 'RESEARCHER = """drifted"""', 'CITE = True', ...TAIL].join('\n');
+  const host = await renderDiff({ left: { file: drifted, start: 21, end: 22 } });
+  await click(buttons(host)[0]);
+  const text = textOf(host);
+  assert(text.includes('no longer matches the patch record'), `the drift is stated: ${text}`);
+  assert(text.includes('"""v3"""'), 'the record’s span is still what is on screen');
+  assert(!text.includes('drifted'), 'and the tree’s text never replaces it');
+  assertEqual(buttons(host).length, 0, 'the bars withdraw rather than showing the other source');
+});
+
+await run();

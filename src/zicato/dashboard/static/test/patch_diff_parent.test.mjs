@@ -235,6 +235,33 @@ test('patch diff: choosing from the dropdown navigates to that baseline', async 
   assertEqual(seen[1][1], null, 'choosing the parent clears the base');
 });
 
+test('patch diff: picking the recorded parent is not a pick', async () => {
+  // `~base=v3` on a candidate whose parent IS v3 asks for the default view.
+  // Treating it as a pick would tint the strip and read "picked, not v3"
+  // over a column showing v3.
+  const host = await renderDiff({}, { mutId: SITE, base: 'v3' });
+  const text = textOf(host);
+  assertEqual(labels(host)[0], 'baseline · v3', 'the parent is the left column either way');
+  assert(!text.includes('picked, not'), `the strip claims no pick: ${text}`);
+  assert(text.includes('left column of every block below'), 'it reads as the default');
+  const tinted = host.querySelectorAll('[class]')
+    .filter((n) => (n.getAttribute('class') || '').split(/\s+/).includes('dn-basepick-picked'));
+  assertEqual(tinted.length, 0, 'and the strip is not tinted');
+});
+
+test('patch diff: a baseline reconstructed against another generation says so', async () => {
+  // v3's tree is gone and its patch recorded a VALUE, so the server rebuilt
+  // the span by writing that value into v0's text. Whatever v1 wrote at the
+  // site is not in it, and the column must not carry v3's authority silently.
+  const host = await renderDiff({ versions: [
+    { generation_id: 'v1', patch_id: 'p1', op: 'replace', rationale: 'first pass', content: 'RESEARCHER = """v1 instruction"""\n', provenance: 'snapshot' },
+    { generation_id: 'v3', patch_id: 'p3', op: 'set_numeric', rationale: 'second pass', content: V0_TEXT, provenance: 'records', reconstructed_against: 'v0' },
+    { generation_id: 'v5', patch_id: 'p5', op: 'replace', rationale: 'sharper brief', content: V5_TEXT, provenance: 'snapshot' },
+  ] }, { mutId: SITE });
+  assertEqual(labels(host)[0], 'baseline · v3 · reconstructed from v0', 'the column names both generations');
+  assert(textOf(host).includes('written into v0’s text'), `and the block says what that means: ${textOf(host)}`);
+});
+
 test('patch diff: an unknown pick falls back to the parent, not to nothing', async () => {
   const host = await renderDiff({}, { mutId: SITE, base: 'v99' });
   assertEqual(labels(host)[0], 'baseline · v3', 'a foreign pick degrades to the parent');
@@ -294,7 +321,10 @@ test('patch diff: the rows are the CANDIDATE\'s own patch set, whatever the base
   assert(text.includes('sharper brief'), "v5's own rationale is a row");
   assert(!text.includes('first pass'), "v1's patch is not a row");
   assert(!text.includes('second pass'), "v3's patch is not a row");
-  assert(text.includes('1'), 'the patched-site count covers only this candidate');
+  const tiles = host.querySelectorAll('[class]')
+    .filter((n) => (n.getAttribute('class') || '').split(/\s+/).includes('dn-stat'))
+    .map((n) => String(n.textContent || ''));
+  assertEqual(tiles[0], '1patched sites', 'the count is one site — this candidate\'s own');
 });
 
 test('patch diff: an earlier base flags the block whose lines are not the candidate\'s', async () => {
@@ -320,4 +350,4 @@ test('patch diff: a base that matches the parent at the site is not flagged', as
   assert(!textOf(host).includes('change alone'), 'identical content is not a mixed diff');
 });
 
-run();
+await run();
