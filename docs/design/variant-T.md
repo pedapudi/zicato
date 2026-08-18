@@ -317,7 +317,8 @@ Rejected / seed branches are unchanged.
 | `#/e/<epoch>/gens` | **Generations** — the **champion-defends banner** + a wrapping grid of compact **MATCH CARDS** (one per challenger round), plus the dense candidate roster (role · parent · scalar · Δ vs champion). Cards + rows open that candidate. |
 | `#/e/<epoch>/gen/<gen>[/<entry>]` | **Candidate** — lifecycle DAG (clickable patch node; **expandable board nodes** revealing per-run losses by rung; a **rung-progression strip** for racing candidates), per-board dot-plot (each row tagged with the **rung/round/matchup** it ran in so re-raced duplicates disambiguate; **clicking a row opens that exact run's board drill-down**), entry drill, **ALL match-ups**, and the **stacked promote gate**. |
 | `#/e/<epoch>/gen/<gen>~cmp=<gen2>` | **Candidate · COMPARE** — the SAME pane split into TWO candidate panels A \| B (S's comparison-first detail). |
-| `#/e/<epoch>/gen/<gen>/diff[/<mutId>]` | **Patch diff** — this candidate's side-by-side diff (baseline vs new content), reusing the mutation-viewer diff component. |
+| `#/e/<epoch>/gen/<gen>/diff[/<mutId>]` | **Patch diff** — this candidate's side-by-side diff against **the generation it was derived from** (its recorded parent), reusing the mutation-viewer diff component. Each block expands into the surrounding file. |
+| `#/e/<epoch>/gen/<gen>/diff[/<mutId>]~base=<gen2>` | **Patch diff · PICKED BASELINE** — the same view with the LEFT column moved to `<gen2>`. The right column and the rows stay this candidate's. |
 | `#/e/<epoch>/boards` | **Boards** — the board **trellis** (small-multiples; here per fix #6); cards route to the per-board view by entry id. |
 | `#/e/<epoch>/board/<entry>[/<gen>]` | **Per-board** — one entry across every candidate (sorted dot-plot + table) with the **inline side-by-side transcript** when a candidate is selected. |
 | `#/e/<epoch>/mutations[/<mutId>[/<gen>]]` | **Mutation surface** — site × generation matrix + side-by-side diff in one cohesive layout. A bare `<mutId>` pins the **SITE** (all generations that patched it, stacked); a trailing `<gen>` pins **ONE cell** (that single generation's diff). |
@@ -360,8 +361,13 @@ detail host holds the destination view.
    BOTH sides of a compare split.
 2. **Patch node → per-candidate diff** — the lifecycle "patch" node is clickable
    → `views/diff.js`, this candidate's SIDE-BY-SIDE diff from its own
-   `/api/files/{epoch}/{gen}/patches` + baseline `/api/mutations/{epoch}/{id}`
-   `.baseline.content` (the STRING, never the object).
+   `/api/files/{epoch}/{gen}/patches` against the content the site held in the
+   candidate's **recorded parent**. That content is read off
+   `/api/mutations/{epoch}/{id}`: the `versions[]` entry of the nearest
+   generation in the parent's own chain that patched the site, falling back to
+   `.baseline.content` (the STRING, never the object) for a site no ancestor
+   ever touched. The left column is LABELLED with the generation it actually
+   is, and a `~base=<gen>` hash suffix moves it to any other generation.
 3. **ALL match-ups for a candidate** — filters `/api/tournaments`.matchups where
    `champion==gen || challenger==gen`; v0 shows v0→v1 AND v0→v2.
 4. **Board view first-class** — reachable from the tree's Boards group

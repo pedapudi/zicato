@@ -312,11 +312,16 @@ def _baseline_surface(
     return _record_surface(paths, epoch_id), FROM_RECORDS
 
 
-def _reconstruct_content(baseline_content: str, patch: Any) -> tuple[str | None, str]:
+def _reconstruct_content(baseline_content: str, patch: Any) -> tuple[str | None, str, bool]:
     """Reconstruct a patch's post-apply content from the patch record.
 
-    Returns ``(content, note)``; ``content`` is ``None`` when the record
-    cannot honestly produce one, and ``note`` says why.
+    Returns ``(content, note, from_baseline)``; ``content`` is ``None``
+    when the record cannot honestly produce one, and ``note`` says why.
+    ``from_baseline`` is ``True`` when the content was produced by
+    substituting into ``baseline_content`` rather than carried by the
+    record itself — the reconstruction is then only as right as the
+    baseline it was substituted into, and the caller must say which
+    baseline that was.
 
     * ``replace`` — the applier writes ``new_content`` into the span
       verbatim, so the record IS the new content, exactly.
@@ -336,8 +341,8 @@ def _reconstruct_content(baseline_content: str, patch: Any) -> tuple[str | None,
     if op == "replace":
         new_content = getattr(patch, "new_content", None)
         if new_content is None:
-            return None, "the patch record carries no replacement content"
-        return str(new_content), ""
+            return None, "the patch record carries no replacement content", False
+        return str(new_content), "", False
 
     # The two value ops differ only in which constant they rewrite and how
     # the value renders back into source.
@@ -352,15 +357,15 @@ def _reconstruct_content(baseline_content: str, patch: Any) -> tuple[str | None,
     }
     spec = value_ops.get(op)
     if spec is None:
-        return None, f"unknown patch op {op!r}"
+        return None, f"unknown patch op {op!r}", False
     field, label, pattern, render = spec
     value = getattr(patch, field, None)
     if value is None:
-        return None, f"the patch record carries no {label} value"
+        return None, f"the patch record carries no {label} value", False
     rendered = render(value)
     if not pattern.search(baseline_content):
-        return None, f"{op} {rendered} — the constant sits outside the recorded span"
-    return pattern.sub(lambda _m: rendered, baseline_content, count=1), ""
+        return None, f"{op} {rendered} — the constant sits outside the recorded span", False
+    return pattern.sub(lambda _m: rendered, baseline_content, count=1), "", True
 
 
 def _recorded_patch(
@@ -530,6 +535,11 @@ def build_mutation_detail(paths: WorkspacePaths, epoch_id: str, mutation_id: str
       patch record when the tree is gone — plus the patch's ``op``,
       ``rationale`` and its own ``provenance``. The frontend diffs
       ``baseline.content`` against each ``versions[i].content``.
+      A reconstruction that had to substitute a recorded VALUE into a
+      span's text carries ``reconstructed_against`` naming the generation
+      whose text it substituted into (``v0``); anything an intermediate
+      generation wrote at the site is absent from such an entry, and the
+      view captions it rather than presenting it as that generation's own.
     * ``provenance_note`` — the caption to render whenever any part of
       the response was reconstructed from records; empty otherwise.
 
@@ -581,12 +591,20 @@ def build_mutation_detail(paths: WorkspacePaths, epoch_id: str, mutation_id: str
             # The tree is gone (GC, or an archived workspace). The patch
             # record still says what this generation wrote into the site.
             patch = _recorded_patch(store, epoch_id, generation_id, patch_info["patch_id"])
-            content, note = (
+            content, note, from_baseline = (
                 _reconstruct_content(baseline_point.content, patch)
                 if patch is not None
-                else (None, "no patch record for this generation")
+                else (None, "no patch record for this generation", False)
             )
             entry.update({"content": content, "provenance": FROM_RECORDS, "note": note})
+            if from_baseline:
+                # The value ops record a VALUE, not text, so this content is
+                # that value substituted into the BASELINE span — v0's text
+                # with this generation's constant in it. Whatever a generation
+                # in between wrote at the site is NOT represented, so the
+                # content cannot be presented as this generation's own without
+                # naming what it was reconstructed against.
+                entry["reconstructed_against"] = _BASELINE_GENERATION
             versions.append(entry)
             continue
         if generation_id not in enum_cache:
@@ -687,7 +705,7 @@ def reconstructed_spans(
         mutation_id = str(getattr(patch, "mutation_id", "") or "")
         point = baseline.get(mutation_id)
         old_content = point.content if point is not None else ""
-        new_content, note = _reconstruct_content(old_content, patch)
+        new_content, note, _ = _reconstruct_content(old_content, patch)
         spans.append(
             {
                 "path": _rel_file(point) if point is not None else "",

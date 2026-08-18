@@ -381,6 +381,14 @@ export function mutations(epochId) {
 export function patches(epochId, genId) {
   return cachedJson(`/api/files/${enc(epochId)}/${enc(genId)}/patches`);
 }
+// ONE file's text out of ONE generation's source tree. Backs the patch
+// diff's context EXPANSION: the span is what the patch record holds, the
+// surrounding lines only exist in the tree. A generation whose tree GC
+// pruned answers with an `error` field — the caller hides the control
+// rather than pretending the file is there.
+export function fileContent(epochId, genId, path) {
+  return cachedJson(`/api/files/${enc(epochId)}/${enc(genId)}/content?path=${enc(path)}`);
+}
 // ONE mutation site's baseline (v0) string content + per-generation versions —
 // the LEFT column of the side-by-side diff (.baseline.content, NOT the object).
 export function mutationDetail(epochId, mutationId) {
