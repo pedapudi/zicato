@@ -414,6 +414,7 @@ def build_round_pipeline(paths: WorkspacePaths) -> dict[str, Any]:
         LIVENESS_INTERRUPTED,
         LIVENESS_LIVE,
         derive_liveness,
+        fresh_run_count,
         read_active_runs_view,
         read_active_tournament_dict,
         read_heartbeat_dict,
@@ -422,7 +423,11 @@ def build_round_pipeline(paths: WorkspacePaths) -> dict[str, Any]:
     hb = read_heartbeat_dict(paths)
     tournament = read_active_tournament_dict(paths)
     try:
-        run_count = len(read_active_runs_view(paths))
+        # Count records still BEATING, never records on disk: an
+        # active_runs file outlives the worker that wrote it, so the file
+        # count over-reports in flight by every dead unit (#268). One rule,
+        # shared with derive_liveness.
+        run_count = fresh_run_count(read_active_runs_view(paths))
     except Exception:  # noqa: BLE001 — best-effort
         run_count = 0
 
