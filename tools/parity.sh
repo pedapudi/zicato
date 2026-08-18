@@ -48,8 +48,10 @@ SKIP=()
 while [ $# -gt 0 ]; do
   case "$1" in
     --update) UPDATE=1; shift ;;
-    --only) ONLY+=($(echo "$2" | tr ',' ' ')); shift 2 ;;
-    --skip) SKIP+=($(echo "$2" | tr ',' ' ')); shift 2 ;;
+    # Split a comma list without an unquoted expansion: an unquoted $() is
+    # subject to pathname expansion, so `--only '*'` would glob the cwd.
+    --only) IFS=',' read -r -a _vals <<< "$2"; ONLY+=(${_vals[@]+"${_vals[@]}"}); shift 2 ;;
+    --skip) IFS=',' read -r -a _vals <<< "$2"; SKIP+=(${_vals[@]+"${_vals[@]}"}); shift 2 ;;
     *) echo "unknown arg: $1" >&2; exit 2 ;;
   esac
 done
