@@ -18,8 +18,8 @@ The baseline and final ratchet use the same metric:
 
 | Measurement | Baseline (`f9052dd`) | Current limit | Net reduction |
 |---|---:|---:|---:|
-| Total | 408,547 | 411,536 | -2,989 |
-| Production | 197,588 | 197,858 | -270 |
+| Total | 408,547 | 412,609 | -4,062 |
+| Production | 197,588 | 198,388 | -800 |
 
 The earlier raw count of 425,755 included lockfiles and generated artifacts and
 is retained in `.line-budget.json` for provenance; it is not the enforced
@@ -63,3 +63,5 @@ increase.
 | Unit provenance (production) | 197,312 | +163 | 197,475 | Issues #242 + #245: the three OUTPUT-only loss fields, worker stamping, attempt recording, and the carried-champion attempt guard. |
 | Patch diff against the recorded parent (total) | 410,555 | +981 | 411,536 | Issue #253: the lineage-resolved baseline with a pickable base and context expansion, plus the truncation, per-column-room, record-vs-tree, and reconstruction-caption regressions. |
 | Patch diff against the recorded parent (production) | 197,475 | +383 | 197,858 | Issue #253: the diff view's baseline resolution, the base picker, the expansion machinery, and the reconstructed_against flag on mutation detail. |
+| Per-entry outcomes on the configured signal (total) | 411,536 | +1,073 | 412,609 | Issue #246: the served decided_by resolver, the shared replicate-score enumeration, the six-surface client sweep, and the signal regressions. |
+| Per-entry outcomes on the configured signal (production) | 197,858 | +530 | 198,388 | Issue #246: delta_score/score_se/drift_present on the matchup grid and per-entry readers plus the channel-aware figure. |
