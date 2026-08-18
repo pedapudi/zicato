@@ -29,7 +29,10 @@ from pathlib import Path
 
 import zicato.dashboard as _dashboard_pkg
 
-STATIC_DIR = Path(_dashboard_pkg.__file__).resolve().parent / "static"
+# Deliberately NOT resolved: an installed tree may stage the package as
+# symlinks, and resolving would walk into whatever tree they point at
+# instead of scanning the tree that is actually served.
+STATIC_DIR = Path(str(_dashboard_pkg.__file__)).parent / "static"
 
 #: Every text source under the dashboard's static tree. Deliberately the
 #: WHOLE tree rather than the two directories today's pins happen to scan

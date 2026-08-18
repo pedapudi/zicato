@@ -18,8 +18,8 @@ The baseline and final ratchet use the same metric:
 
 | Measurement | Baseline (`f9052dd`) | Current limit | Reduction |
 |---|---:|---:|---:|
-| Total | 408,547 | 408,050 | 497 |
-| Production | 197,588 | 196,418 | 1,170 |
+| Total | 408,547 | 408,136 | 411 |
+| Production | 197,588 | 196,434 | 1,154 |
 
 The earlier raw count of 425,755 included lockfiles and generated artifacts and
 is retained in `.line-budget.json` for provenance; it is not the enforced
@@ -50,3 +50,5 @@ increase.
 | Execution-tree stated statuses and delegation nesting (total) | 407,860 | +158 | 408,018 | Statuses from invocation boundary-exit and cancel events; delegation observations nest under the delegating invocation's stated id; regression coverage for deep agent/tool mixtures. |
 | Execution-tree stated statuses and delegation nesting (production) | 196,369 | +51 | 196,420 | Boundary-exit and cancel status handling plus the explicit delegation parent edge in the transcript reader. |
 | Execution-tree error-visibility regressions (total) | 408,018 | +32 | 408,050 | Renderer tests pinning failed/cancelled styling on branch, leaf, and tool nodes and live error repaint of the run rail; the accompanying recursive rail signature reduced production by 2 (ratcheted to 196,418). |
+| Lexical static-file guard (total) | 408,050 | +86 | 408,136 | Issue #231: first coverage of the static guard — a traversal-refusal test and a symlink-staged bundle test — plus non-emptiness floors on the package-tree walks the structural pins depend on. |
+| Lexical static-file guard (production) | 196,418 | +16 | 196,434 | Issue #231: lexical normalize-and-reject in `_serve_static` and the unresolved-first relative path in `_rel_file`. |

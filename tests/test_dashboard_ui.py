@@ -29,7 +29,10 @@ import pytest
 # this test layout-agnostic.
 import zicato.dashboard as _dashboard_pkg  # noqa: E402
 
-STATIC_DIR = Path(_dashboard_pkg.__file__).resolve().parent / "static"
+# Deliberately NOT resolved: an installed tree may stage the package as
+# symlinks, and resolving would walk into whatever tree they point at
+# instead of scanning the tree that is actually served.
+STATIC_DIR = Path(str(_dashboard_pkg.__file__)).parent / "static"
 
 
 @pytest.fixture(scope="module")
@@ -126,6 +129,25 @@ def _served_text_files() -> list[Path]:
             continue
         files.append(path)
     return sorted(files)
+
+
+# ---------------------------------------------------------------------------
+# The bundle walk itself
+# ---------------------------------------------------------------------------
+
+
+def test_js_bundle_walk_finds_the_modules() -> None:
+    """The JS walk resolves, so every assertion over the bundle has input.
+
+    ``_js_bundle_files`` degrades silently: if ``js/`` is missing or the
+    walk lands somewhere without it, the "bundle" is the entry point
+    alone and every grep-shaped assertion over the concatenation still
+    passes, having read a few hundred bytes. The floor makes that
+    degradation a failure instead of a green run.
+    """
+    files = _js_bundle_files()
+    assert len(files) > 20, f"the JS bundle walk found only {len(files)} files"
+    assert (STATIC_DIR / "app_T.js") in files
 
 
 # ---------------------------------------------------------------------------
