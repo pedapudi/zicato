@@ -315,6 +315,18 @@ def mutations_json_path(workspace_root: Path, epoch_id: str) -> Path:
     return _layout(workspace_root).mutations(epoch_id)
 
 
+def proposer_inputs_path(workspace_root: Path, epoch_id: str) -> Path:
+    """Path to an epoch's captured proposer inputs (``proposer_inputs.jsonl``).
+
+    Append-only, one line per proposer LLM call, holding the rendered
+    system + user text verbatim plus the lineage coordinates that identify
+    the call (:mod:`zicato.proposer.input_capture`). It lives under the
+    epoch directory rather than ``runtime/`` because it is durable history
+    that must survive a resume, not live process state.
+    """
+    return _layout(workspace_root).proposer_inputs(epoch_id)
+
+
 def ladder_state_path(workspace_root: Path, epoch_id: str) -> Path:
     """Path to an epoch's persisted Ladder governor state (``ladder_state.json``).
 
@@ -468,6 +480,7 @@ __all__ = [
     "patches_dir",
     "patch_json_path",
     "mutations_json_path",
+    "proposer_inputs_path",
     "ladder_state_path",
     "journal_path",
     "analysis_path",

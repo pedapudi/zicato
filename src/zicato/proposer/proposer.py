@@ -43,6 +43,7 @@ from zicato.core.types import (
     ProposerSkill,
 )
 from zicato.proposer.brief import enforce_forbidden
+from zicato.proposer.input_capture import ROLE_PROPOSAL, capture_proposer_input
 from zicato.proposer.prompts import render_system_prompt, render_user_prompt
 from zicato.proposer.structured import (
     ExperimentParseError,
@@ -112,6 +113,7 @@ async def propose_experiment(
     sample_hint: str = "",
     mutation_track_records: Mapping[str, MutationTrackRecord] | None = None,
     revise_feedback: str = "",
+    slot_index: int | None = None,
 ) -> Experiment:
     """Compose prompts, call the auxiliary LLM, parse the response.
 
@@ -318,6 +320,13 @@ async def propose_experiment(
         default) seeds nothing — every existing caller renders a
         byte-identical first prompt.
 
+    slot_index:
+        Optional best-of-N slate coordinate, recorded on this call's
+        durable input capture (:mod:`zicato.proposer.input_capture`) so
+        the concurrently-written records of one round's slate can be told
+        apart. It reaches no renderer — the prompt is byte-identical with
+        or without it. ``None`` (the default) is a call outside a slate.
+
     Raises
     ------
     ProposerError
@@ -363,7 +372,7 @@ async def propose_experiment(
     attempt_errors: list[str] = []
 
     total_attempts = max_retries + 1
-    for _attempt in range(total_attempts):
+    for attempt in range(total_attempts):
         user_prompt = render_user_prompt(
             current_loss_summary=current_loss_summary,
             patterns=patterns_list,
@@ -381,6 +390,22 @@ async def propose_experiment(
             calibration=calibration,
             sample_hint=sample_hint,
             mutation_track_records=mutation_track_records,
+        )
+        # Durable input capture, BEFORE the call: an attempt that times out
+        # is precisely the one whose prompt is worth reading, and each retry
+        # renders its own repair feedback, so every attempt lands its own
+        # record. Best-effort — it cannot fail the round.
+        capture_proposer_input(
+            workspace_root=workspace_root,
+            epoch_id=epoch_id,
+            role=ROLE_PROPOSAL,
+            system=system_prompt,
+            user=user_prompt,
+            model=model,
+            parent_generation_id=parent_generation_id,
+            new_generation_id=new_generation_id,
+            attempt=attempt,
+            slot=slot_index,
         )
         # Meta-loop bookends: one paired ``proposer_call_started`` /
         # ``proposer_call_completed`` per attempt. ``invocation_id`` is

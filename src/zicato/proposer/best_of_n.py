@@ -138,6 +138,11 @@ from zicato.proposer.agent import NativeSlateProposer, ProposerAgent, ProposerCo
 # alongside the failure-mode-conditioned FAILURE_MODE_HINTS and the pure
 # slot→hint mapping); re-exported here so every existing import keeps working.
 from zicato.proposer.hints import EDIT_CLASS_HINTS, hint_for_slot, strategy_for_slot
+from zicato.proposer.input_capture import (
+    ROLE_CRITIQUE,
+    ROLE_RECOMBINE_MERGE,
+    capture_proposer_input,
+)
 from zicato.proposer.prompts import render_user_prompt
 from zicato.proposer.proposer import ProposerError
 from zicato.scoring.diff_complexity import diff_char_size as _diff_size
@@ -835,7 +840,7 @@ class BestOfNProposerAgent:
         from zicato.telemetry.meta_loop import SPAN_SLOT, meta_span  # noqa: PLC0415
 
         validate, cleanup = self._slot_validate_lease(ctx)
-        slot_ctx = replace(ctx, validate_experiment=validate)
+        slot_ctx = replace(ctx, validate_experiment=validate, slot_index=sample)
         degraded_errors: tuple[str, ...] = ()
         try:
             # Slate-slot span: the N slots gather concurrently, so these render
@@ -1080,6 +1085,17 @@ class BestOfNProposerAgent:
             custom_judge_names=ctx.custom_judge_names or frozenset(),
         )
         aux_call_llm = self._depth_call_llm(ctx)
+        capture_proposer_input(
+            workspace_root=ctx.workspace_root,
+            epoch_id=ctx.epoch_id,
+            role=ROLE_RECOMBINE_MERGE,
+            system=system_prompt,
+            user=user_prompt,
+            model=ctx.model,
+            parent_generation_id=ctx.parent_generation_id,
+            new_generation_id=ctx.new_generation_id,
+            slot=ctx.slot_index,
+        )
         try:
             response = await aux_call_llm(system_prompt, user_prompt, ctx.model)
         except Exception as exc:  # noqa: BLE001 — opaque LLM errors are common
@@ -1450,6 +1466,18 @@ class BestOfNProposerAgent:
             f"{screen_note}\n"
             f"Respond with ONLY the integer index (0..{len(candidates) - 1}) "
             "of the best candidate."
+        )
+        # The critique is the call that picks the winner, so its input is the
+        # record that answers "which candidate shipped, and on what basis".
+        capture_proposer_input(
+            workspace_root=ctx.workspace_root,
+            epoch_id=ctx.epoch_id,
+            role=ROLE_CRITIQUE,
+            system=_CRITIC_SYSTEM_PROMPT,
+            user=user_prompt,
+            model=ctx.model,
+            parent_generation_id=ctx.parent_generation_id,
+            new_generation_id=ctx.new_generation_id,
         )
         try:
             response = await aux_call_llm(_CRITIC_SYSTEM_PROMPT, user_prompt, ctx.model)

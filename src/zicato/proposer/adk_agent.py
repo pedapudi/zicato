@@ -60,6 +60,7 @@ from typing import TYPE_CHECKING, Any
 from zicato.core.types import Experiment, ProposerSpec
 from zicato.import_path import explain_attribute_error
 from zicato.proposer.brief import enforce_forbidden
+from zicato.proposer.input_capture import ROLE_PROPOSAL, capture_proposer_input
 from zicato.proposer.prompts import render_system_prompt, render_user_prompt
 from zicato.proposer.proposer import ProposerError
 from zicato.proposer.structured import (
@@ -479,8 +480,24 @@ class ADKProposerAgent:
         feedback = ctx.revise_feedback
         attempt_errors: list[str] = []
         total_attempts = ctx.max_retries + 1
-        for _attempt in range(total_attempts):
+        for attempt in range(total_attempts):
             task_text = _render_task_text(self.spec, ctx, feedback)
+            # Durable input capture, BEFORE the run (an attempt that raises
+            # is the one worth reading back). The agent owns the static
+            # instruction half, so only the task text is zicato's to record
+            # and the record's ``system`` is empty by design.
+            capture_proposer_input(
+                workspace_root=ctx.workspace_root,
+                epoch_id=ctx.epoch_id,
+                role=ROLE_PROPOSAL,
+                system="",
+                user=task_text,
+                model=ctx.model,
+                parent_generation_id=ctx.parent_generation_id,
+                new_generation_id=ctx.new_generation_id,
+                attempt=attempt,
+                slot=ctx.slot_index,
+            )
             try:
                 with bind_proposer_tool_context(tool_ctx):
                     response_text = await self._run_agent_once(agent, task_text)

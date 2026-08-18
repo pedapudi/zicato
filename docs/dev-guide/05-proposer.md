@@ -275,6 +275,7 @@ folded to counts), **REDACTED** (mechanically scrubbed content), **SANITIZED**
 | `failure_profile` | `str = ""` | orchestrator: `_render_failure_profile(TRAIN losses, weights)` — pre-rendered, **already banded** | spliced as `## Failure-mode profile`; `hint_for_slot` parses its stable line shapes for the dominant mode | BANDED + AGGREGATED (every number through `_band_rate`/`_band_quality`; board-anonymous by construction) |
 | `process_exemplars` | `str = ""` | orchestrator: `_render_process_exemplars_block` — **opt-in** (`proposer_quality.process_exemplars > 0`), best-effort | spliced as `## Process exemplars` directly after the failure profile; also fed to the critic | REDACTED (R1–R4, §5.8.3); train-only; empty at default |
 | `sample_hint` | `str = ""` | the **best-of-N wrapper** (`replace(ctx, sample_hint=hint_for_slot(i, n, profile))`) — never the orchestrator | `render_user_prompt` → `## Edit-class hint (this sample)` at the very top | IDENTITY-FREE (static instruction strings only) |
+| `slot_index` | `int \| None = None` | the **best-of-N wrapper** (`replace(ctx, slot_index=sample)` in `_run_one_slot`) — never the orchestrator | the input capture only (§5.5.1), to tell one slot's records from a sibling's in the epoch's shared capture file; reaches NO renderer | MACHINERY |
 | `revise_feedback` | `str = ""` | the **best-of-N wrapper**, only on the ONE all-vetoed revise re-sample (`_render_revise_feedback`) | both engines seed the FIRST attempt's `feedback` slot with it; retries overwrite it | AGGREGATED (composed solely of counts-only screen reason strings + static text) |
 | `mutation_track_records` | `Mapping[str, MutationTrackRecord] \| None = None` | orchestrator: `_load_mutation_track_records` (best-effort index read, `{}` on failure) | `render_mutation_block(track_records=…)` — one banded advisory line per manifest entry; the `mutation_track_record` tool renders the same shape | BANDED + AGGREGATED ("experiments touching this point"; Δscalar bucketed; never causal) |
 | `round_event_emitter` | `Callable[[str, dict], None] \| None = None` | orchestrator: `_RoundLogEmitter.emit` | best-of-N wrapper via `_emit_round_event` (guarded — a raising emitter never fails a propose) | MACHINERY |
@@ -744,6 +745,58 @@ Two rendering rules worth internalizing:
 > what the model sees. Any prompt edit must run
 > `tests/test_proposer_prompts.py` (which pins section ordering, banding, and
 > the byte-identical-at-default properties).
+
+### 5.5.1 Reading back what the proposer saw
+
+The renderers are pure, but the channels they render from (patterns, the loss
+summary, the prior-experiment digest, genealogy, calibration, the retry
+feedback) are assembled per round and not otherwise persisted, so a past
+round's prompt cannot be re-derived from the workspace. Every proposer LLM
+call therefore writes its rendered input verbatim to
+`epochs/{epoch_id}/proposer_inputs.jsonl` before the call is made
+(`src/zicato/proposer/input_capture.py`; the path comes from
+`proposer_inputs_path()` / `WorkspaceLayout.proposer_inputs()`, never a
+spelled-out filename). Read it back with
+`read_proposer_inputs(workspace_root, epoch_id)`, which yields records
+oldest-first.
+
+One line per call, at all four sites, tagged by `role`:
+
+| `role` | Site | What the record holds |
+|---|---|---|
+| `proposal` | the text shim's retry loop (`proposer.py`) | `render_system_prompt` + `render_user_prompt`, one record per attempt |
+| `proposal` | the default ADK agent (`adk_agent.py`) | `_render_task_text`; `system` is EMPTY because the agent owns its static instruction |
+| `critique` | best-of-N selection (`best_of_n.py`) | `_CRITIC_SYSTEM_PROMPT` + the critic's slate prompt |
+| `recombine_merge` | the LLM merge slot (`best_of_n.py`) | `render_recombine_merge_prompt`'s two halves |
+
+Each record also carries `ts`, the lineage coordinates (`epoch_id`,
+`parent_generation_id`, `new_generation_id`), the `model` string, the
+`attempt` index where the site retries, and the `slot` index where the call
+belongs to a best-of-N slate.
+
+Four properties to preserve when touching this:
+
+- **Capture runs BEFORE the call.** The attempt that times out is the one
+  whose input matters; the response path never runs for it.
+- **The write is best-effort and never raises** (DEBUG log, round continues),
+  and the reader tolerates an absent file and an unparseable FINAL line. An
+  unparseable interior line raises — under the append-only writer only the
+  tail can be torn.
+- **The append is one `os.write()` on an `O_APPEND` fd under a process-local
+  lock** keyed by path, because a best-of-N slate has several writers and a
+  buffered text write is several syscalls. Do not route this through
+  `StorageBackend.append_jsonl`: it skips the outer→inner `.zicato/` descent
+  and its append is unlocked and buffered.
+- **Capture is unconditional.** The file is a new at-rest location for
+  board-derived content beside `brief.md` and `mutations.json`, and exposes
+  nothing to the proposer that the proposer did not already receive, so the
+  envelope of §5.8 is unaffected. It is not free: one proposal record against
+  a 15-point manifest measures ~23 KB, so a default round (three slate slots
+  plus the critique) writes on the order of 90 KB, and a 100-round epoch a few
+  megabytes. Nothing prunes it — `zicato epoch gc` removes generation source
+  trees only — so if that growth ever bites, the fix is an opt-OUT knob, not a
+  default-off flag: a diagnostic nobody enabled in advance is absent from
+  exactly the round that needed it.
 
 ---
 
