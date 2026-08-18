@@ -348,7 +348,7 @@ def test_an_attempt_record_never_reads_as_a_replicate(tmp_path: Path) -> None:
     them, or a discarded execution would become a scoring draw.
     """
     from zicato.query.eval_view import _cell_evidence_replicate_index
-    from zicato.reflection.corpus import _LOSS_REPLICATE_RE, _discover_replicate_losses
+    from zicato.tournament.unit_cache import _LOSS_REPLICATE_RE, own_code_board_draws
 
     run_dir = tmp_path / "runs" / "entry_a"
     run_dir.mkdir(parents=True)
@@ -357,7 +357,7 @@ def test_an_attempt_record_never_reads_as_a_replicate(tmp_path: Path) -> None:
     for name in ("loss.json", "loss.r1000.json", "loss.a1.json", "loss.r1000.a1.json"):
         write_loss_profile(make_loss_profile(), run_dir / name)
 
-    assert [p.name for _, p in _discover_replicate_losses(run_dir)] == [
+    assert [p.name for _, p in own_code_board_draws(run_dir)] == [
         "loss.json",
         "loss.r1000.json",
     ]
@@ -371,7 +371,7 @@ def test_an_attempt_record_never_reads_as_a_replicate(tmp_path: Path) -> None:
 
 def test_attempt_records_do_not_move_the_folded_per_entry_loss(tmp_path: Path) -> None:
     """Scoring reads the same replicate set before and after attempts exist."""
-    from zicato.reflection.corpus import _discover_replicate_losses
+    from zicato.tournament.unit_cache import own_code_board_draws
 
     run_dir = tmp_path / "runs" / "entry_a"
     run_dir.mkdir(parents=True)
@@ -381,7 +381,7 @@ def test_attempt_records_do_not_move_the_folded_per_entry_loss(tmp_path: Path) -
     )
 
     def _folded() -> float:
-        profiles = [read_loss_profile(p) for _, p in _discover_replicate_losses(run_dir)]
+        profiles = [read_loss_profile(p) for _, p in own_code_board_draws(run_dir)]
         return _average_losses([{"entry_a": p} for p in profiles])["entry_a"].drift_loss
 
     assert _folded() == pytest.approx(3.0)
