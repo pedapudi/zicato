@@ -108,6 +108,7 @@ directory.
       scoring.json                   # weights + tournament thresholds
       config.json                    # EpochConfig (id, name, contract_hash, closed)
       mutations.json                 # most-recent mutation-point enumeration
+      proposer_inputs.jsonl          # one line per proposer LLM call: its rendered input
       generations/
         v0/
           snapshot/                  # inner-harness source at this generation

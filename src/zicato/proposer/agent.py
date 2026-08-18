@@ -192,6 +192,13 @@ class ProposerContext:
     #: it composes with the restricted-visibility envelope untouched. Empty
     #: (the default — every single-sample propose) renders no section.
     sample_hint: str = ""
+    #: Optional best-of-N slate coordinate, stamped by the wrapper on each
+    #: slot's context alongside ``sample_hint``. It reaches no renderer: its
+    #: only consumer is the durable input capture
+    #: (:mod:`zicato.proposer.input_capture`), which needs it to tell one
+    #: slot's records from a sibling's in the epoch's shared capture file.
+    #: ``None`` (the default — every single-sample propose) records no slot.
+    slot_index: int | None = None
     #: Optional seed for the repair-feedback loop's FIRST attempt — the
     #: screen-informed revise channel (WS-R). The best-of-N wrapper stamps
     #: the all-vetoed slate's COUNTS-ONLY veto summary here (never an entry
@@ -350,6 +357,7 @@ async def propose_via_engine(
         sample_hint=ctx.sample_hint,
         mutation_track_records=ctx.mutation_track_records,
         revise_feedback=ctx.revise_feedback,
+        slot_index=ctx.slot_index,
     )
 
 

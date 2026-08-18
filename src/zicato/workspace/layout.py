@@ -99,6 +99,10 @@ class WorkspaceLayout:
         """One epoch's per-round mutation-points snapshot (``mutations.json``)."""
         return self.epoch_dir(epoch_id) / "mutations.json"
 
+    def proposer_inputs(self, epoch_id: str) -> Path:
+        """One epoch's captured proposer inputs (``proposer_inputs.jsonl``)."""
+        return self.epoch_dir(epoch_id) / "proposer_inputs.jsonl"
+
     def contract_components(self, epoch_id: str) -> Path:
         """One epoch's per-component contract sub-hashes (``contract_components.json``)."""
         return self.epoch_dir(epoch_id) / "contract_components.json"
