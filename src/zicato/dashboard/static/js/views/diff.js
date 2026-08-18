@@ -163,7 +163,6 @@ export async function render(host, ctx, params) {
     nodes.push(el('div', { class: 'dn-panel dn-row' }, [
       stat(String(myPatches.length || fileEntries.length), pinned ? 'pinned site' : 'patched sites'),
       stat(genId, 'candidate'),
-      stat(baseGen || '—', baseGen && baseGen === recordedParent ? 'baseline · parent' : 'baseline · picked'),
       el('div', { class: 'dn-stat' }, [el('a', { class: 'dn-linkbtn', href: ctx.href('candidate', { epochId, gen: genId }), text: '← back to candidate' })]),
     ]));
 
@@ -171,9 +170,9 @@ export async function render(host, ctx, params) {
       // The SAME select the candidate compare uses — one picker idiom across
       // the console. The parent is the default option, so choosing it clears
       // `~base=` and returns to the canonical URL.
-      nodes.push(el('div', { class: 'dn-panel dn-row dn-basepick' }, [
+      nodes.push(el('div', { class: 'dn-panel dn-row dn-basepick' + (pickedBase ? ' dn-basepick-picked' : '') }, [
         comparePicker({
-          label: 'diff against…',
+          label: 'baseline',
           current: genId,
           value: pickedBase || '',
           noneLabel: recordedParent ? `${recordedParent} · parent` : '— parent —',
@@ -182,6 +181,11 @@ export async function render(host, ctx, params) {
             .filter((o) => o.id !== recordedParent),
           onChange: (v) => ctx.navigate('diff', { epochId, gen: genId, mutId: pinned, base: v || null }),
         }),
+        // What the control DOES, next to the control. The left column is the
+        // only thing it moves, and a non-default choice says so louder.
+        el('span', { class: 'dn-basepick-hint', text: pickedBase
+          ? `left column · picked, not ${recordedParent || 'the parent'}`
+          : 'left column of every block below' }),
       ]));
     }
 

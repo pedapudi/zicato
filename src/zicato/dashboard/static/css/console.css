@@ -2392,8 +2392,18 @@
   .dn-board-sel { outline: 2px solid var(--v2-accent); outline-offset: -2px; }
   a.dn-linkbtn.dn-linkbtn-on { color: var(--v2-paper); background: var(--v2-accent); border-radius: 3px; }
   /* the patch diff's BASELINE picker — which version the left column is.
-     Same select as the candidate compare; the panel just seats it. */
-  .dn-basepick { --dt-row-gap: 8px; align-items: baseline; }
+     Same select as the candidate compare, but this one is the page's ONE
+     control, so it carries the accent rather than sitting flat among the
+     read-only panels. A non-default choice tints the whole strip: the diff
+     on screen is then not the default one, and that must not be quiet. */
+  .dn-basepick { --dt-row-gap: 10px; align-items: center; gap: 10px;
+    border-left: 3px solid var(--v2-accent); }
+  .dn-basepick .dt-cmp-picker-lab { color: var(--v2-accent); }
+  .dn-basepick .dt-cmp-select { border-color: var(--v2-accent); font-weight: 700; }
+  .dn-basepick-hint { font-family: var(--v2-mono); color: var(--v2-ink-faint);
+    font-size: calc(10.5px * var(--dt-font-scale, 1)); }
+  .dn-basepick.dn-basepick-picked { background: color-mix(in srgb, var(--v2-accent) 10%, var(--v2-panel)); }
+  .dn-basepick.dn-basepick-picked .dn-basepick-hint { color: var(--v2-accent); }
   /* a RUNNING candidate row — its loss is not scored yet; the live link reads
      "watch live →" and tints with the good/live accent (theme-aware). */
   .dn-board-table tr.dn-board-running td { background: color-mix(in srgb, var(--v2-good) 7%, transparent); }
