@@ -374,9 +374,7 @@ fn is_events_file(path: &Path) -> bool {
     else {
         return false;
     };
-    !index.is_empty()
-        && !index.starts_with('0')
-        && index.chars().all(|ch| ch.is_ascii_digit())
+    !index.is_empty() && !index.starts_with('0') && index.chars().all(|ch| ch.is_ascii_digit())
 }
 
 /// Assemble `GET /api/run-log`. Never fails: a missing/absent log file
