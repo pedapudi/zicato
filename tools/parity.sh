@@ -31,8 +31,8 @@
 # -----
 #   bash tools/parity.sh                 # run every gate
 #   bash tools/parity.sh --update        # (re)capture every golden baseline
-#   bash tools/parity.sh --only PYTEST   # run a single gate (repeatable)
-#   bash tools/parity.sh --skip PYTEST   # skip a gate (repeatable)
+#   bash tools/parity.sh --only PYTEST   # run a gate (repeatable, or A,B)
+#   bash tools/parity.sh --skip PYTEST   # skip a gate (repeatable, or A,B)
 #
 # Exit code is 0 only if every selected gate passed.
 
@@ -48,8 +48,10 @@ SKIP=()
 while [ $# -gt 0 ]; do
   case "$1" in
     --update) UPDATE=1; shift ;;
-    --only) ONLY+=("$2"); shift 2 ;;
-    --skip) SKIP+=("$2"); shift 2 ;;
+    # Split a comma list without an unquoted expansion: an unquoted $() is
+    # subject to pathname expansion, so `--only '*'` would glob the cwd.
+    --only) IFS=',' read -r -a _vals <<< "$2"; ONLY+=(${_vals[@]+"${_vals[@]}"}); shift 2 ;;
+    --skip) IFS=',' read -r -a _vals <<< "$2"; SKIP+=(${_vals[@]+"${_vals[@]}"}); shift 2 ;;
     *) echo "unknown arg: $1" >&2; exit 2 ;;
   esac
 done
@@ -65,10 +67,10 @@ _selected() {
   local gate="$1"
   if [ ${#ONLY[@]} -gt 0 ]; then
     local found=0
-    for g in "${ONLY[@]}"; do [ "$g" = "$gate" ] && found=1; done
+    for g in ${ONLY[@]+"${ONLY[@]}"}; do [ "$g" = "$gate" ] && found=1; done
     [ $found -eq 1 ] || return 1
   fi
-  for g in "${SKIP[@]}"; do [ "$g" = "$gate" ] && return 1; done
+  for g in ${SKIP[@]+"${SKIP[@]}"}; do [ "$g" = "$gate" ] && return 1; done
   return 0
 }
 
@@ -147,7 +149,7 @@ fi
 
 # --- VERDICT ----------------------------------------------------------------
 _banner "PARITY VERDICT"
-for r in "${RESULTS[@]}"; do
+for r in ${RESULTS[@]+"${RESULTS[@]}"}; do
   gate="${r%%$'\t'*}"; status="${r##*$'\t'}"
   if [ "$status" = "PASS" ]; then
     printf '  \033[32mPASS\033[0m  %s\n' "$gate"
