@@ -5,17 +5,18 @@ real subprocess workers whose deterministic policy adapter emits REAL
 goldfive lifecycle frames (``run_started``, one ``drift_detected`` per
 remaining planted defect token, ``run_completed``) through the worker's
 JSONL sink — so a contract that opts into
-``proposer_quality.process_exemplars`` must, from round 2 onward (once
-the champion has telemetry), splice a redacted ``## Process exemplars``
-section into the proposer's user prompt, anchored on the planted
-``unexpected_output`` drift.
+``proposer_quality.process_exemplars`` must splice a redacted
+``## Process exemplars`` section into the proposer's user prompt, anchored
+on the planted ``unexpected_output`` drift.
 
 Asserted here, per ``docs/design/PROCESS-EXEMPLARS.md``:
 
-* round 1 (no parent telemetry) renders NO exemplar section — the
-  best-effort extraction degrades to the empty-string sentinel;
-* round 2 renders the section, positioned after the failure-mode
-  profile, with the anchor drift's closed-vocabulary fields visible;
+* round 1 already renders the section: the contract pre-flight evaluates
+  the champion over the whole board before the first duel exists, so the
+  champion's baseline losses (and therefore its patterns and its event
+  footprint) are in hand from the first proposal onward;
+* round 2 renders it too, positioned after the failure-mode profile, with
+  the anchor drift's closed-vocabulary fields visible;
 * REDACTION holds on real worker-written events: no board entry id, no
   board input text (the task prompt rides ``run_started.goal_summary``,
   an unlisted case), and no run id reaches the prompt.
@@ -103,7 +104,7 @@ def _bootstrap(tmp_path: Path) -> tuple[Path, str]:
     return workspace, cfg.id
 
 
-def test_exemplar_block_renders_redacted_from_round_two(
+def test_exemplar_block_renders_redacted_from_the_first_round(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     import zicato.proposer.proposer as proposer_mod
@@ -144,9 +145,12 @@ def test_exemplar_block_renders_redacted_from_round_two(
     assert len(captured) == 2
     round_1, round_2 = captured
 
-    # Round 1: the champion (v0) has no telemetry yet — no patterns, no
-    # exemplars; the best-effort extraction leaves the prompt untouched.
-    assert "## Process exemplars" not in round_1
+    # Round 1: the champion (v0) HAS telemetry — the contract pre-flight ran
+    # it over the whole board before any duel — so the channel is live from
+    # the first proposal, under the same redaction contract as round 2.
+    assert "## Process exemplars (train slice — redacted event windows)" in round_1
+    for entry_id in _BOARD_ENTRY_IDS:
+        assert entry_id not in round_1, f"entry id {entry_id!r} leaked in round 1"
 
     # Round 2: the champion (v1, promoted in round 1) carries real
     # worker-written events; the planted `unexpected_output` drift fires

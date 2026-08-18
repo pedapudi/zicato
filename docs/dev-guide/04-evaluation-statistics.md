@@ -1207,7 +1207,7 @@ like a port-number registry.
 | Base | Range in practice | Owner | Constant | Purpose |
 |---|---|---|---|---|
 | `0` | `0 .. replicates-1` | tournament duels | (implicit; `replicate_base=0`) | real matchup samples; r0 is the canonical `loss.json` |
-| `1000` | `1000 .. 1000+K-1` | A/A calibration | `zicato.tournament.calibration.CALIBRATION_REPLICATE_BASE` | noise-floor draws; idempotent across `board audit` re-runs |
+| `1000` | `1000 .. 1000+K-1` | A/A calibration | `zicato.tournament.calibration.CALIBRATION_REPLICATE_BASE` (block width `CALIBRATION_REPLICATE_SPAN` = 1000) | noise-floor draws; idempotent across `board audit` re-runs. `measure_noise_floor` refuses a run count wider than the block rather than walk into the pre-flight's degraded probes |
 | `2000` | `2000 + j` (probe `j` of the sample) | contract pre-flight | `zicato.epoch.preflight.PREFLIGHT_REPLICATE_BASE` (block width `PREFLIGHT_REPLICATE_SPAN` = 1000) | the degraded-copy probe draws (cached under the CHAMPION's id); one slot per probed mutation point so no probe replays another's result |
 | `3000` | `3000` + confirm at `3001` | candidate screen | `zicato.epoch.screen.SCREEN_REPLICATE_BASE` | tryout panel runs (`3000`); the confirm-before-veto re-run (`3001`) |
 | `4000` | `4000 .. 4000+budget-1` | evidence gate | `zicato.selection.evidence_gate.EVIDENCE_REPLICATE_BASE` | independent evidence draws of BOTH sides of the crowning pair |
@@ -1245,7 +1245,18 @@ audit, a new confirmation loop), follow this procedure exactly:
 3. **Cross-reference the ledger.** Update the reserved-ladder note on
    `zicato.selection.evidence_gate.EVIDENCE_REPLICATE_BASE` (the canonical
    in-code ledger) and every sibling docstring that enumerates the ladder
-   (`calibration.py`, `preflight.py`, `screen.py`) — and this table.
+   (`calibration.py`, `preflight.py`, `screen.py`, `reflection/corpus.py`,
+   `reflection/admission.py`) — and this table, and the G7 row in
+   `00-INDEX.md`.
+3a. **Decide what READERS may do with your slots.** A slot cached under a real
+   generation id is visible to anything walking that generation's `runs/`
+   directory, so `zicato.tournament.unit_cache.is_own_code_board_draw` — the
+   allow-list the passive reflection corpus and the proposer's baseline reader
+   both filter through — must learn your base. It answers `False` for any
+   unclaimed index, so a new base is EXCLUDED until you admit it: correct for a
+   degraded probe (the 2000 block) or a panel-subset draw (the 3000 block),
+   and something you must change explicitly for a clean full-board draw of the
+   generation's own code.
 4. **Stamp AND key** with the same index (`_stamp_replicate_index` +
    `replicate_index=`/`replicate_base=`), through the same board-unit runner
    every duel uses.

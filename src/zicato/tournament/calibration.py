@@ -43,8 +43,29 @@ DEFAULT_CALIBRATION_RUNS: int = 5
 #: Replicate-index base for calibration draws. Deliberately far above any
 #: index a real duel schedules (duel replicates count up from 0), so the
 #: calibration's cache slots can never collide with — or pre-seed — the
-#: slots a tournament will actually read.
+#: slots a tournament will actually read. This is the second row of the
+#: reserved-base ledger (dev-guide ``04-evaluation-statistics.md §8.1``): real
+#: duel replicates count up from 0, THIS calibration at 1000, the contract
+#: pre-flight across 2000..2999
+#: (:data:`zicato.epoch.preflight.PREFLIGHT_REPLICATE_BASE` +
+#: :data:`~zicato.epoch.preflight.PREFLIGHT_REPLICATE_SPAN`), the candidate
+#: screen at 3000 (:data:`zicato.epoch.screen.SCREEN_REPLICATE_BASE`), the
+#: evidence gate at 4000
+#: (:data:`zicato.selection.evidence_gate.EVIDENCE_REPLICATE_BASE`), board
+#: reflection at 5000 (:data:`zicato.reflection.corpus.REFLECTION_REPLICATE_BASE`),
+#: and eval-synthesis admission at 6000
+#: (:data:`zicato.reflection.admission.SYNTHESIS_REPLICATE_BASE`).
 CALIBRATION_REPLICATE_BASE: int = 1000
+
+#: Width of the block :data:`CALIBRATION_REPLICATE_BASE` opens. Draw ``j``
+#: caches at ``CALIBRATION_REPLICATE_BASE + j``, so a run count above this span
+#: would walk into the contract pre-flight's block and its DEGRADED probes
+#: would be indistinguishable from clean A/A draws in either direction.
+#: :func:`measure_noise_floor` refuses rather than overlap — the mirror of the
+#: pre-flight's own probe-sample guard. It is also the span every reader of the
+#: calibration band tests against (:func:`zicato.tournament.unit_cache
+#: .is_own_code_board_draw`) instead of a bare literal.
+CALIBRATION_REPLICATE_SPAN: int = 1000
 
 #: How many noise standard deviations a recommended ``promote_margin`` sits
 #: above zero. The gate compares two aggregate scalars, so the quantity that
@@ -190,6 +211,19 @@ async def measure_noise_floor(
 
     if runs < 2:
         raise ValueError(f"noise-floor calibration needs at least 2 runs, got {runs!r}")
+    if runs > CALIBRATION_REPLICATE_SPAN:
+        # Draw j caches at CALIBRATION_REPLICATE_BASE + j, so a wider run count
+        # would squat the contract pre-flight's block: a later `board preflight`
+        # would read these clean A/A draws as its own cached degraded probes,
+        # and every reader of the calibration band would read the pre-flight's
+        # degraded probes as champion behaviour. Refuse rather than overlap.
+        block_end = CALIBRATION_REPLICATE_BASE + CALIBRATION_REPLICATE_SPAN - 1
+        raise ValueError(
+            f"noise-floor calibration: {runs} draws exceed the reserved replicate "
+            f"block of {CALIBRATION_REPLICATE_SPAN} "
+            f"({CALIBRATION_REPLICATE_BASE}..{block_end}); lower --runs "
+            '(or the "contract_preflight" run count in config.json)'
+        )
 
     board = _stamp_disable_drift(board, disable_drift)
     board = _stamp_judge_only(board, judge_only)

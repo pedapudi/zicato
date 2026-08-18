@@ -1083,6 +1083,7 @@ class BestOfNProposerAgent:
             brief_text=ctx.brief_text,
             mutations=ctx.mutations,
             custom_judge_names=ctx.custom_judge_names or frozenset(),
+            metric_priorities=ctx.metric_priorities,
         )
         aux_call_llm = self._depth_call_llm(ctx)
         capture_proposer_input(
@@ -1427,6 +1428,7 @@ class BestOfNProposerAgent:
             prior_experiments=ctx.prior_experiments,
             restrict_visibility=ctx.restrict_visibility,
             custom_judge_names=ctx.custom_judge_names or frozenset(),
+            metric_priorities=ctx.metric_priorities,
             failure_profile=ctx.failure_profile,
             # The critic stays inside the SAME visibility envelope as the
             # proposer: the redacted exemplar block (when the contract opted

@@ -40,7 +40,6 @@ from __future__ import annotations
 
 import json
 import os
-import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -70,8 +69,6 @@ REFLECTION_REPLICATE_BASE: int = 5000
 FIDELITY_VERBATIM: str = "verbatim"
 FIDELITY_RESULT: str = "result"
 FIDELITY_PREVIEW: str = "preview"
-
-_LOSS_REPLICATE_RE = re.compile(r"^loss\.r(\d+)\.json$")
 
 
 class ReflectionDrawInconclusive(RuntimeError):
@@ -426,69 +423,6 @@ def _read_loss(loss_path: Path) -> Any | None:
         return None
 
 
-def _is_ingestable_replicate(index: int) -> bool:
-    """Whether a replicate-base slot is honest evidence for the passive corpus.
-
-    The replicate-index namespace is partitioned by owner (see
-    :data:`REFLECTION_REPLICATE_BASE`). Passive ingest accepts ONLY the slots
-    whose provenance the ledger vouches for as a clean, non-degraded draw of the
-    REAL contract:
-
-      * ``0``            — the canonical tournament duel (``loss.json``).
-      * ``1000..1999``   — A/A noise-floor calibration (``CALIBRATION_REPLICATE_BASE``);
-                           free pillar-1 replicates of the real board.
-      * ``4000..4999``   — evidence gate (``EVIDENCE_REPLICATE_BASE``); both-sides-fresh
-                           clean draws of real trees.
-      * ``>= 5000``      — board reflection (this owner); prior reflection draws.
-
-    EXCLUDED — ``2000..3999``:
-
-      * ``2000..2999`` (``PREFLIGHT_REPLICATE_BASE`` + probe ordinal) are the
-        contract pre-flight's DELIBERATELY-DEGRADED champion probes, cached
-        under the champion's OWN generation id — folding one in would poison the
-        corpus with a known-bad draw of a mutilated board. The whole block is
-        excluded, so widening the pre-flight's probe sample (issue #106) can
-        never leak a degraded draw into the corpus.
-      * ``3000``/``3001`` (``SCREEN_REPLICATE_BASE``) are candidate-screen
-        bases — fast-mode probes, not clean duels; excluded defensively.
-
-    Any other unreserved slot (``1..999``) is excluded too: the corpus ingests
-    only slots the ledger names, never an unattributed one.
-    """
-    if index == 0:
-        return True
-    if 1000 <= index <= 1999:
-        return True
-    if 2000 <= index <= 3999:
-        return False
-    if 4000 <= index <= 4999:
-        return True
-    return index >= 5000
-
-
-def _discover_replicate_losses(run_dir: Path) -> list[tuple[int, Path]]:
-    """Every INGESTABLE persisted replicate loss under one run dir, ascending.
-
-    ``loss.json`` → replicate 0; ``loss.r{n}.json`` → replicate ``n``. Only
-    slots the reserved-base ledger vouches for are returned
-    (:func:`_is_ingestable_replicate`): r0, the calibration slots at 1000+, the
-    evidence slots at 4000+, and any prior reflection draws at 5000+ — never the
-    pre-flight's degraded 2000s probes or the 3000s screen bases.
-    """
-    found: list[tuple[int, Path]] = []
-    canonical = run_dir / "loss.json"
-    if canonical.exists():
-        found.append((0, canonical))
-    if run_dir.is_dir():
-        for path in run_dir.iterdir():
-            match = _LOSS_REPLICATE_RE.match(path.name)
-            if match:
-                index = int(match.group(1))
-                if _is_ingestable_replicate(index):
-                    found.append((index, path))
-    return sorted(found)
-
-
 # ---------------------------------------------------------------------------
 # Passive ingest — zero LLM, references the lineage's artifacts
 # ---------------------------------------------------------------------------
@@ -514,13 +448,18 @@ def ingest_lineage(
     Missing / unreadable artifacts degrade the record, never crash.
     """
     from zicato.core.workspace import run_dir as _run_dir  # noqa: PLC0415
+    from zicato.tournament.unit_cache import own_code_board_draws  # noqa: PLC0415
 
     runs: list[ObservationRun] = []
     for candidate_id in candidates:
         for entry_id in entries:
             run_directory = _run_dir(workspace_root, epoch_id, candidate_id, entry_id)
             events_path = run_directory / "events.jsonl"
-            for replicate, loss_path in _discover_replicate_losses(run_directory):
+            # Passive ingest takes only the slots the reserved-base ledger
+            # vouches for as a clean draw of the candidate's REAL code over the
+            # real board — never the pre-flight's degraded probes, which cache
+            # in this same directory under the champion's own generation id.
+            for replicate, loss_path in own_code_board_draws(run_directory):
                 loss = _read_loss(loss_path)
                 if loss is None:
                     continue

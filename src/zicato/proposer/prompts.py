@@ -32,6 +32,7 @@ from __future__ import annotations
 import re
 import textwrap
 from collections.abc import Iterable, Mapping
+from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from zicato.analyzer.outcome_marginals import OutcomeMarginalSummary
@@ -403,7 +404,201 @@ def render_mutation_block(
     return "\n".join(lines)
 
 
-def render_metric_targets_block(custom_judge_names: Iterable[str] = ()) -> str:
+@dataclass(frozen=True, slots=True)
+class ScoredTarget:
+    """One target the contract actually scores, with its resolved weight.
+
+    ``weight`` is the coefficient the scoring path resolves for this target,
+    signed as the scalar sees it: positive means a higher value costs more
+    (the scalar is a LOSS), negative means a higher value is better. Only the
+    RATIO between weights inside one channel is ever rendered — the raw
+    coefficient stays orchestrator-side, because handing the proposer the
+    objective function invites optimising the shape of the score rather than
+    the behaviour the board measures (dev-guide ``05-proposer.md §5.8``).
+    """
+
+    name: str
+    weight: float
+
+
+@dataclass(frozen=True, slots=True)
+class MetricPriorities:
+    """What the active contract scores, split into non-comparable channels.
+
+    The proposer chooses what to work on each round; the operator already
+    answered that question by setting the scoring weights. This is that answer
+    in a shape the prompt can render: per channel, the targets whose weight is
+    non-zero, ordered by weight magnitude, highest first.
+
+    The channels are PEERS, never one ranking. Drift kinds live inside
+    ``drift_loss_mean`` and are then scaled by ``drift_weight``; the pass term
+    is its own bounded ``pass_weight * (1 - mean_score)``; a namespace
+    coefficient is calibrated to that namespace's own units (``cost:`` counts
+    tokens in the thousands, ``rubric:`` is a quality score with a NEGATIVE
+    weight). A single cross-channel ranking would imply a comparability that
+    does not exist, so banding happens strictly within a channel.
+
+    A zero-weight target is ABSENT rather than annotated — the convention the
+    scoring side already holds to for ``diff_complexity``
+    (:func:`zicato.scoring.builtins.builtin_scalar`): at zero the term is
+    exactly absent, no key and no addition.
+
+    Fields
+    ------
+    judges:
+        Declared board judges (board ``JudgeSpec.name`` ∪ ``per_judge_weights``
+        keys) at ``per_judge_weights.get(name, default_judge_weight)``, times
+        ``drift_weight`` — a custom judge reports under the ``custom`` drift
+        kind, so ``drift_weight=0.0`` zeroes the whole judge namespace.
+    drift_kinds:
+        Built-in goldfive drift kinds at ``per_kind_weights.get(kind, 1.0)``
+        times ``drift_weight``.
+    pass_rate_weight:
+        ``pass_weight``. Named as a real target: once zero-weight entries are
+        dropped, a pass-rate-only contract has an empty target vocabulary but
+        still owes a mandatory movement, and the validator accepts
+        ``pass_rate`` only because it accepts any unprefixed string.
+    namespace_metrics:
+        The separately-scored metric namespaces at
+        ``namespace_weights[namespace]``. Names are DATA-DRIVEN from the
+        round's own loss profiles (:meth:`~zicato.core.loss.LossProfile
+        .unified_metrics`), so a round with no losses yet carries the
+        namespace prefixes alone (``cost:``, ``rubric:``) rather than
+        inventing metric names.
+    """
+
+    judges: tuple[ScoredTarget, ...] = ()
+    drift_kinds: tuple[ScoredTarget, ...] = ()
+    pass_rate_weight: float = 0.0
+    namespace_metrics: tuple[ScoredTarget, ...] = ()
+
+    def is_empty(self) -> bool:
+        """Whether the contract scores nothing this block could name."""
+        return not (
+            self.judges or self.drift_kinds or self.pass_rate_weight or self.namespace_metrics
+        )
+
+
+def _band_weight_ratio(weight: float, top: float) -> str:
+    """Band one target's weight against the TOP weight in its own channel.
+
+    Weights are unbounded, so the ``[0, 1]`` thirds split :func:`_band_quality`
+    uses does not transfer; the ratio to the channel's own maximum does, and it
+    is the only thing the proposer can act on anyway. Magnitude only — the sign
+    is direction, rendered separately.
+    """
+    ratio = abs(weight) / top if top else 0.0
+    if ratio < 1.0 / 3.0:
+        return "low"
+    if ratio < 2.0 / 3.0:
+        return "medium"
+    return "high"
+
+
+def _render_priority_targets(targets: tuple[ScoredTarget, ...]) -> str:
+    """Render one channel's targets, grouped by their band within the channel.
+
+    When every weight in the channel is equal the bands carry no information —
+    and that IS the default contract, where ``per_kind_weights`` is empty and
+    every kind sits at ``1.0`` — so the channel renders as one flat list and
+    says so once, rather than banding every target ``high``.
+
+    Otherwise the targets group under their band rather than taking a line
+    each. A contract that raises one kind leaves the other forty at the same
+    weight, and forty consecutive identical band labels bury the one target
+    the operator actually singled out.
+    """
+    magnitudes = {round(abs(t.weight), 12) for t in targets}
+    if len(magnitudes) <= 1:
+        return "  " + ", ".join(t.name for t in targets) + "\n  (all scored equally)"
+    top = max(abs(t.weight) for t in targets)
+    grouped: dict[str, list[str]] = {}
+    for target in targets:
+        grouped.setdefault(_band_weight_ratio(target.weight, top), []).append(target.name)
+    return "\n".join(
+        f"  {band + ':':<8}{', '.join(grouped[band])}"
+        for band in ("high", "medium", "low")
+        if band in grouped
+    )
+
+
+def _render_namespace_targets(targets: tuple[ScoredTarget, ...]) -> str:
+    """Render the namespace channel: direction only, deliberately unbanded.
+
+    A namespace coefficient is calibrated to that namespace's OWN units —
+    ``cost:`` counts tokens in the thousands, so its coefficient is small
+    precisely because its values are large — which makes the ratio between two
+    namespace weights meaningless. Banding them would say "cost barely counts"
+    about a term that contributes 1.0 to the scalar for every thousand tokens.
+    The sign IS meaningful and is rendered as the direction: negative weights
+    mean a higher value is better (rubric scores grow with quality).
+    """
+    return "\n".join(
+        f"  {t.name:<28} {'higher is better' if t.weight < 0 else 'lower is better'}"
+        for t in targets
+    )
+
+
+def render_metric_priorities_block(priorities: MetricPriorities) -> str:
+    """Render the contract's scored targets, ordered by what it rewards.
+
+    The priority-aware form of :func:`render_metric_targets_block`: the same
+    ``## Valid expectation targets`` body (same movement syntax, same worked
+    example) with the vocabulary filtered to what the contract actually scores
+    and ordered by weight within each channel. A target the contract weights at
+    zero is absent, so the proposer cannot spend a round improving something
+    that cannot move the result.
+
+    Returns the empty string when the contract scores nothing this block can
+    name, which leaves :func:`render_metric_targets_block` on its unfiltered
+    membership rendering — an empty section would be worse than a flat list.
+    """
+    if priorities.is_empty():
+        return ""
+    sections: list[str] = [
+        "The contract WEIGHTS these targets. Prefer the ones it scores highest; a\n"
+        "target absent from this section carries ZERO weight, so improving it cannot\n"
+        "move the score at all.",
+    ]
+    if priorities.judges:
+        example = priorities.judges[0].name
+        sections.append(
+            "Declared board judges (THIS board) — reference by the judge's BARE name\n"
+            'in "expected_metric_movements"[].metric_name. Correct:\n'
+            f'    {{"metric_name": "{example}", "direction": "increase", "magnitude": "medium"}}\n'
+            f'  WRONG (these will be rejected as written): "drift:{example}",\n'
+            f'  "drift:custom:{example}", "custom:{example}".\n'
+            + _render_priority_targets(priorities.judges)
+        )
+    else:
+        sections.append("Declared board judges (THIS board): (none this contract scores)")
+    if priorities.drift_kinds:
+        sections.append(
+            'Built-in drift kinds — reference as "drift:<kind>" (e.g.\n'
+            '{"metric_name": "drift:off_topic", ...}) or, in\n'
+            'expected_drift_movements, {"kind": "off_topic", ...}:\n'
+            + _render_priority_targets(priorities.drift_kinds)
+        )
+    if priorities.pass_rate_weight:
+        sections.append(
+            "Board outcome — reference by its bare name:\n"
+            "  pass_rate                    scored (the fraction of board entries\n"
+            "                               whose expectation is met; higher is better)"
+        )
+    if priorities.namespace_metrics:
+        sections.append(
+            'Other metric namespaces — reference as "<namespace>:<metric>". These are\n'
+            "separate scalar terms, each calibrated to its own units, so they are\n"
+            "listed by direction rather than ranked against each other:\n"
+            + _render_namespace_targets(priorities.namespace_metrics)
+        )
+    return "\n\n".join(sections)
+
+
+def render_metric_targets_block(
+    custom_judge_names: Iterable[str] = (),
+    metric_priorities: str = "",
+) -> str:
     """Render the board's valid metric-movement targets for the user prompt.
 
     Enumerates, for THIS board, exactly what a hypothesis movement may
@@ -425,7 +620,25 @@ def render_metric_targets_block(custom_judge_names: Iterable[str] = ()) -> str:
     these forms, so the prompt and the gate agree by construction. An empty
     judge set renders an explicit "(this board declares no custom judges)"
     notice so the model sees the absence as a signal rather than a gap.
+
+    ``metric_priorities`` is the PRE-RENDERED priority-aware body
+    (:func:`render_metric_priorities_block`, built orchestrator-side where the
+    frozen weights are in scope). When supplied it REPLACES the membership
+    rendering below, because the two answer the same question and the flat one
+    answers it wrongly: it presents a zero-weight judge beside a
+    quadruple-weight one, and puts a triple-weight drift kind somewhere in 41
+    alphabetically-ordered names. Empty (the default, and every caller that
+    holds no weights — the standalone ``zicato propose``, tests) keeps the
+    membership rendering byte-for-byte.
+
+    Either form is a superset-free view of what
+    :func:`~zicato.proposer.structured.parse_experiment_json` accepts: the
+    validator's accept-list is unchanged by the priority filter, so dropping a
+    zero-weight judge from the prompt can never turn an accepted movement into
+    a parse rejection and a burned retry.
     """
+    if metric_priorities.strip():
+        return metric_priorities.strip()
 
     judges = sorted({str(n) for n in custom_judge_names if str(n)})
     drift_kinds = ", ".join(sorted(GOLDFIVE_DRIFT_KINDS))
@@ -953,6 +1166,7 @@ def render_user_prompt(
     prior_experiments: Iterable[PriorExperiment] = (),
     restrict_visibility: bool = False,
     custom_judge_names: Iterable[str] = (),
+    metric_priorities: str = "",
     failure_profile: str = "",
     process_exemplars: str = "",
     genealogy: Iterable[GenealogyItem] = (),
@@ -1023,6 +1237,16 @@ def render_user_prompt(
         prompt and the validator's accepted forms in lockstep. Empty (the
         default) renders an explicit "no custom judges" notice alongside the
         always-present drift-kind enumeration.
+    metric_priorities:
+        Optional pre-rendered priority-aware form of that same block
+        (:func:`render_metric_priorities_block`, built orchestrator-side from
+        the frozen :class:`~zicato.core.scoring_config.ScoringWeights`). When
+        non-empty it REPLACES the membership rendering, so the proposer sees
+        what the contract rewards — targets ordered by weight within each
+        channel, zero-weight targets absent — instead of one flat alphabetical
+        list in which a quadruple-weight judge and a switched-off one look
+        identical. Empty (the default, and every caller holding no weights)
+        renders the membership form byte-for-byte.
     failure_profile:
         Optional pre-rendered, train-slice-only, BUCKETED outcome-marginal
         block (Capability 2 of issue #18 — built by
@@ -1103,7 +1327,7 @@ def render_user_prompt(
 
     body = USER_PROMPT_TEMPLATE.format(
         current_loss_summary=current_loss_summary.strip() or "(no loss summary)",
-        metric_targets_block=render_metric_targets_block(custom_judge_names),
+        metric_targets_block=render_metric_targets_block(custom_judge_names, metric_priorities),
         pattern_block=render_pattern_block(patterns, restrict=restrict_visibility),
         mutation_block=render_mutation_block(mutations, track_records=mutation_track_records),
     )
@@ -1247,6 +1471,7 @@ def render_recombine_merge_prompt(
     brief_text: str,
     mutations: Iterable[MutationPoint] = (),
     custom_judge_names: Iterable[str] = (),
+    metric_priorities: str = "",
 ) -> tuple[str, str]:
     """Build the ``(system, user)`` prompt for an LLM-guided recombination merge.
 
@@ -1262,7 +1487,9 @@ def render_recombine_merge_prompt(
     * COUNTS-ONLY complementarity (how many train entries each improved, the
       combined improved / regressed counts);
     * the valid expectation targets + the mutation manifest, so the merged
-      proposal targets only manifest-valid ids.
+      proposal targets only manifest-valid ids. ``metric_priorities`` carries
+      the priority-aware form of that block through unchanged, so a merge
+      round is steered by the same contract weights a fresh sample is.
 
     It carries NOTHING the genealogy channel does not already permit: no
     board-entry id, no per-entry result, no exact Δscalar (the builder bands
@@ -1272,7 +1499,7 @@ def render_recombine_merge_prompt(
     epoch brief, which carries the forbidden-edits guidance, IS included.
     """
     system_prompt = render_system_prompt(brief_text)
-    targets_block = render_metric_targets_block(custom_judge_names)
+    targets_block = render_metric_targets_block(custom_judge_names, metric_priorities)
     mutation_block = render_mutation_block(mutations)
     a_outcome = pair.a_banded_outcome or "unsettled"
     b_outcome = pair.b_banded_outcome or "unsettled"
@@ -1311,11 +1538,14 @@ def render_recombine_merge_prompt(
 __all__ = [
     "SYSTEM_PROMPT_TEMPLATE",
     "USER_PROMPT_TEMPLATE",
+    "MetricPriorities",
+    "ScoredTarget",
     "band_rate",
     "render_calibration_block",
     "render_failure_mode_profile",
     "render_genealogy_block",
     "render_recombine_merge_prompt",
+    "render_metric_priorities_block",
     "render_metric_targets_block",
     "render_process_exemplars",
     "render_mutation_track_annotation",

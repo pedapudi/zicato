@@ -193,6 +193,7 @@ def _render_task_text(spec: ProposerSpec, ctx: ProposerContext, feedback: str) -
         restrict_visibility=ctx.restrict_visibility,
         custom_judge_names=ctx.custom_judge_names or frozenset(),
         failure_profile=ctx.failure_profile,
+        metric_priorities=ctx.metric_priorities,
         process_exemplars=ctx.process_exemplars,
         genealogy=ctx.genealogy,
         calibration=ctx.calibration,
