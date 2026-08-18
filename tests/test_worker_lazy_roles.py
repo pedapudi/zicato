@@ -301,7 +301,7 @@ async def test_inner_model_resolved_after_active_run_and_heartbeat(
     monkeypatch.setattr(state_mod, "write_active_run", _fake_write_active_run)
     monkeypatch.setattr(heartbeat_mod, "RunHeartbeatBeater", _FakeHeartbeat)
     monkeypatch.setattr(worker, "_resolve_inner_model_from_role", _fake_resolve_inner_model)
-    monkeypatch.setattr(worker, "_build_adapter", lambda spec: _FakeAdapter())
+    monkeypatch.setattr(worker, "build_adapter", lambda spec: _FakeAdapter())
 
     workspace = tmp_path / ".zicato"
     workspace.mkdir()

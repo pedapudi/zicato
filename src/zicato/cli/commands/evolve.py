@@ -567,6 +567,45 @@ def _import_callable(dotted: str, *, kind: str) -> Any:
     return fn
 
 
+def _dry_run_and_exit(workspace_root: Path, epoch: str | None) -> None:
+    """Report the workspace gate's verdict and exit without spending.
+
+    Normal evolve execution is gated inside ``evolve_n_rounds``, the
+    public spend boundary shared by CLI and library callers. This helper
+    exists only because ``--dry-run`` exits before entering that loop, so
+    it runs the validators itself — over ONE context, which is also what
+    the summary line's board and surface sizes are read from.
+
+    Without an explicit ``--epoch`` the loop auto-epochs, freezing
+    whatever the live contract files now say — so those are what gets
+    checked. Checking the frozen copy there would validate the contract
+    the LAST round ran and miss anything edited since.
+    """
+    from zicato.check import (  # noqa: PLC0415
+        CheckContext,
+        WorkspaceCheckError,
+        build_report,
+        render_report,
+    )
+
+    with CheckContext(workspace_root, epoch_id=epoch, live_contract=epoch is None) as ctx:
+        report = build_report(ctx)
+        entries, points = len(ctx.board), len(ctx.surface)
+        shown_epoch = ctx.epoch_id or "no epoch"
+
+    if report.findings:
+        click.echo(render_report(report), nl=False)
+    if report.blocking:
+        raise click.ClickException(str(WorkspaceCheckError(report)))
+
+    click.echo(
+        f"\ndry run: {shown_epoch}, "
+        f"{entries} board {'entry' if entries == 1 else 'entries'}, "
+        f"{points} mutation {'point' if points == 1 else 'points'}. Nothing was spent."
+    )
+    raise SystemExit(0)
+
+
 @click.command(
     name="evolve",
     short_help="Resolve the contract, auto-open an epoch on any change, and run the loop.",
@@ -597,6 +636,15 @@ def _import_callable(dotted: str, *, kind: str) -> Any:
     "--epoch",
     default=None,
     help="Epoch id. Defaults to the workspace's current epoch.",
+)
+@click.option(
+    "--dry-run",
+    is_flag=True,
+    default=False,
+    help=(
+        "Validate the workspace with the flags this invocation would use, print the "
+        "result, and exit without spending a round."
+    ),
 )
 @click.option(
     "--rounds",
@@ -772,6 +820,7 @@ def _import_callable(dotted: str, *, kind: str) -> Any:
 def evolve_cmd(
     workspace: str,
     epoch: str | None,
+    dry_run: bool,
     rounds: int,
     mode: str,
     harness_dotted: str,
@@ -833,8 +882,16 @@ def evolve_cmd(
             workspace_root, tournament_structure, tournament_params
         )
 
+    # Resolve both required callables before the dry-run exit: a dry run
+    # validates the invocation that would execute, including its two
+    # process-boundary imports.
     harness_call_llm = _import_callable(harness_dotted, kind="harness_call_llm")
     auxiliary_call_llm = _import_callable(auxiliary_dotted, kind="auxiliary_call_llm")
+
+    # ``--dry-run`` exits through the same validators as the public loop.
+    # Normal execution is gated inside ``evolve_n_rounds`` itself.
+    if dry_run:
+        _dry_run_and_exit(workspace_root, epoch)
 
     # Lazy import — the orchestrator is heavy. We keep it out of
     # `zicato --help` time.
@@ -946,6 +1003,7 @@ def evolve_cmd(
     # Imported here, not at module scope: CLI discovery imports every command
     # module to build the root group, so ``zicato --help`` must not pull in
     # the evolve pipeline.
+    from zicato.check import WorkspaceCheckError, render_report  # noqa: PLC0415
     from zicato.evolve.round import BadPatchSetError  # noqa: PLC0415
 
     try:
@@ -958,6 +1016,9 @@ def evolve_cmd(
             # status (128 + SIGTERM) instead of a cancellation traceback.
             raise SystemExit(128 + signal.SIGTERM) from None
         raise
+    except WorkspaceCheckError as exc:
+        click.echo(render_report(exc.report), nl=False)
+        raise click.ClickException(str(exc)) from exc
     except (FileNotFoundError, RuntimeError, BadPatchSetError) as exc:
         # FileNotFoundError: missing config / epoch marker.
         # RuntimeError: contract drift under --no-auto-epoch, or a

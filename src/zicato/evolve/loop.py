@@ -462,13 +462,14 @@ async def evolve_n_rounds(
     subprocess-worker layer (L3). This is the same contract the
     per-entry budget relies on.
 
-    Contract-hash auto-epoching runs ONCE, before the round loop: when
-    ``epoch_id`` is ``None`` and ``auto_epoch`` is true, the orchestrator
-    resolves (and, if the contract drifted, auto-rolls) the epoch via
-    :func:`ensure_epoch_for_contract`. The resolved id is then pinned
-    for every round of this invocation so the loop never re-rolls
-    mid-flight. When ``epoch_id`` is passed explicitly, auto-rolling is
-    skipped entirely — an explicit target always wins.
+    The mandatory workspace gate runs first, before auto-epoching or any
+    model call. Contract-hash auto-epoching then runs ONCE, before the round
+    loop: when ``epoch_id`` is ``None`` and ``auto_epoch`` is true, the
+    orchestrator resolves (and, if the contract drifted, auto-rolls) the epoch
+    via :func:`ensure_epoch_for_contract`. The resolved id is then pinned for
+    every round of this invocation so the loop never re-rolls mid-flight.
+    When ``epoch_id`` is passed explicitly, auto-rolling is skipped entirely
+    — an explicit target always wins.
 
     The list of :class:`EvolveRoundOutcome` returned has one entry per
     round attempted (which may be fewer than ``rounds`` if any
@@ -510,6 +511,25 @@ async def evolve_n_rounds(
     if rounds <= 0:
         _set_stop_reason("completed")
         return []
+
+    # One of the two public spend boundaries (``evolve_once`` is the other,
+    # and gates itself the same way). Keeping the gate here rather than in a
+    # command-layer helper is what makes it unbypassable: a library caller
+    # reaches it without going through the CLI. It must precede
+    # auto-epoching, because resolving contract drift may call the auxiliary
+    # model. Every round below is then handed ``workspace_checked=True``, so
+    # a multi-round invocation pays for the gate exactly once.
+    # Imported per call, not at module scope. Suites that drive this loop
+    # against a deliberately minimal fixture workspace patch
+    # ``zicato.check.require_workspace_valid``; hoisting this import would
+    # bind the function once and silently defeat every one of those patches.
+    from zicato.check import require_workspace_valid  # noqa: PLC0415
+
+    require_workspace_valid(
+        workspace_root,
+        epoch_id=epoch_id,
+        live_contract=epoch_id is None,
+    )
 
     # Contract-hash auto-epoching — resolve the epoch ONCE up front.
     # An explicit --epoch wins and skips auto-rolling entirely.
@@ -779,6 +799,7 @@ async def evolve_n_rounds(
                         total_rounds=rounds,
                         meta_loop_emitter=meta_loop_emitter,
                         resume_plan=_resume_plan,
+                        workspace_checked=True,
                     )
 
             try:

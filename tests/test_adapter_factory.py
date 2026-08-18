@@ -106,7 +106,7 @@ def test_make_adapter_block_must_be_mapping() -> None:
 
 # ---------------------------------------------------------------------------
 # kind="import" — the generic factory shape, mirroring the worker's
-# ``_build_adapter`` branch so config.json can declare a non-ADK adapter.
+# ``build_adapter`` branch so config.json can declare a non-ADK adapter.
 # ---------------------------------------------------------------------------
 
 
@@ -128,7 +128,7 @@ def test_make_adapter_import_kind_calls_factory() -> None:
 
     assert isinstance(adapter, StubAdapter)
     # The adapter round-trips: its worker_spec() is the same shape the
-    # worker's _build_adapter reconstructs from.
+    # worker's build_adapter reconstructs from.
     assert adapter.worker_spec() == {
         "kind": "import",
         "factory": "tests._subprocess_worker_support:make_stub_adapter",

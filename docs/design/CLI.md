@@ -79,6 +79,11 @@ zicato dashboard --view builder
 
 - `evolve` remains self-orchestrating; advanced commands are debugging and
   recovery tools, not required setup steps.
+- Every `evolve` invocation runs the workspace validators at the public spend
+  boundary before auto-epoching or model spend, and refuses to start on any
+  finding that would make the round unmeasurable. `--dry-run` runs the same
+  validators, reports board and mutation-surface sizes, and exits without
+  starting the loop.
 - Canonical artifact formats and command behavior stay unchanged when a command
   moves.
 - The root is explicitly assembled. Adding a module under `cli/commands` does

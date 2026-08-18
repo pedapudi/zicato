@@ -120,8 +120,17 @@ async def evolve_once(
     total_rounds: int = 0,
     meta_loop_emitter: Any = None,
     resume_plan: ResumePlan | None = None,
+    workspace_checked: bool = False,
 ) -> EvolveRoundOutcome:
     """Run ONE evolve round against the current epoch.
+
+    ``workspace_checked`` says the caller has already run the pre-spend
+    workspace gate for this invocation. :func:`evolve_n_rounds` passes it
+    so a multi-round run pays for the gate once rather than per round.
+    Default ``False``, because this function is exported as
+    :func:`zicato.orchestrator.evolve_once` and a library caller entering
+    here spends a full round: it is a spend boundary in its own right and
+    gates itself accordingly.
 
     ``resume_plan`` — when supplied by :func:`evolve_n_rounds` for the
     FIRST round of a resumed invocation — carries the conservative
@@ -198,6 +207,20 @@ async def evolve_once(
         run_fast_mode,
         run_tournament,
     )
+
+    # The mandatory pre-spend gate, unless the caller already ran it (see
+    # ``workspace_checked``). Imported per call, not at module scope: suites
+    # that drive a round against a deliberately minimal fixture workspace
+    # patch ``zicato.check.require_workspace_valid``, and hoisting this would
+    # bind the function once and silently defeat every one of those patches.
+    if not workspace_checked:
+        from zicato.check import require_workspace_valid  # noqa: PLC0415
+
+        require_workspace_valid(
+            workspace_root,
+            epoch_id=epoch_id,
+            live_contract=epoch_id is None,
+        )
 
     # --- 1. Workspace + epoch artifacts ---
     workspace_config = workspace_loader.load_workspace_config(workspace_root)

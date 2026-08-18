@@ -78,6 +78,9 @@ def _install_mock_evolve_once(
         return _make_outcome(round_index, decision)
 
     monkeypatch.setattr("zicato.evolve.gauntlet.evolve_once", _mock_evolve_once)
+    # This suite replaces the round beneath the public loop and uses the
+    # deliberately non-worker stub workspace from test_orchestrator.
+    monkeypatch.setattr("zicato.check.require_workspace_valid", lambda *a, **k: None)
 
 
 class _FakeClock:
@@ -126,6 +129,7 @@ def _install_clock_advancing_evolve_once(
 
     monkeypatch.setattr("zicato.evolve.gauntlet.evolve_once", _mock_evolve_once)
     monkeypatch.setattr("zicato.evolve.loop.time.monotonic", clock.monotonic)
+    monkeypatch.setattr("zicato.check.require_workspace_valid", lambda *a, **k: None)
 
 
 async def _harness_call_llm(system: str, user: str, model: str) -> str:

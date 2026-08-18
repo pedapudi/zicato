@@ -18,8 +18,8 @@ The baseline and final ratchet use the same metric:
 
 | Measurement | Baseline (`f9052dd`) | Current limit | Net reduction |
 |---|---:|---:|---:|
-| Total | 408,547 | 412,609 | -4,062 |
-| Production | 197,588 | 198,388 | -800 |
+| Total | 408,547 | 414,906 | -6,359 |
+| Production | 197,588 | 199,628 | -2,040 |
 
 The earlier raw count of 425,755 included lockfiles and generated artifacts and
 is retained in `.line-budget.json` for provenance; it is not the enforced
@@ -65,3 +65,5 @@ increase.
 | Patch diff against the recorded parent (production) | 197,475 | +383 | 197,858 | Issue #253: the diff view's baseline resolution, the base picker, the expansion machinery, and the reconstructed_against flag on mutation detail. |
 | Per-entry outcomes on the configured signal (total) | 411,536 | +1,073 | 412,609 | Issue #246: the served decided_by resolver, the shared replicate-score enumeration, the six-surface client sweep, and the signal regressions. |
 | Per-entry outcomes on the configured signal (production) | 197,858 | +530 | 198,388 | Issue #246: delta_score/score_se/drift_present on the matchup grid and per-entry readers plus the channel-aware figure. |
+| Pre-spend workspace gate (total) | 412,609 | +2,297 | 414,906 | Issue #240: the check package (shared workspace view, validators, report), the gate at both spend boundaries, the structural unbound-span-marker collector, the reconstructible stub adapter the parity capture now runs the gate against, and the severity, probe-environment, probe-timeout, model-role, and advisory-tier regressions. |
+| Pre-spend workspace gate (production) | 198,388 | +1,240 | 199,628 | Issue #240: the validators and their lazily-built workspace view, the shared `duplicate_mutation_ids` helper, `make_adapter_from_spec`, the process-group-bounded adapter probe, and the enumerator's unbound-marker collector. |

@@ -190,8 +190,10 @@ def _install_stub_adapter_factory(monkeypatch: pytest.MonkeyPatch) -> None:
     fake_factory.make_adapter_from_config = make_adapter_from_config  # type: ignore[attr-defined]
     monkeypatch.setitem(sys.modules, "zicato.adapter_factory", fake_factory)
     import zicato
+    import zicato.check
 
     monkeypatch.setattr(zicato, "adapter_factory", fake_factory, raising=False)
+    monkeypatch.setattr(zicato.check, "require_workspace_valid", lambda *a, **k: None)
 
 
 def _install_telemetry_stubs(

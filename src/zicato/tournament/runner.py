@@ -207,7 +207,7 @@ from zicato.tournament.unit_cache import (  # noqa: F401
 # so every helper is a RUNNER-module global: ``_run_single`` (which stays
 # here) resolves them via bare-name lookup, and the test suite patches them
 # (``_terminate_worker``, the timeout constants, ``_weights_spec``,
-# ``_adapter_spec``, ``_entry_to_dict``, ``_stamp_*``) on this module's
+# ``adapter_worker_spec``, ``_entry_to_dict``, ``_stamp_*``) on this module's
 # namespace, so the names must live here. Re-exported for the stable
 # ``from zicato.tournament.runner import ...`` import surface (F401).
 from zicato.tournament.worker_transport import (  # noqa: F401
@@ -221,7 +221,6 @@ from zicato.tournament.worker_transport import (  # noqa: F401
     _REPLICATE_INDEX_CONTEXT_KEY,
     _SIGTERM_TO_SIGKILL_GRACE_S,
     _aborted_loss_profile,
-    _adapter_spec,
     _callable_dotted_path,
     _checkout_run_snapshot,
     _config_pins,
@@ -238,13 +237,14 @@ from zicato.tournament.worker_transport import (  # noqa: F401
     _role_worker_spec,
     _run_id_for,
     _runtime_state,
-    _scrubbed_worker_env,
     _stamp_disable_drift,
     _stamp_judge_only,
     _stamp_replicate_index,
     _telemetry_helpers,
     _terminate_worker,
     _weights_spec,
+    adapter_worker_spec,
+    scrubbed_worker_env,
 )
 
 log = logging.getLogger("zicato.tournament.runner")
@@ -616,7 +616,7 @@ async def _run_single(
                 "snapshot_root": str(ephemeral_snapshot),
                 "scratch_dir": str(scratch_dir),
                 "entry": entry_dict,
-                "adapter": _adapter_spec(adapter),
+                "adapter": adapter_worker_spec(adapter),
                 "harness_role": _role_worker_spec(
                     "harness", models=_models, fallback_callable=config.harness_call_llm
                 ),
@@ -708,7 +708,7 @@ async def _run_single(
         # so a mutated worker cannot read every credential in the process env.
         worker_env: dict[str, str] | None = None
         if config.scrub_worker_env:
-            worker_env = _scrubbed_worker_env(
+            worker_env = scrubbed_worker_env(
                 models=_models,
                 extra_env_keys=tuple(config.worker_env_passthrough),
             )

@@ -401,7 +401,7 @@ class StubAdapter:
 
     ``load`` returns a fresh :class:`_StubSession` per call. The
     ``worker_spec`` method is the hook
-    :func:`zicato.tournament.runner._adapter_spec` uses to make the
+    :func:`zicato.tournament.runner.adapter_worker_spec` uses to make the
     adapter re-constructible inside the worker subprocess.
     """
 
