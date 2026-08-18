@@ -32,7 +32,8 @@
 import { el } from '../core/dom.js';
 import * as D from '../data.js';
 import * as svg from '../svg.js';
-import { gatedSwap, section, empty, stat, subhead } from '../ui.js';
+import { gatedSwap, empty, stat, subhead } from '../ui.js';
+import { comparePicker } from '../compare.js';
 
 export async function render(host, ctx, params) {
   if (!host.firstChild) host.appendChild(el('p', { class: 'dn-empty', text: 'Reading patch diff…' }));
@@ -167,7 +168,21 @@ export async function render(host, ctx, params) {
     ]));
 
     if (gens.length > 1) {
-      nodes.push(basePicker(gens, genId, baseGen, recordedParent, pinned, ctx, epochId));
+      // The SAME select the candidate compare uses — one picker idiom across
+      // the console. The parent is the default option, so choosing it clears
+      // `~base=` and returns to the canonical URL.
+      nodes.push(el('div', { class: 'dn-panel dn-row dn-basepick' }, [
+        comparePicker({
+          label: 'diff against…',
+          current: genId,
+          value: pickedBase || '',
+          noneLabel: recordedParent ? `${recordedParent} · parent` : '— parent —',
+          options: gens
+            .map((g) => ({ id: g.generation_id, label: g.generation_id }))
+            .filter((o) => o.id !== recordedParent),
+          onChange: (v) => ctx.navigate('diff', { epochId, gen: genId, mutId: pinned, base: v || null }),
+        }),
+      ]));
     }
 
     const body = el('div', { class: 'dn-panel dn-mut-detail' });
@@ -217,7 +232,7 @@ export async function render(host, ctx, params) {
     } else {
       body.appendChild(empty('This candidate recorded no patches (it may be the seed, or its patch payload is unavailable).'));
     }
-    nodes.push(section('Side-by-side diff', body));
+    nodes.push(body);
     return nodes;
   });
 }
@@ -264,28 +279,6 @@ function baseLede(baseGen, recordedParent, fileDiff) {
   if (!left) return 'What this candidate changed — side by side, line-diffed. Left: the baseline these patches were written against. Right: this candidate’s new content.';
   const role = left === recordedParent ? 'the generation it was derived from' : 'the version you picked';
   return `What this candidate changed against ${left} — side by side, line-diffed. Left: ${left}, ${role}. Right: this candidate’s new content.`;
-}
-
-// The version picker. Every other generation in the epoch is a candidate
-// baseline; the parent is the default and carries no `~base=` suffix, so the
-// default view keeps ONE canonical URL.
-function basePicker(gens, genId, baseGen, recordedParent, pinned, ctx, epochId) {
-  const row = el('div', { class: 'dn-panel dn-row dn-basepick' }, [
-    el('span', { class: 'dn-faint', text: 'diff against:' }),
-  ]);
-  for (const g of gens) {
-    const id = g.generation_id;
-    if (id === genId) continue;
-    const isParent = id === recordedParent;
-    const on = id === baseGen;
-    row.appendChild(el('a', {
-      class: 'dn-linkbtn dn-mono' + (on ? ' dn-linkbtn-on' : ''),
-      'aria-current': on ? 'true' : null,
-      href: ctx.href('diff', { epochId, gen: genId, mutId: pinned, base: isParent ? null : id }),
-      text: isParent ? `${id} · parent` : id,
-    }));
-  }
-  return row;
 }
 
 function fileLine(s) {

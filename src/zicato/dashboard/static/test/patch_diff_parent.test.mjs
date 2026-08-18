@@ -192,26 +192,47 @@ test('patch diff: a picked baseline reads THROUGH its own chain', async () => {
   assertEqual(labels(host)[0], 'baseline · v0', 'labelled as picked');
 });
 
-test('patch diff: the picker offers every OTHER generation, parent marked', async () => {
+function pickerOptions(host) {
+  const sel = host.querySelectorAll('[class]')
+    .filter((n) => (n.getAttribute('class') || '').split(/\s+/).includes('dt-cmp-select'))[0];
+  return { sel, options: sel ? sel.querySelectorAll('[value]') : [] };
+}
+
+test('patch diff: the picker is a DROPDOWN of every other generation', async () => {
   const host = await renderDiff({}, { mutId: SITE });
-  const row = host.querySelectorAll('[class]')
-    .filter((n) => (n.getAttribute('class') || '').split(/\s+/).includes('dn-basepick'))[0];
-  assert(row, 'the picker renders');
-  const links = row.querySelectorAll('[href]');
-  assertEqual(links.map((a) => a.textContent).join('|'), 'v0|v1|v3 · parent', 'every other gen, parent marked');
-  // The DEFAULT view keeps one canonical URL — the parent link has no suffix.
-  const parentLink = links[2].getAttribute('href');
-  assert(!parentLink.includes('~base='), `the parent link carries no suffix: ${parentLink}`);
-  assert(links[0].getAttribute('href').includes('~base=v0'), 'a non-parent pick rides ~base=');
-  assert(!links.some((a) => a.textContent.includes('v5')), 'the candidate is not its own baseline');
+  const { sel, options } = pickerOptions(host);
+  assert(sel, 'the picker is a select, not a row of links');
+  // The parent is the DEFAULT option (the empty value), so choosing it clears
+  // `~base=` and lands back on the canonical URL.
+  assertEqual(options.map((o) => o.textContent).join('|'), 'v3 · parent|v0|v1', 'parent default, then the rest');
+  assertEqual(options[0].getAttribute('value'), '', 'the parent option carries no base');
+  assert(!options.some((o) => o.getAttribute('value') === 'v5'), 'the candidate is not its own baseline');
 });
 
-test('patch diff: the picked baseline is the one marked on', async () => {
+test('patch diff: the dropdown reflects the picked baseline', async () => {
   const host = await renderDiff({}, { mutId: SITE, base: 'v1' });
-  const on = host.querySelectorAll('[class]')
-    .filter((a) => (a.getAttribute('class') || '').split(/\s+/).includes('dn-linkbtn-on'))
-    .map((a) => a.textContent);
-  assertEqual(on.join('|'), 'v1', 'the pick is the current chip');
+  const { sel, options } = pickerOptions(host);
+  assertEqual(sel.value, 'v1', 'the select shows the pick');
+  const marked = options.filter((o) => o.hasAttribute('selected')).map((o) => o.getAttribute('value'));
+  assertEqual(marked.join('|'), 'v1', 'and marks it selected for a cold load');
+});
+
+test('patch diff: choosing from the dropdown navigates to that baseline', async () => {
+  const seen = [];
+  const ctx = { navigate: (view, params) => seen.push([view, params.base, params.gen, params.mutId]), href: router.href };
+  data.invalidate();
+  globalThis.window.location = { hash: '', search: '' };
+  install({});
+  const host = globalThis.document.createElement('div');
+  await diff.render(host, ctx, { epochId: EPOCH, gen: 'v5', mutId: SITE });
+  const { sel } = pickerOptions(host);
+  sel.value = 'v0';
+  sel.dispatchEvent({ type: 'change', target: sel });
+  assertEqual(JSON.stringify(seen), JSON.stringify([['diff', 'v0', 'v5', SITE]]), 'the pick routes, candidate and pin intact');
+
+  sel.value = '';
+  sel.dispatchEvent({ type: 'change', target: sel });
+  assertEqual(seen[1][1], null, 'choosing the parent clears the base');
 });
 
 test('patch diff: an unknown pick falls back to the parent, not to nothing', async () => {
