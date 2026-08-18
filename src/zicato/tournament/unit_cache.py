@@ -151,6 +151,10 @@ def _unit_loss_path(
 #: replicate-0 slot is plain ``loss.json`` and does not match.
 _LOSS_REPLICATE_RE = re.compile(r"^loss\.r(\d+)\.json$")
 
+#: The events twin of :data:`_LOSS_REPLICATE_RE`, used to enumerate the
+#: current (non-archived) transcripts a run directory holds.
+_EVENTS_REPLICATE_RE = re.compile(r"^events\.r(\d+)\.jsonl$")
+
 
 def is_own_code_board_draw(replicate_index: int) -> bool:
     """Whether a slot under ``generations/<gen>/runs/`` is a full-board draw of
@@ -266,6 +270,57 @@ def unit_events_path(loss_path: Path) -> Path:
         if replicate.isdigit() and int(replicate) > 0:
             return loss_path.with_name(f"events.r{replicate}.jsonl")
     return loss_path.with_name("events.jsonl")
+
+
+def any_unit_transcript(canonical_events_path: Path) -> Path:
+    """Pick the transcript that best represents ONE generation×entry.
+
+    Readers that answer "what did this generation DO on this entry" — the
+    proposer's redacted facts, its process exemplars, the failure-pattern
+    detector — want a transcript, not a specific replicate. Before the
+    replicate dimension existed every draw of a unit wrote the same
+    ``events.jsonl``, so those readers named that one file and got whichever
+    draw ran last. Now each draw keeps its own file, and naming replicate 0
+    alone would blind them whenever the only draws so far are the contract
+    pre-flight's probe and the calibration band — which is exactly the state
+    at the FIRST round's proposal, before any duel has run.
+
+    Preference order, first non-empty file winning:
+
+    1. the canonical replicate-0 ``events.jsonl`` — a real duel draw;
+    2. own-code full-board draws in ascending replicate order
+       (:func:`is_own_code_board_draw`), so a calibration draw of the
+       candidate's real code is preferred over a degraded probe;
+    3. any remaining replicate, ascending.
+
+    Returns the canonical path unchanged when nothing readable exists, so a
+    caller's "no telemetry" branch behaves exactly as it did before.
+    """
+    run_dir = canonical_events_path.parent
+
+    def _has_content(path: Path) -> bool:
+        try:
+            return path.is_file() and path.stat().st_size > 0
+        except OSError:
+            return False
+
+    if _has_content(canonical_events_path):
+        return canonical_events_path
+    if not run_dir.is_dir():
+        return canonical_events_path
+
+    own_code: list[tuple[int, Path]] = []
+    other: list[tuple[int, Path]] = []
+    for path in run_dir.iterdir():
+        match = _EVENTS_REPLICATE_RE.match(path.name)
+        if not match or not _has_content(path):
+            continue
+        index = int(match.group(1))
+        (own_code if is_own_code_board_draw(index) else other).append((index, path))
+    for candidates in (own_code, other):
+        if candidates:
+            return min(candidates)[1]
+    return canonical_events_path
 
 
 def _clip_result_text(text: str) -> tuple[str, bool]:
@@ -1122,6 +1177,7 @@ __all__ = [
     "_unit_loss_path",
     "archive_outgoing_unit_loss",
     "is_unit_attempt_slot",
+    "any_unit_transcript",
     "read_run_result",
     "read_unit_loss_history",
     "record_unit_attempt",

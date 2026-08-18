@@ -611,6 +611,7 @@ def extract_process_exemplars(
     if cap <= 0 or not patterns:
         return ()
     from zicato.core.workspace import events_jsonl_path  # noqa: PLC0415
+    from zicato.tournament.unit_cache import any_unit_transcript  # noqa: PLC0415
 
     train_ids = sorted(str(e) for e in train_entry_ids)
     if not train_ids:
@@ -623,7 +624,9 @@ def extract_process_exemplars(
         cached = events_cache.get(entry_id)
         if cached is None:
             cached = _load_events(
-                events_jsonl_path(workspace_root, epoch_id, parent_generation_id, entry_id)
+                any_unit_transcript(
+                    events_jsonl_path(workspace_root, epoch_id, parent_generation_id, entry_id)
+                )
             )
             events_cache[entry_id] = cached
         return cached
