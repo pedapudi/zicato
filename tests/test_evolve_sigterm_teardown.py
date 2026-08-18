@@ -47,6 +47,7 @@ epoch_id = sys.argv[2]
 pid_file = Path(sys.argv[3])
 
 import zicato.cli.commands.evolve as ev
+import zicato.check as check
 import zicato.orchestrator as orch
 
 spawned: list[int] = []
@@ -75,6 +76,10 @@ async def _no_report(*_a, **_k):
 
 ev._report_dashboard_url = _no_report
 ev._announce_dashboard_still_serving = lambda *a, **k: None
+# The pre-spend wiring gate: this fixture workspace is minimal and the
+# test is about SIGTERM teardown, not wiring. Patched in the CHILD,
+# since the child is a real process the test cannot monkeypatch into.
+check.require_workspace_valid = lambda *a, **k: None
 
 
 async def _hang_mid_round(**_kwargs):

@@ -256,6 +256,8 @@ def _install_evolve_mocks(monkeypatch: pytest.MonkeyPatch, spawned: list[_FakePr
 
     monkeypatch.setattr(ev, "_resolve_supervisor_binary", lambda: Path("/fake/zicato-supervisor"))
 
+    monkeypatch.setattr(ev, "_validate_before_spending", lambda *a, **k: None)
+
     async def _fake_evolve_n_rounds(**kwargs: Any) -> list[Any]:
         stop_reason_out = kwargs.get("stop_reason_out")
         if stop_reason_out is not None:

@@ -182,8 +182,12 @@ def _install_stub_adapter_factory(
     # Re-bind on the zicato namespace so `from zicato import adapter_factory`
     # picks up the stub.
     import zicato
+    import zicato.check
 
     monkeypatch.setattr(zicato, "adapter_factory", fake_factory, raising=False)
+    # This fixture's local adapter is deliberately not subprocess-importable;
+    # tests using it exercise loop orchestration below the workspace gate.
+    monkeypatch.setattr(zicato.check, "require_workspace_valid", lambda *a, **k: None)
 
 
 def _install_telemetry_stubs(

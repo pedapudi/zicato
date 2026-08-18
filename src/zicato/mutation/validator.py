@@ -55,6 +55,7 @@ numeric fields and its presentational ``rule_fired``.
 from __future__ import annotations
 
 import ast
+from collections.abc import Sequence
 from pathlib import Path
 
 from zicato.core.types import MutationPoint, Patch
@@ -102,6 +103,27 @@ def classify_post_apply_error(message: str) -> str | None:
     if sep and code in POST_APPLY_CHECKS:
         return code
     return None
+
+
+def duplicate_mutation_ids(points: Sequence[MutationPoint]) -> dict[str, list[str]]:
+    """Return every id enumerated more than once, mapped to its locations.
+
+    ``MutationPoint.id`` is declared globally unique within a generation,
+    but the enumerator emits a point per marker and does not dedupe, so
+    two markers sharing an id both enumerate. Any index keyed on id then
+    silently resolves to whichever point came last, and the applier edits
+    an arbitrary one of the colliding spans.
+
+    Shared by two callers with deliberately different scopes.
+    :func:`validate_patches` intersects this with the ids a batch
+    actually targets — its job is to reject one batch, and an unrelated
+    duplicate elsewhere in the tree must not block a clean one.
+    ``zicato check`` reports the whole surface, before any spend.
+    """
+    locations: dict[str, list[str]] = {}
+    for point in points:
+        locations.setdefault(point.id, []).append(f"{point.file}:{point.line_start}")
+    return {mid: locs for mid, locs in locations.items() if len(locs) > 1}
 
 
 def validate_patches(
@@ -165,19 +187,14 @@ def validate_patches(
     # patch actually targets are reported, so an unrelated duplicate
     # elsewhere in the tree does not block an otherwise-clean batch.
     targeted_ids = {patch.mutation_id for patch in patches}
-    id_locations: dict[str, list[str]] = {}
-    for enumerated in points:
-        id_locations.setdefault(enumerated.id, []).append(
-            f"{enumerated.file}:{enumerated.line_start}"
+    collisions = duplicate_mutation_ids(points)
+    for dup_id in sorted(targeted_ids & set(collisions)):
+        locations = collisions[dup_id]
+        errors.append(
+            f"mutation_id {dup_id!r} is ambiguous: it resolves to "
+            f"{len(locations)} mutation points ({', '.join(sorted(locations))}); "
+            f"ids must be unique across the mutation surface"
         )
-    for dup_id in sorted(targeted_ids):
-        locations = id_locations.get(dup_id, [])
-        if len(locations) > 1:
-            errors.append(
-                f"mutation_id {dup_id!r} is ambiguous: it resolves to "
-                f"{len(locations)} mutation points ({', '.join(sorted(locations))}); "
-                f"ids must be unique across the mutation surface"
-            )
 
     for patch in patches:
         rule = _OP_RULES.get(patch.op)
@@ -403,6 +420,7 @@ def check_forbidden_ids(patches: list[Patch], forbidden_ids: list[str]) -> list[
 
 
 __all__ = [
+    "duplicate_mutation_ids",
     "POST_APPLY_CHECKS",
     "check_forbidden_ids",
     "classify_post_apply_error",

@@ -449,6 +449,9 @@ Options:
                                   .zicato]
   --epoch TEXT                    Epoch id. Defaults to the workspace's current
                                   epoch.
+  --dry-run                       Validate the workspace with the flags this
+                                  invocation would use, print the result, and
+                                  exit without spending a round.
   --rounds INTEGER RANGE          Number of evolve rounds to attempt.  [default:
                                   1; x>=1]
   --mode [full|fast]              fast (default) = cache-first: every

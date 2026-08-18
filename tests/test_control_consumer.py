@@ -528,6 +528,7 @@ def test_pause_blocks_then_resumes_between_rounds(
         return _mock_outcome(round_index)
 
     monkeypatch.setattr("zicato.evolve.gauntlet.evolve_once", _mock_evolve_once)
+    monkeypatch.setattr("zicato.check.require_workspace_valid", lambda *a, **k: None)
 
     # Pause is active before the loop starts.
     write_command(workspace, ControlCommand(name=CMD_PAUSE_EPOCH))
@@ -586,6 +587,7 @@ def test_rubric_replacement_rolls_the_epoch(
         return _mock_outcome(round_index)
 
     monkeypatch.setattr("zicato.evolve.gauntlet.evolve_once", _mock_evolve_once)
+    monkeypatch.setattr("zicato.check.require_workspace_valid", lambda *a, **k: None)
 
     # Queue the rubric replacement BEFORE the loop starts so it fires at the
     # top of round 0's between-rounds safe point.

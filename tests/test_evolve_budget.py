@@ -78,6 +78,9 @@ def _install_mock_evolve_once(
         return _make_outcome(round_index, decision)
 
     monkeypatch.setattr("zicato.evolve.gauntlet.evolve_once", _mock_evolve_once)
+    # This suite replaces the round beneath the public loop and uses the
+    # deliberately non-worker stub workspace from test_orchestrator.
+    monkeypatch.setattr("zicato.check.require_workspace_valid", lambda *a, **k: None)
 
 
 class _FakeClock:
@@ -126,6 +129,7 @@ def _install_clock_advancing_evolve_once(
 
     monkeypatch.setattr("zicato.evolve.gauntlet.evolve_once", _mock_evolve_once)
     monkeypatch.setattr("zicato.evolve.loop.time.monotonic", clock.monotonic)
+    monkeypatch.setattr("zicato.check.require_workspace_valid", lambda *a, **k: None)
 
 
 async def _harness_call_llm(system: str, user: str, model: str) -> str:
@@ -358,6 +362,12 @@ def _install_cli_capture(monkeypatch: pytest.MonkeyPatch, captured: dict[str, An
 
     monkeypatch.setattr(orch_mod, "evolve_n_rounds", _fake_evolve_n_rounds)
 
+    # The pre-spend wiring gate is patched out: this fixture workspace is
+    # deliberately minimal and exercises CLI plumbing, not wiring.
+    import zicato.cli.commands.evolve as evolve_mod
+
+    monkeypatch.setattr(evolve_mod, "_validate_before_spending", lambda *a, **k: None)
+
 
 def test_cli_passes_max_wall_clock_seconds_flag(
     monkeypatch: pytest.MonkeyPatch,
@@ -456,9 +466,11 @@ def test_cli_summary_reports_budget_stop(
             stop_reason_out.append("wall_clock_budget_between_rounds")
         return [_make_outcome(0)]
 
+    import zicato.cli.commands.evolve as evolve_mod
     import zicato.orchestrator as orch_mod
 
     monkeypatch.setattr(orch_mod, "evolve_n_rounds", _fake_evolve_n_rounds)
+    monkeypatch.setattr(evolve_mod, "_validate_before_spending", lambda *a, **k: None)
 
     runner = CliRunner()
     result = runner.invoke(
@@ -496,9 +508,11 @@ def test_cli_summary_reports_mid_round_abort(
             stop_reason_out.append("wall_clock_budget_mid_round")
         return [_make_outcome(0, decision="rejected")]
 
+    import zicato.cli.commands.evolve as evolve_mod
     import zicato.orchestrator as orch_mod
 
     monkeypatch.setattr(orch_mod, "evolve_n_rounds", _fake_evolve_n_rounds)
+    monkeypatch.setattr(evolve_mod, "_validate_before_spending", lambda *a, **k: None)
 
     runner = CliRunner()
     result = runner.invoke(

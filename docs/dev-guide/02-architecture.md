@@ -80,16 +80,23 @@ tests patch those owners directly.
    `"consecutive_rejections"`, `"degenerate_health"`,
    `"wall_clock_budget_between_rounds"`, or
    `"wall_clock_budget_mid_round"`.
-2. **Contract-hash auto-epoching, ONCE.** When `epoch_id is None` and
+2. **Mandatory workspace gate.** The public loop calls
+   `zicato.check.require_workspace_valid(...)` before auto-epoching or any
+   model call. It checks the live contract when no explicit epoch is pinned,
+   reconstructs the adapter through the same worker-spec seam as tournament
+   workers, and enumerates the adapter-scoped snapshot under the contract's
+   mutation syntax. Library callers and the CLI therefore share one spend
+   boundary; `--dry-run` invokes the same gate before exiting.
+3. **Contract-hash auto-epoching, ONCE.** When `epoch_id is None` and
    `auto_epoch` is true, `_orch.ensure_epoch_for_contract(...)` resolves
    (and, on drift, rolls) the epoch; the resolved id is pinned for every
    round of this invocation so the loop never re-rolls mid-flight. An
    explicit `epoch_id` skips auto-rolling entirely — an explicit target
    always wins. (Mechanics: 03-contract-and-epochs.md §"epoch lifecycle".)
-3. **Workspace lock.** `acquire_workspace_lock(workspace_root,
+4. **Workspace lock.** `acquire_workspace_lock(workspace_root,
    instance_id)` — two concurrent orchestrators must not share a
    workspace. Released in the `finally`.
-4. **Conservative crash-resume reconciliation, ONCE.**
+5. **Conservative crash-resume reconciliation, ONCE.**
    `prepare_resume(workspace_root, epoch_id)`
    (`src/zicato/runtime/resume.py`) runs right after the lock and before
    any new work: it clears stale runtime state from a prior dead evolve
@@ -98,11 +105,11 @@ tests patch those owners directly.
    On ANY ambiguity it discards the partial generation. A clean workspace
    yields the no-op plan; the plan is consumed by the FIRST round only
    (`resume_plan = None` after round one).
-5. **Progress log cleared.** `progress_log.clear_log(...)` so this
+6. **Progress log cleared.** `progress_log.clear_log(...)` so this
    invocation's `seq` starts from 1 — "a stale tail must never read as
    live progress". Then `HeartbeatBeater(workspace_root, instance_id,
    interval_s=2.0)` starts.
-6. **Harmonograf + meta-loop emitter.**
+7. **Harmonograf + meta-loop emitter.**
    `_orch._resolve_or_launch_harmonograf(...)` returns the console URL
    plus a shutdown handle (auto-launched in-process unless the workspace
    configures an external URL); `_build_meta_loop_emitter_safe(...)`
@@ -110,7 +117,7 @@ tests patch those owners directly.
    judges, analyzer) — degraded installs get a no-op emitter. Both are
    torn down in the `finally` block, emitter first (a sink flushing to
    the console wants the server still up).
-7. **First genuine transition.** `LOOP_START` appended to the progress
+8. **First genuine transition.** `LOOP_START` appended to the progress
    log; its `seq` stamped onto the heartbeat.
 
 > ⚠️ **TRAP** — the progress log's monotonic `seq` advances ONLY on

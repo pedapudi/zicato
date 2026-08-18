@@ -171,6 +171,12 @@ def _install_cli_capture(monkeypatch: pytest.MonkeyPatch, captured: dict[str, An
 
     monkeypatch.setattr(orch_mod, "evolve_n_rounds", _fake_evolve_n_rounds)
 
+    # The pre-spend wiring gate: these fixture workspaces exercise flag
+    # routing and the auto-epoch resolver, not wiring.
+    import zicato.cli.commands.evolve as evolve_mod
+
+    monkeypatch.setattr(evolve_mod, "_validate_before_spending", lambda *a, **k: None)
+
 
 def test_evolve_passes_auto_epoch_true_by_default(
     monkeypatch: pytest.MonkeyPatch,
@@ -296,6 +302,12 @@ def test_evolve_resolves_and_auto_epochs_on_contract_change(
     import zicato.orchestrator as orch_mod
 
     monkeypatch.setattr(orch_mod, "evolve_n_rounds", _fake_evolve_n_rounds)
+
+    # The pre-spend wiring gate: these fixture workspaces exercise flag
+    # routing and the auto-epoch resolver, not wiring.
+    import zicato.cli.commands.evolve as evolve_mod
+
+    monkeypatch.setattr(evolve_mod, "_validate_before_spending", lambda *a, **k: None)
 
     from zicato.epoch.lifecycle import list_epochs
 

@@ -340,6 +340,7 @@ source_modules = [
     "zicato.analyzer",
     "zicato.aux_timeout",
     "zicato.board",
+    "zicato.check",
     "zicato.config",
     "zicato.core",
     "zicato.emulator",

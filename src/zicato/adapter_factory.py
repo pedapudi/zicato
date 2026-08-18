@@ -40,6 +40,26 @@ def make_adapter_from_config(workspace_config: Mapping[str, Any]) -> Any:
       honestly in ``config.json`` instead of relying on a test-side
       factory monkeypatch.
 
+    What usually travels with a custom adapter
+    ------------------------------------------
+    A target zicato does not ship is rarely graded well by stock
+    machinery, so an operator setting ``adapter.factory`` (or pointing
+    ``adapter.entrypoint`` at their own harness) usually also wants:
+
+    * ``scoring.outcome_summarizer_spec`` — how a finished run is
+      reduced to an outcome for THIS target, rather than the default
+      summary;
+    * a ``predicate`` ``expectation.spec`` on the board entries — a
+      dotted path to their own pass/fail callable, rather than the
+      literal text or regex matchers, which rarely know what good looks
+      like for a bespoke target.
+
+    None of that is enforced: a custom adapter with stock grading is a
+    legitimate, if unusual, configuration. It is recorded here because
+    the coupling is easy to miss and expensive to discover — the loop
+    runs, spends, and optimizes against a grade that was never about
+    this target.
+
     Backwards-compatibility hook: the older ``zicato epoch register`` flow
     persists ``config['adk_entrypoint']`` + ``config['mutable_trees']``
     at the workspace-config top level. When ``config['adapter']`` is

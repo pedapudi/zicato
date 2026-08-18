@@ -1,5 +1,48 @@
 # Changelog
 
+### `zicato evolve` gates a workspace before it spends a round
+
+Integrating a new target had no cheap way to prove the wiring works. The
+cheapest instrument that touched the target was a statistical one, and a wiring
+defect and an unmeasurable contract look the same from there: flat and
+saturated. So a duplicated mutation id, or an adapter no worker can rebuild,
+first showed up after a round had already been spent.
+
+`evolve` now reports every defect it can prove, before round zero, and refuses
+to run when it finds one:
+
+- a mutation id that resolves to more than one point, across the whole surface
+  rather than only the ids a patch happens to target;
+- a mutation surface the proposer cannot edit — no roots, a missing tree, a
+  tree that enumerates to nothing, a span marker that binds to no literal;
+- an adapter that does not rebuild and load in a fresh interpreter, which is
+  how every tournament worker builds it;
+- an invalid board or scoring contract — unreadable data, a
+  `per_judge_weights` key no entry declares, or a predicate or process judge
+  whose dotted path does not import. Drift-only boards remain valid: their
+  loss signal comes from runtime telemetry rather than pass/fail expectations.
+
+The gate runs on every `evolve`, with no flag — a gate people have to remember
+is a gate people forget. `--dry-run` stops there even when the workspace is
+clean, printing the epoch, the board size, and the surface size without
+spending anything.
+
+Three things it checks that a separate, approximate command could not. It
+constructs the adapter and uses its canonical worker specification; it reads
+the exact adapter-scoped surface under the contract's declared marker syntax,
+materialising an ephemeral v0 snapshot on a fresh workspace; and without an
+explicit `--epoch` it reads the LIVE contract files, because auto-epoching is
+about to freeze whatever they now say. Checking the frozen copy there would
+validate the contract the last round ran.
+
+No model is called and no board entry runs, so the cost does not scale with the
+board or the target.
+
+The duplicate-id detection inside `validate_patches` now shares one
+`duplicate_mutation_ids` helper with the gate. Its behaviour is unchanged: it
+still reports only the ids a batch targets, because its job is to reject one
+batch and an unrelated duplicate elsewhere must not block a clean one.
+
 ### A racing rung could eliminate half the field without evaluating anything
 
 Racing sized its rung slices against the FULL board and then handed them to
