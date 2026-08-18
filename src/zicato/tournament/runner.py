@@ -521,6 +521,10 @@ async def _run_single(
                     models=_models,
                     fallback_callable=config.effective_user_emulator_call_llm(),
                 ),
+                # The parent is the ONE producer of the run id: it stamps the
+                # active_runs record the supervisor polices, so the worker must
+                # not re-derive it from its own view of the entry (issue #250).
+                "run_id": run_id,
                 "sink_events_path": str(sink_path),
                 "loss_path": str(loss_path),
                 "result_path": str(result_path),

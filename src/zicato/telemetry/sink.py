@@ -86,22 +86,30 @@ def make_run_sink_path(
     return path
 
 
-EVENTS_PREV_FILENAME = "events.prev.jsonl"
-
-
 def events_prev_path_for(path: Path) -> Path:
-    """Keep the replicate stem when deriving its predecessor path."""
+    """The retained predecessor of one events file. See :func:`archive_prior_events`.
+
+    Derived from the stem so each replicate keeps its own archive:
+    ``events.jsonl`` → ``events.prev.jsonl`` and ``events.r{n}.jsonl`` →
+    ``events.r{n}.prev.jsonl``. A fixed filename would make every replicate
+    of a unit archive over the same file.
+    """
     return path.with_name(f"{path.stem}.prev.jsonl")
 
 
 def archive_prior_events(path: Path) -> None:
     """Retain the events file a ``mode="write"`` sink is about to truncate.
 
-    Each replicate has no round dimension, so a re-measurement would
-    otherwise destroy the prior raw telemetry (issue #122).
+    A replicate's events file is keyed by ``(epoch, generation, entry,
+    replicate)`` with no round dimension, so a re-measured unit — the
+    champion under ``--mode full``, which is re-run every round — used to
+    have its raw telemetry truncated by the next round's sink.
+    ``loss.json`` can in principle be re-derived from the events; once they
+    are gone the measurement is unreconstructable by any means (issue #122).
 
-    This renames an EXISTING events file to ``events.prev.jsonl`` before
-    the sink opens, keeping exactly ONE predecessor: the archive is
+    This renames an EXISTING events file to its
+    :func:`events_prev_path_for` sibling before the sink opens, keeping
+    exactly ONE predecessor PER REPLICATE: the archive is
     bounded (a champion defending twenty rounds costs two files, not
     twenty), which is the trade for preserving the immediately-clobbered
     measurement without unbounded growth. A no-op when nothing is there
@@ -371,7 +379,6 @@ def make_run_sinks(
 
 __all__ = [
     "archive_prior_events",
-    "EVENTS_PREV_FILENAME",
     "events_prev_path_for",
     "make_run_sink_path",
     "make_run_sink",

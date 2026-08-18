@@ -55,7 +55,7 @@ from zicato.core import (
     ScoringWeights,
     is_infra_abort_cause,
 )
-from zicato.core.workspace import events_jsonl_path, loss_profile_path
+from zicato.core.workspace import events_jsonl_path, loss_profile_path, run_id_for_unit
 from zicato.runtime.paths import active_run_path
 from zicato.runtime.state import ActiveRun
 from zicato.tournament.runner import _run_single
@@ -218,6 +218,7 @@ def _write_args_file(
         "adapter": {"kind": "import", "factory": adapter_factory},
         "harness_role": {"dotted": "tests._subprocess_worker_support:harness_call_llm"},
         "auxiliary_role": {"dotted": "tests._subprocess_worker_support:auxiliary_call_llm"},
+        "run_id": run_id_for_unit(generation.id, entry.id),
         "sink_events_path": str(sink_path),
         "loss_path": str(loss_path),
         "result_path": str(result_path),

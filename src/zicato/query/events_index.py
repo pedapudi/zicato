@@ -80,7 +80,16 @@ def _current_events_files(epochs: Path) -> list[Path]:
 
 
 def _run_id_file_state(path: Path, cached: _RunIdFileState | None) -> _RunIdFileState | None:
-    """Return metadata + id, retaining a resolved id across pure appends."""
+    """Return metadata + id, retaining a resolved id across pure appends.
+
+    An append (same inode, grown size) keeps the id already parsed out of
+    the file; anything else reparses. The one case this cannot see is a
+    truncate-in-place that lands on the same size within the same mtime
+    tick, which would keep a stale id. Production never does that: a
+    ``mode="write"`` sink archives the old file to its ``.prev.jsonl``
+    sibling first (:func:`zicato.telemetry.sink.archive_prior_events`), so
+    the replacement is a NEW inode and the identity comparison catches it.
+    """
     try:
         stat = path.stat()
     except OSError:

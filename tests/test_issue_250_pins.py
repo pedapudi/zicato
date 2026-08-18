@@ -35,9 +35,32 @@ def _entry(entry_id: str = ENTRY) -> BoardEntry:
 def test_run_id_is_replicate_keyed_and_r0_is_historical() -> None:
     assert run_id_for_unit(GEN, ENTRY) == f"{GEN}--{ENTRY}"
     assert len({run_id_for_unit(GEN, ENTRY, r) for r in range(3)}) == 3
-    assert run_id_for_unit(GEN, ENTRY, 1).startswith("r1.")
+    assert run_id_for_unit(GEN, ENTRY, 1) == f"r1.{GEN}--{ENTRY}"
     assert replicate_index_from_run_id(GEN, ENTRY, run_id_for_unit(GEN, ENTRY, 1)) == 1
     assert replicate_index_from_run_id(GEN, "different", run_id_for_unit(GEN, ENTRY, 1)) is None
+
+
+def test_replicate_run_id_passes_the_shared_id_guard() -> None:
+    """Every id the supervisor and dashboard police must survive their guard.
+
+    ``_is_safe_id`` mirrors the Rust ``routes::is_safe_id``; the reserved
+    ``r{n}.`` prefix must not push a realistic id past either.
+    """
+    from zicato.dashboard.endpoints import _is_safe_id
+
+    for replicate in (0, 1, 9, 999):
+        assert _is_safe_id(run_id_for_unit(GEN, ENTRY, replicate))
+    long_entry = "transformers_progressive_scripted" * 5  # 165 chars
+    assert _is_safe_id(run_id_for_unit("v1234", long_entry, 999))
+
+
+def test_generation_ids_cannot_enter_the_reserved_replicate_namespace() -> None:
+    """The disjointness the reserved prefix rests on: a generation id is ``v{n}``."""
+    from zicato.evolve.generation_phase import next_generation_id
+
+    assert next_generation_id(Path("/nonexistent-workspace"), EPOCH) == "v0"
+    for generation_id in ("v0", "v7", "v123"):
+        assert replicate_index_from_run_id(generation_id, ENTRY, f"{generation_id}--{ENTRY}") == 0
 
 
 def test_legacy_suffix_entry_remains_valid_and_cannot_collide() -> None:

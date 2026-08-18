@@ -559,7 +559,24 @@ def test_endpoint_per_judge_for_run_by_entry(
     # resolves it and returns the same shape as the run_id-keyed route.
     assert body["run_id"] == "run_v1"
 
-    replicate_loss = (
+
+def test_per_judge_by_entry_agrees_across_its_two_sources(
+    phase1_client: TestClient, phase1_workspace: Path
+) -> None:
+    """The by-entry route answers from ``loss.json`` OR the index, never differently.
+
+    ``build_per_judge_for_entry`` prefers the run directory's own
+    ``per_judge_loss`` block and falls back to the ``judge_losses`` index
+    when the block is absent. Which source answered must not be visible in
+    the response: the fixture's v1 loss.json carries no block, so the first
+    read comes from the index; writing the SAME rows into the file must
+    leave the response byte-identical.
+    """
+    url = "/api/run/2026-05-16_e0/v1/entry_alpha/per-judge"
+    from_index = phase1_client.get(url).json()
+    assert [row["judge_name"] for row in from_index["judges"]] == ["critic_A", "critic_B"]
+
+    loss_path = (
         phase1_workspace
         / "epochs"
         / "2026-05-16_e0"
@@ -567,35 +584,18 @@ def test_endpoint_per_judge_for_run_by_entry(
         / "v1"
         / "runs"
         / "entry_alpha"
-        / "loss.r1.json"
+        / "loss.json"
     )
     _write_json(
-        replicate_loss,
+        loss_path,
         {
-            "run_id": "run_v1_r1",
-            "per_judge_loss": [
-                {
-                    "judge_name": "replicate-only",
-                    "weighted_loss": 0.75,
-                    "raw_loss": 1.5,
-                    "weight": 0.5,
-                }
-            ],
+            "run_id": "run_v1",
+            "entry_id": "entry_alpha",
+            "per_judge_loss": from_index["judges"],
         },
     )
-    replicate = phase1_client.get("/api/run/2026-05-16_e0/v1/entry_alpha/per-judge?replicate=1")
-    assert replicate.status_code == 200
-    assert replicate.json() == {
-        "run_id": "run_v1_r1",
-        "judges": [
-            {
-                "judge_name": "replicate-only",
-                "weighted_loss": 0.75,
-                "raw_loss": 1.5,
-                "weight": 0.5,
-            }
-        ],
-    }
+    from_file = phase1_client.get(url).json()
+    assert from_file == from_index
 
 
 def test_environment_workspace_is_structured(phase1_client: TestClient) -> None:

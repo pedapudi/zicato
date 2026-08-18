@@ -259,7 +259,7 @@ async def test_inner_model_resolved_after_active_run_and_heartbeat(
     import zicato._tournament_worker as worker
     import zicato.runtime.heartbeat as heartbeat_mod
     import zicato.runtime.state as state_mod
-    from zicato.core.workspace import events_jsonl_path, loss_profile_path
+    from zicato.core.workspace import events_jsonl_path, loss_profile_path, run_id_for_unit
 
     order: list[str] = []
 
@@ -322,6 +322,7 @@ async def test_inner_model_resolved_after_active_run_and_heartbeat(
         # the fake above just records the call instead.
         "harness_role": {"models_role": dict(_MODEL_SPEC)},
         "auxiliary_role": {"dotted": "tests._subprocess_worker_support:auxiliary_call_llm"},
+        "run_id": run_id_for_unit("v0", "entry_a"),
         "sink_events_path": str(events_jsonl_path(workspace, "e0", "v0", "entry_a")),
         "loss_path": str(loss_profile_path(workspace, "e0", "v0", "entry_a")),
         "result_path": str(tmp_path / "result.json"),
@@ -394,7 +395,7 @@ def _write_inner_model_gate_args(
     ``google.adk`` import tax to build one — see the adapter-kind gate on
     ``_resolve_inner_model_from_role`` in ``_tournament_worker._run``.
     """
-    from zicato.core.workspace import events_jsonl_path, loss_profile_path
+    from zicato.core.workspace import events_jsonl_path, loss_profile_path, run_id_for_unit
 
     sink_path = events_jsonl_path(workspace, "e0", "v0", "entry_a")
     loss_path = loss_profile_path(workspace, "e0", "v0", "entry_a")
@@ -423,6 +424,7 @@ def _write_inner_model_gate_args(
             }
         },
         "auxiliary_role": {"dotted": "tests._subprocess_worker_support:auxiliary_call_llm"},
+        "run_id": run_id_for_unit("v0", "entry_a"),
         "sink_events_path": str(sink_path),
         "loss_path": str(loss_path),
         "result_path": str(result_path),

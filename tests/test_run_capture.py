@@ -41,7 +41,12 @@ from typing import Any
 import pytest
 
 from zicato.core import RunResult
-from zicato.core.workspace import events_jsonl_path, loss_profile_path, run_result_path
+from zicato.core.workspace import (
+    events_jsonl_path,
+    loss_profile_path,
+    run_id_for_unit,
+    run_result_path,
+)
 from zicato.judge_runtime.io_capture import (
     JUDGE_IO_CLIP_CHARS,
     JUDGE_IO_CLIP_MARKER,
@@ -477,6 +482,7 @@ def _write_args(
         "adapter": {"kind": "import", "factory": adapter_factory},
         "harness_role": {"dotted": "tests._subprocess_worker_support:harness_call_llm"},
         "auxiliary_role": {"dotted": "tests._subprocess_worker_support:auxiliary_call_llm"},
+        "run_id": run_id_for_unit("v0", "entry_a"),
         "sink_events_path": str(sink_path),
         "loss_path": str(loss),
         "result_path": str(result_path),

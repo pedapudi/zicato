@@ -46,7 +46,6 @@ that already pass the inner dir, and tests that build a synthetic
 
 from __future__ import annotations
 
-import hashlib
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -212,31 +211,36 @@ def proposer_staged_recommendations_path(workspace_root: Path) -> Path:
 def run_id_for_unit(generation_id: str, entry_id: str, replicate_index: int = 0) -> str:
     """Identify ``(generation, entry, replicate)`` for runtime artifacts.
 
-    Replicate 0 keeps the historical ``generation--entry`` form. Replicate
-    ``r>0`` uses an opaque ``rN.<digest>`` id with no ``--`` substring, so it
-    cannot collide with ANY historical r0 id and no entry-id suffix needs to
-    be reserved. The digest input is length-framed, making the two identity
-    components unambiguous before hashing.
+    Replicate 0 keeps the historical ``{generation}--{entry}`` form, so a
+    single-replicate workspace is byte-identical to one written before the
+    replicate dimension existed. Replicate ``r>0`` prefixes that same form
+    with a reserved ``r{index}.`` marker.
+
+    The prefix cannot collide with any replicate-0 id: a replicate-0 id
+    begins with a generation id, and every generation id is ``v{n}``
+    (:func:`zicato.evolve.generation_phase.next_generation_id`), so none of
+    them can begin ``r`` followed by digits and a dot. The two id spaces are
+    therefore disjoint by construction, without reserving an entry-id suffix
+    the way a trailing ``--r{index}`` would have to.
+
+    The result is a legible operator-facing label — it names the unit in
+    ``runtime/active_runs``, in the kill-request marker, and in the run's
+    harmonograf span — and stays inside the shared 200-character id guard
+    (Rust ``routes::is_safe_id``, Python ``endpoints._is_safe_id``), which
+    admits ``.`` alongside the alphanumerics, ``-`` and ``_`` a replicate-0
+    id already uses.
     """
     canonical = f"{generation_id}--{entry_id}"
     if replicate_index <= 0:
         return canonical
-    generation_bytes = generation_id.encode("utf-8")
-    entry_bytes = entry_id.encode("utf-8")
-    framed = (
-        len(generation_bytes).to_bytes(8, "big")
-        + generation_bytes
-        + len(entry_bytes).to_bytes(8, "big")
-        + entry_bytes
-    )
-    return f"r{replicate_index}.{hashlib.sha256(framed).hexdigest()}"
+    return f"r{replicate_index}.{canonical}"
 
 
 def replicate_index_from_run_id(generation_id: str, entry_id: str, run_id: str) -> int | None:
     """Recover a unit's replicate index from its validated runtime run id."""
     if run_id == run_id_for_unit(generation_id, entry_id):
         return 0
-    prefix, separator, _digest = run_id.partition(".")
+    prefix, separator, _rest = run_id.partition(".")
     if separator != "." or not prefix.startswith("r") or not prefix[1:].isdigit():
         return None
     replicate_index = int(prefix[1:])

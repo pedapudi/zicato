@@ -139,7 +139,16 @@ def read_events_history(
     entry_id: str,
     replicate_index: int = 0,
 ) -> list[list[dict[str, Any]]]:
-    """One replicate's retained telemetry, oldest measurement first."""
+    """One replicate's retained raw telemetry, oldest measurement first.
+
+    Returns one element per retained events file for that replicate — the
+    archived predecessor (``events.prev.jsonl`` / ``events.r{n}.prev.jsonl``,
+    when a re-measurement displaced one) followed by the current file — each
+    element being that file's parsed JSONL records. A replicate measured
+    once yields a single element; one never measured yields ``[]``.
+
+    Best-effort: unreadable files and malformed lines are skipped.
+    """
     out: list[list[dict[str, Any]]] = []
     for path in (
         layout.events_prev(epoch_id, generation_id, entry_id, replicate_index),
