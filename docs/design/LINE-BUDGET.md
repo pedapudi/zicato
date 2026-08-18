@@ -18,8 +18,8 @@ The baseline and final ratchet use the same metric:
 
 | Measurement | Baseline (`f9052dd`) | Current limit | Net reduction |
 |---|---:|---:|---:|
-| Total | 408,547 | 415,633 | -7,086 |
-| Production | 197,588 | 199,938 | -2,350 |
+| Total | 408,547 | 417,426 | -8,879 |
+| Production | 197,588 | 201,029 | -3,441 |
 
 The earlier raw count of 425,755 included lockfiles and generated artifacts and
 is retained in `.line-budget.json` for provenance; it is not the enforced
@@ -69,3 +69,5 @@ increase.
 | Pre-spend workspace gate (production) | 198,388 | +1,240 | 199,628 | Issue #240: the validators and their lazily-built workspace view, the shared `duplicate_mutation_ids` helper, `make_adapter_from_spec`, the process-group-bounded adapter probe, and the enumerator's unbound-marker collector. |
 | Replicate-keyed run identity (total) | 414,906 | +727 | 415,633 | Issue #250: replicate-suffixed run ids and events files, the single-producer args payload, the per-replicate transcript readers, and the collision/telemetry pins. |
 | Replicate-keyed run identity (production) | 199,628 | +310 | 199,938 | Issue #250: the legible reserved-prefix id, per-replicate sink paths, and the any_unit_transcript reader shared by the three proposer-channel consumers. |
+| Execution-plan reader (total) | 415,633 | +1,793 | 417,426 | Issue #241 (partial): the epoch execution-plan builder, its endpoint, the indexed replicate walk, and the plan regressions incl. the on-disk audit. |
+| Execution-plan reader (production) | 199,938 | +1,091 | 201,029 | Issue #241 (partial): query/execution_plan.py, the endpoint registration, and the shared indexed enumerator. |
