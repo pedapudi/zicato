@@ -995,12 +995,12 @@ def _ingest_run_into(
         epoch_id=epoch_id,
         generation_id=generation_id,
         entry_id=entry_id,
-        # The workspace does not persist a free-standing per-run record
-        # with wall-clock timestamps — loss.json carries only the
-        # duration. started_at / ended_at are left empty; runtime_ms is
-        # the authoritative timing field.
-        started_at="",
-        ended_at="",
+        # The run's wall-clock span, as the worker stamped it (issue #242).
+        # Empty for a profile written before those fields existed and for a
+        # synthesised worst-case that never measured one; runtime_ms remains
+        # the authoritative DURATION either way.
+        started_at=(profile.started_at or ""),
+        ended_at=(profile.ended_at or ""),
         aborted=profile.wall_clock_budget_exceeded,
         runtime_ms=profile.runtime_ms,
         tournament_id=tournament_id,

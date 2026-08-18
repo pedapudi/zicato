@@ -36,50 +36,6 @@ class ArtifactSet:
 
 
 @dataclass(frozen=True, slots=True)
-class RunRecord:
-    """Persistence-side record of one run.
-
-    Bridges a run's executed-state metadata (when it started, when it
-    ended, where its artifacts landed) with the lineage view. Distinct
-    from :class:`RunResult` (the transcript-shape result the harness
-    handed back) and :class:`LossProfile` (the reducer's output).
-
-    Fields
-    ------
-    run_id:
-        Unique id of the run.
-    entry_id:
-        The :class:`BoardEntry.id` executed.
-    generation_id, epoch_id:
-        Lineage coordinates.
-    started_at, ended_at:
-        ISO-8601 UTC strings — wall-clock timestamps.
-    events_jsonl_path:
-        Absolute path to the goldfive event JSONL written by the
-        persistence sink.
-    loss_profile_path:
-        Absolute path to the reducer's per-run ``loss.json``.
-    aborted:
-        ``True`` iff the run was force-terminated (budget exceeded,
-        operator cancel, runner exception).
-    abort_reason:
-        Short symbolic reason when :attr:`aborted` is true. Empty string
-        otherwise.
-    """
-
-    run_id: str
-    entry_id: str
-    generation_id: str
-    epoch_id: str
-    started_at: str
-    ended_at: str
-    events_jsonl_path: Path
-    loss_profile_path: Path
-    aborted: bool = False
-    abort_reason: str = ""
-
-
-@dataclass(frozen=True, slots=True)
 class RunResult:
     """The transcript-shape result of executing one board entry under one generation.
 

@@ -290,6 +290,7 @@ def _materialize_carried_champion(
     runner finds it as a hit.
     """
     from zicato.core.workspace import run_dir  # noqa: PLC0415
+    from zicato.tournament.unit_cache import is_unit_attempt_slot  # noqa: PLC0415
 
     try:
         from zicato.telemetry.reducer import (  # noqa: PLC0415
@@ -313,7 +314,12 @@ def _materialize_carried_champion(
             dst_run_dir = run_dir(workspace_root, epoch_id, generation_id, entry_id)
             any_for_entry = False
             # Canonical loss.json (replicate 0) + any loss.r<r>.json siblings.
+            # Attempt siblings are excluded: they describe a superseded
+            # execution in the SOURCE epoch, and carrying one forward would
+            # present it as this generation's measurement.
             for src_loss in sorted(entry_dir.glob("loss*.json")):
+                if is_unit_attempt_slot(src_loss):
+                    continue
                 try:
                     profile = read_loss_profile(src_loss)
                 except (OSError, ValueError, KeyError, json.JSONDecodeError) as exc:

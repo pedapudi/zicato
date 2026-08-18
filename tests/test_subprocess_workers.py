@@ -46,7 +46,14 @@ from tests._subprocess_worker_support import (
     auxiliary_call_llm,
     harness_call_llm,
 )
-from zicato.core import BoardEntry, Generation, LossProfile, RuntimeConfig, ScoringWeights
+from zicato.core import (
+    BoardEntry,
+    Generation,
+    LossProfile,
+    RuntimeConfig,
+    ScoringWeights,
+    is_infra_abort_cause,
+)
 from zicato.core.workspace import events_jsonl_path, loss_profile_path
 from zicato.runtime.paths import active_run_path
 from zicato.runtime.state import ActiveRun
@@ -312,6 +319,18 @@ def test_worker_penalises_aborted_run_in_loss_json(tmp_path: Path) -> None:
     # task_failure_ratio 1.0 * 10.0 = 60.0 under the default weights.
     assert profile.drift_loss == pytest.approx(60.0)
     assert profile.task_failure_ratio == pytest.approx(1.0)
+    # ...and the penalty is attributable: the adapter's own abort reason is
+    # the only record of WHY a profile with empty drift_counts carries 60.0.
+    assert profile.not_completed_reason == "harness_exception:TypeError"
+    # It is NOT stamped on abort_cause: any non-budget value there reads as an
+    # infra abort, which would stop this scored failure from being cached at
+    # all — turning a crash into "no evidence" instead of a worst-case score.
+    assert profile.abort_cause is None
+    assert is_infra_abort_cause(profile.abort_cause) is False
+    # The unit's wall-clock span is recorded even on the aborted path.
+    assert profile.started_at is not None
+    assert profile.ended_at is not None
+    assert profile.started_at <= profile.ended_at
 
 
 def test_per_judge_weights_survive_worker_serialize_deserialize() -> None:
@@ -1074,6 +1093,9 @@ def test_worker_cooperative_budget_produces_clean_aborted_result(
 
     assert loss.abort_cause == BUDGET_ABORT_CAUSE
     assert is_infra_abort_cause(loss.abort_cause) is False
+    # The budget path carries BOTH provenance fields: the cause the cache
+    # reads, and the reason the run did not complete.
+    assert loss.not_completed_reason == "wall_clock_budget"
 
 
 # ---------------------------------------------------------------------------

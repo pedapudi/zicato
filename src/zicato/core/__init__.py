@@ -64,7 +64,6 @@ from zicato.core.types import (
     Patch,
     PatchOpKind,
     Pattern,
-    RunRecord,
     RunResult,
     RuntimeConfig,
     ScoringWeights,
@@ -131,7 +130,6 @@ __all__ = [
     # run record / lineage
     "ArtifactFile",
     "ArtifactSet",
-    "RunRecord",
     "RunResult",
     # hypothesis / experiment
     "DriftDirection",

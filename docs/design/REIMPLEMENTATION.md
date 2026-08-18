@@ -868,8 +868,7 @@ core/
                     subtypes instead of one struct with optional fields),
                     Expectation, JudgeSpec, UserPersona, ScriptedTurn, BoardMeta
                     (disable_drift/judge_only as typed fields — see storage §6).
-  loss.py           LossProfile, ExpectationResult, JudgeLoss, RunRecord,
-                    RunResult.
+  loss.py           LossProfile, ExpectationResult, JudgeLoss, RunResult.
   scoring_config.py ScoringWeights DECOMPOSED into nested typed groups:
                     DriftScoring (drift_weight, severity_weights, per_kind,
                     per_judge, default_judge_weight),
