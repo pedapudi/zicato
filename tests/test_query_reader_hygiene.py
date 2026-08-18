@@ -23,12 +23,15 @@ from pathlib import Path
 
 import pytest
 
+from zicato.core import run_id_for_unit
 from zicato.query import (
     WorkspacePaths,
     build_epoch_analysis,
     build_matchup_conversations,
+    build_per_judge_for_entry,
     build_per_judge_trend,
     build_run_transcript,
+    build_run_transcript_delta,
     empty_run_transcript,
     read_epoch_journal,
     read_epoch_journal_md,
@@ -249,6 +252,44 @@ def test_resolve_run_id_for_entry_falls_back_to_entry_id(tmp_path: Path) -> None
     assert resolve_run_id_for_entry(paths, EPOCH, GEN, ENTRY) == ENTRY
 
 
+def test_per_judge_entry_reader_selects_replicate_loss(tmp_path: Path) -> None:
+    ws = _base_workspace(tmp_path)
+    paths = WorkspacePaths(ws)
+    run_dir = ws / "epochs" / EPOCH / "generations" / GEN / "runs" / ENTRY
+    _write_json(run_dir / "loss.json", {"run_id": "goldfive-r0"})
+    _write_json(
+        run_dir / "loss.r1.json",
+        {
+            "run_id": "goldfive-r1",
+            "per_judge_loss": [
+                {
+                    "judge_name": "replicate-judge",
+                    "raw_loss": 0.5,
+                    "weight": 0.25,
+                    "weighted_loss": 0.125,
+                }
+            ],
+        },
+    )
+    runtime_run_id = run_id_for_unit(GEN, ENTRY, 1)
+    assert (
+        resolve_run_id_for_entry(paths, EPOCH, GEN, ENTRY, run_id=runtime_run_id) == "goldfive-r1"
+    )
+    assert resolve_run_id_for_entry(paths, EPOCH, GEN, ENTRY, run_id="goldfive-r1") == "goldfive-r1"
+    payload = build_per_judge_for_entry(paths, EPOCH, GEN, ENTRY, run_id=runtime_run_id)
+    assert payload == {
+        "run_id": "goldfive-r1",
+        "judges": [
+            {
+                "judge_name": "replicate-judge",
+                "raw_loss": 0.5,
+                "weight": 0.25,
+                "weighted_loss": 0.125,
+            }
+        ],
+    }
+
+
 # ---------------------------------------------------------------------------
 # transcript_view — resolve_conversation / build_run_transcript
 # ---------------------------------------------------------------------------
@@ -308,6 +349,53 @@ def test_build_run_transcript_stamps_coordinates(tmp_path: Path) -> None:
         "report.html",
         "42 bytes",
     )
+
+
+def test_full_and_delta_transcripts_select_exact_replicate(tmp_path: Path) -> None:
+    """Both transcript readers must resolve the requested sibling, never r0."""
+    ws = _base_workspace(tmp_path)
+    run_dir = ws / "epochs" / EPOCH / "generations" / GEN / "runs" / ENTRY
+    run_dir.mkdir(parents=True)
+    (run_dir / "events.jsonl").write_text('{"runId": "goldfive-r0"}\n', encoding="utf-8")
+    replicate_events = run_dir / "events.r1.jsonl"
+    replicate_events.write_text('{"runId": "goldfive-r1"}\n', encoding="utf-8")
+
+    seen: list[Path] = []
+
+    def reconstruct(events_path: Path, *, partial_ok: bool = False) -> _FakeTranscript:
+        seen.append(events_path)
+        return _FakeTranscript(
+            {
+                "run_id": "goldfive-r1",
+                "turns": [{"role": "agent", "source_index": 0}],
+                "annotations": [],
+                "event_count": 1,
+                "complete": True,
+            }
+        )
+
+    runtime_run_id = run_id_for_unit(GEN, ENTRY, 1)
+    full = build_run_transcript(
+        WorkspacePaths(ws),
+        EPOCH,
+        GEN,
+        ENTRY,
+        run_id=runtime_run_id,
+        reconstruct=reconstruct,
+    )
+    delta = build_run_transcript_delta(
+        WorkspacePaths(ws),
+        EPOCH,
+        GEN,
+        ENTRY,
+        run_id=runtime_run_id,
+        reconstruct=reconstruct,
+    )
+
+    assert seen == [replicate_events, replicate_events]
+    assert full["run_id"] == "goldfive-r1"
+    assert delta["run_id"] == "goldfive-r1"
+    assert delta["events_path"] == str(replicate_events)
 
 
 def test_build_run_transcript_failure_degrades_same_shape(tmp_path: Path) -> None:

@@ -59,6 +59,7 @@ import asyncio
 import itertools
 import random
 import statistics
+import tempfile
 from dataclasses import replace
 from functools import lru_cache
 from pathlib import Path
@@ -791,51 +792,69 @@ def _worker_config(workspace: Path, seed: int) -> RuntimeConfig:
     )
 
 
-def test_noisy_adapter_seeded_draws_cross_the_worker_boundary(tmp_path):
-    """The REAL noisy adapter through REAL subprocess workers, twice.
+@pytest.mark.slow
+@pytest.mark.integration
+def test_noisy_adapter_seeded_draws_cross_the_worker_boundary(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Prove seeded draws and replicate artifacts across real workers.
 
-    One replicated A/A duel (identical policy trees, two generation ids,
-    replicates=2, a 2-entry board slice) is run through the full
-    subprocess path — worker spawn, ``worker_spec()`` reconstruction with
-    the sigma in its ``args``, goldfive frames, the real reducer — and
-    then run AGAIN in a fresh workspace with the same workspace seed.
-
-    Asserts the three seeded-noise properties end to end:
-
-    * REPRODUCIBLE — the two independent executions produce byte-equal
-      per-entry losses and aggregates (the seed derives only from stable
-      identifiers, so nothing about process ids, tempdir names, or the
-      clock leaks into the measurement);
-    * side-INDEPENDENT — the two generation ids draw different noise even
-      over identical trees (the A/A premise);
-    * replicate-INDEPENDENT — replicate 0 and replicate 1 of the same
-      unit draw differently (the production ``replicate_index`` stamp
-      survives the runner -> args-file -> worker -> adapter round-trip).
+    Two independent A/A duels must reproduce, while sides and replicates
+    remain independent. The run also pins bounded cleanup and one events
+    file per replicate across the process boundary.
     """
     subset = ("conv_summary", "conv_no_fabrication")
     sigma = 0.35
     adapter = make_noisy_adapter({"noise_sigma": sigma})
+    worker_tmp = tmp_path / "worker-tmp"
+    worker_tmp.mkdir()
+    monkeypatch.setattr(tempfile, "tempdir", str(worker_tmp))
 
     def _duel(workspace: Path) -> Any:
         workspace.mkdir()
-        return asyncio.run(
-            run_matchup(
-                adapter=adapter,
-                left_gen=_real_gen(workspace, "aa-left", BASE_TOKENS),
-                right_gen=_real_gen(workspace, "aa-right", BASE_TOKENS),
-                board=list(_board()),
-                weights=NAIVE_WEIGHTS,
-                config=_worker_config(workspace, seed=7),
-                workspace_root=workspace,
-                epoch_id="e0",
-                board_subset=subset,
-                replicates=2,
-                match_id="noisy-aa",
+
+        async def _bounded() -> Any:
+            return await asyncio.wait_for(
+                run_matchup(
+                    adapter=adapter,
+                    left_gen=_real_gen(workspace, "aa-left", BASE_TOKENS),
+                    right_gen=_real_gen(workspace, "aa-right", BASE_TOKENS),
+                    board=list(_board()),
+                    weights=NAIVE_WEIGHTS,
+                    config=_worker_config(workspace, seed=7),
+                    workspace_root=workspace,
+                    epoch_id="e0",
+                    board_subset=subset,
+                    replicates=2,
+                    match_id="noisy-aa",
+                ),
+                timeout=20,
             )
-        )
+
+        result = asyncio.run(_bounded())
+        assert not list((workspace / "runtime" / "active_runs").glob("*.json"))
+        assert not list((workspace / "runtime" / "control" / "kill_requests").glob("*"))
+        assert not list(worker_tmp.iterdir()), "worker temp artifact leaked"
+        return result
 
     first = _duel(tmp_path / "ws1")
     second = _duel(tmp_path / "ws2")
+
+    for generation_id in ("aa-left", "aa-right"):
+        for entry_id in subset:
+            run_dir = (
+                tmp_path
+                / "ws1"
+                / "epochs"
+                / "e0"
+                / "generations"
+                / generation_id
+                / "runs"
+                / entry_id
+            )
+            r0, r1 = run_dir / "events.jsonl", run_dir / "events.r1.jsonl"
+            assert r0.is_file() and r1.is_file()
+            assert r0.read_bytes() and r1.read_bytes() and r0.read_bytes() != r1.read_bytes()
 
     # REPRODUCIBLE: independent executions, identical measurements.
     assert first.parent_agg["scalar"] == second.parent_agg["scalar"]

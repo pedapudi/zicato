@@ -41,27 +41,35 @@ from zicato.analyzer.prompts import (
 )
 from zicato.aux_timeout import aux_call_timeout_s
 from zicato.core.workspace import epoch_dir
+from zicato.workspace import is_events_file
 
 if TYPE_CHECKING:  # pragma: no cover - typing-only import
     from zicato.telemetry.meta_loop import MetaLoopEmitter
 
 
 def _collect_events_jsonl_paths(workspace_root: Path, epoch_id: str) -> list[Path]:
-    """Walk the epoch's generation tree and return every ``events.jsonl`` path.
+    """Walk the epoch's generation tree and return every current events path.
 
     The walk is filesystem-driven (rather than reading the board) so
     every generation's runs surface — including rejected ones, whose
     telemetry is still useful for analysis. Returns an empty list when
     the epoch directory does not exist or carries no events files yet
     (e.g. a freshly-created epoch with no completed rounds).
+
+    EVERY replicate of a unit is collected, not just replicate 0, and the
+    insight prompt therefore aggregates across replicate bands: a unit run
+    at ``replicates=3`` contributes three transcripts of the same board
+    entry. That is deliberate for a whole-epoch drift summary — but it
+    means a per-entry count read off this list counts draws, not units.
+    Archived predecessors (``*.prev.jsonl``) are excluded.
     """
 
     root = epoch_dir(workspace_root, epoch_id) / "generations"
     if not root.exists():
         return []
     out: list[Path] = []
-    for path in sorted(root.glob("*/runs/*/events.jsonl")):
-        if path.is_file():
+    for path in sorted(root.glob("*/runs/*/events*.jsonl")):
+        if path.is_file() and is_events_file(path):
             out.append(path)
     return out
 

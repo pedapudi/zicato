@@ -318,7 +318,7 @@ def test_worker_honours_config_pins_from_args_file(tmp_path: Path) -> None:
     import subprocess
     import sys
 
-    from zicato.core.workspace import events_jsonl_path, loss_profile_path
+    from zicato.core.workspace import events_jsonl_path, loss_profile_path, run_id_for_unit
 
     workspace = tmp_path / ".zicato"
     workspace.mkdir()
@@ -348,6 +348,7 @@ def test_worker_honours_config_pins_from_args_file(tmp_path: Path) -> None:
                 },
                 "harness_role": {"dotted": "tests._subprocess_worker_support:harness_call_llm"},
                 "auxiliary_role": {"dotted": "tests._subprocess_worker_support:auxiliary_call_llm"},
+                "run_id": run_id_for_unit(generation.id, entry.id),
                 "sink_events_path": str(sink_path),
                 "loss_path": str(loss_path),
                 "result_path": str(result_path),

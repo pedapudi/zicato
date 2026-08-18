@@ -208,17 +208,58 @@ def proposer_staged_recommendations_path(workspace_root: Path) -> Path:
     return _layout(workspace_root).proposer_staged_recommendations()
 
 
+def run_id_for_unit(generation_id: str, entry_id: str, replicate_index: int = 0) -> str:
+    """Identify ``(generation, entry, replicate)`` for runtime artifacts.
+
+    Replicate 0 keeps the historical ``{generation}--{entry}`` form, so a
+    single-replicate workspace is byte-identical to one written before the
+    replicate dimension existed. Replicate ``r>0`` prefixes that same form
+    with a reserved ``r{index}.`` marker.
+
+    The prefix cannot collide with any replicate-0 id: a replicate-0 id
+    begins with a generation id, and every generation id is ``v{n}``
+    (:func:`zicato.evolve.generation_phase.next_generation_id`), so none of
+    them can begin ``r`` followed by digits and a dot. The two id spaces are
+    therefore disjoint by construction, without reserving an entry-id suffix
+    the way a trailing ``--r{index}`` would have to.
+
+    The result is a legible operator-facing label — it names the unit in
+    ``runtime/active_runs``, in the kill-request marker, and in the run's
+    harmonograf span — and stays inside the shared 200-character id guard
+    (Rust ``routes::is_safe_id``, Python ``endpoints._is_safe_id``), which
+    admits ``.`` alongside the alphanumerics, ``-`` and ``_`` a replicate-0
+    id already uses.
+    """
+    canonical = f"{generation_id}--{entry_id}"
+    if replicate_index <= 0:
+        return canonical
+    return f"r{replicate_index}.{canonical}"
+
+
+def replicate_index_from_run_id(generation_id: str, entry_id: str, run_id: str) -> int | None:
+    """Recover a unit's replicate index from its validated runtime run id."""
+    if run_id == run_id_for_unit(generation_id, entry_id):
+        return 0
+    prefix, separator, _rest = run_id.partition(".")
+    if separator != "." or not prefix.startswith("r") or not prefix[1:].isdigit():
+        return None
+    replicate_index = int(prefix[1:])
+    if replicate_index <= 0:
+        return None
+    return (
+        replicate_index
+        if run_id == run_id_for_unit(generation_id, entry_id, replicate_index)
+        else None
+    )
+
+
 def run_dir(
     workspace_root: Path,
     epoch_id: str,
     generation_id: str,
     entry_id: str,
 ) -> Path:
-    """Return the directory holding one run's artifacts.
-
-    A run is one ``(epoch, generation, board_entry)`` triple; its
-    directory holds the events JSONL and the reducer's loss profile.
-    """
+    """Return the directory holding one entry's replicate artifacts."""
     return _layout(workspace_root).run_dir(epoch_id, generation_id, entry_id)
 
 
@@ -227,9 +268,10 @@ def events_jsonl_path(
     epoch_id: str,
     generation_id: str,
     entry_id: str,
+    replicate_index: int = 0,
 ) -> Path:
-    """Path to the goldfive event JSONL for one run."""
-    return _layout(workspace_root).events(epoch_id, generation_id, entry_id)
+    """Path to one replicate's events; replicate 0 is ``events.jsonl``."""
+    return _layout(workspace_root).events(epoch_id, generation_id, entry_id, replicate_index)
 
 
 def loss_profile_path(
@@ -473,6 +515,8 @@ __all__ = [
     "proposer_staged_recommendations_path",
     "run_dir",
     "events_jsonl_path",
+    "run_id_for_unit",
+    "replicate_index_from_run_id",
     "loss_profile_path",
     "run_result_path",
     "experiment_json_path",

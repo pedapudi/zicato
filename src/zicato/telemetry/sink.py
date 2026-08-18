@@ -78,43 +78,38 @@ def make_run_sink_path(
     epoch_id: str,
     generation_id: str,
     entry_id: str,
+    replicate_index: int = 0,
 ) -> Path:
-    """Return the per-run ``events.jsonl`` path and ensure its parent exists.
-
-    The path itself is computed by
-    :func:`zicato.core.workspace.events_jsonl_path` so the layout stays
-    pinned to the workspace contract. We additionally ``mkdir(parents=
-    True, exist_ok=True)`` on the run directory so callers that build
-    the sink lazily — goldfive's sink opens the file handle on first
-    emit — do not need to remember to pre-create the tree.
-
-    Returning the path (not the sink) is deliberate: tests and CLI
-    introspection commands need to know where the JSONL will land
-    without constructing a sink, and the reducer needs to read the same
-    path the sink wrote to. Both call this helper.
-    """
-    path = events_jsonl_path(workspace_root, epoch_id, generation_id, entry_id)
+    """Return one replicate's canonical events path, parent ensured."""
+    path = events_jsonl_path(workspace_root, epoch_id, generation_id, entry_id, replicate_index)
     path.parent.mkdir(parents=True, exist_ok=True)
     return path
 
 
-#: The one retained predecessor of a run's ``events.jsonl``. See
-#: :func:`archive_prior_events`.
-EVENTS_PREV_FILENAME = "events.prev.jsonl"
+def events_prev_path_for(path: Path) -> Path:
+    """The retained predecessor of one events file. See :func:`archive_prior_events`.
+
+    Derived from the stem so each replicate keeps its own archive:
+    ``events.jsonl`` → ``events.prev.jsonl`` and ``events.r{n}.jsonl`` →
+    ``events.r{n}.prev.jsonl``. A fixed filename would make every replicate
+    of a unit archive over the same file.
+    """
+    return path.with_name(f"{path.stem}.prev.jsonl")
 
 
 def archive_prior_events(path: Path) -> None:
     """Retain the events file a ``mode="write"`` sink is about to truncate.
 
-    The per-run events file is keyed by ``(epoch, generation, entry)``
-    with no round dimension, so a re-measured unit — the champion under
-    ``--mode full``, which is re-run every round — used to have its raw
-    telemetry truncated by the next round's sink. ``loss.json`` can in
-    principle be re-derived from the events; once they are gone the
-    measurement is unreconstructable by any means (issue #122).
+    A replicate's events file is keyed by ``(epoch, generation, entry,
+    replicate)`` with no round dimension, so a re-measured unit — the
+    champion under ``--mode full``, which is re-run every round — used to
+    have its raw telemetry truncated by the next round's sink.
+    ``loss.json`` can in principle be re-derived from the events; once they
+    are gone the measurement is unreconstructable by any means (issue #122).
 
-    This renames an EXISTING events file to ``events.prev.jsonl`` before
-    the sink opens, keeping exactly ONE predecessor: the archive is
+    This renames an EXISTING events file to its
+    :func:`events_prev_path_for` sibling before the sink opens, keeping
+    exactly ONE predecessor PER REPLICATE: the archive is
     bounded (a champion defending twenty rounds costs two files, not
     twenty), which is the trade for preserving the immediately-clobbered
     measurement without unbounded growth. A no-op when nothing is there
@@ -126,7 +121,7 @@ def archive_prior_events(path: Path) -> None:
     if not path.is_file():
         return
     try:
-        path.replace(path.with_name(EVENTS_PREV_FILENAME))
+        path.replace(events_prev_path_for(path))
     except OSError as exc:  # pragma: no cover — unwritable workspace
         log.debug("events archive skipped for %s: %s", path, exc)
 
@@ -384,7 +379,7 @@ def make_run_sinks(
 
 __all__ = [
     "archive_prior_events",
-    "EVENTS_PREV_FILENAME",
+    "events_prev_path_for",
     "make_run_sink_path",
     "make_run_sink",
     "make_run_sinks",

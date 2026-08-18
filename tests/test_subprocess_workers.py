@@ -40,6 +40,7 @@ import pytest
 
 import zicato.tournament.runner as runner_mod
 from tests._subprocess_worker_support import (
+    EmittingThenSleepingAdapter,
     SleepingAdapter,
     SnapshotWritingAdapter,
     StubAdapter,
@@ -54,10 +55,11 @@ from zicato.core import (
     ScoringWeights,
     is_infra_abort_cause,
 )
-from zicato.core.workspace import events_jsonl_path, loss_profile_path
+from zicato.core.workspace import events_jsonl_path, loss_profile_path, run_id_for_unit
 from zicato.runtime.paths import active_run_path
 from zicato.runtime.state import ActiveRun
 from zicato.tournament.runner import _run_single
+from zicato.tournament.worker_transport import _stamp_replicate_index
 
 # Every test here spawns (or deliberately kills) real worker subprocesses —
 # the process-isolation semantics ARE the coverage. Tagged for the opt-in
@@ -145,6 +147,51 @@ def _worker_env() -> dict[str, str]:
     return env
 
 
+def test_two_replicates_of_one_unit_hold_distinct_active_runs(tmp_path: Path) -> None:
+    workspace = tmp_path / ".zicato"
+    workspace.mkdir()
+    generation = _generation(workspace)
+    entry = _entry(budget_s=5)
+    entries = [_stamp_replicate_index([entry], replicate)[0] for replicate in (0, 1)]
+    active_dir = workspace / "runtime" / "active_runs"
+
+    async def _drive() -> list[LossProfile]:
+        tasks = [
+            asyncio.create_task(
+                _run_single(
+                    adapter=EmittingThenSleepingAdapter(),
+                    generation=generation,
+                    entry=replicate_entry,
+                    weights=ScoringWeights(),
+                    config=_config(workspace),
+                    workspace_root=workspace,
+                    epoch_id="e0",
+                    side="parent",
+                )
+            )
+            for replicate_entry in entries
+        ]
+        deadline = time.monotonic() + 10
+        while time.monotonic() < deadline and len(list(active_dir.glob("*.json"))) < 2:
+            await asyncio.sleep(0.05)
+        records = [
+            json.loads(path.read_text(encoding="utf-8")) for path in active_dir.glob("*.json")
+        ]
+        assert len(records) == 2, "concurrent replicates collapsed into one active-run slot"
+        assert len({record["run_id"] for record in records}) == 2
+        assert {Path(record["events_jsonl_path"]).name for record in records} == {
+            "events.jsonl",
+            "events.r1.jsonl",
+        }
+        return list(await asyncio.gather(*tasks))
+
+    losses = asyncio.run(asyncio.wait_for(_drive(), timeout=20))
+    assert len(losses) == 2 and all(loss.wall_clock_budget_exceeded for loss in losses)
+    assert not list((workspace / "runtime" / "active_runs").glob("*.json"))
+    assert not list((workspace / "runtime" / "control" / "kill_requests").glob("*"))
+    assert not list(Path(tempfile.gettempdir()).iterdir())
+
+
 def _write_args_file(
     args_path: Path,
     *,
@@ -171,6 +218,7 @@ def _write_args_file(
         "adapter": {"kind": "import", "factory": adapter_factory},
         "harness_role": {"dotted": "tests._subprocess_worker_support:harness_call_llm"},
         "auxiliary_role": {"dotted": "tests._subprocess_worker_support:auxiliary_call_llm"},
+        "run_id": run_id_for_unit(generation.id, entry.id),
         "sink_events_path": str(sink_path),
         "loss_path": str(loss_path),
         "result_path": str(result_path),

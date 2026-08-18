@@ -341,11 +341,19 @@ def _build_events_paths(
     parent_id: str,
     board: list[Any],
 ) -> dict[str, Path]:
-    """Map entry id → events.jsonl path under the parent generation."""
+    """Map entry id → the parent generation's transcript for that entry.
+
+    Replicate-aware via :func:`any_unit_transcript`: at the first round's
+    proposal the only draws on disk are the contract pre-flight's probe and
+    the calibration band, none of which is replicate 0.
+    """
     from zicato.core.workspace import events_jsonl_path  # noqa: PLC0415
+    from zicato.tournament.unit_cache import any_unit_transcript  # noqa: PLC0415
 
     return {
-        entry.id: events_jsonl_path(workspace_root, epoch_id, parent_id, entry.id)
+        entry.id: any_unit_transcript(
+            events_jsonl_path(workspace_root, epoch_id, parent_id, entry.id)
+        )
         for entry in board
     }
 

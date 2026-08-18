@@ -16,8 +16,25 @@ byte-identical to the inline joins it replaces.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from pathlib import Path
+
+_REPLICATE_EVENTS_RE = re.compile(r"^events\.r([1-9]\d*)\.jsonl$")
+
+
+def events_replicate_index(path: Path | str) -> int | None:
+    """Return a current events file's replicate index; archives are ``None``."""
+    name = Path(path).name
+    if name == "events.jsonl":
+        return 0
+    match = _REPLICATE_EVENTS_RE.match(name)
+    return int(match.group(1)) if match else None
+
+
+def is_events_file(path: Path | str) -> bool:
+    """Whether ``path`` is ``events.jsonl`` or a current ``events.rN.jsonl``."""
+    return events_replicate_index(path) is not None
 
 
 @dataclass(frozen=True)
@@ -336,19 +353,23 @@ class WorkspaceLayout:
         """
         return self.run_dir(epoch_id, generation_id, entry_id) / "result.json"
 
-    def events(self, epoch_id: str, generation_id: str, entry_id: str) -> Path:
-        """One run's goldfive event JSONL (``events.jsonl``)."""
-        return self.run_dir(epoch_id, generation_id, entry_id) / "events.jsonl"
+    def events(
+        self, epoch_id: str, generation_id: str, entry_id: str, replicate_index: int = 0
+    ) -> Path:
+        """One replicate's events JSONL; replicate 0 is canonical."""
+        run = self.run_dir(epoch_id, generation_id, entry_id)
+        if replicate_index <= 0:
+            return run / "events.jsonl"
+        return run / f"events.r{replicate_index}.jsonl"
 
-    def events_prev(self, epoch_id: str, generation_id: str, entry_id: str) -> Path:
-        """The ONE retained predecessor of a run's ``events.jsonl``.
-
-        Written by :func:`zicato.telemetry.sink.archive_prior_events`
-        when a re-measurement is about to truncate the events file
-        (issue #122). Exactly one generation of history is kept, so the
-        archive is bounded no matter how many rounds a champion defends.
-        """
-        return self.run_dir(epoch_id, generation_id, entry_id) / "events.prev.jsonl"
+    def events_prev(
+        self, epoch_id: str, generation_id: str, entry_id: str, replicate_index: int = 0
+    ) -> Path:
+        """The retained predecessor of one replicate's events JSONL."""
+        run = self.run_dir(epoch_id, generation_id, entry_id)
+        if replicate_index <= 0:
+            return run / "events.prev.jsonl"
+        return run / f"events.r{replicate_index}.prev.jsonl"
 
     def loss_archive(self, epoch_id: str, generation_id: str, entry_id: str) -> Path:
         """One run's displaced-loss archive (``loss.archive.jsonl``).

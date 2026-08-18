@@ -42,7 +42,7 @@ from zicato.workspace.epochs import (
     natural_key,
     read_epoch_config,
 )
-from zicato.workspace.layout import WorkspaceLayout
+from zicato.workspace.layout import WorkspaceLayout, events_replicate_index, is_events_file
 from zicato.workspace.reads import (
     read_board,
     read_events_history,
@@ -58,6 +58,8 @@ __all__ = [
     "WorkspaceLayout",
     "epoch_created_at",
     "epoch_sort_key",
+    "events_replicate_index",
+    "is_events_file",
     "iter_epochs",
     "list_epoch_ids",
     "natural_key",

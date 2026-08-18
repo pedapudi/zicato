@@ -447,6 +447,7 @@ def _collect() -> tuple[dict[str, _EntryFacts], int, str]:
     data.
     """
     from zicato.core.workspace import events_jsonl_path  # noqa: PLC0415
+    from zicato.tournament.unit_cache import any_unit_transcript  # noqa: PLC0415
 
     ctx = _active_context()
     train_ids, reason = _derive_train_slice(ctx)
@@ -458,7 +459,9 @@ def _collect() -> tuple[dict[str, _EntryFacts], int, str]:
     collected: dict[str, _EntryFacts] = {}
     for entry_id in sorted(train_ids):  # GATE 1: train-slice files only.
         events = _read_events(
-            events_jsonl_path(ctx.workspace_root, ctx.epoch_id, ctx.generation_id, entry_id)
+            any_unit_transcript(
+                events_jsonl_path(ctx.workspace_root, ctx.epoch_id, ctx.generation_id, entry_id)
+            )
         )
         if not events:
             continue

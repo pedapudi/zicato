@@ -734,7 +734,12 @@ async def _run(args: dict[str, Any]) -> None:
         os.environ[SCRATCH_DIR_ENV] = str(scratch_dir)
 
     entry = validate_board_entry(args["entry"])
-    run_id = f"{generation_id}--{entry.id}"
+    # The run id arrives from the parent, which minted it via
+    # zicato.core.workspace.run_id_for_unit and already stamped the
+    # active_runs record the supervisor polices. Re-deriving it here from
+    # this process's own view of the entry would give the id two producers,
+    # and any skew between the two views silently reproduces issue #250.
+    run_id = str(args["run_id"])
     weights = _weights_from_args(args)
     budget_s = float(entry.wall_clock_budget_seconds)
 
@@ -1154,10 +1159,10 @@ def _install_worker_log_stream_from_args(args: dict[str, Any]) -> None:
     """Install the worker-side operator-log stream from the args file.
 
     Reads the invocation stream path the runner threaded through
-    (``log_stream_path``) and the run coordinate (epoch / generation /
-    entry) to bind context, then appends this worker's records to that one
-    stream. Fully best-effort: any failure is swallowed so logging setup
-    can never fail a run.
+    (``log_stream_path``), the run coordinate (epoch / generation) and the
+    parent-minted ``run_id`` to bind context, then appends this worker's
+    records to that one stream. Fully best-effort: any failure is swallowed
+    so logging setup can never fail a run.
     """
     try:
         path = args.get("log_stream_path")
@@ -1167,9 +1172,7 @@ def _install_worker_log_stream_from_args(args: dict[str, Any]) -> None:
 
         epoch_id = str(args.get("epoch_id") or "") or None
         generation_id = str(args.get("generation_id") or "") or None
-        entry = args.get("entry")
-        entry_id = str(entry.get("id")) if isinstance(entry, dict) and entry.get("id") else None
-        run_id = f"{generation_id}--{entry_id}" if generation_id and entry_id else None
+        run_id = str(args.get("run_id") or "") or None
         install_worker_log_stream(
             path,
             epoch_id=epoch_id,

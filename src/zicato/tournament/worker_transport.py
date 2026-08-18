@@ -46,6 +46,7 @@ from zicato.core import (
     Generation,
     LossProfile,
     ScoringWeights,
+    run_id_for_unit,
 )
 from zicato.epoch.genstore import EPHEMERAL_SNAPSHOT_PREFIX, EphemeralCheckout
 
@@ -122,7 +123,8 @@ def _now_iso_utc() -> str:
 
 
 def _run_id_for(generation: Generation, entry: BoardEntry) -> str:
-    return f"{generation.id}--{entry.id}"
+    """Return the canonical run id for the entry's stamped replicate."""
+    return run_id_for_unit(generation.id, entry.id, _entry_replicate_index(entry))
 
 
 #: ``BoardEntry.context`` key under which the board-level ``disable_drift``

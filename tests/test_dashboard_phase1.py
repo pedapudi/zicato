@@ -549,13 +549,53 @@ def test_endpoint_per_judge_for_run(phase1_client: TestClient) -> None:
     assert any(j["judge_name"] == "critic_A" for j in body["judges"])
 
 
-def test_endpoint_per_judge_for_run_by_entry(phase1_client: TestClient) -> None:
+def test_endpoint_per_judge_for_run_by_entry(
+    phase1_client: TestClient, phase1_workspace: Path
+) -> None:
     r = phase1_client.get("/api/run/2026-05-16_e0/v1/entry_alpha/per-judge")
     assert r.status_code == 200
     body = r.json()
     # The entry's loss.json carries run_id "run_v1"; the endpoint
     # resolves it and returns the same shape as the run_id-keyed route.
     assert body["run_id"] == "run_v1"
+
+
+def test_per_judge_by_entry_agrees_across_its_two_sources(
+    phase1_client: TestClient, phase1_workspace: Path
+) -> None:
+    """The by-entry route answers from ``loss.json`` OR the index, never differently.
+
+    ``build_per_judge_for_entry`` prefers the run directory's own
+    ``per_judge_loss`` block and falls back to the ``judge_losses`` index
+    when the block is absent. Which source answered must not be visible in
+    the response: the fixture's v1 loss.json carries no block, so the first
+    read comes from the index; writing the SAME rows into the file must
+    leave the response byte-identical.
+    """
+    url = "/api/run/2026-05-16_e0/v1/entry_alpha/per-judge"
+    from_index = phase1_client.get(url).json()
+    assert [row["judge_name"] for row in from_index["judges"]] == ["critic_A", "critic_B"]
+
+    loss_path = (
+        phase1_workspace
+        / "epochs"
+        / "2026-05-16_e0"
+        / "generations"
+        / "v1"
+        / "runs"
+        / "entry_alpha"
+        / "loss.json"
+    )
+    _write_json(
+        loss_path,
+        {
+            "run_id": "run_v1",
+            "entry_id": "entry_alpha",
+            "per_judge_loss": from_index["judges"],
+        },
+    )
+    from_file = phase1_client.get(url).json()
+    assert from_file == from_index
 
 
 def test_environment_workspace_is_structured(phase1_client: TestClient) -> None:

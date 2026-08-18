@@ -879,6 +879,22 @@ readers — `conversations_view.py`, `transcript_view.py`, `journal_view.py` (+
 their homes) — each with a DQ3 degrade+shape test, leaving `endpoints.py` a
 sheet of validate-then-delegate one-liners (~1451→~1000 lines) and the readers
 sharing the ONE `open_index_ro` connection discipline (`query/_sqlite.py`; §9.3).
+Replicated board runs remain one `(epoch, generation, entry)` directory with
+numbered `events.rN.jsonl` / `loss.rN.json` siblings. Transcript and per-judge
+readers therefore accept an optional runtime `run` id (the per-judge reader
+also takes an explicit replicate coordinate), resolve the exact sibling from
+canonical files, and retain replicate 0 as the no-selector default. Only the
+transcript route exposes its selector as a query parameter; the per-judge route
+always asks for replicate 0, so a view that wants a sibling's judges must pass
+the keyword through a new route parameter first. The Goldfive `runId` inside an
+event stream is a separate identity and must not be fabricated from the runtime
+run id in fixtures.
+For deliberately supported legacy racing workspaces, a `match` selector is a
+nested-rung coordinate and takes precedence over the top-level replicate loss's
+`match_id`; runtime `run` selectors prefer the numbered sibling. The global
+Goldfive-run-id lookup caches each event file independently: pure appends reuse
+an already discovered id without a workspace scan or stream reopen, while new,
+replaced, truncated, and previously empty files are reparsed.
 `_make_live_endpoints` is the model — `api_live_pipeline` is one line over
 `build_round_pipeline`:
 

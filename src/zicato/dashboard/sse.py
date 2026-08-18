@@ -35,6 +35,7 @@ from pathlib import Path
 from typing import Any
 
 from zicato.query import WorkspacePaths, build_snapshot
+from zicato.workspace import is_events_file
 
 try:  # watchdog is the preferred backend; the poll loop is the fallback.
     from watchdog.events import FileSystemEvent, FileSystemEventHandler
@@ -215,7 +216,7 @@ class ChangeBroker:
         kind = _classify(path, self.paths)
         self._schedule_state_change(kind)
         # An events.jsonl write also drives the live conversation stream.
-        if path.name == "events.jsonl":
+        if is_events_file(path):
             self._report_events_growth(path)
 
     def _schedule_state_change(self, kind: str) -> None:

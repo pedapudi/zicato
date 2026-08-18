@@ -12,6 +12,7 @@ from zicato.query.paths import (
     _read_json_value,
     to_snake,
 )
+from zicato.workspace import is_events_file
 
 # ---------------------------------------------------------------------------
 # Run-log tail
@@ -244,7 +245,9 @@ def _newest_epoch_events(paths: WorkspacePaths) -> Path | None:
     if not paths.epochs.is_dir():
         return None
     newest: tuple[float, Path] | None = None
-    for events in paths.epochs.rglob("events.jsonl"):
+    for events in paths.epochs.rglob("events*.jsonl"):
+        if not is_events_file(events):
+            continue
         try:
             mtime = events.stat().st_mtime
         except OSError:

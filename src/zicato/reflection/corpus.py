@@ -398,6 +398,12 @@ def _unit_result_path_for(loss_path: Path) -> Path:
     return unit_result_path(loss_path)
 
 
+def _unit_events_path_for(loss_path: Path) -> Path:
+    from zicato.tournament.unit_cache import unit_events_path  # noqa: PLC0415
+
+    return unit_events_path(loss_path)
+
+
 def _read_sidecars(loss_path: Path) -> tuple[bool, list[dict[str, Any]]]:
     """``(result_present, judge_io_records)`` via the tolerant R1 readers."""
     from zicato.judge_runtime.io_capture import (  # noqa: PLC0415
@@ -454,7 +460,6 @@ def ingest_lineage(
     for candidate_id in candidates:
         for entry_id in entries:
             run_directory = _run_dir(workspace_root, epoch_id, candidate_id, entry_id)
-            events_path = run_directory / "events.jsonl"
             # Passive ingest takes only the slots the reserved-base ledger
             # vouches for as a clean draw of the candidate's REAL code over the
             # real board — never the pre-flight's degraded probes, which cache
@@ -474,7 +479,7 @@ def ingest_lineage(
                         weights=weights,
                         loss_path=loss_path,
                         result_present=result_present,
-                        events_path=events_path,
+                        events_path=_unit_events_path_for(loss_path),
                         judge_io_records=judge_io_records,
                     )
                 )
@@ -562,7 +567,6 @@ async def run_corpus(
                     workspace_root, plan.epoch_id, generation.id, entry.id, replicate_index
                 )
                 result_present, judge_io_records = _read_sidecars(loss_path)
-                events_path = loss_path.parent / "events.jsonl"
                 runs.append(
                     _build_observation(
                         reflection_id=plan.reflection_id,
@@ -573,7 +577,7 @@ async def run_corpus(
                         weights=weights,
                         loss_path=loss_path,
                         result_present=result_present,
-                        events_path=events_path,
+                        events_path=_unit_events_path_for(loss_path),
                         judge_io_records=judge_io_records,
                     )
                 )
