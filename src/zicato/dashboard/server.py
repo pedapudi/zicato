@@ -30,6 +30,7 @@ from __future__ import annotations
 import contextlib
 import json
 import logging
+import os
 import socket
 import time
 from collections.abc import AsyncIterator
@@ -230,12 +231,17 @@ def create_app(
     def _serve_static(name: str, inm: str | None = None) -> Response:
         if not name or name in (".", ".."):
             name = "index.html"
-        # Reject path traversal.
-        candidate = (static_dir / name).resolve()
-        try:
-            candidate.relative_to(static_dir.resolve())
-        except ValueError:
+        # The traversal guard is LEXICAL: a request may not escape the bundle
+        # root, which is a property of the requested path alone. Where the
+        # files themselves live is a deployment property — a bundle staged as
+        # symlinks into another tree is legitimate and must still serve — so
+        # the candidate is never resolved through its links to be checked.
+        if "\x00" in name:
             return PlainTextResponse("not found", status_code=404)
+        rel = os.path.normpath(name)
+        if os.path.isabs(rel) or rel == ".." or rel.startswith(".." + os.sep):
+            return PlainTextResponse("not found", status_code=404)
+        candidate = static_dir / rel
         if candidate.is_file():
             import mimetypes
             from email.utils import formatdate

@@ -2439,6 +2439,51 @@ def test_unknown_static_is_404(client: TestClient) -> None:
     assert r.status_code == 404
 
 
+def test_static_traversal_request_is_404(client: TestClient, tmp_path: Path) -> None:
+    """A request path that escapes the bundle root is refused.
+
+    The escape is a property of the URL, so the check is lexical: the
+    normalized request path may not begin above the static root. The
+    secret sits directly beside that root, so a served body would be
+    unambiguous evidence of the escape.
+    """
+    (tmp_path / "outside.txt").write_text("secret", encoding="utf-8")
+    # The separator is percent-encoded because the HTTP client collapses a
+    # literal ``/../`` before the request is sent; the encoded form reaches
+    # the route as the path parameter ``../outside.txt``, which is what the
+    # guard has to refuse.
+    r = client.get("/static/..%2foutside.txt")
+    assert r.status_code == 404
+    assert "secret" not in r.text
+    assert client.get("/..%2foutside.txt").status_code == 404
+
+
+def test_static_serves_a_symlink_staged_bundle(workspace: Path, tmp_path: Path) -> None:
+    """A bundle staged as per-file symlinks into another tree still serves.
+
+    Where the files live is a deployment property — an installed or staged
+    tree may link each asset to its origin — and the server must not
+    police it.
+    """
+    import os
+
+    origin = tmp_path / "origin"
+    origin.mkdir()
+    (origin / "index.html").write_text("<!doctype html><title>staged</title>", encoding="utf-8")
+    (origin / "app_T.js").write_text("// staged app", encoding="utf-8")
+    staged = tmp_path / "staged"
+    staged.mkdir()
+    for name in ("index.html", "app_T.js"):
+        os.symlink(origin / name, staged / name)
+
+    app = create_app(workspace, staged, read_only=True)
+    with TestClient(app) as c:
+        root = c.get("/")
+        assert root.status_code == 200
+        assert "staged" in root.text
+        assert c.get("/static/app_T.js").status_code == 200
+
+
 def test_static_asset_carries_etag_validator(client: TestClient) -> None:
     # A served asset keeps `no-cache` but now carries an ETag/Last-Modified
     # validator so the browser can revalidate cheaply instead of re-downloading.

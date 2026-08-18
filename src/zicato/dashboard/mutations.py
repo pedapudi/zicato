@@ -383,12 +383,22 @@ def _rel_file(point: MutationPoint) -> str:
     The enumerator stores absolute paths; the dashboard only ever shows
     the ``/``-joined path relative to the generation's source root so the
     rendered location matches the file-tree browser's paths.
+
+    The unresolved paths are tried first: a source root staged as
+    per-file symlinks resolves each file to its origin tree, outside the
+    root, which would strip the whole directory prefix. Resolving is only
+    the fallback for when the unresolved forms disagree (a symlinked or
+    relative root), and the bare filename the last resort.
     """
-    try:
-        rel = Path(point.file).resolve().relative_to(Path(point.source_root).resolve())
-    except ValueError:
-        return Path(point.file).name
-    return "/".join(rel.parts)
+    for file_path, root in (
+        (Path(point.file), Path(point.source_root)),
+        (Path(point.file).resolve(), Path(point.source_root).resolve()),
+    ):
+        try:
+            return "/".join(file_path.relative_to(root).parts)
+        except ValueError:
+            continue
+    return Path(point.file).name
 
 
 def _point_summary(point: MutationPoint) -> dict[str, Any]:
