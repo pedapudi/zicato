@@ -824,6 +824,22 @@ export async function buildTreeModel(route) {
   const timelineByEpoch = new Map(
     (await Promise.all(epochs.map(async (e) => [e.id, await D.roundTimeline(e.id)])))
   );
+  // The champion pointer is PER EPOCH. Each epoch node reads its OWN
+  // `?epoch=`-scoped payload — the same scoping the drill-down views use. The
+  // contract epoch reuses the payload fetched above.
+  //
+  // A bare `D.epoch()` answers for the CURRENT epoch alone. Holding ONE such
+  // pointer and gating the crown on the contract epoch marked every OTHER
+  // epoch's reigning champion a FORMER champion, and crowned nothing there.
+  // A failed read resolves to `null` (cachedJson swallows it), which the stamp
+  // below reads as "pointer unknown", never as "not the champion".
+  const championByEpoch = new Map(
+    (await Promise.all(epochs.map(async (e) => {
+      if (String(e.id) === String(contractEpochId)) return [e.id, currentChampionId];
+      const scoped = await D.epoch(e.id);
+      return [e.id, (scoped && scoped.current_champion != null) ? String(scoped.current_champion) : null];
+    })))
+  );
   for (const e of epochs) {
     const id = e.id;
     // THE PER-EPOCH FIX: each node lists its OWN generations — the lineage rows
@@ -844,12 +860,18 @@ export async function buildTreeModel(route) {
           promoted: x.promoted == null ? null : !!x.promoted,
           round_index: Number.isInteger(x.round_index) ? x.round_index : null,
         })) : []);
-    // disambiguate the CURRENT champion (♛) from FORMER champions (hollow
-    // crown ♔) — the server's pointer applies to the contract epoch.
-    for (const g of gensList) {
-      const champ = isContractEpoch && g.promoted === true && String(g.id) === String(currentChampionId);
-      g.currentChampion = champ;
-      g.formerChampion = g.promoted === true && !champ;
+    // Separate THIS epoch's CURRENT champion from its FORMER champions (the
+    // hollow crown) off THIS epoch's own pointer. An unknown pointer stamps
+    // NEITHER flag, so tree.js falls back to `legacyChamp`: the promoted
+    // generations keep the solid crown. An unserved pointer must never turn a
+    // whole epoch "former".
+    const epochChampionId = championByEpoch.get(id) || null;
+    if (epochChampionId != null) {
+      for (const g of gensList) {
+        const champ = g.promoted === true && String(g.id) === String(epochChampionId);
+        g.currentChampion = champ;
+        g.formerChampion = g.promoted === true && !champ;
+      }
     }
     // An ORPHAN is a parentless generation that nothing descends from and that
     // never recorded an outcome — a stray from an aborted run, NOT the baseline
@@ -877,7 +899,7 @@ export async function buildTreeModel(route) {
       gens: gensList,
       bracket: isContractEpoch ? brk : null,
       structure: epochStructure,
-      championId: currentChampionId,
+      championId: epochChampionId,
     });
     byEpoch[id] = { gens: gensList, boards: boardList, rounds: treeRounds, hasReflections: reflEpochs.has(String(id)) };
   }

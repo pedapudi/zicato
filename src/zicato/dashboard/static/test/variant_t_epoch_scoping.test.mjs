@@ -676,6 +676,100 @@ test('tree model (cross-epoch): EVERY epoch node lists its OWN generations (e0 n
 });
 
 // ====================================================================
+// CROSS-EPOCH BUG 1b — the CROWN is per epoch.
+//
+// buildTreeModel read the champion pointer ONCE, from a bare `D.epoch()` (the
+// CURRENT epoch), then gated the crown on `isContractEpoch`. That flag tests
+// CURRENT, not closed, so every promoted generation in every OTHER epoch fell
+// to `formerChampion`: that epoch's own reigning champion read "former
+// champion" and nothing there was crowned. Each epoch node now reads its OWN
+// `?epoch=`-scoped pointer.
+// ====================================================================
+
+// the two-epoch fixture + the SCOPED /api/epoch payloads that carry each
+// epoch's own champion pointer. e0's spine is v0 -> v4 (so v4 REIGNS there and
+// v0 is its former champion); e1 has promoted only its seed v0.
+function crownFixture(opts) {
+  const o = opts || {};
+  const F = twoEpochFixture(TWO_EP_NEW);
+  F['/api/workspace'] = {
+    current_epoch_id: TWO_EP_NEW,
+    epochs: [
+      { epoch_id: TWO_EP_OLD, generation_count: 5, promoted_count: 2, closed: true, goal: 'e0' },
+      { epoch_id: TWO_EP_NEW, generation_count: 3, promoted_count: 1, closed: false, goal: 'e1' },
+    ],
+    sparkline: [],
+  };
+  // the CURRENT epoch's payload (bare read) names e1's champion.
+  F['/api/epoch'] = { ...F['/api/epoch'], current_champion: 'v0' };
+  // the scoped reads. `oldPointerless` serves e0's payload WITHOUT a
+  // `current_champion` field — a pre-pointer server, i.e. the pointer-unknown
+  // degrade. (An OMITTED scoped fixture would not 404: lookupFixture falls back
+  // from `?epoch=` to the bare `/api/epoch`, which would silently hand e0 the
+  // CURRENT epoch's payload — the very confusion this fix removes.)
+  F[`/api/epoch?epoch=${TWO_EP_OLD}`] = o.oldPointerless
+    ? { epoch_id: TWO_EP_OLD, closed: true }
+    : { epoch_id: TWO_EP_OLD, closed: true, current_champion: 'v4' };
+  F[`/api/epoch?epoch=${TWO_EP_NEW}`] = { epoch_id: TWO_EP_NEW, closed: false, current_champion: 'v0' };
+  return F;
+}
+
+test('tree model (cross-epoch): EACH epoch crowns its OWN champion — a NON-CURRENT epoch does not read all-former', async () => {
+  freshState();
+  installFixtureMap(crownFixture());
+  coreState.state.heartbeat = { phase: 'idle' };
+  coreState.state.activeRuns = [];
+  coreState.state.activeTournament = null;
+
+  // routed at the CURRENT epoch (e1); e0 is the closed, non-current one.
+  const model = await shell.buildTreeModel(router.parseRoute(`#/e/${TWO_EP_NEW}`));
+
+  const byId = (epochId) => new Map(model.byEpoch[epochId].gens.map((g) => [g.id, g]));
+
+  // e0 (non-current): v4 REIGNS, v0 is the former champion.
+  const e0 = byId(TWO_EP_OLD);
+  assert(e0.get('v4').currentChampion === true, 'e0 crowns its own champion v4');
+  assert(e0.get('v4').formerChampion === false, 'e0’s reigning v4 is NOT a former champion');
+  assert(e0.get('v0').formerChampion === true, 'e0’s superseded seed v0 reads former champion');
+  assert(e0.get('v0').currentChampion === false, 'e0’s seed v0 is not the current champion');
+  // a rejected challenger is neither.
+  assert(e0.get('v1').currentChampion === false && e0.get('v1').formerChampion === false,
+    'a rejected e0 challenger carries neither crown');
+
+  // e1 (CURRENT): its promoted seed v0 reigns — unchanged behaviour.
+  const e1 = byId(TWO_EP_NEW);
+  assert(e1.get('v0').currentChampion === true, 'e1 still crowns its own champion v0');
+  assert(e1.get('v0').formerChampion === false, 'e1’s reigning v0 is not former');
+
+  // EXACTLY ONE current champion per epoch node.
+  for (const epochId of [TWO_EP_OLD, TWO_EP_NEW]) {
+    const crowned = model.byEpoch[epochId].gens.filter((g) => g.currentChampion === true);
+    assertEqual(crowned.length, 1, `${epochId} crowns exactly one generation`);
+  }
+});
+
+test('tree model (cross-epoch): an epoch with NO served pointer stamps NEITHER flag (legacy crown fallback, never all-former)', async () => {
+  freshState();
+  installFixtureMap(crownFixture({ oldPointerless: true }));
+  coreState.state.heartbeat = { phase: 'idle' };
+  coreState.state.activeRuns = [];
+  coreState.state.activeTournament = null;
+
+  const model = await shell.buildTreeModel(router.parseRoute(`#/e/${TWO_EP_NEW}`));
+
+  // e0's payload carries no pointer → it is UNKNOWN. Neither flag is stamped, so
+  // tree.js's `legacyChamp` path gives every promoted gen the solid crown; the
+  // one thing that must never happen is a promoted gen reading "former".
+  for (const g of model.byEpoch[TWO_EP_OLD].gens) {
+    assert(g.currentChampion === undefined, `${g.id}: no currentChampion stamp without a pointer`);
+    assert(g.formerChampion === undefined, `${g.id}: no formerChampion stamp without a pointer`);
+  }
+  // the CURRENT epoch is unaffected — its pointer came from the bare read.
+  assert(model.byEpoch[TWO_EP_NEW].gens.find((g) => g.id === 'v0').currentChampion === true,
+    'the current epoch still crowns its champion');
+});
+
+// ====================================================================
 // CROSS-EPOCH BUG 2 — Match-ups live state is gated to the ACTIVE epoch.
 //
 // gens.js read deriveLiveStatus() from the GLOBAL state and adopted the LIVE
