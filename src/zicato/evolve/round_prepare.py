@@ -14,6 +14,7 @@ from zicato.core.types import (
     Generation,
 )
 from zicato.evolve.lifecycle_services import (
+    _beat,
     _now_iso,
 )
 from zicato.util import best_effort
@@ -22,7 +23,7 @@ if TYPE_CHECKING:
     # Annotation-only — the proposer module is imported lazily inside
     # ``evolve_once`` (see the module docstring on lazy imports), so its
     # exception type is referenced here purely for type annotations.
-    pass
+    from zicato.runtime.heartbeat import HeartbeatBeater
 
 log = logging.getLogger("zicato.orchestrator")
 
@@ -49,6 +50,8 @@ async def _maybe_calibrate_noise_floor(
     config: Any,
     disable_drift: tuple[Any, ...],
     judge_only: bool,
+    beater: HeartbeatBeater | None = None,
+    round_index: int = 0,
 ) -> None:
     """Run the opt-in A/A noise-floor calibration once per epoch.
 
@@ -58,6 +61,15 @@ async def _maybe_calibrate_noise_floor(
     a fresh epoch) and every later round short-circuits on the persisted
     record. Best-effort by contract — a calibration failure must never abort
     the round.
+
+    The measurement is SERIAL and front-loaded — K passes over every board
+    entry before the round's first duel — so it owns the heartbeat for its
+    duration: ``beater`` (when the loop supplies one) is stamped
+    :data:`~zicato.tournament.calibration.CALIBRATION_PHASE` plus a live
+    ``draws-completed/total`` suffix, and restored to the round phase on the
+    way out. Without that stamp the round's own phase stands while nothing
+    proposes or duels, which is indistinguishable from a wedged round
+    (issue #175). ``round_index`` names the phase to restore.
     """
     raw = workspace_config.get("calibrate_noise_floor")
     if not raw:
@@ -74,34 +86,61 @@ async def _maybe_calibrate_noise_floor(
         return
 
     from zicato.epoch.lifecycle import set_epoch_noise_floor  # noqa: PLC0415
-    from zicato.tournament.calibration import measure_noise_floor  # noqa: PLC0415
+    from zicato.tournament.calibration import (  # noqa: PLC0415
+        CALIBRATION_PHASE,
+        measure_noise_floor,
+    )
 
-    with best_effort(
-        "A/A noise-floor calibration",
-        on_error=lambda exc: log.warning("noise-floor calibration skipped: %s", exc),
-    ):
-        floor = await measure_noise_floor(
-            adapter=adapter,
-            generation=parent_gen,
-            board=board,
-            weights=weights,
-            config=config,
-            workspace_root=workspace_root,
-            epoch_id=epoch_id,
-            runs=runs,
-            disable_drift=disable_drift,
-            judge_only=judge_only,
-        )
-        set_epoch_noise_floor(workspace_root, epoch_id, floor.to_json())
-        log.info(
-            "A/A noise floor measured for epoch %s (%s, %d draws): "
-            "max |delta| = %.6g, delta std = %.6g",
-            epoch_id,
-            parent_gen.id,
-            runs,
-            floor.max_abs_delta,
-            floor.delta_std,
-        )
+    # The whole cost is knowable before the first draw: K draws, each a serial
+    # pass over every board entry. Named up front so an operator can decide
+    # whether to wait rather than inferring the shape from loss files landing
+    # on disk.
+    log.info(
+        "A/A noise-floor calibration for epoch %s: %d draws x %d board entries "
+        "= %d board-entry runs, serially, before this round's first duel "
+        '(set "calibrate_noise_floor": 0 to skip)',
+        epoch_id,
+        runs,
+        len(board),
+        runs * len(board),
+    )
+    _beat(beater, phase=f"{CALIBRATION_PHASE}:0/{runs}")
+    try:
+        with best_effort(
+            "A/A noise-floor calibration",
+            on_error=lambda exc: log.warning("noise-floor calibration skipped: %s", exc),
+        ):
+            floor = await measure_noise_floor(
+                adapter=adapter,
+                generation=parent_gen,
+                board=board,
+                weights=weights,
+                config=config,
+                workspace_root=workspace_root,
+                epoch_id=epoch_id,
+                runs=runs,
+                disable_drift=disable_drift,
+                judge_only=judge_only,
+                on_draw=lambda done, total: _beat(
+                    beater, phase=f"{CALIBRATION_PHASE}:{done}/{total}"
+                ),
+            )
+            set_epoch_noise_floor(workspace_root, epoch_id, floor.to_json())
+            log.info(
+                "A/A noise floor measured for epoch %s (%s, %d draws): "
+                "max |delta| = %.6g, delta std = %.6g",
+                epoch_id,
+                parent_gen.id,
+                runs,
+                floor.max_abs_delta,
+                floor.delta_std,
+            )
+    finally:
+        # The round owns the phase again — the same stamp ``evolve_n_rounds``
+        # writes when it schedules the round. Restored on the best-effort skip
+        # path too, so a failed calibration never leaves the heartbeat parked
+        # on a measurement that is no longer running.
+        _beat(beater, phase=f"evolve_once:round_{round_index}")
 
 
 async def _maybe_contract_preflight(

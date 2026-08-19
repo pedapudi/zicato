@@ -835,7 +835,14 @@ is the contract pre-flight and the noise-floor calibration.
    `config.json` knob (e.g. `workspace_config.get("<your_step>")`); return early
    if unset, malformed, or if the epoch field is ALREADY set (fire exactly once
    per epoch). Call it from `evolve_once`'s epoch-open sequence.
-4. **Test the never-rolls property.** In `tests/test_<your_step>.py`, capture the
+4. **Stamp a phase while it runs.** An epoch-open step runs inside the round but
+   ahead of propose→apply→run→gate, so the round's phase would stand over it —
+   the shape a wedged round has. Take the `beater` and `round_index`, `_beat` your
+   own phase on entry (with progress if the step is long), and restore
+   `evolve_once:round_{N}` in a `finally` — `_maybe_calibrate_noise_floor` is the
+   precedent. Teach `query/loop_view.py::_epoch_open_step` the new token so the
+   dashboard stepper and the console lifeline report it.
+5. **Test the never-rolls property.** In `tests/test_<your_step>.py`, capture the
    epoch's `contract_hash` before, call `set_epoch_<field>`, reload, and assert
    the hash is UNCHANGED — the exact pattern `tests/test_contract_preflight.py`
    uses.

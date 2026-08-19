@@ -12,6 +12,9 @@
 //     the good tone);
 //   * pipelineStepperDigest: a re-served identical projection is byte-
 //     identical; a step advancing flips it;
+//   * an epoch_open_step (the A/A noise-floor calibration) leads the strip as
+//     the ACTIVE element while all four steps sit pending, and its draw count
+//     renders — that stretch is work, not a stalled round;
 //   * LiveController.updatePipeline: an idle projection (all pending, no
 //     decision) or a null read (Rust supervisor) leaves the host EMPTY; a
 //     live one renders; an identical re-serve keeps DOM NODE IDENTITY (zero
@@ -84,6 +87,54 @@ test('pipelineStepper: the settled decision word renders (promoted = good tone)'
   assert(hasClass(dec, 'dn-good-t'), 'a promotion reads in the good tone');
 });
 
+// The server's projection while the epoch-open A/A calibration draws: every
+// pipeline step pending, nothing active, the calibration reporting itself.
+function calibratingPipe(detail) {
+  return pipeFixture({
+    phase: 'evolve_once:calibrating_noise_floor:2/3',
+    steps: idlePipe().steps,
+    active_step: null,
+    epoch_open_step: {
+      id: 'calibrating_noise_floor', label: 'calibrating noise floor',
+      detail: detail === undefined ? '2/3 draws' : detail,
+    },
+    in_flight: 1,
+  });
+}
+
+test('pipelineStepper: the epoch-open calibration leads the strip with its draw count', () => {
+  const host = mountInto(live.pipelineStepper(calibratingPipe()));
+  const steps = allByClass(host, 'dt-pipe-step');
+  assertEqual(steps.length, 5, 'the calibration leads the four pipeline steps');
+  assertEqual(steps[0].getAttribute('data-step'), 'calibrating_noise_floor', 'it comes first');
+  assert(hasClass(steps[0], 'dt-pipe-active'), 'the calibration is what is happening now');
+  assert(steps.slice(1).every((s) => hasClass(s, 'dt-pipe-pending')),
+    'the pipeline itself has not started');
+  const details = allByClass(host, 'dt-pipe-detail');
+  assertEqual(details.length, 1, 'exactly one detail (the calibration)');
+  assertEqual(details[0].textContent, '2/3 draws', 'the server label is rendered verbatim');
+  // Stamped before the first draw settles: the label stands alone.
+  const bare = allByClass(mountInto(live.pipelineStepper(calibratingPipe(''))), 'dt-pipe-detail');
+  assertEqual(bare.length, 0, 'no detail element without served progress');
+});
+
+test('LiveController.updatePipeline: a calibrating projection renders, and each draw repaints', () => {
+  const ctl = new live.LiveController({});
+  const host = ctl._pipeHost;
+
+  ctl.updatePipeline(calibratingPipe());
+  assertEqual(allByClass(host, 'dt-pipe-step').length, 5,
+    'an all-pending pipeline still renders while the calibration runs');
+  const first = host.firstChild;
+
+  ctl.updatePipeline(calibratingPipe());
+  assert(host.firstChild === first, 'a steady re-serve writes zero DOM');
+
+  ctl.updatePipeline(calibratingPipe('3/3 draws'));
+  assert(host.firstChild !== first, 'a completed draw repaints the count');
+  assertEqual(allByClass(host, 'dt-pipe-detail')[0].textContent, '3/3 draws');
+});
+
 test('pipelineStepperDigest: identical projections fold identically; an advance flips', () => {
   assertEqual(live.pipelineStepperDigest(pipeFixture()), live.pipelineStepperDigest(pipeFixture()),
     'a re-served identical projection is byte-identical (zero DOM)');
@@ -94,6 +145,9 @@ test('pipelineStepperDigest: identical projections fold identically; an advance 
   assert(live.pipelineStepperDigest(advanced) !== live.pipelineStepperDigest(pipeFixture()),
     'a step advance flips the digest');
   assertEqual(live.pipelineStepperDigest(null), 'none', 'a null read folds to the stable none');
+  assert(live.pipelineStepperDigest(calibratingPipe('3/3 draws'))
+    !== live.pipelineStepperDigest(calibratingPipe()),
+    'a settled calibration draw flips the digest');
 });
 
 test('LiveController.updatePipeline: idle/null → empty host; live renders; identical re-serve keeps node identity', () => {
@@ -128,4 +182,4 @@ test('LiveController.updatePipeline: idle/null → empty host; live renders; ide
   assertEqual(host.childNodes.length, 0, 'a null read clears the stepper');
 });
 
-run();
+await run();

@@ -69,6 +69,33 @@ def test_golden_ascii(name: str) -> None:
     check_golden(GOLDENS / f"{name}.ascii.txt", text)
 
 
+def test_home_lifeline_leads_with_the_epoch_open_calibration() -> None:
+    """A calibration in flight leads the lifeline with its own stage and the
+    served draw count, so a minutes-long measurement is not read as a round
+    that started and stalled (issue #175)."""
+    payloads = live_payloads()
+    payloads["/api/live/pipeline"] = {
+        **payloads["/api/live/pipeline"],
+        "phase": "evolve_once:calibrating_noise_floor:2/3",
+        "steps": [
+            {"id": s["id"], "label": s["label"], "state": "pending", "detail": ""}
+            for s in payloads["/api/live/pipeline"]["steps"]
+        ],
+        "active_step": None,
+        "epoch_open_step": {
+            "id": "calibrating_noise_floor",
+            "label": "calibrating noise floor",
+            "detail": "2/3 draws",
+        },
+        "in_flight": 1,
+    }
+    ctx = LensContext(route=Route(lens="home", params={"epoch": EPOCH}), width=100)
+    text = render_text(safe_render(BY_NAME["home"], SnapshotClient(payloads), ctx), width=100)
+    assert "calibrating noise floor" in text
+    assert "2/3 draws" in text
+    assert "no round in flight" not in text
+
+
 # ---------------------------------------------------------------------------
 # Degrade paths — one per lens
 # ---------------------------------------------------------------------------

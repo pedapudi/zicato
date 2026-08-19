@@ -686,6 +686,17 @@ a **runtime measurement, never a contract input, never hashed** (mirroring the
 | epoch-open hook | workspace `config.json` `"calibrate_noise_floor": K` — once per epoch at the first evolve round, idempotent, best-effort |
 | evolve-start check + per-round health | reads the persisted floor; see below |
 
+**What the epoch-open hook costs.** K draws x every board entry, serially,
+before the first duel of the epoch's first round — `--parallelism` buys
+nothing, so K=3 on a 6-entry board is 18 board-entry runs of dead time up
+front. The step logs that arithmetic before its first draw and reports
+`{done}/{K}` on the heartbeat as each draw settles (`CALIBRATION_PHASE`), so
+the wait is legible rather than mistakable for a hung round. The same cost
+shape applies to the `"contract_preflight"` hook below, which additionally
+runs the degraded probes. A loop with no consumer for the floor — no
+promote-margin bar to defend, no A/A arm — should set
+`"calibrate_noise_floor": 0` rather than pay it.
+
 **The margin-vs-floor warning.** `margin_below_floor(promote_margin, floor)`
 returns true when the margin is strictly below the measured `max_abs_delta`.
 The health finding `margin_below_noise_floor`
@@ -1657,7 +1668,9 @@ reported in the same words.
 Surfaces: `zicato board preflight` (manual, always recommend-only; carries
 `--degrade-mutation-id` and `--probe-points`, prints every probe and the window
 verdict) + the epoch-open hook `"contract_preflight": K` still sets the number
-of A/A draws K (absent ⇒ `DEFAULT_CALIBRATION_RUNS`). Because the measurement
+of A/A draws K (absent ⇒ `DEFAULT_CALIBRATION_RUNS`). Like the calibration it
+is serial and front-loaded — K A/A draws plus the degraded probes over every
+board entry before the round's first duel. Because the measurement
 runs the champion for its A/A floor, a fast-mode test asserting "the champion
 is never re-run" must set `runtime.preflight_gate: "off"`.
 

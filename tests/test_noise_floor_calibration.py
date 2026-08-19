@@ -209,6 +209,7 @@ def test_measure_noise_floor_deterministic_adapter_is_zero(tmp_path: Path) -> No
     )
     epoch_cfg = load_epoch(workspace, epoch_id)
 
+    progress: list[tuple[int, int]] = []
     floor = asyncio.run(
         measure_noise_floor(
             adapter=adapter,
@@ -219,8 +220,12 @@ def test_measure_noise_floor_deterministic_adapter_is_zero(tmp_path: Path) -> No
             workspace_root=workspace,
             epoch_id=epoch_id,
             runs=3,
+            on_draw=lambda done, total: progress.append((done, total)),
         )
     )
+    # Progress is reported once per SETTLED draw, so the count an operator
+    # reads is draws completed — never draws started.
+    assert progress == [(1, 3), (2, 3), (3, 3)]
     assert floor.runs == 3
     assert floor.max_abs_delta == 0.0
     assert floor.delta_std == 0.0
@@ -285,3 +290,163 @@ def test_board_audit_cli_measures_and_persists(tmp_path: Path) -> None:
     cfg = load_epoch(workspace, epoch_id)
     assert cfg.noise_floor is not None
     assert cfg.noise_floor["max_abs_delta"] == 0.0
+
+
+# ---------------------------------------------------------------------------
+# Legibility — what the loop REPORTS while the measurement runs (issue #175)
+# ---------------------------------------------------------------------------
+
+
+class _RecordingBeater:
+    """A :class:`HeartbeatBeater` stand-in recording the phases stamped on it."""
+
+    def __init__(self) -> None:
+        self.phases: list[str] = []
+
+    def update(self, **fields: object) -> None:
+        if fields.get("phase") is not None:
+            self.phases.append(str(fields["phase"]))
+
+    def bump_now(self) -> None:
+        pass
+
+
+def _calibrate(
+    monkeypatch,
+    *,
+    workspace_config: dict,
+    measured: object,
+    noise_floor: object = None,
+    board_size: int = 2,
+    round_index: int = 4,
+) -> _RecordingBeater:
+    """Run the epoch-open calibration step against a stubbed measurement.
+
+    ``measured`` is either a :class:`NoiseFloor` the fake measurement returns
+    (reporting one ``on_draw`` per draw) or an exception it raises.
+    """
+    import zicato.epoch.lifecycle as lifecycle
+    import zicato.tournament.calibration as calibration
+    from zicato.evolve.round_prepare import _maybe_calibrate_noise_floor
+
+    async def _fake_measure(*, runs: int, on_draw=None, **_kw: object) -> object:
+        for draw in range(runs):
+            if on_draw is not None:
+                on_draw(draw + 1, runs)
+        if isinstance(measured, Exception):
+            raise measured
+        return measured
+
+    monkeypatch.setattr(calibration, "measure_noise_floor", _fake_measure)
+    monkeypatch.setattr(lifecycle, "set_epoch_noise_floor", lambda *a, **k: None)
+
+    beater = _RecordingBeater()
+    asyncio.run(
+        _maybe_calibrate_noise_floor(
+            workspace_root=Path("."),
+            epoch_id="e0",
+            epoch_cfg=type("_Cfg", (), {"noise_floor": noise_floor})(),
+            workspace_config=workspace_config,
+            adapter=None,
+            parent_gen=None,
+            board=[None] * board_size,
+            weights=None,
+            config=None,
+            disable_drift=(),
+            judge_only=False,
+            beater=beater,  # type: ignore[arg-type]
+            round_index=round_index,
+        )
+    )
+    return beater
+
+
+def _floor(runs: int) -> object:
+    from zicato.tournament.calibration import NoiseFloor
+
+    return NoiseFloor(
+        generation_id="v0",
+        epoch_id="e0",
+        runs=runs,
+        scalars=(1.0,) * runs,
+        max_abs_delta=0.0,
+        delta_std=0.0,
+        measured_at="2026-08-17T00:00:00Z",
+    )
+
+
+def test_calibration_owns_the_phase_and_counts_its_draws(monkeypatch) -> None:
+    """The measurement stamps its OWN phase with live draw progress, then
+    hands the round back its phase — a working calibration used to be
+    indistinguishable from a round 0 that had hung."""
+    beater = _calibrate(
+        monkeypatch,
+        workspace_config={"calibrate_noise_floor": 3},
+        measured=_floor(3),
+    )
+    assert beater.phases == [
+        "evolve_once:calibrating_noise_floor:0/3",
+        "evolve_once:calibrating_noise_floor:1/3",
+        "evolve_once:calibrating_noise_floor:2/3",
+        "evolve_once:calibrating_noise_floor:3/3",
+        "evolve_once:round_4",
+    ]
+
+
+def test_a_calibrating_phase_reads_as_active_work() -> None:
+    """No segment of the calibration phase is an at-rest token, so a
+    workspace mid-measurement reads ACTIVE rather than settled."""
+    from zicato.query.runtime_view import is_active_phase
+    from zicato.tournament.calibration import CALIBRATION_PHASE
+
+    assert is_active_phase(CALIBRATION_PHASE)
+    assert is_active_phase(f"{CALIBRATION_PHASE}:7/18")
+
+
+def test_a_failed_calibration_still_hands_the_round_its_phase_back(monkeypatch) -> None:
+    """The measurement is best-effort: a failure must not leave the heartbeat
+    parked on a measurement that is no longer running."""
+    beater = _calibrate(
+        monkeypatch,
+        workspace_config={"calibrate_noise_floor": 2},
+        measured=RuntimeError("endpoint outage"),
+    )
+    assert beater.phases[0] == "evolve_once:calibrating_noise_floor:0/2"
+    assert beater.phases[-1] == "evolve_once:round_4"
+
+
+def test_a_skipped_calibration_touches_no_phase(monkeypatch) -> None:
+    """Opted out, misconfigured, or already measured: the round's own phase
+    stands untouched — byte-identical to the behaviour before the step
+    reported itself."""
+    for workspace_config, floor in (
+        ({}, None),
+        ({"calibrate_noise_floor": 0}, None),
+        ({"calibrate_noise_floor": "three"}, None),
+        ({"calibrate_noise_floor": 1}, None),
+        ({"calibrate_noise_floor": 3}, {"max_abs_delta": 0.0}),
+    ):
+        beater = _calibrate(
+            monkeypatch,
+            workspace_config=workspace_config,
+            measured=_floor(3),
+            noise_floor=floor,
+        )
+        assert beater.phases == [], (workspace_config, floor)
+
+
+def test_the_calibration_cost_is_named_before_the_first_draw(monkeypatch, caplog) -> None:
+    """K draws x N board entries is knowable up front; the operator should not
+    have to infer the shape from loss files landing on disk."""
+    import logging
+
+    with caplog.at_level(logging.INFO, logger="zicato.orchestrator"):
+        _calibrate(
+            monkeypatch,
+            workspace_config={"calibrate_noise_floor": 3},
+            measured=_floor(3),
+            board_size=6,
+        )
+    cost = next(m for m in caplog.messages if "board-entry runs" in m)
+    assert "3 draws x 6 board entries = 18 board-entry runs" in cost
+    assert "serially" in cost
