@@ -370,12 +370,10 @@ def _write_judge_scoring(ws: Path, epoch_id: str) -> None:
     scoring_path(ws, epoch_id).write_text(
         json.dumps(
             {
-                "drift_weight": 1.0,
                 "pass_weight": 1.0,
                 "severity_weights": {"info": 1.0, "warning": 3.0, "critical": 10.0},
                 "per_judge_weights": {"quality": 4.0},
                 "plan_revision_weight": 0.5,
-                "runtime_weight": 0.0,
                 "promote_margin": 0.01,
                 "pass_rate_monotonicity": True,
             }

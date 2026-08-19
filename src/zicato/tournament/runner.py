@@ -100,7 +100,6 @@ from zicato.tournament.unit_cache import (  # noqa: F401
 # namespace, so the names must live here. Re-exported for the stable
 # ``from zicato.tournament.runner import ...`` import surface (F401).
 from zicato.tournament.worker_transport import (  # noqa: F401
-    _ABORTED_TASK_FAILURE_MULTIPLIER,
     _DISABLE_DRIFT_CONTEXT_KEY,
     _EPHEMERAL_SNAPSHOT_PREFIX,
     _GENERATION_ID_CONTEXT_KEY,
@@ -576,7 +575,6 @@ async def _run_single(
                 entry=entry,
                 generation_id=generation.id,
                 epoch_id=epoch_id,
-                weights=weights,
                 runtime_ms=0,
                 match_id=match_id,
                 abort_cause="prepare_failed",
@@ -719,7 +717,6 @@ async def _run_single(
                 entry=entry,
                 generation_id=generation.id,
                 epoch_id=epoch_id,
-                weights=weights,
                 runtime_ms=runtime_ms,
                 match_id=match_id,
                 abort_cause=abort_cause,
@@ -743,7 +740,6 @@ async def _run_single(
                 entry=entry,
                 generation_id=generation.id,
                 epoch_id=epoch_id,
-                weights=weights,
                 runtime_ms=runtime_ms,
                 match_id=match_id,
                 abort_cause="result_unreadable",

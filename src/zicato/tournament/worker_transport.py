@@ -756,20 +756,12 @@ def _resolve_harmonograf_grpc(workspace_root: Path, url: str) -> str:
         return ""
 
 
-#: Multiplier on ``task_failure_ratio`` in the synthesised aborted-run
-#: loss — mirrors :data:`zicato.telemetry.reducer._TASK_FAILURE_RATIO_MULTIPLIER`
-#: ("pure failures matter"). Kept as a local constant so this module does
-#: not import the reducer just to compute an empty-counts loss.
-_ABORTED_TASK_FAILURE_MULTIPLIER: float = 10.0
-
-
 def _aborted_loss_profile(
     *,
     run_id: str,
     entry: BoardEntry,
     generation_id: str,
     epoch_id: str,
-    weights: ScoringWeights,
     runtime_ms: int,
     match_id: str = "",
     abort_cause: str | None = None,
@@ -790,20 +782,15 @@ def _aborted_loss_profile(
     layer reads this to persist ONLY genuine budget exhaustion and never an
     infra abort, so a transient blip cannot poison a unit's score.
 
-    The ``drift_loss`` scalar is computed inline (empty drift counts, a
-    full ``task_failure_ratio`` of 1.0, the heavy fixed budget-exceeded
-    term) rather than by calling into the reducer — the runner must be
-    able to synthesise a definite-loss profile even when the reducer is
-    unavailable, so the tournament can always aggregate a killed run as a
-    loss for the entry.
+    The profile states the FACTS of the abort — no drift events observed
+    (``drift_loss=0.0``), every started task failed
+    (``task_failure_ratio=1.0``), and the run did not complete
+    (``not_completed=True``) — and the ``failure:`` channel derives the loss
+    from them at aggregation time. Nothing is computed inline here, so this
+    synthesiser can never disagree with the reducer's arithmetic, and it
+    needs no reducer import to produce a definite-loss profile for a killed
+    run.
     """
-    sev_vals = list(weights.severity_weights.values()) or [1.0]
-    drift_loss = (
-        weights.runtime_weight * (runtime_ms / 1000.0)
-        + _ABORTED_TASK_FAILURE_MULTIPLIER * 1.0
-        + 5.0 * max(sev_vals)
-    )
-    drift_loss = max(0.0, drift_loss)
     return LossProfile(
         run_id=run_id,
         entry_id=entry.id,
@@ -814,17 +801,18 @@ def _aborted_loss_profile(
         task_failure_ratio=1.0,
         runtime_ms=runtime_ms,
         wall_clock_budget_exceeded=True,
+        not_completed=True,
         expectation_result=None,
-        drift_loss=drift_loss,
+        drift_loss=0.0,
         pass_fail=(False if entry.expectation is not None else None),
         match_id=match_id,
         abort_cause=abort_cause,
         # Provenance twin of the worker's own stamp: this profile carries the
-        # same worst-case penalty the reducer applies to a not-completed run,
+        # same worst-case charge the reducer applies to a not-completed run,
         # so it must name its cause the same way. Here the cause and the
         # cache signal happen to coincide — both are the parent's observation
         # — but a reader of ``not_completed_reason`` sees an attributed
-        # penalty on either synthesis path.
+        # charge on either synthesis path.
         not_completed_reason=abort_cause,
     )
 
@@ -893,7 +881,6 @@ def _load_worker_result(result_path: Path) -> dict[str, Any] | None:
 
 
 __all__ = [
-    "_ABORTED_TASK_FAILURE_MULTIPLIER",
     "_DISABLE_DRIFT_CONTEXT_KEY",
     "_EPHEMERAL_SNAPSHOT_PREFIX",
     "_GENERATION_ID_CONTEXT_KEY",

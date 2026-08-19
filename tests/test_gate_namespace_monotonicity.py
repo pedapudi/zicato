@@ -201,7 +201,7 @@ def test_zero_weight_namespace_skipped_even_when_monotonicity_true() -> None:
         namespace_aggregates={"output:": 0.0},
     )
     weights = ScoringWeights(
-        namespace_weights={"drift:": 1.0, "output:": 0.0},
+        namespace_weights={"drift:": 1.0, "failure:": 1.0, "output:": 0.0},
         namespace_monotonicity={"output:": True},  # explicitly enabled
     )
     outcome = evaluate_gate(parent, child, weights)

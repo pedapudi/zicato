@@ -101,15 +101,28 @@ def _candidate(gid: str, **kwargs: Any) -> FrontierCandidate:
 
 
 def test_frontier_axes_are_the_non_zero_namespace_weights() -> None:
-    """``output:`` is excluded: a zero weight has no direction to optimise."""
-    assert frontier_axes(_weights()) == ("cost:", "drift:", "latency:", "rubric:", "schema:")
+    """``output:`` and ``runtime:`` are excluded: a zero weight has no direction.
+
+    Every other shipped channel — judges and failures included — is an axis,
+    which is what makes the frontier follow the contract rather than a
+    hand-kept list.
+    """
+    assert frontier_axes(_weights()) == (
+        "cost:",
+        "drift:",
+        "failure:",
+        "judge:",
+        "latency:",
+        "rubric:",
+        "schema:",
+    )
 
 
 def test_an_operator_zeroed_axis_drops_out() -> None:
     weights = _weights(
-        namespace_weights={"drift:": 1.0, "cost:": 0.0, "rubric:": -1.0},
+        namespace_weights={"drift:": 1.0, "failure:": 1.0, "cost:": 0.0, "rubric:": -1.0},
     )
-    assert frontier_axes(weights) == ("drift:", "rubric:")
+    assert frontier_axes(weights) == ("drift:", "failure:", "rubric:")
 
 
 def test_axis_values_omit_a_missing_or_non_finite_measurement() -> None:

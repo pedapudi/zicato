@@ -91,13 +91,13 @@ def _dispatch_op(draft: TournamentDraft, op: str, args: dict[str, Any]) -> ops.D
     if op == "set_weights":
         return ops.set_weights(
             draft,
-            drift_weight=_opt_float(args, "drift_weight"),
             pass_weight=_opt_float(args, "pass_weight"),
             per_kind_weights=args.get("per_kind_weights"),
             per_judge_weights=args.get("per_judge_weights"),
             default_judge_weight=_opt_float(args, "default_judge_weight"),
             plan_revision_weight=_opt_float(args, "plan_revision_weight"),
-            runtime_weight=_opt_float(args, "runtime_weight"),
+            task_failure_weight=_opt_float(args, "task_failure_weight"),
+            not_completed_weight=_opt_float(args, "not_completed_weight"),
             severity_weights=args.get("severity_weights"),
         )
     if op == "set_gate":

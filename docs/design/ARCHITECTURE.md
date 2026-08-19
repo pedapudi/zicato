@@ -126,10 +126,11 @@ judges. See [TELEMETRY-DIALECTS.md](TELEMETRY-DIALECTS.md).
 Two board-level headers are often mistaken for that lever and are not it.
 `disable_drift` names drift kinds whose **mapped built-in judges** are
 suppressed on the ADK path — kinds with no mapped judge are silently
-inert, and the remaining contributions to the drift term (plan revisions,
-task-failure ratio, runtime, custom per-judge drift) all survive. There is
-no "all drift off" board mode; setting `drift_weight` to `0.0` is what
-removes the drift component from the scalar. `judge_only` is orthogonal
+inert, and every other channel (plan revisions in `drift:`, custom judges
+in `judge:`, task failures and aborts in `failure:`, wall-clock in
+`runtime:`) survives untouched. There is no "all drift off" board mode;
+setting `namespace_weights["drift:"]` to `0.0` is what removes the drift
+channel from the scalar, and it removes only that channel. `judge_only` is orthogonal
 again: it keeps judges armed while disabling steering entirely (no
 goal-derivation call, no replanning, no drift-triggered refine). See
 [BOARD-FORMAT.md](BOARD-FORMAT.md).

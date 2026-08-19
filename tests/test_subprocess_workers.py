@@ -360,15 +360,18 @@ def test_worker_penalises_aborted_run_in_loss_json(tmp_path: Path) -> None:
     loss_path = loss_profile_path(workspace, "e0", generation.id, entry.id)
     assert loss_path.exists()
     profile = read_loss_profile(loss_path)
-    # The crash is penalised, not rewarded: drift_loss is the worst-case
-    # not-completed magnitude, never 0.0.
-    assert profile.drift_loss > 0.0
-    # Heavy term 5.0 * max(severity_weights)=50.0 + floored
-    # task_failure_ratio 1.0 * 10.0 = 60.0 under the default weights.
-    assert profile.drift_loss == pytest.approx(60.0)
+    # The crash is charged, not rewarded. The charge is the failure channel's
+    # — not_completed_weight 50.0 + task_failure_weight 10.0 × the floored
+    # ratio 1.0 = 60.0 under the default weights — and the run emitted no
+    # drift, so drift_loss is honestly 0.0.
+    assert profile.drift_loss == 0.0
+    assert profile.not_completed is True
     assert profile.task_failure_ratio == pytest.approx(1.0)
-    # ...and the penalty is attributable: the adapter's own abort reason is
-    # the only record of WHY a profile with empty drift_counts carries 60.0.
+    failure = {mc.name: mc.count for mc in profile.unified_metrics()}
+    assert failure["failure:not_completed"] == 1.0
+    assert failure["failure:tasks"] == pytest.approx(1.0)
+    # ...and the charge is attributable: the adapter's own abort reason is
+    # the only record of WHY an empty-drift profile costs 60.0.
     assert profile.not_completed_reason == "harness_exception:TypeError"
     # It is NOT stamped on abort_cause: any non-budget value there reads as an
     # infra abort, which would stop this scored failure from being cached at
@@ -400,11 +403,11 @@ def test_per_judge_weights_survive_worker_serialize_deserialize() -> None:
 
     Hand-check: a ``file_findability`` custom judge emitting raw drift 14
     (count 14 × ``info`` severity weight 1.0) configured at weight 2.0 must
-    contribute 28 to ``drift_loss``. The dropped-weight bug yields 14.
+    contribute 28 to the judge channel. The dropped-weight bug yields 14.
     """
     from zicato._tournament_worker import _weights_from_args
     from zicato.core import DriftCount
-    from zicato.telemetry.reducer import compute_drift_loss
+    from zicato.telemetry.reducer import compute_per_judge_loss
     from zicato.tournament.runner import _weights_spec
 
     weights = ScoringWeights(
@@ -424,9 +427,7 @@ def test_per_judge_weights_survive_worker_serialize_deserialize() -> None:
     # raw drift = count 14 × info severity 1.0 = 14.
     drift = (DriftCount(kind="custom:file_findability", severity="info", count=14),)
 
-    weighted = compute_drift_loss(
-        drift, plan_revisions=0, task_failure_ratio=0.0, runtime_ms=0, weights=round_tripped
-    )
+    weighted = sum(jl.weighted_loss for jl in compute_per_judge_loss(drift, round_tripped))
     # 14 raw × per_judge weight 2.0 = 28. The bug (weight dropped to the
     # default 1.0) would give 14.
     assert weighted == pytest.approx(28.0)
@@ -434,9 +435,7 @@ def test_per_judge_weights_survive_worker_serialize_deserialize() -> None:
     # Counterfactual: the unconfigured worker-side path (weight dropped)
     # produces the under-counted 14 — the exact bug we are guarding.
     dropped = ScoringWeights(severity_weights={"info": 1.0, "warning": 3.0, "critical": 10.0})
-    under_counted = compute_drift_loss(
-        drift, plan_revisions=0, task_failure_ratio=0.0, runtime_ms=0, weights=dropped
-    )
+    under_counted = sum(jl.weighted_loss for jl in compute_per_judge_loss(drift, dropped))
     assert under_counted == pytest.approx(14.0)
     assert weighted != under_counted
 
@@ -548,9 +547,7 @@ def test_drift_kind_aggregation_survives_worker_serialize_deserialize() -> None:
     assert round_tripped.pass_transform == {"op": "pow", "exponent": 2.0}
 
     drift = (DriftCount(kind="looping_reasoning", severity="warning", count=4),)
-    weighted = compute_drift_loss(
-        drift, plan_revisions=0, task_failure_ratio=0.0, runtime_ms=0, weights=round_tripped
-    )
+    weighted = compute_drift_loss(drift, plan_revisions=0, weights=round_tripped)
     harmonic4 = 1.0 + 1.0 / 2.0 + 1.0 / 3.0 + 1.0 / 4.0
     assert weighted == pytest.approx(3.0 * 2.0 * harmonic4)  # sev × kind × H(4)
 
@@ -560,9 +557,7 @@ def test_drift_kind_aggregation_survives_worker_serialize_deserialize() -> None:
         {"weights": {k: v for k, v in spec.items() if k != "drift_kind_aggregation"}}
     )
     assert dropped.drift_kind_aggregation == {}
-    linear = compute_drift_loss(
-        drift, plan_revisions=0, task_failure_ratio=0.0, runtime_ms=0, weights=dropped
-    )
+    linear = compute_drift_loss(drift, plan_revisions=0, weights=dropped)
     assert linear == pytest.approx(3.0 * 2.0 * 4)  # sev × kind × linear count
     assert weighted < linear  # the harmonic shape really survived + reshaped
     assert not math.isnan(weighted)
@@ -833,7 +828,10 @@ def test_parent_kills_worker_that_blocks_past_budget_plus_grace(
     assert isinstance(loss, LossProfile)
     assert loss.wall_clock_budget_exceeded is True
     assert loss.entry_id == entry.id
-    assert loss.drift_loss > 0.0
+    # The synthesised profile states the facts of the abort; the failure
+    # channel turns them into the loss.
+    assert loss.not_completed is True
+    assert loss.task_failure_ratio == 1.0
     # The parent stamped the abort cause so loop-health can tell its OWN kill
     # of a wedged worker apart from a budget exhaustion or a supervisor kill.
     assert loss.abort_cause == "parent_kill"

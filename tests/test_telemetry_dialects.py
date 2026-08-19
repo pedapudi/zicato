@@ -97,8 +97,11 @@ def test_adk_events_known_answer(tmp_path: Path) -> None:
     * model_usage = 1 → llm_call_count 1; tokens 100+50 = 150
     * unknown event → skipped; trailing garbage line → malformed (skipped)
 
-    drift_loss = (10 + 3 + 1) + 0.5*plan_rev(0) + 10.0*0.5 + 0.0*runtime
-               = 14 + 5.0 = 19.0
+    drift_loss = (10 + 3 + 1) + 0.5*plan_rev(0) = 14.0
+
+    The task-failure ratio is NOT in the drift channel: it is
+    ``failure:tasks``, worth ``task_failure_weight * 0.5 = 5.0`` in the
+    failure channel, and the wall-clock is ``runtime:seconds``.
     """
     events = tmp_path / "adk.jsonl"
     _write_jsonl(events, _ADK_FIXTURE, trailing_garbage="this is not json")
@@ -114,7 +117,7 @@ def test_adk_events_known_answer(tmp_path: Path) -> None:
     ]
     assert lp.task_failure_ratio == 0.5
     assert lp.plan_revisions == 0
-    assert lp.drift_loss == 19.0
+    assert lp.drift_loss == 14.0
     assert lp.tokens_spent == 150
     assert lp.output_chars == 0
     assert lp.schema_failures == 0
@@ -141,7 +144,7 @@ def test_adk_events_per_kind_weight_applies(tmp_path: Path) -> None:
         telemetry_dialect=DIALECT_ADK_EVENTS, per_kind_weights={"tool_error": 2.0}
     )
     lp = reduce_loss(events, entry, "g", "e", None, 0, False, weights)
-    assert lp.drift_loss == 29.0  # 19.0 + extra 10 from the doubled tool_error
+    assert lp.drift_loss == 24.0  # 14.0 + extra 10 from the doubled tool_error
 
 
 def test_adk_events_retry_loop_ignores_arg_key_order(tmp_path: Path) -> None:
@@ -250,7 +253,7 @@ def test_transcript_known_answer_zero_drift(tmp_path: Path) -> None:
     assert ("cost:llm_calls", 0.0) in metric  # always emitted, even at zero
 
 
-def test_transcript_drift_weights_do_not_alter_scalar(tmp_path: Path) -> None:
+def test_transcript_drift_knobs_do_not_alter_the_loss(tmp_path: Path) -> None:
     """Drift weights are inert under transcript — the scalar is unmoved."""
     events = tmp_path / "t.jsonl"
     _write_jsonl(events, [{"role": "assistant", "content": "hello world"}])
@@ -269,7 +272,7 @@ def test_transcript_drift_weights_do_not_alter_scalar(tmp_path: Path) -> None:
         False,
         ScoringWeights(
             telemetry_dialect=DIALECT_TRANSCRIPT,
-            drift_weight=99.0,
+            namespace_weights={"drift:": 99.0, "failure:": 1.0},
             per_kind_weights={"tool_error": 100.0},
         ),
     )
@@ -346,13 +349,13 @@ def test_capability_warnings_transcript_flags_drift_knobs() -> None:
     warns = dialect_capability_warnings(
         ScoringWeights(
             telemetry_dialect=DIALECT_TRANSCRIPT,
-            drift_weight=5.0,
+            namespace_weights={"drift:": 5.0, "failure:": 1.0},
             per_kind_weights={"tool_error": 2.0},
             per_judge_weights={"quality": 2.0},
         )
     )
     joined = " ".join(warns)
-    assert "drift_weight" in joined
+    assert "namespace_weights['drift:']" in joined
     assert "per_kind_weights" in joined
     assert "per_judge_weights" in joined
 

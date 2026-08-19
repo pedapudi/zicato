@@ -187,7 +187,6 @@ def test_average_losses_counts_an_aborted_replicate_as_a_miss() -> None:
         entry=entry,
         generation_id="v1",
         epoch_id="e0",
-        weights=_Weights(),
         runtime_ms=0,
         match_id="",
         abort_cause="budget_exhausted",
@@ -201,7 +200,10 @@ def test_average_losses_counts_an_aborted_replicate_as_a_miss() -> None:
     assert folded.score == pytest.approx(0.5)
     assert entry_score(folded) == pytest.approx(0.5)
     # ...and the continuous axis the scalar runs on agrees with the vote's sign.
-    agg = aggregate_generation_score([folded], _Weights(drift_weight=0.0, pass_weight=1.0))
+    agg = aggregate_generation_score(
+        [folded],
+        _Weights(namespace_weights={"drift:": 0.0, "failure:": 1.0}, pass_weight=1.0),
+    )
     assert agg["mean_score"] == pytest.approx(0.5)
 
 
@@ -283,7 +285,7 @@ def test_folded_namespace_aggregate_matches_the_per_replicate_aggregate() -> Non
     from zicato.tournament.scoring import aggregate_namespaced_metrics
     from zicato.tournament.unit_cache import _average_losses
 
-    weights = ScoringWeights(namespace_weights={"cost:": 1.0})
+    weights = ScoringWeights(namespace_weights={"cost:": 1.0, "failure:": 1.0})
     profiles = [
         _loss(score=0.5, metric_counts=(MetricCount(name="cost:tokens_spent", count=c),))
         for c in (300.0, 0.0, 0.0)
@@ -344,7 +346,7 @@ def test_replicated_mean_score_is_the_replicate_mean_end_to_end() -> None:
     from zicato.tournament.scoring import aggregate_generation_score
     from zicato.tournament.unit_cache import _average_losses
 
-    weights = ScoringWeights(drift_weight=0.0, pass_weight=1.0)
+    weights = ScoringWeights(namespace_weights={"drift:": 0.0, "failure:": 1.0}, pass_weight=1.0)
     runs = [{"e": _loss(drift_loss=0.0, score=s, pass_fail=bool(s))} for s in (1.0, 0.0, 0.0, 0.0)]
     agg = aggregate_generation_score(list(_average_losses(runs).values()), weights)
     assert agg["mean_score"] == pytest.approx(0.25)

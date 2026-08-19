@@ -140,7 +140,7 @@ def test_make_pattern_default() -> None:
 def test_make_scoring_weights_default() -> None:
     sw = make_scoring_weights()
     assert isinstance(sw, ScoringWeights)
-    assert sw.drift_weight == 1.0
+    assert sw.pass_weight == 1.0
     assert sw.severity_weights["info"] == 1.0
 
 

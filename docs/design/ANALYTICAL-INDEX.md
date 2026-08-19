@@ -481,7 +481,7 @@ round's full per-entry detail is one join away.
 
 One row per (run × custom judge) — the per-judge weighted-loss
 breakdown that the scoring layer's `per_judge_weights` produces
-(see [SCORING.md §2.2](SCORING.md#22-per-judge-weights)). This is
+(see [SCORING.md §2.2](SCORING.md#22-the-judge-channel)). This is
 the table added in the v1 → v2 migration; it is created by the
 regular `CREATE TABLE IF NOT EXISTS` pass (the migrator does not
 need an `ALTER` for it — a fresh table on a v1 database).
@@ -1132,7 +1132,7 @@ processes.
 | The three storage concerns, from the storage side | [STORAGE.md §7](STORAGE.md#7-three-storage-concerns) |
 | Generation trees → git (v0+1 roadmap) | [STORAGE.md](STORAGE.md) |
 | Event capture → `events.jsonl` (no SQLite) | [TELEMETRY.md](TELEMETRY.md) |
-| The `LossProfile` shape the index projects | [TELEMETRY.md](TELEMETRY.md), [SCORING.md §2](SCORING.md#2-per-entry-drift-loss) |
+| The `LossProfile` shape the index projects | [TELEMETRY.md](TELEMETRY.md), [SCORING.md §2](SCORING.md#2-the-metric-channels) |
 | `experiment.json` / `gen_score.json` the index derives from | [EPOCHS-AND-JOURNALING.md §3](EPOCHS-AND-JOURNALING.md#3-the-experiment) |
 | The tournament analytics the index backs | [TOURNAMENT.md §4](TOURNAMENT.md#4-tournament-detail-analytics) |
 | The supervisor binary that reads the index | [RUNTIME.md](RUNTIME.md), [DASHBOARD.md](DASHBOARD.md) |

@@ -269,31 +269,33 @@ def set_proposer(proposer_path: str | None = None) -> str:
 
 
 def set_weights(
-    drift_weight: float | None = None,
     pass_weight: float | None = None,
     per_kind_weights: dict[str, float] | None = None,
     per_judge_weights: dict[str, float] | None = None,
     default_judge_weight: float | None = None,
     plan_revision_weight: float | None = None,
-    runtime_weight: float | None = None,
+    task_failure_weight: float | None = None,
+    not_completed_weight: float | None = None,
     severity_weights: dict[str, float] | None = None,
 ) -> str:
     """Set scoring weights (the loss-shaping knobs).
 
     Any subset of the supported weight fields may be supplied; mapping
     fields replace the whole mapping. Returns the patch + updated cost /
-    warnings.
+    warnings. The per-CHANNEL coefficients (``drift:``, ``judge:``,
+    ``failure:``, ``runtime:``, ``cost:``, ...) are ``set_namespace_weights``;
+    these fields shape a channel from within it.
     """
     ctx = _active_context()
     patch = ops.set_weights(
         ctx.draft(),
-        drift_weight=drift_weight,
         pass_weight=pass_weight,
         per_kind_weights=per_kind_weights,
         per_judge_weights=per_judge_weights,
         default_judge_weight=default_judge_weight,
         plan_revision_weight=plan_revision_weight,
-        runtime_weight=runtime_weight,
+        task_failure_weight=task_failure_weight,
+        not_completed_weight=not_completed_weight,
         severity_weights=severity_weights,
     )
     return _result_json(_summary(patch))

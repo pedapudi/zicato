@@ -67,7 +67,7 @@ def test_aggregate_mixed_pass_fail_and_none_expectations() -> None:
         _make_loss("b", drift_loss=2.0, pass_fail=False),
         _make_loss("c", drift_loss=1.0, pass_fail=None),
     ]
-    weights = ScoringWeights(drift_weight=1.0, pass_weight=2.0)
+    weights = ScoringWeights(pass_weight=2.0)
 
     agg = aggregate_generation_score(losses, weights)
 
@@ -83,9 +83,24 @@ def test_aggregate_mixed_pass_fail_and_none_expectations() -> None:
 
     # Per-entry mapping preserves raw signals. ``score`` is the uniform
     # continuous outcome (bool -> 1.0/0.0; None for a no-expectation entry).
-    assert agg["per_entry"]["a"] == {"drift_loss": 0.0, "pass_fail": True, "score": 1.0}
-    assert agg["per_entry"]["b"] == {"drift_loss": 2.0, "pass_fail": False, "score": 0.0}
-    assert agg["per_entry"]["c"] == {"drift_loss": 1.0, "pass_fail": None, "score": None}
+    assert agg["per_entry"]["a"] == {
+        "drift_loss": 0.0,
+        "failure": 0.0,
+        "pass_fail": True,
+        "score": 1.0,
+    }
+    assert agg["per_entry"]["b"] == {
+        "drift_loss": 2.0,
+        "failure": 0.0,
+        "pass_fail": False,
+        "score": 0.0,
+    }
+    assert agg["per_entry"]["c"] == {
+        "drift_loss": 1.0,
+        "failure": 0.0,
+        "pass_fail": None,
+        "score": None,
+    }
 
 
 def test_aggregate_with_no_expectations_yields_pass_rate_one() -> None:
@@ -100,17 +115,17 @@ def test_aggregate_with_no_expectations_yields_pass_rate_one() -> None:
 
     assert agg["expectation_count"] == 0
     assert agg["pass_rate"] == 1.0
-    # scalar reduces to drift_weight * drift_loss_mean only
-    assert agg["scalar"] == weights.drift_weight * agg["drift_loss_mean"]
+    # scalar reduces to the drift channel alone
+    assert agg["scalar"] == weights.namespace_weights["drift:"] * agg["drift_loss_mean"]
 
 
 def test_aggregate_scalar_uses_supplied_weights() -> None:
-    """Confirm scalar uses both drift_weight and pass_weight as multipliers."""
+    """Confirm the scalar uses both the drift coefficient and pass_weight."""
     losses = [
         _make_loss("a", drift_loss=4.0, pass_fail=False),
         _make_loss("b", drift_loss=4.0, pass_fail=False),
     ]
-    weights = ScoringWeights(drift_weight=0.25, pass_weight=10.0)
+    weights = ScoringWeights(namespace_weights={"drift:": 0.25, "failure:": 1.0}, pass_weight=10.0)
 
     agg = aggregate_generation_score(losses, weights)
 

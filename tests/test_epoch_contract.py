@@ -41,7 +41,7 @@ _BOARD_LINE_B = json.dumps(
 
 _BRIEF = "# Proposer brief\n\n## Focus\n- Be careful.\n"
 
-_SCORING = json.dumps({"drift_weight": 1.0, "pass_weight": 1.0, "promote_margin": 0.01})
+_SCORING = json.dumps({"pass_weight": 1.0, "promote_margin": 0.01})
 
 
 def _write_contract(
@@ -102,7 +102,7 @@ def test_hash_stable_across_scoring_float_noise(tmp_path: Path) -> None:
     base.scoring_path.write_text(
         json.dumps(
             {
-                "drift_weight": 1.0000000001,
+                "plan_revision_weight": 0.5000000001,
                 "pass_weight": 0.9999999999,
                 "promote_margin": 0.01,
             }
@@ -138,9 +138,7 @@ def test_hash_changes_on_scoring_weight_edit(tmp_path: Path) -> None:
     base = _write_contract(tmp_path)
     h1 = compute_contract_hash(base)
 
-    base.scoring_path.write_text(
-        json.dumps({"drift_weight": 2.0, "pass_weight": 1.0, "promote_margin": 0.01})
-    )
+    base.scoring_path.write_text(json.dumps({"pass_weight": 2.0, "promote_margin": 0.01}))
     h2 = compute_contract_hash(base)
     assert h1 != h2
 
@@ -205,7 +203,6 @@ def test_hash_changes_on_overfitting_knob_edit(tmp_path: Path) -> None:
     base.scoring_path.write_text(
         json.dumps(
             {
-                "drift_weight": 1.0,
                 "pass_weight": 1.0,
                 "promote_margin": 0.01,
                 "overfitting": {"enabled": False},
@@ -261,9 +258,9 @@ def test_hash_stable_when_outcome_summarizer_spec_omitted(tmp_path: Path) -> Non
     # that spells out its empty-string default — no spurious roll for existing
     # contracts that predate the field.
     base = _write_contract(tmp_path)
-    base.scoring_path.write_text(json.dumps({"drift_weight": 1.0}))
+    base.scoring_path.write_text(json.dumps({"pass_weight": 1.0}))
     h_omitted = compute_contract_hash(base)
-    base.scoring_path.write_text(json.dumps({"drift_weight": 1.0, "outcome_summarizer_spec": ""}))
+    base.scoring_path.write_text(json.dumps({"pass_weight": 1.0, "outcome_summarizer_spec": ""}))
     h_explicit_default = compute_contract_hash(base)
     assert h_omitted == h_explicit_default
 
@@ -274,12 +271,12 @@ def test_hash_stable_when_screening_fields_at_default(tmp_path: Path) -> None:
     # a contract that predates the fields hashes byte-identically to one that
     # spells out the OFF defaults — no retroactive roll for existing epochs.
     base = _write_contract(tmp_path)
-    base.scoring_path.write_text(json.dumps({"drift_weight": 1.0}))
+    base.scoring_path.write_text(json.dumps({"pass_weight": 1.0}))
     h_omitted = compute_contract_hash(base)
     base.scoring_path.write_text(
         json.dumps(
             {
-                "drift_weight": 1.0,
+                "pass_weight": 1.0,
                 "proposer_quality": {"screen_entries": 0, "screen_veto_only": False},
             }
         )
@@ -294,16 +291,16 @@ def test_hash_changes_when_screening_opted_in(tmp_path: Path) -> None:
     # screen_entries — or flipping screen_veto_only — rolls the epoch,
     # exactly like retuning any other contract weight.
     base = _write_contract(tmp_path)
-    base.scoring_path.write_text(json.dumps({"drift_weight": 1.0}))
+    base.scoring_path.write_text(json.dumps({"pass_weight": 1.0}))
     h_default = compute_contract_hash(base)
     base.scoring_path.write_text(
-        json.dumps({"drift_weight": 1.0, "proposer_quality": {"screen_entries": 2}})
+        json.dumps({"pass_weight": 1.0, "proposer_quality": {"screen_entries": 2}})
     )
     h_on = compute_contract_hash(base)
     base.scoring_path.write_text(
         json.dumps(
             {
-                "drift_weight": 1.0,
+                "pass_weight": 1.0,
                 "proposer_quality": {"screen_entries": 2, "screen_veto_only": True},
             }
         )
@@ -318,10 +315,10 @@ def test_hash_stable_when_recombine_at_default(tmp_path: Path) -> None:
     # knobs: a contract that predates the field hashes byte-identically to
     # one that spells out the False default — no retroactive roll.
     base = _write_contract(tmp_path)
-    base.scoring_path.write_text(json.dumps({"drift_weight": 1.0}))
+    base.scoring_path.write_text(json.dumps({"pass_weight": 1.0}))
     h_omitted = compute_contract_hash(base)
     base.scoring_path.write_text(
-        json.dumps({"drift_weight": 1.0, "proposer_quality": {"recombine": False}})
+        json.dumps({"pass_weight": 1.0, "proposer_quality": {"recombine": False}})
     )
     h_explicit_default = compute_contract_hash(base)
     assert h_omitted == h_explicit_default
@@ -332,10 +329,10 @@ def test_hash_changes_when_recombine_opted_in(tmp_path: Path) -> None:
     # minted union can be chosen without a critic pass), so recombine: true
     # rolls the epoch exactly like retuning any other contract weight.
     base = _write_contract(tmp_path)
-    base.scoring_path.write_text(json.dumps({"drift_weight": 1.0}))
+    base.scoring_path.write_text(json.dumps({"pass_weight": 1.0}))
     h_default = compute_contract_hash(base)
     base.scoring_path.write_text(
-        json.dumps({"drift_weight": 1.0, "proposer_quality": {"recombine": True}})
+        json.dumps({"pass_weight": 1.0, "proposer_quality": {"recombine": True}})
     )
     h_on = compute_contract_hash(base)
     assert h_default != h_on
@@ -347,9 +344,9 @@ def test_hash_stable_when_mutation_surface_is_empty(tmp_path: Path) -> None:
     # spells out the empty table, so widening the ENVELOPE mechanism rolls no
     # existing epoch.
     base = _write_contract(tmp_path)
-    base.scoring_path.write_text(json.dumps({"drift_weight": 1.0}))
+    base.scoring_path.write_text(json.dumps({"pass_weight": 1.0}))
     h_omitted = compute_contract_hash(base)
-    base.scoring_path.write_text(json.dumps({"drift_weight": 1.0, "mutation_surface": {}}))
+    base.scoring_path.write_text(json.dumps({"pass_weight": 1.0, "mutation_surface": {}}))
     h_explicit_default = compute_contract_hash(base)
     assert h_omitted == h_explicit_default
 
@@ -360,14 +357,14 @@ def test_hash_changes_when_a_file_type_is_declared(tmp_path: Path) -> None:
     # LEADERS are part of it too: they decide what the applier can strip out of
     # a region body, so retuning them alone must move the hash.
     base = _write_contract(tmp_path)
-    base.scoring_path.write_text(json.dumps({"drift_weight": 1.0}))
+    base.scoring_path.write_text(json.dumps({"pass_weight": 1.0}))
     h_none = compute_contract_hash(base)
     base.scoring_path.write_text(
-        json.dumps({"drift_weight": 1.0, "mutation_surface": {".ts": {"leaders": ["//"]}}})
+        json.dumps({"pass_weight": 1.0, "mutation_surface": {".ts": {"leaders": ["//"]}}})
     )
     h_ts = compute_contract_hash(base)
     base.scoring_path.write_text(
-        json.dumps({"drift_weight": 1.0, "mutation_surface": {".ts": {"leaders": ["//", "/*"]}}})
+        json.dumps({"pass_weight": 1.0, "mutation_surface": {".ts": {"leaders": ["//", "/*"]}}})
     )
     h_ts_two_leaders = compute_contract_hash(base)
     assert h_none != h_ts
@@ -379,10 +376,10 @@ def test_hash_stable_when_genealogy_at_default(tmp_path: Path) -> None:
     # exemplar knobs: a contract that predates the field hashes byte-identically
     # to one that spells out the 0 default — no retroactive roll.
     base = _write_contract(tmp_path)
-    base.scoring_path.write_text(json.dumps({"drift_weight": 1.0}))
+    base.scoring_path.write_text(json.dumps({"pass_weight": 1.0}))
     h_omitted = compute_contract_hash(base)
     base.scoring_path.write_text(
-        json.dumps({"drift_weight": 1.0, "proposer_quality": {"genealogy": 0}})
+        json.dumps({"pass_weight": 1.0, "proposer_quality": {"genealogy": 0}})
     )
     h_explicit_default = compute_contract_hash(base)
     assert h_omitted == h_explicit_default
@@ -392,10 +389,10 @@ def test_hash_changes_when_genealogy_opted_in(tmp_path: Path) -> None:
     # A proposer shown candidate genealogy proposes under a different rule, so
     # a non-zero genealogy count rolls the epoch like any other contract weight.
     base = _write_contract(tmp_path)
-    base.scoring_path.write_text(json.dumps({"drift_weight": 1.0}))
+    base.scoring_path.write_text(json.dumps({"pass_weight": 1.0}))
     h_default = compute_contract_hash(base)
     base.scoring_path.write_text(
-        json.dumps({"drift_weight": 1.0, "proposer_quality": {"genealogy": 4}})
+        json.dumps({"pass_weight": 1.0, "proposer_quality": {"genealogy": 4}})
     )
     h_on = compute_contract_hash(base)
     assert h_default != h_on
@@ -406,10 +403,10 @@ def test_hash_stable_when_calibration_feedback_at_default(tmp_path: Path) -> Non
     # genealogy / screen / exemplar knobs: a contract that predates the field
     # hashes byte-identically to one that spells out the 0 default.
     base = _write_contract(tmp_path)
-    base.scoring_path.write_text(json.dumps({"drift_weight": 1.0}))
+    base.scoring_path.write_text(json.dumps({"pass_weight": 1.0}))
     h_omitted = compute_contract_hash(base)
     base.scoring_path.write_text(
-        json.dumps({"drift_weight": 1.0, "proposer_quality": {"calibration_feedback": 0}})
+        json.dumps({"pass_weight": 1.0, "proposer_quality": {"calibration_feedback": 0}})
     )
     h_explicit_default = compute_contract_hash(base)
     assert h_omitted == h_explicit_default
@@ -419,10 +416,10 @@ def test_hash_changes_when_calibration_feedback_opted_in(tmp_path: Path) -> None
     # A proposer shown its own prediction calibration proposes under a different
     # rule, so a non-zero calibration_feedback rolls the epoch like any weight.
     base = _write_contract(tmp_path)
-    base.scoring_path.write_text(json.dumps({"drift_weight": 1.0}))
+    base.scoring_path.write_text(json.dumps({"pass_weight": 1.0}))
     h_default = compute_contract_hash(base)
     base.scoring_path.write_text(
-        json.dumps({"drift_weight": 1.0, "proposer_quality": {"calibration_feedback": 5}})
+        json.dumps({"pass_weight": 1.0, "proposer_quality": {"calibration_feedback": 5}})
     )
     h_on = compute_contract_hash(base)
     assert h_default != h_on
@@ -504,14 +501,11 @@ def test_absent_overfitting_block_hashes_as_the_defaults(tmp_path: Path) -> None
     # canonicalizer routes both through the same fully-defaulted
     # OverfittingConfig.
     base = _write_contract(tmp_path)
-    base.scoring_path.write_text(
-        json.dumps({"drift_weight": 1.0, "pass_weight": 1.0, "promote_margin": 0.01})
-    )
+    base.scoring_path.write_text(json.dumps({"pass_weight": 1.0, "promote_margin": 0.01}))
     h_absent = compute_contract_hash(base)
     base.scoring_path.write_text(
         json.dumps(
             {
-                "drift_weight": 1.0,
                 "pass_weight": 1.0,
                 "promote_margin": 0.01,
                 "overfitting": {

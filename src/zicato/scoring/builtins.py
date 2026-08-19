@@ -1,19 +1,19 @@
-"""The built-in (default) scoring formulas, extracted as pure functions.
+"""The built-in (default) scoring formulas, as pure functions.
 
-These two functions ARE the current scoring formulas, lifted verbatim out of
-``telemetry/reducer.py`` (Seam 1) and ``tournament/scoring.py`` (Seam 2) so
-that:
+These two functions ARE zicato's scoring formulas, held here rather than
+inline in ``telemetry/reducer.py`` (Seam 1) and ``tournament/scoring.py``
+(Seam 2) so that:
 
 * both the orchestrator AND the killable worker subprocess import the SAME
-  implementation (no drift between the two sites), and
-* a later plugin can compute the default and adjust it
-  (``ctx.builtin_loss`` / ``ctx.builtin_scalar``) rather than reimplement it.
+  implementation (no divergence between the two sites), and
+* a plugin can compute the default and adjust it (``ctx.builtin_loss`` /
+  ``ctx.builtin_scalar``) rather than reimplement it.
 
-PHASE 1 invariant: these produce results **byte-identical** to the inline
-formulas they replaced. The golden test in ``tests/test_scoring_seams.py``
-pins that across a representative corpus. Any later phase that changes a
-*default* (Phase 2's neutral-by-default transforms) leaves these untouched —
-the change rides on top via the dispatcher, never by editing these.
+``tests/test_scoring_seams.py`` holds a deliberately independent second
+implementation of both formulas and pins the two against each other across a
+representative corpus; a change here that is not mirrored there is a test
+failure by design. Transforms and plugins ride ON TOP via the dispatcher
+(:mod:`zicato.scoring.dispatch`), never by editing these.
 
 Pure / deterministic / no-LLM / no-I/O / no-wall-clock by contract.
 """
@@ -24,82 +24,71 @@ from collections.abc import Mapping
 
 from zicato.core import DriftCount, ScoringWeights
 
-# ---------------------------------------------------------------------------
-# Shared constants (single source of truth, mirrored by the reducer's
-# module-level constants so the extraction stayed byte-identical).
-# ---------------------------------------------------------------------------
 
-#: Multiplier on ``task_failure_ratio`` inside the drift-loss formula. The
-#: contract pinned it constant ("pure failures matter"); see the reducer's
-#: ``_TASK_FAILURE_RATIO_MULTIPLIER`` (kept equal — single value).
-_TASK_FAILURE_RATIO_MULTIPLIER: float = 10.0
+def is_judge_attributed_kind(kind: str) -> bool:
+    """Return ``True`` for a custom-judge drift kind (``custom`` / ``custom:x``).
+
+    Judge-attributed drift is scored in the ``judge:`` channel, off the
+    profile's ``per_judge_loss`` split, so it is EXCLUDED from the drift
+    channel here — the two must never both charge for the same event.
+
+    The test is done locally (rather than importing the reducer's
+    ``split_judge_attributed_kind``) so this module has NO dependency on the
+    reducer — the reducer depends on it, keeping the seam one-directional and
+    importable from the worker.
+    """
+    return kind == "custom" or kind.startswith("custom:")
 
 
 def _kind_multiplier(kind: str, weights: ScoringWeights) -> float:
-    """Resolve the kind-/judge-level multiplier for one drift kind.
+    """Resolve the per-kind multiplier for one drift kind.
 
-    Mirrors the reducer's ``_kind_multiplier`` exactly:
-
-    * **first-class kinds** → ``per_kind_weights.get(kind, 1.0)``;
-    * **custom-judge kinds** (``custom`` / ``custom:<judge_name>``) →
-      ``per_judge_weights.get(judge_name, default_judge_weight)``.
-
-    The split is done locally (rather than importing the reducer) so this
-    module has NO dependency on the reducer — the reducer depends on it,
-    keeping the seam one-directional and importable from the worker.
+    ``per_kind_weights.get(kind, 1.0)`` — an unknown kind falls back to
+    ``1.0``. Custom-judge kinds never reach here (their callers skip them via
+    :func:`is_judge_attributed_kind`); ``per_kind_weights["custom"]`` is
+    rejected at contract load for the same reason.
     """
-    # Inline of reducer.split_judge_attributed_kind to avoid a reducer import.
-    if kind == "custom":
-        judge_name = ""
-        is_custom = True
-    elif kind.startswith("custom:"):
-        judge_name = kind[len("custom:") :]
-        is_custom = True
-    else:
-        judge_name = ""
-        is_custom = False
-    if is_custom:
-        return weights.per_judge_weights.get(judge_name, weights.default_judge_weight)
     return weights.per_kind_weights.get(kind, 1.0)
 
 
 def builtin_drift_loss(
     drift_counts: tuple[DriftCount, ...],
     plan_revisions: int,
-    task_failure_ratio: float,
-    runtime_ms: int,
     weights: ScoringWeights,
 ) -> float:
-    """The built-in per-run drift-loss formula (Seam 1).
+    """The built-in per-run drift-loss formula (Seam 1) — the ``drift:`` channel.
 
     Byte-identical to ``zicato.telemetry.reducer.compute_drift_loss``::
 
-        loss = sum(severity_weights[c.severity] * kind_mult(c.kind) * c.count
-                   for c in drift_counts)
+        loss = sum(severity_weights[c.severity] * per_kind_weights(c.kind) * c.count
+                   for c in drift_counts if not judge-attributed)
              + plan_revision_weight * plan_revisions
-             + 10.0 * task_failure_ratio
-             + runtime_weight * (runtime_ms / 1000.0)
 
-    clamped to ``max(0.0, loss)``. The not-completed heavy term and the
-    ``task_failure_ratio`` floor are applied by the reducer AROUND this call
-    (they are reducer policy, not part of the per-run drift formula), so they
-    stay where they are — this function is the inner formula only.
+    clamped to ``max(0.0, loss)``. Drift EVENTS only: the run-outcome facts
+    (task failures, a run that did not complete) are the ``failure:`` channel
+    and wall-clock is the ``runtime:`` channel, both derived from the profile
+    by :meth:`zicato.core.LossProfile.unified_metrics`. Plan revisions stay
+    here because they are the same telemetry stream — an adapter that emits no
+    plan-revision events contributes exactly zero.
+
+    The ``task_failure_ratio`` floor for a not-completed run is applied by the
+    reducer (it is reducer policy, not part of this formula), and the
+    not-completed magnitude is charged in the failure channel.
     """
     sev_w = weights.severity_weights
     loss = 0.0
     for c in drift_counts:
+        if is_judge_attributed_kind(c.kind):
+            continue
         sev_mult = sev_w.get(c.severity, 0.0)
         kind_mult = _kind_multiplier(c.kind, weights)
         loss += sev_mult * kind_mult * c.count
     loss += weights.plan_revision_weight * plan_revisions
-    loss += _TASK_FAILURE_RATIO_MULTIPLIER * task_failure_ratio
-    loss += weights.runtime_weight * (runtime_ms / 1000.0)
     return max(0.0, float(loss))
 
 
 def builtin_scalar(
     mean_score: float,
-    drift_loss_mean: float,
     namespace_aggregates: Mapping[str, float],
     weights: ScoringWeights,
     diff_size: Mapping[str, int] | None = None,
@@ -108,24 +97,33 @@ def builtin_scalar(
 
     Byte-identical to the scalar composition in
     ``zicato.tournament.scoring.aggregate_generation_score``: builds the
-    ``scalar_components`` dict (``"drift"`` + ``"pass"`` + one entry per
-    non-``"drift:"`` namespace, keyed by the colon-stripped namespace name)
-    and returns ``sum(scalar_components.values())``.
+    ``scalar_components`` dict (``"pass"`` + one entry per namespace, keyed by
+    the colon-stripped namespace name) and returns
+    ``sum(scalar_components.values())``. The composition has exactly two kinds
+    of term::
 
-    The summation reproduces the ORIGINAL term order EXACTLY — drift, pass,
-    then each namespace in ``namespace_aggregates`` iteration order — because
-    float addition is not associative: accumulating the namespaces in a
-    different order can flip the last bit of the result. The dict-then-``sum``
-    shape is therefore load-bearing for the byte-identical guarantee (the
-    golden test pins it), not a stylistic choice. It also mirrors the original
-    key-collision behaviour: two namespaces that strip to the same component
-    name collapse to the last one written, exactly as before.
+        scalar = pass_weight * (1 - mean_score)
+               + Σ over SORTED namespaces of namespace_aggregates[ns]
+               + diff_complexity term (when configured)
+
+    ``pass`` is deliberately NOT a namespace: it runs on a different
+    denominator (expectation-bearing entries, not every entry), it has its own
+    monotonicity mechanism (``pass_rate_monotonicity_scope``), and the
+    transform seam reads it as a bounded coefficient. Every MEASURED channel —
+    drift, judges, failures, runtime, cost, latency, rubric, output, schema —
+    is a namespace, with no privileged term among them.
+
+    The namespace sum is SORTED because float addition is not associative:
+    accumulating in ``dict``/``set`` iteration order would make the last bit of
+    the scalar depend on hash seeding. Sorting makes the result reproducible
+    across processes, which the goldens and the two statistical oracles pin.
+    The dict-then-``sum`` shape also keeps the original key-collision
+    behaviour: two namespaces that strip to the same component name collapse to
+    the last one written.
 
     ``namespace_aggregates`` are ALREADY weight-multiplied (see
     :func:`zicato.tournament.scoring.aggregate_namespaced_metrics`), so each
-    non-drift namespace value slots straight in. The ``"drift:"`` namespace is
-    excluded because the ``drift`` component already owns the drift
-    contribution (avoids double-counting), exactly as the inline formula does.
+    value slots straight in.
 
     The pass component runs on the UNIFORM ``mean_score`` (issue #18), which
     equals ``pass_rate`` byte-for-byte on an all-bool board — so this stays
@@ -139,21 +137,13 @@ def builtin_scalar(
     every namespace — and ONLY when ``weights.diff_complexity_weight > 0.0``
     AND ``diff_size`` is not ``None``; otherwise the term is EXACTLY absent (no
     key, no addition), so the default ``diff_complexity_weight == 0.0`` leaves
-    the scalar byte-identical to the pre-feature formula. Appending last (after
-    the float-order-sensitive namespace accumulation) keeps every other term's
-    contribution bit-for-bit unchanged.
+    the scalar byte-identical to a contract without the field.
     """
-    drift_component = weights.drift_weight * drift_loss_mean
     pass_component = weights.pass_weight * (1.0 - mean_score)
-    scalar_components: dict[str, float] = {
-        "drift": drift_component,
-        "pass": pass_component,
-    }
-    for ns, value in namespace_aggregates.items():
-        if ns == "drift:":
-            continue
+    scalar_components: dict[str, float] = {"pass": pass_component}
+    for ns in sorted(namespace_aggregates):
         component_name = ns[:-1] if ns.endswith(":") else ns
-        scalar_components[component_name] = value
+        scalar_components[component_name] = namespace_aggregates[ns]
     # Parsimony / MDL term, appended LAST and only when opted in. The guard is
     # the byte-identical-when-off contract: at the 0.0 default (or with no diff
     # size) the key is never written, so `sum(...)` is unchanged.
@@ -193,4 +183,5 @@ __all__ = [
     "builtin_drift_loss",
     "builtin_scalar",
     "diff_complexity_component",
+    "is_judge_attributed_kind",
 ]

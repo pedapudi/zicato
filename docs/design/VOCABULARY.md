@@ -77,7 +77,7 @@ goldfive event stream. Weighted sum across drift counts (by kind,
 by severity), plan revisions, task failure ratio, runtime over budget,
 and abort. Always available; works without ground-truth expectations.
 Combines with pass-rate into the generation score. See
-[SCORING.md §2](SCORING.md#2-per-entry-drift-loss).
+[SCORING.md §2](SCORING.md#2-the-metric-channels).
 
 ## Epoch
 

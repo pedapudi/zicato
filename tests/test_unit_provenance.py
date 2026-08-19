@@ -415,12 +415,11 @@ def test_a_failed_attempt_write_never_costs_the_round(tmp_path: Path) -> None:
 def test_a_synthesised_abort_attributes_its_penalty(tmp_path: Path) -> None:
     """The parent's worst-case twin names its cause the same way the worker does.
 
-    The arithmetic is untouched: the same weights and runtime still produce
-    the same ``drift_loss``.
+    It states the same facts too — no drift observed, every task failed, the
+    run did not complete — from which the failure channel derives the charge.
     """
     del tmp_path
     entry = _entry()
-    weights = ScoringWeights()
 
     for cause in ("parent_kill", "gone_no_result", "nonzero_exit:1", BUDGET_ABORT_CAUSE):
         profile = _aborted_loss_profile(
@@ -428,14 +427,14 @@ def test_a_synthesised_abort_attributes_its_penalty(tmp_path: Path) -> None:
             entry=entry,
             generation_id="v0",
             epoch_id=_EPOCH,
-            weights=weights,
             runtime_ms=0,
             abort_cause=cause,
         )
         assert profile.not_completed_reason == cause
         assert profile.abort_cause == cause
-        # 5.0 * max(severity_weights) + task_failure_ratio 1.0 * 10.0.
-        assert profile.drift_loss == pytest.approx(60.0)
+        assert profile.drift_loss == 0.0
+        assert profile.not_completed is True
+        assert profile.task_failure_ratio == pytest.approx(1.0)
 
 
 def test_not_completed_reason_survives_the_loss_json_round_trip(tmp_path: Path) -> None:

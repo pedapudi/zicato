@@ -699,6 +699,6 @@ def test_scoring_weights_per_judge_weights_accepts_mapping() -> None:
 def test_scoring_weights_per_judge_weights_replace_preserves() -> None:
     """``dataclasses.replace`` keeps ``per_judge_weights`` intact."""
     sw = ScoringWeights(per_judge_weights={"safety": 5.0})
-    updated = dataclasses.replace(sw, drift_weight=2.0)
+    updated = dataclasses.replace(sw, pass_weight=2.0)
     assert updated.per_judge_weights == {"safety": 5.0}
-    assert updated.drift_weight == 2.0
+    assert updated.pass_weight == 2.0

@@ -1,10 +1,19 @@
 {
-  "drift_weight": 0.3,
   "pass_weight": 1.0,
   "severity_weights": {"info": 1.0, "warning": 2.0, "critical": 5.0},
   "per_kind_weights": {},
   "plan_revision_weight": 0.2,
-  "runtime_weight": 0.001,
+  "namespace_weights": {
+    "drift:": 0.3,
+    "judge:": 1.0,
+    "failure:": 1.0,
+    "runtime:": 0.001,
+    "cost:": 0.001,
+    "latency:": 0.0001,
+    "rubric:": -1.0,
+    "output:": 0.0,
+    "schema:": 5.0
+  },
   "promote_margin": 0.02,
   "pass_rate_monotonicity": true
 }

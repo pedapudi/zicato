@@ -461,28 +461,31 @@ def set_proposer(draft: TournamentDraft, proposer_path: str | Path | None) -> Dr
 def set_weights(
     draft: TournamentDraft,
     *,
-    drift_weight: float | None = None,
     pass_weight: float | None = None,
     per_kind_weights: dict[str, float] | None = None,
     per_judge_weights: dict[str, float] | None = None,
     default_judge_weight: float | None = None,
     plan_revision_weight: float | None = None,
-    runtime_weight: float | None = None,
+    task_failure_weight: float | None = None,
+    not_completed_weight: float | None = None,
     severity_weights: dict[str, float] | None = None,
 ) -> DraftPatch:
     """Set scoring weights (the loss-shaping knobs).
 
     Any subset of the supported weight fields may be supplied. Mapping
     fields replace the whole mapping (the builder edits them wholesale).
+    The per-CHANNEL coefficients — including ``drift:``, ``judge:``,
+    ``failure:`` and ``runtime:`` — are :func:`set_namespace_weights`; the
+    fields here shape a channel from within it.
     """
     changed: dict[str, Any] = {}
     scoring_changes: dict[str, Any] = {}
     for name, value in (
-        ("drift_weight", drift_weight),
         ("pass_weight", pass_weight),
         ("default_judge_weight", default_judge_weight),
         ("plan_revision_weight", plan_revision_weight),
-        ("runtime_weight", runtime_weight),
+        ("task_failure_weight", task_failure_weight),
+        ("not_completed_weight", not_completed_weight),
     ):
         if value is not None and value != getattr(draft.scoring, name):
             scoring_changes[name] = value

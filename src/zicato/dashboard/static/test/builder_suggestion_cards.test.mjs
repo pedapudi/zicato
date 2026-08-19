@@ -34,7 +34,7 @@ function freshDraft() {
     scoring: {
       tournament: { structure: 'gauntlet', params: { field_size: 2, replicates: 1 } },
       overfitting: { enabled: true, holdout_fraction: 0.2, min_board_size_for_split: 8, ladder: { enabled: true, budget: 16, noise_scale: 0 } },
-      promote_margin: 0, drift_weight: 1, pass_weight: 1,
+      promote_margin: 0, pass_weight: 1,
       namespace_weights: {}, proposer_quality: { best_of_n: 3, critique_enabled: true }, experiment_memory: {},
     },
     board: [{ id: 'entryA', kind: 'single_turn', budget_s: 60, input: 'hi' }],

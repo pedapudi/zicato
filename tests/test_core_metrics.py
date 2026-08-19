@@ -99,14 +99,31 @@ def test_unified_metrics_with_only_drift_counts_yields_drift_namespace() -> None
     )
     unified = profile.unified_metrics()
     names = [m.name for m in unified]
-    assert names == ["drift:off_topic", "drift:tool_error"]
-    assert all(m.name.startswith("drift:") for m in unified)
-    severities = {m.severity for m in unified}
-    assert severities == {"warning", "info"}
+    # The drift entries first, then the always-derived run-outcome channels.
+    assert names == [
+        "drift:off_topic",
+        "drift:tool_error",
+        "failure:tasks",
+        "failure:not_completed",
+        "runtime:seconds",
+    ]
+    drift = [m for m in unified if m.name.startswith("drift:")]
+    assert {m.severity for m in drift} == {"warning", "info"}
 
 
-def test_unified_metrics_empty_when_no_signals() -> None:
-    assert _bare_profile().unified_metrics() == ()
+def test_unified_metrics_of_a_clean_run_is_the_derived_channels_at_zero() -> None:
+    """A run with no signals still states its outcome, at zero.
+
+    The ``failure:`` and ``runtime:`` members are emitted unconditionally so
+    the metric key set does not depend on whether the run went wrong — a
+    channel that appears only on failure cannot be aggregated across a
+    generation.
+    """
+    assert {m.name: m.count for m in _bare_profile().unified_metrics()} == {
+        "failure:tasks": 0.0,
+        "failure:not_completed": 0.0,
+        "runtime:seconds": 1.0,
+    }
 
 
 def test_unified_metrics_synthesises_scalar_fields_when_metric_counts_unset() -> None:
@@ -139,9 +156,9 @@ def test_unified_metrics_with_explicit_metric_counts_includes_all_namespaces() -
     assert "cost:output_tokens" in names
     assert "rubric:slide_structure" in names
     assert "latency:p95_turn_ms" in names
-    # Distinct namespaces all surfaced.
+    # Distinct namespaces all surfaced, alongside the derived ones.
     namespaces = {m.name.split(":", 1)[0] for m in profile.unified_metrics()}
-    assert namespaces == {"drift", "cost", "rubric", "latency"}
+    assert namespaces == {"drift", "cost", "rubric", "latency", "failure", "runtime"}
 
 
 def test_unified_metrics_does_not_double_count_when_metric_counts_mirrors_drift() -> None:
@@ -162,9 +179,14 @@ def test_unified_metrics_does_not_double_count_when_metric_counts_mirrors_drift(
 
 
 def test_unified_metrics_skips_zero_scalar_fields_when_metric_counts_unset() -> None:
-    # Empty scalars should not flood the unified view with zero rows.
+    # Empty scalars should not flood the unified view with zero rows; only the
+    # derived run-outcome channels are unconditional.
     profile = _bare_profile()
-    assert profile.unified_metrics() == ()
+    assert [m.name for m in profile.unified_metrics()] == [
+        "failure:tasks",
+        "failure:not_completed",
+        "runtime:seconds",
+    ]
 
 
 # ---------------------------------------------------------------------------

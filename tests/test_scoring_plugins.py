@@ -62,8 +62,6 @@ def _drift_ctx(weights: ScoringWeights, drift_counts: tuple[DriftCount, ...]) ->
         builtin_loss=builtin_drift_loss(
             drift_counts=drift_counts,
             plan_revisions=0,
-            task_failure_ratio=0.0,
-            runtime_ms=0,
             weights=weights,
         ),
     )
@@ -82,7 +80,6 @@ def _scalar_ctx(
         weights=weights,
         builtin_scalar=builtin_scalar(
             mean_score=mean_score,
-            drift_loss_mean=drift_loss_mean,
             namespace_aggregates=ns,
             weights=weights,
         ),
@@ -478,14 +475,10 @@ def test_drift_reducer_survives_worker_transport_and_drives_compute_drift_loss(
 
     drift = (DriftCount(kind="off_topic", severity="warning", count=5),)
     # builtin = 5 × warning 3.0 = 15; the reducer doubles it → 30.
-    plugin_loss = compute_drift_loss(
-        drift, plan_revisions=0, task_failure_ratio=0.0, runtime_ms=0, weights=round_tripped
-    )
+    plugin_loss = compute_drift_loss(drift, plan_revisions=0, weights=round_tripped)
     builtin_loss = compute_drift_loss(
         drift,
         plan_revisions=0,
-        task_failure_ratio=0.0,
-        runtime_ms=0,
         weights=ScoringWeights(severity_weights={"info": 1.0, "warning": 3.0, "critical": 10.0}),
     )
     assert builtin_loss == pytest.approx(15.0)

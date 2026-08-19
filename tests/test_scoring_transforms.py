@@ -160,17 +160,19 @@ def test_is_neutral() -> None:
 
 
 def _scalar_ctx(weights: ScoringWeights, *, mean_score: float, drift_loss_mean: float = 0.0):
+    # The drift channel reaches the scalar through namespace_aggregates,
+    # already multiplied by its coefficient (as the aggregator hands it over).
+    ns = {"drift:": weights.namespace_weights.get("drift:", 0.0) * drift_loss_mean}
     return ScalarContext(
         pass_rate=mean_score,
         mean_score=mean_score,
         drift_loss_mean=drift_loss_mean,
-        namespace_aggregates={},
+        namespace_aggregates=ns,
         per_judge_loss={},
         weights=weights,
         builtin_scalar=builtin_scalar(
             mean_score=mean_score,
-            drift_loss_mean=drift_loss_mean,
-            namespace_aggregates={},
+            namespace_aggregates=ns,
             weights=weights,
         ),
     )
@@ -180,7 +182,6 @@ def test_pass_transform_pow_reproduces_quadratic_recall() -> None:
     """``pass_transform=pow(2)`` ⇒ the miss term is ``(1 - mean_score) ** 2``."""
     mean_score = 0.3  # miss = 0.7
     weights = ScoringWeights(
-        drift_weight=1.0,
         pass_weight=2.0,
         pass_transform={"op": "pow", "exponent": 2.0},
     )
@@ -188,14 +189,14 @@ def test_pass_transform_pow_reproduces_quadratic_recall() -> None:
     scalar, prov = resolve_scalar(ctx)
 
     miss = 1.0 - mean_score
-    expected = weights.drift_weight * 1.5 + weights.pass_weight * (miss**2)
+    expected = weights.namespace_weights["drift:"] * 1.5 + weights.pass_weight * (miss**2)
     assert scalar == pytest.approx(expected)
     # Provenance records the pass transform structurally.
     assert prov == "transform:pass=pow(2.0)"
 
     # Cross-check against the OLD bespoke ``pass_exponent`` formula
     # (1 - mean_score) ** pass_exponent — byte-for-byte the same shape.
-    legacy = weights.drift_weight * 1.5 + weights.pass_weight * (miss**2.0)
+    legacy = weights.namespace_weights["drift:"] * 1.5 + weights.pass_weight * (miss**2.0)
     assert scalar == pytest.approx(legacy)
 
 
@@ -230,8 +231,6 @@ def _drift_ctx(weights: ScoringWeights, drift_counts: tuple[DriftCount, ...]):
         builtin_loss=builtin_drift_loss(
             drift_counts=drift_counts,
             plan_revisions=0,
-            task_failure_ratio=0.0,
-            runtime_ms=0,
             weights=weights,
         ),
     )
@@ -281,8 +280,6 @@ def test_drift_kind_harmonic_reproduces_old_looping_value() -> None:
     builtin = builtin_drift_loss(
         drift_counts=drift,
         plan_revisions=0,
-        task_failure_ratio=0.0,
-        runtime_ms=0,
         weights=weights,
     )
     assert loss < builtin
@@ -299,8 +296,6 @@ def test_builtin_drift_loss_is_pure_linear_no_harmonic() -> None:
     builtin = builtin_drift_loss(
         drift_counts=drift,
         plan_revisions=0,
-        task_failure_ratio=0.0,
-        runtime_ms=0,
         weights=weights,
     )
     sev = weights.severity_weights["warning"]
@@ -330,8 +325,6 @@ def test_drift_kind_neutral_defaults_are_builtin() -> None:
     assert loss == builtin_drift_loss(
         drift_counts=drift,
         plan_revisions=0,
-        task_failure_ratio=0.0,
-        runtime_ms=0,
         weights=weights,
     )
     assert prov == "builtin"
@@ -344,8 +337,6 @@ def test_drift_kind_explicit_linear_is_builtin() -> None:
     assert loss == builtin_drift_loss(
         drift_counts=drift,
         plan_revisions=0,
-        task_failure_ratio=0.0,
-        runtime_ms=0,
         weights=weights,
     )
     assert prov == "builtin"
@@ -361,8 +352,6 @@ def test_drift_kind_aggregation_only_touches_named_kind() -> None:
     assert loss == builtin_drift_loss(
         drift_counts=drift,
         plan_revisions=0,
-        task_failure_ratio=0.0,
-        runtime_ms=0,
         weights=weights,
     )
     # No kind actually transformed → reported as builtin (byte-identical).

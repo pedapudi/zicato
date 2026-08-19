@@ -44,7 +44,7 @@ from zicato.scoring.api import (
     ScalarContext,
     ScoringProvenance,
 )
-from zicato.scoring.builtins import _TASK_FAILURE_RATIO_MULTIPLIER, _kind_multiplier
+from zicato.scoring.builtins import _kind_multiplier, is_judge_attributed_kind
 from zicato.scoring.plugins import apply_drift_reducer, apply_scalar_fn
 from zicato.scoring.transforms import apply_transform, is_neutral
 
@@ -74,9 +74,9 @@ def resolve_drift_loss(ctx: DriftContext) -> tuple[float, ScoringProvenance]:
       the named transform to the COUNT of each kind that carries a non-neutral
       spec (``severity × kind_weight × transform(count)`` in place of
       ``severity × kind_weight × count``), and re-adds the unchanged
-      plan-revision / task-failure / runtime terms — so a default-linear kind
-      contributes exactly as the built-in does, and only the configured kinds
-      reshape. The provenance records each transformed kind, e.g.
+      plan-revision term — so a default-linear kind contributes exactly as the
+      built-in does, and only the configured kinds reshape. The provenance
+      records each transformed kind, e.g.
       ``"transform:drift{looping_reasoning=harmonic}"``.
 
     If the contract names a ``drift_reducer`` dotted spec the dispatcher then
@@ -128,6 +128,10 @@ def _drift_transform(ctx: DriftContext) -> tuple[float, ScoringProvenance]:
     loss = 0.0
     transformed: dict[str, str] = {}
     for c in ctx.drift_counts:
+        # Judge-attributed drift is the judge: channel's, not this one's —
+        # the same exclusion :func:`builtin_drift_loss` makes, in lockstep.
+        if is_judge_attributed_kind(c.kind):
+            continue
         sev_mult = sev_w.get(c.severity, 0.0)
         kind_mult = _kind_multiplier(c.kind, weights)
         spec = active.get(c.kind)
@@ -138,10 +142,8 @@ def _drift_transform(ctx: DriftContext) -> tuple[float, ScoringProvenance]:
             shaped_count = apply_transform(spec, c.count)
             transformed[c.kind] = _spec_provenance(spec)
         loss += sev_mult * kind_mult * shaped_count
-    # The non-drift-count terms are NOT per-kind and ride through unchanged.
+    # Plan revisions are not per-kind and ride through unchanged.
     loss += weights.plan_revision_weight * ctx.plan_revisions
-    loss += _TASK_FAILURE_RATIO_MULTIPLIER * ctx.task_failure_ratio
-    loss += weights.runtime_weight * (ctx.runtime_ms / 1000.0)
     loss = max(0.0, float(loss))
 
     if not transformed:

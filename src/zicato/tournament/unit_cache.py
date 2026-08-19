@@ -57,7 +57,6 @@ from zicato.core import (
     LossProfile,
     MetricCount,
     MetricSeverity,
-    ScoringWeights,
 )
 from zicato.tournament.worker_transport import (
     _aborted_loss_profile,
@@ -91,7 +90,6 @@ def _skipped_unit_loss(
     generation: Generation,
     entry: BoardEntry,
     epoch_id: str,
-    weights: ScoringWeights,
     match_id: str,
 ) -> LossProfile:
     """Synthesise a budget-exceeded :class:`LossProfile` for an un-run unit.
@@ -109,7 +107,6 @@ def _skipped_unit_loss(
         entry=entry,
         generation_id=generation.id,
         epoch_id=epoch_id,
-        weights=weights,
         runtime_ms=0,
         match_id=match_id,
         # A unit skipped because the matchup's wall-clock budget was already
@@ -1071,7 +1068,27 @@ def _average_losses(
     ----------
     ``drift_loss``
         Mean across replicates. Reaches the scalar as the ``"drift"``
-        component (``drift_weight × drift_loss_mean``).
+        component (``namespace_weights["drift:"] × drift_loss_mean``).
+    ``task_failure_ratio``
+        Mean across replicates. It is the ``failure:tasks`` channel member,
+        so replicating a unit averages how badly its tasks failed.
+    ``not_completed``
+        ORed across replicates: a unit that could not be completed even
+        ONCE did not complete. This is deliberately not a mean or a
+        majority — the field is a bool, and the contract property the
+        ``failure:`` channel exists to hold is that crashing is never free.
+        A mean would let a crash be diluted by replication (and shrink
+        toward zero as K grows), and a majority would make a crash in half
+        the replicates cost nothing at all, so a challenger that crashes
+        intermittently would out-score one that runs. The cost is that a
+        single flaky infra abort charges the full not-completed magnitude
+        for the whole duel; that is the intended direction of the error.
+    ``runtime_ms``
+        Rounded mean across replicates — it is the ``runtime:seconds``
+        channel member (default coefficient ``0.0``, so most contracts do
+        not score it, but one that does must see the duel's duration rather
+        than the first replicate's). The field is milliseconds by contract,
+        hence the rounding.
     ``score``
         Mean of each replicate's RESOLVED OUTCOME
         (:func:`_mean_outcome` — ``entry_score``, not the raw field), so a
@@ -1147,14 +1164,14 @@ def _average_losses(
         ``metric_counts`` already carries their meaned ``"drift:"`` mirror.
     ``entry_id``, ``generation_id``, ``epoch_id``, ``match_id``
         Invariant across the replicates of one unit by construction.
-    ``runtime_ms``, ``plan_revisions``, ``task_failure_ratio``,
+    ``plan_revisions``,
     ``turns_completed``, ``memory_failure_count``, ``context_loss_count``,
     ``adk_session_id``, ``cached`` / ``source_epoch`` / ``source_run``,
     ``scoring_provenance``, ``wall_clock_budget_exceeded``, ``abort_cause``,
     ``not_completed_reason``, ``started_at`` / ``ended_at``
         Neither the scalar nor the gate reads them. They describe ONE
-        execution (its duration, its wall-clock span, its abort and why,
-        which cache slot it came from) and have no meaningful fold, so they
+        execution (its wall-clock span, its abort and why, which cache slot
+        it came from) and have no meaningful fold, so they
         report the representative replicate. A folded span in particular
         would be a fiction: N replicates are N disjoint spans, and a reader
         wanting the true extent reads the per-replicate ``loss.r{n}.json``
@@ -1187,6 +1204,9 @@ def _average_losses(
         out[entry_id] = _replace(
             profiles[0],
             drift_loss=mean_drift,
+            task_failure_ratio=sum(float(p.task_failure_ratio) for p in profiles) / n,
+            not_completed=any(p.not_completed for p in profiles),
+            runtime_ms=round(sum(p.runtime_ms for p in profiles) / n),
             pass_fail=majority_pass,
             score=_mean_outcome(profiles),
             metrics=_mean_metrics(profiles),

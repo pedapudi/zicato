@@ -319,10 +319,17 @@ def test_read_loss_profile_back_compat_loads_old_json_without_metric_fields(
     assert profile.output_chars == 0
     assert profile.schema_failures == 0
     # unified_metrics() synthesises the drift-namespace view from
-    # drift_counts when metric_counts is empty.
+    # drift_counts when metric_counts is empty, and derives the run-outcome
+    # channels from the first-class fields (a profile written before those
+    # fields existed reads as "completed, no task failures").
     unified = profile.unified_metrics()
-    assert len(unified) == 1
-    assert unified[0].name == "drift:off_topic"
+    assert [mc.name for mc in unified] == [
+        "drift:off_topic",
+        "failure:tasks",
+        "failure:not_completed",
+        "runtime:seconds",
+    ]
+    assert {mc.name: mc.count for mc in unified}["failure:not_completed"] == 0.0
 
 
 def test_unified_metrics_after_reducer_emit_does_not_double_count_drift(

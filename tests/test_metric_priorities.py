@@ -10,9 +10,10 @@ Two invariants recur and are the reason the split exists:
 * a zero-weight target is ABSENT from the prompt (the scoring side's own
   omit-at-zero convention) but STILL ACCEPTED by the hypothesis validator, so
   dropping it costs no bounded retry;
-* channels are peers. Drift kinds ride ``drift_loss_mean``, pass is its own
-  bounded term, and each metric namespace is calibrated to its own units — so
-  banding happens strictly within a channel and never across.
+* channels are peers. Drift kinds ride ``drift_loss_mean`` and judges ride
+  their own channel, pass is its own bounded term, and each metric namespace
+  is calibrated to its own units — so banding happens strictly within a
+  channel and never across.
 """
 
 from __future__ import annotations
@@ -35,7 +36,6 @@ from zicato.proposer.prompts import (
 from zicato.proposer.structured import parse_experiment_json
 
 _WEIGHTED = ScoringWeights(
-    drift_weight=1.0,
     per_kind_weights={"off_topic": 3.0, "task_timeout": 0.5, "tool_error": 0.0},
     per_judge_weights={"critical_judge": 4.0, "ignored_judge": 0.0},
 )
@@ -191,13 +191,34 @@ def _loss_with(judge: str, judge_loss: float, drift_loss: float) -> LossProfile:
 
 def test_loss_summary_omits_a_zero_weighted_term() -> None:
     losses = [_loss_with("critical_judge", 0.4, 0.89)]
-    weights = ScoringWeights(drift_weight=0.0, pass_weight=1.0)
+    weights = ScoringWeights(
+        namespace_weights={"drift:": 0.0, "judge:": 0.0, "failure:": 1.0},
+        pass_weight=1.0,
+    )
     summary = _render_loss_summary(losses, build_metric_priorities([], weights, losses))
-    # drift_weight=0.0 zeroes the drift term AND the whole judge namespace, so
-    # neither is reported; the pass term the contract does score is.
+    # Neither channel is scored, so neither is reported; the pass term the
+    # contract does score is.
     assert "drift_loss_mean" not in summary
     assert "critical_judge" not in summary
     assert "pass_rate=1.00" in summary
+
+
+def test_a_zeroed_drift_channel_leaves_the_judges_reported() -> None:
+    """Judges are their own channel: turning drift off no longer silences them.
+
+    Under the old composition judges reached the scalar through the drift
+    term, so a drift-disabled contract dropped every judge from the prompt
+    while they still had to be worked on — or, worse, while they genuinely
+    scored nothing.
+    """
+    losses = [_loss_with("critical_judge", 0.4, 0.89)]
+    weights = ScoringWeights(
+        per_judge_weights={"critical_judge": 4.0},
+        namespace_weights={"drift:": 0.0, "judge:": 1.0, "failure:": 1.0},
+    )
+    summary = _render_loss_summary(losses, build_metric_priorities([], weights, losses))
+    assert "drift_loss_mean" not in summary
+    assert "critical_judge=0.400" in summary
 
 
 def test_loss_summary_names_a_heavily_weighted_judge() -> None:
@@ -218,16 +239,18 @@ def test_loss_summary_sentinels_survive() -> None:
     )
 
 
-def test_a_contract_scoring_nothing_renders_no_priority_block() -> None:
+def test_priorities_with_nothing_to_name_render_no_block() -> None:
     # An empty block would be worse than the flat list, so the renderer
-    # returns the omit sentinel and the membership form stands.
-    nothing = ScoringWeights(
-        drift_weight=0.0,
-        pass_weight=0.0,
-        namespace_weights={},
-    )
-    assert _block(nothing) == ""
-    assert render_metric_targets_block(("a_judge",), _block(nothing)) != ""
+    # returns the omit sentinel and the membership form stands. A contract
+    # cannot reach this state through its weights any more — ``failure:`` is
+    # required to be positive, so it is always a named target — but the
+    # renderer's sentinel is still its contract.
+    from zicato.proposer.prompts import MetricPriorities
+
+    nothing = MetricPriorities()
+    assert nothing.is_empty()
+    assert render_metric_priorities_block(nothing) == ""
+    assert render_metric_targets_block(("a_judge",), "") != ""
 
 
 def test_board_declared_judges_resolve_at_the_default_judge_weight() -> None:

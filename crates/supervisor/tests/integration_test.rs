@@ -231,8 +231,8 @@ fn write_full_epoch(paths: &reader::WorkspacePaths, id: &str) {
     std::fs::write(dir.join("brief.md"), "# full brief text\nbody").unwrap();
 
     let scoring = serde_json::json!({
-        "drift_weight": 1.0,
         "pass_weight": 1.0,
+        "namespace_weights": {"drift:": 1.0, "failure:": 1.0},
         "promote_margin": 0.01,
     });
     std::fs::write(dir.join("scoring.json"), scoring.to_string()).unwrap();
@@ -291,7 +291,7 @@ async fn epoch_endpoint_returns_full_definition() {
     assert!(board[1]["expectation_kind"].is_null());
 
     assert_eq!(r["brief"], "# full brief text\nbody");
-    assert_eq!(r["scoring"]["drift_weight"], 1.0);
+    assert_eq!(r["scoring"]["namespace_weights"]["drift:"], 1.0);
     assert_eq!(r["scoring"]["pass_weight"], 1.0);
 
     let muts = r["mutations"].as_array().unwrap();

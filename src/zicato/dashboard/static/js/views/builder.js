@@ -335,7 +335,7 @@ function sectionDone(id) {
     case 'field': return !!(ts.params && Object.keys(ts.params).length);
     case 'board': return Array.isArray(d.board) && d.board.length > 0;
     case 'overfitting': return !!sc.overfitting;
-    case 'weights': return sc.drift_weight != null;
+    case 'weights': return sc.pass_weight != null;
     case 'proposer': return !!d.proposer;
     case 'gate': return sc.promote_margin != null;
     case 'review': return !!(_diff && _diff.rolls_epoch);
@@ -1264,12 +1264,6 @@ function weightsSection(d) {
       title: 'telemetry_dialect', def: 'goldfive',
       body: 'The PRODUCER that reduces a run\'s raw telemetry into the LossProfile the scalar scores. goldfive consumes the full drift-instrument stream; adk_events reduces a generic agent event-log JSONL (no in-process drift instruments, no custom process-judge drift); transcript is the predicate/judge-only floor with a structurally zero drift term. A contract field — changing it selects champions under a different measurement rule and rolls the epoch.',
     }, telemetryDialectControl(sc)),
-    controlRow('Drift weight', {
-      title: 'drift_weight', def: '1.0',
-      body: 'Coefficient on the aggregated drift-loss term of the scalar.',
-    }, numInput(sc.drift_weight != null ? sc.drift_weight : 1,
-      { step: '0.1', 'aria-label': 'Drift weight' },
-      (n) => runOp('set_weights', { drift_weight: n }))),
     controlRow('Pass weight', {
       title: 'pass_weight', def: '1.0',
       body: 'Coefficient on the (1 − pass_rate) miss term of the scalar.',
@@ -1288,12 +1282,18 @@ function weightsSection(d) {
     }, numInput(sc.plan_revision_weight != null ? sc.plan_revision_weight : 0.5,
       { step: '0.1', 'aria-label': 'Plan revision weight' },
       (n) => runOp('set_weights', { plan_revision_weight: n }))),
-    controlRow('Runtime weight', {
-      title: 'runtime_weight', def: '0.0',
-      body: 'Coefficient on the wall-clock runtime term of the scalar — opt-in pressure toward faster runs (0 keeps runtime untracked in the loss).',
-    }, numInput(sc.runtime_weight != null ? sc.runtime_weight : 0,
-      { step: '0.1', 'aria-label': 'Runtime weight' },
-      (n) => runOp('set_weights', { runtime_weight: n }))),
+    controlRow('Task-failure weight', {
+      title: 'task_failure_weight', def: '10.0',
+      body: 'Multiplier on the fraction of a run\'s started tasks that failed, inside the failure: channel. Pure failures matter, so it is large relative to a single drift observation.',
+    }, numInput(sc.task_failure_weight != null ? sc.task_failure_weight : 10,
+      { step: '0.5', 'aria-label': 'Task failure weight' },
+      (n) => runOp('set_weights', { task_failure_weight: n }))),
+    controlRow('Not-completed weight', {
+      title: 'not_completed_weight', def: '50.0',
+      body: 'What a run that did not complete — killed, crashed, wall-clock exhausted — costs in the failure: channel. An absolute magnitude, so retuning severities never rescales it. Without it a challenger could win by failing fast.',
+    }, numInput(sc.not_completed_weight != null ? sc.not_completed_weight : 50,
+      { step: '1', 'aria-label': 'Not completed weight' },
+      (n) => runOp('set_weights', { not_completed_weight: n }))),
     controlRow('Diff-complexity weight', {
       title: 'diff_complexity_weight', def: '0 (term absent)',
       body: 'Opt-in MDL/parsimony coefficient: adds weight × (added + removed + patches) to the challenger scalar, biasing selection toward the smaller, more general edit (a shorter-description edit provably overfits the board less). 0 keeps the term exactly absent. Applies on the full gauntlet A/B path only (racing/swiss/elim matchups score without a diff term).',
@@ -1372,7 +1372,7 @@ function weightsSection(d) {
   const nsKeys = Object.keys(ns);
   const nsRows = nsKeys.map((key) => controlRow('Namespace ' + key, {
     title: 'namespace_weights["' + key + '"]', def: String(ns[key]),
-    body: 'Signed coefficient turning this namespace\'s per-run mean into a scalar component. Positive = higher is worse (drift, cost, schema); negative = higher is better (rubric — negation keeps the scalar lower-is-better); zero = tracked but unscored.',
+    body: 'Signed coefficient turning this namespace\'s per-run mean into a scalar component. EVERY measured channel rides this map — drift:, judge:, failure:, runtime: included — so this is where a whole channel is turned up, down, or off. Positive = higher is worse (drift, cost, schema); negative = higher is better (rubric — negation keeps the scalar lower-is-better); zero = tracked but unscored. failure: must stay above zero: a contract cannot make crashing free.',
   }, numInput(ns[key], { step: '0.001', 'aria-label': 'Namespace weight ' + key }, (n) => {
     const next = Object.assign({}, ns);
     next[key] = n;
@@ -1389,7 +1389,7 @@ function weightsSection(d) {
   }));
 
   return section('Weights',
-    el('p', { class: 'dn-lede', text: 'The loss-shaping coefficients: how drift, misses, and each metric namespace fold into the one scalar a duel compares. Contract fields — a change rolls the epoch.' }),
+    el('p', { class: 'dn-lede', text: 'The loss-shaping coefficients: the bounded pass/miss term, the shape of each channel from within, and the per-channel coefficients that fold every measured namespace into the one scalar a duel compares. Contract fields — a change rolls the epoch.' }),
     ...rows,
     el('h3', { class: 'dn-bld-subhead', text: 'Severity weights' }),
     ...(sevRows.length ? sevRows : [empty('No drift severities in the vocabulary.')]),

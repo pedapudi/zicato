@@ -119,7 +119,6 @@ def build_fixture_workspace(tmp_path: Path) -> Path:
         _write_json(
             edir / "scoring.json",
             {
-                "drift_weight": 1.0,
                 "pass_weight": 1.0,
                 "tournament": {"structure": "gauntlet", "params": {}},
             },

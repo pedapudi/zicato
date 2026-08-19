@@ -43,7 +43,7 @@ _BOARD = (
     + "\n"
 )
 _BRIEF = "# Proposer brief\n- Be careful.\n"
-_SCORING = json.dumps({"drift_weight": 1.0, "pass_weight": 1.0})
+_SCORING = json.dumps({"pass_weight": 1.0})
 
 
 def _bootstrap(tmp_path: Path) -> tuple[Path, dict[str, Path]]:
@@ -144,7 +144,6 @@ def test_aggregate_scope_epoch_new_then_evolve_does_not_auto_roll(tmp_path: Path
     files["scoring"].write_text(
         json.dumps(
             {
-                "drift_weight": 1.0,
                 "pass_weight": 1.0,
                 "pass_rate_monotonicity": True,
                 "pass_rate_monotonicity_scope": "aggregate",
@@ -178,7 +177,6 @@ def test_flipping_scope_to_aggregate_auto_rolls(tmp_path: Path) -> None:
     files["scoring"].write_text(
         json.dumps(
             {
-                "drift_weight": 1.0,
                 "pass_weight": 1.0,
                 "pass_rate_monotonicity_scope": "aggregate",
             }
@@ -224,7 +222,7 @@ def test_contract_changed_auto_rolls(tmp_path: Path) -> None:
 def test_contract_changed_no_auto_raises(tmp_path: Path) -> None:
     workspace, files = _bootstrap(tmp_path)
     asyncio.run(ensure_epoch_for_contract(workspace, auto_epoch=True, aux_call_llm=_aux_llm))
-    files["scoring"].write_text(json.dumps({"drift_weight": 9.0}))
+    files["scoring"].write_text(json.dumps({"pass_weight": 9.0}))
 
     with pytest.raises(RuntimeError, match="drifted"):
         asyncio.run(ensure_epoch_for_contract(workspace, auto_epoch=False, aux_call_llm=_aux_llm))
@@ -234,7 +232,7 @@ def test_contract_change_message_names_component(tmp_path: Path) -> None:
     """The roll-time message names which contract component changed."""
     workspace, files = _bootstrap(tmp_path)
     asyncio.run(ensure_epoch_for_contract(workspace, auto_epoch=True, aux_call_llm=_aux_llm))
-    files["scoring"].write_text(json.dumps({"drift_weight": 9.0}))
+    files["scoring"].write_text(json.dumps({"pass_weight": 9.0}))
     with pytest.raises(RuntimeError, match="scoring"):
         asyncio.run(ensure_epoch_for_contract(workspace, auto_epoch=False, aux_call_llm=_aux_llm))
 

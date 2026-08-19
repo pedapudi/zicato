@@ -227,7 +227,7 @@ def test_aggregate_generation_score_back_compat_when_no_metric_counts() -> None:
         _make_loss("a", drift_loss=4.0, pass_fail=False),
         _make_loss("b", drift_loss=4.0, pass_fail=False),
     ]
-    weights = ScoringWeights(drift_weight=0.25, pass_weight=10.0)
+    weights = ScoringWeights(namespace_weights={"drift:": 0.25, "failure:": 1.0}, pass_weight=10.0)
     agg = aggregate_generation_score(losses, weights)
     # drift_loss_mean = 4.0, pass_rate = 0.0 → scalar = 0.25*4 + 10*1
     assert agg["drift_loss_mean"] == 4.0
@@ -355,13 +355,12 @@ def test_aggregate_generation_score_includes_observed_unknown_namespaces() -> No
         ),
     ]
     # Custom weights mapping has no entry for "custom_ns:".
-    weights = ScoringWeights(namespace_weights={"drift:": 1.0})
+    weights = ScoringWeights(namespace_weights={"drift:": 1.0, "failure:": 1.0})
     agg = aggregate_generation_score(losses, weights)
     # Observed but unweighted → zero contribution; the key is still
     # surfaced for visibility.
     assert agg["namespace_aggregates"]["custom_ns:"] == 0.0
-    # Only "drift" and "pass" appear in scalar_components (custom_ns is
-    # observed but zero-weighted; we surface it in namespace_aggregates
-    # but it adds nothing to the scalar).
+    # The unweighted namespace is surfaced as a component too, at zero: the
+    # composition writes one entry per namespace, weighted or not.
     assert "custom_ns" in agg["scalar_components"]
     assert agg["scalar_components"]["custom_ns"] == 0.0

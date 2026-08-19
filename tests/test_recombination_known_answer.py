@@ -11,8 +11,9 @@ hard disjointness predicate):
     # zicato:mutable id="style_rules_extra"  → seeds ``skip-citations``
 
 The exact arithmetic, from the shipped scoring formulas (σ = 0,
-``severity_weights.info = 1.0``, ``drift_weight = pass_weight = 1.0``,
-``runtime_weight = 0``, 5-entry board):
+``severity_weights.info = 1.0``, the shipped channel coefficients — the
+``drift:`` channel and ``pass_weight`` both at ``1.0``, ``runtime:`` at
+``0.0`` — 5-entry board):
 
     scalar(k tokens, p passes) = k + (1 - p/5)
 
@@ -95,11 +96,9 @@ BEST_OF_N = 2
 
 def _scoring_dict(*, promote_margin: float, recombine: bool) -> dict:
     return {
-        "drift_weight": 1.0,
         "pass_weight": 1.0,
         "severity_weights": {"info": 1.0, "warning": 3.0, "critical": 10.0},
         "plan_revision_weight": 0.5,
-        "runtime_weight": 0.0,
         "promote_margin": promote_margin,
         "pass_rate_monotonicity": True,
         "tournament": {

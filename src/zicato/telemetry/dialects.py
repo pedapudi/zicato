@@ -468,13 +468,18 @@ def dialect_capability_warnings(weights: ScoringWeights) -> tuple[str, ...]:
     the result.
 
     * ``transcript`` produces NO drift at all, so every drift-shaping knob
-      (``drift_weight`` / ``plan_revision_weight`` / ``per_kind_weights`` /
-      ``per_judge_weights`` / ``drift_kind_aggregation`` / ``drift_reducer``)
+      (the ``drift:`` namespace coefficient / ``plan_revision_weight`` /
+      ``per_kind_weights`` / ``drift_kind_aggregation`` / ``drift_reducer``)
       is inert.
     * ``adk_events`` produces drift but carries NO process-judge
-      judgements, so ``per_judge_weights`` (the ``custom:<judge_name>``
-      lever) is inert.
+      judgements, so the judge channel's knobs (the ``judge:`` namespace
+      coefficient and ``per_judge_weights``) are inert. So are they under
+      ``transcript``.
     * ``goldfive`` can produce everything ⇒ never warns.
+
+    The ``failure:`` and ``runtime:`` channels are dialect-independent — a
+    run's outcome and its wall-clock are facts of the harness, not of the
+    telemetry stream — so no dialect makes them inert.
     """
     dialect = weights.telemetry_dialect
     if dialect == DIALECT_GOLDFIVE:
@@ -484,10 +489,11 @@ def dialect_capability_warnings(weights: ScoringWeights) -> tuple[str, ...]:
     out: list[str] = []
 
     if dialect == DIALECT_TRANSCRIPT:
-        if weights.drift_weight != defaults.drift_weight:
+        if weights.namespace_weights.get("drift:") != defaults.namespace_weights["drift:"]:
             out.append(
-                "drift_weight is inert under the 'transcript' dialect: it "
-                "produces no drift, so the drift term is structurally 0."
+                "namespace_weights['drift:'] is inert under the 'transcript' "
+                "dialect: it produces no drift, so the channel is "
+                "structurally 0."
             )
         if weights.plan_revision_weight != defaults.plan_revision_weight:
             out.append(
@@ -510,11 +516,18 @@ def dialect_capability_warnings(weights: ScoringWeights) -> tuple[str, ...]:
                 "drift term is structurally 0 with no counts to reduce."
             )
 
-    if dialect in (DIALECT_TRANSCRIPT, DIALECT_ADK_EVENTS) and dict(weights.per_judge_weights):
-        out.append(
-            f"per_judge_weights is inert under the {dialect!r} dialect: an "
-            "event log / transcript carries no process-judge judgements, so "
-            "no custom:<judge_name> drift is produced."
-        )
+    if dialect in (DIALECT_TRANSCRIPT, DIALECT_ADK_EVENTS):
+        if dict(weights.per_judge_weights):
+            out.append(
+                f"per_judge_weights is inert under the {dialect!r} dialect: an "
+                "event log / transcript carries no process-judge judgements, so "
+                "no custom:<judge_name> drift is produced."
+            )
+        if weights.namespace_weights.get("judge:") != defaults.namespace_weights["judge:"]:
+            out.append(
+                f"namespace_weights['judge:'] is inert under the {dialect!r} "
+                "dialect: no process-judge judgements are produced, so the "
+                "channel is structurally 0."
+            )
 
     return tuple(out)

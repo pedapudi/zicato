@@ -50,8 +50,9 @@ function freshDraft() {
       },
       promote_margin: 0, pass_rate_monotonicity: false,
       pass_rate_monotonicity_scope: 'per_entry',
-      drift_weight: 1, pass_weight: 1, diff_complexity_weight: 0, diff_complexity_ceiling: 0,
-      default_judge_weight: 1, plan_revision_weight: 0.5, runtime_weight: 0,
+      pass_weight: 1, diff_complexity_weight: 0, diff_complexity_ceiling: 0,
+      default_judge_weight: 1, plan_revision_weight: 0.5,
+      task_failure_weight: 10, not_completed_weight: 50,
       severity_weights: { info: 1, warning: 3, critical: 10 },
       per_kind_weights: {}, per_judge_weights: {},
       namespace_weights: { 'drift:': 1, 'rubric:': -1 },
@@ -770,12 +771,9 @@ test('builder view: the Overfitting section covers the split floor, visibility, 
 
 test('builder view: the Weights section drives set_weights + set_namespace_weights (full mapping)', async () => {
   const host = await mountAt('Weights');
-  const drift = byAria(host, 'dn-bld-num', 'Drift weight');
-  assert(drift, 'the drift-weight control renders (set_weights has a GUI now)');
-  drift.value = '2';
-  drift.dispatchEvent(makeEvent('change'));
-  await tick();
-  assert(OP_CALLS.find((c) => c.op === 'set_weights' && c.args.drift_weight === 2), 'drift weight posts set_weights');
+  // Every measured channel — drift included — is a namespace weight; the
+  // section's own scalar rows are the pass term and the within-channel shapes.
+  assert(!byAria(host, 'dn-bld-num', 'Drift weight'), 'drift has no scalar row of its own');
   // a namespace weight edit posts the WHOLE mapping with the one key changed.
   const rubric = byAria(host, 'dn-bld-num', 'Namespace weight rubric:');
   assert(rubric, 'per-namespace weight controls render');
@@ -1277,9 +1275,12 @@ test('builder view: Weights adds the default-judge / plan-revision / runtime sca
   await setNum('Plan revision weight', 0.25);
   assert(OP_CALLS.find((c) => c.op === 'set_weights' && c.args.plan_revision_weight === 0.25),
     'the plan-revision row posts set_weights {plan_revision_weight}');
-  await setNum('Runtime weight', 0.3);
-  assert(OP_CALLS.find((c) => c.op === 'set_weights' && c.args.runtime_weight === 0.3),
-    'the runtime row posts set_weights {runtime_weight}');
+  await setNum('Task failure weight', 8);
+  assert(OP_CALLS.find((c) => c.op === 'set_weights' && c.args.task_failure_weight === 8),
+    'the task-failure row posts set_weights {task_failure_weight}');
+  await setNum('Not completed weight', 25);
+  assert(OP_CALLS.find((c) => c.op === 'set_weights' && c.args.not_completed_weight === 25),
+    'the not-completed row posts set_weights {not_completed_weight}');
 });
 
 test('builder view: Weights severity_weights editor renders FIXED vocab rows + posts the WHOLE mapping', async () => {

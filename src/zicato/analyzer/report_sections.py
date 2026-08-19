@@ -165,10 +165,10 @@ def _render_scoring_block(scoring: dict[str, object]) -> str:
         if key in scoring:
             lines.append(f"| {label} | `{scoring[key]}` |")
 
-    _row("drift_weight", "drift_weight")
     _row("pass_weight", "pass_weight")
     _row("plan_revision_weight", "plan_revision_weight")
-    _row("runtime_weight", "runtime_weight")
+    _row("task_failure_weight", "task_failure_weight")
+    _row("not_completed_weight", "not_completed_weight")
     _row("promote_margin", "promote_margin")
     _row("pass_rate_monotonicity", "pass_rate_monotonicity")
     _row("pass_rate_monotonicity_scope", "pass_rate_monotonicity_scope")

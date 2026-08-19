@@ -49,7 +49,7 @@ _PARENT: dict[str, str] = {"whole_file_point": _TEMPLATE}
 
 #: The issue's configuration.
 _WEIGHTS = ScoringWeights(
-    drift_weight=0.0,
+    namespace_weights={"drift:": 0.0, "failure:": 1.0},
     pass_weight=1.0,
     promote_margin=0.01,
     diff_complexity_weight=0.02,

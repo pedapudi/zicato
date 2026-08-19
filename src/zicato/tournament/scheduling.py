@@ -484,7 +484,6 @@ def _skip_unit_side(
         generation=generation,
         entry=entry,
         epoch_id=epoch_id,
-        weights=weights,
         match_id=match_id,
     )
     _persist_unit_loss(

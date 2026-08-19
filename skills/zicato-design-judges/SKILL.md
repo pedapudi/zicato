@@ -35,8 +35,8 @@ expectation. "The agent never fabricated a metric value it wasn't given" is a
 judge — fabrication is a property of the *trajectory*, and a run can land a
 correct-looking product through a process you'd reject. The two axes are
 independent and combine into the scalar with separate coefficients
-(`pass_weight` vs `drift_weight`), so a behavior you care about on both axes
-gets *both* an expectation and a judge.
+(`pass_weight` vs `namespace_weights["judge:"]`), so a behavior you care about
+on both axes gets *both* an expectation and a judge.
 
 ## Expectations — the five matcher kinds
 

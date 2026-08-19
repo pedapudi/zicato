@@ -11,7 +11,8 @@ The mechanical mint REQUIRES a disjoint pair (selector predicate #7), so on
 this fixture mechanical mode selects NOTHING (the control below). Only an LLM
 merge can compose the union — a single edit removing BOTH defect tokens.
 
-The arithmetic (σ = 0, ``info = 1.0``, ``drift_weight = pass_weight = 1.0``,
+The arithmetic (σ = 0, ``info = 1.0``, the ``drift:`` channel and
+``pass_weight`` both at ``1.0``,
 5-entry board), from the shipped scoring formulas:
 
     scalar(k tokens, p passes) = k + (1 - p/5)
@@ -89,11 +90,9 @@ def _scoring_dict(*, merge_mode: str | None) -> dict:
     if merge_mode is not None:
         proposer_quality["recombine_merge"] = merge_mode
     return {
-        "drift_weight": 1.0,
         "pass_weight": 1.0,
         "severity_weights": {"info": 1.0, "warning": 3.0, "critical": 10.0},
         "plan_revision_weight": 0.5,
-        "runtime_weight": 0.0,
         "promote_margin": PROMOTE_MARGIN,
         "pass_rate_monotonicity": True,
         "tournament": {

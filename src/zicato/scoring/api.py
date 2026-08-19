@@ -4,8 +4,8 @@ zicato's scoring pipeline has two stages that have historically absorbed
 core edits whenever a new scoring *shape* was needed:
 
 * **Seam 1 — per-run drift reduction** (``telemetry/reducer.py``): turns a
-  run's drift counts + plan revisions + task-failure ratio + runtime into a
-  single ``drift_loss`` scalar. Runs INSIDE the killable worker subprocess.
+  run's drift counts + plan revisions into a single ``drift_loss`` scalar.
+  Runs INSIDE the killable worker subprocess.
 * **Seam 2 — per-generation scalar synthesis** (``tournament/scoring.py``):
   turns ``pass_rate`` / ``mean_score`` + ``drift_loss_mean`` + namespace
   aggregates + per-judge loss into the per-generation ``scalar``. Runs in
@@ -53,10 +53,8 @@ PROVENANCE_BUILTIN: ScoringProvenance = "builtin"
 class DriftContext:
     """Read-only inputs to **Seam 1** (per-run drift reduction).
 
-    Mirrors the real signature of
-    :func:`zicato.telemetry.reducer.compute_drift_loss` — every field here
-    is an input that formula consumes — plus ``builtin_loss``, the value the
-    built-in formula returns for these inputs.
+    Carries the run facts Seam 1 is computed from, plus ``builtin_loss``, the
+    value the built-in formula returns for them.
 
     Fields
     ------
@@ -67,9 +65,12 @@ class DriftContext:
     task_failure_ratio:
         Fatally-failed-to-started task ratio in ``[0.0, 1.0]`` (already
         floored to ``1.0`` by the reducer for a not-completed run, before
-        this context is built).
+        this context is built). NOT part of the drift formula — it is the
+        ``failure:tasks`` channel member — and carried here so a drift plugin
+        can see the outcome of the run it is scoring.
     runtime_ms:
-        Total wall-clock duration in milliseconds.
+        Total wall-clock duration in milliseconds. Likewise not part of the
+        drift formula; it is the ``runtime:seconds`` channel member.
     weights:
         The epoch's frozen :class:`~zicato.core.ScoringWeights`.
     builtin_loss:
@@ -111,18 +112,21 @@ class ScalarContext:
         ``[0, 1]`` score over the expectation denominator.
     drift_loss_mean:
         Mean per-run ``drift_loss`` across the generation's entries — the
-        input to the drift component.
+        ``drift:`` channel's aggregate BEFORE its namespace coefficient.
+        Carried for display / plugin visibility; the built-in scalar reads
+        the already-weighted ``"drift:"`` entry of ``namespace_aggregates``
+        instead, so this must not be added a second time.
     namespace_aggregates:
         ``{namespace: weighted_aggregate}``, ALREADY weight-multiplied by
         :func:`zicato.tournament.scoring.aggregate_namespaced_metrics`. The
-        scalar adds every non-``"drift:"`` namespace value directly. The
-        ``"drift:"`` entry is owned by the drift component and excluded from
-        the sum to avoid double-counting.
+        scalar adds EVERY namespace value directly, in sorted key order —
+        drift included, with no privileged channel.
     per_judge_loss:
         ``{judge_name: weighted_loss}`` per-judge attribution for the
         generation. Carried for plugin/provenance visibility; the built-in
-        scalar does not add it separately (it is already folded into
-        ``drift_loss_mean`` via the reducer's ``drift_loss``).
+        scalar does not add it separately — the same per-judge values reach
+        the scalar as the ``judge:<name>`` metrics of the ``judge:``
+        namespace, and adding them here as well would double-count.
     weights:
         The epoch's frozen :class:`~zicato.core.ScoringWeights`.
     builtin_scalar:

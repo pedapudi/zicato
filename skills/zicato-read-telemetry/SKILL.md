@@ -22,9 +22,12 @@ convergence point and a *dialect* is a named producer feeding it, chosen by
   revisions.
 - **`adk_events`** / **`transcript`** — tolerant readers for a harness that does
   NOT run under the drift-instrumented ecosystem harness. goldfive is no longer
-  required. Under `transcript` the drift knobs (`drift_weight`,
-  `plan_revision_weight`, `per_kind_weights`, `drift_reducer`) are **inert** —
-  zicato warns rather than failing, because no drift kinds are produced.
+  required. Under `transcript` the drift-shaping knobs
+  (`namespace_weights["drift:"]`, `plan_revision_weight`, `per_kind_weights`,
+  `drift_reducer`) and the judge-channel knobs are **inert** — zicato warns
+  rather than failing, because no drift kinds are produced. The `failure:`
+  and `runtime:` channels still score under every dialect: a run that crashed
+  did so regardless of what telemetry it wrote.
 
 Everything downstream of the reducer (scoring, the gate, the index, board
 reflection) reads `LossProfile` and never knows which dialect produced it. The

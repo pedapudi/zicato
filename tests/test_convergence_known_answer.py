@@ -19,8 +19,9 @@ The target is ``examples/zicato_examples/target_0_convergence``:
 
 The exact floor, from the shipped scoring formulas
 (``zicato.scoring.builtins``) with the example contract
-(``severity_weights.info = 1.0``, ``drift_weight = pass_weight = 1.0``,
-``runtime_weight = 0``):
+(``severity_weights.info = 1.0``, the shipped channel coefficients — the
+``drift:`` channel and ``pass_weight`` both at ``1.0``, ``runtime:`` at
+``0.0``):
 
     scalar(k, passes) = 1.0 * k  +  1.0 * (1 - passes/5)
 
@@ -64,13 +65,14 @@ def _expected_scalar(tokens: int, passes: int) -> float:
     Mirrors ``zicato.scoring.builtins.builtin_drift_loss`` +
     ``builtin_scalar`` under the example contract: every run carries
     ``tokens`` drift frames at severity ``info`` (weight 1.0, kind
-    weight 1.0), zero plan revisions, zero task failures, and
-    ``runtime_weight == 0`` — so the per-run drift loss is exactly
-    ``float(tokens)`` and the drift mean over identical runs equals it.
-    The pass component is ``pass_weight * (1 - mean_score)`` with
-    ``mean_score = passes / BOARD_SIZE`` (all-bool board). Every default
-    namespace aggregate is exactly ``0.0`` here (no LLM-call cost, no
-    latency/rubric/schema metrics), so it contributes nothing.
+    weight 1.0) and zero plan revisions, so the per-run drift loss is
+    exactly ``float(tokens)`` and the drift channel's mean over identical
+    runs equals it at coefficient 1.0. The pass component is
+    ``pass_weight * (1 - mean_score)`` with ``mean_score = passes /
+    BOARD_SIZE`` (all-bool board). Every OTHER channel is exactly ``0.0``
+    here: no run fails a task or aborts (``failure:``), no custom judges
+    fire (``judge:``), the ``runtime:`` coefficient is 0.0, and there are
+    no cost / latency / rubric / schema metrics.
     """
     drift_component = 1.0 * float(tokens)
     mean_score = float(passes) / BOARD_SIZE

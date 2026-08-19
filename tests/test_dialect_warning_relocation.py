@@ -24,9 +24,12 @@ def _write_jsonl(path: Path, rows: list[dict]) -> None:
 
 
 def _warn_y_weights() -> ScoringWeights:
-    # transcript produces no drift, so a non-default drift_weight is a
+    # transcript produces no drift, so a non-default drift: coefficient is a
     # capability-warning trigger (dialect_capability_warnings is non-empty).
-    w = ScoringWeights(telemetry_dialect=DIALECT_TRANSCRIPT, drift_weight=99.0)
+    w = ScoringWeights(
+        telemetry_dialect=DIALECT_TRANSCRIPT,
+        namespace_weights={"drift:": 99.0, "failure:": 1.0},
+    )
     assert dialect_capability_warnings(w), "fixture must actually warn"
     return w
 

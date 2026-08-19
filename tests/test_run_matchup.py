@@ -203,7 +203,7 @@ def test_run_matchup_replicates_average_losses(monkeypatch, tmp_path):
             left_gen=_gen(tmp_path, "v0"),
             right_gen=_gen(tmp_path, "v1"),
             board=board,
-            weights=ScoringWeights(drift_weight=1.0),
+            weights=ScoringWeights(),
             config=_config(tmp_path),
             workspace_root=tmp_path,
             epoch_id="e0",

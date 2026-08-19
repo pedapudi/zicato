@@ -319,9 +319,9 @@ function name in every case.
 | `set_param` | one `tournament_structure.params[key]` | `key`, `value` (stored verbatim; `None` removes the key) |
 | `set_holdout` | `scoring.overfitting` + per-entry `holdout` tags + nested `ladder` | `enabled`, `fraction`, `tags`, `min_board_size_for_split`, `rotate_holdout`, `restrict_proposer_visibility`, `random_baseline_every_n`, `max_generations_per_contract` (`0` clears), `ladder` (partial dict) |
 | `set_proposer` | `draft.proposer_path` | `proposer_path: str \| Path \| None` |
-| `set_weights` | scalar + mapping loss-shaping fields on `scoring` | `drift_weight`, `pass_weight`, `per_kind_weights`, `per_judge_weights`, `default_judge_weight`, `plan_revision_weight`, `runtime_weight`, `severity_weights` |
+| `set_weights` | the pass term + the within-channel shapes on `scoring` | `pass_weight`, `per_kind_weights`, `per_judge_weights`, `default_judge_weight`, `plan_revision_weight`, `task_failure_weight`, `not_completed_weight`, `severity_weights` |
 | `set_gate` | the promote gate on `scoring` | `promote_margin`, `monotonicity`, `monotonicity_scope`, `namespace_monotonicity`, `block_on_containment_violation`, `block_on_gate_contradiction`, `regression_gate_enabled`, `regression_test_command`, `regression_timeout_s` |
-| `set_namespace_weights` | `scoring.namespace_weights`, `scoring.diff_complexity_weight` | `namespace_weights` (sign encodes worse-direction), `diff_complexity_weight` (≥0) |
+| `set_namespace_weights` | `scoring.namespace_weights`, `scoring.diff_complexity_weight` | `namespace_weights` (the per-CHANNEL coefficients — sign encodes worse-direction; `"failure:"` must stay > 0), `diff_complexity_weight` (≥0) |
 | `set_proposer_quality` | nested `scoring.proposer_quality` | `best_of_n` (≥1), `critique_enabled`, `process_exemplars` (≥0) |
 | `set_experiment_memory` | `scoring.experiment_memory.cross_epoch` | `cross_epoch: bool` |
 | `set_screening` | `scoring.proposer_quality.screen_entries` / `screen_veto_only` | `entries` (≥0), `veto_only` |

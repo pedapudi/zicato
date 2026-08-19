@@ -126,7 +126,7 @@ operator tunes an `adk_events` contract with the exact same knobs.
 | Event-log signal | Derivation | Maps to | Severity | Rationale |
 |---|---|---|---|---|
 | tool invocations | count of `tool_call` | `task_started` | — | denominator of the failure ratio |
-| tool failures | count of `tool_response` with error status | `task_failed` | — | numerator of `task_failure_ratio` (the ×10 pure-failure term) |
+| tool failures | count of `tool_response` with error status | `task_failed` | — | numerator of `task_failure_ratio`, the `failure:tasks` channel member |
 | errors / exceptions | count of `error` events | `DriftCount("tool_error", …)` | critical | a surfaced execution error is worst-severity drift |
 | retry loops | a `tool_call` whose `(tool, args)` repeats an earlier `tool_call` | `DriftCount("looping_tool_call", …)`, one per repeat | warning | the canonical "same tool, same args" loop |
 | transfer churn | count of `agent_transfer` | `DriftCount("agent_transfer", …)` | info | excessive handoffs are weak-signal drift (info-weighted so churn shows without swamping) |
@@ -153,8 +153,9 @@ Honest tiers matter more than a long signal table. Relative to
   *behaviour* (tools, transfers, errors), never *reasoning*.
 - **No custom process-judge drift.** Custom judges are goldfive
   `JudgementEmitted`/`DriftDetected` pairs; an event log carries no
-  judgements, so `custom:<judge_name>` drift is never produced and
-  `per_judge_weights` is inert under this dialect (§4 warns on it).
+  judgements, so `custom:<judge_name>` drift is never produced and the
+  whole `judge:` channel — its coefficient and `per_judge_weights` alike
+  — is inert under this dialect (§4 warns on both).
 - **No collusion-guarded emulator introspection.** The emulator lane and
   its answer-leak guard are goldfive-side; `adk_events` has no visibility
   into them.
@@ -183,12 +184,14 @@ Scoring degrades to **predicates + optional in-run judges only**.
 
 ### 4.1 The degrade decision: explicit zero-drift, no renormalization
 
-The drift term is structurally `0.0` under `transcript`: with
-`drift_counts == ()`, `plan_revisions == 0`, and `task_failure_ratio ==
-0`, `builtin_drift_loss` returns `0.0`, so the per-generation scalar's
-`drift` component is `drift_weight × 0 = 0` and the scalar reduces to the
-pass/miss term (`pass_weight × (1 - mean_score)`) plus any non-drift
-namespace terms (also absent here).
+The drift channel is structurally `0.0` under `transcript`: with
+`drift_counts == ()` and `plan_revisions == 0`, `builtin_drift_loss`
+returns `0.0`, so the `drift` component is `namespace_weights["drift:"]
+× 0 = 0`. The `judge:` channel is likewise structurally empty. The
+scalar reduces to the pass/miss term (`pass_weight × (1 - mean_score)`)
+plus the channels a transcript CAN still populate: `failure:` (a run
+that crashed or was killed did so regardless of dialect), `runtime:`,
+and `output:chars`.
 
 We take the **explicit zero-drift stance** and do **not** renormalize the
 weights. Justification:
@@ -211,9 +214,9 @@ not a scalar that pretends drift was measured.
 ### 4.2 Config-validation story (warn-or-refuse, preflight house style)
 
 A contract can *ask for* drift it cannot get — e.g. a `transcript`
-dialect with a non-default `drift_weight`, a populated `per_kind_weights`
-/ `per_judge_weights`, a `drift_kind_aggregation`, or a `drift_reducer`
-plugin. Those knobs would silently do nothing. Following the preflight
+dialect with a non-default `namespace_weights["drift:"]`, a populated
+`per_kind_weights` / `per_judge_weights`, a `drift_kind_aggregation`, or
+a `drift_reducer` plugin. Those knobs would silently do nothing. Following the preflight
 house style ([PREFLIGHT / board-reflection](OVERFITTING.md) — default
 *warn*, recommend-only; opt-in *refuse*):
 
@@ -223,8 +226,10 @@ house style ([PREFLIGHT / board-reflection](OVERFITTING.md) — default
 - **Warn (recommend-only) for a capability mismatch:**
   `dialect_capability_warnings(weights)` is a pure function returning the
   human-readable list of "this knob is inert under this dialect" findings
-  (drift weights under `transcript`; `per_judge_weights` under
-  `adk_events`, which has no judgements). The reducer logs them at
+  (the drift-shaping knobs under `transcript`; the judge-channel knobs
+  under either, since neither carries judgements). The `failure:` and
+  `runtime:` channels are never reported inert: run outcome and
+  wall-clock are facts of the harness, not of the telemetry stream. The reducer logs them at
   `warning` when it resolves a non-`goldfive` dialect. It does not refuse
   the run — a drift-weighted transcript contract still scores correctly
   (the drift term is just zero); the warning tells the operator their

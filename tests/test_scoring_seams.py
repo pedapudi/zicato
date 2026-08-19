@@ -1,29 +1,26 @@
-"""Golden byte-identical proof for the issue-#19 phase-1 scoring extraction.
+"""A deliberately independent second implementation of both scoring seams.
 
-PHASE 1 is a pure refactor: the two scoring seams (per-run drift loss in the
-reducer; per-generation scalar synthesis in the tournament) were lifted out
-into :mod:`zicato.scoring` and routed through dispatchers, with NO behaviour
-change. This module pins that the extracted built-ins + dispatchers produce
-results BYTE-IDENTICAL to the historical inline formulas.
+The two seams — per-run drift loss (Seam 1, reducer) and per-generation scalar
+synthesis (Seam 2, tournament) — are computed here a SECOND time, from the
+specification rather than by calling the shipped code, and the two are pinned
+against each other bit-for-bit across a corpus that exercises every weighting
+axis. A change to :mod:`zicato.scoring.builtins` that is not mirrored in
+:func:`_ref_drift_loss` / :func:`_ref_scalar` reds this module by design: the
+point is that the formula has to be written twice before it moves.
 
-The reference implementations in this file (:func:`_ref_drift_loss`,
-:func:`_ref_scalar`) are the LITERAL pre-refactor formulas, transcribed from
-``telemetry/reducer.py::compute_drift_loss`` and the scalar composition in
-``tournament/scoring.py::aggregate_generation_score`` as they stood before the
-extraction. The corpus exercises every weighting axis the seams touch:
+The corpus covers:
 
-* per-kind weights, per-judge weights (``custom`` / ``custom:<name>``),
-  the unattributed bare ``custom`` bucket, and the default-judge-weight
-  fallback;
-* severity weights (including a missing-severity → 0.0 fallback);
-* ``plan_revisions``, ``task_failure_ratio``, and ``runtime`` terms;
-* namespace aggregates (incl. the ``"drift:"`` exclusion + a negative
-  rubric-style weight);
-* the issue-#18 continuous ``mean_score`` path (scored boards AND the
-  all-bool board where ``mean_score == pass_rate`` byte-for-byte);
-* a ``pass`` curve with ``pass_weight != 1`` (a stand-in for the future
-  ``pass_transform`` axis — PHASE 1 keeps the linear ``(1 - mean_score)``
-  shape, so the reference here is exactly that linear term).
+* per-kind weights and severity weights (including a missing-severity → 0.0
+  fallback), and ``plan_revisions``;
+* judge-attributed drift (``custom`` / ``custom:<name>``, the unattributed
+  bare bucket, and the default-judge-weight fallback), which the drift channel
+  EXCLUDES and the ``judge:`` channel scores;
+* the ``failure:`` channel on a clean run and on an aborted one;
+* namespace aggregates, including a negative rubric-style weight and the
+  sorted-sum determinism the composition depends on;
+* the continuous ``mean_score`` path (scored boards AND the all-bool board
+  where ``mean_score == pass_rate`` byte-for-byte);
+* a ``pass`` curve with ``pass_weight != 1``.
 
 It also asserts the dispatchers return the ``"builtin"`` provenance and that
 the live ``compute_drift_loss`` / ``aggregate_generation_score`` paths match.
@@ -36,7 +33,7 @@ import json
 import math
 from pathlib import Path
 
-from zicato.core import DriftCount, LossProfile, ScoringWeights
+from zicato.core import DriftCount, JudgeLoss, LossProfile, ScoringWeights
 from zicato.scoring import (
     PROVENANCE_BUILTIN,
     DriftContext,
@@ -57,57 +54,78 @@ from zicato.tournament.scoring import (
 # Reference implementations — the LITERAL pre-refactor formulas.
 # ---------------------------------------------------------------------------
 
-_TASK_FAILURE_RATIO_MULTIPLIER = 10.0
+
+def _ref_is_judge_attributed(kind: str) -> bool:
+    """Independently: is this a custom-judge drift kind?"""
+    return kind == "custom" or kind.startswith("custom:")
 
 
 def _ref_kind_multiplier(kind: str, weights: ScoringWeights) -> float:
-    """Pre-refactor ``_kind_multiplier`` from reducer.py (transcribed)."""
-    if kind == "custom":
-        is_custom, judge_name = True, ""
-    elif kind.startswith("custom:"):
-        is_custom, judge_name = True, kind[len("custom:") :]
-    else:
-        is_custom, judge_name = False, ""
-    if is_custom:
-        return weights.per_judge_weights.get(judge_name, weights.default_judge_weight)
+    """Independently: the per-kind multiplier for a first-class drift kind."""
     return weights.per_kind_weights.get(kind, 1.0)
 
 
 def _ref_drift_loss(
     drift_counts: tuple[DriftCount, ...],
     plan_revisions: int,
-    task_failure_ratio: float,
-    runtime_ms: int,
     weights: ScoringWeights,
 ) -> float:
-    """Pre-refactor ``compute_drift_loss`` body (transcribed verbatim)."""
+    """Independently: the ``drift:`` channel's per-run term (Seam 1)."""
     sev_w = weights.severity_weights
     loss = 0.0
     for c in drift_counts:
+        if _ref_is_judge_attributed(c.kind):
+            continue
         sev_mult = sev_w.get(c.severity, 0.0)
         kind_mult = _ref_kind_multiplier(c.kind, weights)
         loss += sev_mult * kind_mult * c.count
     loss += weights.plan_revision_weight * plan_revisions
-    loss += _TASK_FAILURE_RATIO_MULTIPLIER * task_failure_ratio
-    loss += weights.runtime_weight * (runtime_ms / 1000.0)
     return max(0.0, float(loss))
+
+
+def _ref_judge_channel(
+    drift_counts: tuple[DriftCount, ...],
+    weights: ScoringWeights,
+) -> dict[str, float]:
+    """Independently: ``{judge_name: weighted_loss}`` for the judge channel."""
+    raw: dict[str, float] = {}
+    for c in drift_counts:
+        if not _ref_is_judge_attributed(c.kind):
+            continue
+        name = c.kind[len("custom:") :] if c.kind.startswith("custom:") else ""
+        raw[name] = raw.get(name, 0.0) + weights.severity_weights.get(c.severity, 0.0) * c.count
+    return {
+        name: value * weights.per_judge_weights.get(name, weights.default_judge_weight)
+        for name, value in raw.items()
+    }
+
+
+def _ref_failure_channel(
+    task_failure_ratio: float,
+    not_completed: bool,
+    weights: ScoringWeights,
+) -> float:
+    """Independently: the ``failure:`` channel's per-run total."""
+    total = weights.task_failure_weight * task_failure_ratio
+    if not_completed:
+        total += weights.not_completed_weight
+    return total
 
 
 def _ref_scalar(
     mean_score: float,
-    drift_loss_mean: float,
     namespace_aggregates: dict[str, float],
     weights: ScoringWeights,
 ) -> float:
-    """Pre-refactor scalar composition from aggregate_generation_score."""
-    drift_component = weights.drift_weight * drift_loss_mean
-    pass_component = weights.pass_weight * (1.0 - mean_score)
-    components: dict[str, float] = {"drift": drift_component, "pass": pass_component}
-    for ns, value in namespace_aggregates.items():
-        if ns == "drift:":
-            continue
+    """Independently: the scalar composition (Seam 2).
+
+    One bounded pass/miss term, plus every already-weighted channel in SORTED
+    namespace order.
+    """
+    components: dict[str, float] = {"pass": weights.pass_weight * (1.0 - mean_score)}
+    for ns in sorted(namespace_aggregates):
         name = ns[:-1] if ns.endswith(":") else ns
-        components[name] = value
+        components[name] = namespace_aggregates[ns]
     return sum(components.values())
 
 
@@ -120,7 +138,6 @@ _W_DEFAULT = ScoringWeights()
 _W_KINDS = ScoringWeights(
     per_kind_weights={"off_topic": 2.0, "tool_error": 0.5},
     plan_revision_weight=0.5,
-    runtime_weight=0.01,
 )
 _W_JUDGES = ScoringWeights(
     per_judge_weights={"precision": 3.0, "structure": 0.25},
@@ -175,7 +192,7 @@ _DRIFT_CORPUS: list[tuple[str, tuple[DriftCount, ...], int, float, int, ScoringW
         7,
         0.75,
         60_000,
-        ScoringWeights(plan_revision_weight=0.3, runtime_weight=0.05),
+        ScoringWeights(plan_revision_weight=0.3),
     ),
     (
         # Issue #19 phase-2 migration pin: the builtin no longer carries the
@@ -200,15 +217,9 @@ _DRIFT_CORPUS: list[tuple[str, tuple[DriftCount, ...], int, float, int, ScoringW
 
 
 def test_builtin_drift_loss_byte_identical_to_reference() -> None:
-    for name, dc, pr, tfr, rt, w in _DRIFT_CORPUS:
-        expected = _ref_drift_loss(dc, pr, tfr, rt, w)
-        got = builtin_drift_loss(
-            drift_counts=dc,
-            plan_revisions=pr,
-            task_failure_ratio=tfr,
-            runtime_ms=rt,
-            weights=w,
-        )
+    for name, dc, pr, _tfr, _rt, w in _DRIFT_CORPUS:
+        expected = _ref_drift_loss(dc, pr, w)
+        got = builtin_drift_loss(drift_counts=dc, plan_revisions=pr, weights=w)
         # Byte-identical: bit-for-bit equal floats (no tolerance).
         assert got == expected, f"{name}: builtin {got!r} != ref {expected!r}"
         assert got.hex() == expected.hex(), name
@@ -216,7 +227,7 @@ def test_builtin_drift_loss_byte_identical_to_reference() -> None:
 
 def test_resolve_drift_loss_dispatches_builtin_with_provenance() -> None:
     for name, dc, pr, tfr, rt, w in _DRIFT_CORPUS:
-        expected = _ref_drift_loss(dc, pr, tfr, rt, w)
+        expected = _ref_drift_loss(dc, pr, w)
         ctx = DriftContext(
             drift_counts=dc,
             plan_revisions=pr,
@@ -226,8 +237,6 @@ def test_resolve_drift_loss_dispatches_builtin_with_provenance() -> None:
             builtin_loss=builtin_drift_loss(
                 drift_counts=dc,
                 plan_revisions=pr,
-                task_failure_ratio=tfr,
-                runtime_ms=rt,
                 weights=w,
             ),
         )
@@ -239,19 +248,19 @@ def test_resolve_drift_loss_dispatches_builtin_with_provenance() -> None:
 def test_live_compute_drift_loss_matches_reference() -> None:
     """The live reducer entry point still equals the pre-refactor formula."""
     for name, dc, pr, tfr, rt, w in _DRIFT_CORPUS:
-        expected = _ref_drift_loss(dc, pr, tfr, rt, w)
+        expected = _ref_drift_loss(dc, pr, w)
         got = compute_drift_loss(
             drift_counts=dc,
             plan_revisions=pr,
+            weights=w,
             task_failure_ratio=tfr,
             runtime_ms=rt,
-            weights=w,
         )
         assert got == expected, name
 
 
 def test_builtin_kind_multiplier_matches_reference() -> None:
-    cases = ["off_topic", "tool_error", "custom", "custom:precision", "custom:unlisted", "unknown"]
+    cases = ["off_topic", "tool_error", "unknown"]
     for w in (_W_DEFAULT, _W_KINDS, _W_JUDGES, _W_MISSING_SEV):
         for kind in cases:
             assert _builtin_kind_mult(kind, w) == _ref_kind_multiplier(kind, w), (kind, w)
@@ -292,38 +301,59 @@ def _loss(
 _SCALAR_CORPUS = [
     ("default_perfect", 1.0, 0.0, {}, _W_DEFAULT),
     ("default_mixed", 0.5, 2.0, {"drift:": 2.0}, _W_DEFAULT),
-    ("pass_weight_4", 0.25, 1.0, {}, ScoringWeights(drift_weight=1.0, pass_weight=4.0)),
-    ("pass_weight_0", 0.0, 3.0, {}, ScoringWeights(drift_weight=1.0, pass_weight=0.0)),
+    ("pass_weight_4", 0.25, 1.0, {}, ScoringWeights(pass_weight=4.0)),
+    ("pass_weight_0", 0.0, 3.0, {}, ScoringWeights(pass_weight=0.0)),
+    (
+        "every_channel",
+        0.5,
+        1.5,
+        {
+            "drift:": 1.5,
+            "judge:": 4.0,
+            "failure:": 60.0,
+            "runtime:": 0.0,
+            "cost:": 0.8,
+            "rubric:": -0.4,
+            "output:": 0.0,
+        },
+        _W_DEFAULT,
+    ),
     (
         "namespaces_pos_and_neg",
         0.6,
         1.5,
         {"drift:": 1.5, "cost:": 0.8, "rubric:": -0.4, "output:": 0.0},
         ScoringWeights(
-            namespace_weights={"drift:": 1.0, "cost:": 1.0, "rubric:": -1.0, "output:": 0.0},
+            namespace_weights={
+                "drift:": 1.0,
+                "failure:": 1.0,
+                "cost:": 1.0,
+                "rubric:": -1.0,
+                "output:": 0.0,
+            },
         ),
     ),
     (
         "continuous_score",
         0.834,  # a graded mean_score, not collapsible to a pass_rate
         0.9,
-        {"drift:": 0.9},
-        ScoringWeights(drift_weight=2.0, pass_weight=1.5),
+        {"drift:": 1.8},
+        ScoringWeights(namespace_weights={"drift:": 2.0, "failure:": 1.0}, pass_weight=1.5),
     ),
 ]
 
 
 def test_builtin_scalar_byte_identical_to_reference() -> None:
-    for name, ms, dlm, ns, w in _SCALAR_CORPUS:
-        expected = _ref_scalar(ms, dlm, ns, w)
-        got = builtin_scalar(mean_score=ms, drift_loss_mean=dlm, namespace_aggregates=ns, weights=w)
+    for name, ms, _dlm, ns, w in _SCALAR_CORPUS:
+        expected = _ref_scalar(ms, ns, w)
+        got = builtin_scalar(mean_score=ms, namespace_aggregates=ns, weights=w)
         assert got == expected, f"{name}: builtin {got!r} != ref {expected!r}"
         assert got.hex() == expected.hex(), name
 
 
 def test_resolve_scalar_dispatches_builtin_with_provenance() -> None:
     for name, ms, dlm, ns, w in _SCALAR_CORPUS:
-        expected = _ref_scalar(ms, dlm, ns, w)
+        expected = _ref_scalar(ms, ns, w)
         ctx = ScalarContext(
             pass_rate=ms,
             mean_score=ms,
@@ -331,9 +361,7 @@ def test_resolve_scalar_dispatches_builtin_with_provenance() -> None:
             namespace_aggregates=ns,
             per_judge_loss={},
             weights=w,
-            builtin_scalar=builtin_scalar(
-                mean_score=ms, drift_loss_mean=dlm, namespace_aggregates=ns, weights=w
-            ),
+            builtin_scalar=builtin_scalar(mean_score=ms, namespace_aggregates=ns, weights=w),
         )
         scalar, prov = resolve_scalar(ctx)
         assert scalar == expected, name
@@ -347,7 +375,7 @@ def test_live_aggregate_scalar_matches_reference_scored_board() -> None:
     NOT collapse to pass_rate, plus a non-drift namespace metric, and proves
     the live scalar equals the reference recomputed from the same aggregates.
     """
-    weights = ScoringWeights(drift_weight=1.0, pass_weight=2.0)
+    weights = ScoringWeights(pass_weight=2.0)
     # Scores chosen so the graded mean (0.55) does NOT equal the binary
     # pass_rate (2/3) — proving the scalar runs on mean_score, not pass_rate.
     losses = [
@@ -357,7 +385,7 @@ def test_live_aggregate_scalar_matches_reference_scored_board() -> None:
     ]
     agg = aggregate_generation_score(losses, weights)
     ns_agg = aggregate_namespaced_metrics(losses, weights)
-    expected = _ref_scalar(agg["mean_score"], agg["drift_loss_mean"], dict(ns_agg), weights)
+    expected = _ref_scalar(agg["mean_score"], dict(ns_agg), weights)
     assert agg["scalar"] == expected
     assert agg["scalar_provenance"] == "builtin"
     # mean_score is a genuine graded mean here (not a binary pass_rate).
@@ -375,9 +403,87 @@ def test_live_aggregate_scalar_all_bool_board_equals_reference() -> None:
     agg = aggregate_generation_score(losses, weights)
     assert agg["mean_score"] == agg["pass_rate"]
     ns_agg = aggregate_namespaced_metrics(losses, weights)
-    expected = _ref_scalar(agg["mean_score"], agg["drift_loss_mean"], dict(ns_agg), weights)
+    expected = _ref_scalar(agg["mean_score"], dict(ns_agg), weights)
     assert agg["scalar"] == expected
     assert agg["scalar_provenance"] == "builtin"
+
+
+def test_live_aggregate_scalar_with_judges_and_an_abort_matches_reference() -> None:
+    """End-to-end over the channels the profile derives, not just drift + pass.
+
+    One run carries judge-attributed drift, one aborted. The reference builds
+    each channel independently from the run facts and composes them, so this
+    fails if the derivation, the within-channel weights, or the sum drift.
+    """
+    weights = ScoringWeights(per_judge_weights={"precision": 3.0}, default_judge_weight=1.5)
+    judged = dataclasses.replace(
+        _loss("a", drift_loss=0.0, pass_fail=True),
+        drift_counts=(
+            DriftCount(kind="custom:precision", severity="warning", count=2),
+            DriftCount(kind="custom:unlisted", severity="info", count=1),
+        ),
+        per_judge_loss=tuple(
+            JudgeLoss(
+                judge_name=name,
+                raw_loss=0.0,
+                weight=weights.per_judge_weights.get(name, weights.default_judge_weight),
+                weighted_loss=value,
+            )
+            for name, value in sorted(
+                _ref_judge_channel(
+                    (
+                        DriftCount(kind="custom:precision", severity="warning", count=2),
+                        DriftCount(kind="custom:unlisted", severity="info", count=1),
+                    ),
+                    weights,
+                ).items()
+            )
+        ),
+    )
+    aborted = dataclasses.replace(
+        _loss("b", drift_loss=0.0, pass_fail=False),
+        task_failure_ratio=1.0,
+        not_completed=True,
+    )
+    losses = [judged, aborted]
+
+    agg = aggregate_generation_score(losses, weights)
+    ns_agg = aggregate_namespaced_metrics(losses, weights)
+
+    # Each channel, rebuilt independently and meaned over the two runs.
+    judge_mean = sum(sum(_ref_judge_channel(p.drift_counts, weights).values()) for p in losses) / 2
+    failure_mean = (
+        sum(_ref_failure_channel(p.task_failure_ratio, p.not_completed, weights) for p in losses)
+        / 2
+    )
+    assert ns_agg["judge:"] == weights.namespace_weights["judge:"] * judge_mean
+    assert ns_agg["failure:"] == weights.namespace_weights["failure:"] * failure_mean
+    # The aborted run's cost is explicable per entry.
+    assert agg["per_entry"]["b"]["failure"] == _ref_failure_channel(1.0, True, weights)
+    assert agg["per_entry"]["a"]["failure"] == 0.0
+    assert agg["scalar"] == _ref_scalar(agg["mean_score"], dict(ns_agg), weights)
+
+
+def test_scalar_sums_the_channels_in_sorted_order() -> None:
+    """The composition is sorted, so it does not depend on mapping order.
+
+    Float addition is not associative: the same channels handed over in a
+    different iteration order must still produce the identical scalar, which
+    is only true because both the built-in and the reference sort.
+    """
+    weights = ScoringWeights()
+    forward = {
+        "cost:": 0.1,
+        "drift:": 1.5,
+        "failure:": 60.0,
+        "judge:": 4.0,
+        "rubric:": -0.4,
+        "schema:": 0.25,
+    }
+    reversed_order = dict(reversed(list(forward.items())))
+    a = builtin_scalar(mean_score=0.5, namespace_aggregates=forward, weights=weights)
+    b = builtin_scalar(mean_score=0.5, namespace_aggregates=reversed_order, weights=weights)
+    assert a.hex() == b.hex()
 
 
 # ---------------------------------------------------------------------------
