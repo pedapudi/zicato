@@ -101,7 +101,13 @@ async def probe_role(
     engine = spec.model or spec.call_llm or ""
     try:
         call_llm = build_call_llm(spec, role=role)
-        answer = await asyncio.wait_for(call_llm(_PROBE_SYSTEM, _PROBE_USER, engine), timeout_s)
+        # The model ARGUMENT is the spec's model or empty — never the dotted
+        # path: a call_llm-form callable owns its model choice, and every
+        # real caller passes "" for it (judge_runtime/builder.py). ``engine``
+        # is only the report label.
+        answer = await asyncio.wait_for(
+            call_llm(_PROBE_SYSTEM, _PROBE_USER, spec.model or ""), timeout_s
+        )
     except TimeoutError:
         return RoleProbe(role, engine, False, f"no answer within {timeout_s:g}s")
     except Exception as exc:  # noqa: BLE001 — any failure to answer is the defect
