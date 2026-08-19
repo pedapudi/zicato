@@ -17,6 +17,7 @@ from zicato.query.paths import (
     _utc_now,
     read_current_epoch,
 )
+from zicato.runtime.lock import WorkspaceLock, is_same_process
 from zicato.runtime.state import (
     list_active_runs,
     read_active_tournament,
@@ -489,21 +490,103 @@ def _is_fresh(stamp: Any, now: _dt.datetime) -> bool:
     return (now - ts).total_seconds() <= STALE_HEARTBEAT_S
 
 
-def fresh_run_count(runs: list[dict[str, Any]], now: _dt.datetime | None = None) -> int:
+def _reader_shares_worker_host(paths: WorkspacePaths | None) -> bool:
+    """Whether this reader runs on the host the ``active_runs`` pids name.
+
+    An :class:`~zicato.runtime.state.ActiveRun` records a ``pid`` but no
+    host, so reading anything into that pid is only sound when the reader
+    and the worker share a machine. The workspace runtime lock supplies
+    the proof: the orchestrator that spawns every worker holds the lock on
+    its own host and stamps its ``pid`` plus the ``start_time`` identity
+    token. When that exact process is live *here*, this reader is on the
+    orchestrator's host and the worker pids denote local processes.
+
+    ``False`` whenever host-locality cannot be proven, which is the only
+    safe default: no lock file (a workspace at rest), an unreadable or
+    legacy lock carrying no start-time token, or a lock whose owner is not
+    a live local process — the case of a workspace synced or copied to
+    another machine, where the recorded pids mean nothing locally.
+    """
+    if paths is None:
+        return False
+    raw = read_lock_dict(paths)
+    if not isinstance(raw, dict):
+        return False
+    try:
+        lock = WorkspaceLock.from_dict(raw)
+    except (KeyError, TypeError, ValueError):
+        return False
+    if lock.start_time is None:
+        return False
+    return is_same_process(lock.pid, lock.start_time)
+
+
+def _is_provably_dead(run: dict[str, Any], *, host_local: bool) -> bool:
+    """Whether ``run``'s worker process is KNOWN to be gone.
+
+    Ground truth rather than a proxy: the record carries the worker's
+    ``pid`` and the ``pid_start_time`` token that defeats pid reuse, so
+    :func:`~zicato.runtime.lock.is_same_process` answers directly. Only
+    ever ``True`` when death is provable — off-host the pids are
+    meaningless, and a record missing either identity field (a producer
+    from before the worker stamped them, or a platform with no readable
+    start time) cannot be judged at all.
+    """
+    if not host_local:
+        return False
+    pid = run.get("pid")
+    start = run.get("pid_start_time")
+    if not isinstance(pid, int) or isinstance(pid, bool) or pid <= 0:
+        return False
+    if not isinstance(start, int | float) or isinstance(start, bool):
+        return False
+    return not is_same_process(pid, float(start))
+
+
+def fresh_run_count(
+    runs: list[dict[str, Any]],
+    now: _dt.datetime | None = None,
+    *,
+    paths: WorkspacePaths | None = None,
+) -> int:
     """In-flight records still BEATING — not the record count on disk.
 
     ``active_runs/*.json`` outlives the process that wrote it (the file is
     removed on a clean run-end, so a killed worker's record lingers), so the
-    count of files is not a count of workers. Each record carries the
-    per-run beater's ``last_progress``; age it exactly like the heartbeat.
-    Mirrors the client's ``freshRunCount`` (``livestatus.js``), with one
-    deliberate divergence: an untimestamped record counts as NOT fresh here
-    (``_is_fresh``'s rule), because both Python readers of this tally run on
-    one server and must agree, and the real producer always stamps
-    ``started_at``.
+    count of files is not a count of workers. A record counts iff it passes
+    BOTH gates:
+
+    1. **Timestamp** — the per-run beater's ``last_progress`` (falling back
+       to ``started_at``) is within :data:`STALE_HEARTBEAT_S`, aged exactly
+       like the heartbeat. Mirrors the client's ``freshRunCount``
+       (``livestatus.js``), with one deliberate divergence: an untimestamped
+       record counts as NOT fresh here (``_is_fresh``'s rule), because both
+       Python readers of this tally run on one server and must agree, and
+       the real producer always stamps ``started_at``.
+    2. **Process identity** — the record's worker is not *provably* dead
+       (:func:`_is_provably_dead`). This gate only ever TIGHTENS the first:
+       it drops a record whose named process is known to be gone, reaping it
+       at once instead of waiting out the staleness window, and it never
+       admits one the timestamps rejected.
+
+    The identity gate needs ``paths`` — it proves host-locality off the
+    workspace lock — and is unknowable without it, as it is on a workspace
+    read from another machine. There the timestamp rule stands alone,
+    exactly as before, which is also the client mirror's permanent case: a
+    browser is never the worker's host.
+
+    Reaping here is READ-side: the record leaves the tally and the file
+    stays. Removing it belongs to the writer and the supervisor; a read
+    must not mutate the workspace.
     """
     now = now or _utc_now()
-    return sum(1 for r in runs if _is_fresh(r.get("last_progress") or r.get("started_at"), now))
+    host_local = _reader_shares_worker_host(paths)
+    return sum(
+        1
+        for r in runs
+        if _is_fresh(r.get("last_progress") or r.get("started_at"), now)
+        and not _is_provably_dead(r, host_local=host_local)
+    )
 
 
 def _on_disk_heartbeat(paths: WorkspacePaths) -> dict[str, Any] | None:
@@ -588,7 +671,7 @@ def derive_liveness(paths: WorkspacePaths, *, now: _dt.datetime | None = None) -
     # before the progress log existed records a clean end.
     at_rest = hb is not None and bool(str(phase or "").strip()) and not is_active_phase(phase)
 
-    pulse = _is_fresh(last_heartbeat, now) or fresh_run_count(runs, now) > 0
+    pulse = _is_fresh(last_heartbeat, now) or fresh_run_count(runs, now, paths=paths) > 0
 
     if terminal or at_rest:
         state = LIVENESS_SETTLED
