@@ -106,26 +106,18 @@ UNCLAIMED_BAND: MeasurementBand = MeasurementBand(
 def measurement_bands() -> tuple[MeasurementBand, ...]:
     """The reserved replicate bands that are NOT cell evidence, ascending.
 
-    The bounds come from the owning modules' own constants, so this ledger
-    cannot drift from the bases those modules actually stamp; the ledger
-    itself is described at :func:`zicato.tournament.unit_cache
-    .is_own_code_board_draw`. Imported inside the function because those
-    owners (the pre-flight, the screen, reflection) pull in the tournament
-    and mutation machinery, which a query module must not load to answer a
-    read.
+    The bounds are LITERAL MIRRORS of the owning modules' constants
+    (``CALIBRATION_REPLICATE_BASE``/``_SPAN``, ``PREFLIGHT_REPLICATE_BASE``/
+    ``_SPAN``, ``SCREEN_REPLICATE_BASE``, ``EVIDENCE_REPLICATE_BASE``,
+    ``REFLECTION_REPLICATE_BASE``, ``SYNTHESIS_REPLICATE_BASE``), not
+    imports: the owners pull in the pre-flight, screening, and reflection
+    machinery, and reflection reaches the dashboard — chains the query
+    layer's import contracts forbid. The correspondence test in
+    ``tests/test_query_execution_plan.py`` imports both sides and pins the
+    mirror to the owners, so a moved base fails a test instead of drifting.
+    The ledger itself is described at
+    :func:`zicato.tournament.unit_cache.is_own_code_board_draw`.
     """
-    from zicato.epoch.preflight import (  # noqa: PLC0415
-        PREFLIGHT_REPLICATE_BASE,
-        PREFLIGHT_REPLICATE_SPAN,
-    )
-    from zicato.epoch.screen import SCREEN_REPLICATE_BASE  # noqa: PLC0415
-    from zicato.reflection.admission import SYNTHESIS_REPLICATE_BASE  # noqa: PLC0415
-    from zicato.reflection.corpus import REFLECTION_REPLICATE_BASE  # noqa: PLC0415
-    from zicato.selection.evidence_gate import EVIDENCE_REPLICATE_BASE  # noqa: PLC0415
-    from zicato.tournament.calibration import (  # noqa: PLC0415
-        CALIBRATION_REPLICATE_BASE,
-        CALIBRATION_REPLICATE_SPAN,
-    )
 
     return (
         MeasurementBand(
@@ -137,8 +129,8 @@ def measurement_bands() -> tuple[MeasurementBand, ...]:
                 "spread is the evaluation's noise floor — not evidence about any "
                 "candidate."
             ),
-            start=CALIBRATION_REPLICATE_BASE,
-            stop=CALIBRATION_REPLICATE_BASE + CALIBRATION_REPLICATE_SPAN,
+            start=1000,
+            stop=2000,
         ),
         MeasurementBand(
             key="contract_preflight",
@@ -150,8 +142,8 @@ def measurement_bands() -> tuple[MeasurementBand, ...]:
                 "out-signal its own noise. A failure here is the probe working as "
                 "designed and says NOTHING about what this generation does."
             ),
-            start=PREFLIGHT_REPLICATE_BASE,
-            stop=PREFLIGHT_REPLICATE_BASE + PREFLIGHT_REPLICATE_SPAN,
+            start=2000,
+            stop=3000,
         ),
         MeasurementBand(
             key="candidate_screen",
@@ -162,8 +154,8 @@ def measurement_bands() -> tuple[MeasurementBand, ...]:
                 "ephemeral snapshot that never entered the lineage. It "
                 "disqualifies; it never ranks, and its scalar is never evidence."
             ),
-            start=SCREEN_REPLICATE_BASE,
-            stop=EVIDENCE_REPLICATE_BASE,
+            start=3000,
+            stop=4000,
         ),
         MeasurementBand(
             key="board_reflection",
@@ -173,8 +165,8 @@ def measurement_bands() -> tuple[MeasurementBand, ...]:
                 "terms, the board entries themselves — rather than the generation "
                 "they were drawn from."
             ),
-            start=REFLECTION_REPLICATE_BASE,
-            stop=SYNTHESIS_REPLICATE_BASE,
+            start=5000,
+            stop=6000,
         ),
         MeasurementBand(
             key="eval_synthesis_admission",
@@ -184,8 +176,8 @@ def measurement_bands() -> tuple[MeasurementBand, ...]:
                 "and how often it flips under noise, before it is admitted to the "
                 "board."
             ),
-            start=SYNTHESIS_REPLICATE_BASE,
-            stop=SYNTHESIS_REPLICATE_BASE + RESERVED_BAND_WIDTH,
+            start=6000,
+            stop=7000,
         ),
     )
 
