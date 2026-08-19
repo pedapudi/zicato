@@ -426,8 +426,10 @@ def build_round_pipeline(paths: WorkspacePaths) -> dict[str, Any]:
         # Count records still BEATING, never records on disk: an
         # active_runs file outlives the worker that wrote it, so the file
         # count over-reports in flight by every dead unit (#268). One rule,
-        # shared with derive_liveness.
-        run_count = fresh_run_count(read_active_runs_view(paths))
+        # shared with derive_liveness — including the host-local identity
+        # gate that reaps a provably dead worker's record at once (#270),
+        # which is why the paths go through.
+        run_count = fresh_run_count(read_active_runs_view(paths), paths=paths)
     except Exception:  # noqa: BLE001 — best-effort
         run_count = 0
 

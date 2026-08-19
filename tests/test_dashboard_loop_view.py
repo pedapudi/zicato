@@ -605,7 +605,7 @@ def test_in_flight_tally_agrees_with_the_liveness_reader(tmp_path: Path) -> None
     out = build_round_pipeline(paths)
     runs = read_active_runs_view(paths)
 
-    assert out["in_flight"] == fresh_run_count(runs) == 1
+    assert out["in_flight"] == fresh_run_count(runs, paths=paths) == 1
     assert derive_liveness(paths)["state"] == "live"
 
 

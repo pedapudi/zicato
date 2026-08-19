@@ -718,7 +718,7 @@ run without touching anything else. The schema (`ActiveRun` in
 |---|---|---|
 | `run_id` | unique run id — `{generation}--{entry}` for replicate 0, `r{n}.{generation}--{entry}` for `r>0`; a generation id is always `v{n}`, so the two namespaces are disjoint without reserving user entry ids | everything |
 | `pid` | the WORKER's own pid (`os.getpid()` stamped by the worker) | supervisor kill paths |
-| `pid_start_time` | the worker's `/proc` start-time token — pid-reuse immunity (D9) | `signal::is_same_process` in the supervisor |
+| `pid_start_time` | the worker's `/proc` start-time token — pid-reuse immunity (D9) | `signal::is_same_process` in the supervisor; `fresh_run_count`'s identity gate in the query layer |
 | `pgid` | the worker's own process group (spawned with `start_new_session`, so `pgid == pid`) | group-kill upgrade (`resolve_kill_target`) |
 | `started_at`, `last_progress` | ISO-8601 UTC; `last_progress` is bumped every ~3s by `RunHeartbeatBeater` (a daemon thread that keeps beating through GIL-releasing LLM waits) | staleness trigger `decide_run` |
 | `wall_clock_budget_seconds`, `deadline` | the promised budget and the absolute deadline (`started_at + budget`) | deadline trigger `decide_run_deadline` — but note the supervisor treats the written deadline as UNTRUSTED and clamps it (08-supervisor.md §"Untrusted clamped deadlines") |
@@ -731,6 +731,17 @@ The lifecycle: worker writes the file on start → beater bumps
 dies, the files linger; `prepare_resume`'s `clear_runtime_state` removes them
 on the next start, and the supervisor's confirmed-dead reaper finalizes them
 if it gets there first.
+
+Because the files linger, **a reader must never treat record presence as
+work in flight**. `zicato.query.runtime_view.fresh_run_count` — the one
+tally both `derive_liveness` and the round pipeline read — counts a record
+only when it is timestamp-fresh AND not provably dead, where "provably
+dead" is `is_same_process(pid, pid_start_time)` returning false. The pid
+check is sound only host-locally (an `ActiveRun` records no host), so it is
+gated on the workspace lock naming a live LOCAL process; on a workspace
+synced to another machine, or with no lock, the staleness window stands
+alone. The reaping is read-side only: the record leaves the tally and the
+file stays, because removing it belongs to the writers and the supervisor.
 
 ### 7.6.3 The active-tournament event log and its fold
 

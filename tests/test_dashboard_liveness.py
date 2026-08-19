@@ -16,8 +16,13 @@ from __future__ import annotations
 
 import datetime as _dt
 import json
+import os
+import subprocess
+import sys
 from pathlib import Path
 from typing import Any
+
+import pytest
 
 from zicato.query.paths import WorkspacePaths
 from zicato.query.runtime_view import (
@@ -26,9 +31,12 @@ from zicato.query.runtime_view import (
     LIVENESS_SETTLED,
     STALE_HEARTBEAT_S,
     derive_liveness,
+    fresh_run_count,
     is_active_phase,
+    read_active_runs_view,
 )
 from zicato.runtime import progress_log
+from zicato.runtime.lock import pid_start_time
 
 #: The pinned "now" every fixture is dated against.
 NOW = _dt.datetime(2026, 8, 9, 12, 0, 0, tzinfo=_dt.UTC)
@@ -44,12 +52,20 @@ def _ws(
     phase: str | None = "tournament:round_0:v1",
     beat_age_s: float | None = 1.0,
     run_ages_s: list[float] | None = None,
+    run_identity: tuple[int, float | None] | None = None,
+    lock_owner: tuple[int, float | None] | None = None,
 ) -> Path:
     """A runtime workspace with a heartbeat aged ``beat_age_s`` before NOW.
 
     ``phase=None`` writes no heartbeat at all. ``run_ages_s`` writes one
     ``active_runs`` record per entry, each ``last_progress`` that many
     seconds before NOW.
+
+    ``run_identity`` is the ``(pid, pid_start_time)`` every run record
+    claims (default: a made-up pid and no start time, the shape of a
+    producer from before the worker stamped one). ``lock_owner`` is the
+    ``(pid, start_time)`` written to ``runtime/lock.json``; a lock naming a
+    live LOCAL process is what proves the reader shares the workers' host.
     """
     ws = tmp_path / ".zicato"
     (ws / "runtime" / "active_runs").mkdir(parents=True)
@@ -70,13 +86,27 @@ def _ws(
             ),
             encoding="utf-8",
         )
+    if lock_owner is not None:
+        (ws / "runtime" / "lock.json").write_text(
+            json.dumps(
+                {
+                    "pid": lock_owner[0],
+                    "instance_id": "default",
+                    "acquired_at": _iso(NOW - _dt.timedelta(hours=1)),
+                    "workspace_root": str(ws.parent),
+                    "start_time": lock_owner[1],
+                }
+            ),
+            encoding="utf-8",
+        )
     for i, age in enumerate(run_ages_s or []):
         started = NOW - _dt.timedelta(seconds=age)
         (ws / "runtime" / "active_runs" / f"r{i}.json").write_text(
             json.dumps(
                 {
                     "run_id": f"r{i}",
-                    "pid": 100 + i,
+                    "pid": run_identity[0] if run_identity else 100 + i,
+                    "pid_start_time": run_identity[1] if run_identity else None,
                     "started_at": _iso(started),
                     "last_progress": _iso(started),
                     "wall_clock_budget_seconds": 180,
@@ -200,8 +230,6 @@ def test_an_unparseable_beat_is_not_fresh(tmp_path: Path) -> None:
     record["last_heartbeat"] = "not-a-timestamp"
     hb.write_text(json.dumps(record), encoding="utf-8")
     old = (NOW - _dt.timedelta(days=60)).timestamp()
-    import os
-
     os.utime(hb, (old, old))
     assert _derive(ws)["state"] == LIVENESS_INTERRUPTED
 
@@ -231,13 +259,118 @@ def test_active_runs_carry_an_ageable_timestamp(tmp_path: Path) -> None:
     it a consumer can only count records, which is how a workspace dead since
     June reported seven units running.
     """
-    from zicato.query.runtime_view import read_active_runs_view
-
     ws = _ws(tmp_path, run_ages_s=[5.0])
     rows = read_active_runs_view(WorkspacePaths(ws))
     assert len(rows) == 1
     expected = int((NOW - _dt.timedelta(seconds=5.0)).timestamp() * 1000)
     assert rows[0]["last_progress_ts"] == expected
+
+
+# ---------------------------------------------------------------------------
+# Process identity — reaping a dead worker's record (#270)
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture(scope="module")
+def dead_worker() -> tuple[int, float]:
+    """A ``(pid, pid_start_time)`` pair naming a process that has exited.
+
+    Read off a real child while it lives, so the pair is exactly what a
+    worker stamps on its own record; the child is then reaped, which is
+    what makes the identity check answer "gone".
+    """
+    proc = subprocess.Popen(  # noqa: S603
+        [sys.executable, "-c", "import sys; sys.stdin.read()"], stdin=subprocess.PIPE
+    )
+    start = pid_start_time(proc.pid)
+    proc.kill()
+    proc.wait(timeout=30)
+    if start is None:
+        pytest.skip("no readable process start time on this platform")
+    return (proc.pid, start)
+
+
+def _this_process() -> tuple[int, float | None]:
+    """The reader's own ``(pid, start_time)`` — a lock naming it is host-local."""
+    return (os.getpid(), pid_start_time(os.getpid()))
+
+
+def _count(ws: Path) -> int:
+    paths = WorkspacePaths(ws)
+    return fresh_run_count(read_active_runs_view(paths), NOW, paths=paths)
+
+
+def test_a_dead_worker_is_reaped_without_waiting_out_the_window(
+    tmp_path: Path, dead_worker: tuple[int, float]
+) -> None:
+    """Identity beats the staleness proxy: a seconds-old record whose worker
+    is provably gone is not in flight, and does not hold the verdict live."""
+    ws = _ws(
+        tmp_path,
+        beat_age_s=None,
+        run_ages_s=[1.0],
+        run_identity=dead_worker,
+        lock_owner=_this_process(),
+    )
+    assert _count(ws) == 0
+    assert _derive(ws)["state"] == LIVENESS_INTERRUPTED
+
+
+def test_a_live_worker_survives_the_identity_gate(tmp_path: Path) -> None:
+    """The gate only ever tightens — a record naming a live local process
+    (here, the test process itself) still counts."""
+    ws = _ws(
+        tmp_path,
+        beat_age_s=None,
+        run_ages_s=[1.0],
+        run_identity=_this_process(),
+        lock_owner=_this_process(),
+    )
+    assert _count(ws) == 1
+    assert _derive(ws)["state"] == LIVENESS_LIVE
+
+
+def test_a_dead_worker_still_counts_when_the_lock_names_another_host(
+    tmp_path: Path, dead_worker: tuple[int, float]
+) -> None:
+    """A workspace synced from another machine: the lock owner is not a live
+    local process, so the recorded pids carry no local meaning and the
+    timestamp rule stands alone."""
+    ws = _ws(
+        tmp_path,
+        beat_age_s=None,
+        run_ages_s=[1.0],
+        run_identity=dead_worker,
+        lock_owner=(dead_worker[0], dead_worker[1] + 1.0),
+    )
+    assert _count(ws) == 1
+
+
+def test_a_dead_worker_still_counts_with_no_lock(
+    tmp_path: Path, dead_worker: tuple[int, float]
+) -> None:
+    """No lock (a workspace at rest) proves no host-locality either."""
+    ws = _ws(tmp_path, beat_age_s=None, run_ages_s=[1.0], run_identity=dead_worker)
+    assert _count(ws) == 1
+
+
+def test_a_record_without_identity_fields_counts(tmp_path: Path) -> None:
+    """Back-compat: a producer that stamped no ``pid_start_time`` cannot be
+    judged dead — a bare pid number is not an identity."""
+    ws = _ws(tmp_path, beat_age_s=None, run_ages_s=[1.0], lock_owner=_this_process())
+    assert _count(ws) == 1
+
+
+def test_a_stale_record_stays_out_however_alive_its_pid_is(tmp_path: Path) -> None:
+    """The identity gate never ADMITS a record the timestamp rule rejected."""
+    ws = _ws(
+        tmp_path,
+        beat_age_s=None,
+        run_ages_s=[86400.0],
+        run_identity=_this_process(),
+        lock_owner=_this_process(),
+    )
+    assert _count(ws) == 0
 
 
 # ---------------------------------------------------------------------------
