@@ -18,8 +18,8 @@ The baseline and final ratchet use the same metric:
 
 | Measurement | Baseline (`f9052dd`) | Current limit | Net reduction |
 |---|---:|---:|---:|
-| Total | 408,547 | 418,866 | -10,319 |
-| Production | 197,588 | 201,648 | -4,060 |
+| Total | 408,547 | 419,527 | -10,980 |
+| Production | 197,588 | 202,101 | -4,513 |
 
 The earlier raw count of 425,755 included lockfiles and generated artifacts and
 is retained in `.line-budget.json` for provenance; it is not the enforced
@@ -77,3 +77,5 @@ increase.
 | Fresh in-flight tally (production) | 201,407 | +20 | 201,427 | Issue #268: fresh_run_count in runtime_view, shared by derive_liveness and the round pipeline. |
 | Dry-run reachability probe (total) | 418,360 | +506 | 418,866 | Issue #264: the probe module, its dry-run wiring, and the stub-driven per-role coverage including the keyless-spec and bounded-timeout pins. |
 | Dry-run reachability probe (production) | 201,427 | +221 | 201,648 | Issue #264: the per-role bounded round trip through the worker's construction seam, the per-role report renderer, and the dry-run report-and-exit wiring. |
+| Measurement bands on the execution plan (total) | 418,866 | +661 | 419,527 | Issue #241: the band steps with their attribution anchors, the shared complement walk, and the set-based coverage audit. |
+| Measurement bands on the execution plan (production) | 201,648 | +453 | 202,101 | Issue #241: measurement_band/measurement_draw nodes, the screen-round anchor, and the partitioned enumerations. |

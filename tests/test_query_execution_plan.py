@@ -8,11 +8,15 @@ still open, a round that died in validation, a round that never released
 the holdout, a run directory with no loss file, and a round log whose
 tail was torn by a crash.
 
-The load-bearing one is :func:`test_unit_count_equals_the_loss_files_on_disk`.
-The plan's whole promise is that a node the reader opens describes work
-that happened, so a replicate silently dropped from the tree — or one
-invented from a configured count — has to fail a test rather than render
-plausibly.
+The load-bearing ones are the two audits. :func:`test_unit_count_equals_the
+_loss_files_on_disk` pins the work units to the scoring slots on disk, and
+:func:`test_every_loss_file_on_disk_is_named_once_by_the_plan` widens that
+to the whole epoch: units and measurement-band draws together must name
+every non-attempt loss file, so a band the builder forgets renders as a
+missing file rather than as a plausible, incomplete tree. The plan's whole
+promise is that a node the reader opens describes work that happened, so a
+replicate silently dropped — or one invented from a configured count — has
+to fail a test.
 """
 
 from __future__ import annotations
@@ -44,6 +48,7 @@ from zicato.epoch.round_log import (
 from zicato.query import WorkspacePaths, build_execution_plan
 from zicato.query.contracts import ENDPOINT_PAYLOADS
 from zicato.query.execution_plan import PlanNode
+from zicato.query.replicate_scores import band_of, measurement_bands
 from zicato.telemetry import reducer
 from zicato.tournament.unit_cache import unit_result_path
 
@@ -288,6 +293,25 @@ def test_three_replicates_give_three_nodes_with_their_own_match_ids(
     }
 
 
+def _loss_files_on_disk(root: Path) -> set[Path]:
+    """Every non-attempt ``loss*.json`` the epoch holds."""
+    return {
+        path
+        for path in (root / "epochs" / EPOCH / "generations").rglob("loss*.json")
+        if ".a" not in path.stem[len("loss") :]
+    }
+
+
+def _files_the_plan_names(root: Path) -> set[Path]:
+    """The loss file each work unit and each band draw in the plan describes."""
+    plan = _plan(root)
+    named: set[Path] = set()
+    for node in _of_kind(plan, "board_entry_run") + _of_kind(plan, "measurement_draw"):
+        where = node["coordinates"]
+        named.add(_loss_path(root, where["generation_id"], where["entry_id"], where["replicate"]))
+    return named
+
+
 def test_unit_count_equals_the_loss_files_on_disk(complete_run: Path) -> None:
     """The audit: every scoring slot on disk is one node, and nothing else is.
 
@@ -296,14 +320,11 @@ def test_unit_count_equals_the_loss_files_on_disk(complete_run: Path) -> None:
     number the builder also computes.
     """
     plan = _plan(complete_run)
-    on_disk = [
-        path
-        for path in (complete_run / "epochs" / EPOCH / "generations").rglob("loss*.json")
-        if ".a" not in path.stem[len("loss") :]
-    ]
+    on_disk = _loss_files_on_disk(complete_run)
 
     assert len(on_disk) == 8  # 2 entries x (1 baseline + 3 replicates)
     assert len(_of_kind(plan, "board_entry_run")) == len(on_disk)
+    assert _files_the_plan_names(complete_run) == on_disk
 
 
 def test_an_attempt_hangs_under_its_unit_and_is_not_a_work_unit(tmp_path: Path) -> None:
@@ -357,6 +378,193 @@ def test_a_unit_without_a_recorded_span_reads_partial(tmp_path: Path) -> None:
     assert unit["provenance"] == "partial"
     # Provenance propagates up, so an unopened branch still says so.
     assert _stage(_plan(root), "/baseline")["provenance"] == "partial"
+
+
+# ---------------------------------------------------------------------------
+# Measurement bands — the executions that are not a cell's evidence
+# ---------------------------------------------------------------------------
+
+
+def _bands(plan: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    """The plan's band steps keyed by band key (ids are unique per stage)."""
+    return {node["coordinates"]["band"]: node for node in _of_kind(plan, "measurement_band")}
+
+
+def test_the_band_ledger_tracks_the_bases_its_owners_stamp(tmp_path: Path) -> None:
+    """The bands are the owners' own constants, not numbers copied beside them."""
+    from zicato.epoch.preflight import PREFLIGHT_REPLICATE_BASE
+    from zicato.epoch.screen import SCREEN_REPLICATE_BASE
+    from zicato.reflection.admission import SYNTHESIS_REPLICATE_BASE
+    from zicato.reflection.corpus import REFLECTION_REPLICATE_BASE
+    from zicato.tournament.calibration import CALIBRATION_REPLICATE_BASE
+
+    starts = {band.key: band.start for band in measurement_bands()}
+
+    assert starts == {
+        "calibration": CALIBRATION_REPLICATE_BASE,
+        "contract_preflight": PREFLIGHT_REPLICATE_BASE,
+        "candidate_screen": SCREEN_REPLICATE_BASE,
+        "board_reflection": REFLECTION_REPLICATE_BASE,
+        "eval_synthesis_admission": SYNTHESIS_REPLICATE_BASE,
+    }
+    # Every band an owner claims is disjoint from the evidence a cell reads.
+    for band in measurement_bands():
+        assert band_of(band.start) is band
+        assert band_of(band.stop - 1) is band
+
+
+def test_every_reserved_band_executed_against_the_champion_gets_its_own_step(
+    tmp_path: Path,
+) -> None:
+    """Calibration, pre-flight, reflection and admission draws all surface."""
+    root = _workspace(tmp_path)
+    _write_loss(root, "v0", "login")
+    for replicate, match_id in (
+        (1000, "aa-calibration:0"),
+        (1001, "aa-calibration:1"),
+        (2000, "contract-preflight:degraded:tool_description"),
+        (5000, "reflection:refl-1:r0"),
+        (6000, "admission-noise:0"),
+    ):
+        _write_loss(root, "v0", "login", replicate=replicate, match_id=match_id)
+
+    bands = _bands(_plan(root))
+
+    assert {key: node["outcome"]["draw_count"] for key, node in bands.items()} == {
+        "calibration": 2,
+        "contract_preflight": 1,
+        "board_reflection": 1,
+        "eval_synthesis_admission": 1,
+    }
+    assert bands["calibration"]["id"] == f"e:{EPOCH}/baseline/band:calibration"
+    assert bands["calibration"]["outcome"]["replicate_range"] == [1000, 1999]
+    assert bands["calibration"]["outcome"]["generation_ids"] == ["v0"]
+    # A band draw is never a work unit: the cell still holds exactly one.
+    assert len(_of_kind(_plan(root), "board_entry_run")) == 1
+    draw = _find(_stage(_plan(root), "/baseline"), f"{bands['calibration']['id']}/v0/login/r1000")
+    assert draw["coordinates"]["match_id"] == "aa-calibration:0"
+    assert draw["status"] == "done"
+
+
+def test_the_preflight_band_says_its_probes_are_degraded(tmp_path: Path) -> None:
+    """A probe failure must never read as champion behaviour — parent or not."""
+    root = _workspace(tmp_path)
+    _write_loss(root, "v0", "login", replicate=2000, passes=False)
+
+    band = _bands(_plan(root))["contract_preflight"]
+
+    assert "degraded" in band["label"].lower()
+    assert "DELIBERATELY DEGRADED" in band["purpose"]
+    # The caveat rides on the draw too: a client may render it standalone.
+    assert "DELIBERATELY DEGRADED" in band["children"][0]["purpose"]
+    assert band["children"][0]["outcome"]["pass_fail"] is False
+
+
+def test_a_band_with_no_draws_yields_no_step(complete_run: Path) -> None:
+    """An empty band step would assert a measurement nothing on disk records."""
+    assert _bands(_plan(complete_run)) == {}
+
+
+def test_an_unclaimed_replicate_index_is_visible_as_unclaimed(tmp_path: Path) -> None:
+    """The ledger is an allow-list: an index no owner claims is shown, not admitted."""
+    root = _workspace(tmp_path)
+    _write_loss(root, "v0", "login", replicate=7000, match_id="")
+
+    bands = _bands(_plan(root))
+
+    assert set(bands) == {"unclaimed"}
+    assert bands["unclaimed"]["outcome"]["draw_count"] == 1
+    assert "never counted" in bands["unclaimed"]["purpose"]
+    # Never a work unit, and never inside a claimed band.
+    assert _of_kind(_plan(root), "board_entry_run") == []
+
+
+def test_a_band_states_that_the_files_record_no_round(tmp_path: Path) -> None:
+    root = _workspace(tmp_path)
+    _write_loss(root, "v0", "login", replicate=1000)
+
+    band = _bands(_plan(root))["calibration"]
+
+    assert band["provenance"] == "partial"
+    assert "record no round" in band["outcome"]["attribution"]
+
+
+def test_a_leftover_screen_snapshot_hangs_under_the_round_its_name_states(
+    tmp_path: Path,
+) -> None:
+    """The ephemeral screen id is the anchor: it names the round it served."""
+    root = _workspace(tmp_path)
+    for entry in ENTRIES:
+        _write_loss(root, "v0", entry)
+        _write_loss(root, "v1", entry)
+    _complete_round(root)
+    _write_loss(root, "v0-screen-r0c1", "login", replicate=3000, match_id="candidate-screen:r0:c1")
+
+    plan = _plan(root)
+    band = _bands(plan)["candidate_screen"]
+
+    assert band["id"] == f"e:{EPOCH}/round:0/band:candidate_screen"
+    assert band["provenance"] == "exact"
+    assert band["outcome"]["attribution"] == "the generation id names the round these draws served"
+    # It never ran the board, so it gets no board sweep and no baseline home.
+    assert _stage(plan, "/baseline")["outcome"]["generation_ids"] == ["v0"]
+    assert [node["coordinates"]["generation_id"] for node in _of_kind(plan, "board_sweep")] == [
+        "v0",
+        "v1",
+    ]
+    # The round's five loop steps are unchanged; the band follows them.
+    assert [child["kind"] for child in _stage(plan, "/round:0")["children"]] == [
+        "propose_step",
+        "apply_step",
+        "run_step",
+        "gate_step",
+        "decide_step",
+        "measurement_band",
+    ]
+    assert _stage(plan, "/round:0")["progress"] == {"done": 5, "total": 5}
+
+
+def test_a_screen_snapshot_naming_a_round_with_no_stage_falls_back_to_the_baseline(
+    tmp_path: Path,
+) -> None:
+    """No stage to move to means no stated home — the band says so."""
+    root = _workspace(tmp_path)
+    _write_loss(root, "v0-screen-r9c0", "login", replicate=3000)
+
+    band = _bands(_plan(root))["candidate_screen"]
+
+    assert band["id"] == f"e:{EPOCH}/baseline/band:candidate_screen"
+    assert band["provenance"] == "partial"
+    assert "record no round" in band["outcome"]["attribution"]
+
+
+def test_every_loss_file_on_disk_is_named_once_by_the_plan(tmp_path: Path) -> None:
+    """The extended audit: units and band draws together cover the whole epoch.
+
+    The evidence ranges and the bands partition the replicate namespace, so a
+    band the builder forgets to render is a file no node names — which this
+    fails on rather than rendering a plausible, incomplete tree.
+    """
+    root = _workspace(tmp_path)
+    for entry in ENTRIES:
+        _write_loss(root, "v0", entry)
+        _write_loss(root, "v0", entry, replicate=1000)
+        _write_loss(root, "v0", entry, replicate=2000)
+        _write_loss(root, "v0", entry, replicate=5000)
+        _write_loss(root, "v0", entry, replicate=7000)
+        _write_loss(root, "v1", entry)
+        _write_loss(root, "v1", entry, replicate=4000)
+        # A superseded attempt is provenance, never a draw of either kind.
+        _write_loss(
+            root, "v1", entry, path=_loss_path(root, "v1", entry, 0).with_name("loss.a1.json")
+        )
+    _complete_round(root)
+    _write_loss(root, "v0-screen-r0c1", "login", replicate=3000)
+
+    on_disk = _loss_files_on_disk(root)
+
+    assert len(on_disk) == 15  # 2 entries x 7 slots, plus the one screen draw
+    assert _files_the_plan_names(root) == on_disk
 
 
 # ---------------------------------------------------------------------------
