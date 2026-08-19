@@ -18,8 +18,8 @@ The baseline and final ratchet use the same metric:
 
 | Measurement | Baseline (`f9052dd`) | Current limit | Net reduction |
 |---|---:|---:|---:|
-| Total | 408,547 | 419,971 | -11,424 |
-| Production | 197,588 | 202,271 | -4,683 |
+| Total | 408,547 | 420,410 | -11,863 |
+| Production | 197,588 | 202,421 | -4,833 |
 
 The earlier raw count of 425,755 included lockfiles and generated artifacts and
 is retained in `.line-budget.json` for provenance; it is not the enforced
@@ -83,3 +83,5 @@ increase.
 | Process-identity reaping of in-flight records (production) | 202,101 | +77 | 202,178 | Issue #270: the lock-derived host-locality proof and the per-record identity check the tally composes with the staleness window. |
 | Replicate-aware judge repair (total) | 419,737 | +234 | 419,971 | Issue #265: the shared slot walk with its records/evidence split, per-slot transcript pairing, and the idempotence and outcome-count regressions. |
 | Replicate-aware judge repair (production) | 202,178 | +93 | 202,271 | Issue #265: persisted_loss_slots beside the evidence walk and the per-slot repair loop with honest outcome counts. |
+| Calibration phase and progress (total) | 419,971 | +439 | 420,410 | Issue #175: the calibrating phase with draw progress, the epoch-open pipeline step, the cost line, and the phase/render regressions. |
+| Calibration phase and progress (production) | 202,271 | +150 | 202,421 | Issue #175: the beater threading, the on_draw seam, the epoch-open projection, and its two renderers. |
