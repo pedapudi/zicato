@@ -11,7 +11,9 @@ each link in that chain end-to-end.
 from __future__ import annotations
 
 import json
+import re
 import sqlite3
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -357,23 +359,81 @@ def test_judge_loss_query_helpers_aggregate_across_runs_and_generations(
 # ---------------------------------------------------------------------------
 
 
+def _write_judge_scoring(ws: Path, epoch_id: str) -> None:
+    """Give the epoch a non-default weighting for the "quality" judge.
+
+    A warning fires at severity weight 3.0 and the judge's own weight is
+    4.0, so one firing is raw_loss 3.0 / weighted_loss 12.0. The repair
+    re-reads scoring.json per epoch, so this is what its re-derivation
+    must reproduce.
+    """
+    scoring_path(ws, epoch_id).write_text(
+        json.dumps(
+            {
+                "drift_weight": 1.0,
+                "pass_weight": 1.0,
+                "severity_weights": {"info": 1.0, "warning": 3.0, "critical": 10.0},
+                "per_judge_weights": {"quality": 4.0},
+                "plan_revision_weight": 0.5,
+                "runtime_weight": 0.0,
+                "promote_margin": 0.01,
+                "pass_rate_monotonicity": True,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+
+def _unattributed_profile(epoch_id: str, run_id: str) -> LossProfile:
+    """A loss profile carrying neither drift_counts nor per_judge_loss."""
+    return LossProfile(
+        run_id=run_id,
+        entry_id="e1",
+        generation_id="v0",
+        epoch_id=epoch_id,
+        drift_counts=(),
+        plan_revisions=0,
+        task_failure_ratio=0.0,
+        runtime_ms=10,
+        wall_clock_budget_exceeded=False,
+        expectation_result=None,
+        drift_loss=0.0,
+        pass_fail=None,
+        per_judge_loss=(),
+    )
+
+
+def _judge_drift_events(judge_name: str, firings: int) -> list[dict]:
+    """``firings`` warning-severity drift events attributed to one judge."""
+    return [
+        {
+            "event_id": f"d{seq}",
+            "run_id": "run-slot",
+            "sequence": seq,
+            "drift_detected": {
+                "kind": f"custom:{judge_name}",
+                "severity": "DRIFT_SEVERITY_WARNING",
+            },
+        }
+        for seq in range(firings)
+    ]
+
+
+def _summary_counts(output: str) -> dict[str, tuple[int, int]]:
+    """Parse the repair summary into ``outcome -> (canonical, replicate)``."""
+    counts: dict[str, tuple[int, int]] = {}
+    for line in output.splitlines():
+        match = re.match(r"\s+(.+?)\s{2,}\d+\s+\(canonical (\d+), replicate (\d+)\)$", line)
+        if match:
+            counts[match.group(1)] = (int(match.group(2)), int(match.group(3)))
+    return counts
+
+
 def test_repair_judge_losses_subcommand_backfills_idempotently(tmp_path: Path) -> None:
     """repair-judge-losses rewrites loss.json with populated per_judge_loss
     and is idempotent across re-runs."""
     ws, epoch_id = _build_min_workspace(tmp_path)
-    # Override the epoch's scoring.json so the repair picks up a non-default
-    # weighting for the judge. The repair re-reads scoring.json for the epoch.
-    scoring_payload = {
-        "drift_weight": 1.0,
-        "pass_weight": 1.0,
-        "severity_weights": {"info": 1.0, "warning": 3.0, "critical": 10.0},
-        "per_judge_weights": {"quality": 4.0},
-        "plan_revision_weight": 0.5,
-        "runtime_weight": 0.0,
-        "promote_margin": 0.01,
-        "pass_rate_monotonicity": True,
-    }
-    scoring_path(ws, epoch_id).write_text(json.dumps(scoring_payload), encoding="utf-8")
+    _write_judge_scoring(ws, epoch_id)
     # Seed a loss.json carrying drift_counts attributed to "quality" but
     # an empty per_judge_loss field (the pre-fix shape).
     stale = LossProfile(
@@ -414,6 +474,77 @@ def test_repair_judge_losses_subcommand_backfills_idempotently(tmp_path: Path) -
     assert second.exit_code == 0
     after_second = (loss_profile_path(ws, epoch_id, "v0", "e1")).read_text(encoding="utf-8")
     assert before_second == after_second
+
+
+def test_repair_judge_losses_repairs_every_replicate_slot(tmp_path: Path) -> None:
+    """The repair covers every persisted loss slot a run directory holds, and
+    attributes each one from its OWN replicate-keyed events transcript."""
+    ws, epoch_id = _build_min_workspace(tmp_path)
+    _write_judge_scoring(ws, epoch_id)
+    run_dir = loss_profile_path(ws, epoch_id, "v0", "e1").parent
+    # The canonical duel slot, a further duel replicate, and a draw from the
+    # A/A calibration band — each with a different number of judge firings on
+    # its own transcript, so a slot attributed from another slot's events
+    # lands on the wrong numbers rather than passing by coincidence.
+    slots = (
+        ("loss.json", "events.jsonl", 1),
+        ("loss.r1.json", "events.r1.jsonl", 2),
+        ("loss.r1000.json", "events.r1000.jsonl", 3),
+    )
+    for loss_name, events_name, firings in slots:
+        write_loss_profile(_unattributed_profile(epoch_id, loss_name), run_dir / loss_name)
+        _write_events_jsonl(run_dir / events_name, _judge_drift_events("quality", firings))
+    # An attempt sibling records a superseded execution: never a scoring slot,
+    # so the repair must leave it exactly as it found it.
+    attempt = run_dir / "loss.a1.json"
+    write_loss_profile(_unattributed_profile(epoch_id, "attempt"), attempt)
+    attempt_before = attempt.read_text(encoding="utf-8")
+
+    result = CliRunner().invoke(repair_judge_losses_cmd, ["--workspace", str(ws)])
+    assert result.exit_code == 0, result.output
+
+    for loss_name, _events_name, firings in slots:
+        rows = read_loss_profile(run_dir / loss_name).per_judge_loss
+        assert [row.judge_name for row in rows] == ["quality"], loss_name
+        assert rows[0].raw_loss == pytest.approx(3.0 * firings), loss_name
+        assert rows[0].weight == pytest.approx(4.0), loss_name
+        assert rows[0].weighted_loss == pytest.approx(12.0 * firings), loss_name
+    assert attempt.read_text(encoding="utf-8") == attempt_before
+    assert _summary_counts(result.output)["repaired"] == (1, 2)
+
+
+def test_repair_judge_losses_reports_slots_it_cannot_re_derive(tmp_path: Path) -> None:
+    """A slot with neither drift counts nor a paired transcript is reported
+    with its reason, not silently skipped, and the pass still exits 0."""
+    ws, epoch_id = _build_min_workspace(tmp_path)
+    _write_judge_scoring(ws, epoch_id)
+    run_dir = loss_profile_path(ws, epoch_id, "v0", "e1").parent
+    # The canonical slot already carries the attribution its counts imply.
+    populated = replace(
+        _unattributed_profile(epoch_id, "run_canonical"),
+        drift_counts=(DriftCount(kind="custom:quality", severity="warning", count=2),),
+        per_judge_loss=(
+            JudgeLoss(judge_name="quality", raw_loss=6.0, weight=4.0, weighted_loss=24.0),
+        ),
+    )
+    write_loss_profile(populated, run_dir / "loss.json")
+    # A replicate slot from a workspace written before the events transcript
+    # was replicate-keyed: no events.r1.jsonl exists, and none ever will.
+    replicate = run_dir / "loss.r1.json"
+    write_loss_profile(_unattributed_profile(epoch_id, "run_replicate"), replicate)
+    replicate_before = replicate.read_text(encoding="utf-8")
+
+    result = CliRunner().invoke(repair_judge_losses_cmd, ["--workspace", str(ws)])
+    assert result.exit_code == 0, result.output
+
+    counts = _summary_counts(result.output)
+    assert counts["already populated"] == (1, 0)
+    assert counts["no drift counts and no events transcript"] == (0, 1)
+    assert counts["repaired"] == (0, 0)
+    # Both slots are untouched: the populated one already agreed, the other
+    # had nothing to re-derive from.
+    assert replicate.read_text(encoding="utf-8") == replicate_before
+    assert read_loss_profile(run_dir / "loss.json").per_judge_loss == populated.per_judge_loss
 
 
 # ---------------------------------------------------------------------------

@@ -10,7 +10,9 @@ structure-agnostic cache:
 * the per-replicate ``loss.json`` path mapping (:func:`_unit_loss_path`)
   and its inverse, the reserved-base filter that says which persisted
   slots are draws of the generation's OWN code over the real board
-  (:func:`is_own_code_board_draw`, :func:`own_code_board_draws`);
+  (:func:`is_own_code_board_draw`, :func:`own_code_board_draws`) beside
+  the unfiltered records walk maintenance passes need
+  (:func:`persisted_loss_slots`);
 * the read/write of a cached unit (:func:`_resolve_cached_unit`,
   :func:`_persist_unit_loss`);
 * the budget-skip synthesis that records an un-run unit as a
@@ -41,6 +43,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -205,6 +208,28 @@ def is_own_code_board_draw(replicate_index: int) -> bool:
     return 4000 <= replicate_index <= 6999
 
 
+def _loss_slots(run_dir: Path, keep: Callable[[int], bool]) -> list[tuple[int, Path]]:
+    """The persisted loss slots of ONE run dir that ``keep`` admits, ascending.
+
+    THE filename walk of a run directory: ``loss.json`` → replicate 0,
+    ``loss.r{n}.json`` → replicate ``n``. An attempt sibling
+    (``loss.a1.json``, ``loss.r2.a1.json``) matches neither form, so a
+    superseded execution is excluded by construction for every caller.
+    """
+    found: list[tuple[int, Path]] = []
+    canonical = run_dir / "loss.json"
+    if canonical.exists() and keep(0):
+        found.append((0, canonical))
+    if run_dir.is_dir():
+        for path in run_dir.iterdir():
+            match = _LOSS_REPLICATE_RE.match(path.name)
+            if match:
+                index = int(match.group(1))
+                if keep(index):
+                    found.append((index, path))
+    return sorted(found)
+
+
 def own_code_board_draws(run_dir: Path) -> list[tuple[int, Path]]:
     """Every persisted own-code full-board loss slot under ONE run dir, ascending.
 
@@ -214,18 +239,30 @@ def own_code_board_draws(run_dir: Path) -> list[tuple[int, Path]]:
     re-deriving the base ledger — and cannot pick up a degraded pre-flight
     probe cached beside the real draws.
     """
-    found: list[tuple[int, Path]] = []
-    canonical = run_dir / "loss.json"
-    if canonical.exists():
-        found.append((0, canonical))
-    if run_dir.is_dir():
-        for path in run_dir.iterdir():
-            match = _LOSS_REPLICATE_RE.match(path.name)
-            if match:
-                index = int(match.group(1))
-                if is_own_code_board_draw(index):
-                    found.append((index, path))
-    return sorted(found)
+    return _loss_slots(run_dir, is_own_code_board_draw)
+
+
+def persisted_loss_slots(run_dir: Path) -> list[tuple[int, Path]]:
+    """Every persisted loss slot under ONE run dir, ascending — records, not evidence.
+
+    The unfiltered twin of :func:`own_code_board_draws`, and the two answer
+    different questions of the same directory.
+
+    :func:`own_code_board_draws` is an EVIDENCE read: it admits only the
+    bands whose draws are that generation's own code over the real board, so
+    a deliberately-degraded pre-flight probe cached beside the real draws can
+    never reach a reader as champion behaviour. Anything that asks "what did
+    this generation do" belongs there.
+
+    This walk is a RECORDS pass: it names every slot a maintenance command
+    must keep internally consistent, refused bands included, because a
+    persisted profile whose fields disagree with its own drift counts is a
+    wrong record no matter which owner wrote it. It carries no claim about
+    what the draws measured, so it must never stand in for the evidence
+    filter. Attempt siblings stay excluded either way — they record
+    executions that were superseded, not slots.
+    """
+    return _loss_slots(run_dir, lambda _index: True)
 
 
 #: ``format_version`` stamped onto every persisted ``result.json``. Readers
@@ -1176,7 +1213,10 @@ __all__ = [
     "_skipped_unit_loss",
     "_unit_loss_path",
     "archive_outgoing_unit_loss",
+    "is_own_code_board_draw",
     "is_unit_attempt_slot",
+    "own_code_board_draws",
+    "persisted_loss_slots",
     "any_unit_transcript",
     "read_run_result",
     "read_unit_loss_history",

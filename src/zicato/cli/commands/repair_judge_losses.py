@@ -7,32 +7,47 @@ they carry the aggregate ``drift_loss`` correctly but leave
 the analyzer report shows the no-judge-fired notice even when custom
 judges fired during the run.
 
-The command walks every run under every epoch of the workspace,
-re-derives ``per_judge_loss`` by replaying the run's ``events.jsonl``
-through the reducer's per-judge attribution path, rewrites the
-``loss.json`` with the populated field, and re-ingests the updated
-profile into the analytical index so ``judge_losses`` rows land
-without needing a full ``zicato repair index``.
+The command walks every run under every epoch and repairs EVERY
+persisted loss slot each run directory holds — the canonical
+``loss.json`` and each replicate sibling ``loss.r{n}.json``
+(:func:`zicato.tournament.unit_cache.persisted_loss_slots`). A
+replicated unit keeps most of its records in the r>0 slots, so a pass
+resolving only the canonical file would report success while leaving
+those profiles unattributed forever. Each slot is re-derived from its
+OWN records and never another replicate's, at the epoch's own
+``scoring.json`` weighting, and is left byte-for-byte unchanged when it
+already agrees.
 
-The repair is idempotent — running it twice on a workspace whose
-loss.json already carries ``per_judge_loss`` is a no-op (the
-re-derivation reproduces the same values). Reads ``scoring.json``
-for each epoch so the per-judge weighting matches what would have
-landed had the original reducer run produced the field.
+Slots the reserved-base ledger refuses as EVIDENCE — the contract
+pre-flight's degraded probes, the candidate screen's panel-subset draws
+— are repaired too: this is a consistency pass over persisted records,
+not a read of what a generation did, and a profile whose
+``per_judge_loss`` disagrees with its own drift counts is a wrong record
+whichever owner wrote it. Attempt siblings (``loss.a{n}.json``) are
+never touched; they record executions that were superseded.
+
+Scope boundary: the repair fixes the ON-DISK records. The analytical
+index is a projection of canonical slots only
+(:func:`zicato.index.ingest.ingest_run` resolves ``loss.json``), so a
+run's ``judge_losses`` rows come from replicate 0; a repaired r>0 slot
+is correct on disk and carries no index row by design. Each run whose
+canonical profile is readable is re-ingested so those rows land without
+needing a full ``zicato repair index``.
 """
 
 from __future__ import annotations
 
 import json
 from collections import Counter
+from dataclasses import replace
 from pathlib import Path
+from typing import Literal, get_args
 
 import click
 
 from zicato.core import normalize_wire_drift_kind, normalize_wire_severity
 from zicato.core.types import DriftCount, ScoringWeights
 from zicato.core.workspace import (
-    events_jsonl_path,
     loss_profile_path,
     scoring_path,
 )
@@ -42,6 +57,7 @@ from zicato.telemetry.reducer import (
     read_loss_profile,
     write_loss_profile,
 )
+from zicato.tournament.unit_cache import persisted_loss_slots, unit_events_path
 from zicato.workspace import WorkspaceLayout, list_epoch_ids
 from zicato.workspace_loader import scoring_weights_from_dict
 
@@ -147,50 +163,61 @@ def _iter_runs(workspace_root: Path) -> list[tuple[str, str, str]]:
     return out
 
 
-def _rederive_per_judge_loss(
-    workspace_root: Path,
-    epoch_id: str,
-    generation_id: str,
-    entry_id: str,
-    weights: ScoringWeights,
-) -> bool:
-    """Re-derive ``per_judge_loss`` for one run and write it back.
+#: What the repair did to ONE persisted loss slot. Every slot lands in
+#: exactly one of these, and the command's summary reports all five — a
+#: pass that cannot re-derive a slot must say so rather than fold it into
+#: a silent skip, because "nothing happened here" and "this slot is beyond
+#: repair" call for different operator action.
+_SlotOutcome = Literal[
+    "repaired",
+    "already populated",
+    "no per-judge drift on record",
+    "no drift counts and no events transcript",
+    "unreadable loss profile",
+]
 
-    Returns ``True`` when the run's ``loss.json`` was rewritten (any
-    re-derivation, even one that produced the same tuple, counts as a
-    write so the file's serialised form is canonical). Returns
-    ``False`` when there is nothing to repair — no ``loss.json``
-    landed for the run, or the file could not be parsed.
+#: Summary order, taken from :data:`_SlotOutcome`'s own declaration order so
+#: the reported rows cannot drift from the outcomes a slot can land in: what
+#: was fixed, then what needed nothing, then what could not be fixed.
+_OUTCOME_ORDER: tuple[_SlotOutcome, ...] = get_args(_SlotOutcome)
 
-    The re-derivation uses the run's already-bucketed
-    :attr:`LossProfile.drift_counts` rather than re-walking
-    ``events.jsonl`` because the reducer's per-judge attribution
-    pipeline is keyed on the ``custom:<judge_name>`` drift kind that
-    already lives on those counts — same path
-    :func:`zicato.telemetry.reducer.compute_per_judge_loss` operates on.
-    When the persisted profile has no drift_counts (the loss profile
-    predated the metric_counts surface entirely), we additionally
-    rebuild drift_counts from the events JSONL so the per-judge view
-    is not silently empty.
+
+def _repair_slot(loss_path: Path, weights: ScoringWeights) -> _SlotOutcome:
+    """Re-derive ``per_judge_loss`` for ONE persisted loss slot and write it back.
+
+    Writes the file only when the re-derived attribution differs from the
+    persisted one, so a slot that is already correct is left byte-for-byte
+    unchanged and the pass is idempotent by construction.
+
+    The attribution is derived from the slot's already-bucketed
+    :attr:`LossProfile.drift_counts`, which carry the ``custom:<judge_name>``
+    drift kind :func:`zicato.telemetry.reducer.compute_per_judge_loss` is
+    keyed on. A profile written with no drift_counts at all (one predating
+    the metric surface, or an older reducer crash) falls back to re-tallying
+    THIS slot's own transcript
+    (:func:`zicato.tournament.unit_cache.unit_events_path`): replicate 0
+    reads ``events.jsonl`` and replicate ``n`` reads ``events.r{n}.jsonl``,
+    so a replicate is never attributed from another replicate's drift. Only
+    ``per_judge_loss`` is written back — a drift_counts tuple rebuilt from
+    the transcript feeds the attribution and is not itself persisted, so the
+    repair never invents counts the reducer did not record.
+
+    A slot with neither source is reported as such, not skipped: a workspace
+    written before the transcript was replicate-keyed has no
+    ``events.r{n}.jsonl`` for its r>0 slots, and those stay unrepairable
+    however often the pass runs.
     """
-    lpath = loss_profile_path(workspace_root, epoch_id, generation_id, entry_id)
-    if not lpath.exists():
-        return False
     try:
-        profile = read_loss_profile(lpath)
+        profile = read_loss_profile(loss_path)
     except (OSError, ValueError, KeyError, json.JSONDecodeError):
-        return False
+        return "unreadable loss profile"
 
     drift_counts: tuple[DriftCount, ...] = profile.drift_counts
     if not drift_counts:
-        # Fall back to re-tallying events.jsonl so a run whose loss
-        # profile was written without drift_counts (an older reducer
-        # crash, or a hand-rolled fixture) still surfaces per-judge
-        # attribution. This repair owns its own tolerant event walker
-        # (the analytical index no longer re-tallies events — it is a
-        # pure projection of loss.json).
-        epath = events_jsonl_path(workspace_root, epoch_id, generation_id, entry_id)
-        tally = _drift_counts_from_events(epath)
+        events_path = unit_events_path(loss_path)
+        if not events_path.exists():
+            return "no drift counts and no events transcript"
+        tally = _drift_counts_from_events(events_path)
         if tally:
             drift_counts = tuple(
                 DriftCount(kind=kind, severity=sev, count=count)  # type: ignore[arg-type]
@@ -198,19 +225,15 @@ def _rederive_per_judge_loss(
             )
 
     per_judge_loss = compute_per_judge_loss(drift_counts, weights)
-    # Re-write even when the new tuple equals the old one — the file's
-    # serialised form is now canonical and the index re-ingest below
-    # picks up the on-disk shape.
-    from dataclasses import replace  # noqa: PLC0415
-
-    new_profile = replace(profile, per_judge_loss=per_judge_loss)
-    write_loss_profile(new_profile, lpath)
-    return True
+    if per_judge_loss == profile.per_judge_loss:
+        return "already populated" if per_judge_loss else "no per-judge drift on record"
+    write_loss_profile(replace(profile, per_judge_loss=per_judge_loss), loss_path)
+    return "repaired"
 
 
 @click.command(
     name="repair-judge-losses",
-    short_help="Advanced: backfill per_judge_loss into existing loss.json files.",
+    short_help="Advanced: backfill per_judge_loss into every persisted loss slot.",
 )
 @click.option(
     "--workspace",
@@ -223,49 +246,79 @@ def _rederive_per_judge_loss(
     default=True,
     show_default=True,
     help=(
-        "Re-ingest each rewritten run into index.db so the judge_losses "
-        "table is populated without a full `zicato repair index`."
+        "Re-ingest each run whose canonical loss.json is readable into "
+        "index.db so the judge_losses table is populated without a full "
+        "`zicato repair index`."
     ),
 )
 def repair_judge_losses_cmd(workspace: str, reingest: bool) -> None:
     """Advanced: backfill per_judge_loss into existing runs.
 
-    Off the happy path. Walks every run on disk, re-derives the
-    per-judge weighted-loss attribution from the run's drift_counts
-    (and, for runs whose profile predated drift_counts entirely, from
-    the events JSONL), and rewrites loss.json with the populated
-    `per_judge_loss` field. Idempotent: re-running produces the same
-    files. By default each rewritten run is re-ingested into the
-    analytical index so `judge_losses` rows land immediately.
+    Off the happy path. Walks every run directory on disk and repairs
+    every persisted loss slot it holds — the canonical loss.json and
+    each replicate sibling loss.r{n}.json, degraded measurement bands
+    included, attempt siblings never. Each slot's per-judge
+    weighted-loss attribution is re-derived from its own drift_counts,
+    falling back to its own replicate-keyed events transcript, and
+    written back. Idempotent: a slot that already agrees is left
+    unchanged.
+
+    The summary counts every slot by what happened to it, canonical and
+    replicate separately, including the slots that could not be
+    re-derived because neither source survives.
+
+    Scope: this repairs the on-disk records. The analytical index
+    projects canonical slots only, so `judge_losses` rows come from
+    replicate 0; a repaired replicate slot is correct on disk and
+    carries no index row by design. Each run with a readable canonical
+    profile is re-ingested by default.
     """
     ws = Path(workspace).resolve()
-    runs = _iter_runs(ws)
-    rewrote = 0
-    skipped = 0
     weights_cache: dict[str, ScoringWeights] = {}
-    for epoch_id, generation_id, entry_id in runs:
+    # outcome -> (canonical slots, replicate slots)
+    tally: dict[_SlotOutcome, list[int]] = {name: [0, 0] for name in _OUTCOME_ORDER}
+    run_dirs = 0
+    for epoch_id, generation_id, entry_id in _iter_runs(ws):
         if epoch_id not in weights_cache:
             weights_cache[epoch_id] = _load_scoring_for_epoch(ws, epoch_id)
         weights = weights_cache[epoch_id]
-        wrote = _rederive_per_judge_loss(ws, epoch_id, generation_id, entry_id, weights)
-        if wrote:
-            rewrote += 1
-            if reingest:
-                try:
-                    ingest_run(ws, None, epoch_id, generation_id, entry_id)
-                except Exception as exc:  # noqa: BLE001 — best-effort repair
-                    click.echo(
-                        f"  warning: re-ingest of "
-                        f"{epoch_id}/{generation_id}/{entry_id} failed: {exc}",
-                        err=True,
-                    )
-        else:
-            skipped += 1
+        run_dir = loss_profile_path(ws, epoch_id, generation_id, entry_id).parent
+        slots = persisted_loss_slots(run_dir)
+        if not slots:
+            continue
+        run_dirs += 1
+        canonical_readable = False
+        for replicate_index, loss_path in slots:
+            outcome = _repair_slot(loss_path, weights)
+            tally[outcome][0 if replicate_index == 0 else 1] += 1
+            if replicate_index == 0 and outcome != "unreadable loss profile":
+                canonical_readable = True
+        # The index is a projection of the canonical slot, so the re-ingest
+        # is per RUN and unconditional on whether this pass changed the
+        # file: a workspace whose loss.json was already populated but whose
+        # judge_losses rows never landed is exactly what --reingest is for.
+        if reingest and canonical_readable:
+            try:
+                ingest_run(ws, None, epoch_id, generation_id, entry_id)
+            except Exception as exc:  # noqa: BLE001 — best-effort repair
+                click.echo(
+                    f"  warning: re-ingest of "
+                    f"{epoch_id}/{generation_id}/{entry_id} failed: {exc}",
+                    err=True,
+                )
+    total = sum(sum(pair) for pair in tally.values())
     click.echo(
-        f"Repaired per-judge loss in {rewrote} run "
-        f"{'profile' if rewrote == 1 else 'profiles'} under {ws} "
-        f"({skipped} skipped — no loss.json or unreadable)."
+        f"Per-judge loss repair under {ws}: "
+        f"{total} loss {'slot' if total == 1 else 'slots'} in "
+        f"{run_dirs} run {'directory' if run_dirs == 1 else 'directories'}."
     )
+    width = max(len(name) for name in _OUTCOME_ORDER)
+    for name in _OUTCOME_ORDER:
+        canonical, replicate = tally[name]
+        click.echo(
+            f"  {name:<{width}}  {canonical + replicate:>5}  "
+            f"(canonical {canonical}, replicate {replicate})"
+        )
 
 
 __all__ = ["repair_judge_losses_cmd"]
