@@ -161,7 +161,7 @@ def test_scoring_pins_the_transcript_dialect() -> None:
     """
     scoring = json.loads((EXAMPLE_DIR / "scoring.json").read_text())
     assert scoring["telemetry_dialect"] == "transcript"
-    assert scoring["drift_weight"] == 1.0
+    assert scoring["pass_weight"] == 1.0
     assert scoring["plan_revision_weight"] == 0.5
     assert scoring.get("per_kind_weights", {}) == {}
 

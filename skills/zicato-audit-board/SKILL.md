@@ -244,7 +244,8 @@ for g in "$RUNS"/*/gen_score.json; do
 done | sort -n | awk -F'\t' '{printf "%s  scalar=%s  %s  %s  %s\n",$2,$1,$3,$4,$5}'
 # RED FLAG: the higher-pass-rate generation has the WORSE (larger) scalar
 # because `drift` dominates — the board ranks by drift, not the metric you want.
-# Fix in zicato-tune-scoring (drift_weight / pass_weight / per_kind_weights).
+# Fix in zicato-tune-scoring (namespace_weights["drift:"] / pass_weight /
+# per_kind_weights).
 ```
 
 **6. Per-judge weighted loss — which judge drove a run's loss.** When a judge

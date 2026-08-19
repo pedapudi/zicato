@@ -379,6 +379,6 @@ def test_scoring_json_loads_into_scoring_weights() -> None:
         d = json.load(f)
     sw = ScoringWeights(**d)
     # Spot-check a couple of fields we know the rubric leans on.
-    assert sw.drift_weight == 1.0
+    assert sw.namespace_weights["drift:"] == 1.0
     assert sw.pass_rate_monotonicity is True
     assert sw.severity_weights["critical"] >= sw.severity_weights["warning"]

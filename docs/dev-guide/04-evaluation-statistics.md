@@ -75,49 +75,50 @@ one place that knows the wire form.
 
 ### 1.1 Seam 1 — the per-run drift-loss formula
 
-The per-run reduction of drift counts + plan revisions + task failures +
-runtime into a single `drift_loss` scalar is **Seam 1**. Its formula lives in
-`src/zicato/scoring/builtins.py::builtin_drift_loss` and is byte-identical to
-what `zicato.telemetry.reducer.compute_drift_loss` historically inlined:
+The per-run reduction of a run's drift EVENTS into a single `drift_loss`
+scalar is **Seam 1**. Its formula lives in
+`src/zicato/scoring/builtins.py::builtin_drift_loss`:
 
 ```python
 # src/zicato/scoring/builtins.py — builtin_drift_loss (core)
     sev_w = weights.severity_weights
     loss = 0.0
     for c in drift_counts:
+        if is_judge_attributed_kind(c.kind):
+            continue
         sev_mult = sev_w.get(c.severity, 0.0)
         kind_mult = _kind_multiplier(c.kind, weights)
         loss += sev_mult * kind_mult * c.count
     loss += weights.plan_revision_weight * plan_revisions
-    loss += _TASK_FAILURE_RATIO_MULTIPLIER * task_failure_ratio
-    loss += weights.runtime_weight * (runtime_ms / 1000.0)
     return max(0.0, float(loss))
 ```
 
 Facts a change here must respect:
 
-- `_TASK_FAILURE_RATIO_MULTIPLIER` is a **pinned constant 10.0**, not a knob.
-  The contract froze it ("pure failures matter"). Operators who want to dampen
-  failures up-weight drift via `severity_weights` / `per_kind_weights` /
-  `per_judge_weights` instead.
-- `_kind_multiplier` splits **first-class drift kinds** (weighted by
-  `per_kind_weights.get(kind, 1.0)`) from **custom-judge kinds** (`custom` /
-  `custom:<judge_name>`, weighted by
-  `per_judge_weights.get(judge_name, weights.default_judge_weight)`). The
-  reducer attributes each custom drift to its authoring judge by folding the
-  paired `JudgementEmitted.judge_name` into the kind string — this is how two
-  distinct process judges weigh independently.
-- The reducer applies two pieces of **reducer policy** *around* this formula,
-  not inside it: the not-completed heavy penalty and the
-  `task_failure_ratio` floor for a run that never completed. Those stay in
-  `telemetry/reducer.py`. Do not move them into the builtin — the builtin is
-  the *inner per-run formula only*, and the worker imports it without importing
-  the reducer.
+- This is the `drift:` CHANNEL, not the run's whole loss. Task failures and
+  the not-completed charge are the `failure:` channel, wall-clock is
+  `runtime:`, and custom judges are `judge:` — each derived from the profile
+  by `LossProfile.unified_metrics` and coefficiented by `namespace_weights`.
+  `builtin_drift_loss` sees `task_failure_ratio` / `runtime_ms` nowhere; the
+  `DriftContext` still carries them so a drift PLUGIN can read the run's
+  outcome.
+- Judge-attributed kinds (`custom` / `custom:<judge_name>`) are SKIPPED here
+  and scored off `LossProfile.per_judge_loss` in the `judge:` channel. The
+  skip and the derivation are one invariant in two places: charging a
+  judge's drift in both channels double-counts it. `per_kind_weights` for
+  the `custom` kind is rejected at contract load for the same reason.
+- `_kind_multiplier` is `per_kind_weights.get(kind, 1.0)` — a first-class
+  kind's multiplier, stacked on the severity weight.
+- The reducer applies one piece of **reducer policy** *around* this formula,
+  not inside it: the `task_failure_ratio` floor to 1.0 for a run that never
+  completed. It stays in `telemetry/reducer.py`. Do not move it into the
+  builtin — the builtin is the *inner per-run formula only*, and the worker
+  imports it without importing the reducer.
 
 ### 1.2 Why the formula has two homes and must stay byte-identical
 
-`builtin_drift_loss` and `builtin_scalar` were **lifted verbatim** out of the
-reducer and `tournament/scoring.py` so that:
+`builtin_drift_loss` and `builtin_scalar` live outside the reducer and
+`tournament/scoring.py` so that:
 
 1. the orchestrator AND the killable worker subprocess import the **same**
    implementation — no drift between the two sites, ever; and
@@ -126,54 +127,49 @@ reducer and `tournament/scoring.py` so that:
    `src/zicato/scoring/api.py`) instead of re-implementing it.
 
 The dependency direction is one-way by construction: `scoring/builtins.py`
-inlines its own copy of the judge-kind split rather than importing the
-reducer, precisely so the worker can import the builtin without pulling the
-reducer's world in. The golden test `tests/test_scoring_seams.py` pins
-byte-identity across a representative corpus.
+owns its own judge-kind test rather than importing the reducer, precisely so
+the worker can import the builtin without pulling the reducer's world in.
+`tests/test_scoring_seams.py` holds a deliberately INDEPENDENT second
+implementation of both formulas and pins the two against each other
+bit-for-bit across a representative corpus.
 
-> ⛔ NEVER change a default scoring behavior by editing
-> `src/zicato/scoring/builtins.py`. The builtins are frozen extraction
-> artifacts; behavior changes ride *on top* via the dispatcher
-> (`src/zicato/scoring/dispatch.py` — declarative transforms in
-> `scoring/transforms.py`, dotted-spec plugins in `scoring/plugins.py`).
-> Editing the builtin breaks the byte-identical guarantee that the golden
-> test, every persisted `loss.json`, and every historical epoch relies on.
+> ⛔ Do not change a default scoring behavior by editing
+> `src/zicato/scoring/builtins.py` alone. An operator-facing shape change
+> rides *on top* via the dispatcher (`src/zicato/scoring/dispatch.py` —
+> declarative transforms in `scoring/transforms.py`, dotted-spec plugins in
+> `scoring/plugins.py`). A genuine change to the COMPOSITION — the kind that
+> rolls every epoch in the wild — must move the builtin, the dispatcher's
+> mirroring path, and the seam test's second implementation together, and
+> must say so in the release note.
 
-### 1.3 Seam 2 — the per-generation scalar, and why dict-then-`sum` is load-bearing
+### 1.3 Seam 2 — the per-generation scalar, and why the sum is sorted
 
-**Seam 2** synthesizes the per-generation scalar. The composition in
-`builtin_scalar` looks redundant — build a dict, then `sum` its values —
-and a well-meaning "simplification" into a running accumulation is exactly
-the wrong move:
+**Seam 2** synthesizes the per-generation scalar: one bounded pass/miss term
+plus every already-weighted channel. The composition in `builtin_scalar`
+looks redundant — build a dict, then `sum` its values — and a well-meaning
+"simplification" into a running accumulation is exactly the wrong move:
 
 ```python
 # src/zicato/scoring/builtins.py — builtin_scalar (core)
-    drift_component = weights.drift_weight * drift_loss_mean
     pass_component = weights.pass_weight * (1.0 - mean_score)
-    scalar_components: dict[str, float] = {
-        "drift": drift_component,
-        "pass": pass_component,
-    }
-    for ns, value in namespace_aggregates.items():
-        if ns == "drift:":
-            continue
+    scalar_components: dict[str, float] = {"pass": pass_component}
+    for ns in sorted(namespace_aggregates):
         component_name = ns[:-1] if ns.endswith(":") else ns
-        scalar_components[component_name] = value
+        scalar_components[component_name] = namespace_aggregates[ns]
     diff_component = diff_complexity_component(weights, diff_size)
     if diff_component is not None:
         scalar_components["diff_complexity"] = diff_component
     return sum(scalar_components.values())
 ```
 
-The module's own docstring states the reason, and it is worth internalizing
-because it generalizes to every float-accumulating surface in zicato:
-
-> The summation reproduces the ORIGINAL term order EXACTLY — drift, pass, then
-> each namespace in `namespace_aggregates` iteration order — because **float
-> addition is not associative**: accumulating the namespaces in a different
-> order can flip the last bit of the result. The dict-then-`sum` shape is
-> therefore load-bearing for the byte-identical guarantee (the golden test
-> pins it), not a stylistic choice.
+The `sorted` is the load-bearing part, and the reason generalizes to every
+float-accumulating surface in zicato: **float addition is not associative**,
+and the namespace key set is assembled from a `set` in
+`aggregate_namespaced_metrics`. Summing in mapping-iteration order would make
+the scalar's last bit depend on the process's hash seed — stable within one
+run and different in the next. Sorting makes the result reproducible; the
+dict-then-`sum` shape keeps the surfaced `scalar_components` and the summed
+value from ever disagreeing.
 
 Concretely: `(a + b) + c != a + (b + c)` for IEEE-754 doubles in general. A
 last-bit flip in the scalar sounds harmless until you remember that (a) the
@@ -185,10 +181,13 @@ manufactures phantom noise.
 
 Three more properties of Seam 2 that any extension must preserve:
 
-- **The `drift:` namespace is excluded from the loop** because the `drift`
-  component already owns the drift contribution — including it would
-  double-count whenever `drift_weight` equals `namespace_weights["drift:"]`
-  (the common back-compat case).
+- **Every namespace is in the loop, drift included.** There is no privileged
+  term and no skip: `aggregate_namespaced_metrics` hands over one
+  already-coefficiented value per channel, and the composition adds them all.
+  The one thing that must never appear twice is a single measurement in two
+  channels — which is why judge-attributed drift is excluded from
+  `drift_loss` and the `drift:` MetricCount mirrors are excluded from the
+  generic namespace walk.
 - **Key collisions collapse to the last writer** (two namespaces stripping to
   the same component name), exactly as the original inline code behaved. This
   is documented, mirrored behavior — not a bug to "fix."
@@ -285,8 +284,8 @@ unit *counts* statistically:
 | `pass_fail is None` | no expectation, or the expectation could not fire (e.g. budget death before the matcher). Excluded from `pass_rate`/`mean_score` numerator AND denominator — never counted as a fail. |
 | `wall_clock_budget_exceeded=True` / `abort_cause == BUDGET_ABORT_CAUSE` | a **deterministic** exhaustion: re-running re-hits the same cap. Cache-eligible (the one cacheable abort cause) and aggregates as a worst-case loss for its side. |
 | `abort_cause` set to anything else (`is_infra_abort_cause`) | an **infra blip** — worker crash, spawn failure, endpoint outage. NOT a measurement of the generation. Never cached as a result; consumers like the screen treat it as *no signal* (it can never veto). |
-| not-completed penalty | any non-success terminal state adds `not_completed_penalty(weights)` = `_NOT_COMPLETED_HEAVY_TERM_FACTOR * max(severity_weights)` to the drift loss (`telemetry/reducer.py`, exposed publicly so the runner's aborted-run synthesiser computes the *identical* magnitude — one source of truth for "what a not-completed run costs"). |
-| `per_judge_loss` | per-judge weighted-loss attribution, aggregated by `_per_judge_loss_aggregate` for plugin/provenance visibility only — the builtin scalar does NOT add it separately (each judge's contribution is already folded into `drift_loss` by the reducer). Adding it again is a double-count. |
+| `not_completed=True` | any non-success terminal state. Charged in the `failure:` channel as `not_completed_weight` (an absolute contract magnitude) on top of `task_failure_weight × task_failure_ratio`, whose ratio is floored to 1.0 for such a run. Both the reducer and the runner's aborted-run synthesiser state the FACTS (`not_completed`, the floored ratio) and let the channel do the arithmetic — so the two paths cannot disagree. |
+| `per_judge_loss` | per-judge weighted-loss attribution. It IS the `judge:` channel — `LossProfile.unified_metrics` derives one `judge:<name>` metric per entry — and it is ALSO carried onto `ScalarContext` by `_per_judge_loss_aggregate` for plugin/provenance visibility. A scalar that adds the context copy on top of the channel double-counts. |
 
 The distinction between the deterministic budget abort and the infra abort is
 load-bearing everywhere a loss is *classified* rather than summed. The
@@ -335,10 +334,10 @@ Rules the dispatch layer enforces that a change must not weaken:
 The whole chain is hand-computable on the target_0 convergence example, and
 you should be able to reproduce this arithmetic before you change anything in
 the chain. From `examples/zicato_examples/target_0_convergence` under its
-contract (`severity_weights.info = 1.0`, `drift_weight = pass_weight = 1.0`,
-`runtime_weight = 0` — the zero runtime weight is load-bearing, because
-per-run wall clock varies and any nonzero weight would break the exact
-floor):
+contract (`severity_weights.info = 1.0`, and the shipped channel defaults —
+`drift:` and `pass_weight` at `1.0`, `runtime:` at `0.0`; the zero runtime
+coefficient is load-bearing, because per-run wall clock varies and any
+nonzero coefficient would break the exact floor):
 
 - the policy carries `tokens` defect tokens; the harness emits one
   `drift_detected` frame at severity `info` per remaining token per run, so
@@ -347,8 +346,10 @@ floor):
 - each known token fails exactly one predicate on the 5-entry board, so
   `mean_score = passes/5` (all-bool board ⇒ equals `pass_rate`
   byte-for-byte);
-- **Seam 2**: every default namespace aggregate is exactly `0.0` (no cost /
-  latency / rubric / schema metrics in this world), so
+- **Seam 2**: every other channel is exactly `0.0` — no cost / latency /
+  rubric / schema metrics in this world, no custom judges, and no run
+  aborts (`failure:` is `0.0` only because every run completes, which is
+  itself part of what the oracle pins) — so
 
   ```
   scalar(tokens, passes) = 1.0·tokens + 1.0·(1 − passes/5)

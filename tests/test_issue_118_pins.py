@@ -67,7 +67,7 @@ def _slice(prefix: str, total: int, failing: int, weights: ScoringWeights) -> di
     return aggregate
 
 
-#: A pass-dominated contract: ``drift_weight == 0`` leaves the scalar equal to
+#: A pass-dominated contract: a zeroed ``drift:`` channel leaves the scalar equal to
 #: the slice's failing fraction, so a slice of N entries moves in 1/N steps.
 def _weights(
     margin: float,
@@ -77,7 +77,7 @@ def _weights(
     holdout_budget: int = 0,
 ) -> ScoringWeights:
     return ScoringWeights(
-        drift_weight=0.0,
+        namespace_weights={"drift:": 0.0, "failure:": 1.0},
         pass_weight=1.0,
         promote_margin=margin,
         holdout_margin=holdout_margin,

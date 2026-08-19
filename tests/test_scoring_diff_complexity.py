@@ -162,13 +162,10 @@ def test_aggregate_byte_identical_when_off() -> None:
 
 def test_builtin_scalar_byte_identical_when_off() -> None:
     weights = ScoringWeights()
-    base = builtin_scalar(
-        mean_score=0.5, drift_loss_mean=2.0, namespace_aggregates={}, weights=weights
-    )
+    base = builtin_scalar(mean_score=0.5, namespace_aggregates={"drift:": 2.0}, weights=weights)
     with_diff = builtin_scalar(
         mean_score=0.5,
-        drift_loss_mean=2.0,
-        namespace_aggregates={},
+        namespace_aggregates={"drift:": 2.0},
         weights=weights,
         diff_size={"added": 50, "removed": 0, "patches": 3},
     )
@@ -202,12 +199,12 @@ def test_component_value_and_scalar_delta_when_weighted() -> None:
 def test_component_appended_last_in_fixed_position() -> None:
     weights = ScoringWeights(
         diff_complexity_weight=0.1,
-        namespace_weights={"drift:": 1.0, "cost:": 1.0},
+        namespace_weights={"drift:": 1.0, "failure:": 1.0, "cost:": 1.0},
     )
     losses = [_loss("e1", drift_loss=1.0)]
     diff = {"added": 2, "removed": 0, "patches": 1}
     on = aggregate_generation_score(losses, weights, diff_size=diff)
-    # diff_complexity is the LAST component key (after drift/pass/namespaces).
+    # diff_complexity is the LAST component key (after pass + every channel).
     assert list(on["scalar_components"].keys())[-1] == "diff_complexity"
 
 

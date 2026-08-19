@@ -96,7 +96,7 @@ def test_all_bool_mean_score_equals_pass_rate_byte_for_byte() -> None:
         _loss("c", drift_loss=1.0, pass_fail=True),
         _loss("d", drift_loss=0.5, pass_fail=None),  # no expectation
     ]
-    weights = ScoringWeights(drift_weight=1.0, pass_weight=2.0)
+    weights = ScoringWeights(pass_weight=2.0)
     agg = aggregate_generation_score(losses, weights)
 
     # 2 of 3 expectation entries passed.
@@ -157,7 +157,7 @@ def test_all_bool_per_entry_pass_to_fail_still_rejects() -> None:
 
 def test_continuous_score_moves_scalar_without_threshold_cross() -> None:
     """0.55 -> 0.70 F1 on one entry lowers the scalar with no pass/fail flip."""
-    weights = ScoringWeights(drift_weight=1.0, pass_weight=2.0)
+    weights = ScoringWeights(pass_weight=2.0)
     before = aggregate_generation_score([_loss("a", score=0.55)], weights)
     after = aggregate_generation_score([_loss("a", score=0.70)], weights)
 
@@ -195,7 +195,7 @@ def test_continuous_score_clamps_and_rejects_nonfinite() -> None:
 
 def test_aggregate_clamps_out_of_range_scores() -> None:
     """entry_score / mean_score clamp out-of-range and non-finite per-entry scores."""
-    weights = ScoringWeights(drift_weight=0.0, pass_weight=1.0)
+    weights = ScoringWeights(namespace_weights={"drift:": 0.0, "failure:": 1.0}, pass_weight=1.0)
     agg = aggregate_generation_score(
         [
             _loss("hi", score=5.0),  # clamps to 1.0

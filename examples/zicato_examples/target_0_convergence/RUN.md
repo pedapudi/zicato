@@ -26,7 +26,7 @@ which also pins the exact per-round scalars and the on-disk artifacts.
   and each known token fails exactly one predicate on the five-entry
   board ([`board.jsonl`](./board.jsonl) / [`predicates.py`](./predicates.py)).
 * With the contract in [`scoring.json`](./scoring.json)
-  (`drift_weight = pass_weight = 1.0`, `runtime_weight = 0` — the zero
+  (the `drift:` channel and `pass_weight` both at `1.0`, `runtime:` at `0` — the zero
   runtime weight is load-bearing: per-run wall-clock varies, so any
   nonzero weight would break the exact floor):
 

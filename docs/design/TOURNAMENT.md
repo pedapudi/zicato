@@ -325,7 +325,9 @@ whether any pass flipped.
 How the per-entry numbers aggregate into the two generation
 scalars — the arithmetic of [SCORING.md §4](SCORING.md#4-per-generation-aggregate-score)
 (`drift_loss_mean` is the unweighted mean over the five entries above;
-defaults `drift_weight = pass_weight = 1.0`), shown:
+defaults `namespace_weights["drift:"] = pass_weight = 1.0`, and no run
+here aborted or carried a custom judge, so the `judge:` and `failure:`
+channels are zero on both sides), shown:
 
 ```
 Scalar breakdown
@@ -333,7 +335,7 @@ Scalar breakdown
                             champion v2     challenger c-r4
   drift_loss_mean              0.836            0.624
   pass_rate                    0.600            1.000
-  drift_weight · drift         0.836            0.624
+  drift: channel               0.836            0.624
   pass_weight · (1-pass_rate)  0.400            0.000
   ───────────────────────     ───────          ───────
   scalar                       1.236            0.624

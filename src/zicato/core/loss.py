@@ -497,14 +497,24 @@ class LossProfile:
     # this field existed, and every freshly-reduced (non-aborted) run, omits
     # it. OUTPUT only — never a contract field, never enters the contract hash.
     abort_cause: str | None = None
+    # WHETHER this run reached a non-success terminal state — killed, crashed,
+    # harness-exception, emulator-leak-aborted, or wall-clock exhausted. It is
+    # the fact the ``failure:not_completed`` channel member scores, so it must
+    # be first-class: :attr:`not_completed_reason` is legitimately ``None`` for
+    # an abort whose adapter supplied no reason, and reading its absence as
+    # "completed" would hand a crashed run the best possible score. ``False``
+    # is the healthy case and the default. OUTPUT only — never a contract
+    # field, never enters the contract hash.
+    not_completed: bool = False
     # Not-completed provenance — WHY the reducer scored this run worst-case
-    # (``run_not_completed``: the heavy fixed penalty plus a
-    # ``task_failure_ratio`` floored to 1.0). The value is the adapter's own
+    # (``run_not_completed``: the ``failure:`` channel's fixed
+    # not-completed magnitude plus a ``task_failure_ratio`` floored to 1.0).
+    # The value is the adapter's own
     # :attr:`RunResult.abort_reason`: ``"harness_exception:{type}"``,
     # ``"unsupported_kind:{kind}"``, an emulator abort, the worker's
-    # wall-clock reason, or a custom adapter string. Without it the penalty
-    # is unattributable — the profile carries a large ``drift_loss`` with an
-    # empty ``drift_counts`` and nothing naming its cause.
+    # wall-clock reason, or a custom adapter string. Without it the charge
+    # is unattributable — the profile carries a large failure-channel term
+    # with an empty ``drift_counts`` and nothing naming its cause.
     #
     # Distinct from :attr:`abort_cause`, which is the CACHE-eligibility
     # signal (:func:`is_infra_abort_cause` reads any non-budget value as an
@@ -547,6 +557,30 @@ class LossProfile:
         (``tokens_spent``, ``output_chars``, ``schema_failures``) so
         downstream consumers see a uniform view regardless of how the
         profile was constructed.
+
+        Three channels are then DERIVED from first-class fields, always and
+        regardless of how the profile was built, so that a synthesised or
+        hand-built profile carries them exactly as a reduced one does:
+
+        * ``judge:<name>`` — one per :attr:`per_judge_loss` entry, carrying
+          that judge's already-per-judge-weighted loss. This is the only
+          route custom judges take into the scalar; their ``drift:custom``
+          mirrors are excluded from the generic namespace aggregation
+          precisely so the two cannot double-count.
+        * ``failure:tasks`` / ``failure:not_completed`` — the run-outcome
+          facts (:attr:`task_failure_ratio`, :attr:`not_completed`). Emitted
+          even at zero so the key set does not depend on whether a run went
+          wrong.
+        * ``runtime:seconds`` — :attr:`runtime_ms` in seconds, kept out of
+          ``latency:`` because that namespace's coefficient is calibrated
+          for millisecond percentiles.
+
+        The derived entries carry the RAW measurement; their contract
+        coefficients (``task_failure_weight`` / ``not_completed_weight``
+        within the channel, ``namespace_weights`` across channels) are
+        applied by :func:`zicato.tournament.scoring.aggregate_namespaced_metrics`.
+        A name already present from ``metric_counts`` wins — the derivation
+        never overwrites a measured entry.
         """
         out: list[MetricCount] = [MetricCount.from_drift_count(dc) for dc in self.drift_counts]
         if self.metric_counts:
@@ -579,6 +613,31 @@ class LossProfile:
                         name="schema:failures", severity="", count=float(self.schema_failures)
                     )
                 )
+
+        # Derived channels — see the docstring. Deduped by NAME (not by
+        # ``(name, severity)``): these are per-run scalars with no severity,
+        # and a measured entry of the same name is authoritative.
+        derived: list[MetricCount] = [
+            MetricCount(name=f"judge:{jl.judge_name}", severity="", count=float(jl.weighted_loss))
+            for jl in self.per_judge_loss
+        ]
+        derived.append(
+            MetricCount(name="failure:tasks", severity="", count=float(self.task_failure_ratio))
+        )
+        derived.append(
+            MetricCount(
+                name="failure:not_completed", severity="", count=1.0 if self.not_completed else 0.0
+            )
+        )
+        derived.append(
+            MetricCount(name="runtime:seconds", severity="", count=self.runtime_ms / 1000.0)
+        )
+        seen_names = {mc.name for mc in out}
+        for mc in derived:
+            if mc.name in seen_names:
+                continue
+            out.append(mc)
+            seen_names.add(mc.name)
         return tuple(out)
 
 

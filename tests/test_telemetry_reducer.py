@@ -29,6 +29,7 @@ from zicato.core import (
 )
 from zicato.telemetry.reducer import (
     compute_drift_loss,
+    compute_per_judge_loss,
     read_loss_profile,
     reduce_loss,
     split_judge_attributed_kind,
@@ -38,6 +39,22 @@ from zicato.telemetry.reducer import (
 # ---------------------------------------------------------------------------
 # Fixture helpers
 # ---------------------------------------------------------------------------
+
+
+def _failure_channel(profile: LossProfile, weights: ScoringWeights) -> float:
+    """One profile's ``failure:`` channel total, before its coefficient.
+
+    Sums the channel's members off the profile's own metric view, so the
+    assertion reads the same data the scalar does rather than restating the
+    arithmetic.
+    """
+    return sum(
+        mc.count
+        * (weights.task_failure_weight if mc.name == "failure:tasks" else 1.0)
+        * (weights.not_completed_weight if mc.name == "failure:not_completed" else 1.0)
+        for mc in profile.unified_metrics()
+        if mc.name.startswith("failure:")
+    )
 
 
 def _write_events_jsonl(path: Path, events: list[dict]) -> None:
@@ -135,17 +152,21 @@ def test_compute_drift_loss_per_kind_multiplier() -> None:
     assert loss == pytest.approx(18.0)
 
 
-def test_compute_drift_loss_task_failure_term() -> None:
-    """task_failure_ratio is multiplied by the fixed 10.0 constant."""
+def test_compute_drift_loss_excludes_the_run_outcome() -> None:
+    """Task failures and wall-clock are NOT drift: the channel is events only.
+
+    Both are carried on the context for a drift plugin to read, and both are
+    scored elsewhere — ``failure:tasks`` and ``runtime:seconds``.
+    """
     weights = _default_weights()
     loss = compute_drift_loss(
         drift_counts=(),
         plan_revisions=0,
-        task_failure_ratio=0.5,
-        runtime_ms=0,
+        task_failure_ratio=1.0,
+        runtime_ms=60_000,
         weights=weights,
     )
-    assert loss == pytest.approx(5.0)
+    assert loss == pytest.approx(0.0)
 
 
 def test_compute_drift_loss_plan_revision_term() -> None:
@@ -161,17 +182,23 @@ def test_compute_drift_loss_plan_revision_term() -> None:
     assert loss == pytest.approx(8.0)
 
 
-def test_compute_drift_loss_runtime_term() -> None:
-    """runtime contributes runtime_weight * runtime_seconds."""
-    weights = ScoringWeights(runtime_weight=0.25)
+def test_compute_drift_loss_excludes_judge_attributed_drift() -> None:
+    """Custom-judge drift is the judge: channel's; the drift channel skips it.
+
+    Charging it here as well would double-count against the ``judge:<name>``
+    metrics :func:`compute_per_judge_loss` feeds.
+    """
+    weights = _default_weights()
     loss = compute_drift_loss(
-        drift_counts=(),
+        drift_counts=(
+            DriftCount(kind="off_topic", severity="warning", count=1),
+            DriftCount(kind="custom:slide_quality", severity="critical", count=1),
+            DriftCount(kind="custom", severity="critical", count=1),
+        ),
         plan_revisions=0,
-        task_failure_ratio=0.0,
-        runtime_ms=4000,
         weights=weights,
     )
-    assert loss == pytest.approx(1.0)
+    assert loss == pytest.approx(3.0)
 
 
 # ---------------------------------------------------------------------------
@@ -314,19 +341,19 @@ def test_reduce_loss_plan_revisions_and_task_ratio(tmp_path: Path) -> None:
     assert profile.plan_revisions == 2
     # 1 failed / 2 started = 0.5
     assert profile.task_failure_ratio == pytest.approx(0.5)
-    # drift_loss: 0 drifts + 0.5*2 (plan_revision_weight) + 10.0*0.5 (failure)
-    assert profile.drift_loss == pytest.approx(1.0 + 5.0)
+    # drift_loss: 0 drifts + 0.5*2 (plan_revision_weight). The failed task
+    # rides the failure: channel, not this one.
+    assert profile.drift_loss == pytest.approx(1.0)
 
 
-def test_reduce_loss_wall_clock_budget_exceeded_heavy_term(tmp_path: Path) -> None:
-    """A budget-exceeded run carries the full not-completed penalty.
+def test_reduce_loss_wall_clock_budget_exceeded_is_not_completed(tmp_path: Path) -> None:
+    """A budget-exceeded run is recorded as not completed, with the task floor.
 
-    ``wall_clock_budget_exceeded`` is one non-success terminal state, so
-    it triggers the same penalty as any other: the heavy fixed term
-    ``not_completed_penalty`` PLUS the floored ``task_failure_ratio`` of
-    1.0 contributing ``_TASK_FAILURE_RATIO_MULTIPLIER`` inside
-    ``compute_drift_loss``. For the default weights that is
-    ``5.0 * 10.0 + 10.0 * 1.0 == 60.0`` over the clean baseline.
+    ``wall_clock_budget_exceeded`` is one non-success terminal state, so it
+    states the same two facts as any other: ``not_completed`` and a
+    ``task_failure_ratio`` floored to 1.0. The charge itself is the
+    ``failure:`` channel's, not the drift channel's, so ``drift_loss`` is
+    unmoved by the abort.
     """
     p = tmp_path / "events.jsonl"
     _write_events_jsonl(p, [])
@@ -352,10 +379,12 @@ def test_reduce_loss_wall_clock_budget_exceeded_heavy_term(tmp_path: Path) -> No
         weights=weights,
     )
     assert busted.wall_clock_budget_exceeded is True
-    # Heavy term 5.0 * max(severity_weights) = 50.0, plus the floored
-    # task_failure_ratio of 1.0 * 10.0 = 10.0 → 60.0 total.
-    assert busted.drift_loss - base.drift_loss == pytest.approx(60.0)
+    assert busted.not_completed is True
+    assert base.not_completed is False
+    assert busted.drift_loss == pytest.approx(base.drift_loss)
     assert busted.task_failure_ratio == pytest.approx(1.0)
+    # not_completed_weight 50.0 + task_failure_weight 10.0 * 1.0 = 60.0.
+    assert _failure_channel(busted, weights) == pytest.approx(60.0)
 
 
 def test_reduce_loss_pass_fail_from_expectation_result(tmp_path: Path) -> None:
@@ -839,26 +868,26 @@ def test_split_judge_attributed_kind_round_trip() -> None:
     assert split_judge_attributed_kind("custom:team:judge") == (True, "team:judge")
 
 
-def test_compute_drift_loss_per_judge_weight_distinct_judges() -> None:
+def _judge_channel(drift_counts, weights: ScoringWeights) -> float:
+    """Total ``judge:`` channel value for a run's drift counts.
+
+    The per-judge split IS the judge channel — each judge's weighted loss
+    becomes one ``judge:<name>`` metric — so summing it is what the scalar
+    sees.
+    """
+    return sum(jl.weighted_loss for jl in compute_per_judge_loss(drift_counts, weights))
+
+
+def test_judge_channel_per_judge_weight_distinct_judges() -> None:
     """Two custom judges with distinct per_judge_weights score independently."""
     weights = ScoringWeights(
         per_judge_weights={"judge_a": 2.0, "judge_b": 5.0},
     )
-    # judge_a: one warning-severity custom drift.
-    loss_a = compute_drift_loss(
-        drift_counts=(DriftCount(kind="custom:judge_a", severity="warning", count=1),),
-        plan_revisions=0,
-        task_failure_ratio=0.0,
-        runtime_ms=0,
-        weights=weights,
+    loss_a = _judge_channel(
+        (DriftCount(kind="custom:judge_a", severity="warning", count=1),), weights
     )
-    # judge_b: one warning-severity custom drift.
-    loss_b = compute_drift_loss(
-        drift_counts=(DriftCount(kind="custom:judge_b", severity="warning", count=1),),
-        plan_revisions=0,
-        task_failure_ratio=0.0,
-        runtime_ms=0,
-        weights=weights,
+    loss_b = _judge_channel(
+        (DriftCount(kind="custom:judge_b", severity="warning", count=1),), weights
     )
     # severity_weights["warning"] == 3.0; per_judge multiplier stacks.
     assert loss_a == pytest.approx(3.0 * 2.0)
@@ -868,74 +897,59 @@ def test_compute_drift_loss_per_judge_weight_distinct_judges() -> None:
     assert loss_a != pytest.approx(loss_b)
 
 
-def test_compute_drift_loss_per_judge_weight_default_for_unknown_judge() -> None:
+def test_judge_channel_per_judge_weight_default_for_unknown_judge() -> None:
     """A custom judge with no per_judge_weights entry uses default_judge_weight."""
     weights = ScoringWeights(
         per_judge_weights={"judge_a": 9.0},
         default_judge_weight=4.0,
     )
-    # judge_unknown is absent from per_judge_weights → default_judge_weight.
-    loss = compute_drift_loss(
-        drift_counts=(DriftCount(kind="custom:judge_unknown", severity="warning", count=1),),
-        plan_revisions=0,
-        task_failure_ratio=0.0,
-        runtime_ms=0,
-        weights=weights,
+    loss = _judge_channel(
+        (DriftCount(kind="custom:judge_unknown", severity="warning", count=1),), weights
     )
     assert loss == pytest.approx(3.0 * 4.0)
 
 
-def test_compute_drift_loss_bare_custom_uses_default_judge_weight() -> None:
+def test_judge_channel_bare_custom_uses_default_judge_weight() -> None:
     """An unattributed bare ``custom`` drift also scores at default_judge_weight."""
     weights = ScoringWeights(default_judge_weight=2.5)
-    loss = compute_drift_loss(
-        drift_counts=(DriftCount(kind="custom", severity="warning", count=1),),
-        plan_revisions=0,
-        task_failure_ratio=0.0,
-        runtime_ms=0,
-        weights=weights,
-    )
+    loss = _judge_channel((DriftCount(kind="custom", severity="warning", count=1),), weights)
     assert loss == pytest.approx(3.0 * 2.5)
 
 
-def test_compute_drift_loss_default_judge_weight_defaults_to_one() -> None:
-    """With no per_judge config, a custom judge weighs the same as an unknown kind."""
+def test_judge_channel_default_judge_weight_defaults_to_one() -> None:
+    """With no per_judge config, a custom judge weighs like an unknown drift kind.
+
+    The two land in DIFFERENT channels now, so the equality is between the
+    judge channel and the drift channel at their default coefficients — which
+    is what makes an unconfigured judge commensurate with a first-class kind.
+    """
     weights = ScoringWeights()  # default_judge_weight == 1.0
-    custom = compute_drift_loss(
-        drift_counts=(DriftCount(kind="custom:some_judge", severity="warning", count=1),),
-        plan_revisions=0,
-        task_failure_ratio=0.0,
-        runtime_ms=0,
-        weights=weights,
+    custom = _judge_channel(
+        (DriftCount(kind="custom:some_judge", severity="warning", count=1),), weights
     )
     first_class = compute_drift_loss(
         drift_counts=(DriftCount(kind="off_topic", severity="warning", count=1),),
         plan_revisions=0,
-        task_failure_ratio=0.0,
-        runtime_ms=0,
         weights=weights,
     )
     assert custom == pytest.approx(first_class)
 
 
-def test_compute_drift_loss_per_kind_and_per_judge_coexist() -> None:
+def test_per_kind_and_per_judge_apply_to_their_own_channels() -> None:
     """per_kind_weights and per_judge_weights apply to their own kinds only."""
     weights = ScoringWeights(
         per_kind_weights={"off_topic": 2.0},
         per_judge_weights={"judge_a": 7.0},
     )
-    loss = compute_drift_loss(
-        drift_counts=(
-            DriftCount(kind="off_topic", severity="warning", count=1),
-            DriftCount(kind="custom:judge_a", severity="warning", count=1),
-        ),
-        plan_revisions=0,
-        task_failure_ratio=0.0,
-        runtime_ms=0,
-        weights=weights,
+    counts = (
+        DriftCount(kind="off_topic", severity="warning", count=1),
+        DriftCount(kind="custom:judge_a", severity="warning", count=1),
     )
-    # off_topic: 3.0 * 2.0 ; custom:judge_a: 3.0 * 7.0
-    assert loss == pytest.approx(3.0 * 2.0 + 3.0 * 7.0)
+    drift = compute_drift_loss(drift_counts=counts, plan_revisions=0, weights=weights)
+    judge = _judge_channel(counts, weights)
+    # off_topic: 3.0 * 2.0 in drift: ; custom:judge_a: 3.0 * 7.0 in judge:
+    assert drift == pytest.approx(3.0 * 2.0)
+    assert judge == pytest.approx(3.0 * 7.0)
 
 
 def test_reduce_loss_attributes_custom_drift_to_paired_judge(tmp_path: Path) -> None:
@@ -964,7 +978,7 @@ def test_reduce_loss_attributes_custom_drift_to_paired_judge(tmp_path: Path) -> 
 
 def test_reduce_loss_two_custom_judges_score_independently(tmp_path: Path) -> None:
     """Two custom judges with distinct judge_names + per_judge_weights produce
-    independent drift_loss contributions."""
+    independent judge-channel contributions."""
     events = [
         _judgement_emitted("judge_a", severity="warning", seq=0),
         _drift_detected(severity="DRIFT_SEVERITY_WARNING", seq=1),
@@ -989,8 +1003,10 @@ def test_reduce_loss_two_custom_judges_score_independently(tmp_path: Path) -> No
         ("custom:judge_a", "warning"): 1,
         ("custom:judge_b", "critical"): 1,
     }
-    # drift_loss: judge_a -> 3.0(warning) * 2.0 ; judge_b -> 10.0(critical) * 5.0
-    assert profile.drift_loss == pytest.approx(3.0 * 2.0 + 10.0 * 5.0)
+    # judge channel: judge_a -> 3.0(warning) * 2.0 ; judge_b -> 10.0(critical) * 5.0.
+    # The drift channel stays empty: every count here is judge-attributed.
+    assert profile.drift_loss == pytest.approx(0.0)
+    assert _judge_channel(profile.drift_counts, weights) == pytest.approx(3.0 * 2.0 + 10.0 * 5.0)
 
 
 def test_reduce_loss_custom_drift_without_judgement_uses_default(tmp_path: Path) -> None:
@@ -1015,8 +1031,9 @@ def test_reduce_loss_custom_drift_without_judgement_uses_default(tmp_path: Path)
     )
     by_key = {(c.kind, c.severity): c.count for c in profile.drift_counts}
     assert by_key == {("custom", "warning"): 1}
-    # drift_loss: 3.0 (warning severity) * 3.0 (default_judge_weight) = 9.0
-    assert profile.drift_loss == pytest.approx(9.0)
+    # judge channel: 3.0 (warning severity) * 3.0 (default_judge_weight) = 9.0
+    assert profile.drift_loss == pytest.approx(0.0)
+    assert _judge_channel(profile.drift_counts, weights) == pytest.approx(9.0)
 
 
 def test_reduce_loss_non_drift_judgement_does_not_attribute(tmp_path: Path) -> None:
@@ -1279,7 +1296,8 @@ def test_reduce_loss_camelcase_judgement_attributes_custom_drift(tmp_path: Path)
     )
     by_key = {(c.kind, c.severity): c.count for c in profile.drift_counts}
     assert by_key == {("custom:slide_quality", "warning"): 1}
-    assert profile.drift_loss > 0.0
+    assert profile.per_judge_loss[0].judge_name == "slide_quality"
+    assert profile.per_judge_loss[0].weighted_loss > 0.0
 
 
 def test_reduce_loss_camelcase_plan_revisions_and_llm_calls(tmp_path: Path) -> None:
@@ -1328,15 +1346,38 @@ def test_reduce_loss_camelcase_plan_revisions_and_llm_calls(tmp_path: Path) -> N
 # ---------------------------------------------------------------------------
 
 
-def test_not_completed_penalty_keyed_off_severity_weights() -> None:
-    """``not_completed_penalty`` is ``5.0 * max(severity_weights)``."""
-    from zicato.telemetry.reducer import not_completed_penalty
+def test_not_completed_charge_is_absolute_not_severity_scaled(tmp_path: Path) -> None:
+    """What a crash costs is ``not_completed_weight``, whatever the severities.
 
-    w = ScoringWeights(severity_weights={"info": 1.0, "warning": 3.0, "critical": 10.0})
-    assert not_completed_penalty(w) == pytest.approx(50.0)
-    # An epoch with no severity weights still gets a non-trivial penalty.
-    w_empty = ScoringWeights(severity_weights={})
-    assert not_completed_penalty(w_empty) == pytest.approx(5.0)
+    The magnitude used to be ``5 x max(severity_weights)``, so retuning the
+    severity scale silently rescaled every abort. It is now an absolute
+    contract field: two contracts with different severity scales charge the
+    same for the same crash.
+    """
+    p = tmp_path / "events.jsonl"
+    _write_events_jsonl(p, [])
+
+    def _charge(weights: ScoringWeights) -> float:
+        profile = reduce_loss(
+            events_jsonl_path=p,
+            entry=_single_turn_entry(),
+            generation_id="v0",
+            epoch_id="ep1",
+            expectation_result=None,
+            runtime_ms=1,
+            wall_clock_budget_exceeded=False,
+            weights=weights,
+            run_not_completed=True,
+        )
+        return _failure_channel(profile, weights)
+
+    mild = ScoringWeights(severity_weights={"info": 0.1, "warning": 0.2, "critical": 0.5})
+    harsh = ScoringWeights(severity_weights={"info": 10.0, "warning": 30.0, "critical": 100.0})
+    assert _charge(mild) == pytest.approx(60.0)
+    assert _charge(harsh) == pytest.approx(60.0)
+    # And the magnitude is the contract's to set.
+    retuned = ScoringWeights(not_completed_weight=5.0)
+    assert _charge(retuned) == pytest.approx(15.0)
 
 
 def test_reduce_loss_run_not_completed_penalises_crashed_run(tmp_path: Path) -> None:
@@ -1361,10 +1402,12 @@ def test_reduce_loss_run_not_completed_penalises_crashed_run(tmp_path: Path) -> 
         weights=weights,
         run_not_completed=True,
     )
-    # Heavy term 50.0 + floored task_failure_ratio 1.0 * 10.0 = 60.0.
-    assert profile.drift_loss == pytest.approx(60.0)
-    assert profile.drift_loss > 0.0
+    # not_completed_weight 50.0 + floored task_failure_ratio 1.0 * 10.0 = 60.0,
+    # all of it in the failure channel: the run emitted no drift at all.
+    assert profile.drift_loss == pytest.approx(0.0)
+    assert profile.not_completed is True
     assert profile.task_failure_ratio == pytest.approx(1.0)
+    assert _failure_channel(profile, weights) == pytest.approx(60.0)
 
 
 def test_reduce_loss_killed_crashed_aborted_all_penalised(tmp_path: Path) -> None:
@@ -1398,13 +1441,13 @@ def test_reduce_loss_killed_crashed_aborted_all_penalised(tmp_path: Path) -> Non
 
     # None of the non-success states score the best-possible 0.0.
     for label, prof in (("killed", killed), ("crashed", crashed), ("both", both)):
-        assert prof.drift_loss > 0.0, f"{label} run scored 0.0 drift_loss"
-    # All non-success states score IDENTICALLY — the penalty is applied
+        assert _failure_channel(prof, weights) > 0.0, f"{label} run cost nothing"
+    # All non-success states score IDENTICALLY — the charge is applied
     # exactly once even when both flags are set.
-    assert killed.drift_loss == pytest.approx(crashed.drift_loss)
-    assert both.drift_loss == pytest.approx(killed.drift_loss)
+    assert _failure_channel(killed, weights) == pytest.approx(_failure_channel(crashed, weights))
+    assert _failure_channel(both, weights) == pytest.approx(_failure_channel(killed, weights))
     # The completed run is the only one that may score 0.0.
-    assert completed.drift_loss == pytest.approx(0.0)
+    assert _failure_channel(completed, weights) == pytest.approx(0.0)
 
 
 def test_reduce_loss_run_not_completed_with_drift_stacks(tmp_path: Path) -> None:
@@ -1430,8 +1473,10 @@ def test_reduce_loss_run_not_completed_with_drift_stacks(tmp_path: Path) -> None
         weights=weights,
         run_not_completed=True,
     )
-    # drift 3.0 (warning) + heavy term 50.0 + task_failure 10.0 = 63.0.
-    assert profile.drift_loss == pytest.approx(63.0)
+    # The drift the run managed to emit is scored in its own channel, and
+    # the abort in the failure channel: 3.0 (warning) + 60.0 = 63.0 together.
+    assert profile.drift_loss == pytest.approx(3.0)
+    assert _failure_channel(profile, weights) == pytest.approx(60.0)
 
 
 def test_reduce_loss_completed_run_unaffected_by_default(tmp_path: Path) -> None:

@@ -70,7 +70,6 @@ def test_promotion_that_breaks_an_entry_names_it_under_aggregate_scope() -> None
     dispute it — but e0 has now failed permanently and nothing says so.
     """
     weights = ScoringWeights(
-        drift_weight=1.0,
         pass_weight=1.0,
         promote_margin=0.01,
         pass_rate_monotonicity_scope="aggregate",
@@ -114,7 +113,7 @@ def test_per_entry_quality_collapse_on_a_still_passing_entry_is_reported() -> No
     The per-entry row already carries ``drift_loss`` on both sides — the
     evidence is in hand and simply unread.
     """
-    weights = ScoringWeights(drift_weight=1.0, pass_weight=1.0, promote_margin=0.01)
+    weights = ScoringWeights(pass_weight=1.0, promote_margin=0.01)
     parent = aggregate_generation_score(
         [
             _loss("e0", passed=True, drift_loss=0.10),

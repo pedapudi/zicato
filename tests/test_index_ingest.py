@@ -170,10 +170,10 @@ def test_rebuild_index_expected_row_counts(tmp_path: Path) -> None:
     assert counts["patches"] == 1
     assert counts["tournaments"] == 1
     # metric_counts is a pure projection of loss.json's metric surface. The
-    # ``_build_workspace`` runs write loss.json with NO drift / metric
-    # surface (and the index no longer re-tallies events.jsonl), so they
-    # contribute zero metric_counts rows.
-    assert counts["metric_counts"] == 0
+    # ``_build_workspace`` runs write loss.json with NO drift / metric surface
+    # (and the index no longer re-tallies events.jsonl), so each contributes
+    # only the three derived run-outcome channels.
+    assert counts["metric_counts"] == 4 * 3
 
 
 def test_rebuild_index_custom_db_path(tmp_path: Path) -> None:
@@ -312,13 +312,18 @@ def test_rebuild_index_metric_counts_are_pure_projection_of_loss_json(
 def test_rebuild_index_no_metric_surface_yields_no_metric_counts(
     tmp_path: Path,
 ) -> None:
-    # A loss.json with no drift / metric surface yields zero metric_counts
-    # rows even when an events.jsonl with drift sits beside it — the index
-    # is a pure projection and never re-tallies events.
+    # A loss.json with no drift / metric surface yields ONLY the derived
+    # run-outcome channels, even when an events.jsonl with drift sits beside
+    # it — the index is a pure projection of the profile and never re-tallies
+    # events.
     ws, eid = _build_workspace(tmp_path)
     db = rebuild_index(ws)
     run_id = f"run_{eid}_v0_e1"
-    assert metric_counts_for_run(db, run_id) == []
+    assert sorted(row["name"] for row in metric_counts_for_run(db, run_id)) == [
+        "failure:not_completed",
+        "failure:tasks",
+        "runtime:seconds",
+    ]
 
 
 def test_rebuild_index_dump_is_idempotent(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

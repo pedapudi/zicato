@@ -410,7 +410,11 @@ def _read_epoch_scoring_weights(paths: WorkspacePaths, epoch_id: str) -> Any:
 
     try:
         return ScoringWeights(**kwargs)
-    except TypeError:
+    except (TypeError, ValueError):
+        # A document this reader cannot turn into a valid contract — a
+        # namespace map the loader rejects, an unknown key — degrades to the
+        # defaults. A reader never raises (DQ3); the live loader is where an
+        # invalid contract must fail.
         return defaults
 
 

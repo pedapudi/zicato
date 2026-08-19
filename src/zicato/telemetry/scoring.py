@@ -20,21 +20,16 @@ across generations: lower is better, by construction.
 
 Custom-judge signal
 -------------------
-A custom judge contributes through ``drift_loss`` like any other
-drift source — it does not get a separate scalar axis. The reducer
-(:func:`zicato.telemetry.reducer.compute_drift_loss`) attributes each
-``custom``-kind drift to its authoring judge by the stable
-``judge_name`` and weights it by
-:attr:`ScoringWeights.per_judge_weights` (falling back to
-:attr:`ScoringWeights.default_judge_weight` for an unconfigured
-judge). By the time a :class:`LossProfile` reaches this module its
-``drift_loss`` already carries the per-judge-weighted custom-judge
-contribution, so :func:`aggregate_generation_score` and
-:func:`combined_scalar` need no custom-judge-specific arithmetic —
-they mean / combine ``drift_loss`` exactly as before.
-``per_judge_weights`` enters the pipeline upstream, in the reducer,
-not here. ``ScoringWeights`` is still threaded through both functions
-unchanged so the call-site surface stays uniform.
+Custom judges are NOT in ``drift_loss``: the reducer
+(:func:`zicato.telemetry.reducer.compute_per_judge_loss`) attributes each
+``custom``-kind drift to its authoring judge by the stable ``judge_name``,
+weights it by :attr:`ScoringWeights.per_judge_weights` (falling back to
+:attr:`ScoringWeights.default_judge_weight` for an unconfigured judge), and
+records the split on the profile, from which it reaches the scalar as the
+``judge:`` channel. The two-axis :func:`combined_scalar` here therefore does
+not see judge signal at all — one of the reasons it is a projection rather
+than the scalar. ``ScoringWeights`` is threaded through both functions so
+the call-site surface stays uniform.
 """
 
 from __future__ import annotations
@@ -99,19 +94,23 @@ def combined_scalar(
 
     Formula::
 
-        score = weights.drift_weight * drift_loss_mean
+        score = namespace_weights["drift:"] * drift_loss_mean
               + weights.pass_weight * (1.0 - pass_rate)
 
     Lower is better. The two terms are additive rather than
     multiplicative so an epoch can zero out one axis (set
     ``pass_weight=0`` to ignore expectations entirely) without
-    obliterating the other. Operators tune
-    :attr:`ScoringWeights.drift_weight` and
-    :attr:`ScoringWeights.pass_weight` per epoch; defaults are equal
-    (1.0 / 1.0) which keeps the two axes commensurate during early
-    dogfood.
+    obliterating the other.
+
+    This is the TWO-AXIS view: drift and pass only. The full composition
+    (:func:`zicato.scoring.builtins.builtin_scalar`) sums every measured
+    channel — judges, failures, runtime, cost, latency, rubric, schema —
+    and needs the per-run metric view this signature does not carry. Use it
+    where only the two aggregate axes are available, and read the two
+    numbers as a projection of the scalar rather than the scalar itself.
     """
-    return weights.drift_weight * drift_loss_mean + weights.pass_weight * (1.0 - pass_rate)
+    drift_weight = weights.namespace_weights.get("drift:", 0.0)
+    return drift_weight * drift_loss_mean + weights.pass_weight * (1.0 - pass_rate)
 
 
 __all__ = ["aggregate_generation_score", "combined_scalar"]

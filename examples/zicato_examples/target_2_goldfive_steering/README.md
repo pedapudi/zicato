@@ -43,7 +43,7 @@ adversarial ground truth**:
 
 Recall, precision, and non-interference are three orthogonal axes; the
 board exercises all three. The scoring weights (`scoring.json`)
-de-emphasize drift_weight relative to pass_weight precisely because
+de-emphasize the `drift:` channel relative to `pass_weight` precisely because
 drift counts are FEATURES, not LOSS, in this target. They feed into
 the scalar so pattern detectors can still surface "drift kind X dropped
 to zero across the board" as a signal — but they no longer drive the

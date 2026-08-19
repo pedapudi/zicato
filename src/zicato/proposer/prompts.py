@@ -431,8 +431,9 @@ class MetricPriorities:
     non-zero, ordered by weight magnitude, highest first.
 
     The channels are PEERS, never one ranking. Drift kinds live inside
-    ``drift_loss_mean`` and are then scaled by ``drift_weight``; the pass term
-    is its own bounded ``pass_weight * (1 - mean_score)``; a namespace
+    ``drift_loss_mean`` and are then scaled by ``namespace_weights["drift:"]``;
+    judges are scaled by ``namespace_weights["judge:"]``; the pass term is its
+    own bounded ``pass_weight * (1 - mean_score)``; every other namespace
     coefficient is calibrated to that namespace's own units (``cost:`` counts
     tokens in the thousands, ``rubric:`` is a quality score with a NEGATIVE
     weight). A single cross-channel ranking would imply a comparability that
@@ -448,19 +449,21 @@ class MetricPriorities:
     judges:
         Declared board judges (board ``JudgeSpec.name`` ∪ ``per_judge_weights``
         keys) at ``per_judge_weights.get(name, default_judge_weight)``, times
-        ``drift_weight`` — a custom judge reports under the ``custom`` drift
-        kind, so ``drift_weight=0.0`` zeroes the whole judge namespace.
+        ``namespace_weights["judge:"]`` — judges are their own channel, so a
+        zeroed ``drift:`` coefficient leaves them ranked.
     drift_kinds:
         Built-in goldfive drift kinds at ``per_kind_weights.get(kind, 1.0)``
-        times ``drift_weight``.
+        times ``namespace_weights["drift:"]``.
     pass_rate_weight:
         ``pass_weight``. Named as a real target: once zero-weight entries are
         dropped, a pass-rate-only contract has an empty target vocabulary but
         still owes a mandatory movement, and the validator accepts
         ``pass_rate`` only because it accepts any unprefixed string.
     namespace_metrics:
-        The separately-scored metric namespaces at
-        ``namespace_weights[namespace]``. Names are DATA-DRIVEN from the
+        The remaining scored metric namespaces — ``failure:``, ``runtime:``,
+        ``cost:``, ``rubric:``, ... — at ``namespace_weights[namespace]``.
+        ``drift:`` and ``judge:`` are excluded because the two channels above
+        already name them per kind and per judge. Names are DATA-DRIVEN from the
         round's own loss profiles (:meth:`~zicato.core.loss.LossProfile
         .unified_metrics`), so a round with no losses yet carries the
         namespace prefixes alone (``cost:``, ``rubric:``) rather than

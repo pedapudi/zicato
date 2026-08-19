@@ -94,7 +94,6 @@ def _runtime_config(tmp_path: Path) -> RuntimeConfig:
 def test_aborted_profile_stamps_abort_cause() -> None:
     """``_aborted_loss_profile`` carries the cause it was handed; ``None`` default."""
     entry = _entry()
-    weights = ScoringWeights()
 
     for cause in ("parent_kill", "gone_no_result", "nonzero_exit:1", BUDGET_ABORT_CAUSE):
         profile = _aborted_loss_profile(
@@ -102,7 +101,6 @@ def test_aborted_profile_stamps_abort_cause() -> None:
             entry=entry,
             generation_id="v0",
             epoch_id="e0",
-            weights=weights,
             runtime_ms=0,
             abort_cause=cause,
         )
@@ -115,7 +113,6 @@ def test_aborted_profile_stamps_abort_cause() -> None:
         entry=entry,
         generation_id="v0",
         epoch_id="e0",
-        weights=weights,
         runtime_ms=0,
     )
     assert default.abort_cause is None

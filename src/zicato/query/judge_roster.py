@@ -62,6 +62,7 @@ def _empty_judge_roster(epoch_id: str | None) -> dict[str, Any]:
         "unmapped_drift_kinds": [],
         "per_judge_weights": {},
         "default_judge_weight": None,
+        "judge_channel_weight": None,
         "scorecards": {},
     }
 
@@ -113,6 +114,12 @@ def build_judge_roster(paths: WorkspacePaths, epoch_id: str | None = None) -> di
     * ``per_judge_weights`` / ``default_judge_weight`` — the frozen
       ``scoring.json`` weights, which key on judge name across BOTH halves
       (a built-in and a custom judge are weighted by the same lookup).
+    * ``judge_channel_weight`` — the contract's ``namespace_weights["judge:"]``
+      coefficient, which every per-judge weight above is multiplied by. It is
+      the difference between retiring ONE judge (its per-judge weight is 0)
+      and retiring the whole channel (this is 0, and no judge scores however
+      it is weighted), so the panel cannot read the roster honestly without
+      it. ``None`` when no frozen scoring document could be read.
     * ``scorecards`` — ``{judge_name: reflection_id}`` for the judges a
       reflection has scored.
 
@@ -170,6 +177,9 @@ def build_judge_roster(paths: WorkspacePaths, epoch_id: str | None = None) -> di
     if isinstance(scoring, dict):
         roster["per_judge_weights"] = coerce_numeric_dict(scoring.get("per_judge_weights"))
         roster["default_judge_weight"] = coerce_float(scoring.get("default_judge_weight"))
+        roster["judge_channel_weight"] = coerce_numeric_dict(scoring.get("namespace_weights")).get(
+            "judge:"
+        )
 
     roster["scorecards"] = _scorecard_reflections(paths, epoch_id)
     return roster

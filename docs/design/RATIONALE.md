@@ -263,7 +263,7 @@ needs.
 **Chosen.** Every board entry carries `wall_clock_budget_seconds`.
 Exceeded → run aborts and contributes a heavy loss term. See
 [BOARD-FORMAT.md §1.2](BOARD-FORMAT.md#12-wall_clock_budget_seconds)
-and [SCORING.md §2.3](SCORING.md#23-why-an-abort-is-a-heavy-constant).
+and [SCORING.md §2.3](SCORING.md#23-the-failure-channel).
 
 **Why.** Drift counts in a 30-second run vs a 4-minute run aren't
 apples-to-apples. The same generation against the same entry can

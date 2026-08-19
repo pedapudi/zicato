@@ -296,46 +296,6 @@ def _payload(event: dict[str, Any]) -> tuple[str | None, dict[str, Any]]:
 # ---------------------------------------------------------------------------
 
 
-# Multiplier on ``task_failure_ratio`` inside :func:`compute_drift_loss`.
-# Spec'd in the contract: "task_failure_ratio (multiplier 10.0 by
-# default — pure failures matter)". Kept as a module-level constant so
-# tests can introspect it and so the value lives somewhere greppable.
-_TASK_FAILURE_RATIO_MULTIPLIER: float = 10.0
-
-# Factor on ``max(severity_weights)`` for the heavy fixed-magnitude
-# not-completed penalty. Any run that did NOT complete successfully —
-# killed, crashed, harness-exception, emulator-leak-aborted, budget
-# exceeded — is scored worst-case by adding ``_NOT_COMPLETED_HEAVY_TERM_FACTOR
-# * max(severity_weights)`` to its drift loss AND flooring its
-# ``task_failure_ratio`` to 1.0. Keying the term off ``severity_weights``
-# keeps the penalty proportionate to the epoch's drift scale; the value
-# 5.0 mirrors the constant the runner's ``_aborted_loss_profile`` uses
-# for a SIGKILLed worker, so a crash and a watchdog kill score
-# identically. Without this a run that crashes instantly (empty events
-# file, zero drift counts) would earn ``drift_loss == 0.0`` — the BEST
-# possible score — and a challenger generation could win a tournament
-# by failing fast.
-_NOT_COMPLETED_HEAVY_TERM_FACTOR: float = 5.0
-
-
-def not_completed_penalty(weights: ScoringWeights) -> float:
-    """Heavy fixed-magnitude drift-loss term for a run that did not complete.
-
-    Returns ``_NOT_COMPLETED_HEAVY_TERM_FACTOR * max(severity_weights)``
-    — the penalty :func:`reduce_loss` adds for ANY non-success terminal
-    state (killed / crashed / errored / aborted / budget-exceeded). An
-    epoch with no configured severity weights falls back to a factor of
-    ``1.0`` so the penalty is still non-trivial.
-
-    Exposed (not underscore-private) so the tournament runner's
-    aborted-run synthesiser can compute the identical magnitude rather
-    than hard-coding it — single source of truth for "what a
-    not-completed run costs".
-    """
-    sev_vals = list(weights.severity_weights.values()) or [1.0]
-    return _NOT_COMPLETED_HEAVY_TERM_FACTOR * max(sev_vals)
-
-
 def _continuous_score(expectation_result: ExpectationResult) -> float:
     """Coerce an :class:`ExpectationResult` into a clamped ``[0, 1]`` score.
 
@@ -427,32 +387,6 @@ def split_judge_attributed_kind(kind: str) -> tuple[bool, str]:
     return False, ""
 
 
-def _kind_multiplier(kind: str, weights: ScoringWeights) -> float:
-    """Resolve the kind-/judge-level multiplier for one drift kind.
-
-    Two regimes, mirroring each other:
-
-    * **First-class kinds** (``off_topic``, ``tool_error``, ...) —
-      ``per_kind_weights.get(kind, 1.0)``. An unknown kind falls back
-      to ``1.0``.
-    * **Custom-judge kinds** (``custom`` / ``custom:<judge_name>``) —
-      ``per_judge_weights.get(judge_name, default_judge_weight)``. The
-      per-judge map is keyed on the stable ``judge_name`` recovered
-      from the namespaced kind; an unknown judge (or an unattributed
-      bare ``custom`` drift) falls back to ``default_judge_weight``.
-
-    Either way the returned multiplier stacks multiplicatively with
-    the severity weight inside :func:`compute_drift_loss`, so a custom
-    judge's drift contribution is ``per_judge_weights[judge_name] ×
-    severity_weights[severity] × count`` — structurally identical to
-    the first-class ``per_kind_weights × severity_weights × count``.
-    """
-    is_custom, judge_name = split_judge_attributed_kind(kind)
-    if is_custom:
-        return weights.per_judge_weights.get(judge_name, weights.default_judge_weight)
-    return weights.per_kind_weights.get(kind, 1.0)
-
-
 def compute_per_judge_loss(
     drift_counts: tuple[DriftCount, ...],
     weights: ScoringWeights,
@@ -466,18 +400,16 @@ def compute_per_judge_loss(
     :attr:`ScoringWeights.default_judge_weight` for unconfigured
     judges), and returns one :class:`JudgeLoss` per attributed judge.
 
-    Mirrors the per-judge half of :func:`compute_drift_loss`: the
-    weighted_loss values returned here sum exactly to the
-    custom-attributed portion of the aggregate drift_loss term, so
-    downstream consumers can split the drift_loss between first-class
-    drift kinds and custom-judge contributions without re-walking the
-    events file.
+    This split is how custom judges reach the scalar: each entry becomes a
+    ``judge:<name>`` metric of the ``judge:`` channel
+    (:meth:`zicato.core.LossProfile.unified_metrics`), and
+    :func:`compute_drift_loss` excludes judge-attributed kinds from the
+    ``drift:`` channel so the same event is never charged twice.
 
     A run with no custom-kind drift returns the empty tuple. Drifts
     whose attribution is empty (the unattributed bare ``custom`` kind)
-    are accumulated under the ``""`` judge_name, mirroring the catch-
-    all bucket :func:`_kind_multiplier` already routes through
-    :attr:`default_judge_weight`.
+    are accumulated under the ``""`` judge_name, a catch-all bucket that
+    weighs at :attr:`default_judge_weight`.
 
     The returned tuple is sorted by ``judge_name`` so the order is
     deterministic across runs of the same reducer; that makes diffs
@@ -495,9 +427,8 @@ def compute_per_judge_loss(
     out: list[JudgeLoss] = []
     for judge_name in sorted(raw_by_judge.keys()):
         raw_loss = raw_by_judge[judge_name]
-        # Mirror _kind_multiplier's per-judge resolution: a judge listed
-        # in per_judge_weights wins, an unlisted judge (or the bare
-        # unattributed bucket "") falls back to default_judge_weight.
+        # A judge listed in per_judge_weights wins; an unlisted judge (or the
+        # bare unattributed bucket "") falls back to default_judge_weight.
         weight = weights.per_judge_weights.get(judge_name, weights.default_judge_weight)
         weighted_loss = raw_loss * weight
         out.append(
@@ -514,57 +445,46 @@ def compute_per_judge_loss(
 def compute_drift_loss(
     drift_counts: tuple[DriftCount, ...],
     plan_revisions: int,
-    task_failure_ratio: float,
-    runtime_ms: int,
     weights: ScoringWeights,
+    *,
+    task_failure_ratio: float = 0.0,
+    runtime_ms: int = 0,
 ) -> float:
-    """Compute the weighted-scalar drift-loss term.
+    """Compute the ``drift:`` channel's per-run term.
 
     The formula is::
 
         loss = sum(
-            severity_weights[c.severity] * kind_multiplier(c.kind) * c.count
-            for c in drift_counts
+            severity_weights[c.severity] * per_kind_weights(c.kind) * c.count
+            for c in drift_counts if not judge-attributed
         )
         + weights.plan_revision_weight * plan_revisions
-        + 10.0 * task_failure_ratio
-        + weights.runtime_weight * (runtime_ms / 1000.0)
 
-    where ``kind_multiplier`` is ``per_kind_weights.get(kind, 1.0)``
-    for a first-class drift kind and
-    ``per_judge_weights.get(judge_name, default_judge_weight)`` for a
-    custom-judge kind (``custom`` / ``custom:<judge_name>``). Custom
-    judges emit drift under the single ``custom`` kind; the reducer
-    attributes each ``custom``-kind drift to its authoring judge by
-    folding the paired ``JudgementEmitted.judge_name`` into the kind
-    string, so two distinct custom judges weigh independently via
-    :attr:`ScoringWeights.per_judge_weights` — the per-judge analogue
-    of :attr:`per_kind_weights`. See :func:`_kind_multiplier`.
+    where a first-class drift kind resolves through
+    ``per_kind_weights.get(kind, 1.0)``. Custom-judge kinds (``custom`` /
+    ``custom:<judge_name>``) are EXCLUDED: they are scored in the ``judge:``
+    channel off :func:`compute_per_judge_loss`, and charging them here as
+    well would double-count.
 
-    All terms are non-negative on legal inputs, so the return value is
+    Both terms are non-negative on legal inputs, so the return value is
     non-negative; we clamp to zero defensively in case weights are
     set unusually.
 
-    The 10.0 multiplier on ``task_failure_ratio`` is deliberately
-    constant rather than configurable — the contract pinned it as
-    "pure failures matter". If operators want to dampen failures
-    relative to drift, they should up-weight drift via
-    :attr:`ScoringWeights.severity_weights`,
-    :attr:`ScoringWeights.per_kind_weights`, or — for custom judges —
-    :attr:`ScoringWeights.per_judge_weights` instead.
+    ``task_failure_ratio`` and ``runtime_ms`` are not part of this formula —
+    they are the ``failure:`` and ``runtime:`` channels — but they are
+    accepted so a drift PLUGIN, which sees the whole
+    :class:`~zicato.scoring.api.DriftContext`, can read the outcome of the
+    run it is scoring. They default to the neutral "no failure, no elapsed
+    time" values for callers that only want the drift term.
 
-    Seam-1 dispatch (issue #19 phase 1)
-    -----------------------------------
-    The formula itself now lives in
+    Seam-1 dispatch
+    ---------------
+    The formula itself lives in
     :func:`zicato.scoring.builtins.builtin_drift_loss` (importable from
     BOTH the orchestrator and the killable worker), and this function
     routes through :func:`zicato.scoring.dispatch.resolve_drift_loss` —
-    the single seam later phases (declarative transforms / dotted-spec
-    plugins) plug into. PHASE 1 is a pure refactor: the dispatcher returns
-    the built-in value with a ``"builtin"`` provenance, so this function's
-    result is byte-identical to the historical inline formula. The
-    ``_TASK_FAILURE_RATIO_MULTIPLIER`` constant is kept here for
-    introspection / greppability; it equals the builtin's copy.
+    the single seam declarative transforms and dotted-spec plugins plug
+    into.
     """
     loss, _provenance = resolve_drift_loss(
         DriftContext(
@@ -576,8 +496,6 @@ def compute_drift_loss(
             builtin_loss=builtin_drift_loss(
                 drift_counts=drift_counts,
                 plan_revisions=plan_revisions,
-                task_failure_ratio=task_failure_ratio,
-                runtime_ms=runtime_ms,
                 weights=weights,
             ),
         )
@@ -999,16 +917,15 @@ def reduce_loss(
       emulated driver was unavailable, the adapter rejected the entry
       kind, or the worker process was killed.
 
-    Either flag triggers the SAME penalty, applied exactly once even
-    when both are set: the reducer floors ``task_failure_ratio`` to
-    ``1.0`` (so the failure term inside :func:`compute_drift_loss`
-    contributes its maximum) and adds the heavy fixed-magnitude term
-    :func:`not_completed_penalty` keyed off ``severity_weights``. This
-    is deliberate: without it a run that crashes instantly leaves an
-    empty events file, the reducer counts zero drift, and the run earns
-    ``drift_loss == 0.0`` — the BEST possible score. A challenger
+    Either flag records the SAME two facts, exactly once even when both
+    are set: the reducer floors ``task_failure_ratio`` to ``1.0`` (so the
+    ``failure:tasks`` term contributes its maximum) and sets
+    ``not_completed``, which charges ``not_completed_weight`` in the same
+    channel. This is deliberate: without it a run that crashes instantly
+    leaves an empty events file, the reducer counts zero drift, and the
+    run earns a loss of ``0.0`` — the BEST possible score. A challenger
     generation could then win a tournament simply by failing fast. The
-    floor + heavy term make any non-completing run unambiguously
+    floor + the fixed charge make any non-completing run unambiguously
     worst-case, consistent with how a watchdog-killed run is already
     scored by the runner's :func:`_aborted_loss_profile`.
 
@@ -1118,12 +1035,12 @@ def reduce_loss(
     task_failure_ratio = max(0.0, min(1.0, task_failure_ratio))
 
     # A run that did not complete successfully is scored worst-case.
-    # Floor ``task_failure_ratio`` to its maximum so the failure term
-    # inside ``compute_drift_loss`` contributes fully even when the run
-    # crashed before emitting a single ``task_failed`` event (the
-    # common case — an instant harness exception leaves an empty events
-    # file). The heavy fixed-magnitude term is added after the loss
-    # computation, below. Both ``wall_clock_budget_exceeded`` and
+    # Floor ``task_failure_ratio`` to its maximum so the ``failure:tasks``
+    # term contributes fully even when the run crashed before emitting a
+    # single ``task_failed`` event (the common case — an instant harness
+    # exception leaves an empty events file). The fixed not-completed
+    # magnitude rides the same channel, off the ``not_completed`` flag
+    # recorded on the profile. Both ``wall_clock_budget_exceeded`` and
     # ``run_not_completed`` are non-success terminal states; either one
     # triggers the floor.
     not_completed = bool(wall_clock_budget_exceeded or run_not_completed)
@@ -1148,9 +1065,9 @@ def reduce_loss(
     # --- 3. Compute drift loss (Seam 1) ---
     #
     # Route through the scoring dispatcher so the provenance marker is
-    # captured for ``loss.json``. PHASE 1 (issue #19): the dispatcher
-    # returns the built-in value with a ``"builtin"`` provenance, so this
-    # is byte-identical to the historical ``compute_drift_loss`` path.
+    # captured for ``loss.json``. The drift channel is drift EVENTS only;
+    # the run's outcome is carried on the profile (``task_failure_ratio`` /
+    # ``not_completed``) and scored in the ``failure:`` channel.
     drift_loss, scoring_provenance = resolve_drift_loss(
         DriftContext(
             drift_counts=drift_counts,
@@ -1161,20 +1078,10 @@ def reduce_loss(
             builtin_loss=builtin_drift_loss(
                 drift_counts=drift_counts,
                 plan_revisions=plan_revisions,
-                task_failure_ratio=task_failure_ratio,
-                runtime_ms=runtime_ms,
                 weights=weights,
             ),
         )
     )
-    if not_completed:
-        # Heavy fixed-magnitude term keyed off severity_weights so the
-        # penalty stays meaningfully large relative to the rest of the
-        # scoring surface. Applied exactly once for ANY non-success
-        # terminal state — budget exceeded OR any other abnormal
-        # termination — so a fast crash scores no better than a
-        # watchdog kill. See docstring for rationale.
-        drift_loss += not_completed_penalty(weights)
 
     # --- 4. Pass/fail + continuous-score derivation ---
 
@@ -1239,6 +1146,7 @@ def reduce_loss(
         task_failure_ratio=task_failure_ratio,
         runtime_ms=runtime_ms,
         wall_clock_budget_exceeded=wall_clock_budget_exceeded,
+        not_completed=not_completed,
         expectation_result=expectation_result,
         drift_loss=drift_loss,
         pass_fail=pass_fail,
@@ -1414,6 +1322,7 @@ def loss_profile_from_dict(d: dict[str, Any]) -> LossProfile:
         task_failure_ratio=float(d["task_failure_ratio"]),
         runtime_ms=int(d["runtime_ms"]),
         wall_clock_budget_exceeded=bool(d["wall_clock_budget_exceeded"]),
+        not_completed=bool(d.get("not_completed", False)),
         expectation_result=expectation_result,
         drift_loss=float(d["drift_loss"]),
         pass_fail=d.get("pass_fail"),
@@ -1449,7 +1358,6 @@ __all__ = [
     "reduce_loss",
     "compute_drift_loss",
     "compute_per_judge_loss",
-    "not_completed_penalty",
     "split_judge_attributed_kind",
     "read_loss_profile",
     "loss_profile_from_dict",

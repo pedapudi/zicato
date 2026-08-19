@@ -870,10 +870,12 @@ core/
                     (disable_drift/judge_only as typed fields — see storage §6).
   loss.py           LossProfile, ExpectationResult, JudgeLoss, RunResult.
   scoring_config.py ScoringWeights DECOMPOSED into nested typed groups:
-                    DriftScoring (drift_weight, severity_weights, per_kind,
-                    per_judge, default_judge_weight),
-                    PassScoring (pass_weight, plan_revision_weight,
-                    runtime_weight, pass_transform),
+                    DriftScoring (severity_weights, per_kind,
+                    plan_revision_weight),
+                    JudgeScoring (per_judge, default_judge_weight),
+                    FailureScoring (task_failure_weight,
+                    not_completed_weight),
+                    PassScoring (pass_weight, pass_transform),
                     PromoteGate (promote_margin, pass_rate_monotonicity[+scope]),
                     RegressionGate (enabled, command, timeout_s),
                     NamespaceScoring (namespace_weights, namespace_monotonicity,

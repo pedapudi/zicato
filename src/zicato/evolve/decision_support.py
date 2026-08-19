@@ -446,10 +446,10 @@ def _render_loss_summary(losses: list[Any], priorities: Any = None) -> str:
 
     ``priorities`` is the round's :class:`~zicato.proposer.prompts
     .MetricPriorities`. When supplied, the summary reports only terms the
-    contract actually scores, each channel in weight order: a
-    ``drift_weight=0.0`` contract no longer leads with a ``drift_loss_mean``
-    that contributes nothing to the scalar, and a heavily-weighted judge is
-    named rather than summed away into the aggregate drift term. ``None`` (the
+    contract actually scores, each channel in weight order: a contract that
+    zeroes ``namespace_weights["drift:"]`` no longer leads with a
+    ``drift_loss_mean`` that contributes nothing to the scalar, and a
+    heavily-weighted judge is named rather than left implicit. ``None`` (the
     default, and every caller that holds no weights) renders the unfiltered
     form byte-for-byte.
 
@@ -471,9 +471,10 @@ def _render_loss_summary(losses: list[Any], priorities: Any = None) -> str:
         return f"drift_loss_mean={drift_mean:.3f} over {len(losses)} runs" + pass_part
 
     parts: list[str] = []
-    # The drift term covers the whole judge namespace as well, so it is
-    # score-bearing exactly when some judge or kind survived the zero filter.
-    if priorities.drift_kinds or priorities.judges:
+    # ``drift_loss_mean`` is the drift channel's own aggregate — judges are a
+    # separate channel, reported per judge below — so it is score-bearing
+    # exactly when some drift kind survived the zero filter.
+    if priorities.drift_kinds:
         parts.append(f"drift_loss_mean={drift_mean:.3f} over {len(losses)} runs")
     if priorities.pass_rate_weight and pass_eligible:
         parts.append(pass_part.lstrip(", "))
@@ -548,11 +549,10 @@ def build_metric_priorities(board: list[Any], weights: Any, losses: list[Any]) -
 
     Two resolutions are worth stating because they are easy to get wrong:
 
-    * Custom judges report under the single ``custom`` drift kind, so their
-      contribution flows through ``drift_loss`` and is then multiplied by
-      ``drift_weight``. ``drift_weight=0.0`` therefore zeroes the entire judge
-      namespace, and every judge drops out — the same way it drops out of the
-      scalar.
+    * Custom judges are their own channel: each judge's per-judge weight is
+      scaled by ``namespace_weights["judge:"]``, so zeroing that coefficient
+      drops every judge — the same way they drop out of the scalar — while a
+      zeroed ``drift:`` coefficient leaves them ranked.
     * Namespace metric NAMES come from the round's own loss profiles, because
       only the data knows whether this board reports ``cost:tokens_spent`` or
       ``rubric:slide_structure``. A round with no losses names the weighted
@@ -567,7 +567,9 @@ def build_metric_priorities(board: list[Any], weights: Any, losses: list[Any]) -
     from zicato.core.drift_kinds import GOLDFIVE_DRIFT_KINDS  # noqa: PLC0415
     from zicato.proposer.prompts import MetricPriorities, ScoredTarget  # noqa: PLC0415
 
-    drift_weight = float(getattr(weights, "drift_weight", 0.0) or 0.0)
+    namespace_weights = dict(getattr(weights, "namespace_weights", None) or {})
+    drift_weight = float(namespace_weights.get("drift:", 0.0) or 0.0)
+    judge_weight = float(namespace_weights.get("judge:", 0.0) or 0.0)
     per_kind = dict(getattr(weights, "per_kind_weights", None) or {})
     per_judge = dict(getattr(weights, "per_judge_weights", None) or {})
     default_judge = float(getattr(weights, "default_judge_weight", 1.0))
@@ -582,7 +584,7 @@ def build_metric_priorities(board: list[Any], weights: Any, losses: list[Any]) -
             if name:
                 judge_names.add(str(name))
     judges = [
-        ScoredTarget(name, drift_weight * float(per_judge.get(name, default_judge)))
+        ScoredTarget(name, judge_weight * float(per_judge.get(name, default_judge)))
         for name in sorted(judge_names)
     ]
 
@@ -594,7 +596,6 @@ def build_metric_priorities(board: list[Any], weights: Any, losses: list[Any]) -
         if kind != "custom" and not kind.startswith("custom:")
     ]
 
-    namespace_weights = dict(getattr(weights, "namespace_weights", None) or {})
     observed: set[str] = set()
     for loss in losses:
         metrics = getattr(loss, "unified_metrics", None)
@@ -602,10 +603,10 @@ def build_metric_priorities(board: list[Any], weights: Any, losses: list[Any]) -
             observed.update(str(mc.name) for mc in metrics())
     namespace_metrics: list[Any] = []
     for namespace, weight in namespace_weights.items():
-        # The drift namespace is excluded from the scalar's namespace sum —
-        # the drift component already owns that axis — so naming it here would
-        # double-advertise the drift-kind channel above.
-        if namespace == "drift:" or not float(weight):
+        # ``drift:`` and ``judge:`` are already advertised above, per kind and
+        # per judge — the banded within-channel form the proposer acts on.
+        # Naming them here as bare namespaces would double-advertise them.
+        if namespace in ("drift:", "judge:") or not float(weight):
             continue
         names = sorted(name for name in observed if name.startswith(namespace))
         for name in names or [namespace]:

@@ -2,17 +2,19 @@
 
 zicato scores each generation against a frozen board and uses the
 score to drive tournament promotion. The score is a **weighted scalar**
-combining two signals:
+with exactly two kinds of term:
 
-- **Drift-derived loss.** A weighted sum across drift counts (by kind
-  and severity), plan revisions, task failure ratio, runtime
-  features, and abort. Always available; works without ground-truth
-  expectations.
-- **Pass-rate.** The fraction of board entries whose outcome checks
-  (`expectations` — `Predicate` / `Rubric`) passed. Only entries with
-  a non-empty `expectations` list contribute.
+- **One bounded correctness term** over board expectations: the fraction
+  of entries whose outcome checks (`expectations` — `Predicate` /
+  `Rubric`) missed. Only entries with a non-empty `expectations` list
+  contribute.
+- **A signed coefficient per measured metric channel.** Every measured
+  signal — drift events, custom judges, run failures, runtime, cost,
+  latency, rubric scores, output size, schema failures — is one
+  namespace on `namespace_weights`, with no privileged channel among
+  them. Channels work without ground-truth expectations.
 
-The two combine into a single tournament scalar. The combination is
+They combine into a single tournament scalar. The combination is
 **operator-tunable** at three levels of escalating power: a fixed
 vocabulary of linear weights (the 90%), a declarative **transform
 registry** for non-linear shapes (`pow` / `harmonic` / `cap` / `clip`
@@ -29,7 +31,7 @@ promotion gate.
 > leaked into core as a bespoke field or an unconditional special-case.
 > Issue #19 closed that gap. The linear weights below are the neutral
 > default; §11 documents the transform registry + plugin seams that
-> reshape them without a core edit, and §2.4 covers the source-hashing
+> reshape them without a core edit, and §2.5 covers the source-hashing
 > that rolls the epoch when a plugin body changes.
 
 ## 1. Why both signals
@@ -55,34 +57,54 @@ Weighting both makes the system sensitive to both kinds of regression.
 The operator gets a knob (the weights) to emphasize one over the
 other when the project's priorities shift.
 
+Correctness stays out of the channel map for three concrete reasons: it
+runs on a different denominator (expectation-bearing entries, not every
+entry), it has its own monotonicity mechanism
+(`pass_rate_monotonicity_scope`, §5), and the transform seam reads it as
+a bounded coefficient (§11.1). Every *measured* signal is a channel.
+
 Both components are **always computed when both are available**. The
 operator opts into pass-rate by attaching expectations to board entries
 — expectations are not required for the loop to function, but a
 generation can only beat its parent on pass-rate if expectations
 exist on the board.
 
-## 2. Per-entry drift loss
+## 2. The metric channels
 
-For one entry, the reducer computes a per-entry drift loss from the
-fields of the `LossProfile` (see [TELEMETRY.md](TELEMETRY.md)). Each
-drift count is weighted by its **severity** and, for custom-judge
-drift, by its **judge name**; the per-kind multiplier stacks on top.
-Plan revisions and (optionally) runtime add their own terms:
+Every measured signal enters the scalar as a **channel**: a namespace
+prefix (`drift:`, `judge:`, `failure:`, `runtime:`, `cost:`, `latency:`,
+`rubric:`, `output:`, `schema:`) carrying a signed coefficient in
+`namespace_weights`. The sign is the channel's "worse" direction —
+positive means higher is worse, negative means higher is better (rubric
+scores grow with quality), zero excludes the channel from the scalar
+while still tracking it.
+
+Some channels also have a **within-channel shape**: a second map that
+discriminates between members of the same channel before the channel
+coefficient applies. `drift:` has `severity_weights` × `per_kind_weights`,
+`judge:` has `per_judge_weights`, and `failure:` has
+`task_failure_weight` / `not_completed_weight`.
+
+### 2.1 The drift channel
+
+For one entry the reducer reduces the run's drift EVENTS into a single
+`drift_loss` from the fields of the `LossProfile` (see
+[TELEMETRY.md](TELEMETRY.md)):
 
 ```
 drift_loss[entry] =
-      sum over (kind k, severity s) of:
+      sum over (kind k, severity s), k not judge-attributed, of:
           per_kind_weights[k] * severity_weights[s] * drift_counts[k, s]
     + plan_revision_weight * plan_revisions
-    + runtime_weight       * runtime_seconds
 ```
 
-Custom-judge drift is a refinement *within* the loss, not a separate
-term. Every custom-judge violation is a `custom`-kind drift carrying
-the judge's stable `judge_name`; the reducer attributes it to that
-judge and weights it by `per_judge_weights[judge_name]` (stacked with
-`severity_weights[s]`), falling back to `default_judge_weight` when the
-judge has no entry. See §2.2.
+clamped at zero. Judge-attributed kinds (`custom` / `custom:<name>`) are
+excluded here and scored in the `judge:` channel (§2.2) — charging them
+in both would double-count. Plan revisions stay in this channel because
+they are the same telemetry stream; an adapter that emits none
+contributes exactly zero. `per_kind_weights["custom"]` is rejected at
+contract load: it would be structurally inert, and an operator who set
+it would believe they had retuned their judges.
 
 Where (defaults are the `ScoringWeights` field defaults):
 
@@ -93,12 +115,8 @@ Where (defaults are the `ScoringWeights` field defaults):
 | `per_judge_weights[j]` | empty mapping → falls back to `default_judge_weight` | Per-custom-judge multiplier, keyed on the judge `name`. See §2.2. |
 | `default_judge_weight` | `1.0` | Fallback multiplier for a custom judge absent from `per_judge_weights`. |
 | `plan_revision_weight` | `0.5` | Each plan-revision event is half a unit of loss. |
-| `runtime_weight` | `0.0` | Coefficient on per-second runtime. Off by default — operators usually rely on the per-entry wall-clock budget as a hard ceiling rather than scoring runtime continuously. |
-
-There is no separate `task_failure`, `escalation`, or `abort` weight in
-the shipped `ScoringWeights` — a budget-exceeded run is recorded via
-`LossProfile.wall_clock_budget_exceeded` and scored worst-case by the
-reducer, not via a dedicated weight.
+| `task_failure_weight` | `10.0` | Multiplier on `task_failure_ratio` in the `failure:` channel (§2.3). Pure failures matter. |
+| `not_completed_weight` | `50.0` | What a run that did not complete costs in the `failure:` channel (§2.3). An absolute magnitude. |
 
 The weights are stored in `scoring.json` per epoch. Keys are the
 `ScoringWeights` field names; severity keys and drift-kind keys are
@@ -106,7 +124,6 @@ The weights are stored in `scoring.json` per epoch. Keys are the
 
 ```json
 {
-  "drift_weight": 1.0,
   "pass_weight": 1.0,
   "severity_weights": {
     "info": 1.0,
@@ -123,7 +140,19 @@ The weights are stored in `scoring.json` per epoch. Keys are the
   },
   "default_judge_weight": 1.0,
   "plan_revision_weight": 0.5,
-  "runtime_weight": 0.0,
+  "task_failure_weight": 10.0,
+  "not_completed_weight": 50.0,
+  "namespace_weights": {
+    "drift:": 1.0,
+    "judge:": 1.0,
+    "failure:": 1.0,
+    "runtime:": 0.0,
+    "cost:": 0.001,
+    "latency:": 0.0001,
+    "rubric:": -1.0,
+    "output:": 0.0,
+    "schema:": 5.0
+  },
   "promote_margin": 0.01,
   "pass_rate_monotonicity": true,
   "pass_rate_monotonicity_scope": "per_entry"
@@ -139,16 +168,13 @@ uniform `1.0` otherwise — there is no `_default` sentinel key. An empty
 `per_kind_weights` mapping weights every kind uniformly; the operator
 adds entries only to elevate or demote specific drift kinds.
 
-> **Future / roadmap.** `ScoringWeights` also carries a multi-objective
-> surface — `namespace_weights` and `namespace_monotonicity` — that
-> generalises drift loss into namespaced metrics (`drift:`, `cost:`,
-> `latency:`, `rubric:`, `schema:`, `output:`). These ship today on the
-> dataclass but are the forward path for the cost-aware scoring of
-> target 2 (§9); the single-axis drift-loss view in this section is the
-> primary surface for v0 boards. See §5 for the per-namespace
-> monotonicity gate.
+An explicit `namespace_weights` mapping REPLACES the shipped defaults
+rather than merging with them, and a namespace it omits scores at `0.0`.
+One key is exempt from that freedom: `"failure:"` must be present and
+strictly positive, and the loader rejects a contract that zeroes or
+omits it (§2.3).
 
-### 2.1 Why drift counts are weighted, not pass/fail-only
+### 2.1.1 Why drift counts are weighted, not pass/fail-only
 
 A drift event is **information**. It says "the runtime saw this shape
 of trouble during this run". Counting drift events as a loss term
@@ -160,14 +186,14 @@ The weights are part of the **evaluation contract** (they live in
 the contract; if the operator wants different weights, they start a
 new epoch.
 
-### 2.2 Per-judge weights
+### 2.2 The judge channel
 
 A board's custom judges (`Judge.custom` / `Judge.python` — see
 [BOARD-FORMAT.md](BOARD-FORMAT.md) §4) all emit the same drift kind,
-`custom`. `per_kind_weights["custom"]` (or the uniform `1.0` when it is
-unset) therefore weights *every* custom judge identically. When that is
-too coarse — when a violation of one judge should count for more than a
-violation of another — `per_judge_weights` is the finer knob.
+`custom`, so they are their own channel rather than a slice of the drift
+one. `namespace_weights["judge:"]` turns the whole channel up or down;
+`per_judge_weights` is the within-channel shape when one judge's
+violation should count for more than another's.
 
 `per_judge_weights` is a mapping **keyed on the judge `name`** (the
 first argument to `Judge.custom` / `Judge.python`, and the same
@@ -180,12 +206,17 @@ falls back to `default_judge_weight` (default `1.0`).
 In the `ScoringWeights` dataclass these are the `per_judge_weights` and
 `default_judge_weight` fields. Like every other weight they are frozen
 per epoch — changing them changes the evaluation contract and rolls the
-epoch. `per_judge_weights` mirrors `per_kind_weights`: `per_kind_weights`
-discriminates by drift kind, `per_judge_weights` discriminates one step
-finer, by `judge_name`, within the `custom` kind. The reducer also
-preserves the per-judge breakdown on each `LossProfile.per_judge_loss`
-(a tuple of `JudgeLoss` records) so downstream attribution does not have
-to re-walk the events.
+epoch. `per_judge_weights` mirrors `per_kind_weights` one channel over:
+`per_kind_weights` discriminates by drift kind within `drift:`,
+`per_judge_weights` by `judge_name` within `judge:`.
+
+The channel is DERIVED from `LossProfile.per_judge_loss` (a tuple of
+`JudgeLoss` records the reducer writes): each entry becomes one
+`judge:<judge_name>` metric carrying that judge's already-per-judge-
+weighted loss, and the channel coefficient scales the sum. The two
+gestures are therefore distinct and both available: retiring ONE judge
+is `per_judge_weights: {name: 0.0}`, retiring the WHOLE channel is
+`namespace_weights: {"judge:": 0.0}`.
 
 Example: a board with two judges, `cite-before-metric` and
 `ack-before-edit`, where a missing citation is a real defect but a
@@ -201,20 +232,66 @@ missing acknowledgement is a nicety:
 A third custom judge not listed here is weighted by
 `default_judge_weight` (default `1.0`).
 
-### 2.3 Aborted runs are scored worst-case
+### 2.3 The failure channel
 
-A run that exhausted its wall-clock budget didn't produce a result.
-The expectation can't fire and the drift counts are incomplete; the
-reducer can't tell whether the agent was about to succeed or still
-flailing. There is no dedicated abort weight in `ScoringWeights` —
-instead the reducer records `LossProfile.wall_clock_budget_exceeded`
-and treats the run as worst-case for that entry when it derives the
-profile's `drift_loss` and `pass_fail`. The conservative
-interpretation — "this is the worst possible outcome for this entry" —
-is therefore baked into the per-run profile, not applied as a separate
-scoring term.
+A run that crashed, was killed, or exhausted its wall-clock budget did
+not produce a result. The expectation cannot fire and the drift counts
+are incomplete; the reducer cannot tell whether the agent was about to
+succeed or still flailing. Run outcome is a fact of every harness, not
+of any telemetry dialect, so it is its own channel with two members:
 
-### 2.4 Scoring config is part of the frozen contract
+```
+failure[entry] =
+      task_failure_weight   * task_failure_ratio
+    + not_completed_weight  (only when the run did not complete)
+```
+
+`task_failure_ratio` is failed-to-started tasks in `[0, 1]`, floored to
+`1.0` for a run that did not complete — a run that crashed before
+emitting a single `task_failed` event still failed everything it
+started. `not_completed` is a first-class `LossProfile` field, set for
+ANY non-success terminal state (killed, crashed, harness exception,
+emulator abort, budget exhausted). It is not derived from
+`not_completed_reason`, which is legitimately absent when the adapter
+supplied no reason; reading that absence as "completed" would hand a
+crashed run the best possible score.
+
+`not_completed_weight` is an ABSOLUTE magnitude, not a multiple of
+`max(severity_weights)`. Keying it off the severity scale meant that
+retuning severities silently rescaled what every abort cost; a contract
+that scales severities must now scale `failure:` deliberately to keep
+the same proportion.
+
+**The channel coefficient must be positive.** The loader rejects
+`namespace_weights["failure:"] <= 0`, and rejects omitting the key from
+an explicit mapping, naming the invariant: a contract must not be able
+to make crashing free. Without that rule a challenger that fails fast
+scores best of all — and the rule has to be structural, because the
+failure mode is silent (the scalar simply stops seeing aborts). Dampen
+the channel with a small positive coefficient instead of zeroing it.
+
+### 2.4 The runtime channel, and the adapter-supplied ones
+
+`runtime:seconds` is the run's wall-clock duration, derived from
+`LossProfile.runtime_ms`. Its default coefficient is `0.0`: operators
+usually rely on the per-entry wall-clock budget as a hard ceiling rather
+than scoring duration continuously, but the channel is there when
+duration matters intrinsically.
+
+It is deliberately separate from `latency:`, whose default coefficient
+is calibrated for adapter-supplied millisecond percentiles. Members of
+one channel are SUMMED before the coefficient applies, and a sum of
+whole-run seconds and per-turn millisecond percentiles is not a
+quantity.
+
+The remaining channels — `cost:`, `latency:`, `rubric:`, `output:`,
+`schema:` — carry whatever the adapter reports as `MetricCount` entries
+under those prefixes, plus the first-class scalars the reducer always
+emits (`cost:llm_calls`, `cost:tokens_spent`, `output:chars`,
+`schema:failures`). An unrecognised namespace in the data is aggregated
+at coefficient `0.0` and surfaced for visibility.
+
+### 2.5 Scoring config is part of the frozen contract
 
 Every `ScoringWeights` field — the linear weights, the gate knobs, the
 declarative transforms (§11.1), and the plugin specs (§11.2) — folds
@@ -251,10 +328,10 @@ The outcome-check kinds and their evaluation are specified in
 
 Note the division of labour: an entry's **process** checks (`judges`,
 [BOARD-FORMAT.md](BOARD-FORMAT.md) §4) never touch pass-rate. A
-violated judge emits a `DriftKind.CUSTOM` drift, which is counted in
-`drift_counts_by_kind` and feeds the **drift-loss** side of the score
-(§2). Pass-rate is purely the outcome-check side; drift loss is where
-both built-in and custom-judge violations land.
+violated judge emits a `DriftKind.CUSTOM` drift, which the reducer
+attributes to its authoring judge and scores in the `judge:` channel
+(§2.2). Pass-rate is purely the outcome-check side; the channels are
+where every process signal lands.
 
 ## 4. Per-generation aggregate score
 
@@ -268,45 +345,58 @@ declarative `pass_transform` and dotted-spec `scalar_fn` plugin (§11).
 The built-in formula is:
 
 ```
-drift_loss_mean = mean over entries i of loss_profile[i].drift_loss
+observed  = count of entries i whose pass_fail is not None
+passes    = count of those entries with pass_fail == True
+pass_rate = passes / observed   (or 1.0 when observed == 0)
 
-observed        = count of entries i whose pass_fail is not None
-passes          = count of those entries with pass_fail == True
-pass_rate       = passes / observed   (or 1.0 when observed == 0)
+channel[ns] = namespace_weights[ns] * mean over entries of that
+              namespace's within-channel-weighted total
 
-scalar = drift_weight * drift_loss_mean + pass_weight * (1.0 - mean_score)
+scalar = pass_weight * (1.0 - mean_score)
+       + sum over SORTED namespaces ns of channel[ns]
+       + diff_complexity term (when configured, §12)
 ```
+
+The namespace sum is **sorted**. Float addition is not associative, and
+the namespace key set is assembled from a `set`, so an unsorted sum
+would make the scalar's last bit depend on hash seeding — reproducible
+within one process and different in the next.
 
 (The pass term runs on the uniform continuous `mean_score` axis, issue
 #18; on an all-bool board `mean_score == pass_rate`, so this is
 byte-identical to the historical `(1 - pass_rate)` term. There is a
-`telemetry/scoring.py::combined_scalar` helper, but it is a TEST-ONLY
-parity reference — the live scalar is the dispatcher path above.)
+`telemetry/scoring.py::combined_scalar` helper, but it is a two-axis
+PROJECTION — drift and pass only, for callers that hold nothing else —
+not the scalar; the live scalar is the dispatcher path above.)
 
 Notes:
 
-- `drift_loss_mean` is the **arithmetic mean** drift loss across the
-  generation's runs (one run per board entry). The shipped aggregator
-  does not re-weight by `BoardEntry.weight` — the per-entry `weight`
-  field exists on the board but the v0 aggregator means uniformly; an
-  empty generation means `0.0`.
+- Each channel is the **arithmetic mean** across the generation's runs
+  (one run per board entry). The shipped aggregator does not re-weight
+  by `BoardEntry.weight` — the per-entry `weight` field exists on the
+  board but the v0 aggregator means uniformly; an empty generation
+  means `0.0`.
 - `pass_rate` counts only runs whose `pass_fail` is not `None`
   (entries with an expectation). If no run has an expectation,
   `pass_rate` is `1.0` by convention (no failures observed) so the
   `pass_weight` term contributes 0 to the scalar.
-- Both terms are oriented so **lower is better**:
-  - `drift_loss_mean` is non-negative, larger when the runs were
-    messier.
-  - `1.0 - pass_rate` is in `[0, 1]`, larger when more entries
-    failed.
-- `scalar` is non-negative; smaller is better.
+- Every term is oriented so **lower is better**: `1.0 - pass_rate` is
+  in `[0, 1]`, larger when more entries failed, and each channel's
+  coefficient sign points its measurement in the loss direction.
+- `scalar` is smaller-is-better. It is non-negative unless a contract
+  configures a negative coefficient large enough to dominate (the
+  `rubric:` default is negative by design).
 
-The two terms are **additive**, not multiplicative, so an epoch can
-zero out one axis (set `pass_weight = 0` to ignore expectations
-entirely, or `drift_weight = 0` to score on pass-rate alone) without
-obliterating the other. The shipped defaults are equal (`drift_weight =
-pass_weight = 1.0`), which keeps the two axes commensurate during early
-dogfood.
+The terms are **additive**, not multiplicative, so an epoch can zero out
+one axis — `pass_weight = 0` to ignore expectations entirely, or
+`namespace_weights: {"drift:": 0.0}` to stop scoring drift — without
+obliterating the others. Zeroing `drift:` no longer silences judges,
+task failures, or the crash charge: each is its own channel.
+
+`scalar_components` decomposes the result for display and the gate:
+`"pass"` plus one entry per namespace (keyed by the colon-stripped
+name), written in sorted namespace order and summing exactly to
+`scalar`.
 
 `zicato tournament run v3 v4` prints the tournament result — both
 generations' aggregates and the gate verdict — as a JSON object.
@@ -326,8 +416,8 @@ final answer. The right weights depend on:
 The honest position is that **good defaults are unknown until the
 loop has run real epochs**. The recommended workflow:
 
-1. Start with equal weights (`drift_weight = pass_weight = 1.0`) and
-   the per-kind / severity weights from §2.
+1. Start with the shipped channel coefficients (`drift:` and `pass` both
+   at `1.0`) and the per-kind / severity weights from §2.
 2. Run an epoch.
 3. Inspect the journal: do the promoted generations align with what
    the operator would have promoted by eye?
@@ -407,14 +497,17 @@ nondeterministic entry turns into a ratchet that no amount of aggregate
 improvement can overcome; `aggregate` trades that ratchet for a net-rate
 guard.
 
-**Rule 3 — per-namespace monotonicity** (roadmap surface; see the §2
-note). For each namespace whose flag in `namespace_monotonicity` is
+**Rule 3 — per-namespace monotonicity.** For each namespace whose flag in `namespace_monotonicity` is
 `true`, the child's weighted per-namespace aggregate may not have moved
 in the namespace's "worse" direction (the sign of the `namespace_weights`
 coefficient already folds direction into the aggregate). A regression
 rejects with `"monotonicity_regression on namespace=<ns>, ..."`. Zero-
 weight namespaces are skipped. The shipped defaults guard `rubric:` and
-`schema:` and leave `drift:` unguarded.
+`schema:` and leave the rest unguarded, including `drift:`: a proposer
+may trade some drift movement for gains elsewhere. The rule applies to
+every channel uniformly, `judge:` and `failure:` included — and it
+widens the gate very little in practice, because non-aborting
+generations all tie at `failure: = 0.0`.
 
 If no rule rejects, the gate returns `decision="promoted"`.
 
@@ -482,8 +575,11 @@ confidence intervals remains a roadmap item (§9).
 
 A small board with 3 entries; v3 → v4 candidate proposal.
 
-Using the shipped defaults (`drift_weight = pass_weight = 1.0`,
-`promote_margin = 0.01`) and the unweighted mean.
+Using the shipped defaults (`namespace_weights["drift:"] = 1.0`,
+`pass_weight = 1.0`, `promote_margin = 0.01`) and the unweighted mean.
+Neither generation aborted and neither board carries custom judges, so
+the `judge:` and `failure:` channels contribute zero throughout and the
+scalar reduces to the two terms shown.
 
 **v3 (parent):**
 
@@ -527,7 +623,8 @@ scalar = 1.0 * 1.000 + 1.0 * 0.0 = 1.000
   long_solar}`; candidate passes those plus `contradictory`. No
   previously-passing entry regressed. ✓
 - Rule 3 (per-namespace monotonicity): with default weights `drift:` is
-  unguarded; `rubric:` / `schema:` aggregates are absent here. ✓
+  unguarded, `judge:` / `failure:` are both `0.0` on each side, and
+  `rubric:` / `schema:` aggregates are absent here. ✓
 
 **Decision: `promoted`.** v4 becomes the new parent.
 
@@ -682,7 +779,7 @@ plugin). Specs are **validated fail-fast at contract load**
 op, a missing / non-finite / non-numeric param, a typo'd param name, or a
 `clip` with `lo > hi` is rejected loudly, so `apply_transform` is total
 at scoring time and never produces a `NaN` mid-run. Both slots serialize
-natively and fold into the contract hash (§2.4).
+natively and fold into the contract hash (§2.5).
 
 ### 11.2 Dotted-spec plugins (the escape hatch)
 
@@ -756,7 +853,7 @@ on the per-run `loss.json` (`LossProfile.scoring_provenance`, Seam 1) and
 the per-generation aggregate (`scalar_provenance` in `gen_score.json`,
 Seam 2), and surfaced in the dashboard's promote-gate breakdown as a
 per-side **scalar decomposition** (which transform / plugin produced the
-pass term + each drift component). Token shapes:
+pass term + each channel). Token shapes:
 
 | token | meaning |
 |---|---|

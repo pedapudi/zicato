@@ -26,27 +26,25 @@ epoch's :class:`~zicato.core.ScoringWeights`. The dict carries:
 * ``entry_count`` — number of entries that contributed to drift loss
   (denominator for the drift term).
 * ``scalar`` — the multi-objective combined score. Lower = better.
-* ``per_entry`` — ``{entry_id: {"drift_loss": float, "pass_fail":
-  bool|None, "score": float|None}}`` for entry-level deltas the gate
-  needs. ``score`` is the per-entry :func:`entry_score` the gate's
-  per-entry continuous-monotonicity scope reads.
+* ``per_entry`` — ``{entry_id: {"drift_loss": float, "failure": float,
+  "pass_fail": bool|None, "score": float|None}}`` for entry-level deltas the
+  gate needs. ``score`` is the per-entry :func:`entry_score` the gate's
+  per-entry continuous-monotonicity scope reads; ``failure`` is the entry's
+  ``failure:`` channel total, which is what explains an aborted unit whose
+  ``drift_loss`` is legitimately ``0.0``.
 * ``namespace_aggregates`` — ``{namespace: weighted_aggregate}`` for
   every namespace observed in the inputs or named in
   :attr:`ScoringWeights.namespace_weights`. Each value is the
   namespace's per-run mean already multiplied by its weight, so it is
   ready to add directly into the scalar.
 * ``scalar_components`` — ``{component_name: contribution}`` whose
-  values sum exactly to ``scalar``. Includes ``"drift"`` (the
-  drift-weight × drift_loss_mean term, kept for back-compat with
-  callers that only know the drift term), ``"pass"`` (the
-  ``(1 - mean_score)`` term — equal to the historical
-  ``(1 - pass_rate)`` term on an all-bool board), and one entry per namespace whose weight
-  is non-zero — minus the ``"drift:"`` namespace, which the drift
-  component already covers to avoid double-counting. When the opt-in
+  values sum exactly to ``scalar``: ``"pass"`` (the ``(1 - mean_score)``
+  term — equal to the historical ``(1 - pass_rate)`` term on an all-bool
+  board) plus one entry per namespace, keyed by the colon-stripped namespace
+  name and written in sorted namespace order. When the opt-in
   diff-complexity term is active (``diff_complexity_weight > 0`` AND a
   ``diff_size`` was threaded for the candidate) a final ``"diff_complexity"``
-  entry is appended; at the default weight ``0.0`` the key is absent and the
-  scalar is byte-identical.
+  entry is appended; at the default weight ``0.0`` the key is absent.
 
 The aggregation is intentionally cheap and deterministic; it does NOT
 re-derive ``drift_loss`` from raw drift counts (that derivation lives
@@ -139,6 +137,45 @@ def _namespace_of(metric_name: str) -> str:
     return metric_name[: idx + 1]
 
 
+def _within_channel_weight(metric_name: str, weights: ScoringWeights) -> float:
+    """Return the within-channel multiplier for one metric, ``1.0`` by default.
+
+    The ``failure:`` channel's two members carry contract magnitudes the way
+    ``drift:`` carries ``severity_weights × per_kind_weights`` (applied inside
+    ``drift_loss``) and ``judge:`` carries ``per_judge_weights`` (applied
+    inside ``per_judge_loss.weighted_loss``). Both live on the contract, so
+    retuning either rolls the epoch.
+
+    Every other metric enters its channel at its measured value; the channel's
+    ``namespace_weights`` coefficient is what scales it.
+    """
+    if metric_name == "failure:tasks":
+        return weights.task_failure_weight
+    if metric_name == "failure:not_completed":
+        return weights.not_completed_weight
+    return 1.0
+
+
+def _failure_channel_total(loss: LossProfile, weights: ScoringWeights) -> float:
+    """Return one run's ``failure:`` channel total, before its coefficient.
+
+    ``task_failure_weight × task_failure_ratio + not_completed_weight`` (the
+    latter only for a run that did not complete) — the same two members
+    :meth:`LossProfile.unified_metrics` derives and
+    :func:`aggregate_namespaced_metrics` sums, computed per entry so the
+    evidence surface can explain an aborted unit's contribution.
+
+    Reads both fields via ``getattr`` so a duck-typed loss stand-in — the
+    projected-standings placeholder, or a profile materialised before the
+    fields existed — resolves to "completed, nothing failed", mirroring
+    :func:`entry_score`'s defensive read.
+    """
+    total = weights.task_failure_weight * float(getattr(loss, "task_failure_ratio", 0.0) or 0.0)
+    if getattr(loss, "not_completed", False):
+        total += weights.not_completed_weight
+    return total
+
+
 def aggregate_namespaced_metrics(
     losses: list[LossProfile],
     weights: ScoringWeights,
@@ -146,18 +183,18 @@ def aggregate_namespaced_metrics(
     """Compute the weighted per-namespace aggregate across ``losses``.
 
     For the ``"drift:"`` namespace the aggregate is
-    ``weights.drift_weight * mean(LossProfile.drift_loss)`` — keeping
-    parity with the existing drift-loss-mean term so callers that
-    consume only the namespace surface get the same drift contribution
-    they used to derive from ``drift_loss_mean``.
+    ``namespace_weights["drift:"] * mean(LossProfile.drift_loss)``: drift is
+    reduced per run into ``drift_loss`` (Seam 1) and enters the scalar as one
+    channel, not as its per-``(kind, severity)`` buckets.
 
     For every other namespace the aggregate is
-    ``weights.namespace_weights[namespace] * mean(MetricCount.count)``
-    over the namespace's entries across all losses' unified metric view
-    (see :meth:`LossProfile.unified_metrics`). Namespaces named in
-    :attr:`ScoringWeights.namespace_weights` but absent from the loss
-    data appear with an aggregate of ``0.0`` so the keys are predictable
-    for downstream consumers.
+    ``namespace_weights[namespace] * mean(Σ within-channel-weighted
+    MetricCount.count)`` over the namespace's entries across all losses'
+    unified metric view (see :meth:`LossProfile.unified_metrics`, which
+    derives the ``judge:`` / ``failure:`` / ``runtime:`` members).
+    Namespaces named in :attr:`ScoringWeights.namespace_weights` but absent
+    from the loss data appear with an aggregate of ``0.0`` so the keys are
+    predictable for downstream consumers.
 
     Unnamespaced metric names (no colon prefix) are silently ignored.
     Namespaces present in the data but with no weight configured are
@@ -169,9 +206,6 @@ def aggregate_namespaced_metrics(
     """
     namespace_means: dict[str, float] = {}
 
-    # Drift gets the existing weighted-mean semantics so a multi-
-    # objective scalar built on top of namespace aggregates collapses to
-    # the same number a drift-only scorer would produce.
     if losses:
         drift_total = sum(per_run_drift_loss(loss, weights) for loss in losses)
         drift_mean = drift_total / len(losses)
@@ -196,11 +230,14 @@ def aggregate_namespaced_metrics(
         for mc in loss.unified_metrics():
             ns = _namespace_of(mc.name)
             if not ns or ns == "drift:":
-                # Drift already handled via drift_loss above; skip its
-                # MetricCount mirror entries here to avoid double-
-                # counting.
+                # Drift is already reduced into ``drift_loss`` above; its
+                # MetricCount mirrors — including the ``drift:custom``
+                # judge-attributed ones the judge: channel scores — are
+                # skipped here so nothing is counted twice.
                 continue
-            per_loss[ns] = per_loss.get(ns, 0.0) + mc.count
+            per_loss[ns] = per_loss.get(ns, 0.0) + mc.count * _within_channel_weight(
+                mc.name, weights
+            )
         for ns, val in per_loss.items():
             sums[ns] = sums.get(ns, 0.0) + val
 
@@ -222,8 +259,8 @@ def _per_judge_loss_aggregate(losses: list[LossProfile]) -> dict[str, float]:
 
     Carried onto :class:`~zicato.scoring.api.ScalarContext` purely for plugin
     / provenance visibility — the built-in scalar does NOT add it separately
-    (each judge's contribution is already folded into ``drift_loss`` by the
-    reducer, hence into ``drift_loss_mean``). Summing each judge's per-run
+    (the same values reach it as the ``judge:<name>`` metrics of the
+    ``judge:`` channel). Summing each judge's per-run
     ``weighted_loss`` and dividing by the run count mirrors the per-run mean
     model the rest of the aggregation uses; a judge absent from a run
     contributes zero to its sum. Returns ``{}`` for empty input.
@@ -276,6 +313,12 @@ def aggregate_generation_score(
         entry_outcome = entry_score(loss)
         per_entry[loss.entry_id] = {
             "drift_loss": drift,
+            # The entry's within-channel ``failure:`` total, the analogue of
+            # ``drift_loss`` for the failure channel (both are pre-namespace-
+            # coefficient). Without it an aborted unit shows an empty
+            # ``drift_loss`` of 0.0 and nothing explaining the loss it
+            # contributed.
+            "failure": _failure_channel_total(loss, weights),
             "pass_fail": loss.pass_fail,
             # The continuous per-entry outcome the gate's per_entry scope
             # reads. ``None`` for an entry with no expectation; a bool
@@ -312,34 +355,23 @@ def aggregate_generation_score(
     # the scalar.
     namespace_aggregates = aggregate_namespaced_metrics(losses, weights)
 
-    # Drift and pass components keep their existing meaning so callers
-    # that only inspect "drift" / "pass" in scalar_components remain
-    # well-defined under the back-compat default weights. The
-    # ``"drift:"`` namespace entry of namespace_aggregates would
-    # otherwise duplicate the drift contribution; we route it through
-    # the named ``"drift"`` component instead.
-    drift_component = weights.drift_weight * drift_loss_mean
     # The pass component runs on the UNIFORM mean_score, not the binary
     # pass_rate. On an all-bool board mean_score == pass_rate (see above),
     # so this is byte-identical to the historical
     # ``pass_weight * (1 - pass_rate)`` term; on a board with continuous
-    # scores it tracks the graded quality with no threshold cliff.
+    # scores it tracks the graded quality with no threshold cliff. It is the
+    # scalar's only non-namespace term — see :func:`builtin_scalar` for why
+    # pass is not a channel.
     pass_component = weights.pass_weight * (1.0 - mean_score)
 
-    scalar_components: dict[str, float] = {
-        "drift": drift_component,
-        "pass": pass_component,
-    }
-    for ns, value in namespace_aggregates.items():
-        if ns == "drift:":
-            # Drift is owned by the "drift" component above. Including
-            # it here would double-count when drift_weight equals the
-            # namespace_weights["drift:"] coefficient (the common
-            # back-compat case).
-            continue
+    scalar_components: dict[str, float] = {"pass": pass_component}
+    # SORTED, mirroring :func:`builtin_scalar`: float addition is not
+    # associative, so summing the channels in mapping-iteration order would
+    # make the scalar's last bit depend on hash seeding.
+    for ns in sorted(namespace_aggregates):
         # Strip the trailing colon for human-readable component names.
         component_name = ns[:-1] if ns.endswith(":") else ns
-        scalar_components[component_name] = value
+        scalar_components[component_name] = namespace_aggregates[ns]
 
     # Parsimony / MDL term (OVERFITTING.md §5 / §12 #4), appended LAST and only
     # when opted in. The component value comes from the SAME seam
@@ -368,7 +400,6 @@ def aggregate_generation_score(
             weights=weights,
             builtin_scalar=builtin_scalar(
                 mean_score=mean_score,
-                drift_loss_mean=drift_loss_mean,
                 namespace_aggregates=namespace_aggregates,
                 weights=weights,
                 diff_size=diff_size,

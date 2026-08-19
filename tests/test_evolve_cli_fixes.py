@@ -78,7 +78,7 @@ def _bootstrap_explicit_flow(
         + "\n"
     )
     brief.write_text("# Brief\n- Be careful.\n")
-    scoring_doc: dict = {"drift_weight": 1.0, "pass_weight": 1.0}
+    scoring_doc: dict = {"pass_weight": 1.0}
     if scoring_extra:
         scoring_doc.update(scoring_extra)
     scoring.write_text(json.dumps(scoring_doc))
@@ -320,7 +320,7 @@ def test_epoch_new_streamlined_flow_files_already_in_place(tmp_path: Path) -> No
         + "\n"
     )
     brief.write_text("# Brief\n- steer\n")
-    scoring.write_text(json.dumps({"drift_weight": 1.0, "pass_weight": 1.0}))
+    scoring.write_text(json.dumps({"pass_weight": 1.0}))
     agent = tmp_path / "agent"
     agent.mkdir()
     (agent / "agent.py").write_text('# zicato:mutable id="g"\nG = "hi"\n')

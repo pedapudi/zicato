@@ -37,7 +37,7 @@ def test_absent_tournament_block_defaults_to_gauntlet() -> None:
 
 
 def test_scoring_without_tournament_key_is_gauntlet() -> None:
-    w = scoring_weights_from_dict({"drift_weight": 2.0})
+    w = scoring_weights_from_dict({"pass_weight": 2.0})
     assert w.tournament_structure.structure == "gauntlet"
 
 
@@ -81,7 +81,7 @@ def test_absent_overfitting_block_is_default_on() -> None:
 
 
 def test_scoring_without_overfitting_key_is_default_on() -> None:
-    w = scoring_weights_from_dict({"drift_weight": 2.0})
+    w = scoring_weights_from_dict({"pass_weight": 2.0})
     assert w.overfitting.enabled is True
     assert w.overfitting.restrict_proposer_visibility is True
 
@@ -219,9 +219,9 @@ def _write_scoring(tmp_path: Path, payload: dict) -> ContractInputs:
 
 
 def test_structure_change_moves_contract_hash(tmp_path: Path) -> None:
-    gauntlet = _write_scoring(tmp_path, {"drift_weight": 1.0})
+    gauntlet = _write_scoring(tmp_path, {"pass_weight": 1.0})
     h_gauntlet = compute_contract_hash(gauntlet)
-    swiss = _write_scoring(tmp_path, {"drift_weight": 1.0, "tournament": {"structure": "swiss"}})
+    swiss = _write_scoring(tmp_path, {"tournament": {"structure": "swiss"}})
     h_swiss = compute_contract_hash(swiss)
     assert h_gauntlet != h_swiss
 
@@ -240,10 +240,10 @@ def test_absent_block_hashes_same_as_explicit_gauntlet(tmp_path: Path) -> None:
     # An operator's partial doc (no tournament key) and an explicit
     # fully-defaulted gauntlet block must canonicalize identically — this
     # is what keeps a stored epoch hash matching a re-derived live hash.
-    absent = _write_scoring(tmp_path, {"drift_weight": 1.0})
+    absent = _write_scoring(tmp_path, {"pass_weight": 1.0})
     explicit = _write_scoring(
         tmp_path,
-        {"drift_weight": 1.0, "tournament": {"structure": "gauntlet", "params": {}}},
+        {"tournament": {"structure": "gauntlet", "params": {}}},
     )
     assert compute_contract_hash(absent) == compute_contract_hash(explicit)
 

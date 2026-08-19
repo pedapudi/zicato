@@ -280,35 +280,43 @@
       "namespace_aggregates": {
         "cost:": 0.0,
         "drift:": 2.0,
+        "failure:": 0.0,
+        "judge:": 0.0,
         "latency:": 0.0,
         "output:": 0.0,
         "rubric:": -0.0,
+        "runtime:": 0.0,
         "schema:": 0.0
       },
       "pass_rate": 1.0,
       "per_entry": {
         "every_expectation_kind_demo": {
           "drift_loss": 2.0,
+          "failure": 0.0,
           "pass_fail": true,
           "score": 1.0
         },
         "q3_metrics_outline": {
           "drift_loss": 2.0,
+          "failure": 0.0,
           "pass_fail": true,
           "score": 1.0
         },
         "transformers_lay_audience": {
           "drift_loss": 2.0,
+          "failure": 0.0,
           "pass_fail": true,
           "score": 1.0
         },
         "transformers_progressive_scripted": {
           "drift_loss": 2.0,
+          "failure": 0.0,
           "pass_fail": true,
           "score": 1.0
         },
         "waffles_revision_scripted": {
           "drift_loss": 2.0,
+          "failure": 0.0,
           "pass_fail": true,
           "score": 1.0
         }
@@ -317,10 +325,13 @@
       "scalar_components": {
         "cost": 0.0,
         "drift": 2.0,
+        "failure": 0.0,
+        "judge": 0.0,
         "latency": 0.0,
         "output": 0.0,
         "pass": 0.0,
         "rubric": -0.0,
+        "runtime": 0.0,
         "schema": 0.0
       },
       "scalar_provenance": "builtin"
@@ -334,35 +345,43 @@
       "namespace_aggregates": {
         "cost:": 0.0,
         "drift:": 0.4,
+        "failure:": 0.0,
+        "judge:": 0.0,
         "latency:": 0.0,
         "output:": 0.0,
         "rubric:": -0.0,
+        "runtime:": 0.0,
         "schema:": 0.0
       },
       "pass_rate": 1.0,
       "per_entry": {
         "every_expectation_kind_demo": {
           "drift_loss": 0.4,
+          "failure": 0.0,
           "pass_fail": true,
           "score": 1.0
         },
         "q3_metrics_outline": {
           "drift_loss": 0.4,
+          "failure": 0.0,
           "pass_fail": true,
           "score": 1.0
         },
         "transformers_lay_audience": {
           "drift_loss": 0.4,
+          "failure": 0.0,
           "pass_fail": true,
           "score": 1.0
         },
         "transformers_progressive_scripted": {
           "drift_loss": 0.4,
+          "failure": 0.0,
           "pass_fail": true,
           "score": 1.0
         },
         "waffles_revision_scripted": {
           "drift_loss": 0.4,
+          "failure": 0.0,
           "pass_fail": true,
           "score": 1.0
         }
@@ -371,10 +390,13 @@
       "scalar_components": {
         "cost": 0.0,
         "drift": 0.4,
+        "failure": 0.0,
+        "judge": 0.0,
         "latency": 0.0,
         "output": 0.0,
         "pass": 0.0,
         "rubric": -0.0,
+        "runtime": 0.0,
         "schema": 0.0
       },
       "scalar_provenance": "builtin"
@@ -388,30 +410,37 @@
       "namespace_aggregates": {
         "cost:": 0.0,
         "drift:": 0.8,
+        "failure:": 0.0,
+        "judge:": 0.0,
         "latency:": 0.0,
         "output:": 0.0,
         "rubric:": -0.0,
+        "runtime:": 0.0,
         "schema:": 0.0
       },
       "pass_rate": 1.0,
       "per_entry": {
         "q3_metrics_outline": {
           "drift_loss": 0.8,
+          "failure": 0.0,
           "pass_fail": true,
           "score": 1.0
         },
         "transformers_lay_audience": {
           "drift_loss": 0.8,
+          "failure": 0.0,
           "pass_fail": true,
           "score": 1.0
         },
         "transformers_progressive_scripted": {
           "drift_loss": 0.8,
+          "failure": 0.0,
           "pass_fail": true,
           "score": 1.0
         },
         "waffles_revision_scripted": {
           "drift_loss": 0.8,
+          "failure": 0.0,
           "pass_fail": true,
           "score": 1.0
         }
@@ -420,10 +449,13 @@
       "scalar_components": {
         "cost": 0.0,
         "drift": 0.8,
+        "failure": 0.0,
+        "judge": 0.0,
         "latency": 0.0,
         "output": 0.0,
         "pass": 0.0,
         "rubric": -0.0,
+        "runtime": 0.0,
         "schema": 0.0
       },
       "scalar_provenance": "builtin"
@@ -437,20 +469,25 @@
       "namespace_aggregates": {
         "cost:": 0.0,
         "drift:": 1.2,
+        "failure:": 0.0,
+        "judge:": 0.0,
         "latency:": 0.0,
         "output:": 0.0,
         "rubric:": -0.0,
+        "runtime:": 0.0,
         "schema:": 0.0
       },
       "pass_rate": 1.0,
       "per_entry": {
         "q3_metrics_outline": {
           "drift_loss": 1.2,
+          "failure": 0.0,
           "pass_fail": true,
           "score": 1.0
         },
         "transformers_lay_audience": {
           "drift_loss": 1.2,
+          "failure": 0.0,
           "pass_fail": true,
           "score": 1.0
         }
@@ -459,10 +496,13 @@
       "scalar_components": {
         "cost": 0.0,
         "drift": 1.2,
+        "failure": 0.0,
+        "judge": 0.0,
         "latency": 0.0,
         "output": 0.0,
         "pass": 0.0,
         "rubric": -0.0,
+        "runtime": 0.0,
         "schema": 0.0
       },
       "scalar_provenance": "builtin"
@@ -476,20 +516,25 @@
       "namespace_aggregates": {
         "cost:": 0.0,
         "drift:": 1.6,
+        "failure:": 0.0,
+        "judge:": 0.0,
         "latency:": 0.0,
         "output:": 0.0,
         "rubric:": -0.0,
+        "runtime:": 0.0,
         "schema:": 0.0
       },
       "pass_rate": 1.0,
       "per_entry": {
         "q3_metrics_outline": {
           "drift_loss": 1.6,
+          "failure": 0.0,
           "pass_fail": true,
           "score": 1.0
         },
         "transformers_lay_audience": {
           "drift_loss": 1.6,
+          "failure": 0.0,
           "pass_fail": true,
           "score": 1.0
         }
@@ -498,10 +543,13 @@
       "scalar_components": {
         "cost": 0.0,
         "drift": 1.6,
+        "failure": 0.0,
+        "judge": 0.0,
         "latency": 0.0,
         "output": 0.0,
         "pass": 0.0,
         "rubric": -0.0,
+        "runtime": 0.0,
         "schema": 0.0
       },
       "scalar_provenance": "builtin"

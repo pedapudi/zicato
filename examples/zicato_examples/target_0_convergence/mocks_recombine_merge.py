@@ -15,7 +15,7 @@ single edit that removes BOTH defect tokens, which a blind last-wins
 concatenation could never produce.
 
 The arithmetic mirrors the mechanical OC exactly (σ = 0, ``info = 1.0``,
-``drift_weight = pass_weight = 1.0``, 5-entry board):
+the ``drift:`` channel and ``pass_weight`` both at ``1.0``, 5-entry board):
 
     scalar(k tokens, p passes) = k + (1 - p/5)
 

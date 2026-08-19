@@ -13,9 +13,9 @@ loops on ``read_presentation_files``. These tests:
    asserting elevated severity on the former and silence on the latter;
 2. confirm the judge attaches via the ``Judge.python`` authoring helper
    and resolves live through :func:`zicato.judge_runtime.judge_spec_to_goldfive`;
-3. prove the judge's ``custom`` drift folds into the scalar loss through
-   ``per_judge_weights[\"file_findability\"]`` — a run with file-finding
-   failures scores strictly worse than a clean one.
+3. prove the judge's ``custom`` drift folds into the scalar's ``judge:``
+   channel through ``per_judge_weights[\"file_findability\"]`` — a run with
+   file-finding failures scores strictly worse than a clean one.
 """
 
 from __future__ import annotations
@@ -26,7 +26,7 @@ from goldfive.judges import JudgeContext, JudgeVerdict
 from zicato.board.judges import Judge
 from zicato.core.types import DriftCount, ScoringWeights
 from zicato.judge_runtime import judge_spec_to_goldfive
-from zicato.telemetry.reducer import compute_drift_loss
+from zicato.telemetry.reducer import compute_per_judge_loss
 from zicato_examples.target_1_presentation.judges import (
     FILE_FINDABILITY_JUDGE_PATH,
     FILE_FINDABILITY_NAME,
@@ -403,23 +403,29 @@ def _weights(judge_weight: float) -> ScoringWeights:
     )
 
 
+def _judge_loss(
+    *,
+    drift_counts: tuple[DriftCount, ...],
+    weights: ScoringWeights,
+) -> float:
+    """The ``judge:`` channel total for these drift counts."""
+    return sum(jl.weighted_loss for jl in compute_per_judge_loss(drift_counts, weights))
+
+
 def test_file_finding_failure_scores_worse_than_clean() -> None:
     """A run with file-finding failures has strictly higher (worse) loss.
 
     The judge's adverse verdicts are attributed by the reducer to the
-    ``custom:file_findability`` drift kind; ``compute_drift_loss`` folds
-    that through ``severity_weights[severity] * per_judge_weights[name] *
+    ``custom:file_findability`` drift kind, which the ``judge:`` channel
+    scores through ``severity_weights[severity] * per_judge_weights[name] *
     count``. Here we feed the two outcomes' drift_counts directly to
     isolate the loss-fold contract.
     """
     weights = _weights(2.0)
 
     # Clean run: no file-findability drift at all.
-    clean_loss = compute_drift_loss(
+    clean_loss = _judge_loss(
         drift_counts=(),
-        plan_revisions=0,
-        task_failure_ratio=0.0,
-        runtime_ms=0,
         weights=weights,
     )
 
@@ -431,11 +437,8 @@ def test_file_finding_failure_scores_worse_than_clean() -> None:
         DriftCount(kind=f"custom:{FILE_FINDABILITY_NAME}", severity="warning", count=1),
         DriftCount(kind=f"custom:{FILE_FINDABILITY_NAME}", severity="critical", count=2),
     )
-    failing_loss = compute_drift_loss(
+    failing_loss = _judge_loss(
         drift_counts=failing_counts,
-        plan_revisions=0,
-        task_failure_ratio=0.0,
-        runtime_ms=0,
         weights=weights,
     )
 
@@ -448,7 +451,7 @@ def test_file_finding_failure_scores_worse_than_clean() -> None:
 def test_per_judge_weight_amplifies_the_penalty() -> None:
     """Raising per_judge_weights[file_findability] increases the loss."""
     counts = (DriftCount(kind=f"custom:{FILE_FINDABILITY_NAME}", severity="warning", count=1),)
-    low = compute_drift_loss(counts, 0, 0.0, 0, _weights(1.0))
-    high = compute_drift_loss(counts, 0, 0.0, 0, _weights(2.0))
+    low = _judge_loss(drift_counts=counts, weights=_weights(1.0))
+    high = _judge_loss(drift_counts=counts, weights=_weights(2.0))
     assert high > low
     assert high == 2.0 * low

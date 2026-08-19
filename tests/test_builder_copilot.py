@@ -51,7 +51,7 @@ def _seed_workspace(tmp_path: Path, *, builder_model: bool = False) -> Path:
     brief = tmp_path / "brief.md"
     brief.write_text("# Brief\n\nsteer\n", encoding="utf-8")
     scoring = tmp_path / "scoring.json"
-    scoring.write_text(json.dumps({"drift_weight": 1.0}), encoding="utf-8")
+    scoring.write_text(json.dumps({"pass_weight": 1.0}), encoding="utf-8")
     write_workspace_config(
         ws,
         {

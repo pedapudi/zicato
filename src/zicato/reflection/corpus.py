@@ -201,11 +201,16 @@ class ObservationRun:
 def _loss_decomposition(loss: Any, weights: ScoringWeights) -> dict[str, float]:
     """Decompose one run's loss into ``judge:<name>`` + ``drift:<kind>`` terms.
 
-    ``per_judge_loss`` carries the already-weighted per-judge contribution;
+    ``per_judge_loss`` carries the already-per-judge-weighted contribution;
     the drift counts are folded per kind, severity-weighted by
-    ``weights.severity_weights`` and scaled by ``weights.drift_weight`` — the
-    same shape the reducer sums into the scalar, but kept attributed so a
+    ``weights.severity_weights`` and scaled by the ``drift:`` channel
+    coefficient — the same shape the scalar sums, but kept attributed so a
     dead / dominating term is visible.
+
+    The judge terms are NOT scaled by the ``judge:`` coefficient here: this
+    decomposition answers "what did this run's judges say", and scaling both
+    channels by their coefficients would make a contract that has turned one
+    channel down look like a board on which nothing fired.
     """
     decomp: dict[str, float] = {}
     for jl in getattr(loss, "per_judge_loss", ()) or ():
@@ -214,7 +219,8 @@ def _loss_decomposition(loss: Any, weights: ScoringWeights) -> dict[str, float]:
             getattr(jl, "weighted_loss", 0.0)
         )
     sev_weights = getattr(weights, "severity_weights", {}) or {}
-    drift_weight = float(getattr(weights, "drift_weight", 0.0))
+    namespace_weights = getattr(weights, "namespace_weights", {}) or {}
+    drift_weight = float(namespace_weights.get("drift:", 0.0))
     for dc in getattr(loss, "drift_counts", ()) or ():
         sev_w = float(sev_weights.get(getattr(dc, "severity", ""), 1.0))
         key = f"drift:{getattr(dc, 'kind', '')}"

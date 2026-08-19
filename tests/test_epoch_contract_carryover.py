@@ -49,7 +49,7 @@ _EXTERNAL_AGENT = "tests.test_proposer_external_seam:StubExternalAgent"
 
 _BOARD = '{"id": "e1", "kind": "single_turn", "wall_clock_budget_seconds": 60, "input": "hi"}\n'
 _BRIEF = "# Proposer brief\n\nMake it faster.\n"
-_SCORING = '{"drift_weight": 1.0, "pass_weight": 2.0}\n'
+_SCORING = '{"pass_weight": 2.0}\n'
 
 
 @pytest.fixture()

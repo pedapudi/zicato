@@ -1852,7 +1852,7 @@ def _build_facet_workspace(
     )
     _write_json(
         ws / "epochs" / epoch_id / "scoring.json",
-        weights if weights is not None else {"drift_weight": 1.0, "pass_weight": 1.0},
+        weights if weights is not None else {"pass_weight": 1.0},
     )
 
     # The per-entry ROWS come from the index (the facet aggregate reads the run
@@ -2010,7 +2010,7 @@ def test_per_entry_facet_uses_the_epochs_frozen_weights(tmp_path: Path) -> None:
         ws,
         [("clean_csv", True, 0.60, 0.2)],
         {"clean_csv": ["facet:data_cleaning"]},
-        weights={"drift_weight": 10.0, "pass_weight": 1.0},
+        weights={"namespace_weights": {"drift:": 10.0, "failure:": 1.0}, "pass_weight": 1.0},
     )
 
     # drift 0.2 * 10 + (1 - 0.60) = 2.40, not the 0.60 the defaults give.
@@ -2141,7 +2141,7 @@ def test_per_entry_facet_overall_is_the_gates_own_number(tmp_path: Path) -> None
     _build_facet_workspace(ws, runs, {e: ["facet:everything"] for e in ids})
 
     epoch_id = "2026-05-16_e0"
-    weights = ScoringWeights(drift_weight=1.0, pass_weight=1.0)
+    weights = ScoringWeights(pass_weight=1.0)
     board = load_board(ws / "epochs" / epoch_id / "board.jsonl")
     train_ids, holdout_ids = split_board(
         board, weights.overfitting, seed=rotation_seed(weights.overfitting, epoch_id)

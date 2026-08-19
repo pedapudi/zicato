@@ -256,7 +256,7 @@ def test_evolve_resolves_and_auto_epochs_on_contract_change(
     brief = tmp_path / "brief.md"
     brief.write_text("Improve the greeting.\n", encoding="utf-8")
     scoring = tmp_path / "scoring.json"
-    scoring.write_text(json.dumps({"drift_weight": 1.0}), encoding="utf-8")
+    scoring.write_text(json.dumps({"pass_weight": 1.0}), encoding="utf-8")
 
     # config.json with the contract block pointing at the live files.
     (workspace / "config.json").write_text(

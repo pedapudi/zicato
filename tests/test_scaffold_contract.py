@@ -56,8 +56,8 @@ def test_init_writes_full_effective_scoring_scaffold(tmp_path: Path) -> None:
     # The FULL effective contract: every top-level field is spelled out by
     # the field-enumerating serializer, not just the overrides.
     for key in (
-        "drift_weight",
         "pass_weight",
+        "namespace_weights",
         "promote_margin",
         "tournament",
         "overfitting",

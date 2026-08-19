@@ -13,22 +13,39 @@ to the workspace; `evolve` reads it there and freezes a per-epoch copy under
 `zicato-author-board`, `zicato-write-brief`. See
 [SCORING.md](../../docs/design/SCORING.md).
 
-> The on-disk keys (canonical, from `ScoringWeights`) are PLURAL and differ
-> from some prose in SCORING.md. Use: `per_kind_weights`, `per_judge_weights`,
-> `severity_weights`, `plan_revision_weight`, `runtime_weight`,
-> `promote_margin`, `pass_rate_monotonicity` — NOT `per_kind_weight`,
-> `w_drift`, `tournament_margin`. The dataclass field names are the truth.
+> The on-disk keys (canonical, from `ScoringWeights`) are PLURAL. Use:
+> `per_kind_weights`, `per_judge_weights`, `severity_weights`,
+> `plan_revision_weight`, `namespace_weights`, `promote_margin`,
+> `pass_rate_monotonicity` — NOT `per_kind_weight`, `w_drift`,
+> `tournament_margin`. The dataclass field names are the truth.
 
-## Two halves of the scalar
+## The shape of the scalar
 
-1. **Drift-derived loss** — a weighted sum over drift counts (by kind and
-   severity), custom-judge violations, plan revisions, task-failure ratio,
-   runtime-over-budget, and abort. Always available; needs no expectations.
-2. **Pass-rate** — the weighted fraction of board entries whose `expectation`
-   passed. Only entries that carry an `expectation` contribute.
+Two kinds of term, and only two:
 
-`drift_weight` and `pass_weight` are the coefficients combining the two
-(roughly `scalar = drift_weight * weighted_drift + pass_weight * (1 - mean_score)`).
+1. **One bounded correctness term** — `pass_weight * (1 - mean_score)`, over
+   the board entries that carry an `expectation`. Nothing else uses that
+   denominator, which is why correctness is not a channel.
+2. **One signed coefficient per measured CHANNEL** — every measured signal is
+   a namespace on `namespace_weights`, summed in sorted order:
+
+   | channel | what it measures | within-channel shape |
+   |---|---|---|
+   | `drift:` | drift events + plan revisions | `severity_weights` × `per_kind_weights` |
+   | `judge:` | custom process judges | `per_judge_weights` / `default_judge_weight` |
+   | `failure:` | task failures + a run that did not complete | `task_failure_weight` / `not_completed_weight` |
+   | `runtime:` | wall-clock seconds | — |
+   | `cost:` `latency:` `rubric:` `output:` `schema:` | whatever the adapter reports under the prefix | — |
+
+```
+scalar = pass_weight * (1 - mean_score) + Σ over channels of coefficient * mean
+```
+
+No channel is privileged. Turning one off turns off exactly that one:
+`namespace_weights: {"drift:": 0.0}` stops scoring drift and leaves judges,
+failures and cost scoring exactly as before. The one coefficient you may not
+zero is `"failure:"` — the loader rejects it, because a contract must not be
+able to make crashing free.
 
 Tuning is **three layers of escalating power**, neutral by default — adding
 none of the lower layers leaves scoring byte-identical to the linear weights:
@@ -50,7 +67,6 @@ The shipped example (`examples/zicato_examples/target_1_presentation/scoring.jso
 
 ```json
 {
-  "drift_weight": 1.0,
   "pass_weight": 1.0,
   "severity_weights": {
     "info": 1.0,
@@ -62,7 +78,6 @@ The shipped example (`examples/zicato_examples/target_1_presentation/scoring.jso
     "looping_reasoning": 1.5
   },
   "plan_revision_weight": 0.5,
-  "runtime_weight": 0.0,
   "promote_margin": 0.01,
   "pass_rate_monotonicity": true,
   "pass_rate_monotonicity_scope": "per_entry"
@@ -73,18 +88,18 @@ The shipped example (`examples/zicato_examples/target_1_presentation/scoring.jso
 
 | Key | Default | Meaning |
 |---|---|---|
-| `drift_weight` | `1.0` | Coefficient on the aggregated drift-loss term. |
-| `pass_weight` | `1.0` | Coefficient on the `(1 - pass_rate)` term. |
+| `pass_weight` | `1.0` | Coefficient on the `(1 - pass_rate)` term — the scalar's one non-channel term. |
 | `severity_weights` | `{"info":1.0,"warning":3.0,"critical":10.0}` | Per-severity multipliers (lowercase keys). Missing key → `0.0` (non-scoring). |
 | `per_kind_weights` | `{}` (uniform) | Per-`DriftKind` multipliers. Keys are short lowercase tokens — `confabulation_risk`, `looping_reasoning`, `intent_divergence`, … Stacks multiplicatively with `severity_weights`. |
-| `per_judge_weights` | `{}` | Per-custom-judge multipliers keyed on the judge `name`. All custom judges share the `custom` drift kind, so this is the only way to weight them apart. |
+| `per_judge_weights` | `{}` | Per-custom-judge multipliers keyed on the judge `name`, INSIDE the `judge:` channel. All custom judges share the `custom` drift kind, so this is the only way to weight them apart. Retiring one judge is `{name: 0.0}` here; retiring the whole channel is `namespace_weights: {"judge:": 0.0}`. |
 | `default_judge_weight` | `1.0` | Fallback multiplier for a custom judge whose `name` is absent from `per_judge_weights`. |
-| `plan_revision_weight` | `0.5` | Coefficient on `plan_revisions`. |
-| `runtime_weight` | `0.0` | Coefficient on per-second runtime. Usually `0.0` — the wall-clock budget is the hard ceiling; set >0 only when runtime matters intrinsically. |
+| `plan_revision_weight` | `0.5` | Coefficient on `plan_revisions`, inside the `drift:` channel. |
+| `task_failure_weight` | `10.0` | Multiplier on the failed-task ratio inside the `failure:` channel. Pure failures matter. |
+| `not_completed_weight` | `50.0` | What a run that did not complete — killed, crashed, wall-clock exhausted — costs in the `failure:` channel. An ABSOLUTE magnitude: retuning `severity_weights` does not rescale it. |
 | `promote_margin` | `0.01` | Minimum scalar improvement the child must show over the parent to be promoted (regression-noise floor). |
 | `pass_rate_monotonicity` | `true` | On/off switch for the pass-rate gate. When false, the rule is disabled. |
 | `pass_rate_monotonicity_scope` | `"per_entry"` | Granularity when the rule is on: `"per_entry"` rejects if ANY champion-passed entry flips to fail (invariant/regression boards); `"aggregate"` rejects only if the OVERALL pass-rate drops (sampled evaluation boards). |
-| `namespace_weights` | `{"drift:":1.0,"cost:":0.001,"latency:":0.0001,"rubric:":-1.0,"output:":0.0,"schema:":5.0}` | Per-namespace coefficients for the multi-objective scalar. The SIGN encodes the namespace's "worse" direction — positive = higher is worse, negative = higher is better (rubric), `0.0` = tracked but not optimised. |
+| `namespace_weights` | `{"drift:":1.0,"judge:":1.0,"failure:":1.0,"runtime:":0.0,"cost:":0.001,"latency:":0.0001,"rubric:":-1.0,"output:":0.0,"schema:":5.0}` | The per-CHANNEL coefficients — every measured signal rides this map. The SIGN encodes the channel's "worse" direction — positive = higher is worse, negative = higher is better (rubric), `0.0` = tracked but not optimised. An explicit mapping REPLACES the defaults wholesale, so a channel you omit scores at `0.0`; `"failure:"` must be present and > 0 or the contract is rejected at load. |
 | `namespace_monotonicity` | `{"drift:":false,"rubric:":true,"schema:":true}` | Per-namespace gate guards. A `true` namespace rejects any child that moved in that namespace's worse direction, even when the combined scalar improves. **Default-on for `rubric:` and `schema:`** — see the gate section. |
 | `diff_complexity_weight` | `0.0` (off) | Opt-in parsimony/MDL term: adds `weight * (added + removed + patches)` to the challenger's scalar, biasing toward the smaller, more general edit. At `0.0` the term is exactly absent (omitted from the contract hash, so unset contracts never roll). |
 | `diff_complexity_ceiling` | `0.0` (off) | Opt-in parsimony CEILING — a hard gate rule, not a loss nudge. Any `<= 0` is off; above that, a challenger whose diff complexity exceeds it is rejected outright. |
@@ -314,7 +329,7 @@ loosens the gate's primary decision.
 
 Good weights are unknown until the loop has run real epochs.
 
-1. Start near the defaults (`drift_weight = pass_weight = 1.0`, the shipped
+1. Start near the defaults (the shipped channel coefficients, the shipped
    `severity_weights`).
 2. Run an epoch.
 3. Inspect the journal/analysis: do promoted generations match what you would

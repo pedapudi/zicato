@@ -27,7 +27,7 @@ def workspace(tmp_path: Path) -> Path:
     brief = tmp_path / "brief.md"
     brief.write_text("# Brief\n\nsteer\n", encoding="utf-8")
     scoring = tmp_path / "scoring.json"
-    scoring.write_text(json.dumps({"drift_weight": 1.0}), encoding="utf-8")
+    scoring.write_text(json.dumps({"pass_weight": 1.0}), encoding="utf-8")
     write_workspace_config(
         ws,
         {
@@ -291,7 +291,7 @@ def test_builder_op_float_knobs_are_typed_not_passed_through(client: TestClient)
     # Garbage is a field-precise 400, never a 500.
     for op, args, needle in (
         ("set_gate", {"holdout_margin": "x"}, "holdout_margin"),
-        ("set_weights", {"drift_weight": "heavy"}, "drift_weight"),
+        ("set_weights", {"task_failure_weight": "heavy"}, "task_failure_weight"),
         ("set_holdout", {"ladder": {"threshold": "bad"}}, "ladder.threshold"),
         # A bool floats to 1.0 in Python, so it must be refused explicitly
         # or `true` would read as a silent weight of 1.0.
@@ -472,14 +472,14 @@ def test_builder_op_full_knob_dispatch(client: TestClient) -> None:
             **s,
             "op": "set_namespace_weights",
             "args": {
-                "namespace_weights": {"drift:": 1.0, "rubric:": -2.0},
+                "namespace_weights": {"drift:": 1.0, "failure:": 1.0, "rubric:": -2.0},
                 "diff_complexity_weight": 0.005,
             },
         },
     )
     assert r.status_code == 200
     sc = r.json()["draft"]["scoring"]
-    assert sc["namespace_weights"] == {"drift:": 1.0, "rubric:": -2.0}
+    assert sc["namespace_weights"] == {"drift:": 1.0, "failure:": 1.0, "rubric:": -2.0}
     assert sc["diff_complexity_weight"] == 0.005
 
     r = client.post(
@@ -724,21 +724,21 @@ def test_builder_op_set_weights_scalar_and_each_mapping(client: TestClient) -> N
             **s,
             "op": "set_weights",
             "args": {
-                "drift_weight": 2.0,
                 "pass_weight": 3.0,
                 "default_judge_weight": 1.5,
                 "plan_revision_weight": 0.5,
-                "runtime_weight": 0.25,
+                "task_failure_weight": 8.0,
+                "not_completed_weight": 25.0,
             },
         },
     )
     assert r.status_code == 200
     sc = r.json()["draft"]["scoring"]
-    assert sc["drift_weight"] == 2.0
     assert sc["pass_weight"] == 3.0
     assert sc["default_judge_weight"] == 1.5
     assert sc["plan_revision_weight"] == 0.5
-    assert sc["runtime_weight"] == 0.25
+    assert sc["task_failure_weight"] == 8.0
+    assert sc["not_completed_weight"] == 25.0
 
     # Each mapping field replaces the WHOLE mapping (wholesale semantics).
     for field, first, second in (

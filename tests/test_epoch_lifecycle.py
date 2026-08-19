@@ -89,7 +89,7 @@ def test_new_epoch_creates_expected_layout(
 
     # scoring.json is parseable and round-trips key fields.
     scoring = json.loads((edir / "scoring.json").read_text())
-    assert scoring["drift_weight"] == weights.drift_weight
+    assert scoring["pass_weight"] == weights.pass_weight
     assert scoring["pass_weight"] == weights.pass_weight
     assert scoring["severity_weights"]["critical"] == 10.0
 
@@ -174,7 +174,7 @@ def test_new_epoch_accepts_in_memory_objects_without_prior_save(
         forbidden_ids=("router__sp",),
         preferred_ids=(),
     )
-    weights = ScoringWeights(drift_weight=2.0, pass_weight=3.0)
+    weights = ScoringWeights(pass_weight=3.0)
 
     cfg = new_epoch(
         workspace_root=workspace,
@@ -197,7 +197,7 @@ def test_new_epoch_accepts_in_memory_objects_without_prior_save(
     # The brief's source text was written verbatim.
     assert (edir / "brief.md").read_text() == brief.text
     # Scoring weights were serialized from the in-memory object.
-    assert json.loads((edir / "scoring.json").read_text())["drift_weight"] == 2.0
+    assert json.loads((edir / "scoring.json").read_text())["pass_weight"] == 3.0
     # The contract hash is populated (64-hex sha256).
     assert len(cfg.contract_hash) == 64
     assert load_epoch(workspace, cfg.id).contract_hash == cfg.contract_hash
@@ -415,12 +415,12 @@ def test_current_epoch_id_returns_none_when_marker_missing(workspace: Path) -> N
 
 
 def test_load_epoch_round_trips(workspace: Path, board_file: Path, brief_file: Path) -> None:
-    weights = ScoringWeights(drift_weight=2.0, pass_weight=3.0, promote_margin=0.05)
+    weights = ScoringWeights(pass_weight=3.0, promote_margin=0.05)
     cfg = new_epoch(workspace, "alpha", board_file, brief_file, weights)
     loaded = load_epoch(workspace, cfg.id)
     assert loaded.id == cfg.id
     assert loaded.name == "alpha"
-    assert loaded.scoring.drift_weight == 2.0
+    assert loaded.scoring.pass_weight == 3.0
     assert loaded.scoring.pass_weight == 3.0
     assert loaded.scoring.promote_margin == 0.05
     assert loaded.closed is False
@@ -455,14 +455,12 @@ def test_scoring_from_dict_preserves_per_judge_weights() -> None:
     from zicato.epoch.lifecycle import _scoring_from_dict
 
     payload = {
-        "drift_weight": 1.0,
         "pass_weight": 1.0,
         "severity_weights": {"info": 1.0, "warning": 3.0, "critical": 10.0},
         "per_kind_weights": {},
         "per_judge_weights": {"quality": 4.0, "no_pii": 7.0},
         "default_judge_weight": 2.5,
         "plan_revision_weight": 0.5,
-        "runtime_weight": 0.0,
         "promote_margin": 0.01,
         "pass_rate_monotonicity": True,
     }
@@ -478,12 +476,10 @@ def test_scoring_from_dict_defaults_when_per_judge_fields_absent() -> None:
     from zicato.epoch.lifecycle import _scoring_from_dict
 
     legacy_payload = {
-        "drift_weight": 1.0,
         "pass_weight": 1.0,
         "severity_weights": {"info": 1.0, "warning": 3.0, "critical": 10.0},
         "per_kind_weights": {},
         "plan_revision_weight": 0.5,
-        "runtime_weight": 0.0,
         "promote_margin": 0.01,
         "pass_rate_monotonicity": True,
     }

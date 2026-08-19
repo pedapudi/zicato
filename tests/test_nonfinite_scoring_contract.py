@@ -29,7 +29,7 @@ from zicato.workspace_loader import scoring_weights_from_dict
             id="ladder-noise-scale",
         ),
         pytest.param(
-            lambda: ScoringWeights(namespace_weights={"drift:": math.inf}),
+            lambda: ScoringWeights(namespace_weights={"drift:": math.inf, "failure:": 1.0}),
             id="namespace-weight",
         ),
     ],
@@ -96,7 +96,7 @@ def test_gate_flags_a_namespace_whose_aggregate_is_nonfinite() -> None:
     """Rule 3: an unreadable namespace is a regression, not a clean pass."""
     weights = ScoringWeights(
         pass_rate_monotonicity=False,
-        namespace_weights={"drift:": 1.0},
+        namespace_weights={"drift:": 1.0, "failure:": 1.0},
         namespace_monotonicity={"drift:": True},
     )
     outcome = evaluate_gate(

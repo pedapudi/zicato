@@ -103,12 +103,12 @@ def test_set_weights() -> None:
     draft = TournamentDraft()
     patch = ops.set_weights(
         draft,
-        drift_weight=2.0,
+        not_completed_weight=2.0,
         per_judge_weights={"j1": 3.0},
     )
-    assert draft.scoring.drift_weight == 2.0
+    assert draft.scoring.not_completed_weight == 2.0
     assert dict(draft.scoring.per_judge_weights) == {"j1": 3.0}
-    assert patch.changed["drift_weight"]["to"] == 2.0
+    assert patch.changed["not_completed_weight"]["to"] == 2.0
 
 
 def test_set_gate() -> None:
@@ -995,7 +995,7 @@ def test_set_namespace_weights() -> None:
     import pytest
 
     draft = TournamentDraft()
-    weights = {"drift:": 2.0, "rubric:": -0.5, "cost:": 0.0}
+    weights = {"drift:": 2.0, "failure:": 1.0, "rubric:": -0.5, "cost:": 0.0}
     patch = ops.set_namespace_weights(draft, namespace_weights=weights, diff_complexity_weight=0.01)
     assert dict(draft.scoring.namespace_weights) == weights
     assert draft.scoring.diff_complexity_weight == 0.01
@@ -1311,7 +1311,7 @@ def _slot_workspace(tmp_path) -> object:
     brief = tmp_path / "brief.md"
     brief.write_text("# Brief\n", encoding="utf-8")
     scoring = tmp_path / "scoring.json"
-    scoring.write_text(json.dumps({"drift_weight": 1.0}), encoding="utf-8")
+    scoring.write_text(json.dumps({"pass_weight": 1.0}), encoding="utf-8")
     write_workspace_config(
         ws,
         {
@@ -1712,7 +1712,7 @@ def _seed_min_workspace(tmp_path) -> None:
     brief = tmp_path / "brief.md"
     brief.write_text("# Brief\n", encoding="utf-8")
     scoring = tmp_path / "scoring.json"
-    scoring.write_text(_json.dumps({"drift_weight": 1.0, "promote_margin": 0.01}), encoding="utf-8")
+    scoring.write_text(_json.dumps({"promote_margin": 0.01}), encoding="utf-8")
     _wcfg(
         ws,
         {

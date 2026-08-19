@@ -42,7 +42,7 @@ def fresh_workspace(tmp_path: Path) -> tuple[Path, str]:
     brief_src = tmp_path / "brief.md"
     brief_src.write_text("# Proposer brief\n- Be careful.\n")
 
-    weights = ScoringWeights(drift_weight=1.5)
+    weights = ScoringWeights(pass_weight=1.5)
     cfg = new_epoch(
         workspace,
         name="alpha",
@@ -79,7 +79,7 @@ def test_load_current_epoch_config_uses_marker(
     workspace, epoch_id = fresh_workspace
     cfg = load_current_epoch_config(workspace)
     assert cfg.id == epoch_id
-    assert cfg.scoring.drift_weight == 1.5
+    assert cfg.scoring.pass_weight == 1.5
 
 
 def test_load_current_epoch_missing_marker_raises(tmp_path: Path) -> None:
@@ -103,7 +103,7 @@ def test_load_current_scoring_round_trips_weights(
 ) -> None:
     workspace, _ = fresh_workspace
     weights = load_current_scoring(workspace)
-    assert weights.drift_weight == 1.5
+    assert weights.pass_weight == 1.5
 
 
 def test_load_current_brief_parses_markdown(

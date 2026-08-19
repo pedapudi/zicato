@@ -72,7 +72,7 @@ def _bootstrap_workspace_without_v0_marker(tmp_path: Path) -> tuple[Path, str]:
         '"input": "answer", "expectation": {"kind": "rubric", "spec": "accurate"}}\n',
         encoding="utf-8",
     )
-    _write_json(edir / "scoring.json", {"drift_weight": 1.0, "pass_weight": 1.0})
+    _write_json(edir / "scoring.json", {"pass_weight": 1.0})
 
     # v0 — seed, no experiment.json (the bug-reproduction shape).
     v0_dir = edir / "generations" / "v0"

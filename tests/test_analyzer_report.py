@@ -87,7 +87,6 @@ def epoch_workspace(tmp_path: Path) -> tuple[Path, str]:
     _write(
         edir / "scoring.json",
         {
-            "drift_weight": 1.0,
             "pass_weight": 1.5,
             "promote_margin": 0.02,
             "severity_weights": {"info": 1.0, "warning": 3.0, "critical": 10.0},

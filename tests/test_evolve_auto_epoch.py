@@ -117,7 +117,7 @@ def _bootstrap_registered(tmp_path: Path) -> tuple[Path, Path]:
         + "\n"
     )
     rubric.write_text("# Rubric\n- Be careful.\n")
-    scoring.write_text(json.dumps({"drift_weight": 1.0, "pass_weight": 1.0}))
+    scoring.write_text(json.dumps({"pass_weight": 1.0}))
 
     # The mutable source tree.
     agent = tmp_path / "agent"

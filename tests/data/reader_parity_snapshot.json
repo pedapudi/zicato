@@ -291,7 +291,6 @@
       "journal": "",
       "mutations": [],
       "scoring": {
-        "drift_weight": 1.0,
         "pass_weight": 1.0,
         "tournament": {
           "params": {},
@@ -494,7 +493,6 @@
     "journal": "",
     "mutations": [],
     "scoring": {
-      "drift_weight": 1.0,
       "pass_weight": 1.0,
       "tournament": {
         "params": {},
@@ -608,7 +606,6 @@
     "journal": "",
     "mutations": [],
     "scoring": {
-      "drift_weight": 1.0,
       "pass_weight": 1.0,
       "tournament": {
         "params": {},
@@ -689,7 +686,6 @@
     "journal": "",
     "mutations": [],
     "scoring": {
-      "drift_weight": 1.0,
       "pass_weight": 1.0,
       "tournament": {
         "params": {},
@@ -1478,7 +1474,6 @@
       "journal": "",
       "mutations": [],
       "scoring": {
-        "drift_weight": 1.0,
         "pass_weight": 1.0,
         "tournament": {
           "params": {},

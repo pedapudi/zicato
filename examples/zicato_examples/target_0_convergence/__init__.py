@@ -15,7 +15,7 @@ scalar is computable by hand. The target is scripted at every seam:
   patches drive the loop to a known floor, plus the never-invoked
   ``harness_llm`` placeholder.
 * ``board.jsonl`` / ``scoring.json`` / ``scoring.effective.json`` — the
-  frozen contract, with ``runtime_weight: 0`` so the floor is an exact
+  frozen contract, with the ``runtime:`` coefficient at 0 so the floor is an exact
   float.
 
 See ``RUN.md`` for the no-endpoint demo recipe and

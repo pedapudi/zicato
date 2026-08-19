@@ -138,14 +138,14 @@ operator means by "better":
 
 | Knob | Keys on | Use it to express… |
 |---|---|---|
-| `drift_weight` / `pass_weight` | the two top-level axes | whether cleanliness or correctness dominates (`pass_weight = 0` ignores expectations; `drift_weight = 0` scores on pass-rate alone) |
+| `pass_weight` | the one non-channel term | how much correctness dominates (`0` ignores expectations entirely) |
 | `severity_weights` | `info` / `warning` / `critical` | how much worse a critical is than an info |
 | `per_kind_weights` | built-in `DriftKind` token | "this harness's `off_topic` matters 2× the others" |
 | `per_judge_weights` | judge `name` | telling *custom judges apart* — they all share the `custom` kind, so this is the only per-judge lever |
 | `default_judge_weight` | — | the fallback for a custom judge absent from `per_judge_weights` |
 | `plan_revision_weight` | — | how hard mid-run plan churn (the agent rewriting its own plan) weighs in the scalar |
-| `runtime_weight` | — | opt-in pressure toward faster runs (`0` keeps wall-clock out of the loss) |
-| `namespace_weights` | namespace prefix (`drift:`, `cost:`, `rubric:`, …) | the multi-objective scalar — signed coefficients fold each namespace into the scalar |
+| `task_failure_weight` / `not_completed_weight` | the `failure:` channel | how much failed tasks and a run that never completed cost (the latter is absolute — retuning severities does not rescale it) |
+| `namespace_weights` | namespace prefix (`drift:`, `judge:`, `failure:`, `runtime:`, `cost:`, `rubric:`, …) | the per-CHANNEL coefficients — every measured signal rides this map, so this is where a whole channel goes up, down, or off. `"drift:": 0.0` scores on everything but drift; `"failure:"` may not be zeroed |
 | pass-rate monotonicity (`pass_rate_monotonicity` bool + `pass_rate_monotonicity_scope`) | the gate | "a challenger may never break an entry the champion passed" — `per_entry` scope (default; no individual passing entry may regress — invariant/regression boards) vs `aggregate` (only the board-wide pass-rate may not drop — sampled evaluation boards). The bool is the on/off switch; there is no `off` scope |
 
 Worked example of *shaping*: to say "I care most that the agent stays on
@@ -222,7 +222,7 @@ directly. The copilot's tools (conceptual):
 |---|---|
 | `edit_board_entry` | add / edit / remove one entry (input, expectation, tags, weight) |
 | `add_judge` | declare a process judge on an entry (name, mode, body, severity) |
-| `set_weights` | the loss knobs above — the scalars (`drift_weight`, `pass_weight`, `default_judge_weight`, `plan_revision_weight`, `runtime_weight`) and the wholesale maps (`severity_weights`, `per_kind_weights`, `per_judge_weights`) |
+| `set_weights` | the loss knobs above — the scalars (`pass_weight`, `default_judge_weight`, `plan_revision_weight`, `task_failure_weight`, `not_completed_weight`) and the wholesale maps (`severity_weights`, `per_kind_weights`, `per_judge_weights`) |
 | `set_namespace_weights` | the multi-objective namespace coefficients (`namespace_weights`) + the `diff_complexity_weight` parsimony term |
 | `set_holdout` | the train/holdout split (`holdout`-tagged ids and/or fraction) + the wider anti-overfitting block (Ladder, rotation, placebo cadence — detail in `zicato-build-tournament`) |
 | `validate` | (read-only) re-runs board validation (ids unique + filesystem-safe, per-kind fields present, expectation `reads` valid for the kind, judge slugs unique, `disable_drift` tokens resolve) — plus the statistical margin-vs-noise-floor rule when the epoch carries a measured A/A floor |

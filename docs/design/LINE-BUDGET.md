@@ -18,8 +18,8 @@ The baseline and final ratchet use the same metric:
 
 | Measurement | Baseline (`f9052dd`) | Current limit | Net reduction |
 |---|---:|---:|---:|
-| Total | 408,547 | 420,410 | -11,863 |
-| Production | 197,588 | 202,421 | -4,833 |
+| Total | 408,547 | 421,034 | -12,487 |
+| Production | 197,588 | 202,542 | -4,954 |
 
 The earlier raw count of 425,755 included lockfiles and generated artifacts and
 is retained in `.line-budget.json` for provenance; it is not the enforced
@@ -85,3 +85,5 @@ increase.
 | Replicate-aware judge repair (production) | 202,178 | +93 | 202,271 | Issue #265: persisted_loss_slots beside the evidence walk and the per-slot repair loop with honest outcome counts. |
 | Calibration phase and progress (total) | 419,971 | +439 | 420,410 | Issue #175: the calibrating phase with draw progress, the epoch-open pipeline step, the cost line, and the phase/render regressions. |
 | Calibration phase and progress (production) | 202,271 | +150 | 202,421 | Issue #175: the beater threading, the on_draw seam, the epoch-open projection, and its two renderers. |
+| De-centered scalar channels (total) | 420,410 | +624 | 421,034 | Issue #262: the derived judge/failure/runtime channels, the identity and refusal pins, and the seam test's rewritten second implementation. |
+| De-centered scalar channels (production) | 202,421 | +121 | 202,542 | Issue #262: the two failure-channel contract fields with their load-time invariant, the channel derivation on LossProfile, the within-channel resolver, and the replicate fold of the run-outcome fields — net of the deleted drift_weight/runtime_weight fields, the not-completed penalty helper, the reducer's dead kind-multiplier, and the runner's inline abort arithmetic. |

@@ -65,7 +65,7 @@ def _build_populated_workspace(outer: Path) -> tuple[Path, str]:
         '"input": "x", "expectation": {"kind": "predicate", "spec": "p"}}\n',
         encoding="utf-8",
     )
-    _write_json(edir / "scoring.json", {"drift_weight": 1.0, "promote_margin": 0.02})
+    _write_json(edir / "scoring.json", {"promote_margin": 0.02})
     (edir / "journal.md").write_text("## v1\nokay\n", encoding="utf-8")
 
     # v0 baseline.

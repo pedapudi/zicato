@@ -707,9 +707,20 @@ def _default_namespace_weights() -> Mapping[str, float]:
     often counted in tokens (thousands) while drift loss is a small
     weighted sum, so the cost coefficient is small to keep both terms
     in a comparable scale.
+
+    Every measured channel rides this map; the scalar has no privileged
+    term besides the bounded pass/miss one (see
+    :func:`zicato.scoring.builtins.builtin_scalar`). ``runtime:`` is
+    separate from ``latency:`` on purpose: ``latency:`` coefficients are
+    calibrated for adapter-supplied millisecond percentiles, and summing
+    those together with a whole-run duration in seconds would produce a
+    meaningless within-namespace total.
     """
     return {
         "drift:": 1.0,
+        "judge:": 1.0,
+        "failure:": 1.0,
+        "runtime:": 0.0,
         "cost:": 0.001,
         "latency:": 0.0001,
         "rubric:": -1.0,
@@ -748,10 +759,14 @@ class ScoringWeights:
 
     Fields
     ------
-    drift_weight:
-        Coefficient on the aggregated drift-loss term.
     pass_weight:
-        Coefficient on the ``(1 - pass_rate)`` term.
+        Coefficient on the ``(1 - pass_rate)`` term. The pass/miss term is
+        the scalar's ONE non-namespace term: it has its own denominator
+        (expectation-bearing entries, not every entry), its own
+        monotonicity mechanism (:attr:`pass_rate_monotonicity_scope`), and
+        its own transform seam (:attr:`pass_transform`). Every MEASURED
+        channel — drift, judges, failures, runtime, cost, latency, rubric,
+        output, schema — rides :attr:`namespace_weights` instead.
     severity_weights:
         Per-severity multipliers applied inside the drift-loss
         aggregation. Keys are lowercase severity strings; missing keys
@@ -774,6 +789,12 @@ class ScoringWeights:
         mirroring how an unknown kind falls back to ``1.0`` under
         :attr:`per_kind_weights`. Empty mapping = every custom judge
         scores at the default.
+
+        This is the WITHIN-CHANNEL shape of the ``judge:`` namespace
+        (each judge's weighted loss becomes a ``judge:<name>`` metric),
+        so retiring one judge is ``per_judge_weights: {name: 0.0}`` while
+        retiring the whole channel is
+        ``namespace_weights: {"judge:": 0.0}``.
     default_judge_weight:
         Fallback multiplier for a custom judge whose ``judge_name`` is
         absent from :attr:`per_judge_weights`. Defaults to ``1.0`` so an
@@ -782,11 +803,20 @@ class ScoringWeights:
     plan_revision_weight:
         Coefficient on :attr:`LossProfile.plan_revisions`. Defaults to
         ``0.5`` — plan revisions are signal but less so than drift.
-    runtime_weight:
-        Coefficient on per-second runtime. Defaults to ``0.0`` — operators
-        usually rely on the wall-clock budget as a hard ceiling rather
-        than scoring runtime continuously, but the knob is here for
-        cases where runtime matters intrinsically.
+    task_failure_weight:
+        Multiplier on :attr:`LossProfile.task_failure_ratio` inside the
+        ``failure:`` channel (the ``failure:tasks`` member). Defaults to
+        ``10.0`` — pure failures matter.
+    not_completed_weight:
+        Fixed magnitude charged in the ``failure:`` channel (the
+        ``failure:not_completed`` member) for a run that did not complete:
+        killed, crashed, harness-exception, emulator-leak-aborted, or
+        wall-clock exhausted. Defaults to ``50.0``, an ABSOLUTE magnitude
+        rather than a multiple of :attr:`severity_weights`, so retuning
+        severities cannot silently rescale what a crash costs. Without it
+        a run that crashes instantly (empty events file, zero drift
+        counts) would earn the BEST possible score and a challenger could
+        win a tournament by failing fast.
     diff_complexity_weight:
         Coefficient on the challenger's diff complexity — an opt-in
         parsimony / MDL term (OVERFITTING.md §5 / §12 #4). When ``> 0`` the
@@ -922,18 +952,25 @@ class ScoringWeights:
         Wall-clock seconds the regression subprocess is allowed before
         the runner kills it. A timeout counts as a regression failure.
     namespace_weights:
-        Per-namespace coefficients used by the multi-objective scalar.
-        Keys are namespace prefixes (with the trailing colon, e.g.
-        ``"drift:"``). The sign of each coefficient codifies the
-        namespace's "worse" direction:
+        Per-namespace coefficients used by the multi-objective scalar —
+        the ONE map every measured channel rides. Keys are namespace
+        prefixes (with the trailing colon, e.g. ``"drift:"``). The sign of
+        each coefficient codifies the namespace's "worse" direction:
 
-        * Positive → higher value is worse (drift, cost, latency,
-          schema). Added to the scalar as ``weight * mean``.
+        * Positive → higher value is worse (drift, judges, failures,
+          runtime, cost, latency, schema). Added to the scalar as
+          ``weight * mean``.
         * Negative → higher value is better (rubric). The negation
           flips the metric into a loss so the scalar stays
           lower-is-better.
         * Zero → namespace excluded from the scalar; tracked but not
-          optimised (default for ``"output:"``).
+          optimised (default for ``"output:"`` and ``"runtime:"``).
+
+        An explicit mapping REPLACES the defaults wholesale rather than
+        merging with them, and a namespace it omits scores at ``0.0``.
+        ``"failure:"`` is therefore required to be present and strictly
+        positive (see :meth:`__post_init__`): a contract must not be able
+        to make crashing free, by omission or by assignment.
 
         See :func:`_default_namespace_weights` for the shipped values.
     namespace_monotonicity:
@@ -963,7 +1000,6 @@ class ScoringWeights:
         Validated fail-fast in :meth:`__post_init__`.
     """
 
-    drift_weight: float = field(default=1.0, metadata=_knob(builder_op="set_weights"))
     pass_weight: float = field(default=1.0, metadata=_knob(builder_op="set_weights"))
     severity_weights: Mapping[str, float] = field(
         default_factory=_default_severity_weights,
@@ -977,7 +1013,12 @@ class ScoringWeights:
     )
     default_judge_weight: float = field(default=1.0, metadata=_knob(builder_op="set_weights"))
     plan_revision_weight: float = field(default=0.5, metadata=_knob(builder_op="set_weights"))
-    runtime_weight: float = field(default=0.0, metadata=_knob(builder_op="set_weights"))
+    # The two ``failure:`` channel magnitudes. They live on the contract (not
+    # as module constants) so retuning them rolls the epoch through the normal
+    # hash mechanism — a mid-epoch retune would otherwise let the unit cache
+    # fold old- and new-formula losses together undetectably.
+    task_failure_weight: float = field(default=10.0, metadata=_knob(builder_op="set_weights"))
+    not_completed_weight: float = field(default=50.0, metadata=_knob(builder_op="set_weights"))
     # Opt-in parsimony / MDL term (OVERFITTING.md §5 / §12 #4). DEFAULT 0.0 ⇒
     # the diff-complexity term is exactly absent and the scalar / contract hash
     # / every golden are byte-identical to a contract without this field (the
@@ -1236,11 +1277,11 @@ class ScoringWeights:
         from zicato.scoring.transforms import validate_transform_spec  # noqa: PLC0415
 
         for name in (
-            "drift_weight",
             "pass_weight",
             "default_judge_weight",
             "plan_revision_weight",
-            "runtime_weight",
+            "task_failure_weight",
+            "not_completed_weight",
             "diff_complexity_weight",
             "diff_complexity_ceiling",
             "promote_margin",
@@ -1254,6 +1295,34 @@ class ScoringWeights:
         _require_finite_mapping("per_kind_weights", self.per_kind_weights)
         _require_finite_mapping("per_judge_weights", self.per_judge_weights)
         _require_finite_mapping("namespace_weights", self.namespace_weights)
+
+        # A run that did not complete is charged in the ``failure:`` channel,
+        # so a contract that zeroes (or omits) that channel makes crashing
+        # free — and a challenger can then win by failing fast. The invariant
+        # is enforced at load rather than left to operator discipline because
+        # the failure mode is silent: the scalar simply stops seeing aborts.
+        # An explicit namespace_weights mapping replaces the defaults, so
+        # omission is the same statement as 0.0 and is rejected the same way.
+        failure_weight = float(self.namespace_weights.get("failure:", 0.0))
+        if failure_weight <= 0.0:
+            raise ValueError(
+                'namespace_weights["failure:"] must be present and > 0 (got '
+                f"{failure_weight!r}): the failure: channel carries the "
+                "task-failure and not-completed terms, and a contract must "
+                "not be able to make crashing free. Dampen it with a small "
+                "positive coefficient instead of zeroing it."
+            )
+        # ``custom`` / ``custom:<judge>`` drift is scored in the ``judge:``
+        # channel via per_judge_weights, never through per_kind_weights, so a
+        # per_kind_weights entry for it would be silently inert. Reject it
+        # rather than let an operator believe they have retuned their judges.
+        if "custom" in self.per_kind_weights:
+            raise ValueError(
+                'per_kind_weights["custom"] is inert: custom-judge drift is '
+                "scored in the judge: channel. Use per_judge_weights "
+                "{judge_name: weight} to retune one judge, or "
+                'namespace_weights {"judge:": w} to retune the channel.'
+            )
 
         if self.pass_transform is not None:
             validate_transform_spec(self.pass_transform)

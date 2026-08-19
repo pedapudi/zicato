@@ -89,7 +89,7 @@ def test_aggregate_pass_rate_all_fail() -> None:
 
 def test_combined_scalar_default_weights() -> None:
     """combined_scalar with default weights is drift_mean + (1 - pass_rate)."""
-    weights = ScoringWeights()  # drift_weight=1.0, pass_weight=1.0
+    weights = ScoringWeights()  # drift: 1.0, pass_weight 1.0
     assert combined_scalar(2.0, 1.0, weights) == pytest.approx(2.0)
     assert combined_scalar(2.0, 0.0, weights) == pytest.approx(3.0)
     assert combined_scalar(0.0, 0.5, weights) == pytest.approx(0.5)
@@ -97,14 +97,14 @@ def test_combined_scalar_default_weights() -> None:
 
 def test_combined_scalar_tunable_weights() -> None:
     """Up-weighting the pass axis penalises failures harder."""
-    weights = ScoringWeights(drift_weight=1.0, pass_weight=4.0)
+    weights = ScoringWeights(pass_weight=4.0)
     # drift_mean=2, pass_rate=0.5 → 1*2 + 4*(1-0.5) = 4.0
     assert combined_scalar(2.0, 0.5, weights) == pytest.approx(4.0)
 
 
 def test_combined_scalar_pass_weight_zero_ignores_pass() -> None:
     """pass_weight=0 makes the scalar drift-only."""
-    weights = ScoringWeights(drift_weight=1.0, pass_weight=0.0)
+    weights = ScoringWeights(pass_weight=0.0)
     # pass_rate becomes irrelevant
     assert combined_scalar(7.0, 0.0, weights) == pytest.approx(7.0)
     assert combined_scalar(7.0, 1.0, weights) == pytest.approx(7.0)
@@ -112,7 +112,7 @@ def test_combined_scalar_pass_weight_zero_ignores_pass() -> None:
 
 def test_full_pipeline_mock_losses() -> None:
     """Aggregate then combine: an end-to-end mock profile flow."""
-    weights = ScoringWeights(drift_weight=1.0, pass_weight=2.0)
+    weights = ScoringWeights(pass_weight=2.0)
     losses = [
         _profile(1.0, True),
         _profile(3.0, False),
@@ -189,9 +189,8 @@ def test_combined_scalar_unchanged_with_per_judge_weights_configured() -> None:
     """Setting per_judge_weights on ScoringWeights does not change the
     combined-scalar formula — per_judge_weights is consumed by the reducer,
     not by combined_scalar."""
-    plain = ScoringWeights(drift_weight=1.0, pass_weight=1.0)
+    plain = ScoringWeights(pass_weight=1.0)
     with_judges = ScoringWeights(
-        drift_weight=1.0,
         pass_weight=1.0,
         per_judge_weights={"judge_a": 4.0, "judge_b": 0.5},
         default_judge_weight=2.0,

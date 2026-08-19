@@ -107,14 +107,14 @@ _NONDEFAULT_VALUES: dict[str, dict[str, Any]] = {
         "cross_epoch": True,
     },
     "ScoringWeights": {
-        "drift_weight": 2.5,
         "pass_weight": 3.5,
         "severity_weights": {"info": 2.0, "warning": 4.0, "critical": 11.0},
         "per_kind_weights": {"off_topic": 1.5},
         "per_judge_weights": {"quality": 4.0, "no_pii": 7.0},
         "default_judge_weight": 2.5,
         "plan_revision_weight": 0.9,
-        "runtime_weight": 0.3,
+        "task_failure_weight": 12.0,
+        "not_completed_weight": 75.0,
         "diff_complexity_weight": 0.2,
         "diff_complexity_ceiling": 10.0,
         "promote_margin": 0.05,
@@ -125,7 +125,7 @@ _NONDEFAULT_VALUES: dict[str, dict[str, Any]] = {
         "regression_gate_enabled": True,
         "regression_test_command": ("python", "-m", "unittest"),
         "regression_timeout_s": 120,
-        "namespace_weights": {"drift:": 2.0, "cost:": 0.002},
+        "namespace_weights": {"drift:": 2.0, "failure:": 2.0, "cost:": 0.002},
         "namespace_monotonicity": {"drift:": True, "rubric:": False},
         "tournament_structure": TournamentStructure(
             structure="swiss", params={"rounds_n": 3, "nested": {"a": [1, 2, 3]}}
@@ -366,7 +366,7 @@ def test_legacy_scoring_json_loads_at_defaults() -> None:
     """A minimal legacy ``scoring.json`` (only a couple of keys) loads with
     every absent field at its dataclass default — back-compat for epochs
     frozen before later fields landed."""
-    legacy = {"drift_weight": 1.0, "pass_weight": 1.0, "promote_margin": 0.01}
+    legacy = {"pass_weight": 1.0, "promote_margin": 0.01}
     w = scoring_weights_from_dict(legacy)
     assert w == ScoringWeights()
 

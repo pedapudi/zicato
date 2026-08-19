@@ -161,12 +161,12 @@ def _scoring_from_dict(d: dict[str, Any]) -> ScoringWeights:
     :func:`zicato.workspace_loader.scoring_weights_from_dict`.
     """
     from zicato.epoch.contract_serde import jsonable_to_dataclass  # noqa: PLC0415
-    from zicato.workspace_loader import _reject_retired_pass_exponent  # noqa: PLC0415
+    from zicato.workspace_loader import _reject_retired_scoring_keys  # noqa: PLC0415
 
-    # Reject a retired ``pass_exponent`` key (issue #19) symmetrically with the
-    # live loader, so a stale / pre-feature snapshot fails loudly through either
-    # path rather than silently scoring linearly.
-    _reject_retired_pass_exponent(d)
+    # Reject retired keys symmetrically with the live loader, so a stale
+    # snapshot fails loudly through either path rather than silently scoring
+    # under a default nobody chose.
+    _reject_retired_scoring_keys(d)
     return jsonable_to_dataclass(ScoringWeights, dict(d))
 
 

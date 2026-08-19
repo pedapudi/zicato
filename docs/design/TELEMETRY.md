@@ -343,7 +343,7 @@ The aggregate `drift_loss` already sums in every judge's
 contribution, but it does not preserve *which* judge drove the loss.
 `per_judge_loss` (§3.6) carries that attribution out separately. The
 per-judge weight applied is `ScoringWeights.per_judge_weights` keyed
-on `judge_name` (see [SCORING.md §2.2](SCORING.md#22-per-judge-weights)).
+on `judge_name` (see [SCORING.md §2.2](SCORING.md#22-the-judge-channel)).
 
 goldfive's built-in judges emit their own native drift kinds (not
 `custom`), so they are already discriminated by kind and never need

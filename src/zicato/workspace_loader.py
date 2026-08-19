@@ -191,28 +191,42 @@ def scoring_weights_from_dict(d: Mapping[str, Any]) -> ScoringWeights:
     """
     from zicato.epoch.contract_serde import jsonable_to_dataclass  # noqa: PLC0415
 
-    _reject_retired_pass_exponent(d)
+    _reject_retired_scoring_keys(d)
     return jsonable_to_dataclass(ScoringWeights, d)
 
 
-def _reject_retired_pass_exponent(d: Mapping[str, Any]) -> None:
-    """Reject a retired ``pass_exponent`` config key with a loud migration error.
+#: Retired ``scoring.json`` keys, each mapped to a template naming what
+#: replaces it. The field-enumerating loader IGNORES unknown keys, so a
+#: retired one would otherwise degrade invisibly — the contract would score
+#: under a default the operator never chose, with no error and no epoch roll.
+#: Every entry here is a key that once shaped the scalar.
+_RETIRED_SCORING_KEYS: Mapping[str, str] = {
+    "pass_exponent": (
+        '`pass_exponent` is retired — express it as pass_transform={{"op": '
+        '"pow", "exponent": {raw}}} in scoring.json.'
+    ),
+    "drift_weight": (
+        "`drift_weight` is retired — drift is one metric channel among "
+        'several, so express it as namespace_weights={{"drift:": {raw}}} in '
+        "scoring.json."
+    ),
+    "runtime_weight": (
+        "`runtime_weight` is retired — runtime is one metric channel among "
+        'several, so express it as namespace_weights={{"runtime:": {raw}}} in '
+        "scoring.json."
+    ),
+}
 
-    ``pass_exponent`` was the bespoke quadratic-recall field (the miss term
-    ``(1 - mean_score) ** pass_exponent``); issue #19 retired it in favour of
-    the declarative ``pass_transform`` (``{"op":"pow",...}``). It is no longer a
-    ``ScoringWeights`` field, and the field-enumerating loader would SILENTLY
-    IGNORE a stray ``pass_exponent`` — scoring linearly, with no error and no
-    epoch roll, the worst kind of drift to debug. So reject it LOUDLY: a stale
-    ``scoring.json`` fails fast with the migration instead of degrading
-    invisibly.
+
+def _reject_retired_scoring_keys(d: Mapping[str, Any]) -> None:
+    """Reject any retired ``scoring.json`` key with a loud migration error.
+
+    A stale contract fails fast, naming the field that replaced the one it
+    uses, rather than loading with a silently defaulted scalar.
     """
-    if "pass_exponent" in d:
-        raw = d["pass_exponent"]
-        raise ValueError(
-            "`pass_exponent` is retired (issue #19) — express it as "
-            f'pass_transform={{"op": "pow", "exponent": {raw}}} in scoring.json.'
-        )
+    for key, template in _RETIRED_SCORING_KEYS.items():
+        if key in d:
+            raise ValueError(template.format(raw=d[key]))
 
 
 def overfitting_config_from_dict(raw: Any) -> OverfittingConfig:

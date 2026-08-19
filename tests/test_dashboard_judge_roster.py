@@ -250,6 +250,7 @@ def test_an_unresolvable_epoch_yields_the_empty_shape(workspace: Path, bad: str)
         "unmapped_drift_kinds": [],
         "per_judge_weights": {},
         "default_judge_weight": None,
+        "judge_channel_weight": None,
         "scorecards": {},
     }
 
@@ -370,5 +371,6 @@ def test_endpoint_degrades_on_an_unknown_epoch(client: TestClient) -> None:
         "unmapped_drift_kinds": [],
         "per_judge_weights": {},
         "default_judge_weight": None,
+        "judge_channel_weight": None,
         "scorecards": {},
     }
