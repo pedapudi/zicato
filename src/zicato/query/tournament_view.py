@@ -196,9 +196,66 @@ def _bracket_from_conn(
                 "run_ref": _rget(r, "champion_run_ref"),
             }
 
+    def _field_champion(comps: list[Any]) -> dict[str, Any] | None:
+        """The champion of a FIELD row, whose own parent column is empty.
+
+        A field row is a round, not a duel, so ``_upsert_field_tournament``
+        leaves its parent/child columns empty on purpose. The champion has to
+        come from the competitor list, and the two ways of reading that list
+        are NOT equivalent:
+
+        * The record TAGS the champion (``role: "champion"`` — the shape
+          ``competitors_meta`` writes, champion first). Read the tag.
+        * Borrowing "the first competitor that appears in ``champ_by_child``"
+          reads the champion's OWN crowning duel, whose parent is the champion
+          it BEAT. That named the PREVIOUS champion on every round after a
+          promotion, so a beaten champion went on defending every later round.
+
+        The champion's scalar and eval provenance (cached vs re-run) still ride
+        on a CHALLENGER's crowning row, whose parent IS this round's champion —
+        that borrow is correct and is what the old code was reaching for.
+
+        For a record whose competitors carry no role (hand-built, or written
+        before the tag), fall back on the structural fact that a field's
+        champion COMPETES in the field: prefer a borrowed champion that is
+        itself one of the competitors. Competitor order drives the walk, so the
+        answer is deterministic.
+        """
+        ids = [str(c.get("generation_id") if isinstance(c, dict) else c) for c in comps]
+        tagged = next(
+            (
+                str(c.get("generation_id") or "")
+                for c in comps
+                if isinstance(c, dict) and str(c.get("role") or "") == "champion"
+            ),
+            "",
+        )
+        if tagged:
+            sibling = next(
+                (
+                    v
+                    for k, v in champ_by_child.items()
+                    if str(v.get("id")) == tagged and k != tagged
+                ),
+                None,
+            )
+            base = dict(sibling) if sibling else {}
+            base["id"] = tagged
+            return base
+        in_field = set(ids)
+        for key in ids:
+            borrowed = champ_by_child.get(key)
+            if borrowed is not None and str(borrowed.get("id")) in in_field:
+                return dict(borrowed)
+        for key in ids:
+            if key in champ_by_child:
+                return dict(champ_by_child[key])
+        return None
+
     def _champion_for(row: sqlite3.Row, comps: list[Any]) -> dict[str, Any] | None:
-        # a per-challenger / gauntlet row carries the champion directly;
-        # a field row (empty parent) borrows from a competitor's sibling row.
+        # a per-challenger / gauntlet row carries the champion directly; a
+        # field row has no parent of its own, so ``_field_champion`` reads it
+        # off the competitor list.
         cid = row["parent_generation_id"]
         base = (
             {
@@ -211,11 +268,7 @@ def _bracket_from_conn(
             else None
         )
         if base is None:
-            for c in comps:
-                key = str(c.get("generation_id") if isinstance(c, dict) else c)
-                if key in champ_by_child:
-                    base = dict(champ_by_child[key])
-                    break
+            base = _field_champion(comps)
         if base is None:
             return None
         sc = base.get("scalar")

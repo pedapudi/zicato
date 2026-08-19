@@ -448,6 +448,23 @@ and the loss-floor waterfall. The client performs no decision-bearing join.
 ```
 — `src/zicato/query/rounds_view.py` (module docstring)
 
+> ⚠️ TRAP — a FIELD row has no champion of its own. `_upsert_field_tournament`
+> leaves `parent_generation_id` / `child_generation_id` EMPTY on purpose (a
+> field is a round, not a duel, and a populated child would collide with the
+> per-challenger crowning row), and it writes one for every field of 3+
+> competitors — so every racing / swiss / elim round has one. The champion must
+> therefore come from `competitors_json`, and there is exactly one right way to
+> read it: the competitor the record TAGS `role: "champion"` (`competitors_meta`
+> writes the champion first, role-tagged). Borrowing "the first competitor that
+> has a crowning row" instead reads the CHAMPION'S OWN duel, whose parent is the
+> champion it BEAT — which served the previous champion as the defender of every
+> round after a promotion, so a beaten champion appeared to reign for the rest
+> of the epoch. The champion's scalar and eval provenance (cached vs re-run) DO
+> ride on a challenger's crowning row, whose parent is this round's champion;
+> that borrow is the correct one. A regression test needs a round AFTER the
+> promotion plus a field row: with only per-challenger rows, `_build_rounds`
+> carries the champion forward correctly and the bug is invisible.
+
 **Pipeline projection (ex-phase-string parsing).** The client used to parse
 the heartbeat `phase` string to decide propose→apply→run→gate position.
 That inference is now server-side (§9.11); the JS renders the verdict
@@ -2334,6 +2351,7 @@ Where to add (and what will catch) a regression, by concern:
 | entry-status four-bucket canon + `status_raw` preservation | `tests/test_dashboard_*runtime*` / the runtime-view suite |
 | `_is_safe_id` / degrade-to-200 / `?epoch=` 404 | `tests/test_dashboard_endpoints.py` |
 | the served joins (round-timeline / racing-field) match the client mock | `tests/test_dashboard_racing_and_rounds.py` + `test/mock_server.mjs` |
+| a field round names the WINNER after a promotion (role tag, not a borrow) | `tests/test_dashboard_racing_and_rounds.py::test_field_round_names_the_new_champion_after_a_promotion` |
 | SSE frame shape (kinds + seq + terminal only), coalescing, ordering | `tests/test_dashboard_sse*.py`, node `live_protocol.test.mjs` |
 | the uncertainty-honest verdict (`no_signal` vs `plateaued`) | `tests/test_dashboard_loop_view.py` |
 | digest-gated render: no-op DOM identity, seq skip gate, four run-states | node `seq_render_gate.test.mjs`, `pipeline_stepper.test.mjs` |

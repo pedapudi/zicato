@@ -350,6 +350,178 @@ def test_round_timeline_prefers_round_index_stamp(tmp_path: Path) -> None:
     assert rounds[0]["gate"] == {"kind": "promoted", "gen": "v2"}
 
 
+def _field_round_workspace(tmp_path: Path) -> Path:
+    """A racing epoch with a round AFTER a promotion, persisted with FIELD rows.
+
+    v0 is the carried champion. Round 0 fields v1..v5 and v5 WINS. Round 1
+    fields v6/v7 against the NEW champion v5. Each round carries a field-level
+    row (3+ competitors, so ``_upsert_field_tournament`` writes one) whose
+    parent/child columns are EMPTY by design, beside the per-challenger duel
+    rows. ``competitors`` uses the real ``competitors_meta`` shape: the
+    champion FIRST, role-tagged.
+    """
+    ws = _base_workspace(tmp_path)
+    _write_json(
+        ws / "epochs" / EPOCH / "scoring.json",
+        {"tournament": {"structure": "racing", "params": {"eta": 2, "board_fraction": 0.25}}},
+    )
+    gens_dir = ws / "epochs" / EPOCH / "generations"
+    _write_json(gens_dir / "v0" / "experiment.json", {"parent_generation_id": None})
+    for gid in ("v1", "v2", "v3", "v4"):
+        _write_json(
+            gens_dir / gid / "experiment.json",
+            {
+                "parent_generation_id": "v0",
+                "round_index": 0,
+                "outcome": {"tournament_decision": "rejected"},
+            },
+        )
+    _write_json(
+        gens_dir / "v5" / "experiment.json",
+        {
+            "parent_generation_id": "v0",
+            "round_index": 0,
+            "outcome": {"tournament_decision": "promoted"},
+        },
+    )
+    for gid in ("v6", "v7"):
+        _write_json(
+            gens_dir / gid / "experiment.json",
+            {
+                "parent_generation_id": "v5",
+                "round_index": 1,
+                "outcome": {"tournament_decision": "rejected"},
+            },
+        )
+    lineage = [{"id": "v0", "parent_id": None, "promoted": True}]
+    lineage += [{"id": g, "parent_id": "v0", "promoted": False} for g in ("v1", "v2", "v3", "v4")]
+    lineage += [{"id": "v5", "parent_id": "v0", "promoted": True}]
+    lineage += [{"id": g, "parent_id": "v5", "promoted": False} for g in ("v6", "v7")]
+    _write_json(ws / "lineage.json", {"epochs": [{"id": EPOCH, "generations": lineage}]})
+
+    def _comps(champion: str, challengers: list[str]) -> str:
+        return json.dumps(
+            [{"generation_id": champion, "seed": 1, "role": "champion"}]
+            + [
+                {"generation_id": c, "seed": i + 2, "role": "challenger"}
+                for i, c in enumerate(challengers)
+            ]
+        )
+
+    conn = sqlite3.connect(ws / "index.db")
+    _index_schema(conn)
+    conn.executescript(
+        """
+        CREATE TABLE loss_profiles(run_id TEXT, epoch_id TEXT, generation_id TEXT,
+            entry_id TEXT, drift_loss REAL, pass_fail INTEGER, loss_json TEXT);
+        """
+    )
+    parents = {"v1": "v0", "v2": "v0", "v3": "v0", "v4": "v0", "v5": "v0", "v6": "v5", "v7": "v5"}
+    conn.executemany(
+        "INSERT INTO generations VALUES(?,?,?,?,?)",
+        [(EPOCH, "v0", None, 1, "2026-06-01T00:00:00Z")]
+        + [
+            (EPOCH, g, parents[g], 1 if g == "v5" else 0, f"2026-06-01T0{i + 1}:00:00Z")
+            for i, g in enumerate(("v1", "v2", "v3", "v4", "v5", "v6", "v7"))
+        ],
+    )
+    conn.executemany(
+        "INSERT INTO loss_profiles VALUES(?,?,?,?,?,?,?)",
+        [
+            (f"r_{g}", EPOCH, g, "e1", loss, 1, None)
+            for g, loss in [
+                ("v0", 0.50),
+                ("v1", 0.90),
+                ("v2", 0.88),
+                ("v3", 0.86),
+                ("v4", 0.84),
+                ("v5", 0.30),
+                ("v6", 0.60),
+                ("v7", 0.61),
+            ]
+        ],
+    )
+    rows = []
+    for i, gid in enumerate(("v1", "v2", "v3", "v4")):
+        rows.append(
+            (f"{EPOCH}:v0->{gid}", EPOCH, "v0", gid, "rejected", 0.5, 0.9, 0.4, None,
+             f"2026-06-01T01:0{i}:00Z", "racing", None, _comps("v0", [gid]), None, None)
+        )
+    rows.append(
+        (f"{EPOCH}:v0->v5", EPOCH, "v0", "v5", "promoted", 0.5, 0.3, -0.2, None,
+         "2026-06-01T01:05:00Z", "racing", None, _comps("v0", ["v5"]), None, None)
+    )
+    # round 0's FIELD row — champion v0, empty parent/child.
+    rows.append(
+        (f"{EPOCH}:field:v1", EPOCH, "", "", "promoted", None, None, None, "",
+         "2026-06-01T01:06:00Z", "racing", None,
+         _comps("v0", ["v1", "v2", "v3", "v4", "v5"]), json.dumps([]), json.dumps([]))
+    )
+    for i, gid in enumerate(("v6", "v7")):
+        rows.append(
+            (f"{EPOCH}:v5->{gid}", EPOCH, "v5", gid, "rejected", 0.3, 0.6, 0.3, None,
+             f"2026-06-01T02:0{i}:00Z", "racing", None, _comps("v5", [gid]), None, None)
+        )
+    # round 1's FIELD row — champion v5, empty parent/child.
+    rows.append(
+        (f"{EPOCH}:field:v6", EPOCH, "", "", "held", None, None, None, "",
+         "2026-06-01T02:06:00Z", "racing", None,
+         _comps("v5", ["v6", "v7"]), json.dumps([]), json.dumps([]))
+    )
+    conn.executemany("INSERT INTO tournaments VALUES(" + ",".join("?" * 15) + ")", rows)
+    conn.commit()
+    conn.close()
+    return ws
+
+
+def test_field_round_names_the_new_champion_after_a_promotion(tmp_path: Path) -> None:
+    """A round AFTER a promotion names the WINNER, never the champion it beat.
+
+    A field row's parent column is empty by design, so the champion comes from
+    the competitor list. Borrowing "the first competitor with a crowning row"
+    reads the champion's OWN duel, whose parent is the champion it BEAT — which
+    left the beaten champion defending every later round. The role tag on the
+    competitor is the answer.
+    """
+    ws = _field_round_workspace(tmp_path)
+    tl = build_round_timeline(WorkspacePaths(ws), EPOCH)
+    rounds = tl["rounds"]
+    assert [r["round_index"] for r in rounds] == [0, 1]
+    # round 0: the carried champion v0 defends, and v5 takes the title.
+    assert rounds[0]["champion"]["id"] == "v0"
+    assert rounds[0]["gate"] == {"kind": "promoted", "gen": "v5"}
+    # round 1: v5 DEFENDS. This is the regression — it read "v0" before.
+    assert rounds[1]["champion"]["id"] == "v5", "the promoted challenger defends the next round"
+    assert sorted(c["id"] for c in rounds[1]["challengers"]) == ["v6", "v7"]
+    assert rounds[1]["gate"] == {"kind": "held", "gen": None}
+
+
+def test_field_round_champion_survives_untagged_competitors(tmp_path: Path) -> None:
+    """An untagged (legacy / hand-built) field record still names the champion.
+
+    Without a ``role`` tag the champion is still recoverable structurally: a
+    field's champion COMPETES in the field, so a borrowed champion that is
+    itself a competitor is this round's, while one from outside the field is a
+    competitor's older duel.
+    """
+    ws = _field_round_workspace(tmp_path)
+    conn = sqlite3.connect(ws / "index.db")
+    # strip the role tags from BOTH field rows — bare id strings, champion first.
+    for tid, comps in (
+        (f"{EPOCH}:field:v1", ["v0", "v1", "v2", "v3", "v4", "v5"]),
+        (f"{EPOCH}:field:v6", ["v5", "v6", "v7"]),
+    ):
+        conn.execute(
+            "UPDATE tournaments SET competitors_json = ? WHERE tournament_id = ?",
+            (json.dumps(comps), tid),
+        )
+    conn.commit()
+    conn.close()
+    rounds = build_round_timeline(WorkspacePaths(ws), EPOCH)["rounds"]
+    assert rounds[0]["champion"]["id"] == "v0"
+    assert rounds[1]["champion"]["id"] == "v5"
+
+
 def test_round_timeline_owns_live_field_overlay(tmp_path: Path) -> None:
     ws = _gauntlet_workspace(tmp_path)
     _write_json(
