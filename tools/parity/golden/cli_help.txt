@@ -959,8 +959,8 @@ Commands:
                  (parent + promoted).
   index          Advanced: rebuild the SQLite analytical index from workspace
                  files.
-  judge-losses   Advanced: backfill per_judge_loss into existing loss.json
-                 files.
+  judge-losses   Advanced: backfill per_judge_loss into every persisted loss
+                 slot.
   report         Advanced: re-render `epochs/{id}/analysis.md` against the
                  current on-disk data.
   tournament-fk  Advanced: backfill tournament_id on runs / loss_profiles +
@@ -1032,19 +1032,29 @@ Usage: zicato repair judge-losses [OPTIONS]
 
   Advanced: backfill per_judge_loss into existing runs.
 
-  Off the happy path. Walks every run on disk, re-derives the per-judge
-  weighted-loss attribution from the run's drift_counts (and, for runs whose
-  profile predated drift_counts entirely, from the events JSONL), and rewrites
-  loss.json with the populated `per_judge_loss` field. Idempotent: re-running
-  produces the same files. By default each rewritten run is re-ingested into the
-  analytical index so `judge_losses` rows land immediately.
+  Off the happy path. Walks every run directory on disk and repairs every
+  persisted loss slot it holds — the canonical loss.json and each replicate
+  sibling loss.r{n}.json, degraded measurement bands included, attempt siblings
+  never. Each slot's per-judge weighted-loss attribution is re-derived from its
+  own drift_counts, falling back to its own replicate-keyed events transcript,
+  and written back. Idempotent: a slot that already agrees is left unchanged.
+
+  The summary counts every slot by what happened to it, canonical and replicate
+  separately, including the slots that could not be re-derived because neither
+  source survives.
+
+  Scope: this repairs the on-disk records. The analytical index projects
+  canonical slots only, so `judge_losses` rows come from replicate 0; a repaired
+  replicate slot is correct on disk and carries no index row by design. Each run
+  with a readable canonical profile is re-ingested by default.
 
 Options:
   --workspace TEXT            Path to the zicato workspace directory.  [default:
                               .zicato]
-  --reingest / --no-reingest  Re-ingest each rewritten run into index.db so the
-                              judge_losses table is populated without a full
-                              `zicato repair index`.  [default: reingest]
+  --reingest / --no-reingest  Re-ingest each run whose canonical loss.json is
+                              readable into index.db so the judge_losses table
+                              is populated without a full `zicato repair index`.
+                              [default: reingest]
   --help                      Show this message and exit.
 
 ===== zicato repair report --help =====

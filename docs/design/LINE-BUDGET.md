@@ -18,8 +18,8 @@ The baseline and final ratchet use the same metric:
 
 | Measurement | Baseline (`f9052dd`) | Current limit | Net reduction |
 |---|---:|---:|---:|
-| Total | 408,547 | 419,737 | -11,190 |
-| Production | 197,588 | 202,178 | -4,590 |
+| Total | 408,547 | 419,971 | -11,424 |
+| Production | 197,588 | 202,271 | -4,683 |
 
 The earlier raw count of 425,755 included lockfiles and generated artifacts and
 is retained in `.line-budget.json` for provenance; it is not the enforced
@@ -81,3 +81,5 @@ increase.
 | Measurement bands on the execution plan (production) | 201,648 | +453 | 202,101 | Issue #241: measurement_band/measurement_draw nodes, the screen-round anchor, and the partitioned enumerations. |
 | Process-identity reaping of in-flight records (total) | 419,527 | +210 | 419,737 | Issue #270: the host-locality predicate, the identity gate in fresh_run_count, and the dead-child / off-host / no-identity-fields regressions. |
 | Process-identity reaping of in-flight records (production) | 202,101 | +77 | 202,178 | Issue #270: the lock-derived host-locality proof and the per-record identity check the tally composes with the staleness window. |
+| Replicate-aware judge repair (total) | 419,737 | +234 | 419,971 | Issue #265: the shared slot walk with its records/evidence split, per-slot transcript pairing, and the idempotence and outcome-count regressions. |
+| Replicate-aware judge repair (production) | 202,178 | +93 | 202,271 | Issue #265: persisted_loss_slots beside the evidence walk and the per-slot repair loop with honest outcome counts. |
