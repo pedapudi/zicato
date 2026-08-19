@@ -18,8 +18,8 @@ The baseline and final ratchet use the same metric:
 
 | Measurement | Baseline (`f9052dd`) | Current limit | Net reduction |
 |---|---:|---:|---:|
-| Total | 408,547 | 418,360 | -9,813 |
-| Production | 197,588 | 201,427 | -3,839 |
+| Total | 408,547 | 418,866 | -10,319 |
+| Production | 197,588 | 201,648 | -4,060 |
 
 The earlier raw count of 425,755 included lockfiles and generated artifacts and
 is retained in `.line-budget.json` for provenance; it is not the enforced
@@ -75,3 +75,5 @@ increase.
 | Replicate-slot overlap (production) | 201,029 | +378 | 201,407 | Issue #251: the overlap predicate, entry chains, the two path wrappers, and the fast-mode shared semaphore. |
 | Fresh in-flight tally (total) | 418,286 | +74 | 418,360 | Issue #268: the shared fresh_run_count helper, the aged pipeline tally, and the two-reader agreement pins. |
 | Fresh in-flight tally (production) | 201,407 | +20 | 201,427 | Issue #268: fresh_run_count in runtime_view, shared by derive_liveness and the round pipeline. |
+| Dry-run reachability probe (total) | 418,360 | +506 | 418,866 | Issue #264: the probe module, its dry-run wiring, and the stub-driven per-role coverage including the keyless-spec and bounded-timeout pins. |
+| Dry-run reachability probe (production) | 201,427 | +221 | 201,648 | Issue #264: the per-role bounded round trip through the worker's construction seam, the per-role report renderer, and the dry-run report-and-exit wiring. |

@@ -15,6 +15,13 @@ contributes nothing are reported as advisories instead.
 
 No model is called and no board entry runs, so the cost does not grow
 with the board or with the target.
+
+:mod:`zicato.check.reachability` holds the one thing that cannot be
+proved that way — that a configured role's credential is accepted and
+its model id exists, which takes a round trip. It is not part of the
+gate for exactly that reason, and runs on ``zicato evolve --dry-run``
+alone, where an operator has asked "will this work?" and no round is at
+stake.
 """
 
 from __future__ import annotations
