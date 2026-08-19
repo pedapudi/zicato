@@ -92,6 +92,23 @@ tests patch those owners directly.
    callers and the CLI therefore share the same spend boundaries;
    `--dry-run` runs the same validators before exiting.
 
+   The gate makes no model call, which is what keeps it mandatory: a check
+   needing the network would refuse every offline workspace, every fixture,
+   and the parity capture. So the half of role checking that needs a round
+   trip — is the credential *accepted*, does the model id *exist*, does the
+   callable return a `str` — lives in `check/reachability.py` and runs on
+   `evolve --dry-run` alone, after the offline validators have passed. It
+   sends one short fixed request per configured `models.<role>`, building
+   each role's callable through `models_config.lazy_text_call_llm`, the same
+   seam `_tournament_worker._resolve_role_call_llm` uses, so whatever
+   authentication the spec implies (a named `api_key_env`, or the ambient
+   credentials a keyless endpoint spec relies on) is exercised rather than
+   assumed. Each role is bounded by `ROLE_TIMEOUT_S` and reported on its own
+   line — roles fail separately and have different remedies — and any role
+   that does not answer makes the dry run exit nonzero. A workspace
+   configuring no role is told nothing was probed, which is not the same
+   answer as reachable.
+
    Findings come in two severities. A finding that proves the round cannot
    produce a valid measurement raises `WorkspaceCheckError`. A finding that
    proves only that something declared contributes nothing — a stale tree

@@ -580,11 +580,22 @@ def _dry_run_and_exit(workspace_root: Path, epoch: str | None) -> None:
     whatever the live contract files now say — so those are what gets
     checked. Checking the frozen copy there would validate the contract
     the LAST round ran and miss anything edited since.
+
+    A dry run also probes reachability, which the gate on the spend
+    paths deliberately does not: one short request per configured model
+    role, sent only once the offline validators have passed. This is
+    where a round trip belongs. ``--dry-run`` is the "will this work?"
+    gesture — interactive, network-tolerant, costing no board entry —
+    while a networked check on the mandatory path would refuse every
+    offline workspace and every fixture. A role that does not answer
+    makes the dry run exit nonzero, because an unreachable role is
+    exactly the defect an operator ran this to find.
     """
     from zicato.check import (  # noqa: PLC0415
         CheckContext,
         WorkspaceCheckError,
         build_report,
+        reachability,
         render_report,
     )
 
@@ -592,17 +603,27 @@ def _dry_run_and_exit(workspace_root: Path, epoch: str | None) -> None:
         report = build_report(ctx)
         entries, points = len(ctx.board), len(ctx.surface)
         shown_epoch = ctx.epoch_id or "no epoch"
+        models = ctx.models
 
     if report.findings:
         click.echo(render_report(report), nl=False)
     if report.blocking:
         raise click.ClickException(str(WorkspaceCheckError(report)))
 
+    probes = asyncio.run(reachability.probe_configured_roles(models))
     click.echo(
         f"\ndry run: {shown_epoch}, "
         f"{entries} board {'entry' if entries == 1 else 'entries'}, "
-        f"{points} mutation {'point' if points == 1 else 'points'}. Nothing was spent."
+        f"{points} mutation {'point' if points == 1 else 'points'}."
     )
+    click.echo(reachability.render_reachability(probes), nl=False)
+    unreachable = reachability.unreachable_roles(probes)
+    if unreachable:
+        raise click.ClickException(
+            f"{len(unreachable)} configured model role(s) did not answer; "
+            f"a round would spend on a role that cannot be measured."
+        )
+    click.echo("No board entry ran." if probes else "Nothing was spent.")
     raise SystemExit(0)
 
 

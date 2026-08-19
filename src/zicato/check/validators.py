@@ -326,7 +326,8 @@ def model_roles(ctx: CheckContext) -> Iterator[Defect]:
 
     What is NOT proved is that the credential is accepted or that the
     model id exists. That needs a round trip, which this gate does not
-    make — see the reachability follow-up on issue #240.
+    make: :mod:`zicato.check.reachability` makes it, on ``zicato evolve
+    --dry-run`` only, over the same set of configured roles.
     """
     from zicato.models_config import MODEL_ROLES  # noqa: PLC0415
 
