@@ -25,6 +25,25 @@ Two sources, two jobs
   definition of "what counts as a draw for this cell" — so the plan and
   the eval matrix can never disagree about how many times something ran.
 
+Every execution, not only the duels
+-----------------------------------
+The replicate namespace is partitioned by owner, and only two of its
+ranges are a cell's evidence. The rest ran too: the A/A noise-floor
+calibration, the contract pre-flight's deliberately-degraded probes, the
+candidate screen, board reflection, and the eval-synthesis admission
+probes. They surface as MEASUREMENT BAND steps
+(:func:`zicato.query.replicate_scores.measurement_bands`), one per band
+per stage, holding one node per draw — so the plan accounts for every
+non-attempt loss file on disk and nothing executed is invisible.
+
+A band is not a work unit and must never read as one. The pre-flight band
+in particular describes DEGRADED copies of the champion's code cached
+under the champion's own id: its label and every draw's purpose say so,
+because a reader who meets one of those nodes without its parent must
+still not mistake a probe's failure for champion behaviour. An index no
+owner claims lands in the ``unclaimed`` band rather than being admitted
+quietly.
+
 Never guess a shape
 -------------------
 Multiplying a board size by a configured replicate count would draw a
@@ -89,7 +108,14 @@ from zicato.query.paths import (
     coerce_float,
     layout_of,
 )
-from zicato.query.replicate_scores import cell_replicate_draws_indexed, replicate_index
+from zicato.query.replicate_scores import (
+    UNCLAIMED_BAND,
+    MeasurementBand,
+    cell_replicate_draws_indexed,
+    measurement_band_draws_indexed,
+    measurement_bands,
+    replicate_index,
+)
 from zicato.query.runtime_view import read_active_tournament_dict
 
 # --- the served vocabularies ------------------------------------------------
@@ -312,6 +338,26 @@ def _unit_outcome(profile: Any, result: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _timing(profile: Any) -> tuple[int | None, int | None, int | None, str]:
+    """``(started_at, ended_at, duration_ms, provenance)`` of ONE execution.
+
+    Without a recorded span the execution has a duration but no position: it
+    cannot be placed on a timeline or shown as concurrent, which is exactly
+    what ``partial`` is for. Every node that describes one execution — a work
+    unit, a superseded attempt, a measurement-band draw — reads its span here,
+    so none of them can start reporting a different one.
+    """
+    started = _ts_ms(getattr(profile, "started_at", None))
+    ended = _ts_ms(getattr(profile, "ended_at", None))
+    runtime_ms = getattr(profile, "runtime_ms", None)
+    return (
+        started,
+        ended,
+        runtime_ms if isinstance(runtime_ms, int) else None,
+        PROVENANCE_EXACT if started is not None and ended is not None else PROVENANCE_PARTIAL,
+    )
+
+
 def _unit_status(outcome: dict[str, Any]) -> str:
     """``failed`` for an execution that did not complete, else ``done``.
 
@@ -359,9 +405,7 @@ def _attempt_nodes(
         except Exception:  # noqa: BLE001 — an unreadable attempt is dropped
             continue
         outcome = _unit_outcome(profile, _run_result(path))
-        runtime_ms = getattr(profile, "runtime_ms", None)
-        started = _ts_ms(getattr(profile, "started_at", None))
-        ended = _ts_ms(getattr(profile, "ended_at", None))
+        started, ended, duration_ms, provenance = _timing(profile)
         found.append(
             (
                 index,
@@ -371,14 +415,10 @@ def _attempt_nodes(
                     label=f"Attempt {index}",
                     purpose="An execution of this unit that was superseded.",
                     status=_unit_status(outcome),
-                    provenance=(
-                        PROVENANCE_EXACT
-                        if started is not None and ended is not None
-                        else PROVENANCE_PARTIAL
-                    ),
+                    provenance=provenance,
                     started_at=started,
                     ended_at=ended,
-                    duration_ms=runtime_ms if isinstance(runtime_ms, int) else None,
+                    duration_ms=duration_ms,
                     coordinates={**coordinates, "attempt": index},
                     outcome=outcome,
                 ),
@@ -412,13 +452,7 @@ def _unit_nodes(
         }
         unit_id = f"{sweep_id}/{entry_id}/r{replicate}"
         attempts = _attempt_nodes(unit_id, run_dir, replicate, coordinates)
-        started = _ts_ms(getattr(profile, "started_at", None))
-        ended = _ts_ms(getattr(profile, "ended_at", None))
-        runtime_ms = getattr(profile, "runtime_ms", None)
-        # Without a recorded span the unit has a duration but no position:
-        # it cannot be placed on a timeline or shown as concurrent, which
-        # is exactly what ``partial`` is for.
-        own = PROVENANCE_EXACT if started is not None and ended is not None else PROVENANCE_PARTIAL
+        started, ended, duration_ms, own = _timing(profile)
         nodes.append(
             PlanNode(
                 id=unit_id,
@@ -429,7 +463,7 @@ def _unit_nodes(
                 provenance=_rolled(own, attempts),
                 started_at=started,
                 ended_at=ended,
-                duration_ms=runtime_ms if isinstance(runtime_ms, int) else None,
+                duration_ms=duration_ms,
                 coordinates=coordinates,
                 outcome=outcome,
                 children=attempts,
@@ -492,6 +526,133 @@ def _sweep_node(
         outcome=outcome,
         children=children,
     )
+
+
+# ---------------------------------------------------------------------------
+# Measurement bands — the executions that are not a cell's evidence
+# ---------------------------------------------------------------------------
+
+
+#: What a band step says about WHERE it hangs when nothing on disk states the
+#: round. A band draw's loss file records its coordinates, its timing and its
+#: verdict, but never a round, so the honest placement is the stage that owns
+#: the generation the draws sit under — which is where that generation was
+#: minted, not necessarily when the draws were taken.
+_UNSTATED_ATTRIBUTION = (
+    "the draw files record no round; this band hangs under the stage that owns "
+    "its generation, which is where that generation was minted and not "
+    "necessarily when the draws were taken"
+)
+
+#: The band step's placement when the generation's own id states the round it
+#: served — the ephemeral candidate-screen snapshot
+#: (:func:`zicato.epoch.screen.screen_generation_round`).
+_STATED_ATTRIBUTION = "the generation id names the round these draws served"
+
+
+def _band_draw_node(
+    band_id: str, band: MeasurementBand, run_dir: Path, coordinates: dict[str, Any], profile: Any
+) -> PlanNode:
+    """One execution recorded in a measurement band.
+
+    Carries the band's purpose verbatim rather than a generic one: a client
+    may render this node without its parent, and a deliberately-degraded
+    pre-flight probe that arrives labelled only "one draw" is exactly the
+    misreading the band vocabulary exists to prevent.
+    """
+    generation_id, entry_id = coordinates["generation_id"], coordinates["entry_id"]
+    replicate = coordinates["replicate"]
+    # Every band index is above zero, so a band draw is always a sibling slot.
+    outcome = _unit_outcome(profile, _run_result(run_dir / f"loss.r{replicate}.json"))
+    started, ended, duration_ms, provenance = _timing(profile)
+    return PlanNode(
+        id=f"{band_id}/{generation_id}/{entry_id}/r{replicate}",
+        kind="measurement_draw",
+        label=f"{generation_id} · {entry_id} · replicate {replicate}",
+        purpose=band.purpose,
+        status=_unit_status(outcome),
+        provenance=provenance,
+        started_at=started,
+        ended_at=ended,
+        duration_ms=duration_ms,
+        coordinates=coordinates,
+        outcome=outcome,
+    )
+
+
+def _band_steps(
+    paths: WorkspacePaths,
+    epoch_id: str,
+    stage_id: str,
+    generation_ids: list[str],
+    stated: frozenset[str] = frozenset(),
+) -> tuple[PlanNode, ...]:
+    """The measurement bands executed under this stage's generations.
+
+    One step per band that actually holds draws — a band with nothing on
+    disk yields NO node, because an empty step would assert that a
+    measurement was planned, and nothing here records a plan.
+
+    ``stated`` names the generations whose own id places them in this stage
+    (the screen snapshots). A band drawn only from those is ``exact``; every
+    other band is ``partial`` and says why in its outcome.
+    """
+    layout = layout_of(paths)
+    draws: dict[str, list[PlanNode]] = {}
+    contributors: dict[str, set[str]] = {}
+    for generation_id in generation_ids:
+        for entry_id in _subdirectory_names(layout.runs_dir(epoch_id, generation_id)):
+            run_dir = layout.run_dir(epoch_id, generation_id, entry_id)
+            for replicate, band, profile in measurement_band_draws_indexed(
+                paths, epoch_id, generation_id, entry_id
+            ):
+                coordinates = {
+                    "epoch_id": epoch_id,
+                    "generation_id": generation_id,
+                    "entry_id": entry_id,
+                    "replicate": replicate,
+                    "match_id": str(getattr(profile, "match_id", "") or ""),
+                    "band": band.key,
+                }
+                draws.setdefault(band.key, []).append(
+                    _band_draw_node(
+                        f"{stage_id}/band:{band.key}", band, run_dir, coordinates, profile
+                    )
+                )
+                contributors.setdefault(band.key, set()).add(generation_id)
+    steps: list[PlanNode] = []
+    for band in (*measurement_bands(), UNCLAIMED_BAND):
+        children = tuple(draws.get(band.key, ()))
+        if not children:
+            continue
+        generations = sorted(contributors.get(band.key, set()), key=_natural_key)
+        attributed = bool(generations) and all(gid in stated for gid in generations)
+        steps.append(
+            PlanNode(
+                id=f"{stage_id}/band:{band.key}",
+                kind="measurement_band",
+                label=band.label,
+                purpose=band.purpose,
+                # The draws exist, so the band ran. Whether each draw
+                # completed is that draw's own status; a band is a group of
+                # measurements and has no verdict of its own to fail.
+                status=STATUS_DONE,
+                provenance=_rolled(
+                    PROVENANCE_EXACT if attributed else PROVENANCE_PARTIAL, children
+                ),
+                coordinates={"epoch_id": epoch_id, "band": band.key},
+                outcome={
+                    "draw_count": len(children),
+                    "replicate_range": [band.start, band.stop - 1]
+                    if band.stop > band.start
+                    else [],
+                    "generation_ids": generations,
+                    "attribution": _STATED_ATTRIBUTION if attributed else _UNSTATED_ATTRIBUTION,
+                },
+                children=children,
+            )
+        )
+    return tuple(steps)
 
 
 # ---------------------------------------------------------------------------
@@ -764,8 +925,15 @@ def _round_stage(
     lineage: dict[str, dict[str, Any]],
     experiments: dict[str, dict[str, Any]],
     generation_ids: list[str],
+    band_generation_ids: list[str],
+    stated: frozenset[str],
 ) -> PlanNode:
-    """One round, spine-first: its five steps in loop order."""
+    """One round, spine-first: its five steps in loop order, then its bands.
+
+    The band steps follow the five loop steps rather than joining them: a
+    measurement band is not a turn of the loop, and the round's ``progress``
+    stays a count over the five steps it is made of.
+    """
     events, readable = log
     record = fold_round_record(events)
     closed = record.closed
@@ -779,6 +947,7 @@ def _round_stage(
         _gate_step(f"{stage_id}/gate", events, record, closed),
         _decide_step(f"{stage_id}/decide", events, generation_ids, lineage, experiments, closed),
     )
+    bands = _band_steps(paths, epoch_id, stage_id, band_generation_ids, stated)
     started, ended, duration = _span(events)
     outcome: dict[str, Any] = {
         "contract_hash": record.contract_hash,
@@ -793,7 +962,7 @@ def _round_stage(
         label=f"Round {index}",
         purpose="One turn of the outer loop: propose, apply, run, gate, decide.",
         status=STATUS_DONE if closed else STATUS_RUNNING,
-        provenance=_rolled(PROVENANCE_EXACT if readable else PROVENANCE_PARTIAL, steps),
+        provenance=_rolled(PROVENANCE_EXACT if readable else PROVENANCE_PARTIAL, steps + bands),
         started_at=started,
         ended_at=ended,
         duration_ms=duration,
@@ -803,7 +972,7 @@ def _round_stage(
         },
         coordinates={"epoch_id": epoch_id, "round_index": index},
         outcome=outcome,
-        children=steps,
+        children=steps + bands,
     )
 
 
@@ -817,10 +986,15 @@ def _baseline_stage(
     generation to exactly one stage is also what makes the plan's unit
     count equal the unit files on disk: nothing is counted twice.
     """
+    stage_id = f"e:{epoch_id}/baseline"
     sweeps = tuple(
-        _sweep_node(paths, epoch_id, gid, f"e:{epoch_id}/baseline", board_entry_ids, settled=True)
+        _sweep_node(paths, epoch_id, gid, stage_id, board_entry_ids, settled=True)
         for gid in generation_ids
     )
+    # The pre-loop measurements — the noise floor and the contract pre-flight's
+    # degraded probes — are drawn against the incoming champion, so they land
+    # here with the generation they were drawn from.
+    bands = _band_steps(paths, epoch_id, stage_id, list(generation_ids))
     if not sweeps:
         status = STATUS_SKIPPED
     elif any(sweep.status == STATUS_DONE for sweep in sweeps):
@@ -828,16 +1002,16 @@ def _baseline_stage(
     else:
         status = STATUS_SKIPPED
     return PlanNode(
-        id=f"e:{epoch_id}/baseline",
+        id=stage_id,
         kind="baseline",
         label="Baseline",
         purpose="Evaluate the incoming champion before the loop proposes anything.",
         status=status,
-        provenance=_rolled(PROVENANCE_EXACT, sweeps),
+        provenance=_rolled(PROVENANCE_EXACT, sweeps + bands),
         progress={"done": len(sweeps), "total": len(sweeps)} if sweeps else None,
         coordinates={"epoch_id": epoch_id},
         outcome={"generation_ids": list(generation_ids)},
-        children=sweeps,
+        children=sweeps + bands,
     )
 
 
@@ -921,7 +1095,9 @@ def build_execution_plan(paths: WorkspacePaths, epoch_id: str | None = None) -> 
     ``<entry_id>/r<replicate>`` for a work unit, ``a<n>`` for one of that
     unit's superseded attempts, and ``attempt:<n>`` / ``evaluation:<n>``
     for a proposal attempt or a gate evaluation (their log order, which is
-    append-only and therefore stable).
+    append-only and therefore stable). A stage's measurement bands are
+    ``band:<band_key>``, each draw under one keyed
+    ``<generation_id>/<entry_id>/r<replicate>``.
 
     Degrades to the empty plan — same shape, a ``note`` saying why — for an
     absent, unknown, or path-unsafe epoch and for any failure underneath
@@ -963,7 +1139,19 @@ def _build(paths: WorkspacePaths, epoch_id: str) -> dict[str, Any]:
         per_round[index] = [gid for gid in named if claimed.setdefault(gid, index) == index]
 
     on_disk = _generation_ids(paths, epoch_id)
-    baseline_ids = [gid for gid in on_disk if gid not in claimed]
+
+    # A leftover candidate-screen snapshot is not a baseline champion: it is
+    # an ephemeral tree whose name states the round it served, and whose only
+    # files are screen-band draws. It gets no board sweep (it never ran the
+    # board) and its bands hang under the round it names, when that round is
+    # on disk; otherwise it falls back to the baseline like any other
+    # generation no round claims.
+    screen_home = _screen_generation_rounds(on_disk, claimed, indices)
+    baseline_ids = [gid for gid in on_disk if gid not in claimed and gid not in screen_home]
+    screened_by_round: dict[int, list[str]] = {}
+    for generation_id, round_index in screen_home.items():
+        screened_by_round.setdefault(round_index, []).append(generation_id)
+    stated = frozenset(screen_home)
 
     lineage = {
         str(node.get("generation_id")): node
@@ -976,6 +1164,7 @@ def _build(paths: WorkspacePaths, epoch_id: str) -> dict[str, Any]:
 
     stages = [_baseline_stage(paths, epoch_id, baseline_ids, board_entry_ids)]
     for index in indices:
+        evaluated = per_round.get(index, [])
         stages.append(
             _round_stage(
                 paths,
@@ -985,7 +1174,9 @@ def _build(paths: WorkspacePaths, epoch_id: str) -> dict[str, Any]:
                 board_entry_ids,
                 lineage,
                 experiments,
-                per_round.get(index, []),
+                evaluated,
+                evaluated + screened_by_round.get(index, []),
+                stated,
             )
         )
     stages.extend(_planned_rounds(paths, epoch_id, indices))
@@ -994,6 +1185,28 @@ def _build(paths: WorkspacePaths, epoch_id: str) -> dict[str, Any]:
     plan["board"] = {"digest": digest, "entry_count": len(board_entry_ids)}
     plan["stages"] = [stage.payload() for stage in stages]
     return plan
+
+
+def _screen_generation_rounds(
+    generation_ids: list[str], claimed: dict[str, int], indices: list[int]
+) -> dict[str, int]:
+    """Each leftover screen snapshot mapped to the round its NAME states.
+
+    Only ids no round log claims and whose stated round has a stage are
+    mapped: a screen id naming a round that is not on disk has no home to
+    move to, so it stays with the generations the baseline collects and its
+    bands read ``partial`` like every other unattributed one.
+    """
+    from zicato.epoch.screen import screen_generation_round  # noqa: PLC0415
+
+    homes: dict[str, int] = {}
+    for generation_id in generation_ids:
+        if generation_id in claimed:
+            continue
+        index = screen_generation_round(generation_id)
+        if index is not None and index in indices:
+            homes[generation_id] = index
+    return homes
 
 
 def _experiment_outcomes(
