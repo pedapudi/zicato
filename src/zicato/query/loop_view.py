@@ -25,6 +25,7 @@ so the floor still surfaces on a degraded read.
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from zicato.query.paths import (
@@ -34,6 +35,7 @@ from zicato.query.paths import (
     _utc_now,
     coerce_float,
 )
+from zicato.tournament.calibration import CALIBRATION_PHASE_TOKEN
 
 
 def _epoch_noise_floor(paths: WorkspacePaths, epoch_id: str) -> dict[str, Any] | None:
@@ -260,6 +262,10 @@ def build_tournament_cost(paths: WorkspacePaths, epoch_id: str) -> dict[str, Any
 # strings, so every consumer reads ONE verdict.
 # ---------------------------------------------------------------------------
 
+#: A trailing ``done/total`` phase segment — the progress an epoch-open step
+#: appends to its phase (``…:calibrating_noise_floor:7/18``).
+_PROGRESS_SUFFIX = re.compile(r"\d+/\d+")
+
 #: The four pipeline steps, in loop order.
 PIPELINE_STEPS: tuple[tuple[str, str], ...] = (
     ("propose", "propose"),
@@ -267,6 +273,30 @@ PIPELINE_STEPS: tuple[tuple[str, str], ...] = (
     ("run", "run"),
     ("gate", "gate"),
 )
+
+
+def _epoch_open_step(segments: list[str]) -> dict[str, str] | None:
+    """The epoch-open step running BEFORE the pipeline, or ``None``.
+
+    An epoch-open step (currently only the A/A noise-floor calibration) runs
+    once per epoch, inside the first round but ahead of propose → apply → run
+    → gate: it is serial, minutes-long, and while it runs the four pipeline
+    steps have genuinely not started. Reporting it as its own step is what
+    keeps that stretch from reading as a wedged round (issue #175).
+
+    The label and detail are SERVER-owned strings the clients render verbatim
+    (``docs/design/EVAL-VIEW.md`` DQ1). ``detail`` carries the live ``done/total`` draw
+    count the loop appends to the phase, and is empty when the phase carries
+    no progress suffix.
+    """
+    if CALIBRATION_PHASE_TOKEN not in segments:
+        return None
+    detail = ""
+    tail = segments[-1]
+    if tail != CALIBRATION_PHASE_TOKEN and _PROGRESS_SUFFIX.fullmatch(tail):
+        done, total = tail.split("/")
+        detail = f"{done}/{total} draws"
+    return {"id": CALIBRATION_PHASE_TOKEN, "label": "calibrating noise floor", "detail": detail}
 
 
 def _phase_round_index(segments: list[str]) -> int | None:
@@ -328,6 +358,16 @@ def _project_pipeline(
 
     segments = [s for s in str(phase or "").strip().lower().split(":") if s]
     head = segments[0] if segments else ""
+
+    if CALIBRATION_PHASE_TOKEN in segments:
+        # An epoch-open step runs ahead of the pipeline (its phase still heads
+        # with ``evolve_once``, which would otherwise read as proposing): every
+        # step is genuinely pending, and :func:`_epoch_open_step` reports it.
+        steps = [
+            {"id": sid, "label": label, "state": "pending", "detail": ""}
+            for sid, label in PIPELINE_STEPS
+        ]
+        return steps, None, None
 
     fc = field_counts
     field_detail = ""
@@ -458,6 +498,7 @@ def build_round_pipeline(paths: WorkspacePaths) -> dict[str, Any]:
         tournament_phase=(str(at.get("phase") or "") if at is not None else None),
         run_count=run_count,
     )
+    epoch_open_step = _epoch_open_step(segments)
 
     # Liveness is NOT re-derived here — the pipeline reads the one served
     # verdict (runtime_view.derive_liveness) so a post-mortem workspace
@@ -474,6 +515,7 @@ def build_round_pipeline(paths: WorkspacePaths) -> dict[str, Any]:
         "epoch_id": hb_epoch or None,
         "round_index": round_index,
         "steps": steps,
+        "epoch_open_step": epoch_open_step,
         "active_step": active,
         "decision": decision,
         "in_flight": run_count,

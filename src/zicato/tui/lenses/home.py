@@ -35,6 +35,10 @@ VERDICT_STYLE = {"nosignal": "warn", "stalled": "warn", "plateau": "warn"}
 #: the accent is spent on: it is the answer to "what is happening now".
 STEP_STYLE = {
     "running": "accent",
+    # The served pipeline projection's word for the same state
+    # (:func:`zicato.query.loop_view._project_pipeline` emits pending |
+    # active | done), so the live step is the one that gets the accent.
+    "active": "accent",
     "done": "plain",
     "complete": "plain",
     "failed": "bad",
@@ -275,6 +279,12 @@ def _round_block(pipeline: dict[str, Any], ctx: LensContext) -> Block:
     stale = bool(pipeline.get("stale"))
     steps = [s for s in as_list(pipeline.get("steps")) if isinstance(s, dict)]
     active = pipeline.get("active_step")
+    # The epoch-open step (the A/A noise-floor calibration) runs AHEAD of the
+    # four pipeline steps, so it leads the lifeline as the active stage while
+    # they all read pending — otherwise a minutes-long measurement paints an
+    # untouched pipeline and reads as a wedged round.
+    open_step = pipeline.get("epoch_open_step")
+    open_step = open_step if isinstance(open_step, dict) else None
 
     if not steps:
         stage_spans = glyphs.lifeline(
@@ -282,8 +292,12 @@ def _round_block(pipeline: dict[str, Any], ctx: LensContext) -> Block:
         )
     else:
         stage_spans = []
+        if open_step is not None:
+            stage_spans.append(
+                (str(open_step.get("label") or open_step.get("id") or "?"), STEP_STYLE["active"])
+            )
         for i, step in enumerate(steps):
-            if i:
+            if i or open_step is not None:
                 stage_spans.append((" > " if ctx.ascii_only else " ▸ ", "faint"))
             label = str(step.get("label") or step.get("id") or "?")
             state = str(step.get("state") or "pending")
@@ -295,14 +309,16 @@ def _round_block(pipeline: dict[str, Any], ctx: LensContext) -> Block:
     if not running:
         rows.append(row("idle", ("no round in flight", "faint")))
     else:
-        detail = next(
-            (
-                str(s.get("detail") or "")
-                for s in steps
-                if s.get("id") == active or s.get("state") == "running"
-            ),
-            "",
-        )
+        detail = str(open_step.get("detail") or "") if open_step is not None else ""
+        if not detail:
+            detail = next(
+                (
+                    str(s.get("detail") or "")
+                    for s in steps
+                    if s.get("id") == active or s.get("state") == "running"
+                ),
+                "",
+            )
         rows.append(
             kv_row(
                 "phase",
@@ -373,6 +389,9 @@ def _pipeline_digest(pipeline: dict[str, Any]) -> Any:
         pipeline.get("phase"),
         pipeline.get("round_index"),
         pipeline.get("active_step"),
+        [open_step.get("id"), open_step.get("label"), open_step.get("detail")]
+        if isinstance(open_step := pipeline.get("epoch_open_step"), dict)
+        else None,
         pipeline.get("in_flight"),
         pipeline.get("decision"),
         [

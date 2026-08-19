@@ -408,6 +408,11 @@ async def evolve_once(
         config=config,
         disable_drift=disable_drift,
         judge_only=judge_only,
+        # The calibration owns the heartbeat while it draws: this round's
+        # phase would otherwise stand over a serial measurement that has not
+        # proposed or duelled anything (issue #175).
+        beater=beater,
+        round_index=round_index,
     )
 
     # --- 2a'. Contract pre-flight (epoch-open step) ----------------------

@@ -447,6 +447,13 @@ degraded copy, replicate base 2000; recommend-only). On round 0 only,
 `_warn_margin_below_noise_floor` says loudly when `promote_margin` sits
 inside the measured floor.
 
+Both measurements are SERIAL and front-loaded: K draws, each a full pass
+over the board, before the round's first duel, and `--parallelism` does
+not shorten them. The calibration therefore owns the heartbeat while it
+runs — `CALIBRATION_PHASE` plus a `{done}/{K}` suffix restamped per
+settled draw (see the phase vocabulary in §6) — because the round's own
+phase over a null tournament is exactly the shape a wedged round has.
+
 ### 3.6 Steps 3–5 — mutations, the split, patterns, the proposer's view
 
 `enumerate_mutations(_resolve_mutable_trees(adapter, parent_snapshot))` —
@@ -1292,6 +1299,7 @@ supervisor's staleness logic). The vocabulary as emitted today:
 |---|---|
 | `evolve_n_rounds:start` | loop boot (epoch resolved, lock held) |
 | `evolve_once:round_{N}` | round scheduled (loop side) |
+| `evolve_once:calibrating_noise_floor:{done}/{K}` | the epoch-open A/A calibration, restamped per settled draw |
 | `proposing:round_{N}:{vX}` | before the proposer call (both paths) |
 | `screening:r{N}` | the candidate screen's panel runs |
 | `applying:…` | inside `build_post_apply_validator` per attempt |

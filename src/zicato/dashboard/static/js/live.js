@@ -321,14 +321,25 @@ function rungStepperDigest({ stepIndex, stepCount } = {}) {
 // the phase-string inference; this builder never re-derives loop position
 // from phase tokens. One pip+label per step (done = filled/muted, active =
 // accent, pending = hollow), the active step's detail beside it, and the
-// gate decision word once the round settles. Pure: builds detached DOM.
+// gate decision word once the round settles. An `epoch_open_step` (the A/A
+// noise-floor calibration) leads the strip as the active element while the four
+// pipeline steps sit pending — that stretch is real work, not a stalled round.
+// Pure: builds detached DOM.
 export function pipelineStepper(pipe) {
   const steps = (pipe && Array.isArray(pipe.steps)) ? pipe.steps : [];
+  const open = (pipe && pipe.epoch_open_step) ? pipe.epoch_open_step : null;
   const wrap = el('div', { class: 'dt-pipe', role: 'img', 'aria-label': 'round pipeline' });
+  if (open && open.id) {
+    wrap.appendChild(el('span', { class: 'dt-pipe-step dt-pipe-active', 'data-step': String(open.id) }, [
+      el('span', { class: 'dt-pipe-dot', 'aria-hidden': 'true' }),
+      el('span', { class: 'dt-pipe-label', text: open.label || open.id }),
+      open.detail ? el('span', { class: 'dt-pipe-detail dn-faint', text: open.detail }) : null,
+    ].filter(Boolean)));
+  }
   steps.forEach((s, i) => {
     if (!s || !s.id) return;
     const state = (s.state === 'done' || s.state === 'active') ? s.state : 'pending';
-    if (i > 0) wrap.appendChild(el('span', { class: 'dt-pipe-sep', 'aria-hidden': 'true', text: '→' }));
+    if (i > 0 || open) wrap.appendChild(el('span', { class: 'dt-pipe-sep', 'aria-hidden': 'true', text: '→' }));
     const node = el('span', { class: 'dt-pipe-step dt-pipe-' + state, 'data-step': String(s.id) }, [
       el('span', { class: 'dt-pipe-dot', 'aria-hidden': 'true' }),
       el('span', { class: 'dt-pipe-label', text: s.label || s.id }),
@@ -351,9 +362,11 @@ export function pipelineStepper(pipe) {
 // DOM); a step advancing / a detail moving / the verdict landing flips it.
 export function pipelineStepperDigest(pipe) {
   if (!pipe || !Array.isArray(pipe.steps)) return 'none';
+  const open = pipe.epoch_open_step;
   return 'pipe|' + pipe.steps.map((s) => [
     s && s.id, s && s.state, (s && s.state === 'active' && s.detail) ? s.detail : '',
-  ].join(':')).join('|') + '|' + (pipe.decision || '') + '|' + (pipe.running ? 'R' : '-');
+  ].join(':')).join('|') + '|' + (open ? [open.id, open.detail || ''].join(':') : '')
+    + '|' + (pipe.decision || '') + '|' + (pipe.running ? 'R' : '-');
 }
 
 // ── the activity ticker (append-only, capped, NEVER repaints) ─────────
@@ -955,10 +968,12 @@ export class LiveController {
   // degrading the head to exactly its pre-stepper reading.
   updatePipeline(pipe) {
     if (!this._pipeHost) return;
-    // an idle projection (all steps pending, nothing decided) reads as no
-    // stepper — the meta line already says "proposing …" etc. while filling.
+    // an idle projection (all steps pending, nothing decided, no epoch-open
+    // step in flight) reads as no stepper — the meta line already says
+    // "proposing …" etc. while filling.
     const idle = !pipe || !Array.isArray(pipe.steps)
-      || (!pipe.decision && pipe.steps.every((s) => !s || (s.state !== 'active' && s.state !== 'done')));
+      || (!pipe.decision && !pipe.epoch_open_step
+        && pipe.steps.every((s) => !s || (s.state !== 'active' && s.state !== 'done')));
     const digest = idle ? 'none' : pipelineStepperDigest(pipe);
     if (digest === this._pipeDigest && (idle || this._pipeHost.firstChild)) return;
     this._pipeDigest = digest;

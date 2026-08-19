@@ -32,7 +32,7 @@ from zicato.query import (
     build_round_pipeline,
     build_tournament_cost,
 )
-from zicato.query.loop_view import _project_pipeline
+from zicato.query.loop_view import _epoch_open_step, _project_pipeline
 
 EPOCH = "2026-06_e0"
 
@@ -463,6 +463,32 @@ def test_pipeline_after_round_reads_done() -> None:
     assert decision == "rejected"
 
 
+def test_pipeline_calibration_is_an_epoch_open_step_not_a_started_round() -> None:
+    """The A/A calibration heads with ``evolve_once``, which used to read as
+    proposing; it runs BEFORE propose, so every pipeline step is pending and
+    the epoch-open step reports itself (issue #175)."""
+    phase = "evolve_once:calibrating_noise_floor:7/18"
+    steps, active, decision = _project_pipeline(phase)
+    assert all(s["state"] == "pending" for s in steps)
+    assert active is None
+    assert decision is None
+    assert _epoch_open_step(phase.split(":")) == {
+        "id": "calibrating_noise_floor",
+        "label": "calibrating noise floor",
+        "detail": "7/18 draws",
+    }
+
+
+def test_epoch_open_step_without_progress_and_without_calibration() -> None:
+    # Stamped before the first draw completes — the label stands alone.
+    assert _epoch_open_step(["evolve_once", "calibrating_noise_floor"])["detail"] == ""
+    # A malformed suffix is not read as progress rather than rendered raw.
+    assert _epoch_open_step(["evolve_once", "calibrating_noise_floor", "soon"])["detail"] == ""
+    # Every other phase has no epoch-open step at all.
+    assert _epoch_open_step(["tournament", "round_0", "v1"]) is None
+    assert _epoch_open_step([]) is None
+
+
 def test_pipeline_idle_heads_read_all_pending() -> None:
     for phase in ("", "idle", "evolve_n_rounds:start", "evolve_n_rounds:done"):
         steps, active, decision = _project_pipeline(phase)
@@ -641,12 +667,29 @@ def test_build_round_pipeline_foreign_epoch_tournament_ignored(tmp_path: Path) -
     assert by_id["propose"]["detail"] == ""
 
 
+def test_build_round_pipeline_reports_a_calibration_in_flight(tmp_path: Path) -> None:
+    """A workspace mid-calibration reads LIVE, with the epoch-open step and its
+    draw progress served for the stepper — never as a round that has begun."""
+    ws = _pipeline_workspace(tmp_path, phase="evolve_once:calibrating_noise_floor:2/3")
+    out = build_round_pipeline(WorkspacePaths(ws))
+    assert out["running"] is True
+    assert out["liveness"]["state"] == "live"
+    assert out["epoch_open_step"] == {
+        "id": "calibrating_noise_floor",
+        "label": "calibrating noise floor",
+        "detail": "2/3 draws",
+    }
+    assert out["active_step"] is None
+    assert all(s["state"] == "pending" for s in out["steps"])
+
+
 def test_build_round_pipeline_empty_workspace(tmp_path: Path) -> None:
     ws = tmp_path / ".zicato"
     ws.mkdir()
     out = build_round_pipeline(WorkspacePaths(ws))
     assert out["running"] is False
     assert out["active_step"] is None
+    assert out["epoch_open_step"] is None
     assert all(s["state"] == "pending" for s in out["steps"])
 
 

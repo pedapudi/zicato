@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import datetime as _dt
 import math
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -66,6 +67,22 @@ CALIBRATION_REPLICATE_BASE: int = 1000
 #: calibration band tests against (:func:`zicato.tournament.unit_cache
 #: .is_own_code_board_draw`) instead of a bare literal.
 CALIBRATION_REPLICATE_SPAN: int = 1000
+
+#: The heartbeat ``phase`` segment that names a calibration in flight. The
+#: calibration is an epoch-open step running BEFORE the round it precedes has
+#: proposed anything, so it must not inherit the round's phase: a workspace
+#: stamped ``evolve_once:round_0`` with no active tournament is exactly the
+#: shape a WEDGED round has, which is how a working calibration came to read
+#: as a hang (issue #175). Readers match this token as a phase segment
+#: (:func:`zicato.query.loop_view._project_pipeline`) rather than the whole
+#: string, because the loop appends live ``done/total`` draw progress to it.
+CALIBRATION_PHASE_TOKEN: str = "calibrating_noise_floor"
+
+#: The full phase the evolve loop stamps for the duration of the calibration.
+#: The per-draw progress suffix (``:7/18``) is appended by the loop's draw
+#: callback; no segment here is an idle token, so a calibrating workspace
+#: reads ACTIVE (:func:`zicato.query.runtime_view.is_active_phase`).
+CALIBRATION_PHASE: str = f"evolve_once:{CALIBRATION_PHASE_TOKEN}"
 
 #: How many noise standard deviations a recommended ``promote_margin`` sits
 #: above zero. The gate compares two aggregate scalars, so the quantity that
@@ -174,6 +191,7 @@ async def measure_noise_floor(
     disable_drift: tuple[Any, ...] = (),
     judge_only: bool = False,
     raise_on_infra_abort: bool = False,
+    on_draw: Callable[[int, int], None] | None = None,
 ) -> NoiseFloor:
     """Duel ``generation`` against itself ``runs`` times; measure the spread.
 
@@ -199,6 +217,12 @@ async def measure_noise_floor(
     outage's worst-case not-completed scalar into the floor. The default-on
     contract pre-flight opts in (an outage must never disqualify a contract);
     the tolerant default preserves the ``zicato board audit`` surface.
+
+    ``on_draw`` (default ``None`` — no behaviour change for callers that do not
+    pass one) is called ``(draws_completed, runs)`` after each draw settles, so
+    a long serial measurement can report progress live rather than looking like
+    a hang. It is strictly an observability hook: it runs inside the draw loop,
+    so it must be cheap and must not raise.
     """
     from zicato.core.loss import is_infra_abort_cause  # noqa: PLC0415
     from zicato.tournament.scheduling import _run_board_units_fast  # noqa: PLC0415
@@ -265,6 +289,10 @@ async def measure_noise_floor(
             )
         agg = aggregate_generation_score(list(losses.values()), weights)
         scalars.append(float(agg.get("scalar", 0.0)))
+        if on_draw is not None:
+            # Reported AFTER the draw settles, so the count is draws COMPLETED
+            # — never draws started. The caller stamps the initial 0/K itself.
+            on_draw(draw + 1, runs)
 
     max_abs, std = delta_spread(scalars)
     return NoiseFloor(
@@ -373,6 +401,8 @@ def margin_below_floor(promote_margin: float, floor: dict[str, Any] | None) -> b
 
 
 __all__ = [
+    "CALIBRATION_PHASE",
+    "CALIBRATION_PHASE_TOKEN",
     "CALIBRATION_REPLICATE_BASE",
     "DEFAULT_CALIBRATION_RUNS",
     "MARGIN_NOISE_MULTIPLE",
