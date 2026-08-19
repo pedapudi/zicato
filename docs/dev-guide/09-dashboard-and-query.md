@@ -206,6 +206,17 @@ def _current_champion(experiments: list[dict[str, Any]]) -> str | None:
 > about. A regression test for a champion-selection change MUST use a
 > two-promotion lineage (see 11-testing.md §"Write a regression test").
 
+> ⚠️ TRAP — the same bug wears a SECOND costume: the client reads the
+> server's answer, but reads it for the WRONG EPOCH. A bare `D.epoch()` /
+> `D.bracket()` / `D.scoreTrajectory()` answers for the CURRENT epoch, so a
+> surface that paints more than one epoch must take the `?epoch=<id>`-scoped
+> read PER epoch node. `buildTreeModel` held ONE bare-read champion pointer and
+> gated the crown on "is this the contract epoch", which marked every CLOSED
+> epoch's reigning champion a FORMER champion and crowned nothing there.
+> Deciding "this epoch has no champion" is still a client decision. A
+> multi-epoch fixture is the only thing that catches it: with one epoch the
+> bare read and the scoped read are the same payload.
+
 ### 9.2.2 The one decision classifier — `decisions.py`
 
 Every payload that names a tournament decision funnels through ONE module
