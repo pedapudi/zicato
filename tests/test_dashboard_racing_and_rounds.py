@@ -522,6 +522,72 @@ def test_field_round_champion_survives_untagged_competitors(tmp_path: Path) -> N
     assert rounds[1]["champion"]["id"] == "v5"
 
 
+def test_field_round_champion_metadata_comes_from_that_round(tmp_path: Path) -> None:
+    """A held champion's scalar and provenance come from the current field."""
+    ws = _field_round_workspace(tmp_path)
+    conn = sqlite3.connect(ws / "index.db")
+    conn.executescript(
+        """
+        ALTER TABLE tournaments ADD COLUMN champion_eval_mode TEXT;
+        ALTER TABLE tournaments ADD COLUMN champion_run_ref TEXT;
+        """
+    )
+    # Round 1 has its own measurement.  Round 2 must not borrow it merely
+    # because v5 remains the champion.
+    conn.execute(
+        "UPDATE tournaments SET parent_scalar = ?, champion_eval_mode = ?, champion_run_ref = ? "
+        "WHERE tournament_id = ?",
+        (0.31, "fast", "round-1", f"{EPOCH}:v5->v6"),
+    )
+    comps = json.dumps(
+        [
+            {"generation_id": "v5", "seed": 1, "role": "champion"},
+            {"generation_id": "v8", "seed": 2, "role": "challenger"},
+            {"generation_id": "v9", "seed": 3, "role": "challenger"},
+        ]
+    )
+    conn.executemany(
+        "INSERT INTO tournaments("
+        "tournament_id, epoch_id, parent_generation_id, child_generation_id, decision, "
+        "parent_scalar, child_scalar, delta_scalar, rejection_reason, ran_at, structure, "
+        "structure_params_json, competitors_json, rounds_json, standings_json, "
+        "champion_eval_mode, champion_run_ref) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        [
+            (f"{EPOCH}:v5->v8", EPOCH, "v5", "v8", "rejected", 0.42, 0.7, 0.28, None,
+             "2026-06-01T03:00:00Z", "racing", None, comps, None, None,
+             "fast-degraded", "round-2"),
+            (f"{EPOCH}:v5->v9", EPOCH, "v5", "v9", "rejected", 0.42, 0.8, 0.38, None,
+             "2026-06-01T03:01:00Z", "racing", None, comps, None, None,
+             "fast-degraded", "round-2"),
+            (f"{EPOCH}:field:v8", EPOCH, "", "", "held", None, None, None, "",
+             "2026-06-01T03:02:00Z", "racing", None, comps, json.dumps([]), json.dumps([]),
+             None, None),
+        ],
+    )
+    conn.commit()
+    conn.close()
+    gens_dir = ws / "epochs" / EPOCH / "generations"
+    for gid in ("v8", "v9"):
+        _write_json(
+            gens_dir / gid / "experiment.json",
+            {
+                "parent_generation_id": "v5",
+                "round_index": 2,
+                "outcome": {"tournament_decision": "rejected"},
+            },
+        )
+
+    timeline = build_round_timeline(WorkspacePaths(ws), EPOCH)
+    champion = timeline["rounds"][2]["champion"]
+    assert champion == {
+        "id": "v5",
+        "scalar": pytest.approx(0.42),
+        "eval_mode": "fast-degraded",
+        "run_ref": "round-2",
+        "from_record": True,
+    }
+
+
 def test_round_timeline_owns_live_field_overlay(tmp_path: Path) -> None:
     ws = _gauntlet_workspace(tmp_path)
     _write_json(

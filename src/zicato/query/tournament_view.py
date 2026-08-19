@@ -212,8 +212,12 @@ def _bracket_from_conn(
           promotion, so a beaten champion went on defending every later round.
 
         The champion's scalar and eval provenance (cached vs re-run) still ride
-        on a CHALLENGER's crowning row, whose parent IS this round's champion —
-        that borrow is correct and is what the old code was reaching for.
+        on the crowning row of a CHALLENGER IN THIS FIELD, whose parent IS this
+        round's champion — that borrow is correct and is what the old code was
+        reaching for. Keying it to this field's own challengers is what keeps a
+        HELD champion's provenance on the CURRENT round: one champion defends
+        several rounds, so an unrestricted search finds its earliest defence and
+        reports that round's scalar and cached-vs-fresh mode instead.
 
         For a record whose competitors carry no role (hand-built, or written
         before the tag), fall back on the structural fact that a field's
@@ -222,6 +226,7 @@ def _bracket_from_conn(
         answer is deterministic.
         """
         ids = [str(c.get("generation_id") if isinstance(c, dict) else c) for c in comps]
+        in_field = set(ids)
         tagged = next(
             (
                 str(c.get("generation_id") or "")
@@ -235,14 +240,13 @@ def _bracket_from_conn(
                 (
                     v
                     for k, v in champ_by_child.items()
-                    if str(v.get("id")) == tagged and k != tagged
+                    if str(v.get("id")) == tagged and k in in_field and k != tagged
                 ),
                 None,
             )
             base = dict(sibling) if sibling else {}
             base["id"] = tagged
             return base
-        in_field = set(ids)
         for key in ids:
             borrowed = champ_by_child.get(key)
             if borrowed is not None and str(borrowed.get("id")) in in_field:
