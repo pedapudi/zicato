@@ -833,9 +833,17 @@ export async function buildTreeModel(route) {
   // epoch's reigning champion a FORMER champion, and crowned nothing there.
   // A failed read resolves to `null` (cachedJson swallows it), which the stamp
   // below reads as "pointer unknown", never as "not the champion".
+  // A CLOSED epoch promotes nothing more, so its pointer is read through the
+  // memoized `closedEpochChampion` — one contract build per closed epoch per
+  // page, not one per epoch node on every live bust.
+  const closedEpochs = new Set();
+  if (ws && Array.isArray(ws.epochs)) {
+    for (const e of ws.epochs) if (e && e.closed === true && e.epoch_id != null) closedEpochs.add(String(e.epoch_id));
+  }
   const championByEpoch = new Map(
     (await Promise.all(epochs.map(async (e) => {
       if (String(e.id) === String(contractEpochId)) return [e.id, currentChampionId];
+      if (closedEpochs.has(String(e.id))) return [e.id, await D.closedEpochChampion(e.id)];
       const scoped = await D.epoch(e.id);
       return [e.id, (scoped && scoped.current_champion != null) ? String(scoped.current_champion) : null];
     })))
