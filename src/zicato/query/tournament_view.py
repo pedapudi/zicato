@@ -192,7 +192,12 @@ def _bracket_from_conn(
             champ_by_child[str(cg)] = {
                 "id": str(pg),
                 "scalar": r["parent_scalar"],
-                "eval_mode": _rget(r, "champion_eval_mode"),
+                # A legacy row (pre-v8 index) has the column as NULL, and the
+                # schema's rule for that is "mode unknown, treat as full". The
+                # default belongs HERE, on the read of a real row — not on the
+                # assembled champion, where it would also fire for a round that
+                # has NO row yet and claim an evaluation that never happened.
+                "eval_mode": _rget(r, "champion_eval_mode") or "full",
                 "run_ref": _rget(r, "champion_run_ref"),
             }
 
@@ -265,7 +270,7 @@ def _bracket_from_conn(
             {
                 "id": str(cid),
                 "scalar": row["parent_scalar"],
-                "eval_mode": _rget(row, "champion_eval_mode"),
+                "eval_mode": _rget(row, "champion_eval_mode") or "full",
                 "run_ref": _rget(row, "champion_run_ref"),
             }
             if cid is not None and str(cid) != ""
@@ -279,7 +284,14 @@ def _bracket_from_conn(
         return {
             "id": base["id"],
             "scalar": coerce_float(sc),
-            "eval_mode": base.get("eval_mode") or "full",
+            # No default here: every path that read a ROW already applied the
+            # legacy "NULL ⇒ full" rule above, so an absent mode means there was
+            # no row to read — a round whose champion has not been evaluated yet
+            # (the field row is written at OPEN, before any crowning row). That
+            # is genuinely unknown, and the round timeline already carries
+            # ``eval_mode: None`` for it; the tree renders plain "defends"
+            # rather than claiming "defends · re-run".
+            "eval_mode": base.get("eval_mode"),
             "run_ref": base.get("run_ref"),
         }
 

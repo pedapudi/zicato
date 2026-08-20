@@ -452,7 +452,9 @@ and the loss-floor waterfall. The client performs no decision-bearing join.
 > leaves `parent_generation_id` / `child_generation_id` EMPTY on purpose (a
 > field is a round, not a duel, and a populated child would collide with the
 > per-challenger crowning row), and it writes one for every field of 3+
-> competitors — so every racing / swiss / elim round has one. The champion must
+> competitors — so every MULTI-CHALLENGER racing / swiss / elim round has one. (A
+> round that fields a single challenger is two competitors: no field row, and its
+> per-challenger row carries the champion directly.) The champion must
 > therefore come from `competitors_json`, and there is exactly one right way to
 > read it: the competitor the record TAGS `role: "champion"` (`competitors_meta`
 > writes the champion first, role-tagged). Borrowing "the first competitor that
@@ -460,10 +462,21 @@ and the loss-floor waterfall. The client performs no decision-bearing join.
 > champion it BEAT — which served the previous champion as the defender of every
 > round after a promotion, so a beaten champion appeared to reign for the rest
 > of the epoch. The champion's scalar and eval provenance (cached vs re-run) DO
-> ride on a challenger's crowning row, whose parent is this round's champion;
-> that borrow is the correct one. A regression test needs a round AFTER the
-> promotion plus a field row: with only per-challenger rows, `_build_rounds`
-> carries the champion forward correctly and the bug is invisible.
+> ride on the crowning row of a challenger IN THIS FIELD, whose parent is this
+> round's champion; that borrow is the correct one. It must be keyed to this
+> field: one champion defends several rounds, so an unrestricted search finds its
+> EARLIEST defence and reports that round's scalar and cached-vs-fresh mode.
+>
+> When no such row exists yet — the field row is written at OPEN, so mid-round
+> the reader knows WHO defends but not HOW it was evaluated — the mode is
+> genuinely unknown and serves as `eval_mode: None`, which the tree renders as
+> plain "defends". The `NULL ⇒ "full"` rule from the v8 column wave applies to
+> READING A ROW, so it lives on the row reads; defaulting the assembled champion
+> instead would claim "defends · re-run" for a round that has not run.
+>
+> A regression test needs a round AFTER the promotion plus a field row: with only
+> per-challenger rows, `_build_rounds` carries the champion forward correctly and
+> the bug is invisible.
 
 **Pipeline projection (ex-phase-string parsing).** The client used to parse
 the heartbeat `phase` string to decide propose→apply→run→gate position.
@@ -2352,6 +2365,7 @@ Where to add (and what will catch) a regression, by concern:
 | `_is_safe_id` / degrade-to-200 / `?epoch=` 404 | `tests/test_dashboard_endpoints.py` |
 | the served joins (round-timeline / racing-field) match the client mock | `tests/test_dashboard_racing_and_rounds.py` + `test/mock_server.mjs` |
 | a field round names the WINNER after a promotion (role tag, not a borrow) | `tests/test_dashboard_racing_and_rounds.py::test_field_round_names_the_new_champion_after_a_promotion` |
+| a field round's champion provenance: current round, and unknown vs `"full"` | `tests/test_dashboard_racing_and_rounds.py` (`…metadata_comes_from_that_round`, `…no_crowning_row_reports_an_unknown_eval_mode`, `…legacy_row_without_the_v8_columns_still_reads_full`) |
 | SSE frame shape (kinds + seq + terminal only), coalescing, ordering | `tests/test_dashboard_sse*.py`, node `live_protocol.test.mjs` |
 | the uncertainty-honest verdict (`no_signal` vs `plateaued`) | `tests/test_dashboard_loop_view.py` |
 | digest-gated render: no-op DOM identity, seq skip gate, four run-states | node `seq_render_gate.test.mjs`, `pipeline_stepper.test.mjs` |

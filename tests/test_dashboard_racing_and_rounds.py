@@ -576,6 +576,16 @@ def test_field_round_champion_metadata_comes_from_that_round(tmp_path: Path) -> 
                 "outcome": {"tournament_decision": "rejected"},
             },
         )
+    # lineage.json is the SOLE authority for topology (DQ14) — experiment.json is
+    # proposal metadata. Without these rows v8/v9 read back parentless with
+    # promoted=None, i.e. as seeds rather than as v5's challengers, and the round
+    # this test names would not be the round it describes.
+    lineage = json.loads((ws / "lineage.json").read_text(encoding="utf-8"))
+    lineage["epochs"][0]["generations"] += [
+        {"id": "v8", "parent_id": "v5", "promoted": False},
+        {"id": "v9", "parent_id": "v5", "promoted": False},
+    ]
+    _write_json(ws / "lineage.json", lineage)
 
     timeline = build_round_timeline(WorkspacePaths(ws), EPOCH)
     champion = timeline["rounds"][2]["champion"]
@@ -586,6 +596,79 @@ def test_field_round_champion_metadata_comes_from_that_round(tmp_path: Path) -> 
         "run_ref": "round-2",
         "from_record": True,
     }
+
+
+def test_field_round_with_no_crowning_row_reports_an_unknown_eval_mode(
+    tmp_path: Path,
+) -> None:
+    """A round that has not been evaluated says so, rather than claiming a re-run.
+
+    ``_persist_field_tournament`` dual-writes the field row at OPEN — before any
+    per-challenger crowning row for that round exists — so mid-round the reader
+    can resolve WHO defends (the role tag) while nothing yet says HOW it was
+    evaluated. That is genuinely unknown, and the round timeline already spells
+    unknown as ``eval_mode: None`` (an unmatched record, and the live in-flight
+    round). Defaulting it to ``"full"`` would make the tree paint
+    "defends · re-run" for work that has not happened.
+    """
+    ws = _field_round_workspace(tmp_path)
+    conn = sqlite3.connect(ws / "index.db")
+    # Round 2 opens: its field row lands with the role-tagged competitors, and
+    # v8/v9 have been applied — but no v5->v8 / v5->v9 duel row exists yet.
+    comps = json.dumps(
+        [
+            {"generation_id": "v5", "seed": 1, "role": "champion"},
+            {"generation_id": "v8", "seed": 2, "role": "challenger"},
+            {"generation_id": "v9", "seed": 3, "role": "challenger"},
+        ]
+    )
+    conn.execute(
+        "INSERT INTO tournaments("
+        "tournament_id, epoch_id, parent_generation_id, child_generation_id, decision, "
+        "parent_scalar, child_scalar, delta_scalar, rejection_reason, ran_at, structure, "
+        "structure_params_json, competitors_json, rounds_json, standings_json) "
+        "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        (
+            f"{EPOCH}:field:v8", EPOCH, "", "", "", None, None, None, "",
+            "2026-06-01T03:02:00Z", "racing", None, comps, json.dumps([]), json.dumps([]),
+        ),
+    )
+    conn.commit()
+    conn.close()
+    gens_dir = ws / "epochs" / EPOCH / "generations"
+    for gid in ("v8", "v9"):
+        _write_json(
+            gens_dir / gid / "experiment.json",
+            {"parent_generation_id": "v5", "round_index": 2},
+        )
+    lineage = json.loads((ws / "lineage.json").read_text(encoding="utf-8"))
+    lineage["epochs"][0]["generations"] += [
+        {"id": "v8", "parent_id": "v5", "promoted": None},
+        {"id": "v9", "parent_id": "v5", "promoted": None},
+    ]
+    _write_json(ws / "lineage.json", lineage)
+
+    champion = build_round_timeline(WorkspacePaths(ws), EPOCH)["rounds"][2]["champion"]
+    # WHO defends is known — the record tags it.
+    assert champion["id"] == "v5"
+    # HOW it was evaluated is not. tree.js renders None as plain "defends";
+    # "full" would render "defends · re-run".
+    assert champion["eval_mode"] is None
+    assert champion["run_ref"] is None
+
+
+def test_legacy_row_without_the_v8_columns_still_reads_full(tmp_path: Path) -> None:
+    """A pre-v8 row keeps the schema's documented default.
+
+    ``champion_eval_mode IS NULL`` on a real row means "mode unknown, treat as
+    full" (index/schema.py, the v8 column wave). That default belongs to READING
+    a row, so it must survive the reader no longer defaulting on the assembled
+    champion — otherwise a legacy index would start reporting an unknown mode
+    for rounds it did measure.
+    """
+    ws = _field_round_workspace(tmp_path)  # its index has no v8 columns at all
+    rounds = build_round_timeline(WorkspacePaths(ws), EPOCH)["rounds"]
+    assert [r["champion"]["eval_mode"] for r in rounds] == ["full", "full"]
 
 
 def test_round_timeline_owns_live_field_overlay(tmp_path: Path) -> None:
