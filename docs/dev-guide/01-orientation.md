@@ -227,7 +227,9 @@ distinct axes both used to be called "round"; the overload was killed:
 - The **evolve round** (`round_index` on `Generation` / `Experiment`) is
   the outer, epoch-cumulative axis. Zero-based. Re-running `evolve` on an
   existing epoch CONTINUES its numbering — `_epoch_round_base` in
-  `src/zicato/evolve/loop.py` computes `max(persisted round_index) + 1`.
+  `src/zicato/evolve/loop.py` computes `max(persisted round_index) + 1` over
+  the MINTED generations, skipping the parentless seed (which is carried, not
+  minted, and still persists `round_index: 0`).
   > ⚠️ **TRAP** — before this fix, a re-run restarted at 0 and the
   > dashboard collided the new field into the old bucket ("v9 lands in
   > Round 0 next to v1–v4"). If you ever mint a generation, thread the

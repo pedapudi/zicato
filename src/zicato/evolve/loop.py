@@ -176,6 +176,15 @@ def _epoch_round_base(workspace_root: Path, epoch_id: str | None) -> int:
     (the "v9 lands in Round 0 next to v1–v4" bug). Returns
     ``max(persisted round_index) + 1``, or ``0`` for a fresh / unreadable epoch
     (the historical behaviour for a brand-new epoch, where the first round is 0).
+
+    A PARENTLESS generation is skipped: the epoch's seed is CARRIED (copied from
+    the registered trees, or from a rolled predecessor's promoted head), never
+    minted by a round, so it does not represent a round already spent. It still
+    persists ``round_index: 0`` — ``write_seed_experiment`` builds it with the
+    ``Experiment.round_index`` default — so counting it started a seeded-but-unrun
+    epoch's first real field at 1 and left a phantom round 0 in the timeline. This
+    is the same rule the round-timeline reader uses to identify the seed (the
+    parentless generation), so writer and reader agree on what a round is.
     """
     if not epoch_id:
         return 0
@@ -185,6 +194,8 @@ def _epoch_round_base(workspace_root: Path, epoch_id: str | None) -> int:
     try:
         layout = WorkspaceLayout.from_root(workspace_root)
         for _gid, exp in read_experiments(layout, epoch_id):
+            if not exp.get("parent_generation_id"):
+                continue  # the seed is carried, not minted — it is not a round
             ri = exp.get("round_index")
             if isinstance(ri, int) and ri > best:
                 best = ri
