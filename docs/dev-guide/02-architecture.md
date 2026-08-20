@@ -658,7 +658,11 @@ single inner `propose` with NO critique and NO extra work):
    diff?), else the deterministic heuristic (smallest diff targeting an
    observed failure mode). Survivors' banded panel counts feed the
    selection only as a LATE tiebreak, and not at all under
-   `screen_veto_only`. `critique_selected{index, reason}`.
+   `screen_veto_only`. `critique_selected{index, reason, slate,
+   rationale}` — the mode, a per-candidate summary of the whole slate
+   (core idea + mutation ids), and, when a critic chose, its one-line
+   reason. Both selection routes (the aux critic and pi's in-session
+   `select_candidate` tool) write the identical shape.
 5. **Align the tree** (`_align_child_tree`) — the step you must not
    forget exists. Every slate sample's post-apply validation derived
    the SAME fixed child snapshot in place (each attempt clears the

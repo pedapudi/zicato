@@ -840,7 +840,7 @@ screen_results = await _screen_slate(candidates, ctx)      # GUARDED; None = uns
 survivors = non-vetoed indices (all-vetoed → the ONE revise pass, §5.6.4)
 chosen, mode = selection (§5.6.6): sole-survivor | critique | heuristic
 chosen, mode = await _align_child_tree(candidates, chosen, mode, ctx)   # §5.6.5
-emit critique_selected {index, reason=mode}
+emit critique_selected {index, reason=mode, slate, rationale}
 return candidates[chosen]
 ```
 
@@ -1081,11 +1081,53 @@ flag, including the failure profile and the redacted exemplar block) + the
 compact candidate slate (`_render_candidate_slate`: index, core idea, targets,
 per-patch op + rationale, diff size — the proposer's own outputs, already
 inside the envelope) + the optional calibration note (§5.4.6) + the optional
-counts-only `## Screen measurements` block. It must answer with ONLY the
-integer index; `_parse_critic_choice` salvages the first integer token and
-range-checks it. Any failure — raise, timeout, unparseable, out-of-range —
-returns `None` and the selection falls back to the heuristic, so a flaky
-critic never blocks the step.
+counts-only `## Screen measurements` block. It answers with the integer index
+ALONE on the first line, then ONE sentence naming the bar clause that decided
+it; `_parse_critic_choice` returns `(index, rationale)`, scanning the first
+line for the integer token and range-checking it. Any failure — raise,
+timeout, unparseable, out-of-range — returns `(None, "")` and the selection
+falls back to the heuristic, so a flaky critic never blocks the step.
+
+> ✅ The parse stays BACKWARD COMPATIBLE with the bare-integer response the
+> prompt used to demand. A single-line `2`, a fenced `2`, or prose carrying
+> the index all select exactly the index they always did — they simply record
+> no rationale. A first line with no digits falls back to the historical
+> whole-response scan and keeps NO rationale, because the split that would
+> have separated index from reason is the thing that did not hold. A rejected
+> index discards the rationale with it: the sentence explains a CHOICE, so it
+> must never land beside a heuristic pick.
+
+> ⛔ The prompt asks for the bar CLAUSE and forbids the candidate NUMBER, and
+> that is load-bearing, not style. `_select_over` hands the critic the
+> SUB-slate of screen survivors, renumbered from 0 — its "candidate 1" is
+> `survivor_indices[1]`, not slate slot 1. The returned index is mapped back
+> to slate coordinates, but free text cannot be mapped, so a sentence naming
+> a number would point at the wrong row of the event's own `slate` field.
+
+The rationale is capped at `RATIONALE_CAP` (240) characters with whitespace
+collapsed, because it rides one `round_log.jsonl` line. The cap sits above the
+200 the prompt asks for, so a compliant sentence is never clipped — it catches
+runaway text, it does not enforce the ask. Both transports normalize through
+the one shared `normalize_selection_rationale`, so their records are genuinely
+interchangeable. Each slate entry's `core_idea` goes through the SAME
+normalizer: it is unbounded model text (no `maxLength` in the proposer
+schema), and bounding one of the payload's two text fields would leave the
+round-log line unbounded anyway. The `slate` value is a TUPLE, matching the
+declared `CritiqueSelected.slate` type — the decoder re-tuples top-level lists
+on read, so emitting a list would leave a written event unequal to its own
+decoded form.
+
+On the `pi` path the index and the rationale come back as separate structured
+fields of the `select_candidate` tool call, and they are parsed with DIFFERENT
+strictness: an unusable index degrades the selection to the heuristic, while an
+unusable rationale is dropped on its own. A note about a decision must never
+veto the decision. The session records the rationale only after the index
+clears its range check, so it never carries a sentence for a choice it
+rejected. It is PROVENANCE:
+nothing in the loop reads it back, and truncation costs a reader the end of a
+sentence and costs the step nothing. Its visibility envelope is the critic's
+own — the critic can only paraphrase what it was shown, and it was shown
+nothing the proposer had not already seen.
 
 **The deterministic heuristic** (`_heuristic_best_index`) ranks by, in order:
 

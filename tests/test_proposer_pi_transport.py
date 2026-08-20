@@ -1,16 +1,17 @@
 from __future__ import annotations
 
+import asyncio
 import json
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import pytest
 
 from zicato.core.types import Experiment, MutationPoint, ProposerQualityConfig, ProposerSpec
 from zicato.proposer.agent import ProposerContext
-from zicato.proposer.best_of_n import NativeSlateAdapter, wrap_with_proposer_quality
+from zicato.proposer.best_of_n import RATIONALE_CAP, NativeSlateAdapter, wrap_with_proposer_quality
 from zicato.proposer.external import ExternalProposerConfig
-from zicato.proposer.pi_agent import PiProposerAgent
+from zicato.proposer.pi_agent import PiProposerAgent, PiRpcSession
 from zicato.proposer.proposer import ProposerError
 
 STUB = Path(__file__).parent / "_pi_stub_peer.py"
@@ -171,6 +172,123 @@ async def test_best_of_n_generation_and_review_share_one_session(
     assert [item["core_idea"] for item in audited["slate"]] == ["small", "different", "best"]
     assert audited["index"] == 2
     assert audited["rationale"] == "best grounded change"
+
+
+@pytest.mark.asyncio
+async def test_native_slate_normalizes_the_review_rationale(
+    agent: PiProposerAgent, workspace: Path, tmp_path: Path
+) -> None:
+    candidates = [_candidate("first", "a"), _candidate("second", "b")]
+    _script(
+        tmp_path,
+        [{"emit": item} for item in candidates]
+        + [{"select": {"index": 1, "rationale": " word\n" * 400}}],
+    )
+    events: list[tuple[str, dict[str, Any]]] = []
+    wrapped = wrap_with_proposer_quality(agent, ProposerQualityConfig(best_of_n=2))
+
+    await wrapped.propose(
+        _context(workspace, round_event_emitter=lambda kind, fields: events.append((kind, fields)))
+    )
+
+    audited = next(fields for kind, fields in events if kind == "critique_selected")
+    assert len(audited["rationale"]) == RATIONALE_CAP
+    assert "\n" not in audited["rationale"]
+
+
+@pytest.mark.asyncio
+async def test_a_malformed_rationale_never_discards_the_review(
+    agent: PiProposerAgent, workspace: Path, tmp_path: Path
+) -> None:
+    """The index is the DECISION; the rationale is a note about it.
+
+    A tool call that answers with a well-formed index and a junk rationale
+    has still reviewed the slate. Dropping the whole selection back to the
+    deterministic heuristic over the note would let provenance veto a
+    decision — so the note is dropped alone.
+    """
+    candidates = [_candidate("first", "a"), _candidate("second", "b")]
+    _script(
+        tmp_path,
+        [{"emit": item} for item in candidates] + [{"select": {"index": 1, "rationale": 17}}],
+    )
+    events: list[tuple[str, dict[str, Any]]] = []
+    wrapped = wrap_with_proposer_quality(agent, ProposerQualityConfig(best_of_n=2))
+
+    chosen = await wrapped.propose(
+        _context(workspace, round_event_emitter=lambda kind, fields: events.append((kind, fields)))
+    )
+
+    assert chosen.hypothesis.core_idea == "second"
+    audited = next(fields for kind, fields in events if kind == "critique_selected")
+    assert audited["index"] == 1
+    assert audited["reason"] == "critique"
+    assert audited["rationale"] == ""
+
+
+@pytest.mark.asyncio
+async def test_an_out_of_range_review_records_no_rationale(
+    agent: PiProposerAgent, workspace: Path, tmp_path: Path
+) -> None:
+    """A rejected choice leaves no rationale behind on the session.
+
+    The selection degrades to the heuristic, and the round log must not
+    caption that deterministic pick with the discarded review's sentence.
+    """
+    candidates = [_candidate("first", "a"), _candidate("second", "b")]
+    _script(
+        tmp_path,
+        [{"emit": item} for item in candidates]
+        + [{"select": {"index": 9, "rationale": "confident but out of range"}}],
+    )
+    events: list[tuple[str, dict[str, Any]]] = []
+    wrapped = wrap_with_proposer_quality(agent, ProposerQualityConfig(best_of_n=2))
+
+    await wrapped.propose(
+        _context(workspace, round_event_emitter=lambda kind, fields: events.append((kind, fields)))
+    )
+
+    audited = next(fields for kind, fields in events if kind == "critique_selected")
+    assert audited["reason"] == "heuristic"
+    assert audited["rationale"] == ""
+
+
+class _StubReviewSession(PiRpcSession):
+    """A real ``PiRpcSession`` whose two RPC hops are canned.
+
+    Built through the real ``__init__`` (with a stand-in process it never
+    touches) so every attribute the class establishes exists: a session
+    method that later reads ``_next_id`` or ``_stderr_tail`` keeps failing
+    the ASSERTION it is under test for, not with an ``AttributeError``.
+    """
+
+    def __init__(self, selection: dict[str, Any]) -> None:
+        super().__init__(cast("asyncio.subprocess.Process", None), "system")
+        self._selection = selection
+
+    async def _command(self, command: dict[str, Any]) -> dict[str, Any]:
+        del command
+        return {"success": True}
+
+    async def _await_tool(self, name: str) -> dict[str, Any]:
+        del name
+        return self._selection
+
+
+@pytest.mark.asyncio
+async def test_a_rejected_index_leaves_no_rationale_on_the_session() -> None:
+    """The session never carries a rationale for a choice it rejected.
+
+    ``select`` parks the rationale on the session for the caller to read, so
+    assigning it before the range check would leave a discarded review's
+    sentence sitting there — available to caption whatever the deterministic
+    selector picks next. The caller does guard this today, but the session
+    must not depend on a guard that lives one layer up.
+    """
+    session = _StubReviewSession({"index": 9, "rationale": "confident, and out of range"})
+
+    assert await session.select("system", "user", 2) is None
+    assert session.selection_rationale == ""
 
 
 def test_native_slate_rejects_stage_model_overrides(agent: PiProposerAgent) -> None:

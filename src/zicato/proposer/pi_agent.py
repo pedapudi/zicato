@@ -16,13 +16,13 @@ import shutil
 import tempfile
 from collections import deque
 from collections.abc import Awaitable, Callable, Mapping
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from zicato.core.types import Experiment, ProposerQualityConfig, ProposerSpec
 from zicato.proposer.agent import ProposerContext, propose_via_engine
-from zicato.proposer.best_of_n import BestOfNProposerAgent
+from zicato.proposer.best_of_n import BestOfNProposerAgent, normalize_selection_rationale
 from zicato.proposer.external import ExternalProposerConfig
 from zicato.proposer.prompts import render_system_prompt
 from zicato.proposer.proposer import ProposerError
@@ -221,7 +221,20 @@ class PiRpcSession:
             raise
 
     async def select(self, system: str, user: str, count: int) -> int | None:
-        """Choose one candidate with the session's structured review tool."""
+        """Choose one candidate with the session's structured review tool.
+
+        The INDEX is the decision and the rationale is a note ABOUT it, so
+        the two are parsed with different strictness. An unusable index —
+        missing, non-numeric, out of range — returns ``None`` and the caller
+        degrades to the deterministic selector. An unusable rationale is
+        dropped on its own: a malformed note must never discard a review the
+        session actually completed.
+
+        ``selection_rationale`` is assigned only AFTER the index clears its
+        range check, so the session never carries a rationale for a choice it
+        rejected. The caller reads it off the session, and that read must not
+        depend on a guard living in the caller.
+        """
         message = (
             f"{system}\n\n{user}\n\n"
             "Review only. Call select_candidate with the strongest listed candidate."
@@ -232,10 +245,15 @@ class PiRpcSession:
         selection = await self._await_tool("select_candidate")
         try:
             index = int(selection["index"])
-            self.selection_rationale = str(selection["rationale"])
         except (KeyError, TypeError, ValueError):
             return None
-        return index if 0 <= index < count else None
+        if not 0 <= index < count:
+            return None
+        rationale = selection.get("rationale", "")
+        self.selection_rationale = (
+            normalize_selection_rationale(rationale) if isinstance(rationale, str) else ""
+        )
+        return index
 
     async def aclose(self) -> None:
         """Terminate the subprocess and stop draining its stderr."""
@@ -429,9 +447,7 @@ class PiProposerAgent:
 
         async def run(session: PiRpcSession) -> Experiment:
             inner = _SessionProposer(self.spec, session)
-            slate = _PiBestOfNProposerAgent(
-                inner=inner, config=config, session=session, candidates=inner.candidates
-            )
+            slate = _PiBestOfNProposerAgent(inner=inner, config=config, session=session)
             return await slate.propose(ctx)
 
         return await self._run_session(ctx, run)
@@ -504,57 +520,22 @@ class PiProposerAgent:
 class _SessionProposer:
     spec: ProposerSpec
     session: PiRpcSession
-    candidates: list[Experiment] = field(default_factory=list)
 
     async def propose(self, ctx: ProposerContext) -> Experiment:
-        candidate = await propose_via_engine(
-            spec=self.spec, ctx=ctx, aux_call_llm=self.session.call
-        )
-        self.candidates.append(candidate)
-        return candidate
+        return await propose_via_engine(spec=self.spec, ctx=ctx, aux_call_llm=self.session.call)
 
 
 @dataclass
 class _PiBestOfNProposerAgent(BestOfNProposerAgent):
+    """The best-of-N wrapper driven by ONE warm session.
+
+    Only the critique differs from the base wrapper: the review is a
+    structured ``select_candidate`` tool call on the session that already
+    sampled the slate, not a fresh auxiliary LLM call. The base emits the
+    ``critique_selected`` event — slate summary included — for both routes.
+    """
+
     session: PiRpcSession | None = None
-    candidates: list[Experiment] = field(default_factory=list)
-
-    async def propose(self, ctx: ProposerContext) -> Experiment:
-        emitter = ctx.round_event_emitter
-        if emitter is None:
-            return await super().propose(ctx)
-
-        def emit(kind: str, fields: dict[str, Any]) -> None:
-            if kind == "critique_selected":
-                fields = {
-                    **fields,
-                    "slate": [
-                        {
-                            "index": i,
-                            "core_idea": item.hypothesis.core_idea,
-                            "mutation_ids": list(item.hypothesis.modulating),
-                        }
-                        for i, item in enumerate(self.candidates)
-                    ],
-                    "rationale": self.session.selection_rationale if self.session else "",
-                }
-            emitter(kind, fields)
-
-        return await super().propose(replace(ctx, round_event_emitter=emit))
-
-    async def _mint_recombined(self, ctx: ProposerContext) -> Experiment | None:
-        candidate = await super()._mint_recombined(ctx)
-        if candidate is not None:
-            self.candidates.append(candidate)
-        return candidate
-
-    async def _merge_recombined(
-        self, ctx: ProposerContext
-    ) -> tuple[Experiment | None, tuple[str, ...]]:
-        candidate, errors = await super()._merge_recombined(ctx)
-        if candidate is not None:
-            self.candidates.append(candidate)
-        return candidate, errors
 
     async def _critique(
         self,
@@ -562,7 +543,15 @@ class _PiBestOfNProposerAgent(BestOfNProposerAgent):
         candidates: list[Experiment],
         ctx: ProposerContext,
         screen_note: str = "",
-    ) -> int | None:
+    ) -> tuple[int | None, str]:
+        """Review the slate with the session's tool; keep ITS rationale.
+
+        The tool returns the index and the rationale as separate structured
+        fields, so nothing needs parsing out of prose. The shim hands the
+        base a bare index string (the shape its parser expects) and the
+        rationale is re-attached here, which is why the base's own parse
+        yields an empty one on this path.
+        """
         assert self.session is not None
         session = self.session
 
@@ -571,7 +560,10 @@ class _PiBestOfNProposerAgent(BestOfNProposerAgent):
             choice = await session.select(system, user, len(candidates))
             return "" if choice is None else str(choice)
 
-        return await super()._critique(native_review, candidates, ctx, screen_note)
+        index, _ = await super()._critique(native_review, candidates, ctx, screen_note)
+        if index is None:
+            return None, ""
+        return index, session.selection_rationale
 
 
 def _sha256_file(path: Path) -> str:
