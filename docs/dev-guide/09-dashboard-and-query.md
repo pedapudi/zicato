@@ -206,6 +206,17 @@ def _current_champion(experiments: list[dict[str, Any]]) -> str | None:
 > about. A regression test for a champion-selection change MUST use a
 > two-promotion lineage (see 11-testing.md §"Write a regression test").
 
+> ⚠️ TRAP — the same bug wears a SECOND costume: the client reads the
+> server's answer, but reads it for the WRONG EPOCH. A bare `D.epoch()` /
+> `D.bracket()` / `D.scoreTrajectory()` answers for the CURRENT epoch, so a
+> surface that paints more than one epoch must take the `?epoch=<id>`-scoped
+> read PER epoch node. `buildTreeModel` held ONE bare-read champion pointer and
+> gated the crown on "is this the contract epoch". That gate tests CURRENT, not
+> closed, so it marked every OTHER epoch's reigning champion a FORMER champion
+> and crowned nothing there. Deciding "this epoch has no champion" is still a
+> client decision. A multi-epoch fixture is the only thing that catches it:
+> with one epoch the bare read and the scoped read are the same payload.
+
 ### 9.2.2 The one decision classifier — `decisions.py`
 
 Every payload that names a tournament decision funnels through ONE module
@@ -2329,5 +2340,6 @@ Where to add (and what will catch) a regression, by concern:
 | the pipeline projection (`_project_pipeline`) | `tests/test_dashboard_loop_view.py` (pure inference) + `pipeline_stepper.test.mjs` |
 | controls: read-only 403, two-step confirm, paused readback | node `loop_controls.test.mjs`, `override_taxonomy.test.mjs`, `tests/test_dashboard_gate_endpoint.py` |
 | `_current_champion` reigning-spine (bug #4 regression, two-promotion lineage) | `tests/test_dashboard_lineage_ordering.py` / the epoch-view suite |
+| the tree crown per epoch (bug #4's wrong-epoch costume, multi-epoch fixture) | node `variant_t_epoch_scoping.test.mjs` |
 | the whole Node behaviour suite (digest / no-op / mock parity) | `src/zicato/dashboard/static/test/run-all.mjs` via `make node-test` |
 | the query layer stays dashboard-free (DQ4) | `uv run lint-imports` (the import-linter contract) |

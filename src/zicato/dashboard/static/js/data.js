@@ -51,7 +51,7 @@ export function cachedJson(path) {
 }
 
 export function invalidate(prefix) {
-  if (!prefix) { _cache.clear(); return; }
+  if (!prefix) { _cache.clear(); _closedChampion.clear(); return; }
   for (const key of [..._cache.keys()]) {
     if (key.startsWith(prefix)) _cache.delete(key);
   }
@@ -186,6 +186,23 @@ export async function generationsForEpoch(epochId) {
 export function epoch(epochId) {
   return cachedJson(epochId != null ? `/api/epoch?epoch=${enc(epochId)}` : '/api/epoch');
 }
+// A CLOSED epoch's REIGNING champion. A closed epoch promotes nothing more, so
+// the pointer cannot change once served — it is memoized OUTSIDE the live-bust
+// cache (only the hard `invalidate()` reset clears it). The sidebar tree reads
+// one pointer per epoch node, and every live bust would otherwise re-fan a FULL
+// `/api/epoch` contract build (that epoch's whole experiment set, board and
+// trajectories) per closed epoch to re-read one id. An UNSERVED pointer is
+// never memoized, so a degraded read stays retryable.
+const _closedChampion = new Map();
+export async function closedEpochChampion(epochId) {
+  const key = String(epochId);
+  if (_closedChampion.has(key)) return _closedChampion.get(key);
+  const ep = await epoch(epochId);
+  const pointer = (ep && ep.current_champion != null) ? String(ep.current_champion) : null;
+  if (pointer != null) _closedChampion.set(key, pointer);
+  return pointer;
+}
+
 export function scoreTrajectory(epochId) {
   return cachedJson(epochId != null ? `/api/score-trajectory?epoch=${enc(epochId)}` : '/api/score-trajectory');
 }
