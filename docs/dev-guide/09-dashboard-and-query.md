@@ -204,7 +204,11 @@ def _current_champion(experiments: list[dict[str, Any]]) -> str | None:
 > scan LOOKS correct in every single-promotion fixture. Bug #4 only surfaces
 > on a multi-promotion epoch — which is exactly the epoch an operator cares
 > about. A regression test for a champion-selection change MUST use a
-> two-promotion lineage (see 11-testing.md §"Write a regression test").
+> two-promotion lineage (see 11-testing.md §"Write a regression test"), and
+> when the two promotions are SIBLINGS the head is not derivable from the
+> lineage flags at all — it is the one the runner recorded
+> (`src/zicato/query/promoted_head.py`; the fixture is
+> `tests/test_dashboard_promoted_head.py`).
 
 > ⚠️ TRAP — the same bug wears a SECOND costume: the client reads the
 > server's answer, but reads it for the WRONG EPOCH. A bare `D.epoch()` /
@@ -2373,6 +2377,7 @@ Where to add (and what will catch) a regression, by concern:
 | the pipeline projection (`_project_pipeline`) | `tests/test_dashboard_loop_view.py` (pure inference) + `pipeline_stepper.test.mjs` |
 | controls: read-only 403, two-step confirm, paused readback | node `loop_controls.test.mjs`, `override_taxonomy.test.mjs`, `tests/test_dashboard_gate_endpoint.py` |
 | `_current_champion` reigning-spine (bug #4 regression, two-promotion lineage) | `tests/test_dashboard_decision_surface.py::test_current_champion_is_the_spine_end` (+ the seed fallback beside it) |
+| which member of a promoted SET is the head — `gate.gen`, the round-timeline spine, and `current_champion` on a BRANCHING lineage | `tests/test_dashboard_promoted_head.py` |
 | the tree crown per epoch (bug #4's wrong-epoch costume, multi-epoch fixture) | node `variant_t_epoch_scoping.test.mjs` |
 | the whole Node behaviour suite (digest / no-op / mock parity) | `src/zicato/dashboard/static/test/run-all.mjs` via `make node-test` |
 | the query layer stays dashboard-free (DQ4) | `uv run lint-imports` (the import-linter contract) |

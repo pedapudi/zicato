@@ -1278,14 +1278,15 @@ Goal: add an operator flag to `evolve` (or any command) so it shadows a
    runner already threads ALL pins via `config_pins`; you get propagation for
    free. Your job is to prove it: add a test that pins the override, builds the
    worker args (or calls `_config_pins()`), and asserts your `section.field` is
-   present in the args payload and re-pins correctly worker-side.
+   present in the args payload and re-pins correctly worker-side. Both halves —
+   flag→config threading and the `config_pins` worker payload — live in
+   `tests/test_cli_config_flags.py`; add yours beside them.
 5. **Help text + CLI.md.** Re-run `uv run zicato <command> --help`, confirm the
    flag reads correctly, then reconcile `docs/design/CLI.md` (§10.9.2) — update
    the option, its default, and the "Last reconciled" date.
 6. **Verify:**
    ```bash
-   uv run pytest tests/test_config.py tests/test_cli_evolve.py \
-       tests/test_tournament_worker_transport.py -x -q
+   uv run pytest tests/test_config.py tests/test_cli_config_flags.py -x -q
    uv run zicato evolve --help          # eyeball the new flag + its shadow note
    # CLI-HELP parity gate (11-testing.md §"parity gates"):
    bash tools/parity.sh --only CLI-HELP

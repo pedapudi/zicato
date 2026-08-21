@@ -1994,11 +1994,15 @@ async def test_failed_slot_errors_are_logged_even_when_a_sibling_survives() -> N
     ]
     # Emitted in SLOT order, and interleaved with the survivor's own event —
     # the trail reads as the slate ran, not as two lists stapled together.
+    # The collapsed slate closes with its own selection event (issue #292):
+    # nothing chose, and the record says so rather than saying nothing.
     assert [t for t, _ in events] == [
         "proposal_attempted",
         "proposal_attempted",
         "candidate_sampled",
+        "critique_selected",
     ]
+    assert events[-1][1]["reason"] == "sole_candidate"
     # The error text is VERBATIM: the reader's marker scan anchors on the
     # call-boundary prefix, so a re-wrapped error would be unclassifiable.
     assert attempts[0]["errors"][0].startswith("auxiliary LLM call raised ")

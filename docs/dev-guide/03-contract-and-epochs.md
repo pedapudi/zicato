@@ -1310,8 +1310,13 @@ can lean on the **screening-scaffolded-vs-exemplars-NOT-scaffolded asymmetry**
    **Verify:**
    ```bash
    uv run python -c "from zicato.core.scoring_config import ProposerQualityConfig as C; C(<field>=<bad>)"  # expect ValueError
-   uv run pytest tests/test_scoring_config.py -q
+   uv run pytest tests/test_core_types.py tests/test_knob_registry.py -q
    ```
+   No suite asserts the per-knob `__post_init__` rejections one by one — the
+   `python -c` line above IS that check. `tests/test_core_types.py` holds the
+   dataclass-level pins that do exist (`ScoringWeights.per_judge_weights`,
+   `RuntimeConfig.parallelism`), and `tests/test_knob_registry.py` is the guard
+   that reds when a knob's declaration is inconsistent with the registries.
 
 2. **Register omit-at-default (if the default is inert).** Add the field NAME to
    `_SCORING_OMIT_AT_DEFAULT_FIELDS` (`src/zicato/epoch/contract.py`). For a
@@ -1372,7 +1377,7 @@ can lean on the **screening-scaffolded-vs-exemplars-NOT-scaffolded asymmetry**
    alone.
    **Verify:**
    ```bash
-   uv run pytest tests/test_scoring_config.py -k "scaffold" -q
+   uv run pytest tests/test_scaffold_contract.py -q
    uv run python -c "from zicato.core.scoring_config import recommended_scaffold_weights as s; print(s().proposer_quality)"
    ```
 
@@ -1417,7 +1422,7 @@ can lean on the **screening-scaffolded-vs-exemplars-NOT-scaffolded asymmetry**
    **Verify:**
    ```bash
    uv run pytest tests/test_builder_operations.py tests/test_builder_api.py \
-       tests/test_builder_copilot_tools.py tests/test_knob_registry.py -q
+       tests/test_builder_copilot.py tests/test_knob_registry.py -q
    node src/zicato/dashboard/static/test/builder.test.mjs
    ```
 
@@ -1468,7 +1473,7 @@ can lean on the **screening-scaffolded-vs-exemplars-NOT-scaffolded asymmetry**
 uv sync --all-extras
 uv run pytest tests/test_epoch_contract.py \
     tests/test_contract_serializer_completeness.py \
-    tests/test_scoring_config.py tests/test_builder_operations.py -q
+    tests/test_knob_registry.py tests/test_builder_operations.py -q
 uv run ruff check src/zicato/core/scoring_config.py src/zicato/epoch/contract.py
 uv run mypy src/zicato/core/scoring_config.py src/zicato/epoch/contract.py
 # + the per-branch vendor scan: no model-vendor names, ids, or trailers
@@ -1505,8 +1510,10 @@ does not roll the epoch."
    design — do not add expensive validation there).
    **Verify:**
    ```bash
-   uv run pytest tests/test_runtime_config.py -q
+   uv run pytest tests/test_core_types.py -k runtime_config -q
    ```
+   `RuntimeConfig`'s dataclass pins live in `tests/test_core_types.py`; there is
+   no separate runtime-config suite.
 
 2. **Parse it in `make_runtime_config`** (`src/zicato/runtime_factory.py`) from
    the `runtime` block of the workspace config — never from `scoring.json`. The
@@ -1691,9 +1698,10 @@ Where to add (and what will catch) a regression, by concern:
 | lifecycle round-trip (parser + loader agree) | `tests/test_contract_serializer_completeness.py` (`test_scoring_lifecycle_round_trip_every_field`, `test_lifecycle_parser_and_loader_agree`) |
 | `resolve_contract_inputs` (config keys, legacy `rubric_path`, defaults, proposer_path) | `tests/test_epoch_contract.py` (`test_resolve_contract_inputs_*`) |
 | epoch lifecycle (new / close / list / switch, id construction, stub analysis) | `tests/test_epoch_lifecycle.py` |
-| auto-roll decision (legacy no-roll, drift rolls, `--no-auto-epoch` raises, component label, override drain) | `tests/test_evolve_epoching.py`, `tests/test_orchestrator*.py` |
+| auto-roll decision (legacy no-roll, drift rolls, `--no-auto-epoch` raises, component label) | `tests/test_auto_epoch.py` (the decision in isolation), `tests/test_evolve_auto_epoch.py` (through a full `evolve` loop) |
+| stale gate overrides drained on roll | `tests/test_control_consumer.py` (`drain_stale_gate_overrides`) |
 | lineage DAG (register / append / upsert / pending tri-state / summary) | `tests/test_epoch_lineage.py` |
 | record-format guard (absent ⇒ v1, higher ⇒ refuse) | `tests/test_epoch_storage.py`, and the guard's callers in `tests/test_epoch_journal.py` / `tests/test_epoch_lifecycle.py` |
 | journal + experiment persistence (per-patch layout, seed marker, outcome update) | `tests/test_epoch_journal.py` |
 | source-hash folding (edit-the-body rolls) | `tests/test_scoring_plugins.py`, `tests/test_epoch_contract.py` (predicate/judge source rows) |
-| runtime-knob-does-not-roll (the §3.12 negative) | `tests/test_runtime_config.py`, `tests/test_runtime_factory.py` |
+| runtime-knob-does-not-roll (the §3.12 negative) | `tests/test_fast_mode_structure_agnostic.py` (flipping `fast_mode` leaves the contract hash), `tests/test_runtime_factory.py` |

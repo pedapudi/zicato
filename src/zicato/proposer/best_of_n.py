@@ -802,6 +802,18 @@ class BestOfNProposerAgent:
             # scratch validation tree was already cleaned up, so the shared
             # tree must be derived from its patches before the caller mounts.
             await self._mount_chosen(candidates, 0, ctx)
+            # A collapsed slate is still a SELECTION, and the invariant is that
+            # every round which minted a generation records what was chosen out
+            # of what. Nothing CHOSE here — ``n >= 2`` slots were sampled and
+            # all but one failed — so the mode names that degenerate basis and
+            # the slate summary carries the one survivor. Same builder as the
+            # two deciding paths below, so a reader folding the log sees one
+            # event shape whether or not a critic ran.
+            _emit_round_event(
+                ctx,
+                "critique_selected",
+                lambda: _selected_event_fields(candidates, 0, "sole_candidate"),
+            )
             return candidates[0]
 
         # Optional pre-tournament candidate screen (tryouts) — VETO-FIRST:
