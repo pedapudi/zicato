@@ -192,37 +192,109 @@ def _bracket_from_conn(
             champ_by_child[str(cg)] = {
                 "id": str(pg),
                 "scalar": r["parent_scalar"],
-                "eval_mode": _rget(r, "champion_eval_mode"),
+                # A legacy row (pre-v8 index) has the column as NULL, and the
+                # schema's rule for that is "mode unknown, treat as full". The
+                # default belongs HERE, on the read of a real row — not on the
+                # assembled champion, where it would also fire for a round that
+                # has NO row yet and claim an evaluation that never happened.
+                "eval_mode": _rget(r, "champion_eval_mode") or "full",
                 "run_ref": _rget(r, "champion_run_ref"),
             }
 
+    def _field_champion(comps: list[Any]) -> dict[str, Any] | None:
+        """The champion of a FIELD row, whose own parent column is empty.
+
+        A field row is a round, not a duel, so ``_upsert_field_tournament``
+        leaves its parent/child columns empty on purpose. The champion has to
+        come from the competitor list, and the two ways of reading that list
+        are NOT equivalent:
+
+        * The record TAGS the champion (``role: "champion"`` — the shape
+          ``competitors_meta`` writes, champion first). Read the tag.
+        * Borrowing "the first competitor that appears in ``champ_by_child``"
+          reads the champion's OWN crowning duel, whose parent is the champion
+          it BEAT. That named the PREVIOUS champion on every round after a
+          promotion, so a beaten champion went on defending every later round.
+
+        The champion's scalar and eval provenance (cached vs re-run) still ride
+        on the crowning row of a CHALLENGER IN THIS FIELD, whose parent IS this
+        round's champion — that borrow is correct and is what the old code was
+        reaching for. Keying it to this field's own challengers is what keeps a
+        HELD champion's provenance on the CURRENT round: one champion defends
+        several rounds, so an unrestricted search finds its earliest defence and
+        reports that round's scalar and cached-vs-fresh mode instead.
+
+        For a record whose competitors carry no role (hand-built, or written
+        before the tag), fall back on the structural fact that a field's
+        champion COMPETES in the field: prefer a borrowed champion that is
+        itself one of the competitors, walked in competitor order. Both
+        paths are deterministic: the tagged path's sibling lookup walks
+        ``champ_by_child`` in insertion order (rows arrive ``ORDER BY
+        ran_at, tournament_id``), the untagged path walks the record's own
+        competitor order.
+        """
+        ids = [str(c.get("generation_id") if isinstance(c, dict) else c) for c in comps]
+        in_field = set(ids)
+        tagged = next(
+            (
+                str(c.get("generation_id") or "")
+                for c in comps
+                if isinstance(c, dict) and str(c.get("role") or "") == "champion"
+            ),
+            "",
+        )
+        if tagged:
+            sibling = next(
+                (
+                    v
+                    for k, v in champ_by_child.items()
+                    if str(v.get("id")) == tagged and k in in_field and k != tagged
+                ),
+                None,
+            )
+            base = dict(sibling) if sibling else {}
+            base["id"] = tagged
+            return base
+        for key in ids:
+            borrowed = champ_by_child.get(key)
+            if borrowed is not None and str(borrowed.get("id")) in in_field:
+                return dict(borrowed)
+        for key in ids:
+            if key in champ_by_child:
+                return dict(champ_by_child[key])
+        return None
+
     def _champion_for(row: sqlite3.Row, comps: list[Any]) -> dict[str, Any] | None:
-        # a per-challenger / gauntlet row carries the champion directly;
-        # a field row (empty parent) borrows from a competitor's sibling row.
+        # a per-challenger / gauntlet row carries the champion directly; a
+        # field row has no parent of its own, so ``_field_champion`` reads it
+        # off the competitor list.
         cid = row["parent_generation_id"]
         base = (
             {
                 "id": str(cid),
                 "scalar": row["parent_scalar"],
-                "eval_mode": _rget(row, "champion_eval_mode"),
+                "eval_mode": _rget(row, "champion_eval_mode") or "full",
                 "run_ref": _rget(row, "champion_run_ref"),
             }
             if cid is not None and str(cid) != ""
             else None
         )
         if base is None:
-            for c in comps:
-                key = str(c.get("generation_id") if isinstance(c, dict) else c)
-                if key in champ_by_child:
-                    base = dict(champ_by_child[key])
-                    break
+            base = _field_champion(comps)
         if base is None:
             return None
         sc = base.get("scalar")
         return {
             "id": base["id"],
             "scalar": coerce_float(sc),
-            "eval_mode": base.get("eval_mode") or "full",
+            # No default here: every path that read a ROW already applied the
+            # legacy "NULL ⇒ full" rule above, so an absent mode means there was
+            # no row to read — a round whose champion has not been evaluated yet
+            # (the field row is written at OPEN, before any crowning row). That
+            # is genuinely unknown, and the round timeline already carries
+            # ``eval_mode: None`` for it; the tree renders plain "defends"
+            # rather than claiming "defends · re-run".
+            "eval_mode": base.get("eval_mode"),
             "run_ref": base.get("run_ref"),
         }
 
@@ -236,8 +308,11 @@ def _bracket_from_conn(
     # field record stand. The per-challenger rows remain in the index
     # (the gauntlet matchup list + crowning columns still read them);
     # they are merely excluded from this structure-aware envelope.
-    # Racing has no field record, so its per-challenger rows survive —
-    # ``reconstructRacing`` aggregates them on the read side.
+    # Racing DOES write a field record (the persist gates only on
+    # competitor count), so racing lands in this set and its
+    # per-challenger rows are suppressed like any other field structure —
+    # the field row is then the round's only servable record, which is
+    # why its champion resolution must read the role tag.
     field_structures = {
         _normalize_structure(r["structure"])
         for r in struct_rows

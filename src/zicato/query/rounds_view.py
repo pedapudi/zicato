@@ -18,9 +18,9 @@ SOURCE PRIORITY (degrades gracefully when ``round_index`` is absent):
   (2) the per-round FIELD-TOURNAMENT records, one per round;
   (3) the gauntlet matchups, round-ordered by ``ran_at``;
   (4) nothing -> the whole epoch is a single round 0.
-Racing skips (2)/(3): it is persisted per CHALLENGER, so without a
-round-index stamp a racing epoch is a single round (its figure is the
-racing-field ladder, served by :mod:`racing_view`).
+Racing persists BOTH a per-round field record and per-challenger rows;
+without a round-index stamp a racing epoch is a single round (its figure
+is the racing-field ladder, served by :mod:`racing_view`).
 """
 
 from __future__ import annotations
