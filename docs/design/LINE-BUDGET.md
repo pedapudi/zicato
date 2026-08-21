@@ -18,8 +18,8 @@ The baseline and final ratchet use the same metric:
 
 | Measurement | Baseline (`f9052dd`) | Current limit | Net reduction |
 |---|---:|---:|---:|
-| Total | 408,547 | 421,705 | -13,158 |
-| Production | 197,588 | 202,664 | -5,076 |
+| Total | 408,547 | 421,838 | -13,291 |
+| Production | 197,588 | 202,685 | -5,097 |
 
 The earlier raw count of 425,755 included lockfiles and generated artifacts and
 is retained in `.line-budget.json` for provenance; it is not the enforced
@@ -91,3 +91,5 @@ increase.
 | Per-epoch champion pointer in the tree (production) | 202,542 | +47 | 202,589 | Issue #280: the `?epoch=`-scoped champion read per epoch node, replacing the single bare-read pointer gated on the contract epoch, plus the data-layer `closedEpochChampion` memo that keeps a closed epoch off the live-bust re-fan. |
 | Field-round champion from the role tag (total) | 421,175 | +530 | 421,705 | Issue #284: the tagged-champion resolver with its fallback chain, the nullable eval-mode provenance, and the five round-timeline regressions. |
 | Field-round champion from the role tag (production) | 202,589 | +75 | 202,664 | Issue #284: _field_champion reading the recorded role, the per-round metadata borrow, and the relocated NULL-means-full default. |
+| The seed is not a round (total) | 421,705 | +133 | 421,838 | Issue #286: the parentage-tested seed skip on both sides, the re-armed malformed-stamp pin, and the phantom-round regressions. |
+| The seed is not a round (production) | 202,664 | +21 | 202,685 | Issue #286: the writer's parentless skip and the reader's parentage guard. |
