@@ -18,8 +18,8 @@ The baseline and final ratchet use the same metric:
 
 | Measurement | Baseline (`f9052dd`) | Current limit | Net reduction |
 |---|---:|---:|---:|
-| Total | 408,547 | 421,838 | -13,291 |
-| Production | 197,588 | 202,685 | -5,097 |
+| Total | 408,547 | 422,257 | -13,710 |
+| Production | 197,588 | 202,818 | -5,230 |
 
 The earlier raw count of 425,755 included lockfiles and generated artifacts and
 is retained in `.line-budget.json` for provenance; it is not the enforced
@@ -93,3 +93,5 @@ increase.
 | Field-round champion from the role tag (production) | 202,589 | +75 | 202,664 | Issue #284: _field_champion reading the recorded role, the per-round metadata borrow, and the relocated NULL-means-full default. |
 | The seed is not a round (total) | 421,705 | +133 | 421,838 | Issue #286: the parentage-tested seed skip on both sides, the re-armed malformed-stamp pin, and the phantom-round regressions. |
 | The seed is not a round (production) | 202,664 | +21 | 202,685 | Issue #286: the writer's parentless skip and the reader's parentage guard. |
+| Critic choice and rationale on the round log (total) | 421,838 | +419 | 422,257 | Issue #279: the two-line critic ask with its mutation-proofed prompt pin, the slate summary on both transports, the missing-rationale bind, and the restored payload pin. |
+| Critic choice and rationale on the round log (production) | 202,685 | +133 | 202,818 | Issue #279: the rationale-threading parse and emit path shared by both transports, and the simplified pi wrapper. |

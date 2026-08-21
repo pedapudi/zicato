@@ -449,10 +449,32 @@ _CRITIC_SYSTEM_PROMPT = (
     "general edit over a large or special-cased one)?\n"
     "  3. Is its hypothesis grounded and falsifiable (a clear expected "
     "movement), not vague?\n"
-    "Pick the candidate that best satisfies the bar. Respond with ONLY the "
-    "integer index of the best candidate (e.g. `0`) — no prose, no JSON, no "
-    "explanation."
+    "Pick the candidate that best satisfies the bar. Reply with the integer "
+    "index of that candidate ALONE on the FIRST line (e.g. `0`). On the "
+    "SECOND line write ONE sentence, under 200 characters, naming the bar "
+    "clause that decided it — the CLAUSE, never the candidate number. "
+    "No JSON, no fences, nothing else."
 )
+
+#: Cap on the critic's recorded rationale, in characters. The rationale is
+#: asked for as ONE sentence and lands in one ``round_log.jsonl`` line, so a
+#: model that ignores the length instruction must not bloat the log. The
+#: truncation is silent by design: the rationale is provenance, never a
+#: parsed input, so a clipped tail costs a reader the end of a sentence and
+#: costs the loop nothing. Deliberately ABOVE the 200 characters the prompt
+#: asks for, so an answer that obeys the instruction is never clipped — the
+#: cap catches runaway text, it does not enforce the ask.
+RATIONALE_CAP: int = 240
+
+
+def normalize_selection_rationale(rationale: str) -> str:
+    """Return the bounded, single-line form stored in round-log provenance.
+
+    Both critic transports persist this untrusted model output. Keeping the
+    normalization here makes their ``critique_selected`` records genuinely
+    interchangeable and protects the canonical JSONL log from runaway text.
+    """
+    return " ".join(rationale.split())[:RATIONALE_CAP]
 
 
 def _screened_event_fields(
@@ -479,6 +501,52 @@ def _screened_event_fields(
     }
 
 
+def _selected_event_fields(
+    candidates: list[Experiment], index: int, mode: str, rationale: str = ""
+) -> dict[str, Any]:
+    """One ``critique_selected`` event payload — the selection's provenance.
+
+    ``index`` alone does not say WHAT was chosen: a reader holding the round
+    log has to re-open the captured critique prompt to learn what candidate 1
+    was. So the payload carries a per-candidate summary of the whole slate —
+    the proposer's OWN declared core idea and the mutation ids it targets —
+    and, when a critic chose, that critic's one-line reason.
+
+    Both extra fields are PROVENANCE: nothing in the loop reads them back,
+    and an empty one (a heuristic mode, a critic that wrote no sentence) is a
+    thinner record, never a broken one. The shape matches what the ``pi``
+    transport already writes, so the two selection routes log identically.
+
+    Redaction: every string here is PROPOSER-authored (``core_idea``) or
+    CRITIC-authored under the same restricted envelope, plus mutation ids
+    from the manifest the proposer was offered. No entry id, no task text,
+    and no holdout value can reach this payload — none of the three writers
+    ever saw one.
+    """
+    return {
+        "index": index,
+        "reason": mode,
+        # A TUPLE, matching the declared field type — the round-log decoder
+        # re-tuples top-level lists on read, so emitting a list would make
+        # the written event unequal to its own decoded form
+        # (``_slot_error_texts`` keeps the same contract for
+        # ``ProposalAttempted.errors``).
+        "slate": tuple(
+            {
+                "index": i,
+                # BOUNDED like the rationale beside it: ``core_idea`` is
+                # unbounded model text (no ``maxLength`` in the proposer
+                # schema), and capping only one of the payload's two text
+                # fields would leave the round-log line unbounded anyway.
+                "core_idea": normalize_selection_rationale(item.hypothesis.core_idea),
+                "mutation_ids": list(item.hypothesis.modulating),
+            }
+            for i, item in enumerate(candidates)
+        ),
+        "rationale": rationale,
+    }
+
+
 def _render_revise_feedback(results: Sequence[CandidateScreenResult]) -> str:
     """The revise re-sample's repair-feedback string. COUNTS ONLY by contract.
 
@@ -501,7 +569,11 @@ def _render_revise_feedback(results: Sequence[CandidateScreenResult]) -> str:
     )
 
 
-def _emit_round_event(ctx: ProposerContext, type_token: str, fields: dict[str, Any]) -> None:
+def _emit_round_event(
+    ctx: ProposerContext,
+    type_token: str,
+    fields: dict[str, Any] | Callable[[], dict[str, Any]],
+) -> None:
     """Best-effort round-log emission through the context's optional emitter.
 
     The emitter seam keeps the proposer decoupled from the round-log module
@@ -509,12 +581,17 @@ def _emit_round_event(ctx: ProposerContext, type_token: str, fields: dict[str, A
     callable on :attr:`ProposerContext.round_event_emitter`; ``None`` (every
     caller that does not opt in) emits nothing. Guarded here so a raising
     emitter can never fail a propose step.
+
+    ``fields`` may be a THUNK for a payload that costs something to build.
+    It is called only after the ``None`` check and inside the guard, so an
+    unwired emitter pays nothing and a raising builder cannot fail a propose
+    any more than a raising emitter can.
     """
     emitter = ctx.round_event_emitter
     if emitter is None:
         return
     try:
-        emitter(type_token, fields)
+        emitter(type_token, fields() if callable(fields) else fields)
     except Exception as exc:  # noqa: BLE001 — emission must never fail a propose
         log.debug("round-log %s emission skipped: %s", type_token, exc)
 
@@ -543,28 +620,52 @@ def _slot_error_texts(outcome: _SlotOutcome) -> tuple[str, ...]:
     return tuple(texts)
 
 
-def _parse_critic_choice(response: str, n: int) -> int | None:
-    """Parse the critic's chosen index out of its raw response.
+def _parse_critic_choice(response: str, n: int) -> tuple[int | None, str]:
+    """Parse the critic's chosen index and rationale out of its raw response.
 
-    Tolerant: the critic is asked for a bare integer, but a stray fence /
-    prose is salvaged by scanning for the first integer token. Returns the
-    chosen index when it is in ``range(n)``, else ``None`` (the caller falls
-    back to the heuristic).
+    Returns ``(index, rationale)``. The index is the chosen candidate when it
+    is in ``range(n)``, else ``None`` (the caller falls back to the
+    heuristic). The rationale is the critic's own one-line justification,
+    whitespace-collapsed and capped at :data:`RATIONALE_CAP` — ``""`` when the
+    critic wrote none, which is every response from a model that answers with
+    the bare integer the OLD prompt asked for.
+
+    Tolerant on BOTH halves, because a flaky critic must never fail a propose:
+
+    * The index is scanned as the first integer token of the first line of
+      the STRIPPED response (leading blank lines are routine), and the whole
+      response is re-scanned when that line holds no digits (a model that
+      opens with a fence or a lead-in still parses).
+    * The rationale is whatever follows, or ``""``. A missing rationale is
+      never an error — it costs the round log a sentence, never the step.
+
+    A rejected index yields ``(None, "")``: the rationale explains a CHOICE,
+    so it is meaningless once the choice is discarded.
     """
     import re  # noqa: PLC0415
 
     if not response:
-        return None
-    match = re.search(r"-?\d+", response)
+        return None, ""
+    # STRIP first: a leading blank line is routine model output, and
+    # partitioning the raw text would hand the scan an empty first line and
+    # discard the rationale behind the fallback below.
+    head, _, tail = response.strip().partition("\n")
+    match = re.search(r"-?\d+", head)
     if match is None:
-        return None
+        # The first line carried no digits — fall back to the historical
+        # whole-response scan, and keep NO rationale (the split that would
+        # have separated them is exactly the thing that did not hold).
+        match = re.search(r"-?\d+", response)
+        tail = ""
+    if match is None:
+        return None, ""
     try:
         choice = int(match.group(0))
     except ValueError:
-        return None
-    if 0 <= choice < n:
-        return choice
-    return None
+        return None, ""
+    if not 0 <= choice < n:
+        return None, ""
+    return choice, normalize_selection_rationale(tail)
 
 
 @dataclass
@@ -726,7 +827,11 @@ class BestOfNProposerAgent:
             # slate member — every existing path is unchanged.
             chosen, selection_mode = recombined_index, "recombined"
             await self._mount_chosen(candidates, chosen, ctx)
-            _emit_round_event(ctx, "critique_selected", {"index": chosen, "reason": selection_mode})
+            _emit_round_event(
+                ctx,
+                "critique_selected",
+                lambda: _selected_event_fields(candidates, chosen, selection_mode),
+            )
             return candidates[chosen]
 
         survivor_indices = list(range(len(candidates)))
@@ -755,13 +860,17 @@ class BestOfNProposerAgent:
             # The revise replacement survived its own screen (or could not
             # be screened — the guarded degrade): it is the choice, no
             # critique call needed.
-            chosen, selection_mode = len(candidates) - 1, "screen_revise_survivor"
+            chosen, selection_mode, rationale = (
+                len(candidates) - 1,
+                "screen_revise_survivor",
+                "",
+            )
         elif screen_results is not None and not all_vetoed and len(survivor_indices) == 1:
             # A single survivor needs no critique call — the veto already
             # decided the slate.
-            chosen, selection_mode = survivor_indices[0], "screen_sole_survivor"
+            chosen, selection_mode, rationale = survivor_indices[0], "screen_sole_survivor", ""
         else:
-            chosen, selection_mode = await self._select_over(
+            chosen, selection_mode, rationale = await self._select_over(
                 candidates, survivor_indices, screen_results, ctx
             )
             if all_vetoed:
@@ -770,7 +879,11 @@ class BestOfNProposerAgent:
         # ``next_id`` tree (its slate scratch tree is gone). This is the
         # ⛔-funnel guaranteeing the mounted tree == the chosen candidate.
         await self._mount_chosen(candidates, chosen, ctx)
-        _emit_round_event(ctx, "critique_selected", {"index": chosen, "reason": selection_mode})
+        _emit_round_event(
+            ctx,
+            "critique_selected",
+            lambda: _selected_event_fields(candidates, chosen, selection_mode, rationale),
+        )
         return candidates[chosen]
 
     async def _gather_slate(self, ctx: ProposerContext, n: int) -> list[_SlotOutcome]:
@@ -1324,8 +1437,11 @@ class BestOfNProposerAgent:
         survivor_indices: list[int],
         screen_results: list[CandidateScreenResult] | None,
         ctx: ProposerContext,
-    ) -> tuple[int, str]:
+    ) -> tuple[int, str, str]:
         """Select over the surviving sub-slate; map the index back to the slate.
+
+        Returns ``(slate index, selection mode, rationale)`` — the rationale
+        is the critic's own words, ``""`` for every non-critique mode.
 
         The screen's measurements feed the selection only as a LATE
         tiebreak — and only when the contract has not pinned
@@ -1334,6 +1450,16 @@ class BestOfNProposerAgent:
         heuristic's penultimate panel-scalar key. Unscreened (or
         veto-only), both channels are inert and the selection is
         byte-identical to the pre-screen wrapper.
+
+        ⛔ The critic sees the SUB-slate, renumbered from 0 by
+        :func:`_render_candidate_slate` — its "candidate 1" is
+        ``survivor_indices[1]``, not slate slot 1. The returned index is
+        mapped back here, but the RATIONALE is free text that cannot be
+        mapped, so a sentence naming a candidate number would point at the
+        wrong row of the event's own ``slate`` field. That is why
+        :data:`_CRITIC_SYSTEM_PROMPT` asks for the bar CLAUSE and forbids the
+        candidate number: the fix belongs at the source, because no amount of
+        post-processing can recover which numbering a sentence meant.
         """
         sub = [candidates[i] for i in survivor_indices]
         feed = screen_results is not None and not self.config.screen_veto_only
@@ -1344,10 +1470,10 @@ class BestOfNProposerAgent:
             sub_results = [screen_results[i] for i in survivor_indices]
             screen_scalars = [res.scalar for res in sub_results]
             screen_note = _render_screen_note(sub_results)
-        sub_choice, selection_mode = await self._select_best(
+        sub_choice, selection_mode, rationale = await self._select_best(
             sub, ctx, screen_scalars=screen_scalars, screen_note=screen_note
         )
-        return survivor_indices[sub_choice], selection_mode
+        return survivor_indices[sub_choice], selection_mode, rationale
 
     @staticmethod
     async def _revalidate(
@@ -1372,8 +1498,8 @@ class BestOfNProposerAgent:
         ctx: ProposerContext,
         screen_scalars: list[float | None] | None = None,
         screen_note: str = "",
-    ) -> tuple[int, str]:
-        """Return ``(best index, selection mode)`` against the §4.1 quality bar.
+    ) -> tuple[int, str, str]:
+        """Return ``(best index, mode, rationale)`` against the §4.1 quality bar.
 
         Runs the self-critique LLM pass when it is enabled and an auxiliary
         callable is available; otherwise (or on any critique failure) falls
@@ -1382,26 +1508,32 @@ class BestOfNProposerAgent:
         string (``"critique"`` / ``"heuristic"``) is round-log provenance
         only — the caller's choice of candidate is the index.
 
+        The rationale is the critic's own one-line justification, round-log
+        provenance exactly like the mode. It is ``""`` on EVERY heuristic
+        path: the heuristic's basis is its deterministic sort key, which the
+        mode string already names, and inventing prose for it would put words
+        in a comparator's mouth.
+
         ``screen_scalars`` / ``screen_note`` are the OPTIONAL candidate-
         screen tiebreak feeds (heuristic key / critic prompt block); both
         default inert — every unscreened caller is byte-identical.
         """
         if not self.config.critique_enabled:
-            return _heuristic_best_index(candidates, ctx, screen_scalars), "heuristic"
+            return _heuristic_best_index(candidates, ctx, screen_scalars), "heuristic", ""
 
         # WS-ENS: the self-CRITIQUE selection call is a DEPTH pass (it judges +
         # ranks the slate) — resolve the depth role, falling back to
         # ``ctx.aux_call_llm`` (byte-identical) when no depth role is set.
         aux_call_llm = self._depth_call_llm(ctx)
         if aux_call_llm is None:  # pragma: no cover — orchestrator always wires it
-            return _heuristic_best_index(candidates, ctx, screen_scalars), "heuristic"
+            return _heuristic_best_index(candidates, ctx, screen_scalars), "heuristic", ""
 
-        choice = await self._critique(aux_call_llm, candidates, ctx, screen_note)
+        choice, rationale = await self._critique(aux_call_llm, candidates, ctx, screen_note)
         if choice is None:
             # Critique failed / unparseable — fall back to the heuristic so a
             # flaky critic never blocks the step.
-            return _heuristic_best_index(candidates, ctx, screen_scalars), "heuristic"
-        return choice, "critique"
+            return _heuristic_best_index(candidates, ctx, screen_scalars), "heuristic", ""
+        return choice, "critique", rationale
 
     async def _critique(
         self,
@@ -1409,8 +1541,8 @@ class BestOfNProposerAgent:
         candidates: list[Experiment],
         ctx: ProposerContext,
         screen_note: str = "",
-    ) -> int | None:
-        """One cheap self-critique LLM call; returns the chosen index or None.
+    ) -> tuple[int | None, str]:
+        """One cheap self-critique LLM call; returns ``(index, rationale)``.
 
         Builds the critic's user prompt from the SAME restricted context the
         proposer saw — rendered through :func:`render_user_prompt` under the
@@ -1418,8 +1550,14 @@ class BestOfNProposerAgent:
         the experiment memory banded exactly as for the proposer — plus the
         compact candidate slate. The critic NEVER receives the holdout or any
         identity the proposer did not already see. Best-effort: a raising /
-        timing-out / unparseable critic returns ``None`` and the caller falls
-        back to the heuristic.
+        timing-out / unparseable critic returns ``(None, "")`` and the caller
+        falls back to the heuristic.
+
+        The rationale rides the SAME envelope as the call that produced it:
+        the critic can only paraphrase what it was shown, and it was shown
+        nothing the proposer had not already seen, so no holdout value and no
+        entry identity can reach it. It is the ``pi`` transport's
+        ``select_candidate`` rationale by another route.
         """
         restricted_context = render_user_prompt(
             current_loss_summary=ctx.current_loss_summary,
@@ -1466,8 +1604,9 @@ class BestOfNProposerAgent:
             # the prompt is byte-identical to the pre-screen wrapper.
             f"{calibration_note}"
             f"{screen_note}\n"
-            f"Respond with ONLY the integer index (0..{len(candidates) - 1}) "
-            "of the best candidate."
+            f"Respond with the integer index (0..{len(candidates) - 1}) of "
+            "the best candidate ALONE on the first line, then one sentence "
+            "under 200 characters naming the quality-bar clause that decided it."
         )
         # The critique is the call that picks the winner, so its input is the
         # record that answers "which candidate shipped, and on what basis".
@@ -1485,7 +1624,7 @@ class BestOfNProposerAgent:
             response = await aux_call_llm(_CRITIC_SYSTEM_PROMPT, user_prompt, ctx.model)
         except Exception as exc:  # noqa: BLE001 — opaque LLM errors are common
             log.debug("best-of-N critique call failed (%s); using heuristic", exc)
-            return None
+            return None, ""
         return _parse_critic_choice(response or "", len(candidates))
 
 
@@ -1563,10 +1702,12 @@ def wrap_with_proposer_quality(
 __all__ = [
     "CALIBRATION_TRUST_BAR",
     "EDIT_CLASS_HINTS",
+    "RATIONALE_CAP",
     "BestOfNProposerAgent",
     "NativeSlateAdapter",
     "CandidateScreenResult",
     "ScreenRunner",
+    "normalize_selection_rationale",
     "recent_prediction_accuracy",
     "wrap_with_proposer_quality",
 ]

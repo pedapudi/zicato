@@ -29,8 +29,10 @@ from zicato.core.types import (
 )
 from zicato.proposer.agent import ProposerContext
 from zicato.proposer.best_of_n import (
+    RATIONALE_CAP,
     BestOfNProposerAgent,
     CandidateScreenResult,
+    _parse_critic_choice,
     wrap_with_proposer_quality,
 )
 
@@ -208,6 +210,12 @@ async def test_best_of_n_critic_picks_scripted_winner() -> None:
     assert "Candidate 0" in prompt
     assert "Candidate 1" in prompt
     assert "minimal grounded edit" in prompt
+    # The USER prompt's closing instruction is load-bearing for the recorded
+    # rationale: it is the last and most specific ask the critic sees, so if
+    # it ever regresses to "ONLY the integer index" the model obeys IT, the
+    # second line never arrives, and the feature goes silently inert while
+    # the parser and system prompt stay green.
+    assert "ALONE on the first line, then one sentence" in prompt
 
 
 @pytest.mark.asyncio
@@ -272,6 +280,110 @@ async def test_out_of_range_critic_choice_falls_back_to_heuristic() -> None:
     # Heuristic: neither is grounded (no router pattern? router IS flagged) —
     # cand0 targets router (flagged) and is the smaller diff, so it wins.
     assert out is cand0
+
+
+# --------------------------------------------------------------------------
+# The critic's rationale — WHY the winner won
+# --------------------------------------------------------------------------
+
+
+def test_critic_response_parses_index_and_rationale() -> None:
+    """The two-line shape the prompt asks for: index, then one sentence."""
+    assert _parse_critic_choice("1\nMinimal diff on a flagged mutation point.", 3) == (
+        1,
+        "Minimal diff on a flagged mutation point.",
+    )
+
+
+def test_a_bare_integer_critic_still_parses() -> None:
+    """BACKWARD COMPATIBILITY: the response shape the OLD prompt asked for.
+
+    A model that answers with the bare integer — an older pinned model, a
+    cached response, a stub in someone else's test — selects exactly as it
+    always did. The rationale is simply absent, recorded as ``""``.
+    """
+    assert _parse_critic_choice("2", 3) == (2, "")
+    assert _parse_critic_choice("  2  ", 3) == (2, "")
+
+
+def test_prose_and_fenced_responses_keep_their_old_index() -> None:
+    """The salvage paths are unchanged: the same index the parser always
+    found, and no rationale invented out of prose that never was one."""
+    assert _parse_critic_choice("The best is candidate 2 here.", 3) == (2, "")
+    assert _parse_critic_choice("```\n2\n```", 3) == (2, "")
+
+
+def test_an_unusable_critic_response_yields_no_choice_and_no_rationale() -> None:
+    """A rationale explains a CHOICE — when the choice is rejected the
+    rationale goes with it, rather than landing beside a heuristic pick."""
+    assert _parse_critic_choice("", 3) == (None, "")
+    assert _parse_critic_choice("no integer here", 3) == (None, "")
+    assert _parse_critic_choice("9\nOut of range but confident.", 3) == (None, "")
+
+
+def test_a_runaway_rationale_is_collapsed_and_capped() -> None:
+    """One round-log line must stay one round-log line."""
+    index, rationale = _parse_critic_choice("0\n" + "word " * 400, 2)
+    assert index == 0
+    assert len(rationale) == RATIONALE_CAP
+    assert "\n" not in rationale
+
+
+@pytest.mark.asyncio
+async def test_the_round_log_records_the_winner_and_its_rationale() -> None:
+    """End to end: the critic's own words reach ``critique_selected``."""
+    from dataclasses import replace as _replace
+
+    cand0 = _experiment(core_idea="big", mutation_id="writer__sp", new_content="z" * 500)
+    cand1 = _experiment(core_idea="small grounded", mutation_id="router__sp", new_content="x")
+    inner = _ScriptedInnerAgent([cand0, cand1])
+    critic = _CapturingCriticLLM("1\nClause 2: the minimal diff on a flagged point.")
+    events: list[tuple[str, dict]] = []
+    agent = BestOfNProposerAgent(inner=inner, config=ProposerQualityConfig(best_of_n=2))
+
+    out = await agent.propose(
+        _replace(
+            _context(critic, patterns=(_pattern(("router__sp",)),)),
+            round_event_emitter=lambda t, f: events.append((t, f)),
+        )
+    )
+
+    assert out is cand1
+    selected = dict(events)["critique_selected"]
+    assert selected["index"] == 1
+    assert selected["reason"] == "critique"
+    assert selected["rationale"] == "Clause 2: the minimal diff on a flagged point."
+    # The slate summary answers "what WAS candidate 1" without a second file.
+    # A TUPLE, matching the declared ``CritiqueSelected.slate`` type, so the
+    # emitted event equals its own decoded form.
+    assert selected["slate"] == (
+        {"index": 0, "core_idea": "big", "mutation_ids": ["writer__sp"]},
+        {"index": 1, "core_idea": "small grounded", "mutation_ids": ["router__sp"]},
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_heuristic_pick_records_no_rationale() -> None:
+    """The heuristic's basis is its sort key, and the mode string already
+    names it — no prose is invented for a comparator."""
+    from dataclasses import replace as _replace
+
+    cand0 = _experiment(core_idea="a", mutation_id="router__sp", new_content="x")
+    cand1 = _experiment(core_idea="b", mutation_id="writer__sp", new_content="z" * 500)
+    inner = _ScriptedInnerAgent([cand0, cand1])
+    events: list[tuple[str, dict]] = []
+    agent = BestOfNProposerAgent(inner=inner, config=ProposerQualityConfig(best_of_n=2))
+
+    await agent.propose(
+        _replace(
+            _context(_CapturingCriticLLM("no integer here"), patterns=(_pattern(("router__sp",)),)),
+            round_event_emitter=lambda t, f: events.append((t, f)),
+        )
+    )
+
+    selected = dict(events)["critique_selected"]
+    assert selected["reason"] == "heuristic"
+    assert selected["rationale"] == ""
 
 
 # --------------------------------------------------------------------------
@@ -499,7 +611,12 @@ async def test_chosen_earlier_candidate_rederives_its_child_tree() -> None:
     # inner engine calls it once per attempt BEFORE selection.)
     assert hook.calls == [candidates[0]]
     selected = dict(events)["critique_selected"]
-    assert selected == {"index": 0, "reason": "critique"}
+    assert selected["index"] == 0
+    assert selected["reason"] == "critique"
+    # A bare-integer critic — the shape the OLD prompt asked for — still
+    # parses; it simply records no rationale.
+    assert selected["rationale"] == ""
+    assert [item["core_idea"] for item in selected["slate"]] == ["zero", "one", "two"]
 
 
 @pytest.mark.asyncio
@@ -852,8 +969,19 @@ async def test_sole_survivor_mode_string_and_event_ordering() -> None:
         "candidate_passes",
         "reason",
     }
-    selected = dict(events)["critique_selected"]
-    assert selected == {"index": 1, "reason": "screen_sole_survivor"}
+    # ONE exact-dict pin for the payload survives on purpose: the round-log
+    # emitter constructs the event with ``cls(**fields)`` inside a bare
+    # ``except Exception``, so an unexpected key silently DROPS the whole
+    # event — a drifted payload must fail here, loudly, not there, silently.
+    assert dict(events)["critique_selected"] == {
+        "index": 1,
+        "reason": "screen_sole_survivor",
+        "slate": (
+            {"index": 0, "core_idea": "broken", "mutation_ids": ["router__sp"]},
+            {"index": 1, "core_idea": "fine", "mutation_ids": ["writer__sp"]},
+        ),
+        "rationale": "",
+    }
 
 
 @pytest.mark.asyncio
@@ -1089,7 +1217,9 @@ async def test_all_vetoed_revise_survivor_is_chosen() -> None:
     assert inner.calls == 3  # 2 slate samples + exactly ONE revise
     assert screen.calls == 2  # the slate, then the replacement (guarded)
     selected = dict(events)["critique_selected"]
-    assert selected == {"index": 2, "reason": "screen_revise_survivor"}
+    assert selected["index"] == 2
+    assert selected["reason"] == "screen_revise_survivor"
+    assert selected["rationale"] == ""
 
 
 @pytest.mark.asyncio
@@ -1191,11 +1321,14 @@ async def test_screening_off_never_revises_byte_identical() -> None:
     assert out is cand1
     assert inner.calls == 2
     assert all(c.revise_feedback == "" for c in inner.contexts)
-    assert events == [
-        ("candidate_sampled", {"i": 0, "n": 2}),
-        ("candidate_sampled", {"i": 1, "n": 2}),
-        ("critique_selected", {"index": 1, "reason": "critique"}),
+    assert [kind for kind, _ in events] == [
+        "candidate_sampled",
+        "candidate_sampled",
+        "critique_selected",
     ]
+    assert [fields for _, fields in events[:2]] == [{"i": 0, "n": 2}, {"i": 1, "n": 2}]
+    assert events[2][1]["index"] == 1
+    assert events[2][1]["reason"] == "critique"
 
 
 @pytest.mark.asyncio
@@ -1362,7 +1495,11 @@ async def test_recombination_mint_happy_path() -> None:
     sampled = [f for t, f in events if t == "candidate_sampled"]
     assert [s.get("recombined", False) for s in sampled] == [False, False, True]
     selected = dict(events)["critique_selected"]
-    assert selected == {"index": 2, "reason": "recombined"}
+    assert selected["index"] == 2
+    assert selected["reason"] == "recombined"
+    assert selected["rationale"] == ""
+    # The mint rides the slate summary as an ordinary member.
+    assert selected["slate"][2]["core_idea"].startswith("[recombined]")
 
 
 @pytest.mark.asyncio

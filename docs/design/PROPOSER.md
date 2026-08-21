@@ -617,7 +617,10 @@ turn uses the bounded `select_candidate` tool; an absent or out-of-range index
 degrades to the deterministic selector. The round log
 retains the ordinary `candidate_sampled` events and enriches
 `critique_selected` with candidate summaries and the review rationale, making
-the in-session decision inspectable without board identities.
+the in-session decision inspectable without board identities. The default aux
+critic records the same two fields by another route — it answers with the
+index and one sentence — so a reader of `round_log.jsonl` learns what was
+chosen and why regardless of which transport ran.
 
 The session boundary is one proposal slate: it is never shared across board
 entries, runs, challengers, or rounds. Pi receives only `ProposerContext`'s

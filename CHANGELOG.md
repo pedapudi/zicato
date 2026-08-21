@@ -1,5 +1,39 @@
 # Changelog
 
+### The round log records which candidate won, and why
+
+A best-of-N slate ends in one choice, and the round log recorded that choice as
+one integer. `critique_selected` carried the winning index and the selection
+MODE — `critique`, `heuristic`, `recombined`, and the screen prefixes — which
+says how the loop decided but not what it decided between. Reading `index: 1`
+later meant re-opening the captured critique prompt to learn what candidate 1
+even was.
+
+The event now carries a per-candidate summary of the whole slate — each
+candidate's own core idea and the mutation ids it targets — and, when a critic
+chose, that critic's one-line reason. The `pi` transport already wrote both
+fields from its structured review tool; the default critic now answers with the
+index and one sentence, so both selection routes log the identical shape.
+
+The critic's response parse stays backward compatible: a bare integer, a fenced
+integer, or prose carrying the index all select the index they always did, and
+simply record no rationale. A rejected index discards the rationale with it —
+the sentence explains a choice, so it never lands beside a heuristic pick. The
+rationale is capped and whitespace-collapsed, because it rides one round-log
+line.
+
+Both fields are provenance. Nothing in the loop reads them back, so an empty
+one is a thinner record and never a broken one. Neither widens the visibility
+envelope: every string is written by the proposer or by a critic that saw
+nothing the proposer had not already seen.
+
+A note about a decision never vetoes the decision. On the `pi` path the index
+and the rationale arrive as separate structured fields, and an unusable
+rationale is now dropped on its own instead of discarding a review the session
+actually completed. The rationale is recorded only after the index clears its
+range check, so a rejected choice leaves no sentence behind to caption the
+deterministic pick that replaces it.
+
 ### `evolve` gates a workspace before it spends a round
 
 Integrating a new target had no cheap way to prove the wiring works. The

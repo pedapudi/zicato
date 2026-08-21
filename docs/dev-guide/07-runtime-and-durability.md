@@ -1052,7 +1052,7 @@ registered in `EVENT_TYPES` keyed by its `TYPE` wire token:
 | `proposal_attempted` | `ProposalAttempted` | `errors` tuple (empty on success) |
 | `candidate_sampled` | `CandidateSampled` | `i`, `n`, `revise` |
 | `candidate_screened` | `CandidateScreened` | `index`, `vetoed`, `confirmed`, counts-only `screen_summary`, `revise` |
-| `critique_selected` | `CritiqueSelected` | `index`, `reason`, optional native `slate` + `rationale` |
+| `critique_selected` | `CritiqueSelected` | `index`, `reason`, `slate` (both transports), `rationale` (when a critic chose) |
 | `experiment_minted` | `ExperimentMinted` | `experiment_id` |
 | `patches_applied` | `PatchesApplied` | `generation_id` |
 | `validation_failed` | `ValidationFailed` | `findings` tuple |
