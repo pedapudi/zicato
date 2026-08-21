@@ -18,8 +18,8 @@ The baseline and final ratchet use the same metric:
 
 | Measurement | Baseline (`f9052dd`) | Current limit | Net reduction |
 |---|---:|---:|---:|
-| Total | 408,547 | 421,175 | -12,628 |
-| Production | 197,588 | 202,589 | -5,001 |
+| Total | 408,547 | 421,705 | -13,158 |
+| Production | 197,588 | 202,664 | -5,076 |
 
 The earlier raw count of 425,755 included lockfiles and generated artifacts and
 is retained in `.line-budget.json` for provenance; it is not the enforced
@@ -89,3 +89,5 @@ increase.
 | De-centered scalar channels (production) | 202,421 | +121 | 202,542 | Issue #262: the two failure-channel contract fields with their load-time invariant, the channel derivation on LossProfile, the within-channel resolver, and the replicate fold of the run-outcome fields — net of the deleted drift_weight/runtime_weight fields, the not-completed penalty helper, the reducer's dead kind-multiplier, and the runner's inline abort arithmetic. |
 | Per-epoch champion pointer in the tree (total) | 421,034 | +141 | 421,175 | Issue #280: the multi-epoch `buildTreeModel` crown regressions (each epoch crowns its own champion; a pointerless epoch stamps neither flag), the per-epoch scoped read, and the memoized closed-epoch pointer. |
 | Per-epoch champion pointer in the tree (production) | 202,542 | +47 | 202,589 | Issue #280: the `?epoch=`-scoped champion read per epoch node, replacing the single bare-read pointer gated on the contract epoch, plus the data-layer `closedEpochChampion` memo that keeps a closed epoch off the live-bust re-fan. |
+| Field-round champion from the role tag (total) | 421,175 | +530 | 421,705 | Issue #284: the tagged-champion resolver with its fallback chain, the nullable eval-mode provenance, and the five round-timeline regressions. |
+| Field-round champion from the role tag (production) | 202,589 | +75 | 202,664 | Issue #284: _field_champion reading the recorded role, the per-round metadata borrow, and the relocated NULL-means-full default. |
