@@ -663,26 +663,27 @@ single inner `propose` with NO critique and NO extra work):
    (core idea + mutation ids), and, when a critic chose, its one-line
    reason. Both selection routes (the aux critic and pi's in-session
    `select_candidate` tool) write the identical shape.
-5. **Align the tree** (`_align_child_tree`) — the step you must not
-   forget exists. Every slate sample's post-apply validation derived
-   the SAME fixed child snapshot in place (each attempt clears the
-   previous tree), so after N samples the on-disk tree belongs to the
-   LAST-validated candidate while the critic may have chosen an
-   EARLIER one. Before the fix, the tournament scored — and the field
-   path diversity-judged — a tree that was not the experiment on
-   record. The fix: when `chosen != last_validated`, run the validate
-   hook once more on the chosen candidate (the idempotent
-   clear-and-reapply); on unexpected findings, fall back to the
-   last-validated candidate (restoring its tree with one more hook
-   call) and stamp `:revalidate-fallback` onto the selection mode so
-   the round log records why the critic's pick was not returned. Both
-   pipelines are covered e2e by
+5. **Mount the chosen candidate** (`_mount_chosen`) — the step you must
+   not forget exists. Each slate slot validates into its OWN scratch
+   tree (`GenerationStore.derive_scratch`, leased per slot by
+   `build_scratch_validator_factory`); a scratch tree never enters the
+   generation namespace and is discarded with the slot, so nothing has
+   been derived into the round's real `next_id` when the selection
+   ends. After selection the wrapper therefore derives the CHOSEN
+   candidate into `next_id` exactly once, through the round's shared
+   validate hook. That single derive is what makes the mounted tree and
+   the persisted experiment the same artifact, and it is what populates
+   `last_child_snapshot["path"]` for the caller. There is no shared
+   tree to fall back to, so an unexpected finding here (the parent tree
+   changed underneath the slate) raises the standard `ProposerError`.
+   Both pipelines are covered e2e by
    `tests/test_best_of_n_tree_integrity.py`.
 
 > ⛔ **NEVER** decouple "the experiment we persist" from "the tree we
-> mount". Any new selection/mutation of the slate AFTER validation must
-> re-run the validate hook on whatever it returns — that hook is the
-> only thing that makes tree and record agree.
+> mount". Every return path out of the best-of-N wrapper — a new
+> tiebreak, a new degrade, a second sampling pass — must funnel through
+> `_mount_chosen`, because that derive is the only thing that makes
+> tree and record agree.
 
 ### 3.10 Steps 7–10a — manifest check, rejected tail, the tournament, the infra circuit
 

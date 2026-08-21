@@ -264,7 +264,7 @@
       "epoch_id": "e0",
       "experiments": [
         {
-          "decision": "promoted",
+          "decision": "baseline",
           "decision_label": "seed (v0)",
           "generation_id": "v0",
           "hypothesis": {
@@ -466,7 +466,7 @@
     "epoch_id": "e0",
     "experiments": [
       {
-        "decision": "promoted",
+        "decision": "baseline",
         "decision_label": "seed (v0)",
         "generation_id": "v0",
         "hypothesis": {
@@ -563,7 +563,7 @@
     "epoch_id": "e1",
     "experiments": [
       {
-        "decision": "promoted",
+        "decision": "baseline",
         "decision_label": "seed (v0)",
         "generation_id": "v0",
         "hypothesis": {
@@ -1447,7 +1447,7 @@
       "epoch_id": "e0",
       "experiments": [
         {
-          "decision": "promoted",
+          "decision": "baseline",
           "decision_label": "seed (v0)",
           "generation_id": "v0",
           "hypothesis": {

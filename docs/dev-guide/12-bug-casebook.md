@@ -614,16 +614,23 @@ iteration ran last" is never the selection's semantics.
 
 ### The fix
 
-At the one seam serving both pipelines
-(`BestOfNProposerAgent._align_child_tree`,
-`src/zicato/proposer/best_of_n.py`): after selection, if the chosen candidate
-is not the last-validated one, re-run `ctx.validate_experiment(chosen)` —
-the same idempotent clear-and-reapply a retry performs — so tree and
-experiment agree. An unexpected re-validate failure falls back to the
-last-validated candidate (restoring *that* tree with one more hook call) and
-stamps `:revalidate-fallback` onto the selection mode so the round log
-records why the critic's pick was not returned; a double failure raises the
-standard `ProposerError`. Either way the pair stays consistent.
+At the one seam serving both pipelines (`BestOfNProposerAgent`,
+`src/zicato/proposer/best_of_n.py`): after selection, re-run
+`ctx.validate_experiment` on the chosen candidate — the same idempotent
+clear-and-reapply a retry performs — so tree and experiment agree.
+
+As shipped (`_align_child_tree`) that re-derive was CONDITIONAL: it fired only
+when the chosen candidate was not the last-validated one, and an unexpected
+finding fell back to the last-validated candidate, stamping
+`:revalidate-fallback` onto the selection mode. The mechanism has since been
+replaced by `_mount_chosen` (commit `8e010e8`), which removed the shared
+last-validated tree the conditional depended on: every slate slot now
+validates into its own throwaway scratch tree
+(`GenerationStore.derive_scratch`), so the chosen candidate is
+UNCONDITIONALLY derived into the round's real `next_id` exactly once after
+selection, with no candidate to fall back to and a `ProposerError` on any
+finding. The invariant is unchanged and the funnel is stronger — there is no
+longer a branch that can skip the derive.
 
 ### The regression test pattern that pins it
 
@@ -632,8 +639,10 @@ returned object: `tests/test_best_of_n_tree_integrity.py` scripts a
 3-candidate slate where the critic picks candidate 0 and asserts the mounted
 tree contains candidate 0's patch — through the full known-answer e2e over
 target_0 with real subprocess workers, for BOTH pipelines. The wrapper-seam
-unit tests in `tests/test_proposer_best_of_n.py` pin the fallback ladder
-(re-derive / skip-when-last / fallback / double-failure / raising hook).
+unit tests in `tests/test_proposer_best_of_n.py` pin the mount ladder
+(an earlier pick is re-derived, the last pick is mounted too, a hookless
+context is left untouched, a mount failure raises without attempting a
+fallback, a raising hook is folded into that error).
 
 ### You are about to reintroduce this if…
 
@@ -643,8 +652,9 @@ unit tests in `tests/test_proposer_best_of_n.py` pin the fallback ladder
 - you add a second sampling loop (a revise pass, a repair retry) that calls
   the post-apply validator and then returns something other than the final
   validated candidate;
-- you optimize away the `_align_child_tree` re-derive because "the candidate
-  already validated cleanly" — validation *is* the re-derive;
+- you optimize away the post-selection re-derive (`_mount_chosen`) because
+  "the candidate already validated cleanly" — validation *is* the re-derive,
+  and the candidate validated into a scratch tree that no longer exists;
 - your test asserts the returned experiment matches expectations but never
   reads the mounted snapshot's bytes.
 
@@ -697,7 +707,8 @@ one seam rather than patching the diversity call site.
 
 ### The fix
 
-The same `_align_child_tree` re-derive (Case 6): once tree == chosen, the
+The same post-selection re-derive as Case 6 (`_align_child_tree` then, its
+unconditional successor `_mount_chosen` now): once tree == chosen, the
 diversity check is correct by construction. No change to the diversity code
 itself — the fix is upstream, at the identity seam.
 
@@ -716,7 +727,7 @@ that identity and pin each one, not just the first artifact.
   score) computed from the experiment record at a point where the mounted
   tree may not be that record's tree;
 - you reorder the propose pipeline so any judgment runs between selection and
-  the `_align_child_tree` re-derive;
+  the `_mount_chosen` re-derive;
 - you cache a hypothesis signature keyed by generation id before the
   generation's tree is final.
 

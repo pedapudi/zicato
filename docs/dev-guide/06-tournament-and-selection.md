@@ -22,7 +22,7 @@
 > (why a structure/replicates/gate knob rolls the epoch), 04-evaluation-
 > statistics.md §"Train/holdout split" and §"Scoring" (the scalar the gate
 > compares, the calibration noise floor), 05-proposer.md §"5.6 Best-of-N"
-> (where the challenger tree comes from — and the `_align_child_tree`
+> (where the challenger tree comes from — and the tree/record agreement
 > invariant this chapter depends on), 07-runtime-and-durability.md
 > §"`checkout_ephemeral`" and §"The atomic-write contract" (the per-run tree
 > and how `loss.json` is written).
@@ -40,7 +40,7 @@
 > | T6 | `evaluate_gate` is THE per-duel decider. A `SelectionStrategy` reads a `GateOutcome` and interprets it per its own bracket/Swiss/racing rules; it never re-implements or re-runs the gate. |
 > | T7 | The champion pointer advances ONLY on a `"promoted"` `SelectionDecision`. Every layer above the gate (the Bradley–Terry pre-gate, the resolvers, the placebo) can only HOLD a promotion, never force one. |
 > | T8 | The reserved replicate bases are pairwise disjoint (duels `0..`, calibration `1000`, preflight `2000`, screen `3000`/`3001`, evidence `4000`) so an auxiliary draw can neither read nor clobber a canonical replicate slot (Case 8). |
-> | T9 | The child snapshot the tournament mounts is derived from the patches of the experiment the round persists (Case 6/7; the enforcing seam is 05-proposer.md §"5.6.5 `_align_child_tree`"). |
+> | T9 | The child snapshot the tournament mounts is derived from the patches of the experiment the round persists (Case 6/7; the enforcing seam is 05-proposer.md §"5.6.5 Mounting the chosen candidate"). |
 > | T10 | The Bradley–Terry audit only ever accumulates DISTINCT draws; a duplicate matchup id is refused, because identical data re-presented to the fit separates CIs by repetition alone (Case 8). |
 > | T11 | The placebo arm is a genuine lineage child scored by the unchanged gate, but it NEVER advances the champion pointer and is split out of the optimization-stream health detectors. |
 
@@ -2156,8 +2156,8 @@ uv run pytest tests/test_best_of_n_tree_integrity.py -q
 - 04-evaluation-statistics.md — the scalar the gate compares, the A/A noise
   floor `promote_margin` is calibrated against, the train/holdout split and the
   Ladder budget that governs when a holdout confirmation counts.
-- 05-proposer.md — where the challenger tree comes from; §"5.6.5
-  `_align_child_tree`" is the seam that enforces T9 (the mounted tree matches
+- 05-proposer.md — where the challenger tree comes from; §"5.6.5 Mounting the
+  chosen candidate" is the seam that enforces T9 (the mounted tree matches
   the chosen experiment); §"5.6.2 The candidate SCREEN" owns replicate base 3000.
 - 07-runtime-and-durability.md — `checkout_ephemeral` and the `ztw-snap-`
   contract; the atomic-write contract behind `loss.json`; the store inventory's

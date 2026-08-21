@@ -30,9 +30,9 @@ leases a fresh scratch validator from
 post-apply validator by
 :func:`zicato.evolve.round.build_scratch_validator_factory`), so no two slots
 ever derive into the same on-disk tree — the shared ``next_id`` derive that
-used to serialise the slate is done EXACTLY ONCE, for the chosen candidate,
-after selection (:meth:`BestOfNProposerAgent._mount_chosen`, replacing the old
-``_align_child_tree`` conditional re-derive). A deterministic post-gather pass
+would otherwise serialise the slate is done EXACTLY ONCE, for the chosen
+candidate, after selection
+(:meth:`BestOfNProposerAgent._mount_chosen`). A deterministic post-gather pass
 emits the ``candidate_sampled`` events and appends candidates in SLOT order, so
 the slate, event sequence, and chosen candidate are byte-identical regardless
 of completion order; ``propose_parallelism == 1`` runs the slate serially,
@@ -1008,12 +1008,11 @@ class BestOfNProposerAgent:
     ) -> None:
         """Mount the chosen candidate into the real ``next_id`` tree (⛔-funnel).
 
-        Replaces ``_align_child_tree``'s conditional "re-derive only when the
-        pick is not the last-validated" logic. With per-slot scratch there is
-        no shared last-validated tree to align against — each slot validated
-        into its OWN scratch tree, already cleaned up — so the chosen candidate
-        is ALWAYS derived into the canonical ``next_id`` exactly once here,
-        through the round's shared ``validate_experiment`` hook
+        UNCONDITIONAL by construction: each slot validated into its OWN
+        scratch tree, already cleaned up, so there is no candidate whose tree
+        is mounted and no branch that may skip this derive. The chosen
+        candidate is ALWAYS derived into the canonical ``next_id`` exactly
+        once here, through the round's shared ``validate_experiment`` hook
         (:func:`zicato.evolve.round.build_post_apply_validator`). That single
         derive is what guarantees the mounted ``next_id`` tree == the chosen
         candidate + populates the caller's ``last_child_snapshot``.
