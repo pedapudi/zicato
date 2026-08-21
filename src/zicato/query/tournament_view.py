@@ -227,8 +227,11 @@ def _bracket_from_conn(
         For a record whose competitors carry no role (hand-built, or written
         before the tag), fall back on the structural fact that a field's
         champion COMPETES in the field: prefer a borrowed champion that is
-        itself one of the competitors. Competitor order drives the walk, so the
-        answer is deterministic.
+        itself one of the competitors, walked in competitor order. Both
+        paths are deterministic: the tagged path's sibling lookup walks
+        ``champ_by_child`` in insertion order (rows arrive ``ORDER BY
+        ran_at, tournament_id``), the untagged path walks the record's own
+        competitor order.
         """
         ids = [str(c.get("generation_id") if isinstance(c, dict) else c) for c in comps]
         in_field = set(ids)
@@ -305,8 +308,11 @@ def _bracket_from_conn(
     # field record stand. The per-challenger rows remain in the index
     # (the gauntlet matchup list + crowning columns still read them);
     # they are merely excluded from this structure-aware envelope.
-    # Racing has no field record, so its per-challenger rows survive —
-    # ``reconstructRacing`` aggregates them on the read side.
+    # Racing DOES write a field record (the persist gates only on
+    # competitor count), so racing lands in this set and its
+    # per-challenger rows are suppressed like any other field structure —
+    # the field row is then the round's only servable record, which is
+    # why its champion resolution must read the role tag.
     field_structures = {
         _normalize_structure(r["structure"])
         for r in struct_rows

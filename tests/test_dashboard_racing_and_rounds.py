@@ -444,29 +444,102 @@ def _field_round_workspace(tmp_path: Path) -> Path:
     rows = []
     for i, gid in enumerate(("v1", "v2", "v3", "v4")):
         rows.append(
-            (f"{EPOCH}:v0->{gid}", EPOCH, "v0", gid, "rejected", 0.5, 0.9, 0.4, None,
-             f"2026-06-01T01:0{i}:00Z", "racing", None, _comps("v0", [gid]), None, None)
+            (
+                f"{EPOCH}:v0->{gid}",
+                EPOCH,
+                "v0",
+                gid,
+                "rejected",
+                0.5,
+                0.9,
+                0.4,
+                None,
+                f"2026-06-01T01:0{i}:00Z",
+                "racing",
+                None,
+                _comps("v0", [gid]),
+                None,
+                None,
+            )
         )
     rows.append(
-        (f"{EPOCH}:v0->v5", EPOCH, "v0", "v5", "promoted", 0.5, 0.3, -0.2, None,
-         "2026-06-01T01:05:00Z", "racing", None, _comps("v0", ["v5"]), None, None)
+        (
+            f"{EPOCH}:v0->v5",
+            EPOCH,
+            "v0",
+            "v5",
+            "promoted",
+            0.5,
+            0.3,
+            -0.2,
+            None,
+            "2026-06-01T01:05:00Z",
+            "racing",
+            None,
+            _comps("v0", ["v5"]),
+            None,
+            None,
+        )
     )
     # round 0's FIELD row — champion v0, empty parent/child.
     rows.append(
-        (f"{EPOCH}:field:v1", EPOCH, "", "", "promoted", None, None, None, "",
-         "2026-06-01T01:06:00Z", "racing", None,
-         _comps("v0", ["v1", "v2", "v3", "v4", "v5"]), json.dumps([]), json.dumps([]))
+        (
+            f"{EPOCH}:field:v1",
+            EPOCH,
+            "",
+            "",
+            "promoted",
+            None,
+            None,
+            None,
+            "",
+            "2026-06-01T01:06:00Z",
+            "racing",
+            None,
+            _comps("v0", ["v1", "v2", "v3", "v4", "v5"]),
+            json.dumps([]),
+            json.dumps([]),
+        )
     )
     for i, gid in enumerate(("v6", "v7")):
         rows.append(
-            (f"{EPOCH}:v5->{gid}", EPOCH, "v5", gid, "rejected", 0.3, 0.6, 0.3, None,
-             f"2026-06-01T02:0{i}:00Z", "racing", None, _comps("v5", [gid]), None, None)
+            (
+                f"{EPOCH}:v5->{gid}",
+                EPOCH,
+                "v5",
+                gid,
+                "rejected",
+                0.3,
+                0.6,
+                0.3,
+                None,
+                f"2026-06-01T02:0{i}:00Z",
+                "racing",
+                None,
+                _comps("v5", [gid]),
+                None,
+                None,
+            )
         )
     # round 1's FIELD row — champion v5, empty parent/child.
     rows.append(
-        (f"{EPOCH}:field:v6", EPOCH, "", "", "held", None, None, None, "",
-         "2026-06-01T02:06:00Z", "racing", None,
-         _comps("v5", ["v6", "v7"]), json.dumps([]), json.dumps([]))
+        (
+            f"{EPOCH}:field:v6",
+            EPOCH,
+            "",
+            "",
+            "held",
+            None,
+            None,
+            None,
+            "",
+            "2026-06-01T02:06:00Z",
+            "racing",
+            None,
+            _comps("v5", ["v6", "v7"]),
+            json.dumps([]),
+            json.dumps([]),
+        )
     )
     conn.executemany("INSERT INTO tournaments VALUES(" + ",".join("?" * 15) + ")", rows)
     conn.commit()
@@ -553,15 +626,63 @@ def test_field_round_champion_metadata_comes_from_that_round(tmp_path: Path) -> 
         "structure_params_json, competitors_json, rounds_json, standings_json, "
         "champion_eval_mode, champion_run_ref) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
         [
-            (f"{EPOCH}:v5->v8", EPOCH, "v5", "v8", "rejected", 0.42, 0.7, 0.28, None,
-             "2026-06-01T03:00:00Z", "racing", None, comps, None, None,
-             "fast-degraded", "round-2"),
-            (f"{EPOCH}:v5->v9", EPOCH, "v5", "v9", "rejected", 0.42, 0.8, 0.38, None,
-             "2026-06-01T03:01:00Z", "racing", None, comps, None, None,
-             "fast-degraded", "round-2"),
-            (f"{EPOCH}:field:v8", EPOCH, "", "", "held", None, None, None, "",
-             "2026-06-01T03:02:00Z", "racing", None, comps, json.dumps([]), json.dumps([]),
-             None, None),
+            (
+                f"{EPOCH}:v5->v8",
+                EPOCH,
+                "v5",
+                "v8",
+                "rejected",
+                0.42,
+                0.7,
+                0.28,
+                None,
+                "2026-06-01T03:00:00Z",
+                "racing",
+                None,
+                comps,
+                None,
+                None,
+                "fast-degraded",
+                "round-2",
+            ),
+            (
+                f"{EPOCH}:v5->v9",
+                EPOCH,
+                "v5",
+                "v9",
+                "rejected",
+                0.42,
+                0.8,
+                0.38,
+                None,
+                "2026-06-01T03:01:00Z",
+                "racing",
+                None,
+                comps,
+                None,
+                None,
+                "fast-degraded",
+                "round-2",
+            ),
+            (
+                f"{EPOCH}:field:v8",
+                EPOCH,
+                "",
+                "",
+                "held",
+                None,
+                None,
+                None,
+                "",
+                "2026-06-01T03:02:00Z",
+                "racing",
+                None,
+                comps,
+                json.dumps([]),
+                json.dumps([]),
+                None,
+                None,
+            ),
         ],
     )
     conn.commit()
@@ -629,8 +750,21 @@ def test_field_round_with_no_crowning_row_reports_an_unknown_eval_mode(
         "structure_params_json, competitors_json, rounds_json, standings_json) "
         "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
         (
-            f"{EPOCH}:field:v8", EPOCH, "", "", "", None, None, None, "",
-            "2026-06-01T03:02:00Z", "racing", None, comps, json.dumps([]), json.dumps([]),
+            f"{EPOCH}:field:v8",
+            EPOCH,
+            "",
+            "",
+            "",
+            None,
+            None,
+            None,
+            "",
+            "2026-06-01T03:02:00Z",
+            "racing",
+            None,
+            comps,
+            json.dumps([]),
+            json.dumps([]),
         ),
     )
     conn.commit()
