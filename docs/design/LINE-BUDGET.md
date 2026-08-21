@@ -18,8 +18,8 @@ The baseline and final ratchet use the same metric:
 
 | Measurement | Baseline (`f9052dd`) | Current limit | Net reduction |
 |---|---:|---:|---:|
-| Total | 408,547 | 423,951 | -15,404 |
-| Production | 197,588 | 203,586 | -5,998 |
+| Total | 408,547 | 424,596 | -16,049 |
+| Production | 197,588 | 203,810 | -6,222 |
 
 The earlier raw count of 425,755 included lockfiles and generated artifacts and
 is retained in `.line-budget.json` for provenance; it is not the enforced
@@ -101,3 +101,5 @@ increase.
 | Pre-flight phase and stable delegation pin (production) | 202,821 | +139 | 202,960 | Issues #276 + #260: the beater threading with restore-on-refusal, probe_selection_bounds, and the generalized epoch-open projection. |
 | Live execution plan and the served per-run in-flight verdict (total) | 422,733 | +1,218 | 423,951 | Issue #241: the live plan builder with its liveness gate, active-path projection and run-scope placement, the per-row `fresh` verdict shared with the tally, the client's consumption of it with its absent-field fallback, and the 23 plan / 4 verdict / 4 node regressions plus the re-captured parity snapshot. |
 | Live execution plan and the served per-run in-flight verdict (production) | 202,960 | +626 | 203,586 | Issue #241: query/live_execution_plan.py, its endpoint, route and payload contract, and the per-record predicate `fresh_run_count` and `read_active_runs_view` now share. |
+| Recorded promoted head and the collapsed slate's selection (total) | 423,951 | +645 | 424,596 | Issues #287 + #292: the one promoted-head reader with its source order, the sole-candidate selection event, and the multi-promote, byte-identity, and pointer regressions. |
+| Recorded promoted head and the collapsed slate's selection (production) | 203,586 | +224 | 203,810 | Issues #287 + #292: promoted_head.py, the gate/spine/champion consumers, and the shared-builder emission on the collapsed slate. |
