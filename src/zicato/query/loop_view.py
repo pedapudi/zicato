@@ -28,6 +28,7 @@ from __future__ import annotations
 import re
 from typing import Any
 
+from zicato.epoch.preflight import PREFLIGHT_PHASE_TOKEN
 from zicato.query.paths import (
     WorkspacePaths,
     _iso,
@@ -275,28 +276,41 @@ PIPELINE_STEPS: tuple[tuple[str, str], ...] = (
 )
 
 
+#: The epoch-open steps that own the heartbeat while they run, keyed by the
+#: phase segment each stamps: ``(label, the unit its progress counts)``. Both
+#: strings are SERVER-owned — the clients render them verbatim
+#: (``docs/design/EVAL-VIEW.md`` DQ1) — so a step added here reaches the
+#: dashboard stepper and the console lifeline without touching either.
+_EPOCH_OPEN_STEPS: dict[str, tuple[str, str]] = {
+    CALIBRATION_PHASE_TOKEN: ("calibrating noise floor", "draws"),
+    PREFLIGHT_PHASE_TOKEN: ("contract pre-flight", "probes"),
+}
+
+
 def _epoch_open_step(segments: list[str]) -> dict[str, str] | None:
     """The epoch-open step running BEFORE the pipeline, or ``None``.
 
-    An epoch-open step (currently only the A/A noise-floor calibration) runs
-    once per epoch, inside the first round but ahead of propose → apply → run
-    → gate: it is serial, minutes-long, and while it runs the four pipeline
-    steps have genuinely not started. Reporting it as its own step is what
-    keeps that stretch from reading as a wedged round (issue #175).
+    An epoch-open step (the A/A noise-floor calibration, the contract
+    pre-flight) runs once per epoch, inside the first round but ahead of
+    propose → apply → run → gate: it is serial, minutes-long, and while it
+    runs the four pipeline steps have genuinely not started. Reporting it as
+    its own step is what keeps that stretch from reading as a wedged round
+    (issues #175 and #276).
 
-    The label and detail are SERVER-owned strings the clients render verbatim
-    (``docs/design/EVAL-VIEW.md`` DQ1). ``detail`` carries the live ``done/total`` draw
-    count the loop appends to the phase, and is empty when the phase carries
+    ``detail`` carries the live ``done/total`` count the step appends to its
+    phase, named in the step's own unit, and is empty when the phase carries
     no progress suffix.
     """
-    if CALIBRATION_PHASE_TOKEN not in segments:
+    token = next((seg for seg in segments if seg in _EPOCH_OPEN_STEPS), None)
+    if token is None:
         return None
+    label, unit = _EPOCH_OPEN_STEPS[token]
     detail = ""
     tail = segments[-1]
-    if tail != CALIBRATION_PHASE_TOKEN and _PROGRESS_SUFFIX.fullmatch(tail):
+    if tail != token and _PROGRESS_SUFFIX.fullmatch(tail):
         done, total = tail.split("/")
-        detail = f"{done}/{total} draws"
-    return {"id": CALIBRATION_PHASE_TOKEN, "label": "calibrating noise floor", "detail": detail}
+        detail = f"{done}/{total} {unit}"
+    return {"id": token, "label": label, "detail": detail}
 
 
 def _phase_round_index(segments: list[str]) -> int | None:
@@ -359,7 +373,7 @@ def _project_pipeline(
     segments = [s for s in str(phase or "").strip().lower().split(":") if s]
     head = segments[0] if segments else ""
 
-    if CALIBRATION_PHASE_TOKEN in segments:
+    if any(seg in _EPOCH_OPEN_STEPS for seg in segments):
         # An epoch-open step runs ahead of the pipeline (its phase still heads
         # with ``evolve_once``, which would otherwise read as proposing): every
         # step is genuinely pending, and :func:`_epoch_open_step` reports it.

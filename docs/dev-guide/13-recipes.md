@@ -839,9 +839,11 @@ is the contract pre-flight and the noise-floor calibration.
    ahead of propose→apply→run→gate, so the round's phase would stand over it —
    the shape a wedged round has. Take the `beater` and `round_index`, `_beat` your
    own phase on entry (with progress if the step is long), and restore
-   `evolve_once:round_{N}` in a `finally` — `_maybe_calibrate_noise_floor` is the
-   precedent. Teach `query/loop_view.py::_epoch_open_step` the new token so the
-   dashboard stepper and the console lifeline report it.
+   `evolve_once:round_{N}` in a `finally` — `_maybe_calibrate_noise_floor` and
+   `_maybe_contract_preflight` are the precedents. Add the token, its label, and
+   the unit its progress counts to `query/loop_view.py::_EPOCH_OPEN_STEPS`; the
+   dashboard stepper and the console lifeline then report it with no client
+   change, since both render the served label and detail verbatim.
 5. **Test the never-rolls property.** In `tests/test_<your_step>.py`, capture the
    epoch's `contract_hash` before, call `set_epoch_<field>`, reload, and assert
    the hash is UNCHANGED — the exact pattern `tests/test_contract_preflight.py`

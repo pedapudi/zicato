@@ -692,9 +692,9 @@ before the first duel of the epoch's first round — `--parallelism` buys
 nothing, so K=3 on a 6-entry board is 18 board-entry runs of dead time up
 front. The step logs that arithmetic before its first draw and reports
 `{done}/{K}` on the heartbeat as each draw settles (`CALIBRATION_PHASE`), so
-the wait is legible rather than mistakable for a hung round. The same cost
-shape applies to the `"contract_preflight"` hook below, which additionally
-runs the degraded probes. A loop with no consumer for the floor — no
+the wait is legible rather than mistakable for a hung round. The
+`"contract_preflight"` hook below reports itself the same way, over the A/A
+draws AND its degraded probes. A loop with no consumer for the floor — no
 promote-margin bar to defend, no A/A arm — should set
 `"calibrate_noise_floor": 0` rather than pay it.
 
@@ -1671,7 +1671,16 @@ Surfaces: `zicato board preflight` (manual, always recommend-only; carries
 verdict) + the epoch-open hook `"contract_preflight": K` still sets the number
 of A/A draws K (absent ⇒ `DEFAULT_CALIBRATION_RUNS`). Like the calibration it
 is serial and front-loaded — K A/A draws plus the degraded probes over every
-board entry before the round's first duel. Because the measurement
+board entry before the round's first duel — so it owns the heartbeat for its
+duration (`PREFLIGHT_PHASE`, owned by `epoch/preflight.py`) and logs its whole
+expected cost first: K A/A draws + up to `preflight_probe_points` degraded
+probes x every board entry. `run_contract_preflight`'s `on_probe` callback
+reports `{done}/{total}` as each A/A draw and each probe settles — one count
+over both stages, since each is one pass over the board — and `total` is the
+ceiling the probe loop may stop short of. The phase restores to
+`evolve_once:round_{N}` in a `finally` on every path, refusal included; the
+served projection renders it beside the calibration
+(`loop_view._EPOCH_OPEN_STEPS`). Because the measurement
 runs the champion for its A/A floor, a fast-mode test asserting "the champion
 is never re-run" must set `runtime.preflight_gate: "off"`.
 

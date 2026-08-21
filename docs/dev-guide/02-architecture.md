@@ -466,11 +466,14 @@ degraded copy, replicate base 2000; recommend-only). On round 0 only,
 inside the measured floor.
 
 Both measurements are SERIAL and front-loaded: K draws, each a full pass
-over the board, before the round's first duel, and `--parallelism` does
-not shorten them. The calibration therefore owns the heartbeat while it
-runs — `CALIBRATION_PHASE` plus a `{done}/{K}` suffix restamped per
-settled draw (see the phase vocabulary in §6) — because the round's own
-phase over a null tournament is exactly the shape a wedged round has.
+over the board, before the round's first duel (the pre-flight adds one
+pass per degraded probe), and `--parallelism` does not shorten them. Each
+therefore owns the heartbeat while it runs — `CALIBRATION_PHASE` or
+`PREFLIGHT_PHASE` plus a `{done}/{total}` suffix restamped per settled
+unit, restored to the round's phase in a `finally` (see the phase
+vocabulary in §6) — because the round's own phase over a null tournament
+is exactly the shape a wedged round has. Both log their whole expected
+cost before spending the first draw.
 
 ### 3.6 Steps 3–5 — mutations, the split, patterns, the proposer's view
 
@@ -1323,6 +1326,7 @@ supervisor's staleness logic). The vocabulary as emitted today:
 | `evolve_n_rounds:start` | loop boot (epoch resolved, lock held) |
 | `evolve_once:round_{N}` | round scheduled (loop side) |
 | `evolve_once:calibrating_noise_floor:{done}/{K}` | the epoch-open A/A calibration, restamped per settled draw |
+| `evolve_once:contract_preflight:{done}/{total}` | the epoch-open contract pre-flight, restamped per settled A/A draw and degraded probe (`total` is the ceiling — an early-settling verdict ends below it) |
 | `proposing:round_{N}:{vX}` | before the proposer call (both paths) |
 | `screening:r{N}` | the candidate screen's panel runs |
 | `applying:…` | inside `build_post_apply_validator` per attempt |

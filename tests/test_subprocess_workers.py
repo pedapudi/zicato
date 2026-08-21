@@ -929,11 +929,26 @@ def test_parent_delegates_kill_to_supervisor_via_request_marker(
     from zicato.runtime.paths import kill_request_path
     from zicato.runtime.state import list_active_runs
 
+    # Set when the fake supervisor resolves the pid and reaps the worker, so a
+    # failure names which side broke rather than only that the fallback fired.
+    reaped_by_supervisor = {"value": False}
+
     async def _fake_supervisor() -> None:
-        """Stand in for the Rust runs_loop: on a kill-request, SIGKILL the pid."""
+        """Stand in for the Rust runs_loop: on a kill-request, SIGKILL the pid.
+
+        Polls until it has actually reaped, the way the runs_loop does. The
+        two events it joins are written by DIFFERENT processes — the parent
+        writes the kill-request marker on its own budget timer, while the
+        WORKER writes the ``active_runs`` record the pid comes from — so the
+        marker appears first whenever worker start-up outlasts budget+grace,
+        which on a loaded runner it does. A supervisor that looked once and
+        gave up turned that ordering into a flake: nothing reaped the worker,
+        and the parent's last-resort escalation fired on a delegation that was
+        working exactly as designed (issue #260).
+        """
         marker = kill_request_path(workspace, run_id)
         while True:
-            await asyncio.sleep(0.05)
+            await asyncio.sleep(0.02)
             if not marker.exists():
                 continue
             # Resolve the worker pid from its active_runs record and kill it,
@@ -943,8 +958,9 @@ def test_parent_delegates_kill_to_supervisor_via_request_marker(
                     try:
                         os.kill(run.pid, signal.SIGKILL)
                     except ProcessLookupError:
-                        pass
-            return
+                        pass  # already gone; the reap is accounted for either way
+                    reaped_by_supervisor["value"] = True
+                    return
 
     async def _drive() -> LossProfile:
         sup = asyncio.create_task(_fake_supervisor())
@@ -954,10 +970,12 @@ def test_parent_delegates_kill_to_supervisor_via_request_marker(
                 generation=generation,
                 entry=entry,
                 weights=ScoringWeights(),
-                # Generous supervisor-wait: the fake supervisor reaps well
-                # within it, so the parent's last-resort fallback should
-                # never be reached.
-                config=_config(workspace, supervisor_kill_wait_s=10.0),
+                # Load-tolerant supervisor-wait: the parent returns the moment
+                # the worker dies, so a healthy delegation never spends this
+                # window — only a genuine regression waits it out. It has to
+                # cover the worker's whole start-up, since the pid the
+                # supervisor kills does not exist until the worker registers.
+                config=_config(workspace, supervisor_kill_wait_s=60.0),
                 workspace_root=workspace,
                 epoch_id="e0",
                 side="parent",
@@ -971,6 +989,7 @@ def test_parent_delegates_kill_to_supervisor_via_request_marker(
     assert loss.wall_clock_budget_exceeded is True
     # The supervisor reaped the worker, so the parent's last-resort
     # escalation never ran — no parent↔supervisor race over the pid.
+    assert reaped_by_supervisor["value"] is True
     assert fallback_fired["value"] is False
     # The kill-request marker was cleaned up on the run's finally block.
     assert not kill_request_path(workspace, run_id).exists()

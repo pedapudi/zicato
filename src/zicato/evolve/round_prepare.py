@@ -156,6 +156,8 @@ async def _maybe_contract_preflight(
     config: Any,
     disable_drift: tuple[Any, ...],
     judge_only: bool,
+    beater: HeartbeatBeater | None = None,
+    round_index: int = 0,
 ) -> str | None:
     """Measure the contract pre-flight once per epoch; return the verdict.
 
@@ -171,6 +173,17 @@ async def _maybe_contract_preflight(
     The number of A/A draws K is taken from the legacy ``config.json``
     ``"contract_preflight": K`` key when present (K >= 2), else defaults to
     :data:`~zicato.tournament.calibration.DEFAULT_CALIBRATION_RUNS`.
+
+    Like the calibration above it, the measurement is SERIAL and
+    front-loaded — K passes over the board plus one per degraded probe,
+    before the round's first duel — so it owns the heartbeat for its
+    duration: ``beater`` (when the loop supplies one) is stamped
+    :data:`~zicato.epoch.preflight.PREFLIGHT_PHASE` plus a live
+    ``units-settled/total`` suffix, and restored to the round phase on
+    every way out, including a refusal. Without that stamp the round's own
+    phase stands over a minutes-long step that has proposed and duelled
+    nothing, which is indistinguishable from a wedged round (issue #276).
+    ``round_index`` names the phase to restore.
 
     Returns the GATE verdict
     (:func:`~zicato.epoch.preflight.effective_gate_verdict` — ``"refuse"``
@@ -243,10 +256,30 @@ async def _maybe_contract_preflight(
         set_epoch_preflight,
     )
     from zicato.epoch.preflight import (  # noqa: PLC0415
+        PREFLIGHT_PHASE,
         VERDICT_OK,
         PreflightConfigError,
         PreflightRefusedError,
+        probe_selection_bounds,
         run_contract_preflight,
+    )
+
+    # The whole spend is knowable before the first draw: K A/A draws plus at
+    # most one draw per probe the sample may hold, each a serial pass over
+    # every board entry. Named up front so an operator can decide whether to
+    # wait, rather than inferring the shape from probe draws landing on disk.
+    pinned, probe_ceiling = probe_selection_bounds(config)
+    probes = len(set(pinned)) or probe_ceiling
+    log.info(
+        "contract pre-flight for epoch %s: %d A/A draw(s) + up to %d degraded "
+        "probe(s) x %d board entries = up to %d board-entry runs, serially, before "
+        "this round's first duel (the probe loop stops at the first probe that "
+        'settles the verdict; runtime.preflight_gate="off" skips the step)',
+        epoch_id,
+        runs,
+        probes,
+        len(board),
+        (runs + probes) * len(board),
     )
 
     verdict_holder: list[str] = []
@@ -265,81 +298,95 @@ async def _maybe_contract_preflight(
             config_error.append(exc)
         log.warning("contract pre-flight skipped: %s", exc)
 
-    with best_effort("contract pre-flight", on_error=_on_preflight_error):
-        report, floor = await run_contract_preflight(
-            adapter=adapter,
-            generation=parent_gen,
-            board=board,
-            weights=weights,
-            config=config,
-            workspace_root=workspace_root,
-            epoch_id=epoch_id,
-            runs=runs,
-            disable_drift=disable_drift,
-            judge_only=judge_only,
-        )
-        record = report.to_json()
-        set_epoch_preflight(workspace_root, epoch_id, record)
-        verdict_holder.append(effective_gate_verdict(record) or report.verdict)
-        # The pre-flight's step (a) IS the A/A calibration; persist the
-        # floor too when the epoch has none yet (reload — the calibration
-        # hook may have written one after ``epoch_cfg`` was loaded), so the
-        # margin check + noise-floor detector benefit from the same draws.
-        if load_epoch(workspace_root, epoch_id).noise_floor is None:
-            set_epoch_noise_floor(workspace_root, epoch_id, floor.to_json())
-        if report.verdict == VERDICT_OK and report.window_failure is None:
-            log.info(
-                "contract pre-flight OK for epoch %s (%s): degradation signal "
-                "%.6g clears the measured noise floor %.6g and leaves "
-                "promote_margin %.6g inside the window (probed %d point(s))",
-                epoch_id,
-                parent_gen.id,
-                report.signal,
-                report.noise_floor_max_abs_delta,
-                report.promote_margin,
-                report.drawn_probe_count(),
-            )
-        else:
-            # LOUD run-level warning. The diagnosis is per-verdict on purpose:
-            # "noise swamps the signal", "the probe was inert", "the margin
-            # exceeds what we measured" and "the margin is inside the noise"
-            # have four different fixes, and issue #106/#112 both trace operator
-            # time wasted to these being reported in the same words. Whether
-            # this also STOPS the run is the caller's decision, per
-            # ``gate_mode`` — and only the floor-based verdicts can stop it
-            # (issue #119).
-            log.warning(
-                "CONTRACT PRE-FLIGHT %s — epoch %s (%s): degradation signal "
-                "%.6g vs measured A/A noise floor %.6g vs promote_margin %.6g "
-                "(best of %d probed point(s): %s → scalar %.6g). %s %s See the "
-                "per-round health report / `zicato board preflight`.",
-                (report.window_failure or report.verdict).upper(),
-                epoch_id,
-                parent_gen.id,
-                report.signal,
-                report.noise_floor_max_abs_delta,
-                report.promote_margin,
-                report.drawn_probe_count(),
-                report.degraded_mutation_id,
-                report.degraded_scalar,
-                _preflight_diagnosis(report),
-                (
-                    "Set runtime.preflight_gate='refuse' to stop such a run "
-                    "before it spends rounds."
-                    if gate_mode != "refuse"
-                    else "Refusing the run (runtime.preflight_gate='refuse')."
+    # The pre-flight owns the heartbeat from here: the round's own phase over
+    # a step that has proposed and duelled nothing is the shape a wedged round
+    # has. The progress suffix arrives from the measurement's own probe loop.
+    _beat(beater, phase=PREFLIGHT_PHASE)
+    try:
+        with best_effort("contract pre-flight", on_error=_on_preflight_error):
+            report, floor = await run_contract_preflight(
+                adapter=adapter,
+                generation=parent_gen,
+                board=board,
+                weights=weights,
+                config=config,
+                workspace_root=workspace_root,
+                epoch_id=epoch_id,
+                runs=runs,
+                disable_drift=disable_drift,
+                judge_only=judge_only,
+                on_probe=lambda done, total: _beat(
+                    beater, phase=f"{PREFLIGHT_PHASE}:{done}/{total}"
                 ),
             )
-    if config_error and gate_mode == "refuse":
-        raise PreflightRefusedError(
-            f"contract pre-flight CONFIG ERROR for epoch {epoch_id}: "
-            f"{config_error[0]}. The pre-flight could not run at all, so the "
-            "hard gate has nothing to gate on — refusing the run rather than "
-            "spending rounds unprotected (runtime.preflight_gate='refuse'). Fix "
-            "the probe-selection config, or set runtime.preflight_gate='warn' to "
-            "proceed with the pre-flight skipped."
-        )
-    return verdict_holder[0] if verdict_holder else None
+            record = report.to_json()
+            set_epoch_preflight(workspace_root, epoch_id, record)
+            verdict_holder.append(effective_gate_verdict(record) or report.verdict)
+            # The pre-flight's step (a) IS the A/A calibration; persist the
+            # floor too when the epoch has none yet (reload — the calibration
+            # hook may have written one after ``epoch_cfg`` was loaded), so the
+            # margin check + noise-floor detector benefit from the same draws.
+            if load_epoch(workspace_root, epoch_id).noise_floor is None:
+                set_epoch_noise_floor(workspace_root, epoch_id, floor.to_json())
+            if report.verdict == VERDICT_OK and report.window_failure is None:
+                log.info(
+                    "contract pre-flight OK for epoch %s (%s): degradation signal "
+                    "%.6g clears the measured noise floor %.6g and leaves "
+                    "promote_margin %.6g inside the window (probed %d point(s))",
+                    epoch_id,
+                    parent_gen.id,
+                    report.signal,
+                    report.noise_floor_max_abs_delta,
+                    report.promote_margin,
+                    report.drawn_probe_count(),
+                )
+            else:
+                # LOUD run-level warning. The diagnosis is per-verdict on purpose:
+                # "noise swamps the signal", "the probe was inert", "the margin
+                # exceeds what we measured" and "the margin is inside the noise"
+                # have four different fixes, and issue #106/#112 both trace operator
+                # time wasted to these being reported in the same words. Whether
+                # this also STOPS the run is the caller's decision, per
+                # ``gate_mode`` — and only the floor-based verdicts can stop it
+                # (issue #119).
+                log.warning(
+                    "CONTRACT PRE-FLIGHT %s — epoch %s (%s): degradation signal "
+                    "%.6g vs measured A/A noise floor %.6g vs promote_margin %.6g "
+                    "(best of %d probed point(s): %s → scalar %.6g). %s %s See the "
+                    "per-round health report / `zicato board preflight`.",
+                    (report.window_failure or report.verdict).upper(),
+                    epoch_id,
+                    parent_gen.id,
+                    report.signal,
+                    report.noise_floor_max_abs_delta,
+                    report.promote_margin,
+                    report.drawn_probe_count(),
+                    report.degraded_mutation_id,
+                    report.degraded_scalar,
+                    _preflight_diagnosis(report),
+                    (
+                        "Set runtime.preflight_gate='refuse' to stop such a run "
+                        "before it spends rounds."
+                        if gate_mode != "refuse"
+                        else "Refusing the run (runtime.preflight_gate='refuse')."
+                    ),
+                )
+        if config_error and gate_mode == "refuse":
+            raise PreflightRefusedError(
+                f"contract pre-flight CONFIG ERROR for epoch {epoch_id}: "
+                f"{config_error[0]}. The pre-flight could not run at all, so the "
+                "hard gate has nothing to gate on — refusing the run rather than "
+                "spending rounds unprotected (runtime.preflight_gate='refuse'). Fix "
+                "the probe-selection config, or set runtime.preflight_gate='warn' to "
+                "proceed with the pre-flight skipped."
+            )
+        return verdict_holder[0] if verdict_holder else None
+    finally:
+        # The round owns the phase again — the same stamp ``evolve_n_rounds``
+        # writes when it schedules the round. Restored on every way out: a
+        # settled verdict, a best-effort skip, and the config-error refusal,
+        # so the heartbeat never parks on a measurement that has ended.
+        _beat(beater, phase=f"evolve_once:round_{round_index}")
 
 
 def _preflight_diagnosis(report: Any) -> str:
