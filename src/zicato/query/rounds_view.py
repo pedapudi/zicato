@@ -294,7 +294,12 @@ def build_round_timeline(paths: WorkspacePaths, epoch_id: str | None = None) -> 
             # 0`` by default, so it formed a bucket of its own: a phantom round 0
             # whose only member is dropped again downstream (the carried champion
             # is never a minted challenger), leaving a round with an empty field.
-            if str(gid) == str(seed_id):
+            if str(gid) == str(seed_id) and not g.get("parent_generation_id"):
+                # The seed test is PARENTAGE, the same rule the writer's base
+                # computation uses — never the id alone: ``seed_id`` prefers the
+                # lineage root, and a lineage whose root is a MINTED generation
+                # (an unpromoted or absent v0) must not have that real round
+                # dropped from its bucket.
                 continue
             ri = int(ri_raw) if isinstance(ri_raw, int | float) else 0
             buckets.setdefault(ri, []).append(str(gid))

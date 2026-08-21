@@ -22,9 +22,7 @@ from pathlib import Path
 from zicato.evolve.loop import _epoch_round_base
 
 
-def _write_gen(
-    ws: Path, epoch: str, gid: str, round_index: int, parent: str = "v0"
-) -> None:
+def _write_gen(ws: Path, epoch: str, gid: str, round_index: int, parent: str = "v0") -> None:
     """A MINTED challenger: it carries the parent every real challenger has."""
     d = ws / "epochs" / epoch / "generations" / gid
     d.mkdir(parents=True, exist_ok=True)
@@ -44,9 +42,7 @@ def _write_seed(ws: Path, epoch: str, gid: str = "v0") -> None:
     d = ws / "epochs" / epoch / "generations" / gid
     d.mkdir(parents=True, exist_ok=True)
     (d / "experiment.json").write_text(
-        json.dumps(
-            {"generation_id": gid, "round_index": 0, "parent_generation_id": None}
-        )
+        json.dumps({"generation_id": gid, "round_index": 0, "parent_generation_id": None})
     )
 
 
@@ -84,7 +80,9 @@ def test_epoch_round_base_ignores_non_integer_round_index(tmp_path: Path) -> Non
     # A malformed round_index must not crash or inflate the base.
     d = ws / "epochs" / epoch / "generations" / "v2"
     d.mkdir(parents=True, exist_ok=True)
-    (d / "experiment.json").write_text(json.dumps({"round_index": "oops"}))
+    (d / "experiment.json").write_text(
+        json.dumps({"parent_generation_id": "v0", "round_index": "oops"})
+    )
     assert _epoch_round_base(ws, epoch) == 1
 
 
