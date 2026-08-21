@@ -877,3 +877,239 @@ def test_preflight_voids_on_infra_abort_instead_of_persisting_a_poisoned_floor(
         )
     )
     assert floor.runs == 3  # tolerated (raise_on_infra_abort defaults False)
+
+
+# ---------------------------------------------------------------------------
+# Legibility — what the loop REPORTS while the measurement runs (issue #276)
+# ---------------------------------------------------------------------------
+
+
+class _RecordingBeater:
+    """A :class:`HeartbeatBeater` stand-in recording the phases stamped on it."""
+
+    def __init__(self) -> None:
+        self.phases: list[str] = []
+
+    def update(self, **fields: object) -> None:
+        if fields.get("phase") is not None:
+            self.phases.append(str(fields["phase"]))
+
+    def bump_now(self) -> None:
+        pass
+
+
+class _HookConfig:
+    """The RuntimeConfig surface the epoch-open hook reads."""
+
+    def __init__(self, *, gate: str = "warn", probe_points: int = 2) -> None:
+        self.preflight_gate = gate
+        self.preflight_probe_points = probe_points
+        self.preflight_probe_mutation_ids: tuple[str, ...] = ()
+
+
+def _report(*, runs: int = 3, verdict: str = VERDICT_OK) -> object:
+    from zicato.epoch.preflight import PreflightReport
+
+    return PreflightReport(
+        epoch_id="e0",
+        generation_id="v0",
+        verdict=verdict,
+        noise_floor_max_abs_delta=0.0,
+        noise_floor_runs=runs,
+        champion_scalars=(1.0,) * runs,
+        degraded_scalar=2.0,
+        signal=1.0,
+        degraded_mutation_id="style_rules",
+        degraded_mutation_kind="span",
+        degraded_file="agent/policy.py",
+        measured_at="2026-08-17T00:00:00Z",
+    )
+
+
+def _preflight_hook(
+    monkeypatch,
+    *,
+    workspace_config: dict,
+    measured: object,
+    persisted: object = None,
+    config: object = None,
+    board_size: int = 2,
+    round_index: int = 4,
+    beater: _RecordingBeater | None = None,
+) -> _RecordingBeater:
+    """Run the epoch-open pre-flight step against a stubbed measurement.
+
+    ``measured`` is either the ``(report, floor)`` pair the fake measurement
+    returns — reporting progress over its own units the way the real one does
+    — or an exception it raises.
+    """
+    import zicato.epoch.lifecycle as lifecycle
+    import zicato.epoch.preflight as preflight_mod
+    from zicato.evolve.round_prepare import _maybe_contract_preflight
+    from zicato.tournament.calibration import NoiseFloor
+
+    floor = NoiseFloor(
+        generation_id="v0",
+        epoch_id="e0",
+        runs=3,
+        scalars=(1.0, 1.0, 1.0),
+        max_abs_delta=0.0,
+        delta_std=0.0,
+        measured_at="2026-08-17T00:00:00Z",
+    )
+
+    async def _fake_preflight(*, runs: int, on_probe=None, **_kw: object) -> object:
+        total = runs + 1
+        if on_probe is not None:
+            on_probe(0, total)
+            for unit in range(1, total + 1):
+                on_probe(unit, total)
+        if isinstance(measured, Exception):
+            raise measured
+        return measured, floor
+
+    monkeypatch.setattr(preflight_mod, "run_contract_preflight", _fake_preflight)
+    monkeypatch.setattr(lifecycle, "set_epoch_preflight", lambda *a, **k: None)
+    monkeypatch.setattr(lifecycle, "set_epoch_noise_floor", lambda *a, **k: None)
+    monkeypatch.setattr(
+        lifecycle, "load_epoch", lambda *a, **k: type("_Cfg", (), {"noise_floor": None})()
+    )
+
+    beater = beater if beater is not None else _RecordingBeater()
+    asyncio.run(
+        _maybe_contract_preflight(
+            workspace_root=Path("."),
+            epoch_id="e0",
+            epoch_cfg=type("_Cfg", (), {"preflight": persisted})(),
+            workspace_config=workspace_config,
+            adapter=None,
+            parent_gen=None,  # type: ignore[arg-type]
+            board=[None] * board_size,
+            weights=None,
+            config=config if config is not None else _HookConfig(),
+            disable_drift=(),
+            judge_only=False,
+            beater=beater,  # type: ignore[arg-type]
+            round_index=round_index,
+        )
+    )
+    return beater
+
+
+def test_preflight_owns_the_phase_and_counts_its_units(monkeypatch) -> None:
+    """The measurement stamps its OWN phase, counting every A/A draw and every
+    degraded probe, then hands the round back its phase — a working pre-flight
+    used to be indistinguishable from a round that had hung."""
+    beater = _preflight_hook(
+        monkeypatch,
+        workspace_config={"contract_preflight": 3},
+        measured=_report(),
+    )
+    assert beater.phases == [
+        "evolve_once:contract_preflight",
+        "evolve_once:contract_preflight:0/4",
+        "evolve_once:contract_preflight:1/4",
+        "evolve_once:contract_preflight:2/4",
+        "evolve_once:contract_preflight:3/4",
+        "evolve_once:contract_preflight:4/4",
+        "evolve_once:round_4",
+    ]
+
+
+def test_a_preflighting_phase_reads_as_active_work() -> None:
+    """No segment of the pre-flight phase is an at-rest token, so a workspace
+    mid-measurement reads ACTIVE rather than settled."""
+    from zicato.epoch.preflight import PREFLIGHT_PHASE
+    from zicato.query.runtime_view import is_active_phase
+
+    assert is_active_phase(PREFLIGHT_PHASE)
+    assert is_active_phase(f"{PREFLIGHT_PHASE}:4/6")
+
+
+def test_a_failed_preflight_still_hands_the_round_its_phase_back(monkeypatch) -> None:
+    """The measurement is best-effort: a failure must not leave the heartbeat
+    parked on a measurement that is no longer running."""
+    beater = _preflight_hook(
+        monkeypatch,
+        workspace_config={"contract_preflight": 2},
+        measured=RuntimeError("endpoint outage"),
+    )
+    assert beater.phases[0] == "evolve_once:contract_preflight"
+    assert beater.phases[-1] == "evolve_once:round_4"
+
+
+def test_a_refused_run_still_hands_the_round_its_phase_back(monkeypatch) -> None:
+    """The one failure that ESCAPES the best-effort contract — a probe-config
+    error under the hard gate — leaves through the same ``finally``."""
+    import pytest
+
+    from zicato.epoch.preflight import PreflightConfigError, PreflightRefusedError
+
+    beater = _RecordingBeater()
+    with pytest.raises(PreflightRefusedError):
+        _preflight_hook(
+            monkeypatch,
+            workspace_config={"contract_preflight": 2},
+            measured=PreflightConfigError("no such mutation point"),
+            config=_HookConfig(gate="refuse"),
+            beater=beater,
+        )
+    assert beater.phases[0] == "evolve_once:contract_preflight"
+    assert beater.phases[-1] == "evolve_once:round_4"
+
+
+def test_a_skipped_preflight_touches_no_phase(monkeypatch) -> None:
+    """Opted out, misconfigured, or already measured: the round's own phase
+    stands untouched — byte-identical to the behaviour before the step
+    reported itself."""
+    for workspace_config, persisted, config in (
+        ({}, None, _HookConfig(gate="off")),
+        ({"contract_preflight": "three"}, None, None),
+        ({"contract_preflight": 1}, None, None),
+        ({"contract_preflight": 3}, {"verdict": "ok"}, None),
+    ):
+        beater = _preflight_hook(
+            monkeypatch,
+            workspace_config=workspace_config,
+            measured=_report(),
+            persisted=persisted,
+            config=config,
+        )
+        assert beater.phases == [], (workspace_config, persisted)
+
+
+def test_the_preflight_cost_is_named_before_the_first_draw(monkeypatch, caplog) -> None:
+    """K A/A draws + up to P probes x N board entries is knowable up front; the
+    operator should not have to infer the shape from probe draws on disk."""
+    import logging
+
+    with caplog.at_level(logging.INFO, logger="zicato.orchestrator"):
+        _preflight_hook(
+            monkeypatch,
+            workspace_config={"contract_preflight": 3},
+            measured=_report(),
+            config=_HookConfig(probe_points=2),
+            board_size=6,
+        )
+    cost = next(m for m in caplog.messages if "board-entry runs" in m)
+    assert "3 A/A draw(s) + up to 2 degraded probe(s) x 6 board entries" in cost
+    assert "up to 30 board-entry runs" in cost
+    assert "serially" in cost
+
+
+def test_progress_counts_every_a_a_draw_and_every_probe(tmp_path: Path) -> None:
+    """Against the real probe loop: the count covers BOTH measurement stages —
+    K A/A draws then the degraded probes — because each is one pass over the
+    board, and the total is fixed before the first draw is spent."""
+    workspace, epoch_id = _bootstrap(tmp_path)
+    progress: list[tuple[int, int]] = []
+    report, _floor = _run_preflight(
+        workspace,
+        epoch_id,
+        runs=3,
+        on_probe=lambda done, total: progress.append((done, total)),
+    )
+    # target_0 enumerates exactly one mutation point, so the pre-flight's units
+    # are 3 A/A draws + 1 probe, each reported once as it settles.
+    assert report.drawn_probe_count() == 1
+    assert progress == [(0, 4), (1, 4), (2, 4), (3, 4), (4, 4)]

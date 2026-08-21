@@ -96,6 +96,32 @@ def test_home_lifeline_leads_with_the_epoch_open_calibration() -> None:
     assert "no round in flight" not in text
 
 
+def test_home_lifeline_leads_with_the_epoch_open_preflight() -> None:
+    """The contract pre-flight leads the lifeline with its served probe count,
+    exactly as the calibration does (issue #276)."""
+    payloads = live_payloads()
+    payloads["/api/live/pipeline"] = {
+        **payloads["/api/live/pipeline"],
+        "phase": "evolve_once:contract_preflight:1/4",
+        "steps": [
+            {"id": s["id"], "label": s["label"], "state": "pending", "detail": ""}
+            for s in payloads["/api/live/pipeline"]["steps"]
+        ],
+        "active_step": None,
+        "epoch_open_step": {
+            "id": "contract_preflight",
+            "label": "contract pre-flight",
+            "detail": "1/4 probes",
+        },
+        "in_flight": 1,
+    }
+    ctx = LensContext(route=Route(lens="home", params={"epoch": EPOCH}), width=100)
+    text = render_text(safe_render(BY_NAME["home"], SnapshotClient(payloads), ctx), width=100)
+    assert "contract pre-flight" in text
+    assert "1/4 probes" in text
+    assert "no round in flight" not in text
+
+
 # ---------------------------------------------------------------------------
 # Degrade paths — one per lens
 # ---------------------------------------------------------------------------

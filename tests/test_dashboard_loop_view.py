@@ -479,11 +479,29 @@ def test_pipeline_calibration_is_an_epoch_open_step_not_a_started_round() -> Non
     }
 
 
+def test_pipeline_preflight_is_an_epoch_open_step_with_its_own_unit() -> None:
+    """The contract pre-flight reports itself the same way the calibration
+    does, counting the units it actually spends — A/A draws plus degraded
+    probes — so a minutes-long measurement is not read as a started round
+    (issue #276)."""
+    phase = "evolve_once:contract_preflight:4/6"
+    steps, active, decision = _project_pipeline(phase)
+    assert all(s["state"] == "pending" for s in steps)
+    assert active is None
+    assert decision is None
+    assert _epoch_open_step(phase.split(":")) == {
+        "id": "contract_preflight",
+        "label": "contract pre-flight",
+        "detail": "4/6 probes",
+    }
+
+
 def test_epoch_open_step_without_progress_and_without_calibration() -> None:
     # Stamped before the first draw completes — the label stands alone.
     assert _epoch_open_step(["evolve_once", "calibrating_noise_floor"])["detail"] == ""
     # A malformed suffix is not read as progress rather than rendered raw.
     assert _epoch_open_step(["evolve_once", "calibrating_noise_floor", "soon"])["detail"] == ""
+    assert _epoch_open_step(["evolve_once", "contract_preflight"])["detail"] == ""
     # Every other phase has no epoch-open step at all.
     assert _epoch_open_step(["tournament", "round_0", "v1"]) is None
     assert _epoch_open_step([]) is None
@@ -678,6 +696,20 @@ def test_build_round_pipeline_reports_a_calibration_in_flight(tmp_path: Path) ->
         "id": "calibrating_noise_floor",
         "label": "calibrating noise floor",
         "detail": "2/3 draws",
+    }
+    assert out["active_step"] is None
+    assert all(s["state"] == "pending" for s in out["steps"])
+
+
+def test_build_round_pipeline_reports_a_preflight_in_flight(tmp_path: Path) -> None:
+    """The same served shape for the epoch's other front-loaded measurement."""
+    ws = _pipeline_workspace(tmp_path, phase="evolve_once:contract_preflight:1/4")
+    out = build_round_pipeline(WorkspacePaths(ws))
+    assert out["running"] is True
+    assert out["epoch_open_step"] == {
+        "id": "contract_preflight",
+        "label": "contract pre-flight",
+        "detail": "1/4 probes",
     }
     assert out["active_step"] is None
     assert all(s["state"] == "pending" for s in out["steps"])

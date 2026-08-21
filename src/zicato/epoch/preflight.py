@@ -173,6 +173,7 @@ from __future__ import annotations
 
 import datetime as _dt
 import tempfile
+from collections.abc import Callable
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
@@ -206,6 +207,24 @@ PREFLIGHT_REPLICATE_BASE: int = 2000
 #: own). Far above any plausible mutable surface: the presentation target, the
 #: largest real harness, enumerates 15 points.
 PREFLIGHT_REPLICATE_SPAN: int = 1000
+
+#: The heartbeat ``phase`` segment that names a pre-flight in flight. The
+#: pre-flight is an epoch-open step running BEFORE the round it precedes has
+#: proposed anything, so it must not inherit the round's phase: a workspace
+#: stamped ``evolve_once:round_0`` with no active tournament is exactly the
+#: shape a WEDGED round has, and a serial measurement of K A/A draws plus the
+#: degraded probes holds that shape for minutes (issue #276, the same defect
+#: issue #175 fixed for the calibration). Readers match this token as a phase
+#: segment (:data:`zicato.query.loop_view._EPOCH_OPEN_STEPS`) rather than the
+#: whole string, because the loop appends live ``done/total`` probe progress.
+PREFLIGHT_PHASE_TOKEN: str = "contract_preflight"
+
+#: The full phase the evolve loop stamps for the duration of the pre-flight.
+#: The progress suffix (``:4/6``) is appended by :func:`run_contract_preflight`
+#: through its ``on_probe`` callback; no segment here is an idle token, so a
+#: pre-flighting workspace reads ACTIVE
+#: (:func:`zicato.query.runtime_view.is_active_phase`).
+PREFLIGHT_PHASE: str = f"evolve_once:{PREFLIGHT_PHASE_TOKEN}"
 
 #: The pre-flight verdicts, weakest concern first.
 VERDICT_OK: str = "ok"
@@ -523,6 +542,32 @@ def degraded_patch_for(point: MutationPoint) -> Patch:
             "point to measure the contract's signal"
         ),
     )
+
+
+def probe_selection_bounds(
+    config: Any,
+    *,
+    degrade_mutation_id: str | None = None,
+    probe_points: int | None = None,
+) -> tuple[tuple[str, ...], int]:
+    """Resolve ``(pinned mutation ids, automatic-sample ceiling)`` from config.
+
+    Shared by :func:`run_contract_preflight` and the evolve-start hook that
+    names the pre-flight's cost before a single draw is spent, so the two can
+    never disagree about how many probes the measurement may draw. An explicit
+    pin ignores the ceiling (:func:`select_probe_points`), so the effective
+    number of probes is ``len(set(pinned)) or ceiling``.
+    """
+    if degrade_mutation_id:
+        pinned: tuple[str, ...] = (degrade_mutation_id,)
+    else:
+        pinned = tuple(getattr(config, "preflight_probe_mutation_ids", ()) or ())
+    ceiling = (
+        probe_points
+        if probe_points is not None
+        else int(getattr(config, "preflight_probe_points", 1) or 1)
+    )
+    return pinned, ceiling
 
 
 def select_probe_points(
@@ -863,6 +908,7 @@ async def run_contract_preflight(
     judge_only: bool = False,
     degrade_mutation_id: str | None = None,
     probe_points: int | None = None,
+    on_probe: Callable[[int, int], None] | None = None,
 ) -> tuple[PreflightReport, NoiseFloor]:
     """Measure the contract's noise floor AND degradation signal; verdict.
 
@@ -889,6 +935,17 @@ async def run_contract_preflight(
     a CEILING, not a cost: the loop stops at the first probe that settles
     the verdict, so a healthy contract still spends exactly one degraded
     draw.
+
+    ``on_probe`` (default ``None`` — no behaviour change for callers that
+    do not pass one) is called ``(units_settled, total_units)`` where a
+    unit is one pass over the whole board: the K A/A draws of step (a)
+    followed by the degraded probes of step (b), each reported once as it
+    settles, plus a leading ``(0, total)`` as soon as selection fixes the
+    total. That total is the same CEILING as ``probe_points``, so a
+    verdict that settles early ends the count below it. Strictly an
+    observability hook for a measurement long enough to look like a hang
+    (issue #276): it runs inside the measurement, so it must be cheap and
+    must not raise.
 
     Returns ``(report, floor)``; the caller decides what to persist
     (:func:`zicato.epoch.lifecycle.set_epoch_preflight` /
@@ -932,15 +989,8 @@ async def run_contract_preflight(
             f"contract pre-flight: no mutation points enumerated under "
             f"{generation.snapshot_root}; nothing to degrade (and nothing to evolve)"
         )
-    pinned: tuple[str, ...]
-    if degrade_mutation_id:
-        pinned = (degrade_mutation_id,)
-    else:
-        pinned = tuple(getattr(config, "preflight_probe_mutation_ids", ()) or ())
-    limit = (
-        probe_points
-        if probe_points is not None
-        else int(getattr(config, "preflight_probe_points", 1) or 1)
+    pinned, limit = probe_selection_bounds(
+        config, degrade_mutation_id=degrade_mutation_id, probe_points=probe_points
     )
     sample, probed = select_probe_points(points, limit=limit, mutation_ids=pinned)
     if not sample:
@@ -964,6 +1014,13 @@ async def run_contract_preflight(
             "runtime.preflight_probe_mutation_ids)"
         )
 
+    # Everything the measurement may spend is now known: K A/A draws plus one
+    # draw per selected probe, each a serial pass over the whole board. That
+    # total anchors the progress an operator reads while it runs.
+    total_units = runs + len(sample)
+    if on_probe is not None:
+        on_probe(0, total_units)
+
     # (a) The A/A noise floor — the same measurement `zicato board audit`
     # takes, on the same cache slots (idempotent across the two surfaces).
     # This is where the pre-flight starts SPENDING: K champion draws.
@@ -985,6 +1042,11 @@ async def run_contract_preflight(
         # raised :class:`NoiseFloorInconclusive` into a skip + re-measure next
         # round.
         raise_on_infra_abort=True,
+        # The A/A draws are the pre-flight's first units, so the calibration's
+        # per-draw callback reports against the PRE-FLIGHT's total, not K.
+        on_draw=(
+            (lambda done, _runs: on_probe(done, total_units)) if on_probe is not None else None
+        ),
     )
 
     margin = float(getattr(weights, "promote_margin", 0.0))
@@ -1047,6 +1109,10 @@ async def run_contract_preflight(
             degraded_scalar = float(agg.get("scalar", 0.0))
 
         signal = abs(degraded_scalar - champion_mean)
+        if on_probe is not None:
+            # Reported AFTER the probe's draw settles, so the count an operator
+            # reads is units COMPLETED — the A/A draws plus this probe.
+            on_probe(runs + ordinal + 1, total_units)
         probed.append(
             ProbedPoint(
                 mutation_id=point.id,
@@ -1107,6 +1173,8 @@ async def run_contract_preflight(
 
 
 __all__ = [
+    "PREFLIGHT_PHASE",
+    "PREFLIGHT_PHASE_TOKEN",
     "PREFLIGHT_REPLICATE_BASE",
     "PREFLIGHT_REPLICATE_SPAN",
     "VERDICT_INERT",
@@ -1127,6 +1195,7 @@ __all__ = [
     "is_no_op_degradation",
     "preflight_verdict",
     "preflight_window_verdict",
+    "probe_selection_bounds",
     "run_contract_preflight",
     "select_probe_points",
 ]

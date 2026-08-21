@@ -322,8 +322,10 @@ function rungStepperDigest({ stepIndex, stepCount } = {}) {
 // from phase tokens. One pip+label per step (done = filled/muted, active =
 // accent, pending = hollow), the active step's detail beside it, and the
 // gate decision word once the round settles. An `epoch_open_step` (the A/A
-// noise-floor calibration) leads the strip as the active element while the four
-// pipeline steps sit pending — that stretch is real work, not a stalled round.
+// noise-floor calibration, the contract pre-flight) leads the strip as the
+// active element while the four pipeline steps sit pending — that stretch is
+// real work, not a stalled round. Its label and detail are server-owned, so a
+// new epoch-open step renders here with no change on this side.
 // Pure: builds detached DOM.
 export function pipelineStepper(pipe) {
   const steps = (pipe && Array.isArray(pipe.steps)) ? pipe.steps : [];

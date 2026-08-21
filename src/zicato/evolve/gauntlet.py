@@ -440,6 +440,12 @@ async def evolve_once(
         config=config,
         disable_drift=disable_drift,
         judge_only=judge_only,
+        # The pre-flight owns the heartbeat while it measures, for the same
+        # reason the calibration above does: this round's phase would
+        # otherwise stand over a serial step that has proposed and duelled
+        # nothing (issue #276).
+        beater=beater,
+        round_index=round_index,
     )
     from zicato.epoch.preflight import (  # noqa: PLC0415
         VERDICT_REFUSE,

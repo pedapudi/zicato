@@ -279,10 +279,11 @@ def _round_block(pipeline: dict[str, Any], ctx: LensContext) -> Block:
     stale = bool(pipeline.get("stale"))
     steps = [s for s in as_list(pipeline.get("steps")) if isinstance(s, dict)]
     active = pipeline.get("active_step")
-    # The epoch-open step (the A/A noise-floor calibration) runs AHEAD of the
-    # four pipeline steps, so it leads the lifeline as the active stage while
-    # they all read pending — otherwise a minutes-long measurement paints an
-    # untouched pipeline and reads as a wedged round.
+    # An epoch-open step (the A/A noise-floor calibration, the contract
+    # pre-flight) runs AHEAD of the four pipeline steps, so it leads the
+    # lifeline as the active stage while they all read pending — otherwise a
+    # minutes-long measurement paints an untouched pipeline and reads as a
+    # wedged round. Its label and detail are served, never derived here.
     open_step = pipeline.get("epoch_open_step")
     open_step = open_step if isinstance(open_step, dict) else None
 
