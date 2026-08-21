@@ -23,6 +23,7 @@ from zicato.query.paths import (
     coerce_float,
     layout_of,
 )
+from zicato.query.promoted_head import read_recorded_heads, recorded_head_ids
 from zicato.workspace import iter_epochs
 
 # ---------------------------------------------------------------------------
@@ -478,7 +479,9 @@ def _read_epoch_experiments(
     return experiments
 
 
-def _current_champion(experiments: list[dict[str, Any]]) -> str | None:
+def _current_champion(
+    experiments: list[dict[str, Any]], recorded_heads: frozenset[str] = frozenset()
+) -> str | None:
     """The epoch's REIGNING champion, from the stamped experiment records.
 
     Walks the promoted champion spine (the same chain
@@ -487,6 +490,14 @@ def _current_champion(experiments: list[dict[str, Any]]) -> str | None:
     generation. When nothing is promoted yet, the parentless seed (round
     0's incoming champion) is the champion; ``None`` when the epoch has
     no generations at all.
+
+    The spine BRANCHES wherever a round promoted a SET: every member carries
+    the lineage promoted flag, but only one headed the round and defended
+    afterwards, and which one is not a lineage fact
+    (:mod:`zicato.query.promoted_head` states where that authority lives).
+    ``recorded_heads`` is the set the runner recorded, and it resolves the
+    branch. Natural order is the deterministic TIEBREAK for a branch no
+    record survives to explain — a stable answer, not a correct one.
     """
     by_gen: dict[str, dict[str, Any]] = {}
     promoted: set[str] = set()
@@ -498,20 +509,30 @@ def _current_champion(experiments: list[dict[str, Any]]) -> str | None:
         if exp.get("promoted") is True:
             promoted.add(gid)
 
+    def _head(candidates: list[str]) -> str:
+        """The recorded head among ``candidates``, else the first of them."""
+        return next((gid for gid in candidates if gid in recorded_heads), candidates[0])
+
     if promoted:
-        child_of: dict[str, str] = {}
+        children: dict[str, list[str]] = {}
         roots: list[str] = []
-        for gid in sorted(promoted):
+        # Natural order throughout, so every candidate list this walk hands to
+        # ``_head`` is already in its tiebreak order (``v2`` before ``v11`` —
+        # the lexicographic sort this walk used put ``v11`` first).
+        for gid in sorted(promoted, key=_natural_key):
             parent = by_gen[gid].get("parent_generation_id")
             if isinstance(parent, str) and parent in promoted:
-                child_of.setdefault(parent, gid)
+                children.setdefault(parent, []).append(gid)
             else:
                 roots.append(gid)
         if roots:
-            cur = roots[0]
+            cur = _head(roots)
             seen = {cur}
-            while cur in child_of and child_of[cur] not in seen:
-                cur = child_of[cur]
+            while cur in children:
+                nxt = _head(children[cur])
+                if nxt in seen:
+                    break
+                cur = nxt
                 seen.add(cur)
             return cur
 
@@ -993,8 +1014,12 @@ def build_epoch_view(
 
     # The REIGNING champion — the end of the promoted spine (or the seed
     # while nothing is promoted). The ONE champion pointer the frontend
-    # reads instead of re-scanning the generation list.
-    view["current_champion"] = _current_champion(view["experiments"])
+    # reads instead of re-scanning the generation list. The recorded heads
+    # resolve the spine wherever a multi-promote branched it; the runtime
+    # ``current_generation`` marker stays unread (see promoted_head).
+    view["current_champion"] = _current_champion(
+        view["experiments"], recorded_head_ids(read_recorded_heads(paths, epoch_id))
+    )
 
     # Holdout ladder summary — the latest decision's ``holdout`` block
     # (ladder budget + train/holdout scalars). Read defensively from the

@@ -2004,9 +2004,15 @@ skipped under `--mode fast`.
 
 ```bash
 uv run pytest tests/ -q -k "selection or strategy or conformance"
-uv run pytest tests/test_selection_conformance.py -q     # the parametrized gate
+uv run pytest tests/test_selection_strategies.py tests/test_orchestrator_selection.py -q
 uv run zicato --help | grep -A2 structure                # the token is documented
 ```
+
+There is no parametrized conformance gate over the structures: each strategy is
+driven directly in `tests/test_selection_strategies.py`, its orchestrator wiring
+in `tests/test_orchestrator_selection.py`, and its in-flight projection in
+`tests/test_live_tournament_structure.py`. A new structure needs its own cases
+added to those three; nothing picks it up automatically.
 
 ---
 

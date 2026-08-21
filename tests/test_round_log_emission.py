@@ -25,6 +25,7 @@ from zicato.epoch.round_log import RoundLog, fold_round_record
 from zicato.evolve.round_reporting import _RoundLogEmitter
 from zicato.proposer.agent import ProposerContext
 from zicato.proposer.best_of_n import BestOfNProposerAgent
+from zicato.proposer.proposer import ProposerError
 
 
 def _experiment(gen_id: str, idea: str) -> Experiment:
@@ -353,6 +354,71 @@ class TestBestOfNEmission:
         critique = emitted[-1][1]
         assert critique["reason"] == "heuristic"
         assert isinstance(critique["index"], int)
+
+    def test_a_collapsed_slate_still_records_its_selection(self) -> None:
+        """One surviving candidate is still a recorded selection (issue #292).
+
+        The early return that mounts a sole survivor used to skip the emit
+        entirely, so a round whose other slots all failed minted a generation
+        with no record of what it was chosen from — the same blind spot one
+        layer down from the missing slate summary. The event is the shared
+        shape, and its ``reason`` names the degenerate basis: nothing chose.
+        """
+        emitted: list[tuple[str, dict[str, Any]]] = []
+
+        class _Inner:
+            def __init__(self) -> None:
+                self.calls = 0
+
+            async def propose(self, ctx: ProposerContext) -> Experiment:
+                self.calls += 1
+                if self.calls > 1:
+                    raise ProposerError(["slot down"])
+                return _experiment("v1", "the only idea")
+
+        agent = BestOfNProposerAgent(
+            inner=_Inner(),
+            config=ProposerQualityConfig(best_of_n=3, critique_enabled=False),
+        )
+        result = asyncio.run(agent.propose(_ctx(lambda t, f: emitted.append((t, f)))))
+        assert result.generation_id == "v1"
+        assert [t for t, _f in emitted] == [
+            "candidate_sampled",
+            "proposal_attempted",
+            "proposal_attempted",
+            "critique_selected",
+        ]
+        assert emitted[-1][1] == {
+            "index": 0,
+            "reason": "sole_candidate",
+            "slate": ({"index": 0, "core_idea": "the only idea", "mutation_ids": ["m1"]},),
+            "rationale": "",
+        }
+
+    def test_a_full_slate_selection_is_unchanged(self) -> None:
+        """The degenerate emit did not disturb a slate that really chose."""
+        emitted: list[tuple[str, dict[str, Any]]] = []
+
+        class _Inner:
+            def __init__(self) -> None:
+                self.calls = 0
+
+            async def propose(self, ctx: ProposerContext) -> Experiment:
+                self.calls += 1
+                return _experiment(f"v{self.calls}", f"idea {self.calls}")
+
+        agent = BestOfNProposerAgent(
+            inner=_Inner(),
+            config=ProposerQualityConfig(best_of_n=2, critique_enabled=False),
+        )
+        asyncio.run(agent.propose(_ctx(lambda t, f: emitted.append((t, f)))))
+        assert [t for t, _f in emitted] == [
+            "candidate_sampled",
+            "candidate_sampled",
+            "critique_selected",
+        ]
+        assert emitted[-1][1]["reason"] == "heuristic"
+        assert [row["core_idea"] for row in emitted[-1][1]["slate"]] == ["idea 1", "idea 2"]
 
     def test_raising_emitter_never_fails_the_propose(self) -> None:
         class _Inner:

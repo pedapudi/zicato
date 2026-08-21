@@ -25,6 +25,7 @@ is the racing-field ladder, served by :mod:`racing_view`).
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 from zicato.query.gate_view import build_score_trajectory
@@ -33,8 +34,11 @@ from zicato.query.paths import (
     WorkspacePaths,
     _resolve_epoch_id,
 )
+from zicato.query.promoted_head import head_of_round, read_recorded_heads
 from zicato.query.runtime_view import read_active_tournament_dict
 from zicato.query.tournament_view import build_bracket
+
+log = logging.getLogger("zicato.query")
 
 
 def _is_num(v: Any) -> bool:
@@ -144,7 +148,24 @@ def build_round_timeline(paths: WorkspacePaths, epoch_id: str | None = None) -> 
     else:
         seed_id = None
 
+    # The runner's own per-round statement of WHICH member of a promoted set
+    # took the title. Read once for the epoch and matched per round below.
+    recorded_heads = read_recorded_heads(paths, epoch_id)
+
     def _build_rounds(per_round: list[dict[str, Any]], source: str) -> list[dict[str, Any]]:
+        def _next_round_champion(index: int) -> str | None:
+            """The role-tagged champion on the NEXT round's field record.
+
+            Whoever defends round N+1 IS the head round N promoted — the
+            second place the runner records it (:mod:`zicato.query.
+            promoted_head`). Consulted only when round N's own snapshot is
+            absent or was written while the round was still in flight.
+            """
+            nxt = per_round[index + 1].get("tournament_ref") if index + 1 < len(per_round) else None
+            champ = nxt.get("champion") if isinstance(nxt, dict) else None
+            cid = champ.get("id") if isinstance(champ, dict) else None
+            return str(cid) if cid is not None and str(cid) else None
+
         carried = seed_id
         out: list[dict[str, Any]] = []
         for i, r in enumerate(per_round):
@@ -160,22 +181,74 @@ def build_round_timeline(paths: WorkspacePaths, epoch_id: str | None = None) -> 
                         "promoted": _promoted_of(gid),
                     }
                 )
-            promoted_challenger = next((c for c in challengers if c["promoted"]), None)
+            round_index = int(r["round_index"]) if _is_num(r.get("round_index")) else i
+            ref = r.get("tournament_ref")
+            tournament_id = (
+                str(ref.get("tournament_id"))
+                if isinstance(ref, dict) and ref.get("tournament_id") is not None
+                else None
+            )
+            # INVARIANT (09-dashboard-and-query.md DQ14, "lineage owns
+            # topology"): the lineage flags own WHETHER the round promoted; they
+            # cannot own WHICH member of a promoted set headed it, because every
+            # member carries the same flag. So the head is the RECORDED one,
+            # confined to the lineage-promoted set — the record disambiguates
+            # within that set and never adds a promotion. First-match over the
+            # flags is the reconstruction of last resort.
+            head: str | None = None
+            promoted_set = [c for c in challengers if c["promoted"]]
+            if promoted_set:
+                promoted_ids = {str(c["id"]) for c in promoted_set}
+                reconstructed = str(promoted_set[0]["id"])
+                claims = [
+                    (origin, gid)
+                    for origin, gid in (
+                        ("field_record", head_of_round(recorded_heads, tournament_id)),
+                        ("next_round_champion", _next_round_champion(i)),
+                    )
+                    if gid is not None
+                ]
+                usable = next(((o, gid) for o, gid in claims if gid in promoted_ids), None)
+                head = usable[1] if usable is not None else reconstructed
+                if claims and claims[0][1] != reconstructed:
+                    log.info(
+                        "round-timeline: epoch %s round %s — recorded head %s (%s) disagrees "
+                        "with the reconstructed spine %s; serving %s",
+                        epoch_id,
+                        round_index,
+                        claims[0][1],
+                        claims[0][0],
+                        reconstructed,
+                        head,
+                    )
             gate = (
-                {"kind": "promoted", "gen": promoted_challenger["id"]}
-                if promoted_challenger
+                {"kind": "promoted", "gen": head}
+                if head is not None
                 else {"kind": "held", "gen": None}
             )
             # Prefer the CANONICAL per-round champion off the tournament
             # record ({id, scalar, eval_mode, run_ref}) over the
             # reconstructed spine + trajectory scalar.
-            ref = r.get("tournament_ref")
             ref_champ = None
             if isinstance(ref, dict):
                 rc = ref.get("champion")
                 if isinstance(rc, dict) and rc.get("id") is not None:
                     ref_champ = rc
             champ_id = str(ref_champ["id"]) if ref_champ else carried
+            # The record stays the champion source, but the spine is now a real
+            # cross-check: ``carried`` advances by the recorded head above, so a
+            # divergence here is two records disagreeing, not the known
+            # first-match weakness. Surfaced as a log line, never a payload
+            # field — the served answer is the record either way.
+            if ref_champ is not None and carried is not None and champ_id != str(carried):
+                log.info(
+                    "round-timeline: epoch %s round %s — record champion %s disagrees with the "
+                    "carried spine %s; serving the record",
+                    epoch_id,
+                    round_index,
+                    champ_id,
+                    carried,
+                )
             champion = {
                 "id": champ_id,
                 "scalar": (
@@ -189,22 +262,18 @@ def build_round_timeline(paths: WorkspacePaths, epoch_id: str | None = None) -> 
             }
             out.append(
                 {
-                    "round_index": (int(r["round_index"]) if _is_num(r.get("round_index")) else i),
+                    "round_index": round_index,
                     "champion": champion,
                     "challengers": challengers,
                     "structure": structure,
                     "gate": gate,
-                    "tournament_id": (
-                        str(ref.get("tournament_id"))
-                        if isinstance(ref, dict) and ref.get("tournament_id") is not None
-                        else None
-                    ),
+                    "tournament_id": tournament_id,
                     "tournament": ref if isinstance(ref, dict) else None,
                     "source": source,
                 }
             )
-            if promoted_challenger:
-                carried = str(promoted_challenger["id"])
+            if head is not None:
+                carried = head
         return out
 
     def _payload(rounds: list[dict[str, Any]], source: str) -> dict[str, Any]:
@@ -221,12 +290,16 @@ def build_round_timeline(paths: WorkspacePaths, epoch_id: str | None = None) -> 
                 seen = {str(c["id"]) for r in rounds for c in r.get("challengers", [])}
                 if ids and not seen.intersection(ids):
                     last = rounds[-1] if rounds else None
-                    winner = next(
-                        (c for c in (last or {}).get("challengers", []) if c.get("promoted")), None
+                    # The in-flight round's incoming champion is the previous
+                    # round's HEAD — read off its settled gate, which already
+                    # resolved the recorded one, rather than re-deriving it from
+                    # the lineage flags (which cannot name a head).
+                    last_gate = (last or {}).get("gate") or {}
+                    champion_id = (
+                        last_gate.get("gen")
+                        or ((last or {}).get("champion") or {}).get("id")
+                        or seed_id
                     )
-                    champion_id = (winner or (last or {}).get("champion") or {}).get(
-                        "id"
-                    ) or seed_id
                     projected = active.get("projected_standings")
                     projected = projected if isinstance(projected, dict) else {}
                     status = {
