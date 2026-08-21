@@ -396,13 +396,24 @@ def read_meta_loop_session_id(paths: WorkspacePaths) -> str:
     return ""
 
 
-def read_active_runs_view(paths: WorkspacePaths) -> list[dict[str, Any]]:
+def read_active_runs_view(
+    paths: WorkspacePaths, *, now: _dt.datetime | None = None
+) -> list[dict[str, Any]]:
     """``active_runs/*.json`` enriched with computed deadline progress.
 
     Each row inlines every on-disk ``ActiveRun`` field and adds
     ``progress`` (deadline fraction), ``elapsed_seconds`` and
     ``budget_seconds`` — exactly what ``/api/active-runs`` returns from
     the Rust ``read_active_runs_view``.
+
+    Each row also carries the SERVED in-flight verdict ``fresh``
+    (:func:`is_run_fresh`): whether this record is one the server counts as
+    still beating. Both gates are decided here because only the server can
+    run the second one — a browser is never the worker's host, so a client
+    that ages rows by timestamp alone keeps counting a record whose worker
+    is provably gone until the staleness window expires. ``now`` pins the
+    clock the row is aged against (defaults to the read's own wall clock);
+    passing it makes a fixture's verdict deterministic.
 
     ``adk_session_id`` is intentionally NOT read here: opening
     ``events.jsonl`` files in this hot path (called from
@@ -412,7 +423,8 @@ def read_active_runs_view(paths: WorkspacePaths) -> list[dict[str, Any]]:
     available via ``build_matchup_detail`` → ``ab_grid`` cells (the
     reducer persists it in ``loss.json``).
     """
-    now = _utc_now()
+    now = now or _utc_now()
+    host_local = _reader_shares_worker_host(paths)
     out: list[dict[str, Any]] = []
     try:
         runs = list_active_runs(paths.root)
@@ -430,6 +442,7 @@ def read_active_runs_view(paths: WorkspacePaths) -> list[dict[str, Any]]:
         # units in flight for a run that died in June. Derived from the per-run
         # beater's ``last_progress``, falling back to ``started_at``.
         d["last_progress_ts"] = _heartbeat_ts_ms(d.get("last_progress") or d.get("started_at"))
+        d["fresh"] = is_run_fresh(d, now, host_local=host_local)
         out.append(d)
     return out
 
@@ -543,6 +556,28 @@ def _is_provably_dead(run: dict[str, Any], *, host_local: bool) -> bool:
     return not is_same_process(pid, float(start))
 
 
+def is_run_fresh(run: dict[str, Any], now: _dt.datetime, *, host_local: bool) -> bool:
+    """Whether ONE ``active_runs`` record is still in flight.
+
+    THE per-record rule :func:`fresh_run_count` tallies and
+    :func:`read_active_runs_view` stamps onto each served row, so the count
+    and the per-row verdict can never disagree. Both gates, in order:
+
+    1. **Timestamp** — the per-run beater's ``last_progress`` (falling back
+       to ``started_at``) is within :data:`STALE_HEARTBEAT_S` of ``now``.
+    2. **Process identity** — the record's worker is not *provably* dead
+       (:func:`_is_provably_dead`), which only ever TIGHTENS the first.
+
+    ``host_local`` is the proof that the recorded pids denote local
+    processes (:func:`_reader_shares_worker_host`); ``False`` leaves the
+    staleness window standing alone, which is the correct reading on a
+    workspace copied from another machine.
+    """
+    return _is_fresh(run.get("last_progress") or run.get("started_at"), now) and not (
+        _is_provably_dead(run, host_local=host_local)
+    )
+
+
 def fresh_run_count(
     runs: list[dict[str, Any]],
     now: _dt.datetime | None = None,
@@ -554,26 +589,21 @@ def fresh_run_count(
     ``active_runs/*.json`` outlives the process that wrote it (the file is
     removed on a clean run-end, so a killed worker's record lingers), so the
     count of files is not a count of workers. A record counts iff it passes
-    BOTH gates:
-
-    1. **Timestamp** — the per-run beater's ``last_progress`` (falling back
-       to ``started_at``) is within :data:`STALE_HEARTBEAT_S`, aged exactly
-       like the heartbeat. Mirrors the client's ``freshRunCount``
-       (``livestatus.js``), with one deliberate divergence: an untimestamped
-       record counts as NOT fresh here (``_is_fresh``'s rule), because both
-       Python readers of this tally run on one server and must agree, and
-       the real producer always stamps ``started_at``.
-    2. **Process identity** — the record's worker is not *provably* dead
-       (:func:`_is_provably_dead`). This gate only ever TIGHTENS the first:
-       it drops a record whose named process is known to be gone, reaping it
-       at once instead of waiting out the staleness window, and it never
-       admits one the timestamps rejected.
+    both of :func:`is_run_fresh`'s gates.
 
     The identity gate needs ``paths`` — it proves host-locality off the
     workspace lock — and is unknowable without it, as it is on a workspace
-    read from another machine. There the timestamp rule stands alone,
-    exactly as before, which is also the client mirror's permanent case: a
-    browser is never the worker's host.
+    read from another machine. There the timestamp rule stands alone.
+
+    The client's ``freshRunCount`` (``livestatus.js``) reads the per-row
+    ``fresh`` verdict this rule stamps on every served row rather than
+    re-deriving it, because a browser can never run the identity gate; it
+    falls back to ageing the timestamps only against a server that sends no
+    verdict. That fallback carries one deliberate divergence: an
+    untimestamped record counts as NOT fresh here (``_is_fresh``'s rule)
+    while the client's fallback keeps it, because the real producer always
+    stamps ``started_at`` and every Python reader of this tally runs on one
+    server and must agree.
 
     Reaping here is READ-side: the record leaves the tally and the file
     stays. Removing it belongs to the writer and the supervisor; a read
@@ -581,12 +611,7 @@ def fresh_run_count(
     """
     now = now or _utc_now()
     host_local = _reader_shares_worker_host(paths)
-    return sum(
-        1
-        for r in runs
-        if _is_fresh(r.get("last_progress") or r.get("started_at"), now)
-        and not _is_provably_dead(r, host_local=host_local)
-    )
+    return sum(1 for r in runs if is_run_fresh(r, now, host_local=host_local))
 
 
 def _on_disk_heartbeat(paths: WorkspacePaths) -> dict[str, Any] | None:

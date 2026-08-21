@@ -113,6 +113,47 @@ test('liveness: a fresh heartbeat reads LIVE and reports no end', () => {
   assertEqual(liveness.endedAt, null, 'a live run has not ended');
 });
 
+// ── 1b. the SERVED per-run in-flight verdict ────────────────────────────
+//
+// The tally's second gate asks whether the record's worker process still
+// exists. Only the server can answer that — it runs on the worker's host —
+// so it decides per row and sends `fresh`. The browser must take that
+// answer, and must keep working against a server that does not send it.
+
+test('in flight: the served per-run verdict decides, not the timestamp', () => {
+  // Seconds-old records the SERVER says are over: their workers are gone,
+  // which no amount of timestamp arithmetic in the browser can see.
+  const runs = liveState().activeRuns.map((r) => Object.assign({}, r, { fresh: false }));
+  const { status } = LS.livenessFor(liveState({ activeRuns: runs }), NOW);
+  assertEqual(status.inFlight, 0, 'a fresh-looking record the server reaped is not in flight');
+});
+
+test('in flight: a served verdict can also keep a record the clock would drop', () => {
+  // The mirror case — the identity gate only ever tightens, but the client
+  // must not second-guess a served TRUE either.
+  const runs = juneState().activeRuns.map((r) => Object.assign({}, r, { fresh: true }));
+  const { status } = LS.livenessFor(juneState({ activeRuns: runs }), NOW);
+  assertEqual(status.inFlight, 7, 'the server\'s verdict stands on every row it sends');
+});
+
+test('in flight: a server that sends no verdict still ages the timestamps', () => {
+  // The DEGRADE that must not break: the Rust supervisor (and any build
+  // before this field) sends rows with no `fresh`, and the client falls back
+  // to exactly the ageing it did before.
+  const junePlain = LS.livenessFor(juneState(), NOW).status;
+  assertEqual(junePlain.inFlight, 0, 'stale rows with no served verdict still age out');
+  const livePlain = LS.livenessFor(liveState(), NOW).status;
+  assertEqual(livePlain.inFlight, 7, 'fresh rows with no served verdict still count');
+});
+
+test('in flight: a non-boolean fresh field is not a verdict', () => {
+  // Only a real boolean is an answer. A string / null / absent field means
+  // the server did not decide, so the clock does.
+  const runs = juneState().activeRuns.map((r) => Object.assign({}, r, { fresh: 'yes' }));
+  const { status } = LS.livenessFor(juneState({ activeRuns: runs }), NOW);
+  assertEqual(status.inFlight, 0, 'a non-boolean is ignored and the stale rows age out');
+});
+
 test('liveness: the client can DEMOTE the server\'s live verdict but never PROMOTE a dead one', () => {
   // Server says live, client\'s own ageing says the pulse is long gone (the
   // stream died mid-run and the payload is a stale photograph).

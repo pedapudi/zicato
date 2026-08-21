@@ -374,6 +374,57 @@ def test_a_stale_record_stays_out_however_alive_its_pid_is(tmp_path: Path) -> No
 
 
 # ---------------------------------------------------------------------------
+# The SERVED per-row verdict (#273 residual)
+# ---------------------------------------------------------------------------
+#
+# The browser can age a timestamp but can never run the identity gate — it is
+# not the worker's host. So the server decides per row and sends the answer;
+# these pin that the served verdict is the tally's own rule, row by row.
+
+
+def _rows(ws: Path) -> list[dict[str, Any]]:
+    return read_active_runs_view(WorkspacePaths(ws), now=NOW)
+
+
+def test_each_row_carries_the_servers_in_flight_verdict(tmp_path: Path) -> None:
+    """A beating record serves ``fresh: true``, a stale one ``fresh: false``."""
+    ws = _ws(tmp_path, run_ages_s=[5.0, 86400.0])
+    assert [row["fresh"] for row in _rows(ws)] == [True, False]
+
+
+def test_the_per_row_verdict_runs_the_identity_gate(
+    tmp_path: Path, dead_worker: tuple[int, float]
+) -> None:
+    """A seconds-old record whose worker is provably gone serves fresh:false.
+
+    This is the half a client cannot reach: by the timestamp alone the row
+    is one second old, and only the pid identity says the work is over.
+    """
+    ws = _ws(
+        tmp_path,
+        beat_age_s=None,
+        run_ages_s=[1.0],
+        run_identity=dead_worker,
+        lock_owner=_this_process(),
+    )
+    assert [row["fresh"] for row in _rows(ws)] == [False]
+
+
+def test_the_per_row_verdict_and_the_tally_never_disagree(
+    tmp_path: Path, dead_worker: tuple[int, float]
+) -> None:
+    """One rule, two surfaces: the tally is the count of fresh rows."""
+    ws = _ws(
+        tmp_path,
+        run_ages_s=[1.0, 86400.0, 2.0],
+        run_identity=dead_worker,
+        lock_owner=_this_process(),
+    )
+    rows = _rows(ws)
+    assert sum(1 for row in rows if row["fresh"]) == _count(ws)
+
+
+# ---------------------------------------------------------------------------
 # The phase vocabulary
 # ---------------------------------------------------------------------------
 

@@ -100,12 +100,25 @@ function runTs(r) {
 // hand-built or minimal payload, and dropping it would silently under-report a
 // genuinely live run. The stale-forever case we are fixing always HAS a
 // timestamp — an old one.
+//
+// The SERVER now decides this per row and sends its verdict as `fresh`
+// (read_active_runs_view), and that verdict wins whenever it is present. It
+// applies a second gate the browser CANNOT: the record names a worker pid,
+// and the server — running on the worker's own host — can ask whether that
+// exact process still exists, so a record whose worker is provably gone drops
+// out at once instead of waiting out the staleness window. Ageing timestamps
+// is the fallback for a server that sends no verdict (the Rust supervisor, or
+// any build predating the field); the two agree on every record the client can
+// judge for itself.
+function runIsFresh(r, now) {
+  if (r && typeof r === 'object' && typeof r.fresh === 'boolean') return r.fresh;
+  const t = runTs(r);
+  return !isFinite(t) || (now - t) <= STALE_HEARTBEAT_MS;
+}
+
 function freshRunCount(runs, now) {
   let n = 0;
-  for (const r of runs) {
-    const t = runTs(r);
-    if (!isFinite(t) || (now - t) <= STALE_HEARTBEAT_MS) n += 1;
-  }
+  for (const r of runs) if (runIsFresh(r, now)) n += 1;
   return n;
 }
 
