@@ -210,6 +210,12 @@ async def test_best_of_n_critic_picks_scripted_winner() -> None:
     assert "Candidate 0" in prompt
     assert "Candidate 1" in prompt
     assert "minimal grounded edit" in prompt
+    # The USER prompt's closing instruction is load-bearing for the recorded
+    # rationale: it is the last and most specific ask the critic sees, so if
+    # it ever regresses to "ONLY the integer index" the model obeys IT, the
+    # second line never arrives, and the feature goes silently inert while
+    # the parser and system prompt stay green.
+    assert "ALONE on the first line, then one sentence" in prompt
 
 
 @pytest.mark.asyncio
