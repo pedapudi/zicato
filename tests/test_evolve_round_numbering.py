@@ -6,6 +6,12 @@ epoch's round numbering rather than restart the invocation-local loop counter at
 rounds in the round-grouped dashboard view (the "v9 lands in Round 0 next to
 v1–v4" bug). :func:`zicato.evolve.loop._epoch_round_base` computes the next
 round index for the pinned epoch.
+
+The count is over MINTED generations only. The seed is carried — copied from the
+registered trees, or from a rolled predecessor's promoted head — and is not a
+round that was spent, even though it persists ``round_index: 0``. Every fixture
+here therefore gives a challenger the parent a real one has; a parentless record
+is a seed.
 """
 
 from __future__ import annotations
@@ -16,11 +22,27 @@ from pathlib import Path
 from zicato.evolve.loop import _epoch_round_base
 
 
-def _write_gen(ws: Path, epoch: str, gid: str, round_index: int) -> None:
+def _write_gen(ws: Path, epoch: str, gid: str, round_index: int, parent: str = "v0") -> None:
+    """A MINTED challenger: it carries the parent every real challenger has."""
     d = ws / "epochs" / epoch / "generations" / gid
     d.mkdir(parents=True, exist_ok=True)
     (d / "experiment.json").write_text(
-        json.dumps({"generation_id": gid, "round_index": round_index})
+        json.dumps(
+            {"generation_id": gid, "round_index": round_index, "parent_generation_id": parent}
+        )
+    )
+
+
+def _write_seed(ws: Path, epoch: str, gid: str = "v0") -> None:
+    """The synthetic seed marker, shaped like ``write_seed_experiment`` writes it.
+
+    Parentless, and stamped ``round_index: 0`` by the ``Experiment.round_index``
+    default — the pair that made the seed look like a spent round.
+    """
+    d = ws / "epochs" / epoch / "generations" / gid
+    d.mkdir(parents=True, exist_ok=True)
+    (d / "experiment.json").write_text(
+        json.dumps({"generation_id": gid, "round_index": 0, "parent_generation_id": None})
     )
 
 
@@ -58,5 +80,49 @@ def test_epoch_round_base_ignores_non_integer_round_index(tmp_path: Path) -> Non
     # A malformed round_index must not crash or inflate the base.
     d = ws / "epochs" / epoch / "generations" / "v2"
     d.mkdir(parents=True, exist_ok=True)
-    (d / "experiment.json").write_text(json.dumps({"round_index": "oops"}))
+    (d / "experiment.json").write_text(
+        json.dumps({"parent_generation_id": "v0", "round_index": "oops"})
+    )
     assert _epoch_round_base(ws, epoch) == 1
+
+
+def test_seeded_but_unrun_epoch_starts_at_round_zero(tmp_path: Path) -> None:
+    """A seed alone is not a round: the first real field must still be round 0.
+
+    ``write_seed_experiment`` persists ``round_index: 0`` on the parentless seed,
+    so counting it returned base 1 and the epoch's first real field was stamped
+    1 — which the round timeline then rendered as a phantom round 0 (the seed's
+    own bucket, emptied downstream) above the real rounds. Reachable whenever an
+    epoch is seeded and mints no field: a pre-flight refusal, a crash before the
+    field lands, a budget stop, an operator interrupt.
+    """
+    ws = tmp_path / ".zicato"
+    epoch = "2026-06-15_rolled"
+    _write_seed(ws, epoch)
+    assert _epoch_round_base(ws, epoch) == 0
+
+
+def test_seed_does_not_inflate_a_running_epochs_numbering(tmp_path: Path) -> None:
+    """The seed is skipped, and the MINTED rounds still decide the base."""
+    ws = tmp_path / ".zicato"
+    epoch = "2026-06-15_rolled"
+    _write_seed(ws, epoch)
+    _write_gen(ws, epoch, "v1", 0)
+    _write_gen(ws, epoch, "v2", 1)
+    # Rounds 0 and 1 were spent, so the next is 2 — the seed adds nothing.
+    assert _epoch_round_base(ws, epoch) == 2
+
+
+def test_seed_skip_preserves_cumulative_numbering(tmp_path: Path) -> None:
+    """The standing proof: a re-run still CONTINUES past the highest round.
+
+    Skipping the seed must lower the base only when the seed is the sole
+    experiment. An epoch whose challengers all sit in round 4 keeps continuing at
+    5, so the "v9 lands in Round 0 next to v1-v4" collision stays fixed.
+    """
+    ws = tmp_path / ".zicato"
+    epoch = "2026-06-15_demo"
+    _write_seed(ws, epoch)
+    for gid in ("v7", "v8", "v9"):
+        _write_gen(ws, epoch, gid, 4, parent="v6")
+    assert _epoch_round_base(ws, epoch) == 5

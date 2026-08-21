@@ -805,6 +805,52 @@ def test_legacy_row_without_the_v8_columns_still_reads_full(tmp_path: Path) -> N
     assert [r["champion"]["eval_mode"] for r in rounds] == ["full", "full"]
 
 
+def test_round_timeline_drops_a_numerically_stamped_seed(tmp_path: Path) -> None:
+    """A stamped seed is not a round: no phantom round 0 with an empty field.
+
+    ``write_seed_experiment`` persists ``round_index: 0`` on the parentless seed.
+    The bucketing skipped the seed only when its stamp was ABSENT, so a stamped
+    one formed a bucket of its own — and since the carried champion is never a
+    minted challenger, that bucket emptied downstream into a round where the old
+    champion "defends" nothing. Epochs stamped this way are already on disk (the
+    stamps are never rewritten), so the reader has to hold the line too.
+    """
+    ws = _gauntlet_workspace(tmp_path)
+    gens_dir = ws / "epochs" / EPOCH / "generations"
+    # the seed, exactly as write_seed_experiment leaves it: parentless, stamped 0.
+    _write_json(
+        gens_dir / "v0" / "experiment.json",
+        {"parent_generation_id": None, "round_index": 0},
+    )
+    # the real field, stamped 1 — what an epoch gets when the base counted the seed.
+    _write_json(
+        gens_dir / "v1" / "experiment.json",
+        {
+            "parent_generation_id": "v0",
+            "round_index": 1,
+            "outcome": {"tournament_decision": "rejected"},
+        },
+    )
+    _write_json(
+        gens_dir / "v2" / "experiment.json",
+        {
+            "parent_generation_id": "v0",
+            "round_index": 1,
+            "outcome": {"tournament_decision": "promoted"},
+        },
+    )
+    tl = build_round_timeline(WorkspacePaths(ws), EPOCH)
+    assert tl["source"] == "round_index"
+    rounds = tl["rounds"]
+    # ONE round — the real one. The seed contributes no round of its own.
+    assert [r["round_index"] for r in rounds] == [1]
+    assert sorted(c["id"] for c in rounds[0]["challengers"]) == ["v1", "v2"]
+    assert rounds[0]["champion"]["id"] == "v0", "the carried seed still DEFENDS its round"
+    assert rounds[0]["gate"] == {"kind": "promoted", "gen": "v2"}
+    # and no round anywhere is an empty field.
+    assert all(r["challengers"] for r in rounds), "no round with an empty field"
+
+
 def test_round_timeline_owns_live_field_overlay(tmp_path: Path) -> None:
     ws = _gauntlet_workspace(tmp_path)
     _write_json(

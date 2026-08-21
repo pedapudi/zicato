@@ -237,6 +237,15 @@ def _epoch_round_base(workspace_root: Path, epoch_id: str | None) -> int:
     (the "v9 lands in Round 0 next to v1–v4" bug). Returns
     ``max(persisted round_index) + 1``, or ``0`` for a fresh / unreadable epoch
     (the historical behaviour for a brand-new epoch, where the first round is 0).
+
+    A PARENTLESS generation is skipped: the epoch's seed is CARRIED (copied from
+    the registered trees, or from a rolled predecessor's promoted head), never
+    minted by a round, so it does not represent a round already spent. It still
+    persists ``round_index: 0`` — ``write_seed_experiment`` builds it with the
+    ``Experiment.round_index`` default — so counting it started a seeded-but-unrun
+    epoch's first real field at 1 and left a phantom round 0 in the timeline. This
+    is the same rule the round-timeline reader uses to identify the seed (the
+    parentless generation), so writer and reader agree on what a round is.
     """
 ```
 *(src/zicato/evolve/loop.py, `_epoch_round_base`)*
@@ -247,6 +256,15 @@ a new epoch). Note the closure detail: the per-round `_run_round` inner
 function binds `_epoch_id: str | None = epoch_id` as a DEFAULT ARGUMENT
 so a mid-iteration reassignment is captured by value, not late-bound — a
 classic Python trap the code comments on explicitly.
+
+> ⚠️ TRAP — count MINTED generations only. The seed is carried, not minted,
+> and it still persists `round_index: 0` (`write_seed_experiment` builds it with
+> the `Experiment.round_index` default). Counting it made a seeded-but-unrun
+> epoch — a pre-flight refusal, a crash before the field landed, a budget stop —
+> start its first real field at 1, and the round timeline then rendered the
+> seed's own bucket as a phantom round 0 in which the carried champion defends
+> an empty field. Writer and reader both identify the seed the same way: it is
+> the PARENTLESS generation.
 
 ### 2.4 The between-rounds operator safe point
 
