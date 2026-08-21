@@ -136,21 +136,42 @@ def test_epoch_experiments_are_stamped(tmp_path: Path) -> None:
     assert by_gen["v1"]["promoted"] is True
     assert by_gen["v2"]["decision"] == "rejected"
     assert by_gen["v2"]["promoted"] is False
-    # An in-flight record is stamped tri-state None, never False (Class B).
-    assert by_gen["v4"]["decision"] is None
+    # An in-flight record is stamped tri-state None, never False (Class B);
+    # its decision is the classifier's ``pending``, the same token the
+    # lineage feed serves for a candidate that has not settled.
+    assert by_gen["v4"]["decision"] == "pending"
+    assert by_gen["v4"]["decision_label"] == "undecided"
     assert by_gen["v4"]["promoted"] is None
-    assert by_gen["v0"]["decision"] == "promoted"
+    # The seed faced no gate. It carries ``promoted: true`` (it is the
+    # incoming champion of round 0) but its decision is the classifier's
+    # ``baseline``, never a win it never contested.
+    assert by_gen["v0"]["decision"] == "baseline"
+    assert by_gen["v0"]["decision_label"] == "seed (v0)"
     assert by_gen["v0"]["promoted"] is True
 
 
 def test_epoch_experiments_agree_with_lineage(tmp_path: Path) -> None:
-    """Every operator feed uses lineage as its one decision authority."""
+    """Every operator feed uses lineage as its one decision authority.
+
+    Pins the whole disagreement class, not one node: for EVERY generation
+    of the epoch — the seed included — the epoch feed and the lineage feed
+    must serve the identical (promoted, decision, decision_label) triple.
+    A feed that derives any part of that triple locally instead of copying
+    the classifier's output fails here.
+    """
     ws = _seed_workspace(tmp_path)
     view = build_epoch_view(WorkspacePaths(ws))
     lineage = build_lineage_view(WorkspacePaths(ws), EPOCH)
-    lin_by_gen = {g["generation_id"]: g["promoted"] for g in lineage["generations"]}
-    for exp in view["experiments"]:
-        assert exp["promoted"] == lin_by_gen[exp["generation_id"]]
+
+    def surface(rec: dict[str, object]) -> tuple[object, ...]:
+        return tuple(rec.get(k) for k in ("promoted", "decision", "decision_label"))
+
+    lin_by_gen = {g["generation_id"]: surface(g) for g in lineage["generations"]}
+    epoch_by_gen = {e["generation_id"]: surface(e) for e in view["experiments"]}
+    assert epoch_by_gen.keys() == lin_by_gen.keys()
+    assert epoch_by_gen == lin_by_gen
+    # And the seed's triple is the honest one both feeds now agree on.
+    assert epoch_by_gen["v0"] == (True, "baseline", "seed (v0)")
 
 
 def test_current_champion_is_the_spine_end(tmp_path: Path) -> None:

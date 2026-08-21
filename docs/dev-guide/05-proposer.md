@@ -4,7 +4,7 @@
 > resolution paths behind `ProposerAgent`, every field of `ProposerContext`, the
 > single-shot engine loop (`propose_experiment`), the structured-output schema and
 > its two-pass validation, best-of-N sampling + screening + critique + the
-> child-tree alignment invariant, the round-log vocabulary the propose step emits,
+> tree/record agreement invariant, the round-log vocabulary the propose step emits,
 > the **restricted-visibility envelope** as a formal spec, the read-only proposer
 > tools registry, and experiment memory (same-epoch + cross-epoch).
 >
@@ -19,7 +19,7 @@
 >    anonymized, or redacted at the render boundary (§"The restricted-visibility
 >    envelope").
 > 2. **The mounted child tree must match the CHOSEN experiment** — bugs #6/#7
->    (§"`_align_child_tree`").
+>    (§"Mounting the chosen candidate").
 > 3. **A screen can veto, never rank; and it can never fail a propose step**
 >    (§"The candidate screen").
 > 4. **The proposer is a pure prompt-assembler over caller-supplied inputs** — it
@@ -43,7 +43,7 @@
 | `src/zicato/proposer/proposer.py` | `propose_experiment` — the single-shot compose → call → parse → validate → bounded-retry engine; `ProposerError`; `ExperimentValidator` | 494 lines |
 | `src/zicato/proposer/prompts.py` | Every prompt template + render helper; ALL banding/aggregation happens here (`_aggregate_pattern_detail`, `_bucket_scalar_delta`, `_band_rate`, `_band_quality`, …) | 1074 lines |
 | `src/zicato/proposer/structured.py` | `EXPERIMENT_JSON_SCHEMA`, `parse_experiment_json` (two-pass validation), `extract_json_object` (5-stage salvage), `ExperimentParseError`, `PostApplyValidationError` | 841 lines |
-| `src/zicato/proposer/best_of_n.py` | `BestOfNProposerAgent` (slate sampling, screen, revise, critique, heuristic, `_align_child_tree`), `CandidateScreenResult`, `ScreenRunner`, `wrap_with_proposer_quality` | 950 lines |
+| `src/zicato/proposer/best_of_n.py` | `BestOfNProposerAgent` (slate sampling, screen, revise, critique, heuristic, `_mount_chosen`), `CandidateScreenResult`, `ScreenRunner`, `wrap_with_proposer_quality` | 950 lines |
 | `src/zicato/proposer/hints.py` | `EDIT_CLASS_HINTS`, `FAILURE_MODE_HINTS`, `hint_for_slot`, `dominant_failure_mode` — the per-slot slate diversifier | 210 lines |
 | `src/zicato/proposer/tools.py` | The read-only tool registry (`DEFAULT_PROPOSER_TOOLS`), `ProposerToolContext`, `bind_proposer_tool_context` (the contextvar seam) | 588 lines |
 | `src/zicato/proposer/brief.py` | `ProposerBrief` / `load_brief` / `enforce_forbidden` — the operator's `brief.md` parser | 217 lines |
@@ -267,7 +267,8 @@ folded to counts), **REDACTED** (mechanically scrubbed content), **SANITIZED**
 | `max_retries` | `int = 2` | orchestrator (`max_proposer_retries`) | both engines: `total_attempts = max_retries + 1` | MACHINERY |
 | `forbidden_ids` | `tuple[str, ...] = ()` | orchestrator: `brief.forbidden_ids` (parsed from `# Forbidden edits` bullets) | `enforce_forbidden` in both engines; re-checked post-propose by `check_patch_manifest_and_forbidden` | IDENTITY-FREE |
 | `workspace_root` | `Path \| None = None` | orchestrator | text shim: `load_latest_insights`; ADK: tools context root + generation-root resolution; `None` ⇒ no insights, tools degrade | MACHINERY |
-| `validate_experiment` | `ExperimentValidator \| None = None` | orchestrator: `build_post_apply_validator(...)` (`src/zicato/evolve/round.py`) | both engines (post-parse hook); best-of-N `_align_child_tree` / `_revalidate` | MACHINERY |
+| `validate_experiment` | `ExperimentValidator \| None = None` | orchestrator: `build_post_apply_validator(...)` (`src/zicato/evolve/round.py`) | both engines (post-parse hook); best-of-N `_mount_chosen` / `_revalidate` — the shared hook is what mounts the canonical `next_id` tree | MACHINERY |
+| `scratch_validator_factory` | `Callable[[], tuple[ExperimentValidator, Callable[[], None]]] \| None = None` | orchestrator: `build_scratch_validator_factory(...)` (`src/zicato/evolve/round.py`) | best-of-N only: one `(validate, cleanup)` lease per slate slot, each over its OWN disjoint scratch tree, so the slate can gather. `None` ⇒ the wrapper falls back to `validate_experiment` and runs the slate serially | MACHINERY |
 | `meta_loop_emitter` | `MetaLoopEmitter \| None = None` | orchestrator (one per `evolve_n_rounds`) | text shim only: `proposer_call_started`/`proposer_call_completed` bookends per attempt | MACHINERY (telemetry, best-effort) |
 | `custom_judge_names` | `frozenset[str] \| None = None` | orchestrator: `_declared_custom_judge_names(board, weights)` (board `JudgeSpec.name` ∪ `per_judge_weights` keys) | `parse_experiment_json` (drift-metric validation) ONLY — deliberately permissive, including zero-weight judges, so the prompt-side priority filter can never turn an accepted movement into a burned retry; the prompt vocabulary comes from `metric_priorities` | IDENTITY-FREE (judge names are contract identity, not board-entry identity) |
 | `prior_experiments` | `tuple[PriorExperiment, ...] = ()` | orchestrator: `_load_prior_experiments` (+ the field loop appends in-flight `siblings`) | `render_prior_experiments_block` (prompt); `recent_prediction_accuracy` (best-of-N calibration) | BANDED under `restrict_visibility` (Δscalar bucketed; accuracy always banded); curated + capped at 12 (§5.10) |
@@ -397,12 +398,38 @@ validator strings fed back. The retry budget is **shared** with parse-error
 retries, so the per-round wall-clock stays bounded.
 
 > ⚠️ TRAP — the hook derives into the SAME on-disk child coordinate every
-> attempt (that is what makes retries idempotent). Under best-of-N this means
-> N validated candidates all derived the SAME tree in sequence — after the
-> slate settles, the on-disk tree belongs to the LAST validated candidate.
-> That is the root cause of bugs #6/#7 and why `_align_child_tree` exists
-> (§5.6.5). If you write a new consumer of `last_child_snapshot["path"]`,
-> reason about WHICH candidate's tree is mounted at the moment you read it.
+> attempt (that is what makes retries idempotent), so `next_id`'s tree is a
+> single mutable slot that only ever holds ONE candidate's edits. Under
+> best-of-N the slate keeps out of that slot entirely: each slot validates
+> through a per-slot scratch lease (§5.3.3a) and the shared hook runs exactly
+> once, on the chosen candidate, after selection (§5.6.5). That is what bugs
+> #6/#7 cost the project — see 12-bug-casebook.md. If you write a new
+> consumer of `last_child_snapshot["path"]`, reason about WHICH candidate's
+> tree is mounted at the moment you read it: before `_mount_chosen` runs,
+> the slot holds nothing this round wrote.
+
+#### 5.3.3a The per-slot scratch validator (what the slate actually calls)
+
+`build_scratch_validator_factory` (`src/zicato/evolve/round.py`) is the
+concurrency-enabling sibling of the shared hook, threaded onto
+`ProposerContext.scratch_validator_factory`. Each `factory()` call mints a
+fresh `mkdtemp` parent (`ztw-slate-*`, in the OS temp dir — OUTSIDE the
+workspace, so nothing under it can be mistaken for a canonical snapshot) and
+returns a `(validate, cleanup)` lease:
+
+- `validate` beats the same `applying` phase, then calls
+  `genstore.derive_scratch(...)` — a plain `apply_patches` into the disjoint
+  temp tree that NEVER enters the generation namespace (no commit, no tag, no
+  branch or working-tree mutation), so no walker — records listing, lineage,
+  GC, reindex, the dashboard readers — can enumerate it. A retry within the
+  slot re-derives into the SAME scratch tree, the same idempotent
+  clear-and-reapply the shared hook performs.
+- `cleanup` idempotently removes the whole `ztw-slate-*` parent; a
+  crash-leaked parent is swept at the start of the next round.
+
+The parent generation's source tree is pre-warmed once by the factory, so the
+concurrent slot derives find it materialized and only READ it — they race on
+nothing. This factory never writes the canonical tree.
 
 ### 5.3.4 Timeouts and telemetry
 
@@ -448,9 +475,8 @@ should crash an evolve loop; if one does, that is the bug.
 | `attempt k: derive_generation rejected the patch set: …` | `apply_patches`' own post-apply syntax gate raised `ValueError` — surfaced as a single retryable finding rather than crashing the loop | `build_post_apply_validator` step 2 |
 | `attempt k: auxiliary LLM call timed out after Ns` | `aux_call_timeout_s()` fired; the next attempt re-asks with the timeout message as feedback, echo carriers cleared | §5.3.1 row 1 |
 | `multi-challenger field: proposer could not produce a valid challenger for …; the field runs without it` (WARNING) | one field slot exhausted its budget; the strategy resolves over a narrower field; the dashboard shows the slot `rejected` with full `attempt_reasons` | `_propose_and_apply_challenger` |
-| `best-of-N: re-validating chosen candidate i failed unexpectedly (…); falling back to last-validated candidate j …` (WARNING) | the `:revalidate-fallback` path — the chosen candidate stopped re-deriving between validation and selection; near-zero in a healthy loop | §5.6.5 |
 | `candidate screen failed (…); selecting unscreened` (DEBUG) | the guarded screen degrade — runner raised or returned a malformed result; selection proceeded byte-identically to an unscreened round | §5.6.2 clause 3 |
-| `screen-informed revise produced no replacement (…); degrading to critic-over-all` (DEBUG) | the `"unavailable"` revise outcome; the last-validated tree was restored first | §5.6.4 |
+| `screen-informed revise produced no replacement (…); degrading to critic-over-all` (DEBUG) | the `"unavailable"` revise outcome; nothing to restore — the failed revise wrote only its own scratch tree | §5.6.4 |
 | `proposer agent model '…' equals the auxiliary model string; …` (WARNING) | the custom-agent collusion smell test — advisory, author responsibility | §5.1.2 |
 | `prior_experiments_for_epoch skipped for …` / `mutation_point_track_record skipped …` (DEBUG) | best-effort index reads degraded; the prompt omits the section / manifest renders unannotated | §5.10.1 |
 | `process-exemplar extraction skipped: …` (DEBUG) | the opt-in exemplar channel failed best-effort; prompt renders without the section | §5.8.3 |
@@ -830,16 +856,19 @@ emulator, judge, or adjudicator roles.
 The full `propose` flow when N > 1:
 
 ```
-for i in 0..N-1:
-    slot_ctx = replace(ctx, sample_hint=hint_for_slot(i, N, ctx.failure_profile))
-    candidates.append(await inner.propose(slot_ctx))       # failures narrow the slate
+outcomes = await _gather_slate(ctx, n)     # N slots CONCURRENTLY, each with
+                                           # sample_hint=hint_for_slot(i, N, …)
+                                           # and its OWN scratch tree (§5.3.3a)
+for outcome in outcomes:                   # deterministic pass, SLOT order
+    emit proposal_attempted {errors, slot_index}   # every slot that failed
+    candidates.append(outcome.candidate)           # failures narrow the slate
     emit candidate_sampled {i, n}
-if slate empty: re-raise the last inner ProposerError
-if len == 1: return it (no critique, no screen)
+if slate empty: raise one ProposerError carrying EVERY slot's attempts
+if len == 1: await _mount_chosen(candidates, 0, ctx); return it (no critique, no screen)
 screen_results = await _screen_slate(candidates, ctx)      # GUARDED; None = unscreened
 survivors = non-vetoed indices (all-vetoed → the ONE revise pass, §5.6.4)
 chosen, mode = selection (§5.6.6): sole-survivor | critique | heuristic
-chosen, mode = await _align_child_tree(candidates, chosen, mode, ctx)   # §5.6.5
+await _mount_chosen(candidates, chosen, ctx)   # §5.6.5 — the one canonical derive
 emit critique_selected {index, reason=mode, slate, rationale}
 return candidates[chosen]
 ```
@@ -990,23 +1019,24 @@ Mechanics (`BestOfNProposerAgent._revise_all_vetoed`):
 2. `replacement = await inner.propose(replace(ctx, revise_feedback=feedback))`
    — the seed lands in the FIRST attempt's `feedback` slot (§5.3.2). Exactly
    one revise per propose: this method never re-enters `propose`, never loops.
+   It leases its own scratch validator exactly like a slate slot, so a failed
+   revise cannot clobber any other candidate's tree.
 3. The replacement is screened GUARDED (`_screen_replacement`; its
    `candidate_screened` event carries `revise: true` and `index` one past the
    original slate).
 4. **The replacement is APPENDED to `candidates` whatever its own verdict** —
-   its post-apply validation just re-derived the shared child tree, so
-   appending keeps `_align_child_tree`'s last-validated bookkeeping honest on
-   every downstream path.
+   so the selection can pick it, and so `_mount_chosen` can address it by
+   slate index like any other candidate.
 
 Outcomes:
 
 | Return | Meaning | Resulting selection |
 |---|---|---|
-| `"chosen"` | replacement survived (or could not be screened — the guarded degrade) | the replacement is the pick, `selection_mode = "screen_revise_survivor"`, no critique call; it is also the last-validated candidate, so tree alignment is a no-op |
+| `"chosen"` | replacement survived (or could not be screened — the guarded degrade) | the replacement is the pick, `selection_mode = "screen_revise_survivor"`, no critique call; it is mounted by the same unconditional `_mount_chosen` derive as any other pick |
 | `"fallback"` | replacement itself vetoed | critic-over-ALL over the original slate, mode prefixed `screen_all_vetoed_after_revise:` |
-| `"unavailable"` | inner proposer produced no replacement | degrade exactly as pre-revise (`screen_all_vetoed:` prefix) — but FIRST `_restore_last_validated_tree` re-derives `candidates[-1]`'s tree, because the failed revise attempts may have clobbered the shared on-disk child tree; if even the restore fails, the step raises `ProposerError` (no candidate's tree can be mounted consistently) |
+| `"unavailable"` | inner proposer produced no replacement | degrade exactly as pre-revise (`screen_all_vetoed:` prefix). No tree restore is needed: the failed revise wrote only its own throwaway scratch tree, and the eventual pick is derived into `next_id` afterwards |
 
-### 5.6.5 `_align_child_tree` — THE MOUNTED TREE MUST MATCH THE CHOSEN EXPERIMENT
+### 5.6.5 Mounting the chosen candidate — THE MOUNTED TREE MUST MATCH THE CHOSEN EXPERIMENT
 
 The invariant, spelled out: **the on-disk child snapshot the tournament mounts
 must be derived from the patches of the experiment the round persists.** If
@@ -1014,11 +1044,37 @@ they diverge, the tournament scores — and the journal/lineage/index record —
 two different artifacts, and every downstream conclusion (gate verdict,
 Δscalar, memory digest, dashboard diff) is attributed to the wrong code.
 
-Why it can diverge at all: every slate sample's post-apply validation derives
-the SAME fixed child snapshot in place (each attempt clears the previous
-attempt's tree — §5.3.3), so after N samples the tree belongs to the
-**last successfully-validated** candidate, while the selection may pick an
-**earlier** one.
+Why it can diverge at all: the round has exactly ONE canonical child
+coordinate (`next_id`) and the slate has N candidates. Whatever last wrote
+that coordinate owns it, and "last write" is not the selection's semantics.
+
+**How it is enforced.** The slate never writes the canonical coordinate:
+every slot validates into its own scratch tree (§5.3.3a), so when the
+selection ends, `next_id` holds nothing this round wrote. The wrapper then
+derives the chosen candidate into it exactly once, unconditionally, at the
+one seam serving both pipelines (`BestOfNProposerAgent._mount_chosen`):
+
+```python
+# src/zicato/proposer/best_of_n.py — _mount_chosen (core)
+        validate = ctx.validate_experiment
+        if validate is None:
+            return
+        findings = await self._revalidate(validate, candidates[chosen])
+        if findings:
+            raise ProposerError([...])
+```
+
+That single hook call is the same idempotent clear-and-reapply a retry
+performs, so tree and experiment agree by construction. `validate_experiment
+is None` — a context with no derive hook, the pre-hook caller contract —
+mounts nothing and returns. The chosen candidate validated cleanly in scratch
+moments ago, so a finding here is unexpected (e.g. the parent tree changed
+underneath the slate); there is no other candidate whose tree is mounted, so
+there is nothing to fall back TO and the step raises the standard
+`ProposerError` every call site already handles.
+
+**What a divergence costs**, from the two recorded failures this seam exists
+to prevent — the casebook holds the full anatomy of each:
 
 - **Bug #6** (see 12-bug-casebook.md §"Bug #6"): on the gauntlet path, the
   tournament mounted `last_child_snapshot["path"]` (the last-validated tree)
@@ -1035,39 +1091,17 @@ attempt's tree — §5.3.3), so after N samples the tree belongs to the
   this: slot 2 of every slate is the same fabricate-metrics decoy, so a
   pre-fix run mounts the WRONG, identical trees for both arms).
 
-The fix lives at the one seam serving both pipelines
-(`BestOfNProposerAgent._align_child_tree`):
-
-```python
-# src/zicato/proposer/best_of_n.py — _align_child_tree (core)
-        last_validated = len(candidates) - 1
-        validate = ctx.validate_experiment
-        if validate is None or chosen == last_validated:
-            return chosen, selection_mode
-        findings = await self._revalidate(validate, candidates[chosen])
-        if not findings:
-            return chosen, selection_mode
-```
-
-When the chosen candidate is not the last-validated one, the hook runs once
-more on it — the same idempotent clear-and-reapply a retry performs — so tree
-and experiment agree. The chosen candidate validated cleanly moments ago, so
-findings here are unexpected (e.g. the parent tree changed underneath the
-slate); on any finding the selection FALLS BACK to the last-validated
-candidate (whose tree is restored by one more hook call, because the failed
-re-derive cleared it) and the mode string gains a `:revalidate-fallback`
-suffix so the round log records why the critic's pick was not returned. If
-even the restore fails, the step raises the standard `ProposerError` — the
-both-failed precedent every call site already handles.
-
 > ⛔ NEVER return a candidate from `BestOfNProposerAgent.propose` without going
-> through `_align_child_tree` (or proving the chosen candidate IS the
-> last-validated one, as the revise-survivor path does). Any new selection
-> branch you add — a new tiebreak, a new degrade — must funnel through it.
+> through `_mount_chosen` — including the early returns (the sole survivor,
+> the recombination short-circuit) and every degrade path. There is no
+> "already mounted" case to except: a candidate that never went through
+> `_mount_chosen` has NO tree in the generation namespace at all, so skipping
+> it fails loudly rather than mounting the wrong tree.
 > The e2e proof is `tests/test_best_of_n_tree_integrity.py`: real evolve
 > rounds with subprocess workers, a scripted critic that always picks slot 0,
 > and a known-answer scalar that detects a wrong mounted tree both by content
-> and by arithmetic.
+> and by arithmetic — run at `propose_parallelism` 1 AND 4, and asserting no
+> scratch residue survives in the namespace or the temp dir.
 
 ### 5.6.6 Selection: critique, calibration-aware ranking, screen tiebreak
 
@@ -1193,25 +1227,29 @@ per round (evolve_once, orchestrator.py):
   next_id = _next_generation_id(…)               # e.g. "v7"
   beat "proposing:round_3:v7"
   validator = build_post_apply_validator(…, last_child_snapshot={})
+  scratch   = build_scratch_validator_factory(…)   # per-slot leases
 
   _propose_child → BestOfNProposerAgent.propose(ctx):
-    slot 0: replace(ctx, sample_hint=hint_for_slot(0,3,profile))
+    3 slots gather concurrently (propose_parallelism=4); slot 0 shown:
+    slot 0: replace(ctx, sample_hint=hint_for_slot(0,3,profile),
+                    validate_experiment=<its own scratch lease>)
       ADKProposerAgent.propose:
         _load_agent(ctx) → build_default_adk_agent(ctx.model)   # cached after slot 0
         tool_ctx = ProposerToolContext(root, parent snapshot, epoch, manifest, parent_id)
         task = _render_task_text(spec, slot_ctx, feedback="")
         with bind_proposer_tool_context(tool_ctx):
             text = _run_agent_once(agent, task)   # ADK InMemoryRunner, fresh session
-        parse_experiment_json → enforce_forbidden → validator(candidate)
-            └ derive_generation clears+applies into generations/v7/…    ← tree #0
-      emit candidate_sampled {i:0, n:3}
-    slot 1: … (tree #1 overwrites the same coordinate)
-    slot 2: … (tree #2 overwrites it again — last-validated)
+        parse_experiment_json → enforce_forbidden → scratch validate(candidate)
+            └ derive_scratch applies into /tmp/ztw-slate-*/child   ← slot 0's OWN tree
+      lease cleanup removes the scratch parent
+    slots 1, 2: … each into its own disjoint scratch tree
+    post-gather pass, SLOT order: emit candidate_sampled {i, n:3} ×3
     screen: None → unscreened
     _select_best: critic call over aux_call_llm (restricted context + slate)
       → picks index 0
-    _align_child_tree: chosen(0) != last_validated(2)
-      → validator(candidates[0]) re-derives tree #0     ← THE invariant
+    _mount_chosen(candidates, 0, ctx):
+      → validator(candidates[0]) derives generations/v7/…    ← THE invariant:
+        the round's FIRST and ONLY write to the canonical coordinate
     emit critique_selected {index:0, reason:"critique", slate, rationale}
     return candidates[0]
 
@@ -1225,8 +1263,9 @@ per round (evolve_once, orchestrator.py):
 Points where the trace changes under non-default knobs:
 
 - `best_of_n: 1` → the wrapper is not even constructed; ONE
-  `ADKProposerAgent.propose`, no slate events, no critique, no alignment
-  needed (one candidate = last-validated).
+  `ADKProposerAgent.propose` straight through the shared
+  `validate_experiment` hook — no slate events, no critique, no scratch, and
+  the canonical tree is written by that one validation.
 - a skills-only proposer dir → `DefaultProposerAgent`; the inner engine is
   `propose_experiment` over `aux_call_llm` with per-attempt meta-loop
   bookends and the `aux_call_timeout_s()` bound; no tools.
@@ -1587,10 +1626,10 @@ Events the propose step emits, **in required order** within one propose:
 
 | # | Event | Emitted by | Payload | Notes |
 |---|---|---|---|---|
-| 1..N | `candidate_sampled` | best-of-N wrapper, after each successful inner propose | `{i, n}` (`revise: false`) | a failed slot emits nothing (it never sampled) |
+| 1..N | `candidate_sampled` | best-of-N wrapper, deterministic post-gather pass in SLOT order | `{i, n}` (`revise: false`) | a failed slot contributes a `proposal_attempted{errors, slot_index}` instead, so a sibling's success never discards its evidence (issue #141) |
 | N+1..2N | `candidate_screened` | `_screen_slate`, one per candidate AFTER the whole slate settled | `{index, vetoed, confirmed, screen_summary{entries_screened, baseline_passes, candidate_passes, reason}, revise: false}` | counts-only by the `reason` contract; absent entirely for an unscreened round |
 | (opt) | `candidate_sampled` `{i: N, n, revise: true}` then `candidate_screened` `{index: N, …, revise: true}` | the ONE all-vetoed revise pass | the replacement's index is one past the original slate | additive fields with defaults — pre-revise logs decode identically |
-| last | `critique_selected` | the wrapper, once the winner is chosen | `{index, reason: selection_mode, slate: [{index, core_idea, mutation_ids}], rationale}` | `index` is the FINAL slate index; both transports fill `slate`, and `rationale` is non-empty only when a critic chose |
+| last | `critique_selected` | the wrapper, after `_mount_chosen` | `{index, reason: selection_mode, slate: [{index, core_idea, mutation_ids}], rationale}` | `index` is the FINAL slate index; both transports fill `slate`, and `rationale` is non-empty only when a critic chose. Emitted only once the chosen candidate's tree is mounted, so the event and the artifact cannot disagree |
 
 Then, from `_propose_child` (outside the wrapper):
 
@@ -2139,7 +2178,7 @@ content with its own design doc).
 - 09-dashboard-and-query.md §"Proposal session" — how the round-log fold and
   the proposing tracker render what §5.7 emits.
 - 12-bug-casebook.md §"Bug #6" / §"Bug #7" — the tree/selection mismatch pair
-  behind `_align_child_tree`.
+  that §5.6.5's mount funnel exists to prevent.
 - 13-recipes.md — the short-form index that points back at §5.11.
 
 ---
@@ -2233,7 +2272,7 @@ Where to add (and what will catch) a regression, by concern:
 | ADK agent (builtin + custom + post-response loop) | `tests/test_proposer_adk_agent.py` |
 | tools: sandbox, caps, contextvar, error texts | `tests/test_proposer_tools.py`, `tests/test_proposer_grounding_tools.py` |
 | best-of-N: slate, critique, heuristic, screen wiring, revise | `tests/test_proposer_best_of_n.py` |
-| the tree-alignment invariant, end to end with subprocess workers | `tests/test_best_of_n_tree_integrity.py` (+ the scripted slates in `tests/_best_of_n_slate_support.py`) |
+| the tree/record agreement invariant, end to end with subprocess workers | `tests/test_best_of_n_tree_integrity.py` (+ the scripted slates in `tests/_best_of_n_slate_support.py`) |
 | slot hints + dominant-mode parsing | `tests/test_proposer_hints.py` |
 | screen engine: panel rotation, veto classes, confirm-before-veto, counts-only, phantom-dir hygiene | `tests/test_candidate_screen.py` |
 | exemplar redaction R1–R4 (adversarial fixtures) + threading | `tests/test_process_exemplars.py`, `tests/test_process_exemplars_e2e.py` |

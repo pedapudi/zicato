@@ -430,10 +430,12 @@ that is exactly the blind spot that let bugs #6 and #8 ship. Every pinned-off
 knob owes a knob-ON adversarial test.
 
 - **Bug #6/#7 hid behind best-of-1.** With `best_of_n=1` the mounted child
-  tree is trivially the last-validated tree (there is only one candidate), so
-  the tree-mismatch never manifests. The bug only exists at `best_of_n>1`
-  (the default), where N samples derive the same on-disk tree in sequence and
-  the selection may pick an earlier one (05-proposer.md §5.6.5). The
+  tree is trivially the only candidate's, so the tree-mismatch cannot
+  manifest. The bug existed only at `best_of_n>1` (the default), where the
+  slate derived one shared on-disk tree per sample while the selection could
+  pick an earlier candidate. Today the slate derives per-slot scratch trees
+  and the pick is mounted once after selection (05-proposer.md §5.6.5), but
+  the coverage lesson is unchanged. The
   countermeasure is `tests/test_best_of_n_tree_integrity.py` driving REAL
   evolve rounds at the default `best_of_n`, with a scripted slate
   (`tests/_best_of_n_slate_support.py`) whose slot-2 is a fabricate-metrics
@@ -1791,7 +1793,7 @@ ls ${TMPDIR:-/tmp} | grep ztw-snap && echo "LEAK" || echo "clean"
 - 04-evaluation-statistics.md — the gate / replication / monotonicity-scope
   / noise-floor machinery the power harness (§11.4.2) characterizes; the
   train/holdout split the convergence oracle stays below.
-- 05-proposer.md §5.6.5 — the tree-alignment invariant the best-of-N
+- 05-proposer.md §5.6.5 — the tree/record agreement invariant the best-of-N
   integrity test (§11.3.1) proves at the default `best_of_n`.
 - 06-tournament-and-selection.md — the evidence pre-gate the power harness
   drives; the racing structure the MOCK-GOLDEN capture and the convergence

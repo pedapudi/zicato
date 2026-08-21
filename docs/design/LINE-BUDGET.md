@@ -95,3 +95,5 @@ increase.
 | The seed is not a round (production) | 202,664 | +21 | 202,685 | Issue #286: the writer's parentless skip and the reader's parentage guard. |
 | Critic choice and rationale on the round log (total) | 421,838 | +419 | 422,257 | Issue #279: the two-line critic ask with its mutation-proofed prompt pin, the slate summary on both transports, the missing-rationale bind, and the restored payload pin. |
 | Critic choice and rationale on the round log (production) | 202,685 | +133 | 202,818 | Issue #279: the rationale-threading parse and emit path shared by both transports, and the simplified pi wrapper. |
+| One-classifier seed decision (total) | 422,257 | +24 | 422,281 | Issue #291: the cross-feed probe pinning that the epoch and lineage payloads serve the identical (promoted, decision, decision_label) triple for every generation, seed included. |
+| One-classifier seed decision (production) | 202,818 | +3 | 202,821 | Issue #291: the copy-off-the-lineage-node invariant comment at the recompute site that produced the disagreement, net of the deleted local derivation and of the shortened best-of-N mount docstrings. |

@@ -2241,7 +2241,7 @@ malformed epoch ⇒ empty, no raise). This is the DQ3 pin.
 **Verify**
 
 ```bash
-uv run pytest tests/test_dashboard_endpoints.py tests/test_promotion_cadence.py -q
+uv run pytest tests/test_dashboard_server.py tests/test_promotion_cadence.py -q
 uv run lint-imports              # the reader must not import the dashboard (DQ4)
 make node-test                   # the no-op / null-degrade node assertions
 uv run mypy src/zicato/
@@ -2360,9 +2360,9 @@ Where to add (and what will catch) a regression, by concern:
 |---|---|
 | decision classifier: canonical token + tri-state + Class-B `null` | `tests/test_dashboard_decision_surface.py` |
 | reader degrade (missing index ⇒ empty + note; malformed epoch ⇒ empty) | `tests/test_dashboard_loop_view.py`, per-reader `tests/test_*_view*.py` |
-| coercers: `coerce_float` bool-exclusion, `to_snake` Rust parity, `_opt_bool` | `tests/test_query_paths.py` (+ the transcript/aggregator suites for `to_snake`) |
+| coercers: `coerce_float` bool-exclusion, `to_snake` Rust parity, `_opt_bool` | no dedicated suite — exercised only INDIRECTLY, through the reader suites that consume them. A direct unit test for `zicato/query/paths.py` is the standing gap here |
 | entry-status four-bucket canon + `status_raw` preservation | `tests/test_dashboard_*runtime*` / the runtime-view suite |
-| `_is_safe_id` / degrade-to-200 / `?epoch=` 404 | `tests/test_dashboard_endpoints.py` |
+| `_is_safe_id` / degrade-to-200 / `?epoch=` 404 | `tests/test_dashboard_server.py` (+ `tests/test_issue_250_pins.py` for the `_is_safe_id`/Rust mirror) |
 | the served joins (round-timeline / racing-field) match the client mock | `tests/test_dashboard_racing_and_rounds.py` + `test/mock_server.mjs` |
 | a field round names the WINNER after a promotion (role tag, not a borrow) | `tests/test_dashboard_racing_and_rounds.py::test_field_round_names_the_new_champion_after_a_promotion` |
 | a field round's champion provenance: current round, and unknown vs `"full"` | `tests/test_dashboard_racing_and_rounds.py` (`…metadata_comes_from_that_round`, `…no_crowning_row_reports_an_unknown_eval_mode`, `…legacy_row_without_the_v8_columns_still_reads_full`) |
@@ -2371,7 +2371,7 @@ Where to add (and what will catch) a regression, by concern:
 | digest-gated render: no-op DOM identity, seq skip gate, four run-states | node `seq_render_gate.test.mjs`, `pipeline_stepper.test.mjs` |
 | the pipeline projection (`_project_pipeline`) | `tests/test_dashboard_loop_view.py` (pure inference) + `pipeline_stepper.test.mjs` |
 | controls: read-only 403, two-step confirm, paused readback | node `loop_controls.test.mjs`, `override_taxonomy.test.mjs`, `tests/test_dashboard_gate_endpoint.py` |
-| `_current_champion` reigning-spine (bug #4 regression, two-promotion lineage) | `tests/test_dashboard_lineage_ordering.py` / the epoch-view suite |
+| `_current_champion` reigning-spine (bug #4 regression, two-promotion lineage) | `tests/test_dashboard_decision_surface.py::test_current_champion_is_the_spine_end` (+ the seed fallback beside it) |
 | the tree crown per epoch (bug #4's wrong-epoch costume, multi-epoch fixture) | node `variant_t_epoch_scoping.test.mjs` |
 | the whole Node behaviour suite (digest / no-op / mock parity) | `src/zicato/dashboard/static/test/run-all.mjs` via `make node-test` |
 | the query layer stays dashboard-free (DQ4) | `uv run lint-imports` (the import-linter contract) |

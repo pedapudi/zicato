@@ -464,11 +464,15 @@ def _read_epoch_experiments(
         stamp_experiment_decision(record)
         node = lineage.get(gen_dir.name) if lineage is not None else None
         if node is not None:
+            # INVARIANT: this feed and /api/lineage serve the IDENTICAL
+            # (promoted, decision, decision_label) triple for every
+            # generation. So copy all three off the lineage node, which
+            # already carries ``decision_surface``'s output — never derive
+            # one here from ``promoted``: the seed is promoted yet faced no
+            # gate, so a local derivation reads it as a win it never raced.
             promoted = node.get("promoted")
             record["promoted"] = promoted if isinstance(promoted, bool) else None
-            record["decision"] = (
-                "promoted" if promoted is True else "rejected" if promoted is False else None
-            )
+            record["decision"] = node.get("decision")
             record["decision_label"] = node.get("decision_label")
         experiments.append(record)
     return experiments

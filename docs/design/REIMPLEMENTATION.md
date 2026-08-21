@@ -472,15 +472,15 @@ from gather-completion order):
    — an `rmtree` + `apply_patches` against the ONE shared
    `generations/{next_id}/snapshot/` (directory backend) or the ONE shared
    epoch-branch working tree, tag, and `.derive-scratch` path (git backend)
-   — plus the shared `last_child_snapshot["path"]` mutation. `_align_child_tree`
-   then assumes the on-disk tree belongs to the LAST-validated candidate.
-   Two concurrent slots deriving into the same `next_id` would corrupt the
-   tree, make validation findings scheduling-dependent, and turn
-   `tests/test_best_of_n_tree_integrity.py` flaky. So — UNLIKE the field
-   loop, whose `v{base_n+offset}` ids already name disjoint directories
-   (item 1) — the slate is NOT gatherable as-is: the shared derive
-   transaction is the slate's version of the field's structural
-   precondition, and must be split (below) before the gather is sound.
+   — plus the shared `last_child_snapshot["path"]` mutation, which the
+   post-selection alignment step then read as the LAST-validated
+   candidate's tree. Two concurrent slots deriving into the same `next_id`
+   would corrupt the tree, make validation findings scheduling-dependent,
+   and turn `tests/test_best_of_n_tree_integrity.py` flaky. So — UNLIKE the
+   field loop, whose `v{base_n+offset}` ids already name disjoint
+   directories (item 1) — the slate was NOT gatherable as-is: the shared
+   derive transaction is the slate's version of the field's structural
+   precondition, and had to be split (below) before the gather was sound.
 
 **Structural precondition (the slate split).** The slate loop's blocker
 mirrors the field loop's: side effects (here the shared `next_id` derive)
@@ -504,15 +504,15 @@ unreachable until the derive is split off. The split commit 2 implements:
 - **One unconditional post-selection derive.** After the critique/selection
   pass picks the winner, the chosen candidate is ALWAYS derived into the
   real `next_id` (via the round's own `build_post_apply_validator` hook),
-  guaranteeing the mounted tree == the chosen candidate. This REPLACES
-  `_align_child_tree`'s conditional "re-derive only when chosen != last-
-  validated" logic (and retires the `_restore_last_validated_tree`
-  bookkeeping the shared tree needed): with per-slot scratch there is no
-  shared last-validated tree to align against, so the funnel simplifies to
-  one always-runs final derive that raises the standard `ProposerError`
-  when the chosen candidate cannot be re-derived. The recombination-mint /
-  llm-merge slots and their degrade paths ride the same per-slot scratch
-  mechanics.
+  guaranteeing the mounted tree == the chosen candidate
+  (`BestOfNProposerAgent._mount_chosen`). It supersedes the earlier
+  conditional alignment step, which re-derived only when the chosen
+  candidate was not the last-validated one and kept restore bookkeeping for
+  the shared tree: with per-slot scratch there is no shared last-validated
+  tree to align against, so the funnel simplifies to one always-runs final
+  derive that raises the standard `ProposerError` when the chosen candidate
+  cannot be re-derived. The recombination-mint / llm-merge slots and their
+  degrade paths ride the same per-slot scratch mechanics.
 - **The gather.** With the slots now write-disjoint, the N samples run
   concurrently under a `RuntimeConfig.propose_parallelism` semaphore
   (runtime-only — never part of the scoring canonical form; default 4;
