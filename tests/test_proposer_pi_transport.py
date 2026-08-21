@@ -203,14 +203,45 @@ async def test_a_malformed_rationale_never_discards_the_review(
     """The index is the DECISION; the rationale is a note about it.
 
     A tool call that answers with a well-formed index and a junk rationale
-    has still reviewed the slate. Dropping the whole selection back to the
-    deterministic heuristic over the note would let provenance veto a
-    decision — so the note is dropped alone.
+    has still reviewed the slate: the selection stands and the junk value is
+    dropped alone rather than stringified into the log (the pre-fix reader
+    recorded the literal ``'17'`` here).
     """
     candidates = [_candidate("first", "a"), _candidate("second", "b")]
     _script(
         tmp_path,
         [{"emit": item} for item in candidates] + [{"select": {"index": 1, "rationale": 17}}],
+    )
+    events: list[tuple[str, dict[str, Any]]] = []
+    wrapped = wrap_with_proposer_quality(agent, ProposerQualityConfig(best_of_n=2))
+
+    chosen = await wrapped.propose(
+        _context(workspace, round_event_emitter=lambda kind, fields: events.append((kind, fields)))
+    )
+
+    assert chosen.hypothesis.core_idea == "second"
+    audited = next(fields for kind, fields in events if kind == "critique_selected")
+    assert audited["index"] == 1
+    assert audited["reason"] == "critique"
+    assert audited["rationale"] == ""
+
+
+@pytest.mark.asyncio
+async def test_a_missing_rationale_never_discards_the_review(
+    agent: PiProposerAgent, workspace: Path, tmp_path: Path
+) -> None:
+    """An omitted rationale field must not throw away a completed review.
+
+    The shipped extension declares ``rationale`` required, so a
+    schema-validating peer always sends it — but the transport must not
+    trust that: the pre-fix reader raised ``KeyError`` on the missing key
+    and the whole selection degraded to the deterministic heuristic, the
+    one path where a note's ABSENCE vetoed a decision.
+    """
+    candidates = [_candidate("first", "a"), _candidate("second", "b")]
+    _script(
+        tmp_path,
+        [{"emit": item} for item in candidates] + [{"select": {"index": 1}}],
     )
     events: list[tuple[str, dict[str, Any]]] = []
     wrapped = wrap_with_proposer_quality(agent, ProposerQualityConfig(best_of_n=2))

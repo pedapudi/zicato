@@ -1412,7 +1412,7 @@ round_opened{contract_hash}
 ( proposal_attempted{errors}* )                       # failed attempts, if any
   [ candidate_sampled{i,n,revise?} × best_of_n ]      # slate sampling
   [ candidate_screened{index,vetoed,confirmed,…} × slate ]
-  [ critique_selected{index,reason} ]
+  [ critique_selected{index,reason,slate,rationale} ]
 proposal_attempted{}  experiment_minted  patches_applied     # per applied challenger
 [ validation_failed{findings} ]                        # the rejected tail only
 unit_completed{entry,replicate,side} × (units run)

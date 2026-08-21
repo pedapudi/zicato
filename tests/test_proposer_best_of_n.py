@@ -963,10 +963,19 @@ async def test_sole_survivor_mode_string_and_event_ordering() -> None:
         "candidate_passes",
         "reason",
     }
-    selected = dict(events)["critique_selected"]
-    assert selected["index"] == 1
-    assert selected["reason"] == "screen_sole_survivor"
-    assert selected["rationale"] == ""
+    # ONE exact-dict pin for the payload survives on purpose: the round-log
+    # emitter constructs the event with ``cls(**fields)`` inside a bare
+    # ``except Exception``, so an unexpected key silently DROPS the whole
+    # event — a drifted payload must fail here, loudly, not there, silently.
+    assert dict(events)["critique_selected"] == {
+        "index": 1,
+        "reason": "screen_sole_survivor",
+        "slate": (
+            {"index": 0, "core_idea": "broken", "mutation_ids": ["router__sp"]},
+            {"index": 1, "core_idea": "fine", "mutation_ids": ["writer__sp"]},
+        ),
+        "rationale": "",
+    }
 
 
 @pytest.mark.asyncio

@@ -1212,7 +1212,7 @@ per round (evolve_once, orchestrator.py):
       → picks index 0
     _align_child_tree: chosen(0) != last_validated(2)
       → validator(candidates[0]) re-derives tree #0     ← THE invariant
-    emit critique_selected {index:0, reason:"critique"}
+    emit critique_selected {index:0, reason:"critique", slate, rationale}
     return candidates[0]
 
   back in evolve_once:
@@ -1590,7 +1590,7 @@ Events the propose step emits, **in required order** within one propose:
 | 1..N | `candidate_sampled` | best-of-N wrapper, after each successful inner propose | `{i, n}` (`revise: false`) | a failed slot emits nothing (it never sampled) |
 | N+1..2N | `candidate_screened` | `_screen_slate`, one per candidate AFTER the whole slate settled | `{index, vetoed, confirmed, screen_summary{entries_screened, baseline_passes, candidate_passes, reason}, revise: false}` | counts-only by the `reason` contract; absent entirely for an unscreened round |
 | (opt) | `candidate_sampled` `{i: N, n, revise: true}` then `candidate_screened` `{index: N, …, revise: true}` | the ONE all-vetoed revise pass | the replacement's index is one past the original slate | additive fields with defaults — pre-revise logs decode identically |
-| last | `critique_selected` | the wrapper, after `_align_child_tree` | `{index, reason: selection_mode}` | `index` is the FINAL slate index (post-alignment fallback included) |
+| last | `critique_selected` | the wrapper, once the winner is chosen | `{index, reason: selection_mode, slate: [{index, core_idea, mutation_ids}], rationale}` | `index` is the FINAL slate index; both transports fill `slate`, and `rationale` is non-empty only when a critic chose |
 
 Then, from `_propose_child` (outside the wrapper):
 
