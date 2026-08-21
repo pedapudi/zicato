@@ -723,11 +723,23 @@ def _make_live_endpoints(paths: WorkspacePaths) -> dict[str, Any]:
         """
         return JSONResponse(query.build_round_pipeline(paths))
 
+    async def api_live_execution_plan(_request: Request) -> JSONResponse:
+        """The running epoch's execution plan, with what is executing marked.
+
+        ``GET /api/live/execution-plan``. The durable plan for the epoch the
+        heartbeat names, plus a server-owned overlay: the served liveness
+        verdict, the active path, and one node per still-beating in-flight
+        run — see ``build_live_execution_plan``. Takes no coordinate; a
+        workspace that is not live serves its plan with an empty overlay.
+        """
+        return JSONResponse(query.build_live_execution_plan(paths))
+
     return {
         "api_active_runs": api_active_runs,
         "api_active_tournament": api_active_tournament,
         "api_heartbeat": api_heartbeat,
         "api_live_pipeline": api_live_pipeline,
+        "api_live_execution_plan": api_live_execution_plan,
     }
 
 

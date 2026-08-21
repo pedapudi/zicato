@@ -35,6 +35,14 @@ tolerance.
 - The round timeline owns settled and in-flight rounds, embedded tournament
   records, projected standings, and gate state. The browser does not join an
   active envelope or infer a carried champion.
+- Whether an in-flight run record still counts is decided once, per record,
+  on the server, and served on the record as `fresh`. One of its two gates
+  asks whether the worker process still exists, which only the worker's own
+  host can answer, so a client consumes the verdict and reaches for the
+  timestamps only against a server that sends none.
+- Live projections mark and populate only while the served liveness verdict
+  reads live. A workspace that stopped still serves its durable structure —
+  post-mortem reads stay honest — with the present-tense layer withheld.
 - The supervisor serves operational state, liveness, controls, and parity
   views. Analytical projections belong to the Python query service.
 - No-op updates retain digest equality so neither renderer rebuilds.

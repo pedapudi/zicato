@@ -253,6 +253,13 @@ def capture_snapshot(ws: Path) -> dict[str, Any]:
     snap["environment"] = sr.build_environment(paths)
     snap["search_empty"] = sr.build_search_results(paths, "")
     snap["search_hello"] = sr.build_search_results(paths, "hello")
+    # The LIVE execution plan takes no coordinate — it resolves the current
+    # epoch itself — and is served by the Python service alone, so the Rust
+    # supervisor answers its standard empty shape until it grows the route
+    # (DQ8). The fixture workspace has no runtime state, so what is pinned
+    # here is the not-live path: the durable plan, the served liveness
+    # verdict, and an overlay withheld rather than populated from files.
+    snap["live_execution_plan"] = sr.build_live_execution_plan(paths)
 
     # --- per-epoch scoped ---------------------------------------------------
     for eid in CANONICAL_EPOCH_ORDER:

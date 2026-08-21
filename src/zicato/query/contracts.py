@@ -77,6 +77,19 @@ class ExecutionPlanPayload(ObjectPayload, total=False):
     stages: list[dict[str, Any]]
 
 
+class LiveExecutionPlanPayload(ExecutionPlanPayload, total=False):
+    """The running epoch's plan, plus the overlay describing what runs now.
+
+    ``liveness`` is the served tri-state the whole overlay gates on;
+    ``overlay`` carries the active path, the in-flight partition, and the
+    phase the path was derived from. The ``stages`` nodes are the durable
+    ones with an added ``active`` flag.
+    """
+
+    liveness: LivenessPayload
+    overlay: dict[str, Any]
+
+
 class DetailPayload(ObjectPayload, total=False):
     summary: dict[str, Any]
     contract: dict[str, Any]
@@ -168,3 +181,4 @@ ENDPOINT_PAYLOADS.update(
     }
 )
 ENDPOINT_PAYLOADS["/api/epoch/{epoch_id}/execution-plan"] = ExecutionPlanPayload
+ENDPOINT_PAYLOADS["/api/live/execution-plan"] = LiveExecutionPlanPayload

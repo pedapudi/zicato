@@ -140,6 +140,9 @@ from zicato.query.ledger_view import (
 from zicato.query.lineage_view import (
     build_lineage_view,
 )
+from zicato.query.live_execution_plan import (
+    build_live_execution_plan,
+)
 from zicato.query.log_stream import (
     LOG_DEFAULT_LIMIT,
     LOG_MAX_LIMIT,
@@ -379,6 +382,7 @@ __all__ = [
     "build_rating_view",
     "build_health_report",
     "build_lineage_view",
+    "build_live_execution_plan",
     "build_matchup_detail",
     "build_matchup_grid",
     "build_meta_loop_ledger",

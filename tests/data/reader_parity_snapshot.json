@@ -1088,6 +1088,84 @@
       }
     ]
   },
+  "live_execution_plan": {
+    "board": {
+      "digest": "aaaef18030ad0c8d981d02460f8a11d9eb11e5d420816759d44276f08fa2d916",
+      "entry_count": 2
+    },
+    "epoch_id": "e0",
+    "generated_at": "<masked>",
+    "liveness": {
+      "state": "settled"
+    },
+    "note": "",
+    "overlay": {
+      "active_path": [],
+      "in_flight": 0,
+      "note": "workspace is not live; overlay withheld",
+      "other_epoch": 0,
+      "phase": null,
+      "placed": 0,
+      "round_index": null,
+      "unplaced": 0
+    },
+    "stages": [
+      {
+        "active": false,
+        "children": [
+          {
+            "active": false,
+            "children": [],
+            "coordinates": {
+              "epoch_id": "e0",
+              "generation_id": "v0"
+            },
+            "duration_ms": null,
+            "ended_at": null,
+            "id": "e:e0/baseline/v0",
+            "kind": "board_sweep",
+            "label": "Board sweep — v0",
+            "outcome": {
+              "entries_without_units": [
+                "t1",
+                "t2"
+              ],
+              "unit_count": 0
+            },
+            "progress": {
+              "done": 0,
+              "total": 2
+            },
+            "provenance": "partial",
+            "purpose": "Every board entry executed against one candidate.",
+            "started_at": null,
+            "status": "skipped"
+          }
+        ],
+        "coordinates": {
+          "epoch_id": "e0"
+        },
+        "duration_ms": null,
+        "ended_at": null,
+        "id": "e:e0/baseline",
+        "kind": "baseline",
+        "label": "Baseline",
+        "outcome": {
+          "generation_ids": [
+            "v0"
+          ]
+        },
+        "progress": {
+          "done": 1,
+          "total": 1
+        },
+        "provenance": "partial",
+        "purpose": "Evaluate the incoming champion before the loop proposes anything.",
+        "started_at": null,
+        "status": "skipped"
+      }
+    ]
+  },
   "matchup_detail::e0::v0": {
     "ab_grid": [],
     "champion": null,

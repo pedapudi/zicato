@@ -743,6 +743,16 @@ synced to another machine, or with no lock, the staleness window stands
 alone. The reaping is read-side only: the record leaves the tally and the
 file stays, because removing it belongs to the writers and the supervisor.
 
+The pid check is also why the tally is not something a client re-derives: a
+browser is never the worker's host, so it can age the timestamps and nothing
+more. `read_active_runs_view` therefore stamps the SAME per-record predicate
+(`is_run_fresh`, both gates) onto every served row as `fresh`, and the
+frontend's `freshRunCount` (`livestatus.js`) reads that verdict. Ageing the
+timestamps is its fallback for a server that sends no `fresh` field — the
+Rust supervisor's `/api/active-runs`, or any build predating it — which is
+the one case where the two can differ, and only by keeping a record whose
+worker the client cannot see is gone.
+
 ### 7.6.3 The active-tournament event log and its fold
 
 The live tournament view was historically a mutable `active_tournament.json`
