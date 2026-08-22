@@ -5,7 +5,10 @@ journal, ``experiment.json``, the runtime tournament log (ephemeral), and
 free-text reasons. This module defines the ONE durable, replayable record
 of a round: a typed, sequenced JSONL event log at
 
-    ``epochs/{epoch}/rounds/{round}/round_log.jsonl``
+``epochs/{epoch}/rounds/{round}/round_log.jsonl``. Each wire record has a
+type-specific ``payload`` plus an extensible ``scope`` envelope for plan
+coordinates; adding a coordinate does not require changing every event's
+payload schema.
 
 plus the fold that reduces it to a typed :class:`RoundRecord` summary.
 The orchestrator's ``_RoundLogEmitter`` wires this on the evolve path:
@@ -48,6 +51,7 @@ folds on an older reader.
 from __future__ import annotations
 
 import json
+from collections.abc import Mapping
 from dataclasses import asdict, dataclass, field, fields
 from pathlib import Path
 from typing import Any, ClassVar
@@ -128,6 +132,9 @@ class CandidateSampled:
     rejected parents' patch sets (WS-REC) instead of sampling the LLM — the
     last slot when the round carries a recombination pair. Additive with a
     default so every pre-recombine log decodes identically.
+
+    Its challenger and other plan coordinates live in the enclosing
+    :class:`RoundEventScope`, not this event-specific payload.
     """
 
     TYPE: ClassVar[str] = "candidate_sampled"
@@ -152,6 +159,9 @@ class CandidateScreened:
     the ONE bounded revise replacement an all-vetoed slate may sample
     (``index`` is then one past the original slate) — additive with a
     default so every pre-revise log decodes identically.
+
+    Its challenger and other plan coordinates live in the enclosing
+    :class:`RoundEventScope`, not this event-specific payload.
     """
 
     TYPE: ClassVar[str] = "candidate_screened"
@@ -164,7 +174,11 @@ class CandidateScreened:
 
 @dataclass(frozen=True, slots=True)
 class CritiqueSelected:
-    """The self-critique pass picked candidate ``index`` for ``reason``."""
+    """The self-critique pass picked candidate ``index`` for ``reason``.
+
+    Its challenger and other plan coordinates live in the enclosing
+    :class:`RoundEventScope`, not this event-specific payload.
+    """
 
     TYPE: ClassVar[str] = "critique_selected"
     index: int = 0
@@ -401,6 +415,81 @@ RoundEvent = (
 
 
 @dataclass(frozen=True, slots=True)
+class RoundEventScope:
+    """Stable plan coordinates that enclose, rather than alter, an event.
+
+    A round log is a shared event stream: field rounds can produce several
+    challengers, and a single challenger can produce several board units. The
+    event ``type`` describes *what happened* and its payload records the
+    type-specific fact; this object describes *where that fact belongs* in the
+    round plan. Keeping those concerns separate lets a reader group events
+    without guessing from their position in the JSONL file.
+
+    The named fields are the coordinates every plan reader may rely on. The
+    ``attributes`` map is an explicit extension point for a newer emitter's
+    additional coordinates. It is deliberately separate from the named fields
+    so an extension cannot silently redefine ``generation_id`` or another
+    shared coordinate. A reader that predates an extension preserves those
+    values in ``attributes`` instead of dropping them.
+
+    All fields default to the empty scope. Logs written before scopes existed
+    therefore remain readable, but their events cannot be attributed more
+    precisely than the legacy record permits.
+    """
+
+    generation_id: str = ""
+    round_index: int | None = None
+    step: str = ""
+    ordinal: int | None = None
+    entry_id: str = ""
+    replicate: int | None = None
+    side: str = ""
+    band: str = ""
+    attributes: dict[str, Any] = field(default_factory=dict)
+
+    @classmethod
+    def from_payload(cls, payload: Mapping[str, Any] | None) -> RoundEventScope:
+        """Decode a wire scope, retaining unknown coordinates as attributes."""
+        if not isinstance(payload, Mapping):
+            return cls()
+        known = {f.name for f in fields(cls)}
+        attributes = payload.get("attributes", {})
+        extras = dict(attributes) if isinstance(attributes, Mapping) else {}
+        extras.update({key: value for key, value in payload.items() if key not in known})
+        return cls(
+            generation_id=str(payload.get("generation_id", "")),
+            round_index=payload.get("round_index"),
+            step=str(payload.get("step", "")),
+            ordinal=payload.get("ordinal"),
+            entry_id=str(payload.get("entry_id", "")),
+            replicate=payload.get("replicate"),
+            side=str(payload.get("side", "")),
+            band=str(payload.get("band", "")),
+            attributes=extras,
+        )
+
+    def to_payload(self) -> dict[str, Any]:
+        """Return the compact, forward-compatible JSON shape for this scope."""
+        payload: dict[str, Any] = {}
+        for name in (
+            "generation_id",
+            "round_index",
+            "step",
+            "ordinal",
+            "entry_id",
+            "replicate",
+            "side",
+            "band",
+        ):
+            value = getattr(self, name)
+            if value not in ("", None):
+                payload[name] = value
+        if self.attributes:
+            payload["attributes"] = self.attributes
+        return payload
+
+
+@dataclass(frozen=True, slots=True)
 class RoundLogEnvelope:
     """One decoded log line: the sequenced wire record plus its typed event.
 
@@ -408,13 +497,15 @@ class RoundLogEnvelope:
     under the single-writer contract); ``ts`` is for humans. ``event`` is
     the decoded dataclass for a known ``type``; ``None`` for a token this
     reader does not know (forward compatibility — the raw ``payload`` is
-    still carried verbatim).
+    still carried verbatim). ``scope`` is the stable, type-independent plan
+    coordinate envelope. It is empty for legacy records which predate scope.
     """
 
     seq: int
     ts: str
     type: str
     payload: dict[str, Any]
+    scope: RoundEventScope = field(default_factory=RoundEventScope)
     event: RoundEvent | None = None
 
 
@@ -472,7 +563,9 @@ class RoundLog:
         """The log's on-disk JSONL path."""
         return self._path
 
-    def append(self, event: RoundEvent) -> RoundLogEnvelope:
+    def append(
+        self, event: RoundEvent, *, scope: RoundEventScope | Mapping[str, Any] | None = None
+    ) -> RoundLogEnvelope:
         """Append one typed event; return it with its assigned ``seq`` + ``ts``.
 
         ``seq`` is the last PARSEABLE event's ``seq`` plus one (``1`` for
@@ -494,12 +587,28 @@ class RoundLog:
         seq = 1 if tail is None else tail.seq + 1
         ts = _now_iso()
         payload = asdict(event)
-        record = {"seq": seq, "ts": ts, "type": type(event).TYPE, "payload": payload}
+        event_scope = (
+            scope if isinstance(scope, RoundEventScope) else RoundEventScope.from_payload(scope)
+        )
+        record = {
+            "seq": seq,
+            "ts": ts,
+            "type": type(event).TYPE,
+            "scope": event_scope.to_payload(),
+            "payload": payload,
+        }
         self._path.parent.mkdir(parents=True, exist_ok=True)
         line = json.dumps(record, separators=(",", ":"))
         with self._path.open("a", encoding="utf-8") as fh:
             fh.write(line + "\n")
-        return RoundLogEnvelope(seq=seq, ts=ts, type=type(event).TYPE, payload=payload, event=event)
+        return RoundLogEnvelope(
+            seq=seq,
+            ts=ts,
+            type=type(event).TYPE,
+            payload=payload,
+            scope=event_scope,
+            event=event,
+        )
 
     def read(self) -> list[RoundLogEnvelope]:
         """Return every decoded event in append order, tolerating a torn tail.
@@ -529,6 +638,7 @@ class RoundLog:
             payload = record.get("payload") or {}
             if not isinstance(payload, dict):
                 payload = {}
+            scope = RoundEventScope.from_payload(record.get("scope"))
             type_token = str(record.get("type", ""))
             out.append(
                 RoundLogEnvelope(
@@ -536,6 +646,7 @@ class RoundLog:
                     ts=str(record.get("ts", "")),
                     type=type_token,
                     payload=payload,
+                    scope=scope,
                     event=_decode_event(type_token, payload),
                 )
             )
@@ -791,6 +902,7 @@ __all__ = [
     "RoundClosed",
     "EVENT_TYPES",
     "RoundEvent",
+    "RoundEventScope",
     "RoundLogEnvelope",
     "RoundLog",
     "ProposalSession",

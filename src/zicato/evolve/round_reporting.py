@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import logging
 import time  # noqa: F401  — kept as the ``orch.time`` clock seam (see __all__)
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, TypeGuard
 
@@ -63,6 +63,26 @@ async def _regenerate_epoch_report(
 # ---------------------------------------------------------------------------
 
 
+_ROUND_LOG_STEP: dict[str, str] = {
+    "round_opened": "open",
+    "proposal_attempted": "propose",
+    "candidate_sampled": "propose",
+    "candidate_screened": "propose",
+    "critique_selected": "propose",
+    "experiment_minted": "propose",
+    "patches_applied": "apply",
+    "validation_failed": "apply",
+    "harness_loaded": "run",
+    "unit_completed": "run",
+    "gate_evaluated": "gate",
+    "holdout_released": "gate",
+    "evidence_replicated": "gate",
+    "decision_recorded": "decide",
+    "frontier_updated": "decide",
+    "round_closed": "close",
+}
+
+
 class _RoundLogEmitter:
     """Best-effort appender onto one round's durable RoundLog (WS8).
 
@@ -81,10 +101,11 @@ class _RoundLogEmitter:
     token is silently dropped (never a crash on a vocabulary skew).
     """
 
-    __slots__ = ("_log",)
+    __slots__ = ("_log", "_round_index")
 
     def __init__(self, workspace_root: Path, epoch_id: str, round_index: int) -> None:
         self._log: Any = None
+        self._round_index = round_index
         try:
             from zicato.epoch.round_log import RoundLog  # noqa: PLC0415
 
@@ -93,7 +114,15 @@ class _RoundLogEmitter:
             log.debug("round-log emitter unavailable: %s", exc)
 
     def emit(self, type_token: str, fields: dict[str, Any] | None = None) -> None:
-        """Append one typed event; any failure is swallowed at debug level."""
+        """Append one typed event; any failure is swallowed at debug level.
+
+        ``scope`` is a reserved, type-independent field on this transport
+        seam. It becomes the record's outer ``RoundEventScope`` envelope and
+        is never passed to the event dataclass constructor, so every event
+        type can acquire coordinates without growing a payload field. The
+        emitter fills the round, lifecycle-step, and matching payload
+        coordinates when its caller does not supply them.
+        """
         if self._log is None:
             return
         try:
@@ -102,7 +131,21 @@ class _RoundLogEmitter:
             cls = EVENT_TYPES.get(type_token)
             if cls is None:
                 return
-            self._log.append(cls(**(fields or {})))
+            payload = dict(fields or {})
+            supplied_scope = payload.pop("scope", None)
+            scope = dict(supplied_scope) if isinstance(supplied_scope, Mapping) else {}
+            scope.setdefault("round_index", self._round_index)
+            step = _ROUND_LOG_STEP.get(type_token)
+            if step:
+                scope.setdefault("step", step)
+            for field in ("generation_id", "entry_id", "replicate", "side", "band"):
+                if field in payload:
+                    scope.setdefault(field, payload[field])
+            for ordinal_field in ("ordinal", "i", "index", "slot_index"):
+                if ordinal_field in payload and payload[ordinal_field] is not None:
+                    scope.setdefault("ordinal", payload[ordinal_field])
+                    break
+            self._log.append(cls(**payload), scope=scope)
         except Exception as exc:  # noqa: BLE001 — emission must never fail a round
             log.debug("round-log emit %s skipped: %s", type_token, exc)
 

@@ -240,9 +240,12 @@ class ProposerContext:
     #: into the round's durable event log WITHOUT importing the log module
     #: (the proposer stays decoupled from :mod:`zicato.epoch.round_log`).
     #: Called as ``emitter(type_token, fields)`` — e.g.
-    #: ``("candidate_sampled", {"i": 0, "n": 3})`` from the best-of-N
-    #: wrapper. Emission is best-effort by contract: callers guard every
-    #: invocation so a raising emitter can never fail a propose step.
+    #: ``("candidate_sampled", {"i": 0, "n": 3,
+    #: "scope": {"generation_id": "v1"}})`` from the best-of-N wrapper.
+    #: ``scope`` is a reserved, type-independent envelope field; the durable
+    #: emitter removes it before constructing the typed event payload.
+    #: Emission is best-effort by contract: callers guard every invocation so
+    #: a raising emitter can never fail a propose step.
     #: ``None`` (the default) emits nothing.
     round_event_emitter: Callable[[str, dict[str, Any]], None] | None = None
     #: Optional pre-tournament candidate-screen runner (tryouts; WS-S).

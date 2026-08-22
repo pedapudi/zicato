@@ -981,6 +981,7 @@ async def test_sole_survivor_mode_string_and_event_ordering() -> None:
             {"index": 1, "core_idea": "fine", "mutation_ids": ["writer__sp"]},
         ),
         "rationale": "",
+        "scope": {"generation_id": "v1"},
     }
 
 
@@ -1285,9 +1286,14 @@ async def test_revise_round_log_ordering_and_markers() -> None:
         "critique_selected",
     ]
     sampled = [f for t, f in events if t == "candidate_sampled"]
-    assert sampled[0] == {"i": 0, "n": 2}
-    assert sampled[1] == {"i": 1, "n": 2}
-    assert sampled[2] == {"i": 2, "n": 2, "revise": True}
+    assert sampled[0] == {"i": 0, "n": 2, "scope": {"generation_id": "v1"}}
+    assert sampled[1] == {"i": 1, "n": 2, "scope": {"generation_id": "v1"}}
+    assert sampled[2] == {
+        "i": 2,
+        "n": 2,
+        "revise": True,
+        "scope": {"generation_id": "v1"},
+    }
     screened = [f for t, f in events if t == "candidate_screened"]
     assert [f["revise"] for f in screened] == [False, False, True]
     assert screened[2]["index"] == 2
@@ -1298,6 +1304,14 @@ async def test_revise_round_log_ordering_and_markers() -> None:
         "candidate_passes",
         "reason",
     }
+    # Every event that belongs to this slate carries its challenger scope,
+    # including the ordinary and revise sample/screen paths and the choice.
+    slate_events = [
+        fields
+        for type_token, fields in events
+        if type_token in {"candidate_sampled", "candidate_screened", "critique_selected"}
+    ]
+    assert {fields["scope"]["generation_id"] for fields in slate_events} == {"v1"}
 
 
 @pytest.mark.asyncio
@@ -1326,7 +1340,10 @@ async def test_screening_off_never_revises_byte_identical() -> None:
         "candidate_sampled",
         "critique_selected",
     ]
-    assert [fields for _, fields in events[:2]] == [{"i": 0, "n": 2}, {"i": 1, "n": 2}]
+    assert [fields for _, fields in events[:2]] == [
+        {"i": 0, "n": 2, "scope": {"generation_id": "v1"}},
+        {"i": 1, "n": 2, "scope": {"generation_id": "v1"}},
+    ]
     assert events[2][1]["index"] == 1
     assert events[2][1]["reason"] == "critique"
 
@@ -1498,6 +1515,7 @@ async def test_recombination_mint_happy_path() -> None:
     assert selected["index"] == 2
     assert selected["reason"] == "recombined"
     assert selected["rationale"] == ""
+    assert selected["scope"]["generation_id"] == "v1"
     # The mint rides the slate summary as an ordinary member.
     assert selected["slate"][2]["core_idea"].startswith("[recombined]")
 
@@ -2003,6 +2021,7 @@ async def test_failed_slot_errors_are_logged_even_when_a_sibling_survives() -> N
         "critique_selected",
     ]
     assert events[-1][1]["reason"] == "sole_candidate"
+    assert events[-1][1]["scope"]["generation_id"] == "v1"
     # The error text is VERBATIM: the reader's marker scan anchors on the
     # call-boundary prefix, so a re-wrapped error would be unclassifiable.
     assert attempts[0]["errors"][0].startswith("auxiliary LLM call raised ")

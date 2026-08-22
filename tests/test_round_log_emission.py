@@ -21,7 +21,7 @@ from typing import Any
 import pytest
 
 from zicato.core.types import Experiment, HypothesisSpec, ProposerQualityConfig
-from zicato.epoch.round_log import RoundLog, fold_round_record
+from zicato.epoch.round_log import RoundEventScope, RoundLog, fold_round_record
 from zicato.evolve.round_reporting import _RoundLogEmitter
 from zicato.proposer.agent import ProposerContext
 from zicato.proposer.best_of_n import BestOfNProposerAgent
@@ -73,6 +73,11 @@ class TestRoundLogEmitter:
         emitter.emit("round_closed")
         events = RoundLog(tmp_path, "e1", 3).read()
         assert [e.type for e in events] == ["round_opened", "experiment_minted", "round_closed"]
+        assert [event.scope for event in events] == [
+            RoundEventScope(round_index=3, step="open"),
+            RoundEventScope(round_index=3, step="propose"),
+            RoundEventScope(round_index=3, step="close"),
+        ]
         record = fold_round_record(events)
         assert record.complete
         assert record.contract_hash == "abc"
@@ -90,6 +95,22 @@ class TestRoundLogEmitter:
         emitter.emit("round_opened", {"contract_hash": "ok"})
         events = RoundLog(tmp_path, "e1", 0).read()
         assert [e.type for e in events] == ["round_opened"]
+
+    def test_scope_is_outer_and_enriched_from_event_coordinates(self, tmp_path: Path) -> None:
+        emitter = _RoundLogEmitter(tmp_path, "e1", 3)
+        emitter.emit(
+            "unit_completed",
+            {"entry_id": "entry-1", "replicate": 2, "side": "child"},
+        )
+        event = RoundLog(tmp_path, "e1", 3).read()[0]
+        assert event.scope == RoundEventScope(
+            round_index=3,
+            step="run",
+            entry_id="entry-1",
+            replicate=2,
+            side="child",
+        )
+        assert event.payload == {"entry_id": "entry-1", "replicate": 2, "side": "child"}
 
     def test_unwritable_log_never_raises(self, tmp_path: Path) -> None:
         # Bind onto a path whose parent is a FILE, so every append fails —
@@ -351,6 +372,7 @@ class TestBestOfNEmission:
         ]
         assert [f["i"] for t, f in emitted if t == "candidate_sampled"] == [0, 1, 2]
         assert all(f["n"] == 3 for t, f in emitted if t == "candidate_sampled")
+        assert all(f["scope"] == {"generation_id": "v1"} for _t, f in emitted)
         critique = emitted[-1][1]
         assert critique["reason"] == "heuristic"
         assert isinstance(critique["index"], int)
@@ -393,6 +415,7 @@ class TestBestOfNEmission:
             "reason": "sole_candidate",
             "slate": ({"index": 0, "core_idea": "the only idea", "mutation_ids": ["m1"]},),
             "rationale": "",
+            "scope": {"generation_id": "v1"},
         }
 
     def test_a_full_slate_selection_is_unchanged(self) -> None:
@@ -509,6 +532,16 @@ class TestSlateEvidenceReachesTheReader:
         from zicato.epoch.round_integrity import RoundStatus, round_integrity
 
         self._run_slate(tmp_path, survivors=1, n=3)
+        slate_events = [
+            event
+            for event in RoundLog(tmp_path, "e1", 1).read()
+            if event.type in {"candidate_sampled", "critique_selected"}
+        ]
+        assert slate_events
+        assert {event.scope.generation_id for event in slate_events} == {"v1"}
+        assert {(event.scope.round_index, event.scope.step) for event in slate_events} == {
+            (1, "propose")
+        }
         verdict = round_integrity(tmp_path, "e1", 1)
 
         assert verdict.status == RoundStatus.VOID

@@ -477,8 +477,17 @@ def normalize_selection_rationale(rationale: str) -> str:
     return " ".join(rationale.split())[:RATIONALE_CAP]
 
 
+def _slate_scope(generation_id: str) -> dict[str, str]:
+    """The durable plan scope shared by every event from one challenger slate."""
+    return {"generation_id": generation_id}
+
+
 def _screened_event_fields(
-    index: int, res: CandidateScreenResult, revise: bool = False
+    index: int,
+    res: CandidateScreenResult,
+    *,
+    generation_id: str,
+    revise: bool = False,
 ) -> dict[str, Any]:
     """One ``candidate_screened`` event payload — the counts-only summary.
 
@@ -498,11 +507,17 @@ def _screened_event_fields(
             "reason": res.reason,
         },
         "revise": revise,
+        "scope": _slate_scope(generation_id),
     }
 
 
 def _selected_event_fields(
-    candidates: list[Experiment], index: int, mode: str, rationale: str = ""
+    candidates: list[Experiment],
+    index: int,
+    mode: str,
+    *,
+    generation_id: str,
+    rationale: str = "",
 ) -> dict[str, Any]:
     """One ``critique_selected`` event payload — the selection's provenance.
 
@@ -544,6 +559,7 @@ def _selected_event_fields(
             for i, item in enumerate(candidates)
         ),
         "rationale": rationale,
+        "scope": _slate_scope(generation_id),
     }
 
 
@@ -772,7 +788,11 @@ class BestOfNProposerAgent:
             if outcome.candidate is None:
                 continue
             candidates.append(outcome.candidate)
-            fields: dict[str, Any] = {"i": outcome.sample, "n": n}
+            fields: dict[str, Any] = {
+                "i": outcome.sample,
+                "n": n,
+                "scope": _slate_scope(ctx.new_generation_id),
+            }
             if outcome.recombined:
                 recombined_index = len(candidates) - 1
                 fields["recombined"] = True
@@ -812,7 +832,12 @@ class BestOfNProposerAgent:
             _emit_round_event(
                 ctx,
                 "critique_selected",
-                lambda: _selected_event_fields(candidates, 0, "sole_candidate"),
+                lambda: _selected_event_fields(
+                    candidates,
+                    0,
+                    "sole_candidate",
+                    generation_id=ctx.new_generation_id,
+                ),
             )
             return candidates[0]
 
@@ -842,7 +867,12 @@ class BestOfNProposerAgent:
             _emit_round_event(
                 ctx,
                 "critique_selected",
-                lambda: _selected_event_fields(candidates, chosen, selection_mode),
+                lambda: _selected_event_fields(
+                    candidates,
+                    chosen,
+                    selection_mode,
+                    generation_id=ctx.new_generation_id,
+                ),
             )
             return candidates[chosen]
 
@@ -894,7 +924,13 @@ class BestOfNProposerAgent:
         _emit_round_event(
             ctx,
             "critique_selected",
-            lambda: _selected_event_fields(candidates, chosen, selection_mode, rationale),
+            lambda: _selected_event_fields(
+                candidates,
+                chosen,
+                selection_mode,
+                generation_id=ctx.new_generation_id,
+                rationale=rationale,
+            ),
         )
         return candidates[chosen]
 
@@ -1312,7 +1348,11 @@ class BestOfNProposerAgent:
             )
             return None
         for i, res in enumerate(results):
-            _emit_round_event(ctx, "candidate_screened", _screened_event_fields(i, res))
+            _emit_round_event(
+                ctx,
+                "candidate_screened",
+                _screened_event_fields(i, res, generation_id=ctx.new_generation_id),
+            )
         return results
 
     async def _revise_all_vetoed(
@@ -1403,7 +1443,16 @@ class BestOfNProposerAgent:
             return "unavailable"
         finally:
             cleanup()
-        _emit_round_event(ctx, "candidate_sampled", {"i": revise_index, "n": n, "revise": True})
+        _emit_round_event(
+            ctx,
+            "candidate_sampled",
+            {
+                "i": revise_index,
+                "n": n,
+                "revise": True,
+                "scope": _slate_scope(ctx.new_generation_id),
+            },
+        )
         result = await self._screen_replacement(replacement, revise_index, ctx)
         candidates.append(replacement)
         if result is not None and result.vetoed:
@@ -1439,7 +1488,16 @@ class BestOfNProposerAgent:
             )
             return None
         res = results[0]
-        _emit_round_event(ctx, "candidate_screened", _screened_event_fields(index, res, True))
+        _emit_round_event(
+            ctx,
+            "candidate_screened",
+            _screened_event_fields(
+                index,
+                res,
+                generation_id=ctx.new_generation_id,
+                revise=True,
+            ),
+        )
         return res
 
     async def _select_over(

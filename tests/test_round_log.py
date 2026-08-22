@@ -16,6 +16,7 @@ import pytest
 
 from zicato.epoch.round_log import (
     CandidateSampled,
+    CandidateScreened,
     CritiqueSelected,
     DecisionRecorded,
     EvidenceReplicated,
@@ -25,6 +26,7 @@ from zicato.epoch.round_log import (
     PatchesApplied,
     ProposalAttempted,
     RoundClosed,
+    RoundEventScope,
     RoundLog,
     RoundOpened,
     UnitCompleted,
@@ -274,9 +276,46 @@ def test_critique_slate_and_rationale_round_trip(tmp_path):
     assert (decoded.slate[1]["core_idea"], decoded.rationale) == ("best", event.rationale)
 
 
-def test_pre_recombine_log_decodes_with_flag_defaulted(tmp_path):
-    """A log written BEFORE the flag existed (no ``recombined`` key in the
-    payload) decodes identically — the additive-default contract."""
+def test_slate_events_round_trip_with_a_generation_scope(tmp_path):
+    """The three slate event types share one challenger's outer scope."""
+    log = RoundLog(tmp_path, "epoch-01", 8)
+    scope = RoundEventScope(generation_id="v7")
+    log.append(CandidateSampled(i=0, n=2), scope=scope)
+    log.append(CandidateScreened(index=0, vetoed=False), scope=scope)
+    log.append(CritiqueSelected(index=0, reason="critic"), scope=scope)
+
+    events = log.read()
+    assert [event.scope.generation_id for event in events] == ["v7", "v7", "v7"]
+    assert all("generation_id" not in event.payload for event in events)
+
+
+def test_scope_round_trips_standard_and_future_coordinates(tmp_path):
+    """A reader retains an unknown future scope field instead of dropping it."""
+    log = RoundLog(tmp_path, "epoch-01", 8)
+    log.append(
+        RoundOpened(contract_hash="h"),
+        scope={
+            "round_index": 8,
+            "step": "propose",
+            "generation_id": "v7",
+            "future_coordinate": "north",
+        },
+    )
+
+    envelope = log.read()[0]
+    assert envelope.scope == RoundEventScope(
+        generation_id="v7",
+        round_index=8,
+        step="propose",
+        attributes={"future_coordinate": "north"},
+    )
+    wire = json.loads(log.path.read_text(encoding="utf-8"))
+    assert wire["scope"]["attributes"]["future_coordinate"] == "north"
+    assert "scope" not in wire["payload"]
+
+
+def test_pre_scope_log_decodes_with_empty_envelope_scope(tmp_path):
+    """A log written before scope existed still decodes identically."""
     import json as _json
 
     path = round_log_path(tmp_path, "epoch-01", 8)
@@ -284,6 +323,8 @@ def test_pre_recombine_log_decodes_with_flag_defaulted(tmp_path):
     lines = [
         {"seq": 1, "ts": "t", "type": "round_opened", "payload": {"contract_hash": "h"}},
         {"seq": 2, "ts": "t", "type": "candidate_sampled", "payload": {"i": 0, "n": 3}},
+        {"seq": 3, "ts": "t", "type": "candidate_screened", "payload": {"index": 0}},
+        {"seq": 4, "ts": "t", "type": "critique_selected", "payload": {"index": 0}},
     ]
     path.write_text("".join(_json.dumps(rec) + "\n" for rec in lines), encoding="utf-8")
 
@@ -291,6 +332,11 @@ def test_pre_recombine_log_decodes_with_flag_defaulted(tmp_path):
     sampled = events[1].event
     assert isinstance(sampled, CandidateSampled)
     assert sampled.recombined is False
+    screened = events[2].event
+    selected = events[3].event
+    assert isinstance(screened, CandidateScreened)
+    assert isinstance(selected, CritiqueSelected)
+    assert [event.scope for event in events[1:]] == [RoundEventScope()] * 3
     record = fold_round_record(events)
     assert record.proposal.recombined_sampled == 0
 
