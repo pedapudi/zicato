@@ -782,7 +782,14 @@ class BestOfNProposerAgent:
             errors = _slot_error_texts(outcome)
             if errors:
                 staged.append(
-                    ("proposal_attempted", {"errors": errors, "slot_index": outcome.sample})
+                    (
+                        "proposal_attempted",
+                        {
+                            "errors": errors,
+                            "slot_index": outcome.sample,
+                            "scope": _slate_scope(ctx.new_generation_id),
+                        },
+                    )
                 )
                 slot_attempts.extend(f"slot {outcome.sample}: {text}" for text in errors)
             if outcome.candidate is None:

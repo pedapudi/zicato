@@ -200,11 +200,21 @@ async def _propose_child(
     except ProposerError as exc:
         if round_emitter is not None:
             for attempt_error in exc.attempts:
-                round_emitter.emit("proposal_attempted", {"errors": (str(attempt_error),)})
+                round_emitter.emit(
+                    "proposal_attempted",
+                    {
+                        "errors": (str(attempt_error),),
+                        "scope": {"generation_id": next_id},
+                    },
+                )
         raise
     if round_emitter is not None:
-        round_emitter.emit("proposal_attempted", {})
-        round_emitter.emit("experiment_minted", {"experiment_id": experiment.id})
+        scope = {"generation_id": next_id}
+        round_emitter.emit("proposal_attempted", {"scope": scope})
+        round_emitter.emit(
+            "experiment_minted",
+            {"experiment_id": experiment.id, "scope": scope},
+        )
         # The proposer's validate hook derived + validated the child tree
         # before a successful return, so the patches are applied by here.
         round_emitter.emit("patches_applied", {"generation_id": next_id})

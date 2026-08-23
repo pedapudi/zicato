@@ -83,6 +83,30 @@ _ROUND_LOG_STEP: dict[str, str] = {
 }
 
 
+#: The ONE reserved field on the emitter seam. It is the outer scope
+#: envelope, never a payload field, so every emitter — the durable one below
+#: and any test double — MUST take it out before constructing the typed
+#: event. :func:`split_round_event_fields` is that single definition.
+ROUND_EVENT_SCOPE_FIELD = "scope"
+
+
+def split_round_event_fields(
+    fields: dict[str, Any] | None,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Split emitter ``fields`` into the event payload and its outer scope.
+
+    Every emitter on the ``round_event_emitter`` seam has to strip the
+    reserved scope key: no event dataclass declares it, so leaving it in
+    raises ``TypeError`` from the constructor. Keeping the split here means a
+    test double stays honest by calling the same helper the real emitter does
+    rather than re-deriving the rule and drifting from it.
+    """
+    payload = dict(fields or {})
+    supplied = payload.pop(ROUND_EVENT_SCOPE_FIELD, None)
+    scope = dict(supplied) if isinstance(supplied, Mapping) else {}
+    return payload, scope
+
+
 class _RoundLogEmitter:
     """Best-effort appender onto one round's durable RoundLog (WS8).
 
@@ -131,14 +155,18 @@ class _RoundLogEmitter:
             cls = EVENT_TYPES.get(type_token)
             if cls is None:
                 return
-            payload = dict(fields or {})
-            supplied_scope = payload.pop("scope", None)
-            scope = dict(supplied_scope) if isinstance(supplied_scope, Mapping) else {}
+            payload, scope = split_round_event_fields(fields)
             scope.setdefault("round_index", self._round_index)
             step = _ROUND_LOG_STEP.get(type_token)
             if step:
                 scope.setdefault("step", step)
-            for field in ("generation_id", "entry_id", "replicate", "side", "band"):
+            # ``replicate`` is deliberately NOT auto-filled. The only event
+            # that carries one is ``unit_completed``, whose replicate is the
+            # aggregate placeholder 0 rather than the draw's true index (see
+            # _emit_tournament_units) — promoting it here would state a plan
+            # coordinate the files contradict. A caller with a REAL replicate
+            # supplies it through ``scope``.
+            for field in ("generation_id", "entry_id", "side", "band"):
                 if field in payload:
                     scope.setdefault(field, payload[field])
             for ordinal_field in ("ordinal", "i", "index", "slot_index"):
@@ -150,7 +178,14 @@ class _RoundLogEmitter:
             log.debug("round-log emit %s skipped: %s", type_token, exc)
 
 
-def _emit_tournament_units(round_log: _RoundLogEmitter, tournament_result: Any) -> None:
+def _emit_tournament_units(
+    round_log: _RoundLogEmitter,
+    tournament_result: Any,
+    *,
+    parent_generation_id: str = "",
+    child_generation_id: str = "",
+    matchup_id: str = "",
+) -> None:
     """Emit ``unit_completed`` events for a settled duel's board units.
 
     Emitted as an AGGREGATE after the duel settles (per-unit emission at
@@ -160,17 +195,44 @@ def _emit_tournament_units(round_log: _RoundLogEmitter, tournament_result: Any) 
     ``replicate=0`` (the runner's per-entry map carries the canonical
     replicate; extra replicates fold into the aggregates upstream and are
     not re-derivable here). Best-effort like every emission.
+
+    ``parent_generation_id`` / ``child_generation_id`` NAME the two sides.
+    A field round settles several matchups into ONE round log, so the same
+    ``entry_id`` arrives with ``side="child"`` once per challenger; without
+    the generation id those events collide and no reader can separate them.
+    ``matchup_id`` distinguishes repeat or field matchups involving the same
+    generation. The placeholder replicate travels as the
+    ``aggregate_replicate`` attribute rather than as the ``replicate``
+    coordinate, so a reader that places nodes by coordinate cannot mistake it
+    for a real draw index.
     """
     per_entry = getattr(tournament_result, "per_entry_losses", None) or {}
     try:
         entry_ids = sorted(per_entry)
     except Exception:  # noqa: BLE001 — emission must never fail a round
         return
+    side_generations = {"parent": parent_generation_id, "child": child_generation_id}
+    side_opponents = {"parent": child_generation_id, "child": parent_generation_id}
     for entry_id in entry_ids:
         for side in ("parent", "child"):
+            scope: dict[str, Any] = {
+                "entry_id": str(entry_id),
+                "side": side,
+                "attributes": {
+                    "aggregate_replicate": 0,
+                    **({"matchup_id": matchup_id} if matchup_id else {}),
+                    **(
+                        {"opponent_generation_id": str(side_opponents[side])}
+                        if side_opponents[side]
+                        else {}
+                    ),
+                },
+            }
+            if side_generations[side]:
+                scope["generation_id"] = str(side_generations[side])
             round_log.emit(
                 "unit_completed",
-                {"entry_id": str(entry_id), "replicate": 0, "side": side},
+                {"entry_id": str(entry_id), "replicate": 0, "side": side, "scope": scope},
             )
 
 
@@ -238,6 +300,9 @@ def _emit_gate_evaluated(
     parent_agg: Any = None,
     child_agg: Any = None,
     weights: Any = None,
+    generation_id: str = "",
+    opponent_generation_id: str = "",
+    matchup_id: str = "",
 ) -> None:
     """Emit the ``gate_evaluated`` event for one settled duel's gate verdict.
 
@@ -281,6 +346,23 @@ def _emit_gate_evaluated(
     margin = getattr(weights, "promote_margin", None)
     if _is_real_number(margin):
         fields["margin_required"] = float(margin)
+    # A field round gates each matchup into ONE round log; without the
+    # challenger's id every verdict reads as the round's own.
+    if generation_id or opponent_generation_id or matchup_id:
+        scope: dict[str, Any] = {}
+        if generation_id:
+            scope["generation_id"] = str(generation_id)
+        attributes = {
+            **(
+                {"opponent_generation_id": str(opponent_generation_id)}
+                if opponent_generation_id
+                else {}
+            ),
+            **({"matchup_id": matchup_id} if matchup_id else {}),
+        }
+        if attributes:
+            scope["attributes"] = attributes
+        fields["scope"] = scope
     round_log.emit("gate_evaluated", fields)
 
 

@@ -517,8 +517,16 @@ async def evolve_field_round(
             )
             field_aggregates[m.left.generation_id] = result.parent_agg
             field_aggregates[m.right.generation_id] = result.child_agg
-        # WS8: this matchup's board units + gate verdict onto the round log.
-        _emit_tournament_units(round_log, result)
+        # WS8: this matchup's board units + gate verdict onto the round log,
+        # each NAMING its generation — a field round settles several matchups
+        # into one log, so unscoped units and gates would be indistinguishable.
+        _emit_tournament_units(
+            round_log,
+            result,
+            parent_generation_id=m.left.generation_id,
+            child_generation_id=m.right.generation_id,
+            matchup_id=m.matchup_id,
+        )
         _emit_harness_loaded(round_log, workspace_root, epoch_id, result)
         _emit_gate_evaluated(
             round_log,
@@ -526,6 +534,9 @@ async def evolve_field_round(
             parent_agg=result.parent_agg,
             child_agg=result.child_agg,
             weights=weights,
+            generation_id=m.right.generation_id,
+            opponent_generation_id=m.left.generation_id,
+            matchup_id=m.matchup_id,
         )
         return MatchupResult(
             matchup_id=m.matchup_id,
@@ -774,7 +785,10 @@ async def evolve_field_round(
     if crowning_holdout_block is not None:
         round_log.emit(
             "holdout_released",
-            {"confirmed": bool(crowning_holdout_block.get("confirmed"))},
+            {
+                "confirmed": bool(crowning_holdout_block.get("confirmed")),
+                "scope": {"generation_id": crowning_challenger_id},
+            },
         )
 
     # --- Opt-in integrity blocking modes (default OFF) -------------------

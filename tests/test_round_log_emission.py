@@ -103,14 +103,144 @@ class TestRoundLogEmitter:
             {"entry_id": "entry-1", "replicate": 2, "side": "child"},
         )
         event = RoundLog(tmp_path, "e1", 3).read()[0]
+        # ``replicate`` is NOT auto-filled: the only emitter of the field
+        # sends the aggregate placeholder, so the payload's value is never
+        # promoted to a plan coordinate. Everything else is.
         assert event.scope == RoundEventScope(
+            round_index=3,
+            step="run",
+            entry_id="entry-1",
+            side="child",
+        )
+        assert event.payload == {"entry_id": "entry-1", "replicate": 2, "side": "child"}
+
+    def test_supplied_scope_carries_a_real_replicate(self, tmp_path: Path) -> None:
+        emitter = _RoundLogEmitter(tmp_path, "e1", 3)
+        emitter.emit(
+            "unit_completed",
+            {
+                "entry_id": "entry-1",
+                "replicate": 0,
+                "side": "child",
+                "scope": {"generation_id": "gen-7", "replicate": 2},
+            },
+        )
+        event = RoundLog(tmp_path, "e1", 3).read()[0]
+        assert event.scope == RoundEventScope(
+            generation_id="gen-7",
             round_index=3,
             step="run",
             entry_id="entry-1",
             replicate=2,
             side="child",
         )
-        assert event.payload == {"entry_id": "entry-1", "replicate": 2, "side": "child"}
+
+    def test_tournament_units_keep_their_matchup_and_opponent(self, tmp_path: Path) -> None:
+        from types import SimpleNamespace
+
+        from zicato.evolve.round_reporting import _emit_tournament_units
+
+        emitter = _RoundLogEmitter(tmp_path, "e1", 3)
+        _emit_tournament_units(
+            emitter,
+            SimpleNamespace(per_entry_losses={"entry-1": object()}),
+            parent_generation_id="v0",
+            child_generation_id="v1",
+            matchup_id="rung-2",
+        )
+        events = RoundLog(tmp_path, "e1", 3).read()
+        assert [(event.scope.generation_id, event.scope.side) for event in events] == [
+            ("v0", "parent"),
+            ("v1", "child"),
+        ]
+        assert [event.scope.attributes for event in events] == [
+            {
+                "aggregate_replicate": 0,
+                "matchup_id": "rung-2",
+                "opponent_generation_id": "v1",
+            },
+            {
+                "aggregate_replicate": 0,
+                "matchup_id": "rung-2",
+                "opponent_generation_id": "v0",
+            },
+        ]
+
+    def test_gate_scope_keeps_the_matchup_and_opponent(self, tmp_path: Path) -> None:
+        from types import SimpleNamespace
+
+        from zicato.evolve.round_reporting import _emit_gate_evaluated
+
+        emitter = _RoundLogEmitter(tmp_path, "e1", 3)
+        _emit_gate_evaluated(
+            emitter,
+            SimpleNamespace(reason="", decision="promoted"),
+            generation_id="v1",
+            opponent_generation_id="v0",
+            matchup_id="rung-2",
+        )
+        event = RoundLog(tmp_path, "e1", 3).read()[0]
+        assert event.scope == RoundEventScope(
+            generation_id="v1",
+            round_index=3,
+            step="gate",
+            attributes={"matchup_id": "rung-2", "opponent_generation_id": "v0"},
+        )
+
+    def test_a_null_coordinate_reads_back_as_absent(self, tmp_path: Path) -> None:
+        emitter = _RoundLogEmitter(tmp_path, "e1", 1)
+        emitter.emit("round_opened", {"contract_hash": "h", "scope": {"generation_id": None}})
+        event = RoundLog(tmp_path, "e1", 1).read()[0]
+        # Never the literal string "None" — a null coordinate is an absent one.
+        assert event.scope.generation_id == ""
+
+    def test_proposal_lifecycle_events_share_the_next_generation_scope(
+        self, tmp_path: Path
+    ) -> None:
+        """The outer proposer events join the slate, not merely the round."""
+        from types import SimpleNamespace
+
+        from zicato.evolve.propose_apply import _propose_child
+
+        class _Proposer:
+            async def propose(self, _ctx: ProposerContext) -> Experiment:
+                return _experiment("v1", "idea")
+
+        async def _aux(_system: str, _user: str, _model: str) -> str:
+            return ""
+
+        asyncio.run(
+            _propose_child(
+                proposer_agent=_Proposer(),
+                epoch_id="e1",
+                parent_id="v0",
+                next_id="v1",
+                patterns=(),
+                mutations=(),
+                brief=SimpleNamespace(text="", forbidden_ids=frozenset()),
+                loss_summary="",
+                auxiliary_call_llm=_aux,
+                auxiliary_model="test",
+                max_proposer_retries=1,
+                workspace_root=tmp_path,
+                generation_root=tmp_path,
+                validate_experiment=None,
+                meta_loop_emitter=None,
+                custom_judge_names=frozenset(),
+                prior_experiments=(),
+                restrict_visibility=True,
+                failure_profile="",
+                round_index=3,
+                round_emitter=_RoundLogEmitter(tmp_path, "e1", 3),
+            )
+        )
+        events = RoundLog(tmp_path, "e1", 3).read()
+        assert [event.type for event in events] == [
+            "proposal_attempted",
+            "experiment_minted",
+            "patches_applied",
+        ]
+        assert {event.scope.generation_id for event in events} == {"v1"}
 
     def test_unwritable_log_never_raises(self, tmp_path: Path) -> None:
         # Bind onto a path whose parent is a FILE, so every append fails —
@@ -574,3 +704,120 @@ class TestSlateEvidenceReachesTheReader:
         )
         # ... and no slot-tagged transport error was mistaken for a patch.
         assert not verdict.invalid_patch
+
+
+class TestDuelScopeWiring:
+    """What the unit and gate emitters actually WRITE as plan coordinates.
+
+    These records are write-once: a dropped keyword or a reversed side map
+    corrupts the durable log for every round emitted before anyone notices,
+    and no re-run repairs it. So the assertions are on the scope that
+    reaches the log, not on the arguments the call site passes.
+    """
+
+    class _Result:
+        per_entry_losses = {"entry-b": 0.2, "entry-a": 0.1}
+        parent_agg = {"scalar": 0.6}
+        child_agg = {"scalar": 0.9}
+        outcome = type("_O", (), {"reason": "", "decision": "promote"})()
+
+    def _scopes(self, tmp_path: Path, type_token: str) -> list[RoundEventScope]:
+        return [e.scope for e in RoundLog(tmp_path, "e1", 4).read() if e.type == type_token]
+
+    def test_units_name_the_generation_on_each_side(self, tmp_path: Path) -> None:
+        from zicato.evolve.round_reporting import _emit_tournament_units
+
+        _emit_tournament_units(
+            _RoundLogEmitter(tmp_path, "e1", 4),
+            self._Result(),
+            parent_generation_id="v-champ",
+            child_generation_id="v-chal",
+            matchup_id="m-7",
+        )
+
+        scopes = self._scopes(tmp_path, "unit_completed")
+        # One per (entry, side), entries in sorted order.
+        assert [(s.entry_id, s.side, s.generation_id) for s in scopes] == [
+            ("entry-a", "parent", "v-champ"),
+            ("entry-a", "child", "v-chal"),
+            ("entry-b", "parent", "v-champ"),
+            ("entry-b", "child", "v-chal"),
+        ]
+        # The opponent is the OTHER side, never the same generation twice.
+        assert [s.attributes["opponent_generation_id"] for s in scopes] == [
+            "v-chal",
+            "v-champ",
+            "v-chal",
+            "v-champ",
+        ]
+        # The placeholder never reaches the replicate COORDINATE.
+        assert {s.replicate for s in scopes} == {None}
+        assert {s.attributes["aggregate_replicate"] for s in scopes} == {0}
+        assert {s.attributes["matchup_id"] for s in scopes} == {"m-7"}
+        assert {s.step for s in scopes} == {"run"}
+
+    def test_the_gate_names_the_challenger_and_its_opponent(self, tmp_path: Path) -> None:
+        from zicato.evolve.round_reporting import _emit_gate_evaluated
+
+        _emit_gate_evaluated(
+            _RoundLogEmitter(tmp_path, "e1", 4),
+            self._Result.outcome,
+            parent_agg=self._Result.parent_agg,
+            child_agg=self._Result.child_agg,
+            generation_id="v-chal",
+            opponent_generation_id="v-champ",
+            matchup_id="m-7",
+        )
+
+        (scope,) = self._scopes(tmp_path, "gate_evaluated")
+        assert (scope.generation_id, scope.step, scope.round_index) == ("v-chal", "gate", 4)
+        assert scope.attributes == {"opponent_generation_id": "v-champ", "matchup_id": "m-7"}
+
+    def test_an_unnamed_duel_still_emits_an_unscoped_record(self, tmp_path: Path) -> None:
+        """No ids to give (the default call): coordinates are absent, not faked."""
+        from zicato.evolve.round_reporting import _emit_gate_evaluated, _emit_tournament_units
+
+        emitter = _RoundLogEmitter(tmp_path, "e1", 4)
+        _emit_tournament_units(emitter, self._Result())
+        _emit_gate_evaluated(emitter, self._Result.outcome)
+
+        units = self._scopes(tmp_path, "unit_completed")
+        (gate,) = self._scopes(tmp_path, "gate_evaluated")
+        assert {s.generation_id for s in units} == {""}
+        assert "opponent_generation_id" not in units[0].attributes
+        assert "matchup_id" not in units[0].attributes
+        assert (gate.generation_id, gate.attributes) == ("", {})
+
+
+def test_every_duel_call_site_names_the_generations_it_gates() -> None:
+    """Both round drivers PASS the ids, not just accept them.
+
+    The emitters default their scope arguments to ``""`` so an unscoped
+    caller still emits a well-formed record. That default is what makes a
+    dropped keyword silent: the round runs, the log is written, and only the
+    attribution is gone — permanently, since these records are write-once.
+    Driving a whole field round here would cost minutes, so the call sites
+    are pinned structurally instead, the way ``test_generation_phase``
+    already pins this package's shape.
+    """
+    import ast
+
+    src = Path(__file__).resolve().parents[1] / "src" / "zicato" / "evolve"
+    required = {
+        "_emit_tournament_units": {"parent_generation_id", "child_generation_id"},
+        "_emit_gate_evaluated": {"generation_id", "opponent_generation_id"},
+    }
+    seen: dict[tuple[str, str], set[str]] = {}
+    for module in ("field.py", "gauntlet.py"):
+        for node in ast.walk(ast.parse((src / module).read_text())):
+            if not isinstance(node, ast.Call) or not isinstance(node.func, ast.Name):
+                continue
+            if node.func.id in required:
+                seen[(module, node.func.id)] = {kw.arg or "" for kw in node.keywords}
+
+    assert set(seen) == {
+        (module, name) for module in ("field.py", "gauntlet.py") for name in required
+    }
+    for (module, name), keywords in sorted(seen.items()):
+        missing = required[name] - keywords
+        assert not missing, f"{module}: {name} no longer names {sorted(missing)}"

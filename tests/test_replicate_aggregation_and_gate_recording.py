@@ -597,13 +597,20 @@ def _emitted_gate_event(
     and not just the dataclass shape.
     """
     from zicato.epoch.round_log import EVENT_TYPES
-    from zicato.evolve.round_reporting import _emit_gate_evaluated
+    from zicato.evolve.round_reporting import (
+        _emit_gate_evaluated,
+        split_round_event_fields,
+    )
 
     captured: list[Any] = []
 
     class _Emitter:
         def emit(self, type_token: str, fields: dict[str, Any] | None = None) -> None:
-            captured.append(EVENT_TYPES[type_token](**(fields or {})))
+            # Through the SAME split the real emitter uses: ``scope`` is a
+            # reserved envelope key no event dataclass declares, so a double
+            # that forwarded it verbatim would raise on any scoped call.
+            payload, _scope = split_round_event_fields(fields)
+            captured.append(EVENT_TYPES[type_token](**payload))
 
     _emit_gate_evaluated(
         _Emitter(),  # type: ignore[arg-type]

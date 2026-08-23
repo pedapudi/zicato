@@ -28,6 +28,7 @@ from zicato.epoch.round_log import (
     RoundClosed,
     RoundEventScope,
     RoundLog,
+    RoundLogEnvelope,
     RoundOpened,
     UnitCompleted,
     ValidationFailed,
@@ -89,6 +90,14 @@ def test_round_trip_and_seq_monotonicity(tmp_path):
     resumed = RoundLog(tmp_path, "epoch-01", 1)
     extra = resumed.append(ProposalAttempted(errors=("late",)))
     assert extra.seq == len(appended) + 1
+
+
+def test_round_log_envelope_keeps_its_existing_positional_event_argument():
+    """Adding scope must not reinterpret an existing fifth positional argument."""
+    event = RoundOpened(contract_hash="h")
+    envelope = RoundLogEnvelope(1, "t", "round_opened", {"contract_hash": "h"}, event)
+    assert envelope.event is event
+    assert envelope.scope == RoundEventScope()
 
 
 def test_fold_round_record_on_the_convergence_shape(tmp_path):
@@ -287,6 +296,23 @@ def test_slate_events_round_trip_with_a_generation_scope(tmp_path):
     events = log.read()
     assert [event.scope.generation_id for event in events] == ["v7", "v7", "v7"]
     assert all("generation_id" not in event.payload for event in events)
+
+
+def test_a_scope_has_a_canonical_hashable_grouping_key():
+    """Open extension data groups through a snapshot, not a mutable hash key."""
+    left = RoundEventScope(generation_id="v7", entry_id="e1", attributes={"x": [1, 2]})
+    right = RoundEventScope(generation_id="v7", entry_id="e1", attributes={"x": [1, 2]})
+    assert left.grouping_key() == right.grouping_key()
+    assert len({left.grouping_key(), right.grouping_key(), RoundEventScope().grouping_key()}) == 2
+    assert {left.grouping_key(): "group"}[right.grouping_key()] == "group"
+
+
+def test_a_rendered_payload_cannot_mutate_its_frozen_scope():
+    """``to_payload`` renders a snapshot, never the scope's live mapping."""
+    scope = RoundEventScope(generation_id="v1", attributes={"a": 1})
+    payload = scope.to_payload()
+    payload["attributes"]["injected"] = True
+    assert scope.attributes == {"a": 1}
 
 
 def test_scope_round_trips_standard_and_future_coordinates(tmp_path):

@@ -447,6 +447,13 @@ class RoundEventScope:
     band: str = ""
     attributes: dict[str, Any] = field(default_factory=dict)
 
+    #: DELIBERATELY unhashable. ``frozen=True`` would otherwise generate a
+    #: ``__hash__`` that raises on the ``attributes`` mapping — clean to a
+    #: type checker, a crash at runtime, and no hint of the supported route.
+    #: ``None`` states the decision: the type reports as unhashable, and a
+    #: reader who needs a set member or a dict key uses :meth:`grouping_key`.
+    __hash__ = None  # type: ignore[assignment]
+
     @classmethod
     def from_payload(cls, payload: Mapping[str, Any] | None) -> RoundEventScope:
         """Decode a wire scope, retaining unknown coordinates as attributes."""
@@ -457,16 +464,32 @@ class RoundEventScope:
         extras = dict(attributes) if isinstance(attributes, Mapping) else {}
         extras.update({key: value for key, value in payload.items() if key not in known})
         return cls(
-            generation_id=str(payload.get("generation_id", "")),
+            # ``or ""`` and not ``str(...)``: a null wire coordinate is an
+            # ABSENT coordinate. ``str(None)`` would persist the literal
+            # "None" as a generation id, which ``to_payload`` then keeps
+            # because it is neither "" nor None.
+            generation_id=str(payload.get("generation_id") or ""),
             round_index=payload.get("round_index"),
-            step=str(payload.get("step", "")),
+            step=str(payload.get("step") or ""),
             ordinal=payload.get("ordinal"),
-            entry_id=str(payload.get("entry_id", "")),
+            entry_id=str(payload.get("entry_id") or ""),
             replicate=payload.get("replicate"),
-            side=str(payload.get("side", "")),
-            band=str(payload.get("band", "")),
+            side=str(payload.get("side") or ""),
+            band=str(payload.get("band") or ""),
             attributes=extras,
         )
+
+    def grouping_key(self) -> str:
+        """Return this scope's canonical, hashable grouping key.
+
+        ``attributes`` is deliberately open JSON data and can contain nested
+        lists or maps, so a scope itself must not become a hash key: its
+        mutable mapping would make a set or dict corrupt after mutation. A
+        plan reader that needs grouping uses this snapshot instead; canonical
+        JSON gives the same key to equivalent wire coordinates regardless of
+        mapping insertion order.
+        """
+        return json.dumps(self.to_payload(), sort_keys=True, separators=(",", ":"))
 
     def to_payload(self) -> dict[str, Any]:
         """Return the compact, forward-compatible JSON shape for this scope."""
@@ -485,7 +508,10 @@ class RoundEventScope:
             if value not in ("", None):
                 payload[name] = value
         if self.attributes:
-            payload["attributes"] = self.attributes
+            # A COPY: the scope is frozen, so handing out its live mapping
+            # would let a caller mutate one through the payload it was
+            # rendered into.
+            payload["attributes"] = dict(self.attributes)
         return payload
 
 
@@ -505,8 +531,8 @@ class RoundLogEnvelope:
     ts: str
     type: str
     payload: dict[str, Any]
-    scope: RoundEventScope = field(default_factory=RoundEventScope)
     event: RoundEvent | None = None
+    scope: RoundEventScope = field(default_factory=RoundEventScope)
 
 
 def _decode_event(type_token: str, payload: dict[str, Any]) -> RoundEvent | None:

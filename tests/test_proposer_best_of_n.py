@@ -2007,8 +2007,16 @@ async def test_failed_slot_errors_are_logged_even_when_a_sibling_survives() -> N
     # EVIDENCE — new: one attempt event per failed slot, tagged with its slot.
     attempts = [f for t, f in events if t == "proposal_attempted"]
     assert attempts == [
-        {"errors": (_CREDENTIAL_ERROR,), "slot_index": 0},
-        {"errors": (_CREDENTIAL_ERROR,), "slot_index": 1},
+        {
+            "errors": (_CREDENTIAL_ERROR,),
+            "slot_index": 0,
+            "scope": {"generation_id": "v1"},
+        },
+        {
+            "errors": (_CREDENTIAL_ERROR,),
+            "slot_index": 1,
+            "scope": {"generation_id": "v1"},
+        },
     ]
     # Emitted in SLOT order, and interleaved with the survivor's own event —
     # the trail reads as the slate ran, not as two lists stapled together.
