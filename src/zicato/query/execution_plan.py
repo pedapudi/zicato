@@ -58,11 +58,12 @@ emits it.
 Best-effort throughout (DQ3): every input may be missing, pruned, or
 torn, and each failure narrows the tree rather than raising.
 
-Deliberately not built here (issue #241 keeps them open)
---------------------------------------------------------
-* ``GET /api/live/execution-plan`` — the live overlay (heartbeat, active
-  tournament, active runs, the path that runs now). Only the durable
-  epoch endpoint ships.
+Durable model, separate live overlay
+------------------------------------
+This module builds the typed account of settled files. The live reader
+renders this same model with a runtime overlay instead of rewriting it.
+One feature remains deliberately absent here:
+
 * The ``depth`` parameter. The whole plan is served in one response; a
   client that wants a spine reads the top of the tree and ignores the
   rest.
@@ -78,6 +79,7 @@ import datetime as _dt
 import hashlib
 import json
 import re
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -190,14 +192,20 @@ class PlanNode:
     outcome: dict[str, Any] = field(default_factory=dict)
     children: tuple[PlanNode, ...] = ()
 
-    def payload(self) -> dict[str, Any]:
-        """The node's wire shape — every key always present, nulls for unknowns."""
-        return {
+    def payload(
+        self,
+        *,
+        status: str | None = None,
+        children: list[dict[str, Any]] | None = None,
+        active: bool | None = None,
+    ) -> dict[str, Any]:
+        """Render the node, optionally with live status, children, and activity."""
+        payload = {
             "id": self.id,
             "kind": self.kind,
             "label": self.label,
             "purpose": self.purpose,
-            "status": self.status,
+            "status": status or self.status,
             "provenance": self.provenance,
             "started_at": self.started_at,
             "ended_at": self.ended_at,
@@ -205,7 +213,44 @@ class PlanNode:
             "progress": dict(self.progress) if self.progress is not None else None,
             "coordinates": dict(self.coordinates),
             "outcome": dict(self.outcome),
-            "children": [child.payload() for child in self.children],
+            "children": children
+            if children is not None
+            else [child.payload() for child in self.children],
+        }
+        if active is not None:
+            payload["active"] = active
+        return payload
+
+
+@dataclass(frozen=True, slots=True)
+class ExecutionPlan:
+    """The typed execution plan shared by durable and live readers.
+
+    The live endpoint overlays the frozen tree while rendering and never
+    writes present-tense state into the settled account.
+    """
+
+    epoch_id: str | None
+    generated_at: str
+    board_digest: str = ""
+    board_entry_count: int = 0
+    note: str = ""
+    stages: tuple[PlanNode, ...] = ()
+
+    def payload(
+        self, render_node: Callable[[PlanNode], dict[str, Any]] | None = None
+    ) -> dict[str, Any]:
+        """The wire shape, optionally rendered through a node overlay."""
+        render = render_node or PlanNode.payload
+        return {
+            "epoch_id": self.epoch_id,
+            "generated_at": self.generated_at,
+            "board": {
+                "digest": self.board_digest,
+                "entry_count": self.board_entry_count,
+            },
+            "note": self.note,
+            "stages": [render(stage) for stage in self.stages],
         }
 
 
@@ -1058,15 +1103,9 @@ def _planned_rounds(
 # ---------------------------------------------------------------------------
 
 
-def _empty_plan(epoch_id: str | None, note: str) -> dict[str, Any]:
-    """The plan's shape with nothing in it — the ONE degrade shape (DQ3)."""
-    return {
-        "epoch_id": epoch_id,
-        "generated_at": _iso(_utc_now()),
-        "board": {"digest": "", "entry_count": 0},
-        "note": note,
-        "stages": [],
-    }
+def _empty_plan_model(epoch_id: str | None, note: str) -> ExecutionPlan:
+    """The empty typed model behind the one durable degrade shape (DQ3)."""
+    return ExecutionPlan(epoch_id=epoch_id, generated_at=_iso(_utc_now()), note=note)
 
 
 def build_execution_plan(paths: WorkspacePaths, epoch_id: str | None = None) -> dict[str, Any]:
@@ -1103,19 +1142,29 @@ def build_execution_plan(paths: WorkspacePaths, epoch_id: str | None = None) -> 
     absent, unknown, or path-unsafe epoch and for any failure underneath
     (DQ3): no reader here raises.
     """
+    return build_execution_plan_model(paths, epoch_id).payload()
+
+
+def build_execution_plan_model(paths: WorkspacePaths, epoch_id: str | None = None) -> ExecutionPlan:
+    """Build the typed model used by both execution-plan endpoints.
+
+    This is the shared reader seam. It follows the public endpoint's DQ3
+    guarantee and always returns a model, including for an absent or unreadable
+    epoch.
+    """
     try:
         resolved = _resolve_epoch_id(paths, epoch_id)
     except ValueError:
-        return _empty_plan(epoch_id, "unknown epoch")
+        return _empty_plan_model(epoch_id, "unknown epoch")
     if resolved is None:
-        return _empty_plan(None, "no epoch")
+        return _empty_plan_model(None, "no epoch")
     try:
         return _build(paths, resolved)
     except Exception:  # noqa: BLE001 — DQ3: the endpoint never returns a 500
-        return _empty_plan(resolved, "epoch could not be read")
+        return _empty_plan_model(resolved, "epoch could not be read")
 
 
-def _build(paths: WorkspacePaths, epoch_id: str) -> dict[str, Any]:
+def _build(paths: WorkspacePaths, epoch_id: str) -> ExecutionPlan:
     digest, board_entry_ids = _board_facts(paths, epoch_id)
     indices = _round_indices(paths, epoch_id)
 
@@ -1181,10 +1230,13 @@ def _build(paths: WorkspacePaths, epoch_id: str) -> dict[str, Any]:
         )
     stages.extend(_planned_rounds(paths, epoch_id, indices))
 
-    plan = _empty_plan(epoch_id, "")
-    plan["board"] = {"digest": digest, "entry_count": len(board_entry_ids)}
-    plan["stages"] = [stage.payload() for stage in stages]
-    return plan
+    return ExecutionPlan(
+        epoch_id=epoch_id,
+        generated_at=_iso(_utc_now()),
+        board_digest=digest,
+        board_entry_count=len(board_entry_ids),
+        stages=tuple(stages),
+    )
 
 
 def _screen_generation_rounds(
@@ -1235,6 +1287,8 @@ __all__ = [
     "STATUS_PLANNED",
     "STATUS_RUNNING",
     "STATUS_SKIPPED",
+    "ExecutionPlan",
     "PlanNode",
     "build_execution_plan",
+    "build_execution_plan_model",
 ]
