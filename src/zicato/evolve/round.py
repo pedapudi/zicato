@@ -1,16 +1,8 @@
-"""Shared Round-pipeline helpers split out of :mod:`zicato.orchestrator`.
+"""Scratch validation and patch checks for shared candidate production.
 
-The orchestrator runs TWO evolve pipelines — the gauntlet single-duel path
-(:func:`zicato.orchestrator.evolve_once`) and the multi-challenger field
-(:func:`zicato.evolve.field.evolve_field_round`). Their *tails*
-diverge deeply (one challenger vs an N-wide strategy-driven field, a single
-``run_tournament`` vs ``resolve_tournament`` with live structure publishing,
-one persisted experiment vs N with crowning invariants, an operator-gate
-override present only on the gauntlet, …), so they are NOT a single pipeline
-and are deliberately left distinct.
-
-What IS provably identical between them is the **propose-time patch
-plumbing** that each used to inline as its own closure:
+Every tournament structure produces candidates through one batch builder.
+This module supplies the proposal-time patch plumbing used by each batch
+slot:
 
 * :func:`build_post_apply_validator` — the ``validate_experiment`` hook the
   proposer agent calls on every attempt. It beats the ``applying`` phase,
@@ -23,12 +15,6 @@ plumbing** that each used to inline as its own closure:
   re-enumerated mutation manifest, and no patch may touch a
   ``forbidden_ids`` mutation. Raises :class:`BadPatchSetError` — a
   ``ValueError`` — on either violation (issue #83).
-
-Both helpers are exact extractions of the previously-triplicated closures;
-the gauntlet path and the field path now call the SAME code. Behaviour is
-identical — the validator factory reproduces the closure's beat / derive /
-validate sequence verbatim, and the manifest check raises the same two
-messages.
 
 Concurrency note (WS-CONC): under best-of-N slate parallelism the per-slot
 ``validate`` hook from :func:`build_scratch_validator_factory` calls
@@ -321,7 +307,7 @@ def check_patch_manifest_and_forbidden(
 ) -> None:
     """Cross-check a proposer experiment's patches against the manifest.
 
-    Two invariants both pipelines enforced inline with byte-identical code:
+    Two invariants apply to every candidate slot:
 
     * every patch's ``mutation_id`` must resolve against the re-enumerated
       mutation manifest (a stale id is a hard error — the proposer targeted
@@ -330,7 +316,7 @@ def check_patch_manifest_and_forbidden(
       explicit no-go list).
 
     Raises :class:`BadPatchSetError` (a ``ValueError``) with the same
-    message either pipeline raised on the first violation; returns ``None``
+    message for the first violation; returns ``None``
     when the patch set is clean.
 
     The exception TYPE is load-bearing (issue #83): "this patch set cannot

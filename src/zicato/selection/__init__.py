@@ -15,6 +15,8 @@ from __future__ import annotations
 from zicato.selection.driver import (
     EvidencePreGate,
     EvidenceResolution,
+    TournamentEvaluation,
+    evaluate_tournament,
     resolve_tournament,
 )
 from zicato.selection.rating import (
@@ -65,9 +67,11 @@ __all__ = [
     "STRUCTURE_DEFAULT_REPLICATES",
     "default_replicates_for",
     "resolve_tournament",
+    "evaluate_tournament",
     # Opt-in Bradley--Terry promotion pre-gate (driver wiring).
     "EvidencePreGate",
     "EvidenceResolution",
+    "TournamentEvaluation",
     # Opt-in rating layer (Bradley--Terry).
     "fit_bradley_terry",
     "prob_stronger",

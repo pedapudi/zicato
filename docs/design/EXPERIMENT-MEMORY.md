@@ -13,9 +13,9 @@
 > [`core/types.py`](../../src/zicato/core/types.py),
 > [`render_prior_experiments_block`](../../src/zicato/proposer/prompts.py)
 > (the `## What's already been tried` prompt section), and the
-> orchestrator wiring — `_load_prior_experiments` plus the gauntlet and
-> multi-challenger (`_evolve_multi_challenger`, including in-flight
-> sibling accumulation) call sites. The §5 implementation plan describes
+> orchestrator wiring — `_load_prior_experiments` plus
+> `produce_candidate_batch` (including in-flight sibling accumulation). The
+> §5 implementation plan describes
 > the as-built contract; read it in the past tense. The §3.4 / §5.2
 > **cross-contract transfer** (`same_contract=False` — a different epoch
 > under the *same* `contract_hash`) is now ALSO built, as the opt-in
@@ -129,7 +129,7 @@ for offset in range(field_n):
     challenger, status = await _propose_and_apply_challenger(...)
 ```
 
-(`orchestrator._evolve_multi_challenger`, ~line 1314). Each call to
+(`produce_candidate_batch` in `evolve/candidate_batch.py`). Each call to
 `_propose_and_apply_challenger` is a **blind** proposer call: challenger
 k has no idea what challengers 0..k-1 in the *same round* just proposed.
 Two siblings can — and in practice do — propose the same mutation,
@@ -454,17 +454,15 @@ clearly-separated, epoch-tagged block after the same-epoch blocks.)
   every attempt unchanged).
 - Update the docstring's parameter list.
 
-### 5.5 Orchestrator fetch + threading — `zicato/orchestrator.py`
+### 5.5 Candidate-batch fetch and threading
 
-- Add a helper `_load_prior_experiments(workspace_root, epoch_id) -> list[PriorExperiment]`
+- Use `_load_prior_experiments(workspace_root, epoch_id) -> list[PriorExperiment]`
   that calls `prior_experiments_for_epoch(_index_db_path(workspace_root), epoch_id)`
   inside a best-effort `try/except` (a missing or stale index must never
   abort a round — log at debug and return `[]`, mirroring
   `_ingest_experiment_into_index`).
-- **Gauntlet call site (~line 684).** Compute `prior = _load_prior_experiments(workspace_root, resolved_epoch_id)`
-  once, before the proposer call; pass `prior_experiments=prior`.
-- **Multi-challenger field (`_evolve_multi_challenger`, ~line 1314).**
-  - Compute the settled `prior` once, before the `for offset in range(field_n)` loop.
+- **Candidate batch (`produce_candidate_batch`).**
+  - Compute the settled `prior` once, before iterating over the requested slots.
   - Maintain a running list `siblings: list[PriorExperiment] = []`,
     accumulated in mint order. Before each
     `_propose_and_apply_challenger` call, pass the concatenation

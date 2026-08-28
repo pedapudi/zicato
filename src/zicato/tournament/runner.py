@@ -5,8 +5,9 @@ cap across matchups and route every ``(generation, entry, replicate)``
 through the unit cache. A cache miss reaches :func:`_run_single`, which
 creates an ephemeral checkout, passes a replicate-keyed events/loss slot
 to ``python -m zicato._tournament_worker``, enforces the budget, and
-always cleans up runtime state. Full mode runs both sides concurrently;
-fast mode reuses the champion and runs only the challenger.
+always cleans up runtime state. Full mode runs both sides concurrently. Fast
+mode resolves both competitors through the replicate-keyed cache and runs only
+missing units.
 
 Detailed invariants and call topology live in
 ``docs/dev-guide/06-tournament-and-selection.md``.
@@ -1430,30 +1431,26 @@ async def run_matchup(
     fast: bool = False,
     matchup_budget_seconds: float | None = None,
     unit_semaphore: asyncio.Semaphore | None = None,
+    left_diff_size: dict[str, int] | None = None,
+    right_diff_size: dict[str, int] | None = None,
 ) -> TournamentResult:
-    """Run ONE duel between two generations, ending in the unchanged gate.
+    """Run one duel between two generations and apply the promotion gate.
 
-    The selection-layer analogue of :func:`run_tournament`: it runs a
-    single :class:`~zicato.selection.strategy.Matchup` between ``left_gen``
-    and ``right_gen`` — champion-vs-challenger OR
-    challenger-vs-challenger, since the gate only needs two aggregates and
-    treats ``left`` as the nominal parent. It honours a ``board_subset``
-    (racing rungs run on a board slice) and ``replicates`` (averaged
-    paired runs), then aggregates and runs ``_gate_with_regression`` →
-    ``evaluate_gate`` — the SAME gate, never re-decided.
+    The competitors may be a champion and challenger or two field
+    challengers; the gate treats ``left`` as the nominal parent. The runner
+    honours a board subset and averaged paired replicates, aggregates both
+    competitors, and applies ``_gate_with_regression`` and ``evaluate_gate``.
 
     Returns a :class:`TournamentResult` whose ``parent_*`` fields describe
-    ``left`` and ``child_*`` describe ``right``, so the strategy reads
-    ``outcome.decision`` / ``outcome.delta_scalar`` exactly as the gauntlet
-    does today.
+    ``left`` and ``child_*`` describe ``right``, so a strategy can consume
+    ``outcome.decision`` and ``outcome.delta_scalar`` without translation.
 
     ``match_id`` is the strategy's id for THIS matchup (e.g. ``"rung0_m2"``,
     ``"racing-final"``). It is threaded down to every board-entry run so
     each persisted :class:`LossProfile` (and the analytical-index ``runs`` /
     ``loss_profiles`` rows) is tagged with the matchup it ran within —
-    enabling per-run rung attribution in the dashboard. Empty string (the
-    default) leaves runs untagged, which is exactly what the gauntlet path
-    (via :func:`run_tournament`) does.
+    enabling per-run rung attribution in the dashboard. Empty string leaves
+    direct library calls untagged.
 
     ``replicate_base`` offsets every replicate's per-unit cache slot (and
     the index stamped onto each entry for the harness's seeded noise draw):
@@ -1461,17 +1458,16 @@ async def run_matchup(
     tournament matchup) is byte-identical to before the parameter existed;
     the evidence pre-gate's replicate duels pass a RESERVED base
     (:data:`zicato.selection.evidence_gate.EVIDENCE_REPLICATE_BASE`) so each
-    evidence draw is a fresh sample of BOTH sides that never reads or
+    evidence draw is a fresh sample of both sides that never reads or
     clobbers the canonical replicate-0 slots.
 
-    ``fast`` is the structure-agnostic fast-mode champion-eval knob (the
+    ``fast`` is the structure-independent cache-first evaluation knob (the
     runtime ``--mode fast`` setting, threaded identically to
-    ``disable_drift`` / ``judge_only``). When set, the ``left`` side is
-    the CHAMPION and its per-board scalars are reused from the cached
-    per-entry ``loss.json`` instead of being re-run — across EVERY
-    structure that schedules matchups (racing / swiss / elim), exactly
-    as the gauntlet's :func:`run_fast_mode` reuses the champion. The
-    resolved mode (``"fast"`` / ``"fast-degraded"`` / ``"full"``) is
+    ``disable_drift`` and ``judge_only``). When set, both competitors resolve
+    each ``(generation, entry, replicate)`` slot through the unit cache and
+    only missing slots run. The ``left`` competitor is normally the champion,
+    whose cached-versus-fresh counts determine the resolved mode
+    (``"fast"`` / ``"fast-degraded"`` / ``"full"``), which is
     recorded on the returned :attr:`TournamentResult.champion_eval_mode`
     for journal provenance; it never enters the gate or the contract.
 
@@ -1489,22 +1485,20 @@ async def run_matchup(
     (e.g. a racing final rung), a different axis from the per-board
     :attr:`BoardEntry.wall_clock_budget_seconds` (which bounds ONE unit).
 
-    ``unit_semaphore`` is the OPT-IN cross-matchup concurrency gate. When
+    ``unit_semaphore`` is the optional cross-matchup concurrency gate. When
     the orchestrator runs several matchups of a round concurrently it
     passes ONE shared semaphore to every matchup so all of the round's
     board units draw from a single global cap (instead of each matchup
     minting its own ``Semaphore(parallelism)`` — which let N concurrent
-    matchups run ``N × parallelism`` units at once). ``None`` (every
-    direct / gauntlet caller) ⇒ each board-unit runner mints its own,
-    byte-identical to the single-matchup path.
+    matchups run ``N × parallelism`` units at once). ``None`` gives the
+    matchup its own semaphore.
     """
     from zicato.core import assert_distinct_callables  # noqa: PLC0415
 
     assert_distinct_callables(config.harness_call_llm, config.auxiliary_call_llm)
 
     board = _stamp_disable_drift(board, disable_drift)
-    # Mirror the board-level judge_only threading the gauntlet path does in
-    # run_tournament / run_fast_mode: stamp the flag onto each entry's
+    # Stamp the board-level judge_only flag onto each entry's
     # context so the adapter selects no-steering evaluation per entry. A
     # no-op when judge_only is False (the default), so the steering path
     # stays byte-identical. (Stamped before board_subset filtering so the
@@ -1531,8 +1525,16 @@ async def run_matchup(
         unit_semaphore=unit_semaphore,
     )
 
-    left_agg = aggregate_generation_score(list(left_losses.values()), weights)
-    right_agg = aggregate_generation_score(list(right_losses.values()), weights)
+    left_agg = aggregate_generation_score(
+        list(left_losses.values()),
+        weights,
+        diff_size=left_diff_size,
+    )
+    right_agg = aggregate_generation_score(
+        list(right_losses.values()),
+        weights,
+        diff_size=right_diff_size,
+    )
 
     outcome = await _gate_with_regression(
         parent_agg=left_agg,
@@ -1577,25 +1579,19 @@ async def confirm_crowning_holdout(
     judge_only: bool = False,
     fast: bool = False,
 ) -> tuple[GateOutcome, dict[str, Any] | None, float | None]:
-    """Ladder-mediate the holdout confirmation of a structure's crowning duel.
+    """Ladder-mediate the holdout confirmation of a crowning duel.
 
-    The non-gauntlet structures (swiss / single_elim / double_elim / racing)
-    resolve a leader/survivor through their bracket/swiss/racing logic — all
-    scored on the TRAIN slice — and then run ONE final champion-gate duel of
-    that survivor vs the reigning champion. ``train_outcome`` /
-    ``train_parent_agg`` / ``train_child_agg`` are that crowning duel's
-    TRAIN-slice gate verdict and aggregates (``train_outcome`` decided on the
-    train slice, exactly like the gauntlet's ``run_tournament`` train gate).
+    A strategy resolves its leader on the train slice and identifies a final
+    champion-gate duel. ``train_outcome``, ``train_parent_agg``, and
+    ``train_child_agg`` describe that train-slice duel.
 
-    This function reuses the gauntlet's holdout machinery to add the SAME
-    Ladder-mediated holdout confirmation on top of that crowning duel:
+    The confirmation procedure is:
 
     1. Split the board into train / holdout via :func:`split_board` with the
-       epoch-id :func:`rotation_seed` — identical to the gauntlet path. When
+       epoch-id :func:`rotation_seed`. When
        the holdout is empty (small board / split disabled / no tagged entry)
        this returns ``(train_outcome, None, None)`` immediately, so the
-       structure's decision is byte-identical to today's whole-board
-       behaviour (the back-compat degrade).
+       train decision is returned unchanged.
     2. Otherwise run ONE additional duel — champion (``left``) vs survivor
        (``right``) — restricted to the HOLDOUT slice via ``board_subset``, to
        measure both sides' holdout-slice aggregates. The holdout is
@@ -1603,8 +1599,7 @@ async def confirm_crowning_holdout(
     3. Feed the train verdict + train/holdout aggregates through
        :func:`_ladder_mediated_outcome` — the same per-epoch
        :class:`~zicato.tournament.ladder.LadderState` at ``ladder_state_path``
-       the gauntlet loads/saves, so the per-epoch query budget is SHARED
-       across whichever path consults the holdout this epoch. A released
+       every strategy shares, so the per-epoch query budget is shared. A released
        non-confirmation flips the crowning promote to a ``rejected`` outcome
        (reason ``holdout_not_confirmed``); the champion stands.
 
@@ -1629,7 +1624,7 @@ async def confirm_crowning_holdout(
     seed = rotation_seed(weights.overfitting, epoch_id)
     _train_ids, holdout_ids = split_board(board, weights.overfitting, seed=seed)
     if not holdout_ids:
-        # No holdout slice → byte-identical to today's whole-board decision.
+        # No holdout slice: return the train decision unchanged.
         return train_outcome, None, None
 
     holdout_result = await run_matchup(

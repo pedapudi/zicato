@@ -12,8 +12,7 @@
 > (train-slice-only patterns, aggregated entry ids, withheld inputs), the
 > **#5 generalization-gap detector** (a `zicato health` finding), and the
 > **#6 board-rotation cadence**. The holdout confirmation has since been
-> **extended through the non-gauntlet structures** (swiss / single_elim /
-> double_elim / racing) via `orchestrator._evolve_multi_challenger` +
+> **extended through every strategy** via `evolve_field_round` and
 > `runner.confirm_crowning_holdout`, so a crowning under any structure is
 > Ladder-mediated on the holdout. §12 now carries per-lever **SHIPPED /
 > FUTURE** status tags (**#4** diff-complexity regularization is now shipped
@@ -561,10 +560,9 @@ ids, withheld inputs — plus the §11.5 outcome-marginal channel); **#5**
 the `generalization_gap` loop-health detector (`health/diagnostics.py`);
 and **#6** the board-refresh / holdout-rotation cadence (`board/split.py`
 `rotation_seed`). The holdout confirmation has since been **extended
-through the non-gauntlet structures** (swiss / single_elim / double_elim /
-racing) via `orchestrator._evolve_multi_challenger` +
-`runner.confirm_crowning_holdout`, so a crowning under any structure — not
-just the gauntlet — is Ladder-mediated on the holdout; and **#7** the
+through every strategy via `evolve_field_round` and
+`runner.confirm_crowning_holdout`, so every eligible crown is Ladder-mediated
+on the holdout; and **#7** the
 random-baseline placebo arm (`overfitting.random_baseline_every_n`).
 All seven levers are now built (the complexity-ceiling half of **#4** —
 once the last future item — has since shipped; see below). Levers compose;

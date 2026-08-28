@@ -659,14 +659,13 @@ deliverable** (§7).
   feasibility-failing node-winner as eliminated — that is a strategy
   policy, not a gate change). The *final* champion-gate is the real,
   full three-rule test.
-- **Replication (§9 lever 1)**: surfaced as `Matchup.replicates`, applied
-  in `_run_replicated` on the structure path, in `run_tournament` on the
-  full A/B gauntlet path, and in `run_fast_mode` on the fast gauntlet path
-  (challenger side only — §3.1). Every path folds through the one
-  `_average_losses` primitive. The gauntlet's own default is `2`, like the
-  bracket structures — `SELECTION.md §8` makes replication, not bracket
-  shape, the noise lever, so no structure opts out of it (only `racing`
-  pins `1`, replicating intrinsically via escalating board slices).
+- **Replication (§9 lever 1)**: surfaced as `Matchup.replicates` and applied
+  by `_run_replicated` for every production strategy. Each requested slot is
+  keyed by generation, board entry, and replicate for both competitors, and
+  every path folds through `_average_losses`. The standalone `run_tournament`
+  and `run_fast_mode` APIs retain their own replication parameters. The
+  gauntlet default is `2`, as it is for the bracket structures; only `racing`
+  pins `1` because escalating board slices supply repeated evidence.
 - **§5 optimal-stopping**: stays in `evolve_n_rounds`
   (`orchestrator.py:1263-1294`), outside the strategy. The strategy
   resolves the *intra-tournament* bracket; `evolve_n_rounds` decides

@@ -132,12 +132,9 @@ async def _propose_child(
 ) -> Experiment:
     """Build the :class:`ProposerContext` + propose ONE child of the champion.
 
-    The single propose shape both pipelines share — the gauntlet's inline
-    propose block and :func:`_propose_and_apply_challenger` previously built
-    near-identical contexts, so a new ``ProposerContext`` field could land on
-    one path only. Raises :class:`~zicato.proposer.proposer.ProposerError`
-    exactly as the inner agent does (callers own the rejected-outcome /
-    narrower-field handling).
+    The single propose shape used by every candidate slot. Raises
+    :class:`~zicato.proposer.proposer.ProposerError` exactly as the inner
+    agent does; callers own candidate-rejection handling.
 
     The returned experiment carries the EVOLVE ``round_index`` stamped on —
     the authoritative birth round the dashboard's round-grouping and the

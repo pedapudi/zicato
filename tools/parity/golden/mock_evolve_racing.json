@@ -30,7 +30,7 @@
       "id": "exp_<DATE>_t1_racing_v1",
       "outcome": {
         "champion_eval_mode": "full",
-        "drift_loss_delta": 0.0,
+        "drift_loss_delta": -1.6,
         "drift_movements": [],
         "eliminated_in_round": null,
         "evidence": null,

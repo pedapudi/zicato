@@ -1,8 +1,8 @@
 # zicato — cleaner reimplementation roadmap (behavior-preserving)
 
-> **Status: proposal / design note — not yet implemented.** Captures a
-> behavior-preserving reimplementation roadmap (Part I) and a target data-model
-> & storage design (Part II), informed by a three-domain audit of the codebase.
+> **Status: historical implementation roadmap.** Several steps have shipped;
+> the development guide describes the present system. This document preserves
+> the original behavior-preserving roadmap and target storage design.
 > Companion to [`ARCHITECTURE.md`](ARCHITECTURE.md), [`STORAGE.md`](STORAGE.md),
 > and [`TOURNAMENT-DATA-MODEL.md`](TOURNAMENT-DATA-MODEL.md).
 
@@ -600,10 +600,9 @@ pipeline above:
 - **`persist.py`** — the terminal write funnel + round tail
   (`_finalize_generation`, `_round_epilogue`, `_persist_rejected_round`, and
   the two synthetic reject/skip outcome builders).
-- **`gate.py`** — the promotion decision procedure
-  (`_gauntlet_decision_from_result`, `_confirm_gauntlet_promotion`,
-  `_confirm_crowning_on_holdout`, `_apply_field_overrides`,
-  `_resolve_round_champion_mode`, the integrity block, …).
+- **`gate.py`** — holdout confirmation, operator override re-resolution,
+  champion-evaluation provenance, and integrity checks. Strategy progression
+  and Bradley–Terry evidence confirmation live in `selection/driver.py`.
 - **`round_context.py`** — the pre-propose ("screen") context builders that
   assemble the proposer-context inputs once per round
   (`_build_candidate_screen_runner`, `_build_recombination_pair`,
@@ -623,9 +622,9 @@ Each module keeps the `zicato.orchestrator` logger name, imports its stable
 collaborators directly, and resolves back-edges into the driver as lazy
 call-time imports through the orchestrator module object; the orchestrator
 re-exports the externally-referenced names so callers and tests are unaffected.
-The extraction took the driver from ~6,500 to ~4,350 lines. **The orchestrator
-is now the round *driver*:** it owns `evolve_once` and `_evolve_multi_challenger`
-and *sequences* the stage modules, threading the round's data between them.
+`evolve_once` prepares a typed `PreparedRound` and `evolve_field_round`
+sequences candidate production, strategy evaluation, evidence and holdout
+confirmation, and typed `RoundSettlement` persistence for every structure.
 
 **Remaining: the `schedule` closure-lift.** The one stage from the Target
 sequence still living inside the driver is **`schedule`** — the matchup-dispatch

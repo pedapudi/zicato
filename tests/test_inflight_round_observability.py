@@ -307,10 +307,10 @@ def test_inflight_round_visible_in_every_store_before_settle(
 
     import zicato.selection as selection
 
-    real_resolve = selection.resolve_tournament
+    real_evaluate = selection.evaluate_tournament
     captured: dict[str, Any] = {}
 
-    async def _resolve_capturing(strategy: Any, **kwargs: Any) -> Any:
+    async def _evaluate_capturing(strategy: Any, **kwargs: Any) -> Any:
         # Snapshot the on-disk stores at the moment THIS round's bracket is
         # being driven (challengers minted; decision not yet produced). We
         # only care about the round that introduces v5 (round 1) — the
@@ -334,9 +334,9 @@ def test_inflight_round_visible_in_every_store_before_settle(
                     else None
                 ),
             }
-        return await real_resolve(strategy, **kwargs)
+        return await real_evaluate(strategy, **kwargs)
 
-    monkeypatch.setattr(selection, "resolve_tournament", _resolve_capturing)
+    monkeypatch.setattr(selection, "evaluate_tournament", _evaluate_capturing)
 
     from zicato.orchestrator import evolve_n_rounds
 
@@ -351,7 +351,7 @@ def test_inflight_round_visible_in_every_store_before_settle(
         )
     )
 
-    assert "round1" in captured, "resolve_tournament never saw round 1's field"
+    assert "round1" in captured, "evaluate_tournament never saw round 1's field"
     snap = captured["round1"]
 
     # (1) lineage.json already carries round 1's challengers with round_index=1

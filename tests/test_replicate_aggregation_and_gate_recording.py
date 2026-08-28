@@ -11,11 +11,11 @@ original strict-xfail reproductions plus the properties the fixes establish.
   :func:`zicato.tournament.scoring.entry_score` reads FIRST, so the
   continuous outcome axis of a K-replicate duel was replicate 0 verbatim.
   The fold now aggregates every scalar-bearing field.
-* **#109** — :func:`zicato.tournament.runner.run_fast_mode` (the gauntlet
-  under the default ``--mode fast``) took no ``replicates`` parameter at
-  all, so the contract's knob was inert on that path. It is honoured now,
-  on the challenger side, and the residual one-sided asymmetry is logged
-  rather than implied.
+* **#109** — the fast tournament path took no ``replicates`` parameter, so
+  the contract's knob was inert. The production path now routes every
+  structure through :func:`zicato.tournament.runner.run_matchup`, whose
+  cache keys include generation, board entry, and replicate for both sides.
+  The standalone debug runner retains the same replication knob.
 * **#111** — the gate recorded the compared scalars only inside the
   human-readable REJECT text, so a promoted duel carried no numbers and any
   downstream effect-size analysis was missing exactly its promotions. The
@@ -372,38 +372,37 @@ def test_run_fast_mode_accepts_replicates() -> None:
     assert "replicates" in inspect.signature(run_fast_mode).parameters
 
 
-def test_evolve_once_threads_replicates_into_the_fast_branch() -> None:
-    """The fast branch must forward the resolved replicate count.
+def test_evolve_round_threads_strategy_replicates_into_the_canonical_runner() -> None:
+    """Every structure forwards its matchup's resolved replicate count.
 
-    Source-level pin on the ONE call site (``zicato/orchestrator.py``); a
-    live-run assertion is out of scope, and the defect was the missing
-    argument, not its downstream behaviour.
+    The gauntlet and larger fields share this call site, so the assertion
+    covers both fast and full execution without relying on a mode branch.
     """
     import inspect
 
-    from zicato import orchestrator
+    from zicato.evolve.field import evolve_field_round
 
-    src = inspect.getsource(orchestrator.evolve_once)
-    fast_call = src.split("run_fast_mode(", 1)[1].split(")", 1)[0]
-    assert "replicates" in fast_call
+    src = inspect.getsource(evolve_field_round)
+    assert "await run_matchup(" in src
+    assert "replicates=m.replicates" in src
 
 
-def test_fast_branch_is_loud_about_the_one_sided_noise_reduction() -> None:
-    """Honouring the knob is not the same as making the contrast symmetric.
+def test_fast_runner_keys_independent_replicates_for_both_sides() -> None:
+    """Fast mode must never multiply one cached draw into fake evidence.
 
-    Fast mode compares a replicated challenger against ONE frozen cached
-    champion aggregate, so the variance reduction is one-sided no matter
-    how high ``replicates`` goes — the operator must be told, not left to
-    infer a symmetric improvement from the contract.
+    Both competitors resolve each requested replicate slot independently.
+    Existing slots may be reused, but a missing slot must be evaluated rather
+    than substituting another replicate's sample.
     """
     import inspect
 
-    from zicato import orchestrator
+    from zicato.tournament.scheduling import _run_replicated
 
-    src = inspect.getsource(orchestrator.evolve_once)
-    fast_branch = src.split("run_fast_mode(", 1)[0]
-    assert "log.warning" in fast_branch
-    assert "--mode full" in fast_branch
+    src = inspect.getsource(_run_replicated)
+    assert "replicate_base + r" in src
+    assert "parent_gen=left_gen" in src
+    assert "child_gen=right_gen" in src
+    assert "parent_force_fresh=None" in src
 
 
 # ---------------------------------------------------------------------------

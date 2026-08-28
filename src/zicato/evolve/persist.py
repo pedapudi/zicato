@@ -1,26 +1,14 @@
-"""Round-pipeline **persist** stage — the terminal write funnel + round tail.
+"""Persist terminal generation outcomes and run the shared round epilogue.
 
-Split out of :mod:`zicato.orchestrator` as part of the Finding-2 typed
-round-pipeline decomposition (``docs/design/REIMPLEMENTATION.md``). This is the
-pipeline's *persist* seam: the one write funnel every round's terminal outcome
-flows through (:func:`_finalize_generation`), the shared end-of-round tail
-(:func:`_round_epilogue`: loop-health + analyzer + epoch report), the
-validation-reject tail (:func:`_persist_rejected_round`), and the two synthetic
-round-outcome builders for the reject/skip paths.
+The module owns the write funnel for settled outcomes
+(:func:`_finalize_generation`), the end-of-round health, analysis, and report
+tail (:func:`_round_epilogue`), the validation-rejection tail
+(:func:`_persist_rejected_round`), and synthetic reject and skip outcomes.
 
-These five helpers are internal to the evolve loop — nothing outside
-:mod:`zicato.orchestrator` referenced them — so this is a pure relocation. The
-orchestrator re-imports every name, so its internal call sites (``evolve_once``,
-``_evolve_multi_challenger``, the placebo arm) keep resolving unchanged.
-
-Back-edges into the orchestrator that are NOT part of this stage are resolved
-through the orchestrator module object at CALL time (the established
-``zicato.evolve.*`` idiom): the generation-head writer,
-holdout test, so it must be re-read on each call), the health-assessment
-helpers, ``_regenerate_epoch_report``, the generation-number helper, and the
-``EvolveRoundOutcome`` public dataclass still defined in the orchestrator. The
-module logger keeps the ``zicato.orchestrator`` name so records stay
-byte-identical.
+Helpers that preserve public monkeypatch seams resolve their orchestration
+collaborators through the stable `zicato.orchestrator` module at call time.
+The module logger also keeps the `zicato.orchestrator` name so existing log
+routing remains stable.
 """
 
 from __future__ import annotations

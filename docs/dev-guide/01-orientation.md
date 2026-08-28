@@ -402,40 +402,41 @@ forked from whom). This is a repo-wide terminology standard; mixing the
 frames in one sentence is a review comment waiting to happen.
 
 **tournament** — the scored comparison that decides promotion. The
-runner is `src/zicato/tournament/runner.py`: `run_tournament` (the full
-A/B gauntlet duel), `run_fast_mode` (challenger vs the champion's cached
-aggregate), `run_matchup` (one duel of a multi-challenger structure),
-`confirm_crowning_holdout` (the holdout confirmation of a winning duel).
-Result type: `TournamentResult`.
+production runner is `run_matchup` in `src/zicato/tournament/runner.py`.
+Every selection strategy uses it for each scheduled duel.
+`confirm_crowning_holdout` applies the final holdout confirmation.
+`run_tournament` and `run_fast_mode` remain standalone runner APIs. Result
+type: `TournamentResult`.
 
 **tournament structure / `SelectionStrategy`** — the per-epoch shape of
 competition: gauntlet (default), single_elim, double_elim, swiss, racing.
 Configured as `ScoringWeights.tournament_structure`
 (`TournamentStructure`, `src/zicato/core/tournament.py`) so it folds into
 the contract hash. The strategy abstraction lives in
-`src/zicato/selection/` (`SelectionStrategy`, `resolve_tournament`,
+`src/zicato/selection/` (`SelectionStrategy`, `evaluate_tournament`,
 `make_strategy`); it owns scheduling, bracket bookkeeping, and
 intra-tournament stopping — the gate stays the per-duel acceptance test.
 
-**field** — the N challengers a non-gauntlet structure proposes per round
-(`field_size` param; the gauntlet is field size 1). Minted by
-`_evolve_multi_challenger` in `src/zicato/orchestrator.py`.
+**field** — the challengers a strategy proposes per round (`field_size`
+parameter; the gauntlet uses one). `produce_candidate_batch` mints the field,
+and `evolve_field_round` evaluates and settles it.
 
 **crowning** — the final champion-gate duel of a resolved structure, and
 the resulting decision. `SelectionDecision`
 (`src/zicato/selection/strategy.py`) carries
 `promoted_generation_id`, `crowning_matchup_id`, the full matchup audit,
 and standings. The **crowning invariant**: the settled bracket and the
-champion pointer must agree — checked loudly in
-`_evolve_multi_challenger` before any lineage write.
+champion pointer must agree — checked loudly in `evolve_field_round` before
+any lineage write.
 
 **replicate** — one repeated evaluation of the same (generation, entry)
 under a distinct cache slot, used to average out noise. The per-duel
 `replicates` knob (structure param; default 2 for gauntlet/elim/swiss,
-1 for racing) averages paired runs before the gate, on EVERY runner
-entry point — including `run_fast_mode`, where only the challenger side
-is drawn again (ch.04 §7.4). Replicate indices form a **reserved
-ledger** — see Golden Rule G7.
+1 for racing) averages paired runs before the gate. Production cache keys
+include generation, board entry, and replicate for both competitors. A missing
+slot executes instead of replaying another replicate. The standalone
+`run_fast_mode` API retains its one-sided historical-aggregate comparison.
+Replicate indices form a **reserved ledger** — see Golden Rule G7.
 
 **evidence gate / pre-gate** — the opt-in Bradley–Terry confirmation of a
 crowning promote (`promote_confidence_threshold` structure param):
@@ -674,13 +675,12 @@ annotation resolver — see 03-contract-and-epochs.md). Imports nothing
 domain-heavy; everything imports it. Never put behaviour here beyond
 validation — core is types.
 
-**`orchestrator.py`** (module, not a package) — the integration point:
-`evolve_once`, `_evolve_multi_challenger`, and the round-tail helpers.
-Heavier siblings are imported lazily inside function bodies to keep
-`zicato --help` fast. The test suite monkeypatches names on this module
-object (`orch.evolve_once`, `orch.ensure_epoch_for_contract`, …) — which
-is why collaborators are resolved through the module object at call time
-(late binding). Chapter 02 is the walkthrough.
+**`orchestrator.py`** — the stable module-level integration import surface. It
+re-exports `evolve_once`, `evolve_n_rounds`, and their public result
+types from `evolve/`. The test suite monkeypatches names on this module object
+(`orch.evolve_once`, `orch.ensure_epoch_for_contract`, …), so collaborators
+that preserve those test seams resolve through the module object at call time.
+Chapter 02 is the walkthrough.
 
 **`evolve/`** — evolve-loop internals split out of the orchestrator:
 `loop.py` (`evolve_n_rounds` + the `StopPolicy` circuit breakers),

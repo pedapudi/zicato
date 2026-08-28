@@ -92,8 +92,11 @@ Two facts about the file layout you must internalize before editing anything:
 
 ```
 evolve_once (orchestrator.py)
- ├─ resolve_tournament(strategy, request_field=…, run_matchup=…)   selection/driver.py
- │    ├─ request_field(strategy.field_size())      # propose + apply challengers
+ ├─ PreparedRound
+ └─ evolve_field_round (evolve/field.py)
+      ├─ produce_candidate_batch(strategy.field_size())
+      ├─ evaluate_tournament(strategy, request_field=…, run_matchup=…)
+ │    ├─ request_field(strategy.field_size())      # return applied challengers
  │    ├─ strategy.seed(champion, challengers)
  │    └─ loop: strategy.next_matchups() → gather(run_matchup(m)…) → strategy.record_result
  │         run_matchup (runner.py)  →  _run_replicated (scheduling.py)
@@ -107,11 +110,10 @@ evolve_once (orchestrator.py)
  └─ (opt) _maybe_run_placebo_arm_gauntlet       # never advances the champion (T11)
 ```
 
-The gauntlet path is a degenerate case of this topology: `GauntletStrategy`
-schedules exactly one matchup, and the orchestrator's gauntlet call site
-reaches `run_tournament` directly (which is `run_matchup` with the champion as
-`left` and the holdout confirmation folded in) rather than through
-`run_matchup`. Every structure otherwise walks the same driver loop.
+The gauntlet is the one-matchup case of this topology:
+`GauntletStrategy` schedules exactly one champion-versus-challenger matchup.
+It uses the same driver, canonical runner, evidence gate, and settlement tail
+as every wider structure.
 
 ---
 
@@ -1260,14 +1262,14 @@ scoring signal looks perfect."
 
 ---
 
-## 6.7 The four public runner entry points
+## 6.7 Runner entry points
 
 | Entry point | Runs | Champion side | Holdout | Used by |
 |---|---|---|---|---|
-| `run_tournament` | full A/B: both sides, every entry, `replicates` averaged | run live OR cache-read (immutable-champion reuse) | Ladder-mediated confirmation | the gauntlet path |
-| `run_fast_mode` | challenger only, every entry, `replicates` averaged | the cached `parent_historical_agg` is reused wholesale | none (apples-to-oranges) | inline keep/discard |
-| `run_matchup` | ONE duel between any two generations | `left` is the nominal parent; `fast` reuses its cache | none (the strategy runs `confirm_crowning_holdout` separately) | every non-gauntlet structure's driver |
-| `confirm_crowning_holdout` | ONE extra holdout-slice duel | reused under `fast` | the SAME Ladder-mediated confirmation | non-gauntlet crowning |
+| `run_matchup` | one duel between any two generations | `left` is the nominal parent; fast mode resolves both sides cache-first | separate confirmation after strategy resolution | every production strategy |
+| `confirm_crowning_holdout` | one extra holdout-slice duel | reused under fast mode | Ladder-mediated confirmation | every eligible crown |
+| `run_tournament` | full paired A/B with integrated holdout | configurable cache policy | Ladder-mediated confirmation | standalone and debug callers |
+| `run_fast_mode` | challenger only against a supplied historical aggregate | aggregate reused wholesale | none | standalone inline keep/discard callers |
 
 All four return a `TournamentResult` (`runner.py`) — a frozen, JSON-serializable
 value the orchestrator journals. Its fields, and which are RUNTIME provenance
@@ -1288,9 +1290,9 @@ The provenance fields "carry no weight in the gate and are not folded into the
 contract hash" — they exist purely so the journal can attribute champion sample
 freshness + cost per duel.
 
-### 6.7.1 `run_tournament` — the full A/B path
+### 6.7.1 `run_tournament` — standalone full A/B
 
-The gauntlet's rigorous path. Both sides run concurrently per entry; the CHILD
+This standalone API runs both sides concurrently per entry; the child
 is force-fresh by default (a freshly proposed generation has no prior eval), the
 CHAMPION is cache-read by default (immutable within the epoch, reused from a
 prior round / its seed — the `champion_force_fresh=False`, `force_fresh=True`
@@ -1300,7 +1302,7 @@ separately through the Ladder governor (`_ladder_mediated_outcome`). The
 of an interrupted round IS the cache, so completed units cache-HIT and only
 unfinished entries re-run.
 
-### 6.7.2 `run_matchup` — the selection-layer analogue
+### 6.7.2 `run_matchup` — canonical production duel
 
 The structure-agnostic duel: it runs one `Matchup` between `left_gen` and
 `right_gen` (champion-vs-challenger OR challenger-vs-challenger — the gate only
@@ -1308,94 +1310,63 @@ needs two aggregates and treats `left` as the nominal parent), honours a
 `board_subset` (racing rungs) and `replicates`, then aggregates and runs the
 SAME `_gate_with_regression` → `evaluate_gate`. It returns a `TournamentResult`
 whose `parent_*` describe `left` and `child_*` describe `right`, so a strategy
-reads `outcome.decision` / `outcome.delta_scalar` exactly as the gauntlet does.
+reads `outcome.decision` and `outcome.delta_scalar` directly.
 `match_id` is threaded down to every run so each persisted `LossProfile` (and
 the index rows) is tagged with the matchup it ran within — per-rung attribution
 in the dashboard.
 
 ### 6.7.3 `confirm_crowning_holdout` — holdout through structures
 
-A non-gauntlet structure resolves a leader on the TRAIN slice, then runs ONE
-final champion-gate duel of that survivor vs the reigning champion. This
-function adds the SAME Ladder-mediated holdout confirmation on top: split the
+A strategy resolves a leader on the train slice and identifies the final
+champion-gate duel against the reigning champion. This function adds the
+shared Ladder-mediated holdout confirmation: split the
 board, run ONE extra holdout-slice duel (`board_subset=holdout_ids`), feed the
 train verdict + train/holdout aggregates through the shared
-`_ladder_mediated_outcome` at the SAME per-epoch `LadderState` the gauntlet
-uses — so the per-epoch query budget is SHARED across whichever path consults
-the holdout this epoch. An empty holdout returns `(train_outcome, None, None)`
-immediately, byte-identical to the whole-board decision. This is how "holdout-
-through-structures" is achieved without duplicating the gauntlet's holdout
-machinery.
+`_ladder_mediated_outcome` at the shared per-epoch `LadderState`. An empty
+holdout returns `(train_outcome, None, None)` immediately.
 
 ### 6.7.4 One default gauntlet round, end to end (worked trace)
 
-The orchestrator dispatches on `strategy.field_size()`: `field_size == 1` (the
-gauntlet — the default and back-compat baseline) reaches `run_tournament`
-directly, then feeds the verdict into a fresh `GauntletStrategy` and (when the
-pre-gate is enabled) `confirm_promotion_with_evidence`; `field_size > 1` drives
-`resolve_tournament(strategy)`. Read this trace once before your first
-tournament change — every invariant in this chapter appears in situ.
+The default strategy requests one challenger and schedules one matchup. The
+same shared pipeline used by wider structures handles it:
 
 ```
-evolve_once (orchestrator.py), gauntlet round under stock defaults:
-  strategy = make_strategy(spec, board_ids)        # GauntletStrategy
-  if strategy.field_size() > 1: … else ↓           # 1 ⇒ the direct gauntlet path
-  child = _propose_and_apply_challenger(...)        # 05-proposer.md — the mounted
-                                                    #   tree matches the CHOSEN exp (T9)
-  tournament_result = await run_tournament(         # runner.py
-      parent_gen=champion, child_gen=child, board=…, replicates=2, …)
-    ├─ assert_distinct_callables(harness, auxiliary)   # defense-in-depth
-    ├─ _stamp_disable_drift / _stamp_judge_only(board)
-    ├─ publish ActiveTournament (dashboard hall) with QUEUED rows
-    ├─ for r in 0..1:                                  # replicates=2 (T2 slots 0,1)
-    │    _run_board_units_full(board=_stamp_replicate_index(board, r),
-    │        force_fresh=True,               # CHILD force-fresh (fresh generation)
-    │        parent_force_fresh=False)        # CHAMPION cache-read (immutable in epoch)
-    │      per entry, up to `parallelism` at once:
-    │        _run_full_board_unit:  champion ‖ challenger  (asyncio.gather)
-    │          _run_unit_cache_first(champion, r):  HIT (scored a prior round) → no run
-    │          _run_unit_cache_first(challenger, r): MISS → _run_single
-    │            └─ ztw-snap-* checkout → args file (weights + config_pins + entry
-    │               with generation_id in context) → subprocess worker
-    │            └─ worker: pin config, write active_runs w/ OWN pid, drive entry
-    │               under its own wait_for(budget), reduce_loss → loss.json
-    │            └─ persist (not infra-aborted) → loss.r{r}.json (r>0) or loss.json (r=0)
-    │          scorer.record(...) → live partial aggregate climbs
-    ├─ parent_losses/child_losses = _average_losses over the 2 replicates  (T2)
-    ├─ _train_aggs / _holdout_aggs   (train scalar gates; holdout confirms)
-    ├─ _gate_with_regression → evaluate_gate  (T6): 3 rules on the TRAIN aggs
-    └─ _ladder_mediated_outcome(train verdict + holdout aggs)  # holdout confirmation
-  # verdict in hand — fold into a GauntletStrategy + (opt) the BT pre-gate:
-  strategy.seed(champion, [child]); strategy.record_result(MatchupResult(...))
-  decision = strategy.champion()                     # reads outcome.decision (T6)
-  if promote_confidence_threshold set:               # opt-in only
-      decision, resolution = await confirm_promotion_with_evidence(
-          decision, replicate_duel=… at EVIDENCE_REPLICATE_BASE (4000))  # T8/T10
-  if decision.decision == "promoted":                # ONLY here (T7)
-      advance the champion pointer to child; append_to_lineage(promoted=True)
-  else: champion stands; child journaled as a rejected/deferred dead branch
-  (opt) _maybe_run_placebo_arm_gauntlet(...)         # extra duel; never crowns (T11)
+evolve_once
+  strategy = make_strategy(spec, board_ids)             # GauntletStrategy
+  prepared = PreparedRound(..., strategy=strategy)
+  evolve_field_round(prepared)
+    candidate_batch = produce_candidate_batch(prepared, 1)
+    evaluation = evaluate_tournament(
+        strategy,
+        request_field=applied candidate batch,
+        run_matchup=canonical board-unit runner)
+      strategy schedules Matchup("gauntlet", replicates=2)
+      run_matchup
+        ├─ resolve both competitors at replicate slots 0 and 1
+        ├─ fast: cache hits are reused and missing slots execute
+        ├─ full: both competitors execute freshly
+        ├─ _average_losses per entry
+        └─ aggregate_generation_score → evaluate_gate
+      optional confirm_promotion_with_evidence
+        └─ fresh paired duels at EVIDENCE_REPLICATE_BASE + j
+    optional confirm_crowning_holdout
+    integrity checks and operator overrides
+    settlement = RoundSettlement(...)
+    persist outcome → invariant → lineage → champion marker → journal
+    optional placebo duel; never advances champion
 ```
 
-Points where the trace changes under non-default knobs:
+Important variants:
 
-- `replicates: 1` (a deterministic harness) → one pass, no `_average_losses`,
-  slot 0 only; byte-identical to the pre-replication gauntlet.
-- `--mode fast` → `run_fast_mode`: only the challenger runs — `replicates`
-  times, each on its own cache slot and folded by `_average_losses` exactly as
-  the full path folds — compared against the cached `parent_historical_agg`; no
-  holdout (apples-to-oranges), champion rows pre-filled `CACHED` in the
-  dashboard hall. The champion side is never drawn again, so the variance
-  reduction is one-sided (ch.04 §7.4); the branch logs that whenever
-  `replicates > 1`.
-- `--mode full` → `champion_force_fresh=True` re-samples the champion too
-  (`force_fresh` on both sides — every unit re-runs, ignoring the cache).
-- a crash-resume-in-place round → `run_tournament(force_fresh=False)`: the
-  interrupted round's per-unit `loss.json` IS the cache, so completed units
-  cache-HIT and only unfinished entries re-run.
-- `field_size > 1` → `resolve_tournament(strategy)` walking `run_matchup` per
-  scheduled matchup, with the pre-gate folded in via `_apply_pre_gate` and the
-  crowning holdout via `confirm_crowning_holdout`.
+- `replicates: 1` uses only slot zero.
+- `--mode fast` reuses every existing `(generation, entry, replicate)` slot
+  and executes missing slots for either competitor. Fast gauntlet evaluation
+  retains its whole-board behavior and does not release a holdout.
+- `--mode full` forces both competitors fresh.
+- a conservative crash resume enables cache reads so completed units are not
+  repeated.
+- wider structures change only the candidate count and scheduled matchup
+  topology.
 
 ---
 
@@ -1473,24 +1444,19 @@ special-casing in the orchestrator.
 ### 6.8.3 The default-replicates single source of truth
 
 `_default_replicates` is a `ClassVar` on the base (`2` — the noise-aware
-posture) that racing overrides to `1`. It is the SINGLE source of truth read by
-four consumers: the strategy's own `__init__` (resolving `params["replicates"]`
-against it), the public `replicates()` read the orchestrator uses to thread the
-same value into the gauntlet's `run_tournament` call, the SAME read threading it
-into `run_fast_mode` on the gauntlet's fast path, and the builder cost estimator
-(via `STRUCTURE_DEFAULT_REPLICATES`). This is why the cost meter can never
-under-report by assuming a flat `1` — and why the meter's gauntlet term
-(`field_size × replicates × board`) is now the schedule that actually runs under
-the default mode, where it used to be `replicates`× the truth.
+posture) that racing overrides to `1`. It is the single source of truth for the
+strategy's `__init__`, each scheduled `Matchup`, the public `replicates()`
+diagnostic, and the builder cost estimator via
+`STRUCTURE_DEFAULT_REPLICATES`. The cost meter therefore prices the same
+replicate count that execution schedules.
 
 ---
 
-## 6.9 `resolve_tournament` — the structure-agnostic walk
+## 6.9 `evaluate_tournament` — the structure-independent walk
 
-The driver (`selection/driver.py`) is the structure-swappable replacement for
-the historical `evolve_once` steps 2–5. It is intentionally thin and IO-shaped
-only through two injected callables, so it is fully unit-testable with synthetic
-stubs:
+The driver (`selection/driver.py`) owns strategy progression and optional
+evidence confirmation. Candidate access and matchup execution are injected, so
+the driver is fully unit-testable with synthetic stubs:
 
 ```python
     champion, challengers = await request_field(strategy.field_size())
@@ -1507,10 +1473,11 @@ stubs:
 
     decision = strategy.champion()
     if pre_gate is None:
-        return decision
-    return await _apply_pre_gate(decision, champion=champion, pre_gate=pre_gate, ...)
+        return TournamentEvaluation(decision)
+    confirmed, evidence = await confirm_promotion_with_evidence(...)
+    return TournamentEvaluation(confirmed, evidence)
 ```
-— `src/zicato/selection/driver.py`, `resolve_tournament`
+— `src/zicato/selection/driver.py`, `evaluate_tournament`
 
 Two facts a strategy author relies on: **(1)** a batch runs under
 `asyncio.gather` — a Swiss round or racing rung returns multiple matchups and
@@ -1745,10 +1712,9 @@ gate's own decision stands.
 
 ### 6.11.1 The defer→replicate→inconclusive loop, and the dedup (T10)
 
-The shared crowning-confirmation used by BOTH selection shapes
-(`resolve_tournament` after a multi-challenger structure, and the orchestrator's
-gauntlet path on its single crowning duel) is `confirm_promotion_with_evidence`.
-Its loop refits after each replicate and refuses duplicate draws:
+The crowning confirmation used by every selection strategy is
+`confirm_promotion_with_evidence`. Its loop refits after each replicate and
+refuses duplicate draws:
 
 ```python
         extra = await replicate_duel(candidate.left_id, candidate.right_id)
@@ -1988,7 +1954,7 @@ conformance"). It checks: `field_size() >= 1`; `seed` then the
 `champion()` returns a well-formed `SelectionDecision`; the live-projection
 hooks (`live_rounds`/`live_standings`) produce byte-compatible shapes.
 
-**Step 8 — the dashboard structure-view.** A non-gauntlet structure renders its
+**Step 8 — the dashboard structure-view.** A structure renders its
 `rounds()` / `standings` / `_pending_round()` in the dashboard's bracket view.
 Emit `RoundRecord`/`MatchRecord` with stable `stage_index`/`label`/`bracket_slot`
 so the renderer groups matches correctly, and use `pending_match_record` for the
@@ -1996,9 +1962,9 @@ in-flight round so live and settled envelopes match (09-dashboard-and-query.md
 §"The structure view").
 
 **Step 9 — holdout through the structure.** If your structure resolves a leader
-and crowns it, wire `confirm_crowning_holdout` (§6.7.3) into the orchestrator's
-crowning path so the holdout confirmation applies consistently — never silently
-skipped under `--mode fast`.
+and identifies its crowning matchup, the shared round pipeline applies
+`confirm_crowning_holdout` (§6.7.3). Test the structure's crowning id and
+train/holdout behavior; do not add a structure-specific confirmation path.
 
 **Verify**
 

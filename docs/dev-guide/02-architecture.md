@@ -316,51 +316,39 @@ Ctrl-C), the `finally` in `evolve_n_rounds` runs, in this order:
 
 ---
 
-## 3. `evolve_once` — the gauntlet path
+## 3. `evolve_once` — round preparation and dispatch
 
-`evolve_once` (`src/zicato/evolve/gauntlet.py`) is ONE round. Its docstring
-enumerates the classic thirteen steps; the code has grown numbered
-sub-steps (0, 2a, 5a′, 10b″ …) between them. This section walks the real
-sequence. The gauntlet (field size 1 — one champion, one challenger, one
-full-board duel) is the default and the back-compat baseline; §4 covers
-what changes when the structure widens the field.
+`evolve_once` (`src/zicato/evolve/gauntlet.py`) prepares one round. It loads
+and freezes the evaluation inputs, constructs the configured selection
+strategy, and passes a typed `PreparedRound` to the shared evaluation and
+settlement pipeline in `src/zicato/evolve/field.py`. The gauntlet is the
+one-candidate strategy. Every strategy uses the same execution tail.
 
 ```
-evolve_once ─┬─ 0   claim_skip_round (safe abort point)
-             ├─ 1   load workspace config, board(+meta), scoring, brief
-             ├─ 1b  resolve proposer (spec + agent) ── wrap best-of-N
-             ├─ 0b  open RoundLog: round_opened{contract_hash}
-             ├─ 1c  tournament_spec ← weights.tournament_structure
-             ├─ 1d  adapter + RuntimeConfig (+ per-round token ledger)
-             ├─ 2   ensure v0 baseline; resolve parent (champion)
-             ├─ 2a  A/A noise-floor calibration        (opt-in, idempotent)
-             ├─ 2a′ contract pre-flight                (opt-in, idempotent)
-             ├─ 2b  margin-vs-noise-floor warning      (round 0 only)
-             ├─ 3   enumerate_mutations(parent snapshot)  [+ snapshot dump]
-             ├─ 4   split_board → TRAIN/HOLDOUT; parent losses (train only)
-             │      detect_patterns(train)
-             ├─ 5   loss summary · 5a failure profile · 5a″ process exemplars
-             ├─ 5a′ build screen-runner closure        (opt-in, one per round)
-             ├─ 5b  make_strategy ──► field_size() > 1 ? ──► §4 (field path)
-             ├─ 6   mint next_id (or reuse resume id); build post-apply
-             │      validator; load prior experiments (memory)
-             ├─ 6r  resume short-circuit (reuse persisted experiment) or
-             │      _propose_child (best-of-N → screen → critique → validate)
-             ├─ 7   check_patch_manifest_and_forbidden
-             ├─ 9   validation errors? ──► _persist_rejected_round ──► return
-             ├─ 10  write_experiment (outcome=None) + index dual-write
-             │      run_fast_mode | run_tournament  (replicates, force_fresh)
-             ├─ 10a infra circuit ──► _defer_round_infra_outage ──► return
-             ├─ 10a′ cache gen_score.json ×2; RoundLog: units + gate (+holdout)
-             ├─ 10b _gauntlet_decision_from_result (SelectionStrategy)
-             ├─ 10b′ _confirm_gauntlet_promotion (evidence pre-gate, opt-in)
-             ├─ 10b″ _integrity_block_reason (opt-in blocking modes)
-             ├─ 10c claim_gate_override (operator force-promote/reject)
-             ├─ 11  build OutcomeRecord ──► _finalize_generation
-             │      RoundLog: decision_recorded
-             ├─ 13b placebo arm duel (opt-in cadence)
-             ├─ 14+ _round_epilogue (health · analyzer · epoch report)
-             └─ ret EvolveRoundOutcome; RoundLog: round_closed
+evolve_once ─┬─ claim_skip_round (safe abort point)
+             ├─ load workspace config, board metadata, scoring, and brief
+             ├─ resolve proposer and best-of-N policy
+             ├─ open RoundLog with the frozen contract hash
+             ├─ build adapter, RuntimeConfig, and per-round token ledger
+             ├─ ensure the baseline and resolve the champion
+             ├─ run optional A/A calibration and contract pre-flight
+             ├─ enumerate mutation points and analyze champion losses
+             ├─ split train and holdout entries
+             ├─ build proposer context, screen, genealogy, and calibration inputs
+             ├─ make_strategy(weights.tournament_structure)
+             ├─ construct PreparedRound
+             └─ evolve_field_round(prepared, resume_plan)
+
+evolve_field_round
+             ├─ produce_candidate_batch(strategy.field_size())
+             ├─ open live and durable tournament records
+             ├─ evaluate_tournament(strategy, run_matchup)
+             ├─ confirm evidence and holdout
+             ├─ apply integrity checks and operator overrides
+             ├─ construct RoundSettlement
+             ├─ persist outcomes, lineage, champion marker, and journal
+             ├─ run placebo control when configured
+             └─ run health, analyzer, and report epilogue
 ```
 
 ### 3.1 Step 0 — the skip safe point
@@ -525,23 +513,23 @@ stall detector attributes the wall-clock honestly.
 ### 3.8 Step 5b — structure dispatch
 
 ```python
-    strategy = make_strategy(tournament_spec, board_ids=[e.id for e in board])
-    if strategy.field_size() > 1:
-        return await _evolve_multi_challenger(...)
+    strategy = make_strategy(tournament_spec, board_ids=[e.id for e in train_board])
+    prepared = PreparedRound(..., strategy=strategy)
+    return await evolve_field_round(prepared, resume_plan=resume_plan)
 ```
 *(src/zicato/evolve/gauntlet.py, `evolve_once` step 5b — excerpt)*
 
-Board-aware structures (racing) get the epoch's entry ids as default
-`board_ids`; board-agnostic ones ignore them. Field size 1 falls through
-to the gauntlet steps below, byte-for-byte the historical path.
+Board-aware structures (racing) get the train entry ids as default
+`board_ids`; board-agnostic ones ignore them. All field widths use the same
+evaluation and settlement function.
 
 ### 3.9 Step 6 — propose (or resume)
 
-Generation id minting: `_next_generation_id` — EXCEPT when this is the
-resumed round, where the plan's `resume_generation_id` is reused (its
-directory exists; a fresh id would orphan the completed `loss.json`
-units). The proposer's post-apply validation hook is built by the shared
-seam:
+`produce_candidate_batch` mints generation ids from `next_generation_id` and
+requests `strategy.field_size()` candidates. A one-candidate resume may reuse
+the plan's `resume_generation_id`; a fresh id would orphan completed
+`loss.json` units. The proposer's post-apply validation hook is built by the
+shared seam:
 
 - `build_post_apply_validator` (`src/zicato/evolve/round.py`) — the
   `validate_experiment` hook the proposer agent calls on EVERY attempt:
@@ -584,10 +572,9 @@ persisted patches; if re-validation fails (the parent tree changed
 underneath), the round falls back to proposing fresh — "never score
 against a tree we cannot rebuild."
 
-Otherwise `_propose_child` builds the `ProposerContext` — the ONE propose
-shape both pipelines share (previously two near-identical inline blocks,
-which meant a new context field could land on one path only) — and calls
-the agent. Inside the wrapper, per propose-step: N `candidate_sampled`
+Otherwise `_propose_child` builds the one `ProposerContext` shape used by
+every candidate slot and calls the agent. Inside the wrapper, per propose-step:
+N `candidate_sampled`
 draws (each slot with a distinct edit-class hint), the optional guarded
 screen (`candidate_screened` events; veto-first; one bounded revise
 re-sample if all-vetoed), `critique_selected`, then the validate hook.
@@ -755,18 +742,15 @@ wire contract:
 > it produces a plausible-looking no-op aggregate. Assert non-empty at
 > your call site.
 
-**Fast mode, precisely.** `run_fast_mode` evaluates ONLY the challenger
-and compares it against the champion's cached whole-board aggregate
-(`_load_historical_aggregate` reading `gen_score.json`). That is why
-step 10a′ caches BOTH sides after every settled duel
-(`_cache_gen_score` ×2): the promoted child of this round is the
-champion whose cache next round's fast duel reads. Two consequences
-worth memorizing: (a) the diff-complexity term applies on the full A/B
-path only — fast mode never re-derives the challenger scalar through
-that seam; (b) on the field path the round-level provenance is resolved
-from the CHAMPION's cached-vs-fresh unit tally alone
-(`_resolve_round_champion_mode` → `full` / `fast` / `fast-degraded`) —
-challengers always run fresh, so their tally says nothing about reuse.
+**Fast mode.** Every matchup uses the cache-first board-unit
+evaluator. Its key is `(generation, entry, replicate)`, so both competitors
+reuse completed slots and execute only missing slots. A requested replicate
+is never synthesized by replaying another slot. Full mode forces both sides
+fresh; a conservative crash resume enables cache reads even when full mode
+was requested. Diff-complexity is supplied independently for the left and
+right candidates and is applied in both modes. Round-level
+`champion_eval_mode` is derived only from the reigning champion's unit
+provenance: `full`, `fast`, or `fast-degraded`.
 
 **Step 10a — the endpoint-outage circuit.** BEFORE anything downstream
 consumes the duel: when `config.infra_abort_round_threshold >= 1` and
@@ -779,31 +763,18 @@ mode), no strategy routing, no outcome/lineage/journal — the experiment
 stays un-outcomed on disk, exactly the shape `prepare_resume`
 reconciles. The health report carries the `infra_outage` WARNING.
 
-### 3.11 Steps 10a′–10c — verdict routing, confirmation, integrity, override
+### 3.11 Tournament evaluation, evidence, integrity, and overrides
 
-On a settled duel: `_cache_gen_score` for BOTH sides (fast-mode reuse),
-then the RoundLog trio — `_emit_tournament_units` (aggregate
-`unit_completed` events), `_emit_gate_evaluated`, and `holdout_released`
-when the runner consulted a holdout — then the `TOURNAMENT_SETTLE`
-progress transition.
+`evaluate_tournament` seeds every strategy, runs its scheduled matchups
+through `run_matchup`, and returns a typed `TournamentEvaluation`. The
+gauntlet schedules one duel; wider structures schedule their bracket, Swiss,
+or racing topology. A strategy consumes the gate verdict and never re-decides
+the duel.
 
-**10b — the verdict flows through the strategy even on the gauntlet.**
-`_gauntlet_decision_from_result` feeds the already-run duel's
-`GateOutcome` into a fresh `GauntletStrategy`
-(seed → next_matchups → record_result → champion) and reads its
-`SelectionDecision`. The strategy never re-decides the duel; this exists
-so the *decision shape* is uniform and swappable across structures.
-
-**10b′ — evidence-gate confirmation.** `_confirm_gauntlet_promotion`:
-when the contract sets `promote_confidence_threshold` (scaffolds do; the
-bare default is off), a train-promote is confirmed by the SAME
-Bradley–Terry defer→replicate→inconclusive adjudication the field driver
-runs (`confirm_promotion_with_evidence`,
-`src/zicato/selection/driver.py`), BEFORE anything persists. The
-pre-gate can only HOLD a promotion, never force one — a reject/defer
-passes through untouched. While the verdict defers, one extra
-crowning-pair duel per replicate is spent through the SAME `run_matchup`
-+ gate every other duel uses, on the TRAIN slice, at the reserved slots:
+When the contract sets `promote_confidence_threshold`, the driver calls
+`confirm_promotion_with_evidence` before settlement. The pre-gate can only
+withhold a promotion. While the verdict is unresolved, the driver runs fresh
+crowning-pair duels on the train slice at reserved replicate slots:
 
 ```python
         nonlocal evidence_replicates_run
@@ -811,7 +782,7 @@ crowning-pair duel per replicate is spent through the SAME `run_matchup`
         evidence_replicates_run += 1
         matchup_id = f"bt-replicate:r{replicate_slot}:{left_id}:{right_id}"
 ```
-*(src/zicato/orchestrator.py, `_confirm_gauntlet_promotion._replicate_duel` — excerpt)*
+*(src/zicato/evolve/field.py, `evolve_field_round._replicate_duel` — excerpt)*
 
 The reserved slot is a natural cache MISS the first time (a fresh draw of
 BOTH sides) and an idempotent HIT on a resumed confirm — the A/A
@@ -822,7 +793,7 @@ dead-letter queue (`record_inconclusive`), and the journaled `evidence`
 block carries the rating CIs plus the full `ci_history` trail. Each
 refit's CI state also lands as an `evidence_replicated` RoundLog event.
 
-**10b″ — opt-in integrity blocking.** `_integrity_block_reason` guards a
+**Opt-in integrity blocking.** `_integrity_block_reason` guards a
 GATE-DECIDED promotion only (never an operator force-promote): (a) diff
 containment — every file outside the registered mutable trees must be
 byte-identical parent↔child (`zicato.evolve.containment`, mirroring
@@ -916,25 +887,25 @@ Final heartbeat (`PROMOTE`/`REJECT` progress transition),
 
 ---
 
-## 4. `_evolve_multi_challenger` — the field path
+## 4. `evolve_field_round` — shared evaluation and settlement
 
-When `strategy.field_size() > 1`, `evolve_once` hands everything it has
-computed (mutations, patterns, summaries, the screen runner, the
-proposer agent, the open RoundLog) to `_evolve_multi_challenger`
-(`src/zicato/evolve/field.py`). Steps 1–5 of §3 are SHARED — the field
-path re-derives only the train split (it receives the raw board). What
-follows is what differs.
+`evolve_once` passes a `PreparedRound` to `evolve_field_round`
+(`src/zicato/evolve/field.py`) for every selection strategy. The function
+produces the requested candidate batch, drives the strategy, confirms the
+crown, and commits one `RoundSettlement`. Field width changes the number of
+candidates and scheduled matchups. Every width retains the same execution
+pipeline.
 
 ### 4.0 The structure shapes, in one table
 
-06-tournament-and-selection.md owns the theory; what the field path
-needs from each structure is only its scheduling shape
+06-tournament-and-selection.md owns the theory; evaluation needs only each
+structure's scheduling shape
 (`src/zicato/selection/` registry + strategies; params live in
 `TournamentStructure.params` and fold into the contract hash):
 
 | Structure | `field_size` | Shape | Key params |
 |---|---|---|---|
-| `gauntlet` | 1 | one champion-vs-challenger duel; promote-on-gate (never reaches this path) | `replicates` (default 2) |
+| `gauntlet` | 1 | one champion-vs-challenger duel; promote-on-gate | `replicates` (default 2) |
 | `single_elim` / `double_elim` | bracket | challenger-vs-challenger nodes (winner = `lower_scalar_id()`), then champion-gate crowning | `field_size`, `replicates` |
 | `swiss` | N | `rounds_n` swiss pairings, then crowning | `field_size`, `rounds_n`, `replicates` |
 | `racing` | N | escalating board-slice rungs cut the field (`board_subset` per rung); a rung CUTS, it does not crown; final full-train crowning duel | `field_size`, `eta`, `board_fraction`, optional `matchup_budget_seconds`, `promote_confidence_threshold`/`promote_confidence_replicates` |
@@ -945,21 +916,20 @@ and the evidence pre-gate bolt onto "the crowning matchup" uniformly.
 
 ### 4.1 The train/holdout rule, restated for structures
 
-The structure's internal matchups — swiss rounds, elim nodes, racing
-rungs, INCLUDING the final champion-gate duel that decides promotion —
-score on the TRAIN slice only. The holdout is never consumed to *pick*
-the leader; the full board is retained solely for the ONE Ladder-mediated
-holdout confirmation after resolution. Empty holdout ⇒ train IS the full
-board ⇒ byte-identical to whole-board behaviour. This is the
-[train-selects-holdout-confirms] invariant; the gauntlet obeys the same
-rule through `run_tournament`'s internal split handling.
+Internal matchups — the gauntlet duel, Swiss rounds, elimination nodes, and
+racing rungs — score on the train slice when holdout confirmation is active.
+The holdout is never consumed to pick the leader. Empty holdout means train is
+the full board. Fast gauntlet evaluation retains its documented whole-board
+behavior and skips holdout confirmation; full gauntlet evaluation uses the
+shared train-selects, holdout-confirms procedure.
 
 ### 4.2 Minting the field
 
-Ids are minted monotonically from `_next_generation_id`'s base
+Ids are minted monotonically from `next_generation_id`'s base
 (`v{base_n + offset}`) so every challenger gets a distinct id even when
 a proposer attempt fails before deriving a snapshot. For each of the
-`field_size()` slots, `_propose_and_apply_challenger`:
+`field_size()` slots, `produce_candidate_batch` calls
+`_propose_and_apply_challenger`:
 
 1. beats `proposing:…` and publishes a live `"proposing"` field-status
    record BEFORE the LLM call (`on_status` → `_publish_proposing` →
@@ -1031,7 +1001,7 @@ Its loop is four steps, verbatim from its docstring:
        ``strategy.resolved()`` or the strategy schedules nothing.
     4. Return ``strategy.champion()``.
 ```
-*(src/zicato/selection/driver.py, `resolve_tournament` docstring — excerpt)*
+*(src/zicato/selection/driver.py, `evaluate_tournament` — excerpt)*
 
 Each batch fans out under one `asyncio.gather`; `on_progress` fires
 right after a batch is scheduled (the strategy's pending set is
@@ -1039,8 +1009,9 @@ populated, so `live_rounds()` carries the in-flight matchups with
 `winner: null`) — publish-before-run is what makes the live bracket
 exist during, not after. When a `pre_gate` is supplied, a `"promoted"`
 decision is held through the defer→replicate loop
-(`_apply_pre_gate` → the closest-CI duel via `replicate_duel`, refit,
-recheck) before it is returned. The orchestrator supplies the closures:
+(`confirm_promotion_with_evidence` runs the closest-CI duel through
+`replicate_duel`, refits, and rechecks) before it is returned. The
+orchestrator supplies the closures:
 
 - **`_request_field`** — hands the strategy the champion `Contestant` +
   the applied challengers (with snapshots + experiments).
@@ -1067,8 +1038,8 @@ recheck) before it is returned. The orchestrator supplies the closures:
   `_run_matchup` runs under the round-shared semaphore:
 
 ```python
-    # --- Cross-matchup concurrency cap. A non-gauntlet structure schedules
-    # SEVERAL matchups of a round concurrently (the driver fans the batch out
+    # --- Cross-matchup concurrency cap. A strategy may schedule several
+    # matchups concurrently (the driver fans the batch out
     # under one ``asyncio.gather``). Without a shared gate each matchup would
     # mint its own ``Semaphore(parallelism)``, so N concurrent matchups could
     # run ``N × parallelism`` board units at once — overshooting the operator's
@@ -1079,12 +1050,11 @@ recheck) before it is returned. The orchestrator supplies the closures:
 ```
 *(src/zicato/evolve/field.py, `evolve_field_round` — excerpt)*
 
-  Each matchup scores on the train board (a racing rung's `board_subset`
-  is intersected inside `run_matchup`), caches both sides' aggregates
-  (`_cache_gen_score` — mirroring the gauntlet), emits units + gate onto
-  the RoundLog, and accumulates the CHAMPION's cached-vs-fresh unit tally
-  (`unit_provenance`) — challengers always run fresh, so only the
-  champion's tally is meaningful for the round-level
+  Each matchup scores on the applicable train board (a racing rung's
+  `board_subset` is intersected inside `run_matchup`), caches both sides'
+  aggregates, and emits units plus the gate verdict onto the RoundLog. The
+  cache-first evaluator may reuse any competitor's existing unit. Only the
+  reigning champion's cached-vs-fresh tally determines the round-level
   `champion_eval_mode` (`_resolve_round_champion_mode`).
 - **`_publish_live_structure`** (`on_progress`) — every scheduled batch
   republishes the live envelope with settled rounds + the in-flight round
@@ -1118,8 +1088,8 @@ stuck tournament, then re-raises.
 **Holdout confirmation.** `_confirm_crowning_on_holdout` (pure decision
 shape; the I/O is the injected `confirm_fn =
 confirm_crowning_holdout`): a `promoted` crowning duel must ALSO confirm
-on the holdout through the SAME Ladder machinery + the SAME per-epoch
-`ladder_state.json` budget the gauntlet uses. A released
+on the holdout through the shared Ladder machinery and per-epoch
+`ladder_state.json` budget. A released
 non-confirmation flips the crowning promote to a holdout reject — the
 champion stands, `reason_override` carries the cause. The champion side
 is resolved defensively (left by convention, but a right-seeded champion
@@ -1127,13 +1097,12 @@ still confirms correctly), and the crowning challenger's TRAIN scalar is
 paired with its HOLDOUT scalar so the generalization gap is measured on
 the same duel. `holdout_released` lands on the RoundLog.
 
-**Integrity blocking** mirrors the gauntlet's 10b″ against the crowned
-child's snapshot and the crowning duel's champion-oriented delta
+**Integrity blocking** checks the crowned child's snapshot and the crowning
+duel's champion-oriented delta
 (`crowning_delta_scalar` — note the orientation normalization: the gate
 treats LEFT as parent, so a right-seeded champion flips the sign).
 
-**Field overrides.** Unlike the gauntlet's single in-flight generation, a
-field round resolves a whole slate, so
+**Operator overrides.** A round may contain one or several candidates, so
 `claim_field_gate_overrides(workspace, field_candidate_ids)` may target a
 non-winner, the leader, or SEVERAL candidates. The re-resolution is PURE
 (`_apply_field_overrides`):
@@ -1155,14 +1124,12 @@ non-winner, the leader, or SEVERAL candidates. The re-resolution is PURE
 ```
 *(src/zicato/orchestrator.py, `_apply_field_overrides` docstring — excerpt)*
 
-Everything durable — the settled live envelope
-(`_settle_active_tournament`, RETAINED with `phase="completed"` unlike
-the gauntlet's cleared transient), the durable field record, the
-RoundLog `decision_recorded` — is written with the HOLDOUT-RESOLVED,
-POST-OVERRIDE `effective_decision`, so no store ever shows a crown the
-champion pointer contradicts.
+Everything durable — the settled live envelope, the durable tournament
+record where applicable, and the RoundLog `decision_recorded` event — is
+written with the holdout-resolved, post-override `effective_decision`, so no
+store shows a crown that contradicts the champion pointer.
 
-**Write order + the crowning invariant.** The field tail is strictly
+**Write order + the crowning invariant.** The settlement tail is strictly
 ordered — [outcomes-then-invariant-then-lineage]:
 
 1. every challenger's `OutcomeRecord` persists via
@@ -1501,15 +1468,18 @@ types frozen (`frozen=True, slots=True`); state transitions go through
 | `Generation` (`core/epoch.py`) | `id`, `parent_id`, `snapshot_root`, `promoted`, `round_index` (birth round — never re-stamped) | orchestrator (parent from the marker; child at mint) | runner (mounts `snapshot_root`), lineage, genstore | `lineage.json` nodes + the genstore (git tag/commit per generation) |
 | `LossProfile` (`core/loss.py`) | `drift_counts`, `pass_fail`, continuous `score`, `metric_counts` (namespaced), `runtime_ms`, `abort_cause`, `tokens_spent` | the reducer (`telemetry/reducer.py`) inside the worker path, per run | scoring aggregation, gate, detectors, screen, health, failure profile | `runs/{…}/loss.json` (the per-unit cache keys on it) + index `runs` table |
 | `GateOutcome` (`tournament/gate.py`) | `decision`, `reason` (names the rule that fired), `delta_scalar`, `delta_pass_rate` | `evaluate_gate` at the end of every duel | strategies (read, never re-decide), evidence gate, RoundLog `gate_evaluated`, OutcomeRecord deltas | inside `TournamentResult` / `MatchupResult`; not standalone |
-| `TournamentResult` (`tournament/runner.py`) | both aggregates, `outcome`, `per_entry_losses`, `champion_eval_mode`, `unit_provenance`, `holdout`, `holdout_child_scalar` | `run_tournament` / `run_fast_mode` / `run_matchup` | gauntlet tail (10a–11), `_gauntlet_decision_from_result`, infra counter, gen_score caching | aggregates cached as `gen_score.json`; the rest flows into `OutcomeRecord` |
+| `TournamentResult` (`tournament/runner.py`) | both aggregates, `outcome`, `per_entry_losses`, `champion_eval_mode`, `unit_provenance`, `holdout`, `holdout_child_scalar` | `run_matchup`; standalone debug APIs also return it | canonical matchup closure, infra counter, aggregate caching | aggregates cached as `gen_score.json`; the rest is projected into `MatchupResult` and `OutcomeRecord` |
 | `MatchupResult` (`selection/strategy.py`) | matchup id, left/right ids + aggs, `outcome`, `stage_index`, `bracket_slot` | `_run_matchup` from a `TournamentResult` | strategies (`record_result`), `SelectionDecision.matchups`, standings, match records | inside the durable field record (`_serialise_rounds`) |
 | `SelectionDecision` (`selection/strategy.py`) | `promoted_generation_id`, `decision`, `reason`, `matchups`, `crowning_matchup_id`, `standings` | the strategy (`champion()`), re-written by holdout/override re-resolution into `effective_decision` | field tail (outcomes, lineage, envelopes), round summary | the settled field record + `ActiveTournament` |
-| `OutcomeRecord` (`core/experiment.py`) | decision + reason, deltas, `structure`/`final_rank`/`match_record`, `champion_eval_mode`, `holdout` block, `train_loss`/`holdout_loss`/`generalization_gap`, `operator_override(+reason)`, `evidence` | the round tails (gauntlet step 11; field per-challenger loop; rejected/soft-reject tails) | journal, index, dashboard decision surface, gap detector | onto `experiment.json` via `_finalize_generation` → `update_experiment_outcome` |
+| `TournamentEvaluation` (`selection/driver.py`) | strategy decision plus optional `EvidenceResolution` | `evaluate_tournament` | holdout confirmation and settlement construction | not persisted directly; its parts enter the tournament and outcome records |
+| `CandidateBatch` (`evolve/candidate_batch.py`) | incumbent, requested width, applied challengers, rejected slots, field status, resume provenance | `produce_candidate_batch` | strategy seeding and round evaluation | experiments and soft rejections persist independently; the typed batch does not |
+| `RoundSettlement` (`evolve/settlement.py`) | effective decision, primary and additional promotions, candidate outcomes, champion scalar, evidence, tournament metadata | `evolve_field_round` after confirmation and overrides | outcome, lineage, marker, hook, and journal commits | its constituent records persist; the typed settlement does not |
+| `OutcomeRecord` (`core/experiment.py`) | decision + reason, deltas, `structure`/`final_rank`/`match_record`, `champion_eval_mode`, `holdout` block, `train_loss`/`holdout_loss`/`generalization_gap`, `operator_override(+reason)`, `evidence` | settlement construction plus rejected/soft-reject tails | journal, index, dashboard decision surface, gap detector | onto `experiment.json` via `_finalize_generation` → `update_experiment_outcome` |
 | `PriorExperiment` (`core/experiment.py`) | `core_idea`, `modulating`, `decision` (incl. `"in_flight"`), banded delta, `same_contract`, `prediction_accuracy` | `_load_prior_experiments` (index) + the field loop (siblings) | the proposer's memory section | never persisted — a render-time projection |
 | `EvolveRoundOutcome` (`evolve/round_api.py`) | parent/child ids, decision (incl. `deferred_infra`), reason, scalars + delta, health summary/critical | every `evolve_once` return path | `evolve_n_rounds` stop policies, the CLI summary | not persisted (the journal/experiment carry the durable truth) |
 | `ResumePlan` (`runtime/resume.py`) | `classification`, `resumes_in_place`, `resume_generation_id`, `resume_experiment` | `prepare_resume` at loop start / after a deferral | `evolve_once` steps 6/6r, cache-read decisions | derived from the workspace; not persisted |
 | `Standing` (`selection/strategy.py`) | `generation_id`, `rank`, `scalar`, wins/losses, `status`, `role` | the strategy's standings view | dashboard leaderboard, `final_rank` on OutcomeRecords | inside the settled field record |
-| `_AppliedChallenger` (`evolve/propose_apply.py`, private) | generation id + snapshot + experiment + `Generation` | `_propose_and_apply_challenger` | the field loop (`by_id`, lineage, outcomes) | not persisted (its parts are) |
+| `_AppliedChallenger` (`evolve/propose_apply.py`, private) | generation id + snapshot + experiment + `Generation` | `_propose_and_apply_challenger` | candidate batch, strategy seeding, settlement | not persisted (its parts are) |
 | `_CrowningHoldout` (`evolve/gate.py`, private) | post-holdout promoted id, reason override, holdout block, train/holdout scalar pair, champion-oriented `crowning_delta_scalar` | `_confirm_crowning_on_holdout` (pure) | override re-resolution, integrity block, OutcomeRecord stamping | not persisted (its parts are) |
 | `_FieldMintDecision` (`evolve/propose_apply.py`, private) | `action` ∈ accept / reject_duplicate / reject_overlap, overlap + peer index | `_mint_challenger_field` (pure) | the field loop's soft-reject branches | not persisted (soft-reject reasons land on experiment.json) |
 | `GateOverride` (`runtime/control_consumer.py`) | forced `decision`, operator `reason` | the operator via control files; claimed at safe points | override application + provenance stamping | archived to `control_log/`; provenance on records |
@@ -1530,13 +1500,10 @@ bug: a completed swiss epoch rendered blank from the index alone).
 The decomposition rule this codebase converged on, and the one you must
 follow:
 
-> ✅ **ALWAYS** put a NEW round step into an existing seam or extract a
-> new one. ⛔ **NEVER** copy a shared step into both `evolve_once` and
-> `evolve_field_round`. The two pipelines share
-> steps by CALLING THE SAME FUNCTION — the god-function era proved that
-> "the same code, twice, inline" guarantees the two copies drift (the
-> epilogue and the propose plumbing were both near-verbatim duplicated
-> before extraction, and features landed on one path only).
+> ✅ **ALWAYS** put a new round step into the shared preparation,
+> candidate-production, evaluation, or settlement seam. ⛔ **NEVER** add a
+> structure-specific execution tail. Tournament structures vary through
+> `SelectionStrategy`; operational behavior stays in the shared pipeline.
 
 The seams, and what each owns:
 
@@ -1544,21 +1511,24 @@ The seams, and what each owns:
 |---|---|---|---|
 | `evolve_n_rounds` + stop policies | `evolve/loop.py` | the loop, circuit breakers, budget, backoff, control safe points, progress log lifecycle | (the loop itself) |
 | `ensure_epoch_for_contract`, `_create_epoch_from_contract`, `_promoted_head_snapshot`, component-hash bookkeeping | `evolve/epoching.py` | the roll-at-evolve-time decision (03 covers it) | loop start, rubric replacement |
-| `build_post_apply_validator` | `evolve/round.py` | the propose-time apply+validate hook (beat → derive all-or-nothing → validate; retryable findings) | gauntlet step 6, every field slot |
-| `check_patch_manifest_and_forbidden` | `evolve/round.py` | manifest + forbidden-ids cross-check | both pipelines |
-| `_propose_child` | `evolve/propose_apply.py` | the ONE `ProposerContext` build + propose + RoundLog proposal events + round-index stamp | gauntlet, `_propose_and_apply_challenger` |
-| `_build_candidate_screen_runner` | `evolve/round_context.py` | the per-round screen closure (one panel per round) | both pipelines via `ProposerContext.screen_candidates` |
-| `_finalize_generation` | `evolve/persist.py` | the ONE outcome→index→lineage→marker→journal write pipeline | every round tail (gauntlet, field, rejected, soft-reject) |
-| `_round_epilogue` | `evolve/persist.py` | health + analyzer + report regeneration | both pipelines + the rejected tail (`run_analyzer=False`) |
-| `_persist_rejected_round` | `evolve/persist.py` | the validation-reject tail | gauntlet (the field's equivalent is per-slot narrowing) |
-| `_defer_round_infra_outage` | `evolve/decision_support.py` | the deferral tail (no caches, no journal, health WARNING) | gauntlet (field-side infra handling rides run_matchup losses) |
-| `_mint_challenger_field`, `_apply_field_overrides`, `_confirm_crowning_on_holdout` | `evolve/propose_apply.py`, `evolve/gate.py` | the PURE field decisions (diversity, overrides, holdout re-resolution) — I/O stays at the call site | field path; unit-testable without e2e |
-| `_gauntlet_decision_from_result`, `_confirm_gauntlet_promotion`, `_integrity_block_reason` | `evolve/gate.py` | verdict routing, evidence confirmation, opt-in blocking | gauntlet (field has driver-native equivalents) |
-| `_RoundLogEmitter`, `_emit_tournament_units`, `_emit_gate_evaluated` | `evolve/round_reporting.py` | best-effort RoundLog emission | both pipelines |
-| lifecycle services (`_beat`, `_now_iso`, `_resolve_or_launch_harmonograf`, `_build_meta_loop_emitter_safe`, env restorer, launch handles) | `evolve/lifecycle_services.py` | heartbeat/harmonograf/emitter plumbing | loop + both pipelines |
-| placebo minting + cadence | `evolve/placebo.py` + `_mint_placebo_challenger`/`_maybe_run_placebo_arm_gauntlet` | the control arm | both pipelines |
-| containment check | `evolve/containment.py` | the Python mirror of the supervisor's diff-containment rule | `_integrity_block_reason` (both pipelines) |
-| dashboard projection (`_publish_active_tournament`, `_settle_active_tournament`, `_persist_field_tournament`, `_serialise_rounds/standings`, overlays, `_mark_run_terminal`) | `evolve/dashboard_projection.py` | every live-envelope + durable-record write | field path + loop teardown |
+| `PreparedRound` construction | `evolve/gauntlet.py`, type in `evolve/generation_phase.py` | frozen inputs shared by every field slot and matchup | every strategy |
+| `produce_candidate_batch` | `evolve/candidate_batch.py` | field width, proposal/apply admission, diversity, rejection, resume provenance | every strategy |
+| `build_post_apply_validator` | `evolve/round.py` | propose-time apply+validate hook (beat → derive all-or-nothing → validate) | every candidate slot |
+| `check_patch_manifest_and_forbidden` | `evolve/round.py` | manifest + forbidden-ids cross-check | every candidate slot |
+| `_propose_child` | `evolve/propose_apply.py` | the one `ProposerContext` build + propose + RoundLog proposal events + round-index stamp | candidate production |
+| `evaluate_tournament`, `confirm_promotion_with_evidence` | `selection/driver.py` | strategy progression and Bradley–Terry confirmation | every strategy |
+| `run_matchup` | `tournament/runner.py` | board selection, paired replication, cache policy, aggregation, promotion gate | every scheduled matchup |
+| `RoundSettlement`, `CandidateSettlement` | `evolve/settlement.py` | typed boundary between resolved evaluation and commits | every settled round |
+| `_finalize_generation` | `evolve/persist.py` | outcome and index write | every candidate settlement and rejected tail |
+| `_round_epilogue` | `evolve/persist.py` | health + analyzer + report regeneration | every completed round plus rejected tail |
+| `_persist_rejected_round` | `evolve/persist.py` | one-candidate proposer-exhaustion tail | gauntlet candidate failure |
+| `_defer_round_infra_outage` | `evolve/decision_support.py` | deferral tail with no lineage or journal write | every strategy |
+| `_mint_challenger_field`, `_apply_field_overrides`, `_confirm_crowning_on_holdout` | `evolve/propose_apply.py`, `evolve/gate.py` | diversity, overrides, and holdout re-resolution | every applicable round |
+| `_integrity_block_reason` | `evolve/gate.py` | opt-in diff-containment and gate-contradiction block | every strategy |
+| `_RoundLogEmitter`, `_emit_tournament_units`, `_emit_gate_evaluated` | `evolve/round_reporting.py` | best-effort RoundLog emission | every strategy |
+| lifecycle services (`_beat`, `_now_iso`, `_resolve_or_launch_harmonograf`, `_build_meta_loop_emitter_safe`, env restorer, launch handles) | `evolve/lifecycle_services.py` | heartbeat/harmonograf/emitter plumbing | loop and round pipeline |
+| placebo minting + cadence | `evolve/placebo.py` + `_mint_placebo_challenger`/`_maybe_run_placebo_arm_gauntlet` | control arms | strategy-specific cadence through the shared tail |
+| dashboard projection (`_publish_active_tournament`, `_settle_active_tournament`, `_persist_field_tournament`, `_serialise_rounds/standings`, overlays, `_mark_run_terminal`) | `evolve/dashboard_projection.py` | live-envelope and durable tournament-record writes | round pipeline + loop teardown |
 
 Two mechanical rules keep the seams honest:
 
@@ -1629,9 +1599,10 @@ here is somebody's rate limit:
   introduce an `await` inside what used to be an atomic
   read-modify-write of shared round state, you have introduced a race.
 - **Board units fan out under a semaphore.** `RuntimeConfig.parallelism`
-  (default 4) bounds in-flight board units. In FULL mode a unit runs
-  parent + child concurrently, so the true subprocess ceiling is
-  `2 × parallelism`; fast mode runs only the child, so `parallelism`.
+  (default 4) bounds in-flight board units. A unit can run both competitors
+  concurrently, so the subprocess ceiling is `2 × parallelism`. Fast mode
+  resolves each side from the cache first and lowers the active count whenever
+  either unit is already present.
 - **A field round shares ONE semaphore.** The driver gathers a whole
   matchup batch concurrently; without the round-level
   `round_unit_semaphore`, N concurrent matchups would each mint their

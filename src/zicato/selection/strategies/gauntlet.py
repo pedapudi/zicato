@@ -1,11 +1,8 @@
-"""The gauntlet strategy — the default, today's behaviour exactly.
+"""The one-challenger gauntlet selection strategy.
 
-A faithful re-expression of the historical ``evolve_once`` steps 2-5: one
-champion, one challenger, one full-board duel, promote-on-gate. With
-``replicates`` pinned to ``1`` this path reproduces the historical
-single-run gauntlet outcome byte-for-byte; the UNPINNED default is now
-``2`` averaged paired runs (the noise-aware posture — see
-``_default_replicates`` on the base class).
+One champion faces one challenger in a full-board duel and the promotion gate
+decides the crown. The default uses two averaged paired runs; deterministic
+harnesses may set ``replicates`` to ``1``.
 
 Maps to the degenerate single-replicate dueling bandit (SELECTION.md
 §6.3).
@@ -43,8 +40,7 @@ class GauntletStrategy(SelectionStrategy):
         self._scheduled = False
         # ``replicates`` is the §9-lever-1 knob; the gauntlet inherits the
         # base ``_default_replicates`` (2 — the noise-aware default). Pin
-        # ``"replicates": 1`` in the params for the historical single-run
-        # duel (deterministic harnesses do).
+        # ``"replicates": 1`` selects one run for deterministic harnesses.
         self._replicates = max(1, _param_int(self.params, "replicates", self._default_replicates))
 
     def field_size(self) -> int:
@@ -143,9 +139,8 @@ class GauntletStrategy(SelectionStrategy):
         )
 
     def rounds(self) -> tuple[RoundRecord, ...]:
-        # The gauntlet back-compat invariant allows an empty ``rounds``,
-        # but emitting the canonical one-round / one-match shape costs
-        # nothing and is the shape every other structure degenerates to.
+        # Emit the canonical one-round, one-match shape used by uniform
+        # tournament readers.
         if self._result is None or self._champion is None or self._challenger is None:
             return ()
         outcome = self._result.outcome

@@ -225,6 +225,7 @@ async def _duel(
     match_id: str,
     board_subset: tuple[str, ...] | None,
     fast: bool = True,
+    replicate_base: int = 0,
 ) -> Any:
     """One real ``run_matchup`` duel through the (installed) counting world."""
     return await run_matchup(
@@ -237,6 +238,7 @@ async def _duel(
         workspace_root=workspace,
         epoch_id="e0",
         replicates=replicates,
+        replicate_base=replicate_base,
         match_id=match_id,
         board_subset=board_subset,
         fast=fast,
@@ -882,9 +884,12 @@ def slot_integrity_proof(params: HarnessParams, workspace: Path) -> dict[str, An
     swept phantom dirs by design, so its isolation is proven by r0 being
     untouched rather than by a persisted slot.
     """
-    from zicato.core.types import TournamentDecision, TournamentStructure
+    from zicato.core.types import TournamentDecision
     from zicato.core.workspace import loss_profile_path
-    from zicato.evolve.gate import _confirm_gauntlet_promotion  # noqa: PLC0415
+    from zicato.selection.driver import (  # noqa: PLC0415
+        EvidencePreGate,
+        confirm_promotion_with_evidence,
+    )
     from zicato.selection.strategy import SelectionDecision
 
     checks: dict[str, Any] = {}
@@ -946,28 +951,40 @@ def slot_integrity_proof(params: HarnessParams, workspace: Path) -> dict[str, An
             crowning_matchup_id="crowning",
         )
         budget = 3
-        spec = TournamentStructure(
-            structure="gauntlet",
-            params={"promote_confidence_threshold": 0.8, "promote_confidence_replicates": budget},
-        )
-        confirmed, _evidence = asyncio.run(
-            _confirm_gauntlet_promotion(
-                decision,
-                tournament_spec=spec,
-                adapter=object(),
-                parent_gen=_gen("champion"),
-                child_gen=_gen("challenger"),
-                train_board=list(_board()),
+        evidence_replicates_run = 0
+
+        async def _replicate_duel(left_id: str, right_id: str) -> MatchupResult:
+            nonlocal evidence_replicates_run
+            replicate_slot = EVIDENCE_REPLICATE_BASE + evidence_replicates_run
+            evidence_replicates_run += 1
+            matchup_id = f"bt-replicate:r{replicate_slot}:{left_id}:{right_id}"
+            replicate = await _duel(
+                workspace=workspace,
+                seed=2,
+                left_id=left_id,
+                right_id=right_id,
                 weights=ScoringWeights(),
-                config=_config(workspace, 2),
-                workspace_root=workspace,
-                epoch_id="e0",
-                disable_drift=(),
-                judge_only=False,
-                fast_mode=False,
-                round_index=0,
-                total_rounds=1,
-                beater=None,
+                replicates=1,
+                match_id=matchup_id,
+                board_subset=None,
+                fast=False,
+                replicate_base=replicate_slot,
+            )
+            return MatchupResult(
+                matchup_id=matchup_id,
+                left_id=left_id,
+                right_id=right_id,
+                left_agg=replicate.parent_agg,
+                right_agg=replicate.child_agg,
+                outcome=replicate.outcome,
+            )
+
+        confirmed, _evidence = asyncio.run(
+            confirm_promotion_with_evidence(
+                decision,
+                champion=Contestant(generation_id="champion", role="champion"),
+                pre_gate=EvidencePreGate(threshold=0.8, replicate_budget=budget),
+                replicate_duel=_replicate_duel,
             )
         )
 

@@ -188,7 +188,7 @@ class SelectionDecision:
         champion-gate match). Empty when no crowning duel ran.
     standings:
         The final ranking, one :class:`Standing` per contestant, ordered
-        best-first. Empty for a gauntlet (the two-row view is enough).
+        best-first.
     """
 
     promoted_generation_id: str | None
@@ -204,8 +204,8 @@ class Standing:
     """One contestant's position in the final standings.
 
     Mirrors the dashboard ``standings`` shape (data-model §2.5). The
-    orchestrator persists these so a non-gauntlet structure renders a
-    leaderboard / bracket without re-deriving them.
+    The orchestrator persists these so any structure can render a leaderboard
+    or bracket without re-deriving it.
     """
 
     generation_id: str
@@ -222,9 +222,9 @@ class RoundRecord:
     """One settled round / rung / bracket-round, for the persisted record.
 
     Mirrors the data-model ``rounds[]`` shape (§2.4). The strategy emits
-    these so the persisted tournament record (and, later, the dashboard)
-    can render the structure's progression. ``matches`` carries the
-    per-match generalization of today's single champion-vs-challenger row.
+    these so the persisted tournament record and dashboard can render the
+    structure's progression. ``matches`` generalizes a tournament into its
+    individual duels.
 
     NB — ``stage_index`` here is the WITHIN-tournament stage index (a bracket
     round / Swiss round / racing rung INSIDE one evolve round); it is a
@@ -324,11 +324,10 @@ class SelectionStrategy(ABC):
 
         Every concrete strategy resolves ``params["replicates"]`` against its
         ``_default_replicates`` in ``__init__`` (into ``self._replicates``);
-        this is the public read the orchestrator uses to thread the SAME
-        resolved value into an execution path that does not run through
-        :class:`Matchup` objects (the gauntlet's ``run_tournament`` call).
-        Falls back to the class default for a strategy that has not stored
-        the attribute.
+        this is the public read used by cost estimation and diagnostics.
+        Matchup execution receives the same value on each scheduled
+        :class:`Matchup`. Falls back to the class default for a strategy that
+        has not stored the attribute.
         """
         return int(getattr(self, "_replicates", self._default_replicates))
 
@@ -367,9 +366,8 @@ class SelectionStrategy(ABC):
     def rounds(self) -> tuple[RoundRecord, ...]:
         """The settled per-round records (data-model §2.4).
 
-        Default empty (the gauntlet leaves ``rounds`` empty, as the
-        back-compat invariant allows). Non-gauntlet strategies override
-        this to emit their bracket / Swiss / racing progression.
+        The default is empty. Strategies override this to emit their duel,
+        bracket, Swiss, or racing progression.
         """
         return ()
 
@@ -482,17 +480,13 @@ def rung_for_match_id(match_id: str | None) -> str | None:
     * ``"rung0_m2"`` / ``"rung0"`` -> ``"rung 0"``
     * ``"rung1_m0"`` -> ``"rung 1"`` (any ``rung<N>...`` form)
     * ``"racing-final"`` / any ``*-final`` / ``"final"`` -> ``"final"``
-    * ``""`` / ``None`` -> ``None`` (an untagged run — a gauntlet duel,
-      which never carries a ``match_id``, or a legacy run persisted
-      before the tag existed)
+    * ``""`` / ``None`` -> ``None`` (an untagged run)
     * anything else (bracket slots like ``"WB-R1-0"``, swiss ``"r0_m1"``)
       is returned verbatim so a non-racing structure still gets a stable,
       if un-prettified, label rather than ``None``.
 
-    A gauntlet run is intentionally ``None`` rather than ``"gauntlet"``:
-    the gauntlet path runs through ``run_tournament`` and never stamps a
-    ``match_id``, so its runs arrive here with ``""`` and read as "no
-    rung", which is the honest answer for a single-duel structure.
+    A gauntlet matchup id does not match a racing rung form, so it is returned
+    verbatim like any other non-racing matchup.
     """
     if not match_id:
         return None

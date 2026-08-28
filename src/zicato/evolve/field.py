@@ -1,4 +1,4 @@
-"""Multi-challenger field round strategy."""
+"""Evaluate and durably settle one strategy-driven evolve round."""
 
 # ruff: noqa: E402
 from __future__ import annotations
@@ -43,12 +43,15 @@ from zicato.evolve.lifecycle_services import (
 from zicato.evolve.pareto import record_round_frontier
 from zicato.evolve.persist import (
     _finalize_generation,
+    _persist_rejected_round,
+    _rejected_proposer_experiment,
     _round_epilogue,
 )
 from zicato.evolve.placebo import is_placebo_experiment
 from zicato.evolve.promote_hook import fire_on_promote
 from zicato.evolve.propose_apply import (
     _AppliedChallenger,
+    _maybe_run_placebo_arm_gauntlet,
     _mint_placebo_challenger,
     _propose_and_apply_challenger,
     _trim_reason,
@@ -62,6 +65,8 @@ from zicato.util import best_effort
 log = logging.getLogger("zicato.orchestrator")
 
 from zicato.evolve.decision_support import (
+    _count_infra_aborted_runs,
+    _defer_round_infra_outage,
     _field_failure_summary,
     _generalization_fields_from_scalars,
     _token_clip_state,
@@ -71,43 +76,57 @@ from zicato.evolve.round_reporting import (
     _emit_gate_evaluated,
     _emit_harness_loaded,
     _emit_tournament_units,
+    _promoted_entry_regressions,
     _RoundLogEmitter,
 )
+from zicato.evolve.settlement import (
+    CandidateSettlement,
+    RoundSettlement,
+    ordered_promotions,
+)
+
+
+class _InfrastructureRoundDeferred(RuntimeError):
+    """Signal that endpoint failures made the current evaluation invalid."""
+
+    def __init__(self, aborted_runs: int, threshold: int) -> None:
+        super().__init__("infrastructure-abort threshold reached")
+        self.aborted_runs = aborted_runs
+        self.threshold = threshold
 
 
 async def evolve_field_round(
     prepared: generation_phase.PreparedRound,
+    *,
+    resume_plan: Any = None,
 ) -> EvolveRoundOutcome:
-    """Run ONE evolve round under a non-gauntlet tournament structure.
+    """Run one evolve round under the configured selection strategy.
 
-    The structure's :meth:`SelectionStrategy.field_size` challengers are
-    proposed and applied (each a lineage child of the current champion),
-    then the strategy's matchups are driven through
-    :func:`zicato.selection.resolve_tournament`. Each matchup runs via the
-    same board-unit runner (:func:`zicato.tournament.runner.run_matchup`)
-    and ends in the UNCHANGED promote gate; the strategy reads the gate
-    verdict and never re-decides a duel. On resolution the crowned
-    generation (if any) advances the champion, every rejected challenger
-    is recorded as a dead branch, and the live ``ActiveTournament``
-    envelope + per-challenger ``OutcomeRecord`` audit + v3 index columns
-    are persisted per ``docs/design/TOURNAMENT-DATA-MODEL.md``.
+    Candidate production uses :meth:`SelectionStrategy.field_size`; the
+    one-challenger gauntlet requests one candidate and wider structures
+    request their declared field. Every scheduled matchup runs through
+    :func:`zicato.tournament.runner.run_matchup` and the promotion gate. The
+    strategy consumes each gate verdict without re-deciding it. Optional
+    Bradley--Terry evidence and holdout confirmation may withhold a crown.
+    Settlement then records every applied challenger, advances the primary
+    champion when one was promoted, and persists the tournament audit.
 
-    ``fast_mode`` is the RUNTIME champion-eval knob (the ``--mode fast``
-    setting), threaded identically to ``disable_drift`` / ``judge_only``.
-    When set, every matchup reuses the champion's cached per-board
-    scalars instead of re-running the champion (see
-    :func:`zicato.tournament.runner.run_matchup`), so fast mode is
-    structure-agnostic — it composes with racing / swiss / elim exactly
-    as it does with the gauntlet. The resolved champion-eval mode is
-    RECORDED in the journal for provenance (it is never a contract
-    input, so flipping fast↔full does not roll the epoch).
+    ``fast_mode`` is the runtime cache-first evaluation knob (the ``--mode
+    fast`` setting), threaded identically to ``disable_drift`` and
+    ``judge_only``. When set, every matchup resolves both competitors through
+    the replicate-keyed unit cache and runs only missing slots (see
+    :func:`zicato.tournament.runner.run_matchup`). Fast mode is therefore
+    structure-independent: it composes with racing, Swiss, elimination, and
+    gauntlet matchups without replaying one draw as another replicate. The
+    resolved champion-eval mode is recorded in the journal for provenance; it
+    is not a contract input, so flipping fast↔full does not roll the epoch.
     """
     from zicato.core.types import MatchOutcome  # noqa: PLC0415
     from zicato.epoch import (  # noqa: PLC0415
         append_journal_entry,
         append_to_lineage,
     )
-    from zicato.selection import EvidencePreGate, resolve_tournament  # noqa: PLC0415
+    from zicato.selection import EvidencePreGate, evaluate_tournament  # noqa: PLC0415
     from zicato.selection.dead_letter import (  # noqa: PLC0415
         InconclusiveRecord,
         record_inconclusive,
@@ -184,6 +203,7 @@ async def evolve_field_round(
     candidate_batch = await produce_candidate_batch(
         prepared,
         field_n,
+        resume_plan=resume_plan,
         on_status=_publish_proposing,
         # Preserve the public monkeypatch anchor used by integration tests.
         produce_one=_propose_and_apply_challenger,
@@ -194,6 +214,33 @@ async def evolve_field_round(
     base_n = generation_phase.round_number(base_id)
 
     if not applied:
+        if field_n == 1 and candidate_batch.rejections:
+            from zicato.proposer.proposer import ProposerError  # noqa: PLC0415
+
+            rejection = candidate_batch.rejections[0]
+            if isinstance(rejection.proposer_error, ProposerError):
+                error = rejection.proposer_error
+                rejected_experiment = _rejected_proposer_experiment(
+                    epoch_id,
+                    parent_id,
+                    base_id,
+                    error,
+                )
+                return await _persist_rejected_round(
+                    workspace_root=workspace_root,
+                    epoch_id=epoch_id,
+                    parent_id=parent_id,
+                    next_id=base_id,
+                    experiment=rejected_experiment,
+                    validation_errors=list(error.attempts),
+                    proposer_retries_exhausted=True,
+                    board=board,
+                    round_index=round_index,
+                    auxiliary_call_llm=auxiliary_call_llm,
+                    auxiliary_model=auxiliary_model,
+                    beater=beater,
+                    round_log=round_log,
+                )
         # The whole field failed to apply — nothing to run. Record a
         # rejection-shaped outcome so the round still produces a clean
         # return value and the loop continues. Still persist the
@@ -257,12 +304,12 @@ async def evolve_field_round(
     # unchanged strategy + gate like any challenger; the gate must reject
     # it, and a promoted placebo raises the CRITICAL ``placebo_promoted``
     # loop-health finding. Appended AFTER the all-failed early-return above
-    # (a fully-failed proposer field keeps its historical outcome) and
+    # (a fully-failed proposer field keeps its rejection outcome) and
     # appended LAST so sibling diversity, ``first_challenger_id``, and the
     # real challengers' ids are untouched. Best-effort: a placebo mint
     # failure narrows the field back to the real challengers.
     _placebo_every_n = int(getattr(weights.overfitting, "random_baseline_every_n", 0))
-    if base_n is not None and mutations:
+    if field_n > 1 and base_n is not None and mutations:
         from zicato.evolve.placebo import placebo_round_due  # noqa: PLC0415
 
         if placebo_round_due(_placebo_every_n, base_n):
@@ -316,6 +363,15 @@ async def evolve_field_round(
             return champion_gen
         return by_id[gid].generation
 
+    from zicato.scoring.diff_complexity import diff_size  # noqa: PLC0415
+
+    parent_mutation_text = {point.id: point.content for point in mutations}
+    candidate_diff_sizes = {
+        challenger.generation_id: diff_size(challenger.experiment, parent_mutation_text)
+        for challenger in applied
+    }
+    resume_cache = bool(candidate_batch.resumed_generation_ids)
+
     # --- request_field: hand the strategy the champion + applied field.
     async def _request_field(_n: int) -> tuple[Contestant, list[Contestant]]:
         champion = Contestant(generation_id=parent_id, role="champion")
@@ -341,6 +397,7 @@ async def evolve_field_round(
     # provenance field, never a contract input.
     champion_cached_units = 0
     champion_fresh_units = 0
+    infra_aborted_round = 0
 
     # --- Per-generation aggregates for the Pareto frontier record. Filled
     # from the SAME dicts ``_cache_gen_score`` persists and only when
@@ -348,9 +405,10 @@ async def evolve_field_round(
     # draw can never overwrite the round-scored aggregate the record reads
     # (docs/design/PARETO-FRONTIER.md §6).
     field_aggregates: dict[str, dict[str, Any]] = {}
+    raw_matchup_results: dict[str, Any] = {}
 
-    # --- Cross-matchup concurrency cap. A non-gauntlet structure schedules
-    # SEVERAL matchups of a round concurrently (the driver fans the batch out
+    # --- Cross-matchup concurrency cap. A strategy may schedule several
+    # matchups concurrently (the driver fans the batch out
     # under one ``asyncio.gather``). Without a shared gate each matchup would
     # mint its own ``Semaphore(parallelism)``, so N concurrent matchups could
     # run ``N × parallelism`` board units at once — overshooting the operator's
@@ -370,6 +428,7 @@ async def evolve_field_round(
     async def _run_matchup(
         m: Matchup, *, replicate_base: int = 0, cache_scores: bool = True
     ) -> MatchupResult:
+        nonlocal champion_cached_units, champion_fresh_units, infra_aborted_round
         _beat(
             beater,
             epoch_id=epoch_id,
@@ -385,8 +444,8 @@ async def evolve_field_round(
             # is confirmation-only, never used to pick the leader). A racing
             # rung's ``board_subset`` is intersected against the train board
             # inside ``run_matchup``. Empty holdout ⇒ ``train_board`` IS the
-            # full board ⇒ byte-identical to today.
-            board=train_board,
+            # full board, so no entry is excluded.
+            board=(train_board if replicate_base > 0 or field_n > 1 or not fast_mode else board),
             weights=weights,
             config=config,
             workspace_root=workspace_root,
@@ -396,30 +455,36 @@ async def evolve_field_round(
             replicate_base=replicate_base,
             disable_drift=disable_drift,
             judge_only=judge_only,
-            fast=fast_mode,
+            fast=fast_mode or resume_cache,
             round_index=round_index,
             total_rounds=total_rounds,
             match_id=m.matchup_id,
             # Opt-in wall-clock cap on this duel's TOTAL board-unit execution.
             # None (the default for every structure that does not set it) keeps
-            # the run uncapped, byte-identical to today; a racing rung may pin
+            # the run uncapped; a racing rung may pin
             # it to bound a full-board grind (see Matchup.matchup_budget_seconds).
             matchup_budget_seconds=m.matchup_budget_seconds,
             # One shared semaphore across every matchup of this round, so all
             # concurrently-scheduled matchups draw from ONE global concurrency
             # cap rather than each minting its own ``Semaphore(parallelism)``.
             unit_semaphore=round_unit_semaphore,
+            left_diff_size=candidate_diff_sizes.get(m.left.generation_id),
+            right_diff_size=candidate_diff_sizes.get(m.right.generation_id),
         )
+        raw_matchup_results[m.matchup_id] = result
+        infra_threshold = int(getattr(config, "infra_abort_round_threshold", 0) or 0)
+        if infra_threshold > 0:
+            infra_aborted_round += _count_infra_aborted_runs(result)
+            if infra_aborted_round >= infra_threshold:
+                raise _InfrastructureRoundDeferred(infra_aborted_round, infra_threshold)
         # Attribute the CHAMPION's cached-vs-fresh board-unit tally for
         # this matchup (if the champion played in it). ``nonlocal`` so the
         # closure mutates the round-level accumulators.
-        nonlocal champion_cached_units, champion_fresh_units
         champ_prov = result.unit_provenance.get(parent_id)
         if champ_prov is not None:
             champion_cached_units += champ_prov.cached
             champion_fresh_units += champ_prov.fresh
-        # Cache both sides' aggregates for fast-mode reuse, mirroring the
-        # gauntlet path's _cache_gen_score calls. Skipped for evidence
+        # Cache both sides' aggregates for fast-mode reuse. Skipped for evidence
         # replicate duels (``cache_scores=False``): one reserved-slot draw
         # must not overwrite the round-scored aggregates.
         if cache_scores:
@@ -566,8 +631,8 @@ async def evolve_field_round(
     # ``promote_confidence_threshold`` is set in the structure params, the
     # driver holds a crowning promote until the fitted rating clears the
     # confidence bar AND the CIs separate, spending closest-CI replicates in
-    # between (the defer→replicate loop). Unset ⇒ ``pre_gate`` stays ``None``
-    # and the resolution is byte-identical to today.
+    # between (the defer→replicate loop). Unset leaves the strategy's decision
+    # unchanged.
     pre_gate: EvidencePreGate | None = None
     replicate_duel = None
     on_inconclusive = None
@@ -633,18 +698,12 @@ async def evolve_field_round(
                         reason=verdict.reason,
                     ),
                 )
-            # WS8: the ci_state trail per evidence-gate refit. On this path
-            # the driver surfaces the resolution only for the inconclusive
-            # terminal; a confirmed promote's replicate duels are still
-            # traced through the per-matchup unit/gate events above.
-            for _ci_row in resolution.ci_history:
-                round_log.emit("evidence_replicated", {"ci_state": dict(_ci_row)})
 
         on_inconclusive = _on_inconclusive
 
     # --- Drive the strategy to a crowned decision.
     try:
-        decision = await resolve_tournament(
+        evaluation = await evaluate_tournament(
             strategy,
             request_field=_request_field,
             run_matchup=_run_matchup,
@@ -653,26 +712,49 @@ async def evolve_field_round(
             replicate_duel=replicate_duel,
             on_inconclusive=on_inconclusive,
         )
+    except _InfrastructureRoundDeferred as deferred:
+        _clear_active_tournament(workspace_root)
+        return _defer_round_infra_outage(
+            workspace_root=workspace_root,
+            epoch_id=epoch_id,
+            parent_id=parent_id,
+            next_id=base_id,
+            board=board,
+            round_index=round_index,
+            infra_aborted=deferred.aborted_runs,
+            infra_threshold=deferred.threshold,
+            beater=beater,
+            round_log=round_log,
+        )
     except Exception:
         # A failure mid-resolution leaves no settled bracket — clear the
         # live "running" envelope so the dashboard does not show a stuck
         # tournament, then re-raise.
         _clear_active_tournament(workspace_root)
         raise
+    decision = evaluation.decision
+    gate_evidence: dict[str, Any] | None = None
+    if evaluation.evidence is not None:
+        gate_evidence = dict(rating_block(evaluation.evidence.verdict))
+        gate_evidence["ci_history"] = [dict(row) for row in evaluation.evidence.ci_history]
+        # Preserve the full refit trail for confirmed and inconclusive
+        # terminals. Matchup events prove that each replicate ran; these
+        # events preserve the statistical state produced after every refit.
+        for ci_row in evaluation.evidence.ci_history:
+            round_log.emit("evidence_replicated", {"ci_state": dict(ci_row)})
 
     # --- Final champion-gate Ladder-mediated holdout confirmation
     # (OVERFITTING.md §3/§4). The structure resolved its leader on the TRAIN
     # slice and ran ONE crowning champion-vs-survivor duel (also train). If
     # that duel promoted AND a holdout slice exists, the win must ALSO confirm
-    # on the holdout — through the SAME Ladder-mediated machinery + the SAME
-    # per-epoch ``ladder_state.json`` budget the gauntlet uses. A released
+    # on the holdout through the shared Ladder-mediated machinery and
+    # per-epoch ``ladder_state.json`` budget. A released
     # non-confirmation flips the crowning promote to a holdout reject; the
-    # champion stands. Empty holdout (small board / split disabled) ⇒ no
-    # holdout run, no Ladder move ⇒ byte-identical to today. The resulting
+    # champion stands. Empty holdout (small board / split disabled) means no
+    # holdout run and no Ladder move. The resulting
     # ``holdout`` block + the challenger's holdout-slice scalar are stamped on
-    # the crowned/leading challenger's OutcomeRecord below (same shape as the
-    # gauntlet), so #5's gap detector + the board-status surface work for
-    # these structures too.
+    # the crowned or leading challenger's OutcomeRecord below, so the gap
+    # detector and board-status surface consume one record shape.
     crowning_confirm = await _confirm_crowning_on_holdout(
         decision=decision,
         parent_id=parent_id,
@@ -688,6 +770,7 @@ async def evolve_field_round(
         judge_only=judge_only,
         fast_mode=fast_mode,
         confirm_fn=confirm_crowning_holdout,
+        confirm_holdout=not (field_n == 1 and fast_mode),
     )
     promoted_id = crowning_confirm.promoted_id
     crowning_reason_override = crowning_confirm.reason_override
@@ -705,8 +788,8 @@ async def evolve_field_round(
 
     # --- Opt-in integrity blocking modes (default OFF) -------------------
     # Guard the GATE-DECIDED crowning promote before anything persists,
-    # mirroring the gauntlet's 10b'' block: diff containment on the crowned
-    # child's snapshot + the gate-contradiction re-derivation against the
+    # using diff containment on the crowned child's snapshot plus the
+    # gate-contradiction re-derivation against the
     # crowning duel's delta. Runs BEFORE the operator-override claim below,
     # so an explicit force-promote remains the operator's recorded
     # prerogative. Default-off ⇒ this branch is inert.
@@ -727,13 +810,12 @@ async def evolve_field_round(
             promoted_id = None
             crowning_reason_override = _block_reason
 
-    # --- Operator gate override (control protocol) for the FIELD ---------
+    # --- Operator gate overrides -----------------------------------------
     # The structure has settled (train bracket + holdout confirmation) but
     # nothing is persisted yet — the safe point at which an operator's
     # force-promote / force-reject of ANY field candidate overrides the
-    # verdict. Unlike the gauntlet (one in-flight generation), a field round
-    # resolves a whole slate, so an override may target a non-winner, the
-    # crowned leader, or SEVERAL candidates (a tie / a multi-promote).
+    # verdict. An override may target a non-winner, the crowned leader, or
+    # several candidates. A one-candidate gauntlet is the degenerate case.
     # `_apply_field_overrides` documents the promoted-SET semantics + the
     # no-override single-promotion byte-identity invariant; every member of
     # the set is marked promoted in lineage while only the PRIMARY head
@@ -773,13 +855,22 @@ async def evolve_field_round(
                 "parent_generation_id": parent_id,
                 "promoted_generation_id": promoted_id,
                 "promoted_generation_ids": sorted(promoted_ids),
+                "operator_override": bool(override_provenance),
+                "operator_override_reason": next(
+                    (
+                        override.reason
+                        for generation_id, override in field_overrides.items()
+                        if generation_id == promoted_id or promoted_id is None
+                    ),
+                    "",
+                ),
                 "overrides": override_provenance,
             },
         },
     )
 
-    # --- Pareto frontier RECORD (docs/design/PARETO-FRONTIER.md). Same seam
-    # as the gauntlet's, on the post-holdout / post-override truth: the
+    # --- Pareto frontier RECORD (docs/design/PARETO-FRONTIER.md). On the
+    # post-holdout and post-override truth, the
     # champion is the crowned generation when the field crowned one, else the
     # incumbent. A field round can carry the random-baseline placebo INSIDE
     # the slate, so its ids are named explicitly — a no-op re-emission of the
@@ -797,14 +888,11 @@ async def evolve_field_round(
         round_log=round_log,
     )
 
-    # Settle the live envelope with the resolved rounds + standings so the
-    # dashboard's structure reader sees the final bracket. Unlike the
-    # gauntlet path (which clears its transient running record on exit),
-    # the multi-challenger envelope is RETAINED with phase="completed":
-    # competitors/rounds/standings are the dashboard's only live source for
-    # a non-gauntlet field until the next round's tournament starts. Settled
-    # with the HOLDOUT-RESOLVED decision so the dashboard never shows a crown
-    # the champion pointer contradicts.
+    # Settle the live envelope with the resolved rounds and standings so the
+    # dashboard sees the final topology. The completed envelope remains
+    # available until the next round starts. It carries the holdout-resolved
+    # decision, so the dashboard never shows a crown that contradicts the
+    # champion pointer.
     _settle_active_tournament(
         workspace_root,
         tournament_id=tournament_id,
@@ -818,8 +906,8 @@ async def evolve_field_round(
         total_rounds=total_rounds,
         field_status=field_status,
     )
-    # Durably persist the settled FIELD structure (one record per round's
-    # non-gauntlet tournament). The runtime ``active_tournament`` envelope
+    # Durably persist the settled structure. The runtime
+    # ``active_tournament`` envelope
     # above is EPHEMERAL — it is overwritten by the next round and cleared
     # on a crash — so a completed swiss / elim epoch would render blank from
     # the index alone. The field record carries the same shape the live
@@ -889,7 +977,7 @@ async def evolve_field_round(
         fast_requested=fast_mode,
     )
 
-    finalised_by_id: dict[str, Experiment] = {}
+    candidate_settlements: list[CandidateSettlement] = []
     child_scalar_crown = parent_scalar
     for challenger in applied:
         gid = challenger.generation_id
@@ -897,20 +985,24 @@ async def evolve_field_round(
         # promoted set — see `_apply_field_overrides` for the no-override
         # single-promotion invariant (the set is exactly ``{promoted_id}``).
         is_crowned = gid in promoted_ids
+        is_crowning_challenger = gid == crowning_challenger_id
         gid_override = field_overrides.get(gid)
-        gen_decision = TournamentDecision.PROMOTED if is_crowned else TournamentDecision.REJECTED
+        if is_crowned:
+            gen_decision = TournamentDecision.PROMOTED
+        elif is_crowning_challenger and decision.decision == "deferred":
+            gen_decision = TournamentDecision.DEFERRED
+        else:
+            gen_decision = TournamentDecision.REJECTED
         agg = _first_aggregate_for(gid, decision)
         gen_scalar = float(agg.get("scalar", 0.0)) if agg else 0.0
         if gid == promoted_id:
             child_scalar_crown = gen_scalar
         # The crowning challenger (the survivor that reached the final
         # champion-gate duel) carries the Ladder/holdout evidence block + the
-        # per-generation train/holdout/gap fields, mirroring the gauntlet's
-        # OutcomeRecord. A holdout-demoted crown carries the
+        # per-generation train/holdout/gap fields. A holdout-demoted crown carries the
         # ``holdout_not_confirmed`` reason from the confirmation step instead
         # of the strategy's crowning reason. Every other challenger (a dead
-        # bracket branch) keeps the back-compat defaults (no holdout).
-        is_crowning_challenger = gid == crowning_challenger_id
+        # bracket branch) has no holdout block.
         if is_crowning_challenger:
             rejection_reason = (
                 ""
@@ -929,10 +1021,36 @@ async def evolve_field_round(
             gen_fields = _generalization_fields_from_scalars(
                 crown_train, crowning_holdout_child_scalar
             )
+            raw_crowning = raw_matchup_results.get(decision.crowning_matchup_id)
+            if raw_crowning is not None:
+                champion_is_parent_side = raw_crowning.parent_generation_id == parent_id
+                pass_rate_delta = float(raw_crowning.outcome.delta_pass_rate) * (
+                    1.0 if champion_is_parent_side else -1.0
+                )
+                champion_drift = float(
+                    (
+                        raw_crowning.parent_agg
+                        if champion_is_parent_side
+                        else raw_crowning.child_agg
+                    ).get("drift_loss_mean", 0.0)
+                )
+                challenger_drift = float(
+                    (
+                        raw_crowning.child_agg
+                        if champion_is_parent_side
+                        else raw_crowning.parent_agg
+                    ).get("drift_loss_mean", 0.0)
+                )
+                drift_loss_delta = challenger_drift - champion_drift
+            else:
+                pass_rate_delta = 0.0
+                drift_loss_delta = 0.0
         else:
             rejection_reason = "" if is_crowned else decision.reason
             holdout_block = None
             gen_fields = _generalization_fields_from_scalars(gen_scalar, None)
+            pass_rate_delta = 0.0
+            drift_loss_delta = 0.0
         # An operator override on THIS generation makes its verdict explicit
         # (the reject reason carries the override note; a forced promote
         # clears it). Only stamped when an override fired.
@@ -943,8 +1061,8 @@ async def evolve_field_round(
         outcome_record = OutcomeRecord(
             ran_at=_now_iso(),
             drift_movements=(),
-            pass_rate_delta=0.0,
-            drift_loss_delta=0.0,
+            pass_rate_delta=pass_rate_delta,
+            drift_loss_delta=drift_loss_delta,
             scalar_score_delta=gen_scalar - parent_scalar,
             tournament_decision=gen_decision,
             rejection_reason=rejection_reason,
@@ -958,17 +1076,33 @@ async def evolve_field_round(
             train_loss=gen_fields["train_loss"],
             holdout_loss=gen_fields["holdout_loss"],
             generalization_gap=gen_fields["generalization_gap"],
+            evidence=gate_evidence if is_crowning_challenger else None,
         )
-        # Shared outcome→index pipeline. Lineage + journal are deferred to
-        # the loops below so the multi-challenger write ORDER is preserved:
-        # every outcome persists, THEN the crowning invariant is checked,
-        # THEN lineage + the champion marker advance, THEN the journal —
-        # an invariant violation must abort before any lineage write.
+        candidate_settlements.append(
+            CandidateSettlement(
+                challenger=challenger,
+                outcome=outcome_record,
+            )
+        )
+
+    settlement = RoundSettlement(
+        decision=effective_decision,
+        primary_promoted_generation_id=promoted_id,
+        promoted_generation_ids=ordered_promotions(promoted_id, promoted_ids),
+        candidates=tuple(candidate_settlements),
+    )
+
+    # Outcomes and their index projections become durable before lineage or
+    # the champion marker changes. An invariant failure below can therefore
+    # never leave a promoted lineage node pointing at an unsettled outcome.
+    finalised_by_id: dict[str, Experiment] = {}
+    for candidate in settlement.candidates:
+        gid = candidate.challenger.generation_id
         finalised_by_id[gid] = _finalize_generation(
             workspace_root=workspace_root,
             epoch_id=epoch_id,
             generation_id=gid,
-            outcome=outcome_record,
+            outcome=candidate.outcome,
             journal=False,
         )
 
@@ -981,19 +1115,24 @@ async def evolve_field_round(
     # is what drives lineage + ``current_generation`` below — these two are the
     # same value by construction, and this guard makes that contract explicit
     # and catches any future code path that lets them drift apart.
-    _bracket_promoted = effective_decision.decision == "promoted"
-    if _bracket_promoted != (promoted_id is not None):
+    _bracket_promoted = settlement.decision.decision == "promoted"
+    if _bracket_promoted != (settlement.primary_promoted_generation_id is not None):
         raise RuntimeError(
             "crowning invariant violated: settled bracket decision "
-            f"{effective_decision.decision!r} (promoted_generation_id="
-            f"{effective_decision.promoted_generation_id!r}) disagrees with the "
-            f"champion to be crowned ({promoted_id!r}); refusing to persist a "
+            f"{settlement.decision.decision!r} (promoted_generation_id="
+            f"{settlement.decision.promoted_generation_id!r}) disagrees with the "
+            "champion to be crowned "
+            f"({settlement.primary_promoted_generation_id!r}); refusing to persist a "
             "bracket the champion pointer / lineage contradict"
         )
-    if promoted_id is not None and promoted_id not in by_id:
+    if (
+        settlement.primary_promoted_generation_id is not None
+        and settlement.primary_promoted_generation_id not in by_id
+    ):
         raise RuntimeError(
             "crowning invariant violated: settled bracket promotes "
-            f"{promoted_id!r} but no such challenger applied this round; "
+            f"{settlement.primary_promoted_generation_id!r} but no such challenger "
+            "applied this round; "
             "refusing to advance the champion to a generation with no snapshot"
         )
 
@@ -1002,9 +1141,10 @@ async def evolve_field_round(
     # the champion). An operator multi-promote marks each advanced candidate
     # promoted while current_generation still advances only to the PRIMARY
     # head below.
-    for challenger in applied:
+    for candidate in settlement.candidates:
+        challenger = candidate.challenger
         gid = challenger.generation_id
-        is_crowned = gid in promoted_ids
+        is_crowned = gid in settlement.promoted_generation_ids
         gen_record = Generation(
             id=gid,
             epoch_id=epoch_id,
@@ -1037,44 +1177,70 @@ async def evolve_field_round(
             parent_scalar=lineage_parent_scalar,
             child_scalar=float(gen_agg["scalar"]) if gen_agg else None,
         )
-    if promoted_id is not None:
-        generation_phase.set_current_generation(workspace_root, epoch_id, promoted_id)
+    if settlement.primary_promoted_generation_id is not None:
+        generation_phase.set_current_generation(
+            workspace_root,
+            epoch_id,
+            settlement.primary_promoted_generation_id,
+        )
         # The marker MUST now name the crowned generation — a write that did
         # not stick (e.g. a read-only workspace) would leave a settled
         # ``promoted`` bracket whose champion never advanced. Re-read and
         # raise rather than diverge silently (issue #20 acceptance #3).
         _crowned_head = generation_phase.current_generation(workspace_root, epoch_id)
-        if _crowned_head != promoted_id:
+        if _crowned_head != settlement.primary_promoted_generation_id:
             raise RuntimeError(
                 "crowning invariant violated: bracket promoted "
-                f"{promoted_id!r} but current_generation resolves to "
+                f"{settlement.primary_promoted_generation_id!r} but current_generation resolves to "
                 f"{_crowned_head!r} after the crowning write; the champion "
                 "pointer did not advance to the promoted generation"
             )
 
-    # --- Post-promotion adapter hook (#125). Same seam as the gauntlet's:
-    # one statement after the champion marker advanced, once per settled
+    # --- Post-promotion adapter hook (#125). One call after the champion
+    # marker advances, once per settled
     # promotion. Fires for the PRIMARY head only — an operator
     # multi-promote marks several candidates promoted in lineage, but
     # ``current_generation`` advances to exactly one, and it is that
     # crowning the adapter's out-of-tree state has to track.
     on_promote_failure: tuple[str, str, str] | None = None
-    if promoted_id is not None:
+    if settlement.primary_promoted_generation_id is not None:
         on_promote_failure = await fire_on_promote(
             adapter,
             workspace_root=workspace_root,
             epoch_id=epoch_id,
-            generation_id=promoted_id,
+            generation_id=settlement.primary_promoted_generation_id,
             parent_generation_id=parent_id,
-            snapshot_root=by_id[promoted_id].snapshot_root,
+            snapshot_root=by_id[settlement.primary_promoted_generation_id].snapshot_root,
         )
 
     # --- Journal: one entry per challenger (crowned + dead branches).
-    for challenger in applied:
-        append_journal_entry(workspace_root, epoch_id, finalised_by_id[challenger.generation_id])
+    for candidate in settlement.candidates:
+        append_journal_entry(
+            workspace_root,
+            epoch_id,
+            finalised_by_id[candidate.challenger.generation_id],
+        )
 
-    # --- Shared round epilogue (loop-health + analyzer + report) — the
-    # same `_round_epilogue` the gauntlet path runs.
+    if field_n == 1:
+        await _maybe_run_placebo_arm_gauntlet(
+            workspace_root=workspace_root,
+            epoch_id=epoch_id,
+            adapter=adapter,
+            parent_gen=champion_gen,
+            parent_id=parent_id,
+            round_id=base_id,
+            mutations=mutations,
+            board=board,
+            weights=weights,
+            config=config,
+            disable_drift=disable_drift,
+            judge_only=judge_only,
+            fast_mode=fast_mode,
+            round_index=round_index,
+            total_rounds=total_rounds,
+        )
+
+    # --- Round epilogue: loop health, analyzer, and report.
     health_summary, health_critical = await _round_epilogue(
         workspace_root=workspace_root,
         epoch_id=epoch_id,
@@ -1086,6 +1252,11 @@ async def evolve_field_round(
         auxiliary_model=auxiliary_model,
         meta_loop_emitter=meta_loop_emitter,
         token_clip=_token_clip_state(config),
+        attributable_regressions=(
+            _promoted_entry_regressions(raw_matchup_results[decision.crowning_matchup_id])
+            if promoted_id is not None and decision.crowning_matchup_id in raw_matchup_results
+            else None
+        ),
         on_promote_failure=on_promote_failure,
     )
 
@@ -1138,14 +1309,10 @@ async def evolve_field_round(
         # reached the gate (the one the reason is about), not an arbitrary applied[0].
         summary_child_id = promoted_id or (crowning.right_id if champ_is_left else crowning.left_id)
 
-    # A holdout-demoted crown reports the ``holdout_not_confirmed`` cause from
-    # the confirmation step, not the strategy's (promote-shaped) crowning
-    # reason; every other rejection keeps the strategy's reason.
-    summary_reason = (
-        ""
-        if promoted_id is not None
-        else (crowning_reason_override if crowning_reason_override else decision.reason)
-    )
+    # The effective decision is the post-holdout, post-integrity, and
+    # post-override truth. Its reason therefore matches the persisted outcome
+    # for every rejection path.
+    summary_reason = "" if promoted_id is not None else effective_decision.reason
     return EvolveRoundOutcome(
         parent_generation_id=parent_id,
         proposed_generation_id=summary_child_id,

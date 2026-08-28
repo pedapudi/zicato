@@ -773,27 +773,30 @@ def test_propose_child_requires_generation_root() -> None:
 
 
 def test_every_propose_child_call_site_passes_generation_root() -> None:
-    """Both pipelines (gauntlet + multi-challenger field) must populate it.
+    """The shared candidate producer must pass the resolved snapshot root.
 
-    Asserted over the source rather than by running an evolve round: the
-    two call sites live in different modules and a new third one is the
-    realistic regression. The required-argument pin above makes omission a
-    TypeError, and this makes the omission visible in review too.
+    Candidate generation has one call site for every tournament structure.
+    The required-argument pin above makes omission a TypeError; this source
+    check also makes a newly introduced bypass visible in review.
     """
-    import re as _re
-    import subprocess
+    import ast
 
     root = Path(__file__).resolve().parent.parent / "src" / "zicato"
-    out = subprocess.run(
-        ["grep", "-rn", "-A", "8", r"await _propose_child($", str(root)],
-        capture_output=True,
-        text=True,
-        check=False,
-    ).stdout
-    blocks = _re.split(r"\n--\n", out.strip())
-    assert len(blocks) >= 2, f"expected both call sites, got:\n{out}"
-    for block in blocks:
-        assert "generation_root=" in block, block
+    calls: list[tuple[Path, ast.Call]] = []
+    for path in root.rglob("*.py"):
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        calls.extend(
+            (path, node)
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == "_propose_child"
+        )
+
+    assert len(calls) == 1, f"expected one shared _propose_child call, got {calls}"
+    path, call = calls[0]
+    assert path.name == "propose_apply.py"
+    assert any(keyword.arg == "generation_root" for keyword in call.keywords)
 
 
 def test_adk_agent_prefers_the_populated_generation_root(tmp_path: Path) -> None:
