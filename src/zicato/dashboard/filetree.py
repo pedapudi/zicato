@@ -59,8 +59,10 @@ from zicato.dashboard.mutations import (
     recorded_generation_ids,
 )
 from zicato.epoch.genstore import GenerationStore, default_generation_store
+from zicato.epoch.journal import read_generation_patches
 from zicato.query import WorkspacePaths
 from zicato.query.paths import list_epoch_ids
+from zicato.storage import default_backend
 
 #: Files larger than this are not inlined into the content response —
 #: the browser gets a truncation marker instead. The dashboard is a
@@ -136,6 +138,7 @@ def build_file_index(paths: WorkspacePaths) -> dict[str, Any]:
     tree gone forever) from one the store genuinely found empty.
     """
     store = _store(paths)
+    records = default_backend(paths.root)
     epochs: list[dict[str, Any]] = []
     # Epoch enumeration + ordering routes through the single authority
     # (timestamp-first), the same one every other epoch-list response uses.
@@ -143,14 +146,21 @@ def build_file_index(paths: WorkspacePaths) -> dict[str, Any]:
     # the per-epoch record directories this walks.
     for epoch_id in list_epoch_ids(paths):
         generations: list[dict[str, Any]] = []
-        for generation_id in store.list_generations(epoch_id):
+        try:
+            source_generation_ids = store.list_generations(epoch_id)
+        except (FileNotFoundError, OSError, ValueError):
+            source_generation_ids = []
+        generation_ids = sorted(
+            set(source_generation_ids) | set(recorded_generation_ids(paths, epoch_id))
+        )
+        for generation_id in generation_ids:
             try:
                 tree = store.list_tree(epoch_id, generation_id)
                 file_count = sum(1 for e in tree if not e.is_dir)
             except (FileNotFoundError, OSError, ValueError):
                 file_count = 0
             try:
-                patch_count = len(store.list_patches(epoch_id, generation_id).patches)
+                patch_count = len(read_generation_patches(records, epoch_id, generation_id).patches)
             except (FileNotFoundError, OSError, ValueError):
                 patch_count = 0
             generations.append(
@@ -262,14 +272,11 @@ def build_generation_patches(
     """Return the patch set that derived a generation from its parent.
 
     A seed (``v0``) generation yields an empty ``patches`` list. The
-    response is the same shape for both storage backends — the directory
-    backend reads the per-patch JSON files, the git backend reads the
-    commit metadata block, but :meth:`GenerationStore.list_patches`
-    normalises both.
+    response is independent of the generation-source backend because patch
+    records are read through ``StorageBackend``.
     """
-    store = _store(paths)
     try:
-        record = store.list_patches(epoch_id, generation_id)
+        record = read_generation_patches(default_backend(paths.root), epoch_id, generation_id)
     except (FileNotFoundError, OSError, ValueError) as exc:
         return {
             "epoch_id": epoch_id,

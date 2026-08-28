@@ -340,6 +340,7 @@ def test_ensure_baseline_snapshot_writes_v0_marker(tmp_path: Path) -> None:
 
     ws = tmp_path / ".zicato"
     ws.mkdir()
+    _write_json(ws / "config.json", {"generation_source_backend": "directory"})
     board_src = tmp_path / "board.jsonl"
     board_src.write_text(
         '{"id": "qa", "kind": "single_turn", "wall_clock_budget_seconds": 30, '

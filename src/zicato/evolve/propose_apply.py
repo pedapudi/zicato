@@ -373,7 +373,7 @@ async def _propose_and_apply_challenger(
                 epoch_id=epoch_id,
                 parent_id=parent_id,
                 next_id=next_id,
-                generation_root=genstore.snapshot_root(epoch_id, parent_id),
+                generation_root=genstore.materialize_snapshot(epoch_id, parent_id),
                 patterns=patterns,
                 mutations=mutations,
                 brief=brief,

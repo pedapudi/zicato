@@ -81,6 +81,7 @@ def _bootstrap(tmp_path: Path, replicate_budget: int) -> tuple[Path, str]:
         json.dumps(
             {
                 "instance_id": "default",
+                "generation_source_backend": "git",
                 "created_at": "2026-07-01T00:00:00Z",
                 "adapter": ADAPTER_BLOCK,
                 "mutable_trees": [str(AGENT_DIR)],

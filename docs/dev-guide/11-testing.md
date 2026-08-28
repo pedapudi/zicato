@@ -846,7 +846,7 @@ There is one git-specific subtlety the template must handle: a materialised
 git worktree registers its ABSOLUTE path inside the repo, which cannot
 survive relocation-by-`copytree`. The template drops the worktrees and
 prunes the registrations so each copy re-materialises its own on first
-`snapshot_root()`:
+`materialize_snapshot()`:
 
 ```python
         worktrees = ws / GitGenerationStore.WORKTREES_DIRNAME

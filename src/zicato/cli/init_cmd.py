@@ -43,7 +43,7 @@ def initialize_workspace(
 
     * ``{workspace_root}/`` (directory)
     * ``{workspace_root}/config.json`` — ``{instance_id, created_at,
-      storage_backend}``
+      generation_source_backend}``
     * ``{workspace_root}/lineage.json`` — empty DAG: ``{"epochs": []}``
       (the shape :func:`zicato.epoch.lineage.load_lineage` reads; the
       seed used to be ``{"nodes": [], "edges": []}``, which the loader
@@ -64,6 +64,26 @@ def initialize_workspace(
         # `force` only clears the two files we own; we don't recursively
         # delete the directory because epoch artifacts may live alongside.
 
+    from zicato.epoch.genstore import (  # noqa: PLC0415
+        DEFAULT_GENERATION_SOURCE_BACKEND,
+        GENERATION_SOURCE_BACKEND_KEY,
+        KNOWN_GENERATION_SOURCE_BACKENDS,
+    )
+
+    source_backend = DEFAULT_GENERATION_SOURCE_BACKEND
+    existing_config_path = workspace_root / CONFIG_FILENAME
+    if force and existing_config_path.is_file():
+        try:
+            existing_config = json.loads(existing_config_path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeError, json.JSONDecodeError):
+            existing_config = None
+        if isinstance(existing_config, dict):
+            configured_backend = existing_config.get(GENERATION_SOURCE_BACKEND_KEY)
+            if isinstance(configured_backend, str):
+                normalized_backend = configured_backend.strip().lower()
+                if normalized_backend in KNOWN_GENERATION_SOURCE_BACKENDS:
+                    source_backend = normalized_backend
+
     workspace_root.mkdir(parents=True, exist_ok=True)
 
     lineage_path = workspace_root / LINEAGE_FILENAME
@@ -73,17 +93,12 @@ def initialize_workspace(
     # The generation-store backend is recorded, not left to the default.
     # Which store a workspace's generations live in is a durable property
     # of the workspace: writing it here means a later change to
-    # DEFAULT_STORAGE_BACKEND cannot re-interpret a workspace that already
+    # DEFAULT_GENERATION_SOURCE_BACKEND cannot re-interpret a workspace that already
     # exists.
-    from zicato.epoch.genstore import (  # noqa: PLC0415
-        DEFAULT_STORAGE_BACKEND,
-        STORAGE_BACKEND_KEY,
-    )
-
     config: dict[str, Any] = {
         "instance_id": instance_id,
         "created_at": _utcnow_iso(),
-        STORAGE_BACKEND_KEY: DEFAULT_STORAGE_BACKEND,
+        GENERATION_SOURCE_BACKEND_KEY: source_backend,
         "models": {
             "engines": {},
             "roles": {},

@@ -10,7 +10,7 @@ The directory-specific tests stay in ``tests/test_epoch_genstore.py``;
 this file is the *protocol* contract, written against behaviour both
 backends must share: seed-from-trees, derive-by-patch, the
 all-or-nothing transaction boundary, artifact exclusion, and the
-dashboard read surface (``list_tree`` / ``read_file`` / ``list_patches``).
+dashboard read surface (``list_tree`` / ``read_file`` / source diffs).
 """
 
 from __future__ import annotations
@@ -31,7 +31,6 @@ from zicato.epoch.genstore import (
     DirectoryGenerationStore,
     EphemeralCheckout,
     GenerationStore,
-    PatchRecord,
     TreeEntry,
 )
 from zicato.epoch.git_genstore import GitGenerationStore
@@ -78,7 +77,7 @@ def _seeded_ws_templates(tmp_path_factory: pytest.TempPathFactory) -> dict[str, 
         # A materialised git worktree registers its ABSOLUTE path inside the
         # repo, which cannot survive relocation-by-copytree: drop the
         # worktrees and prune the registrations so each copy re-materialises
-        # its own on first snapshot_root().
+        # its own on first materialize_snapshot().
         worktrees = ws / GitGenerationStore.WORKTREES_DIRNAME
         if worktrees.is_dir():
             shutil.rmtree(worktrees)
@@ -167,6 +166,10 @@ def test_backend_satisfies_the_protocol(store: GenerationStore) -> None:
     assert isinstance(store, GenerationStore)
 
 
+def test_backend_reports_its_configured_name(store: GenerationStore, backend: str) -> None:
+    assert store.backend_name == backend
+
+
 # ---------------------------------------------------------------------------
 # coordinate queries
 # ---------------------------------------------------------------------------
@@ -178,6 +181,13 @@ def test_has_generation_false_before_materialisation(store: GenerationStore) -> 
 
 def test_list_generations_empty_for_unknown_epoch(store: GenerationStore) -> None:
     assert store.list_generations("never_existed") == []
+
+
+def test_snapshot_path_is_pure(store: GenerationStore) -> None:
+    path = store.snapshot_path("e1", "v0")
+    assert not path.exists()
+    with pytest.raises(FileNotFoundError):
+        store.materialize_snapshot("e1", "v0")
 
 
 # ---------------------------------------------------------------------------
@@ -241,7 +251,7 @@ def test_derive_generation_applies_patch(seeded_store: GenerationStore) -> None:
 
 def test_derive_generation_leaves_parent_untouched(seeded_store: GenerationStore) -> None:
     store = seeded_store
-    parent_root = store.snapshot_root("e1", "v0")
+    parent_root = store.materialize_snapshot("e1", "v0")
     store.derive_generation(
         "e1",
         "v0",
@@ -340,11 +350,29 @@ def test_read_file_missing_file_raises(seeded_store: GenerationStore) -> None:
         seeded_store.read_file("e1", "v0", "agent/nonexistent.py")
 
 
-def test_list_patches_empty_for_seed(seeded_store: GenerationStore) -> None:
-    record = seeded_store.list_patches("e1", "v0")
-    assert isinstance(record, PatchRecord)
-    assert record.generation_id == "v0"
-    assert record.patches == ()
+def test_diff_generations_reports_the_applied_source_change(
+    seeded_store: GenerationStore,
+) -> None:
+    seeded_store.derive_generation(
+        "e1",
+        "v0",
+        "v1",
+        [_patch(pid="p1", mutation_id="instr", new_content='"""rewritten"""')],
+    )
+    diff = seeded_store.diff_generations("e1", "v0", "v1")
+    assert "original" in diff
+    assert "rewritten" in diff
+    assert "agent/prompts.py" in diff
+
+
+def test_prune_generations_dry_run_and_apply(seeded_store: GenerationStore) -> None:
+    path = seeded_store.materialize_snapshot("e1", "v0")
+    expected_bytes = sum(p.stat().st_size for p in path.rglob("*") if p.is_file())
+    assert seeded_store.prune_generations("e1", ["v0"], dry_run=True) == expected_bytes
+    assert seeded_store.has_generation("e1", "v0")
+    assert seeded_store.prune_generations("e1", ["v0"], dry_run=False) == expected_bytes
+    assert not seeded_store.has_generation("e1", "v0")
+    assert "v0" not in seeded_store.list_generations("e1")
 
 
 # ---------------------------------------------------------------------------

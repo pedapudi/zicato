@@ -44,15 +44,16 @@ def init_cmd(workspace: str, instance_id: str, force: bool) -> None:
     This is the first of the two commands you run. It creates the
     workspace directory if it doesn't exist, writes an empty lineage
     DAG (lineage.json: {"epochs": []}), and writes config.json
-    containing {instance_id, created_at, storage_backend}. It also scaffolds
+    containing {instance_id, created_at, generation_source_backend}. It also scaffolds
     the operator's live scoring.json (next to the workspace, only when
     absent) with the full recommended contract — racing field 4,
     replicates 2, the evidence gate enabled explicitly. Run it once per
     project; then point `zicato evolve` at the same workspace.
 
     Refuses to overwrite an existing workspace unless --force is
-    passed (--force only rewrites config.json / lineage.json — it does
-    not delete epoch artifacts living alongside).
+    passed. Force rewrites config.json and lineage.json while preserving a
+    valid configured generation source backend; it does not delete epoch
+    artifacts living alongside.
 
     \b
     Example:

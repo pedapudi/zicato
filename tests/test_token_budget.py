@@ -78,7 +78,7 @@ def _bootstrap_multi_entry_workspace(
             {
                 "instance_id": "test",
                 "created_at": "2026-05-14T00:00:00Z",
-                "storage_backend": "directory",
+                "generation_source_backend": "directory",
                 "adapter": {"kind": "stub"},
                 "runtime": runtime_block,
             }

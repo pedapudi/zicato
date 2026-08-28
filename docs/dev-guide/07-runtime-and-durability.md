@@ -354,19 +354,23 @@ deliberately not a `StorageBackend` subtype (the reasoning is
 
 | Backend | Selected by | A generation is | Derive cost | Per-run checkout |
 |---|---|---|---|---|
-| `GitGenerationStore` (`src/zicato/epoch/git_genstore.py`) | `storage_backend: "git"` in workspace `config.json` — **the default**, including for a missing/blank knob (`DEFAULT_STORAGE_BACKEND = "git"`) | a commit on branch `epoch/{epoch_id}`, tagged `epoch/{epoch_id}/{generation_id}` | checkout parent + apply patches + commit (blobs dedup across the lineage) | detached `git worktree` in a `ztw-snap-*` temp parent |
-| `DirectoryGenerationStore` (`src/zicato/epoch/genstore.py`) | `storage_backend: "directory"` | `generations/{id}/snapshot/` directory | full `copytree` of the parent + patch apply | artifact-filtered `copytree` (`copy_checkout_ephemeral`) |
+| `GitGenerationStore` (`src/zicato/epoch/git_genstore.py`) | explicit `generation_source_backend: "git"` in workspace `config.json`; this is what `zicato init` writes | a commit on branch `epoch/{epoch_id}`, tagged `epoch/{epoch_id}/{generation_id}` | checkout parent + apply patches + commit (blobs dedup across the lineage) | detached `git worktree` in a `ztw-snap-*` temp parent |
+| `DirectoryGenerationStore` (`src/zicato/epoch/genstore.py`) | `generation_source_backend: "directory"` | `generations/{id}/snapshot/` directory | full `copytree` of the parent + patch apply | artifact-filtered `copytree` (`copy_checkout_ephemeral`) |
 
 The single construction seam is `default_generation_store(workspace_root)` —
 never construct a backend directly in loop code; everything flows through
 that factory so the knob works.
 
-The protocol's shape is small on purpose: coordinate queries
-(`snapshot_root`, `has_generation`, `list_generations`), two transactions
-(`seed_generation`, `derive_generation`), the per-run checkout
-(`checkout_ephemeral`), and a read-only dashboard surface (`list_tree`,
-`read_file`, `list_patches`). Anything record-shaped (`experiment.json`,
-`gen_score.json`) is explicitly NOT here.
+The protocol's shape is source-only: pure path calculation (`snapshot_path`),
+explicit local materialization (`materialize_snapshot`), existence and
+enumeration, seed/derive/scratch transactions, isolated checkout, tree/file
+reads, source diffs, and source pruning. Patch, experiment, score, lineage,
+and journal reads remain on `StorageBackend`.
+
+Backend resolution is configuration-only. An initialized workspace must carry
+`generation_source_backend: "git"` or `"directory"`; missing, blank,
+malformed, and unknown values raise. Never infer a backend from `repo/.git`,
+generation records, or snapshot directories.
 
 The cross-backend contract is pinned by a conformance suite: every test in
 `tests/test_genstore_conformance.py` runs against BOTH backends. If you touch
@@ -384,9 +388,9 @@ genstore conformance suite + session-template fixtures").
 * **Generation** → a commit, tagged ``epoch/{epoch_id}/{generation_id}``
   (e.g. ``epoch/2026-05-18_e1/v3``). The tag is the stable handle; the
   branch head moves as generations are appended.
-* **Patch metadata** → the deriving commit's message, after a
-  ``---zicato-meta---`` sentinel line, as a JSON block. Visible in plain
-  ``git log``, parsed back by :meth:`list_patches`.
+* **Commit context** → the deriving commit's message carries a redundant JSON
+  block for operator-readable `git log` output. Canonical patch reads use
+  `StorageBackend` records.
 ```
 — `src/zicato/epoch/git_genstore.py` (module docstring)
 
@@ -405,7 +409,7 @@ Facts an agent needs before touching this module:
   derived child can legitimately be byte-identical to its parent (a patch
   that sets a value to what it already is). Every generation is a commit even
   when its tree did not change — the lineage IS the commit chain.
-- **The meta sentinel is a parsing contract.** `_format_commit_message`
+- **The meta sentinel is an operator-facing metadata contract.** `_format_commit_message`
   writes the human subject (`zicato: {epoch}/{gen}`), a blank line, the
   `---zicato-meta---` sentinel, then a JSON object with `epoch_id`,
   `generation_id`, `parent_generation_id`, and the full `patches` list.
@@ -420,10 +424,10 @@ Facts an agent needs before touching this module:
 
 ### 7.4.2 Worktree materialisation, and the stale-worktree lesson
 
-`snapshot_root` under git is not pure path math (unlike the directory
-backend): handing a worker a real tree requires a checkout, so
-`_materialise_worktree` creates a detached worktree at the generation's tag
-under `repo-worktrees/{epoch}/{gen}` and reuses it thereafter.
+`snapshot_path` is pure for both backends. Under git,
+`materialize_snapshot` calls `_materialise_worktree`, which creates a detached
+worktree at the generation tag under `repo-worktrees/{epoch}/{gen}` and reuses
+it thereafter.
 
 The trap this created — and the fix now baked into `derive_generation` — is
 the **stale-worktree re-derive bug** (see 12-bug-casebook.md):
@@ -433,10 +437,10 @@ the **stale-worktree re-derive bug** (see 12-bug-casebook.md):
         # post-apply validation, the best-of-N chosen-candidate re-derive, a
         # crash-resume re-validate) moves the tag to the fresh commit — but a
         # worktree materialised by an EARLIER attempt stays detached at the
-        # old commit, so ``snapshot_root`` would hand back a stale tree that
+        # old commit, so ``materialize_snapshot`` would hand back a stale tree that
         # no longer matches the commit just derived (the directory backend
         # clears + rebuilds the child tree instead, so only this backend
-        # needs the refresh). Drop the stale checkout; ``snapshot_root``
+        # needs the refresh). Drop the stale checkout; ``materialize_snapshot``
         # below re-materialises it from the moved tag (its ``worktree add``
         # path prunes the orphaned registration first).
         stale_worktree = self._worktree_path(epoch_id, child_generation_id)
@@ -467,7 +471,7 @@ throwaway checkout instead, with a contract shared by all backends
   the OS temp dir (`EPHEMERAL_SNAPSHOT_PREFIX = "ztw-snap-"`) — the exact
   shape the supervisor's crash-reaper GCs (invariant D6; the Rust twin is
   `SNAPSHOT_PREFIX` in `crates/supervisor/src/reap.rs`);
-- `working_dir`'s basename equals the canonical `snapshot_root`'s basename,
+- `working_dir`'s basename equals the canonical `snapshot_path`'s basename,
   so `__file__`-derived paths inside the agent look identical either way;
 - a sibling `run-scratch` dir (`EPHEMERAL_SCRATCH_DIRNAME`) is created for
   the `SCRATCH_DIR_ENV` contract — run output routed OUTSIDE the source tree;
@@ -545,33 +549,19 @@ refuses to overwrite an existing target), so it uses a scratch swap:
 4. `git add -A`, `_commit(message-with-meta-block)`, `_tag_generation`
    (`tag -f`).
 5. Drop any stale worktree for the child id (§7.4.2), then return
-   `snapshot_root` (which re-materialises from the moved tag).
+   `materialize_snapshot` from the moved tag.
 
 The `finally` block removes `.derive-scratch` regardless of outcome, so a
 failed validation leaves neither a scratch tree nor a commit nor a tag —
 all-or-nothing end to end.
 
-### 7.4.5 `list_patches` and the journal fallback after GC
+### 7.4.5 Patch records stay outside the generation store
 
-The dashboard's patch/mutation views read `list_patches`. Under git the
-patches come from the commit's meta block — but GC (§7.5) deletes a pruned
-generation's tag, which makes `has_generation` false. The reader falls back
-to the journal record, which GC never touches:
-
-```python
-        A generation whose tag is GONE — pruned by
-        :func:`zicato.epoch.gc.prune_generations` — falls back to the
-        journal's ``experiment.json`` record (the same source the
-        directory backend reads), which GC never touches. The dashboard's
-        patch/mutation views therefore keep rendering a pruned
-        generation's patch metadata even after its source tree is
-        collected.
-```
-— `src/zicato/epoch/git_genstore.py`, `list_patches`
-
-This is the doctrine of §7.2 in miniature: the tree is disposable, the
-*record* (`experiment.json`) is canonical, and every reader must keep working
-from records alone.
+`read_generation_patches` reads `experiment.json` and its per-patch files
+through the caller's generic `StorageBackend`. The dashboard and proposer use
+that record query for both source backends. GC can delete a directory snapshot
+or Git tag without changing patch history because source pruning never reaches
+record keys.
 
 ---
 
@@ -580,6 +570,10 @@ from records alone.
 `zicato.epoch.gc.prune_generations` reclaims the disk held by settled-
 rejected generations' source trees. What "prune" means per backend, and the
 non-negotiable floor, are both stated at the top of the module:
+
+The source backend receives the complete selected generation set in one batch.
+Git removes the corresponding tags and worktrees under one repository
+administration lock and runs maintenance once.
 
 ```python
 Exactly one of two policies selects the prune set; BOTH share a safety

@@ -492,7 +492,7 @@ def test_concurrent_derive_scratch_is_disjoint_and_intact(tmp_path: Path, backen
     store.seed_generation(epoch_id, "v0", [AGENT_DIR])  # type: ignore[attr-defined]
     # Pre-warm the parent tree once (git materialises the parent worktree),
     # exactly as the round's scratch-validator factory does before the gather.
-    store.snapshot_root(epoch_id, "v0")  # type: ignore[attr-defined]
+    store.materialize_snapshot(epoch_id, "v0")  # type: ignore[attr-defined]
 
     contents = [f"verbose-prose; token-{i}" for i in range(8)]
     scratch_roots = [tmp_path / f"scratch-{i}" / "child" for i in range(len(contents))]
@@ -521,7 +521,7 @@ def test_concurrent_derive_scratch_is_disjoint_and_intact(tmp_path: Path, backen
     # No scratch tree entered the generation namespace — only v0 exists.
     assert store.list_generations(epoch_id) == ["v0"]  # type: ignore[attr-defined]
     # The parent tree is untouched (still the seed, no defect tokens dropped).
-    parent_line = _policy_style_line(store.snapshot_root(epoch_id, "v0"))  # type: ignore[attr-defined]
+    parent_line = _policy_style_line(store.materialize_snapshot(epoch_id, "v0"))  # type: ignore[attr-defined]
     for content in contents:
         assert content not in parent_line
 
@@ -604,7 +604,7 @@ async def test_composed_real_git_slate_out_of_order_mounts_the_chosen(
     workspace.mkdir()
     store = GitGenerationStore(workspace)
     store.seed_generation("e1", "v0", [AGENT_DIR])
-    mutations = list(enumerate_mutations([store.snapshot_root("e1", "v0")]))
+    mutations = list(enumerate_mutations([store.materialize_snapshot("e1", "v0")]))
 
     n = 3
     contents = [f"verbose-prose; slot-{i}-token" for i in range(n)]

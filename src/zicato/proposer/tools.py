@@ -416,15 +416,9 @@ def read_parent_diff() -> str:
     change so the agent can build on — or deliberately depart from — what
     just worked.
 
-    * **Git backend (the default):** one read-only ``git diff`` between
-      the parent generation's tag and ITS parent's tag
-      (:meth:`~zicato.epoch.git_genstore.GitGenerationStore.diff_generations`
-      — tree objects only, nearly free, nothing is written or checked
-      out).
-    * **Directory backend (or a generation with no commit):** falls back
-      to the generation's recorded patch set from the journal
-      (``list_patches`` reads ``experiment.json``), rendered compactly —
-      the same change, as patch records rather than a line diff.
+    When both source trees remain, the configured generation store returns a
+    unified diff. When either tree has been pruned, the tool renders the
+    generation's canonical patch records through ``StorageBackend``.
 
     A seed generation (no prior promotion) returns an explicit notice.
     Output is capped at :data:`_PARENT_DIFF_LIMIT_CHARS`. Read-only by
@@ -437,18 +431,24 @@ def read_parent_diff() -> str:
             "no promotion diff to show)"
         )
     from zicato.epoch.genstore import default_generation_store  # noqa: PLC0415
-    from zicato.epoch.git_genstore import GitGenerationStore  # noqa: PLC0415
+    from zicato.epoch.journal import (  # noqa: PLC0415
+        read_experiment_from_backend,
+        read_generation_patches,
+    )
+    from zicato.storage import default_backend  # noqa: PLC0415
 
     store = default_generation_store(ctx.workspace_root)
-    if isinstance(store, GitGenerationStore) and store.has_generation(
-        ctx.epoch_id, ctx.generation_id
+    records = default_backend(ctx.workspace_root)
+    try:
+        experiment = read_experiment_from_backend(records, ctx.epoch_id, ctx.generation_id)
+    except (FileNotFoundError, OSError, ValueError):
+        experiment = None
+    parent_id = experiment.parent_generation_id if experiment is not None else None
+    if (
+        parent_id is not None
+        and store.has_generation(ctx.epoch_id, parent_id)
+        and store.has_generation(ctx.epoch_id, ctx.generation_id)
     ):
-        parent_id = store.parent_generation_id(ctx.epoch_id, ctx.generation_id)
-        if parent_id is None:
-            return (
-                f"(generation {ctx.generation_id} is a seed — there is no "
-                "prior promotion to diff)"
-            )
         diff = store.diff_generations(ctx.epoch_id, parent_id, ctx.generation_id)
         if not diff.strip():
             return (
@@ -458,9 +458,9 @@ def read_parent_diff() -> str:
         header = f"# diff {parent_id} -> {ctx.generation_id} (what the last promotion changed)\n"
         return _truncate_note(header + diff, _PARENT_DIFF_LIMIT_CHARS)
 
-    # Directory backend (or no commit for the coordinate): the journal's
-    # patch records are the durable account of what derived this generation.
-    record = store.list_patches(ctx.epoch_id, ctx.generation_id)
+    # When either source tree has been pruned, the record store remains the
+    # durable account of what derived this generation.
+    record = read_generation_patches(records, ctx.epoch_id, ctx.generation_id)
     if not record.patches:
         return (
             f"(generation {ctx.generation_id} has no recorded patch set — a "

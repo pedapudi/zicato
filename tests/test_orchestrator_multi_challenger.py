@@ -111,7 +111,7 @@ def _bootstrap_swiss_workspace(
                 # Hand-built directory-backend snapshot layout below; pin the
                 # directory backend so the git default does not look for git
                 # tags this fixture never writes.
-                "storage_backend": "directory",
+                "generation_source_backend": "directory",
                 "adapter": {"kind": "stub"},
                 # These fixtures assert TOURNAMENT-caching properties (the
                 # champion is never re-run in fast mode). The default-on

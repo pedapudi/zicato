@@ -23,7 +23,7 @@ Concurrency note (WS-CONC): under best-of-N slate parallelism the per-slot
 overlap in time; only the LLM propose calls actually yield and run
 concurrently. Even a hypothetical overlap would be safe, because each slot
 derives into its own disjoint ``ztw-slate-*`` scratch path. The git backend's
-one shared touch is the first ``snapshot_root`` that materialises the parent
+one shared touch is the first ``materialize_snapshot`` call for the parent
 worktree; that is pre-warmed once here, and its cold-store materialisation is
 made idempotent under the worktree-admin lock
 (:meth:`zicato.epoch.git_genstore.GitGenerationStore._materialise_worktree`),
@@ -225,7 +225,7 @@ def build_scratch_validator_factory(
 
     The parent generation's source tree is pre-warmed ONCE here (the git
     backend materialises the parent worktree under its admin lock on first
-    ``snapshot_root``), so the concurrent ``derive_scratch`` calls find it
+    ``materialize_snapshot``), so the concurrent ``derive_scratch`` calls find it
     already present and only ever READ it — the derives race on nothing.
 
     The chosen candidate is still mounted into the real ``next_id`` exactly
@@ -240,9 +240,9 @@ def build_scratch_validator_factory(
     _sweep_stale_slate_scratch()
 
     # Pre-warm the parent source tree once so concurrent slot derives find it
-    # materialised and only read it (git: first snapshot_root checks out the
+    # materialised and only read it (git: the first materialization checks out the
     # parent worktree under the process worktree-admin lock).
-    genstore.snapshot_root(epoch_id, parent_id)
+    genstore.materialize_snapshot(epoch_id, parent_id)
 
     def _factory() -> ScratchValidatorLease:
         from zicato.epoch.genstore import discard_ephemeral_parent  # noqa: PLC0415

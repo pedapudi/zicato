@@ -695,7 +695,10 @@ def test_validate_reads_measured_floor_off_the_epoch_record(tmp_path) -> None:
     )
     brief = tmp_path / "brief.md"
     brief.write_text("# b\n", encoding="utf-8")
-    (ws / "config.json").write_text(json.dumps({"instance_id": "default"}), encoding="utf-8")
+    (ws / "config.json").write_text(
+        json.dumps({"instance_id": "default", "generation_source_backend": "git"}),
+        encoding="utf-8",
+    )
     from zicato.core.types import ScoringWeights
 
     cfg = new_epoch(ws, name="a", board_source=board, brief_source=brief, weights=ScoringWeights())
@@ -758,7 +761,10 @@ def test_preflight_degrades_without_seeded_baseline(tmp_path) -> None:
     )
     brief = tmp_path / "brief.md"
     brief.write_text("# b\n", encoding="utf-8")
-    (ws / "config.json").write_text(json.dumps({"instance_id": "default"}), encoding="utf-8")
+    (ws / "config.json").write_text(
+        json.dumps({"instance_id": "default", "generation_source_backend": "git"}),
+        encoding="utf-8",
+    )
     new_epoch(ws, name="a", board_source=board, brief_source=brief, weights=ScoringWeights())
 
     draft = TournamentDraft()
@@ -798,6 +804,7 @@ def test_preflight_measures_draft_contract_against_target0(tmp_path) -> None:
         json.dumps(
             {
                 "instance_id": "default",
+                "generation_source_backend": "git",
                 "adapter": {
                     "kind": "import",
                     "factory": "zicato_examples.target_0_convergence.harness:make_adapter",

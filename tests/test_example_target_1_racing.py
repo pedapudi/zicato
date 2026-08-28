@@ -231,7 +231,7 @@ def _bootstrap_racing_workspace(tmp_path: Path) -> tuple[Path, str]:
                 # Hand-built directory-backend snapshot layout below; pin it
                 # so the git default does not look for git tags this fixture
                 # never writes.
-                "storage_backend": "directory",
+                "generation_source_backend": "directory",
                 "adapter": {"kind": "stub"},
                 # This e2e asserts the racing tournament's champion-caching
                 # behaviour; opt out of the default-on achievable-signal

@@ -43,7 +43,7 @@ def test_init_creates_workspace(tmp_path: Path) -> None:
     assert load_lineage(workspace) == {"epochs": []}
 
 
-def test_init_records_the_storage_backend(tmp_path: Path) -> None:
+def test_init_records_the_generation_source_backend(tmp_path: Path) -> None:
     """A new workspace records which generation store it is built on.
 
     The backend a workspace uses is a durable property of its contents,
@@ -51,8 +51,8 @@ def test_init_records_the_storage_backend(tmp_path: Path) -> None:
     default that can change under an existing workspace (issue #204).
     """
     from zicato.epoch.genstore import (
-        DEFAULT_STORAGE_BACKEND,
-        STORAGE_BACKEND_KEY,
+        DEFAULT_GENERATION_SOURCE_BACKEND,
+        GENERATION_SOURCE_BACKEND_KEY,
         resolve_generation_store_backend,
     )
 
@@ -60,8 +60,8 @@ def test_init_records_the_storage_backend(tmp_path: Path) -> None:
     runner = CliRunner()
     assert runner.invoke(init_cmd, ["--workspace", str(workspace)]).exit_code == 0
     config = json.loads((workspace / CONFIG_FILENAME).read_text())
-    assert config[STORAGE_BACKEND_KEY] == DEFAULT_STORAGE_BACKEND
-    assert resolve_generation_store_backend(workspace).source == "config"
+    assert config[GENERATION_SOURCE_BACKEND_KEY] == DEFAULT_GENERATION_SOURCE_BACKEND
+    assert resolve_generation_store_backend(workspace) == DEFAULT_GENERATION_SOURCE_BACKEND
 
 
 def test_init_default_instance_id(tmp_path: Path) -> None:
@@ -98,6 +98,32 @@ def test_init_force_overwrites(tmp_path: Path) -> None:
     )
     assert second.exit_code == 0, second.output
     assert json.loads((workspace / CONFIG_FILENAME).read_text())["instance_id"] == "second"
+
+
+def test_init_force_preserves_existing_generation_source_backend(tmp_path: Path) -> None:
+    """Force must not orphan a supported directory-backed source history."""
+    from zicato.epoch.genstore import GENERATION_SOURCE_BACKEND_KEY
+
+    workspace = tmp_path / ".zicato"
+    workspace.mkdir()
+    (workspace / CONFIG_FILENAME).write_text(
+        json.dumps(
+            {
+                "instance_id": "first",
+                GENERATION_SOURCE_BACKEND_KEY: " Directory ",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    result = CliRunner().invoke(
+        init_cmd,
+        ["--workspace", str(workspace), "--instance-id", "second", "--force"],
+    )
+
+    assert result.exit_code == 0, result.output
+    config = json.loads((workspace / CONFIG_FILENAME).read_text())
+    assert config[GENERATION_SOURCE_BACKEND_KEY] == "directory"
 
 
 # ---------------------------------------------------------------------------

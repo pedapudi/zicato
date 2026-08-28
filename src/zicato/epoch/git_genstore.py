@@ -8,8 +8,8 @@ checkout *is* the isolated per-run tree, removing both the per-generation
 and per-run ``copytree`` the directory backend pays.
 :class:`~zicato.epoch.genstore.DirectoryGenerationStore` stays
 config-selectable for a no-git environment
-(``storage_backend: "directory"``); the git backend is what a workspace
-gets with no knob set.
+(``generation_source_backend: "directory"``). ``zicato init`` writes the git
+selection explicitly for a new workspace.
 
 Why git, and why a private workspace repo
 -----------------------------------------
@@ -35,16 +35,16 @@ The domain → git mapping
 * **Generation** → a commit, tagged ``epoch/{epoch_id}/{generation_id}``
   (e.g. ``epoch/2026-05-18_e1/v3``). The tag is the stable handle; the
   branch head moves as generations are appended.
-* **Patch metadata** → the deriving commit's message, after a
-  ``---zicato-meta---`` sentinel line, as a JSON block. Visible in plain
-  ``git log``, parsed back by :meth:`list_patches`.
+* **Commit context** → the deriving commit's message carries a redundant,
+  operator-readable copy of the lineage coordinates and patches. Canonical
+  patch reads always use ``StorageBackend`` records.
 * **Parallel tournament runs** → a ``git worktree`` checked out at the
   generation's tag. This *replaces* the directory backend's per-run
   ``copytree`` ephemeral snapshot with a git-native isolated checkout.
 
-:meth:`snapshot_root` materialises a worktree and returns its path — the
-worker contract (``docs/design/STORAGE.md`` §5.2) needs a real on-disk
-path, and a worktree is exactly that.
+:meth:`snapshot_path` calculates a worktree location without I/O.
+:meth:`materialize_snapshot` checks out the worktree when a caller needs a
+real on-disk source tree.
 
 Why shell out to the ``git`` CLI
 --------------------------------
@@ -73,6 +73,7 @@ of the directory backend's ``copytree(ignore=...)``.
 from __future__ import annotations
 
 import json
+import logging
 import shutil
 import subprocess
 import tempfile
@@ -86,11 +87,13 @@ from zicato.core.types import Patch
 from zicato.epoch.genstore import (
     EPHEMERAL_SCRATCH_DIRNAME,
     EPHEMERAL_SNAPSHOT_PREFIX,
+    GIT_BACKEND,
     GIT_REPO_DIRNAME,
+    GIT_WORKTREES_DIRNAME,
     EphemeralCheckout,
-    PatchRecord,
     TreeEntry,
     discard_ephemeral_parent,
+    source_tree_bytes,
 )
 from zicato.epoch.snapshot_scope import gitignore_lines, is_artifact
 
@@ -105,8 +108,10 @@ _META_SENTINEL = "---zicato-meta---"
 _GIT_AUTHOR_NAME = "zicato"
 _GIT_AUTHOR_EMAIL = "zicato@localhost"
 
+log = logging.getLogger(__name__)
+
 #: Top-level basenames that are git-administrative and must never be laid
-#: into a generation tree. A *git worktree* (what :meth:`snapshot_root`
+#: into a generation tree. A *git worktree* (what :meth:`materialize_snapshot`
 #: returns) carries a ``.git`` pointer file at its root; the worktree's
 #: own ``.gitignore`` is the repo's artifact-exclusion file, re-supplied
 #: from ``zicato-root``. Both appear in a worktree's ``iterdir()`` and
@@ -158,7 +163,7 @@ class GitGenerationStore:
     Conforms to the :class:`~zicato.epoch.genstore.GenerationStore`
     protocol structurally — it is a drop-in second backend, selected at
     :func:`zicato.epoch.genstore.default_generation_store` off the
-    workspace ``storage_backend`` config knob.
+    workspace ``generation_source_backend`` config knob.
 
     Construction is cheap and side-effect free; the git repository is
     created lazily on the first write (:meth:`seed_generation`).
@@ -172,11 +177,10 @@ class GitGenerationStore:
     """
 
     #: Subdirectory of the workspace holding the private generation repo.
-    #: Shared with the backend-resolution evidence probe, which reads this
-    #: directory's ``.git`` as the mark of a git-backed workspace.
+    #: The private repository directory inside the workspace.
     REPO_DIRNAME = GIT_REPO_DIRNAME
     #: Subdirectory holding materialised per-generation worktrees.
-    WORKTREES_DIRNAME = "repo-worktrees"
+    WORKTREES_DIRNAME = GIT_WORKTREES_DIRNAME
 
     def __init__(self, workspace_root: Path) -> None:
         self._workspace_root = Path(workspace_root)
@@ -187,6 +191,11 @@ class GitGenerationStore:
     def workspace_root(self) -> Path:
         """The workspace directory the generation repo is rooted under."""
         return self._workspace_root
+
+    @property
+    def backend_name(self) -> str:
+        """Return the workspace config name for this backend."""
+        return GIT_BACKEND
 
     @property
     def repo_path(self) -> Path:
@@ -284,28 +293,16 @@ class GitGenerationStore:
     # GenerationStore protocol — coordinate queries
     # ------------------------------------------------------------------
 
-    def snapshot_root(self, epoch_id: str, generation_id: str) -> Path:
-        """Return the worktree path for a generation, materialising it if needed.
+    def snapshot_path(self, epoch_id: str, generation_id: str) -> Path:
+        """Return the generation's worktree path without materialising it."""
+        return self._worktree_path(epoch_id, generation_id)
 
-        Unlike the directory backend's pure-path-math ``snapshot_root``,
-        the git backend must *check out* a generation to hand a worker a
-        real source tree. When the generation has a commit but no live
-        worktree, one is created from its tag; when a worktree already
-        exists it is reused. The returned path is the worktree root —
-        exactly the on-disk source tree a tournament worker mounts.
-
-        For a generation that has never been materialised (no commit),
-        this still returns the *would-be* worktree path without creating
-        anything, matching the directory backend's "pure coordinate →
-        path" contract for the not-yet-existing case. Use
-        :meth:`has_generation` to test existence.
-        """
-        wt = self._worktree_path(epoch_id, generation_id)
+    def materialize_snapshot(self, epoch_id: str, generation_id: str) -> Path:
+        """Check out a generation's tag into its reusable local worktree."""
         if not self.has_generation(epoch_id, generation_id):
-            # Never materialised (no commit): return the would-be path without
-            # creating anything, matching the directory backend's pure
-            # coordinate → path contract for the not-yet-existing case.
-            return wt
+            raise FileNotFoundError(
+                f"generation {epoch_id}/{generation_id} has no commit in the generation repo"
+            )
         # Route EVERY materialised read through the locked materialiser — even
         # when a worktree directory already exists. The old unlocked
         # ``if wt.is_dir(): return wt`` fast path was unsafe under concurrency:
@@ -319,20 +316,19 @@ class GitGenerationStore:
         return self._materialise_worktree(epoch_id, generation_id)
 
     def _materialise_worktree(self, epoch_id: str, generation_id: str) -> Path:
-        """Check out a generation's tag into a fresh ``git worktree``.
+        """Check out a generation's tag into its reusable local worktree.
 
-        This is the git-native replacement for the directory backend's
-        per-run ``copytree`` ephemeral snapshot: a worktree is an
-        isolated, cheap checkout — git shares the object store, only the
-        working files are materialised, and a runtime write inside it
-        never touches the commit.
+        This worktree serves orchestrator and source-browser reads. Tournament
+        runs use :meth:`checkout_ephemeral` instead, so runtime writes never
+        reach this reusable tree. Both kinds of checkout share Git's object
+        store rather than copying an existing directory snapshot.
         """
         wt = self._worktree_path(epoch_id, generation_id)
         wt.parent.mkdir(parents=True, exist_ok=True)
         tag = self._generation_tag(epoch_id, generation_id)
         with _worktree_admin_lock(self._repo):
             # Re-check for an existing valid worktree INSIDE the lock before
-            # adding. :meth:`snapshot_root` routes every materialised read here
+            # adding. :meth:`materialize_snapshot` routes every materialised read here
             # (it no longer has its own unlocked ``if wt.is_dir(): return wt``
             # fast path), so two concurrent cold-store materialisations of the
             # same generation both reach this point. ``git worktree add`` on an
@@ -360,7 +356,7 @@ class GitGenerationStore:
 
         Used by :meth:`_materialise_worktree` to tolerate the benign
         concurrent already-materialised case: a sibling caller may have
-        created the worktree between the unlocked ``snapshot_root`` probe and
+        created the worktree between the unlocked materialization probe and
         this caller acquiring the admin lock. The directory is only reused
         when it is a real worktree detached at exactly the commit ``tag``
         names — a stale, partial, or wrong-ref tree returns ``False`` and gets
@@ -418,7 +414,7 @@ class GitGenerationStore:
         mkdtemp parent under the OS temp dir — the exact shape the
         supervisor's crash-reaper (``reap.rs::reapable_snapshot_root``)
         GCs — named with the generation id so the basename matches the
-        shared worktree :meth:`snapshot_root` returns. A per-run
+        shared worktree :meth:`materialize_snapshot` returns. A per-run
         ``run-scratch`` sibling preserves the
         :data:`~zicato.epoch.snapshot_scope.SCRATCH_DIR_ENV` contract.
 
@@ -568,7 +564,7 @@ class GitGenerationStore:
         )
         self._commit(message)
         self._tag_generation(epoch_id, generation_id)
-        return self.snapshot_root(epoch_id, generation_id)
+        return self.materialize_snapshot(epoch_id, generation_id)
 
     def derive_generation(
         self,
@@ -615,7 +611,7 @@ class GitGenerationStore:
             # Source is the parent's worktree (a clean checkout of the
             # parent tree). apply_patches validates the whole batch and
             # raises ValueError without leaving a partial tree.
-            parent_root = self.snapshot_root(epoch_id, parent_generation_id)
+            parent_root = self.materialize_snapshot(epoch_id, parent_generation_id)
             apply_patches(
                 source_root=parent_root,
                 patches=list(patches),
@@ -641,16 +637,16 @@ class GitGenerationStore:
         # post-apply validation, the best-of-N chosen-candidate re-derive, a
         # crash-resume re-validate) moves the tag to the fresh commit — but a
         # worktree materialised by an EARLIER attempt stays detached at the
-        # old commit, so ``snapshot_root`` would hand back a stale tree that
+        # old commit, so ``materialize_snapshot`` would hand back a stale tree that
         # no longer matches the commit just derived (the directory backend
         # clears + rebuilds the child tree instead, so only this backend
-        # needs the refresh). Drop the stale checkout; ``snapshot_root``
+        # needs the refresh). Drop the stale checkout; ``materialize_snapshot``
         # below re-materialises it from the moved tag (its ``worktree add``
         # path prunes the orphaned registration first).
         stale_worktree = self._worktree_path(epoch_id, child_generation_id)
         if stale_worktree.is_dir():
             shutil.rmtree(stale_worktree, ignore_errors=True)
-        return self.snapshot_root(epoch_id, child_generation_id)
+        return self.materialize_snapshot(epoch_id, child_generation_id)
 
     def derive_scratch(
         self,
@@ -663,7 +659,7 @@ class GitGenerationStore:
 
         The concurrency-safe scratch derive: it reads the parent generation's
         materialised worktree (a clean, read-only checkout —
-        :meth:`snapshot_root`) and applies the patch set all-or-nothing into
+        :meth:`materialize_snapshot`) and applies the patch set all-or-nothing into
         the caller-owned ``scratch_root`` via
         :func:`zicato.mutation.applier.apply_patches`. It touches NO shared
         git state — no ``git checkout``/``reset``/``commit``/``tag``, no
@@ -695,7 +691,7 @@ class GitGenerationStore:
                 f"derive_scratch: parent generation {epoch_id}/"
                 f"{parent_generation_id} has no commit in the generation repo"
             )
-        parent_root = self.snapshot_root(epoch_id, parent_generation_id)
+        parent_root = self.materialize_snapshot(epoch_id, parent_generation_id)
         scratch_root = Path(scratch_root)
         if scratch_root.exists():
             shutil.rmtree(scratch_root)
@@ -748,10 +744,9 @@ class GitGenerationStore:
         """Build a generation commit message with the embedded metadata block.
 
         The human-readable subject names the generation; the machine
-        block after :data:`_META_SENTINEL` is a JSON object the
-        :meth:`list_patches` reader parses back. Patch metadata travels
-        *with the commit* — visible in plain ``git log``, transported by
-        any fetch/push.
+        block after :data:`_META_SENTINEL` is a redundant, operator-readable
+        copy of the derivation context. Canonical patch reads use the generic
+        record backend, so pruning a tag never removes patch history.
         """
         subject = f"zicato: {epoch_id}/{generation_id}"
         meta = {
@@ -906,45 +901,42 @@ class GitGenerationStore:
             f"refs/tags/{to_tag}",
         )
 
-    def list_patches(self, epoch_id: str, generation_id: str) -> PatchRecord:
-        """Read a generation's applied patch set from its commit metadata.
-
-        The patches were embedded in the deriving commit's message by
-        :meth:`_format_commit_message`; this reads them straight back.
-        A seed generation (no patches in its metadata block) yields an
-        empty :class:`PatchRecord`.
-
-        A generation whose tag is GONE — pruned by
-        :func:`zicato.epoch.gc.prune_generations` — falls back to the
-        journal's ``experiment.json`` record (the same source the
-        directory backend reads), which GC never touches. The dashboard's
-        patch/mutation views therefore keep rendering a pruned
-        generation's patch metadata even after its source tree is
-        collected.
-        """
-        from zicato.epoch.journal import _patch_from_dict  # noqa: PLC0415
-
-        if not self.has_generation(epoch_id, generation_id):
-            from zicato.epoch.journal import read_experiment  # noqa: PLC0415
-
-            try:
-                experiment = read_experiment(self._workspace_root, epoch_id, generation_id)
-            except (FileNotFoundError, OSError, ValueError):
-                return PatchRecord(generation_id=generation_id, patches=())
-            return PatchRecord(
-                generation_id=generation_id,
-                patches=tuple(experiment.patches),
+    def prune_generations(
+        self,
+        epoch_id: str,
+        generation_ids: Sequence[str],
+        *,
+        dry_run: bool,
+    ) -> int:
+        """Delete selected generation tags and worktrees while preserving records."""
+        selected = [
+            (
+                self._generation_tag(epoch_id, generation_id),
+                self.snapshot_path(epoch_id, generation_id),
             )
-        tag = self._generation_tag(epoch_id, generation_id)
-        meta = self._read_commit_meta(tag)
-        if not meta:
-            return PatchRecord(generation_id=generation_id, patches=())
-        raw_patches = meta.get("patches") or []
-        patches: list[Patch] = []
-        for raw in raw_patches:
-            if isinstance(raw, dict):
-                patches.append(_patch_from_dict(raw))
-        return PatchRecord(generation_id=generation_id, patches=tuple(patches))
+            for generation_id in generation_ids
+        ]
+        reclaimed = sum(source_tree_bytes(worktree) for _, worktree in selected)
+        if dry_run:
+            return reclaimed
+        with _worktree_admin_lock(self._repo):
+            for tag, worktree in selected:
+                if worktree.is_dir():
+                    shutil.rmtree(worktree, ignore_errors=True)
+                try:
+                    self._git("tag", "-d", tag)
+                except GitCommandError as exc:
+                    log.warning("generation source prune: tag delete failed for %s: %s", tag, exc)
+            try:
+                self._git("worktree", "prune")
+            except GitCommandError as exc:
+                log.warning("generation source prune: worktree prune failed: %s", exc)
+        if selected:
+            try:
+                self._git("gc", "--auto")
+            except GitCommandError as exc:
+                log.warning("generation source prune: git gc failed: %s", exc)
+        return reclaimed
 
 
 def _artifact_ignore(src: str, names: list[str]) -> set[str]:

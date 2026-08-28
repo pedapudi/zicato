@@ -21,18 +21,14 @@ storage seam. So :class:`GenerationStore` is a **peer abstraction at the
 domain layer**, not a subtype of ``StorageBackend``. The full reasoning
 is ``docs/design/STORAGE.md`` §4.
 
-The path-returning shape
-------------------------
-:meth:`GenerationStore.snapshot_root` returns a real on-disk
-:class:`~pathlib.Path`. That is not an accident of the directory
-backend — it is the contract. The orchestrator and the subprocess
-tournament workers genuinely need a path: a worker ``chdir``\\ s into a
-generation's source tree and loads the inner-harness adapter from it. A
-future git backend satisfies this by checking out a ``git worktree``
-and returning *its* path; the protocol is written so that backend is a
-drop-in second implementation. A record-store-shaped ``read() ->
-dict[str, bytes]`` surface could not serve the worker, which is the
-other half of why §4 keeps this seam separate.
+Path calculation and materialization
+------------------------------------
+:meth:`GenerationStore.snapshot_path` is pure coordinate-to-path math.
+:meth:`GenerationStore.materialize_snapshot` performs any I/O needed to
+return a usable local tree. The separation matters for git: calculating a
+worktree path must not silently run ``git worktree add``. Tournament workers
+still receive real paths because they load and execute the inner harness from
+an isolated checkout.
 
 Backends
 --------
@@ -42,11 +38,11 @@ Backends
   ``git worktree``. Because the object store dedups unchanged blobs across
   a lineage, and the worktree checkout *is* the isolated per-run tree, the
   git backend removes both the per-generation and the per-run ``copytree``
-  the directory backend pays. The operator-facing git CLI
-  (``zicato repo`` / ``log`` / ``diff`` / ``show`` / ``bisect`` /
-  ``blame``, ``workspace migrate-to-git``) is still on the roadmap.
+  the directory backend pays. Operators can inspect the private repository
+  with ordinary Git commands; zicato does not migrate obsolete directory-
+  backed workspaces.
 * :class:`DirectoryGenerationStore` — the directory-snapshot backend,
-  selected by ``storage_backend: "directory"``. A generation is a
+  selected by ``generation_source_backend: "directory"``. A generation is a
   ``generations/{id}/snapshot/`` directory; deriving a child is a
   ``copytree`` of the parent plus an all-or-nothing patch apply. This IS
   the pre-seam directory-snapshot mechanism, byte-for-byte. It remains a
@@ -54,17 +50,14 @@ Backends
   private git repo is unwanted; the git default simply removes the copy
   cost for the common case.
 
-Which backend reads a given workspace is
-:func:`resolve_generation_store_backend`'s decision: the explicit
-``storage_backend`` knob first, then the workspace's own on-disk contents,
-and only then the default. A workspace's backend is a durable property of
-what it already holds, so the default settles it only for a workspace that
-holds no generations yet.
+Every initialized workspace records ``generation_source_backend`` explicitly.
+:func:`resolve_generation_store_backend` validates that field and never infers
+the answer from repositories, generation records, or snapshot directories.
 """
 
 from __future__ import annotations
 
-import logging
+import difflib
 import shutil
 import tempfile
 from collections.abc import Callable, Iterable, Sequence
@@ -76,8 +69,6 @@ from zicato.core.types import Patch
 from zicato.core.workspace import generation_dir
 from zicato.epoch.snapshot_scope import copytree_ignore, is_artifact
 from zicato.workspace import WorkspaceLayout
-
-log = logging.getLogger(__name__)
 
 #: Filename prefix for a run's ephemeral checkout parent directory. The
 #: parent lives in the system temp dir (``tempfile.mkdtemp``) so it never
@@ -124,29 +115,6 @@ class TreeEntry:
 
 
 @dataclass(frozen=True, slots=True)
-class PatchRecord:
-    """One generation's applied patch set, for the dashboard patch browser.
-
-    A backend-neutral view of the patches that derived a generation from
-    its parent. The directory backend reads these from the per-patch
-    JSON files under ``experiment.json``; the git backend reads them from
-    the generation commit's metadata block. The dashboard renders the
-    list identically either way.
-
-    Attributes
-    ----------
-    generation_id:
-        The generation the patches derived.
-    patches:
-        The applied :class:`~zicato.core.types.Patch` objects, in apply
-        order. Empty for a seed (``v0``) generation.
-    """
-
-    generation_id: str
-    patches: tuple[Patch, ...]
-
-
-@dataclass(frozen=True, slots=True)
 class EphemeralCheckout:
     """One run's throwaway working copy of a generation source tree.
 
@@ -165,7 +133,7 @@ class EphemeralCheckout:
     working_dir:
         The isolated per-run source tree the worker mounts as the inner
         harness's root. Its basename matches the canonical
-        :meth:`GenerationStore.snapshot_root`'s basename so any path the
+        :meth:`GenerationStore.snapshot_path`'s basename so any path the
         agent derives from ``__file__`` looks the same as it would under
         the canonical tree.
     scratch_dir:
@@ -196,8 +164,8 @@ def discard_ephemeral_parent(parent: Path) -> None:
     """
     try:
         shutil.rmtree(parent, ignore_errors=True)
-    except OSError as exc:  # ignore_errors already swallows most
-        log.debug("ephemeral checkout cleanup skipped for %s: %s", parent, exc)
+    except OSError:
+        pass  # Best-effort cleanup must not turn a completed run into a failure.
 
 
 def copy_checkout_ephemeral(source_root: Path, run_id: str) -> EphemeralCheckout:
@@ -235,6 +203,61 @@ def copy_checkout_ephemeral(source_root: Path, run_id: str) -> EphemeralCheckout
     return EphemeralCheckout(working_dir=working_dir, scratch_dir=scratch_dir, cleanup=_cleanup)
 
 
+def source_tree_bytes(root: Path) -> int:
+    """Return a best-effort byte count for regular files under ``root``."""
+    if not root.is_dir():
+        return 0
+    total = 0
+    try:
+        for path in root.rglob("*"):
+            try:
+                if path.is_file() and not path.is_symlink():
+                    total += path.stat().st_size
+            except OSError:
+                continue
+    except OSError:
+        pass
+    return total
+
+
+def _diff_materialized_trees(from_root: Path, to_root: Path) -> str:
+    """Return a deterministic unified diff between two local source trees."""
+    from_files = {
+        path.relative_to(from_root).as_posix(): path
+        for path in from_root.rglob("*")
+        if path.is_file()
+        and not any(is_artifact(part) for part in path.relative_to(from_root).parts)
+    }
+    to_files = {
+        path.relative_to(to_root).as_posix(): path
+        for path in to_root.rglob("*")
+        if path.is_file() and not any(is_artifact(part) for part in path.relative_to(to_root).parts)
+    }
+    lines: list[str] = []
+    for rel_path in sorted(from_files.keys() | to_files.keys()):
+        before = from_files.get(rel_path)
+        after = to_files.get(rel_path)
+        before_lines = (
+            before.read_text(encoding="utf-8", errors="replace").splitlines(keepends=True)
+            if before is not None
+            else []
+        )
+        after_lines = (
+            after.read_text(encoding="utf-8", errors="replace").splitlines(keepends=True)
+            if after is not None
+            else []
+        )
+        lines.extend(
+            difflib.unified_diff(
+                before_lines,
+                after_lines,
+                fromfile=f"a/{rel_path}" if before is not None else "/dev/null",
+                tofile=f"b/{rel_path}" if after is not None else "/dev/null",
+            )
+        )
+    return "".join(lines)
+
+
 @runtime_checkable
 class GenerationStore(Protocol):
     """The pluggable store for generation source trees.
@@ -253,22 +276,33 @@ class GenerationStore(Protocol):
     territory.
     """
 
-    def snapshot_root(self, epoch_id: str, generation_id: str) -> Path:
-        """Return the on-disk source-tree path for one generation.
+    @property
+    def backend_name(self) -> str:
+        """Return the configured generation-source backend name."""
+        ...
+
+    def snapshot_path(self, epoch_id: str, generation_id: str) -> Path:
+        """Return the backend-owned local path for one generation snapshot.
 
         This is a pure coordinate→path computation — it does NOT assert
         the generation exists (use :meth:`has_generation` for that) and
-        does NOT materialise anything. The returned path is what a
-        tournament worker mounts as the inner harness's source root.
+        does NOT materialise anything.
+        """
+        ...
+
+    def materialize_snapshot(self, epoch_id: str, generation_id: str) -> Path:
+        """Ensure a generation has a local source tree and return its path.
+
+        Raises :class:`FileNotFoundError` when the generation does not exist.
         """
         ...
 
     def has_generation(self, epoch_id: str, generation_id: str) -> bool:
-        """Return ``True`` iff a materialised source tree exists for the coordinate."""
+        """Return ``True`` iff source state exists and can be materialized."""
         ...
 
     def list_generations(self, epoch_id: str) -> list[str]:
-        """Return the ids of every materialised generation under ``epoch_id``, sorted."""
+        """Return every source-backed generation id under ``epoch_id``, sorted."""
         ...
 
     def seed_generation(
@@ -282,8 +316,7 @@ class GenerationStore(Protocol):
         Each path in ``sources`` is copied into the generation's source
         tree under its own basename — the ``v0`` layout the orchestrator
         produces from the registered ``mutable_trees``. A single source
-        file (rare) is copied directly. Returns the generation's
-        :meth:`snapshot_root`.
+        file (rare) is copied directly. Returns the materialized source path.
 
         A seed generation has no parent and no patch set — it is the
         epoch's baseline. Deriving every *subsequent* generation goes
@@ -307,7 +340,7 @@ class GenerationStore(Protocol):
         The child generation appears in full, or not at all — there is
         never a half-applied child tree.
 
-        Returns the child generation's :meth:`snapshot_root`.
+        Returns the child's materialized source path.
 
         Raises
         ------
@@ -369,7 +402,7 @@ class GenerationStore(Protocol):
         """Materialise an ISOLATED per-run working copy of a generation.
 
         A tournament worker is never pointed at the canonical source
-        tree (:meth:`snapshot_root`): the canonical tree is what
+        tree (:meth:`materialize_snapshot`): the canonical tree is what
         :meth:`derive_generation` derives every child from, so any
         runtime write into it would accumulate across the whole lineage.
         Instead each run mounts a throwaway checkout this method
@@ -383,7 +416,7 @@ class GenerationStore(Protocol):
           parent in the OS temp dir (:data:`EPHEMERAL_SNAPSHOT_PREFIX`),
           the shape the supervisor's crash-reaper GCs;
         * ``working_dir``'s basename equals the canonical
-          :meth:`snapshot_root`'s basename (``__file__``-derived paths
+          :meth:`snapshot_path`'s basename (``__file__``-derived paths
           look identical);
         * a per-run ``scratch_dir`` sibling is created for the
           :data:`~zicato.epoch.snapshot_scope.SCRATCH_DIR_ENV` contract;
@@ -441,25 +474,34 @@ class GenerationStore(Protocol):
         """
         ...
 
-    def list_patches(self, epoch_id: str, generation_id: str) -> PatchRecord:
-        """Return the patch set that derived ``generation_id`` from its parent.
+    def diff_generations(
+        self,
+        epoch_id: str,
+        from_generation_id: str,
+        to_generation_id: str,
+    ) -> str:
+        """Return a unified source diff between two generations."""
+        ...
 
-        For a seed (``v0``) generation the returned
-        :class:`PatchRecord` carries an empty ``patches`` tuple. For a
-        derived generation it carries the applied patches in apply
-        order. The patches are read from the canonical record (the
-        per-patch JSON files for the directory backend, the commit
-        metadata for the git backend) — this method does not re-derive
-        anything.
+    def prune_generations(
+        self,
+        epoch_id: str,
+        generation_ids: Sequence[str],
+        *,
+        dry_run: bool,
+    ) -> int:
+        """Prune selected generation source trees and return reclaimable bytes.
 
-        Returns an empty :class:`PatchRecord` rather than raising when
-        the generation exists but has no recorded patch set.
+        Record-shaped generation data is outside this seam and must remain
+        untouched. A dry run computes the byte count without changing state.
+        The batch shape lets a backend perform shared maintenance once after
+        removing all selected source trees.
         """
         ...
 
 
 class DirectoryGenerationStore:
-    """The directory-snapshot :class:`GenerationStore` — shipped default.
+    """The directory-snapshot :class:`GenerationStore` implementation.
 
     A generation's source tree is the ``generations/{id}/snapshot/``
     directory under its epoch. Deriving a child is a full ``copytree``
@@ -467,11 +509,10 @@ class DirectoryGenerationStore:
     (via :func:`zicato.mutation.applier.apply_patches`, whose
     deterministic pre-validation already makes the apply atomic).
 
-    This backend IS the pre-seam mechanism the orchestrator used
-    directly — the same paths, the same ``copytree``, the same applier.
-    The seam formalises it so a git backend can later be substituted at
-    exactly one construction site; it does not change a single on-disk
-    byte.
+    This backend is the pre-seam mechanism the orchestrator used
+    directly — the same paths, the same ``copytree``, and the same
+    applier. The seam lets callers use it interchangeably with the git
+    backend without changing its on-disk representation.
 
     The store is rooted at a workspace directory (the ``.zicato/``
     directory) and computes every path under it via
@@ -488,7 +529,12 @@ class DirectoryGenerationStore:
         """The workspace directory every generation path resolves under."""
         return self._workspace_root
 
-    def snapshot_root(self, epoch_id: str, generation_id: str) -> Path:
+    @property
+    def backend_name(self) -> str:
+        """Return the workspace config name for this backend."""
+        return DIRECTORY_BACKEND
+
+    def snapshot_path(self, epoch_id: str, generation_id: str) -> Path:
         """Return ``generations/{generation_id}/snapshot/`` for the coordinate.
 
         Pure path math — no I/O, no assertion that the generation
@@ -497,22 +543,34 @@ class DirectoryGenerationStore:
         """
         return generation_dir(self._workspace_root, epoch_id, generation_id) / "snapshot"
 
+    def materialize_snapshot(self, epoch_id: str, generation_id: str) -> Path:
+        """Return an existing directory snapshot without creating it."""
+        path = self.snapshot_path(epoch_id, generation_id)
+        if not path.is_dir():
+            raise FileNotFoundError(
+                f"generation {epoch_id}/{generation_id} has no source tree at {path}"
+            )
+        return path
+
     def has_generation(self, epoch_id: str, generation_id: str) -> bool:
         """Return ``True`` iff the generation's ``snapshot/`` directory exists."""
-        return self.snapshot_root(epoch_id, generation_id).is_dir()
+        return self.snapshot_path(epoch_id, generation_id).is_dir()
 
     def list_generations(self, epoch_id: str) -> list[str]:
-        """Return the ids of every generation directory under ``epoch_id``, sorted.
+        """Return the ids of every available directory snapshot, sorted.
 
-        A generation counts as present when its directory exists under
-        ``epochs/{epoch_id}/generations/`` — the same liveness rule the
-        orchestrator's ``_next_generation_id`` and the index's directory
-        walk use. Sorted lexicographically for a deterministic order.
+        Record-only generation directories survive source pruning and are not
+        part of this source-store listing. Record consumers enumerate them
+        through the workspace layout or ``StorageBackend`` instead.
         """
         gens_root = WorkspaceLayout.from_root(self._workspace_root).generations_dir(epoch_id)
         if not gens_root.is_dir():
             return []
-        return sorted(child.name for child in gens_root.iterdir() if child.is_dir())
+        return sorted(
+            child.name
+            for child in gens_root.iterdir()
+            if child.is_dir() and (child / SNAPSHOT_DIRNAME).is_dir()
+        )
 
     def seed_generation(
         self,
@@ -533,7 +591,7 @@ class DirectoryGenerationStore:
         FileNotFoundError
             When a source path does not exist on disk.
         """
-        snapshot_root = self.snapshot_root(epoch_id, generation_id)
+        snapshot_root = self.snapshot_path(epoch_id, generation_id)
         snapshot_root.mkdir(parents=True, exist_ok=True)
         for raw in sources:
             source = Path(raw).resolve()
@@ -575,17 +633,17 @@ class DirectoryGenerationStore:
            the patch set with deterministic pre-validation — so a
            malformed patch set leaves *no* child tree behind.
 
-        Returns the child's :meth:`snapshot_root`.
+        Returns the child's materialized source path.
         """
         from zicato.mutation.applier import apply_patches  # noqa: PLC0415
 
-        parent_root = self.snapshot_root(epoch_id, parent_generation_id)
+        parent_root = self.snapshot_path(epoch_id, parent_generation_id)
         if not parent_root.is_dir():
             raise FileNotFoundError(
                 f"derive_generation: parent generation {epoch_id}/"
                 f"{parent_generation_id} has no source tree at {parent_root}"
             )
-        child_root = self.snapshot_root(epoch_id, child_generation_id)
+        child_root = self.snapshot_path(epoch_id, child_generation_id)
         if child_root.exists():
             # A previous failed round may have left a partial snapshot.
             # The applier refuses to overwrite, so clear the tree first.
@@ -620,7 +678,7 @@ class DirectoryGenerationStore:
         """
         from zicato.mutation.applier import apply_patches  # noqa: PLC0415
 
-        parent_root = self.snapshot_root(epoch_id, parent_generation_id)
+        parent_root = self.snapshot_path(epoch_id, parent_generation_id)
         if not parent_root.is_dir():
             raise FileNotFoundError(
                 f"derive_scratch: parent generation {epoch_id}/"
@@ -652,7 +710,7 @@ class DirectoryGenerationStore:
         :func:`copy_checkout_ephemeral`. Code snapshots are KB-sized, so
         a copy per run is cheap.
         """
-        source = self.snapshot_root(epoch_id, generation_id)
+        source = self.materialize_snapshot(epoch_id, generation_id)
         if not source.is_dir():
             raise FileNotFoundError(
                 f"checkout_ephemeral: generation {epoch_id}/{generation_id} "
@@ -673,7 +731,7 @@ class DirectoryGenerationStore:
         renders clean. Paths are ``/``-joined relative to the snapshot
         root and the result is sorted for a deterministic render.
         """
-        root = self.snapshot_root(epoch_id, generation_id)
+        root = self.materialize_snapshot(epoch_id, generation_id)
         if not root.is_dir():
             raise FileNotFoundError(
                 f"list_tree: generation {epoch_id}/{generation_id} has no source tree at {root}"
@@ -700,7 +758,7 @@ class DirectoryGenerationStore:
         Rejects ``..`` traversal and absolute paths — the resolved file
         must sit under the snapshot root.
         """
-        root = self.snapshot_root(epoch_id, generation_id)
+        root = self.materialize_snapshot(epoch_id, generation_id)
         if not root.is_dir():
             raise FileNotFoundError(
                 f"read_file: generation {epoch_id}/{generation_id} has no source tree at {root}"
@@ -717,29 +775,39 @@ class DirectoryGenerationStore:
             )
         return target.read_bytes()
 
-    def list_patches(self, epoch_id: str, generation_id: str) -> PatchRecord:
-        """Read the generation's applied patch set from ``experiment.json``.
-
-        Delegates to :func:`zicato.epoch.journal.read_experiment`, which
-        resolves both the per-patch-file and legacy-inline on-disk
-        shapes. A seed generation (no ``experiment.json``) yields an
-        empty :class:`PatchRecord`.
-        """
-        from zicato.epoch.journal import read_experiment  # noqa: PLC0415
-
-        try:
-            experiment = read_experiment(self._workspace_root, epoch_id, generation_id)
-        except FileNotFoundError:
-            return PatchRecord(generation_id=generation_id, patches=())
-        return PatchRecord(
-            generation_id=generation_id,
-            patches=tuple(experiment.patches),
+    def diff_generations(
+        self,
+        epoch_id: str,
+        from_generation_id: str,
+        to_generation_id: str,
+    ) -> str:
+        """Return a unified diff between two directory snapshots."""
+        return _diff_materialized_trees(
+            self.materialize_snapshot(epoch_id, from_generation_id),
+            self.materialize_snapshot(epoch_id, to_generation_id),
         )
 
+    def prune_generations(
+        self,
+        epoch_id: str,
+        generation_ids: Sequence[str],
+        *,
+        dry_run: bool,
+    ) -> int:
+        """Remove selected directory snapshots while preserving sibling records."""
+        snapshots = [
+            self.snapshot_path(epoch_id, generation_id) for generation_id in generation_ids
+        ]
+        reclaimed = sum(source_tree_bytes(snapshot) for snapshot in snapshots)
+        if not dry_run:
+            for snapshot in snapshots:
+                shutil.rmtree(snapshot, ignore_errors=True)
+        return reclaimed
 
-#: Workspace ``config.json`` key selecting the generation-store backend.
-#: ``"git"`` or ``"directory"``.
-STORAGE_BACKEND_KEY = "storage_backend"
+
+#: Workspace ``config.json`` key selecting the generation source-tree backend.
+#: This is deliberately distinct from the generic record-store abstraction.
+GENERATION_SOURCE_BACKEND_KEY = "generation_source_backend"
 
 #: The git backend's name, in the config knob and in a resolution.
 GIT_BACKEND = "git"
@@ -749,183 +817,60 @@ DIRECTORY_BACKEND = "directory"
 
 #: Every backend name the knob accepts. A knob naming anything else is a
 #: typo, and is refused rather than silently resolved.
-KNOWN_STORAGE_BACKENDS = (GIT_BACKEND, DIRECTORY_BACKEND)
+KNOWN_GENERATION_SOURCE_BACKENDS = (GIT_BACKEND, DIRECTORY_BACKEND)
 
-#: The backend a workspace gets when neither the knob nor the workspace's
-#: own contents decide — i.e. a workspace that holds no generations yet.
+#: The backend written explicitly into new workspaces by ``zicato init``.
 #: ``"git"``: the content-addressed worktree backend dedups blobs across a
 #: lineage and its worktree checkout *is* the isolated per-run tree, so it
 #: removes both the per-generation and per-run ``copytree`` the directory
 #: backend pays. ``"directory"`` stays selectable for environments that do
 #: not want a private git repo.
-DEFAULT_STORAGE_BACKEND = GIT_BACKEND
+DEFAULT_GENERATION_SOURCE_BACKEND = GIT_BACKEND
 
 #: Workspace subdirectory holding the git backend's private repository.
-#: The presence of its ``.git`` is the on-disk evidence of a git-backed
-#: workspace; :class:`~zicato.epoch.git_genstore.GitGenerationStore` reads
-#: this as its ``REPO_DIRNAME``.
 GIT_REPO_DIRNAME = "repo"
+
+#: Workspace subdirectory holding reusable Git generation worktrees.
+GIT_WORKTREES_DIRNAME = "repo-worktrees"
 
 #: A generation's source tree under the directory backend, inside
 #: ``epochs/{epoch_id}/generations/{generation_id}/``.
 SNAPSHOT_DIRNAME = "snapshot"
 
 
-@dataclass(frozen=True)
-class BackendResolution:
-    """Which generation-store backend a workspace uses, and on what grounds.
+def resolve_generation_store_backend(workspace_root: Path) -> str:
+    """Return the explicitly configured generation-source backend.
 
-    ``source`` records *why* — ``"config"`` (the explicit knob),
-    ``"evidence"`` (the workspace's own contents), or ``"default"``
-    (nothing on disk to go on). ``mismatch``, when set, is an
-    operator-facing sentence naming a disagreement between the resolved
-    backend and what is on disk; the resolution still stands.
+    Initialized workspaces must carry :data:`GENERATION_SOURCE_BACKEND_KEY`.
+    Missing, blank, malformed, and unknown values are errors.  The resolver
+    never guesses from repositories, generation records, or snapshot paths;
+    choosing a source backend is workspace configuration, not evidence
+    discovery.
     """
+    from zicato.workspace_loader import load_workspace_config  # noqa: PLC0415
 
-    backend: str
-    source: str
-    mismatch: str | None = None
-
-
-def _read_storage_backend_knob(workspace_root: Path) -> str | None:
-    """Return the ``storage_backend`` knob, or ``None`` when it is absent.
-
-    Best-effort on the *file*: a missing or malformed ``config.json`` (a
-    workspace not yet ``zicato init``-ed, or one predating the knob) reads
-    as no knob, because a config the loader cannot parse must not decide
-    the backend. A knob that *is* present and names an unknown backend is
-    a different matter — see :func:`resolve_generation_store_backend`.
-    """
-    config_path = Path(workspace_root) / "config.json"
-    if not config_path.is_file():
-        return None
-    try:
-        import json  # noqa: PLC0415
-
-        loaded = json.loads(config_path.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return None
-    if not isinstance(loaded, dict):
-        return None
-    value = str(loaded.get(STORAGE_BACKEND_KEY, "")).strip().lower()
-    return value or None
-
-
-def _has_git_store(workspace_root: Path) -> bool:
-    """Return True iff the workspace holds the git backend's repository."""
-    return (Path(workspace_root) / GIT_REPO_DIRNAME / ".git").exists()
-
-
-def _generation_evidence(workspace_root: Path) -> tuple[bool, bool]:
-    """Return ``(any generation record, any directory snapshot)``.
-
-    Both backends write generation *records* (``experiment.json``,
-    patches, run logs); only the source tree differs, so a record alone
-    says "this workspace has produced something" — which is what makes
-    the absence of a git repository informative. A ``snapshot/`` beside
-    a record is the directory backend's source tree, and names the
-    backend outright.
-    """
-    epochs_root = Path(workspace_root) / "epochs"
-    any_record = False
-    for epoch in _children(epochs_root):
-        for generation in _children(epoch / "generations"):
-            any_record = True
-            if (generation / SNAPSHOT_DIRNAME).is_dir():
-                return True, True
-    return any_record, False
-
-
-def _children(path: Path) -> Iterable[Path]:
-    """Iterate ``path``'s subdirectories, yielding nothing when it is not one."""
-    if not path.is_dir():
-        return ()
-    return (child for child in path.iterdir() if child.is_dir())
-
-
-def resolve_generation_store_backend(workspace_root: Path) -> BackendResolution:
-    """Decide which generation-store backend reads a workspace.
-
-    The order is **explicit config > on-disk evidence > default**:
-
-    1. The ``storage_backend`` knob, when present, is the operator's
-       stated intent and wins. An unknown name raises :class:`ValueError`
-       rather than resolving to whichever backend the fallthrough happens
-       to reach.
-    2. Otherwise the workspace's own contents decide. A ``repo/.git``
-       means git wrote it. Generation records with *no* repository mean
-       the directory backend wrote it: a git-backed workspace that has
-       produced any generation necessarily has a repository, and snapshot
-       GC (:mod:`zicato.epoch.gc`) prunes ``snapshot/`` directories but
-       never the repository — so "records, no repo" stays directory
-       evidence even after every snapshot has been pruned.
-    3. A workspace holding no generations has nothing to go on, so
-       :data:`DEFAULT_STORAGE_BACKEND` decides.
-
-    Evidence outranks the default because the default is a *global*
-    constant: reading a knobless workspace through it re-interprets every
-    workspace ever created whenever it changes, which is exactly how a
-    directory-snapshot workspace came to be read as an empty git one.
-    Evidence is a property of the workspace and does not move under it.
-
-    A resolution that contradicts the disk — an explicit knob naming a
-    backend whose store is absent while the other's is present, or two
-    stores present at once — still stands, but carries a ``mismatch``
-    sentence naming it. :func:`default_generation_store` logs that at
-    warning level so the disagreement is never silent.
-    """
-    knob = _read_storage_backend_knob(workspace_root)
-    has_repo = _has_git_store(workspace_root)
-    has_records, has_snapshots = _generation_evidence(workspace_root)
-
-    if knob is not None:
-        if knob not in KNOWN_STORAGE_BACKENDS:
-            known = ", ".join(repr(name) for name in KNOWN_STORAGE_BACKENDS)
-            raise ValueError(
-                f"workspace {workspace_root!s}: unknown {STORAGE_BACKEND_KEY} {knob!r}; "
-                f"known backends: {known}"
-            )
-        chosen_present, other_present = (
-            (has_repo, has_snapshots) if knob == GIT_BACKEND else (has_snapshots, has_repo)
+    config = load_workspace_config(workspace_root)
+    raw = config.get(GENERATION_SOURCE_BACKEND_KEY)
+    if not isinstance(raw, str) or not raw.strip():
+        raise ValueError(
+            f"workspace {workspace_root!s}: config.json must define "
+            f"{GENERATION_SOURCE_BACKEND_KEY!r} as 'git' or 'directory'"
         )
-        mismatch = None
-        if other_present and not chosen_present:
-            other = DIRECTORY_BACKEND if knob == GIT_BACKEND else GIT_BACKEND
-            mismatch = (
-                f"{STORAGE_BACKEND_KEY} is {knob!r} but this workspace holds a "
-                f"{other} generation store and no {knob} one; generations written by "
-                f"the {other} backend will not be listed"
-            )
-        return BackendResolution(knob, "config", mismatch)
-
-    if has_repo:
-        mismatch = None
-        if has_snapshots:
-            mismatch = (
-                "this workspace holds both a git generation store and directory "
-                f"snapshots; reading it as {GIT_BACKEND!r} — set {STORAGE_BACKEND_KEY} "
-                "to pin the intended one"
-            )
-        return BackendResolution(GIT_BACKEND, "evidence", mismatch)
-
-    if has_records:
-        return BackendResolution(DIRECTORY_BACKEND, "evidence", None)
-
-    return BackendResolution(DEFAULT_STORAGE_BACKEND, "default", None)
-
-
-#: Mismatches already logged, so a resolution on a hot path (every
-#: ``snapshot_root`` call goes through one) warns once per workspace
-#: rather than once per generation read.
-_reported_mismatches: set[tuple[str, str]] = set()
+    backend = raw.strip().lower()
+    if backend not in KNOWN_GENERATION_SOURCE_BACKENDS:
+        known = ", ".join(repr(name) for name in KNOWN_GENERATION_SOURCE_BACKENDS)
+        raise ValueError(
+            f"workspace {workspace_root!s}: unknown {GENERATION_SOURCE_BACKEND_KEY} "
+            f"{backend!r}; known backends: {known}"
+        )
+    return backend
 
 
 def default_generation_store(workspace_root: Path) -> GenerationStore:
     """Return the canonical :class:`GenerationStore` for a workspace.
 
-    The backend comes from :func:`resolve_generation_store_backend` —
-    explicit ``storage_backend`` knob, else the workspace's own contents,
-    else :data:`DEFAULT_STORAGE_BACKEND`:
+    The backend comes exclusively from the workspace's explicit
+    ``generation_source_backend`` config field:
 
     * ``"git"`` → :class:`~zicato.epoch.git_genstore.GitGenerationStore`,
       the content-addressed git backend (``docs/design/STORAGE.md`` §7).
@@ -935,13 +880,8 @@ def default_generation_store(workspace_root: Path) -> GenerationStore:
     This function is the single seam where that choice is made — the
     generation-store mirror of :func:`zicato.storage.factory.default_backend`.
     """
-    resolution = resolve_generation_store_backend(workspace_root)
-    if resolution.mismatch is not None:
-        seen = (str(workspace_root), resolution.mismatch)
-        if seen not in _reported_mismatches:
-            _reported_mismatches.add(seen)
-            log.warning("generation store: %s", resolution.mismatch)
-    if resolution.backend == GIT_BACKEND:
+    backend = resolve_generation_store_backend(workspace_root)
+    if backend == GIT_BACKEND:
         from zicato.epoch.git_genstore import GitGenerationStore  # noqa: PLC0415
 
         return GitGenerationStore(workspace_root)
@@ -951,21 +891,21 @@ def default_generation_store(workspace_root: Path) -> GenerationStore:
 __all__ = [
     "GenerationStore",
     "DirectoryGenerationStore",
-    "BackendResolution",
     "EphemeralCheckout",
     "TreeEntry",
-    "PatchRecord",
     "EPHEMERAL_SCRATCH_DIRNAME",
     "EPHEMERAL_SNAPSHOT_PREFIX",
-    "STORAGE_BACKEND_KEY",
-    "DEFAULT_STORAGE_BACKEND",
+    "GENERATION_SOURCE_BACKEND_KEY",
+    "DEFAULT_GENERATION_SOURCE_BACKEND",
     "DIRECTORY_BACKEND",
     "GIT_BACKEND",
     "GIT_REPO_DIRNAME",
-    "KNOWN_STORAGE_BACKENDS",
+    "GIT_WORKTREES_DIRNAME",
+    "KNOWN_GENERATION_SOURCE_BACKENDS",
     "SNAPSHOT_DIRNAME",
     "copy_checkout_ephemeral",
     "default_generation_store",
     "discard_ephemeral_parent",
     "resolve_generation_store_backend",
+    "source_tree_bytes",
 ]

@@ -83,6 +83,9 @@ def test_round_pipeline_structure_stays_bounded() -> None:
 
 
 def test_generation_head_prefers_marker_then_falls_back_to_highest_vn(tmp_path: Path) -> None:
+    (tmp_path / "config.json").write_text(
+        '{"generation_source_backend": "directory"}', encoding="utf-8"
+    )
     layout = WorkspaceLayout.from_root(tmp_path)
     root = layout.generations_dir("e1")
     for name in ("v2", "v10", "named"):

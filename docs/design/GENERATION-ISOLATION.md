@@ -42,14 +42,12 @@ materialised. Both are fixed.
 1. **Storage layer — the generation store is content-addressed by default.**
    `GitGenerationStore` (`zicato.epoch.git_genstore`) stores each generation
    as a commit tagged `epoch/{epoch_id}/{generation_id}` on an `epoch/{id}`
-   branch, and it is the **default** backend: a workspace holding no
-   generations, and no `storage_backend` knob to say otherwise, resolves to
-   `"git"` at the single selection seam,
-   `zicato.epoch.genstore.default_generation_store` (`DEFAULT_STORAGE_BACKEND`).
-   A workspace that *does* hold generations is read by the backend that
-   wrote them ([`STORAGE.md`](STORAGE.md) §5.2).
+   branch. `zicato init` records `generation_source_backend: "git"`
+   explicitly. `zicato.epoch.genstore.default_generation_store` validates
+   the configured value and never infers a backend from workspace contents
+   ([`STORAGE.md`](STORAGE.md) §5.2).
    `DirectoryGenerationStore` remains the dependency-free fallback under
-   `storage_backend: "directory"`. Git's object store *is* the delta
+   `generation_source_backend: "directory"`. Git's object store *is* the delta
    representation this note wanted: a module unchanged across 20 generations
    is one blob referenced by 20 commits, not 20 copies. See
    [`STORAGE.md`](STORAGE.md) §7.1–§7.2.
@@ -166,7 +164,7 @@ is why the record is kept.*
 > **Historical premise — no longer the shipped behaviour.** Under the default
 > git backend a generation is a commit (blob-deduped, no copy) and a run
 > mounts a `git worktree`, so neither copy described in the next paragraph is
-> paid. It is accurate only for `storage_backend: "directory"`, the explicit
+> paid. It is accurate only for `generation_source_backend: "directory"`, the explicit
 > no-git fallback — and even there the *second* copy is now the backend's own
 > `checkout_ephemeral`, not a transport-layer duplicate of it.
 
@@ -217,7 +215,7 @@ env-scrub remains the baseline there).
    the question.
 3. **Graceful fallback.** Degrade to a correct (if slower) path where the host
    filesystem/kernel lacks a fast mechanism. Full copy is the floor, always
-   available. — **MET:** `storage_backend: "directory"` is the no-`git`
+   available. — **MET:** `generation_source_backend: "directory"` is the no-`git`
    fallback, and `copy_checkout_ephemeral` is still the per-run mechanism for it
    and for store-unmanaged generations.
 4. **Behaviour-preserving.** The tree the worker *sees* and the artifact the store
@@ -355,7 +353,7 @@ dir.
 Universal, simple, strong isolation, O(whole-tree) cost. Keep as the guaranteed
 fallback when nothing faster is available. *(2026-07: exactly what happened —
 `copy_checkout_ephemeral` plus `DirectoryGenerationStore`, selected by
-`storage_backend: "directory"` or by a store-unmanaged generation.)*
+`generation_source_backend: "directory"` or by a store-unmanaged generation.)*
 
 ## Trade-offs at a glance
 
@@ -417,10 +415,9 @@ the mandatory one, and the mandatory ones were dropped.*
   diverged tree / commit. The *logical* artifact the store exposes (a snapshot dir
   / a commit ref) stays unchanged, so everything downstream (apply → run → score →
   promote → contract hash) is untouched. → **DONE for the git case:** the
-  artifact is the tagged commit, downstream is untouched, and `snapshot_root`
-  materialises a worktree on demand while an unmaterialised coordinate returns
-  the would-be path without creating anything — matching the directory backend's
-  pure-coordinate-to-path contract.
+  artifact is the tagged commit, downstream is untouched, `snapshot_path`
+  calculates the worktree location without I/O, and `materialize_snapshot`
+  checks it out on demand.
 - **Supervisor synergy:** an overlay `upper` layer is the exact parent→child diff,
   which makes the supervisor's diff-containment attestation (issue #48) precise and
   cheap, and feeds the promotion-veto work (issue #47). → **MOOT.** The
@@ -478,8 +475,8 @@ never applied; the fourth and fifth were addressed.)*
   capability detection, with full `copytree` as the only implementation. Pure
   refactor, behaviour-identical, parity-gated. → *Landed in a different shape:
   the seam is `GenerationStore.checkout_ephemeral`, the "capability detection" is
-  the `storage_backend` knob and, absent a knob, the workspace's own contents —
-  no probing of *host* capabilities either way — and the fallback is
+  the explicit `generation_source_backend` knob — no probing of host
+  capabilities or workspace evidence — and the fallback is
   `copy_checkout_ephemeral`.*
 - **P2 — reflink/CoW fast path.** Cheapest to add (no privilege, no mount); detect
   the FS and use it, else fall back. → *Dropped (strategy B).*

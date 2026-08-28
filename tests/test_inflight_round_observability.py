@@ -132,7 +132,7 @@ def _bootstrap_single_elim_workspace(tmp_path: Path, *, field_size: int) -> tupl
                 # Hand-built directory-backend snapshot layout below; pin the
                 # directory backend so the git default does not look for git
                 # tags this fixture never writes.
-                "storage_backend": "directory",
+                "generation_source_backend": "directory",
                 "adapter": {"kind": "stub"},
             }
         )

@@ -99,15 +99,19 @@ def set_current_generation(workspace_root: Path, epoch_id: str, generation_id: s
 def snapshot_root(workspace_root: Path, epoch_id: str, generation_id: str) -> Path:
     from zicato.epoch.genstore import default_generation_store
 
-    return default_generation_store(workspace_root).snapshot_root(epoch_id, generation_id)
+    return default_generation_store(workspace_root).materialize_snapshot(epoch_id, generation_id)
 
 
 def next_generation_id(workspace_root: Path, epoch_id: str) -> str:
-    from zicato.epoch.genstore import default_generation_store
-
+    generations_root = WorkspaceLayout.from_root(workspace_root).generations_dir(epoch_id)
+    generation_ids = (
+        [path.name for path in generations_root.iterdir() if path.is_dir()]
+        if generations_root.is_dir()
+        else []
+    )
     numbers = [
         number
-        for generation_id in default_generation_store(workspace_root).list_generations(epoch_id)
+        for generation_id in generation_ids
         if (number := round_number(generation_id)) is not None
     ]
     return f"v{max(numbers, default=-1) + 1}"

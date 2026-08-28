@@ -295,6 +295,7 @@ def _bootstrap(
             {
                 "instance_id": "default",
                 "created_at": "2026-07-01T00:00:00Z",
+                "generation_source_backend": "git",
                 "adapter": adapter_block or DETERMINISTIC_ADAPTER,
                 "mutable_trees": [str(agent_dir or AGENT_DIR)],
                 **(extra_config or {}),
@@ -392,7 +393,9 @@ def test_deterministic_adapter_ok_verdict(tmp_path: Path) -> None:
     policy = (Path(report.degraded_file).name, "policy.py")
     assert policy[0] == policy[1]
     snapshot_policy = (
-        default_generation_store(workspace).snapshot_root(epoch_id, "v0") / "agent" / "policy.py"
+        default_generation_store(workspace).materialize_snapshot(epoch_id, "v0")
+        / "agent"
+        / "policy.py"
     ).read_text()
     assert "verbose-prose; omit-summary; skip-citations" in snapshot_policy
 

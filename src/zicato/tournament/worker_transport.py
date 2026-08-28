@@ -418,9 +418,14 @@ def _checkout_run_snapshot(
     try:
         store = default_generation_store(workspace_root)
         if store.has_generation(epoch_id, generation.id):
-            canonical = store.snapshot_root(epoch_id, generation.id)
+            canonical = store.materialize_snapshot(epoch_id, generation.id)
             if Path(canonical).resolve() == snapshot_root.resolve():
                 return store.checkout_ephemeral(epoch_id, generation.id, run_id)
+    except FileNotFoundError:
+        # A library caller may supply an ad-hoc generation tree without an
+        # initialized zicato workspace. Such trees are intentionally outside
+        # GenerationStore and use the copy-based fallback below.
+        pass
     except (OSError, ValueError):
         raise
     except Exception as exc:

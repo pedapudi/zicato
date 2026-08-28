@@ -179,7 +179,7 @@ def _ensure_baseline_snapshot(
         # contract the inline loop enforced.
         store.seed_generation(epoch_id, "v0", [Path(raw) for raw in raw_trees])
 
-    snapshot_root = store.snapshot_root(epoch_id, "v0")
+    snapshot_root = store.materialize_snapshot(epoch_id, "v0")
 
     # Lineage + current-generation marker so the orchestrator's
     # downstream readers see a clean baseline state.
