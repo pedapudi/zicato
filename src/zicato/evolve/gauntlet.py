@@ -8,15 +8,15 @@ import time  # noqa: F401  — kept as the ``orch.time`` clock seam (see __all__
 from collections.abc import Awaitable, Callable
 from dataclasses import replace
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from zicato.core.types import (
-    Experiment,
     Generation,
     OutcomeRecord,
     TournamentDecision,
 )
 from zicato.evolve import generation_phase
+from zicato.evolve.candidate_batch import produce_candidate_batch
 from zicato.evolve.gate import (
     _confirm_gauntlet_promotion,
     _gauntlet_decision_from_result,
@@ -25,8 +25,6 @@ from zicato.evolve.gate import (
 )
 from zicato.evolve.ingest import (
     _cache_gen_score,
-    _ingest_experiment_into_index,
-    _load_prior_experiments,
 )
 from zicato.evolve.lifecycle_services import (
     _beat,
@@ -43,12 +41,6 @@ from zicato.evolve.persist import (
 from zicato.evolve.promote_hook import fire_on_promote
 from zicato.evolve.propose_apply import (
     _maybe_run_placebo_arm_gauntlet,
-    _propose_child,
-)
-from zicato.evolve.round import (
-    build_post_apply_validator,
-    build_scratch_validator_factory,
-    check_patch_manifest_and_forbidden,
 )
 from zicato.evolve.round_context import (
     _build_calibration_summary,
@@ -63,12 +55,6 @@ from zicato.runtime.control_consumer import (
 from zicato.runtime.heartbeat import HeartbeatBeater
 from zicato.runtime.resume import ResumePlan
 from zicato.util import best_effort
-
-if TYPE_CHECKING:
-    # Annotation-only — the proposer module is imported lazily inside
-    # ``evolve_once`` (see the module docstring on lazy imports), so its
-    # exception type is referenced here purely for type annotations.
-    from zicato.proposer.proposer import ProposerError
 
 log = logging.getLogger("zicato.orchestrator")
 
@@ -190,7 +176,7 @@ async def evolve_once(
         runtime_factory,
         workspace_loader,  # noqa: PLC0415
     )
-    from zicato.epoch import load_epoch, write_experiment  # noqa: PLC0415
+    from zicato.epoch import load_epoch  # noqa: PLC0415
     from zicato.epoch.lifecycle import current_epoch_id  # noqa: PLC0415
     from zicato.mutation.enumerator import enumerate_mutations  # noqa: PLC0415
     from zicato.patterns.detectors import (  # noqa: PLC0415
@@ -200,7 +186,6 @@ async def evolve_once(
     )
     from zicato.proposer.agent import build_proposer_agent  # noqa: PLC0415
     from zicato.proposer.external import external_proposer_config  # noqa: PLC0415
-    from zicato.proposer.proposer import ProposerError  # noqa: PLC0415
     from zicato.proposer.skills import resolve_proposer_spec  # noqa: PLC0415
     from zicato.telemetry.reducer import read_loss_profile  # noqa: PLC0415
     from zicato.tournament.runner import (  # noqa: PLC0415
@@ -311,16 +296,6 @@ async def evolve_once(
     # We do nothing more here.
     if config.instance_id != instance_id:
         config = replace(config, instance_id=instance_id)
-    session = generation_phase.RoundSession(
-        workspace_root=workspace_root,
-        epoch_id=resolved_epoch_id,
-        round_index=round_index,
-        total_rounds=total_rounds,
-        instance_id=instance_id,
-        adapter=adapter,
-        config=config,
-        weights=weights,
-    )
     # Per-round token budget (WS-H): mint a FRESH ledger for this round and
     # rebind it onto the config, so every runner seam that already receives
     # the config — the full/fast board-unit schedulers, the candidate
@@ -481,7 +456,7 @@ async def evolve_once(
 
     # --- 3. Mutations ---
     mutations = enumerate_mutations(
-        generation_phase.mutable_trees(session.adapter, parent_gen.snapshot_root)
+        generation_phase.mutable_trees(adapter, parent_gen.snapshot_root)
     )
     if not mutations:
         raise RuntimeError(
@@ -655,258 +630,70 @@ async def evolve_once(
         tournament_spec,
         board_ids=[e.id for e in train_board],
     )
+    prepared = generation_phase.PreparedRound(
+        workspace_root=workspace_root,
+        workspace_config=workspace_config,
+        epoch_id=resolved_epoch_id,
+        round_index=round_index,
+        total_rounds=total_rounds,
+        instance_id=instance_id,
+        parent_generation=parent_gen,
+        adapter=adapter,
+        config=config,
+        weights=weights,
+        board=tuple(board),
+        train_board=tuple(train_board),
+        tournament_spec=tournament_spec,
+        strategy=strategy,
+        brief=brief,
+        mutations=tuple(mutations),
+        patterns=tuple(patterns),
+        loss_summary=loss_summary,
+        failure_profile=failure_profile,
+        metric_priorities=metric_priorities_block,
+        process_exemplars=process_exemplars_block,
+        genealogy=tuple(genealogy_items),
+        calibration=calibration_summary,
+        disable_drift=tuple(disable_drift),
+        judge_only=judge_only,
+        fast_mode=fast_mode,
+        max_proposer_retries=max_proposer_retries,
+        beater=beater,
+        meta_loop_emitter=meta_loop_emitter,
+        proposer_agent=proposer_agent,
+        round_log=round_log,
+        screen_candidates=screen_candidates,
+        recombine_pair=recombine_pair,
+        custom_judge_names=custom_judge_names,
+    )
     if strategy.field_size() > 1:
         from zicato.evolve.field import evolve_field_round
 
-        return await evolve_field_round(
-            screen_candidates=screen_candidates,
-            recombine_pair=recombine_pair,
-            workspace_root=workspace_root,
-            epoch_id=resolved_epoch_id,
-            tournament_spec=tournament_spec,
-            strategy=strategy,
-            parent_id=parent_id,
-            adapter=adapter,
-            board=board,
-            weights=weights,
-            brief=brief,
-            config=config,
-            mutations=mutations,
-            patterns=patterns,
-            loss_summary=loss_summary,
-            failure_profile=failure_profile,
-            metric_priorities=metric_priorities_block,
-            process_exemplars=process_exemplars_block,
-            genealogy=genealogy_items,
-            calibration=calibration_summary,
-            disable_drift=disable_drift,
-            judge_only=judge_only,
-            fast_mode=fast_mode,
-            auxiliary_call_llm=auxiliary_call_llm,
-            workspace_config=workspace_config,
-            max_proposer_retries=max_proposer_retries,
-            beater=beater,
-            round_index=round_index,
-            total_rounds=total_rounds,
-            meta_loop_emitter=meta_loop_emitter,
-            proposer_agent=proposer_agent,
-            round_log=round_log,
-        )
+        return await evolve_field_round(prepared)
 
-    # --- 6. Propose ---
-    # When resuming an interrupted round in place (runtime/resume.py), reuse
-    # the SAME generation id the prior run minted — its directory still
-    # exists, so ``generation_phase.next_generation_id`` would otherwise skip past it to a
-    # fresh vN+1 and orphan the completed loss.json units. Every other path
-    # (cold start, discarded partial, post-resume rounds) picks the next
-    # fresh id exactly as before.
-    if (
-        resume_plan is not None
-        and resume_plan.resumes_in_place
-        and resume_plan.resume_generation_id is not None
-    ):
-        next_id = resume_plan.resume_generation_id
-    else:
-        next_id = generation_phase.next_generation_id(workspace_root, resolved_epoch_id)
-    from zicato.runtime import progress_log  # noqa: PLC0415
+    # --- 6-9. Produce the gauntlet's one-candidate batch ---
+    candidate_batch = await produce_candidate_batch(prepared, 1, resume_plan=resume_plan)
+    next_id = candidate_batch.base_generation_id
+    if not candidate_batch.challengers:
+        from zicato.proposer.proposer import ProposerError  # noqa: PLC0415
 
-    _beat(
-        beater,
-        workspace_root=workspace_root,
-        progress=progress_log.PROPOSE,
-        epoch_id=resolved_epoch_id,
-        generation_id=next_id,
-        round_index=round_index,
-        phase=f"proposing:round_{round_index}:{next_id}",
-    )
-    # The mutation-applier seam: the patch set is applied here so the
-    # post-apply validator can see the real child tree. Materialised
-    # once, reused for the tournament if validation passes.
-    from zicato.epoch.genstore import default_generation_store  # noqa: PLC0415
-
-    genstore = default_generation_store(workspace_root)
-
-    # --- 6a. Post-apply validation hook ---
-    # A destructive proposer patch (one that drops imports, breaks
-    # Python syntax, or removes a ``# zicato:mutable`` marker) used to
-    # cost an entire wasted tournament round: the orchestrator applied
-    # the patch, ran the validator, and rejected with no retry. Instead
-    # we hand the proposer a validation hook so a post-apply failure is
-    # a *retryable* feedback class — the proposer re-proposes with the
-    # concrete validator strings in its prompt, within the same bounded
-    # ``max_proposer_retries`` budget the parse-error retries already
-    # share, so the per-run wall-clock budget is still honoured.
-    #
-    # The hook applies the candidate patch set into the child snapshot
-    # and runs :func:`validate_post_apply`. ``last_child_snapshot``
-    # captures the child tree of the last attempt — when the proposer
-    # returns successfully it is the validated tree the tournament
-    # mounts; no second apply is needed. The hook itself is the shared
-    # ``build_post_apply_validator`` (``zicato.evolve.round``) the field
-    # path also uses — the previously-inlined closure was byte-identical.
-    last_child_snapshot: dict[str, Path] = {}
-    _validate_experiment_post_apply = build_post_apply_validator(
-        genstore=genstore,
-        epoch_id=resolved_epoch_id,
-        parent_id=parent_id,
-        next_id=next_id,
-        mutations=mutations,
-        beater=beater,
-        round_index=round_index,
-        last_child_snapshot=last_child_snapshot,
-    )
-    # WS-CONC: the per-slot scratch-validator factory — each best-of-N slate
-    # slot leases a FRESH disjoint scratch tree from this so the samples can
-    # gather without racing on the shared ``next_id`` derive above. Threaded
-    # onto the ProposerContext; the shared validator above still does the ONE
-    # canonical ``next_id`` derive for the chosen candidate after selection.
-    _scratch_validator_factory = build_scratch_validator_factory(
-        genstore=genstore,
-        epoch_id=resolved_epoch_id,
-        parent_id=parent_id,
-        next_id=next_id,
-        mutations=mutations,
-        beater=beater,
-        round_index=round_index,
-    )
-
-    # Experiment memory: the settled cross-round digest for this epoch.
-    # Best-effort — a missing / stale index yields an empty list and the
-    # proposer simply runs without the ``## What's already been tried``
-    # section. The gauntlet field is a single challenger, so there are no
-    # in-flight siblings to concatenate here.
-    prior = _load_prior_experiments(
-        workspace_root,
-        resolved_epoch_id,
-        cross_epoch=weights.experiment_memory.cross_epoch,
-    )
-
-    proposer_validation_failed: ProposerError | None = None
-    # --- 6r. Conservative crash-resume short-circuit (gauntlet path) ---
-    # When the prior evolve was interrupted mid-tournament on THIS exact
-    # generation, runtime/resume.py validated that the persisted
-    # experiment + patches + snapshot are self-consistent and at least one
-    # board unit completed. Reuse the persisted experiment verbatim rather
-    # than re-proposing (the proposer is non-deterministic — a fresh
-    # proposal would invalidate the on-disk loss.json cache). We still run
-    # the SAME validate/derive hook once, so the snapshot is re-derived
-    # from those same patches (idempotent) before the tournament; the unit
-    # cache then HITs every entry that already has a loss.json. ``None``
-    # (the common cold-start case) leaves the propose path untouched.
-    resumed_experiment: Experiment | None = None
-    if (
-        resume_plan is not None
-        and resume_plan.resumes_in_place
-        and resume_plan.resume_generation_id == next_id
-        and resume_plan.resume_experiment is not None
-    ):
-        candidate = replace(resume_plan.resume_experiment, round_index=round_index)
-        # Re-derive the child snapshot from the persisted patches so the
-        # tournament mounts the same tree the interrupted run scored. The
-        # hook clears any stale child tree and re-applies all-or-nothing.
-        resume_errors = await _validate_experiment_post_apply(candidate)
-        if resume_errors:
-            # The persisted patches no longer re-derive cleanly (e.g. the
-            # parent tree changed underneath them). Fall back to the
-            # conservative default: re-propose fresh, exactly as a cold
-            # start would — never score against a tree we cannot rebuild.
-            log.warning(
-                "resume: persisted patches for %s failed re-validation (%s); "
-                "discarding and re-proposing fresh",
-                next_id,
-                "; ".join(resume_errors),
-            )
-        else:
-            log.info("resume: reusing persisted experiment for %s (no re-propose)", next_id)
-            resumed_experiment = candidate
-
-    if resumed_experiment is not None:
-        # Skip the proposer entirely; the validate/derive hook above
-        # already populated ``last_child_snapshot``. Fall through to the
-        # shared step-7+ path below with the persisted experiment.
-        experiment = resumed_experiment
-    else:
-        try:
-            experiment = await _propose_child(
-                proposer_agent=proposer_agent,
-                epoch_id=resolved_epoch_id,
-                parent_id=parent_id,
-                next_id=next_id,
-                generation_root=genstore.snapshot_root(resolved_epoch_id, parent_id),
-                patterns=patterns,
-                mutations=mutations,
-                brief=brief,
-                loss_summary=loss_summary,
-                auxiliary_call_llm=config.effective_proposer_call_llm(),
-                auxiliary_model=(
-                    config.proposer_model or str(workspace_config.get("auxiliary_model", ""))
-                ),
-                max_proposer_retries=max_proposer_retries,
-                workspace_root=workspace_root,
-                validate_experiment=_validate_experiment_post_apply,
-                meta_loop_emitter=meta_loop_emitter,
-                custom_judge_names=custom_judge_names,
-                prior_experiments=tuple(prior),
-                restrict_visibility=weights.overfitting.restrict_proposer_visibility,
-                failure_profile=failure_profile,
-                metric_priorities=metric_priorities_block,
-                process_exemplars=process_exemplars_block,
-                genealogy=genealogy_items,
-                calibration=calibration_summary,
-                round_index=round_index,
-                round_emitter=round_log,
-                screen_candidates=screen_candidates,
-                recombine_pair=recombine_pair,
-                scratch_validator_factory=_scratch_validator_factory,
-            )
-        except ProposerError as exc:
-            # The proposer exhausted its bounded retries without producing
-            # a patch set that survives post-apply validation (or parsing).
-            # Fall through to the rejected-outcome path rather than crashing
-            # the round — the round still produces a clean ``rejected``
-            # journal entry, and the loop continues.
-            proposer_validation_failed = exc
-            experiment = None
-
-    # --- 7. Validate patch set against the manifest ---
-    if experiment is not None:
-        check_patch_manifest_and_forbidden(experiment, mutations, brief.forbidden_ids)
-
-    # --- 8 + 9. Apply + post-apply validation ---
-    # The proposer's validation hook already applied the (final,
-    # validated) patch set and ran :func:`validate_post_apply`. When the
-    # proposer exhausted its bounded retries without producing a patch
-    # set that survives post-apply validation, ``proposer_validation_failed``
-    # carries the accumulated per-attempt errors and there is no
-    # surviving experiment to score — record a rejection so a
-    # destructive-proposer round still leaves a clean, append-only
-    # journal entry instead of crashing the loop.
-    if proposer_validation_failed is not None:
+        rejection = candidate_batch.rejections[0]
+        error = rejection.proposer_error
+        assert isinstance(error, ProposerError)
         experiment = _rejected_proposer_experiment(
-            resolved_epoch_id, parent_id, next_id, proposer_validation_failed
+            resolved_epoch_id,
+            parent_id,
+            next_id,
+            error,
         )
-        validation_errors = list(proposer_validation_failed.attempts)
-        child_snapshot = last_child_snapshot.get(
-            "path", generation_phase.snapshot_root(workspace_root, resolved_epoch_id, next_id)
-        )
-    else:
-        assert experiment is not None  # narrowed: no ProposerError above
-        # The hook stores the validated child tree; it always runs at
-        # least once before a successful return.
-        child_snapshot = last_child_snapshot["path"]
-        validation_errors = []
-
-    # --- 9. Act on validation outcome ---
-    if validation_errors:
-        assert experiment is not None  # narrowed: rejected placeholder above
         return await _persist_rejected_round(
             workspace_root=workspace_root,
             epoch_id=resolved_epoch_id,
             parent_id=parent_id,
             next_id=next_id,
             experiment=experiment,
-            validation_errors=validation_errors,
-            proposer_retries_exhausted=proposer_validation_failed is not None,
+            validation_errors=list(error.attempts),
+            proposer_retries_exhausted=True,
             board=board,
             round_index=round_index,
             auxiliary_call_llm=auxiliary_call_llm,
@@ -915,12 +702,15 @@ async def evolve_once(
             round_log=round_log,
         )
 
+    challenger = candidate_batch.challengers[0]
+    experiment = challenger.experiment
+    child_snapshot = challenger.snapshot_root
+    child_gen = challenger.generation
+    resumed_experiment = experiment if next_id in candidate_batch.resumed_generation_ids else None
+
     # --- 10. Run the tournament ---
-    write_experiment(workspace_root, resolved_epoch_id, next_id, experiment)
-    # Live index dual-write: the proposer-side experiment.json (outcome
-    # still None) is on disk — fold it in so the index reflects the
-    # in-progress generation before the tournament finishes.
-    _ingest_experiment_into_index(workspace_root, resolved_epoch_id, next_id)
+    from zicato.runtime import progress_log  # noqa: PLC0415
+
     _beat(
         beater,
         workspace_root=workspace_root,
@@ -931,14 +721,6 @@ async def evolve_once(
         phase=f"tournament:round_{round_index}:{next_id}",
     )
 
-    child_gen = Generation(
-        id=next_id,
-        epoch_id=resolved_epoch_id,
-        parent_id=parent_id,
-        snapshot_root=child_snapshot,
-        created_at=_now_iso(),
-        round_index=round_index,
-    )
     # Fast mode reuses the parent/champion's cached aggregate instead of
     # re-running it every round. The very first round of a fresh epoch
     # has no cache yet, so fast mode degrades to a single full A/B

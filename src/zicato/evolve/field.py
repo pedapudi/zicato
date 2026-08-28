@@ -6,18 +6,16 @@ from __future__ import annotations
 import asyncio
 import logging
 import time  # noqa: F401  — kept as the ``orch.time`` clock seam (see __all__)
-from collections.abc import Awaitable, Callable
-from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from zicato.core.types import (
     Experiment,
     Generation,
     OutcomeRecord,
-    PriorExperiment,
     TournamentDecision,
 )
 from zicato.evolve import generation_phase
+from zicato.evolve.candidate_batch import produce_candidate_batch
 from zicato.evolve.dashboard_projection import (
     _clear_active_tournament,
     _field_entries,
@@ -37,11 +35,7 @@ from zicato.evolve.gate import (
     _registered_mutable_trees,
     _resolve_round_champion_mode,
 )
-from zicato.evolve.ingest import (
-    _cache_gen_score,
-    _ingest_experiment_into_index,
-    _load_prior_experiments,
-)
+from zicato.evolve.ingest import _cache_gen_score
 from zicato.evolve.lifecycle_services import (
     _beat,
     _now_iso,
@@ -55,39 +49,24 @@ from zicato.evolve.placebo import is_placebo_experiment
 from zicato.evolve.promote_hook import fire_on_promote
 from zicato.evolve.propose_apply import (
     _AppliedChallenger,
-    _diversity_signature,
-    _mint_challenger_field,
     _mint_placebo_challenger,
     _propose_and_apply_challenger,
     _trim_reason,
-)
-from zicato.evolve.round_context import (
-    _recombine_pair_for_slot,
 )
 from zicato.runtime.control_consumer import (
     GateOverride,
     claim_field_gate_overrides,
 )
-from zicato.runtime.heartbeat import HeartbeatBeater
 from zicato.util import best_effort
 
-if TYPE_CHECKING:
-    # Annotation-only — the proposer module is imported lazily inside
-    # ``evolve_once`` (see the module docstring on lazy imports), so its
-    # exception type is referenced here purely for type annotations.
-    from zicato.proposer.agent import ProposerAgent
-    from zicato.proposer.best_of_n import ScreenRunner
-
 log = logging.getLogger("zicato.orchestrator")
-
-CallLLM = Callable[[str, str, str], Awaitable[str]]
 
 from zicato.evolve.decision_support import (
     _field_failure_summary,
     _generalization_fields_from_scalars,
     _token_clip_state,
 )
-from zicato.evolve.round_api import EvolveRoundOutcome, _declared_custom_judge_names
+from zicato.evolve.round_api import EvolveRoundOutcome
 from zicato.evolve.round_reporting import (
     _emit_gate_evaluated,
     _emit_harness_loaded,
@@ -97,39 +76,7 @@ from zicato.evolve.round_reporting import (
 
 
 async def evolve_field_round(
-    *,
-    workspace_root: Path,
-    epoch_id: str,
-    tournament_spec: Any,
-    strategy: Any,
-    parent_id: str,
-    adapter: Any,
-    board: list[Any],
-    weights: Any,
-    brief: Any,
-    config: Any,
-    mutations: list[Any],
-    patterns: list[Any],
-    loss_summary: str,
-    failure_profile: str,
-    metric_priorities: str,
-    process_exemplars: str,
-    genealogy: tuple[Any, ...] = (),
-    calibration: Any = None,
-    disable_drift: tuple[Any, ...],
-    judge_only: bool,
-    fast_mode: bool,
-    auxiliary_call_llm: CallLLM,
-    workspace_config: Any,
-    max_proposer_retries: int,
-    beater: HeartbeatBeater | None,
-    round_index: int,
-    total_rounds: int,
-    meta_loop_emitter: Any,
-    proposer_agent: ProposerAgent,
-    round_log: _RoundLogEmitter | None = None,
-    screen_candidates: ScreenRunner | None = None,
-    recombine_pair: Any = None,
+    prepared: generation_phase.PreparedRound,
 ) -> EvolveRoundOutcome:
     """Run ONE evolve round under a non-gauntlet tournament structure.
 
@@ -155,12 +102,10 @@ async def evolve_field_round(
     RECORDED in the journal for provenance (it is never a contract
     input, so flipping fast↔full does not roll the epoch).
     """
-    from zicato.board.split import rotation_seed, split_board  # noqa: PLC0415
     from zicato.core.types import MatchOutcome  # noqa: PLC0415
     from zicato.epoch import (  # noqa: PLC0415
         append_journal_entry,
         append_to_lineage,
-        update_experiment_outcome,
     )
     from zicato.selection import EvidencePreGate, resolve_tournament  # noqa: PLC0415
     from zicato.selection.dead_letter import (  # noqa: PLC0415
@@ -181,94 +126,46 @@ async def evolve_field_round(
     )
     from zicato.tournament.runner import confirm_crowning_holdout, run_matchup  # noqa: PLC0415
 
-    auxiliary_call_llm = config.effective_proposer_call_llm()
+    workspace_root = prepared.workspace_root
+    workspace_config = prepared.workspace_config
+    epoch_id = prepared.epoch_id
+    round_index = prepared.round_index
+    total_rounds = prepared.total_rounds
+    parent_id = prepared.parent_generation.id
+    adapter = prepared.adapter
+    config = prepared.config
+    weights = prepared.weights
+    board = list(prepared.board)
+    train_board = list(prepared.train_board)
+    tournament_spec = prepared.tournament_spec
+    strategy = prepared.strategy
+    mutations = list(prepared.mutations)
+    disable_drift = prepared.disable_drift
+    judge_only = prepared.judge_only
+    fast_mode = prepared.fast_mode
+    beater = prepared.beater
+    meta_loop_emitter = prepared.meta_loop_emitter
+    auxiliary_call_llm = config.auxiliary_call_llm
     auxiliary_model = config.proposer_model or str(workspace_config.get("auxiliary_model", ""))
     field_n = strategy.field_size()
     # WS8: a direct caller (tests) may not thread the opened emitter; bind
     # one so every emit below is uniformly best-effort. ``evolve_once`` (the
     # production caller) passes the emitter it already opened the round on.
-    if round_log is None:
-        round_log = _RoundLogEmitter(workspace_root, epoch_id, round_index)
+    round_log = prepared.round_log or _RoundLogEmitter(workspace_root, epoch_id, round_index)
 
-    # TRAIN/HOLDOUT split (OVERFITTING.md §3/§4). The structure's internal
-    # matchups (swiss rounds, elim nodes, racing rungs) — INCLUDING the final
-    # champion-gate duel that decides promotion — score on the TRAIN slice
-    # only, so the holdout is never consumed to *pick* the leader (mirrors the
-    # gauntlet, which selects on train). The full board is retained for the
-    # one Ladder-mediated holdout confirmation run after resolution. When the
-    # holdout is empty (small board / split disabled / no tagged entry) the
-    # train slice IS the full board, so every matchup runs on the full board
-    # and the whole path is byte-identical to today's whole-board behaviour.
-    _train_seed = rotation_seed(weights.overfitting, epoch_id)
-    _train_ids, _holdout_ids = split_board(board, weights.overfitting, seed=_train_seed)
-    _train_id_set = set(_train_ids)
-    train_board = [e for e in board if e.id in _train_id_set]
-
-    # --- Propose + apply the N-challenger field. Ids are minted in
-    # sequence so each challenger is a distinct vN child of the champion;
-    # a proposer that fails for one challenger simply narrows the field.
-    applied: list[_AppliedChallenger] = []
-    # Per-challenger proposing-step outcomes (applied vs rejected + reason),
-    # collected in mint order so the dashboard's proposing-step tracker can
-    # render the field forming live and post-hoc. Persisted onto the live
-    # ActiveTournament envelope (publish + settle) as ``field_status``.
-    field_status: list[dict[str, Any]] = []
-    # Mint ids monotonically from the highest existing vN so every
-    # challenger gets a distinct id even when a proposer attempt fails
-    # before it derives a snapshot (so generation_phase.next_generation_id can't re-pick
-    # the same vN). The first id matches what the gauntlet path would mint.
-    base_id = generation_phase.next_generation_id(workspace_root, epoch_id)
-    base_n = generation_phase.round_number(base_id)
-    custom_judge_names = _declared_custom_judge_names(board, weights)
-    # Experiment memory: the settled cross-round digest, computed ONCE
-    # before the field is minted (it does not change as siblings apply).
-    # ``siblings`` accumulates an in-flight ``PriorExperiment`` per
-    # successfully-applied challenger so challenger k sees the hypotheses
-    # of challengers 0..k-1 this round and can diversify away from them; a
-    # challenger whose proposer failed contributes no sibling.
-    prior = tuple(
-        _load_prior_experiments(
-            workspace_root,
-            epoch_id,
-            cross_epoch=weights.experiment_memory.cross_epoch,
-        )
-    )
-    siblings: list[PriorExperiment] = []
-    # Field-diversity constraint (FUNCTIONALITY-RECOMMENDATIONS.md §4.3): the
-    # signatures of the siblings already minted this round, so a later
-    # challenger that duplicates one (same modulating id-set + core idea) is
-    # soft-rejected instead of collapsing the field (EXPERIMENT-MEMORY.md
-    # §2.2). Localized to this loop; no change to the SelectionStrategy.
-    sibling_signatures: list[tuple[frozenset[str], str]] = []
-    # Opt-in field-diversity OVERLAP enforcement (FUNCTIONALITY-
-    # RECOMMENDATIONS.md §4.3): when ``config.diversity_tolerance`` is set, a
-    # challenger whose targeted-mutation-id set overlaps an already-ACCEPTED
-    # sibling's by a Jaccard ratio strictly greater than the tolerance is
-    # soft-rejected (it would collapse a field of N into fewer real
-    # experiments). ``accepted_mutation_sets`` tracks the mutation-id set of
-    # each kept challenger in mint order so the overlap is measured against
-    # exactly the slate that will actually run. ``None`` ⇒ enforcement OFF,
-    # and every field-status record below stays byte-identical to today (no
-    # ``diversity_status`` key is emitted). Enforcement composes with — and
-    # runs AFTER — the exact-duplicate soft-reject above.
-    diversity_tolerance = getattr(config, "diversity_tolerance", None)
-    accepted_mutation_sets: list[frozenset[str]] = []
-    diversity_soft_rejected = 0
-    # The LIVE field-status map, keyed by generation_id, rewritten as each
-    # challenger slot enters ("proposing"), retries, and settles
-    # ("applied"/"rejected"). The orchestrator publishes a "proposing"-phase
-    # ActiveTournament envelope on every status transition so the dashboard's
-    # proposing tracker updates as each challenger is attempted — not only
-    # after the whole field is minted. (OBSERVABILITY: the operator's "most
-    # of what happens during proposal phase is opaque" pain.)
+    # Publish the candidate batch while it forms so the dashboard can show
+    # each slot before the tournament starts.
     live_status: dict[str, dict[str, Any]] = {}
-    proposing_tournament_id = f"tourn_{epoch_id}_{base_id}"
+    proposing_tournament_id = ""
 
     from zicato.runtime.state import TournamentPhase  # noqa: PLC0415
 
     def _publish_proposing(record: dict[str, Any]) -> None:
-        live_status[str(record.get("generation_id", ""))] = dict(record)
-        ordered = list(live_status.values())
+        nonlocal proposing_tournament_id
+        generation_id = str(record.get("generation_id", ""))
+        if not proposing_tournament_id:
+            proposing_tournament_id = f"tourn_{epoch_id}_{generation_id}"
+        live_status[generation_id] = dict(record)
         champion_only = [{"generation_id": parent_id, "seed": 1, "role": "champion"}]
         _publish_active_tournament(
             workspace_root,
@@ -279,214 +176,22 @@ async def evolve_field_round(
             competitors=champion_only,
             round_index=round_index,
             total_rounds=total_rounds,
-            field_status=ordered,
+            field_status=list(live_status.values()),
             phase=TournamentPhase.PROPOSING,
             entries=_field_entries(champion_only),
         )
 
-    def _persist_soft_reject(generation_id: str, reason: str, detail: str = "") -> None:
-        # A field-diversity soft-reject drops the challenger from the run slate
-        # during proposing. Persist a terminal REJECTED outcome onto its
-        # ``experiment.json`` (written at proposal with ``outcome=None``) so the
-        # canonical generation record — and the round-grouped lineage tree that
-        # reads it — show "rejected" consistently with the live proposed-field
-        # hero, instead of a stale "pending". The ``detail`` (the overlap ratio +
-        # the peer sibling + the tolerance, or the duplicate explanation) is
-        # folded into ``rejection_reason`` so the candidate documents WHY it was
-        # cut — not just the bare "field_diversity_overlap" code. Mirrors the
-        # validator path's ``"<code>: <explanation>"`` reason shape. Best-effort:
-        # a missing / locked record must never abort proposing the rest of field.
-        full_reason = f"{reason}: {detail}" if detail else reason
-        with best_effort(f"persist soft-reject outcome for {generation_id}"):
-            update_experiment_outcome(
-                workspace_root,
-                epoch_id,
-                generation_id,
-                OutcomeRecord(
-                    ran_at=_now_iso(),
-                    drift_movements=(),
-                    pass_rate_delta=0.0,
-                    drift_loss_delta=0.0,
-                    scalar_score_delta=0.0,
-                    tournament_decision=TournamentDecision.REJECTED,
-                    rejection_reason=full_reason,
-                ),
-            )
-            _ingest_experiment_into_index(workspace_root, epoch_id, generation_id)
-
-    for offset in range(field_n):
-        next_id = f"v{base_n + offset}" if base_n is not None else base_id
-        # Seed mirrors competitors_meta: champion is seed 1, challengers
-        # follow in mint order (seed 2, 3, …) regardless of apply outcome.
-        challenger, status = await _propose_and_apply_challenger(
-            workspace_root=workspace_root,
-            epoch_id=epoch_id,
-            parent_id=parent_id,
-            next_id=next_id,
-            mutations=mutations,
-            patterns=patterns,
-            brief=brief,
-            loss_summary=loss_summary,
-            auxiliary_call_llm=auxiliary_call_llm,
-            auxiliary_model=auxiliary_model,
-            max_proposer_retries=max_proposer_retries,
-            beater=beater,
-            round_index=round_index,
-            meta_loop_emitter=meta_loop_emitter,
-            seed=offset + 2,
-            custom_judge_names=custom_judge_names,
-            prior_experiments=prior + tuple(siblings),
-            proposer_agent=proposer_agent,
-            restrict_visibility=weights.overfitting.restrict_proposer_visibility,
-            failure_profile=failure_profile,
-            metric_priorities=metric_priorities,
-            process_exemplars=process_exemplars,
-            genealogy=genealogy,
-            calibration=calibration,
-            on_status=_publish_proposing,
-            round_emitter=round_log,
-            screen_candidates=screen_candidates,
-            recombine_pair=_recombine_pair_for_slot(recombine_pair, offset),
-        )
-        # Field-diversity DECISION (pure — `_mint_challenger_field`): accept
-        # the challenger into the run slate, or soft-reject it as an exact
-        # duplicate of an in-flight sibling / an over-tolerance overlap with
-        # an accepted sibling. The persistence + publish I/O for a rejected
-        # slot stays here, separated from the decision.
-        mint = (
-            _mint_challenger_field(
-                challenger.experiment,
-                sibling_signatures,
-                accepted_mutation_sets,
-                diversity_tolerance,
-            )
-            if challenger is not None
-            else None
-        )
-        if challenger is not None and mint is not None and mint.action == "reject_duplicate":
-            # Field-diversity soft-reject: this challenger duplicates an
-            # already-minted sibling (same modulating id-set + core idea), so
-            # it would collapse the field. Drop it from the run slate and
-            # record a legible rejected field-status — the SelectionStrategy
-            # still resolves over the distinct challengers that remain.
-            hyp = challenger.experiment.hypothesis
-            dup_status = {
-                "generation_id": challenger.generation_id,
-                "status": "rejected",
-                "reason": "field_diversity_duplicate",
-                "attempts": int(status.get("attempts", 0)) if isinstance(status, dict) else 0,
-                "attempt_reasons": [
-                    "duplicates an in-flight sibling (same modulating ids + core idea); "
-                    "soft-rejected to keep the field diverse"
-                ],
-                "hypothesis": _trim_reason(hyp.core_idea),
-                "seed": offset + 2,
-            }
-            # The per-slot diversity status is only stamped when overlap
-            # enforcement is active, so the default-off path's duplicate record
-            # is byte-identical to today.
-            if diversity_tolerance is not None:
-                dup_status["diversity_status"] = "soft_rejected"
-                dup_status["diversity_tolerance"] = diversity_tolerance
-                diversity_soft_rejected += 1
-            field_status.append(dup_status)
-            _publish_proposing(dup_status)
-            log.info(
-                "multi-challenger field: %s/%s duplicates an in-flight sibling "
-                "(modulating=%s); soft-rejected for field diversity",
-                epoch_id,
-                challenger.generation_id,
-                tuple(hyp.modulating),
-            )
-            _persist_soft_reject(
-                challenger.generation_id,
-                "field_diversity_duplicate",
-                "duplicates an in-flight sibling (same mutation ids + core idea)",
-            )
-            continue
-        # Opt-in overlap soft-reject: when a tolerance is configured, drop a
-        # challenger whose mutation-id set overlaps an accepted sibling beyond
-        # the ceiling. Skipped entirely (no key emitted) when tolerance is
-        # None, so the default path is byte-identical.
-        if challenger is not None and mint is not None and mint.action == "reject_overlap":
-            overlap, peer_idx = mint.overlap, mint.overlap_peer_index
-            assert diversity_tolerance is not None  # narrowed: overlap fires only with a tolerance
-            hyp = challenger.experiment.hypothesis
-            peer_gid = applied[peer_idx].generation_id if 0 <= peer_idx < len(applied) else ""
-            overlap_status = {
-                "generation_id": challenger.generation_id,
-                "status": "rejected",
-                "reason": "field_diversity_overlap",
-                "diversity_status": "soft_rejected",
-                "attempts": (int(status.get("attempts", 0)) if isinstance(status, dict) else 0),
-                "attempt_reasons": [
-                    f"mutation-id overlap {overlap:.3f} with sibling "
-                    f"{peer_gid or '(accepted)'} exceeds diversity_tolerance "
-                    f"{diversity_tolerance:.3f}; soft-rejected to keep the field diverse"
-                ],
-                "hypothesis": _trim_reason(hyp.core_idea),
-                "seed": offset + 2,
-                "overlap": round(overlap, 6),
-                "overlap_peer": peer_gid,
-                "diversity_tolerance": diversity_tolerance,
-            }
-            field_status.append(overlap_status)
-            _publish_proposing(overlap_status)
-            diversity_soft_rejected += 1
-            log.info(
-                "multi-challenger field: %s/%s overlaps sibling %s by %.3f "
-                "(> tolerance %.3f); soft-rejected for field diversity",
-                epoch_id,
-                challenger.generation_id,
-                peer_gid,
-                overlap,
-                diversity_tolerance,
-            )
-            _persist_soft_reject(
-                challenger.generation_id,
-                "field_diversity_overlap",
-                f"overlap {overlap:.3f} with sibling {peer_gid or '(accepted)'} "
-                f"exceeds diversity_tolerance {diversity_tolerance:.3f}",
-            )
-            continue
-        if challenger is not None and diversity_tolerance is not None and isinstance(status, dict):
-            # Enforcement active and the challenger is kept: stamp the slot
-            # ``applied`` so the per-slot diversity status is explicit. Only
-            # written when a tolerance is configured, so the default path's
-            # field-status records are untouched.
-            status = {
-                **status,
-                "diversity_status": "applied",
-                "diversity_tolerance": diversity_tolerance,
-            }
-        field_status.append(status)
-        if challenger is not None:
-            applied.append(challenger)
-            accepted_mutation_sets.append(frozenset(challenger.experiment.hypothesis.modulating))
-            hyp = challenger.experiment.hypothesis
-            siblings.append(
-                PriorExperiment(
-                    generation_id=challenger.generation_id,
-                    epoch_id=epoch_id,
-                    core_idea=hyp.core_idea,
-                    modulating=tuple(hyp.modulating),
-                    decision="in_flight",
-                    rejection_reason="",
-                    scalar_score_delta=None,
-                    same_contract=True,
-                )
-            )
-            sibling_signatures.append(_diversity_signature(challenger.experiment))
-
-    if diversity_tolerance is not None and diversity_soft_rejected:
-        log.info(
-            "multi-challenger field: %s soft-rejected %d challenger(s) for "
-            "field-diversity overlap (tolerance %.3f); %d kept",
-            epoch_id,
-            diversity_soft_rejected,
-            diversity_tolerance,
-            len(applied),
-        )
+    candidate_batch = await produce_candidate_batch(
+        prepared,
+        field_n,
+        on_status=_publish_proposing,
+        # Preserve the public monkeypatch anchor used by integration tests.
+        produce_one=_propose_and_apply_challenger,
+    )
+    applied = list(candidate_batch.challengers)
+    field_status = list(candidate_batch.field_status)
+    base_id = candidate_batch.base_generation_id
+    base_n = generation_phase.round_number(base_id)
 
     if not applied:
         # The whole field failed to apply — nothing to run. Record a

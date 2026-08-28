@@ -113,15 +113,13 @@ def _build_candidate_screen_runner(
 
 
 def _recombine_pair_for_slot(recombine_pair: Any, offset: int) -> Any:
-    """The field path's SLOT-0-ONLY rule for the recombination pair. Pure.
+    """Thread one round's recombination pair onto its first candidate only.
 
-    On a multi-challenger field the round's single recombination pair
-    rides the FIRST slot only: every field slot minting the IDENTICAL
+    Every batch gives the pair to its first slot. On a multi-challenger
+    field, letting every slot mint the identical
     union would collapse the extra slots into field-diversity soft-rejects
-    (an exact-duplicate challenger is cut from the run slate) — one mint
-    per round, the rest of the field explores normally. The gauntlet path
-    (one propose per round) threads the pair directly and never calls
-    this.
+    because an exact duplicate is cut from the run slate. A one-candidate
+    gauntlet naturally gives the pair to its only slot.
     """
     return recombine_pair if offset == 0 else None
 
