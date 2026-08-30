@@ -54,6 +54,9 @@ def _advanced_groups() -> tuple[click.Group, ...]:
         reindex_generations_cmd,
         repair_tournament_fk_cmd,
     )
+    from zicato.cli.commands.repair_generation_source_backend import (
+        repair_generation_source_backend_cmd,
+    )
     from zicato.cli.commands.repair_judge_losses import repair_judge_losses_cmd
     from zicato.cli.commands.repair_v0_baseline import repair_v0_baseline_cmd
     from zicato.cli.commands.tournament import tournament_cmd
@@ -90,6 +93,7 @@ def _advanced_groups() -> tuple[click.Group, ...]:
                 "epoch-goals": repair_epoch_goals_cmd,
                 "judge-losses": repair_judge_losses_cmd,
                 "v0-baseline": repair_v0_baseline_cmd,
+                "generation-source-backend": repair_generation_source_backend_cmd,
                 "report": regenerate_report_cmd,
             },
         ),

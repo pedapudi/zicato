@@ -44,15 +44,19 @@ Backends
 * :class:`DirectoryGenerationStore` — the directory-snapshot backend,
   selected by ``generation_source_backend: "directory"``. A generation is a
   ``generations/{id}/snapshot/`` directory; deriving a child is a
-  ``copytree`` of the parent plus an all-or-nothing patch apply. This IS
-  the pre-seam directory-snapshot mechanism, byte-for-byte. It remains a
+  ``copytree`` of the parent plus an all-or-nothing patch apply. It is a
   fully supported, config-selectable backend for environments where a
-  private git repo is unwanted; the git default simply removes the copy
-  cost for the common case.
+  private git repo is unwanted; the git backend removes the copy cost for
+  the common case.
 
 Every initialized workspace records ``generation_source_backend`` explicitly.
 :func:`resolve_generation_store_backend` validates that field and never infers
-the answer from repositories, generation records, or snapshot directories.
+the answer from repositories, generation records, or snapshot directories. It
+is still checked against them: a knob naming a backend whose source data is
+absent while the other backend's is present raises at store construction
+(:func:`assert_generation_source_backend_matches_disk`), because a store on the
+wrong backend does not fail — it reads the workspace as empty, and every reader
+downstream renders that as "this generation has no source tree".
 """
 
 from __future__ import annotations
@@ -509,10 +513,9 @@ class DirectoryGenerationStore:
     (via :func:`zicato.mutation.applier.apply_patches`, whose
     deterministic pre-validation already makes the apply atomic).
 
-    This backend is the pre-seam mechanism the orchestrator used
-    directly — the same paths, the same ``copytree``, and the same
-    applier. The seam lets callers use it interchangeably with the git
-    backend without changing its on-disk representation.
+    The seam lets callers use this backend interchangeably with the git
+    backend: both answer the same protocol, and neither backend's on-disk
+    representation leaks into a caller.
 
     The store is rooted at a workspace directory (the ``.zicato/``
     directory) and computes every path under it via
@@ -538,8 +541,8 @@ class DirectoryGenerationStore:
         """Return ``generations/{generation_id}/snapshot/`` for the coordinate.
 
         Pure path math — no I/O, no assertion that the generation
-        exists. Mirrors the orchestrator's pre-seam ``_snapshot_root``
-        helper exactly.
+        exists. :meth:`materialize_snapshot` is the I/O-performing
+        counterpart; this one never touches disk.
         """
         return generation_dir(self._workspace_root, epoch_id, generation_id) / "snapshot"
 
@@ -711,11 +714,6 @@ class DirectoryGenerationStore:
         a copy per run is cheap.
         """
         source = self.materialize_snapshot(epoch_id, generation_id)
-        if not source.is_dir():
-            raise FileNotFoundError(
-                f"checkout_ephemeral: generation {epoch_id}/{generation_id} "
-                f"has no source tree at {source}"
-            )
         return copy_checkout_ephemeral(source, run_id)
 
     # ------------------------------------------------------------------
@@ -732,10 +730,6 @@ class DirectoryGenerationStore:
         root and the result is sorted for a deterministic render.
         """
         root = self.materialize_snapshot(epoch_id, generation_id)
-        if not root.is_dir():
-            raise FileNotFoundError(
-                f"list_tree: generation {epoch_id}/{generation_id} has no source tree at {root}"
-            )
         entries: list[TreeEntry] = []
         for path in sorted(root.rglob("*")):
             rel = path.relative_to(root)
@@ -759,10 +753,6 @@ class DirectoryGenerationStore:
         must sit under the snapshot root.
         """
         root = self.materialize_snapshot(epoch_id, generation_id)
-        if not root.is_dir():
-            raise FileNotFoundError(
-                f"read_file: generation {epoch_id}/{generation_id} has no source tree at {root}"
-            )
         target = (root / rel_path).resolve()
         root_resolved = root.resolve()
         if target != root_resolved and root_resolved not in target.parents:
@@ -838,6 +828,100 @@ GIT_WORKTREES_DIRNAME = "repo-worktrees"
 SNAPSHOT_DIRNAME = "snapshot"
 
 
+#: The command that writes :data:`GENERATION_SOURCE_BACKEND_KEY` onto an
+#: existing workspace. Named in every resolver error so an operator whose
+#: workspace predates the key — or disagrees with it — has one safe next
+#: move. Deliberately NOT ``zicato init --force``: that rebuilds
+#: ``config.json`` from scratch and resets ``lineage.json``, which would
+#: trade a missing key for a lost lineage.
+GENERATION_SOURCE_BACKEND_COMMAND = "zicato repair generation-source-backend"
+
+
+def _children(path: Path) -> Iterable[Path]:
+    """Iterate ``path``'s subdirectories, yielding nothing when it is not one."""
+    if not path.is_dir():
+        return ()
+    return (child for child in path.iterdir() if child.is_dir())
+
+
+def _has_git_source_store(workspace_root: Path) -> bool:
+    """Return ``True`` iff the workspace holds the git backend's repository."""
+    return (Path(workspace_root) / GIT_REPO_DIRNAME / ".git").exists()
+
+
+def _has_directory_source_store(workspace_root: Path) -> bool:
+    """Return ``True`` iff any generation holds a ``snapshot/`` source tree.
+
+    ``generations/{id}/snapshot/`` is written by
+    :class:`DirectoryGenerationStore` and by nothing else, so its presence
+    names the backend that produced the tree outright.
+    """
+    epochs_root = Path(workspace_root) / "epochs"
+    return any(
+        (generation / SNAPSHOT_DIRNAME).is_dir()
+        for epoch in _children(epochs_root)
+        for generation in _children(epoch / "generations")
+    )
+
+
+def generation_source_evidence(workspace_root: Path) -> str | None:
+    """Return the backend name the workspace's on-disk source data was written by.
+
+    ``None`` when the disk names no single backend: a workspace that has
+    materialised no generation source yet, or one holding a git repository
+    AND directory snapshots at once (a half-finished migration, where only
+    the operator knows which is intended).
+
+    This is evidence, never a choice. :func:`resolve_generation_store_backend`
+    still reads the configured backend and nothing else; the evidence exists
+    so a configuration that contradicts the disk fails loudly instead of
+    reporting an empty workspace.
+    """
+    has_repo = _has_git_source_store(workspace_root)
+    has_snapshots = _has_directory_source_store(workspace_root)
+    if has_repo == has_snapshots:
+        return None
+    return GIT_BACKEND if has_repo else DIRECTORY_BACKEND
+
+
+def assert_generation_source_backend_matches_disk(workspace_root: Path, backend: str) -> None:
+    """Raise when the configured backend contradicts the source data on disk.
+
+    A store built on the wrong backend does not fail — it reads an empty
+    workspace. Every generation then reports no source tree, and the
+    dashboard's file and mutation views caption that as a pruned snapshot
+    while the directory the data actually sits in is untouched. Refusing to
+    construct the store keeps a configuration error from being rendered as
+    a data-retention fact.
+
+    Silent evidence (:func:`generation_source_evidence` returning ``None``)
+    is not a contradiction: a workspace with no materialised source yet is
+    free to declare either backend.
+    """
+    evidence = generation_source_evidence(workspace_root)
+    if evidence is None or evidence == backend:
+        return
+    raise ValueError(
+        f"workspace {workspace_root!s}: {GENERATION_SOURCE_BACKEND_KEY} is {backend!r}, "
+        f"but this workspace's generation source data is {evidence!r} "
+        f"({_EVIDENCE_DESCRIPTION[evidence]}). Reading it as {backend!r} would report "
+        f"every generation as having no source tree. Set the backend the data matches: "
+        f"{GENERATION_SOURCE_BACKEND_COMMAND} --workspace {workspace_root!s} "
+        f"--backend {evidence}"
+    )
+
+
+#: What each evidence verdict SAW, so the error names the files rather than
+#: asking the operator to take the verdict on faith.
+_EVIDENCE_DESCRIPTION = {
+    GIT_BACKEND: f"a {GIT_REPO_DIRNAME}/.git repository and no generation snapshot directories",
+    DIRECTORY_BACKEND: (
+        f"epochs/*/generations/*/{SNAPSHOT_DIRNAME}/ trees and no "
+        f"{GIT_REPO_DIRNAME}/.git repository"
+    ),
+}
+
+
 def resolve_generation_store_backend(workspace_root: Path) -> str:
     """Return the explicitly configured generation-source backend.
 
@@ -852,16 +936,23 @@ def resolve_generation_store_backend(workspace_root: Path) -> str:
     config = load_workspace_config(workspace_root)
     raw = config.get(GENERATION_SOURCE_BACKEND_KEY)
     if not isinstance(raw, str) or not raw.strip():
+        evidence = generation_source_evidence(workspace_root)
+        suggestion = evidence or f"<{'|'.join(KNOWN_GENERATION_SOURCE_BACKENDS)}>"
+        matches = f"; this workspace's source data is {evidence!r}" if evidence else ""
         raise ValueError(
             f"workspace {workspace_root!s}: config.json must define "
-            f"{GENERATION_SOURCE_BACKEND_KEY!r} as 'git' or 'directory'"
+            f"{GENERATION_SOURCE_BACKEND_KEY!r} as 'git' or 'directory'{matches}. "
+            f"Set it with: {GENERATION_SOURCE_BACKEND_COMMAND} "
+            f"--workspace {workspace_root!s} --backend {suggestion}"
         )
     backend = raw.strip().lower()
     if backend not in KNOWN_GENERATION_SOURCE_BACKENDS:
         known = ", ".join(repr(name) for name in KNOWN_GENERATION_SOURCE_BACKENDS)
         raise ValueError(
             f"workspace {workspace_root!s}: unknown {GENERATION_SOURCE_BACKEND_KEY} "
-            f"{backend!r}; known backends: {known}"
+            f"{backend!r}; known backends: {known}. Set it with: "
+            f"{GENERATION_SOURCE_BACKEND_COMMAND} --workspace {workspace_root!s} "
+            f"--backend {KNOWN_GENERATION_SOURCE_BACKENDS[0]}"
         )
     return backend
 
@@ -879,8 +970,14 @@ def default_generation_store(workspace_root: Path) -> GenerationStore:
 
     This function is the single seam where that choice is made — the
     generation-store mirror of :func:`zicato.storage.factory.default_backend`.
+
+    The configured backend is never inferred, but it is checked against the
+    source data on disk: a knob that contradicts the disk raises here rather
+    than returning a store that reads the workspace as empty. See
+    :func:`assert_generation_source_backend_matches_disk`.
     """
     backend = resolve_generation_store_backend(workspace_root)
+    assert_generation_source_backend_matches_disk(workspace_root, backend)
     if backend == GIT_BACKEND:
         from zicato.epoch.git_genstore import GitGenerationStore  # noqa: PLC0415
 
@@ -896,6 +993,9 @@ __all__ = [
     "EPHEMERAL_SCRATCH_DIRNAME",
     "EPHEMERAL_SNAPSHOT_PREFIX",
     "GENERATION_SOURCE_BACKEND_KEY",
+    "GENERATION_SOURCE_BACKEND_COMMAND",
+    "assert_generation_source_backend_matches_disk",
+    "generation_source_evidence",
     "DEFAULT_GENERATION_SOURCE_BACKEND",
     "DIRECTORY_BACKEND",
     "GIT_BACKEND",
