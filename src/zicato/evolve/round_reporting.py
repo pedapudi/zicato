@@ -83,53 +83,35 @@ _ROUND_LOG_STEP: dict[str, str] = {
 }
 
 
-#: The ONE reserved field on the emitter seam. It is the outer scope
-#: envelope, never a payload field, so every emitter — the durable one below
-#: and any test double — MUST take it out before constructing the typed
-#: event. :func:`split_round_event_fields` is that single definition.
-ROUND_EVENT_SCOPE_FIELD = "scope"
-
-
-def split_round_event_fields(
-    fields: dict[str, Any] | None,
-) -> tuple[dict[str, Any], dict[str, Any]]:
-    """Split emitter ``fields`` into the event payload and its outer scope.
-
-    Every emitter on the ``round_event_emitter`` seam has to strip the
-    reserved scope key: no event dataclass declares it, so leaving it in
-    raises ``TypeError`` from the constructor. Keeping the split here means a
-    test double stays honest by calling the same helper the real emitter does
-    rather than re-deriving the rule and drifting from it.
-    """
-    payload = dict(fields or {})
-    supplied = payload.pop(ROUND_EVENT_SCOPE_FIELD, None)
-    scope = dict(supplied) if isinstance(supplied, Mapping) else {}
-    return payload, scope
-
-
 class _RoundLogEmitter:
     """Best-effort appender onto one round's durable RoundLog (WS8).
 
-    Emission failures must NEVER fail a round — the live index dual-write
+    A STORAGE failure must never fail a round — the live index dual-write
     (:func:`_ingest_experiment_into_index`) is the precedent: the canonical
     stores (``experiment.json``, lineage, journal) stay authoritative and
     the event log is a derived, replayable trace. A bind failure degrades
-    to a permanent no-op emitter; every append failure is logged at
-    ``debug`` and swallowed.
+    to a permanent no-op emitter; an append that cannot reach the disk is
+    logged at ``debug`` and swallowed.
 
-    ``emit`` takes the wire ``type_token`` plus its payload fields and
-    resolves the typed event through
-    :data:`zicato.epoch.round_log.EVENT_TYPES` — the same string-token seam
-    the proposer-side callback uses (:attr:`ProposerContext
-    .round_event_emitter`), so one signature serves both sides. An unknown
-    token is silently dropped (never a crash on a vocabulary skew).
+    A SCHEMA mistake is not swallowed. Building the typed event happens
+    outside that guard, so a payload field no event declares raises from the
+    constructor rather than dropping the event: ``seq`` is derived from the
+    file's tail, so a silently dropped event leaves a gap-free log that no
+    reader can tell from a round which never emitted the event at all.
+
+    ``emit`` takes the wire ``type_token``, its payload fields and its
+    optional plan ``scope`` — the same three-argument string-token seam the
+    proposer-side callback uses (:attr:`ProposerContext
+    .round_event_emitter`), so one signature serves both sides. Scope is a
+    separate argument and never a payload key, so no emitter on the seam can
+    forward it into an event constructor. An unknown token is silently
+    dropped (never a crash on a vocabulary skew).
     """
 
-    __slots__ = ("_log", "_round_index")
+    __slots__ = ("_log",)
 
     def __init__(self, workspace_root: Path, epoch_id: str, round_index: int) -> None:
         self._log: Any = None
-        self._round_index = round_index
         try:
             from zicato.epoch.round_log import RoundLog  # noqa: PLC0415
 
@@ -137,44 +119,38 @@ class _RoundLogEmitter:
         except Exception as exc:  # noqa: BLE001 — emission must never fail a round
             log.debug("round-log emitter unavailable: %s", exc)
 
-    def emit(self, type_token: str, fields: dict[str, Any] | None = None) -> None:
-        """Append one typed event; any failure is swallowed at debug level.
+    def emit(
+        self,
+        type_token: str,
+        fields: dict[str, Any] | None = None,
+        scope: Mapping[str, Any] | None = None,
+    ) -> None:
+        """Append one typed event under its plan ``scope``.
 
-        ``scope`` is a reserved, type-independent field on this transport
-        seam. It becomes the record's outer ``RoundEventScope`` envelope and
-        is never passed to the event dataclass constructor, so every event
-        type can acquire coordinates without growing a payload field. The
-        emitter fills the round, lifecycle-step, and matching payload
-        coordinates when its caller does not supply them.
+        The emitter fills exactly one coordinate itself: the lifecycle
+        ``step`` the event's wire token belongs to, which no payload carries.
+        Everything else comes from the caller, because only the caller knows
+        it. In particular ``replicate`` is never derived from the payload: the
+        one event that carries a replicate is ``unit_completed``, whose value
+        is the aggregate placeholder ``0`` rather than the draw's true index
+        (see :func:`_emit_tournament_units`), so promoting it would state a
+        plan coordinate the loss files contradict.
         """
         if self._log is None:
             return
-        try:
-            from zicato.epoch.round_log import EVENT_TYPES  # noqa: PLC0415
+        from zicato.epoch.round_log import EVENT_TYPES  # noqa: PLC0415
 
-            cls = EVENT_TYPES.get(type_token)
-            if cls is None:
-                return
-            payload, scope = split_round_event_fields(fields)
-            scope.setdefault("round_index", self._round_index)
-            step = _ROUND_LOG_STEP.get(type_token)
-            if step:
-                scope.setdefault("step", step)
-            # ``replicate`` is deliberately NOT auto-filled. The only event
-            # that carries one is ``unit_completed``, whose replicate is the
-            # aggregate placeholder 0 rather than the draw's true index (see
-            # _emit_tournament_units) — promoting it here would state a plan
-            # coordinate the files contradict. A caller with a REAL replicate
-            # supplies it through ``scope``.
-            for field in ("generation_id", "entry_id", "side", "band"):
-                if field in payload:
-                    scope.setdefault(field, payload[field])
-            for ordinal_field in ("ordinal", "i", "index", "slot_index"):
-                if ordinal_field in payload and payload[ordinal_field] is not None:
-                    scope.setdefault("ordinal", payload[ordinal_field])
-                    break
-            self._log.append(cls(**payload), scope=scope)
-        except Exception as exc:  # noqa: BLE001 — emission must never fail a round
+        cls = EVENT_TYPES.get(type_token)
+        if cls is None:
+            return
+        event = cls(**(fields or {}))
+        coordinates = dict(scope or {})
+        step = _ROUND_LOG_STEP.get(type_token)
+        if step:
+            coordinates.setdefault("step", step)
+        try:
+            self._log.append(event, scope=coordinates)
+        except OSError as exc:
             log.debug("round-log emit %s skipped: %s", type_token, exc)
 
 
@@ -201,10 +177,11 @@ def _emit_tournament_units(
     ``entry_id`` arrives with ``side="child"`` once per challenger; without
     the generation id those events collide and no reader can separate them.
     ``matchup_id`` distinguishes repeat or field matchups involving the same
-    generation. The placeholder replicate travels as the
-    ``aggregate_replicate`` attribute rather than as the ``replicate``
-    coordinate, so a reader that places nodes by coordinate cannot mistake it
-    for a real draw index.
+    generation. The entry and the side stay payload fields and are NOT copied
+    into the scope: a coordinate the payload already states does not need a
+    second copy that could drift from it. The placeholder replicate reaches
+    neither — the absent ``replicate`` coordinate is the honest statement that
+    this event does not name a draw.
     """
     per_entry = getattr(tournament_result, "per_entry_losses", None) or {}
     try:
@@ -215,24 +192,23 @@ def _emit_tournament_units(
     side_opponents = {"parent": child_generation_id, "child": parent_generation_id}
     for entry_id in entry_ids:
         for side in ("parent", "child"):
-            scope: dict[str, Any] = {
-                "entry_id": str(entry_id),
-                "side": side,
-                "attributes": {
-                    "aggregate_replicate": 0,
-                    **({"matchup_id": matchup_id} if matchup_id else {}),
-                    **(
-                        {"opponent_generation_id": str(side_opponents[side])}
-                        if side_opponents[side]
-                        else {}
-                    ),
-                },
+            attributes = {
+                **({"matchup_id": matchup_id} if matchup_id else {}),
+                **(
+                    {"opponent_generation_id": str(side_opponents[side])}
+                    if side_opponents[side]
+                    else {}
+                ),
             }
+            scope: dict[str, Any] = {}
             if side_generations[side]:
                 scope["generation_id"] = str(side_generations[side])
+            if attributes:
+                scope["attributes"] = attributes
             round_log.emit(
                 "unit_completed",
-                {"entry_id": str(entry_id), "replicate": 0, "side": side, "scope": scope},
+                {"entry_id": str(entry_id), "replicate": 0, "side": side},
+                scope,
             )
 
 
@@ -348,22 +324,20 @@ def _emit_gate_evaluated(
         fields["margin_required"] = float(margin)
     # A field round gates each matchup into ONE round log; without the
     # challenger's id every verdict reads as the round's own.
-    if generation_id or opponent_generation_id or matchup_id:
-        scope: dict[str, Any] = {}
-        if generation_id:
-            scope["generation_id"] = str(generation_id)
-        attributes = {
-            **(
-                {"opponent_generation_id": str(opponent_generation_id)}
-                if opponent_generation_id
-                else {}
-            ),
-            **({"matchup_id": matchup_id} if matchup_id else {}),
-        }
-        if attributes:
-            scope["attributes"] = attributes
-        fields["scope"] = scope
-    round_log.emit("gate_evaluated", fields)
+    scope: dict[str, Any] = {}
+    if generation_id:
+        scope["generation_id"] = str(generation_id)
+    attributes = {
+        **(
+            {"opponent_generation_id": str(opponent_generation_id)}
+            if opponent_generation_id
+            else {}
+        ),
+        **({"matchup_id": matchup_id} if matchup_id else {}),
+    }
+    if attributes:
+        scope["attributes"] = attributes
+    round_log.emit("gate_evaluated", fields, scope)
 
 
 def _promoted_entry_regressions(tournament_result: Any) -> dict[str, dict[str, Any]] | None:

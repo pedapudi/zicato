@@ -161,6 +161,11 @@ async def _propose_child(
 
     from zicato.telemetry.meta_loop import SPAN_PHASE, meta_span  # noqa: PLC0415
 
+    # Every event of this propose belongs to the challenger it is building,
+    # including the retry trail of a propose that never reaches a slate — a
+    # field round threads several challengers through one round log.
+    scope = {"generation_id": next_id}
+
     try:
         # The propose phase span frames this challenger's slate (its slate-slot
         # spans nest under it) and the proposer LLM call (HARMONOGRAF.md §7).
@@ -200,21 +205,11 @@ async def _propose_child(
     except ProposerError as exc:
         if round_emitter is not None:
             for attempt_error in exc.attempts:
-                round_emitter.emit(
-                    "proposal_attempted",
-                    {
-                        "errors": (str(attempt_error),),
-                        "scope": {"generation_id": next_id},
-                    },
-                )
+                round_emitter.emit("proposal_attempted", {"errors": (str(attempt_error),)}, scope)
         raise
     if round_emitter is not None:
-        scope = {"generation_id": next_id}
-        round_emitter.emit("proposal_attempted", {"scope": scope})
-        round_emitter.emit(
-            "experiment_minted",
-            {"experiment_id": experiment.id, "scope": scope},
-        )
+        round_emitter.emit("proposal_attempted", {}, scope)
+        round_emitter.emit("experiment_minted", {"experiment_id": experiment.id}, scope)
         # The proposer's validate hook derived + validated the child tree
         # before a successful return, so the patches are applied by here.
         round_emitter.emit("patches_applied", {"generation_id": next_id})

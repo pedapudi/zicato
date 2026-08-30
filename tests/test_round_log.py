@@ -298,6 +298,34 @@ def test_slate_events_round_trip_with_a_generation_scope(tmp_path):
     assert all("generation_id" not in event.payload for event in events)
 
 
+def test_an_attributes_coordinate_is_promoted_once_a_field_names_it(tmp_path):
+    """A coordinate written before it was named is read through its name.
+
+    A writer that predates a named coordinate puts it where every unknown
+    name goes — ``attributes``. Reading only the named field would leave that
+    value invisible to the reader that now names it, which is exactly the
+    forward compatibility the extension point exists to provide.
+    """
+    scope = RoundEventScope.from_payload({"attributes": {"band": "warmup", "unknown": 1}})
+    assert scope.band == "warmup"
+    # And it is not left behind as a second copy that could drift.
+    assert scope.attributes == {"unknown": 1}
+    assert scope.to_payload() == {"band": "warmup", "attributes": {"unknown": 1}}
+
+    # End to end: a legacy line on disk decodes through the named field.
+    path = round_log_path(tmp_path, "epoch-01", 8)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    record = {
+        "seq": 1,
+        "ts": "t",
+        "type": "round_opened",
+        "scope": {"attributes": {"generation_id": "v7"}},
+        "payload": {"contract_hash": "h"},
+    }
+    path.write_text(json.dumps(record) + "\n", encoding="utf-8")
+    assert RoundLog(tmp_path, "epoch-01", 8).read()[0].scope.generation_id == "v7"
+
+
 def test_a_scope_has_a_canonical_hashable_grouping_key():
     """Open extension data groups through a snapshot, not a mutable hash key."""
     left = RoundEventScope(generation_id="v7", entry_id="e1", attributes={"x": [1, 2]})
@@ -320,20 +348,12 @@ def test_scope_round_trips_standard_and_future_coordinates(tmp_path):
     log = RoundLog(tmp_path, "epoch-01", 8)
     log.append(
         RoundOpened(contract_hash="h"),
-        scope={
-            "round_index": 8,
-            "step": "propose",
-            "generation_id": "v7",
-            "future_coordinate": "north",
-        },
+        scope={"step": "propose", "generation_id": "v7", "future_coordinate": "north"},
     )
 
     envelope = log.read()[0]
     assert envelope.scope == RoundEventScope(
-        generation_id="v7",
-        round_index=8,
-        step="propose",
-        attributes={"future_coordinate": "north"},
+        generation_id="v7", step="propose", attributes={"future_coordinate": "north"}
     )
     wire = json.loads(log.path.read_text(encoding="utf-8"))
     assert wire["scope"]["attributes"]["future_coordinate"] == "north"

@@ -204,7 +204,7 @@ def _ctx(aux: object, events: list[tuple[str, dict]]) -> ProposerContext:
         model="test-model",
         # Empty profile ⇒ the distinct EDIT_CLASS_HINTS rotation per slot.
         failure_profile="",
-        round_event_emitter=lambda t, f: events.append((t, dict(f))),
+        round_event_emitter=lambda t, f, s: events.append((t, dict(f))),
         # No scratch factory + no validate hook: the gather-ordering surface
         # is independent of the real derive, which the stress test covers.
         validate_experiment=None,

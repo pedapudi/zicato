@@ -425,12 +425,41 @@ class RoundEventScope:
     round plan. Keeping those concerns separate lets a reader group events
     without guessing from their position in the JSONL file.
 
-    The named fields are the coordinates every plan reader may rely on. The
-    ``attributes`` map is an explicit extension point for a newer emitter's
-    additional coordinates. It is deliberately separate from the named fields
-    so an extension cannot silently redefine ``generation_id`` or another
-    shared coordinate. A reader that predates an extension preserves those
-    values in ``attributes`` instead of dropping them.
+    A scope carries ONLY the coordinates its payload does not. Where the
+    payload already IS the coordinate — ``unit_completed``'s ``entry_id`` and
+    ``side``, ``patches_applied``'s ``generation_id`` — the reader reads the
+    payload and the scope leaves that field empty, rather than storing a
+    second copy that can drift from the first.
+
+    The named coordinates, each empty where it does not apply:
+
+    * ``generation_id`` — the challenger the event belongs to.
+    * ``step`` — the round's lifecycle step: open, propose, apply, run,
+      gate, decide, close.
+    * ``entry_id`` and ``replicate`` — the board entry, and the draw within
+      it.
+    * ``side`` — ``parent`` or ``child`` of a duel.
+    * ``band`` — the measurement band.
+
+    There is deliberately NO slate ordinal: ``candidate_sampled``'s ``i``
+    numbers slate SLOTS while ``candidate_screened`` / ``critique_selected``
+    number the SURVIVORS that reached the screen, so those numbers diverge as
+    soon as one slot fails and no single coordinate can carry both. Settling
+    one slate ordinal is a payload decision, not an envelope one. The round is
+    not a coordinate either: a record's round is the
+    ``rounds/{round}/round_log.jsonl`` path it was read from, and a copy the
+    writer restated could only disagree with it.
+
+    The ``attributes`` map is an explicit extension point for a newer
+    emitter's additional coordinates. It is deliberately separate from the
+    named fields so an extension cannot silently redefine ``generation_id`` or
+    another shared coordinate. A reader that predates an extension preserves
+    those values in ``attributes`` instead of dropping them, and promotes one
+    into its named field once a later reader knows that name. It holds
+    COORDINATES ONLY, never content: a scope is subject to the same redaction
+    denylist as every other durable record
+    (:func:`zicato.proposer.reflection.assert_redacted`), so board text,
+    prompts and transcripts must never travel here.
 
     All fields default to the empty scope. Logs written before scopes existed
     therefore remain readable, but their events cannot be attributed more
@@ -438,9 +467,7 @@ class RoundEventScope:
     """
 
     generation_id: str = ""
-    round_index: int | None = None
     step: str = ""
-    ordinal: int | None = None
     entry_id: str = ""
     replicate: int | None = None
     side: str = ""
@@ -463,19 +490,32 @@ class RoundEventScope:
         attributes = payload.get("attributes", {})
         extras = dict(attributes) if isinstance(attributes, Mapping) else {}
         extras.update({key: value for key, value in payload.items() if key not in known})
+
+        def coordinate(name: str) -> Any:
+            """Read one named coordinate, PROMOTING an attributes copy of it.
+
+            A writer that predates a named coordinate puts it in
+            ``attributes``, which is exactly where the extension point sends
+            an unrecognised name. Reading the named field alone would leave
+            that value unreachable through the field that now names it, so it
+            is promoted out — and out of ``extras`` either way, so the decoded
+            scope never carries the same coordinate twice.
+            """
+            demoted = extras.pop(name, None)
+            value = payload.get(name)
+            return demoted if value is None else value
+
         return cls(
             # ``or ""`` and not ``str(...)``: a null wire coordinate is an
             # ABSENT coordinate. ``str(None)`` would persist the literal
             # "None" as a generation id, which ``to_payload`` then keeps
             # because it is neither "" nor None.
-            generation_id=str(payload.get("generation_id") or ""),
-            round_index=payload.get("round_index"),
-            step=str(payload.get("step") or ""),
-            ordinal=payload.get("ordinal"),
-            entry_id=str(payload.get("entry_id") or ""),
-            replicate=payload.get("replicate"),
-            side=str(payload.get("side") or ""),
-            band=str(payload.get("band") or ""),
+            generation_id=str(coordinate("generation_id") or ""),
+            step=str(coordinate("step") or ""),
+            entry_id=str(coordinate("entry_id") or ""),
+            replicate=coordinate("replicate"),
+            side=str(coordinate("side") or ""),
+            band=str(coordinate("band") or ""),
             attributes=extras,
         )
 
@@ -494,16 +534,7 @@ class RoundEventScope:
     def to_payload(self) -> dict[str, Any]:
         """Return the compact, forward-compatible JSON shape for this scope."""
         payload: dict[str, Any] = {}
-        for name in (
-            "generation_id",
-            "round_index",
-            "step",
-            "ordinal",
-            "entry_id",
-            "replicate",
-            "side",
-            "band",
-        ):
+        for name in ("generation_id", "step", "entry_id", "replicate", "side", "band"):
             value = getattr(self, name)
             if value not in ("", None):
                 payload[name] = value

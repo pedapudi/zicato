@@ -127,7 +127,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import Awaitable, Callable, Sequence
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass, replace
 from typing import Any, cast
 
@@ -477,17 +477,18 @@ def normalize_selection_rationale(rationale: str) -> str:
     return " ".join(rationale.split())[:RATIONALE_CAP]
 
 
-def _slate_scope(generation_id: str) -> dict[str, str]:
-    """The durable plan scope shared by every event from one challenger slate."""
-    return {"generation_id": generation_id}
+def _slate_scope(ctx: ProposerContext) -> dict[str, Any]:
+    """The durable plan scope shared by every event from one challenger slate.
+
+    A field round drives several challengers through the same round-log
+    emitter while each slate's candidate indexes restart at zero, so the
+    challenger id is the only thing that keeps two slates apart in the log.
+    """
+    return {"generation_id": ctx.new_generation_id}
 
 
 def _screened_event_fields(
-    index: int,
-    res: CandidateScreenResult,
-    *,
-    generation_id: str,
-    revise: bool = False,
+    index: int, res: CandidateScreenResult, revise: bool = False
 ) -> dict[str, Any]:
     """One ``candidate_screened`` event payload — the counts-only summary.
 
@@ -507,17 +508,11 @@ def _screened_event_fields(
             "reason": res.reason,
         },
         "revise": revise,
-        "scope": _slate_scope(generation_id),
     }
 
 
 def _selected_event_fields(
-    candidates: list[Experiment],
-    index: int,
-    mode: str,
-    *,
-    generation_id: str,
-    rationale: str = "",
+    candidates: list[Experiment], index: int, mode: str, rationale: str = ""
 ) -> dict[str, Any]:
     """One ``critique_selected`` event payload — the selection's provenance.
 
@@ -559,7 +554,6 @@ def _selected_event_fields(
             for i, item in enumerate(candidates)
         ),
         "rationale": rationale,
-        "scope": _slate_scope(generation_id),
     }
 
 
@@ -589,25 +583,28 @@ def _emit_round_event(
     ctx: ProposerContext,
     type_token: str,
     fields: dict[str, Any] | Callable[[], dict[str, Any]],
+    scope: Mapping[str, Any] | None = None,
 ) -> None:
     """Best-effort round-log emission through the context's optional emitter.
 
     The emitter seam keeps the proposer decoupled from the round-log module
-    (WS8): the orchestrator threads an ``emitter(type_token, fields)``
+    (WS8): the orchestrator threads an ``emitter(type_token, fields, scope)``
     callable on :attr:`ProposerContext.round_event_emitter`; ``None`` (every
     caller that does not opt in) emits nothing. Guarded here so a raising
     emitter can never fail a propose step.
 
-    ``fields`` may be a THUNK for a payload that costs something to build.
-    It is called only after the ``None`` check and inside the guard, so an
-    unwired emitter pays nothing and a raising builder cannot fail a propose
-    any more than a raising emitter can.
+    ``scope`` is the event's PLAN coordinates and travels separately from the
+    payload, so it can never be mistaken for one of the typed event's own
+    fields. ``fields`` may be a THUNK for a payload that costs something to
+    build. It is called only after the ``None`` check and inside the guard, so
+    an unwired emitter pays nothing and a raising builder cannot fail a
+    propose any more than a raising emitter can.
     """
     emitter = ctx.round_event_emitter
     if emitter is None:
         return
     try:
-        emitter(type_token, fields() if callable(fields) else fields)
+        emitter(type_token, fields() if callable(fields) else fields, scope)
     except Exception as exc:  # noqa: BLE001 — emission must never fail a propose
         log.debug("round-log %s emission skipped: %s", type_token, exc)
 
@@ -782,24 +779,13 @@ class BestOfNProposerAgent:
             errors = _slot_error_texts(outcome)
             if errors:
                 staged.append(
-                    (
-                        "proposal_attempted",
-                        {
-                            "errors": errors,
-                            "slot_index": outcome.sample,
-                            "scope": _slate_scope(ctx.new_generation_id),
-                        },
-                    )
+                    ("proposal_attempted", {"errors": errors, "slot_index": outcome.sample})
                 )
                 slot_attempts.extend(f"slot {outcome.sample}: {text}" for text in errors)
             if outcome.candidate is None:
                 continue
             candidates.append(outcome.candidate)
-            fields: dict[str, Any] = {
-                "i": outcome.sample,
-                "n": n,
-                "scope": _slate_scope(ctx.new_generation_id),
-            }
+            fields: dict[str, Any] = {"i": outcome.sample, "n": n}
             if outcome.recombined:
                 recombined_index = len(candidates) - 1
                 fields["recombined"] = True
@@ -822,7 +808,7 @@ class BestOfNProposerAgent:
             raise ProposerError(["best-of-N produced no candidates"])  # pragma: no cover
 
         for type_token, event_fields in staged:
-            _emit_round_event(ctx, type_token, event_fields)
+            _emit_round_event(ctx, type_token, event_fields, _slate_scope(ctx))
 
         if len(candidates) == 1:
             # Even a sole survivor is mounted into the real ``next_id`` — its
@@ -839,12 +825,8 @@ class BestOfNProposerAgent:
             _emit_round_event(
                 ctx,
                 "critique_selected",
-                lambda: _selected_event_fields(
-                    candidates,
-                    0,
-                    "sole_candidate",
-                    generation_id=ctx.new_generation_id,
-                ),
+                lambda: _selected_event_fields(candidates, 0, "sole_candidate"),
+                _slate_scope(ctx),
             )
             return candidates[0]
 
@@ -874,12 +856,8 @@ class BestOfNProposerAgent:
             _emit_round_event(
                 ctx,
                 "critique_selected",
-                lambda: _selected_event_fields(
-                    candidates,
-                    chosen,
-                    selection_mode,
-                    generation_id=ctx.new_generation_id,
-                ),
+                lambda: _selected_event_fields(candidates, chosen, selection_mode),
+                _slate_scope(ctx),
             )
             return candidates[chosen]
 
@@ -931,13 +909,8 @@ class BestOfNProposerAgent:
         _emit_round_event(
             ctx,
             "critique_selected",
-            lambda: _selected_event_fields(
-                candidates,
-                chosen,
-                selection_mode,
-                generation_id=ctx.new_generation_id,
-                rationale=rationale,
-            ),
+            lambda: _selected_event_fields(candidates, chosen, selection_mode, rationale),
+            _slate_scope(ctx),
         )
         return candidates[chosen]
 
@@ -1356,9 +1329,7 @@ class BestOfNProposerAgent:
             return None
         for i, res in enumerate(results):
             _emit_round_event(
-                ctx,
-                "candidate_screened",
-                _screened_event_fields(i, res, generation_id=ctx.new_generation_id),
+                ctx, "candidate_screened", _screened_event_fields(i, res), _slate_scope(ctx)
             )
         return results
 
@@ -1453,12 +1424,8 @@ class BestOfNProposerAgent:
         _emit_round_event(
             ctx,
             "candidate_sampled",
-            {
-                "i": revise_index,
-                "n": n,
-                "revise": True,
-                "scope": _slate_scope(ctx.new_generation_id),
-            },
+            {"i": revise_index, "n": n, "revise": True},
+            _slate_scope(ctx),
         )
         result = await self._screen_replacement(replacement, revise_index, ctx)
         candidates.append(replacement)
@@ -1498,12 +1465,8 @@ class BestOfNProposerAgent:
         _emit_round_event(
             ctx,
             "candidate_screened",
-            _screened_event_fields(
-                index,
-                res,
-                generation_id=ctx.new_generation_id,
-                revise=True,
-            ),
+            _screened_event_fields(index, res, revise=True),
+            _slate_scope(ctx),
         )
         return res
 

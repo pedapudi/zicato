@@ -73,10 +73,12 @@ class TestRoundLogEmitter:
         emitter.emit("round_closed")
         events = RoundLog(tmp_path, "e1", 3).read()
         assert [e.type for e in events] == ["round_opened", "experiment_minted", "round_closed"]
+        # The emitter derives exactly one coordinate: the lifecycle step of
+        # the wire token. The round is the log's own path, not a field.
         assert [event.scope for event in events] == [
-            RoundEventScope(round_index=3, step="open"),
-            RoundEventScope(round_index=3, step="propose"),
-            RoundEventScope(round_index=3, step="close"),
+            RoundEventScope(step="open"),
+            RoundEventScope(step="propose"),
+            RoundEventScope(step="close"),
         ]
         record = fold_round_record(events)
         assert record.complete
@@ -88,108 +90,41 @@ class TestRoundLogEmitter:
         emitter.emit("not_a_real_event", {"x": 1})
         assert RoundLog(tmp_path, "e1", 0).read() == []
 
-    def test_bad_fields_never_raise(self, tmp_path: Path) -> None:
+    def test_a_payload_field_no_event_declares_raises(self, tmp_path: Path) -> None:
+        """A schema mistake is a BUG, and must not be swallowed as a mishap.
+
+        ``seq`` is derived from the file's tail, so a dropped event leaves a
+        gap-free log: the round reads back as one that never emitted the
+        event at all, and nothing distinguishes the two afterwards. Only a
+        STORAGE failure is best-effort (``test_unwritable_log_never_raises``).
+        """
         emitter = _RoundLogEmitter(tmp_path, "e1", 0)
-        # An unexpected field is a constructor TypeError — swallowed.
-        emitter.emit("round_opened", {"no_such_field": True})
+        with pytest.raises(TypeError):
+            emitter.emit("round_opened", {"no_such_field": True})
         emitter.emit("round_opened", {"contract_hash": "ok"})
         events = RoundLog(tmp_path, "e1", 0).read()
         assert [e.type for e in events] == ["round_opened"]
 
-    def test_scope_is_outer_and_enriched_from_event_coordinates(self, tmp_path: Path) -> None:
+    def test_scope_travels_beside_the_payload_and_duplicates_none_of_it(
+        self, tmp_path: Path
+    ) -> None:
+        """Scope is a separate argument, and carries only what the payload lacks."""
         emitter = _RoundLogEmitter(tmp_path, "e1", 3)
         emitter.emit(
             "unit_completed",
             {"entry_id": "entry-1", "replicate": 2, "side": "child"},
+            {"generation_id": "gen-7"},
         )
         event = RoundLog(tmp_path, "e1", 3).read()[0]
-        # ``replicate`` is NOT auto-filled: the only emitter of the field
-        # sends the aggregate placeholder, so the payload's value is never
-        # promoted to a plan coordinate. Everything else is.
-        assert event.scope == RoundEventScope(
-            round_index=3,
-            step="run",
-            entry_id="entry-1",
-            side="child",
-        )
+        # The entry, the side and the replicate stay where the payload
+        # already states them — a second copy could only drift from the
+        # first. The scope adds the challenger the payload cannot name.
+        assert event.scope == RoundEventScope(generation_id="gen-7", step="run")
         assert event.payload == {"entry_id": "entry-1", "replicate": 2, "side": "child"}
-
-    def test_supplied_scope_carries_a_real_replicate(self, tmp_path: Path) -> None:
-        emitter = _RoundLogEmitter(tmp_path, "e1", 3)
-        emitter.emit(
-            "unit_completed",
-            {
-                "entry_id": "entry-1",
-                "replicate": 0,
-                "side": "child",
-                "scope": {"generation_id": "gen-7", "replicate": 2},
-            },
-        )
-        event = RoundLog(tmp_path, "e1", 3).read()[0]
-        assert event.scope == RoundEventScope(
-            generation_id="gen-7",
-            round_index=3,
-            step="run",
-            entry_id="entry-1",
-            replicate=2,
-            side="child",
-        )
-
-    def test_tournament_units_keep_their_matchup_and_opponent(self, tmp_path: Path) -> None:
-        from types import SimpleNamespace
-
-        from zicato.evolve.round_reporting import _emit_tournament_units
-
-        emitter = _RoundLogEmitter(tmp_path, "e1", 3)
-        _emit_tournament_units(
-            emitter,
-            SimpleNamespace(per_entry_losses={"entry-1": object()}),
-            parent_generation_id="v0",
-            child_generation_id="v1",
-            matchup_id="rung-2",
-        )
-        events = RoundLog(tmp_path, "e1", 3).read()
-        assert [(event.scope.generation_id, event.scope.side) for event in events] == [
-            ("v0", "parent"),
-            ("v1", "child"),
-        ]
-        assert [event.scope.attributes for event in events] == [
-            {
-                "aggregate_replicate": 0,
-                "matchup_id": "rung-2",
-                "opponent_generation_id": "v1",
-            },
-            {
-                "aggregate_replicate": 0,
-                "matchup_id": "rung-2",
-                "opponent_generation_id": "v0",
-            },
-        ]
-
-    def test_gate_scope_keeps_the_matchup_and_opponent(self, tmp_path: Path) -> None:
-        from types import SimpleNamespace
-
-        from zicato.evolve.round_reporting import _emit_gate_evaluated
-
-        emitter = _RoundLogEmitter(tmp_path, "e1", 3)
-        _emit_gate_evaluated(
-            emitter,
-            SimpleNamespace(reason="", decision="promoted"),
-            generation_id="v1",
-            opponent_generation_id="v0",
-            matchup_id="rung-2",
-        )
-        event = RoundLog(tmp_path, "e1", 3).read()[0]
-        assert event.scope == RoundEventScope(
-            generation_id="v1",
-            round_index=3,
-            step="gate",
-            attributes={"matchup_id": "rung-2", "opponent_generation_id": "v0"},
-        )
 
     def test_a_null_coordinate_reads_back_as_absent(self, tmp_path: Path) -> None:
         emitter = _RoundLogEmitter(tmp_path, "e1", 1)
-        emitter.emit("round_opened", {"contract_hash": "h", "scope": {"generation_id": None}})
+        emitter.emit("round_opened", {"contract_hash": "h"}, {"generation_id": None})
         event = RoundLog(tmp_path, "e1", 1).read()[0]
         # Never the literal string "None" — a null coordinate is an absent one.
         assert event.scope.generation_id == ""
@@ -240,7 +175,11 @@ class TestRoundLogEmitter:
             "experiment_minted",
             "patches_applied",
         ]
-        assert {event.scope.generation_id for event in events} == {"v1"}
+        # The two events whose payload cannot name a generation take it from
+        # the scope; ``patches_applied`` already states it in its payload, so
+        # the scope leaves the coordinate empty rather than restating it.
+        assert [event.scope.generation_id for event in events] == ["v1", "v1", ""]
+        assert events[-1].payload["generation_id"] == "v1"
 
     def test_unwritable_log_never_raises(self, tmp_path: Path) -> None:
         # Bind onto a path whose parent is a FILE, so every append fails —
@@ -491,18 +430,21 @@ class TestBestOfNEmission:
             inner=_Inner(),
             config=ProposerQualityConfig(best_of_n=3, critique_enabled=False),
         )
-        ctx = _ctx(lambda token, fields: emitted.append((token, fields)))
+        ctx = _ctx(lambda token, fields, scope: emitted.append((token, fields, scope)))
         asyncio.run(agent.propose(ctx))
-        tokens = [t for t, _f in emitted]
+        tokens = [t for t, _f, _s in emitted]
         assert tokens == [
             "candidate_sampled",
             "candidate_sampled",
             "candidate_sampled",
             "critique_selected",
         ]
-        assert [f["i"] for t, f in emitted if t == "candidate_sampled"] == [0, 1, 2]
-        assert all(f["n"] == 3 for t, f in emitted if t == "candidate_sampled")
-        assert all(f["scope"] == {"generation_id": "v1"} for _t, f in emitted)
+        assert [f["i"] for t, f, _s in emitted if t == "candidate_sampled"] == [0, 1, 2]
+        assert all(f["n"] == 3 for t, f, _s in emitted if t == "candidate_sampled")
+        # Every event of a slate names the challenger it is building: a field
+        # round drives several through this one seam while their candidate
+        # indexes all restart at zero.
+        assert all(s == {"generation_id": "v1"} for _t, _f, s in emitted)
         critique = emitted[-1][1]
         assert critique["reason"] == "heuristic"
         assert isinstance(critique["index"], int)
@@ -532,7 +474,7 @@ class TestBestOfNEmission:
             inner=_Inner(),
             config=ProposerQualityConfig(best_of_n=3, critique_enabled=False),
         )
-        result = asyncio.run(agent.propose(_ctx(lambda t, f: emitted.append((t, f)))))
+        result = asyncio.run(agent.propose(_ctx(lambda t, f, s: emitted.append((t, f)))))
         assert result.generation_id == "v1"
         assert [t for t, _f in emitted] == [
             "candidate_sampled",
@@ -545,7 +487,6 @@ class TestBestOfNEmission:
             "reason": "sole_candidate",
             "slate": ({"index": 0, "core_idea": "the only idea", "mutation_ids": ["m1"]},),
             "rationale": "",
-            "scope": {"generation_id": "v1"},
         }
 
     def test_a_full_slate_selection_is_unchanged(self) -> None:
@@ -564,7 +505,7 @@ class TestBestOfNEmission:
             inner=_Inner(),
             config=ProposerQualityConfig(best_of_n=2, critique_enabled=False),
         )
-        asyncio.run(agent.propose(_ctx(lambda t, f: emitted.append((t, f)))))
+        asyncio.run(agent.propose(_ctx(lambda t, f, s: emitted.append((t, f)))))
         assert [t for t, _f in emitted] == [
             "candidate_sampled",
             "candidate_sampled",
@@ -669,9 +610,7 @@ class TestSlateEvidenceReachesTheReader:
         ]
         assert slate_events
         assert {event.scope.generation_id for event in slate_events} == {"v1"}
-        assert {(event.scope.round_index, event.scope.step) for event in slate_events} == {
-            (1, "propose")
-        }
+        assert {event.scope.step for event in slate_events} == {"propose"}
         verdict = round_integrity(tmp_path, "e1", 1)
 
         assert verdict.status == RoundStatus.VOID
@@ -721,8 +660,11 @@ class TestDuelScopeWiring:
         child_agg = {"scalar": 0.9}
         outcome = type("_O", (), {"reason": "", "decision": "promote"})()
 
+    def _events(self, tmp_path: Path, type_token: str) -> list[Any]:
+        return [e for e in RoundLog(tmp_path, "e1", 4).read() if e.type == type_token]
+
     def _scopes(self, tmp_path: Path, type_token: str) -> list[RoundEventScope]:
-        return [e.scope for e in RoundLog(tmp_path, "e1", 4).read() if e.type == type_token]
+        return [e.scope for e in self._events(tmp_path, type_token)]
 
     def test_units_name_the_generation_on_each_side(self, tmp_path: Path) -> None:
         from zicato.evolve.round_reporting import _emit_tournament_units
@@ -735,9 +677,13 @@ class TestDuelScopeWiring:
             matchup_id="m-7",
         )
 
-        scopes = self._scopes(tmp_path, "unit_completed")
-        # One per (entry, side), entries in sorted order.
-        assert [(s.entry_id, s.side, s.generation_id) for s in scopes] == [
+        events = self._events(tmp_path, "unit_completed")
+        scopes = [e.scope for e in events]
+        # One per (entry, side), entries in sorted order. The entry and the
+        # side are the payload's own; the scope adds the generation each ran.
+        assert [
+            (e.payload["entry_id"], e.payload["side"], e.scope.generation_id) for e in events
+        ] == [
             ("entry-a", "parent", "v-champ"),
             ("entry-a", "child", "v-chal"),
             ("entry-b", "parent", "v-champ"),
@@ -750,9 +696,10 @@ class TestDuelScopeWiring:
             "v-chal",
             "v-champ",
         ]
-        # The placeholder never reaches the replicate COORDINATE.
+        # The aggregate placeholder reaches NO coordinate: an absent
+        # ``replicate`` is the honest statement that this event names no draw.
         assert {s.replicate for s in scopes} == {None}
-        assert {s.attributes["aggregate_replicate"] for s in scopes} == {0}
+        assert all("replicate" not in s.attributes for s in scopes)
         assert {s.attributes["matchup_id"] for s in scopes} == {"m-7"}
         assert {s.step for s in scopes} == {"run"}
 
@@ -770,7 +717,7 @@ class TestDuelScopeWiring:
         )
 
         (scope,) = self._scopes(tmp_path, "gate_evaluated")
-        assert (scope.generation_id, scope.step, scope.round_index) == ("v-chal", "gate", 4)
+        assert (scope.generation_id, scope.step) == ("v-chal", "gate")
         assert scope.attributes == {"opponent_generation_id": "v-champ", "matchup_id": "m-7"}
 
     def test_an_unnamed_duel_still_emits_an_unscoped_record(self, tmp_path: Path) -> None:
@@ -784,8 +731,7 @@ class TestDuelScopeWiring:
         units = self._scopes(tmp_path, "unit_completed")
         (gate,) = self._scopes(tmp_path, "gate_evaluated")
         assert {s.generation_id for s in units} == {""}
-        assert "opponent_generation_id" not in units[0].attributes
-        assert "matchup_id" not in units[0].attributes
+        assert [s.attributes for s in units] == [{}] * len(units)
         assert (gate.generation_id, gate.attributes) == ("", {})
 
 

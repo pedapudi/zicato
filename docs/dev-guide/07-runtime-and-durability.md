@@ -1044,11 +1044,14 @@ so it survives crashes and resume (§7.2's placement rule).
 
 ### 7.10.1 Event schema and `seq`
 
-Each line is `{"seq": N, "ts": "...", "type": "<token>", "payload": {...}}`.
+Each line is
+`{"seq": N, "ts": "...", "type": "<token>", "scope": {...}, "payload": {...}}`.
 `seq` starts at 1 and increments by exactly 1 per append, derived from the
 current tail under the single-writer contract (only the orchestrator driving
-the round appends). The closed vocabulary — one frozen dataclass per event,
-registered in `EVENT_TYPES` keyed by its `TYPE` wire token:
+the round appends). `payload` is the event type's own fact; `scope` is the
+type-independent `RoundEventScope` envelope covered in §7.10.2. The closed
+vocabulary — one frozen dataclass per event, registered in `EVENT_TYPES`
+keyed by its `TYPE` wire token:
 
 | Wire token | Dataclass | Carries |
 |---|---|---|
@@ -1072,7 +1075,47 @@ back as a raw envelope with typed `event = None` (the fold skips it); extra
 payload keys are dropped; missing keys take dataclass defaults; JSON's
 list-vs-tuple round-trip is patched up in `_decode_event`.
 
-### 7.10.2 Torn-tail truncation on the write path
+### 7.10.2 `RoundEventScope` — where an event belongs in the round plan
+
+A round log is a SHARED stream. A field round proposes several challengers
+into one `round_log.jsonl`, each running its own best-of-N slate whose
+candidate indexes restart at zero, and each settling its own board units. The
+event `type` and its payload say *what happened*; `RoundEventScope` says
+*where that fact belongs*, so a reader groups events by coordinate rather
+than by guessing from their position in the file.
+
+Its named coordinates are `generation_id` (the challenger), `step` (the
+lifecycle step: open, propose, apply, run, gate, decide, close), `entry_id`
+and `replicate` (the board entry and the draw within it), `side` (`parent` or
+`child` of a duel), and `band` (the measurement band). Anything else travels
+in an open `attributes` map — the extension point that lets a newer emitter
+add a coordinate without a schema change, and that an older reader preserves
+rather than drops. `attributes` holds COORDINATES ONLY, never content: a
+scope is subject to the same redaction denylist as every other durable record
+(`proposer/reflection.py`'s `assert_redacted`).
+
+Two rules keep the envelope honest:
+
+> ✅ ALWAYS give the scope only what the payload does not already state.
+> `unit_completed` carries its own `entry_id` and `side`, and
+> `patches_applied` its own `generation_id` — the reader reads those from the
+> payload. A second copy in the scope is a fact with a twin that can drift
+> from it, and one of the two will eventually be wrong.
+
+> ⚠️ TRAP: there is deliberately no slate *ordinal* coordinate, because the
+> two candidate numberings diverge. `candidate_sampled.i` is the slate SLOT
+> (`_SlotOutcome.sample`), while `candidate_screened.index` and
+> `critique_selected.index` enumerate the SURVIVORS that reached the screen —
+> so a slate whose slot 0 fails emits `candidate_sampled{i: 1}` and
+> `candidate_screened{index: 0}` for the same candidate. One coordinate
+> cannot carry both meanings, and a wrong coordinate is worse than an absent
+> one. The round is likewise not a coordinate: a record's round is the
+> `rounds/{round}/` path it was read from, which no writer can contradict.
+
+Legacy records predating the envelope decode to the empty scope, so their
+events simply cannot be attributed more precisely than the record permits.
+
+### 7.10.3 Torn-tail truncation on the write path
 
 `RoundLog.append` repairs before it sequences:
 
@@ -1094,7 +1137,7 @@ This is the same tail discipline as the supervisor ledger's
 readers never see dead bytes merge into a fresh event, and so the interior-
 corruption rule (D4) stays a real invariant rather than a hope.
 
-### 7.10.3 The fold
+### 7.10.4 The fold
 
 `fold_round_record(events)` is pure and total over any prefix of a valid
 log: a mid-round crash leaves a foldable partial record (`closed=False`,
@@ -1106,28 +1149,37 @@ carries the round's whole arc: proposal session tallies, applied generation
 ids, validation findings, completed units, gate verdicts, the holdout bit,
 the evidence trail, and the terminal decision + provenance.
 
-### 7.10.4 Emission is best-effort — the never-fail-a-round rule
+### 7.10.5 Emission is best-effort — the never-fail-a-round rule
 
 The orchestrator emits through `_RoundLogEmitter`
-(`src/zicato/orchestrator.py`), and its posture is invariant D11:
+(`src/zicato/evolve/round_reporting.py`), and its posture is invariant D11:
 
 ```python
 class _RoundLogEmitter:
     """Best-effort appender onto one round's durable RoundLog (WS8).
 
-    Emission failures must NEVER fail a round — the live index dual-write
+    A STORAGE failure must never fail a round — the live index dual-write
     (:func:`_ingest_experiment_into_index`) is the precedent: the canonical
     stores (``experiment.json``, lineage, journal) stay authoritative and
     the event log is a derived, replayable trace. A bind failure degrades
-    to a permanent no-op emitter; every append failure is logged at
-    ``debug`` and swallowed.
+    to a permanent no-op emitter; an append that cannot reach the disk is
+    logged at ``debug`` and swallowed.
 ```
-— `src/zicato/orchestrator.py`, `_RoundLogEmitter`
+— `src/zicato/evolve/round_reporting.py`, `_RoundLogEmitter`
 
-`emit(type_token, fields)` resolves the dataclass through `EVENT_TYPES`; an
-unknown token is silently dropped (vocabulary skew must never crash a
-producer). The same string-token seam serves the proposer-side callback
-(`ProposerContext.round_event_emitter`) so both sides share one signature.
+`emit(type_token, fields, scope)` resolves the dataclass through
+`EVENT_TYPES`; an unknown token is silently dropped (vocabulary skew must
+never crash a producer). The same three-argument string-token seam serves the
+proposer-side callback (`ProposerContext.round_event_emitter`) so both sides
+share one signature.
+
+Best-effort covers the DISK, not the schema. Building the typed event happens
+outside the guard, so a payload field no event declares raises rather than
+dropping the event: `seq` is derived from the file's tail, so a silently
+dropped event leaves a gap-free log that reads exactly like a round which
+never emitted it. That is why `scope` is a separate argument and never a
+reserved payload key — no emitter on the seam can forward it into a
+constructor that would reject it.
 
 > ⚠️ TRAP: the RoundLog is simultaneously "durable store-of-record" (its
 > reader semantics, its placement under `epochs/`) and "best-effort at
@@ -1408,17 +1460,33 @@ typed consumer.
 **Step 3 — Emitter token.** Emission goes through the best-effort emitter —
 one call at the decision site in `src/zicato/orchestrator.py` (or via the
 proposer-side `round_event_emitter` callback if it originates in the
-proposer):
+proposer). The emitter takes THREE arguments: the wire token, the event's
+payload fields, and the event's optional plan `scope`:
 
 ```python
-round_log.emit("placebo_drawn", {"arm": arm_name, "seed": seed})
+round_log.emit(
+    "placebo_drawn",
+    {"arm": arm_name, "seed": seed},
+    {"generation_id": challenger_id},
+)
 ```
 
-Never construct/append a `RoundLog` directly from loop code and never let
-emission raise (D11): `_RoundLogEmitter.emit` already swallows — keep it that
-way by passing only pre-computed, exception-free payload values (compute the
-dict *outside* any `getattr` chain that could throw, or mirror
-`_emit_tournament_units`' defensive shape).
+Scope is a separate argument and never a payload key, so it can never reach
+the event constructor. Give it only the coordinates the payload does not
+already state (§7.10.2) — a challenger id the payload cannot name, not a
+second copy of an `entry_id` the payload already carries. Add the token to
+`round_reporting._ROUND_LOG_STEP` so the emitter can fill its lifecycle
+`step`; a token missing from that map simply gets no step.
+
+Never construct/append a `RoundLog` directly from loop code, and never let a
+STORAGE failure fail a round (D11): `_RoundLogEmitter.emit` swallows the
+append's `OSError` — keep it that way by passing only pre-computed,
+exception-free payload values (compute the dict *outside* any `getattr` chain
+that could throw, or mirror `_emit_tournament_units`' defensive shape). A
+payload field no event declares is a different matter: the constructor runs
+outside that guard and RAISES, because `seq` comes from the file's tail and a
+silently dropped event would leave a gap-free log no reader can tell from a
+round that never emitted it.
 
 **Step 4 — Fold.** Extend `fold_round_record`: add an accumulator variable,
 an `elif isinstance(event, PlaceboDrawn):` branch, and (if consumers need

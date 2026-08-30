@@ -239,15 +239,17 @@ class ProposerContext:
     #: orchestrator so the proposer stack can trace its sampling decisions
     #: into the round's durable event log WITHOUT importing the log module
     #: (the proposer stays decoupled from :mod:`zicato.epoch.round_log`).
-    #: Called as ``emitter(type_token, fields)`` — e.g.
-    #: ``("candidate_sampled", {"i": 0, "n": 3,
-    #: "scope": {"generation_id": "v1"}})`` from the best-of-N wrapper.
-    #: ``scope`` is a reserved, type-independent envelope field; the durable
-    #: emitter removes it before constructing the typed event payload.
-    #: Emission is best-effort by contract: callers guard every invocation so
-    #: a raising emitter can never fail a propose step.
+    #: Called as ``emitter(type_token, fields, scope)`` — e.g.
+    #: ``("candidate_sampled", {"i": 0, "n": 3}, {"generation_id": "v1"})``
+    #: from the best-of-N wrapper. ``scope`` carries the event's PLAN
+    #: coordinates and is a SEPARATE argument, never a payload key, so no
+    #: emitter can forward it into the typed event's constructor. Emission is
+    #: best-effort by contract: callers guard every invocation so a raising
+    #: emitter can never fail a propose step.
     #: ``None`` (the default) emits nothing.
-    round_event_emitter: Callable[[str, dict[str, Any]], None] | None = None
+    round_event_emitter: Callable[[str, dict[str, Any], Mapping[str, Any] | None], None] | None = (
+        None
+    )
     #: Optional pre-tournament candidate-screen runner (tryouts; WS-S).
     #: The orchestrator builds ONE closure per round — via
     #: ``_build_candidate_screen_runner``, only when the contract opts in

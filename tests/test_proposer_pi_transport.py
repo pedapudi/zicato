@@ -161,7 +161,9 @@ async def test_best_of_n_generation_and_review_share_one_session(
 
     assert isinstance(wrapped, NativeSlateAdapter)
     chosen = await wrapped.propose(
-        _context(workspace, round_event_emitter=lambda kind, fields: events.append((kind, fields)))
+        _context(
+            workspace, round_event_emitter=lambda kind, fields, scope: events.append((kind, fields))
+        )
     )
 
     launches = _launches(records)
@@ -188,7 +190,9 @@ async def test_native_slate_normalizes_the_review_rationale(
     wrapped = wrap_with_proposer_quality(agent, ProposerQualityConfig(best_of_n=2))
 
     await wrapped.propose(
-        _context(workspace, round_event_emitter=lambda kind, fields: events.append((kind, fields)))
+        _context(
+            workspace, round_event_emitter=lambda kind, fields, scope: events.append((kind, fields))
+        )
     )
 
     audited = next(fields for kind, fields in events if kind == "critique_selected")
@@ -216,7 +220,9 @@ async def test_a_malformed_rationale_never_discards_the_review(
     wrapped = wrap_with_proposer_quality(agent, ProposerQualityConfig(best_of_n=2))
 
     chosen = await wrapped.propose(
-        _context(workspace, round_event_emitter=lambda kind, fields: events.append((kind, fields)))
+        _context(
+            workspace, round_event_emitter=lambda kind, fields, scope: events.append((kind, fields))
+        )
     )
 
     assert chosen.hypothesis.core_idea == "second"
@@ -247,7 +253,9 @@ async def test_a_missing_rationale_never_discards_the_review(
     wrapped = wrap_with_proposer_quality(agent, ProposerQualityConfig(best_of_n=2))
 
     chosen = await wrapped.propose(
-        _context(workspace, round_event_emitter=lambda kind, fields: events.append((kind, fields)))
+        _context(
+            workspace, round_event_emitter=lambda kind, fields, scope: events.append((kind, fields))
+        )
     )
 
     assert chosen.hypothesis.core_idea == "second"
@@ -276,7 +284,9 @@ async def test_an_out_of_range_review_records_no_rationale(
     wrapped = wrap_with_proposer_quality(agent, ProposerQualityConfig(best_of_n=2))
 
     await wrapped.propose(
-        _context(workspace, round_event_emitter=lambda kind, fields: events.append((kind, fields)))
+        _context(
+            workspace, round_event_emitter=lambda kind, fields, scope: events.append((kind, fields))
+        )
     )
 
     audited = next(fields for kind, fields in events if kind == "critique_selected")

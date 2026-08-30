@@ -785,10 +785,8 @@ async def evolve_field_round(
     if crowning_holdout_block is not None:
         round_log.emit(
             "holdout_released",
-            {
-                "confirmed": bool(crowning_holdout_block.get("confirmed")),
-                "scope": {"generation_id": crowning_challenger_id},
-            },
+            {"confirmed": bool(crowning_holdout_block.get("confirmed"))},
+            {"generation_id": crowning_challenger_id},
         )
 
     # --- Opt-in integrity blocking modes (default OFF) -------------------
