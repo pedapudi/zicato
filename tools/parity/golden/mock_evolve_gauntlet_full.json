@@ -1,0 +1,389 @@
+{
+  "current_generation": "v1",
+  "experiments": {
+    "v1": {
+      "epoch_id": "<DATE>_t1_gauntlet",
+      "format_version": 1,
+      "generation_id": "v1",
+      "hypothesis": {
+        "core_idea": "Tighten the researcher's instruction so it produces a compact bullet-point synthesis instead of long prose.",
+        "expected_drift_movements": [
+          {
+            "direction": "decrease",
+            "kind": "context_pressure",
+            "magnitude": "medium"
+          },
+          {
+            "direction": "neutral",
+            "kind": "stopped_early",
+            "magnitude": "small"
+          }
+        ],
+        "expected_metric_movements": [],
+        "expected_pass_rate_delta": "+0.05 to +0.10",
+        "modulating": [
+          "researcher_instruction"
+        ],
+        "risks": "Compact bullets may drop nuance the writer relied on; the writer's slide quality may regress if so.",
+        "why": "The current researcher prompt encourages a verbose, step-by-step synthesis; compact bullets give the writer a cleaner input and should reduce off-topic drift."
+      },
+      "id": "exp_<DATE>_t1_gauntlet_v1",
+      "outcome": {
+        "champion_eval_mode": "full",
+        "drift_loss_delta": -1.6,
+        "drift_movements": [],
+        "eliminated_in_round": null,
+        "evidence": null,
+        "final_rank": 1,
+        "generalization_gap": 0.0,
+        "holdout": {
+          "confirmed": true,
+          "holdout_scalar": 0.4,
+          "ladder_budget_remaining": 15,
+          "ladder_budget_total": 16,
+          "ladder_released": true,
+          "threshold": 0.01,
+          "train_scalar": 0.4
+        },
+        "holdout_loss": 0.4,
+        "match_record": [
+          {
+            "delta_scalar": -1.6,
+            "match_id": "gauntlet",
+            "opponent": "v0",
+            "won": true
+          }
+        ],
+        "metric_movements": [],
+        "operator_override": false,
+        "operator_override_reason": "",
+        "pass_rate_delta": 0.0,
+        "ran_at": "<TS>",
+        "rejection_reason": "",
+        "scalar_score_delta": -1.6,
+        "structure": "gauntlet",
+        "tournament_decision": "promoted",
+        "train_loss": 0.4
+      },
+      "parent_generation_id": "v0",
+      "patch_ids": [
+        "<HEX32>"
+      ],
+      "proposed_at": "<TS>",
+      "round_index": 0
+    }
+  },
+  "field_tournaments": {},
+  "gen_scores": {
+    "v0": {
+      "drift_loss_mean": 2.0,
+      "entry_count": 2,
+      "expectation_count": 2,
+      "generation_id": "v0",
+      "mean_score": 1.0,
+      "namespace_aggregates": {
+        "cost:": 0.0,
+        "drift:": 2.0,
+        "failure:": 0.0,
+        "judge:": 0.0,
+        "latency:": 0.0,
+        "output:": 0.0,
+        "rubric:": -0.0,
+        "runtime:": 0.0,
+        "schema:": 0.0
+      },
+      "pass_rate": 1.0,
+      "per_entry": {
+        "picky_stakeholder_emulated": {
+          "drift_loss": 2.0,
+          "failure": 0.0,
+          "pass_fail": true,
+          "score": 1.0
+        },
+        "transformers_lay_audience": {
+          "drift_loss": 2.0,
+          "failure": 0.0,
+          "pass_fail": true,
+          "score": 1.0
+        }
+      },
+      "scalar": 2.0,
+      "scalar_components": {
+        "cost": 0.0,
+        "drift": 2.0,
+        "failure": 0.0,
+        "judge": 0.0,
+        "latency": 0.0,
+        "output": 0.0,
+        "pass": 0.0,
+        "rubric": -0.0,
+        "runtime": 0.0,
+        "schema": 0.0
+      },
+      "scalar_provenance": "builtin"
+    },
+    "v1": {
+      "drift_loss_mean": 0.4,
+      "entry_count": 2,
+      "expectation_count": 2,
+      "generation_id": "v1",
+      "mean_score": 1.0,
+      "namespace_aggregates": {
+        "cost:": 0.0,
+        "drift:": 0.4,
+        "failure:": 0.0,
+        "judge:": 0.0,
+        "latency:": 0.0,
+        "output:": 0.0,
+        "rubric:": -0.0,
+        "runtime:": 0.0,
+        "schema:": 0.0
+      },
+      "pass_rate": 1.0,
+      "per_entry": {
+        "picky_stakeholder_emulated": {
+          "drift_loss": 0.4,
+          "failure": 0.0,
+          "pass_fail": true,
+          "score": 1.0
+        },
+        "transformers_lay_audience": {
+          "drift_loss": 0.4,
+          "failure": 0.0,
+          "pass_fail": true,
+          "score": 1.0
+        }
+      },
+      "scalar": 0.4,
+      "scalar_components": {
+        "cost": 0.0,
+        "drift": 0.4,
+        "failure": 0.0,
+        "judge": 0.0,
+        "latency": 0.0,
+        "output": 0.0,
+        "pass": 0.0,
+        "rubric": -0.0,
+        "runtime": 0.0,
+        "schema": 0.0
+      },
+      "scalar_provenance": "builtin"
+    }
+  },
+  "lineage": {
+    "epochs": [
+      {
+        "closed_at": "",
+        "generations": [
+          {
+            "child_scalar": 0.4,
+            "created_at": "<TS>",
+            "delta_scalar": -1.6,
+            "id": "v1",
+            "parent_id": "v0",
+            "parent_scalar": 2.0,
+            "promoted": true,
+            "rejection_reason": "",
+            "round_index": 0
+          }
+        ],
+        "id": "<DATE>_t1_gauntlet",
+        "name": "t1-gauntlet",
+        "started_at": "<TS>",
+        "v0_parent": null
+      }
+    ],
+    "format_version": 1
+  },
+  "losses": {},
+  "round_logs": {
+    "0/round_log.jsonl": [
+      {
+        "payload": {
+          "contract_hash": "292fa8d36d30644be17cf0e11ce1fba0ea7c4fb757d2574bf92b48e29c071e47"
+        },
+        "seq": 1,
+        "ts": "<TS>",
+        "type": "round_opened"
+      },
+      {
+        "payload": {
+          "i": 0,
+          "n": 3,
+          "recombined": false,
+          "revise": false
+        },
+        "seq": 2,
+        "ts": "<TS>",
+        "type": "candidate_sampled"
+      },
+      {
+        "payload": {
+          "i": 1,
+          "n": 3,
+          "recombined": false,
+          "revise": false
+        },
+        "seq": 3,
+        "ts": "<TS>",
+        "type": "candidate_sampled"
+      },
+      {
+        "payload": {
+          "i": 2,
+          "n": 3,
+          "recombined": false,
+          "revise": false
+        },
+        "seq": 4,
+        "ts": "<TS>",
+        "type": "candidate_sampled"
+      },
+      {
+        "payload": {
+          "index": 0,
+          "rationale": "",
+          "reason": "heuristic",
+          "slate": [
+            {
+              "core_idea": "Tighten the researcher's instruction so it produces a compact bullet-point synthesis instead of long prose.",
+              "index": 0,
+              "mutation_ids": [
+                "researcher_instruction"
+              ]
+            },
+            {
+              "core_idea": "Sharpen the coordinator's routing instruction so it stops re-dispatching the reviewer in a loop on files_not_found cases.",
+              "index": 1,
+              "mutation_ids": [
+                "coordinator_instruction"
+              ]
+            },
+            {
+              "core_idea": "Require the researcher to attach a source citation to every claim so the writer stops inventing unsupported metrics.",
+              "index": 2,
+              "mutation_ids": [
+                "researcher_instruction"
+              ]
+            }
+          ]
+        },
+        "seq": 5,
+        "ts": "<TS>",
+        "type": "critique_selected"
+      },
+      {
+        "payload": {
+          "errors": [],
+          "slot_index": null
+        },
+        "seq": 6,
+        "ts": "<TS>",
+        "type": "proposal_attempted"
+      },
+      {
+        "payload": {
+          "experiment_id": "exp_<DATE>_t1_gauntlet_v1"
+        },
+        "seq": 7,
+        "ts": "<TS>",
+        "type": "experiment_minted"
+      },
+      {
+        "payload": {
+          "generation_id": "v1"
+        },
+        "seq": 8,
+        "ts": "<TS>",
+        "type": "patches_applied"
+      },
+      {
+        "payload": {
+          "entry_id": "picky_stakeholder_emulated",
+          "replicate": 0,
+          "side": "parent"
+        },
+        "seq": 9,
+        "ts": "<TS>",
+        "type": "unit_completed"
+      },
+      {
+        "payload": {
+          "entry_id": "picky_stakeholder_emulated",
+          "replicate": 0,
+          "side": "child"
+        },
+        "seq": 10,
+        "ts": "<TS>",
+        "type": "unit_completed"
+      },
+      {
+        "payload": {
+          "entry_id": "transformers_lay_audience",
+          "replicate": 0,
+          "side": "parent"
+        },
+        "seq": 11,
+        "ts": "<TS>",
+        "type": "unit_completed"
+      },
+      {
+        "payload": {
+          "entry_id": "transformers_lay_audience",
+          "replicate": 0,
+          "side": "child"
+        },
+        "seq": 12,
+        "ts": "<TS>",
+        "type": "unit_completed"
+      },
+      {
+        "payload": {
+          "attributable_regressions": [],
+          "challenger_scalar": 0.4,
+          "champion_scalar": 2.0,
+          "decision": "promoted",
+          "margin_required": 0.01,
+          "rule_fired": ""
+        },
+        "seq": 13,
+        "ts": "<TS>",
+        "type": "gate_evaluated"
+      },
+      {
+        "payload": {
+          "confirmed": true
+        },
+        "seq": 14,
+        "ts": "<TS>",
+        "type": "holdout_released"
+      },
+      {
+        "payload": {
+          "decision": "promoted",
+          "provenance": {
+            "operator_override": false,
+            "operator_override_reason": "",
+            "overrides": {},
+            "parent_generation_id": "v0",
+            "promoted_generation_id": "v1",
+            "promoted_generation_ids": [
+              "v1"
+            ],
+            "reason": "",
+            "structure": "gauntlet"
+          }
+        },
+        "seq": 15,
+        "ts": "<TS>",
+        "type": "decision_recorded"
+      },
+      {
+        "payload": {},
+        "seq": 16,
+        "ts": "<TS>",
+        "type": "round_closed"
+      }
+    ]
+  }
+}
