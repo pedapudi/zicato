@@ -50,11 +50,12 @@ from zicato.query.execution_plan import (
     STATUS_RUNNING,
     ExecutionPlan,
     PlanNode,
+    _empty_plan_model,
     _ts_ms,
     build_execution_plan_model,
 )
 from zicato.query.loop_view import build_round_pipeline
-from zicato.query.paths import WorkspacePaths, _iso, _utc_now, list_epoch_ids
+from zicato.query.paths import WorkspacePaths, list_epoch_ids
 from zicato.query.runtime_view import (
     LIVENESS_LIVE,
     LIVENESS_SETTLED,
@@ -90,29 +91,41 @@ def _plan_lookups(
     plan: ExecutionPlan,
 ) -> tuple[
     dict[int, PlanNode],
-    dict[str, tuple[PlanNode, PlanNode]],
+    dict[str, tuple[PlanNode, ...]],
     dict[str, PlanNode],
 ]:
-    """Index round, measurement-band, and generation coordinates once."""
+    """Index round, measurement-band, and generation coordinates once.
+
+    A band's entry is its full ANCESTRY — every node from the owning stage
+    down to the band itself — because that chain is what
+    :func:`_active_path` emits, and a chain that named only the stage and
+    the band would skip whatever real parents sit between them for a band
+    nested deeper than one level.
+
+    Both maps are first-wins: a coordinate the plan holds twice keeps the
+    node the plan reached first, so the overlay's answer does not depend
+    on walk order.
+    """
     rounds: dict[int, PlanNode] = {}
-    bands: dict[str, tuple[PlanNode, PlanNode]] = {}
+    bands: dict[str, tuple[PlanNode, ...]] = {}
     sweeps: dict[str, PlanNode] = {}
 
-    def visit(stage: PlanNode, node: PlanNode) -> None:
+    def visit(ancestry: tuple[PlanNode, ...], node: PlanNode) -> None:
+        chain = (*ancestry, node)
         band = str(node.coordinates.get("band") or "")
         generation_id = str(node.coordinates.get("generation_id") or "")
         if node.kind == "measurement_band" and band:
-            bands.setdefault(band, (stage, node))
+            bands.setdefault(band, chain)
         if node.kind == _SWEEP_KIND and generation_id:
             sweeps.setdefault(generation_id, node)
         for child in node.children:
-            visit(stage, child)
+            visit(chain, child)
 
     for stage in plan.stages:
         index = stage.coordinates.get("round_index")
         if stage.kind == "round" and isinstance(index, int) and not isinstance(index, bool):
-            rounds[index] = stage
-        visit(stage, stage)
+            rounds.setdefault(index, stage)
+        visit((), stage)
     return rounds, bands, sweeps
 
 
@@ -272,7 +285,7 @@ def _live_epoch_id(paths: WorkspacePaths, pipeline: dict[str, Any]) -> str | Non
 
 def _active_path(
     rounds: dict[int, PlanNode],
-    bands: dict[str, tuple[PlanNode, PlanNode]],
+    bands: dict[str, tuple[PlanNode, ...]],
     pipeline: dict[str, Any],
 ) -> list[str]:
     """Project the pipeline phase onto node ids that the plan actually holds.
@@ -284,8 +297,8 @@ def _active_path(
     open_step = pipeline.get("epoch_open_step")
     if isinstance(open_step, dict):
         band = EPOCH_OPEN_STEP_BANDS.get(str(open_step.get("id") or ""))
-        path = bands.get(band or "")
-        return [path[0].id, path[1].id] if path else []
+        chain = bands.get(band or "")
+        return [node.id for node in chain] if chain else []
 
     round_index = pipeline.get("round_index")
     stage = (
@@ -454,8 +467,13 @@ def _overlay(
 
 
 def _degraded(paths: WorkspacePaths, note: str) -> dict[str, Any]:
-    """The response shape with nothing in it — the ONE degrade shape (DQ3)."""
-    plan = ExecutionPlan(epoch_id=None, generated_at=_iso(_utc_now()), note=note)
+    """The response shape with nothing in it — the ONE degrade shape (DQ3).
+
+    The empty plan comes from the durable builder's own
+    :func:`~zicato.query.execution_plan._empty_plan_model`, so the live
+    degrade and the durable degrade cannot render different empties.
+    """
+    plan = _empty_plan_model(None, note)
     return RuntimePlanOverlay(
         liveness=_safe_liveness(paths),
         summary=_overlay({}, note=note),

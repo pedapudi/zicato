@@ -1036,8 +1036,9 @@ None of this needs rearchitecting. The whole list is a bounded, behavior-preserv
 ## Persistence: is the approach sensible? (and how to simplify it)
 
 **Verdict: sensible, with caveats.** The claims here are verified against the
-implementation and its cross-backend conformance tests. New workspaces explicitly
-select Git; directory snapshots remain a supported fallback.
+implementation and its cross-backend conformance tests rather than the design
+docs. New workspaces explicitly select Git; directory snapshots remain a
+supported fallback.
 
 ### The spine: CQRS, verified in code
 
@@ -1075,10 +1076,10 @@ final line. Snapshot GC prunes rejected generation source trees behind
 lineage, journal, and run records. Git worktree administration remains under
 the repository lock, including pruning.
 
-### Resulting simplification
+### Where the store boundaries fall
 
 The store *count* is not the problem — each store has a distinct consumer. The
-structural duplication has been removed at their boundary:
+boundary between them carries no duplicated mechanism:
 
 - Per-run isolation lives behind `GenerationStore.checkout_ephemeral`. The
   directory backend copies; the Git backend creates a detached per-run worktree;
@@ -1091,9 +1092,10 @@ structural duplication has been removed at their boundary:
   pruning. Experiments and patches are read through `StorageBackend`, including
   after source pruning. Commit metadata is an operator-readable redundant copy,
   never a second canonical record.
-- The rejected overlay/reflink materialization design remains only as a decision
-  record. Git blob dedup and worktree isolation already provide the required
-  storage and execution properties.
+- The overlay/reflink materialization design in
+  [`GENERATION-ISOLATION.md`](GENERATION-ISOLATION.md) is a rejected-decision
+  record, not a roadmap item: Git blob dedup and worktree isolation already
+  provide the required storage and execution properties.
 
 The two generation backends remain justified: both conform to one protocol, and
 the directory implementation supports hosts where a private Git repository is
@@ -1188,12 +1190,12 @@ Still unproven (endpoint-gated backlog): behavior with a *real* proposer/judges 
 2. **Hoist the duplicated helpers.** Add `coerce_float`/`coerce_numeric_dict` to `dashboard/readers/paths.py` (kills 51 inline copies) and factor `tournament_view.py`'s 3× structure-dict / 2× scalar-pair builders. (~15.9% of logic lines sit in a repeated 6-line window.)
 3. **Delete the zero-risk residue.** `rm -rf ./zicato` (2.2 MB orphaned `.pyc`), 341 lines of dead JS, and ~6 dead private functions. Thin the ~77 "byte-identical to today" per-branch comment tags (keep every `LOAD-BEARING` marker).
 
-**Persistence (sensible spine; consolidation complete):**
+**Persistence (sensible spine):**
 
-1. Per-run isolation is behind `GenerationStore.checkout_ephemeral`; Git no
-   longer pays an additional directory copy in the worker transport.
-2. The overlay/reflink materialization proposal is retained only as a rejected
-   design record; no third mechanism is planned.
+1. Per-run isolation sits behind `GenerationStore.checkout_ephemeral`, so Git
+   pays no additional directory copy in the worker transport.
+2. The overlay/reflink materialization proposal is a rejected-decision record;
+   no third isolation mechanism is planned.
 3. Atomic replacement fsyncs the parent directory, and snapshot retention prunes
    source trees behind the store protocol while preserving every record.
 

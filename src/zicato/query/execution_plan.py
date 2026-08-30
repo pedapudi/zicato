@@ -62,11 +62,16 @@ Durable model, separate live overlay
 ------------------------------------
 This module builds the typed account of settled files. The live reader
 renders this same model with a runtime overlay instead of rewriting it.
-One feature remains deliberately absent here:
+Two features remain deliberately absent here:
 
 * The ``depth`` parameter. The whole plan is served in one response; a
   client that wants a spine reads the top of the tree and ignores the
-  rest.
+  rest. Measured against the largest epoch available at the time
+  (``2026-06-07_e4``, 56 loss files): the whole served payload is 37.7 KB,
+  well under the 200 KB at which paging the tree would start to pay for
+  its own complexity. The payload is close to linear in executed draws —
+  that epoch's 64 nodes cost ~0.59 KB each — so the number to re-measure
+  before revisiting this is executed draws per epoch, not rounds.
 * Absolute-timeline placement for units written before the wall-clock
   span landed on the loss profile. Those nodes carry a duration and read
   ``partial``. A start time is NEVER derived from a file mtime — that
@@ -205,7 +210,10 @@ class PlanNode:
             "kind": self.kind,
             "label": self.label,
             "purpose": self.purpose,
-            "status": status or self.status,
+            # ``is not None``, not truthiness: an overlay that resolves a
+            # node's status to the empty string is stating a status, and
+            # falling back to the node's own would silently overrule it.
+            "status": status if status is not None else self.status,
             "provenance": self.provenance,
             "started_at": self.started_at,
             "ended_at": self.ended_at,
