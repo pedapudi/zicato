@@ -1197,10 +1197,17 @@ async def run_fast_mode(
     ``replicates`` goes, so the contrast has a replicated challenger
     against an unreplicated champion. That halves the noise the knob was
     bought for rather than removing it — an operator who wants independent
-    draws on BOTH sides wants ``--mode full``, and the branch selection
-    logs this explicitly whenever ``replicates > 1`` meets the fast path
-    (see :func:`zicato.orchestrator.evolve_once`). Fast mode's own noise
-    hedge remains the evidence gate's crowning confirmation.
+    draws on BOTH sides wants ``--mode full``, and this function logs the
+    one-sidedness at WARNING whenever ``replicates > 1`` reaches it. Fast
+    mode's own noise hedge remains the evidence gate's crowning
+    confirmation.
+
+    The evolve loop does NOT come through here: its fast rounds resolve
+    both competitors' replicate slots through the unit cache
+    (:func:`run_matchup` under ``fast=True``), so the frozen-champion
+    asymmetry — and this warning — belong to the direct callers that keep
+    it, which is ``zicato tournament run --mode fast`` and library callers
+    holding a cached aggregate.
 
     ``disable_drift`` is the board-level drift-suppression set, stamped
     onto each board entry's context exactly as in :func:`run_tournament`;
@@ -1229,6 +1236,19 @@ async def run_fast_mode(
     from zicato.core import assert_distinct_callables  # noqa: PLC0415
 
     assert_distinct_callables(config.harness_call_llm, config.auxiliary_call_llm)
+
+    # The champion side stays ONE frozen cached aggregate no matter how high
+    # ``replicates`` goes, so replicating here buys a replicated challenger
+    # against an unreplicated champion. Say so out loud rather than letting
+    # an operator infer a symmetric noise reduction from the contract.
+    if replicates > 1:
+        log.warning(
+            "fast-mode duel: replicating the CHALLENGER board %d× (replicates=%d), "
+            "but the champion side is a single frozen cached aggregate — the noise "
+            "reduction is one-sided. Use --mode full for independent draws on both sides.",
+            replicates,
+            replicates,
+        )
 
     # Same board-level disable_drift / judge_only threading as the full
     # A/B path.

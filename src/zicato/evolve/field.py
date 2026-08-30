@@ -131,9 +131,11 @@ async def evolve_field_round(
         InconclusiveRecord,
         record_inconclusive,
     )
-    from zicato.selection.driver import EvidenceResolution  # noqa: PLC0415
+    from zicato.selection.driver import (  # noqa: PLC0415
+        EvidenceResolution,
+        make_evidence_replicate_duel,
+    )
     from zicato.selection.evidence_gate import (  # noqa: PLC0415
-        EVIDENCE_REPLICATE_BASE,
         rating_block,
         read_promote_confidence_threshold,
         read_replicate_budget,
@@ -164,8 +166,16 @@ async def evolve_field_round(
     fast_mode = prepared.fast_mode
     beater = prepared.beater
     meta_loop_emitter = prepared.meta_loop_emitter
+    # Narration (a rejected round's summary sentence, the round epilogue) is
+    # auxiliary work, not proposing: it describes what the round did rather
+    # than generating a candidate. It therefore runs on the auxiliary
+    # callable and the auxiliary model id — the two must name the same
+    # endpoint, or a workspace with a dedicated proposer engine would send
+    # the auxiliary callable a model id it does not serve. The proposer
+    # callable is picked separately, where a candidate is actually proposed
+    # (``candidate_batch``).
     auxiliary_call_llm = config.auxiliary_call_llm
-    auxiliary_model = config.proposer_model or str(workspace_config.get("auxiliary_model", ""))
+    auxiliary_model = str(workspace_config.get("auxiliary_model", ""))
     field_n = strategy.field_size()
     # WS8: a direct caller (tests) may not thread the opened emitter; bind
     # one so every emit below is uniformly best-effort. ``evolve_once`` (the
@@ -642,33 +652,14 @@ async def evolve_field_round(
             threshold=bt_threshold,
             replicate_budget=read_replicate_budget(tournament_spec.params),
         )
-        evidence_replicates_run = 0
-
-        async def _replicate_duel(left_id: str, right_id: str) -> MatchupResult:
-            # One extra crowning-pair duel for the pre-gate's evidence loop,
-            # routed through the SAME board-unit runner + gate every other
-            # duel uses (so a replicate is scored identically to the original
-            # duel) — but at a RESERVED replicate index
-            # (EVIDENCE_REPLICATE_BASE + j for evidence replicate j), so each
-            # replicate draws BOTH sides fresh instead of cache-replaying (or,
-            # in full mode, clobbering) the canonical replicate-0 slots. The
-            # matchup id encodes the index; the driver's audit guard keys on
-            # it. ``cache_scores=False`` keeps the single-draw aggregates out
-            # of the fast-mode ``gen_score.json`` reuse.
-            nonlocal evidence_replicates_run
-            replicate_slot = EVIDENCE_REPLICATE_BASE + evidence_replicates_run
-            evidence_replicates_run += 1
-            return await _run_matchup(
-                Matchup(
-                    matchup_id=f"bt-replicate:r{replicate_slot}:{left_id}:{right_id}",
-                    left=Contestant(generation_id=left_id, role="champion"),
-                    right=Contestant(generation_id=right_id, role="challenger"),
-                ),
-                replicate_base=replicate_slot,
-                cache_scores=False,
-            )
-
-        replicate_duel = _replicate_duel
+        # Each extra crowning-pair duel runs through the SAME board-unit
+        # runner and gate every other duel uses, so a replicate is scored
+        # identically to the original duel. The reserved slot, the matchup
+        # id that encodes it, and the score-cache suppression are the
+        # factory's, not this round's — one implementation of the
+        # ReplicateDuel contract, exercised by the decision-procedure
+        # oracle at the same seam production drives it from.
+        replicate_duel = make_evidence_replicate_duel(_run_matchup)
 
         def _on_inconclusive(resolution: EvidenceResolution) -> None:
             # Record the unresolved crowning duel to the dead-letter queue so

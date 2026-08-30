@@ -41,6 +41,23 @@ log = logging.getLogger("zicato.orchestrator")
 CallLLM = Callable[[str, str, str], Awaitable[str]]
 
 
+def _recorded_generation_ids(workspace_root: Path, epoch_id: str) -> list[str]:
+    """Generation ids from the epoch's RECORD directories — no source trees involved.
+
+    ``epochs/{id}/generations/{gen}/`` is written by the journal under both
+    storage backends and survives source pruning
+    (:mod:`zicato.epoch.gc`), so it is the durable answer to "has this
+    epoch minted a generation".
+    """
+    from zicato.workspace import WorkspaceLayout  # noqa: PLC0415
+
+    gens_root = WorkspaceLayout.from_root(workspace_root).generations_dir(epoch_id)
+    try:
+        return sorted(child.name for child in gens_root.iterdir() if child.is_dir())
+    except (FileNotFoundError, NotADirectoryError, OSError):
+        return []
+
+
 def _atomic_write_text(path: Path, text: str) -> None:
     """Atomically write ``text`` to ``path`` (``.tmp`` + :func:`os.replace`).
 
@@ -137,7 +154,14 @@ def _ensure_baseline_snapshot(
     from zicato.epoch.genstore import default_generation_store  # noqa: PLC0415
 
     store = default_generation_store(workspace_root)
-    if store.list_generations(epoch_id):
+    # Existence is a RECORD question, not a source question. The store lists
+    # source-bearing generations only, so an epoch whose v0 snapshot has been
+    # pruned lists nothing — and re-seeding on that answer would write a
+    # fresh v0 source under the surviving v0 records, silently pairing this
+    # epoch's decisions with a tree that never produced them. The generation
+    # record directories survive pruning by design, so they are what says
+    # whether this epoch has already been seeded.
+    if store.list_generations(epoch_id) or _recorded_generation_ids(workspace_root, epoch_id):
         return  # already have at least one generation; nothing to do
 
     # Priority 1 — cross-epoch lineage seed left by a contract-roll.

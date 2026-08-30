@@ -154,8 +154,10 @@ def prune_generations(
     """Prune settled-rejected generation source trees under one epoch.
 
     Exactly one policy must be selected — ``keep_last_n`` (keep the N
-    newest generations in addition to the safety floor) or
-    ``keep_promoted_only`` (keep only the floor). The safety floor —
+    newest generations that still have sources, in addition to the safety
+    floor) or ``keep_promoted_only`` (keep only the floor). The store
+    enumerates source-bearing generations only, so an already-pruned
+    generation is not one of the N. The safety floor —
     promoted generations, in-flight generations, generations with no
     lineage record, and the seed ``v0`` — is NEVER pruned under either
     policy; see the module docstring for the reasoning.
@@ -192,10 +194,12 @@ def prune_generations(
     if keep_last_n is not None:
         keep.update(generations[-keep_last_n:])
 
-    # A candidate must actually HAVE a source tree: under the directory
-    # backend a previously-pruned generation still enumerates (its record
-    # directory survives by design) but has nothing left to remove, so a
-    # re-run must report it as neither kept nor pruned — idempotency.
+    # A candidate must actually HAVE a source tree. The store enumerates
+    # source-bearing generations, so this normally holds for every listed
+    # id; it is re-asserted because the listing and the removal are two
+    # reads of a directory an operator or a concurrent GC can change
+    # between them, and a report naming a generation it did not remove
+    # would overstate what the run reclaimed.
     pruned = tuple(g for g in generations if g not in keep and store.has_generation(epoch_id, g))
     kept = tuple(g for g in generations if g in keep)
 
