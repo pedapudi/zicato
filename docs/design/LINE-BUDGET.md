@@ -18,8 +18,8 @@ The baseline and final ratchet use the same metric:
 
 | Measurement | Baseline (`f9052dd`) | Current limit | Net reduction |
 |---|---:|---:|---:|
-| Total | 408,547 | 424,596 | -16,049 |
-| Production | 197,588 | 203,810 | -6,222 |
+| Total | 408,547 | 429,572 | -21,025 |
+| Production | 197,588 | 203,386 | -5,798 |
 
 The earlier raw count of 425,755 included lockfiles and generated artifacts and
 is retained in `.line-budget.json` for provenance; it is not the enforced
@@ -103,3 +103,5 @@ increase.
 | Live execution plan and the served per-run in-flight verdict (production) | 202,960 | +626 | 203,586 | Issue #241: query/live_execution_plan.py, its endpoint, route and payload contract, and the per-record predicate `fresh_run_count` and `read_active_runs_view` now share. |
 | Recorded promoted head and the collapsed slate's selection (total) | 423,951 | +645 | 424,596 | Issues #287 + #292: the one promoted-head reader with its source order, the sole-candidate selection event, and the multi-promote, byte-identity, and pointer regressions. |
 | Recorded promoted head and the collapsed slate's selection (production) | 203,586 | +224 | 203,810 | Issues #287 + #292: promoted_head.py, the gate/spine/champion consumers, and the shared-builder emission on the collapsed slate. |
+| Gauntlet and fast-mode golden lanes (total) | 423,921 | +5,651 | 429,572 | Issue #310: three additional mock-evolve captures (gauntlet full, gauntlet fast, racing fast) and the round-log plus field-tournament sections now captured in all four, which together are 4,474 of the delta; plus the source-backend configuration boundary — its store guard, the repair command, the degrade paths in the two dashboard readers, and their regressions. The captures are the coverage: before them the unified round's single-challenger branches and the whole of fast mode executed in no golden. |
+| Gauntlet and fast-mode golden lanes (production) | 202,884 | +502 | 203,386 | Issue #310: the knob-versus-disk guard and its evidence readers in genstore.py, `zicato repair generation-source-backend`, the `--reset-lineage` gate on `init --force`, the store-optional degrade in dashboard/filetree.py and dashboard/mutations.py, the one shipped `ReplicateDuel` implementation lifted into selection/driver.py, and the restored fast-mode asymmetry warning. |
