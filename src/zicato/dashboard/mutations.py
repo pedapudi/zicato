@@ -113,6 +113,13 @@ UNREACHABLE_CAPTION = "snapshot unreachable · reconstructed from records"
 #: are. Consumed by :mod:`zicato.dashboard.filetree`.
 SPANS_CAPTION = "full tree pruned by GC · patch-touched spans reconstructed"
 
+#: The same caption for the OTHER way the tree side goes missing: the reader
+#: cannot reach ANY tree — the workspace declares no generation source
+#: backend, or one its source data contradicts. The spans are reconstructed
+#: identically; only the explanation differs, and "pruned by GC" would be a
+#: retention claim about trees that are very likely still on disk.
+SPANS_UNREACHABLE_CAPTION = "snapshot unreachable · patch-touched spans reconstructed"
+
 #: The per-generation tree directory each backend materialises under.
 #: ``mutations.json`` records the ABSOLUTE path the enumerating round
 #: walked, so a site's repo-relative path is whatever follows that root.
@@ -130,18 +137,31 @@ _STRING_LITERAL_RE = re.compile(
 )
 
 
-def _store(paths: WorkspacePaths) -> GenerationStore:
-    """Build the workspace's generation store (directory or git backend).
+def _resolve_store(paths: WorkspacePaths) -> tuple[GenerationStore | None, str]:
+    """The workspace's generation store, or ``(None, reason)`` when there is none.
 
-    Mirrors :func:`zicato.dashboard.filetree._store` — the mutation-site
-    browser is backend-neutral by routing every read through the store
-    seam, exactly like the file-tree browser it sits beside.
+    Mirrors :func:`zicato.dashboard.filetree._resolve_store` — the
+    mutation-site browser is backend-neutral by routing every read through
+    the store seam, exactly like the file-tree browser it sits beside.
+
+    Naming a source backend is workspace configuration, so building the
+    store can fail on the CONFIGURATION rather than on any generation: a
+    workspace whose ``config.json`` predates ``generation_source_backend``,
+    or whose value contradicts the source data on disk, has no store at
+    all. That is a reader-visible condition, not a crash: every view here
+    already answers from records when a tree cannot be read, so a store
+    that cannot be built degrades onto the same records path and reports
+    the reason. The dashboard is read-only and must never 500 on a
+    workspace it was merely pointed at (DQ3).
     """
-    return default_generation_store(paths.root)
+    try:
+        return default_generation_store(paths.root), ""
+    except (FileNotFoundError, OSError, ValueError) as exc:
+        return None, str(exc)
 
 
 def _enumerate_generation(
-    store: GenerationStore, epoch_id: str, generation_id: str, workspace_root: Path
+    store: GenerationStore | None, epoch_id: str, generation_id: str, workspace_root: Path
 ) -> dict[str, MutationPoint]:
     """Enumerate one generation's mutation surface, keyed by mutation id.
 
@@ -157,7 +177,7 @@ def _enumerate_generation(
     declares a file type beyond the built-ins.
     """
     activate_mutation_surface(workspace_root)
-    if not store.has_generation(epoch_id, generation_id):
+    if store is None or not store.has_generation(epoch_id, generation_id):
         return {}
     try:
         root = store.materialize_snapshot(epoch_id, generation_id)
@@ -171,13 +191,16 @@ def _enumerate_generation(
     return {p.id: p for p in points}
 
 
-def _has_tree(store: GenerationStore, epoch_id: str, generation_id: str) -> bool:
+def _has_tree(store: GenerationStore | None, epoch_id: str, generation_id: str) -> bool:
     """Return ``True`` when the generation still has a materialised tree.
 
     :meth:`GenerationStore.has_generation` is the existence test on both
     backends (a ``snapshot/`` directory, or a generation tag), and it is
-    the ONE question that decides tree-or-records for a generation.
+    the ONE question that decides tree-or-records for a generation. No
+    store at all answers the same as no tree.
     """
+    if store is None:
+        return False
     try:
         return store.has_generation(epoch_id, generation_id)
     except (OSError, ValueError):
@@ -202,7 +225,7 @@ def recorded_generation_ids(paths: WorkspacePaths, epoch_id: str) -> list[str]:
 
 
 def _generation_ids(
-    store: GenerationStore, paths: WorkspacePaths, epoch_id: str
+    store: GenerationStore | None, paths: WorkspacePaths, epoch_id: str
 ) -> tuple[list[str], bool]:
     """Every generation the epoch ever minted, and whether the store saw any.
 
@@ -216,10 +239,26 @@ def _generation_ids(
     already knows.
     """
     try:
-        from_store = list(store.list_generations(epoch_id))
+        from_store = [] if store is None else list(store.list_generations(epoch_id))
     except (FileNotFoundError, OSError, ValueError):
         from_store = []
     return sorted(set(from_store) | set(recorded_generation_ids(paths, epoch_id))), bool(from_store)
+
+
+def _surface_error(epoch_id: str, store_error: str) -> str:
+    """Name why an epoch has no mutation surface at all.
+
+    Both reads are always attempted, so the sentence names both. When the
+    generation store could not be built the tree read never had a chance,
+    and the configuration reason is the actionable half — it is appended
+    rather than substituted, because the ABSENT record is still a fact the
+    operator needs.
+    """
+    sentence = (
+        f"no mutation surface for {epoch_id}: no {_BASELINE_GENERATION} source tree "
+        "and no mutations.json record"
+    )
+    return f"{sentence}; {store_error}" if store_error else sentence
 
 
 def _records_caption(
@@ -313,7 +352,7 @@ def _record_surface(paths: WorkspacePaths, epoch_id: str) -> dict[str, MutationP
 
 
 def _baseline_surface(
-    store: GenerationStore, paths: WorkspacePaths, epoch_id: str
+    store: GenerationStore | None, paths: WorkspacePaths, epoch_id: str
 ) -> tuple[dict[str, MutationPoint], str]:
     """The epoch's baseline surface and where it came from.
 
@@ -494,7 +533,7 @@ def build_mutation_index(paths: WorkspacePaths, epoch_id: str) -> dict[str, Any]
     An epoch with neither a tree nor a record yields an empty
     ``mutations`` list and an ``error`` naming both, rather than raising.
     """
-    store = _store(paths)
+    store, store_error = _resolve_store(paths)
     generation_ids, store_saw_trees = _generation_ids(store, paths, epoch_id)
 
     baseline, provenance = _baseline_surface(store, paths, epoch_id)
@@ -505,10 +544,7 @@ def build_mutation_index(paths: WorkspacePaths, epoch_id: str) -> dict[str, Any]
             "mutations": [],
             "provenance": provenance,
             "provenance_note": "",
-            "error": (
-                f"no mutation surface for {epoch_id}: no {_BASELINE_GENERATION} source tree "
-                "and no mutations.json record"
-            ),
+            "error": _surface_error(epoch_id, store_error),
         }
 
     patched = _patching_generations(paths.root, epoch_id, generation_ids)
@@ -528,7 +564,7 @@ def build_mutation_index(paths: WorkspacePaths, epoch_id: str) -> dict[str, Any]
         entry["patched_by"] = patched.get(mutation_id, [])
         entry["patched_generation_ids"] = [p["generation_id"] for p in entry["patched_by"]]
         mutations.append(entry)
-    return {
+    payload = {
         "epoch_id": epoch_id,
         "generations": generation_ids,
         "mutations": mutations,
@@ -539,6 +575,12 @@ def build_mutation_index(paths: WorkspacePaths, epoch_id: str) -> dict[str, Any]
             else ""
         ),
     }
+    if store_error:
+        # The records answered, so the surface renders; the configuration
+        # that kept the trees out of it is still named rather than left for
+        # the operator to infer from a suspiciously record-shaped view.
+        payload["error"] = store_error
+    return payload
 
 
 def build_mutation_detail(paths: WorkspacePaths, epoch_id: str, mutation_id: str) -> dict[str, Any]:
@@ -572,17 +614,14 @@ def build_mutation_detail(paths: WorkspacePaths, epoch_id: str, mutation_id: str
     A missing baseline, or an id absent from the baseline surface, comes
     back as an ``error`` field, never an exception.
     """
-    store = _store(paths)
+    store, store_error = _resolve_store(paths)
     baseline, baseline_provenance = _baseline_surface(store, paths, epoch_id)
     if not baseline:
         return {
             "epoch_id": epoch_id,
             "mutation_id": mutation_id,
             "provenance": baseline_provenance,
-            "error": (
-                f"no mutation surface for {epoch_id}: no {_BASELINE_GENERATION} source tree "
-                "and no mutations.json record"
-            ),
+            "error": _surface_error(epoch_id, store_error),
         }
     baseline_point = baseline.get(mutation_id)
     if baseline_point is None:
@@ -715,7 +754,7 @@ def reconstructed_spans(
     one; the entry's ``note`` says why, and the view renders the note
     instead of a diff.
     """
-    store = _store(paths)
+    store, _store_error = _resolve_store(paths)
     try:
         record = read_generation_patches(default_backend(paths.root), epoch_id, generation_id)
     except (FileNotFoundError, OSError, ValueError):

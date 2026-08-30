@@ -55,6 +55,7 @@ from zicato.dashboard.mutations import (
     FROM_RECORDS,
     FROM_SNAPSHOT,
     SPANS_CAPTION,
+    SPANS_UNREACHABLE_CAPTION,
     reconstructed_spans,
     recorded_generation_ids,
 )
@@ -75,18 +76,35 @@ _MAX_INLINE_BYTES = 512 * 1024
 _DECODE_ERRORS = "replace"
 
 
-def _store(paths: WorkspacePaths) -> GenerationStore:
-    """Build the workspace's generation store (directory or git backend).
+def _resolve_store(paths: WorkspacePaths) -> tuple[GenerationStore | None, str]:
+    """The workspace's generation store, or ``(None, reason)`` when there is none.
 
     ``WorkspacePaths.root`` is the ``.zicato/`` directory — exactly the
     ``workspace_root`` :func:`default_generation_store` expects, so the
     config-knob backend selection happens for free.
+
+    Building the store can fail on the workspace's CONFIGURATION rather
+    than on any one generation: a ``config.json`` predating
+    ``generation_source_backend``, or a value the source data on disk
+    contradicts, leaves the workspace with no store at all. Every view
+    below already answers for a generation whose tree it cannot walk, so
+    that failure degrades onto the same path and reports the reason
+    instead of raising — the dashboard is read-only and must not 500 on a
+    workspace it was merely pointed at (DQ3).
     """
-    return default_generation_store(paths.root)
+    try:
+        return default_generation_store(paths.root), ""
+    except (FileNotFoundError, OSError, ValueError) as exc:
+        return None, str(exc)
 
 
-def _has_tree(store: GenerationStore, epoch_id: str, generation_id: str) -> bool:
-    """Return ``True`` when the generation still has a materialised tree."""
+def _has_tree(store: GenerationStore | None, epoch_id: str, generation_id: str) -> bool:
+    """Return ``True`` when the generation still has a materialised tree.
+
+    No store at all answers the same as no tree.
+    """
+    if store is None:
+        return False
     try:
         return store.has_generation(epoch_id, generation_id)
     except (OSError, ValueError):
@@ -110,13 +128,38 @@ _PRUNED_TREE_ERROR = (
 #: its own small dishonesty.
 _UNKNOWN_GENERATION_ERROR = "no generation {epoch_id}/{generation_id} in this workspace"
 
+#: …and when NO generation's tree is reachable because the workspace has no
+#: generation store. Kept apart from the pruned sentence because the trees
+#: may be intact on disk: saying "pruned by snapshot GC" there would be an
+#: explanation the operator can see is false.
+_UNREACHABLE_TREE_ERROR = (
+    "no source tree for {epoch_id}/{generation_id} — this workspace has no generation "
+    "source store, so no tree is reachable: {reason}. The records survive: the patch set "
+    "at /api/files/{epoch_id}/{generation_id}/patches, the patched spans at "
+    "/api/files/{epoch_id}/{generation_id}/diff, the site surface at "
+    "/api/mutations/{epoch_id}."
+)
 
-def _missing_tree_error(paths: WorkspacePaths, epoch_id: str, generation_id: str) -> str:
+
+def _missing_tree_error(
+    paths: WorkspacePaths, epoch_id: str, generation_id: str, store_error: str = ""
+) -> str:
     """Name what actually happened to a tree the store cannot walk.
 
-    The record directory is the discriminator: present ⇒ the generation
-    ran and its tree was collected; absent ⇒ the coordinate names nothing.
+    Three readings, and they call for opposite next moves:
+
+    * no store at all — the workspace's configured source backend is
+      missing or contradicts the disk, so NO tree is reachable and the
+      trees may well still be sitting there. The configuration reason is
+      the answer; blaming retention would be an invented explanation.
+    * a record directory, and a store that simply has no tree under the
+      coordinate — the generation ran and its tree was collected.
+    * neither — the coordinate names nothing.
     """
+    if store_error:
+        return _UNREACHABLE_TREE_ERROR.format(
+            epoch_id=epoch_id, generation_id=generation_id, reason=store_error
+        )
     template = (
         _PRUNED_TREE_ERROR
         if generation_id in recorded_generation_ids(paths, epoch_id)
@@ -136,8 +179,15 @@ def build_file_index(paths: WorkspacePaths) -> dict[str, Any]:
     ``has_tree`` separates the two readings of ``file_count: 0``: a
     generation whose source tree snapshot GC collected (records intact,
     tree gone forever) from one the store genuinely found empty.
+
+    A workspace with no generation store at all — a ``config.json``
+    missing ``generation_source_backend``, or naming a backend the source
+    data contradicts — still lists every epoch and every RECORDED
+    generation, each with ``has_tree: false``, and carries a top-level
+    ``error`` naming the configuration. Reporting that as pruned data
+    would be a fabricated retention fact.
     """
-    store = _store(paths)
+    store, store_error = _resolve_store(paths)
     records = default_backend(paths.root)
     epochs: list[dict[str, Any]] = []
     # Epoch enumeration + ordering routes through the single authority
@@ -147,7 +197,7 @@ def build_file_index(paths: WorkspacePaths) -> dict[str, Any]:
     for epoch_id in list_epoch_ids(paths):
         generations: list[dict[str, Any]] = []
         try:
-            source_generation_ids = store.list_generations(epoch_id)
+            source_generation_ids = [] if store is None else store.list_generations(epoch_id)
         except (FileNotFoundError, OSError, ValueError):
             source_generation_ids = []
         generation_ids = sorted(
@@ -155,7 +205,7 @@ def build_file_index(paths: WorkspacePaths) -> dict[str, Any]:
         )
         for generation_id in generation_ids:
             try:
-                tree = store.list_tree(epoch_id, generation_id)
+                tree = [] if store is None else store.list_tree(epoch_id, generation_id)
                 file_count = sum(1 for e in tree if not e.is_dir)
             except (FileNotFoundError, OSError, ValueError):
                 file_count = 0
@@ -172,7 +222,12 @@ def build_file_index(paths: WorkspacePaths) -> dict[str, Any]:
                 }
             )
         epochs.append({"epoch_id": epoch_id, "generations": generations})
-    return {"epochs": epochs}
+    index: dict[str, Any] = {"epochs": epochs}
+    if store_error:
+        # Every generation reads ``has_tree: false`` on this path. Say why,
+        # so the view cannot present a configuration failure as retention.
+        index["error"] = store_error
+    return index
 
 
 def build_generation_tree(
@@ -191,7 +246,14 @@ def build_generation_tree(
     one thing in this module records cannot rebuild, so the honest move
     is to say so and point at what they can (issue #194 §6).
     """
-    store = _store(paths)
+    store, store_error = _resolve_store(paths)
+    if store is None:
+        return {
+            "epoch_id": epoch_id,
+            "generation_id": generation_id,
+            "entries": [],
+            "error": _missing_tree_error(paths, epoch_id, generation_id, store_error),
+        }
     try:
         entries = store.list_tree(epoch_id, generation_id)
     except FileNotFoundError:
@@ -229,7 +291,9 @@ def read_generation_file(
     body. Path traversal and missing files come back as an ``"error"``
     field — never an exception out of this function.
     """
-    store = _store(paths)
+    store, store_error = _resolve_store(paths)
+    if store is None:
+        return {"path": rel_path, "error": store_error}
     try:
         raw = store.read_file(epoch_id, generation_id, rel_path)
     except FileNotFoundError:
@@ -420,12 +484,16 @@ def build_generation_diff(
     the tree of the parent it was RECORDED as derived from is. The second
     matters because falling back to whichever older tree still exists
     would silently answer a different question ("what changed since
-    ``v0``") under the same heading.
+    ``v0``") under the same heading. A workspace with no generation store
+    at all takes it too, for the same reason and with the configuration
+    named rather than retention blamed.
     """
-    store = _store(paths)
+    store, store_error = _resolve_store(paths)
     recorded_parent = _recorded_parent(paths, epoch_id, generation_id)
-    if not store.has_generation(epoch_id, generation_id) or (
-        recorded_parent is not None and not store.has_generation(epoch_id, recorded_parent)
+    if (
+        store is None
+        or not store.has_generation(epoch_id, generation_id)
+        or (recorded_parent is not None and not store.has_generation(epoch_id, recorded_parent))
     ):
         spans = reconstructed_spans(paths, epoch_id, generation_id)
         payload: dict[str, Any] = {
@@ -434,10 +502,10 @@ def build_generation_diff(
             "parent_generation_id": recorded_parent,
             "files": spans,
             "provenance": FROM_RECORDS,
-            "provenance_note": SPANS_CAPTION,
+            "provenance_note": (SPANS_UNREACHABLE_CAPTION if store_error else SPANS_CAPTION),
         }
         if not spans:
-            payload["error"] = _missing_tree_error(paths, epoch_id, generation_id)
+            payload["error"] = _missing_tree_error(paths, epoch_id, generation_id, store_error)
         return payload
 
     parent_id = _resolve_parent_generation(paths, store, epoch_id, generation_id)
