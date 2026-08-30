@@ -86,6 +86,7 @@ from zicato.import_path import import_dotted_path
 from zicato.selection.driver import (
     EvidencePreGate,
     confirm_promotion_with_evidence,
+    make_evidence_replicate_duel,
     resolve_tournament,
 )
 from zicato.selection.evidence_gate import EVIDENCE_REPLICATE_BASE, rating_block
@@ -642,13 +643,25 @@ def _confirm(
             "champion": _gen("champion"),
             "challenger": _gen("challenger"),
         }
-        replicate_count = 0
 
-        async def _replicate(left_id: str, right_id: str) -> MatchupResult:
-            nonlocal replicate_count
-            slot = EVIDENCE_REPLICATE_BASE + replicate_count
-            replicate_count += 1
-            matchup_id = f"bt-replicate:r{slot}:{left_id}:{right_id}"
+        async def _run_reserved_matchup(
+            matchup: Matchup, *, replicate_base: int, cache_scores: bool
+        ) -> MatchupResult:
+            """The round's board-unit runner, as ``evolve_field_round`` calls it.
+
+            The reserved slot, the matchup id encoding it, and
+            ``cache_scores`` all arrive from
+            :func:`make_evidence_replicate_duel` — this closure only routes
+            them to the real runner, so the properties the two tests below
+            assert are the production seam's, not the test's.
+            """
+            # An evidence draw is a single sample and must never land in the
+            # per-generation score a later round reuses. There is no such
+            # cache in this harness, so the flag is asserted rather than
+            # honoured: production turning it back on fails here.
+            assert cache_scores is False, "an evidence replicate must not cache its scores"
+            left_id = matchup.left.generation_id
+            right_id = matchup.right.generation_id
             result = await run_matchup(
                 adapter=object(),
                 left_gen=generations[left_id],
@@ -658,12 +671,12 @@ def _confirm(
                 config=_config(workspace, seed),
                 workspace_root=workspace,
                 epoch_id="e0",
-                replicate_base=slot,
+                replicate_base=replicate_base,
                 fast=fast_mode,
-                match_id=matchup_id,
+                match_id=matchup.matchup_id,
             )
             return MatchupResult(
-                matchup_id=matchup_id,
+                matchup_id=matchup.matchup_id,
                 left_id=left_id,
                 right_id=right_id,
                 left_agg=result.parent_agg,
@@ -678,7 +691,7 @@ def _confirm(
                 threshold=EFFECTIVE_THRESHOLD,
                 replicate_budget=budget,
             ),
-            replicate_duel=_replicate,
+            replicate_duel=make_evidence_replicate_duel(_run_reserved_matchup),
         )
         evidence = None
         if resolution is not None:

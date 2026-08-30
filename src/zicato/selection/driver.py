@@ -14,6 +14,7 @@ from dataclasses import dataclass, field, replace
 from typing import Any
 
 from zicato.selection.evidence_gate import (
+    EVIDENCE_REPLICATE_BASE,
     EvidenceVerdict,
     closest_ci_duel,
     evidence_verdict,
@@ -57,7 +58,54 @@ RunMatchup = Callable[[Matchup], Awaitable[MatchupResult]]
 #: alone, letting duplicate duels "separate" CIs without new evidence.
 ReplicateDuel = Callable[[str, str], Awaitable[MatchupResult]]
 
+#: ``run_reserved_matchup(matchup, replicate_base=..., cache_scores=...)`` runs
+#: one duel at a caller-chosen replicate slot. The single injection point of
+#: :func:`make_evidence_replicate_duel`: everything ELSE about an evidence
+#: replicate — which slot, what the matchup is called, and that its scores stay
+#: out of the cache — is decided there, so a caller cannot satisfy the
+#: ``ReplicateDuel`` contract by accident.
+RunReservedMatchup = Callable[..., Awaitable[MatchupResult]]
+
 log = logging.getLogger("zicato.selection.driver")
+
+
+def make_evidence_replicate_duel(run_reserved_matchup: RunReservedMatchup) -> ReplicateDuel:
+    """Build the pre-gate's :data:`ReplicateDuel` over a reserved-slot runner.
+
+    This is the one implementation of the ``ReplicateDuel`` contract that
+    ships. It owns the three properties the contract demands and that a
+    hand-written closure would have to restate correctly every time:
+
+    * replicate ``j`` of a crowning pair runs at the reserved slot
+      :data:`~zicato.selection.evidence_gate.EVIDENCE_REPLICATE_BASE` ``+ j``,
+      so both sides draw fresh rather than replaying (fast mode) or
+      clobbering (full mode) the canonical replicate-0 units;
+    * the slot is encoded in the matchup id, which the driver's audit guard
+      keys on to refuse a repeated draw;
+    * ``cache_scores`` is off, keeping single-draw aggregates out of the
+      per-generation score the next round reuses.
+
+    The counter lives in the returned closure, so each pre-gate loop numbers
+    its own replicates from zero.
+    """
+    replicates_run = 0
+
+    async def _replicate_duel(left_id: str, right_id: str) -> MatchupResult:
+        nonlocal replicates_run
+        replicate_slot = EVIDENCE_REPLICATE_BASE + replicates_run
+        replicates_run += 1
+        return await run_reserved_matchup(
+            Matchup(
+                matchup_id=f"bt-replicate:r{replicate_slot}:{left_id}:{right_id}",
+                left=Contestant(generation_id=left_id, role="champion"),
+                right=Contestant(generation_id=right_id, role="challenger"),
+            ),
+            replicate_base=replicate_slot,
+            cache_scores=False,
+        )
+
+    return _replicate_duel
+
 
 #: ``on_inconclusive(resolution)`` is called once, at the moment the pre-gate
 #: reaches the terminal ``inconclusive`` state, with the full
@@ -393,6 +441,8 @@ __all__ = [
     "RequestField",
     "RunMatchup",
     "ReplicateDuel",
+    "RunReservedMatchup",
+    "make_evidence_replicate_duel",
     "OnInconclusive",
     "ProgressHook",
     "EvidencePreGate",
