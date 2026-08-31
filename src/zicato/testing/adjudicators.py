@@ -3,7 +3,8 @@
 The board-reflection adjudicator
 (:mod:`zicato.reflection.adjudicator`) talks to a meta-judge through the
 standard ``CallLLM`` shape ``(system, user, model) -> str`` and expects a strict
-JSON verdict back. G3 forbids live endpoints, so these doubles stand in: each
+JSON verdict back. Tests may not call a live endpoint, so these doubles stand
+in: each
 is a callable that parses the adjudicator's DE-ANCHORED user prompt (the
 machine-readable ``JUDGE UNDER REVIEW`` / ``DECISION REF`` header + the judge's
 criterion, plus the ``<<<TRANSCRIPT … TRANSCRIPT>>>`` block — the prompt never
@@ -24,8 +25,8 @@ real independent adjudicator obeys:
   adjudicator received the verbatim ``judge_io`` bytes (the quoted span appears
   in the sidecar's ``reasoning_text``).
 * :class:`ScriptedTable` — a per-``(judge_name, run_ref)`` verdict table for
-  hand-built oracle corpora (the way to script DIFFERENT verdicts per decision
-  now that the prompt no longer reveals the judge's action).
+  hand-built oracle corpora — the way to script DIFFERENT verdicts per
+  decision, given that the prompt reveals nothing of the judge's action.
 * :class:`MalformedThenValid` — returns garbage on its first call and valid JSON
   thereafter, exercising the adjudicator's one-retry-then-ambiguous path.
 
@@ -60,8 +61,8 @@ SEVERITY_VOCAB = ("none", "info", "warning", "critical")
 def _parse_header(user: str) -> dict[str, str]:
     """Extract ``judge_name`` / ``run_ref`` from the de-anchored user prompt.
 
-    The ``THE JUDGE OBSERVED`` line no longer exists (v2 de-anchoring), so the
-    doubles cannot — and must not — read the judge's action from the prompt.
+    The de-anchored prompt carries no ``THE JUDGE OBSERVED`` line, so the
+    doubles cannot — and must not — read the judge's action from it.
     """
     judge_name = ""
     run_ref = ""

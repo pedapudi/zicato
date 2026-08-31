@@ -7,7 +7,7 @@ directly onto the underlying dataclass field names, so a test
 ``make_foo(field=override)`` just overrides one field — no factory
 plumbing on top of the dataclass field set.
 
-Defaults are deliberately minimal and JSON-safe (strings, paths to
+Defaults are minimal and JSON-safe (strings, paths to
 ``/tmp``, small tuples). Tests that need realistic data should pass
 their own overrides; the factories' job is to keep the construction
 boilerplate one line.
@@ -96,7 +96,7 @@ def make_board_entry(kind: str = "single_turn", **overrides: Any) -> BoardEntry:
     requested ``kind`` so the returned entry passes
     :meth:`BoardEntry.validate`. Operator-supplied ``overrides`` win
     on a field-by-field basis; the factory does NOT re-validate after
-    overrides land — tests deliberately crafting invalid entries can
+    overrides land — tests crafting invalid entries can
     do so without the factory fighting them.
     """
     kwargs: dict[str, Any] = {

@@ -11,7 +11,7 @@ surface, and nothing it does touches the live workspace until
 :func:`zicato.builder.operations.apply` is called with ``confirm=True``.
 
 Unlike the frozen contract dataclasses in :mod:`zicato.core.types`, a
-:class:`TournamentDraft` is deliberately MUTABLE — operations mutate it in
+:class:`TournamentDraft` is MUTABLE — operations mutate it in
 place and return a structured patch describing what changed. A
 :class:`DraftStore` keys independent drafts by ``session_id`` so two
 concurrent builder sessions never tread on each other.

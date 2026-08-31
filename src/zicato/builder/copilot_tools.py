@@ -407,7 +407,7 @@ def set_proposer_quality(
     touches the overfitting boundary — point the operator at
     docs/design/PROCESS-EXEMPLARS.md §5, the harm-detection runbook,
     before setting it; read-side only, no cost-meter impact).
-    ``recombine`` opts in the mechanical recombination slot (WS-REC):
+    ``recombine`` opts in the mechanical recombination slot:
     when True the last best-of-N slot mints the patch union of two
     rejected complementary challengers instead of sampling the LLM —
     REQUIRES best_of_n > 1 to have effect, and is cost-neutral (the mint
@@ -418,13 +418,13 @@ def set_proposer_quality(
     call; ``"llm"`` issues one merge call (relaxing disjointness so an
     OVERLAPPING pair the mechanical mint cannot touch can be merged).
     Meaningful only with recombine on; ``"llm"`` rolls the epoch.
-    ``genealogy`` opts in the genealogy
-    channel (WS-GENE): up to that many candidate-lineage items — the
+    ``genealogy`` opts in the genealogy channel: up to that many
+    candidate-lineage items — the
     champion's promoted patch history + diverse rejected reign candidates,
     each with a banded outcome — are spliced into the prompt so the
     proposer can evolve in context (0 = off, the default; read-side only,
     no cost-meter impact). ``calibration_feedback`` opts in the
-    critic-calibration channel (WS-CAL): up to that many RECENT graded
+    critic-calibration channel: up to that many RECENT graded
     hypotheses — the proposer's own falsifiable predictions graded against
     realized outcomes (hit / miss / unresolved counts + the overall
     calibration fraction + banded per-claim outcomes) — are spliced into
@@ -709,7 +709,7 @@ async def preflight(runs: int | None = None) -> str:
     The build-time statistical pre-flight (the same measurement `zicato
     board preflight` takes, run against the DRAFT's board + scoring):
     (a) K A/A draws of the workspace's champion measure the noise floor;
-    (b) a deliberately-degraded ephemeral copy measures the achievable
+    (b) a degraded ephemeral copy measures the achievable
     signal. Verdict `ok` / `warn` (saturated — the board cannot
     discriminate) / `refuse` (signal at or below the floor — duels would
     be decided by noise). RECOMMEND-ONLY, never a gate. Degrades honestly
