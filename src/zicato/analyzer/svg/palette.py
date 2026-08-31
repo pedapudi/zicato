@@ -13,10 +13,10 @@ from __future__ import annotations
 
 from zicato.analyzer.report_data import GenerationView
 
-# Palette mirrored from :mod:`zicato.epoch.html_report` so the analysis
-# report and the standalone epoch HTML carry one visual language across
-# the dashboard surfaces. Hard-coded (not imported) so the analyzer does
-# not depend on the epoch HTML module.
+# The canonical decision colours. This module owns them: the standalone
+# epoch HTML and the dashboard-embedded paper card render through the same
+# figures, so one definition here carries the visual language across every
+# surface.
 #
 # Figures emit these as CSS-variable references in a ``style=""``
 # attribute on each SVG element so a host palette (the dashboard's

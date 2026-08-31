@@ -285,8 +285,9 @@ Before scheduling each round, in this order
    `ensure_epoch_for_contract`, which rolls the epoch. The rolled id is
    re-pinned for all subsequent rounds.
 
-After each round, best-effort: the progressive `analysis.html` refresh
-(`regenerate_in_progress_html`) so file:// readers see the latest lineage
+After each round, best-effort: the epoch-report refresh
+(`regenerate_in_progress_html`, which delegates to the analyzer's
+deterministic regeneration) so file:// readers see the latest lineage
 without the dashboard.
 
 ### 2.5 Teardown — the order of the `finally` block

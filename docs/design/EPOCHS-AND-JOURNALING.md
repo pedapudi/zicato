@@ -492,83 +492,41 @@ The auto-close runs the same analysis pass; the warning exists so
 operators notice they missed the manual step (where they might have
 added a `--focus` flag or otherwise steered the pass).
 
-### 5.2 Progressive `analysis.html`
+### 5.2 The epoch report and its HTML companion
 
-`analysis.md` is generated only at epoch close (it requires the
-LLM pass). `analysis.html` is different — it is regenerated
-**after every generation**, deterministically, with no LLM call.
+Each epoch directory holds one report in two forms: `analysis.md`, the
+markdown source, and `analysis.html`, a self-contained document with no
+external CSS, JavaScript, or images, so it renders the same over `file://`
+as it does through the dashboard.
 
-This gives the operator a current archival snapshot of the epoch
-at any moment, even mid-flight:
+Both are refreshed after every settled round, deterministically and with
+no LLM call: the data-bearing sections are re-templated from the current
+workspace data while any prose the auxiliary LLM has already written is
+preserved verbatim, and mid-epoch the masthead carries a `LIVING DRAFT —
+through round N` stamp. The refresh is digest-gated — a round that moved
+no data rewrites neither file. At close the prose pass runs (§5 above),
+the full document is written, and the draft stamp goes away.
+
+`analysis.html` is `render_report_html` (`src/zicato/analyzer/report.py`)
+applied to the `analysis.md` beside it, whichever pass wrote that
+markdown. One renderer serves every lifecycle phase, so the document an
+operator has open does not change shape when the epoch closes, and the
+HTML cannot disagree with the markdown it accompanies. The figures —
+lineage, score trajectory, hypothesis against outcome, drift-kind
+movements, per-board outcomes — are inline SVG drawn from the same
+structured view the tables are templated from, so a chart and the table
+beside it cannot disagree either.
+
+This gives the operator a current archival snapshot of the epoch at any
+moment, even mid-flight:
 
 | Property | `analysis.md` | `analysis.html` |
 |---|---|---|
-| Cadence | once, at epoch close | regenerated after every generation |
-| Requires LLM? | yes (auxiliary pass) | no (deterministic render) |
+| Cadence | refreshed after every settled round; full render at close | re-rendered from `analysis.md` on every refresh |
+| Requires LLM? | for the prose sections, at close | no |
 | Persisted across `evolve` exits? | yes | yes |
-| Contains the closing-pass narrative? | yes | only after close (final regeneration appends the LLM sections) |
-| Suitable for `file://` opening mid-epoch? | not generated yet | yes |
-
-The flow per generation:
-
-```
-generation v{N} promote/reject committed
-            │
-            ▼
-orchestrator at safe point:
-            │
-            ▼
-read every experiment.json in the epoch so far
-            │
-            ▼
-call render_html_report(...)   # deterministic; no LLM
-            │
-            ▼
-write analysis.html.tmp; atomic rename to analysis.html
-            │
-            ▼
-broadcast SSE 'round_finished' to dashboard
-            (if supervisor is running — see DASHBOARD.md)
-```
-
-#### Atomic write protocol
-
-`analysis.html` uses the same atomic-rename pattern as every
-state file (see [RUNTIME.md](RUNTIME.md) §6):
-
-```python
-def write_html_report_atomic(epoch_path: pathlib.Path, html: str) -> None:
-    target = epoch_path / "analysis.html"
-    tmp = target.with_suffix(".html.tmp")
-    with tmp.open("w", encoding="utf-8") as f:
-        f.write(html)
-        f.flush()
-        os.fsync(f.fileno())
-    tmp.rename(target)
-```
-
-This matters because operators frequently have `analysis.html`
-open in a browser tab and reload it during long epochs. A partial
-read (browser fetches mid-write) would render a broken HTML
-document; the atomic rename guarantees readers always see either
-the previous full document or the new full document, never a
-half-written one.
-
-#### Final regeneration at epoch close
-
-At `zicato epoch close`:
-
-1. The LLM analysis pass runs (§5 above), producing the narrative
-   sections.
-2. `render_html_report` runs once more, this time embedding the
-   narrative sections in the dedicated `<section>` blocks.
-3. The final `analysis.html` is written atomically.
-
-A closed epoch's `analysis.html` has everything: full lineage,
-per-generation experiment cards, score trajectory, drift
-heatmap, AND the LLM narrative sections at the top. An open
-epoch's `analysis.html` has everything except the LLM
-narrative — placeholders where the narrative sections will go.
+| Carries the closing-pass narrative? | after close | after close |
+| Suitable for `file://` opening mid-epoch? | yes | yes |
 
 #### Relationship to the live dashboard
 

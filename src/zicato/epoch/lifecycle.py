@@ -651,7 +651,9 @@ def _write_stub_analysis(workspace_root: Path, epoch_id: str, out_path: Path) ->
             "## Journal snapshot\n\n"
             f"{journal_content}\n"
         )
-    _write_stub_html_companion(workspace_root, epoch_id, out_path)
+    from zicato.epoch.analysis import write_html_companion
+
+    write_html_companion(workspace_root, epoch_id, out_path)
 
 
 def close_epoch(
@@ -789,36 +791,6 @@ def set_epoch_preflight(
     cfg = replace(cfg, preflight=dict(preflight))
     _write_config(workspace_root, cfg)
     return cfg
-
-
-def _write_stub_html_companion(
-    workspace_root: Path,
-    epoch_id: str,
-    md_path: Path,
-) -> None:
-    """Emit ``analysis.html`` when closing without an auxiliary LLM.
-
-    Mirrors the companion-write that ``generate_analysis`` performs in
-    the LLM-driven path; we hydrate the typed generation / experiment
-    view from on-disk artifacts and hand them to
-    :func:`zicato.epoch.html_report.write_html_report`. Failures are
-    swallowed — HTML is a non-critical artifact and we should not
-    block ``epoch close`` on rendering glitches.
-    """
-    try:
-        from zicato.epoch.analysis import (  # noqa: PLC0415
-            _collect_experiments,
-            _hydrate_typed_view,
-            _write_html_companion,
-        )
-    except ImportError:
-        return
-    try:
-        raw_experiments = _collect_experiments(workspace_root, epoch_id)
-        typed_gens, typed_exps = _hydrate_typed_view(workspace_root, epoch_id, raw_experiments)
-        _write_html_companion(md_path, epoch_id, typed_gens, typed_exps)
-    except Exception:  # noqa: BLE001 — HTML is best-effort at close
-        return
 
 
 __all__ = [

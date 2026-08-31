@@ -1,10 +1,12 @@
-"""Tests for ``regenerate_in_progress_html``.
+"""Tests for ``regenerate_in_progress_html``, the evolve loop's per-round refresh.
 
-The progressive path is deterministic (no LLM) and writes a valid HTML
-file directly from on-disk experiment JSON. The renderer's edge cases
-are exercised by ``test_epoch_html_report.py`` — these tests focus on
-the orchestrator-facing contract: empty epoch → no file, one experiment
-→ file written, mtime advances on rewrite.
+The refresh is deterministic (no LLM): it delegates to the analyzer's
+deterministic report regeneration, which re-templates ``analysis.md`` from
+the epoch's on-disk generations and renders the HTML companion beside it.
+These tests pin the loop-facing contract — an epoch with no generation
+yields no file, one experiment writes the document, a later experiment
+appears on the next call. The renderer's own edge cases are exercised by
+``test_analyzer_report.py``.
 """
 
 from __future__ import annotations
@@ -61,15 +63,17 @@ def test_regenerate_returns_none_when_no_experiments(tmp_path: Path) -> None:
 
 
 def test_regenerate_writes_html_after_one_round(tmp_path: Path) -> None:
-    """One promoted experiment → valid analysis.html with the lineage."""
+    """One promoted experiment → an analysis.html naming that generation."""
     _write_experiment(tmp_path, "epoch_a", "v1", "v0", "promoted")
 
     out = regenerate_in_progress_html(tmp_path, "epoch_a")
     assert out is not None
     assert out.exists()
     text = out.read_text()
-    # Sanity checks: it's an HTML document and references our gen ids.
-    assert text.startswith("<!DOCTYPE html>") or text.lstrip().startswith("<!DOCTYPE")
+    # A standalone document from the analyzer's renderer, carrying the epoch
+    # and the generation it now knows about.
+    assert text.startswith("<!DOCTYPE html>")
+    assert '<article class="paper">' in text
     assert "epoch_a" in text
     assert "v1" in text
 
