@@ -1,13 +1,13 @@
 # `zicato tui` — the Console in the terminal
 
-Zicato's interactive surface used to be the browser dashboard alone. The
-terminal surface was command-shaped (`zicato inspect reflection`, `zicato epoch rounds`,
-`zicato health`) — right for scripting, wrong for *review*: watching a live
-round, triaging reflection findings, reading a candidate's gate evidence,
-deciding on a recommendation.
+Zicato's other terminal commands (`zicato inspect reflection`,
+`zicato epoch rounds`, `zicato health`) are command-shaped and suit scripting.
+Review work — watching a live round, triaging reflection findings, reading a
+candidate's gate evidence, deciding on a recommendation — needs a surface a
+reader can navigate.
 
-`zicato tui` is that review surface: a keyboard-driven terminal console, over
-SSH, without a browser.
+`zicato tui` is that review surface: a keyboard-driven terminal console, usable
+over SSH, without a browser.
 
 ```
 zicato tui                                  # this workspace, service auto-started
@@ -16,19 +16,21 @@ zicato tui --view /e/2026-07-04_e2/gens     # open a lens directly
 zicato tui --ascii                          # force the weight-only rendering
 ```
 
-**v1 ships three lenses** — Home, Standings, Instrument — and is entirely
-**read-only**. Candidate, Board and Health are designed below and deferred;
-the render-conformance table names every evidence field that defers with them.
-This document describes the whole design, and marks what is built.
+**The console ships three lenses** — Home, Standings, Instrument — and is
+entirely **read-only**. Candidate, Board and Health are designed below and
+deferred; the render-conformance table names every evidence field that defers
+with them. The design below covers all six lenses and marks which three are
+built.
 
-## Authority: a second renderer, never a second brain
+## Authority: a second renderer over one served model
 
-The TUI renders the **same served model** the dashboard does — the dashboard
-service's JSON payloads and its SSE stream. There is no TUI-side re-derivation
-of verdicts, aggregates or standings: numbers in the terminal are byte-equal to
-the browser's because they are the same bytes.
+The terminal user interface (TUI) renders the **same served model** the
+dashboard does — the dashboard service's JSON payloads and its server-sent
+events (SSE) stream. Verdicts, aggregates and standings are never re-derived on
+the terminal side: numbers in the terminal are byte-equal to the browser's
+because they are the same bytes.
 
-This is structural, not aspirational. The import-linter contract
+An import-linter contract enforces that separation. The contract
 `tui driver: no import of the other drivers` forbids `zicato.tui` from importing
 `zicato.dashboard`, `zicato.cli` or `zicato.builder`. The console reaches a
 workspace over HTTP or not at all; it starts a service by argv
@@ -52,8 +54,8 @@ surfaces cannot disagree about what "stalled" means.
 
 **Quiet precision.** Monospace is native here, so tabular alignment is the
 primary structure. `1512 ±34 · 7 games`, a faint `provisional` suffix, `—` for
-null — never `0`, because zero is a legal measurement. Uncertainty is part of
-the number, not an annotation. `view.columns()` measures content widths and
+null — never `0`, because zero is a legal measurement. Uncertainty is part of the number rather than an
+annotation on it. `view.columns()` measures content widths and
 `pad`/`rpad` add the one shared gutter, so a numeric column right-aligns on its
 last significant place.
 
@@ -85,26 +87,26 @@ ASCII goldens (`tests/goldens/tui/*.ascii.txt`) are what makes that a fact.
   stage lit, replacing the browser's animated surfaces with a static, glanceable
   strip. An unknown stage lights **nothing** rather than guessing.
 
-**The digest discipline, ported — as two gates, not one.**
+**The digest discipline, ported as two gates.**
 
-The SSE stream carries **no digest**. It carries exactly three events —
+The SSE stream carries **no digest**. It carries three events —
 `snapshot` (the `/api/state` body, on connect), `state_change` (coalesced, with
 `seq` + `terminal` + `kinds`), `run_log` — plus a `: ping` comment keepalive.
 So the no-op question is answered twice:
 
 *The OUTER gate — `seq`.* `state_change` carries the orchestrator's progress
-cursor. `Console.note_progress()` ports `core/state.js`'s `noteProgress`
-exactly: a **repeated** `seq` is a no-op beat and is dropped **before any HTTP
+cursor. `Console.note_progress()` ports `core/state.js`'s `noteProgress`: a
+**repeated** `seq` is a no-op beat and is dropped **before any HTTP
 request**; a **backwards** `seq` means the progress log was cleared on a fresh
 `evolve` boot (it restarts at 1), so it forces a full re-apply rather than
 freezing the screen on the finished run; an **absent** `seq` degrades to
-always-refresh, because a pre-RUNTIME-V2 server gives no cursor to skip on and
-a stale screen is worse than a wasted fetch. This is the gate that keeps an
+always-refresh, because a server that does not carry the progress cursor
+gives nothing to skip on, and a stale screen is worse than a wasted fetch. This is the gate that keeps an
 idle console idle *on the wire*.
 
 *The INNER gate — the content digest.* For everything `seq` cannot see (a
 reindex, an operator edit, a service restart), each lens folds a digest over
-exactly the values it *renders* — never `generated_at`, never a sequence
+the values it *renders* and nothing else — never `generated_at`, never a sequence
 number, floats folded at their **rendered** precision, an absent feature
 contributing `null` so a pre-feature payload digests identically to one that
 has the feature switched off. `Console.refresh()` compares digests before any
@@ -120,8 +122,8 @@ Pinned by `test_a_repeated_seq_costs_zero_fetches` (outer, zero requests),
 `test_a_no_op_heartbeat_patches_zero_cells` (inner, per lens) and
 `test_a_repeated_seq_frame_never_reaches_a_widget` (both, end-to-end).
 
-The browser's own `heartbeat` SSE listener is **dead code** — this server never
-emits that event — and is deliberately not ported.
+The browser's own `heartbeat` SSE listener is unreachable, because this
+server never emits that event, and it is not ported.
 
 ## Layout and navigation
 
@@ -142,8 +144,8 @@ The five slots, in fixed order, for every selectable row:
 | `provenance` | where the evidence lives |
 
 Keyboard: `j`/`k` move, `enter` drill, `b` back, `1`–`3` lens jump, `r` reload,
-`?` help, `q` quit. Deliberately small — there is no filter and no apply,
-because there is nothing to apply.
+`?` help, `q` quit. The set is small on purpose: there is no filter and no
+apply, because there is nothing to apply.
 
 Every view is addressable from the shell with the **same path the browser's hash
 router takes** — `--view /e/<epoch>/gen/<gen>` is the candidate dossier in both
@@ -163,9 +165,9 @@ two surfaces.
 
 ### Where the browser's non-route modules land
 
-`structure`, `boardstatus` and `evals_health` are **not** browser routes — they
-are modules mounted inside `epoch` / `evals`. Their evidence maps onto lenses,
-not onto addresses:
+`structure`, `boardstatus` and `evals_health` are modules mounted inside
+`epoch` and `evals` rather than browser routes, so their evidence maps onto
+lenses rather than onto addresses:
 
 | browser module | lens | status |
 | --- | --- | --- |
@@ -174,29 +176,30 @@ not onto addresses:
 | `views/evals_health.js` | Board — MDE / dead / noisiest / redundancy are all "can this instrument measure?" | deferred |
 | `views/home.js` health panel | Health | deferred |
 
-**Applying a recommendation is something the operator does, not the console.**
-The Instrument lens's recommendation queue PRINTS the exact invocation
-(`zicato inspect reflection apply <reflection> <finding>`) for the operator to run. v1 does
-not even shell out: there is no execution path in this build at all, which is
-the smallest surface to trust and to review. (The service refuses control POSTs
-under `read_only` regardless — the same conclusion from the other direction.)
+**The operator applies a recommendation; the console never does.** The
+Instrument lens's recommendation queue prints the invocation
+(`zicato inspect reflection apply <reflection> <finding>`) for the operator to
+run. The console does not shell out: it carries no execution path at all,
+which is the smallest surface to trust and to review. The service refuses
+control POSTs under `read_only` in any case, which is the same conclusion
+reached from the other direction.
 
 ## The render-conformance rule
 
-Every evidence field the browser surfaces must be reachable in the TUI **or
-named here**. Two kinds of absence, and they are different promises:
-**deferred** work is coming back, and its address already resolves; **browser-
-side by design** is a v1 non-goal that is not planned to move.
+Every evidence field the browser surfaces must be reachable in the terminal
+console **or named here**. The two kinds of absence carry different promises:
+**deferred** work is coming back and its address already resolves, while
+**browser-side by design** names evidence that is not planned to move.
 
 ### Deferred lenses (coming back)
 
-A pre-descope build of all three lives unmerged at `feat/tui-full-six-lens`
-(`a2f9d7e`) — kept deliberately as the re-landing base, not stale cruft. Do
-not delete it; re-landing is a **port**, not a cherry-pick (it predates the
-four-absence vocabulary, the current routes table, and the removal of
-`margin_bar`, and its goldens need regenerating).
+A build carrying all three lenses lives unmerged on the branch
+`feat/tui-full-six-lens` (`a2f9d7e`) and is kept as the re-landing base, so it
+must not be deleted. Re-landing it is a port rather than a cherry-pick: the
+branch predates the four-absence vocabulary, the current routes table, and the
+removal of `margin_bar`, and its goldens need regenerating.
 
-| not in v1 | consequence | evidence that defers with it |
+| deferred lens | consequence | evidence that defers with it |
 | --- | --- | --- |
 | **Candidate** dossier | no per-candidate gate evidence in the terminal; the standings row + drawer carry the Δscalar, decision and rating instead | the four gate rules with pass/fail and margins, `deciding_rule`, the Bradley–Terry pre-gate (θ̂ whiskers, `p_stronger`), facet table, per-board rows, per-judge losses, lineage strip, operator-override provenance |
 | **Board** status | no view of whether the instrument can still measure | train/holdout split, rotation cadence + `refresh_recommended`, holdout budget, MDE + power, dead / noisiest / insufficient entries, redundancy clusters, the per-entry outcome heat-strip |
@@ -212,9 +215,9 @@ not give them.
 `detail.recommendation`, the actionable half. That is a five-slot violation on
 the browser side, and the terminal Health lens must not replicate it.
 
-### Browser-side by design (v1 non-goals)
+### Browser-side by design
 
-| not in v1 | consequence | where it lives |
+| stays in the browser | consequence | where it lives |
 | --- | --- | --- |
 | the tournament **builder** | authoring stays in the browser | `#/builder`, `zicato dashboard --view builder` |
 | **settings** (contract / models / appearance) | read-only review only | `#/settings` |
@@ -228,17 +231,17 @@ the browser side, and the terminal Health lens must not replicate it.
 | the **prediction-accuracy scorecard** | proposer calibration is browser-only | `/api/hypothesis-accuracy/…` |
 | **operator controls** (pause / resume / force promote / reject) | the TUI is read-only; use the CLI or the browser | `/api/control/*` |
 
-Each row is a deliberate boundary, not an oversight. Ordered by what is worth
-lifting first: **Candidate** (the gate evidence is the reason to open a
+Each row is a chosen boundary rather than an oversight. The rows are ordered
+by what is worth lifting first: **Candidate** (the gate evidence is the reason to open a
 terminal at all mid-round), then the **progressive live models** (the live
 ladder is the most-watched surface), then **Board**, then the **x-ray** (the
 Instrument lens already lands one keystroke away from it).
 
-A **proposer recommendation queue** (issue #169) is not yet served. The
-Instrument lens's queue is built from board-reflection findings today, and the
-row shape plus `_apply_command` are the join point for the proposer's own
-recommendations when the service starts serving them. The queue honestly shows
-only the source that exists.
+The service does not yet serve a **proposer recommendation queue** (issue
+#169). The Instrument lens's queue is built from board-reflection findings,
+and the row shape plus `_apply_command` are the join point for the proposer's
+own recommendations once the service serves them. The queue shows only the
+source that exists.
 
 ## Degrading
 
@@ -267,12 +270,12 @@ because the operator's next action differs in each case:
 | no measurement | `—` | the run produced no value. **Never `0`** — zero is a legal measurement. |
 | measured-impossible | `n/a — insufficient replication` | defined, but not computable at this `n` |
 | feature off | the row/panel is **omitted** | nothing was asked for; a row would imply it was, and came back empty |
-| unmeasured (the third verdict) | `unmeasured · <reason>` | measurable, not measured — and the reason is the actionable part |
+| unmeasured (the third verdict) | `unmeasured · <reason>` | measurable but not measured, and the reason is the actionable part |
 
 `present.measured()` picks between the first, second and fourth; the third is
-the absence of a row, so callers omit the block. One caveat worth stating: where
-the TUI mirrors a **cross-pinned** browser rendering it keeps the browser's
-answer even if a richer absence exists — an unrated generation prints `—` in
+the absence of a row, so callers omit the block. One caveat: where the terminal
+console mirrors a **cross-pinned** browser rendering it keeps the browser's
+answer even when a richer absence exists. An unrated generation prints `—` in
 the standings because `ui.js` does, and the cross-pin is the stronger
 constraint.
 

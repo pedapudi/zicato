@@ -11,14 +11,15 @@ them.
 Wire spellings are stable and declared with `TypedDict` payloads in
 `zicato.query.contracts`. `ENDPOINT_PAYLOADS` inventories every JSON GET and
 assigns it an object, collection, detail, or runtime contract. Contracts live
-at the query boundary, not in the HTTP driver. Optional keys mean genuinely
-unavailable information, not an alternate spelling.
+at the query boundary rather than in the HTTP driver. An optional key means the
+information is unavailable; it is never a second spelling of a key that is
+already declared.
 
 The first declared envelope is the runtime snapshot and its liveness block.
 Liveness carries `state`, optional timestamps, and `epoch_id` while live. The
 server folds the clock and active scope; clients compare the served epoch id
-with the viewed epoch. A missing epoch id retains the legacy single-epoch
-tolerance.
+with the viewed epoch. A liveness block that carries no epoch id is read as a
+single-epoch workspace.
 
 ## Read rules
 
@@ -36,13 +37,13 @@ tolerance.
   records, projected standings, and gate state. The browser does not join an
   active envelope or infer a carried champion.
 - Whether an in-flight run record still counts is decided once, per record,
-  on the server, and served on the record as `fresh`. One of its two gates
-  asks whether the worker process still exists, which only the worker's own
-  host can answer, so a client consumes the verdict and reaches for the
-  timestamps only against a server that sends none.
+  on the server, and served on the record as `fresh`. One of the two gates
+  behind that verdict asks whether the worker process still exists, which only
+  the worker's own host can answer. A client consumes the served verdict, and
+  reaches for the timestamps only against a server that sends no `fresh` field.
 - Live projections mark and populate only while the served liveness verdict
-  reads live. A workspace that stopped still serves its durable structure —
-  post-mortem reads stay honest — with the present-tense layer withheld.
+  reads live. A workspace that has stopped still serves its durable structure
+  with the present-tense layer withheld, so post-mortem reads stay honest.
 - The supervisor serves operational state, liveness, controls, and parity
   views. Analytical projections belong to the Python query service.
 - No-op updates retain digest equality so neither renderer rebuilds.

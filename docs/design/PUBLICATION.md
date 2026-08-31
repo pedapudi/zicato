@@ -1,13 +1,13 @@
 # The epoch publication
 
-The **publication** is one epoch's story told as an academic paper: what the
-campaign was trying to do, how the tournament was set up, which challengers
-were crowned and on what evidence, and how much we should trust the result.
-It is the operator-facing write-up of a single improvement campaign — distinct
-from the per-round `insights/round_{N}.md` proposer-feedback files and from the
-live dashboard views.
+The **publication** is one epoch written up in the form of an academic paper:
+what the campaign set out to do, how the tournament was configured, which
+challengers were crowned and on what evidence, and how far the result can be
+trusted. It is the operator-facing write-up of a single improvement campaign,
+distinct from the per-round `insights/round_{N}.md` proposer-feedback files and
+from the live dashboard views.
 
-Two rendered forms, one source:
+One source is rendered in two forms:
 
 * `epochs/{id}/analysis.md` — the canonical markdown, assembled by
   `src/zicato/analyzer/` (`report.py` / `report_data.py` / `report_sections.py`
@@ -17,10 +17,9 @@ Two rendered forms, one source:
   dashboard's `publication.js` tab (ACM-style eyebrow / title / meta / abstract
   markers with live `<!-- FIGURE:NAME -->` splicing).
 
-This document is the **contract**: the content spec (what every section must
-carry), the freshness model (when the document is regenerated and how it
-degrades mid-epoch), the per-section data binding (where each fact is sourced),
-and the rendering rules (how the document must never overflow its page).
+The rules below are normative. They fix what every section must carry, when the
+document is regenerated and how it degrades mid-epoch, where each fact is
+sourced, and how wide content is kept from overflowing the page.
 
 ## Design principles
 
@@ -29,8 +28,8 @@ and the rendering rules (how the document must never overflow its page).
    rounded, or invented by the LLM. Only the interpretive prose (Abstract,
    Introduction, Analysis, Conclusion) is LLM-authored, and it is given the
    deterministic sections as its only ground truth.
-2. **Degrade honestly, never fabricate.** A feature that was OFF for the epoch
-   renders a one-line "not enabled for this epoch" notice or is omitted
+2. **Degrade honestly, never fabricate.** A feature that was disabled for the
+   epoch renders a one-line "not enabled for this epoch" notice or is omitted
    entirely — never a fabricated number, never a broken placeholder, never a
    half-rendered table. A reader can trust that a present number is real and an
    absent section means the feature did not run.
@@ -53,11 +52,13 @@ tables/figures by absolute position. The section vocabulary, in order:
 
 **Title + masthead.** Eyebrow, epoch name, the goal, and a metadata grid
 (epoch id, status, generation counts, contract hash, span). Mid-epoch the
-status cell carries the `LIVING DRAFT — through round N` stamp (see Freshness).
+status cell carries the `LIVING DRAFT — through round N` stamp (see the
+freshness model below).
 
-**1. Abstract + headline.** The target and board in one breath; the champion's
-Δ from the seed; promotions over rounds; total cost and cost per promotion.
-The one-paragraph answer to "did this campaign work, and what did it cost".
+**1. Abstract + headline.** The target and board in a single sentence; the
+champion's Δ from the seed; promotions over rounds; total cost and cost per
+promotion. One paragraph stating whether the campaign improved the champion and
+what it cost.
 
 **2. The contract (method).** The frozen evaluation contract:
 * Board composition — entries, kinds, weights, expectations, judges — plus the
@@ -74,15 +75,16 @@ The one-paragraph answer to "did this campaign work, and what did it cost".
 
 **3. The reign narrative (results).** The champion spine round by round. Each
 promotion carries its evidence: gate margins measured against the A/A noise
-floor, the BT rating ± CI at crowning, replicates spent, holdout confirmation.
+floor, the Bradley–Terry (BT) rating with its confidence interval at crowning,
+replicates spent, holdout confirmation.
 Recombined and genealogy-assisted mints are flagged with their
 `recombined_from` provenance. Notable rejects are called out.
 
 **4. Ratings.** The final standings table (elo ± se, games — including racing
 rung observations) and a rating-trajectory figure.
 
-**5. Statistical integrity (validity).** The differentiator. Floor vs observed
-margins; placebo-arm outcomes (a **promoted placebo is a CRITICAL callout**);
+**5. Statistical integrity (validity).** The evidence that the reported gains
+are real. Floor versus observed margins; placebo-arm outcomes (a **promoted placebo is a CRITICAL callout**);
 Ladder holdout budget spent; screen veto/confirm counts; evidence-gate
 deferral and replication statistics.
 
@@ -94,10 +96,10 @@ measured Δ); the slate / selection-mode mix; the cost split by role.
 trends across the promoted lineage.
 
 **8. Limitations + reproduction.** Honest caveats parameterised by the epoch's
-real scale; the contract hash; seeds where recorded; the exact regenerate
-command.
+real scale; the contract hash; seeds where recorded; the command that
+regenerates the document.
 
-Every section obeys principle 2: absent data ⇒ a one-line honest notice or
+Every section degrades honestly: absent data yields a one-line notice or an
 omission.
 
 ## Data binding — where each section is sourced
@@ -128,37 +130,37 @@ When a binding's source is absent for an epoch (e.g. no round has settled yet,
 the measure's feature was disabled — screening off, no holdout — or no rating
 layer was configured), the section degrades to its honest one-liner. The
 scaffolding is present and lights up automatically once the source is
-populated — no report change is needed.
+populated, with no change to the report code.
 
-## Freshness model — event-driven, not a timer
+## Freshness model — refreshed when a round settles
 
-The publication is refreshed by **round-settle events**, not a wall-clock
-timer.
+The publication is refreshed by **round-settle events** rather than on a
+wall-clock timer.
 
 * **After each settled round** the orchestrator regenerates the
-  **deterministic sections only** — no LLM call (cost discipline; the
-  `--no-llm` path already exists). This is debounced to at most once per
-  settled round: the round epilogue runs exactly once when a round settles, so
-  the refresh is inherently one-per-round. The existing LLM-authored prose is
-  preserved verbatim across the deterministic refresh.
+  **deterministic sections only**, with no LLM call, which holds the cost down;
+  this is the `--no-llm` render path. The refresh is debounced to at most once
+  per settled round: the round epilogue runs exactly once when a round settles,
+  so the refresh is inherently one per round. LLM-authored prose already in the
+  document is preserved verbatim across the deterministic refresh.
 * **The refresh is strictly best-effort.** A report failure NEVER aborts a
   round: the regeneration is wrapped so any exception is swallowed and logged
-  quietly (debug level, structured/stdlib log). The optimization the loop
-  exists to do always wins.
+  quietly (debug level, structured/stdlib log). The optimization loop takes
+  priority over report generation.
 * **Mid-epoch the document is a LIVING DRAFT.** While the epoch is open the
   masthead status carries a `LIVING DRAFT — through round N` stamp. The stamp
   is data-derived (it is present iff `config.json` has not been marked closed);
   the close render removes it automatically because the epoch is then closed.
-* **The full render with LLM prose happens at epoch close** — as today. The
-  close seam runs the bounded auxiliary-LLM prose pass, producing the finished
-  paper and dropping the LIVING DRAFT stamp.
-* **`zicato repair report` is unchanged** — the manual backfill still runs
-  the full render (or `--no-llm` for deterministic-only).
+* **The full render with LLM prose happens at epoch close.** The close seam
+  runs the bounded auxiliary-LLM prose pass, producing the finished paper and
+  dropping the LIVING DRAFT stamp.
+* **`zicato repair report` renders on demand.** The manual backfill runs the
+  full render, or the deterministic sections alone under `--no-llm`.
 
-The dashboard tab picks up the refresh through the normal SSE path under the
-digest discipline: a regenerated-but-byte-identical `analysis.md` rebuilds
-**zero DOM** (a content digest folds the markdown length + the live figure
-inputs), so a no-op refresh never flashes the view.
+The dashboard tab picks up the refresh through the ordinary server-sent events
+(SSE) path under the digest discipline: a byte-identical regeneration of
+`analysis.md` rebuilds **zero DOM** (a content digest folds the markdown length
+plus the live figure inputs), so a no-op refresh never flashes the view.
 
 ## Rendering rules — never overflow the page
 

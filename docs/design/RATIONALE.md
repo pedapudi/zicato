@@ -2,15 +2,14 @@
 
 The other design documents describe **what** zicato does. This
 document describes **why** each major choice was made the way it was.
-It is structured as a list of decisions, each with the alternatives
-considered and the reasoning for the chosen path.
+It is a list of decisions, each with the alternatives considered and the
+reasoning for the chosen path.
 
-This is the place to come when a design choice feels arbitrary. If a
-later contributor wants to relitigate a decision, the burden is on
-them to either (a) name a concern in the "why" below that no longer
-applies or (b) bring a new concern that wasn't weighed.
+Reopening one of these decisions takes either a concern named in its
+reasoning that has since stopped applying, or a concern the reasoning did
+not weigh.
 
-## 1. Why annotated mutation points, not free-form source edits
+## 1. Why the mutation surface is operator-annotated
 
 **Alternative considered.** Let the proposer rewrite arbitrary files
 in the inner harness's tree. Maximally flexible; the proposer can
@@ -23,10 +22,10 @@ an id resolves to. See [MUTATION-SURFACE.md](MUTATION-SURFACE.md).
 
 Markers are not confined to `.py` files — a marker may sit in any
 allowlisted text file, so a markdown prompt or a YAML policy is mutable
-surface in its own right. That widens *where a marker may live*; it does
-not weaken the decision above by a step. An unmarked file is immutable
-whatever its type, and the free-form alternative stays rejected for
-exactly the reasons below.
+surface in its own right. That widens *where a marker may live* without
+weakening the decision above. An unmarked file is immutable whatever its
+type, and the free-form alternative stays rejected for the reasons
+below.
 
 **Why.** An inner harness is high-leverage, low-reversibility
 code. Letting an LLM-driven proposer rewrite arbitrary files is a
@@ -35,12 +34,12 @@ syntax errors and import failures, but it cannot catch "the
 researcher's prompt now subtly references a tool that exists but
 behaves differently in this codebase". Pruning the search space to
 operator-annotated targets shifts the optimisation problem to
-"improve these strings" — which is the actual problem worth solving,
-not "rewrite the agent".
+"improve these strings", which is the problem worth solving, rather than
+to "rewrite the agent".
 
-The cost is reach: the proposer cannot, in v0, propose a structural
-change (e.g. "split the researcher into a literature-lookup
-specialist and a fact-checker specialist"). Structural changes are
+The cost is reach: the proposer cannot propose a structural change
+("split the researcher into a literature-lookup specialist and a
+fact-checker specialist", for instance). Structural changes are
 properly the operator's job. The mutation surface is what the
 operator owns; the proposer fills in the strings.
 
@@ -53,7 +52,7 @@ narrow marker for one string; a file marker for "this whole prompts
 module is yours, rewrite as needed". See §10 for the deeper
 discussion of why the single-file model was not adopted.
 
-## 2. Why per-epoch evaluation contract (not a running average)
+## 2. Why the evaluation contract is frozen per epoch
 
 **Alternative considered.** Score every generation against a running
 average of historical scores. Patterns aggregate forever. No epochs.
@@ -79,13 +78,13 @@ loss signal:
 Each of these is a legitimate operator action. The system has to
 accommodate them. Epochs are how: the operator's contract changes
 ARE epoch boundaries, the loss signal within an epoch stays clean,
-and the lineage records exactly when the contract changed.
+and the lineage records when the contract changed.
 
 The cost is that comparing v7 in epoch A against v3 in epoch B is
 fuzzy ("they were measured against different boards"). The benefit
 is that v7 vs v6 in epoch A is precise.
 
-## 3. Why mandatory structured hypothesis up front (not just patches)
+## 3. Why every experiment states a structured hypothesis up front
 
 **Alternative considered.** The proposer's output is just
 `list[Patch]`. Journaling captures the patches and the score delta.
@@ -103,25 +102,24 @@ weeks into running a loop the operator wants to ask:
 - "Why did the proposer think tightening the researcher's prompt
   would reduce CONFABULATION_RISK? Did it predict the side-effect
   on TOOL_ERROR?"
-- "Have we seen this pattern before and rejected a similar
-  hypothesis?"
-- "Is the proposer reasoning, or just guessing?"
+- "Has this pattern appeared before, and was a similar hypothesis
+  rejected?"
+- "Is the proposer reasoning, or guessing?"
 
-Bare patches don't answer any of these. The pre-run hypothesis does:
-the proposer's *reasoning* and *expectations* are in the record
-alongside the result. The post-run `outcome` block matches actuals
-against expectations, which is exactly the signal you need to
-gauge proposer quality independent of patch quality.
+Bare patches answer none of these. The pre-run hypothesis does: the
+proposer's *reasoning* and *expectations* are in the record alongside the
+result. The post-run `outcome` block matches actuals against
+expectations, which is the signal that gauges proposer quality
+independently of patch quality.
 
-Schema enforcement (rejection + re-prompt on malformed responses)
+Schema enforcement — rejecting and re-prompting a malformed response —
 keeps the journal interpretable. A free-text hypothesis would degrade
 into prose that resists analysis.
 
-The cost is one extra LLM call's worth of proposer effort per round.
-The benefit is a journal that supports learning across rounds. Easy
-trade.
+The cost is one extra LLM call's worth of proposer effort per round. The
+benefit is a journal that supports learning across rounds.
 
-## 4. Why collusion-proof emulator construction (and why hard-error)
+## 4. Why the emulator is collusion-proof by construction, and why it hard-errors
 
 **Alternative considered.** Ship a default emulator that uses the
 same `call_llm` callable as the harness. Warn operators about
@@ -157,11 +155,11 @@ context-builder behind a typed function whose signature is exhaustive
 contributor who wants to add a field has to update the signature,
 which is a reviewable change.
 
-This is one of the few decisions in zicato that is *both* a runtime
-check AND a structural type-system guard. The redundancy is
-deliberate — each half catches what the other can miss.
+This is one of the few decisions in zicato carried by both a runtime
+check and a structural type-system guard. The redundancy is intentional:
+each half catches what the other can miss.
 
-## 5. Why goldfive's drift taxonomy as features (not a new typology)
+## 5. Why the drift taxonomy is goldfive's rather than a new typology
 
 **Alternative considered.** Define zicato's own typed failure shapes.
 "Confabulation", "delegation mismatch", "loop", etc., as zicato-side
@@ -185,17 +183,18 @@ the typology would:
 
 The taxonomy is also designed to be extensible (the `CUSTOM` kind
 plus the open enum). When zicato needs to surface a pattern that
-doesn't have a goldfive kind (e.g. "agent forgot a fact established
-earlier", which is a cross-turn pattern, not a per-turn drift), the
-right move is to compute it in the pattern detector — not to add a
-new drift kind.
+does not have a goldfive kind ("agent forgot a fact established
+earlier", say, which is a cross-turn pattern rather than a per-turn
+drift), the right move is to compute it in the pattern detector rather
+than to add a drift kind.
 
-For target 2 (goldfive's steering layer — see
-[DOGFOOD-TARGETS.md](DOGFOOD-TARGETS.md)), the loss model can't use
-drift counts (circular). But the features are still goldfive's
-events; what changes is how they aggregate. The taxonomy remains.
+For the goldfive steering target
+([DOGFOOD-TARGETS.md](DOGFOOD-TARGETS.md)), the loss model cannot use
+drift counts, because that would be circular. The features are still
+goldfive's events; what changes is how they aggregate. The taxonomy
+remains.
 
-## 6. Why two `call_llm` callables, configured (not defaulted)
+## 6. Why both `call_llm` callables must be configured explicitly
 
 Adjacent to §4 but worth its own section.
 
@@ -204,7 +203,7 @@ chooses a vendor and model for the operator. "Just works" out of the
 box.
 
 **Chosen.** No defaults. Operators must supply both callables.
-Registration fails without them. See [CLI.md §3.2](CLI.md#32-zicato-register).
+Registration fails without them. See [CLI.md](CLI.md).
 
 **Why.** A default would either:
 
@@ -224,7 +223,7 @@ template) ship in zicato. The default *wiring* (the LLM) doesn't.
 Prompts are inert; wiring is operational. Zicato ships the inert
 defaults and refuses to fabricate the operational ones.
 
-## 7. Why filesystem layout, not SQLite
+## 7. Why the canonical layout is the filesystem rather than SQLite
 
 **Alternative considered.** Embed a SQLite database for epochs,
 generations, patterns, loss profiles, journal entries. Faster
@@ -232,7 +231,7 @@ queries; one canonical place.
 
 **Chosen.** Filesystem-native. `.zicato/epochs/{epoch}/...` with one
 file per artifact. JSON, JSONL, and markdown. See
-[ARCHITECTURE.md §5](ARCHITECTURE.md#5-storage-layout) and
+[ARCHITECTURE.md §6](ARCHITECTURE.md#6-storage-layout) and
 [EPOCHS-AND-JOURNALING.md §2](EPOCHS-AND-JOURNALING.md#2-storage-layout).
 
 **Why.** The operator's first-class debugging interface for zicato is
@@ -242,18 +241,18 @@ SQLite makes every artifact one query away from inspectable, which is
 strictly worse for a tool whose users are developers running it on
 their laptops.
 
-The cost of filesystem-native is query performance — patterns over a
-hundred generations require walking many files. For v0 this is fine;
-the operator's loop is "run a few rounds, look at the journal", not
-"query a thousand-row pattern table". When pattern queries become a
-bottleneck, the right move is to add an index sidecar (one SQLite
-file used as a cache, regenerable from the filesystem), not to make
-the filesystem layout the index.
+The cost of filesystem-native is query performance: patterns over a
+hundred generations require walking many files. That suits the
+operator's loop, which is "run a few rounds, look at the journal" rather
+than "query a thousand-row pattern table". When pattern queries become a
+bottleneck, the right move is an index sidecar — one SQLite file used as
+a cache, regenerable from the filesystem — rather than making the
+filesystem layout itself the index.
 
 A related decision: every artifact is a JSON (or JSONL) document
 with stable key sorting. Git diffs on `.zicato/` are useful — an
-operator can `git diff` two snapshots of their workspace and see
-exactly what changed across rounds.
+operator can `git diff` two snapshots of their workspace and see what
+changed across rounds.
 
 ## 8. Why fixed per-run wall-clock budget
 
@@ -328,7 +327,7 @@ the brief between rounds and see the effect immediately. Caching
 would create a stale-brief bug class; the cost of re-reading a
 small markdown file is zero.
 
-## 10. Why we did not lift the "one editable file" model
+## 10. Why the mutation surface spans files rather than one editable file
 
 **Alternative considered.** Constrain the mutation surface to one
 file (one mutable program module; the proposer can rewrite that file
@@ -353,94 +352,91 @@ either:
   no business inventing.
 
 The annotated-mutation-points design solves the same
-"bound-the-search-space" problem at the right granularity. The
-mutation surface is exactly what the operator marked, no more, no
-less. The search space is bounded; the inner harness's modular
-structure is preserved.
+"bound-the-search-space" problem at the right granularity. The mutation
+surface is what the operator marked, no more and no less. The search
+space is bounded, and the inner harness's modular structure is
+preserved.
 
-Other ideas adjacent to the single-file framing that DID fit into
-zicato:
+Three adjacent ideas from the single-file framing did transfer:
 
 - **Fixed wall-clock budget per experiment.** See §8.
 - **Operator-edited markdown rubric per epoch.** See §9.
 - **Optional fast inline keep/discard mode.** Shipped as
   `zicato evolve --mode fast`. See [SCORING.md §7](SCORING.md#7-fast-mode-and-the-tournament).
 
-The single-file editable-program constraint was the only one that
-did not transfer cleanly to a multi-agent target; the others all
-generalised.
+The single-file editable-program constraint was the one idea that did
+not transfer cleanly to a multi-agent target.
 
-## 11. Why drift counts ARE features even though zicato is "model-agnostic"
+## 11. Why drift counts are features even though zicato is model-agnostic
 
-A pedantic question worth answering: zicato is model-agnostic, but
-the drift kinds in goldfive's taxonomy are a model-specific opinion
-about how multi-agent systems fail. Are we secretly model-specific?
+Zicato is model-agnostic, and the drift kinds in goldfive's taxonomy are
+an opinion about how multi-agent systems fail. Consuming that taxonomy
+does not make zicato model-specific.
 
-**Answer.** No. "Model-agnostic" means zicato doesn't import a
-vendor SDK and routes every LLM call through a caller-supplied
-`call_llm`. "Framework-agnostic on the inner harness" means zicato
+"Model-agnostic" means zicato does not import a vendor SDK and routes
+every LLM call through a caller-supplied `call_llm`. "Framework-agnostic on the inner harness" means zicato
 doesn't assume the inner harness is ADK, LangChain, or anything else
 — it talks to the inner harness through a `HarnessAdapter`.
 
-The drift taxonomy is **ecosystem-specific**: goldfive ships it,
-zicato consumes it. That's not the same as model-specific or
-vendor-specific. An adapter implementer can use any inner harness
-they want; under the default dialect the inner harness emits goldfive
-events because the adapter wraps the harness with `goldfive.wrap`. The
-taxonomy is the contract between adapter and zicato, not between zicato
-and any particular model.
+The drift taxonomy is **ecosystem-specific**: goldfive ships it and
+zicato consumes it, which is a different thing from being model-specific
+or vendor-specific. An adapter implementer can use any inner harness;
+under the default dialect the inner harness emits goldfive events
+because the adapter wraps the harness with `goldfive.wrap`. The taxonomy
+is the contract between the adapter and zicato rather than between
+zicato and any particular model.
 
 Nor is it a requirement on the harness. `scoring.json`'s
 `telemetry_dialect` selects the producer, and the `adk_events` /
 `transcript` dialects read a harness that never runs under goldfive —
 scoring then degrades to predicates plus optional in-run judges. Drift is
-the richest signal zicato can consume, not the only one it can score on
-(see [TELEMETRY-DIALECTS.md](TELEMETRY-DIALECTS.md)).
+the richest signal zicato can consume, and it is not the only one zicato
+can score on (see [TELEMETRY-DIALECTS.md](TELEMETRY-DIALECTS.md)).
 
-## 12. Why no zicato-specific EventSink
+## 12. Why there is no zicato-specific EventSink
 
 **Alternative considered.** Define `ZicatoSink` that wraps
 `JSONLPersistenceSink` and adds zicato-specific behaviour (e.g.
 in-process accumulation, per-entry metadata stamping).
 
 **Chosen.** Use goldfive's `JSONLPersistenceSink(mode="write")`
-directly. Post-run reducer is a function, not a sink. See
+directly. The post-run reducer is a function rather than a sink. See
 [TELEMETRY.md §1](TELEMETRY.md#1-no-zicato-specific-eventsink).
 
 **Why.** Goldfive's sink already does the right thing. A
 zicato-specific wrapper would couple zicato to the goldfive
 `EventSink` ABI without adding value. Reducing post-run is the right
-shape — sinks must make incremental decisions about each event;
-reducers have full visibility, which is what loss derivation needs.
+shape: a sink must make incremental decisions about each event, while a
+reducer has full visibility, which is what loss derivation needs.
 
-This also has the practical benefit that zicato's loss reducer is
-testable with a fixture JSONL file. No async sink setup needed; just
-`reduce_run(fixture_path)`. Tests for the reducer are about a third
-the size of tests for an equivalent custom-sink design would be.
+This also makes zicato's loss reducer testable with a fixture JSONL
+file: no async sink setup, just `reduce_run(fixture_path)`. The reducer's
+tests are roughly a third the size an equivalent custom-sink design would
+need.
 
-## 13. Why filesystem-native AND not git-aware
+## 13. Why the filesystem-native layout is not git-aware
 
-**Adjacent.** The storage layout is filesystem-native; one might
-expect "and we use git as the underlying versioning". We don't.
+The storage layout is filesystem-native, and git is not the versioning
+underneath it.
 
-**Why.** Generation snapshots are full copies, not git refs. The
+**Why.** Generation snapshots are full copies rather than git refs. The
 snapshot directory is self-contained; it can be `rm -rf`'d without
 worrying about losing history. The journal and analysis are
-markdown files an operator might track in git themselves — but
-zicato does not commit, push, or rely on git.
+markdown files an operator may track in git themselves, and zicato
+itself never commits, pushes, or relies on git.
 
 The cost is disk usage: many full copies of the inner harness's
 tree. For typical inner harnesses (a few dozen Python files plus
 prompts), this is on the order of megabytes per generation. The
-benefit is that snapshots are operations on a filesystem, not
-operations on a repo, and zicato doesn't have to reason about merge
-conflicts, branch hygiene, or remote sync.
+benefit is that a snapshot is a filesystem operation rather than a repo
+operation, so zicato never has to reason about merge conflicts, branch
+hygiene, or remote sync.
 
 The operator who wants their `.zicato/` tracked in git can do so
 externally. The operator who doesn't want it tracked in git can
 `.gitignore .zicato/`. Both work without any code in zicato.
 
-## 14. Why no scoring "feels right" defaults
+## 14. Why the shipped scoring weights are uncalibrated
 
 **Alternative considered.** Ship calibrated weights in
 `scoring.json` so the loop works "out of the box".
@@ -460,15 +456,15 @@ silently bias every project that didn't change the defaults. The
 honest position is to surface the calibration problem in the docs
 and to make the operator's tuning loop explicit (run an epoch,
 inspect the journal, tune weights, run a new epoch). The starter
-weights are a starting point, not a default.
+weights are a starting point that every project is expected to tune.
 
-## 15. Why no live live-tail UX in v0
+## 15. Why zicato has no live-tail interface of its own
 
-**Alternative considered.** Live drift-count display as the run
-progresses. Operator can watch a run in zicato's own terminal.
+**Alternative considered.** A live drift-count display as the run
+progresses, so the operator can watch a run in zicato's own terminal.
 
-**Chosen.** No live-tail in v0. Harmonograf is the live view. See
-[TELEMETRY.md §1.3](TELEMETRY.md#13-no-live-ux-in-v0).
+**Chosen.** Harmonograf is the live view. See
+[TELEMETRY.md §1.3](TELEMETRY.md#13-the-live-view-is-harmonograf).
 
 **Why.** Harmonograf already does this, well. Building a less-good
 version in zicato's CLI would duplicate effort and create a
@@ -477,10 +473,10 @@ integration is "if you want the live view, run harmonograf
 alongside; the same JSONL records get rendered with proper
 multi-agent semantics".
 
-`zicato run --tail` is mentioned in [CLI.md §3.5](CLI.md#35-zicato-run)
-as a future ergonomic — when v0 has shipped and operators ask for it.
+A `--tail` flag on `zicato run` remains an unbuilt ergonomic, to be
+added if operators ask for it.
 
-## 16. Why we deliberately rejected free-text-diff loss
+## 16. Why free-text-diff loss was rejected
 
 **Alternative considered.** Instead of typed drift counts, use a
 free-text diff between the agent's output and an operator-provided
@@ -497,20 +493,19 @@ solar panel converts sunlight to electricity" to "the solar panel
 converts sunlight to magic" has a small edit distance but a
 catastrophic quality difference.
 
-LLM-judge on text diff loss is one step better but introduces a new
-LLM in a load-bearing position with its own biases and failure
-modes — and a new source of collusion risk (the judge's model and
-the agent's model can conspire silently).
+Scoring a text diff with an LLM judge is one step better, but it puts
+another LLM in a load-bearing position with its own biases and failure
+modes, and it adds a source of collusion risk, because the judge's model
+and the agent's model can align silently.
 
 Typed drift counts have clear semantics ("CONFABULATION_RISK fired
 five times"), are computable from the event stream (no extra LLM
 calls), and combine cleanly with optional pass/fail predicates for
 the cases where text-level correctness matters. The trade-off is
-that drift counts don't catch quality issues that don't manifest as
-drift — but the pass/fail predicate is exactly the operator's hook
-for those cases.
+that drift counts miss quality issues that do not manifest as drift,
+and the pass/fail predicate is the operator's hook for those cases.
 
-## 17. Why the proposer reads prior experiment outcomes (memory, not just patterns)
+## 17. Why the proposer reads prior experiment outcomes
 
 **Alternative considered.** Keep the proposer memoryless — it reads the
 current champion's loss summary, the freshly-detected patterns, and the
@@ -525,15 +520,14 @@ tried` user-prompt section. See [EXPERIMENT-MEMORY.md](EXPERIMENT-MEMORY.md).
 
 **Why.** Every other accumulating component in zicato learns across
 runs — the loss reducer, the pattern detectors, the analyzer — but the
-proposer does not. It is a **greedy hill-climb with amnesia**: it
-optimises the current champion's gradient with no record of the search
-it has already done. So it re-proposes mutations that were rejected
-rounds ago (the motivating pattern is still present and nothing says
-"we tried that; it regressed"), and it cannot deliberately extend a
-direction that already promoted. The history is on disk in every
-`experiment.json` and projected into the analytical index's
-`experiments` table; not feeding it back was leaving the cheapest
-available signal on the floor.
+proposer does not. A memoryless proposer optimises the current
+champion's gradient with no record of the search it has already done. It
+re-proposes mutations that were rejected rounds ago, because the
+motivating pattern is still present and nothing records the earlier
+regression, and it cannot extend a direction that already promoted on
+purpose. The history is on disk in every `experiment.json` and projected
+into the analytical index's `experiments` table, so feeding it back is
+the cheapest available signal.
 
 This is consistent with §9. The operator-edited brief carries the
 *operator's* knowledge ("we tried tightening writer prompts three epochs
@@ -541,30 +535,30 @@ ago; it was flat"). Experiment memory carries the *loop's own* settled
 record, mechanically and without the operator having to transcribe it.
 The two compose: the brief steers, the memory reports.
 
-The framing is **advisory, not constraining** — "avoid repeating these
-failures, build on these wins", never "only do X". It is user-prompt
-context exactly like patterns, never part of the hard hypothesis schema;
-the only hard gate on the proposer stays the brief's `## Forbidden`
-list. This is deliberate. A rejected experiment with a near-zero Δscalar
-is a toss-up, not a proven dead end, so the digest carries the signed
-magnitude verbatim rather than collapsing the verdict to a binary
-"rejected" flag — the proposer is trusted to read `-0.020` differently
-from `-0.300` and to revisit a marginal rejection when a new pattern
-justifies it.
+The framing is advisory: "avoid repeating these failures, build on these
+wins", never "only do X". It is user-prompt context in the same position
+as patterns, never part of the hard hypothesis schema, and the only hard
+gate on the proposer stays the brief's `## Forbidden` list. A rejected
+experiment with a near-zero Δscalar is an inconclusive result rather than
+a proven dead end, so the digest carries the signed magnitude verbatim
+instead of collapsing the verdict to a binary "rejected" flag. The
+proposer is trusted to read `-0.020` differently from `-0.300`, and to
+revisit a marginal rejection when a new pattern justifies it.
 
 The cost is prompt size and a risk of over-anchoring (a timid proposer
 that refuses to revisit anything that failed once). Both are bounded by
 design: the digest is capped and curated (all wins, the sharpest recent
-rejections), rendered one compact line per experiment, and scoped to the
-current evaluation contract so a stale cross-board Δscalar never
-masquerades as comparable. The trade is the same easy one as the
-mandatory hypothesis (§3): a little more proposer context for a search
+rejections), rendered as one compact line per experiment, and scoped to
+the current evaluation contract so a stale cross-board Δscalar never
+reads as comparable. The trade is the same as for the mandatory
+hypothesis (§3): a little more proposer context in exchange for a search
 that stops walking in circles.
 
-This is one of the autoresearch-inspired adoptions — alongside the
-per-run wall-clock budget (§8) and the operator-edited brief (§9) — that
-generalised cleanly onto the multi-agent target: a proposer that reasons
-over its own experiment history rather than re-deriving it each round.
+This is one of three ideas adopted from single-program search that
+generalised cleanly onto the multi-agent target, alongside the per-run
+wall-clock budget (§8) and the operator-edited brief (§9): a proposer
+that reasons over its own experiment history rather than re-deriving it
+each round.
 
 ## 18. Cross-references
 
@@ -576,5 +570,5 @@ over its own experiment history rather than re-deriving it each round.
 | Two-callable rule and emulator sealing | [EMULATOR.md](EMULATOR.md) |
 | Loss profile and goldfive integration | [TELEMETRY.md](TELEMETRY.md) |
 | Wall-clock budget semantics | [BOARD-FORMAT.md](BOARD-FORMAT.md), [SCORING.md](SCORING.md) |
-| Three dogfood targets and what they force on v0 | [DOGFOOD-TARGETS.md](DOGFOOD-TARGETS.md) |
+| The three dogfood targets and what each forces on the design | [DOGFOOD-TARGETS.md](DOGFOOD-TARGETS.md) |
 | Glossary | [VOCABULARY.md](VOCABULARY.md) |
