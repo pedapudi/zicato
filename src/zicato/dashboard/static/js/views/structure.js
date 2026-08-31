@@ -10,6 +10,7 @@ import { structureStatusLabel } from '../livestatus.js';
 import { attachHovercard } from '../hovercard.js';
 import { state } from '../core/state.js';
 import { postFieldOverride } from '../core/api.js';
+import * as D from '../data.js';
 const CROWN = svg.CROWN;
 
 // A friendly label + key params for a structure.
@@ -557,43 +558,10 @@ function diversityMembership(st) {
   return out;
 }
 
-// Read the per-challenger proposing outcomes (the v5 `field_status`) off a
-// tournament-structure payload — same shape data.fieldStatus() produces, []
-// if absent. Carries the v6 observability fields (status "proposing",
-// attempts, attempt_reasons, hypothesis) so the proposal phase stays legible
-// after the run as well as during it.
-export function fieldStatusOf(st) {
-  const fs = st && st.field_status;
-  if (!Array.isArray(fs)) return [];
-  const out = [];
-  for (const f of fs) {
-    if (!f || typeof f !== 'object') continue;
-    const gid = f.generation_id;
-    if (gid == null || gid === '') continue;
-    let status;
-    if (f.status === 'applied') status = 'applied';
-    else if (f.status === 'proposing') status = 'proposing';
-    else status = 'rejected';
-    const reasons = Array.isArray(f.attempt_reasons)
-      ? f.attempt_reasons.filter((r) => r != null && String(r) !== '').map((r) => String(r))
-      : [];
-    out.push({
-      generation_id: String(gid),
-      status,
-      reason: f.reason == null ? '' : String(f.reason),
-      attempts: (typeof f.attempts === 'number' && f.attempts >= 0) ? f.attempts : reasons.length,
-      attempt_reasons: reasons,
-      hypothesis: f.hypothesis == null ? '' : String(f.hypothesis),
-      seed: (typeof f.seed === 'number') ? f.seed : null,
-    });
-  }
-  return out;
-}
-
 // The "Proposed field" section — the candidate-generation step rendered via the
 // shared proposingTracker (applied rows drill in; rejected rows show the reason).
 function proposedFieldSection(st, ctx, epochId) {
-  const fs = fieldStatusOf(st);
+  const fs = D.fieldStatus(st);
   if (!fs.length) return null;
   const proposing = fs.filter((f) => f.status === 'proposing').length;
   // A slot still proposing means the field is forming RIGHT NOW — treat as
