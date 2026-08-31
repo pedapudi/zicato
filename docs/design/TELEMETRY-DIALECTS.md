@@ -136,7 +136,8 @@ an `adk_events` contract with the same knobs.
 | identity | first non-empty `run_id` / `session_id` | `run_id` / `adk_session_id` | — | the harmonograf deep-link (best-effort; empty when absent) |
 
 The retry-loop rule spans the whole log: a `(tool, args)` pair counts when
-it repeats any earlier `tool_call`, not only the immediately preceding one,
+it repeats any earlier `tool_call` rather than only the immediately
+preceding one,
 so a retry that brackets a failed response still counts. `args` are compared
 by their canonical JSON (`sort_keys=True`) so key ordering does not
 change the verdict.
