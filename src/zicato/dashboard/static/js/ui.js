@@ -502,6 +502,18 @@ export function loading(text) {
   return el('p', { class: 'dn-empty', text: text || 'Loading…' });
 }
 
+// The FULL entry-kind vocabulary (core/board.py::BoardEntryKind) — the five
+// labels every board surface prints, so one entry never reads as two different
+// things on two surfaces. The two synthetic kinds are settable from the builder
+// and serialized by the board writer, so a view that knows only three renders
+// them unlabelled and counts them nowhere. An unknown key renders the raw
+// token; the caller falls back.
+export const ENTRY_KIND_LABEL = {
+  single_turn: 'single-turn', multi_turn_scripted: 'scripted multi-turn',
+  multi_turn_emulated: 'emulated multi-turn',
+  synthetic_adversarial: 'synthetic adversarial', synthetic_clean: 'synthetic clean',
+};
+
 // The SERVER-STAMPED decision token off any payload record that carries one —
 // an epoch experiment (readers stamp `decision` via the canonical classifier),
 // a gate breakdown, or a tournament matchup row. Read VERBATIM: the server

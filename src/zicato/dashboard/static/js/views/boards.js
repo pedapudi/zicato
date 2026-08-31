@@ -13,22 +13,17 @@ import { el } from '../core/dom.js';
 import { state } from '../core/state.js';
 import * as D from '../data.js';
 import * as svg from '../svg.js';
-import { section, empty, stat, densityTokens, renderView, figCaption } from '../ui.js';
+import { section, empty, stat, densityTokens, renderView, figCaption, ENTRY_KIND_LABEL } from '../ui.js';
 import { inflightForActiveEpoch, inflightForEntryGen, runProgressRatio } from './structure.js';
 import { livenessFor } from '../livestatus.js';
 
-// The FULL entry-kind vocabulary (core/board.py::BoardEntryKind). The two
-// synthetic kinds are settable from the builder and serialized by the board
-// writer, so a view that knows only three renders them unlabelled and counts
-// them nowhere.
+// The trellis sort key over the entry-kind vocabulary
+// (core/board.py::BoardEntryKind): richest conversation shape first, the two
+// synthetic kinds last. The LABELS are ui.js's ENTRY_KIND_LABEL — this map
+// only orders. An unranked kind sorts after every ranked one.
 const KIND_ORDER = {
   multi_turn_emulated: 0, multi_turn_scripted: 1, single_turn: 2,
   synthetic_adversarial: 3, synthetic_clean: 4,
-};
-const KIND_LABEL = {
-  single_turn: 'single-turn', multi_turn_scripted: 'scripted multi-turn',
-  multi_turn_emulated: 'emulated multi-turn',
-  synthetic_adversarial: 'synthetic adversarial', synthetic_clean: 'synthetic clean',
 };
 
 export async function render(host, ctx, params) {
@@ -187,7 +182,7 @@ function trellis(board, gens, rowByGenEntry, domain, valueOf, epochId, ctx, infl
       el('figcaption', { class: 'dn-trellis-cap' }, [
         el('span', { class: 'dn-trellis-id', text: String(eid) }),
         el('span', { class: 'dn-trellis-meta' }, [
-          el('span', { class: 'dn-kind-tag dn-kind-' + (b.kind || 'unknown'), text: KIND_LABEL[b.kind] || b.kind || '—' }),
+          el('span', { class: 'dn-kind-tag dn-kind-' + (b.kind || 'unknown'), text: ENTRY_KIND_LABEL[b.kind] || b.kind || '—' }),
           b.expectation_kind ? el('span', { class: 'dn-faint', text: ' · ' + b.expectation_kind }) : null,
           inf && inf.count ? el('span', { class: 'dn-trellis-live-tag', title: inf.count + ' running' }, [
             el('span', { class: 'dn-inflight-pulse', 'aria-hidden': 'true' }),
