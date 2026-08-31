@@ -63,6 +63,10 @@ so its text is help literals owned by the command definitions. The captured
 bytes under `tools/parity/golden` are a record of what a run produced, and
 editing one to satisfy a lint would destroy the evidence it exists to hold.
 
+One file is exempt from one rule. `CHANGELOG.md` is an explicitly historical
+document, so its chronology is the content it exists to carry and the rule
+against narrating history does not apply to it; every other rule still does.
+
 Waiver: put `prose-lint: allow <rule-id>` (several ids may be listed, or
 `all`) on the offending line or the line above it.
 
@@ -105,6 +109,10 @@ DEFAULT_PATHS = (
 # Generated help text and captured run evidence: a hit in either is owned
 # somewhere else, so neither can be fixed where it appears.
 EXCLUDED = ("docs/design/CLI.md", "tools/parity/golden")
+# Rules that do not apply to one scanned file, keyed by repository-relative
+# path. A changelog is an explicitly historical document: its chronology is
+# the content, so narrating history is what it is for.
+RULE_EXEMPT: dict[str, frozenset[str]] = {"CHANGELOG.md": frozenset({"narrated-history"})}
 REVIEW = "review"
 FAILURE = "failure"
 SAMPLE = 20  # hits printed per risen rule in ratchet mode
@@ -257,12 +265,15 @@ def _waived(lines: Sequence[str], number: int, rule: str) -> bool:
 
 
 def scan(source: str, path: str, rules: Sequence[Rule]) -> list[Hit]:
-    """Report every hit in one file's prose, honouring allowlist and waivers."""
+    """Report one file's hits, honouring allowlist, waivers, and exemptions."""
     lines = source.splitlines()
     prose = python_prose(source) if path.endswith(".py") else markdown_prose(source)
+    exempt = RULE_EXEMPT.get(path, frozenset())
     hits: list[Hit] = []
     for number, text in prose:
         for rule in rules:
+            if rule.name in exempt:
+                continue
             for found in rule.pattern.finditer(text):
                 if rule.name == "codename-label" and _allowed(text, found.span()):
                     continue

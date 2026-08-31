@@ -102,6 +102,13 @@ def test_generated_help_and_captured_evidence_are_skipped(
     assert prose_lint.ROOT / "docs" / "design" / "CLI.md" in reinstated
 
 
+def test_the_changelog_is_exempt_from_the_history_rule_and_no_other() -> None:
+    text = "The writer no longer emits a header. The gate reads the record, not the tree."
+    assert rules_hit(text, "docs/guide.md") == {"narrated-history", "antithesis-apposition"}
+    assert rules_hit(text, "CHANGELOG.md") == {"antithesis-apposition"}
+    assert prose_lint.RULE_EXEMPT["CHANGELOG.md"] == frozenset({"narrated-history"})
+
+
 def test_an_excluded_directory_drops_its_whole_subtree(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
