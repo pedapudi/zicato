@@ -82,7 +82,7 @@ evaluation-engine call:
   auto-close — which rolls the contract with the aux callable in hand — that
   runs the full prose render. To get the prose pass by hand after a manual
   close, use `regenerate-report` with an evaluation callable (step 3)
-  ([EPOCHS-AND-JOURNALING.md §5.1](../../docs/design/EPOCHS-AND-JOURNALING.md#51-closing-manual-primary-auto-close-fallback)).
+  ([EPOCHS-AND-JOURNALING.md §5.1](../../docs/design/EPOCHS-AND-JOURNALING.md#51-closing--manual-primary-auto-close-fallback)).
 
 **A closed epoch is read-only.** Its board, brief, scoring, and generation
 artifacts are frozen — that is what makes its matchups comparable. Re-opening or

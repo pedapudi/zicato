@@ -452,7 +452,7 @@ margin.
 against it: inside the band reads "insufficient improvement", below it
 reads "clears the margin", and above it reads "regressed". The band
 draws the noise threshold the promote gate applies (see
-[SELECTION.md §2 Family ②](SELECTION.md#family--statistical-gate-acceptance-replicate-then-test)).
+[SELECTION.md §2, the statistical-gate family](SELECTION.md#2-three-families-of-promotion-decision)).
 It is a fixed threshold around a point estimate; §4.6 describes the
 credible interval the Bradley–Terry rating draws beside it.
 
@@ -681,15 +681,15 @@ Four surfaces carry uncertainty, and each states what it measured.
   it has earned. The elitist iterated racing strategy eliminates
   dominated candidates on that same evidence, so the standings are a
   ranked field rather than a bracket. See
-  [SELECTION.md §2 Family ③](SELECTION.md#family--single-elimination-bracket-triage-by-resource)
-  and [§6](SELECTION.md#6-why-not-double-elimination-or-swiss-the-explicit-verdict)
+  [SELECTION.md §2, the single-elimination-bracket family](SELECTION.md#2-three-families-of-promotion-decision)
+  and [§8](SELECTION.md#8-why-not-double-elimination-or-swiss-the-explicit-verdict)
   for why a bracket suits a small field of expensive, noisy candidates
   poorly.
 - **Verdicts that respect the noise floor.** Movement inside the
   measured same-versus-same floor reads as "no detectable signal"
   rather than as an improvement or a plateau.
 
-One surface [SELECTION.md §7](SELECTION.md#7-the-recommended-design)
+One surface [SELECTION.md §9](SELECTION.md#9-the-recommended-design)
 describes is not built: a per-entry paired rank test carried as its own
 rung of the gate ladder, which would report a pass-to-fail regression
 only when the flip persists across replicates. The pass-rate
@@ -1157,7 +1157,7 @@ Either stands alone.
 |---|---|
 | The candidate-selection decision theory and the racing/replication roadmap | [SELECTION.md](SELECTION.md) |
 | The promote gate's rules (regression suite → scalar margin → pass-rate → namespace) | [SELECTION.md §3.2](SELECTION.md#32-the-promote-gate--three-rules-in-order), [SCORING.md](SCORING.md) |
-| The replication and rating machinery behind §4.6 | [SELECTION.md §7](SELECTION.md#7-the-recommended-design) |
+| The replication and rating machinery behind §4.6 | [SELECTION.md §9](SELECTION.md#9-the-recommended-design) |
 | State file layout the dashboard reads from | [RUNTIME.md](RUNTIME.md) §2 |
 | The watchdog supervisor + the dashboard-as-separate-service split | [RUNTIME.md](RUNTIME.md) §3, §3.0 |
 | `control/` and `control_log/` file shapes and the consume side | [RUNTIME.md](RUNTIME.md) §2.5 |
