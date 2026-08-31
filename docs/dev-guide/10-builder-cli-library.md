@@ -80,7 +80,7 @@ forbidden** — §10.11 is the enforcement.
 | `src/zicato/cli/discovery.py` | `build_cli_root`, `ZicatoGroup`, the command auto-discovery | ~370 lines |
 | `src/zicato/cli/commands/*.py` | one command (or sub-group) per file — the inventory in §10.9 | — |
 | `src/zicato/config.py` | `pin_overrides` / `pinned_override` / `load_config` + `describe_env_vars` | ~690 lines |
-| `src/zicato/__init__.py` | the lazy `_EXPORTS` facade + `__getattr__` + `TYPE_CHECKING` mirror | 153 lines |
+| `src/zicato/__init__.py` | the lazy `_EXPORTS` facade + `__getattr__` + `TYPE_CHECKING` mirror | ~75 lines |
 | `pyproject.toml` | the seven import-linter contracts, TID251 bans, extras, uv workspace, wheel packaging | 422 lines |
 | `hatch_build.py` | the custom build hook that bundles `zicato-supervisor` into the wheel | ~98 lines |
 
@@ -1331,8 +1331,11 @@ zicato is a library first. The public surface is declared in
 `src/zicato/__init__.py` as a **lazy facade**: a dict mapping each public name to
 its home module, resolved on first access by a module-level `__getattr__`. The
 surface is limited to evolve entry points, harness protocols, board/config
-loaders, and scoring types. The reasoning-aware model boundary is an advanced
-API at `zicato.reasoning`. `__all__` is derived from `_EXPORTS`.
+loaders, and scoring types. All three evolve entry points name
+`zicato.orchestrator` as their home — the dispatch surface over the round
+pipeline, so the facade pins no module inside `zicato.evolve`. The
+reasoning-aware model boundary is an advanced API at `zicato.reasoning`.
+`__all__` is derived from `_EXPORTS`.
 
 Advanced APIs live in their owning subpackages, and the facade carries no
 forwarding aliases to them.

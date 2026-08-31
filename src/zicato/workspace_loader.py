@@ -291,19 +291,6 @@ def overfitting_config_to_dict(cfg: OverfittingConfig) -> dict[str, Any]:
     return dataclass_to_jsonable(cfg)
 
 
-def ladder_config_to_dict(cfg: LadderConfig) -> dict[str, Any]:
-    """Serialize a :class:`LadderConfig` to the ``ladder`` sub-block.
-
-    The inverse of :func:`ladder_config_from_dict`; field-enumerating via
-    :func:`zicato.epoch.contract_serde.dataclass_to_jsonable`, so a new
-    field is covered automatically (issue #13). ``threshold`` is serialized
-    verbatim (``None`` ⇒ derive from ``promote_margin``).
-    """
-    from zicato.epoch.contract_serde import dataclass_to_jsonable  # noqa: PLC0415
-
-    return dataclass_to_jsonable(cfg)
-
-
 def tournament_structure_from_dict(raw: Any) -> TournamentStructure:
     """Parse the ``tournament`` block of a ``scoring.json`` into a spec.
 
@@ -377,5 +364,4 @@ __all__ = [
     "overfitting_config_from_dict",
     "overfitting_config_to_dict",
     "ladder_config_from_dict",
-    "ladder_config_to_dict",
 ]

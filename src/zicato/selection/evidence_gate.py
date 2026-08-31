@@ -54,7 +54,7 @@ multi-challenger driver and the gauntlet crowning duel.
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any, Literal
 
 from zicato.selection.rating import fit_bradley_terry, prob_stronger
@@ -476,19 +476,6 @@ def rating_block(verdict: EvidenceVerdict) -> dict[str, Any]:
     }
 
 
-@dataclass(frozen=True, slots=True)
-class ReplicationOutcome:
-    """The terminal result of the driver's defer→replicate loop.
-
-    ``verdict`` is the final :class:`EvidenceVerdict`; ``ci_history`` is the
-    per-step ``p_stronger`` / ``ci_overlap`` trace the loop produced (one entry
-    per refit), so the dashboard can show the duel converging (or failing to).
-    """
-
-    verdict: EvidenceVerdict
-    ci_history: tuple[dict[str, Any], ...] = field(default_factory=tuple)
-
-
 __all__ = [
     "EVIDENCE_REPLICATE_BASE",
     "MIN_CREDIBLE_DUELS",
@@ -499,7 +486,6 @@ __all__ = [
     "RatingCI",
     "EvidenceVerdict",
     "CandidateDuel",
-    "ReplicationOutcome",
     "read_promote_confidence_threshold",
     "read_replicate_budget",
     "evidence_verdict",

@@ -57,6 +57,18 @@ def test_root_surface_is_deliberately_small() -> None:
     }
 
 
+def test_the_loop_names_all_route_through_the_dispatch_surface() -> None:
+    """One home for all three loop exports.
+
+    :mod:`zicato.orchestrator` is the public dispatch surface over the round
+    pipeline. A facade entry naming a module inside :mod:`zicato.evolve` would
+    pin the module a function is defined in, which the pipeline is free to
+    change; the dispatch surface is what the package root promises.
+    """
+    for name in ("EvolveRoundOutcome", "evolve_n_rounds", "evolve_once"):
+        assert zicato._EXPORTS[name][0] == "zicato.orchestrator", name
+
+
 def test_unknown_attribute_raises_attribute_error() -> None:
     with pytest.raises(AttributeError, match="no_such_name"):
         zicato.no_such_name  # noqa: B018

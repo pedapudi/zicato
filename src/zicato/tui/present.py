@@ -233,18 +233,6 @@ def cost_per_promotion_label(cost: Any) -> str | None:
     return fmt_duration_ms(value) if is_num(value) else None
 
 
-def noise_band(traj: Any, spark_values: Any) -> dict[str, float] | None:
-    """``ui.js`` ``noiseBandFor`` — the A/A floor band around the latest point."""
-    if not isinstance(traj, dict):
-        return None
-    floor = traj.get("noise_floor")
-    half = num(floor.get("max_abs_delta")) if isinstance(floor, dict) else None
-    values = [n for n in (num(v) for v in spark_values or []) if n is not None]
-    if half is None or half <= 0 or not values:
-        return None
-    return {"center": values[-1], "half": half}
-
-
 # ---------------------------------------------------------------------------
 # Ratings — uncertainty is part of the number
 # ---------------------------------------------------------------------------
@@ -459,7 +447,6 @@ __all__ = [
     "is_num",
     "loop_verdict",
     "measured",
-    "noise_band",
     "note_progress",
     "normalize_structure",
     "num",

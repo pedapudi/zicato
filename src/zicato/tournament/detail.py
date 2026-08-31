@@ -146,14 +146,6 @@ class Bracket:
 
 
 @dataclass(frozen=True, slots=True)
-class ScalarComponent:
-    """One named contribution to a side's scalar score."""
-
-    name: str
-    value: float
-
-
-@dataclass(frozen=True, slots=True)
 class EntryComparison:
     """Board entry x {parent, child} loss comparison.
 
@@ -1536,7 +1528,6 @@ __all__ = [
     "PLATEAU_EPSILON",
     "Matchup",
     "Bracket",
-    "ScalarComponent",
     "EntryComparison",
     "GateVerdict",
     "PatchSummary",
