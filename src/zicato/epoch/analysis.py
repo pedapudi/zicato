@@ -19,8 +19,8 @@ that wants structure should read from ``experiment.json`` and
 The pass is **bounded**: we cap the journal slice and per-experiment
 detail we inline into the prompt so the call is predictable. Operators
 who need a fuller retrospective can re-run the pass with a larger budget
-by setting environment knobs (left for a later patch — the function
-takes a ``model`` arg today for forward compat).
+by setting environment knobs; the function takes a ``model`` argument so a
+caller can select one.
 """
 
 from __future__ import annotations
@@ -154,8 +154,8 @@ def _collect_experiments(workspace_root: Path, epoch_id: str) -> list[dict[str, 
 def _collect_patterns_snapshot(workspace_root: Path, epoch_id: str) -> str:
     """Aggregate ``patterns/round_*.json`` files into a single text blob.
 
-    Returns the empty string when there is no patterns directory; this
-    is the common case in v0 (pattern detection lands in a later patch).
+    Returns the empty string when there is no patterns directory, which is
+    the common case: nothing writes pattern files yet.
     """
     patterns_dir = epoch_dir(workspace_root, epoch_id) / "patterns"
     if not patterns_dir.exists():
@@ -194,8 +194,8 @@ def _format_experiment(d: dict[str, Any]) -> str:
 #: Characters that terminate a flowchart token wherever they appear, so
 #: mermaid rejects the whole ``graph`` block when one lands inside a label.
 #: Node labels are emitted inside double quotes and survive these; EDGE
-#: labels are emitted bare between pipes (``a -.->|text| b``) and do not —
-#: one ``(`` fails the parse for the entire diagram, not just its edge.
+#: labels are emitted bare between pipes (``a -.->|text| b``) and do not:
+#: one ``(`` fails the parse for the entire diagram rather than only its edge.
 _MERMAID_LABEL_ENTITIES = {
     "&": "&amp;",
     '"': "&quot;",
@@ -217,15 +217,15 @@ def _sanitize_label(text: str) -> str:
     """Strip mermaid-hostile characters from a node/edge label.
 
     Replaces each with an HTML entity so the rendered label preserves the
-    original glyph while staying syntactically valid — the same trick the
-    quote / angle-bracket escapes have always used.
+    original glyph while staying syntactically valid, the same way the
+    quote and angle-bracket escapes do.
 
     The bracket family matters because gate reasons carry their measured
     numbers in parentheses (``"insufficient improvement: loss fell by only
-    0.000200 (champion … -> challenger …)"``). At the old 30-character
-    edge-label clip the parenthetical was always cut off, so the hazard
-    was latent; :data:`_MERMAID_EDGE_LABEL_LIMIT` at 60 reaches it, and an
-    unescaped ``(`` makes the whole lineage diagram unparseable.
+    0.000200 (champion … -> challenger …)"``). An edge-label clip short
+    enough to cut the parenthetical off would hide the hazard;
+    :data:`_MERMAID_EDGE_LABEL_LIMIT` at 60 reaches it, and an unescaped
+    ``(`` makes the whole lineage diagram unparseable.
     """
     return "".join(_MERMAID_LABEL_ENTITIES.get(ch, ch) for ch in text)
 

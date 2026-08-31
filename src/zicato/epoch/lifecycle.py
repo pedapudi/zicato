@@ -24,7 +24,7 @@ is a filesystem-safe slug of the operator-supplied name. If the same
 name is created twice on the same day the second call gets a numeric
 suffix.
 
-The module is deliberately small and procedural — there is no
+The module is small and procedural by design — there is no
 ``Lifecycle`` class. Functions take ``workspace_root`` explicitly so the
 CLI and tests construct calls from explicit Paths without holding on to
 shared state.
@@ -75,10 +75,9 @@ _AuxCallLLM = Callable[[str, str, str], Awaitable[str]]
 def _brief_path(workspace_root: Path, epoch_id: str) -> Path:
     """Path to the frozen proposer brief (``brief.md``) for one epoch.
 
-    The proposer brief used to be stored as ``rubric.md`` and reached
-    through ``zicato.core.workspace.rubric_path``. The epoch directory
-    is owned by this module, so the brief path is defined here directly
-    — keeping the rename self-contained to ``zicato.epoch`` rather than
+    The epoch directory is owned by this module, so the brief path is
+    defined here directly, keeping the name self-contained to
+    ``zicato.epoch`` rather than
     threading it through the shared workspace-path module.
     """
     return epoch_dir(workspace_root, epoch_id) / "brief.md"
@@ -154,8 +153,8 @@ def _scoring_from_dict(d: dict[str, Any]) -> ScoringWeights:
 
     The inverse of :func:`scoring_to_dict`, field-enumerating via
     :func:`zicato.epoch.contract_serde.jsonable_to_dataclass`: every field
-    absent from a legacy ``scoring.json`` falls back to the dataclass
-    default (so files written before a field landed load cleanly), and
+    absent from a ``scoring.json`` falls back to the dataclass default, so a
+    file written before a field existed loads cleanly, and
     every present field — including the nested ``tournament`` /
     ``overfitting`` blocks — round-trips. Mirror of
     :func:`zicato.workspace_loader.scoring_weights_from_dict`.
@@ -172,8 +171,8 @@ def _scoring_from_dict(d: dict[str, Any]) -> ScoringWeights:
 
 def _config_to_dict(cfg: EpochConfig) -> dict[str, Any]:
     return {
-        # Record-format version (WS5): stamped at write, checked at read
-        # (absent-on-read reads as version 1 so pre-stamp epochs load).
+        # Record-format version: stamped at write, checked at read. An absent
+        # stamp reads as version 1, so an epoch written before it loads.
         "format_version": RECORD_FORMAT_VERSION,
         "id": cfg.id,
         "name": cfg.name,
@@ -183,8 +182,8 @@ def _config_to_dict(cfg: EpochConfig) -> dict[str, Any]:
         "scoring": scoring_to_dict(cfg.scoring),
         "closed": cfg.closed,
         "closed_at": cfg.closed_at,
-        # ``None`` ⇒ pre-hash (legacy) epoch, written as null. Newly
-        # created epochs always carry a real computed hash.
+        # ``None`` ⇒ an epoch written before contract hashing, stored as
+        # null. A newly created epoch always carries a computed hash.
         "contract_hash": cfg.contract_hash,
         "goal": cfg.goal,
         # ``None`` ⇒ built-in default proposer. Written as null so an
@@ -207,8 +206,8 @@ def _config_from_dict(d: dict[str, Any]) -> EpochConfig:
     # ``contract_hash`` defaults to ``None`` so epochs written before
     # contract-hash auto-epoching landed load cleanly — see
     # :class:`zicato.core.types.EpochConfig` and the contract module. A
-    # legacy on-disk ``""`` is normalised to ``None`` (absent ⇒ legacy,
-    # "never rolls"); only ``is None`` reads as legacy downstream.
+    # on-disk ``""`` is normalised to ``None``, which downstream reads as
+    # "this epoch carries no hash, so it never rolls".
     #
     # ``brief_path`` is the current key; ``rubric_path`` is the
     # pre-rename name, still accepted so an epoch ``config.json`` written
@@ -242,8 +241,8 @@ def _config_from_dict(d: dict[str, Any]) -> EpochConfig:
         # before the pre-flight surface landed load cleanly.
         preflight=raw_preflight if isinstance(raw_preflight, dict) else None,
         # ``applied_proposer_recommendations`` defaults to ``()`` so epochs
-        # written before proposer reflection landed load as "no applied
-        # recommendation", which is exactly what they are.
+        # written before proposer reflection existed load as "no applied
+        # recommendation", which is what they are.
         applied_proposer_recommendations=tuple(
             str(x) for x in (d.get("applied_proposer_recommendations") or [])
         ),
@@ -294,8 +293,9 @@ def load_epoch(workspace_root: Path, epoch_id: str) -> EpochConfig:
     raw = backend_for(workspace_root).read_json(epoch_config_key(epoch_id))
     if raw is None:
         raise FileNotFoundError(f"epoch {epoch_id!r} has no config.json under {workspace_root}")
-    # Record-format guard (WS5): absent ⇒ version 1 (pre-stamp epochs keep
-    # loading); a future incompatible version refuses with a clear error.
+    # Record-format guard: absent ⇒ version 1, so an epoch written before the
+    # stamp keeps loading; a future incompatible version refuses with a clear
+    # error.
     check_record_format(raw, f"epochs/{epoch_id}/config.json")
     return _config_from_dict(raw)
 
@@ -326,9 +326,10 @@ def list_epochs(workspace_root: Path) -> list[EpochConfig]:
             continue
         if raw is None:
             continue
-        # Record-format guard (WS5): a future incompatible config.json is a
-        # LOUD refusal, not a silent skip — unlike a torn in-progress write,
-        # the record is intact and the operator must know why it won't load.
+        # Record-format guard: a future incompatible config.json is a LOUD
+        # refusal rather than a silent skip. Unlike a torn in-progress write,
+        # the record is intact, and the operator must know why it will not
+        # load.
         check_record_format(raw, f"epochs/{epoch_id}/config.json")
         try:
             out.append(_config_from_dict(raw))
@@ -410,7 +411,7 @@ def new_epoch(
       1. If ``auto_close_previous`` and the current epoch is open, close
          it first (warning to stderr). ``aux_call_llm`` is required for
          that close — the analysis pass runs on it.
-      2. Compute the epoch id from ``name`` and today's date.
+      2. Compute the epoch id from ``name`` and the current date.
       3. Create ``.zicato/epochs/{id}/`` and write the frozen board +
          proposer brief into it.
       4. Serialize ``weights`` to ``scoring.json``.
@@ -433,7 +434,7 @@ def new_epoch(
     persistence end to end — it writes the frozen ``board.jsonl`` /
     ``brief.md`` / ``scoring.json`` itself. The caller never needs a
     prior ``.save()``; the on-disk files the contract hash is computed
-    from are this function's responsibility, not the caller's. Passing
+    from are this function's responsibility rather than the caller's. Passing
     paths still works and copies the files verbatim.
 
     Carrying the registered contract components
@@ -462,7 +463,7 @@ def new_epoch(
     ``goal`` is a free-form operator-supplied statement of intent for
     the epoch. It is persisted into ``config.json`` and surfaced in
     the analyzer report header so the *why* of the epoch is machine-
-    readable, not just narrative in ``journal.md``. Empty by default
+    readable rather than only narrative in ``journal.md``. Empty by default
     (rendered as "no goal recorded" downstream); multi-line strings
     are accepted verbatim.
 
@@ -505,7 +506,7 @@ def new_epoch(
     # 3. Create the directory and write the frozen contracts. Both the
     # board and the proposer brief are materialized here from whatever
     # the caller passed (in-memory object or path) — canonicalization
-    # and persistence are owned by new_epoch, not the caller.
+    # and persistence are owned by new_epoch rather than the caller.
     edir = epoch_dir(workspace_root, epoch_id)
     edir.mkdir(parents=True, exist_ok=False)
     target_board = board_path(workspace_root, epoch_id)
@@ -555,8 +556,8 @@ def new_epoch(
     # proposer lineage legible: ``zicato proposer apply-recommendation``
     # edited the proposer dir and parked the id; the epoch that first runs
     # under the edited proposer is THIS one, so it is the record that should
-    # say why the proposer changed. Draining is deliberately part of epoch
-    # creation rather than of apply — apply cannot know which epoch will pick
+    # say why the proposer changed. Draining is part of epoch creation rather
+    # than of apply, because apply cannot know which epoch will pick
     # the edit up, and an id parked against a guess would be wrong the moment
     # the operator applied a second recommendation before rolling.
     cfg = EpochConfig(
@@ -570,7 +571,7 @@ def new_epoch(
         closed_at="",
         contract_hash=contract_hash,
         goal=goal,
-        # Read off the hashed contract, not the shorthand parameter, so the
+        # Read off the hashed contract rather than the shorthand parameter, so the
         # proposer this epoch's rounds are built with is the one its hash
         # was taken over.
         proposer_path=contract.proposer_path,

@@ -1,4 +1,4 @@
-"""Pre-tournament candidate screening (tryouts) — veto-first, never ranking.
+"""Pre-tournament candidate screening (tryouts) — a veto that never ranks.
 
 When best-of-N sampling yields N candidate experiments, this engine RUNS
 each candidate on a small rotating TRAIN panel before the selection pass,
@@ -16,7 +16,7 @@ can burn a tournament round. The semantics are strictly **veto-first**:
   is NEVER journaled as evidence, never compared against tournament
   scalars.
 
-Relationship to racing (complementary, not overlapping): a racing
+Relationship to racing, which it complements rather than overlaps: a racing
 tournament's rung-0 halving is field-level screening DOWNSTREAM of the
 proposer — it prunes applied challengers on a board slice after they are
 already lineage children. This screen runs UPSTREAM, inside one

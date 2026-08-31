@@ -92,7 +92,7 @@ def _load_raw(workspace_root: Path) -> dict[str, Any]:
     storage backend's default ``read_json``, which surfaces a decode
     error; lineage is reconstructible, so it absorbs the error here.)
 
-    One deliberate exception (WS5): a lineage stamped with a FUTURE
+    One deliberate exception: a lineage stamped with a FUTURE
     ``format_version`` is an INTACT record this build cannot promise to
     interpret — collapsing it to the empty DAG would silently drop
     history, so it refuses loudly instead.
@@ -225,7 +225,7 @@ def append_to_lineage(
     already-settled generation keeps the verdict that settled it.
     """
     raw = _load_raw(workspace_root)
-    # Annotated at the FIRST binding, not on the fallback literal below: the
+    # Annotated at the FIRST binding rather than on the fallback literal below: the
     # declared type then governs both branches. Annotating the literal instead
     # narrows the type to the literal's own value union (``str | list | None``)
     # and every downstream ``entry[...]`` stops checking (issue #133).
@@ -281,7 +281,8 @@ def append_to_lineage(
                 # a non-empty reason as "rejected", so a stale one would make the
                 # node render as rejected while its own flag says otherwise. That
                 # is the ambiguity #124 exists to remove, so the invariant is
-                # enforced on the RECORD, not just on the write that created it.
+                # enforced on the RECORD rather than only on the write that
+                # created it.
                 g["rejection_reason"] = ""
             g.setdefault("rejection_reason", "")
             if parent_scalar is not None:

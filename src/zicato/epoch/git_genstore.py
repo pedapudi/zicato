@@ -28,7 +28,7 @@ repository; zicato is its only writer.
 The domain → git mapping
 ------------------------
 * **Workspace** → one git repository (``{workspace_root}/repo/``). One
-  repo, not one-per-epoch: cross-epoch ``diff``/``log`` and cross-epoch
+  repo rather than one per epoch: cross-epoch ``diff``/``log`` and cross-epoch
   blob dedup both want a single object store.
 * **Epoch** → a branch, ``epoch/{epoch_id}``. An epoch's generations are
   a commit chain on its branch.
@@ -329,8 +329,8 @@ class GitGenerationStore:
         with _worktree_admin_lock(self._repo):
             # Re-check for an existing valid worktree INSIDE the lock before
             # adding. :meth:`materialize_snapshot` routes every materialised read here
-            # (it no longer has its own unlocked ``if wt.is_dir(): return wt``
-            # fast path), so two concurrent cold-store materialisations of the
+            # (it has no unlocked ``if wt.is_dir(): return wt`` fast path of
+            # its own), so two concurrent cold-store materialisations of the
             # same generation both reach this point. ``git worktree add`` on an
             # already-populated directory fails, so the guard only holds if it
             # lives under the admin lock: the first caller adds the worktree,
@@ -638,7 +638,7 @@ class GitGenerationStore:
         # crash-resume re-validate) moves the tag to the fresh commit — but a
         # worktree materialised by an EARLIER attempt stays detached at the
         # old commit, so ``materialize_snapshot`` would hand back a stale tree that
-        # no longer matches the commit just derived (the directory backend
+        # does not match the commit just derived (the directory backend
         # clears + rebuilds the child tree instead, so only this backend
         # needs the refresh). Drop the stale checkout; ``materialize_snapshot``
         # below re-materialises it from the moved tag (its ``worktree add``

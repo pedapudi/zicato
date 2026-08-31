@@ -9,16 +9,16 @@ not." This module is the seam for that fifth kind.
 
 Why a separate seam (and not an extension of ``StorageBackend``)
 ----------------------------------------------------------------
-``StorageBackend`` is deliberately record-level: ``write_json(key,
+``StorageBackend`` is record-level by design: ``write_json(key,
 data)`` cannot express "materialise generation v3 as a source tree
 derived from v2's tree by applying this patch set." The two seams have
-genuinely different units — a record store's unit is a key→blob pair
+different units — a record store's unit is a key→blob pair
 with per-record atomicity; a generation store's unit is a source tree
 plus a generation-level transaction boundary. Forcing the second
 through the first would make ``StorageBackend`` carry zicato's domain
 vocabulary (epochs, generations, patches) and stop being an honest
 storage seam. So :class:`GenerationStore` is a **peer abstraction at the
-domain layer**, not a subtype of ``StorageBackend``. The full reasoning
+domain layer** rather than a subtype of ``StorageBackend``. The full reasoning
 is ``docs/design/STORAGE.md`` §4.
 
 Path calculation and materialization
@@ -183,8 +183,8 @@ def copy_checkout_ephemeral(source_root: Path, run_id: str) -> EphemeralCheckout
     byte-for-byte:
 
     * a single :func:`tempfile.mkdtemp` parent named
-      ``ztw-snap-{run_id}-*`` in the OS temp dir, deliberately OUTSIDE
-      the workspace tree (and exactly the shape the Rust supervisor's
+      ``ztw-snap-{run_id}-*`` in the OS temp dir, OUTSIDE the workspace
+      tree by design (and exactly the shape the Rust supervisor's
       ``reapable_snapshot_root`` guard reaps after a crash);
     * the copy goes *into a child of the parent keeping the source
       tree's own basename*, so any path the agent derives from
@@ -796,7 +796,7 @@ class DirectoryGenerationStore:
 
 
 #: Workspace ``config.json`` key selecting the generation source-tree backend.
-#: This is deliberately distinct from the generic record-store abstraction.
+#: This is distinct from the generic record-store abstraction by design.
 GENERATION_SOURCE_BACKEND_KEY = "generation_source_backend"
 
 #: The git backend's name, in the config knob and in a resolution.
@@ -928,7 +928,7 @@ def resolve_generation_store_backend(workspace_root: Path) -> str:
     Initialized workspaces must carry :data:`GENERATION_SOURCE_BACKEND_KEY`.
     Missing, blank, malformed, and unknown values are errors.  The resolver
     never guesses from repositories, generation records, or snapshot paths;
-    choosing a source backend is workspace configuration, not evidence
+    choosing a source backend is workspace configuration rather than evidence
     discovery.
     """
     from zicato.workspace_loader import load_workspace_config  # noqa: PLC0415

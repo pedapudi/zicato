@@ -1,4 +1,4 @@
-"""Pure parent selector for the mechanical recombination slot (WS-REC).
+"""Pure parent selector for the mechanical recombination slot.
 
 A single tournament winner can only ever discount ONE challenger's diff,
 so two complementary fixes that each improve a DIFFERENT slice of the
@@ -14,9 +14,10 @@ testable per-predicate with no fixtures.
 
 The 8 hard eligibility predicates (a candidate must clear ALL of #1–#6;
 a PAIR must clear #7–#8), justified inline, are the settled design of
-``docs/design`` WS-REC. Cross-regression is deliberately a RANKING
-penalty, not a filter (per-entry single-sample verdicts are noisy — the
-screen's confirm-before-veto lesson). The ranking is total and
+``docs/design/PROPOSER.md`` §2.6. Cross-regression is a RANKING penalty
+rather than a filter, because a per-entry single-sample verdict is noisy;
+the screen confirms before it vetoes for the same reason. The ranking is
+total and
 deterministic: any evidence tie is broken lexicographically, so the same
 pre-fetched data always mints the same pair.
 """
@@ -28,8 +29,8 @@ from itertools import combinations
 
 from zicato.core.types import ExpectedDriftMovement, ExpectedMetricMovement, Patch
 
-#: Elo scale midpoint used to default-fill a candidate whose rating the
-#: fold has not yet produced (a fresh reject, or an index-absent
+#: Elo scale midpoint that default-fills a candidate whose rating the
+#: fold has not produced (a fresh reject, or an index-absent
 #: workspace). 1500 is the conventional Elo seed; filling both sides of a
 #: pair with it makes the summed-Elo ranking key inert across an
 #: all-unrated pool — it can only ever REORDER within an evidence tie,
@@ -119,7 +120,7 @@ def eligible_parents(
     #4 **non-recombined parent** — no chains in v1 (a recombined mint's
        ``recombined_from`` is non-empty); keeps provenance one level deep.
     #6 **patches reconstructable + all mutation-ids in the manifest** — a
-       target the current manifest no longer exposes cannot be applied, so
+       target the current manifest does not expose cannot be applied, so
        the whole candidate is dropped. (Reconstructability is the builder's
        guard — only readable patch sets reach here; this enforces the
        manifest-membership half.) A patch-free candidate is dropped too:

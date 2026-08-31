@@ -109,8 +109,8 @@ def jsonable_to_dataclass(cls: type[_T], data: Mapping[str, Any]) -> _T:
       scalar type, recursed for nested dataclasses, copied for mappings /
       sequences);
     * a key absent from ``data`` falls back to the field's default — so a
-      legacy ``scoring.json`` written before a field existed loads at that
-      field's default, exactly as the hand-written parsers did.
+      ``scoring.json`` written before a field existed loads at that field's
+      default.
 
     Because absent fields fall back to their declared default and the
     contract canonicalizer resolves the same defaults, the contract hash
@@ -195,8 +195,8 @@ def _value_from_jsonable(field_type: Any, raw: Any) -> Any:
     # field would hydrate it as a bare str while the in-process value
     # carries the declared type (issue #132). The three dataclasses routed
     # through here — ScoringWeights, OverfittingConfig, LadderConfig — are
-    # enum-free and Path-free to their leaves today; add the branch when
-    # that changes.
+    # enum-free and Path-free to their leaves; add the branch if one of them
+    # grows an enum or a Path.
     return raw
 
 

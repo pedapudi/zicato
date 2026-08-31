@@ -30,8 +30,8 @@ Why it lives BESIDE ``round_log.py`` rather than inside it
 round-lifecycle event is on the wire, and how a stream of them reduces
 to a :class:`~zicato.epoch.round_log.RoundRecord`. This module adds a
 *judgement* on top of that record — an infra-error vocabulary and an
-acceptance rule — and a judgement is exactly the kind of thing a log
-schema must not depend on. Keeping them apart means the acceptance rule
+acceptance rule — and a log schema must not depend on a judgement.
+Keeping them apart means the acceptance rule
 can be tightened, widened, or replaced without touching the durable
 format, and a reader of the format never has to reason about which
 errors this month's protocol considers disqualifying.
@@ -41,15 +41,16 @@ Nothing here writes, mutates, or reaches the network. It reads
 
 Known limits of what this reader can see
 ----------------------------------------
-Both are properties of the LOG, not of this module, so neither can be
-fixed here. They are recorded because a reader who does not know them will
+Both are properties of the LOG rather than of this module, so neither can
+be fixed here. They are recorded because a reader who does not know them will
 over-trust a clean report.
 
-(A third limit — **discarded slate errors** — was the largest of them and is
-now CLOSED at the writer, issue #141. ``proposer/best_of_n.py`` used to
-discard every failed slate slot's error whenever a sibling survived, re-raise
-only the LAST one when none did, and swallow the LLM-merge call's exception
-outright, so a round could lose most of its slate to a credential lapse and
+(A third limit — **discarded slate errors** — is closed at the writer
+(issue #141). ``proposer/best_of_n.py`` records every failed slate slot's
+error. Discarding a failed slot's error whenever a sibling survived,
+re-raising only the LAST one when none did, and swallowing the LLM-merge
+call's exception outright would let a round lose most of its slate to a
+credential lapse and
 leave ``proposal.errors`` empty. It now emits one ``proposal_attempted`` per
 failed slot, carrying that slot's attempts verbatim. This module reads that
 evidence like any other: the lapse lands as a matched marker and voids by
@@ -57,10 +58,10 @@ rule 3. The ``recombined_sampled`` discriminator in :func:`classify_round`
 stays as defense in depth — it does not need the evidence to be present, so
 it still holds when a future writer path forgets to emit.
 
-Closing it moved work onto THIS side too. Once failed-slot errors reach the
-log, ``invalid_patch`` can no longer be "the round has any error at all": a
-transport failure is not an invalid patch, and treating it as one hands rule
-4 an acceptance the evidence does not support. The predicate now counts
+That has a consequence on THIS side. Because failed-slot errors reach the
+log, ``invalid_patch`` cannot be "the round has any error at all": a
+transport failure is not an invalid patch, and treating it as one would hand
+rule 4 an acceptance the evidence does not support. The predicate counts
 CONTENT REJECTIONS only — see :func:`_is_call_boundary`.)
 
 * **Challenger granularity.** ``complete`` needs only ONE gate. A round that
@@ -68,8 +69,8 @@ CONTENT REJECTIONS only — see :func:`_is_call_boundary`.)
   survivors, so it is consumed at full weight on a narrower field than its
   peers — the founding failure mode of this module, one level down. The
   evidence survives (the marker is on the record even for a ``complete``
-  round); nothing acts on it yet. Acting on it is a policy question, not a
-  reader question.
+  round); nothing acts on it yet. Acting on it is a policy question rather
+  than a reader question.
 * **Operator-skipped rounds.** A round whose directory was never created is
   invisible, and one created but empty is void. The direction is
   conservative, so this is left alone.
@@ -81,8 +82,8 @@ The three statuses
     gate. This is a round the endpoint consumed: a duel happened and a
     decision came out of it.
 ``settled_degraded``
-    The round settled with no gate, but the proposer *was* reached and
-    genuinely produced an invalid patch. A real measurement whose
+    The round settled with no gate, but the proposer *was* reached and did
+    produce an invalid patch. A real measurement whose
     outcome was "this arm cannot produce a valid child" — see
     :func:`classify_round`.
 ``void``
@@ -200,7 +201,7 @@ class RoundStatus(StrEnum):
 #:   detection load regardless.
 #:
 #: **False-negative caveat.** ``ProposalAttempted.errors`` is free text
-#: off the proposer's exception, so this match is a heuristic, not a
+#: off the proposer's exception, so this match is a heuristic rather than a
 #: structural fact. An endpoint whose error prose uses none of these
 #: tokens reads back as a plain proposer failure — which still lands as VOID
 #: by rule 5, but with the weaker reason. That fallthrough is UNCONDITIONAL
@@ -209,7 +210,7 @@ class RoundStatus(StrEnum):
 #: excluded from ``invalid_patch`` and so can never satisfy rule 4's
 #: acceptance on its own (see :func:`classify_round`).
 #:
-#: This vocabulary is a FLOOR on detection, not a proof of its absence;
+#: This vocabulary is a FLOOR on detection rather than a proof of absence;
 #: widen it per-caller via the ``infra_markers`` parameter rather than by
 #: editing this set in place.
 #:
@@ -282,7 +283,7 @@ HARD_INFRA_MARKERS: frozenset[str] = frozenset(
 #: exposed to — it fires on *real measurements of degraded arms*, it sends
 #: them around the retry loop to exhaustion, and it is ARM-CORRELATED, since
 #: arms that emit more invalid patches would absorb more false voids. An
-#: arm-correlated loss of rounds is precisely the contamination shape this
+#: arm-correlated loss of rounds is the contamination shape this
 #: module was written to catch, so manufacturing one here would be perverse.
 #:
 #: Restricting to the call boundary makes that class structurally impossible
@@ -294,7 +295,7 @@ HARD_INFRA_MARKERS: frozenset[str] = frozenset(
 #: AND eligible as ``invalid_patch``. A gateless round carrying only that
 #: error therefore lands ``settled_degraded`` rather than VOID if the
 #: proposer was reached. Safe in that it cannot manufacture a false void, but
-#: it is an acceptance, not a void — so keep this tuple in lockstep with the
+#: it is an acceptance rather than a void — so keep this tuple in lockstep with the
 #: emitters. Pinned by ``test_epoch_round_integrity.py`` against the real
 #: templates, which is the check that actually catches a rename.
 CALL_BOUNDARY_PREFIXES: tuple[str, ...] = (
@@ -310,8 +311,8 @@ CALL_BOUNDARY_PREFIXES: tuple[str, ...] = (
 #: error aggregating all of them and prefixes each attempt with its slot
 #: (``slot 0: auxiliary LLM call raised ...``) so the operator can tell three
 #: slots failing one way from one slot failing three ways. Testing the anchor
-#: against the prefixed string would silently blind the marker scan on exactly
-#: the round it matters most for — an all-slate credential lapse — so the tag
+#: against the prefixed string would silently blind the marker scan on the
+#: round it matters most for — an all-slate credential lapse — so the tag
 #: is stripped first.
 #:
 #: Safe to strip because the tag is ZICATO-AUTHORED and structurally fixed: a
@@ -319,8 +320,8 @@ CALL_BOUNDARY_PREFIXES: tuple[str, ...] = (
 #: response begins that way — every content-rejection template starts with its
 #: own zicato-authored preamble (``patches violate ...``, ``patches failed
 #: post-apply validation: ...``) or with ``ExperimentParseError``'s, none of
-#: which is ``slot``. So this widens the anchor by exactly one zicato prefix
-#: and admits no model-authored text.
+#: which is ``slot``. So this widens the anchor by one zicato prefix and
+#: admits no model-authored text.
 #:
 #: ONE tag, not N: the strip runs ``count=1``, which is exact only because
 #: best-of-N is never nested. ``wrap_with_proposer_quality`` has a single
@@ -337,10 +338,10 @@ _SLOT_PREFIX = re.compile(r"^slot \d+: ")
 class RoundIntegrity:
     """One round's integrity verdict plus the evidence behind it.
 
-    ``infra_markers`` carries the MATCHED ERROR STRINGS verbatim, not a
-    boolean: the operator reading a void verdict needs the endpoint's
-    own words to tell a credential lapse from a quota wall, and a
-    boolean throws exactly that away. ``evidence`` is the short
+    ``infra_markers`` carries the MATCHED ERROR STRINGS verbatim rather
+    than a boolean: the operator reading a void verdict needs the
+    endpoint's own words to tell a credential lapse from a quota wall,
+    and a boolean throws those words away. ``evidence`` is the short
     human-readable trail the CLI renders, so a reader can see WHY a
     round was called void without re-running anything.
 
@@ -374,8 +375,8 @@ class RoundIntegrity:
 class EpochRoundIntegrity:
     """Every round of one epoch, classified, plus the cell verdict.
 
-    ``rounds`` is ordered by NUMERIC round index (round ``10`` sorts
-    after round ``2``, not between ``1`` and ``2``).
+    ``rounds`` is ordered by NUMERIC round index, so round ``10`` sorts
+    after round ``2`` rather than between ``1`` and ``2``.
     """
 
     epoch_id: str
@@ -388,7 +389,7 @@ class EpochRoundIntegrity:
 
     @property
     def settled_degraded_count(self) -> int:
-        """Rounds that measured a genuinely-degraded arm (no duel)."""
+        """Rounds that measured a degraded arm (no duel)."""
         return sum(1 for r in self.rounds if r.status == RoundStatus.SETTLED_DEGRADED)
 
     @property
@@ -444,8 +445,8 @@ class EpochRoundIntegrity:
         the verdict a consuming protocol needs (the counts, the
         acceptance bit, the empty-cell flag) is a property. Serialising
         the fields alone would hand a campaign harness the raw rounds
-        and make it re-derive the acceptance rule — which is precisely
-        the duplication that lets two callers disagree about what
+        and make it re-derive the acceptance rule, which is the
+        duplication that lets two callers disagree about what
         "healthy" means. So the derived block is injected here.
         """
         payload: dict[str, Any] = asdict(self)
@@ -457,7 +458,7 @@ class EpochRoundIntegrity:
 
 
 def _is_call_boundary(text: str) -> bool:
-    """True when ``text`` is a CALL-BOUNDARY error, not a content rejection.
+    """True when ``text`` is a CALL-BOUNDARY error rather than a content rejection.
 
     The one place the transport/content distinction is decided, so the two
     predicates that need it — marker eligibility (:func:`_matched_markers`)
@@ -486,7 +487,7 @@ def _matched_markers(
     Among eligible errors, matching is case-insensitive substring
     containment; the ORIGINAL string is what comes back — slot tag and all —
     because the operator needs the endpoint's own words and the slot they came
-    from, not the token that happened to match.
+    from, rather than the token that happened to match.
     """
     out: list[str] = []
     for text in texts:
@@ -520,8 +521,8 @@ def classify_round(
        carries a credential/transport/quota failure is the outage this
        module exists to catch.
     4. **Settled, no gate, the proposer was reached AND the patch was
-       invalid** → ``settled_degraded``. This is the deliberately
-       NARROW acceptance and it is load-bearing: a round where the
+       invalid** → ``settled_degraded``. This acceptance is NARROW by
+       design, and it is load-bearing: a round where the
        proposer really was reached and really did produce an invalid
        patch is a REAL MEASUREMENT of a degraded arm, and voiding it
        would send a legitimately-degraded arm around the retry loop to
@@ -550,8 +551,8 @@ def classify_round(
     vocabulary MISS: an outage whose prose matches no marker is supposed to
     fall through rule 3 to rule 5 and VOID anyway. That fallthrough only
     holds if the unmatched transport error cannot itself satisfy rule 4. It
-    could, while ``invalid_patch`` was "any error at all", on precisely the
-    round issue #141 made reachable: a best-of-N slate where one slot
+    could, while ``invalid_patch`` was "any error at all", on the round
+    issue #141 made reachable: a best-of-N slate where one slot
     survives (minting the reach token) and a sibling slot dies at the call
     boundary in prose the vocabulary does not know. Before #141 the sibling's
     error was discarded and the round voided by rule 5; emitting it must not
@@ -568,7 +569,7 @@ def classify_round(
     ``recombine`` arm ``candidates_sampled > 0`` does NOT by itself prove
     the endpoint answered; it proves a slot produced a candidate.
 
-    *Both flags are ROUND-level, not per-attempt.* A round with several
+    *Both flags are ROUND-level rather than per-attempt.* A round with several
     challengers folds all of their events into one record, so
     ``proposer_reached`` can come from one challenger and ``invalid_patch``
     from another. Rule 4 can therefore accept a round in which a LATER
@@ -577,7 +578,7 @@ def classify_round(
     the case the ``HARD_INFRA_MARKERS`` vocabulary is actually load-bearing
     for; widen it via ``infra_markers`` when an endpoint's prose is unusual.
 
-    **``promoted_regressions`` — an observation, not a rule.** A duel can
+    **``promoted_regressions`` — an observation rather than a rule.** A duel can
     promote while entries regressed on their OWN per-entry evidence; the gate
     records them (:attr:`GateEvaluated.attributable_regressions`) and does not
     act on them, so ``rule_fired`` is correctly empty and the loss lands in the
@@ -608,7 +609,7 @@ def classify_round(
     # A MECHANICAL recombination mint is a candidate the loop produced
     # WITHOUT consulting the model — ``mint_recombined_experiment``
     # (``proposer/recombine.py``) is pure, and the surviving slot emits its
-    # ``candidate_sampled`` with ``recombined=True`` exactly as an ordinary
+    # ``candidate_sampled`` with ``recombined=True`` just as an ordinary
     # sample does. Subtracting the recombined count is what keeps a round
     # with zero model responses from vouching for the endpoint: on a
     # ``recombine`` arm mid-outage the LLM slots raise, the mint succeeds, and
@@ -624,7 +625,7 @@ def classify_round(
         non_recombined > 0 or record.proposal.experiment_ids or record.generation_ids
     )
     # CONTENT REJECTIONS only — a call-boundary error is the absence of a
-    # patch, not an invalid one. See the docstring: this exclusion is what
+    # patch rather than an invalid one. See the docstring: this exclusion is what
     # keeps a vocabulary MISS falling through to rule 5 instead of being
     # promoted to ``settled_degraded`` by the very evidence issue #141 added.
     invalid_patch = bool(record.validation_findings) or any(
@@ -801,12 +802,12 @@ def round_integrity(
     Only the FINAL attempt span is classified — see
     :func:`_final_attempt_span`, and note that this is the one place the
     reader looks at raw envelopes rather than the folded record, because
-    the fold deliberately has no attempt scope.
+    the fold has no attempt scope.
 
     INTERIOR corruption (:meth:`RoundLog.read` raises ``ValueError``
     when a non-tail line is unparseable) is caught and classified void
-    with the exception text as evidence. A corrupt log is precisely the
-    case this check exists for; it must never crash a sweep-wide
+    with the exception text as evidence. A corrupt log is the case this
+    check exists for; it must never crash a sweep-wide
     verification and leave the remaining cells unexamined.
     """
     log_path = _relative_log_path(workspace_root, epoch_id, round_index)
@@ -881,17 +882,17 @@ def epoch_round_integrity(
 def render_round_integrity(report: EpochRoundIntegrity) -> str:
     """Render the report as the operator-facing text block.
 
-    Renders the EVIDENCE, not a boolean: every round gets its status,
+    Renders the EVIDENCE rather than a boolean: every round gets its status,
     its gate count, and the lines explaining the call — matched infra
     markers verbatim — so the verdict can be audited from this output
     alone.
 
     A round that PROMOTED while entries regressed on their own evidence also
     gets a warning line naming them. It sits apart from the evidence trail
-    because it does not bear on the verdict — the round is ``complete`` either
-    way — but it is the one thing in a healthy-looking round worth reading,
-    and this report is the post-hoc surface where it was absent (the live loop
-    raises its own health finding for the same observation).
+    because it does not bear on the verdict: the round is ``complete`` either
+    way. It is still the one thing in a healthy-looking round worth reading,
+    and this report is the post-hoc surface that carries it; the live loop
+    raises its own health finding for the same observation.
     """
     # ``Path(".")`` as the workspace root turns the path helper into the
     # workspace-RELATIVE convention (``epochs/{id}/rounds``) without
@@ -926,7 +927,7 @@ def render_round_integrity(report: EpochRoundIntegrity) -> str:
         # vacuously free of void rounds, so :attr:`accepted` stays true and
         # the JSON does not lie — but an epoch that measured nothing is not
         # a healthy cell, and a verdict line reading "ACCEPTED" under a
-        # "NO ROUNDS" banner is exactly the surface that reported 144/144
+        # "NO ROUNDS" banner is the surface that reported every cell healthy
         # on unusable data. Gating callers must read ``no_rounds``; the CLI
         # ``--verify`` flag fails on it.
         lines.append(

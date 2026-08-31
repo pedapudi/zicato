@@ -25,7 +25,7 @@ Both generation-store backends consume this module:
   :func:`gitignore_lines` into the generation repo's ``.gitignore`` so
   the same names never enter a commit.
 
-The policy is **name-based**, not path-based, because both consumers
+The policy is **name-based** rather than path-based, because both consumers
 need a cheap predicate they can apply at every directory level of a
 walk without resolving absolute paths. A name in :data:`ARTIFACT_NAMES`
 is an artifact wherever it appears in a tree.
@@ -45,7 +45,7 @@ from pathlib import Path
 #:   :data:`SCRATCH_DIR_ENV`). Neither is code.
 #: * Tooling caches — reconstructable, never canonical.
 #:
-#: The set is deliberately small and conservative: every name here is
+#: The set is small and conservative by design: every name here is
 #: something a correct generation tree can regenerate or simply does not
 #: need. Adding a name is a policy decision — it makes that name
 #: invisible to *every* generation copy and *every* git commit.
@@ -93,7 +93,7 @@ SCRATCH_DIR_NAME: str = ".zicato-scratch"
 def is_artifact(path: str | Path) -> bool:
     """Return ``True`` when ``path``'s basename is a run/cache artifact.
 
-    The check is purely on the basename — a *name*, not a location. This
+    The check is purely on the basename — a *name* rather than a location. This
     is the predicate both generation-store backends and the dashboard
     file-tree walk use to decide whether to skip an entry. It does no
     I/O and does not require the path to exist.

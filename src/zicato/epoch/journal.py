@@ -25,11 +25,9 @@ form so workspaces created before the refactor keep working.
 
 Persistence is routed through :class:`zicato.storage.StorageBackend`
 (see :mod:`zicato.epoch._storage` and ``docs/design/STORAGE.md`` §5.1).
-Every public helper keeps its ``workspace_root: Path`` signature; the
-on-disk layout is byte-identical to the pre-seam implementation. The
-one observable change is that every write is now atomic — a crash
-mid-write can no longer leave a truncated ``experiment.json`` or a
-half-written per-patch file.
+Every public helper takes a ``workspace_root: Path``. Every write is
+atomic, so a crash mid-write cannot leave a truncated ``experiment.json``
+or a half-written per-patch file.
 """
 
 from __future__ import annotations
@@ -73,9 +71,8 @@ class PatchRecord:
 def _field(name: str, text: str) -> str:
     """Render one ``**name**: value`` field, preserving ``text`` in full.
 
-    Single-line values stay inline, which is what every field was before
-    the journal stopped truncating (issue #123) — so an ordinary entry is
-    byte-identical to one written by the old renderer. A value carrying
+    Single-line values stay inline, so an ordinary entry renders as one
+    line per field. A value carrying
     newlines is fenced by a blank line on BOTH sides and becomes its own
     paragraph, so the markdown still renders and the bytes survive
     verbatim. The trailing blank line is load-bearing: without it the
@@ -300,8 +297,7 @@ def _as_decision(value: Any) -> Any:
     narrows the token first, so an unrecognised value — a hand-edited
     record, or one written by a future format — is returned UNCHANGED
     rather than raising or being rewritten to a verdict the record does
-    not carry. It still compares unequal to all three members, which is
-    exactly how it read before the coercion existed.
+    not carry. It still compares unequal to all three members.
     """
     try:
         return TournamentDecision(value)
@@ -358,7 +354,7 @@ def _outcome_from_dict(d: dict[str, Any] | None) -> OutcomeRecord | None:
         train_loss=_opt_float(d.get("train_loss")),
         holdout_loss=_opt_float(d.get("holdout_loss")),
         generalization_gap=_opt_float(d.get("generalization_gap")),
-        # Operator override (RUNTIME-V2.md Phase 2). ``False`` / absent on
+        # Operator override. ``False`` / absent on
         # every gate-decided round and on journals written before the
         # control consumer was wired.
         operator_override=bool(d.get("operator_override", False)),
@@ -392,7 +388,7 @@ def write_seed_experiment(
         proposer experiment.
       * ``parent_generation_id``: ``None`` — the seed has no parent within
         the epoch (cross-epoch lineage lives in ``lineage.json``). Written
-        as JSON ``null``; a legacy on-disk ``""`` reads back as ``None``.
+        as JSON ``null``; an on-disk ``""`` reads back as ``None``.
       * ``hypothesis.core_idea``: ``"baseline seed"`` — terse and stable.
       * ``outcome``: ``None`` — the seed never ran a tournament round, so
         no realised deltas exist. Loaders detect this and render the
@@ -474,7 +470,7 @@ def write_experiment(
         )
 
     body: dict[str, Any] = {
-        # Record-format version (WS5): stamped at write, checked at read.
+        # Record-format version: stamped at write, checked at read.
         # Absent-on-read is treated as version 1 (pre-stamp records keep
         # loading); a HIGHER version refuses with a clear error rather
         # than misreading a future incompatible shape.
@@ -491,7 +487,7 @@ def write_experiment(
             _coerce_paths(asdict(experiment.outcome)) if experiment.outcome is not None else None
         ),
     }
-    # Recombination provenance (WS-REC) — CONDITIONAL key: emitted only when
+    # Recombination provenance — CONDITIONAL key: emitted only when
     # non-empty, so every ordinary (non-recombined) experiment.json is
     # byte-identical to one written before the field existed (the default-off
     # byte-identity proof). A recombined mint carries the ascending-gid tuple
@@ -574,8 +570,9 @@ def read_experiment_from_backend(
             f"experiment.json not found for {epoch_id}/{generation_id} "
             f"(storage key {exp_key!r})"
         )
-    # Record-format guard (WS5): absent ⇒ version 1 (pre-stamp records keep
-    # loading); a future incompatible version refuses with a clear error.
+    # Record-format guard: absent ⇒ version 1, so a record written before the
+    # stamp keeps loading; a future incompatible version refuses with a clear
+    # error.
     check_record_format(body, f"experiment.json ({epoch_id}/{generation_id})")
 
     raw_inline = body.get("patches")
@@ -583,9 +580,8 @@ def read_experiment_from_backend(
 
     patches: list[Patch] = []
     if isinstance(raw_inline, list):
-        # Legacy inline form — used by workspaces created before the
-        # per-patch refactor landed. We tolerate the old shape so
-        # existing on-disk data does not break.
+        # The inline form, written by workspaces created before patches moved
+        # to one record each. Tolerated so existing on-disk data still loads.
         for d in raw_inline:
             patches.append(_patch_from_dict(d))
     elif isinstance(patch_ids, list):
@@ -605,11 +601,11 @@ def read_experiment_from_backend(
     raw_round = body.get("round_index")
     round_index = raw_round if isinstance(raw_round, int) and not isinstance(raw_round, bool) else 0
     # "Absent" is ``None`` (the seed has no in-epoch parent). New writes
-    # emit JSON ``null``; a legacy on-disk ``""`` is normalised to ``None``
-    # here so existing workspaces load uniformly.
+    # emit JSON ``null``; an on-disk ``""`` is normalised to ``None`` here so
+    # every workspace loads uniformly.
     raw_parent = body.get("parent_generation_id")
     parent_generation_id = str(raw_parent) if raw_parent else None
-    # Recombination provenance (WS-REC). Absent on every non-recombined
+    # Recombination provenance. Absent on every non-recombined
     # record and on every record written before the field existed ⇒ ().
     raw_recombined = body.get("recombined_from")
     recombined_from = (
