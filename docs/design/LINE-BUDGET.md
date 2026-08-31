@@ -18,7 +18,7 @@ The baseline and final ratchet use the same metric:
 
 | Measurement | Baseline (`f9052dd`) | Current limit | Net reduction |
 |---|---:|---:|---:|
-| Total | 408,547 | 429,777 | -21,230 |
+| Total | 408,547 | 437,550 | -29,003 |
 | Production | 197,588 | 203,422 | -5,834 |
 
 The earlier raw count of 425,755 included lockfiles and generated artifacts and
@@ -107,3 +107,4 @@ increase.
 | Gauntlet and fast-mode golden lanes (production) | 202,884 | +502 | 203,386 | Issue #310: the knob-versus-disk guard and its evidence readers in genstore.py, `zicato repair generation-source-backend`, the `--reset-lineage` gate on `init --force`, the store-optional degrade in dashboard/filetree.py and dashboard/mutations.py, the one shipped `ReplicateDuel` implementation lifted into selection/driver.py, and the restored fast-mode asymmetry warning. |
 | Exact scalar aggregation (total) | 429,572 | +205 | 429,777 | Issue #310: the six-case exactness suite with its two witnesses, the `math.fsum` conversions and their stated invariant, the interpreter-independent reference implementations in the scoring-seam suite, and the parity job's Python matrix. |
 | Exact scalar aggregation (production) | 203,386 | +36 | 203,422 | Issue #310: `math.fsum` in place of the builtin sum and of running float accumulators across the seven modules on the served-scalar path, plus the invariant stated in the aggregation module's docstring. |
+| Multi-round and non-racing golden lanes (total) | 429,777 | +7,773 | 437,550 | Issue #316: four additional mock-evolve captures — a two-round racing run and one each for the swiss, single-elimination, and double-elimination structures — which are 7,506 of the delta; plus their three contract variants, the lane table's round-count axis with its persisted carry-over assertions, and the four gates. The captures are the coverage: before them no golden ran a second round against a crowned parent, and the three non-racing registries executed in no golden at all. |
