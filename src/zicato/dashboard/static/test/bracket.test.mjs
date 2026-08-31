@@ -1,4 +1,4 @@
-// test/bracket.test.mjs — Variant T elim BRACKET-FLOW connectivity guard.
+// test/bracket.test.mjs — the elimination bracket-flow connectivity guard.
 //
 // The operator could not trace who-plays-whom / who-advances in the single- and
 // double-elimination bracket views: dots, labels and connector lines were
@@ -41,7 +41,7 @@ function walk(node, fn) {
 function clsOf(n) { return (n.getAttribute && n.getAttribute('class')) || ''; }
 function num(n, a) { const v = n.getAttribute(a); return v == null ? null : Number(v); }
 
-// The double-elim WB→LB drop connector is NOT a <line> — Wave A refined it into a
+// The double-elim WB→LB drop connector is a rounded channel path rather than a
 // rounded orthogonal <path class="…dn-elimflow-seg-drop…"> built by elbowPath():
 // it dips through a staggered bus and rises into the LB re-entry node, so the
 // visual connection is intact (no orphan dot). A <path> has no x1/x2/y1 attrs, so
@@ -363,7 +363,7 @@ test('live elim bracket: the in-flight (pending) final maps the same as a settle
 
 // The persisted within-tournament stage key is `stage_index`; normalizeStructure
 // maps it to the renderer's internal `round_index`, while still accepting the
-// legacy `round_index` key so pre-rename workspaces keep rendering.
+// `round_index` key, which a workspace written under that name still uses.
 test('normalizeStructure: stage_index → round_index (new key + legacy fallback + mixed)', () => {
   const newKey = structure.normalizeStructure({
     structure: 'single_elim',
@@ -391,7 +391,7 @@ test('normalizeStructure: stage_index → round_index (new key + legacy fallback
 
 // ---- DOUBLE-ELIM DROP ROUTING (≥2 losers demoted: clean, non-crossing) ----
 //
-// Regression guard for the WB→LB demotion connectors. They used to dip a half-row
+// Regression guard for the WB→LB demotion connectors. A route that dips a half-row
 // beneath the SOURCE lane and run their horizontal bus THERE — straight across the
 // rows (dots / labels / boxes) of every lane physically between the WB column and
 // the LB re-entry column; with TWO losers demoted from one node the two buses
@@ -428,7 +428,7 @@ function horizontalRuns(pts) {
   }
   return runs;
 }
-// the longest horizontal run (the channel "bus" run, not a tiny jog).
+// the longest horizontal run (the channel "bus" run rather than a tiny jog).
 function busRun(pts) {
   return horizontalRuns(pts).sort((a, b) => (b.x2 - b.x1) - (a.x2 - a.x1))[0] || null;
 }
@@ -541,7 +541,7 @@ test('mock deriveElimStates matches the shared Python/Rust fixture byte-for-byte
   assertEqual(canon(got), canon(fixture.expected), 'the node mirror reproduces the served fold exactly');
 });
 
-// F1: the DQ1 scalar contract — non-scalar competitors/winner (bool, null,
+// The scalar contract the server owns — non-scalar competitors/winner (bool, null,
 // object, array) drop identically across the Python, Rust, and node folds.
 test('mock deriveElimStates drops non-scalar competitors/winner per the shared fixture', async () => {
   const fs = await import('node:fs');

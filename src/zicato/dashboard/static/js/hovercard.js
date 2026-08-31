@@ -17,7 +17,7 @@
 //     Showing/hiding only toggles a class + writes the card's own text — it
 //     never mutates a digest-gated panel, so it cannot trigger a repaint loop
 //     or the SSE-heartbeat flashing bug. Listeners are attached when nodes are
-//     (re)built (so they survive node identity), not on every heartbeat.
+//     (re)built, so they survive node identity, rather than on every heartbeat.
 //   * POSITIONED so it never clips at a panel/viewport edge: it measures the
 //     target + itself and FLIPS above↔below / CLAMPS horizontally to the
 //     viewport. All measurement is feature-guarded so it is a no-op in the

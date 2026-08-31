@@ -1,6 +1,6 @@
 // test/mock_server.mjs — the MOCK SERVER for the two SERVED joins.
 //
-// The prod frontend no longer joins rounds / racing ladders client-side: the
+// The frontend does not join rounds or racing ladders client-side: the
 // server serves them (`build_round_timeline` / `build_racing_field`, pinned by
 // tests/test_dashboard_racing_and_rounds.py). The fixture maps in these node
 // tests still describe workspaces in terms of the granular endpoints, so this
@@ -351,7 +351,7 @@ export function deriveElimStates(roundsIn) {
     .sort((a, b) => (a.k - b.k) || (a.i - b.i))
     .map((x) => x.r);
 
-  // DQ1 scalar contract: a string / finite-number id only — drop bool,
+  // the server-owned scalar contract: a string / finite-number id only — drop bool,
   // object, array, null (the Python `_scalar_id` + Rust str|number twins).
   const scalarId = (v) => (typeof v === 'string' ? v
     : (typeof v === 'number' && Number.isFinite(v)) ? String(v) : null);

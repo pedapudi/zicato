@@ -1,7 +1,5 @@
-// test/fixtures.mjs — shared fixtures + helpers for the variant_t_*.test.mjs
-// suite (the mechanical split of the former variant_t.test.mjs monolith).
-//
-// Everything here is byte-moved from that file: the module handles, the
+// test/fixtures.mjs — shared fixtures and helpers for the variant_t_*.test.mjs
+// suite: the module handles, the
 // FIXTURE map + fetch installers, and every helper/fixture that more than
 // one split file references. Each test file calls installDom() BEFORE
 // dynamically importing this module, so the js/ module imports below only
@@ -34,7 +32,7 @@ export const EPOCH_ID = '2026-05-30_e0';
 // reads it as a live orchestrator pulse. A real heartbeat payload always
 // carries the stamp; these UI fixtures elide it, and a heartbeat with no
 // ageable timestamp reads STALE (not live). Respects an explicit `ts`
-// already on the object (e.g. a deliberately-stale fixture).
+// already on the object (a fixture that is stale on purpose, for instance).
 export function freshHb(hb) {
   if (hb && hb.ts == null) {
     return { ...hb, ts: Date.now() };
@@ -118,7 +116,7 @@ FIXTURE[`/api/round/${EPOCH_ID}/v0/v1/gate`] = { decision: 'rejected', delta_sca
     { id: 'namespace_monotonicity', label: 'Namespace monotonicity', status: 'not_reached', fired: false },
   ],
   scalar_components: { champion: { drift: 68.5, schema: 1.43 }, challenger: { drift: 145.64, schema: 0.0 } },
-  // scalar-provenance decomposition (#19): the challenger's pass term was
+  // scalar-provenance decomposition: the challenger's pass term was
   // reshaped by a pow transform and its drift by a harmonic drift transform;
   // the champion was plain built-in. No fail-open here.
   scalar_decomposition: { present: true, fail_open: false,
@@ -503,7 +501,7 @@ export function readCss() { return _cssCache; }
 // Drive the hovercard like a browser would: fire `mouseenter` on a wired node,
 // read the live card text, then fire `mouseleave` to hide it. Returns the text
 // the styled card surfaced (so a test can assert the SAME explanation the old
-// native <title> carried now lives in the hovercard, not in a <title>).
+// native <title> carried lives in the hovercard rather than in a <title>).
 export function hovercardTextOf(node) {
   hovercard.hide();
   node.dispatchEvent({ type: 'mouseenter', target: node });

@@ -1,5 +1,5 @@
-// test/eval_dossier.test.mjs — WS-DOSSIER: the per-entry EVAL DOSSIER upgrade of
-// the board view (EVAL-VIEW.md §3.2 / §4 / §5 WS-DOSSIER).
+// test/eval_dossier.test.mjs — the per-entry EVAL DOSSIER on the board view
+// (EVAL-VIEW.md §3.2 / §4 / §5).
 //
 // The dossier mounts BESIDE the live-streaming transcript (ADDITIVE), so these
 // tests pin both the section content AND that the transcript render path is
@@ -446,11 +446,11 @@ test('board drill-down: the facet panel names the slices this entry feeds, per c
   const cells = facetPanelCells(host);
   // One column per candidate that reported facets, in lineage order.
   // The unit rides on the row header: every cell is that candidate's scalar.
-  // The champion is named in its header, not by weighting its numbers: dimming
+  // The champion is named in its header rather than by weighting its numbers: dimming
   // a column reads as emphasis on the others, which would imply a verdict this
   // table must not carry.
   // CANDIDATES are the rows (the orientation the rest of the page uses, and
-  // the one that scales — an epoch grows candidates, not facets). The champion
+  // the one that scales — an epoch grows candidates rather than facets). The champion
   // is named in its cell, never by weighting its numbers.
   assertDeep(cells[0], ['candidate · scalar ↓', 'auth', 'data_cleaning'], 'the unit + a column per facet');
   assertDeep(cells[1], ['g0 ○', '1.20', '0.90'], 'the champion row, marked');

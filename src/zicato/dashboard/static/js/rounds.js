@@ -3,8 +3,8 @@
 // Within ONE epoch the outer evolve loop runs N ROUNDS along a CHAMPION SPINE
 // (incoming champion + a freshly-minted field → tournament → gate). The
 // settled and live rounds plus the loss-floor waterfall are SERVED by
-// `GET /api/epoch/{id}/round-timeline` — the old four-endpoint client join
-// (epoch + lineage + score-trajectory + tournaments → rounds) is DELETED.
+// `GET /api/epoch/{id}/round-timeline`. The client performs no four-endpoint
+// join of epoch, lineage, score-trajectory and tournaments.
 //
 // This module only renames served fields for the renderer. Tournament records,
 // projected standings, gate outcomes, and live rounds arrive already joined.

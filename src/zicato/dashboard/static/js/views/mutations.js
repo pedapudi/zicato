@@ -1,7 +1,7 @@
 // js/views/mutations.js — ONE cohesive visual: the mutation surface
-// (site × generation matrix) + a SIDE-BY-SIDE patch diff (fix #2).
+// (site × generation matrix) plus a SIDE-BY-SIDE patch diff.
 //
-// Based on K's mutation element (judged best of the round). The matrix plus a
+// The matrix plus a
 // detail pane: select a site and the pane fills with the line-diffed patch,
 // shown SIDE-BY-SIDE — champion baseline (left) | challenger new (right).
 //
@@ -19,7 +19,7 @@
 // The pinned site lives in the URL (#/N/mutations/<mutId>) so the diff pane
 // rebuilds ONLY on a route change, never on a heartbeat.
 //
-// PROVENANCE (issue #194 §6). A closed epoch's snapshot trees get pruned; the
+// PROVENANCE. A closed epoch's snapshot trees get pruned; the
 // records do not. The server then reconstructs this surface from
 // epochs/{id}/mutations.json + the patch records and says so on the payload —
 // `provenance` ("snapshot" | "records") and `provenance_note`, the caption. The
@@ -46,9 +46,9 @@ export async function render(host, ctx, params) {
     epoch: true, routeEpoch, title: 'Mutation surface',
     load: async ({ epochId }) => {
       const mut = await D.mutations(epochId);
-      // Generation columns in CREATION order (v0, v1, … v9, v10, v11), not the
-      // lexical string order the raw id list sorts to — the numeric vN suffix
-      // IS the mint order.
+      // Generation columns in CREATION order (v0, v1, … v9, v10, v11) rather
+      // than the lexical string order the raw id list sorts to: the numeric vN
+      // suffix IS the mint order.
       const genNum = (g) => { const m = /(\d+)\s*$/.exec(String(g || '')); return m ? parseInt(m[1], 10) : Number.MAX_SAFE_INTEGER; };
       const gens = ((mut && Array.isArray(mut.generations)) ? mut.generations : [])
         .slice().sort((a, b) => genNum(a) - genNum(b) || String(a).localeCompare(String(b)));
@@ -189,7 +189,7 @@ function matrixTable(sites, gens, patchedBySite, pinned, pinnedGen, ctx, epochId
   }
   table.appendChild(tbody);
   const wrap = el('div');
-  // the matrix can be genuinely wide (many generations) — give the TABLE its
+  // the matrix can be very wide (many generations) — give the TABLE its
   // own contained horizontal scroll so it never forces the panel to overflow.
   wrap.appendChild(el('div', { class: 'dn-table-scroll' }, [table]));
   wrap.appendChild(el('p', { class: 'dn-faint', style: 'font-size:11px;margin:10px 0 0;', text: 'row = mutation site · column = generation · ▪ = patched here · click a ▪ CELL → that ONE generation’s diff · click the SITE label → ALL generations that patched it' }));

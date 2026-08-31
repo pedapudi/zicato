@@ -12,11 +12,11 @@
 // Pins (all keys read VERBATIM from build_rating_view's contract):
 //   * rating absent / present:false → null → gate panel byte-identical to today;
 //   * n_duels below the credible-fit minimum (3) → a "rating forms after N duels"
-//     placeholder, NOT a faked estimate;
+//     placeholder rather than a faked estimate;
 //   * present + credible → two whiskers (θ̂ + [ci_lo, ci_hi]) + the P-bar w/ the
 //     threshold marker; the challenger earns good/bad by θ̂ direction (no hue);
 //   * decision deferred → the replicationStrip (pips + next_duel + spark);
-//   * schedule exhausted (no next_duel, not credible) → an "inconclusive" caption;
+//   * schedule exhausted (no next_duel and not credible) → an "inconclusive" caption;
 //   * the radar scalar vertex carries the CI band (buildRadarModel → chalBand);
 //   * ratingDigest: a no-op beat is byte-identical (rounded, NO timestamps) while
 //     a duel resolving / a CI tightening / P moving flips it (the bug class).
@@ -81,7 +81,7 @@ test('gatePanel: present:false rating renders NO rating block', () => {
   assertEqual(allByClass(host, 'dn-bt-rating').length, 0, 'present:false → no block');
 });
 
-// ── 2. forming: below the credible-fit minimum → placeholder, NOT an estimate ─
+// ── 2. forming: below the credible-fit minimum → a placeholder, no estimate ──
 test('ratingBlock: n_duels below the credible minimum → a "rating forms after N duels" placeholder', () => {
   const host = mountInto(candidate.ratingBlock({
     present: true, credible: false, n_duels: 1, decision: 'deferred',

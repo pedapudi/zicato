@@ -75,9 +75,9 @@ export async function render(host, ctx, params) {
   // the viewed epoch (mirrors gens.js / candidate.js).
   const epochInflight = inflightForActiveEpoch(state.activeRuns, {
     heartbeat: state.heartbeat, activeTournament: state.activeTournament,
-    // The served tri-state, not file presence: `active_runs` records outlive
-    // their process, and a trellis cell reading "3 running" months later is
-    // the stale-live bug (issue #194 SS1).
+    // Liveness comes from the served tri-state rather than from file presence:
+    // `active_runs` records outlive their process, so reading them directly
+    // leaves a trellis cell saying "3 running" months after the run died.
     running: livenessFor(state).liveness.live, epochId,
   });
   // per-entry in-flight tally (count + summed progress) for the trellis cells.
@@ -114,10 +114,10 @@ export async function render(host, ctx, params) {
         + ' on a shared scale. Open a card for the per-board cross-candidate view + inline transcripts.' }),
     ]));
 
-    // The kind counters partition the WHOLE vocabulary. They used to test
-    // `=== 'single_turn'` and `startsWith('multi')`, so an all-synthetic board
-    // read "0 single-turn · 0 multi-turn" over N entries. The synthetic tile
-    // appears only when the board has any, so the common board is unchanged.
+    // The kind counters partition the WHOLE vocabulary. Testing only
+    // `=== 'single_turn'` and `startsWith('multi')` would make an all-synthetic
+    // board read "0 single-turn · 0 multi-turn" over N entries. The synthetic
+    // tile appears only on a board that has synthetic entries.
     const synthetic = board.filter((b) => b.kind && b.kind.startsWith('synthetic')).length;
     nodes.push(el('div', { class: 'dn-panel dn-row' }, [
       stat(String(board.length), 'board entries'),
@@ -136,13 +136,12 @@ export async function render(host, ctx, params) {
   });
 }
 
-// One trellis cell's dim caption. The cell used to stack TWO dim blocks under
-// its figure — a budget/weight/tags row and the entry's prompt — which is a
-// third of the cell's height spent on metadata, times N cells. Now: ONE short
-// key line (budget · weight, uniform width across cells so the grid reads as a
-// grid) with the prompt and the tags on the "?". The cell is already TITLED by
-// its entry_id, which names the task, so the prompt is confirmation, not
-// identification — exactly the detail-on-demand split.
+// One trellis cell's dim caption: ONE short key line (budget · weight, uniform
+// width across cells so the grid reads as a grid), with the prompt and the tags
+// behind the "?". Stacking two dim blocks under the figure — a budget/weight/tags
+// row and the entry's prompt — would spend a third of every cell's height on
+// metadata. The cell is already TITLED by its entry_id, which names the task, so
+// the prompt confirms rather than identifies: detail on demand.
 //
 // Exported so the collapse is testable without building the whole trellis.
 export function trellisCaption(b) {

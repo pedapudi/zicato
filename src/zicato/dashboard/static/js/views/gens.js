@@ -3,8 +3,8 @@
 // The detail pane for the tree's "Rounds" group. ONE surface, ONE name: the
 // rail node, the breadcrumb (router.crumbTrail) and the page title all read
 // ROUNDS, and a round-scoped drill reads "Round N · match-ups". The route stays
-// `…/gens` — addresses are API, labels are not. Console IV folds in
-// Variant W's ARENA standings as the hero of this page:
+// `…/gens`: an address is an interface, and a label is not. The ARENA
+// standings are the hero of this page:
 //
 //   * a CHAMPION-DEFENDS banner — the reigning champion id · loss · N title
 //     defences · a promoted badge;
@@ -36,14 +36,14 @@ import { roundsFromTimeline, roundModelDigest } from '../rounds.js';
 // VIEWED? The live topology is the ACTIVE epoch's — adopting it under a
 // different epoch's header (e.g. a closed e0 while e1 races) is BUG 2. Keyed
 // off the active tournament's epoch_id, falling back to the heartbeat's epoch
-// id. When NEITHER live signal carries an epoch tag it is a legacy
-// single-epoch payload, so we trust it for the viewed epoch (mirrors
+// id. When NEITHER live signal carries an epoch tag the payload is the
+// untagged single-epoch shape, so it is trusted for the viewed epoch (mirrors
 // views/epoch.js's `liveForThisEpoch` guard). A run must also actually be
 // running for this to be true.
-// TWO SEPARATE QUESTIONS (issue #194 SS1). "Does this envelope describe the
-// epoch on screen?" is about SCOPE; "is anything running?" is about the CLOCK.
-// Conflating them is what let a workspace dead since June claim a round was
-// still being decided — and gating them TOGETHER would go too far the other
+// TWO SEPARATE QUESTIONS. "Does this envelope describe the epoch on screen?" is
+// about SCOPE; "is anything running?" is about the CLOCK. Conflating them lets a
+// long-dead workspace claim a round is still being decided, and gating them
+// TOGETHER goes too far the other
 // way, blanking the page: a run that was interrupted mid-round left its
 // topology only in the live envelope, and that topology is real evidence of
 // what happened. So the envelope is still ADOPTED for a scoped epoch; only the
@@ -55,7 +55,7 @@ function envelopeBelongsToEpoch(epochId) {
   const hbEpoch = (hb && hb.epoch_id != null) ? hb.epoch_id : null;
   if (atEpoch != null) return String(atEpoch) === String(epochId);
   if (hbEpoch != null) return String(hbEpoch) === String(epochId);
-  return true; // no epoch tag ⇒ legacy single-epoch payload, trust it.
+  return true; // no epoch tag ⇒ the untagged single-epoch shape; trust it.
 }
 
 // Is a run LIVE right now, for the epoch on screen? This is what every
@@ -107,8 +107,8 @@ export async function render(host, ctx, params) {
   // Viewing a NON-active (e.g. closed e0) epoch while a different epoch (e1)
   // races must render e0's COMPLETED structure, never e1's live "being seeded"
   // ladder leaking onto e0. (epoch.js already guards its racing funnel the same
-  // way.) When the live signals carry NO epoch tag it is a legacy single-epoch
-  // payload — trust it for the viewed epoch.
+  // way.) When the live signals carry NO epoch tag the payload is the untagged
+  // single-epoch shape — trust it for the viewed epoch.
   const isLiveForThisEpoch = liveBelongsToEpoch(id);
   // a LIVE non-gauntlet run governs the dispatch even if the epoch contract
   // has not yet recorded its structure block (the active-tournament names it) —
@@ -179,7 +179,7 @@ export async function render(host, ctx, params) {
     // cards): each challenger a lane vs the crowned champion-gate, Δ encoded
     // good-below / bad-above the reference rule, status as a glyph; the per-
     // challenger hypothesis + exact Δ on HOVER. The champion summary is a
-    // compact accent header integrated above the figure, not a boxed banner.
+    // compact accent header integrated above the figure rather than a boxed banner.
     nodes.push(section('Field · the champion defends · Δ-vs-champion lanes (hover for the hypothesis + Δ)',
       fieldFlow(championId, champScalar, matchups, gates, gens.length, promotedCount, ctx, id)));
 
@@ -195,7 +195,7 @@ export async function render(host, ctx, params) {
         rows: gens.map((g) => {
           const sc = scalarByGen.get(g.id);
           const baseline = !g.parent;
-          // Class B: an unscored candidate is PENDING, not rejected.
+          // an unscored candidate is PENDING rather than rejected.
           const decision = g.decision || 'pending';
           const delta = (svg.isNum(sc) && svg.isNum(champScalar) && !baseline) ? sc - champScalar : null;
           return {
@@ -249,13 +249,13 @@ async function renderRoundDrilldown(host, ctx, id, ep, bracket, traj, rows, roun
   // the live PROJECTED standing for an in-flight round's challenger (current
   // epoch only) — falls back to the projected scalar when no settled one exists.
   const liveForThisEpoch = liveBelongsToEpoch(id);
-  // Scope, not clock: the envelope still supplies this round's TOPOLOGY after
+  // Scope rather than clock: the envelope still supplies this round's TOPOLOGY after
   // the run that wrote it died; `liveForThisEpoch` gates the present tense.
   const envelopeIsThisEpoch = envelopeBelongsToEpoch(id);
   const liveAt = state.activeTournament;
   const liveProjected = (liveForThisEpoch && liveAt && liveAt.projected && typeof liveAt.projected === 'object') ? liveAt.projected : {};
   // the live envelope (this epoch only) so a still-proposing NEW round is drillable
-  // as its own in-flight round, not folded under the prior round (issue #16).
+  // as its own in-flight round rather than folded under the prior round.
   const liveInflight = liveForThisEpoch ? liveAt : null;
   // The SETTLED rounds come off the SERVED round timeline; only the live
   // overlay (projected standings + the in-flight round) is applied here.
@@ -266,13 +266,14 @@ async function renderRoundDrilldown(host, ctx, id, ep, bracket, traj, rows, roun
   // THE ROUND'S TOURNAMENT PAYLOAD — for a non-gauntlet structure, resolve it
   // THROUGH THE SHARED resolver (live-first → reconstructRacing → per-round
   // record) so the round view and the all-rounds Rounds / epoch view CANNOT
-  // DRIFT. The old code read `round.tournamentRef.rounds` directly, but a RACING
-  // field record carries `rounds: []` by design (rungs live in the per-challenger
-  // records + the live envelope, not the aggregate field record) — so the round
-  // view came up with zero rungs and rendered "No rungs evaluated yet." while the
-  // epoch view, which went live-first → reconstruct, showed them. The per-round
-  // field record is now only the COMPLETED-record fallback (swiss/elim, whose
-  // rounds DO live in the record); racing is rebuilt by reconstructRacing.
+  // DRIFT. Reading `round.tournamentRef.rounds` directly does not work: a RACING
+  // field record carries `rounds: []` by design, because rungs live in the
+  // per-challenger records and the live envelope rather than in the aggregate
+  // field record. That path yields zero rungs and renders "No rungs evaluated
+  // yet." while the epoch view, going live-first then reconstruct, shows them.
+  // The per-round field record is the COMPLETED-record fallback only (swiss and
+  // elim, whose rounds DO live in the record); racing is rebuilt by
+  // reconstructRacing.
   let st = null;
   if (isNonGauntlet(structure)) {
     // the settled record: RACING reads the SERVED racing-field payload (the
@@ -500,7 +501,7 @@ export function coreIdeaMap(matchups, experiments) {
 function fieldFlow(championId, champScalar, matchups, gates, total, promoted, ctx, epochId) {
   const wrap = el('div', { class: 'dn-panel dn-figpane dt-fieldflow' });
 
-  // the compact accent champion header — integrated with the graphic, not a box.
+  // the compact accent champion header — integrated with the graphic rather than boxed.
   const head = el('div', { class: 'dt-fieldflow-head' });
   if (championId) {
     head.appendChild(el('a', {

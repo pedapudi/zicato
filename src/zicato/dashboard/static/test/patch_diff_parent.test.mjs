@@ -1,5 +1,5 @@
 // test/patch_diff_parent.test.mjs — the patch diff is taken against the
-// candidate's PARENT, not against the seed (issue #253).
+// candidate's PARENT rather than against the seed.
 //
 // Only a v1 off the seed has v0 for a parent. A mid-chain candidate — v3 → v5
 // — diffed against v0 answers "what changed since the seed" under a heading
@@ -146,7 +146,7 @@ test('patch diff: the lede names the generation it diffed against', async () => 
 
 test('patch diff: a site no ancestor touched falls back to the v0 baseline', async () => {
   // The parent held the SEED content at that site, so v0 is the right answer
-  // there — and the label must say v0, not v3.
+  // there — and the label must say v0 rather than v3.
   const host = await renderDiff({ patches: [
     { id: 'p9', mutation_id: UNTOUCHED, op: 'replace', new_content: 'PLANNER = """v5"""\n', rationale: 'widen' },
   ] }, { mutId: UNTOUCHED });
@@ -237,7 +237,7 @@ test('patch diff: choosing from the dropdown navigates to that baseline', async 
 
 test('patch diff: picking the recorded parent is not a pick', async () => {
   // `~base=v3` on a candidate whose parent IS v3 asks for the default view.
-  // Treating it as a pick would tint the strip and read "picked, not v3"
+  // Treating it as a pick would tint the strip and read as picked against v3
   // over a column showing v3.
   const host = await renderDiff({}, { mutId: SITE, base: 'v3' });
   const text = textOf(host);

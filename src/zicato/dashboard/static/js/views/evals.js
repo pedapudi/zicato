@@ -8,9 +8,9 @@
 //
 // STATISTICAL HONESTY (EVAL-VIEW.md §4 — the view MUST obey the SERVED verdict,
 // never re-derive it):
-//   * SHADE BY EVIDENCE, not by verdict — a single-sample cell renders FAINT
-//     (`dn-faint`), a replicated one FIRM. The tier is the SERVED `cell.evidence`
-//     (none/single/replicated); the view never counts replicates itself (DQ1).
+//   * SHADE BY EVIDENCE rather than by verdict — a single-sample cell renders
+//     FAINT (`dn-faint`), a replicated one FIRM. The tier is the SERVED
+//     `cell.evidence` (none/single/replicated); the view never counts replicates.
 //   * A FAILURE renders beside its row's flip-rate context — every entry row
 //     carries its `flip_rate` badge (or "unmeasured"), so a lone red cell is
 //     never read as truth on a noisy channel.
@@ -65,8 +65,8 @@ function ensureSugFeed(host, ctx, epochId) {
     // STALENESS GUARD (the shell's _renderToken discipline, applied here): the
     // shell reuses ONE persistent view host and clears its children on any
     // selection change, so the sentinel is the node THIS view mounted — if it
-    // is no longer connected (the operator navigated while the fetch was in
-    // flight), repainting would clobber whatever view is showing now.
+    // is disconnected (the operator navigated while the fetch was in flight),
+    // repainting would clobber whatever view is showing now.
     const stale = _sugFeedEpoch !== epochId || !_builtRoot || !_builtRoot.isConnected;
     if (!stale) render(host, ctx, { epochId });   // digest-gated: no ghosts → no-op
   }).catch(() => { _sugFeed = null; });
@@ -478,12 +478,12 @@ function roundGroupRow(candidates) {
 // A candidate column header: the champion-spine crown + the gen id + the served
 // decision verdict pill (reusing the shipped dn-pill vocabulary — NO new chip).
 //
-// The decision comes from the server-owned candidate payload, not from a
-// local re-reading of `promoted`. This column used to derive it inline, and the
-// inline derivation could not see the seed or the settle-time lineage record —
-// so an epoch whose challengers were all rejected in June rendered six columns
-// of "racing…". The server now stamps `promoted` off the one lineage authority
-// and flags the `seed`; `epochLive` puts the still-undecided ones in the past
+// The decision comes from the server-owned candidate payload rather than from a
+// local re-reading of `promoted`. Deriving it inline here cannot see the seed or
+// the settle-time lineage record, so an epoch whose challengers were all
+// rejected renders every column as "racing…". The server stamps `promoted` off
+// the one lineage authority and flags the `seed`; `epochLive` puts the
+// still-undecided ones in the past
 // tense when the loop that would decide them is not running.
 function candidateHeader(ctx, epochId, c, epochLive) {
   const spine = c.champion_spine === true;
@@ -540,7 +540,7 @@ function cellNode(ctx, epochId, entry, cand, cell, live) {
   const tone = pass === true ? 'dn-evalmtx-pass' : pass === false ? 'dn-evalmtx-fail' : 'dn-evalmtx-neutral';
   // SHADE BY EVIDENCE (EVAL-VIEW.md §4.1): a single-sample verdict renders
   // FAINT; a replicated one FIRM. The tier is the SERVED evidence, never a
-  // client-side replicate count (DQ1).
+  // client-side replicate count.
   const evid = cell.evidence === 'replicated' ? 'dn-evalmtx-firm'
     : cell.evidence === 'single' ? 'dn-evalmtx-single dn-faint' : 'dn-evalmtx-single dn-faint';
   const cls = 'dn-mtx-cell dn-evalmtx-cell ' + tone + ' ' + evid

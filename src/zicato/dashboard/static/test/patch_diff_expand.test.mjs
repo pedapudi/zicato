@@ -5,7 +5,7 @@
 // generations' source trees, so the controls are offered exactly when both
 // sides can be read back from a tree, and never when one cannot. These pin:
 //   * the bars appear, and one click reveals CONTEXT_STEP more lines;
-//   * the gutter reads as the FILE's line numbers, not the span's;
+//   * the gutter reads as the FILE's line numbers rather than the span's;
 //   * expand-to-edge stops at the file edge and the bar then disappears;
 //   * a records-sourced side (no line numbers) gets no controls at all;
 //   * a tree that answers for the span but not the file says so.
@@ -125,7 +125,7 @@ test('expand: one click up reveals 20 more lines above', async () => {
 test('expand: the gutter reads as the FILE line numbers', async () => {
   const host = await renderDiff({});
   await click(buttons(host)[0]);
-  // left gutter of the first row: line 1 of the file, not line 1 of the span.
+  // left gutter of the first row: line 1 of the file rather than line 1 of the span.
   assertEqual(gutters(host)[0], '1', 'the first revealed line is file line 1');
   const spanRow = rows(host)[20];
   const g = spanRow.querySelectorAll('[class]')
@@ -181,7 +181,7 @@ test('expand: a truncated or binary read is not the file', async () => {
 
 test('expand: the shorter column does not retire the bar for the longer one', async () => {
   // v3's span sits two lines into its file, v5's twenty. One click must take
-  // each column as far as ITS file allows, not stop both at two.
+  // each column as far as ITS file allows rather than stopping both at two.
   const host = await renderDiff({ left: { file: V3_SHORT_FILE, start: 3, end: 4 } });
   await click(buttons(host)[0]);
   const text = textOf(host);

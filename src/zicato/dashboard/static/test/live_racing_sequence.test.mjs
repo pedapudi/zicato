@@ -8,7 +8,7 @@
 //
 //   1. FULL RUNG SEQUENCE — the funnel / scalar-track / epoch round-timeline must
 //      render EVERY settled prior rung (with its committed survivors/cuts) PLUS
-//      the active in-flight rung PLUS the champion-gate, not just the active one.
+//      the active in-flight rung PLUS the champion-gate, rather than the active one alone.
 //   2. CHAMPION BENCHMARK — the live scalar-track champion line must be the REAL
 //      champion loss (the strategy-seeded benchmark), never a fabricated default,
 //      and must survive an EMPTY `partial_champion_agg` (the operator's case).
@@ -336,7 +336,7 @@ test('sequence — the SURVIVAL FUNNEL renders the WHOLE rung sequence mid-fligh
   assert(/v1 ↑/.test(t) && /v2 ↑/.test(t), 'funnel: Rung 0 survivors v1,v2 ride the band (↑)');
   assert(/v3 ✕/.test(t) && /v4 ✕/.test(t), 'funnel: Rung 0 cuts v3,v4 peel off (✕)');
   // the DOT LADDER: a dot per competitor alive entering each rung + converging
-  // splines carrying the survivors forward (replaces the old band-polygon count).
+  // splines carrying the survivors forward, in place of a band-polygon count.
   const dots = nodesByClass(funnel, 'dn-funnel-dot');
   assert(dots.length >= 4, `funnel: a dot per competitor entering each rung (≥ the rung-0 field) — got ${dots.length}`);
   const splines = nodesByClass(funnel, 'dn-funnel-spline').filter((n) => n.localName === 'path');
@@ -362,7 +362,7 @@ test('sequence — the EPOCH round-timeline figure (single round) renders the fu
 test('sequence — each rung renders its FULL field (the union of every champion-vs-survivor matchup)', () => {
   // rung 1 is published as TWO matchups (rung1_m0: v0-v1, rung1_m1: v0-v2) with
   // the full per-lane live_progress on slot 0 only. The model + the funnel must
-  // surface BOTH survivor lanes, not just the slot-0 matchup's first challenger.
+  // surface BOTH survivor lanes rather than the slot-0 matchup's first challenger alone.
   const rm = modelFor(SEQUENCE[2].at);
   const rung1 = rm.rungs[1];
   assertEqual(rung1.competitors.slice().sort().join(','), 'v1,v2', 'rung 1 field = both survivors');
@@ -418,7 +418,7 @@ test('sequence — in-flight rung-1 lanes show REAL projected positions; an earl
   assert(hasProjected(trackMid), 'rung1 streaming: in-flight lanes carry the projected (dn-proj) treatment');
 
   // rung0 streaming: NO recoverable scalar yet → the lanes must SPREAD across the
-  // axis by index, not collapse onto the left edge (x=padL).
+  // axis by index rather than collapsing onto the left edge (x=padL).
   const rmEarly = modelFor(SEQUENCE[1].at);
   const trackEarly = trackFor(rmEarly);
   const dots = nodesByClass(trackEarly, 'dn-scalartrack-dot');
@@ -460,7 +460,7 @@ test('sequence — the hero "what\'s running" is ONE block per RUNG (not one per
   assertEqual(rungBlocks[0].entries.length, 2, 'the rung block carries BOTH survivor lanes (v1, v2)');
   assert(/field of 2/.test(rungBlocks[0].label), 'the rung block reads "field of 2"');
 
-  // gate deciding: the gate is a 1v1 pair block, not a rung block.
+  // gate deciding: the gate is a 1v1 pair block rather than a rung block.
   const gateStep = SEQUENCE[4];
   const gateBlocks = STRUCT.liveMatchBlocks(STRUCT.buildLiveModel(gateStep.at, hb(gateStep.at._phase), [], COMPETITORS.map((x) => x.generation_id)));
   assert(gateBlocks.some((b) => b.kind === 'pair' && String(b.match_id) === 'racing-final'), 'gate deciding: the gate is a 1v1 pair block');
@@ -536,7 +536,7 @@ test('sequence — a REAL change between steps DOES move the digest (the swap fi
 // THE DENSE "WHAT'S RUNNING" CHAMPION-GATE CARD — each competitor is ONE aligned
 // row with fixed columns L→R: vN · progress bar (the width-filler) · ~projected
 // scalar · k/N boards · PROJ tag. The k/N boards-done is a FIRST-CLASS column,
-// not the clipped trailing afterthought it used to be.
+// rather than a clipped trailing glyph.
 // ===========================================================================
 
 test('dense champion-gate card: each competitor row carries ALL fields inline — id · bar · ~scalar · k/N boards · PROJ — nothing clipped', () => {

@@ -1,10 +1,9 @@
-// test/variant_t_live.test.mjs — Variant T ("Console IV") unit tests:
+// test/variant_t_live.test.mjs — the console's live surface:
 // live-status for any structure, structure-aware polish, the progressive
 // live racing/swiss/elim models, projected standings, and the racing-ladder
 // reconstruction from per-challenger match records.
 //
-// Split mechanically from the former variant_t.test.mjs (assertions
-// verbatim); shared fixtures + helpers live in ./fixtures.mjs.
+// Shared fixtures and helpers live in ./fixtures.mjs.
 
 import { installDom, test, run, assert, assertEqual, assertDeep, makeEvent } from './harness.mjs';
 
@@ -95,11 +94,11 @@ test('live-status: isActivePhase distinguishes running phases from idle/terminal
 // ---- (a′) terminal-TAIL phases read as idle (the false-LIVE bug) ----
 
 test('live-status: isActivePhase treats terminal-TAIL phase paths as idle', () => {
-  // the terminal signal lives in the tail segment, not the head.
+  // the terminal signal lives in the tail segment rather than the head.
   assertEqual(livestatus.isActivePhase('evolve_n_rounds:done'), false, 'evolve_n_rounds:done is terminal (tail = done)');
   assertEqual(livestatus.isActivePhase('tournament:round_0:done'), false, 'a tournament path ending in :done is terminal');
   assertEqual(livestatus.isActivePhase('evolve_n_rounds:completed'), false, 'a :completed tail is terminal');
-  // genuinely-active phases keep no idle token in any segment.
+  // an active phase keeps no idle token in any segment.
   assertEqual(livestatus.isActivePhase('tournament:round_0:rung0_m3'), true, 'an in-flight tournament rung is active');
   assertEqual(livestatus.isActivePhase('proposing:field'), true, 'a proposing phase is active');
 });
@@ -152,11 +151,11 @@ test('live-status: a completed active-tournament ALONE (no fresh phase, no runs)
 
 test('live-status: a heartbeat with NO parseable timestamp reads NOT live (missing ts ⇒ stale, never default-to-live)', () => {
   // a realistic 2026 epoch-ms `now` (>1e12) so a numeric `last_heartbeat`
-  // delta is read as ms, not rescaled from "seconds".
+  // delta is read as ms rather than rescaled from "seconds".
   const now = 1_780_455_964_000;
   // THE BUG: a killed run leaves a heartbeat whose ts cannot be parsed. It must
   // NOT default to live off an active phase — a heartbeat that cannot be aged
-  // out is stale, not fresh.
+  // out is stale rather than fresh.
   const noTs = livestatus.deriveLiveStatus({
     heartbeat: { phase: 'tournament:round_0:final' }, activeRuns: [], activeTournament: null,
   }, now);
@@ -393,7 +392,7 @@ test('epoch timeline: a NON-gauntlet (racing) epoch leads with the round timelin
   const host = document.createElement('div');
   await epoch.render(host, { navigate() {}, href: router.href }, { epochId: EPOCH_ID });
 
-  // ONE timeline, for every structure — the old reel + structure strip are GONE.
+  // ONE timeline, for every structure — no separate reel or structure strip.
   assert(allByClass(host, 'dn-roundtl')[0], 'the round timeline rendered for a racing epoch');
   // a single-round epoch degrades to just its episode — the spine + waterfall
   // (a trajectory across ≥2 rounds) are correctly omitted, so the figure is not
@@ -638,7 +637,7 @@ test('live racing model: a fully-completed race (all rounds, no live) still reco
 });
 
 // (g) end-to-end through the match-ups page: a live race with PUBLISHED rounds
-// fills progressively (the page no longer sits on "being seeded").
+// fills progressively rather than sitting on "being seeded".
 test('live racing (e2e): the match-ups page fills progressively from the published live rounds', async () => {
   freshState();
   const at = liveRacingField({ partial_champion_agg: { scalar: 10 }, partial_challenger_agg: { scalar: 7 } });
@@ -1253,7 +1252,7 @@ test('racing field (SERVED): rung0 {v1,v2,v3,v4} (v1/v2 cut ✕, v3/v4 survive �
   const st = STRUCT.normalizeStructure(racingFieldFromBracket(RACING_TOURNAMENTS, RC_EPOCH), false);
   assert(st, 'a racing structure was reconstructed from the per-challenger records');
   assertEqual(st.structure, 'racing', 'the reconstructed structure is racing');
-  // only the RUNG rounds (racing-final is the gate, not a rung).
+  // only the RUNG rounds (racing-final is the gate rather than a rung).
   const rungRounds = st.rounds.filter((r) => String(r.matches[0].match_id) !== 'racing-final');
   assertEqual(rungRounds.length, 2, 'two rungs reconstructed (rung0, rung1)');
 

@@ -1,5 +1,5 @@
 // test/pipeline_stepper.test.mjs — the AUTHORITATIVE round-pipeline stepper
-// (WS4-A item 4).
+// the round-pipeline stepper.
 //
 // The stepper renders the SERVER's /api/live/pipeline projection verbatim
 // (build_round_pipeline owns the propose→apply→run→gate inference; the JS
@@ -14,7 +14,7 @@
 //     identical; a step advancing flips it;
 //   * an epoch_open_step (the A/A noise-floor calibration) leads the strip as
 //     the ACTIVE element while all four steps sit pending, and its draw count
-//     renders — that stretch is work, not a stalled round;
+//     renders — that stretch is work rather than a stalled round;
 //   * LiveController.updatePipeline: an idle projection (all pending, no
 //     decision) or a null read (Rust supervisor) leaves the host EMPTY; a
 //     live one renders; an identical re-serve keeps DOM NODE IDENTITY (zero

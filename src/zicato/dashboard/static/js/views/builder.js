@@ -1,7 +1,6 @@
-// js/views/builder.js — the tournament-builder view (B2).
+// js/views/builder.js — the tournament-builder view.
 //
-// A self-contained four-pane Console-IV view that drives the B1a/B1b builder
-// backend: a LEFT RAIL of contract sections (Structure · Field & noise · Board
+// A self-contained four-pane view that drives the builder backend: a LEFT RAIL of contract sections (Structure · Field & noise · Board
 // & holdout · Proposer · Gate · Review), a CENTER pane of the active section's
 // controls, a RIGHT live PREVIEW (the per-structure svg.js schematic + a cost
 // meter + a board/holdout strip + a contract-impact pill + validation
@@ -14,9 +13,9 @@
 // draft, so the form and chat are two views of one contract. Apply hits POST
 // /builder/apply behind an explicit confirm (dry-run = confirm:false).
 //
-// Re-home discipline: the whole view lives behind `render(host, ctx)` with no
-// dependency on the tree/route params, so B3 can move it under a Settings
-// panel or a standalone entry by changing only the route wiring.
+// The whole view lives behind `render(host, ctx)` with no dependency on the
+// tree or route params, so moving it under a Settings panel or a standalone
+// entry needs only a change to the route wiring.
 
 import { el, clearChildren, patchText } from '../core/dom.js';
 import { gatedSwap, section, empty, chip } from '../ui.js';
@@ -80,7 +79,7 @@ const _provenance = {};
 let _stripFigureForTest = null;
 export function _setStripFigureForTest(fn) { _stripFigureForTest = fn; }
 
-// ── board-editor module state (B2) ────────────────────────────────────
+// ── board-editor module state ─────────────────────────────────────────
 // Pinned across renders so the inline accordion survives a digest re-render:
 // the center digest folds these in, and renderCenter rebuilds the open editor
 // from the pinned buffer (module-state pin). VALUE edits mutate `_editBuffer`
@@ -195,9 +194,9 @@ function applyOpResult(env, opts) {
   else if (env.patch) _undoNote = '';
   // A draft-IDENTITY change (switch to another slot, revert-to-live, or an undo
   // step) swaps the board out from under any open inline editor: a buffer typed
-  // against the old draft would Save into the NEW one. Close the editor so the
-  // stale buffer can never post. (Fork is deliberately excluded — it COPIES the
-  // working draft, so the open editor still targets the same entries.)
+  // against the outgoing draft would Save into the incoming one. Close the
+  // editor so the stale buffer can never post. Fork is excluded, because it
+  // COPIES the working draft and the open editor still targets the same entries.
   if (env.patch && (env.patch.op === 'switch' || env.patch.op === 'revert_to_live' || env.patch.op === 'undo')) {
     closeEditState();
   }
@@ -323,7 +322,7 @@ function lifecycleRow() {
 }
 
 // A section is "done" once the operator has visibly engaged its core contract
-// surface (a coarse heuristic, not a gate): structure is always set; field has
+// surface (a coarse heuristic rather than a gate): structure is always set; field has
 // params; board has entries; gate has a margin; review is done once nothing is
 // left to roll. Drives the rail's done check.
 function sectionDone(id) {
@@ -710,7 +709,7 @@ function suggestionRow(s) {
     + (lineage.length ? ' · lineage ' + lineage.join(', ') : '')
     + ' · target ' + (prov.target_slice || s.target_slice || '?') }));
   // Foreign-source provenance (TRAJECTORY-BOOTSTRAP.md §6): a bootstrap
-  // suggestion came from a foreign agent trace, not a reign — name the trace
+  // suggestion came from a foreign agent trace rather than a reign — name the trace
   // file + sniffed dialect so the operator sees the on-ramp, plus the PROVENANCE
   // MINI-STRIP (trace region → episode → this suggestion) and a link into the
   // Traces detail.
@@ -739,7 +738,7 @@ function suggestionRow(s) {
     kids.push(el('span', { class: 'dn-faint', text: 'recommendation only — no mechanical op (an authoring decision)' }));
   }
   // The roll-honesty note (TRAJECTORY-UI.md §2.2a): a bootstrap entry defaults to
-  // `train` (a regression suite) — keep it there unless the trace is genuinely
+  // `train` (a regression suite) — keep it there unless the trace really is
   // foreign. Recommend-only: staging forks a draft the operator seals.
   if (isForeign && (s.target_slice || '') === 'train') {
     kids.push(el('div', { class: 'dn-faint dn-bld-sugroll', text:
@@ -833,7 +832,7 @@ function stripTextFallback(provPayload, seg) {
 // Mount the shared trajectory-strip figure (compact mode) into a host that
 // already carries the textual fallback. GUARDED: a test-injected factory renders
 // synchronously; otherwise a dynamic import of `svg.trajectoryStrip` — absent in
-// this branch → the fallback stays (the seam composes at integration, WS-TRACES).
+// this build → the fallback stays, and the seam composes with the Traces view.
 function mountProvenanceStrip(hostEl, stripModel) {
   const place = (fn) => {
     if (typeof fn !== 'function') return false;
@@ -899,7 +898,7 @@ function replacedNotice() {
 
 // The row's at-a-glance badges: expectation kind, per-judge (removable), a
 // non-unit weight, the budget, and operator tags (never the holdout tag — the
-// toggle owns that). Uses ui.js's shared chip builder (U6).
+// toggle owns that). Uses ui.js's shared chip builder.
 function entryBadges(entry, id) {
   const out = [];
   if (entry.expectation && entry.expectation.kind) out.push(chip('exp', 'exp:' + entry.expectation.kind));
@@ -942,7 +941,7 @@ function entryAccordion(vocab, editing) {
 }
 
 // The board-level board_meta header controls (drift suppression + judge-only)
-// — closes B0's documented GUI exception; both drive the set_board_meta op.
+// — the board-header controls the GUI exposes; both drive the set_board_meta op.
 function boardMetaPanel(d, vocab) {
   const meta = d.board_meta || { disable_drift: [], judge_only: false };
   const driftKinds = Array.isArray(vocab.drift_kinds) ? vocab.drift_kinds : [];
@@ -1431,7 +1430,7 @@ function briefEditor(d) {
 // The proposer picker: a select over the discovered proposer dirs (from
 // /builder/draft's proposer_dirs) + the builtin default + a free-text path row,
 // all driving set_proposer. An explicit path outside the scanned set is
-// honored verbatim (the scan is a convenience, not a whitelist).
+// honored verbatim: the scan is a convenience rather than an allowlist.
 function proposerPicker(d) {
   const cur = d.proposer_path || '';
   const dirs = Array.isArray(_proposerDirs) ? _proposerDirs : [];
@@ -1887,8 +1886,7 @@ function preflightVerdict(pf) {
     // Count only the probes that actually spent a draw: `probed_points` also
     // carries the points dropped for free (no_op_patch / verdict_settled), and
     // counting those would claim a broader sample than was measured. A
-    // pre-#106 record carries no list at all, so it reads as the one probe it
-    // took.
+    // record written without that list reads as the one probe it took.
     const probed = Array.isArray(r.probed_points)
       ? r.probed_points.filter((p) => p && !p.skipped).length
       : 0;
@@ -1901,7 +1899,7 @@ function preflightVerdict(pf) {
     // The promote_margin window is a separate question from signal-vs-noise.
     // Its upper comparison is against DEGRADATION headroom, which does not
     // bound how far a challenger can improve — say so rather than promising a
-    // null run (issue #119).
+    // null run.
     if (r.window_failure === 'margin_above_achievable') reasons.push(`promote_margin ${fmtSig(r.promote_margin)} is at or above the measured degradation signal — improvement headroom is unmeasured, so check the margin, but this is not proof nothing can promote`);
     else if (r.window_failure === 'margin_below_floor') reasons.push(`promote_margin ${fmtSig(r.promote_margin)} is inside the measured noise — promotions could not be told from re-rolls`);
     else if (r.window_failure === 'empty_window') reasons.push('the measured signal does not clear the noise floor — no promote_margin is defensible on this board');

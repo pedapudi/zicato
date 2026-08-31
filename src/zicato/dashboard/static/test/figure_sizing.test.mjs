@@ -1,5 +1,4 @@
-// test/figure_sizing.test.mjs — THE FIGURE-WIDTH CONTRACT (console review #207
-// items 1, 5, 6 + the layout rule).
+// test/figure_sizing.test.mjs — THE FIGURE-WIDTH CONTRACT.
 //
 // A figure's width is its INTRINSIC content width, capped; full width belongs
 // to tables and timelines. An SVG at `width:100%` scales its own coordinate
@@ -13,7 +12,7 @@
 //   * svg.js exposes ONE intrinsic-sizing mechanism, and the only builders that
 //     may go full-width (`applyResponsive`) are those with a matched
 //     `svg.dn-*-hero` max-width cap in console.css — an uncapped hero is the
-//     bug, so the sweep is a test, not a comment;
+//     bug, so the sweep is a test rather than a comment;
 //   * calibrationTrend renders at a card-scale INTRINSIC width (no 100%, no
 //     aspect-ratio hero, no hero class) and still paints its end label + caption;
 //   * sparkline({intrinsic}) pins its px width + max-width:100%; the default and
@@ -118,8 +117,8 @@ test('calibrationTrend: still paints the served readouts (end label + n_scored c
   }
 });
 
-// The caption used to be drawn at the frame's foot INSIDE the 0..1 plot, where
-// a low fraction (the common case) struck through it. It now owns a gutter.
+// The caption owns its own gutter. Drawn at the frame's foot INSIDE the 0..1
+// plot, a low fraction — the common case — strikes through it.
 test('calibrationTrend: the n_scored caption sits BELOW the plot band, never through it', () => {
   const host = mountInto(svg.calibrationTrend(calibFixture({ latest_fraction: 0, n_scored: 2 })));
   const band = host.querySelectorAll('[class]').find((n) => classOf(n) === 'dn-spark-band');

@@ -142,7 +142,7 @@ export function paramSpecsFor(structure) {
 // Build an ILLUSTRATIVE field for the chosen structure + params so the svg.js
 // figure can draw the SAME shape the runtime view shows — champion = reference,
 // gate = shaded band (the figures already render those). The model is purely a
-// schematic of the SHAPE (rungs / rounds / bracket / dot rows), not real
+// schematic of the SHAPE (rungs / rounds / bracket / dot rows) and carries no
 // results, so it never implies a run happened.
 
 function fieldIds(n) {
@@ -258,10 +258,10 @@ function floatOf(params, key, def) {
 // The per-structure default `replicates` when params.replicates is UNSET — the
 // JS twin of zicato.selection.registry.STRUCTURE_DEFAULT_REPLICATES (itself
 // derived from each strategy's `_default_replicates`). The base default is 2
-// (the noise-aware posture — replication, not bracket shape, is the noise
-// lever), inherited by gauntlet / elim / swiss; racing pins 1 (its replication
-// is intrinsic to its escalating board slices). The cost meter MUST resolve
-// the default by structure, not a flat 1, or it under-reports the schedule a
+// (the noise-aware posture, where replication rather than bracket shape is the
+// noise lever), inherited by gauntlet / elim / swiss; racing pins 1, because its
+// replication is intrinsic to its escalating board slices. The cost meter MUST
+// resolve the default by structure rather than a flat 1, or it under-reports the schedule a
 // structure actually runs — the Python estimator and this twin must agree
 // (the py↔js parity test pins it).
 export const STRUCTURE_DEFAULT_REPLICATES = {
@@ -293,7 +293,7 @@ export function estimateCost(structure, params, trainCount, holdoutCount, propos
   const boardSize = Math.max(0, trainCount || 0);
   const holdoutSize = Math.max(0, holdoutCount || 0);
   // Default `replicates` to the STRUCTURE's own default (swiss / elim default
-  // to 2), NOT a flat 1 — matching the Python estimator. An explicit
+  // to 2) rather than a flat 1 — matching the Python estimator. An explicit
   // `replicates` in params is honored verbatim.
   const replicates = Math.max(1, intOf(params, 'replicates', defaultReplicatesFor(structure)));
   const fieldSize = Math.max(1, intOf(params, 'field_size', 2));
@@ -350,7 +350,7 @@ export function estimateCost(structure, params, trainCount, holdoutCount, propos
     }
   }
 
-  // Best-of-N propose multiplier — auxiliary LLM CALLS, not board runs:
+  // Best-of-N propose multiplier — auxiliary model CALLS rather than board runs:
   // listed on the meter (real spend) but EXCLUDED from the headline.
   if (bestOfN > 1) {
     lines.push(costLine('best-of-N propose calls', proposes * bestOfN,
@@ -425,7 +425,7 @@ function racingCost(params, fieldSize, replicates, boardSize) {
 // measured floor via `opts`). Returns the SAME [{code, message, severity}]
 // shape `/builder/op` carries.
 //
-// SCOPE — deliberately the ENTRY-FREE subset. The board-entry authoring
+// SCOPE — the ENTRY-FREE subset by design. The board-entry authoring
 // codes are Python-only (they need the full entry objects, which this
 // read-only preview never has): duplicate_entry_id, entry_id_unsafe,
 // dotted_path_malformed, rubric_spec_invalid, json_schema_spec_invalid,

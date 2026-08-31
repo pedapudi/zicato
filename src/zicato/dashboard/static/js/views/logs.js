@@ -1,6 +1,6 @@
 // js/views/logs.js — the operator-log pane (LOGGING.md §5).
 //
-// A WORKSPACE-LEVEL surface (a peer of builder / settings, NOT epoch-scoped —
+// A WORKSPACE-LEVEL surface (a peer of builder / settings, outside any epoch —
 // the structured log streams are per-invocation): one JSONL stream per evolve
 // / reflect invocation, tailed through the SAME query-layer reader the CLI and
 // `/api/logs` share. The pane renders the tail as quiet mono rows, level-

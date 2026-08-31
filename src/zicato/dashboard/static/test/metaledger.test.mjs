@@ -135,7 +135,7 @@ test('metaLoopLedger: the FULL change-set lives on the chip hovercard (nothing l
   const node = svg.metaLoopLedger(chain());
   const chipRects = allByClass(node, 'dn-metaledger-chip');
   assertEqual(chipRects.length, 3, 'a chip rect per roll boundary');
-  // every chip is hovercard-wired and the full join is on hover, not in the box.
+  // every chip is hovercard-wired and the full join is on hover rather than in the box.
   chipRects.forEach((r) => assert(hovercard.hasHovercard(r), 'each chip is hovercard-wired'));
   const tips = chipRects.map((r) => hovercardTextOf(r));
   assert(tips.some((t) => t === 'board'), 'the board chip hover carries its (single) set');
@@ -406,7 +406,7 @@ test('home view: an open (live) epoch in the ledger does not change the settled 
   assert(dOpen !== dClosed, 'the open vs closed lifecycle is reflected in the ledger digest');
   // but the STRUCTURAL content (floors, changes, champions) is otherwise
   // identical: pin the lifecycle fields to the SAME value in both and the
-  // digests must agree (digest-format-agnostic since U5's digestOpts fold).
+  // digests must agree, whatever format the shared digestOpts fold emits.
   const pinLifecycle = (ws) => ws.ledger.map((e) => ({ ...e, open: false, closed: true }));
   const dOpenPinned = svg.metaLoopLedgerDigest({ epochs: pinLifecycle(openWs), currentEpochId: openWs.current_epoch_id });
   const dClosedPinned = svg.metaLoopLedgerDigest({ epochs: pinLifecycle(closedWs), currentEpochId: closedWs.current_epoch_id });
@@ -420,8 +420,8 @@ test('metaLoopLedger: the floor value label carries a paper halo (paint-order: s
     fs.readFileSync(new URL('../css/console.css', import.meta.url), 'utf8'));
   const oneLine = css.replace(/\n/g, ' ');
   // the floor label rule carries the halo: paint-order:stroke + a paper stroke,
-  // so a gridline crossing the glyphs no longer reads as a strike-through. Match
-  // the STANDALONE base selector (a leading boundary, NOT the compound
+  // so a gridline crossing the glyphs does not read as a strike-through. Match
+  // the STANDALONE base selector (a leading boundary rather than the compound
   // `.dn-metaledger-step-good.dn-metaledger-floorlbl` colour rules).
   const rule = (oneLine.match(/[\s}]\.dn-metaledger-floorlbl\s*\{[^}]*\}/) || [''])[0];
   assert(rule, 'the .dn-metaledger-floorlbl rule exists');

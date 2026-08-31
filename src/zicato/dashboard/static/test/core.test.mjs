@@ -77,7 +77,7 @@ test('harmonografSessionId: does NOT fall back to synthetic run-id', () => {
 
 // --- A1/A2: the beat path makes ONE consolidated read, never fetch-and-discard.
 //
-// `loadMatchupDetail()` used to pull `/api/tournaments/{gen}` (the whole
+// No `loadMatchupDetail()` pulls `/api/tournaments/{gen}` (the whole
 // matchup-detail payload, ab_grid included) AND `/api/drift-movements/{gen}`
 // into `state.matchupDetail` / `state.driftMovements` on EVERY SSE beat — and no
 // view read either field. Both the loader and the caches are gone; these pin
@@ -114,7 +114,7 @@ test('A1/A2: a debounced SSE refresh fetches /api/environment and NOTHING else',
   void sse;
 });
 
-// --- A3: the superseded contract-diff fetcher is deleted, not merely unused.
+// --- the superseded contract-diff fetcher is deleted rather than merely unused.
 
 test('A3: data.contractDiff is deleted (superseded by the /api/workspace ledger)', async () => {
   const data = await import('../js/data.js');

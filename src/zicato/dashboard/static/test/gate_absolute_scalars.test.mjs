@@ -1,9 +1,8 @@
 // test/gate_absolute_scalars.test.mjs — ABSOLUTE SCALARS in the gate head.
 //
-// The gate head used to read only the Δ chips (Δ scalar / Δ pass rate) — the
-// GAP between the two endpoints without the endpoints themselves. This surfaces
-// the absolute champion_scalar / challenger_scalar as paired dn-stat chips LEFT
-// of the Δ chips; while THIS pair's boards are still streaming in, the
+// The gate head carries the absolute champion_scalar and challenger_scalar as
+// paired dn-stat chips LEFT of the Δ chips. The Δ chips alone (Δ scalar / Δ pass
+// rate) give the GAP between the two endpoints without the endpoints themselves. while THIS pair's boards are still streaming in, the
 // challenger endpoint reads its LIVE PROJECTED scalar in the projStat treatment
 // (proj badge + boards_done/total bar) — visibly not a settled endpoint.
 //

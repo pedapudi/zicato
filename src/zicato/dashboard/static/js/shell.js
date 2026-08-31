@@ -180,7 +180,7 @@ export function applyFontSize(size, rootEl) {
 }
 
 // PAGE-WIDE SCALE. Distinct from density: this is a single master multiplier on
-// the ENTIRE page (text AND diagrams), applied as `zoom` on the Variant-T app
+// the ENTIRE page (text AND diagrams), applied as `zoom` on the console's app
 // ROOT (NOT per-pane). `zoom` reflows rather than transforms, so the layout
 // re-wraps at the scaled size and never clips. We also stamp `--dt-page-scale`
 // (a 0–1 ratio) for any rule that wants the raw factor. Persisted under its own
@@ -261,17 +261,16 @@ function readRailFromRoot(rootEl) {
   return readRail();
 }
 
-// Wire the rail-resize handle (Change 2). THE JUMPINESS FIX.
-//
-// Two bugs made the old drag jump:
+// Wire the rail-resize handle. Two hazards make a drag jump, and the handle
+// avoids both:
 //   (1) ZOOM MISMATCH. The handle lives inside the app root, which carries a
 //       page-wide `zoom` (the page scale). `event.clientX` is a VIEWPORT CSS-px
 //       coordinate, but `--dt-rail` is laid out in the root's UNSCALED layout
-//       space. The old code set the width straight from `clientX − railLeft`,
-//       so at zoom ≠ 1 the width over-/under-tracked the pointer (it was then
-//       re-multiplied by `zoom` on render) → visible jump. We now work in DELTA
-//       space and divide the pointer delta by the live page-scale factor, so a
-//       given pointer travel maps 1:1 onto layout-space rail travel at ANY zoom.
+//       space. Setting the width straight from `clientX − railLeft` makes the
+//       width over- or under-track the pointer at zoom ≠ 1, since render then
+//       re-multiplies it by `zoom`. The handle instead works in DELTA space and
+//       divides the pointer delta by the live page-scale factor, so a given
+//       pointer travel maps 1:1 onto layout-space rail travel at ANY zoom.
 //   (2) LOST POINTER EVENTS. Without pointer capture, a fast drag (or sliding
 //       off the 4-px handle) drops `pointermove`s → the rail stutters. We now
 //       `setPointerCapture` on pointerdown so every move is delivered to the
@@ -469,7 +468,7 @@ function brandWordmark() {
 // compact corner tag beside the wordmark rather than a wide strip. It is purely
 // informational (role="note"); built ONCE as static chrome, never rebuilt on an
 // SSE heartbeat (digest discipline). The styling lives in console.css
-// (.dt-respreview + children). This supersedes the old lower-right corner note.
+// (.dt-respreview + children).
 function researchPreviewPill() {
   return el('span', { class: 'dt-respreview', role: 'note', 'aria-label': 'research preview' }, [
     el('span', { class: 'dt-respreview-line', text: 'research' }),
@@ -519,12 +518,12 @@ export function mountShell(root) {
   // the widest, busiest control on a bar that has to make room for the run
   // state. It now lives ONLY in Settings → Appearance (views/settings.js's
   // scalePicker), which already drives the same applyScale/resetScale path.
-  // applyScale stamps + persists and no longer syncs a top-bar node, so every
-  // other apply path (restore, keyboard, the Settings picker) is unchanged.
+  // applyScale stamps and persists without syncing any top-bar node, so every
+  // apply path (restore, keyboard, the Settings picker) shares one route.
 
   // The live-status pill: a connection dot + the connection word, plus a
   // RUN badge that lights up whenever the loop is active for ANY tournament
-  // structure (read from the live APIs in renderStatus, not the gauntlet-only
+  // structure (read from the live APIs in renderStatus rather than the gauntlet-only
   // activeTournament). The run badge carries the structure + phase label and an
   // in-flight board-unit count; it is hidden when idle/done.
   _statusTextEl = el('span', { class: 'dt-status-text', text: 'connecting…' });
@@ -550,8 +549,7 @@ export function mountShell(root) {
     _runStateEl,
   ]);
 
-  // THE LOOP CONTROLS (WS4-A item 3c): Pause/Resume toggle + Skip-round,
-  // beside the status pill. Rendered ONLY while the loop is controllable
+  // THE LOOP CONTROLS: Pause/Resume toggle + Skip-round, beside the status pill. Rendered ONLY while the loop is controllable
   // (live + a writable workspace); read-only / idle keeps the host empty.
   // renderLoopControls fills it, digest-gated on {shown, paused} so a
   // steady heartbeat writes zero DOM here.
@@ -561,8 +559,8 @@ export function mountShell(root) {
 
   // top-left UP control — navigates UP the selection hierarchy (the parent
   // route); dispatch then repaints the destination into the MAIN detail pane
-  // (never the sidebar). Labelled "↑ up" to reflect its function (it climbs the
-  // hierarchy, NOT browser-back).
+  // (never the sidebar). Labelled "↑ up" because it climbs the hierarchy rather
+  // than stepping back through browser history.
   _backBtn = el('button', { class: 'dt-back', type: 'button', title: 'Navigate up one level', 'aria-label': 'Navigate up' }, [
     el('span', { class: 'dt-back-glyph', 'aria-hidden': 'true', text: '↑' }),
     el('span', { class: 'dt-back-text', text: 'up' }),
@@ -602,8 +600,8 @@ export function mountShell(root) {
       el('span', { class: 'dt-nav-logs-text', text: 'log' }),
     ]),
     // the SETTINGS entry — a ⚙ that opens the Settings surface (contract roll-up
-    // · models / LLM endpoints · appearance). The builder is no longer homed
-    // here; Settings keeps a launcher to the standalone `#/builder` view. Uses
+    // · models / LLM endpoints · appearance). Settings keeps a launcher to the
+    // standalone `#/builder` view, which is where the builder lives. Uses
     // the router href so the route stays the single source of truth.
     el('a', { class: 'dt-nav-build', href: href('settings', {}), title: 'Settings (contract · models · appearance)', 'aria-label': 'Open settings' }, [
       el('span', { class: 'dt-nav-build-glyph', 'aria-hidden': 'true', text: '⚙' }),
@@ -648,9 +646,9 @@ export function mountShell(root) {
     // routes through the file-based control channel; refresh afterwards so
     // the torn-down run leaves the in-flight rows promptly.
     onKill: (runId) => fireLoopControl('kill/' + encodeURIComponent(runId), undefined, null),
-    // the per-run FOLLOW sink (issue #194 §2) — opens that unit's live
-    // conversation on its board, deep-linked so the followed conversation
-    // survives a reload and can be shared.
+    // the per-run FOLLOW sink — opens that unit's live conversation on its
+    // board, deep-linked so the followed conversation survives a reload and
+    // can be shared.
     onFollow: (gen, entry, runId) => {
       if (!gen || !entry) return;
       const r = parseRoute(location.hash);
@@ -663,8 +661,8 @@ export function mountShell(root) {
 
   root.appendChild(el('div', { class: 'dt-body' }, [_treeHost, _railHandle, _viewHost]));
 
-  // THE SETTINGS OVERLAY (Change 1). Settings is no longer a full-page view: it
-  // is a routed right-side DRAWER that paints OVER the current view. The shell
+  // THE SETTINGS OVERLAY. Settings is a routed right-side DRAWER that paints
+  // OVER the current view rather than a full-page view. The shell
   // owns a single scrim + drawer-panel pair, mounted once here and hidden until
   // `#/settings[/<section>]` is the route. The underlying view stays rendered in
   // `_viewHost` behind a scrim, so an Appearance change (theme / typeface / font
@@ -698,9 +696,8 @@ export function mountShell(root) {
     }
   });
 
-  // (The research-preview status tag now lives as a pill NEXT TO the wordmark in
-  // the top bar — see researchPreviewPill() in brandWordmark's topbar block —
-  // superseding the old lower-right corner note.)
+  // (The research-preview status tag is a pill NEXT TO the wordmark in the top
+  // bar — see researchPreviewPill() in brandWordmark's topbar block.)
 
   applyTheme(readColor());
   applyTypeface(readType());
@@ -726,16 +723,14 @@ export function mountShell(root) {
 // with its generations and board entries. Failure-tolerant — a missing
 // drill-down degrades to an empty group, never a blank tree.
 //
-// THE TREE-EMPTY FIX. The epoch list must derive from AUTHORITATIVE data and be
-// reliable on EVERY route (including the publication view). The old build read
-// ONLY /api/workspace.epochs ∪ /api/epoch — both of which can be empty/stale on
-// some routes (a workspace digest that omitted `epochs`, or an /api/epoch that
-// 404s for a non-current epoch), leaving the tree blank even though /api/lineage
-// plainly returns that epoch's generations and the breadcrumb names it. We now
-// union FOUR authoritative sources: /api/lineage generations grouped by
-// epoch_id, /api/workspace.epochs, /api/epoch, AND the currently-routed epochId
-// — so an existing epoch ALWAYS lists, and the empty state shows only when there
-// are genuinely zero epochs across all of them.
+// THE EPOCH LIST unions FOUR authoritative sources: /api/lineage generations
+// grouped by epoch_id, /api/workspace.epochs, /api/epoch, AND the currently
+// routed epochId. An existing epoch therefore ALWAYS lists, and the empty state
+// shows only when all four are empty. Reading /api/workspace.epochs ∪ /api/epoch
+// alone is not enough: both can be empty or stale on some routes — a workspace
+// digest that omits `epochs`, or an /api/epoch that 404s for a non-current
+// epoch — which blanks the tree even while /api/lineage returns that epoch's
+// generations and the breadcrumb names it.
 export async function buildTreeModel(route) {
   const [ws, lin, ep, brk, refl] = await Promise.all([D.workspace(), D.lineage(), D.epoch(), D.bracket(), D.reflections()]);
   // Which epochs carry at least one reflection — ONE workspace-wide read of
@@ -805,7 +800,7 @@ export async function buildTreeModel(route) {
   // non-current epoch's GENERATIONS node empty). The contract-scoped extras
   // (/api/epoch.board + /api/epoch.experiments + the bracket's champion
   // lineage) belong to the epoch /api/epoch resolved (and, when no epoch tag is
-  // present, to the routed/sole epoch — the legacy single-epoch case), so they
+  // present, to the routed or sole epoch — the untagged single-epoch case), so they
   // attach only to that node; every OTHER epoch node still fills its own
   // generations from the lineage. This degrades gracefully — an epoch with no
   // lineage rows and no contract extras resolves to an honest empty group.
@@ -835,7 +830,7 @@ export async function buildTreeModel(route) {
   // below reads as "pointer unknown", never as "not the champion".
   // A CLOSED epoch promotes nothing more, so its pointer is read through the
   // memoized `closedEpochChampion` — one contract build per closed epoch per
-  // page, not one per epoch node on every live bust.
+  // page, rather than one per epoch node on every live bust.
   const closedEpochs = new Set();
   if (ws && Array.isArray(ws.epochs)) {
     for (const e of ws.epochs) if (e && e.closed === true && e.epoch_id != null) closedEpochs.add(String(e.epoch_id));
@@ -882,7 +877,7 @@ export async function buildTreeModel(route) {
       }
     }
     // An ORPHAN is a parentless generation that nothing descends from and that
-    // never recorded an outcome — a stray from an aborted run, NOT the baseline
+    // never recorded an outcome — a stray from an aborted run rather than the baseline
     // seed. The true seed is the lineage ROOT that challengers build on (it is
     // some other gen's parent), so labelling a childless, outcome-less, rootless
     // gen "seed" is misleading; mark it so the tree can say "unscored".
@@ -924,8 +919,9 @@ async function renderTree(route) {
   const { status, liveness } = livenessFor(state);
   const routeEpochId = (route && route.params) ? route.params.epochId : null;
   const live = treeLiveSet({
-    // The tri-state, not file presence — leftover active-run records must not
-    // leave tree rows pulsing months after the run died (issue #194 SS1).
+    // Liveness comes from the tri-state verdict rather than from file
+    // presence: a leftover active-run record must not leave tree rows pulsing
+    // months after the run died.
     activeRuns: state.activeRuns, running: liveness.live && status.running,
     epochId: routeEpochId != null ? routeEpochId : model.current,
   });
@@ -976,11 +972,11 @@ function renderStatus() {
   // TRANSPORT SURFACES ONLY WHEN BROKEN. A healthy socket is silence: the
   // operator saw "connected / STALLED / · racing · rung 0 / · 7 units" — four
   // status tokens, three truth sources, no hierarchy, and the tail of it
-  // contradicted the head. "connected" describes the BROWSER's socket and was
-  // read as a claim about the RUN. It now says nothing while it is fine.
+  // contradicted the head. "connected" describes the BROWSER's socket and reads
+  // as a claim about the RUN, so it says nothing while the socket is fine.
   const conn = state.connected ? '' : state.connecting ? 'connecting…' : 'disconnected — retrying';
-  // THE TRI-STATE (issue #194 SS1) — the one verdict every present-tense
-  // claim in the chrome consumes, so the pill cannot read LIVE against a
+  // THE TRI-STATE — the one verdict every present-tense claim in the chrome
+  // consumes, so the pill cannot read LIVE against a
   // workspace the server has already called interrupted. The four-state
   // verdict rides alongside it; it only refines a LIVE run into LIVE vs
   // STALLED and supplies the phase label.
@@ -998,7 +994,7 @@ function renderStatus() {
   // The transport DOT is the healthy socket's only trace; the word is empty.
   patchClass(_statusEl, 'dt-transport-quiet', !conn);
   patchClass(_statusEl, 'dt-running', liveness.live && status.running);
-  // A frozen heartbeat (stale, not live) gets a distinct chrome class so the
+  // A frozen heartbeat (stale rather than live) gets a distinct chrome class so the
   // dot/badge can read "not live" rather than borrowing the running accent.
   patchClass(_statusEl, 'dt-stale', !liveness.live && !!status.heartbeatStale);
 
@@ -1043,10 +1039,9 @@ function renderStatus() {
   }
 }
 
-// ── THE TOPBAR LOOP CONTROLS (WS4-A item 3c) ─────────────────────────
+// ── THE TOPBAR LOOP CONTROLS ─────────────────────────────────────────
 //
-// Pause/Resume toggle + Skip-round, driven through the previously-dead
-// postControl. Shown ONLY when the workspace is writable (read_only:false
+// Pause/Resume toggle + Skip-round, driven through postControl. Shown ONLY when the workspace is writable (read_only:false
 // from /api/health) AND the loop is alive (or already paused — a paused
 // loop's heartbeat may be held, and the resume affordance must survive
 // that). The pause flag state comes from the runtime payload's `paused`
@@ -1128,10 +1123,10 @@ function renderLoopControls(status, liveness) {
   //
   // The one exception is a PAUSED loop, which stays reachable regardless:
   // `block_while_paused` blocks the orchestrator thread, starving the
-  // asyncio heartbeat beater, so a genuinely-paused run ages into
-  // `interrupted` — and resume must not become unreachable because of it.
-  // `paused` is the live pause-FLAG presence (re-read server-side on every
-  // runtime payload), not a value frozen into a dead heartbeat.
+  // asyncio heartbeat beater, so a paused run ages into `interrupted` — and
+  // resume must not become unreachable because of it. `paused` is the live
+  // pause-FLAG presence, re-read server-side on every runtime payload, rather
+  // than a value frozen into a dead heartbeat.
   const show = canControl && (!!(liveness && liveness.live) || paused);
   const digest = (show ? 'S' : '-') + (paused ? 'P' : '-');
   if (digest === _lastLoopCtlDigest && (!show || _loopCtlHost.firstChild)) return;
@@ -1175,7 +1170,7 @@ function renderExecLink() {
 // internally — a steady tick with identical live state writes ZERO DOM (the
 // ticker appends nothing, the funnel's digest is unchanged, the progress key is
 // unchanged). Because the SSE `heartbeat` frame fires `state._changed()`
-// directly (core/sse.js), this runs sub-second — push, not poll.
+// directly (core/sse.js), this runs sub-second: it is pushed rather than polled.
 function refreshLive() {
   if (!_live) return;
   const { status, liveness } = livenessFor(state);
@@ -1189,7 +1184,7 @@ function refreshLive() {
     canControl: !!(state.health && state.health.read_only === false),
   });
   // The host is always laid out (it carries the status band); the class only
-  // tints it while a run is genuinely in flight.
+  // tints it while a run is in flight.
   if (_heroHost) patchClass(_heroHost, 'dt-hero-live', liveness.live);
   // The AUTHORITATIVE round-pipeline stepper: fetched server-side (the reader
   // owns the phase-string inference) on each live tick, single-flight so a
@@ -1313,8 +1308,8 @@ async function dispatch() {
   renderBack(route);
   renderTree(route);
 
-  // SETTINGS is an OVERLAY, not a `_viewHost` view: paint it into the drawer
-  // over the underlying view rather than taking over the main host.
+  // SETTINGS is an OVERLAY rather than a `_viewHost` view: paint it into the
+  // drawer over the underlying view rather than taking over the main host.
   if (route.view === 'settings') {
     await dispatchSettingsOverlay(route);
     return;
@@ -1348,7 +1343,8 @@ async function dispatch() {
   const token = ++_renderToken;
   try {
     // pass the FULL route (4th arg) so the candidate view sees the compare
-    // target; legacy views read only `route.params` (3rd arg) unchanged.
+    // target; a view that needs no compare target reads only `route.params`
+    // (3rd arg).
     await renderer.render(_viewHost, _ctx, route.params, route);
   } catch (err) {
     if (token !== _renderToken) return;

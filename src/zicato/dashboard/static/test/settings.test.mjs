@@ -85,7 +85,7 @@ function installFetch() {
     }
     if (path.startsWith('/builder/draft')) {
       // the SERVER cost envelope for the current (swiss) contract — the same
-      // number the client used to re-estimate (C6: now served, not recomputed).
+      // number the server serves rather than the client re-estimating it.
       return jsonRes({ session: 'dashboard', draft: { scoring: { tournament_structure: { structure: 'gauntlet', params: {} } }, board: [], holdout: { train_ids: [], holdout_ids: [] }, proposer: {} }, cost: { board_runs_per_round: 12, breakdown: [{ label: 'swiss', runs: 12, detail: '3 rounds' }] }, warnings: [], diff: { changed_components: [], rolls_epoch: false } });
     }
     return jsonRes({});
@@ -106,7 +106,7 @@ test('router: #/settings resolves to the settings view (default contract section
   const r = router.parseRoute('#/settings');
   assertEqual(r.view, 'settings', 'view is settings');
   assertEqual(r.params.section, null, 'no explicit section ⇒ default');
-  // the builder is no longer the default Settings section — the router exports
+  // the builder is not the default Settings section — the router exports
   // the new default so the view + the back/up target agree on it.
   assertEqual(router.DEFAULT_SETTINGS_SECTION, 'contract', 'the default Settings section is now the contract roll-up');
 });
@@ -124,7 +124,7 @@ test('router: #/builder resolves to the STANDALONE builder view (no longer into 
   // the canonical href for the builder view is `#/builder`.
   assertEqual(router.href('builder', {}), '#/builder', 'the builder href is the canonical standalone link');
   // its breadcrumb reads environment › tournament builder, and it steps up to
-  // environment (the un-nesting: it is a top-level view, not a settings child).
+  // environment: it is a top-level view rather than a settings child.
   const trail = router.crumbTrail({ view: 'builder', params: {} });
   assertEqual(trail[0].label, 'environment', 'crumb root is environment');
   assert(trail[trail.length - 1].label === 'tournament builder' && trail[trail.length - 1].current, 'the leaf is the tournament builder');
@@ -157,7 +157,7 @@ test('settings: the rail renders three in-host sections + a builder LAUNCHER (Da
   assert(labels.some((l) => l.includes('Models')), 'the models / LLM-endpoints section is in the rail');
   assert(labels.some((l) => l.includes('Appearance')), 'the appearance section is in the rail');
   assert(!labels.some((l) => l.includes('Dashboard')), 'the Dashboard section was retired (folded into Appearance)');
-  // the builder is a LAUNCHER (a link OUT to the standalone view), NOT an
+  // the builder is a LAUNCHER (a link OUT to the standalone view) rather than an
   // in-host section: its rail entry carries the launcher class + the `#/builder`
   // href, and there is exactly one of it.
   const launchers = byClass(host, 'dn-set-raillauncher');
@@ -232,7 +232,7 @@ test('settings: editing appearance updates the SAME store the top-bar reads (rou
   assert(tf, 'the typeface grouped popover renders in Appearance');
   const onOpt = byClass(tf, 'dt-tf-option').find((o) => o.getAttribute('aria-selected') === 'true');
   assert(onOpt && onOpt.getAttribute('data-type') === 'E8', 'the popover reflects the shared typeface store (E8 selected)');
-  // a legacy stored mode id MIGRATES to its finalized default on read.
+  // a stored MODE id migrates to that group's default pairing on read.
   ui.persistType('display');
   assertEqual(ui.readType(), 'D2', 'a stored legacy "display" migrates to D2 on read');
 });
@@ -314,7 +314,7 @@ test('settings: the Contract section renders the read-only builder PREVIEW from 
   assert(fig, 'the schematic figure renders in the preview');
   assert(firstClass(fig, 'dn-swissladder'), 'the schematic is the swiss-ladder svg figure');
   // the cost meter renders the SERVER cost envelope's board-runs-per-round (C6:
-  // the /builder/draft fetch, not a client re-estimate).
+  // the /builder/draft fetch rather than a client re-estimate).
   const cost = firstClass(preview, 'dn-bld-cost');
   assert(cost, 'the cost meter renders');
   const costNum = firstClass(cost, 'dn-bld-cost-num');
@@ -379,7 +379,7 @@ test('settings: the Contract cost panel degrades to an honest "unavailable" line
   await tick();
   const preview = firstClass(host, 'dn-set-preview');
   assert(preview, 'the contract preview still renders (the schematic + strip degrade independently)');
-  // the cost panel reads the honest unavailable line, NOT a fabricated number.
+  // the cost panel reads the honest unavailable line rather than a fabricated number.
   const unavailable = firstClass(preview, 'dn-bld-cost-unavailable');
   assert(unavailable, 'the cost panel shows the honest "unavailable" degrade');
   assert(/unavailable/i.test(unavailable.textContent), 'the line names the envelope as unavailable');

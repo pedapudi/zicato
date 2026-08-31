@@ -1363,7 +1363,7 @@ test('top bar: NO typeface picker and NO scale pill (both → Settings only); co
 
 // THE STANDALONE BUILDER VIEW. `#/builder` is its own first-class view now
 // (promoted out of Settings): the shell's view dispatcher renders it FULL-WIDTH
-// in the main detail host (.dt-viewhost), NOT nested in the settings
+// in the main detail host (.dt-viewhost) rather than nested in the settings
 // section-host. We mount the real shell, navigate to `#/builder`, and assert
 // the builder's own chrome (.dn-builder) lands in the main view host with NO
 // settings section-host wrapping it (the un-nesting / clutter fix).
@@ -1408,7 +1408,7 @@ test('view dispatcher: #/builder renders the builder full-width in the main view
 
   const viewhost = allByClass(root, 'dt-viewhost')[0];
   assert(viewhost, 'the main view host exists');
-  // the builder mounted INSIDE the main view host (full-width), not a settings host.
+  // the builder mounted INSIDE the main view host (full-width) rather than a settings host.
   const builderRoot = allByClass(viewhost, 'dn-builder')[0];
   assert(builderRoot, 'the builder chrome (.dn-builder) rendered in the main view host');
   // it is NOT wrapped in the settings section-host (the un-nesting / clutter fix):
@@ -1423,7 +1423,7 @@ test('view dispatcher: #/builder renders the builder full-width in the main view
   assert(crumbs && !(crumbs.textContent || '').toLowerCase().includes('settings'), 'the builder breadcrumb does NOT pass through settings');
 });
 
-// THE SETTINGS DRAWER OVERLAY (Change 1). Settings is no longer a full-page
+// THE SETTINGS DRAWER OVERLAY. Settings is not a full-page
 // view: `#/settings[/<section>]` opens a routed RIGHT-SIDE DRAWER that paints
 // OVER the current view (the underlying view stays rendered in `.dt-viewhost`
 // behind a scrim, so an Appearance change applies live to the page behind it).
@@ -1474,7 +1474,7 @@ test('settings overlay: #/settings opens a DRAWER over the current view (underly
   assertEqual(drawer.getAttribute('data-open'), '1', 'the drawer opens on the settings route');
   // the underlying view is STILL rendered in the main host (painted behind the scrim).
   assert(viewhost.firstChild, 'the underlying view stays painted behind the scrim (not torn down)');
-  // the settings surface rendered INTO the drawer body, NOT the main view host.
+  // the settings surface rendered INTO the drawer body rather than the main view host.
   const drawerBody = allByClass(root, 'dt-drawer-body')[0];
   assert(drawerBody && allByClass(drawerBody, 'dn-settings')[0], 'the settings surface painted into the drawer body');
   assertEqual(allByClass(viewhost, 'dn-settings').length, 0, 'settings is NOT painted into the main view host (it is an overlay)');

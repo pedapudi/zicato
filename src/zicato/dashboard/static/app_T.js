@@ -1,13 +1,12 @@
-// app_T.js — entry point for Variant T ("Console IV").
+// app_T.js — the console's entry point.
 //
-// The round-6 convergence-IV ANCHOR: Variant P ("Console III", judged the
-// best-looking console) with three folds — S's first-class side-by-side
-// COMPARE detail, Q's generous proportional spacing, and a working back/up
-// button (top-left) that renders the destination into the MAIN detail pane.
-// Dense, data-ink-maximal; Monokai default colour theme + Technical typeface. A
-// persistent collapsible nested tree (Environment → Epoch → {Generations|
-// Boards|Mutation surface|Publication}) drives a single detail pane. The
-// orchestrator wires `?ui=T` in index.html; this entry:
+// The layout is dense and data-ink-maximal: a persistent collapsible nested
+// tree (Environment → Epoch → {Generations | Boards | Mutation surface |
+// Publication}) drives a single detail pane, with a first-class side-by-side
+// COMPARE detail, generous proportional spacing, and a top-left up button that
+// renders the destination into the MAIN detail pane. It defaults to the Monokai
+// colour theme and the Google Sans Mono typeface pairing. index.html loads this
+// entry, which:
 //   1. injects the variant's scoped stylesheet (self-contained), which itself
 //      @font-faces the SELF-HOSTED monospace woff2 (iA Writer Mono + JetBrains
 //      Mono) the default Technical mode uses,
@@ -56,7 +55,7 @@ function ensureStylesheet() {
 //       Editorial — Fraunces, Bitter, Literata, Domine
 //       Display   — Archivo Narrow, Space Grotesk, Hanken Grotesk,
 //                   Barlow Condensed, Bricolage Grotesque
-//     (Open Sans stays for legacy display fallbacks already in the stylesheet.)
+//     (Open Sans is loaded as the display-family fallback the stylesheet names.)
 function ensureFonts() {
   const id = 'console4-T-fonts';
   if (document.getElementById(id)) return;

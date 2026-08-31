@@ -138,7 +138,7 @@ test('publication: the CSS pins the never-overflow guards', () => {
 // (5) A8 — the SERVER-RENDERED paper is preferred over re-rendering markdown.
 //
 // /api/epoch/{id}/analysis runs the full report renderer on every call to
-// produce `analysis_html_inline`. The view used to read ONLY `analysis_md` and
+// produce `analysis_html_inline`. Reading ONLY `analysis_md` would mean
 // re-render it client-side, throwing that render away.
 // ---------------------------------------------------------------------------
 
@@ -216,7 +216,7 @@ test('publication (A8): analysis_html_inline is FOLDED into the digest (a re-ren
 });
 
 // ---------------------------------------------------------------------------
-// (6) A10 — the #18 continuous-score entry_grid contract is honoured.
+// (6) the continuous-score entry_grid contract is honoured.
 //
 // tournament_view.build_matchup_grid serves parent_score / child_score /
 // parent_metrics / child_metrics / won_by / parent_session_id /
@@ -282,7 +282,7 @@ test('publication (A10): the score / metrics / won_by / session fields are FOLDE
   const first = host.getAttribute('data-t-digest');
 
   // move ONLY the child score — every drift loss and verdict stays equal. A
-  // digest folding only the old four fields would not repaint.
+  // digest folding only the original four fields would not repaint.
   const moved = JSON.parse(JSON.stringify(SCORED_F));
   moved[`/api/matchup-grid/${GRID_EPOCH}/v0/v1`].entry_grid[0].child_score = 0.95;
   await renderWith(host, moved);

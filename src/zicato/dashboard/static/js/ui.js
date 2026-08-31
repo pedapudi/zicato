@@ -22,8 +22,8 @@ export { isNum, fmt, fmtSigned };
 // Shared helpers for surfacing the continuous outcome `score` (∈ [0,1]) and its
 // optional `metrics` precision/recall decomposition wherever the dashboard
 // shows a per-entry / per-board outcome. All three degrade cleanly when the
-// fields are absent (the bool-only / pre-score path) so a board with no scores
-// reads exactly as before.
+// fields are absent (the bool-only path) so a board with no scores still
+// reads correctly.
 
 // finite-number guard — the svg.js canonical (aliased so the many local call
 // sites below read unchanged).
@@ -214,13 +214,14 @@ export const TYPE_THEMES = TYPE_OPTIONS.map((o) => [o.id, o.label]);
 export const DEFAULT_TYPE = 'T7';
 const TYPE_KEY = 'zicato.T.typeface';
 
-// Migrate the THREE legacy mode ids (technical / editorial / display) to a
-// sensible finalized default in their group, so a stored old value keeps a
-// coherent voice instead of snapping back to the global default.
+// The three MODE ids (technical / editorial / display) are not themselves
+// typeface ids. A value stored under one of them migrates to that group's
+// default pairing, so it keeps a coherent voice instead of snapping back to
+// the global default.
 const LEGACY_TYPE_MAP = { technical: 'T7', editorial: 'E5', display: 'D2' };
 
-// Normalise any stored / passed value to a known option id. Unknown ⇒ default;
-// a legacy mode id ⇒ its migrated finalized id.
+// Normalise any stored or passed value to a known option id. An unknown value
+// yields the default; a mode id yields that group's pairing.
 export function normaliseType(t) {
   if (TYPE_IDS.includes(t)) return t;
   if (t && LEGACY_TYPE_MAP[t]) return LEGACY_TYPE_MAP[t];
@@ -254,7 +255,7 @@ export const DENSITY = 'cozy';
 // ---- PAGE-WIDE SCALE (the draggable scale pill + reset) -------------
 //
 // The page scale is one master multiplier on the WHOLE rendered page (text AND
-// diagrams), applied via `zoom` on the Variant-T app root, so the operator can
+// diagrams), applied via `zoom` on the console's app root, so the operator can
 // fill a wide monitor or shrink to fit a laptop. With density removed, this is
 // the SOLE sizing control. A small RESET affordance beside the pill snaps the
 // scale back to 100% (DEFAULT_SCALE) and persists. Range 70 %–150 % in 5-point
@@ -293,8 +294,9 @@ export function persistScale(v) {
 // (text AND figures); this is a TEXT-ONLY multiplier — it scales the HTML text
 // (every `font-size` in console.css is `calc(Npx * var(--dt-font-scale,1))`)
 // WITHOUT touching the SVG figures (their text is sized by svg.js / the `font:`
-// shorthand, not those rules). Some faces (e.g. Ubuntu, Inconsolata) read tiny
-// at the baseline; this lets the operator step the text up a notch or two.
+// shorthand rather than those rules). Some pairings — the Ubuntu one and the
+// Inconsolata one — read small at the baseline, so this lets the operator step
+// the text up a notch or two.
 //
 // THREE stops — small / medium / large — each mapping to a `--dt-font-scale`
 // number. The raw literal-px baseline (scale 1.0) read too small for the low-
@@ -368,7 +370,7 @@ export function persistRail(v) {
 
 // THE PAGE-SCALE FACTOR a coordinate must be divided by to convert a viewport
 // (CSS-px) pointer position into the LAYOUT space that `--dt-rail` lives in.
-// The Variant-T app root carries a page-wide `zoom` (the scale pill) plus a
+// The console's app root carries a page-wide `zoom` (the scale pill) plus a
 // mirrored `--dt-page-scale` ratio; both are the same number. The rail handle
 // sits INSIDE that zoomed root, so `event.clientX` (viewport CSS px) is the
 // LAID-OUT position multiplied by `zoom`. Dividing the pointer delta by this
@@ -458,9 +460,9 @@ export function moreMark(content, opts) {
     title: label, 'aria-label': label,
   });
   attachHovercard(mark, card);
-  // the "?" is a HOVER/FOCUS affordance, not an action. These marks live inside
-  // clickable cards (the board trellis cell navigates on click), so swallow the
-  // click here — otherwise reading the detail with Enter would navigate.
+  // the "?" is a HOVER/FOCUS affordance rather than an action. These marks live
+  // inside clickable cards (the board trellis cell navigates on click), so
+  // swallow the click here — otherwise reading the detail with Enter navigates.
   mark.addEventListener('click', (ev) => { if (ev && ev.stopPropagation) ev.stopPropagation(); });
   return mark;
 }
@@ -525,9 +527,9 @@ export function verdictPill(decision, opts) {
 // either contract shape verbatim:
 //   * gate.override        — {present, action: "promote"|"reject", reason}
 //   * override_status[gid] — {action: "promote"|"reject", state, reason, ts}
-// Returns null (renders NOTHING — byte-identical to today) when no override is
-// present. The four operator states: `forced↑` (force-promote applied),
-// `forced✕` (force-reject applied), `queued` (recorded, not yet fired),
+// Returns null, so nothing renders, when no override is present. The four
+// operator states: `forced↑` (force-promote applied), `forced✕` (force-reject
+// applied), `queued` (recorded and not yet fired),
 // `drained` (queued but the round resolved without it — forward-compat).
 // Direction earns the colour (promote good / reject bad / queued caution /
 // drained faint) — never a new hue, never recoloring the verdict beside it.
@@ -543,7 +545,7 @@ export function normaliseOverride(prov) {
   let label;
   let glyph;
   if (state === 'queued' || state === 'pending') {
-    kind = 'queued'; label = 'queued'; glyph = '⋯'; // operator action recorded, not yet fired
+    kind = 'queued'; label = 'queued'; glyph = '⋯'; // operator action recorded and not yet fired
   } else if (state === 'drained' || state === 'expired') {
     kind = 'drained'; label = 'drained'; glyph = '∅'; // queued, never fired this round
   } else if (action === 'promote') {
@@ -576,9 +578,9 @@ export function overrideChip(prov) {
 
 // A content digest of an override (rounded/stable, no timestamps) so it folds
 // into a structural digest: a real override appearing/changing repaints, a
-// no-op beat stays byte-identical. null (no override) contributes nothing —
-// back-compat with the pre-override digest. NOTE: deliberately drops `ts` (a
-// timestamp would bust the no-op-beat-skip), keeping only kind + reason.
+// no-op beat stays byte-identical. null (no override) contributes nothing, so
+// a payload without overrides digests the same either way. `ts` is dropped
+// because a timestamp would bust the no-op-beat skip; only kind and reason fold.
 export function overrideDigest(prov) {
   const o = normaliseOverride(prov);
   return o ? [o.kind, o.action, o.state, o.reason] : null;
@@ -724,7 +726,7 @@ export function stat(value, key) {
 //
 // The index-derived Bradley–Terry rating, served on the wire as the triple
 // `elo` / `elo_se` / `elo_games` (lineage nodes + tournament standings). The
-// server derives; these helpers only FORMAT (DQ1). Quiet-precision register:
+// server derives them and these helpers only FORMAT. Quiet-precision register:
 // mono `1512 ±34`, a faint `provisional` suffix while the sample is thin,
 // `—` when the fold has not rated the generation (zero settled duels, cold
 // index, or the Rust lineage view, which omits the keys — absence reads as
@@ -924,7 +926,7 @@ export function chip(cls, word, extra) {
 // The tiers are the server's (BOARD-REFLECTION.md's ladder, spelled in
 // zicato/reflection/corpus.py) plus `events`, which is what the follow pane
 // actually renders: the events.jsonl reconstruction. The client never RANKS
-// these — it only names them (DQ1).
+// these — it only names them; the server owns every ranking.
 export function fidelityLabel(fidelity) {
   const f = String(fidelity || 'unavailable');
   if (f === 'verbatim') return 'verbatim (exact judge input)';
@@ -950,7 +952,7 @@ export function pill(cls, word, extra) {
 // candidate's core idea folded onto a standings / roster / ledger row as a dim
 // second line, so a row of ids also says what each one TRIED. An ABSENT idea
 // renders NOTHING (null) rather than a '—' that would read like a recorded
-// blank — a candidate with no hypothesis is silent, not empty-handed.
+// blank. A candidate with no hypothesis stays silent rather than showing one.
 export function coreIdeaLine(idea, chars) {
   const text = (typeof idea === 'string' && idea.trim()) ? idea.trim() : null;
   if (!text) return null;
@@ -1110,8 +1112,8 @@ export function loopStatsDigest(traj, cost) {
 //                 gets {ep:null, epochId:null, …}.
 //   * digest(data) — the content digest (timestamp-free) for gatedSwap.
 //   * build(data)  — the node(s) to paint. Passed straight to gatedSwap.
-// A view whose flow genuinely diverges (parallel-fused fetches, multiple hosts,
-// a non-epoch gate) keeps its hand-rolled scaffold.
+// A view whose flow diverges — parallel-fused fetches, several hosts, a
+// non-epoch gate — keeps its hand-rolled scaffold.
 export async function renderView(host, ctx, spec) {
   if (!host) return;
   const s = spec || {};

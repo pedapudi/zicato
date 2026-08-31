@@ -1099,7 +1099,7 @@ function paintCandidate(host, ctx, epochId, s, cmpId, isPrimary, narrow, structu
     championId, compare: s.compare, driftPresent: s.driftPresent,
     championSigma: s.championSigma,
     candidateSigma: s.candidateSigma, deltaSigma: s.deltaSigma, gateExplain: s.gateExplain,
-    // height is NO LONGER passed: lifecycleDag now DERIVES its viewBox height
+    // no height is passed: lifecycleDag DERIVES its viewBox height
     // from the (deduped) board-node count × a fixed row pitch, so the seed/
     // baseline (full board) and a racing challenger (deduped slice) render with
     // IDENTICAL per-row spacing and a spine centred on the fan — neither side
@@ -1120,8 +1120,8 @@ function paintCandidate(host, ctx, epochId, s, cmpId, isPrimary, narrow, structu
   host.appendChild(section('Lifecycle · cause → effect → verdict', dagCard));
 
   // ---- LIVE — this candidate's in-flight board runs (current-epoch-scoped) ----
-  // A candidate mid-run reads "N running" with per-board progress, NOT a static
-  // page. Rendered for ANY structure (active-runs is structure-agnostic); the
+  // A candidate mid-run reads "N running" with per-board progress rather than as
+  // a static page. Rendered for ANY structure (active-runs is structure-agnostic); the
   // dot-plot below covers COMPLETED boards, this covers the ones still running.
   const inflight = Array.isArray(s.inflight) ? s.inflight : [];
   // INTERRUPTED: say what was running when it stopped, in one past-tense line.
@@ -1204,9 +1204,9 @@ function paintCandidate(host, ctx, epochId, s, cmpId, isPrimary, narrow, structu
     host.appendChild(section('Live · boards running for this candidate', liveCard));
   }
 
-  // ══ THE DOSSIER BODY — coordinated, NOT sprawling (study opt 2 layout) ══
-  // The study folds the per-board read, the promote-gate ladder and the LABELED
-  // radar silhouette into ONE coordinated grid beneath the full-width lifecycle
+  // ══ THE DOSSIER BODY — one coordinated grid ═══════════════════════════
+  // The per-board read, the promote-gate ladder and the LABELED radar
+  // silhouette sit in ONE coordinated grid beneath the full-width lifecycle
   // spine, rather than a flat stack of full-bleed sections (the sprawl the
   // operator flagged). Left column = the per-board comparison + the gate ladder;
   // right column = the silhouette, STRETCHED to fill its column (no empty band).
@@ -1496,7 +1496,7 @@ function facetRows(raw) {
 // counts quality, so the header states each direction rather than relying on
 // the reader to know.
 //
-// Deliberately plain: no verdict colour, no bars, no ordering by value. These
+// Plain by design: no verdict colour, no bars, no ordering by value. These
 // numbers carry NO noise threshold (BOARD-FORMAT.md §1.4) and a thin slice is
 // mostly noise, so the table must not read as a scoreboard. `scored` is shown
 // for the same reason — a scalar over one entry must not read like a scalar
@@ -1560,7 +1560,7 @@ function racingAffordance() {
 // (candidate left of champion) / regressed (right of champion); the Δ (cand −
 // champ) + the pass/fail/timeout marker ride the right edge; rows are passed
 // pre-sorted (worst-first). A de-emphasised dashed champion AGGREGATE tick sits
-// at the foot — context, NOT the per-row comparator. Rendered INLINE with
+// at the foot — context rather than the per-row comparator. Rendered INLINE with
 // svgEl(...) — NO builder is added to / modified in svg.js. Each row is a
 // clickable <g> (board name, either dot, the connector, the Δ) → onClick(row).
 // The shared-contract responsive flag (width:100% + viewBox) keeps it filling
@@ -2127,7 +2127,7 @@ export function ratingBlock(rating) {
   wrap.appendChild(subhead('Bradley–Terry uncertainty · resolve before the gate'));
 
   const nDuels = svg.isNum(rating.n_duels) ? rating.n_duels : 0;
-  // below the credible-fit minimum: a placeholder, NOT a faked estimate.
+  // below the credible-fit minimum: a placeholder rather than a faked estimate.
   if (!rating.credible && nDuels < MIN_CREDIBLE_DUELS) {
     const need = MIN_CREDIBLE_DUELS - nDuels;
     wrap.appendChild(el('div', { class: 'dn-bt-forming dt-proj' }, [

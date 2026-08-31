@@ -16,7 +16,7 @@
 //                                       conversation, the episode anchors linking
 //                                       strip spans ↔ conversation ↔ suggestions.
 //
-// SERVER AUTHORITY (DQ1). The reader pre-computes the strip-model (normalized
+// SERVER AUTHORITY. The reader pre-computes the strip-model (normalized
 // mark/tick/budget/episode geometry); this view DRAWS it via svg.trajectoryStrip
 // and derives NO domain math. Every number is the reader's.
 //
@@ -28,8 +28,8 @@
 // hovercard idiom), never a repaint. Metadata (dialect, counts, the honest
 // reconstruction note) is a dn-faint caption, never a chip (quiet precision).
 //
-// REUSE, DON'T FORK. The strip is svg.trajectoryStrip (shared with WS-SUGVIZ's
-// provenance mini-strip); the reconstructed conversation reuses board.js's
+// The strip is svg.trajectoryStrip, shared with the suggestion visuals'
+// provenance mini-strip; the reconstructed conversation reuses board.js's
 // exported buildTurnNode (the transcript turn vocabulary).
 
 import { el } from '../core/dom.js';

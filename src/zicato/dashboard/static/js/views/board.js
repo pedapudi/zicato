@@ -7,7 +7,7 @@
 //     dot-plot (champion reference rule) and a tabular breakdown;
 //   * fix #5 — selecting a run shows its transcript INLINE within THIS view,
 //     side by side with the CHAMPION's transcript on the same board (two
-//     candidates' transcripts on that board), NOT a navigation to a separate
+//     candidates' transcripts on that board) rather than a navigation to a separate
 //     run page. The selected gen lives in the URL (#/e/<e>/board/<entry>/<gen>)
 //     so the inline transcript rebuilds only on a route change, never a beat.
 //
@@ -350,10 +350,10 @@ export async function render(host, ctx, params, route) {
       el('p', { class: 'dn-lede', text: 'How every candidate performed on this one board entry — lower drift loss is better. Select a candidate to read its transcript inline, side by side with the champion’s.' }),
     ]));
 
-    // The drill-down used to show LESS of the entry than the overview it is
-    // reached from: `expectation_kind` and `tags` ride the same ep.board row
-    // the trellis already reads, and this page — the one an operator opens to
-    // ask what this entry actually checks — dropped both.
+    // The drill-down must not show LESS of the entry than the overview it is
+    // reached from. `expectation_kind` and `tags` ride the same ep.board row
+    // the trellis already reads, and this page is the one an operator opens to
+    // ask what this entry actually checks.
     nodes.push(el('div', { class: 'dn-panel dn-row' }, [
       stat(def ? (KIND_LABEL[def.kind] || def.kind || '—') : '—', 'kind'),
       stat(def && def.expectation_kind ? String(def.expectation_kind) : '—', 'oracle'),
@@ -372,12 +372,12 @@ export async function render(host, ctx, params, route) {
       ]));
     }
 
-    // JUDGES (#194 §5) — the process half of the contract, beside the outcome
-    // half (kind / oracle / weight) the stat row above already names. It sits in
-    // the CONTRACT region of the page, before any result: what grades a run is
-    // part of the question, not part of the answer. A pre-feature server serves
-    // no roster AND the epoch payload carries no board_judges, so nothing is
-    // known and nothing is drawn — the page reads byte-identical to before.
+    // JUDGES — the process half of the contract, beside the outcome half (kind
+    // / oracle / weight) the stat row above already names. It sits in the
+    // CONTRACT region of the page, before any result: what grades a run is part
+    // of the question rather than part of the answer. When a server serves no
+    // roster and the epoch payload carries no board_judges, nothing is known and
+    // nothing is drawn.
     if (roster || entryJudges.length) {
       nodes.push(section('Judges · what grades this entry’s process',
         judgesPanel(roster, entryJudges, ctx, epochId)));
@@ -474,7 +474,7 @@ export async function render(host, ctx, params, route) {
     const tblCard = el('div', { class: 'dn-panel' });
     // the continuous-score column (#18) only appears when AT LEAST ONE
     // candidate scored this board; a wholly bool-only board keeps the
-    // pre-score column set so the table reads exactly as before.
+    // bool-only column set.
     const anyScored = rows.some((r) => svg.isNum(r.score));
     // the live-gated progress column appears only while a candidate is running
     // on this entry (C4); a wholly settled board keeps the pre-C4 column set.
@@ -612,7 +612,7 @@ export async function render(host, ctx, params, route) {
 // pane's cursor, its rendered turn nodes, and the reader's scroll position —
 // the three things the whole design exists to preserve. Every later render
 // finds the pane already there and leaves it alone; the pane keeps itself
-// current off the SSE growth signal, not off this view's render loop.
+// current off the transcript growth signal rather than this view's render loop.
 function syncFollowPane(host, xscriptHost, spec) {
   const wanted = !!(spec.route && spec.route.follow) && !!spec.selGen;
   let followHost = host.querySelector(':scope > [data-node="board-follow"]');
@@ -627,12 +627,12 @@ function syncFollowPane(host, xscriptHost, spec) {
     return;
   }
 
-  // The unit's verdict is re-derived on EVERY render, not just at mount. The
+  // The unit's verdict is re-derived on EVERY render rather than at mount alone. The
   // board paints before the environment read lands, so a pane mounted on that
   // first frame sees no active-run record yet and would otherwise be stuck
   // reading "interrupted" for a unit that is plainly running.
   //
-  // Composition, not a second derivation (#194 §1): the LOOP's liveness is
+  // This composes rather than deriving a second time: the LOOP's liveness is
   // per-workspace, and this unit is live only if the loop is live AND it has
   // an active-run record of its own. `state.activeRuns` is read raw here on
   // purpose — the gating lives in unitLiveness, so a dead loop yields
@@ -708,7 +708,7 @@ function transcriptColumn(sel, conv, championId, side) {
     el('span', { class: 'dn-mono', text: sel.gen + (sel.promoted ? ' ♛' : '') }),
     pill(pillCls, role),
     // A RUNNING candidate gets a live marker so the operator reads the column
-    // as a streaming transcript (it appends as new turns land), not a final one.
+    // as a streaming transcript (it appends as new turns land) rather than a final one.
     sel.running ? el('span', { class: 'dn-pill dn-live dn-xscript-live' }, [
       el('span', { class: 'dn-inflight-pulse', 'aria-hidden': 'true' }),
       el('span', { text: 'live' }),
@@ -716,10 +716,10 @@ function transcriptColumn(sel, conv, championId, side) {
     el('span', { class: 'dn-faint dn-mono', text: svg.isNum(sel.primary) ? ' · ' + (sel.channelLabel || 'value') + ' ' + svg.fmt(sel.primary, 2) : '' }),
   ].filter(Boolean)));
 
-  // The transcript is keyed on the (epoch, gen, entry) triple, NOT the per-entry
-  // run_id — so a candidate whose row carries no run_id can still render its
-  // transcript when the gen×entry events.jsonl exists. Only fall through to the
-  // honest messages when the triple genuinely resolves to nothing.
+  // The transcript is keyed on the (epoch, gen, entry) triple rather than the
+  // per-entry run_id, so a candidate whose row carries no run_id can still
+  // render its transcript when the gen×entry events.jsonl exists. Only fall
+  // through to the honest messages when the triple resolves to nothing.
   const sig = columnStateSig(sel, conv);
   if (sig.startsWith('err')) { col.appendChild(empty(conv.error)); return col; }
   if (sig === 'wait') {
@@ -750,7 +750,7 @@ function transcriptColumn(sel, conv, championId, side) {
 }
 
 // Coarse column STATE for the structure digest + the frame builder: the shape of
-// the column (which message vs a scroller), NOT its growing turn content. So a
+// the column (which message versus a scroller) rather than its growing turn content. So a
 // beat that only appends turns leaves this stable and the frame is kept.
 function columnStateSig(sel, conv) {
   if (!sel) return 'nosel';
@@ -797,8 +797,8 @@ function reconcileTranscript(hostEl, side, sel, conv) {
 // re-raced across rungs (multiple runs under one entry), it picks the
 // specific rung. We pass it along so the backend can select that rung, then
 // fall back to the run_id-keyed /api/conversation ONLY when the triple
-// genuinely resolves to nothing (e.g. a pre-feature workspace). A
-// genuinely-absent gen×entry stays empty → the honest "unavailable" message.
+// resolves to nothing — a workspace that records no such triple. An absent
+// gen×entry stays empty and yields the honest "unavailable" message.
 async function resolveTranscript(epochId, entryId, sel) {
   if (!sel || !sel.gen) return null;
   let conv = await D.runTranscript(epochId, sel.gen, entryId, sel.runId);
@@ -909,7 +909,7 @@ function builtinChip(b, weights) {
 
 // The Judges panel: armed built-ins, then this entry's custom judges. Both
 // halves degrade to a sentence that carries information — "no judges
-// configured" is a fact about the contract, not a missing payload.
+// configured" is a fact about the contract rather than a missing payload.
 export function judgesPanel(roster, entryJudges, ctx, epochId) {
   const weights = (roster && roster.per_judge_weights && typeof roster.per_judge_weights === 'object')
     ? roster.per_judge_weights : {};

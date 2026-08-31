@@ -1,4 +1,4 @@
-// test/liveness_truth.test.mjs — LIVENESS IS A PROPERTY OF THE CLOCK (issue #194 §1).
+// test/liveness_truth.test.mjs — LIVENESS IS A PROPERTY OF THE CLOCK.
 //
 // THE BUG. A real workspace, dead since June, rendered LIVE on every view. Its
 // runtime files all still say "busy": heartbeat.json names
@@ -40,8 +40,8 @@ function allByClass(host, cls) {
 
 // ── the JUNE WORKSPACE, verbatim in shape ────────────────────────────────
 //
-// Read off /home/sunil/zicato-live-t9/.zicato: a mid-round phase, a running
-// tournament, seven active_runs — every timestamp two months stale.
+// Captured from a real workspace: a mid-round phase, a running tournament, and
+// seven active_runs, with every timestamp two months stale.
 const JUNE = Date.parse('2026-06-08T03:58:49Z');
 const NOW = Date.parse('2026-08-09T12:00:00Z');
 
@@ -72,7 +72,7 @@ function juneState(overrides) {
     liveness: { state: 'interrupted', last_heartbeat: '2026-06-08T03:58:49Z',
                 ended_at: '2026-06-08T03:58:49Z' },
     // No progress log on this workspace: seq 0, first frame counts as an
-    // "advance", which is exactly why the four-state verdict used to read LIVE.
+    // "advance", which is what makes a naive four-state verdict read LIVE.
     lastSeq: 0, terminal: false, lastSeqAdvanceAt: NOW,
   }, overrides || {});
 }
@@ -296,7 +296,7 @@ test('hero CSS: the host is always laid out; only the BODY is gated on live', as
     'the drawer body is hidden by default');
   assert(/\.dt-live-hero\.dt-live-on\s+\.dt-live-hero-body\s*\{\s*display:\s*block/.test(css),
     'and shown only under .dt-live-on');
-  // The breathing dot is reserved for a genuinely live run.
+  // The breathing dot is reserved for a live run.
   assert(/\.dt-live-band-live\s+\.dt-live-band-dot\s*\{[^}]*animation:/.test(css),
     'only the LIVE band dot animates');
 });
@@ -311,7 +311,7 @@ test('controls: pause / skip are hidden unless the loop is LIVE and the workspac
   assertEqual(gate(true, false, false), false, 'a read-only workspace offers none either');
   assertEqual(gate(true, true, false), true, 'a live, writable loop offers them');
   // The one exception: block_while_paused starves the heartbeat beater, so a
-  // genuinely paused loop ages into `interrupted` — resume must stay reachable.
+  // paused loop ages into `interrupted` — resume must stay reachable.
   assertEqual(gate(false, true, true), true, 'a paused loop keeps resume reachable');
 });
 
@@ -358,7 +358,7 @@ test('THE ACCEPTANCE CASE: transport state surfaces ONLY when broken', () => {
     'a broken socket speaks, and says what happens next');
 });
 
-// ── 6. an interrupted run's topology is EVIDENCE, not noise ─────────────
+// ── 6. an interrupted run's topology is evidence rather than noise ──────
 
 test('resolver: an interrupted run keeps its topology, in the PAST tense', async () => {
   const STRUCT = await import('../js/views/structure.js');

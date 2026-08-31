@@ -140,7 +140,7 @@ test('bill of health: findings are DE-TAGGED quiet rows — a tone glyph + word,
   installFixtureMap(reflectionFixtureMap());
   const host = document.createElement('div');
   await instrument.render(host, CTX, { epochId: EPOCH_ID, reflectionId: REFLECTION_ID });
-  // findings render as the loop-health row grammar (dn-instr-frow), NOT a chip
+  // findings render as the loop-health row grammar (dn-instr-frow) rather than a chip
   // per row. Three findings + the four practice-review rows = seven frows.
   const frows = allByClass(host, 'dn-instr-frow');
   assert(frows.length === 3 + 4, 'three finding rows + four practice rows, one grammar');
@@ -168,7 +168,7 @@ test('bill of health: evidence renders as inline x-ray links in the row prose, n
   assert(links.some((a) => a.getAttribute('href') === target), 'an inline evidence link points at the x-ray route');
 });
 
-// Issue #129's render-conformance rule, applied to the lens: the report
+// The render-conformance rule, applied to the lens: the report
 // already prints these, and a surface that states a verdict while dropping
 // the numbers behind it (or the remedy) reproduces the bug it fixed.
 test('render conformance: a practice check shows the measured numbers behind its headline', async () => {
@@ -206,8 +206,8 @@ test('render conformance: findings and judge scorecards show their recommendatio
     'the judge scorecard names its remedy');
 });
 
-// Issue #112: the promote-margin recommendation scales `delta_std` (the
-// draw-count-stable dispersion), NOT the max|Δ| RANGE, which inflates with the
+// The promote-margin recommendation scales `delta_std` (the
+// draw-count-stable dispersion) rather than the max|Δ| RANGE, which inflates with the
 // calibration draw count K. A calibration card showing only the range shows the
 // one number the code says not to act on.
 test('calibration: the draw-count-stable delta_std reaches the pillar card', async () => {
@@ -483,7 +483,7 @@ test('digest no-op: the x-ray is fetch-once (immutable) — identical repaint is
 // ====================================================================
 // TREE integration — the Instrument node is an UNCONDITIONAL epoch child.
 //
-// DELIBERATE INVERSION (issue #194 §7). The leaf used to be gated on
+// The leaf is NOT gated on
 // `hasReflections`, which made the lens reachable only from an epoch that had
 // already run a reflection — i.e. unreachable by click from every epoch that
 // had not, which is exactly the population that needs to be told the lens
@@ -525,13 +525,13 @@ test('tree: the Instrument leaf is present even with NO reflections (reachable b
 });
 
 // ====================================================================
-// F4 — the evidence chip verdict comes from the payload, not a title regex.
+// the evidence chip verdict comes from the payload rather than a title regex.
 // ====================================================================
 test('judge audit F4: an evidence chip reads its verdict from the payload, not the title', async () => {
   fresh();
   const summary = JSON.parse(JSON.stringify(REFLECTION_SUMMARY));
   // a finding whose TITLE says "fires falsely" (regex → FP) but whose evidence
-  // is adjudicated FN. The chip must follow the DATA, not the wording.
+  // is adjudicated FN. The chip must follow the DATA rather than the wording.
   summary.findings = [{
     finding_id: 'find-mislabel', pillar: 'validity', severity: 'warning',
     title: "Judge 'format.json' fires falsely", detail: 'x',
@@ -626,7 +626,7 @@ test('proposer panel: a pending recommendation names its remedy and its apply co
   assert(t.includes('zicato proposer apply-recommendation prec-9f3a12bc'), 'the apply command');
   // The five evidence slots reach the panel — a recommendation is evidence-led.
   assert(t.includes('population:') && t.includes('compared against:'), 'the evidence slots');
-  // It renders in the lens's EXISTING findings-row grammar, not new chrome.
+  // It renders in the lens's EXISTING findings-row grammar rather than new chrome.
   assert(hasClass(host, 'dn-instr-frow'), 'reuses the findings-row grammar');
 });
 

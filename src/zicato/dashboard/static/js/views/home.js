@@ -211,9 +211,9 @@ function statTile(value, key, foot) {
 // ---- the fleet's GOAL PROSE (one line per card, never a wall) --------
 //
 // An epoch inherits its predecessor's objective far more often than it rewrites
-// it, so the fleet strip used to print the same five-line paragraph on card
-// after card — the one thing that differs between epochs (the numbers) pushed
-// below the fold by the one thing that does not. Two rules fix it:
+// it. Printing the goal in full on every card would repeat the same five-line
+// paragraph card after card, pushing the numbers — the part that differs — below
+// the fold. Two rules keep the strip readable:
 //
 //   * a card shows its goal's FIRST LINE, clipped to ~90 chars; the untouched
 //     text rides the hovercard (the console's standard "detail on demand");
@@ -293,7 +293,7 @@ function fleetCard(row, isCurrent, ctx, sparkVals, live, loop, cost, goalModel) 
   const promo = promotionRateLabel(loop);
   const costLabel = costPerPromotionLabel(cost);
   // "best" names its HOLDER: the generation `best_generation_id` that set this
-  // epoch's floor. Text, not a link — the whole card is already an <a> to the
+  // epoch's floor. It is plain text: the whole card is already an <a> to the
   // epoch, and nesting an anchor inside it is invalid; the fleet-wide deep link
   // lives on the overview tile above.
   const bestGen = row.best_generation_id == null ? null : String(row.best_generation_id);
