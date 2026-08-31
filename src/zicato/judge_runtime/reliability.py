@@ -220,7 +220,7 @@ async def test_retest(
     errors = 0
     for _ in range(k):
         verdict = await live.evaluate(ctx)
-        # A call that RAISED is counted, not scored. zicato's judge boundary
+        # A call that RAISED is counted rather than scored. zicato's judge boundary
         # swallows the exception and hands back an errored verdict; treating
         # its empty drift flag as a verdict would report a broken endpoint as
         # a perfectly self-consistent judge (issue #121).

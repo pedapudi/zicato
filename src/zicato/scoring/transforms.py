@@ -1,10 +1,10 @@
 """Declarative transform registry — the code-free 90% of pluggable scoring.
 
-The two scoring seams (:mod:`zicato.scoring.dispatch`) historically absorbed a
-core edit every time a new scoring *shape* was needed: a non-linear recall
-curve (``pass_exponent``), a diminishing-returns drift aggregation (the
-harmonic ``looping_reasoning`` special-case), a cap, a clamp. Each was a
-bespoke field + a formula edit in shared core, and an unconditional one (the
+Without this registry the two scoring seams (:mod:`zicato.scoring.dispatch`)
+absorb a core edit every time a new scoring *shape* is needed: a non-linear
+recall curve (``pass_exponent``), a diminishing-returns drift aggregation (a
+harmonic ``looping_reasoning`` rule), a cap, a clamp. Each would be a
+bespoke field plus a formula edit in shared core, and an unconditional one (the
 harmonic case) silently changed scoring for *every* operator.
 
 This module replaces that pattern with a small registry of **named, pure,
@@ -25,8 +25,8 @@ trivially reproducible.
 Design constraints
 ------------------
 * **Single op per slot.** Each spec names exactly one op; there is NO pipeline
-  / composition syntax. Arbitrary multi-step logic is Phase 3's job (the
-  dotted-spec ``scalar_fn`` / ``drift_reducer`` plugins), not the registry's.
+  / composition syntax. Arbitrary multi-step logic belongs to the dotted-spec
+  ``scalar_fn`` / ``drift_reducer`` plugins rather than to this registry.
 * **Pure / deterministic / no-LLM / no-I/O / no-wall-clock.** Every transform
   is a closed-form function of its ``value`` + params.
 * **Validation is fail-fast at CONTRACT LOAD, never mid-scoring.**
@@ -36,8 +36,8 @@ Design constraints
   silently poison a scalar. By the time :func:`apply_transform` runs, the spec
   is already known-good.
 * **Neutral default = ``linear`` (identity).** An absent ``pass_transform`` and
-  an absent ``drift_kind_aggregation`` entry both mean ``linear``, i.e. today's
-  built-in shape unchanged.
+  an absent ``drift_kind_aggregation`` entry both mean ``linear``, which
+  leaves the built-in shape unchanged.
 """
 
 from __future__ import annotations
@@ -77,10 +77,11 @@ def _harmonic(value: float) -> float:
     """Diminishing-returns over an integer count: ``1 + 1/2 + … + 1/n``.
 
     ``value`` is a count ``n`` (truncated to an int floor; a fractional count
-    is not meaningful for this shape). ``harmonic(0) == 0`` (empty sum). This
-    reproduces the old unconditional ``looping_reasoning`` special-case the
-    reducer used to carry — now opt-in per contract via
-    ``drift_kind_aggregation: {"looping_reasoning": {"op": "harmonic"}}``.
+    is not meaningful for this shape). ``harmonic(0) == 0`` (empty sum).
+    Selected per contract via
+    ``drift_kind_aggregation: {"looping_reasoning": {"op": "harmonic"}}``,
+    which is how a diminishing-returns count is configured for one drift
+    kind without hard-coding it into the reducer.
     """
     n = int(value)
     if n <= 0:
@@ -223,7 +224,7 @@ def is_neutral(spec: TransformSpec | None) -> bool:
 
     Lets the dispatchers short-circuit to the byte-identical built-in path +
     ``"builtin"`` provenance when no real reshaping was requested, so a
-    contract that does not opt into transforms scores exactly as today.
+    contract that does not opt into transforms scores unchanged.
     """
     return spec is None or spec.get("op") == "linear"
 

@@ -1,15 +1,15 @@
 """Dotted-spec scoring PLUGINS (Seam 1 ``drift_reducer`` / Seam 2 ``scalar_fn``)
 plus the ONE source-hashing mechanism every grading plugin shares.
 
-zicato's two scoring seams already route through the dispatchers in
-:mod:`zicato.scoring.dispatch`, where the Phase-2 declarative transforms reshape
-the built-in result. This module is Phase 3 (issue #19): an optional
-**operator-owned, contract-referenced** plugin per seam that WRAPS the
-transformed-or-built-in value with arbitrary pure logic the declarative registry
-cannot express (F-beta, cost-aware penalties, the retired harmonic-looping
-special-case as a ~10-line operator plugin).
+zicato's two scoring seams route through the dispatchers in
+:mod:`zicato.scoring.dispatch`, where the declarative transforms reshape the
+built-in result. This module supplies the tier above those transforms: an
+optional **operator-owned, contract-referenced** plugin per seam that WRAPS
+the transformed-or-built-in value with arbitrary pure logic the declarative
+registry cannot express — an F-beta score, a cost-aware penalty, or a
+harmonic-looping curve as a roughly ten-line operator plugin (issue #19).
 
-Design constraints (mirrored from the issue):
+Design constraints:
 
 * **Pure / deterministic / no-LLM / no-I/O / no-wall-clock.** A scoring plugin
   is a pure function over a frozen context, so re-scoring an epoch is
@@ -18,28 +18,29 @@ Design constraints (mirrored from the issue):
   :func:`zicato.import_path.import_dotted_path`, so ``pkg.mod:fn`` and
   ``pkg.mod.fn`` resolve identically everywhere — and Seam 1's resolution works
   in the killable worker subprocess (it is just an import).
-* **Wrap, not reimplement.** The context carries the built-in (or
-  Phase-2-transformed) value as ``ctx.builtin_*`` so the plugin starts from the
-  default. The dispatcher builds a context whose ``builtin_*`` is the POST-
-  TRANSFORM value, so a plugin composes ON TOP of the declarative shape.
+* **A plugin wraps the default rather than replacing it.** The context
+  carries the built-in (or transformed) value as ``ctx.builtin_*``, so the
+  plugin starts from the default. The dispatcher builds a context whose
+  ``builtin_*`` is the POST-TRANSFORM value, so a plugin composes ON TOP of
+  the declarative shape.
 * **Fail-open (mirrors ``evaluate_judges``).** A plugin that raises, or returns
   a non-finite / non-numeric value, falls back to the pre-plugin value, logs at
   WARNING, and records the fallback in the provenance token so it is visible,
-  never silent. There is deliberately **no wall-clock timeout** — these are
-  declared pure CPU functions, a Python pure function cannot be cleanly
-  interrupted, and a timeout contradicts the no-wall-clock contract. The
-  try/except + finite-check IS the guard.
+  never silent. There is **no wall-clock timeout**: these are declared pure
+  CPU functions, a Python pure function cannot be cleanly interrupted, and a
+  timeout would contradict the no-wall-clock contract. The try/except plus
+  the finite-check IS the guard.
 
 Source-hashing
 --------------
-The contract hash must roll when a plugin's BODY is edited, not only when its
-dotted-spec STRING changes — otherwise editing the looping curve in an operator
-plugin would silently re-score an epoch. :func:`spec_with_source_hash` resolves
+The contract hash must roll when a plugin's BODY is edited, and not only when
+its dotted-spec STRING changes; otherwise editing the looping curve in an
+operator plugin would silently re-score an epoch. :func:`spec_with_source_hash` resolves
 a dotted spec to the module that defines it and folds a SHA-256 of that module's
 source into the canonical form. It is the ONE mechanism every grading plugin
 shares: the contract canonicalizer applies it uniformly to the scoring
 ``scalar_fn`` / ``drift_reducer`` AND to the board's predicates / judges and the
-``outcome_summarizer_spec`` (previously hashed by spec string only).
+``outcome_summarizer_spec``.
 """
 
 from __future__ import annotations
@@ -83,7 +84,7 @@ def resolve_plugin_source(dotted: str) -> str | None:
     rolls the epoch. That is the conservative choice: it can over-roll (an
     unrelated edit elsewhere in the same module rolls the epoch) but never
     under-rolls (a behaviour-changing edit the plugin depends on is always
-    caught). Operators keep grading plugins in a dedicated module precisely so
+    caught). Operators keep grading plugins in a dedicated module so
     this is tight.
     """
     if not dotted:
@@ -144,7 +145,7 @@ def _coerce_finite(value: object) -> float | None:
     """Return ``value`` as a finite float, or ``None`` if it cannot be.
 
     A non-numeric return (``str`` / ``None`` / object), a ``bool`` (a plugin
-    must return a number, not a flag — ``bool`` is an ``int`` subclass so it is
+    must return a number rather than a flag — ``bool`` is an ``int`` subclass so it is
     rejected explicitly), or a non-finite (``NaN`` / ``inf``) all yield ``None``
     so the caller falls back to the documented default.
     """
@@ -229,7 +230,7 @@ def apply_drift_reducer(
 ) -> tuple[float, str]:
     """Seam 1: invoke a ``drift_reducer`` plugin fail-open, composing on top.
 
-    ``pre_value`` / ``pre_token`` are the post-Phase-2 (transformed-or-builtin)
+    ``pre_value`` / ``pre_token`` are the post-transform (or built-in)
     drift loss + its provenance; the plugin sees that value as
     ``ctx.builtin_loss`` (the dispatcher rebuilt the context), so it wraps the
     declarative shape rather than the raw built-in. On failure it falls back to
@@ -249,7 +250,7 @@ def apply_scalar_fn(
 ) -> tuple[float, str]:
     """Seam 2: invoke a ``scalar_fn`` plugin fail-open, composing on top.
 
-    ``pre_value`` / ``pre_token`` are the post-Phase-2 (transformed-or-builtin)
+    ``pre_value`` / ``pre_token`` are the post-transform (or built-in)
     scalar + its provenance; the plugin sees that value as ``ctx.builtin_scalar``
     (the dispatcher rebuilt the context), so it wraps the declarative shape. On
     failure it falls back to ``pre_value`` with a visible fallback token. Runs

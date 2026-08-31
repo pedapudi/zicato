@@ -3,7 +3,7 @@
 A board-declared process judge has two honest answers: "the criterion was
 violated" (drift) and "the criterion was not violated" (silence). It has a
 third *outcome* — its callable RAISED — and zicato persisted that as the
-second answer. The laundering is structural, not accidental: a judge must
+second answer. The laundering is structural rather than accidental: a judge must
 never crash a run, so both
 :class:`~zicato.judge_runtime.builder._InlineCriterionJudge` and goldfive's
 ``DefaultSteerer.evaluate_judges`` catch everything a judge throws; goldfive
@@ -15,8 +15,7 @@ uses for a healthy judge whose criterion was simply never met. A
 misconfigured judge endpoint therefore read as a board-design problem, and
 its zero drift made the generation's scalar *better* than the truth.
 
-This module is the counter that survives the catch. It is deliberately
-modelled on
+This module is the counter that survives the catch. It is modelled on
 :data:`zicato.models_config._DEFERRED_ROLE_FAILURES`, the register that
 solved the same shape of problem one layer down (a deferred role resolution
 that fails INSIDE a swallowing judge path): a process-wide dict, written at

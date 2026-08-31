@@ -66,7 +66,7 @@ log = logging.getLogger("zicato.judge_runtime.builder")
 # ---------------------------------------------------------------------------
 #
 # ``JudgeSpec`` is owned by ``zicato/core/types.py`` (a parallel agent
-# defines it; this module must not redefine it). We deliberately depend
+# defines it; this module must not redefine it). We depend
 # on it *structurally* rather than importing the concrete dataclass:
 #
 #   * it keeps ``zicato.judge_runtime`` importable even before the core
@@ -138,7 +138,7 @@ def _errored_verdict(exc: BaseException) -> JudgeVerdict:
     goldfive's :class:`~goldfive.judges.JudgeVerdict` has four flavours —
     drift / rubric / boolean / numeric — and an empty-default verdict means
     "the judge had nothing to say". A judge whose callable RAISED had
-    nothing to say either, which is precisely the ambiguity issue #121 is
+    nothing to say either, which is the ambiguity issue #121 is
     about: the empty verdict a failed call returns is byte-identical to the
     one a healthy judge returns when the criterion was not violated.
 
@@ -490,7 +490,7 @@ class _PythonJudgeWrapper:
     In every case the wrapper guarantees ``name == spec.name`` (so the
     :class:`JudgementEmitted` envelope keys on the operator-chosen name,
     matching the inline case) and normalises the verdict so its
-    drift-flavoured fields carry *strings*, not enums — operator code is
+    drift-flavoured fields carry *strings* rather than enums — operator code is
     free to return either, and the enum->string boundary stays inside
     :mod:`zicato.judge_runtime`.
 

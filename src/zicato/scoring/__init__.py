@@ -1,16 +1,15 @@
 """Pluggable scoring seams.
 
-zicato's scoring has two stages that historically absorbed core edits when a
-new scoring *shape* was needed: per-run drift reduction (Seam 1, in the
-killable worker) and per-generation scalar synthesis (Seam 2, in the
-orchestrator). This package extracts each as a named pure function over a
-read-only typed context, routed through a small dispatcher, so later phases
-(declarative transforms, dotted-spec plugins) plug in additively rather than
-by editing the seams.
+zicato's scoring has two stages that would otherwise absorb a core edit
+whenever a new scoring *shape* is needed: per-run drift reduction (Seam 1,
+in the killable worker) and per-generation scalar synthesis (Seam 2, in the
+orchestrator). This package holds each as a named pure function over a
+read-only typed context, routed through a small dispatcher, so the two ways
+of reshaping a score — declarative transforms and dotted-spec plugins — plug
+in additively rather than by editing the seams.
 
-PHASE 1 (this package as introduced) is a pure refactor: the dispatchers
-compute the extracted built-in formula and return it with a ``"builtin"``
-provenance marker. No behaviour change.
+With neither configured, a dispatcher computes the built-in formula and
+returns it with a ``"builtin"`` provenance marker.
 
 Public surface
 --------------

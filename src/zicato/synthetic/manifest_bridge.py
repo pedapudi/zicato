@@ -66,11 +66,11 @@ def _find_manifest_with_root(source_root: Path) -> tuple[Path, Path] | None:
     the child directory the one-level-deep probe matched.
 
     Returning the base directly is what makes BOTH conventional layouts
-    work. The caller previously re-derived it as ``manifest_path.parents[2]``,
-    which is correct for the three-component
-    ``goldfive/optimization/manifest.toml`` but lands one level ABOVE the
-    checkout for the two-component ``optimization/manifest.toml`` form —
-    so every ``source`` under that layout resolved to a non-existent path
+    work. Re-deriving it as ``manifest_path.parents[2]`` is correct for the
+    three-component ``goldfive/optimization/manifest.toml`` but lands one
+    level ABOVE the checkout for the two-component
+    ``optimization/manifest.toml`` form, and every ``source`` under that
+    layout would then resolve to a non-existent path
     and every entry was dropped. That shape enumerated zero points, so
     correcting it can only add points, never move an existing one.
     """

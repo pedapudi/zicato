@@ -9,7 +9,7 @@ retains them: a tiny sink protocol
 (:class:`JudgeIOFileSink`) writing one JSON line per judge ``evaluate``
 call to a **zicato-owned** ``judge_io.jsonl`` beside the run's
 ``loss.json`` (``judge_io.r{n}.jsonl`` per replicate — the sidecar is
-deliberately NOT a new ``events.jsonl`` frame; goldfive's proto taxonomy
+NOT a new ``events.jsonl`` frame; goldfive's proto taxonomy
 is pinned by three parsers), and a tolerant reader
 (:func:`read_judge_io`).
 
@@ -42,8 +42,8 @@ module existed.
 Scope note: capture rides :class:`_InlineCriterionJudge` (LLM-as-a-judge)
 only. ``python``-mode judges (:class:`_PythonJudgeWrapper`) are
 operator-owned code with no zicato-visible LLM call — there is no "raw
-response" to retain — so they are inline-only for now; their verdicts
-still land as ``JudgementEmitted`` events exactly as before.
+response" to retain — so they are inline-only. Their verdicts land as
+``JudgementEmitted`` events like any other judge's.
 """
 
 from __future__ import annotations

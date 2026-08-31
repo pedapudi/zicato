@@ -1,7 +1,7 @@
 """Clean entry support — drive the cooperative reference agent.
 
 A ``synthetic_clean`` board entry is the inverse of
-``synthetic_adversarial``: it drives a deliberately cooperative agent
+``synthetic_adversarial``: it drives a cooperative agent
 that should produce no warning/critical drift under a well-behaved
 steerer. The expectation is :func:`zicato.synthetic.expectations.
 evaluate_no_drift` — pass iff every emitted drift event is INFO

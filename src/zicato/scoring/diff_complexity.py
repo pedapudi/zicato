@@ -27,16 +27,19 @@ supplies the strings.
 
 Calibration note (issue #120)
 ----------------------------
-Before real delta accounting, a ``kind="file"`` patch was charged for EVERY
-line of the file it re-emitted — a byte-identical re-emit of a 37-line
-template scored complexity 38. With parent content threaded, the same edit
-scores 0, and a genuine three-line change scores ~4 instead of ~38. Both
-halves of the diff-complexity regularizer read this measure — the loss-term
+The charge is the real line delta against the parent's content. A
+byte-identical re-emit of a 37-line template therefore scores 0, and a
+genuine three-line change scores about 4. Charging a ``kind="file"`` patch
+for EVERY line it re-emits instead would score that same re-emit 38.
+
+Both halves of the diff-complexity regularizer read this measure — the
+loss term
 :attr:`~zicato.core.types.ScoringWeights.diff_complexity_weight` and the
-gate's Rule 0 :attr:`~zicato.core.types.ScoringWeights.diff_complexity_ceiling`
-— so any weight or ceiling calibrated against the old file-charging numbers is
-now roughly an order of magnitude too loose on a whole-file mutation surface
-and should be re-tuned against a measured round.
+gate's ceiling
+:attr:`~zicato.core.types.ScoringWeights.diff_complexity_ceiling` — so a
+weight or ceiling calibrated against whole-file charging is roughly an
+order of magnitude too loose on a whole-file mutation surface, and should
+be re-tuned against a measured round.
 
 The differencing is exact up to :data:`EXACT_DIFF_MAX_LINES` and bounded above
 it; see that constant for the measured reason a size cap exists at all.
@@ -130,7 +133,7 @@ def _line_delta(parent: str, child: str) -> tuple[int, int]:
     measures ``(1, 1)`` either way, because the popular lines fall in the
     matched run), and it overstates only a near-total rewrite, where the
     parsimony toll is large under any accounting. Deterministic either way:
-    the cap is a size threshold, not a timeout.
+    the cap is a size threshold rather than a timeout.
     """
     parent_lines = _lines(parent)
     child_lines = _lines(child)
@@ -176,9 +179,9 @@ def diff_size(
     missing from it — the historical count applies unchanged: ``added`` is the
     line count of the whole replacement (a non-empty single-line replacement
     counts ``1``, an empty one ``0``), ``removed`` contributes nothing, and the
-    patch always counts toward ``patches``. This keeps every legacy caller
-    byte-identical; it is a fallback, not a second policy, and it overstates
-    a whole-file edit exactly as described in the module's calibration note.
+    patch always counts toward ``patches``. This is a fallback rather than a
+    second policy, and it overstates a whole-file edit exactly as the
+    module's calibration note describes.
 
     A content-less ``set_numeric`` / ``set_enum`` patch contributes no lines on
     either path and always counts toward ``patches``: the parent text of a
@@ -196,7 +199,7 @@ def diff_size(
         parent = None if parent_contents is None else parent_contents.get(patch.mutation_id)
         if parent is None:
             # Fallback: no parent text for this point — the whole replacement
-            # counts as added, exactly as before parent content was threaded.
+            # counts as added.
             patches += 1
             if content:
                 added += content.count("\n") + 1

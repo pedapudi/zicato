@@ -1,7 +1,7 @@
 """Scoring dispatchers — the single seam the live paths call.
 
-``reducer.py`` (Seam 1) and ``tournament/scoring.py`` (Seam 2) no longer
-inline their formulas; they build the typed context from
+``reducer.py`` (Seam 1) and ``tournament/scoring.py`` (Seam 2) inline no
+formula of their own; they build the typed context from
 :mod:`zicato.scoring.api`, hand it to the matching dispatcher here, and use
 the returned value + provenance marker.
 
@@ -31,7 +31,7 @@ The transform stage lives in the private ``_drift_transform`` /
 ``_scalar_transform`` helpers and the plugin stage in
 :func:`zicato.scoring.plugins.apply_drift_reducer` /
 :func:`~zicato.scoring.plugins.apply_scalar_fn`; the two boundaries are marked
-``# PHASE 2`` / ``# PHASE 3`` inline.
+``# TRANSFORM STAGE`` / ``# PLUGIN STAGE`` inline.
 """
 
 from __future__ import annotations
@@ -69,7 +69,7 @@ def resolve_drift_loss(ctx: DriftContext) -> tuple[float, ScoringProvenance]:
     Returns ``(loss, provenance)``.
 
     * No ``drift_kind_aggregation`` configured (or every entry neutral) →
-      ``(ctx.builtin_loss, "builtin")`` — byte-identical to today.
+      ``(ctx.builtin_loss, "builtin")`` — byte-identical to the default path.
     * Otherwise the dispatcher re-derives the per-drift-count terms, applying
       the named transform to the COUNT of each kind that carries a non-neutral
       spec (``severity × kind_weight × transform(count)`` in place of
@@ -80,7 +80,7 @@ def resolve_drift_loss(ctx: DriftContext) -> tuple[float, ScoringProvenance]:
       ``"transform:drift{looping_reasoning=harmonic}"``.
 
     If the contract names a ``drift_reducer`` dotted spec the dispatcher then
-    composes a Phase-3 plugin ON TOP of the transformed value: the plugin sees
+    composes that plugin ON TOP of the transformed value: the plugin sees
     the transformed loss as ``ctx.builtin_loss`` (so it WRAPS the declarative
     shape) and, fail-open, a raise / non-finite return falls back to the
     transformed value with a ``"<pre-plugin token> (fallback: ...)"``
@@ -92,13 +92,13 @@ def resolve_drift_loss(ctx: DriftContext) -> tuple[float, ScoringProvenance]:
     contract load (``ScoringWeights.__post_init__``), so :func:`apply_transform`
     is total here and never yields a ``NaN`` mid-run.
     """
-    # PHASE 2 — declarative drift_kind_aggregation. Compute the
+    # TRANSFORM STAGE — declarative drift_kind_aggregation. Compute the
     # transformed-or-builtin loss + its provenance; this becomes the PRE-PLUGIN
-    # value the Phase-3 plugin (if any) composes on top of.
+    # value a dotted-spec plugin (if any) composes on top of.
     pre_value, pre_token = _drift_transform(ctx)
 
-    # PHASE 3 HOOK — dotted-spec drift_reducer plugin (Seam 1, runs in the
-    # worker). Composes ON TOP of the Phase-2 transformed loss: the plugin sees
+    # PLUGIN STAGE — dotted-spec drift_reducer plugin (Seam 1, runs in the
+    # worker). Composes ON TOP of the transformed loss: the plugin sees
     # `pre_value` as `ctx.builtin_loss`, so it WRAPS the declarative shape rather
     # than the raw built-in. Fail-open (raise / non-finite -> WARNING + fall back
     # to `pre_value` with a "<pre_token> (fallback: ...)" provenance). NO
@@ -111,11 +111,11 @@ def resolve_drift_loss(ctx: DriftContext) -> tuple[float, ScoringProvenance]:
 
 
 def _drift_transform(ctx: DriftContext) -> tuple[float, ScoringProvenance]:
-    """PHASE 2 — apply the declarative ``drift_kind_aggregation`` (if any).
+    """The transform stage: apply the declarative ``drift_kind_aggregation``.
 
-    Returns the transformed-or-builtin loss + provenance. Extracted from
+    Returns the transformed-or-builtin loss + provenance. Held apart from
     :func:`resolve_drift_loss` so the dispatcher can use the result as the
-    pre-plugin value the Phase-3 ``drift_reducer`` wraps.
+    pre-plugin value a ``drift_reducer`` plugin wraps.
     """
     agg = ctx.weights.drift_kind_aggregation
     active = {k: s for k, s in agg.items() if not is_neutral(s)}
@@ -128,7 +128,7 @@ def _drift_transform(ctx: DriftContext) -> tuple[float, ScoringProvenance]:
     loss = 0.0
     transformed: dict[str, str] = {}
     for c in ctx.drift_counts:
-        # Judge-attributed drift is the judge: channel's, not this one's —
+        # Judge-attributed drift is the judge: channel's rather than this one's —
         # the same exclusion :func:`builtin_drift_loss` makes, in lockstep.
         if is_judge_attributed_kind(c.kind):
             continue
@@ -160,7 +160,7 @@ def resolve_scalar(ctx: ScalarContext) -> tuple[float, ScoringProvenance]:
     Returns ``(scalar, provenance)``.
 
     * No ``pass_transform`` (or neutral ``linear``) → ``(ctx.builtin_scalar,
-      "builtin")`` — byte-identical to today.
+      "builtin")`` — byte-identical to the default path.
     * Otherwise the dispatcher reshapes ONLY the pass/miss component: it
       transforms the ``(1 - mean_score)`` miss with ``pass_transform`` and
       rebuilds the scalar as ``builtin_scalar - old_pass + new_pass``, leaving
@@ -170,7 +170,7 @@ def resolve_scalar(ctx: ScalarContext) -> tuple[float, ScoringProvenance]:
       transform, e.g. ``"transform:pass=pow(2.0)"``.
 
     If the contract names a ``scalar_fn`` dotted spec the dispatcher then
-    composes a Phase-3 plugin ON TOP of the transformed value: the plugin sees
+    composes that plugin ON TOP of the transformed value: the plugin sees
     the transformed scalar as ``ctx.builtin_scalar`` (so it WRAPS the
     declarative shape) and, fail-open, a raise / non-finite return falls back to
     the transformed value with a ``"<pre-plugin token> (fallback: ...)"``
@@ -180,12 +180,13 @@ def resolve_scalar(ctx: ScalarContext) -> tuple[float, ScoringProvenance]:
     no-I/O / no-wall-clock. The spec was validated at contract load, so
     :func:`apply_transform` is total here.
     """
-    # PHASE 2 — declarative pass_transform. Compute the transformed-or-builtin
-    # scalar + its provenance; this becomes the PRE-PLUGIN value.
+    # TRANSFORM STAGE — declarative pass_transform. Compute the
+    # transformed-or-builtin scalar + its provenance; this becomes the
+    # PRE-PLUGIN value.
     pre_value, pre_token = _scalar_transform(ctx)
 
-    # PHASE 3 HOOK — dotted-spec scalar_fn plugin (Seam 2, orchestrator).
-    # Composes ON TOP of the Phase-2 transformed scalar: the plugin sees
+    # PLUGIN STAGE — dotted-spec scalar_fn plugin (Seam 2, orchestrator).
+    # Composes ON TOP of the transformed scalar: the plugin sees
     # `pre_value` as `ctx.builtin_scalar`, so it WRAPS the declarative shape.
     # Fail-open (raise / non-finite -> WARNING + fall back to `pre_value` with a
     # "<pre_token> (fallback: ...)" provenance). NO timeout (see plugins.py).
@@ -197,11 +198,11 @@ def resolve_scalar(ctx: ScalarContext) -> tuple[float, ScoringProvenance]:
 
 
 def _scalar_transform(ctx: ScalarContext) -> tuple[float, ScoringProvenance]:
-    """PHASE 2 — apply the declarative ``pass_transform`` (if any).
+    """The transform stage: apply the declarative ``pass_transform``.
 
-    Returns the transformed-or-builtin scalar + provenance. Extracted from
+    Returns the transformed-or-builtin scalar + provenance. Held apart from
     :func:`resolve_scalar` so the dispatcher can use the result as the
-    pre-plugin value the Phase-3 ``scalar_fn`` wraps.
+    pre-plugin value a ``scalar_fn`` plugin wraps.
     """
     spec = ctx.weights.pass_transform
     if spec is None or is_neutral(spec):

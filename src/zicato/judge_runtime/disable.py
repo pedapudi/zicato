@@ -3,13 +3,13 @@
 A :class:`zicato.core.Board` carries
 ``disable_drift: tuple[goldfive.DriftKind, ...]`` — the drift kinds the
 operator wants *suppressed* for that board (e.g. a board that
-deliberately exercises tool failures does not want ``tool_error`` drift
+exercises tool failures does not want ``tool_error`` drift
 counted against the agent's loss).
 
 goldfive's pluggable-judge surface (``goldfive#437``) has exactly one
 operator-facing lever for *which* signals are armed: the ``judges=``
 list passed to :func:`goldfive.wrap`. There is no per-drift-kind
-"off switch" on the legacy detector path. So "suppress drift kind K"
+"off switch" on the detector path itself. So "suppress drift kind K"
 translates to: **build the goldfive judge list from
 ``builtin_judges.default_judges()`` minus the built-in judge that
 emits K** — dropping that judge removes its
