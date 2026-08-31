@@ -9,16 +9,15 @@ and a challenger whose proposer failed contributes no sibling line.
 
 from __future__ import annotations
 
-import asyncio
 import json
 from pathlib import Path
 
 import pytest
 
 from tests._orchestrator_harness import (
-    _harness_call_llm,
     _install_stub_adapter_factory,
     _install_telemetry_stubs,
+    run_evolve_once,
 )
 from tests.test_orchestrator_multi_challenger import _bootstrap_swiss_workspace
 
@@ -100,16 +99,7 @@ def test_field_accumulates_in_flight_siblings(
         ]
     )
 
-    from zicato.orchestrator import evolve_once
-
-    asyncio.run(
-        evolve_once(
-            workspace_root=workspace,
-            epoch_id=epoch_id,
-            harness_call_llm=_harness_call_llm,
-            auxiliary_call_llm=aux,
-        )
-    )
+    run_evolve_once(workspace, epoch_id, aux)
 
     assert len(aux.proposer_prompts) == 3
     p0, p1, p2 = aux.proposer_prompts
@@ -148,17 +138,7 @@ def test_failed_challenger_contributes_no_sibling(
     # retries); the second is valid.
     aux = _CapturingFieldLLM(["", _response_with_core_idea(idea_b)])
 
-    from zicato.orchestrator import evolve_once
-
-    asyncio.run(
-        evolve_once(
-            workspace_root=workspace,
-            epoch_id=epoch_id,
-            harness_call_llm=_harness_call_llm,
-            auxiliary_call_llm=aux,
-            max_proposer_retries=0,
-        )
-    )
+    run_evolve_once(workspace, epoch_id, aux, max_proposer_retries=0)
 
     assert len(aux.proposer_prompts) == 2
     _, p1 = aux.proposer_prompts
@@ -197,17 +177,9 @@ def test_duplicate_sibling_is_soft_rejected_for_field_diversity(
         ]
     )
 
-    from zicato.orchestrator import evolve_once
     from zicato.runtime.state import read_active_tournament
 
-    asyncio.run(
-        evolve_once(
-            workspace_root=workspace,
-            epoch_id=epoch_id,
-            harness_call_llm=_harness_call_llm,
-            auxiliary_call_llm=aux,
-        )
-    )
+    run_evolve_once(workspace, epoch_id, aux)
 
     active = read_active_tournament(workspace)
     assert active is not None
@@ -248,17 +220,9 @@ def test_same_ids_different_idea_is_not_a_duplicate(
         ]
     )
 
-    from zicato.orchestrator import evolve_once
     from zicato.runtime.state import read_active_tournament
 
-    asyncio.run(
-        evolve_once(
-            workspace_root=workspace,
-            epoch_id=epoch_id,
-            harness_call_llm=_harness_call_llm,
-            auxiliary_call_llm=aux,
-        )
-    )
+    run_evolve_once(workspace, epoch_id, aux)
 
     active = read_active_tournament(workspace)
     assert active is not None
@@ -322,17 +286,9 @@ def test_overlap_soft_reject_fires_under_diversity_tolerance(
         ]
     )
 
-    from zicato.orchestrator import evolve_once
     from zicato.runtime.state import read_active_tournament
 
-    asyncio.run(
-        evolve_once(
-            workspace_root=workspace,
-            epoch_id=epoch_id,
-            harness_call_llm=_harness_call_llm,
-            auxiliary_call_llm=aux,
-        )
-    )
+    run_evolve_once(workspace, epoch_id, aux)
 
     active = read_active_tournament(workspace)
     assert active is not None
@@ -380,17 +336,9 @@ def test_overlap_enforcement_absent_is_byte_compatible(
         ]
     )
 
-    from zicato.orchestrator import evolve_once
     from zicato.runtime.state import read_active_tournament
 
-    asyncio.run(
-        evolve_once(
-            workspace_root=workspace,
-            epoch_id=epoch_id,
-            harness_call_llm=_harness_call_llm,
-            auxiliary_call_llm=aux,
-        )
-    )
+    run_evolve_once(workspace, epoch_id, aux)
 
     active = read_active_tournament(workspace)
     assert active is not None

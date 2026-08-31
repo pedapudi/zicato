@@ -39,6 +39,7 @@ from tests._orchestrator_harness import (
     _harness_call_llm,
     _install_stub_adapter_factory,
     _make_aux_responder,
+    run_evolve_once,
 )
 from zicato.core import BoardEntry, DriftCount, ExpectationResult, LossProfile
 from zicato.core.types import OverfittingConfig, ScoringWeights, TournamentStructure
@@ -338,15 +339,8 @@ def test_holdout_confirms_a_true_win_and_persists_records(
         pass_by_gen={"v0": True, "v1": True, "v2": True},
     )
 
-    from zicato.orchestrator import evolve_once
-
-    outcome = asyncio.run(
-        evolve_once(
-            workspace_root=workspace,
-            epoch_id=epoch_id,
-            harness_call_llm=_harness_call_llm,
-            auxiliary_call_llm=_make_aux_responder(_distinct_field_responses(2)),
-        )
+    outcome = run_evolve_once(
+        workspace, epoch_id, _make_aux_responder(_distinct_field_responses(2))
     )
 
     assert outcome.tournament_decision == "promoted", structure
@@ -398,15 +392,9 @@ def test_holdout_regression_flips_a_bracket_leaders_win_to_reject(
     )
 
     from zicato.evolve.generation_phase import current_generation
-    from zicato.orchestrator import evolve_once
 
-    outcome = asyncio.run(
-        evolve_once(
-            workspace_root=workspace,
-            epoch_id=epoch_id,
-            harness_call_llm=_harness_call_llm,
-            auxiliary_call_llm=_make_aux_responder(_distinct_field_responses(2)),
-        )
+    outcome = run_evolve_once(
+        workspace, epoch_id, _make_aux_responder(_distinct_field_responses(2))
     )
 
     assert outcome.tournament_decision == "rejected", structure
@@ -448,16 +436,8 @@ def test_per_epoch_ladder_budget_is_shared_and_decremented(
     )
 
     from zicato.core.workspace import ladder_state_path
-    from zicato.orchestrator import evolve_once
 
-    asyncio.run(
-        evolve_once(
-            workspace_root=workspace,
-            epoch_id=epoch_id,
-            harness_call_llm=_harness_call_llm,
-            auxiliary_call_llm=_make_aux_responder(_distinct_field_responses(2)),
-        )
-    )
+    run_evolve_once(workspace, epoch_id, _make_aux_responder(_distinct_field_responses(2)))
 
     state_path = ladder_state_path(workspace, epoch_id)
     assert state_path.exists(), "the crowning confirmation must persist the shared ladder state"
@@ -501,15 +481,9 @@ def test_empty_holdout_degrades_to_whole_board(
     )
 
     from zicato.core.workspace import ladder_state_path
-    from zicato.orchestrator import evolve_once
 
-    outcome = asyncio.run(
-        evolve_once(
-            workspace_root=workspace,
-            epoch_id=epoch_id,
-            harness_call_llm=_harness_call_llm,
-            auxiliary_call_llm=_make_aux_responder(_distinct_field_responses(2)),
-        )
+    outcome = run_evolve_once(
+        workspace, epoch_id, _make_aux_responder(_distinct_field_responses(2))
     )
 
     assert outcome.tournament_decision == "promoted", structure
@@ -550,15 +524,9 @@ def test_settled_promotion_agrees_with_champion_and_lineage(
     )
 
     from zicato.evolve.generation_phase import current_generation
-    from zicato.orchestrator import evolve_once
 
-    outcome = asyncio.run(
-        evolve_once(
-            workspace_root=workspace,
-            epoch_id=epoch_id,
-            harness_call_llm=_harness_call_llm,
-            auxiliary_call_llm=_make_aux_responder(_distinct_field_responses(2)),
-        )
+    outcome = run_evolve_once(
+        workspace, epoch_id, _make_aux_responder(_distinct_field_responses(2))
     )
 
     assert outcome.tournament_decision == "promoted", structure
@@ -600,15 +568,9 @@ def test_holdout_flip_persists_a_rejected_bracket_not_a_phantom_promotion(
     )
 
     from zicato.evolve.generation_phase import current_generation
-    from zicato.orchestrator import evolve_once
 
-    outcome = asyncio.run(
-        evolve_once(
-            workspace_root=workspace,
-            epoch_id=epoch_id,
-            harness_call_llm=_harness_call_llm,
-            auxiliary_call_llm=_make_aux_responder(_distinct_field_responses(2)),
-        )
+    outcome = run_evolve_once(
+        workspace, epoch_id, _make_aux_responder(_distinct_field_responses(2))
     )
 
     assert outcome.tournament_decision == "rejected", structure

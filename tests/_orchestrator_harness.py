@@ -28,6 +28,7 @@ Three of the stubs carry decisions that are easy to undo by accident:
 
 from __future__ import annotations
 
+import asyncio
 import json
 import sys
 import types
@@ -370,4 +371,39 @@ def _valid_proposer_response() -> str:
                 }
             ],
         }
+    )
+
+
+def run_evolve_once(
+    workspace: Path,
+    epoch_id: str,
+    auxiliary_call_llm: Any,
+    **evolve_kwargs: Any,
+) -> Any:
+    """Run one scripted evolve round and return its outcome.
+
+    Every scripted caller drives the round the same way: the same harness
+    callable, the workspace and epoch the bootstrap just produced, and a
+    scripted auxiliary callable that stands in for the proposer. Only the
+    scripted responses differ, so only they are passed.
+
+    ``evolve_once`` is imported inside this function rather than at module
+    scope, which is how the callers did it. It matters: a caller has
+    normally just replaced ``zicato.adapter_factory`` and the telemetry
+    modules in ``sys.modules``, and importing the orchestrator before that
+    would bind the real ones.
+
+    Extra keyword arguments go straight to ``evolve_once``, for the tests
+    whose subject is one of its other parameters.
+    """
+    from zicato.orchestrator import evolve_once  # noqa: PLC0415
+
+    return asyncio.run(
+        evolve_once(
+            workspace_root=workspace,
+            epoch_id=epoch_id,
+            harness_call_llm=_harness_call_llm,
+            auxiliary_call_llm=auxiliary_call_llm,
+            **evolve_kwargs,
+        )
     )

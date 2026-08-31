@@ -43,6 +43,7 @@ from tests._orchestrator_harness import (
     _install_telemetry_stubs,
     _make_aux_responder,
     _valid_proposer_response,
+    run_evolve_once,
 )
 from zicato.telemetry.reducer import read_loss_profile as _REAL_READ_LOSS
 from zicato.telemetry.reducer import write_loss_profile as _REAL_WRITE_LOSS
@@ -121,17 +122,8 @@ def test_resume_reuses_completed_units_without_rerun(
     )
     _wire_real_loss_cache(monkeypatch)
 
-    from zicato.orchestrator import evolve_once
-
     # --- Round 1: run a full round so v0 + v1 board units land loss.json. ---
-    first = asyncio.run(
-        evolve_once(
-            workspace_root=workspace,
-            epoch_id=epoch_id,
-            harness_call_llm=_harness_call_llm,
-            auxiliary_call_llm=_make_aux_responder([_valid_proposer_response()]),
-        )
-    )
+    first = run_evolve_once(workspace, epoch_id, _make_aux_responder([_valid_proposer_response()]))
     assert first.proposed_generation_id == "v1"
     gens = workspace / "epochs" / epoch_id / "generations"
     v1_dir = gens / "v1"
