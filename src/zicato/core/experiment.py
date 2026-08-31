@@ -88,7 +88,7 @@ class HypothesisSpec:
     """Structured hypothesis written by the proposer BEFORE the run.
 
     Hypotheses are mandatory and structured so the journal captures what
-    the proposer was thinking and whether it was right, not just what
+    the proposer was thinking and whether it was right rather than just what
     changed. Schema-invalid proposer responses are rejected and the
     proposer is asked to fix.
 
@@ -255,23 +255,26 @@ class OutcomeRecord:
     # per-board scalars were reused and the champion was NOT executed;
     # ``"fast-degraded"`` = fast was requested but no cache covered the
     # needed boards, so the champion ran once to seed it. Defaults to
-    # ``"full"`` so older journals deserialize unchanged. Recorded purely
-    # for provenance — flipping fast↔full does not roll the epoch.
+    # ``"full"``, which is also what a journal omitting the key reads back
+    # as. Recorded for provenance only: flipping fast↔full does not roll the
+    # epoch.
     champion_eval_mode: str = "full"
     # Holdout + Ladder evidence for THIS round (OVERFITTING.md §4 / §12 #2).
     # ``None`` (the default) when there was no holdout to consult — a small
-    # board, the split disabled, or no tagged entry — so older journals and
-    # the byte-identical Phase-A degrade carry no block. When a holdout was
+    # board, the split disabled, or no tagged entry — so a round that never
+    # consulted a holdout carries no block at all. When a holdout was
     # consulted this is a plain JSON-shaped dict with the stable shape the
     # dashboard reads (the keys are documented at
     # :func:`zicato.tournament.ladder.holdout_record`):
     # ``{"confirmed": bool|None, "train_scalar": float|None,
     #    "holdout_scalar": float|None, "ladder_released": bool,
     #    "ladder_budget_total": int, "ladder_budget_remaining": int,
-    #    "threshold": float}``. RUNTIME evidence, not a contract input.
+    #    "threshold": float}``. This is runtime evidence about the round; it
+    # is no part of the evaluation contract.
     holdout: dict[str, Any] | None = None
     # Per-generation train/holdout loss + the generalization gap
-    # (OVERFITTING.md §6 / §12 #5). RUNTIME evidence, not a contract input.
+    # (OVERFITTING.md §6 / §12 #5). Runtime evidence about the round; no part
+    # of the evaluation contract.
     # ``train_loss`` is THIS generation's (the child's) TRAIN-slice scalar —
     # the score that gated it. ``holdout_loss`` is its HOLDOUT-slice scalar,
     # or ``None`` when there was no holdout (small board / split disabled /
@@ -283,15 +286,15 @@ class OutcomeRecord:
     train_loss: float | None = None
     holdout_loss: float | None = None
     generalization_gap: float | None = None
-    # Operator override (RUNTIME-V2.md Phase 2 — the control protocol's
-    # promote/reject commands). When an operator force-promotes or
-    # force-rejects the in-flight generation through the dashboard, the
-    # gate's own verdict is overridden — but NEVER silently: this flag is
-    # set and the reason recorded so the journal/index carry that the
-    # decision was an explicit operator override rather than the gate's.
-    # ``False`` (the default) on every gate-decided round and on every
-    # journal written before the feature. RUNTIME evidence, not a contract
-    # input.
+    # Operator override, driven by the control protocol's promote/reject
+    # commands (``docs/design/RUNTIME-V2.md``). When an operator
+    # force-promotes or force-rejects the in-flight generation through the
+    # dashboard, the gate's own verdict is overridden — but NEVER silently:
+    # this flag is set and the reason recorded, so the journal and index
+    # carry that the decision was an explicit operator override rather than
+    # the gate's. ``False`` on every gate-decided round, and on any journal
+    # that omits the key. This is runtime evidence about how a round was
+    # decided; it is no part of the evaluation contract.
     operator_override: bool = False
     # The freeform reason the operator attached to the override (the
     # dashboard's ``reason`` field), or a synthesised note. Empty unless
@@ -304,7 +307,7 @@ class OutcomeRecord:
     # defer→replicate loop produced. ``None`` when the pre-gate never reached
     # a credible terminal — the gate is off, the decision was a plain reject,
     # or the fit never cleared the credibility floor — so older journals and
-    # gate-off rounds deserialize unchanged. RUNTIME evidence, not a contract
+    # gate-off rounds deserialize unchanged. RUNTIME evidence rather than a contract
     # input.
     evidence: dict[str, Any] | None = None
 
@@ -414,8 +417,8 @@ class Experiment:
     parent_generation_id:
         The lineage head this experiment is challenging, or ``None`` when
         there is no in-epoch parent (the ``v0`` seed marker — cross-epoch
-        lineage lives in ``lineage.json``). A legacy on-disk ``""`` is
-        normalised to ``None`` on read.
+        lineage lives in ``lineage.json``). An on-disk ``""`` is normalised
+        to ``None`` on read.
     proposed_at:
         ISO-8601 UTC timestamp when the proposer emitted the hypothesis.
     hypothesis:
@@ -443,14 +446,14 @@ class Experiment:
     patches: tuple[Patch, ...]
     outcome: OutcomeRecord | None
     round_index: int = 0
-    #: Machine provenance for a mechanically-recombined experiment
-    #: (WS-REC): the generation ids of the two rejected complementary
-    #: parents whose patch sets were merged to mint this challenger, in
-    #: ascending-gid order. Empty ``()`` for every ordinary (non-recombined)
-    #: experiment — the vast majority — so the journal writer OMITS the key
-    #: entirely at this default and every non-recombined ``experiment.json``
-    #: stays byte-identical to one written before the field existed.
+    #: Machine provenance for a mechanically-recombined experiment: the
+    #: generation ids of the two rejected complementary parents whose patch
+    #: sets were merged to mint this challenger, in ascending-gid order.
+    #: Empty ``()`` for every ordinary (non-recombined) experiment — the
+    #: vast majority — and the journal writer OMITS the key entirely at
+    #: that default, so a non-recombined ``experiment.json`` carries no
+    #: recombination key at all.
     #: Consumers read THIS field for recombination provenance; they never
     #: parse the ``[recombined]`` display prefix on ``hypothesis.core_idea``.
-    #: A legacy on-disk record without the key reads back as ``()``.
+    #: An on-disk record without the key reads back as ``()``.
     recombined_from: tuple[str, ...] = ()

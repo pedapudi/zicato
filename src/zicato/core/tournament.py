@@ -60,7 +60,7 @@ class Side(StrEnum):
 #: how a pass-rate movement rejects a challenger when
 #: :attr:`ScoringWeights.pass_rate_monotonicity` is on:
 #:
-#: * ``"per_entry"`` (default, today's behaviour) — EVERY entry the
+#: * ``"per_entry"`` (default, the default behaviour) — EVERY entry the
 #:   champion passed must still pass on the challenger; any entry that
 #:   flips champion-pass → challenger-fail rejects. The right policy when
 #:   every board entry is a must-not-regress invariant (a regression
@@ -136,7 +136,7 @@ class TournamentStructure:
     automatically), so changing the structure — or any param — rolls the
     epoch, exactly as retuning ``promote_margin`` does. A gauntlet
     champion and a Swiss champion are selected under different rules and
-    are not directly comparable, which is precisely the contract-roll
+    are not directly comparable, which is the contract-roll
     rationale.
 
     Fields

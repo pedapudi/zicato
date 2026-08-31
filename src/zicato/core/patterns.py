@@ -23,7 +23,7 @@ class Pattern:
     proposer-actionable observations. Detectors produce a list of
     :class:`Pattern` objects each generation; the proposer reads the
     list and decides which to address. :attr:`kind` is open-ended (a
-    bare string, not a Literal) so new detector kinds can be added
+    bare string rather than a Literal) so new detector kinds can be added
     without breaking the schema.
 
     Fields

@@ -331,7 +331,7 @@ class LossProfile:
     memory_failure_count:
         Zicato-derived signal: number of times across the conversation
         the inner agent re-asked something the simulated user had
-        already answered. Computed by the reducer, not by goldfive.
+        already answered. Computed by the reducer rather than by goldfive.
     context_loss_count:
         Zicato-derived signal: number of times the inner agent appeared
         to forget a fact established earlier in the conversation.
@@ -566,7 +566,7 @@ class LossProfile:
           that judge's already-per-judge-weighted loss. This is the only
           route custom judges take into the scalar; their ``drift:custom``
           mirrors are excluded from the generic namespace aggregation
-          precisely so the two cannot double-count.
+          so the two cannot double-count.
         * ``failure:tasks`` / ``failure:not_completed`` — the run-outcome
           facts (:attr:`task_failure_ratio`, :attr:`not_completed`). Emitted
           even at zero so the key set does not depend on whether a run went

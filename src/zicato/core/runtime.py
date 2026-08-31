@@ -36,10 +36,10 @@ INFRA_BACKOFF_BASE_S_DEFAULT: float = 30.0
 INFRA_BACKOFF_CAP_S_DEFAULT: float = 480.0
 
 #: Valid values for :attr:`RuntimeConfig.preflight_gate`, weakest first.
-#: ``"off"`` — do not run the achievable-signal pre-flight (UNLESS a legacy
-#: ``contract_preflight: K`` key explicitly requests it, preserving pre-#84
-#: opt-in behaviour); with no such key — the common case, incl. deterministic
-#: oracles — ``"off"`` runs no pre-flight at all; ``"warn"`` (the DEFAULT) —
+#: ``"off"`` — do not run the achievable-signal pre-flight, UNLESS a
+#: ``contract_preflight: K`` key explicitly requests it; with no such key —
+#: the common case, including deterministic oracles — ``"off"`` runs no
+#: pre-flight at all; ``"warn"`` (the DEFAULT) —
 #: measure it once per epoch at evolve start and LOUDLY warn on a
 #: below-noise-floor / saturated verdict, but never stop; ``"refuse"`` —
 #: additionally HARD-STOP the run before spending rounds when the verdict is
@@ -160,7 +160,7 @@ class RuntimeConfig:
     judge_call_llm:
         Optional LLM callable used by the in-run process judges /
         rubric matchers. ``None`` (the default) ⇒ judges fall back to
-        :attr:`auxiliary_call_llm` (today's behavior). When set (from
+        :attr:`auxiliary_call_llm` (the default behavior). When set (from
         the workspace ``models.judge`` block) it lets an operator point
         the judges at a separate endpoint/model from the rest of the
         auxiliary surface. Read via :meth:`effective_judge_call_llm`.
@@ -200,7 +200,7 @@ class RuntimeConfig:
         Values above ``1`` let the runner play several "boards" of the
         tournament hall simultaneously, bounded by an
         :class:`asyncio.Semaphore`. The real-world ceiling is almost
-        always the LLM endpoint's own concurrency limit, not this
+        always the LLM endpoint's own concurrency limit rather than this
         number — size it against ``2 * parallelism`` — so
         a modest default (``4``) is a safe starting point; operators
         raise it only when the endpoint can absorb more in-flight calls.
@@ -219,7 +219,7 @@ class RuntimeConfig:
         :mod:`zicato.runtime.spawn_permit` and RUNTIME.md §5.5.7.
 
         ``None`` — the DEFAULT — means AUTO:
-        ``max(4, 2 * os.cpu_count())``, deliberately generous enough that
+        ``max(4, 2 * os.cpu_count())``, generous enough that
         a single ordinary run never waits on a permit. ``0`` disables the
         cap entirely (no filesystem is touched). ``>= 1`` is an explicit
         ceiling. A run whose permits are all held QUEUES rather than
@@ -255,7 +255,7 @@ class RuntimeConfig:
         :attr:`worker_env_passthrough` keys) — instead of inheriting the
         orchestrator's full environment. This denies a mutated worker
         read-access to every credential in the orchestrator's process env.
-        Defaults to ``False`` (full inheritance — today's behavior), so a
+        Defaults to ``False`` (full inheritance — the default behavior), so a
         run is byte-for-byte unchanged unless an operator opts in.
     worker_env_passthrough:
         Extra environment-variable NAMES a scrubbed worker should still
@@ -265,9 +265,8 @@ class RuntimeConfig:
     diversity_tolerance:
         Optional field-diversity overlap ceiling for the multi-challenger
         (non-gauntlet) path. ``None`` (the default) disables enforcement
-        entirely, so a field of N challengers runs byte-for-byte as it does
-        today (the only diversity guard is the pre-existing exact-duplicate
-        soft-reject). When SET to a fraction in ``(0, 1]``, a challenger
+        entirely, leaving the exact-duplicate soft-reject as the only
+        diversity guard. When SET to a fraction in ``(0, 1]``, a challenger
         whose targeted-mutation-id set overlaps an already-accepted sibling's
         by a Jaccard ratio STRICTLY GREATER than this tolerance is
         *soft-rejected* — dropped from the run slate and recorded with a
@@ -295,9 +294,9 @@ class RuntimeConfig:
         is not. Tests and supervisor-less harnesses shrink it to keep
         that floor from dominating wall-clock time.
     infra_abort_round_threshold:
-        Endpoint-outage circuit breaker (WS-H). ``0`` (the DEFAULT) is
-        OFF — an all-infra-aborted round settles exactly as today (the
-        aborted runs score worst-case and the child is rejected). When
+        Endpoint-outage circuit breaker. ``0`` (the DEFAULT) is OFF, and
+        an all-infra-aborted round then settles like any other: the
+        aborted runs score worst-case and the child is rejected. When
         ``>= 1``: after a gauntlet round's tournament settles, the
         orchestrator counts the duel's INFRA-aborted runs
         (:func:`zicato.core.loss.is_infra_abort_cause` — worker crashes,
@@ -321,20 +320,19 @@ class RuntimeConfig:
         :data:`PREFLIGHT_GATE_MODES` — ``"off"`` | ``"warn"`` | ``"refuse"``.
         At evolve start (round 0, once per epoch, idempotent, best-effort)
         the loop measures the contract's A/A noise floor AND its degradation
-        signal (champion vs a deliberately-degraded copy of itself; see
+        signal (champion vs a degraded copy of itself; see
         :mod:`zicato.epoch.preflight`). ``"warn"`` (the DEFAULT) LOUDLY warns
         when the measured signal does not clear the noise floor (or the
         contract is saturated) and lets the run proceed — matching the
         recommend-only philosophy; ``"refuse"`` additionally HARD-STOPS the
         run (``PreflightRefusedError``) before rounds burn budget on a
         contract that cannot be optimized; ``"off"`` runs no pre-flight —
-        UNLESS a legacy ``contract_preflight: K`` key is present (which was the
-        pre-#84 opt-in, so ``"off"`` preserves that exact behaviour). With no
-        such key — the common case, incl. deterministic oracles that assert
-        their own known answer — ``"off"`` is byte-identical to pre-#84 (no
-        measurement). A RUNTIME tuning knob, NOT part of the frozen evaluation
-        contract — flipping it does not roll the epoch. The legacy
-        ``config.json`` ``"contract_preflight": K`` key still sets the number
+        UNLESS a ``contract_preflight: K`` key is present, which requests one
+        explicitly. With no such key — the common case, including
+        deterministic oracles that assert their own known answer — ``"off"``
+        measures nothing at all. A RUNTIME tuning knob that is no part of the
+        frozen evaluation contract, so flipping it does not roll the epoch.
+        The ``config.json`` ``"contract_preflight": K`` key sets the number
         of A/A draws K; absent, K defaults to ``DEFAULT_CALIBRATION_RUNS``.
         COST: under ``"warn"``/``"refuse"`` the once-per-epoch measurement runs
         ~K+1 champion board evaluations (the A/A draws + one degraded probe) at
@@ -352,11 +350,12 @@ class RuntimeConfig:
         replicate block cannot hold a wider sample). The pre-flight degrades
         a deterministic, role-diverse sample of this size
         (:func:`zicato.epoch.preflight.select_probe_points`) and reports the
-        MAX signal, so one point that happens not to reach the deliverable can
-        no longer produce a spurious ``refuse``. COST: a ceiling, not a spend
-        — probing stops at the first point clearing both the noise floor and
-        ``promote_margin``, so the healthy case is one degraded draw and the
-        extra evaluations are paid only on a contract that looks unmeasurable.
+        MAX signal, so one point that happens not to reach the deliverable
+        cannot produce a spurious ``refuse``. COST: this is a ceiling rather
+        than a spend — probing stops at the first point clearing both the
+        noise floor and ``promote_margin``, so the healthy case is one
+        degraded draw and the extra evaluations are paid only on a contract
+        that looks unmeasurable.
         A RUNTIME tuning knob, NOT part of the frozen evaluation contract —
         changing it does not roll the epoch.
     preflight_probe_mutation_ids:
@@ -374,8 +373,8 @@ class RuntimeConfig:
         --degrade-mutation-id`` is the one-shot equivalent. A RUNTIME tuning
         knob, NOT part of the frozen evaluation contract.
     max_tokens_per_round:
-        Per-round token budget (WS-H). ``0`` (the DEFAULT) is OFF —
-        byte-identical scheduling. When ``>= 1``, the orchestrator mints
+        Per-round token budget. ``0`` (the DEFAULT) is OFF and leaves
+        scheduling untouched. When ``>= 1``, the orchestrator mints
         a fresh :class:`RoundTokenLedger` per round; every fresh board
         unit run (parent + child + evidence replicates + candidate
         screen) folds its opportunistic ``cost:tokens_spent`` into the
@@ -442,7 +441,7 @@ class RuntimeConfig:
     plain programming error (a sub-one semaphore is meaningless) caught
     far better at construction than deep inside the runner's gather. It
     reads no callable identity and mutates no field, so it does not
-    reopen the deliberately-deferred two-callable validation above.
+    reopen the deferred two-callable validation above.
     """
 
     instance_id: str
@@ -554,7 +553,7 @@ class RuntimeConfig:
     def effective_judge_call_llm(self) -> CallLLM:
         """The callable judges run on: :attr:`judge_call_llm` or the auxiliary.
 
-        Judges historically run on :attr:`auxiliary_call_llm`; a workspace
+        Judges run on :attr:`auxiliary_call_llm` by default; a workspace
         ``models.judge`` block may override them onto a separate endpoint via
         :attr:`judge_call_llm`. This single accessor centralises that
         fall-back so every judge call site reads the same rule.
@@ -607,7 +606,7 @@ class RuntimeConfig:
         Returns :attr:`proposer_breadth_call_llm` when set, else the
         auxiliary surface. NOT the live read path: the best-of-N wrapper
         does its OWN fall-back onto the propose-time ``ctx.aux_call_llm``
-        (the context, not this config, is the propose-time source of truth
+        (the context rather than this config is the propose-time source of truth
         for the auxiliary surface), so it never calls this accessor. Kept
         for parity with the judge/adjudicator accessors and for callers that
         want the resolved callable off a config in hand.
