@@ -763,7 +763,7 @@ chapter leans on:
 |---|---|---|---|
 | `build_optimization_trajectory` | `/api/epoch/{id}/trajectory` | `{points, promotion_rate, plateaued, verdict, recent_movement, noise_floor}` | empty shape + `note`; floor still attached (§9.8) |
 | `build_tournament_cost` | `/api/epoch/{id}/cost` | `{per_matchup, total_runtime_ms, cost_per_promotion_ms}` | empty shape + `note` |
-| `build_round_pipeline` | `/api/live/pipeline` | `{running, stale, phase, steps[], active_step, decision, in_flight}` | every input degrades independently (§9.11) |
+| `build_live_pipeline` (`query/live_execution_plan.py`) | `/api/live/pipeline` | `{running, stale, liveness, phase, epoch_id, round_index, steps[], epoch_open_step, active_step, decision, in_flight}` — the verdict `build_round_pipeline` decodes, projected out of the SAME read of the running epoch that serves the live execution plan, so the two surfaces cannot report different phases or different counts of the same records | every input degrades independently (§9.11); an unreadable phase serves `{}`, which the stepper reads as no stepper |
 | `build_racing_field` | `/api/epoch/{id}/racing-field` | `{present, structure, rounds[], standings, champion_lineage}` | `{present: false}` (§9.2.5) |
 | `build_round_timeline` | `/api/epoch/{id}/round-timeline` | `{rounds[], waterfall[]}` | empty rounds list |
 | `build_execution_plan` | `/api/epoch/{id}/execution-plan` | `{board:{digest, entry_count}, stages[]}` — the loop as one tree: baseline + per-round propose/apply/run/gate/decide steps from the round log, work units from the per-unit loss files (never from the log's `unit_completed` aggregate), plus one `measurement_band` step per stage for the reserved ranges that are not a cell's evidence (calibration, the pre-flight's deliberately-degraded probes, the candidate screen, reflection, admission, and anything `unclaimed`), each node stating `status` and `exact`/`partial` provenance | empty stages list + `note` |
@@ -1902,10 +1902,27 @@ PIPELINE_STEPS: tuple[tuple[str, str], ...] = (
 phase-string vocabulary (`proposing:… / tournament:… / done:… /
 after_round_…`) into `(steps, active_step, decision)` — each step
 `{id, label, state, detail}` with `state ∈ pending | active | done`. It is
-"the single place the phase-string vocabulary is decoded for the pipeline
-display — the JS renders the verdict verbatim". `build_round_pipeline`
+the single place the phase-string vocabulary is decoded for the pipeline
+display, and the JS renders the verdict verbatim. `build_round_pipeline`
 projects it from the live tournament fold + heartbeat + active-runs count,
-staleness-gated exactly like the frontend.
+staleness-gated the way the frontend gates.
+
+**Both live surfaces come from one read.** `/api/live/pipeline` and
+`/api/live/execution-plan` are the same reading of the running epoch at two
+altitudes: the pipeline names the step the loop is inside, and the plan
+marks that step in the tree of everything the epoch has run.
+`build_live_surfaces` (`live_execution_plan.py`) reads the workspace once,
+calls `build_round_pipeline`, projects that verdict onto plan nodes, and
+returns both; the two endpoints are its two projections. Serving them from
+one read is what keeps the stepper from reporting Gate while the plan marks
+Run active, and keeps the two from reporting different counts of the same
+in-flight records. Both rows are declared `off_event_loop=True`: the plan
+walks every per-unit file in the epoch, and that read must not sit on the
+event loop of a route the hero polls on each live tick. Measured against the
+largest epoch available for measurement (`2026-06-07_e4`, 56 loss files, 64
+nodes) the served live payload is 41.7 KB, ~0.65 KB per node, well under the
+200 KB at which paging the tree would pay for its own complexity — so no
+`depth` parameter is built.
 
 The JS renderer is a straight transcription — one pip per server step, the
 active step's detail beside it, the decision word once the round settles.

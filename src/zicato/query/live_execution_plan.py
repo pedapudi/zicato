@@ -15,16 +15,20 @@ vocabulary and age the run records. It cannot do the second: a browser is
 never the worker's host, so it cannot run the host-locality gate. The two
 surfaces would then disagree about what is running.
 
-Nothing here re-derives liveness or the pipeline position
---------------------------------------------------------
-The phase string is decoded in exactly one place —
-:func:`zicato.query.loop_view.build_round_pipeline`, which the round-pipeline
-stepper already renders — and this module PROJECTS that verdict onto plan
-nodes. So the stepper cannot say "gate" while the plan marks Run active.
-The overlay gates on the same served liveness verdict the stepper gates on.
-A workspace whose files froze in June still holds a mid-round phase and
-seven ``active_runs`` records. It must serve its durable plan with an EMPTY
-overlay rather than a tree full of nodes reading "running".
+Both live surfaces are projections of one read
+---------------------------------------------
+The phase string is decoded in one place —
+:func:`zicato.query.loop_view.build_round_pipeline` — and
+:func:`build_live_surfaces` reads it once, projects it onto plan nodes, and
+returns both projections: the plan for ``/api/live/execution-plan`` and the
+same verdict for ``/api/live/pipeline``, which the round-pipeline stepper
+renders. Serving them from one read is what stops the stepper saying "gate"
+while the plan marks Run active, or the two reporting different counts of
+the same in-flight records. The overlay gates on the served liveness verdict
+the stepper gates on. A workspace whose files froze months ago still holds a
+mid-round phase and seven ``active_runs`` records. It must serve its durable
+plan with an EMPTY overlay rather than a tree full of nodes reading
+"running".
 
 One id grammar, two tenses
 --------------------------
@@ -201,14 +205,68 @@ def build_live_execution_plan(paths: WorkspacePaths) -> dict[str, Any]:
     overlay and no node marked active. Degrades to the empty plan shape
     with the same keys on any failure; no reader here raises.
     """
+    return build_live_surfaces(paths).execution_plan
+
+
+def build_live_pipeline(paths: WorkspacePaths) -> dict[str, Any]:
+    """``GET /api/live/pipeline`` — where the loop is, off the same read.
+
+    The propose → apply → run → gate position the stepper renders. It is
+    the verdict this module projected the plan's overlay from, so the two
+    live surfaces answer from ONE read of the workspace and cannot report
+    different phases, different rounds, or different counts of the same
+    in-flight records.
+
+    The shape is :func:`zicato.query.loop_view.build_round_pipeline`'s:
+    ``{running, stale, liveness, phase, epoch_id, round_index, steps,
+    epoch_open_step, active_step, decision, in_flight, generated_at}``.
+    A failure that stops even the phase read serves an empty object, which
+    the stepper reads as no stepper rather than as a stalled round.
+    """
+    return build_live_surfaces(paths).pipeline
+
+
+@dataclass(frozen=True, slots=True)
+class LiveSurfaces:
+    """The running epoch's two live projections, from one read of it.
+
+    The plan and the pipeline are the same reading of the workspace at two
+    altitudes: the pipeline names the step the loop is inside, and the plan
+    marks that step in the tree of everything the epoch has run. Building
+    them together is what keeps the stepper from reporting Gate while the
+    plan marks Run active.
+    """
+
+    execution_plan: dict[str, Any]
+    pipeline: dict[str, Any]
+
+
+def build_live_surfaces(paths: WorkspacePaths) -> LiveSurfaces:
+    """Read the running epoch once and return both projections of it.
+
+    Best-effort in the same two stages the inputs arrive in. The phase
+    read is what both surfaces start from: without it there is no live
+    verdict to project, and the plan degrades to its empty shape. A failure
+    in the plan build alone leaves the pipeline verdict standing, because
+    it was already read.
+    """
     try:
-        return _build_live(paths)
-    except Exception:  # noqa: BLE001 — the endpoint never returns a 500
-        return _degraded(paths, "live plan could not be read")
+        pipeline = build_round_pipeline(paths)
+    except Exception:  # noqa: BLE001 — neither endpoint returns a 500
+        return LiveSurfaces(execution_plan=_degraded(paths, _UNREADABLE), pipeline={})
+    try:
+        plan = _live_plan(paths, pipeline)
+    except Exception:  # noqa: BLE001 — neither endpoint returns a 500
+        plan = _degraded(paths, _UNREADABLE)
+    return LiveSurfaces(execution_plan=plan, pipeline=pipeline)
 
 
-def _build_live(paths: WorkspacePaths) -> dict[str, Any]:
-    pipeline = build_round_pipeline(paths)
+#: The note a plan carries when it could not be read at all.
+_UNREADABLE = "live plan could not be read"
+
+
+def _live_plan(paths: WorkspacePaths, pipeline: dict[str, Any]) -> dict[str, Any]:
+    """The plan payload for the epoch the given pipeline verdict names."""
     raw_liveness = pipeline.get("liveness")
     liveness = dict(raw_liveness) if isinstance(raw_liveness, dict) else {"state": LIVENESS_SETTLED}
     plan = build_execution_plan_model(paths, _live_epoch_id(paths, pipeline))
@@ -492,4 +550,10 @@ def _safe_liveness(paths: WorkspacePaths) -> dict[str, Any]:
         return {"state": LIVENESS_SETTLED}
 
 
-__all__ = ["EPOCH_OPEN_STEP_BANDS", "build_live_execution_plan"]
+__all__ = [
+    "EPOCH_OPEN_STEP_BANDS",
+    "LiveSurfaces",
+    "build_live_execution_plan",
+    "build_live_pipeline",
+    "build_live_surfaces",
+]

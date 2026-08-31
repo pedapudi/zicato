@@ -384,11 +384,14 @@ READ_ENDPOINTS: Final[tuple[ReadEndpoint, ...]] = (
     ),
     ReadEndpoint(
         path="/api/live/pipeline",
-        reader=query.build_round_pipeline,
+        reader=query.build_live_pipeline,
         serves=(
-            "The propose → apply → run → gate position. The server owns the "
-            "phase-string inference; the stepper renders this verdict verbatim."
+            "The propose → apply → run → gate position, projected from the same "
+            "read of the running epoch that serves the live execution plan, so "
+            "the two surfaces cannot disagree. The server owns the phase-string "
+            "inference; the stepper renders this verdict verbatim."
         ),
+        off_event_loop=True,
     ),
     ReadEndpoint(
         path="/api/live/execution-plan",
@@ -399,6 +402,7 @@ READ_ENDPOINTS: Final[tuple[ReadEndpoint, ...]] = (
             "run. A workspace that is not live serves its plan with an empty "
             "overlay."
         ),
+        off_event_loop=True,
     ),
     # -- reads scoped by the optional ?epoch= parameter -----------------
     ReadEndpoint(

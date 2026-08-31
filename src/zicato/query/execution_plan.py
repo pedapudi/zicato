@@ -65,10 +65,10 @@ Two features are absent by design:
 * The ``depth`` parameter. The whole plan is served in one response; a
   client that wants a spine reads the top of the tree and ignores the
   rest. Measured against the largest epoch available for measurement
-  (``2026-06-07_e4``, 56 loss files): the whole served payload is 37.7 KB,
-  well under the 200 KB at which paging the tree would start to pay for
-  its own complexity. The payload is close to linear in executed draws —
-  that epoch's 64 nodes cost ~0.59 KB each — so the number to re-measure
+  (``2026-06-07_e4``, 56 loss files, 64 nodes): the served live payload is
+  41.7 KB, well under the 200 KB at which paging the tree would start to
+  pay for its own complexity. The payload is close to linear in executed
+  draws — those 64 nodes cost ~0.65 KB each — so the number to re-measure
   before revisiting this is executed draws per epoch rather than rounds.
 * Absolute-timeline placement for a unit whose loss profile records no
   wall-clock span. Those nodes carry a duration and read
