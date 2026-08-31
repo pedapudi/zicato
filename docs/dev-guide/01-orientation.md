@@ -712,8 +712,8 @@ loop-level entry points.
 **`epoch/`** — the epoch domain: `lifecycle.py` (new/close/list/switch/
 load + the frozen-contract writes), `contract.py` (the hash),
 `contract_serde.py` (field-enumerating serializer), `journal.py`,
-`lineage.py`, `analysis.py` + `html_report.py` (the at-close and
-progressive reports), `round_log.py`, `screen.py`, `preflight.py`,
+`lineage.py`, `analysis.py` (the at-close retrospective; its HTML
+companion is rendered by `analyzer/report.py`), `round_log.py`, `screen.py`, `preflight.py`,
 `genstore.py` + `git_genstore.py` (the generation-tree seam), `gc.py`,
 `_storage.py` (record-format guard + storage keys). Owns the
 `format_version` discipline (`RECORD_FORMAT_VERSION`).

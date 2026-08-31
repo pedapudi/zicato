@@ -238,8 +238,8 @@ per-rule statuses instead of re-encoding the short-circuit order.
 
 **3d. analyzer figures + report.** `report_figures.py` (1710) → `svg/primitives.py`
 (axis/bar/marker/legend + `_esc`/`_fmt_*`, dedup vs `report_sections.py:38-48`) +
-`svg/palette.py` (one palette, shared with `epoch/html_report.py` instead of
-hard-copied) + one module per figure family. `report.py` (1401) → isolate the
+`svg/palette.py` (the one decision palette, owned there) + one module per
+figure family. `report.py` (1401) → isolate the
 markdown→HTML engine (`markdown_to_html:350`) into `report/markdown.py` and the
 inline CSS (`_paper_css:1161`) into a data file.
 
@@ -269,9 +269,10 @@ public, breaking the mutation↔synthetic circular lazy-import. `index/ingest.py
 
 Lower-frequency, higher-judgment items; do after the structure is clean.
 
-- **Converge the two HTML report generators** (`analyzer/report.py` and
-  `epoch/html_report.py`, 1270) that render overlapping epoch views and force the
-  palette hard-copy.
+- **One HTML report generator** — built. `analyzer/report.py` renders
+  `analysis.html` at every epoch lifecycle phase, from the `analysis.md`
+  beside it; the second generator that rendered an overlapping epoch view
+  under `epoch/` is deleted, and the palette hard-copy it forced with it.
 - **Fix the synthetic-kind dispatch boundary**: today `adapters/adk.py` handles
   `single_turn`/`multi_turn_*` but `_tournament_worker.py:348` routes
   `synthetic_*` around the adapter. Pick one — all kinds through

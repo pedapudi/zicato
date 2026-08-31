@@ -16,6 +16,11 @@ re-validate the LLM result beyond writing it through; downstream tooling
 that wants structure should read from ``experiment.json`` and
 ``journal.md`` directly.
 
+The sibling ``analysis.html`` is not rendered here: :func:`write_html_companion`
+hands the markdown to :func:`zicato.analyzer.report.render_report_html`, the one
+renderer of the served document, so the HTML always matches the markdown beside
+it.
+
 The pass is **bounded**: we cap the journal slice and per-experiment detail we
 inline into the prompt so the call is predictable. Operators who need a fuller
 retrospective can re-run the pass with a larger budget by setting environment
@@ -707,6 +712,15 @@ def render_drift_kind_movement_table(
     return render_metric_movement_table(generations, experiments, namespace_filter="drift:")
 
 
+# Figure markers naming a builder in :mod:`zicato.analyzer.report_figures`.
+# They are invisible in the markdown and substituted for the inline SVG when
+# the document is rendered to HTML (:func:`write_html_companion`), so each
+# table in this section is accompanied by the chart drawn from the same data.
+_FIGURE_LINEAGE = "<!-- FIGURE:lineage -->"
+_FIGURE_SCORE_TRAJECTORY = "<!-- FIGURE:score-trajectory -->"
+_FIGURE_DRIFT_MOVEMENTS = "<!-- FIGURE:drift-movements -->"
+
+
 def render_tournament_outcomes_section(
     generations: list[Generation],
     experiments: list[Experiment],
@@ -714,8 +728,9 @@ def render_tournament_outcomes_section(
     """Compose the full ``## Tournament outcomes`` markdown section.
 
     Stitches together the mermaid lineage graph, the trajectory table,
-    the ASCII sparkline, and the per-metric movement tables. The drift
-    table renders in its historical position with the historical
+    the ASCII sparkline, and the per-metric movement tables, each
+    followed by the marker for the figure that draws the same data. The
+    drift table renders in its historical position with the historical
     heading (``### Drift-kind movements across the promoted lineage``);
     if any non-drift metric movements are present, a separate
     ``### Metric movements (non-drift namespaces)`` section is
@@ -731,9 +746,13 @@ def render_tournament_outcomes_section(
     parts.append("")
     parts.append(render_mermaid_lineage(generations, experiments))
     parts.append("")
+    parts.append(_FIGURE_LINEAGE)
+    parts.append("")
     parts.append("### Scalar trajectory")
     parts.append("")
     parts.append(render_trajectory_table(generations, experiments))
+    parts.append("")
+    parts.append(_FIGURE_SCORE_TRAJECTORY)
     parts.append("")
     parts.append("### Score sparkline")
     parts.append("")
@@ -744,6 +763,8 @@ def render_tournament_outcomes_section(
         parts.append("### Drift-kind movements across the promoted lineage")
         parts.append("")
         parts.append(drift_table)
+        parts.append("")
+        parts.append(_FIGURE_DRIFT_MOVEMENTS)
     # Render a separate table for every non-drift metric movement so
     # the section surfaces cost / rubric / latency / schema /
     # output / ... signal without disturbing the drift table's shape.
@@ -1230,97 +1251,64 @@ async def generate_analysis(
     out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.write_text("\n".join(composed))
 
-    _write_html_companion(out_path, epoch_id, typed_gens, typed_exps)
+    write_html_companion(workspace_root, epoch_id, out_path)
     return out_path
 
 
-def _write_html_companion(
-    md_path: Path,
-    epoch_id: str,
-    typed_gens: list[Generation],
-    typed_exps: list[Experiment],
-) -> None:
-    """Write the sibling ``analysis.html`` next to ``analysis.md``.
+def write_html_companion(workspace_root: Path, epoch_id: str, md_path: Path) -> Path | None:
+    """Render the sibling ``analysis.html`` from the markdown at *md_path*.
 
-    Best-effort: HTML rendering failures are not fatal — the markdown report
-    is the canonical artifact. Logs a debug message and continues.
+    ``analysis.html`` is always :func:`zicato.analyzer.report.render_report_html`
+    applied to the ``analysis.md`` beside it, whichever pass wrote that
+    markdown — so the served document can never disagree with the report it
+    accompanies, and every epoch lifecycle phase serves one renderer's
+    output. The structured epoch view (:func:`gather_epoch_report_data`)
+    supplies the inline figure SVGs the document's figure markers request.
+
+    Returns the written path, or ``None`` when there is no markdown to
+    render or the render failed. Best-effort by contract: the markdown is
+    the canonical artifact, so a failure here logs at debug level and
+    leaves any existing HTML in place.
     """
+    from zicato.analyzer.report import render_report_html
+    from zicato.analyzer.report_data import gather_epoch_report_data
+
+    try:
+        report_md = md_path.read_text(encoding="utf-8")
+    except OSError:
+        return None
     html_path = md_path.with_suffix(".html")
-    _render_html_report(html_path, epoch_id, typed_gens, typed_exps)
-
-
-def _render_html_report(
-    html_path: Path,
-    epoch_id: str,
-    typed_gens: list[Generation],
-    typed_exps: list[Experiment],
-) -> None:
-    """Shared HTML render — used by both the at-close + progressive paths.
-
-    The narrative section is left empty for the progressive variant. The
-    at-close path overwrites the file with the same shape after the LLM
-    narrative lands so structure is consistent.
-    """
     try:
-        from zicato.epoch.html_report import HtmlReportContext, write_html_report
-    except ImportError:  # pragma: no cover - html_report ships in the same package
-        return
-
-    promoted_count = sum(
-        1
-        for e in typed_exps
-        if e.outcome is not None and e.outcome.tournament_decision == "promoted"
-    )
-    rejected_count = sum(
-        1
-        for e in typed_exps
-        if e.outcome is not None and e.outcome.tournament_decision == "rejected"
-    )
-    final_scalar = 0.0
-    for e in typed_exps:
-        if e.outcome is not None and e.outcome.tournament_decision == "promoted":
-            final_scalar += e.outcome.scalar_score_delta
-
-    ctx = HtmlReportContext(
-        epoch_id=epoch_id,
-        epoch_name=epoch_id,
-        duration="",
-        generations=typed_gens,
-        experiments=typed_exps,
-        final_scalar=final_scalar,
-        promoted_count=promoted_count,
-        rejected_count=rejected_count,
-        narrative_html="",
-    )
-    try:
-        write_html_report(html_path, ctx)
-    except Exception as exc:  # pragma: no cover - defensive; HTML is non-critical
-        import logging
-
-        logging.getLogger(__name__).debug(
-            "skipping analysis.html (write_html_report raised): %s", exc
-        )
+        data = gather_epoch_report_data(workspace_root, epoch_id)
+        html_path.parent.mkdir(parents=True, exist_ok=True)
+        html_path.write_text(render_report_html(epoch_id, report_md, data=data), encoding="utf-8")
+    except Exception as exc:  # noqa: BLE001 — HTML is non-critical
+        logging.getLogger(__name__).debug("skipping analysis.html (render raised): %s", exc)
+        return None
+    return html_path
 
 
 def regenerate_in_progress_html(workspace_root: Path, epoch_id: str) -> Path | None:
-    """Re-render ``analysis.html`` mid-epoch from on-disk experiments.
+    """Refresh ``analysis.md`` and ``analysis.html`` mid-epoch — no LLM call.
 
-    Deterministic — no LLM call. Reads every ``experiment.json`` under the
-    epoch's ``generations/``, hydrates the typed view used by the at-close
-    renderer, and writes a fresh HTML file. Returns the written path on
-    success or ``None`` if there is nothing to render yet.
+    Delegates to the analyzer's deterministic report regeneration, which
+    re-templates every data-bearing section from the current workspace data,
+    preserves any LLM-authored prose verbatim, and rewrites the HTML
+    companion. Returns the HTML path once it exists, or ``None`` for an
+    epoch that has produced no generation yet.
 
-    Used by the orchestrator's evolve loop to keep the file ``file://``
-    readers (and the supervisor's dashboard) see in sync with the latest
-    round, rather than only at epoch close.
+    The evolve loop calls this after every round so that ``file://`` readers
+    and the dashboard's static fallback see the latest round rather than
+    only the state at epoch close. It is the same call the round epilogue
+    makes (:func:`zicato.evolve.round_reporting._regenerate_epoch_report`),
+    is digest-gated, and rewrites nothing when the round moved no data.
     """
-    experiments = _collect_experiments(workspace_root, epoch_id)
-    typed_gens, typed_exps = _hydrate_typed_view(workspace_root, epoch_id, experiments)
-    if not typed_gens and not typed_exps:
+    from zicato.analyzer.report import regenerate_epoch_report_deterministic
+
+    if not any(generations_dir(workspace_root, epoch_id).glob("*/experiment.json")):
         return None
+    regenerate_epoch_report_deterministic(workspace_root, epoch_id)
     html_path = analysis_path(workspace_root, epoch_id).with_suffix(".html")
-    html_path.parent.mkdir(parents=True, exist_ok=True)
-    _render_html_report(html_path, epoch_id, typed_gens, typed_exps)
     return html_path if html_path.exists() else None
 
 
@@ -1334,4 +1322,5 @@ __all__ = [
     "render_score_sparkline",
     "render_tournament_outcomes_section",
     "render_trajectory_table",
+    "write_html_companion",
 ]

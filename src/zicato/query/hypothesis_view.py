@@ -1,13 +1,13 @@
 """hypothesis_view — prediction-accuracy + calibration projection readers.
 
-Pure, additive projection over the SAME stamped flag the static HTML
-report renders. The predicted-vs-actual movement verdict
-(``hypothesis_match``) is computed once, at outcome-write time, onto each
+Pure, additive projection over the stamped predicted-vs-actual movement
+verdict. That verdict (``hypothesis_match``) is computed once, at
+outcome-write time, onto each
 :class:`zicato.core.experiment.DriftMovementActual` /
 :class:`~zicato.core.experiment.MetricMovementActual`. These readers
 **lift that stamped flag verbatim** — they NEVER re-derive a match from
-the raw ``from``/``to`` values — so the dashboard data and the HTML
-report's "Expected vs actual" table can never disagree.
+the raw ``from``/``to`` values — so no dashboard surface can disagree
+with the outcome persisted on disk.
 
 Two surfaces:
 
@@ -275,8 +275,9 @@ def build_hypothesis_accuracy(
     proposer's falsifiable movement claims (``expected_metric_movements`` /
     ``expected_drift_movements``) against the realised movements
     (``metric_movements`` / ``drift_movements``). Each claim lifts the
-    STAMPED ``hypothesis_match`` verdict verbatim — the same flag the static
-    HTML report renders — so this data can never disagree with the report.
+    ``hypothesis_match`` verdict STAMPED on the movement at outcome-write
+    time, verbatim; the endpoint never recomputes it, so no reader of this
+    scorecard can disagree with the persisted outcome.
 
     Returns::
 

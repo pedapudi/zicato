@@ -2,8 +2,8 @@
 
 ``GET /api/hypothesis-accuracy/{epoch}/{gen}`` projects one experiment's
 falsifiable movement claims joined against the realised movements, lifting
-the STAMPED ``hypothesis_match`` verdict verbatim — the same flag the
-static HTML report renders, so the two can never disagree.
+the ``hypothesis_match`` verdict STAMPED at outcome-write time verbatim, so
+the endpoint can never disagree with the outcome on disk.
 
 ``GET /api/calibration-trend[?epoch=<id>]`` walks the lineage and reports
 the per-generation score fraction with rolling aggregates. It is purely
@@ -11,8 +11,8 @@ diagnostic and never feeds the gate.
 
 The fixtures build REAL :class:`Experiment` objects and persist them with
 the canonical :func:`zicato.epoch.journal.write_experiment`, so the readers
-parse the exact on-disk shape the orchestrator writes — and the stamped
-``hypothesis_match`` the report renders.
+parse the exact on-disk shape the orchestrator writes, stamped
+``hypothesis_match`` included.
 """
 
 from __future__ import annotations
@@ -30,7 +30,6 @@ from zicato.core import (
     OutcomeRecord,
 )
 from zicato.dashboard.server import create_app
-from zicato.epoch.html_report import _render_expected_vs_actual
 from zicato.epoch.journal import write_experiment
 from zicato.query import (
     WorkspacePaths,
@@ -169,13 +168,16 @@ def test_hypothesis_accuracy_hit_and_miss(tmp_path: Path) -> None:
     assert result["pass_rate"] == {"predicted": "+0.05 to +0.10", "observed": pytest.approx(0.07)}
 
 
-def test_hypothesis_accuracy_matches_html_report_verdict(tmp_path: Path) -> None:
-    """The endpoint's match/miss is the SAME stamped flag the report renders.
+def test_hypothesis_accuracy_lifts_the_stamped_verdict_over_the_raw_rates(
+    tmp_path: Path,
+) -> None:
+    """The endpoint reports the stamped verdict, never one re-derived from rates.
 
-    Renders the HTML report's expected-vs-actual table off the same
-    Experiment and asserts the report's per-row verdict (``match`` / ``miss``)
-    agrees with the endpoint's ``hypothesis_match`` for every claim — the two
-    cannot diverge because both read the stamped flag, never recompute it.
+    The fixture stamps a MATCH on a movement whose realised rates run
+    against the prediction (predicted a decrease, the rate rose). A reader
+    that recomputed direction agreement from ``from_rate``/``to_rate``
+    would call it a miss; lifting the stamped flag reports the match, which
+    is what the persisted outcome says.
     """
     ws = _make_workspace(tmp_path)
     hypothesis = make_hypothesis_spec(
@@ -187,31 +189,25 @@ def test_hypothesis_accuracy_matches_html_report_verdict(tmp_path: Path) -> None
     outcome = _outcome(
         drift_movements=(
             DriftMovementActual(
-                kind="off_topic", from_rate=0.40, to_rate=0.20, hypothesis_match=True
+                kind="off_topic", from_rate=0.40, to_rate=0.45, hypothesis_match=True
             ),
             DriftMovementActual(
-                kind="verbosity", from_rate=0.10, to_rate=0.05, hypothesis_match=False
+                kind="verbosity", from_rate=0.10, to_rate=0.30, hypothesis_match=False
             ),
         ),
     )
     _persist(ws, generation_id="v1", hypothesis=hypothesis, outcome=outcome)
 
-    # Build the same Experiment the report renders.
-    exp = make_experiment(
-        epoch_id=EPOCH_ID, generation_id="v1", hypothesis=hypothesis, outcome=outcome
-    )
-    report_html = _render_expected_vs_actual(exp)
-
     result = build_hypothesis_accuracy(WorkspacePaths(ws), EPOCH_ID, "v1")
     claims = {c["target"]: c for c in result["claims"]}
 
-    # off_topic stamped True -> report says "match"; verbosity stamped False
-    # -> report says "miss". The endpoint mirrors the stamped flag exactly.
+    # The realised direction disagrees with the prediction on both claims;
+    # only the stamped flag separates them.
+    assert claims["off_topic"]["observed_direction"] == "increase"
     assert claims["off_topic"]["hypothesis_match"] is True
+    assert claims["verbosity"]["observed_direction"] == "increase"
     assert claims["verbosity"]["hypothesis_match"] is False
-    # Report rendered both verdict labels off the same flags.
-    assert ">match<" in report_html
-    assert ">miss<" in report_html
+    assert result["score"] == {"hits": 1, "total": 2, "fraction": 0.5, "brier": None}
 
 
 def test_hypothesis_accuracy_metric_movements_and_unpredicted(tmp_path: Path) -> None:

@@ -1113,9 +1113,9 @@ carries no separate confirmation step for a gate override.
 | `400` | A path-parameter `run_id` / `generation_id` is unsafe (fails the `[A-Za-z0-9._-]` id check). |
 | `403` | The dashboard is in `read_only` mode; the control endpoint refuses. |
 
-## 7. Progressive `analysis.html` and the dashboard
+## 7. `analysis.html` and the dashboard
 
-`analysis.html` is regenerated after every generation completes
+`analysis.html` is re-rendered after every settled round
 (see [EPOCHS-AND-JOURNALING.md](EPOCHS-AND-JOURNALING.md) §5.2).
 It is the **persisted archival snapshot**; the dashboard is the
 live view.
@@ -1167,6 +1167,6 @@ Either stands alone.
 | The analytical index — derived, refreshed at generation boundaries, read only for resolved decisions (see §3.4) | [ANALYTICAL-INDEX.md](ANALYTICAL-INDEX.md) |
 | The dual-write discipline behind the files-canonical / index-derived rule | [ANALYTICAL-INDEX.md §2.3](ANALYTICAL-INDEX.md#23-the-orchestrator-dual-writes-live) |
 | The `experiment.json` shape shown in the generation level's hypothesis-to-outcome panel | [EPOCHS-AND-JOURNALING.md](EPOCHS-AND-JOURNALING.md) §3 |
-| Progressive `analysis.html` generation | [EPOCHS-AND-JOURNALING.md](EPOCHS-AND-JOURNALING.md) §5.2 |
+| `analysis.html` generation | [EPOCHS-AND-JOURNALING.md](EPOCHS-AND-JOURNALING.md) §5.2 |
 | The defense layers backing the supervisor | [ROBUSTNESS.md](ROBUSTNESS.md) |
 | CLI surface (`zicato evolve --no-dashboard`, `zicato dashboard`) | [CLI.md](CLI.md) |
