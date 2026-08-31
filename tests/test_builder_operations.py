@@ -392,6 +392,24 @@ def test_cost_racing_sums_rungs_plus_final() -> None:
     assert "racing-final runs" in labels
 
 
+def test_cost_racing_rung0_override_moves_the_estimate() -> None:
+    # rung0_board_size overrides ceil(board_fraction x board) for the first
+    # rung, so pinning it must change the estimate rather than only the form.
+    def _racing(**params: int | float) -> ops.CostEstimate:
+        draft = TournamentDraft()
+        draft.entries = _board(12)
+        ops.set_structure(draft, "racing")
+        ops.set_param(draft, "field_size", 4)
+        ops.set_param(draft, "eta", 2)
+        for key, value in params.items():
+            ops.set_param(draft, key, value)
+        return ops.estimate_cost(draft)
+
+    by_fraction = _racing(board_fraction=0.25)
+    by_count = _racing(rung0_board_size=6)
+    assert by_count.board_runs_per_round != by_fraction.board_runs_per_round
+
+
 def test_cost_includes_holdout_confirm_runs() -> None:
     draft = TournamentDraft()
     # 12 entries, two explicitly tagged holdout → holdout split active.

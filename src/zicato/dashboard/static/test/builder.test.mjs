@@ -642,33 +642,6 @@ test('builder CSS: the chat log is the flex:1 scrollable middle row + the compos
   assert(cols && /overflow-y:\s*auto/.test(cols[1]), 'the center + preview columns scroll internally');
 });
 
-// ── estimateCost: the per-structure default-replicates twin ───────────
-//
-// The JS estimateCost is the exact twin of operations.py's estimate_cost. The
-// under-reporting bug class: when `replicates` is UNSET the meter must default
-// to the STRUCTURE's own default (swiss / elim default to 2) rather than to a
-// flat 1, so
-// the dashboard preview matches the Python estimator. These mirror the Python
-// cost tests (test_cost_swiss_unset_replicates_uses_strategy_default_two, the
-// explicit-override test, and the per-structure-default pin) number-for-number.
-
-test('estimateCost: swiss with UNSET replicates uses the strategy default of 2 (not a flat 1)', () => {
-  // field_size 4, board 8, holdout 0, replicates UNSET. The Python estimator
-  // reports rounds_n 4 × pairings 2 × replicates 2 × board 8 = 128 — the SAME
-  // number this JS twin must produce. A flat-1 default would report 64 (half).
-  const est = builder.estimateCost('swiss', { field_size: 4 }, 8, 0);
-  assertEqual(est.board_runs_per_round, 128, 'swiss unset replicates → 128 (the py estimator value, not 64)');
-  const swissLine = est.breakdown.find((l) => l.label === 'swiss-pairing runs');
-  assert(swissLine && /replicates 2/.test(swissLine.detail), 'the breakdown detail shows replicates 2');
-});
-
-test('estimateCost: an explicit replicates is honored verbatim over the structure default', () => {
-  const est1 = builder.estimateCost('swiss', { field_size: 4, replicates: 1 }, 8, 0);
-  assertEqual(est1.board_runs_per_round, 64, 'explicit replicates=1 → 64 (4 × 2 × 1 × 8)');
-  const est3 = builder.estimateCost('swiss', { field_size: 4, replicates: 3 }, 8, 0);
-  assertEqual(est3.board_runs_per_round, 192, 'explicit replicates=3 → 192 (4 × 2 × 3 × 8)');
-});
-
 // ── full knob coverage: every rail section drives its ops ──────────────
 
 // helper: mount the view and switch to the rail section whose label matches.
@@ -1174,83 +1147,6 @@ test('builder view: an inert verdict chips as unmeasured, not as a broken board'
   assert(reasons.textContent.includes('no promote_margin is defensible'), 'and that no margin is defensible on this board');
 });
 
-test('validateContract twin: margin at/below a measured floor with the evidence gate off → refuse', () => {
-  // Gate off, margin 0.01 <= floor 0.05 → the refuse-severity rule fires.
-  const warns = builder.validateContract('gauntlet', {}, 6, 0, {}, { promoteMargin: 0.01, noiseFloor: 0.05 });
-  const hit = warns.find((w) => w.code === 'margin_below_noise_floor');
-  assert(hit, 'the margin_below_noise_floor rule fired');
-  assertEqual(hit.severity, 'refuse', 'the rule is refuse-severity');
-  // Evidence gate ON (threshold in (0,1)) silences it.
-  const gated = builder.validateContract('gauntlet', { promote_confidence_threshold: 0.8 }, 6, 0, {}, { promoteMargin: 0.01, noiseFloor: 0.05 });
-  assert(!gated.find((w) => w.code === 'margin_below_noise_floor'), 'the evidence gate silences the rule');
-  // Margin clearing the floor silences it.
-  const clear = builder.validateContract('gauntlet', {}, 6, 0, {}, { promoteMargin: 0.06, noiseFloor: 0.05 });
-  assert(!clear.find((w) => w.code === 'margin_below_noise_floor'), 'a clearing margin is silent');
-  // No floor known → silent (never guess).
-  const unknown = builder.validateContract('gauntlet', {}, 6, 0, {}, { promoteMargin: 0.01 });
-  assert(!unknown.find((w) => w.code === 'margin_below_noise_floor'), 'no measured floor, no rule');
-});
-
-// ── estimateCost: the honest-meter twins (evidence gate, best-of-N aux,
-//    placebo) — mirror the Python estimator's numbers exactly ───────────
-
-test('estimateCost twin: the evidence-gate crowning-confirm budget is priced (budget × 2 × board)', () => {
-  // Gate off: no line.
-  const off = builder.estimateCost('gauntlet', { field_size: 1, replicates: 1 }, 10, 0, { best_of_n: 1 });
-  assert(!off.breakdown.find((l) => l.label.includes('crowning-confirm')), 'no confirm line with the gate off');
-  // The scaffold gate: 32 × 2 × 10 = 640, added to the headline, largest term.
-  const on = builder.estimateCost('gauntlet', {
-    field_size: 1, replicates: 1,
-    promote_confidence_threshold: 0.8, promote_confidence_replicates: 32,
-  }, 10, 0, { best_of_n: 1 });
-  const confirm = on.breakdown.find((l) => l.label.includes('crowning-confirm'));
-  assert(confirm, 'the confirm line renders');
-  assertEqual(confirm.runs, 640, '32 × 2 × 10 = 640 (the py estimator value)');
-  assert(/crowning/.test(confirm.detail), 'the detail says it applies per confirmed crowning');
-  assertEqual(on.board_runs_per_round, off.board_runs_per_round + 640, 'the headline includes it');
-  // Unset budget defaults to 3 (the gate module default).
-  const def = builder.estimateCost('gauntlet', { field_size: 1, replicates: 1, promote_confidence_threshold: 0.8 }, 10, 0, { best_of_n: 1 });
-  assertEqual(def.breakdown.find((l) => l.label.includes('crowning-confirm')).runs, 60, 'unset budget → 3 × 2 × 10');
-});
-
-test('estimateCost twin: best-of-N propose calls are listed as auxiliary and EXCLUDED from the headline', () => {
-  const est = builder.estimateCost('gauntlet', { field_size: 1, replicates: 1 }, 10, 0, { best_of_n: 3 });
-  const aux = est.breakdown.find((l) => l.label === 'best-of-N propose calls');
-  assert(aux, 'the auxiliary line renders when best_of_n > 1');
-  assertEqual(aux.runs, 3, 'proposes 1 × best_of_n 3');
-  assert(/auxiliary/.test(aux.detail), 'labelled as auxiliary LLM calls');
-  assertEqual(est.board_runs_per_round, 10, 'the board-runs headline excludes the calls');
-  // A wide field proposes field_size challengers.
-  const wide = builder.estimateCost('racing', { field_size: 4 }, 10, 0, { best_of_n: 3 });
-  assertEqual(wide.breakdown.find((l) => l.label === 'best-of-N propose calls').runs, 12, '4 × 3');
-});
-
-test('estimateCost twin: the placebo cadence adds an amortized per-round line', () => {
-  const off = builder.estimateCost('gauntlet', { field_size: 1, replicates: 2 }, 10, 0, { best_of_n: 1 }, {});
-  assert(!off.breakdown.find((l) => l.label.includes('placebo')), 'no placebo line at cadence 0');
-  const on = builder.estimateCost('gauntlet', { field_size: 1, replicates: 2 }, 10, 0, { best_of_n: 1 },
-    { random_baseline_every_n: 4 });
-  const placebo = on.breakdown.find((l) => l.label.includes('placebo'));
-  assert(placebo, 'the placebo line renders');
-  assertEqual(placebo.runs, 5, 'ceil(2 × 10 / 4) = 5 (the py estimator value)');
-  assertEqual(on.board_runs_per_round, off.board_runs_per_round + 5, 'the headline includes it');
-});
-
-test('estimateCost: the per-structure default-replicates twin matches the Python map for every structure', () => {
-  // The JS default-replicates map is the twin of the Python
-  // STRUCTURE_DEFAULT_REPLICATES (derived from each strategy's
-  // _default_replicates). Pin every structure so the two can never drift.
-  // Base default 2 (noise-aware); racing pins 1 (intrinsic replication).
-  const expected = { gauntlet: 2, single_elim: 2, double_elim: 2, swiss: 2, racing: 1 };
-  for (const [structure, def] of Object.entries(expected)) {
-    assertEqual(builder.defaultReplicatesFor(structure), def, `${structure} default replicates`);
-    // The UNSET-default estimate equals the explicit-default estimate.
-    const unset = builder.estimateCost(structure, { field_size: 4 }, 8, 0);
-    const explicit = builder.estimateCost(structure, { field_size: 4, replicates: def }, 8, 0);
-    assertEqual(unset.board_runs_per_round, explicit.board_runs_per_round, `${structure}: unset == explicit-default`);
-  }
-});
-
 // ── B3: the remaining knob GUI (weights scalars + mapping editors, gate
 //    namespace-monotonicity, overfitting ceiling, proposer picker, the
 //    revert/undo lifecycle, the rung0 param spec) ───────────────────────
@@ -1542,15 +1438,6 @@ test('paramSpecsFor: racing carries an explicit, contract-visible slice schedule
   // "prefix" rolls the epoch while changing nothing about how a rung slices.
   assert(schedule.removeAtDefault === true,
     'selecting the default removes the key so an untouched contract hashes identically');
-});
-
-test('paramSpecsFor: the rung0 override does not perturb the cost twin (spec-only, arithmetic unchanged)', () => {
-  // both estimators already read rung0_board_size, so an explicit value moves
-  // the meter identically on both sides — the spec only surfaces the control.
-  const base = builder.estimateCost('racing', { field_size: 4, eta: 2, board_fraction: 0.25 }, 12, 0);
-  const withOverride = builder.estimateCost('racing', { field_size: 4, eta: 2, rung0_board_size: 6 }, 12, 0);
-  assert(base.board_runs_per_round !== withOverride.board_runs_per_round,
-    'the rung0 override moves the meter (the key was already read) — a live, not cosmetic, param');
 });
 
 await run();

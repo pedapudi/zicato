@@ -2030,6 +2030,9 @@ matchup count. If your structure schedules a non-obvious number of duels
 count. An estimator that does not know your matchup count under-reports the
 cost, which is the failure `STRUCTURE_DEFAULT_REPLICATES` closes for the
 replicate factor — see `registry.py`'s comment on the swiss/elim default of 2.
+Give each new cost line a draft fixture in
+`tests/test_builder_cost_envelope_correspondence.py`, whose coverage assertion
+reds until one reaches the line.
 
 **Step 6 — the gate-owns-decisions invariant.** Re-read your `record_result` and
 `champion`, and assert in a test that with a gate that always REJECTS your

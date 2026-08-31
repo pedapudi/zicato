@@ -32,7 +32,7 @@
 > |----|------|-----------|
 > | L1 | the one-mutation-surface rule | Every editable contract change flows through exactly one function in `zicato/builder/operations.py`. The form, the copilot, and the REST dispatch all call the same op; there is never a second edit path. |
 > | L2 | the full-coverage rule for a new knob | A new contract knob ships only once it has an op (`operations.py`), a dispatch arm (`api.py::_dispatch_op`), a copilot tool (`copilot_tools.py::DEFAULT_BUILDER_TOOLS`), a GUI control or a documented exception, a cost line if it changes the schedule, and a `validate` consideration if it can be unsound. Two tests — **the knob-coverage pins** — machine-pin the wiring: `test_default_builder_tools_registry_covers_every_op` for the op↔dispatch↔copilot triple, and `test_builder_gui_coverage.py` for the GUI control or exception. |
-> | L3 | the honest-twinned-cost-meter rule | Every board-run multiplier the runtime will spend gets a `CostLine`; auxiliary LLM calls are labelled and excluded from the board-runs headline; the Python estimator and the JS twin must agree (a py↔js parity test). |
+> | L3 | the honest-cost-meter rule | Every board-run multiplier the runtime will spend gets a `CostLine`; auxiliary LLM calls are labelled and excluded from the board-runs headline. `operations.py::estimate_cost` is the only implementation of the arithmetic; the console renders the served numbers, and a correspondence test pins that what the page shows equals what the estimator computed. |
 > | L4 | the recommend-only rule | The builder never hard-blocks `apply`. Even a `refuse`-severity warning or a `refuse` pre-flight verdict informs the operator; it never gates the write. |
 > | L5 | the builder-never-rolls-the-epoch rule | The builder never rolls the epoch and never starts a live evolve. `apply(confirm=True)` writes the contract source files and lets the auto-epoch machinery roll on the next resolve; the copilot's apply tool is always `confirm=False`. |
 > | L6 | the config-pins-not-environment rule | Flags cross the worker boundary via `config_pins`, never an environment variable. No environment variable is a configuration knob; operator knobs are CLI flags (pinned via `pin_overrides`) and `config.json` blocks. |
@@ -76,7 +76,7 @@ forbidden** — §10.11 is the enforcement.
 | `src/zicato/builder/api.py` | `_dispatch_op` + the Starlette routes (`builder_routes`) | ~490 lines |
 | `src/zicato/builder/copilot.py` / `copilot_tools.py` | the chat copilot + its tool registry `DEFAULT_BUILDER_TOOLS` | ~470 lines |
 | `src/zicato/dashboard/static/js/views/builder.js` | the form GUI: rail sections, per-section controls, the Review pane | ~950 lines |
-| `src/zicato/dashboard/static/js/builder/model.js` | `paramSpecsFor`, the schematic preview model, and the **client-side cost twin** (`estimateCost`) | ~515 lines |
+| `src/zicato/dashboard/static/js/builder/model.js` | `paramSpecsFor`, the schematic preview model, and the chat-pane width persistence — no cost or validation arithmetic | ~305 lines |
 | `src/zicato/cli/discovery.py` | `build_cli_root`, `ZicatoGroup`, the command auto-discovery | ~370 lines |
 | `src/zicato/cli/commands/*.py` | one command (or sub-group) per file — the inventory in §10.9 | — |
 | `src/zicato/config.py` | `pin_overrides` / `pinned_override` / `load_config` + `describe_env_vars` | ~690 lines |
@@ -277,7 +277,7 @@ confirm; a per-judge badge's × drives `remove_judge` directly; the board-level
 so the board header is an ordinary GUI control rather than a documented
 exception.
 
-**No client validation twin (the recommend-only rule).** The form carries NO
+**No client-side validation (the recommend-only rule).** The form carries no
 port of `BoardEntry.validate`. Save is gated only on the PRESENCE of an id (a
 presence-only enable/disable, never a semantic check); every structural
 objection is the server's field-precise `ValueError`, rendered verbatim in the
@@ -467,7 +467,7 @@ says so in a line they can read *before* they apply. The op docstring names it:
 "with the scaffold's 32-replicate budget this is typically the LARGEST term."
 
 > ✅ ALWAYS add a `CostLine` for any new contract knob that multiplies the
-> per-round board sweeps (the honest-twinned-cost-meter rule). The meter's
+> per-round board sweeps (the honest-cost-meter rule). The meter's
 > contract is that its headline is a coarse upper-ish bound on the *board runs*
 > a round actually spends. A knob that adds runs without a line leaves the
 > headline short, and the operator learns the true cost only from their model
@@ -481,35 +481,53 @@ says so in a line they can read *before* they apply. The op docstring names it:
 > exactly as best-of-N does. Conflating the two double-charges the board-runs
 > headline.
 
-### 10.3.3 The cost twin — the meter is computed twice and must agree
+### 10.3.3 One owner for the meter, and the test that pins the join
 
-The live builder view drives its meter from the BACKEND: every control POSTs to
-`/builder/op` and reads `cost` out of the returned envelope. But there is a
-SECOND, client-side implementation of the exact same arithmetic —
-`estimateCost` in `builder/model.js` — used so a **read-only** frozen-contract
-preview (Settings → Contract, sourced from `/api/epoch` alone) can render the
-meter without a `/builder/op` round-trip:
+`operations.py::estimate_cost` is the only implementation of the cost
+arithmetic, and `operations.py::validate` the only implementation of the
+recommend-only lint rules. Both surfaces that show them read a server envelope:
+the live builder view POSTs every control change to `/builder/op` and renders
+the `cost` and `warnings` the response carries, and Settings → Contract fetches
+`/builder/draft` for the same two keys. The console's own modules hold no copy
+of either — `builder/preview.js` walks the breakdown it was handed and prints
+the labels, run counts and details verbatim.
 
-```javascript
-// src/zicato/dashboard/static/js/builder/model.js
-// PURE port of zicato/builder/operations.py's estimate_cost + validate, so a
-// READ-ONLY contract preview can show the cost meter + validation diagnostics
-// CLIENT-SIDE — no `/builder/op` round-trip, no backend dependency.
+`tests/test_builder_cost_envelope_correspondence.py` pins that arrangement
+across the language boundary. For five drafts — chosen so that between them
+they reach every cost term and every finding a draft alone can raise — it
+computes the envelope in Python, writes it to a fixture file, renders it under
+node through `builder/preview.js` itself (via the
+`static/test/cost_envelope_readback.mjs` driver), and compares the numbers and
+texts read back off the rendered nodes with the ones Python produced:
+
+```python
+# tests/test_builder_cost_envelope_correspondence.py
+assert rendered == [
+    {
+        "name": e["name"],
+        "board_runs_per_round": e["cost"]["board_runs_per_round"],
+        "breakdown": e["cost"]["breakdown"],
+        "warnings": [...],
+    }
+    for e in envelopes
+]
 ```
 
-The two implementations MUST agree, down to the structure-aware replicate
-default (`STRUCTURE_DEFAULT_REPLICATES = {gauntlet:2, single_elim:2,
-double_elim:2, swiss:2, racing:1}` in the JS, the JS twin of
-`zicato.selection.registry.STRUCTURE_DEFAULT_REPLICATES`). A py↔js parity test
-pins the agreement (see `src/zicato/dashboard/static/test/builder.test.mjs`).
+Renaming a field on either side breaks it: a key the estimator stops emitting
+leaves the renderer showing a default, and a key the renderer stops reading
+does the same. A second check in the same module fails if any file under
+`static/js/` spells a cost-line label or a finding code as a string literal,
+which is what a regrown copy would have to do.
 
-> ⛔ NEVER change a cost term in `operations.py::estimate_cost` (or
-> `_racing_cost`) without making the identical change in
-> `builder/model.js::estimateCost` (and `racingCost`) in the same commit. The
-> two are a twinned pair by design (the honest-twinned-cost-meter rule), and
-> a one-sided edit reds the py↔js parity test. If you "fix" that red by deleting
-> the assertion, the two meters silently diverge, and a frozen-contract preview
-> quotes a different price than the live builder for the same contract.
+> ✅ ALWAYS add a fixture when you add a cost term or a lint rule. The coverage
+> assertion requires the rendered term and code sets to equal the expected
+> sets, so a term no fixture reaches reds the suite rather than passing
+> untested.
+
+> ⛔ NEVER compute a cost estimate or a lint finding in the browser. The
+> operator would then have two prices for one contract with nothing to say
+> which is right. Everything the page needs arrives in the envelope; if
+> something is missing from it, add it to the envelope.
 
 ---
 
@@ -614,11 +632,9 @@ that even `refuse` "never hard-blocks apply." The warnings `validate` emits:
 | `judge_only_board` | info | the board_meta `judge_only` flag is set (judges observe, never steer) |
 | `margin_below_noise_floor` | **refuse** | see below |
 
-The board-authoring codes are **Python-only**: the JS twin
-(`builder/model.js::validateContract`) mirrors the entry-free
-subset only (its scope comment names the excluded codes), because the
-read-only frozen-contract preview it serves never has the full entry
-objects. Do not twin an entry-level code into the JS.
+Every code above is produced by `validate` alone and reaches the console
+through the response envelope, entry-level codes included: the board-authoring
+checks need the full `BoardEntry` objects, which only the server holds.
 
 > ⛔ NEVER import (or `find_spec`) an operator-supplied dotted path inside
 > `validate` — the `dotted_path_malformed` check is SHAPE-ONLY by design.
@@ -850,7 +866,7 @@ step with the op set. A new contract knob is not shipped until it lands on
 | 2 | the dispatch arm | `api.py::_dispatch_op` (an `if op == "…":` arm) | `tests/test_builder_api.py` knob-dispatch tests |
 | 3 | the copilot tool | `copilot_tools.py::DEFAULT_BUILDER_TOOLS` | **`test_default_builder_tools_registry_covers_every_op`** (machine-pinned) |
 | 4 | a GUI control (or a documented exception) | `model.js::paramSpecsFor` / `views/builder.js` / `builder/entry_form.js` section | **`test_builder_gui_coverage.py`** (machine-pinned) + node suite |
-| 5 | a cost line (if it changes the schedule) | `operations.py::estimate_cost` + `model.js::estimateCost` | py↔js parity test |
+| 5 | a cost line (if it changes the schedule) | `operations.py::estimate_cost` | the correspondence test's coverage assertion |
 | 6 | a `validate` consideration (if it can be unsound) | `operations.py::validate` | `tests/test_builder_operations.py` |
 
 Surfaces 2–4 are **mechanically pinned**, surfaces 3 and 4 by the two tests
@@ -890,7 +906,7 @@ coverage claim stays true in both directions.
 
 Surfaces 5–6 are **discipline plus parity**. No single per-knob test asserts
 "this knob has a cost line AND a validate check". What holds them is narrower:
-the py↔js cost parity test forces any cost line you add to be mirrored, and the
+the correspondence test forces any cost line you add to reach a fixture, and the
 design doc (`docs/design/TOURNAMENT-BUILDER.md` §4, "The consequence-forward
 principle") makes the cost and epoch-roll surfacing a stated requirement of the
 two builder skills.
@@ -1001,10 +1017,11 @@ rule. The worked example: exposing a hypothetical
    wire the string
    literally (never build the op name dynamically).
 5. **Add the cost line if it changes the schedule.** If the knob multiplies
-   per-round board runs, add a `CostLine` in `operations.py::estimate_cost` AND
-   the mirror term in `builder/model.js::estimateCost` in the SAME commit
-   (the honest-twinned-cost-meter rule; §10.3.3). Label auxiliary LLM-call terms
-   and leave them out of the headline sum.
+   per-round board runs, add a `CostLine` in `operations.py::estimate_cost` —
+   the meter's only implementation (the honest-cost-meter rule; §10.3.3) — and
+   a fixture that reaches it in
+   `tests/test_builder_cost_envelope_correspondence.py`. Label auxiliary
+   LLM-call terms and leave them out of the headline sum.
 6. **Add the `validate` consideration if it can be unsound.** A value is
    unsound when it stops the contract from telling a real improvement from
    noise — a margin that cannot clear the noise floor, or a field that degrades
@@ -1029,8 +1046,9 @@ rule. The worked example: exposing a hypothetical
    - *GUI coverage* is auto-covered by
      `test_builder_gui_coverage.py::test_every_write_op_has_a_gui_control_or_exception`
      — run it to confirm your knob has a control (or a justified exception);
-   - *cost parity* — if you added a cost line, the py↔js parity test in
-     `src/zicato/dashboard/static/test/builder.test.mjs` must stay green.
+   - *cost correspondence* — if you added a cost line, give it a fixture in
+     `tests/test_builder_cost_envelope_correspondence.py`, whose coverage
+     assertion reds until the term is reached.
 9. **Verify:**
    ```bash
    uv sync --all-extras
@@ -1038,7 +1056,7 @@ rule. The worked example: exposing a hypothetical
        tests/test_builder_copilot.py -x -q
    uv run pytest tests/test_epoch_contract.py \
        tests/test_contract_serializer_completeness.py -q   # omit-at-default + roll
-   make node-test        # the JS twin + the py↔js cost parity assertion
+   make node-test        # the console behaviour suite
    uv run ruff check src/zicato/builder/ && uv run mypy src/zicato/builder/
    ```
    If you skipped step 3, `test_default_builder_tools_registry_covers_every_op`
@@ -1571,8 +1589,9 @@ build can still run the hook.
   the builder REST routes documented here, and the payload discipline the
   builder envelope obeys.
 - 11-testing.md §11.7 "The six parity gates, one by one" (including the CLI-HELP
-  gate), §11.9 "Node behaviour-suite conventions" (the py↔js cost-twin parity),
-  and §11.8 "The seven import contracts + the TID251 bans".
+  gate), §11.9 "Node behaviour-suite conventions" (including §11.9.5, the
+  cross-language correspondence pattern this chapter's cost meter uses), and
+  §11.8 "The seven import contracts + the TID251 bans".
 - 13-recipes.md — the short-form cookbook; §10.8 and §10.10.3 here are the
   long-form builder-op and CLI-flag procedures.
 - `docs/design/TOURNAMENT-BUILDER.md` — the full builder design record (the

@@ -1420,8 +1420,8 @@ wins).
 **Cost-neutral.** The mint REPLACES the slot's auxiliary propose call — a
 recombining round spends `best_of_n − 1` propose calls, NEVER more. The cost
 meter is untouched; `estimate_cost`'s best-of-N line carries one sentence
-noting this upper-bound (`src/zicato/builder/operations.py`), and the py↔js
-parity harness sees no CostLine change.
+noting this upper-bound (`src/zicato/builder/operations.py`), and no `CostLine`
+changes.
 
 **The envelope.** `RecombinationPair` carries counts + patches + hypothesis
 TEXT only — the improved/regressed entry-id sets are computed INSIDE

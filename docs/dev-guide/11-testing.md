@@ -1361,6 +1361,40 @@ split or rename a node test file, the runner (`run-all.mjs`) globs
 assertion you rely on; the grouping is by DOMINANT view and a few assertions
 cross seams.
 
+### 11.9.5 Correspondence: pinning what the page shows against what Python computed
+
+A value the server computes and the browser renders spans two languages, and
+the seam between them is where a copy of the arithmetic tends to appear. The
+remedy is to give the value one owner in Python and test the join rather than
+either side alone.
+
+`tests/test_builder_cost_envelope_correspondence.py` is the worked example. The
+tournament builder's cost estimate and its lint findings belong to
+`zicato.builder.operations`; the console renders whatever the response envelope
+carries. The test computes the envelope for a fixed set of drafts, writes it to
+a fixture file, runs `static/test/cost_envelope_readback.mjs` under node to
+render that fixture through the production module (`builder/preview.js`), and
+compares the numbers and texts read back off the rendered nodes with the ones
+Python produced. Because the driver renders the shipping module rather than a
+stand-in, a field renamed on either side makes the readback disagree.
+
+Two habits make the pattern hold its value:
+
+- **Read the rendered nodes rather than the input model.** The readback pulls
+  each cost line out of the rendered element's `title`, so it measures what a
+  reader of the page sees.
+- **Pin the coverage of the fixtures.** A companion assertion requires the set
+  of rendered terms and finding codes to equal the expected set, so a new term
+  with no fixture reds the suite instead of going untested.
+
+A third check in the same module fails if any file under `static/js/` spells
+one of the owned labels or codes as a string literal — the signature a second
+implementation would have to leave behind.
+
+The driver lives in `static/test/` but is not named `*.test.mjs`, so neither
+`run-all.mjs` nor `node --test` picks it up; it runs only when the Python test
+invokes it. The whole module skips when `node` is unavailable.
+
 ---
 
 ## 11.10 CI

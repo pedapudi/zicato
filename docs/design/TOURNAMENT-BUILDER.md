@@ -177,6 +177,9 @@ Every authoring choice is annotated with its downstream cost before commit:
   flat 1, so the meter matches the schedule a structure actually runs and does
   not under-report its cost. See
   [`TOURNAMENT-STRUCTURES.md §3`](TOURNAMENT-STRUCTURES.md#3-the-five-concrete-strategies).
+  The estimate has one owner, `zicato.builder.operations.estimate_cost`; the
+  console renders the numbers the response envelope carries and computes none
+  of them.
 * **Contract impact.** The impact pill states whether applying the current
   draft **rolls the epoch** and which components changed; a draft that touches
   nothing contract-relevant reads "no contract change."
