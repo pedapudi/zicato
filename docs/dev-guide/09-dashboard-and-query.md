@@ -19,26 +19,27 @@
 > every reader here). 04-evaluation-statistics.md §"Train/holdout split"
 > and §"The noise floor" ground the uncertainty-honest verdicts of §9.8.
 >
-> **Invariants introduced in this chapter.** Each is load-bearing; a
-> violation is a correctness or a data-integrity bug, not a style nit.
+> **Invariants introduced in this chapter.** Each is load-bearing: a violation
+> is a correctness or data-integrity bug rather than a style question. The ID is
+> the locator other documents cite; the Name is what prose uses.
 >
-> | ID | Invariant |
-> |----|-----------|
-> | DQ1 | **The server computes; the client renders.** No join, classification, or decision the server owns is re-derived on the client. Bug #4 (the client champion-scan) is the canonical breach. |
-> | DQ2 | **One spelling per field on the wire.** `entry_id`, `generation_id`, `ts` (int ms epoch), `pass_fail` (`true`/`false`/`null`), `promoted` (tri-state `true`/`false`/`null`). No aliases, no bare ints the client re-interprets, no default-`false` for an undecided promotion. |
-> | DQ3 | **Every reader is best-effort.** A missing / never-built / transiently-torn input degrades to an empty-or-`None` shape (often with a `note`), never raises. No endpoint built on `zicato.query` returns a 500. |
-> | DQ4 | **The query layer is library code and never imports the dashboard.** The import-linter contract "the query layer stays dashboard-free" pins it; the dashboard is a driver on top. |
-> | DQ5 | **SSE frames carry change-kinds + `seq` + `terminal` ONLY — never content.** A `state_change` is a signal to fetch, not a payload. |
-> | DQ6 | **A no-op heartbeat rebuilds ZERO DOM.** The client drops a repeat-`seq` frame with no fetch; a view folds a content digest (timestamps excluded) and swaps only on a real change. Node tests assert DOM-node identity across a re-serve. |
-> | DQ7 | **Verdicts are honest about the noise floor.** Movement inside the measured A/A floor reads `no_signal` ("no detectable signal"), never "plateaued" or "improving". |
-> | DQ8 | **Every new GET null-degrades on the Rust supervisor.** A payload the Rust reader does not serve returns `null`/empty; the client paints the honest empty state, never a spinner or a crash. |
-> | DQ9 | **Controls gate on `read_only:false`; a destructive control takes a two-step confirm.** A control write forces an explicit refresh — it does not advance the progress `seq`, so the no-op-skip gate would otherwise stall the readback. |
-> | DQ10 | **`current_champion` is the reigning spine end** — the LAST promoted generation — never the first-scored or the highest-scored; a decision surface names its `deciding_rule`. |
-> | DQ11 | **A payload-shape change is a clean break.** Server and client change in the same commit, client-side coalescers are deleted, the node `mock_server` parity pin and the goldens are updated together. |
-> | DQ12 | **An id path param is validated by `_is_safe_id` before it touches the workspace.** A malformed coordinate degrades to the empty shape at HTTP 200 — never a 500, never a traversal. |
-> | DQ13 | **Every JSON GET has a declared query contract.** `query.contracts.ENDPOINT_PAYLOADS` is the exhaustive inventory. |
-> | DQ14 | **Lineage owns topology.** `lineage.json` alone supplies parent and tri-state promotion; experiment outcomes are journal detail. |
-> | DQ15 | **Composite readers share walks.** `build_environment` performs one lineage walk and hands its scoped feed to the epoch and trajectory builders. |
+> | ID | Name | Invariant |
+> |----|------|-----------|
+> | DQ1 | server-computes-client-renders | **The server computes; the client renders.** No join, classification, or decision the server owns is re-derived on the client. Bug #4 (the client champion-scan) is the canonical breach. |
+> | DQ2 | one spelling per wire field | **One spelling per field on the wire.** `entry_id`, `generation_id`, `ts` (int ms epoch), `pass_fail` (`true`/`false`/`null`), `promoted` (tri-state `true`/`false`/`null`). No aliases, no bare ints the client re-interprets, no default-`false` for an undecided promotion. |
+> | DQ3 | every reader is best-effort | **Every reader is best-effort.** A missing / never-built / transiently-torn input degrades to an empty-or-`None` shape (often with a `note`), never raises. No endpoint built on `zicato.query` returns a 500. |
+> | DQ4 | the query layer is library code | **The query layer is library code and never imports the dashboard.** The import-linter contract "the query layer stays dashboard-free" pins it; the dashboard is a driver on top. |
+> | DQ5 | change-signals carry no content | **SSE frames carry change-kinds + `seq` + `terminal` ONLY — never content.** A `state_change` is a signal to fetch, not a payload. |
+> | DQ6 | a no-op heartbeat rebuilds zero DOM | **A no-op heartbeat rebuilds ZERO DOM.** The client drops a repeat-`seq` frame with no fetch; a view folds a content digest (timestamps excluded) and swaps only on a real change. Node tests assert DOM-node identity across a re-serve. |
+> | DQ7 | verdicts are honest about the noise floor | **Verdicts are honest about the noise floor.** Movement inside the measured A/A floor reads `no_signal` ("no detectable signal"), never "plateaued" or "improving". |
+> | DQ8 | null-degrade under the Rust supervisor | **Every new GET null-degrades on the Rust supervisor.** A payload the Rust reader does not serve returns `null`/empty; the client paints the honest empty state, never a spinner or a crash. |
+> | DQ9 | controls gate on writability | **Controls gate on `read_only:false`; a destructive control takes a two-step confirm.** A control write forces an explicit refresh — it does not advance the progress `seq`, so the no-op-skip gate would otherwise stall the readback. |
+> | DQ10 | the champion is the reigning spine end | **`current_champion` is the reigning spine end** — the LAST promoted generation — never the first-scored or the highest-scored; a decision surface names its `deciding_rule`. |
+> | DQ11 | a payload-shape change is a clean break | **A payload-shape change is a clean break.** Server and client change in the same commit, client-side coalescers are deleted, the node `mock_server` parity pin and the goldens are updated together. |
+> | DQ12 | validate an id before it touches the workspace | **An id path param is validated by `_is_safe_id` before it touches the workspace.** A malformed coordinate degrades to the empty shape at HTTP 200 — never a 500, never a traversal. |
+> | DQ13 | every JSON GET has a declared contract | **Every JSON GET has a declared query contract.** `query.contracts.ENDPOINT_PAYLOADS` is the exhaustive inventory. |
+> | DQ14 | lineage owns topology | **Lineage owns topology.** `lineage.json` alone supplies parent and tri-state promotion; experiment outcomes are journal detail. |
+> | DQ15 | composite readers share walks | **Composite readers share walks.** `build_environment` performs one lineage walk and hands its scoped feed to the epoch and trajectory builders. |
 
 ---
 
@@ -57,8 +58,8 @@ server + the JS). Nothing in the library knows the driver exists.
 | `src/zicato/query/_sqlite.py` | `_open_index` (read-only `mode=ro`), `_query` (swallow-to-`[]`), `_opt_json`, `_IndexAbsent` | 41 lines |
 | `src/zicato/query/runtime_view.py` | `build_snapshot`, `read_heartbeat_dict` (the `ts` int-ms stamp), `normalize_entry_status` (the four-bucket canon), `read_active_runs_view`, `read_paused` | 438 lines |
 | `src/zicato/query/loop_view.py` | `build_optimization_trajectory` (the uncertainty-honest verdict), `build_tournament_cost`, `build_round_pipeline` + `PIPELINE_STEPS` (the server-owned stepper projection) | 435 lines |
-| `src/zicato/query/racing_view.py` | `build_racing_field` — the racing ladder JOINED server-side (the ex-`reconstructRacing` hoist) | 301 lines |
-| `src/zicato/query/rounds_view.py` | `build_round_timeline` — the round spine + loss-floor waterfall JOINED server-side (the ex-`rounds.js` four-endpoint join) | 329 lines |
+| `src/zicato/query/racing_view.py` | `build_racing_field` — the racing ladder joined server-side out of the per-challenger records | 301 lines |
+| `src/zicato/query/rounds_view.py` | `build_round_timeline` — the round spine and loss-floor waterfall joined server-side across four endpoints' worth of records | 329 lines |
 | `src/zicato/query/reflection_view.py` | `list_reflections`, `build_reflection_summary` (four-pillar bill of health), `build_judge_scorecards`, `build_adjudication_xray` (transcript + judge verdict + meta-judge record), `entry_candidate_matrix` (reflection-independent, off the index loss tables) — the Instrument-lens feed (BOARD-REFLECTION.md R4). Index-first, file-fallback; stays dashboard-free by reading `result.json` / `judge_io` for the x-ray rather than the events-preview reconstructor | ~430 lines |
 | `src/zicato/query/epoch_view.py` | `build_epoch_view`, `build_environment`'s epoch slice, `_current_champion` (reigning spine end), `build_workspace_view`, `compute_board_split` | 35 KB |
 | `src/zicato/query/gate_view.py` | `build_gate_breakdown` (+ `deciding_rule`), `build_score_trajectory`, `build_health_report`, `build_rating_view`, `build_drift_movements` | 56 KB |
@@ -85,7 +86,7 @@ Two orientation facts before anything else:
 - **There are TWO servers that speak the same wire.** This Python service
   and the Rust supervisor (08-supervisor.md) both serve the dashboard
   bundle and both answer the read APIs. The JS cannot tell which one it is
-  talking to, which is the whole reason for DQ8 (every new GET must
+  talking to, which is the whole reason for null-degradation under the Rust supervisor (every new GET must
   null-degrade the way the Rust side will serve it).
 
 ---
@@ -99,7 +100,7 @@ docstring states it and the import-linter enforces it.
 ```python
 """The workspace query layer: read-only ``.zicato/`` state assembly.
 
-Library code, not driver code: these readers turn the on-disk workspace
+These readers are library code rather than driver code: they turn the on-disk workspace
 (runtime state files, the SQLite analytical index, epoch records) into
 the JSON view shapes any consumer can render. The dashboard server is
 the primary consumer today, but the layer has no dashboard dependency —
@@ -134,7 +135,7 @@ invisible at the call site, the boundary is not.
 > ⛔ NEVER import `starlette`, `Request`, `JSONResponse`, or anything under
 > `zicato.dashboard` from a `zicato.query` module. A reader returns plain
 > Python (`dict` / `list` / scalars); the endpoint wraps it in a
-> `JSONResponse`. The moment a reader knows about HTTP, DQ4 is broken and
+> `JSONResponse`. The moment a reader knows about HTTP, the query layer has stopped being library code and
 > `lint-imports` reds — and the Rust supervisor loses the Python peer it
 > keeps parity with.
 
@@ -169,7 +170,8 @@ kept alongside it.
 The client is a **renderer**. Every classification, every join across
 records, every "which one is the champion" decision is computed on the
 server, serialized once, and rendered verbatim. This is not an
-aesthetic preference — it is the fix for a whole bug class (bug #4) and
+aesthetic preference — it is the fix for a whole bug class (the client
+champion-scan case, `12-bug-casebook.md` case 4) and
 the reason the two servers (Python + Rust) can agree.
 
 ### 9.2.1 Bug #4 — the client champion-scan (first vs reigning)
@@ -177,7 +179,7 @@ the reason the two servers (Python + Rust) can agree.
 The canonical breach: a JS view walked the generations list itself and
 picked "the champion" as the FIRST generation it found with a promotion,
 rather than the LAST — the *reigning* champion is the END of the promoted
-spine, not its root. The two disagree the moment an epoch promotes more
+spine rather than its root. The two disagree the moment an epoch promotes more
 than once. The fix moved the walk server-side, into one function, and the
 client reads its answer:
 
@@ -194,7 +196,7 @@ def _current_champion(experiments: list[dict[str, Any]]) -> str | None:
 
 > ⛔ NEVER re-derive "the champion", "the winner", "the latest generation",
 > or a decision on the client from a list the server already ordered. This
-> is DQ1 and it is bug #4. If the client needs to know the reigning champion,
+> is server-computes-client-renders, and the client champion-scan case (`12-bug-casebook.md` case 4) is what breaks it. If the client needs to know the reigning champion,
 > the server ships `current_champion`; if it needs the deciding rule, the
 > server ships `deciding_rule`. The client's job is to draw the answer, not
 > compute it.
@@ -235,7 +237,7 @@ server ships ONE canonical vocabulary and the frontend never re-classifies:
 ```
 — `src/zicato/query/decisions.py` (module docstring)
 
-The classifier maps every legacy spelling onto the canonical wire token and
+The classifier maps every recorded spelling onto the canonical wire token and
 refuses to guess an unknown one:
 
 ```python
@@ -262,10 +264,10 @@ def canonical_decision(raw: str | None) -> str | None:
 — `src/zicato/query/decisions.py`, `canonical_decision`
 
 `PROMOTED_DECISIONS = frozenset({"promoted", "promote", "accepted",
-"accept", "win", "won"})` — the legacy spellings older workspaces recorded,
+"accept", "win", "won"})` — the spellings older workspaces recorded,
 all collapsed to the one canonical token `"promoted"`. An unknown token is
 lowercased and passed through, never coerced into a verdict — an
-un-recognized string is a data question, not a decision the classifier is
+un-recognized string is a data question rather than a decision the classifier is
 allowed to invent.
 
 ### 9.2.3 The tri-state `promoted` stamp — and the Class-B bug
@@ -315,7 +317,7 @@ def stamp_experiment_decision(record: dict[str, Any]) -> None:
 `tournament_decision` / `verdict`) so the "where is the decision written"
 knowledge lives in one place too.
 
-### 9.2.4 The schema canon — one spelling per field (DQ2)
+### 9.2.4 The schema canon — one spelling per field
 
 The wire has ONE spelling for each field, chosen so the client never
 re-interprets or coalesces. Four canonical spellings, each with a single
@@ -407,18 +409,18 @@ exact spelling as `status_raw` alongside so a post-mortem can still tell
 > teach the client a `status === 'completed'` branch. If the index stores a
 > new pass flag as an int, route it through `_opt_bool`, do NOT emit the int.
 > Every alias you let onto the wire is a place the two servers can disagree
-> and a coalescer the client has to grow — DQ2 exists to keep both at zero.
+> and a coalescer the client has to grow. One spelling per wire field keeps both at zero.
 
-### 9.2.5 Served joins — the ex-client reconstructions
+### 9.2.5 Served joins — the server owns every cross-endpoint join
 
-Three payloads used to be assembled by the client walking several
-endpoints and stitching id strings. All three are now JOINED on the server,
-served as ONE payload, and the client reads them whole. Each move deleted a
-class of client/server drift.
+Four payloads each require stitching several records together. The server
+performs every one of those joins and serves the result as a single payload,
+and the client reads it whole. Holding the join on one side is what removes a
+class of client-versus-server drift.
 
-**Racing field (ex-`reconstructRacing`).** The frontend used to parse
-`{epoch}:{champ}->{chall}` id strings client-side to rebuild the rung
-ladder. That join is now `build_racing_field`:
+**The racing field.** A racing tournament persists one record per challenger,
+so the rung ladder has to be joined out of those records. `build_racing_field`
+is that join:
 
 ```python
 """racing_view — the settled racing-field payload, served (not fabricated).
@@ -434,10 +436,10 @@ and never re-derives rungs / survivors / the crowned winner.
 ```
 — `src/zicato/query/racing_view.py` (module docstring)
 
-**Round timeline (ex-`rounds.js` four-endpoint join).** The client used to
-JOIN `/api/epoch` + `/api/lineage` + `/api/score-trajectory` +
-`/api/tournaments` to reconstruct the round model. Now the server owns both
-settled and LIVE rounds; the client only renames fields for the renderer:
+**The round timeline.** The round model draws on `/api/epoch`,
+`/api/lineage`, `/api/score-trajectory`, and `/api/tournaments`. The server
+owns that join for both settled and in-flight rounds, and the client only
+renames fields for the renderer:
 
 ```python
 """rounds_view — the epoch ROUND TIMELINE, served (not joined client-side).
@@ -454,7 +456,7 @@ and the loss-floor waterfall. The client performs no decision-bearing join.
 
 > ⚠️ TRAP — a FIELD row has no champion of its own. `_upsert_field_tournament`
 > leaves `parent_generation_id` / `child_generation_id` EMPTY on purpose (a
-> field is a round, not a duel, and a populated child would collide with the
+> field is a round rather than a duel, and a populated child would collide with the
 > per-challenger crowning row), and it writes one for every field of 3+
 > competitors — so every MULTI-CHALLENGER racing / swiss / elim round has one. (A
 > round that fields a single challenger is two competitors: no field row, and its
@@ -482,22 +484,19 @@ and the loss-floor waterfall. The client performs no decision-bearing join.
 > per-challenger rows, `_build_rounds` carries the champion forward correctly and
 > the bug is invisible.
 
-**Pipeline projection (ex-phase-string parsing).** The client used to parse
-the heartbeat `phase` string to decide propose→apply→run→gate position.
-That inference is now server-side (§9.11); the JS renders the verdict
-verbatim.
+**The pipeline projection.** The propose→apply→run→gate position is inferred
+server-side from the heartbeat `phase` string (§9.11), and the JS renders the
+resulting verdict verbatim.
 
-**Elim gen-states (ex-`elimFlow` per-render derivation).** The bracket
-figures — `svg.js` `elimFlow` (the lane-flow read) and its `elimRadial`
-twin (the concentric-ring read; single_elim's primary + double_elim's
-optional toggle) — each used to
-derive the whole elimination model *per render*: re-sorting the mis-ordered
-`winners.concat(losers)` columns their caller handed them, de-duplicating
-backend-duplicated matches, classifying every loss as an *elimination* vs a
-winners→losers *drop* (the second life), and carrying five defensive guards
-against phantom eliminations in an under-specified payload. That was a DQ1
-breach — the client computing a domain conclusion. `derive_elim_states(rounds)`
-is that fold moved server-side, served as a top-level `gen_states` join:
+**The elimination gen-states.** The elimination model orders a round's
+columns, de-duplicates repeated matches, and classifies each loss as an
+elimination or as a winners-to-losers drop (the second life). A client that
+derived that model per render would be computing a domain conclusion, which
+server authority forbids. `derive_elim_states(rounds)` is the fold, served as
+a top-level `gen_states` join, and both bracket figures — `svg.js`'s
+`elimFlow` lane-flow read and its `elimRadial` concentric-ring twin
+(single_elim's primary figure and double_elim's optional toggle) — render it
+verbatim:
 
 ```python
 def derive_elim_states(rounds: Any) -> dict[str, Any]:
@@ -520,25 +519,20 @@ def derive_elim_states(rounds: Any) -> dict[str, Any]:
 ```
 — `src/zicato/query/tournament_view.py`
 
-This one is the model example of the doctrine's hardest form: the fold is
-served by BOTH servers, so it ships **twice** — the Python `derive_elim_states`
-and the Rust `elim_states.rs` port — pinned isomorphic by the shared
-`tests/data/elim_states_fixture.json` (a Python↔Rust parity fixture, not a
-client golden). A client-side re-derivation fallback is *forbidden*: BOTH
-bracket renderers — `elimFlow` (lane-flow) and `elimRadial` (concentric
-rings) — now render `gen_states` verbatim, having dropped the ~100 derivation
-lines + the caller re-sort + the dedupe + the elimination-vs-drop pass + the
-phantom-✕ guards. Every one of those guards existed only because the payload
-was under-specified; serving the model retired the whole family at once
-(12-bug-casebook.md). (`elimRadial` was briefly cut as a redundant figure and
-then restored by operator veto — it kept its served-model reads across the
-round-trip, so the "server computes, client renders" contract holds for both.)
+This is the doctrine in its hardest form: both servers serve the fold, so it
+ships twice — the Python `derive_elim_states` and the Rust `elim_states.rs`
+port — held isomorphic by the shared `tests/data/elim_states_fixture.json`,
+which is a Python-to-Rust parity fixture rather than a client golden. A
+client-side re-derivation fallback is forbidden. A client that derives the
+model itself needs defensive guards against phantom eliminations, because an
+under-specified payload leaves it guessing; serving the model removes the
+reason for the whole guard family at once (12-bug-casebook.md, case 12).
 
-The tell that a join moved server-side but the CLIENT still cross-checks it
-is the node `mock_server.mjs`, which re-derives the two served joins from
-fixture maps "exactly as the Python readers do" — and pins that any
-divergence is a bug in the mock, never grounds to re-derive in prod
-(§9.16, 11-testing.md §"Node conventions"):
+One place does re-derive these joins: the node `mock_server.mjs` rebuilds them
+from fixture maps the way the Python readers do, so the node suite can check
+the served shape without a Python server. Any divergence between the two is a
+bug in the mock and never grounds to re-derive in production code (§9.16,
+11-testing.md §11.9.3):
 
 ```javascript
 // The prod frontend no longer joins rounds / racing ladders client-side: the
@@ -570,7 +564,7 @@ name of the rule that decided:
 — `src/zicato/query/gate_view.py`, `build_gate_breakdown` (tail)
 
 The empty/degraded gate shape carries `"deciding_rule": None` so the field
-is always present with one spelling (DQ2), and the client shows "no rule
+is always present with one spelling, and the client shows "no rule
 fired yet" from the `null` rather than inferring it.
 
 ---
@@ -579,10 +573,10 @@ fired yet" from the `null` rather than inferring it.
 
 Every reader is a pure function `build_*(paths, ...) -> dict|list`.
 `paths` is a `WorkspacePaths` (the `.zicato/` layout object). They share
-one contract — best-effort degradation (DQ3) — and one small set of
+one contract — every reader is best-effort — and one small set of
 primitives.
 
-### 9.3.1 The best-effort degrade contract (DQ3)
+### 9.3.1 The best-effort degrade contract
 
 The package docstring states it once for everyone:
 
@@ -614,9 +608,9 @@ loop-view is the model — note the two distinct degrade notes:
 > failure — that is how a "best-effort" reader turns into a client crash.
 
 > ⚠️ TRAP — a bare `except Exception` in a reader is CORRECT here (it is the
-> DQ3 contract) but it is the one place ruff's `BLE001` fires; every reader
+> best-effort contract) but it is the one place ruff's `BLE001` fires; every reader
 > carries the `# noqa: BLE001 — best-effort` marker so the blanket-except is
-> a documented decision, not an accident. Do not "tighten" it to a specific
+> a documented decision rather than an accident. Do not "tighten" it to a specific
 > exception type — a never-built index, a torn read, and a schema-newer
 > database must ALL degrade, and you cannot enumerate every failure a
 > future SQLite/file layout can throw.
@@ -760,7 +754,7 @@ six times:
 > trips the filesystem watchdog and emits a spurious `run_log` frame BEFORE
 > the expected `state_change`, breaking SSE ordering. The session id is read
 > off the persisted `loss.json` instead, on a non-hot-path endpoint. If you
-> add a hot-path read, do not touch a watched file — DQ5's ordering depends
+> add a hot-path read, do not touch a watched file — the change-signal ordering depends
 > on it (`read_active_runs_view`'s docstring is the standing warning).
 
 The per-view readers each own one surface; the ones the rest of this
@@ -919,11 +913,11 @@ factories into one `name -> handler` dict:
 Each factory closes over `paths` and returns a small dict of async
 handlers. A handler is thin by construction: validate the coordinate, then
 wrap the reader in a `JSONResponse`. This is now the WHOLE surface: the seven
-endpoint blobs that used to assemble a payload inline in `endpoints.py`
+endpoint blobs that would otherwise assemble a payload inline in `endpoints.py`
 (`_build_matchup_conversations`, the `api_conversation` resolver chain,
 `api_run_transcript`, the journal file-reads, …) were hoisted into `query`
 readers — `conversations_view.py`, `transcript_view.py`, `journal_view.py` (+
-their homes) — each with a DQ3 degrade+shape test, leaving `endpoints.py` a
+their homes) — each with a best-effort degrade-and-shape test, leaving `endpoints.py` a
 sheet of validate-then-delegate one-liners (~1451→~1000 lines) and the readers
 sharing the ONE `open_index_ro` connection discipline (`query/_sqlite.py`; §9.3).
 Replicated board runs remain one `(epoch, generation, entry)` directory with
@@ -936,7 +930,7 @@ always asks for replicate 0, so a view that wants a sibling's judges must pass
 the keyword through a new route parameter first. The Goldfive `runId` inside an
 event stream is a separate identity and must not be fabricated from the runtime
 run id in fixtures.
-For deliberately supported legacy racing workspaces, a `match` selector is a
+For older racing workspaces, which stay supported, a `match` selector is a
 nested-rung coordinate and takes precedence over the top-level replicate loss's
 `match_id`; runtime `run` selectors prefer the numbered sibling. The global
 Goldfive-run-id lookup caches each event file independently: pure appends reuse
@@ -956,7 +950,7 @@ replaced, truncated, and previously empty files are reparsed.
 ```
 — `src/zicato/dashboard/endpoints.py`, `_make_live_endpoints`
 
-### 9.5.1 `_is_safe_id` — the coordinate guard (DQ12)
+### 9.5.1 `_is_safe_id` — the coordinate guard
 
 Any path param that becomes a workspace coordinate is validated by
 `_is_safe_id` BEFORE it touches the filesystem — a conservative allow-list
@@ -1019,10 +1013,10 @@ The `?epoch=<id>` scoping param is validated the same way but via
 handler can answer `404 {"error": "unknown epoch"}` before touching the
 workspace. An id-carrying scoped read returns 404 (a genuinely unknown
 epoch); a coordinate PATH param degrades to the empty shape at 200 (a
-malformed drill-down should still render an empty panel, not a broken page).
+malformed drill-down should still render an empty panel rather than a broken page).
 
 > ⛔ NEVER let a coordinate reach a reader unvalidated, and never answer a
-> malformed coordinate with a 500. DQ12: `_is_safe_id` first, then the reader
+> malformed coordinate with a 500. Validate the id before it touches the workspace: `_is_safe_id` first, then the reader
 > re-validates against the on-disk set (`_resolve_epoch_id`, §9.3.2). The
 > degrade shape MUST match the reader's own empty shape byte-for-byte so the
 > client cannot tell a malformed-coordinate empty from a genuinely-empty one
@@ -1085,7 +1079,7 @@ per-endpoint polls.
 ```
 — `src/zicato/dashboard/sse.py` (module docstring)
 
-### 9.6.1 The wire vocabulary — change-kinds + seq + terminal ONLY (DQ5)
+### 9.6.1 The wire vocabulary — change-kinds + seq + terminal ONLY
 
 The `state_change` frame carries the coalesced set of changed `kind`
 regions plus the orchestrator's true-liveness `seq` and `terminal` marker
@@ -1120,7 +1114,7 @@ degrades to `(0, False)` and never raises into the hot path.
 > `/api/environment` read in response. If you ship the changed data on the
 > frame, you have (a) reintroduced the fan-out, (b) coupled the SSE writer to
 > every payload shape, and (c) made the frame unable to coalesce (two
-> different payloads cannot merge). DQ5: the frame is a signal; the data is a
+> different payloads cannot merge). A change-signal carries no content: the frame is a signal; the data is a
 > GET.
 
 ### 9.6.2 Coalescing — the anti-flash debounce
@@ -1185,7 +1179,7 @@ This is the chapter's most-broken discipline and its most important. The
 recurring bug it closes — call it **the render-bug class** — is a live
 surface that flashes, thrashes, resets scroll, or self-DoSes because a
 no-op SSE beat rebuilt DOM that did not change. It has recurred often
-enough that the fix is a formal checklist, not a habit. The spec has five
+enough that the fix is a formal checklist rather than a habit. The spec has five
 layers; a live surface must satisfy ALL of them.
 
 ### 9.7.1 The bug class, stated
@@ -1195,20 +1189,20 @@ each touch → an SSE frame → a re-render → a DOM rebuild → lost click
 handlers, reset scroll, a visible flash, and (historically) a fan-out of
 per-endpoint polls that self-DoSed the server. Every layer below exists to
 turn a stream of beats into ZERO DOM writes unless the CONTENT actually
-changed. This is DQ6.
+changed. This is the no-op-heartbeat-rebuilds-zero-DOM rule.
 
 > ⚠️ TRAP — this bug is invisible in a screenshot and invisible to a unit
 > test that renders once. It only shows on a LIVE surface under a beat
 > stream: the panel flickers, the log resets scroll, a hovercard closes
 > mid-read. That is why the discipline is enforced by DOM-node-identity
-> assertions in the node suite (§9.7.5), not by "it looks fine".
+> assertions in the node suite (§9.7.5) rather than by inspection.
 
 ### 9.7.2 Layer 1 — the SSE frame ships no content (server)
 
 Covered in §9.6: the `state_change` frame carries change-kinds + `seq` +
 `terminal` only. A payload on the frame would defeat every layer below it,
 because two content-bearing frames cannot coalesce and a content-bearing
-frame forces a render. Layer 1 is DQ5; it is the server's contribution to
+frame forces a render. Layer 1 is the change-signals-carry-no-content rule; it is the server's contribution to
 the render discipline.
 
 ### 9.7.3 Layer 2 — the client seq no-op-skip gate
@@ -1269,9 +1263,9 @@ on a fresh boot); a repeat `seq` is a no-op that moves nothing:
 ```
 — `src/zicato/dashboard/static/js/core/state.js`, `noteProgress`
 
-A frame with NO `seq` (a pre-RUNTIME-V2 / legacy server) degrades to the
-always-refresh path — the gate is additive, an old server just refreshes
-every beat as before.
+A frame with no `seq` — from a server that does not stamp one — degrades to the
+always-refresh path. The gate is additive, so such a server refreshes on every
+beat.
 
 ### 9.7.4 Layer 3 — views fetch-in-render, fold a content digest, `gatedSwap`
 
@@ -1426,8 +1420,8 @@ fetch), the four run-states, and the chrome pill's zero-DOM no-op beat.
 
 A live surface ships only if it ticks every box:
 
-1. **Server frame is a signal, not content.** The change flows through
-   `state_change` (kinds + seq + terminal); the data is a GET. (DQ5)
+1. **The server frame is a signal.** The change flows through
+   `state_change` (kinds + seq + terminal); the data is a GET.
 2. **Fetch-in-render.** The view fetches its own data in `render()` via a
    null-degrading `data.js` accessor; it does not read a frame payload.
 3. **Content digest, timestamps excluded.** The digest folds WHAT is drawn
@@ -1439,7 +1433,7 @@ A live surface ships only if it ticks every box:
 6. **No-op node-identity test.** A node test asserts `host.firstChild ===
    first` across a re-serve of the same payload.
 7. **Rollover + absent-seq handled.** A restarted log (backwards seq) forces
-   a refresh; a legacy server with no seq degrades to always-refresh.
+   a refresh; a server that stamps no seq degrades to always-refresh.
 
 > ⛔ NEVER `container.innerHTML = ...` on a live surface, and never
 > unconditionally `clearChildren` + rebuild in a `render()` that a beat
@@ -1453,7 +1447,7 @@ A live surface ships only if it ticks every box:
 Render discipline (§9.7) keeps a view from *flashing*; this rule keeps a view
 from *drifting off the design language*. A new surface speaks the console's
 existing grammars — it does not bolt a fresh component vocabulary on beside
-them. Three durable rules, each load-bearing for "one console, not a fleet of
+them. Three durable rules, each load-bearing for "one console rather than a fleet of
 mini-apps":
 
 - **Tags/chips are ONLY for a semantic state the console already pills** — a
@@ -1488,7 +1482,7 @@ mini-apps":
 A dashboard that says "plateaued" or "improving" when the movement is
 smaller than the measurement noise is LYING to the operator. The read model
 computes verdicts relative to the epoch's measured A/A noise floor and
-reports "no detectable signal" when the movement fits inside it (DQ7).
+reports "no detectable signal" when the movement fits inside it.
 
 `build_optimization_trajectory` is the worked case. It joins the raw
 plateau flag with the epoch's measured `noise_floor` and picks the honest
@@ -1558,7 +1552,7 @@ widened so the whole band stays framed — the honest rendering is not
 allowed to be cropped out of view.
 
 > ⛔ NEVER render a "plateaued" / "converged" / "improving" verdict without
-> checking it against the measured noise floor. This is DQ7. A movement of
+> checking it against the measured noise floor. Verdicts are honest about the noise floor. A movement of
 > 0.003 on a floor of 0.66 is not a plateau and not an improvement — it is no
 > signal. The proposer's own memory bands round-over-round deltas for exactly
 > this reason (05-proposer.md §5.8.6); the dashboard must not un-band them by
@@ -1567,7 +1561,7 @@ allowed to be cropped out of view.
 > ⚠️ TRAP — "no floor measured yet" is NOT "no signal". When `noise_floor` is
 > `None` (an epoch that never ran the A/A calibration), the verdict falls
 > back to `plateaued`/`improving` on the raw flag — the honest thing to say
-> when you have no floor is the raw observation, not a fabricated "no signal".
+> when you have no floor is the raw observation rather than a fabricated "no signal".
 > Only a MEASURED floor that the movement fits inside earns `no_signal`.
 
 ---
@@ -1653,13 +1647,12 @@ degeneracy is handled at the scale level too.
 
 Every heavy figure participates in the render discipline (§9.7): a view gates
 the figure swap on a `*Digest` that folds ONLY what the figure draws, so a
-no-op heartbeat diffs a string instead of the SVG. There used to be ~8
-hand-written per-figure `*Digest` functions (~130 LOC) that each re-implemented
-the same fold by hand — round to rendered precision, drop timestamps, sort keys.
-`digestOpts(opts, omit)` is that fold, generic and in ONE place; the ~7
-surviving `*Digest` exports (`racingScalarTrackDigest`, `gauntletFieldBarsDigest`,
+no-op heartbeat diffs a string instead of the SVG. Every figure needs the same
+fold — round to rendered precision, drop timestamps, sort keys — so
+`digestOpts(opts, omit)` holds it once and generically, rather than each figure
+carrying its own copy. The seven remaining `*Digest` exports (`racingScalarTrackDigest`, `gauntletFieldBarsDigest`,
 `radarSilhouetteDigest`, `proposingDigest`, `diversityMatrixDigest`,
-`metaLoopLedgerDigest`, `calibrationTrendDigest`) are now thin wrappers that add
+`metaLoopLedgerDigest`, `calibrationTrendDigest`) are thin wrappers that add
 only their own load-bearing normalization (a namespace prefix, an
 absent-vs-empty collapse) and an `omit` list.
 
@@ -1691,7 +1684,7 @@ sound: two byte-identical renders MUST fold to the same digest, so a view gates
 on the figure's `*Digest` and a no-op heartbeat churns no DOM.
 
 > ⚠️ TRAP — a figure's fold must include EVERY field the figure draws,
-> including positional ones (a tick's index, not just its value). If the
+> including positional ones (a tick's index as well as its value). If the
 > figure moves a mark when a value's RANK changes but the fold sees only
 > the value, a rank change that leaves the value equal will not regate the
 > DOM and the figure lies. `metaLoopLedgerDigest` folds `champion_index` (the
@@ -1702,7 +1695,7 @@ on the figure's `*Digest` and a no-op heartbeat churns no DOM.
 
 The figure grammar lives in `svg.js`; the DOM-composition grammar the views
 share lives in `ui.js`. These builders each fold a copy-paste class the views
-used to hand-roll; adopting one is the default, hand-rolling is the exception a
+hand-rolls; adopting one is the default, and hand-rolling is the exception a
 review should question.
 
 | builder | folds | notes |
@@ -1712,7 +1705,7 @@ review should question.
 | `chip(cls, word)` / `pill(cls, word)` | the inline `dn-chip` / `dn-pill` spans | `pill` is the custom-word sibling of `verdictPill` (which derives its own label) |
 | `hovercardBody(...children)` | the 7 `dn-hc-body` wrappers | accepts a single array too (the `lines`-array sites) |
 | `truncate(s, n)` | the four clip/shorten copies (dag / candidate / boardstatus) | the ONE string-truncate; `svg.fmt`/`fmtSigned`/`isNum` stay the numeric home, re-exported from `ui.js` |
-| `emptyState(parent, w, h, label)` | the ~13 centred "no data yet" SVG placeholders | `svg.js`-side (a figure primitive, U5) |
+| `emptyState(parent, w, h, label)` | the ~13 centred "no data yet" SVG placeholders | `svg.js`-side (a figure primitive) |
 
 > ✅ ALWAYS reach for the shared builder first. The `dn-`/`dt-` class names are
 > STABLE (the class-literal test refs route around, they do not churn), so a
@@ -1793,7 +1786,7 @@ two liveness reads agree.
 > ages on a slow LLM call (false stall) and keeps stamping on a wedged loop
 > (false alive) — see 07-runtime-and-durability.md §7.6.1 for the same lesson
 > server-side. The `seq` cursor is the true liveness signal; the timestamp is
-> the DEAD/STALLED split (is the process still pulsing?), not the LIVE test.
+> the DEAD/STALLED split (whether the process is still pulsing) rather than the LIVE test.
 
 The token→CSS mapping lives in the chrome (`shell.js`), which patches one
 `dt-rs-<state>` class per state — `livestatus.js` emits only the lowercase
@@ -1870,13 +1863,13 @@ step's does not, and an identical re-serve keeps DOM node identity (§9.7.5).
 > the stepper, add it to `_project_pipeline` (server-side) and the JS renders
 > the new `state` automatically. The moment the JS parses `phase` to decide
 > which pip is active, you have a second inference the Rust supervisor cannot
-> match and a re-derivation that violates DQ1. `data.js::livePipeline`
+> match and a re-derivation that breaks server authority. `data.js::livePipeline`
 > null-degrades on a server that does not serve `/api/live/pipeline` (the
 > Rust supervisor), so the stepper simply omits — never guesses.
 
 > ⚠️ TRAP — do not conflate the propose→apply→run→gate PIPELINE stepper with
 > the RUNG stepper (`live.js::rungStepper`), which shows one pip per
-> rung/round of a live tournament — structural progress, not a stage
+> rung/round of a live tournament — structural progress rather than a stage
 > pipeline. They look similar and share the pip idiom; they answer different
 > questions.
 
@@ -1906,7 +1899,7 @@ export async function postControl(action, body) {
 ```
 — `src/zicato/dashboard/static/js/core/api.js`, `postControl`
 
-### 9.12.1 Read-only gating (DQ9)
+### 9.12.1 Read-only gating
 
 The loop-control cluster renders ONLY when the workspace is writable
 (`state.health.read_only === false`) and the loop is alive-or-paused — it is
@@ -1963,7 +1956,7 @@ direction buttons (promote ↑ / reject ✕) plus cancel, never a one-click
 force-decision. Both surfaces short-circuit to a spent/disabled state when
 an override is already recorded or the round has settled.
 
-### 9.12.3 Paused readback — the explicit-refresh (DQ9)
+### 9.12.3 Paused readback — the explicit refresh
 
 A control write does NOT advance the orchestrator progress `seq`, so the SSE
 no-op-skip gate (§9.7.3) would DROP its `state_change` and the paused
@@ -2002,7 +1995,7 @@ on the heartbeat payload (`readers/runtime_view.py::read_paused` →
 
 ---
 
-## 9.13 The Rust-supervisor null-degradation duty (DQ8)
+## 9.13 The Rust-supervisor null-degradation duty
 
 Every read API is served by TWO servers — this Python service and the Rust
 supervisor (08-supervisor.md). The JS cannot tell which one answered. So
@@ -2029,12 +2022,12 @@ the head unchanged").
 > view to render an honest empty state on `null`. When you add
 > `/api/epoch/{id}/newthing`, assume the Rust supervisor does not serve it:
 > the accessor returns `null` on a 404, the panel omits or shows "unavailable"
-> — never a spinner, never a crash. DQ8. The reciprocal duty is on the Rust
+> — never a spinner, never a crash. The reciprocal duty is on the Rust
 > side (08-supervisor.md §"When a Python payload change requires Rust
 > parity"): a payload SHAPE change that the client depends on must land in
 > both servers in lock-step, or the two dashboards skew.
 
-> ⚠️ TRAP — the failure mode of skipping DQ8 is invisible on the Python
+> ⚠️ TRAP — the failure mode of skipping the null-degrade is invisible on the Python
 > service (where you develop) and only shows against the Rust supervisor
 > (where operators often run). A new panel that works perfectly in your
 > `zicato dashboard` session throws `Cannot read property 'x' of null` under
@@ -2139,7 +2132,7 @@ skew the two servers, or 500. Worked scenario: a per-epoch
 `build_promotion_cadence(paths, epoch_id)` to a `zicato.query` submodule
 (a new `cadence_view.py`, or fold into `loop_view.py`). It is a pure
 function returning a `dict`; it degrades to the SAME-shaped empty payload
-with a `note` (DQ3), never raises:
+with a `note`, never raises:
 
 ```python
 def build_promotion_cadence(paths: WorkspacePaths, epoch_id: str) -> dict[str, Any]:
@@ -2154,8 +2147,9 @@ def build_promotion_cadence(paths: WorkspacePaths, epoch_id: str) -> dict[str, A
 
 Coerce every numeric with `coerce_float` and every pass flag with
 `_opt_bool`; classify any decision token through `decisions.canonical_decision`
-/ `promoted_tristate`. Emit ONE spelling per field (DQ2). Do NOT re-derive
-"the champion" — read `_current_champion` if you need it (DQ1/DQ10).
+/ `promoted_tristate`. Emit ONE spelling per field. Do NOT re-derive
+"the champion" — read `_current_champion` if you need it, because the server
+owns that decision and the champion is the reigning spine end.
 
 **Step 2 — Export it from the package face.** Add the name to the import
 block AND `__all__` in `src/zicato/query/__init__.py`. This is what makes
@@ -2165,7 +2159,7 @@ invisible (§9.1).
 **Step 3 — The endpoint factory + `_is_safe_id`.** Add the handler to the
 relevant per-surface factory in `endpoints.py` (here `_make_epoch_endpoints`).
 Validate the coordinate FIRST and degrade a malformed one to the reader's
-empty shape at HTTP 200 (DQ12):
+empty shape at HTTP 200:
 
 ```python
     async def api_epoch_promotion_cadence(request: Request) -> JSONResponse:
@@ -2188,7 +2182,7 @@ Return it in the factory's dict (`"api_epoch_promotion_cadence": ...`).
         ),
 ```
 
-**Step 5 — The client accessor, null-degrading (DQ8).** Add a thin cached
+**Step 5 — The client accessor, null-degrading.** Add a thin cached
 accessor to `data.js`, and write it to degrade to `null` on an absent
 endpoint (the Rust supervisor may not serve it):
 
@@ -2214,9 +2208,9 @@ fold a content digest (rounded, timestamp-free), and `gatedSwap`:
 ```
 
 If the panel is a heavy figure, give it a `*Digest` twin in `svg.js` and
-fold THAT (§9.9.3), not the raw data.
+fold THAT (§9.9.3) rather than the raw data.
 
-**Step 7 — The node behaviour test with a no-op assertion (DQ6).** Add a
+**Step 7 — The node behaviour test with a no-op assertion.** Add a
 `*.test.mjs` that renders the panel, captures `host.firstChild`, re-serves
 the SAME payload, and asserts node identity:
 
@@ -2227,11 +2221,11 @@ the SAME payload, and asserts node identity:
   assert(host.firstChild === first, 'a no-op re-serve keeps DOM node identity');
 ```
 
-Also assert the null path renders an honest empty state (DQ8) and, if the
+Also assert the null path renders an honest empty state and, if the
 panel derives from a served join, extend `mock_server.mjs` to mirror the new
 reader (§9.16).
 
-**Step 8 — The Rust degradation check (DQ8).** Confirm the client renders
+**Step 8 — The Rust degradation check.** Confirm the client renders
 correctly when the endpoint 404s. Either the accessor's `null` path (tested
 in step 7) covers it, or — if the datum should ALSO surface under the
 supervisor — mirror the payload in the Rust route and its `state.rs` serde
@@ -2241,34 +2235,36 @@ keeping `EXPECTED_SCHEMA_VERSION` and the field spellings in lock-step.
 **Step 9 — The reader unit test.** In `tests/` add a Python test that
 builds a fixture workspace, calls `build_promotion_cadence`, and asserts the
 shape AND the degrade path (a never-built index ⇒ the empty shape + note; a
-malformed epoch ⇒ empty, no raise). This is the DQ3 pin.
+malformed epoch ⇒ empty, no raise). This is the best-effort-reader pin.
 
 **Verify**
 
 ```bash
 uv run pytest tests/test_dashboard_server.py tests/test_promotion_cadence.py -q
-uv run lint-imports              # the reader must not import the dashboard (DQ4)
+uv run lint-imports              # the reader must not import the dashboard
 make node-test                   # the no-op / null-degrade node assertions
 uv run mypy src/zicato/
 ```
 
 If you skipped step 1's degrade, a never-built index 500s the endpoint
-(DQ3). If you skipped step 5's null-degrade, the panel throws under the Rust
-supervisor (DQ8). If you skipped step 7's node assertion, the panel flashes
+and raise. If you skipped step 5's null-degrade, the panel throws under the
+Rust supervisor. If you skipped step 7's node assertion, the panel flashes
 on every beat and nothing in CI notices (§9.7.1).
 
 ---
 
 ## 9.16 Recipe: change a payload shape (the clean break)
 
-Changing an existing payload's shape is a **clean break**, not a
+Changing an existing payload's shape is a **clean break** rather than a
 back-compat dance — server and client change in the SAME commit, every
-client-side coalescer is DELETED, and the pins are updated together (DQ11).
+client-side coalescer is DELETED, and the pins are updated together — a
+payload-shape change is a clean break.
 The temptation is to add the new field and leave the old one, then teach the
-client to read either. That is exactly the alias-growth DQ2 forbids.
+client to read either. That is the alias growth one-spelling-per-wire-field
+forbids.
 
 **Step 1 — Change the reader.** Rename/reshape the field in the `zicato.query`
-reader. Emit ONE spelling (DQ2). If you are replacing `won_by` with a
+reader. Emit ONE spelling. If you are replacing `won_by` with a
 tri-state `promoted`, remove `won_by` — do not ship both.
 
 **Step 2 — Change the client, delete the coalescer.** Update every view/
@@ -2303,7 +2299,7 @@ bytes are correct, never a rubber-stamp.
 
 **Step 5 — Rust parity, if the client depends on the field.** A shape change
 the JS reads must land in BOTH servers in the same commit or the two
-dashboards skew (DQ8/DQ11). Update the Rust route's serde
+dashboards skew. Update the Rust route's serde
 (`crates/supervisor/src/...`) to emit the same spelling.
 
 **Verify**
@@ -2316,7 +2312,7 @@ cargo test -p zicato-supervisor                # Rust parity, if applicable
 ```
 
 > ⛔ NEVER ship a payload change as "add the new field, keep the old one for
-> a release". That grows an alias (DQ2), forces the client to coalesce
+> a release". That grows an alias, forces the client to coalesce
 > (which then never gets removed), and lets the two servers disagree about
 > which field is authoritative. The workspace files are canonical and
 > rebuildable (07-runtime-and-durability.md §7.1) — there is no wire-format
@@ -2340,20 +2336,20 @@ cargo test -p zicato-supervisor                # Rust parity, if applicable
   endpoints write into; §7.10 — the RoundLog fold behind the round timeline.
 - 08-supervisor.md §"The read-only SQLite discipline" — the Rust twin of
   every reader here; §"When a Python payload change requires Rust parity" —
-  the reciprocal of DQ8/DQ11; §"Warn-only heartbeat" — the seq-vs-timestamp
+  the reciprocal of the null-degrade and clean-break rules; §"Warn-only heartbeat" — the seq-vs-timestamp
   liveness the four run-states mirror.
 - 04-evaluation-statistics.md §"The noise floor" — where the measured A/A
   floor §9.8 reads comes from; §"Train/holdout split" — the board-status
   surface (`compute_board_split` / `boardStatusDigest`).
 - 05-proposer.md §5.7 — the round-log vocabulary the proposing tracker
-  renders; §5.8.6 — the banding the dashboard must not un-band (DQ7).
+  renders; §5.8.6 — the banding the dashboard must not un-band.
 - 06-tournament-and-selection.md — where gate verdicts, the racing rungs,
   and `deciding_rule` come from before the readers join them.
 - 11-testing.md §"Node conventions" — the digest / no-op / DOM-node-identity
   discipline as a test contract; §"The parity gates" — MOCK-GOLDEN /
   REINDEX-DUMP; §"The import contracts" — the query-stays-dashboard-free pin.
 - 12-bug-casebook.md §"Bug #4" — the client champion-scan (first vs
-  reigning) behind DQ1.
+  reigning) behind server authority.
 
 ---
 
@@ -2369,15 +2365,15 @@ Where to add (and what will catch) a regression, by concern:
 | entry-status four-bucket canon + `status_raw` preservation | `tests/test_dashboard_*runtime*` / the runtime-view suite |
 | `_is_safe_id` / degrade-to-200 / `?epoch=` 404 | `tests/test_dashboard_server.py` (+ `tests/test_issue_250_pins.py` for the `_is_safe_id`/Rust mirror) |
 | the served joins (round-timeline / racing-field) match the client mock | `tests/test_dashboard_racing_and_rounds.py` + `test/mock_server.mjs` |
-| a field round names the WINNER after a promotion (role tag, not a borrow) | `tests/test_dashboard_racing_and_rounds.py::test_field_round_names_the_new_champion_after_a_promotion` |
+| a field round names the WINNER after a promotion (by role tag rather than by borrow) | `tests/test_dashboard_racing_and_rounds.py::test_field_round_names_the_new_champion_after_a_promotion` |
 | a field round's champion provenance: current round, and unknown vs `"full"` | `tests/test_dashboard_racing_and_rounds.py` (`…metadata_comes_from_that_round`, `…no_crowning_row_reports_an_unknown_eval_mode`, `…legacy_row_without_the_v8_columns_still_reads_full`) |
 | SSE frame shape (kinds + seq + terminal only), coalescing, ordering | `tests/test_dashboard_sse*.py`, node `live_protocol.test.mjs` |
 | the uncertainty-honest verdict (`no_signal` vs `plateaued`) | `tests/test_dashboard_loop_view.py` |
 | digest-gated render: no-op DOM identity, seq skip gate, four run-states | node `seq_render_gate.test.mjs`, `pipeline_stepper.test.mjs` |
 | the pipeline projection (`_project_pipeline`) | `tests/test_dashboard_loop_view.py` (pure inference) + `pipeline_stepper.test.mjs` |
 | controls: read-only 403, two-step confirm, paused readback | node `loop_controls.test.mjs`, `override_taxonomy.test.mjs`, `tests/test_dashboard_gate_endpoint.py` |
-| `_current_champion` reigning-spine (bug #4 regression, two-promotion lineage) | `tests/test_dashboard_decision_surface.py::test_current_champion_is_the_spine_end` (+ the seed fallback beside it) |
+| `_current_champion` reigning-spine (the client champion-scan regression, two-promotion lineage) | `tests/test_dashboard_decision_surface.py::test_current_champion_is_the_spine_end` (+ the seed fallback beside it) |
 | which member of a promoted SET is the head — `gate.gen`, the round-timeline spine, and `current_champion` on a BRANCHING lineage | `tests/test_dashboard_promoted_head.py` |
-| the tree crown per epoch (bug #4's wrong-epoch costume, multi-epoch fixture) | node `variant_t_epoch_scoping.test.mjs` |
+| the tree crown per epoch (the same client champion-scan defect across epochs, multi-epoch fixture) | node `variant_t_epoch_scoping.test.mjs` |
 | the whole Node behaviour suite (digest / no-op / mock parity) | `src/zicato/dashboard/static/test/run-all.mjs` via `make node-test` |
-| the query layer stays dashboard-free (DQ4) | `uv run lint-imports` (the import-linter contract) |
+| the query layer stays dashboard-free | `uv run lint-imports` (the import-linter contract) |
