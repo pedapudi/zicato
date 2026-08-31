@@ -19,10 +19,10 @@ import pytest
 import zicato_examples.target_0_convergence as _t0_pkg
 from tests._contract_pins import pin_deterministic
 from tests._orchestrator_harness import (
-    _harness_call_llm,
     _install_stub_adapter_factory,
     _install_telemetry_stubs,
     _make_aux_responder,
+    run_evolve_once,
 )
 from tests.test_orchestrator_multi_challenger import _distinct_field_responses
 from zicato.core.experiment import PLACEBO_HYPOTHESIS_MARKER
@@ -440,15 +440,8 @@ def test_multi_challenger_field_gets_extra_placebo_slot(
         canned_pass_by_gen={"v0": True, "v1": True, "v2": True, "v3": True},
     )
 
-    from zicato.orchestrator import evolve_once
-
-    outcome = asyncio.run(
-        evolve_once(
-            workspace_root=workspace,
-            epoch_id=epoch_id,
-            harness_call_llm=_harness_call_llm,
-            auxiliary_call_llm=_make_aux_responder(_distinct_field_responses(2)),
-        )
+    outcome = run_evolve_once(
+        workspace, epoch_id, _make_aux_responder(_distinct_field_responses(2))
     )
 
     assert outcome.tournament_decision == "promoted"

@@ -41,9 +41,10 @@ from tests._orchestrator_harness import (
     _install_telemetry_stubs,
     _make_aux_responder,
     _valid_proposer_response,
+    run_evolve_once,
 )
 from zicato.core.types import DriftCount, LossProfile
-from zicato.orchestrator import DEFERRED_INFRA_DECISION, EvolveRoundOutcome, evolve_once
+from zicato.orchestrator import DEFERRED_INFRA_DECISION, EvolveRoundOutcome
 from zicato.runtime.resume import prepare_resume
 
 # ---------------------------------------------------------------------------
@@ -128,13 +129,8 @@ def test_all_infra_aborted_round_defers_un_outcomed(
 ) -> None:
     workspace, epoch_id = _rig_outage_workspace(monkeypatch, tmp_path, threshold=1)
 
-    outcome = asyncio.run(
-        evolve_once(
-            workspace_root=workspace,
-            epoch_id=epoch_id,
-            harness_call_llm=_harness_call_llm,
-            auxiliary_call_llm=_make_aux_responder([_valid_proposer_response()]),
-        )
+    outcome = run_evolve_once(
+        workspace, epoch_id, _make_aux_responder([_valid_proposer_response()])
     )
 
     assert outcome.tournament_decision == DEFERRED_INFRA_DECISION
@@ -184,13 +180,8 @@ def test_field_infrastructure_threshold_accumulates_across_matchups(
     )
     _install_infra_abort_run_single(monkeypatch)
 
-    outcome = asyncio.run(
-        evolve_once(
-            workspace_root=workspace,
-            epoch_id=epoch_id,
-            harness_call_llm=_harness_call_llm,
-            auxiliary_call_llm=_make_aux_responder(_distinct_field_responses(2)),
-        )
+    outcome = run_evolve_once(
+        workspace, epoch_id, _make_aux_responder(_distinct_field_responses(2))
     )
 
     # Each two-sided, single-entry matchup contributes two infrastructure
@@ -219,13 +210,8 @@ def test_deferred_round_reconciles_cleanly_and_recovers(
     endpoint settles the re-run round normally."""
     workspace, epoch_id = _rig_outage_workspace(monkeypatch, tmp_path, threshold=1)
 
-    outcome = asyncio.run(
-        evolve_once(
-            workspace_root=workspace,
-            epoch_id=epoch_id,
-            harness_call_llm=_harness_call_llm,
-            auxiliary_call_llm=_make_aux_responder([_valid_proposer_response()]),
-        )
+    outcome = run_evolve_once(
+        workspace, epoch_id, _make_aux_responder([_valid_proposer_response()])
     )
     assert outcome.tournament_decision == DEFERRED_INFRA_DECISION
 
@@ -243,14 +229,7 @@ def test_deferred_round_reconciles_cleanly_and_recovers(
         canned_loss_by_gen={"v0": 2.0, "v1": 1.0},
         canned_pass_by_gen={"v0": True, "v1": True},
     )
-    healed = asyncio.run(
-        evolve_once(
-            workspace_root=workspace,
-            epoch_id=epoch_id,
-            harness_call_llm=_harness_call_llm,
-            auxiliary_call_llm=_make_aux_responder([_valid_proposer_response()]),
-        )
-    )
+    healed = run_evolve_once(workspace, epoch_id, _make_aux_responder([_valid_proposer_response()]))
     assert healed.tournament_decision == "promoted"
     assert healed.proposed_generation_id == "v1"
 
@@ -262,13 +241,8 @@ def test_partial_outage_leaves_resume_in_place_classification(
     the cached units are worth keeping and the cache HITs them on re-run."""
     workspace, epoch_id = _rig_outage_workspace(monkeypatch, tmp_path, threshold=1)
 
-    outcome = asyncio.run(
-        evolve_once(
-            workspace_root=workspace,
-            epoch_id=epoch_id,
-            harness_call_llm=_harness_call_llm,
-            auxiliary_call_llm=_make_aux_responder([_valid_proposer_response()]),
-        )
+    outcome = run_evolve_once(
+        workspace, epoch_id, _make_aux_responder([_valid_proposer_response()])
     )
     assert outcome.tournament_decision == DEFERRED_INFRA_DECISION
 
@@ -293,13 +267,8 @@ def test_threshold_off_settles_exactly_as_today(
     ``rejected`` outcome — the un-opted-in path is untouched."""
     workspace, epoch_id = _rig_outage_workspace(monkeypatch, tmp_path, threshold=None)
 
-    outcome = asyncio.run(
-        evolve_once(
-            workspace_root=workspace,
-            epoch_id=epoch_id,
-            harness_call_llm=_harness_call_llm,
-            auxiliary_call_llm=_make_aux_responder([_valid_proposer_response()]),
-        )
+    outcome = run_evolve_once(
+        workspace, epoch_id, _make_aux_responder([_valid_proposer_response()])
     )
 
     assert outcome.tournament_decision == "rejected"

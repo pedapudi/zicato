@@ -45,6 +45,7 @@ from tests._orchestrator_harness import (
     _harness_call_llm,
     _install_stub_adapter_factory,
     _install_telemetry_stubs,
+    run_evolve_once,
 )
 from zicato.core.types import ScoringWeights, TournamentStructure
 from zicato.epoch.lifecycle import new_epoch
@@ -403,16 +404,7 @@ def test_field_record_finalises_to_settled_after_round(
         canned_pass_by_gen={f"v{i}": True for i in range(5)},
     )
 
-    from zicato.orchestrator import evolve_once
-
-    asyncio.run(
-        evolve_once(
-            workspace_root=workspace,
-            epoch_id=epoch_id,
-            harness_call_llm=_harness_call_llm,
-            auxiliary_call_llm=_infinite_proposer_responder(),
-        )
-    )
+    run_evolve_once(workspace, epoch_id, _infinite_proposer_responder())
 
     field_dir = workspace / "epochs" / epoch_id / "tournaments"
     records = sorted(field_dir.glob("field-*.json"))

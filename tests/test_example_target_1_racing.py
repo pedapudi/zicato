@@ -40,7 +40,6 @@ decision, and the persisted ``ActiveTournament`` envelope + per-match
 
 from __future__ import annotations
 
-import asyncio
 import json
 import shutil
 from pathlib import Path
@@ -52,9 +51,9 @@ import pytest
 # the test is independent of where the examples distribution lives on disk.
 import zicato_examples.target_1_presentation as _t1_pkg
 from tests._orchestrator_harness import (
-    _harness_call_llm,
     _install_stub_adapter_factory,
     _install_telemetry_stubs,
+    run_evolve_once,
 )
 from zicato.epoch.lifecycle import _scoring_from_dict, new_epoch
 from zicato_examples.target_1_presentation import mocks as _t1_mocks
@@ -313,16 +312,7 @@ def test_presentation_racing_field_runs_end_to_end_and_promotes(
         canned_pass_by_gen={gid: True for gid in ("v0", *_CHALLENGER_IDS)},
     )
 
-    from zicato.orchestrator import evolve_once
-
-    outcome = asyncio.run(
-        evolve_once(
-            workspace_root=workspace,
-            epoch_id=epoch_id,
-            harness_call_llm=_harness_call_llm,
-            auxiliary_call_llm=_make_example_aux_responder(),
-        )
-    )
+    outcome = run_evolve_once(workspace, epoch_id, _make_example_aux_responder())
 
     # --- A challenger from the field was crowned over the champion.
     assert outcome.tournament_decision == "promoted"
@@ -418,16 +408,7 @@ def test_presentation_racing_field_rejects_when_no_arm_beats_champion(
         canned_pass_by_gen={gid: True for gid in ("v0", *_CHALLENGER_IDS)},
     )
 
-    from zicato.orchestrator import evolve_once
-
-    outcome = asyncio.run(
-        evolve_once(
-            workspace_root=workspace,
-            epoch_id=epoch_id,
-            harness_call_llm=_harness_call_llm,
-            auxiliary_call_llm=_make_example_aux_responder(),
-        )
-    )
+    outcome = run_evolve_once(workspace, epoch_id, _make_example_aux_responder())
 
     assert outcome.tournament_decision == "rejected"
 
@@ -475,17 +456,7 @@ def test_fast_racing_reuses_cached_champion_and_records_provenance(
         champion_run_log=champion_runs,
     )
 
-    from zicato.orchestrator import evolve_once
-
-    outcome = asyncio.run(
-        evolve_once(
-            workspace_root=workspace,
-            epoch_id=epoch_id,
-            harness_call_llm=_harness_call_llm,
-            auxiliary_call_llm=_make_example_aux_responder(),
-            fast_mode=True,
-        )
-    )
+    outcome = run_evolve_once(workspace, epoch_id, _make_example_aux_responder(), fast_mode=True)
 
     # --- The champion (v0) was NEVER executed this round — every run that
     # fired was a challenger run. The cached per-board scalars stood in.
@@ -521,17 +492,7 @@ def test_fast_racing_degrades_to_full_without_cache(
         champion_run_log=champion_runs,
     )
 
-    from zicato.orchestrator import evolve_once
-
-    outcome = asyncio.run(
-        evolve_once(
-            workspace_root=workspace,
-            epoch_id=epoch_id,
-            harness_call_llm=_harness_call_llm,
-            auxiliary_call_llm=_make_example_aux_responder(),
-            fast_mode=True,
-        )
-    )
+    outcome = run_evolve_once(workspace, epoch_id, _make_example_aux_responder(), fast_mode=True)
 
     # The champion ran live at least once (cache miss → degrade-to-full).
     assert "v0" in champion_runs, "the seed champion with no cache must run once"

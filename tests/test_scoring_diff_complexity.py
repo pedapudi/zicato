@@ -20,7 +20,6 @@ echoes it, and the gate rejects with the honest reason recorded on the outcome.
 
 from __future__ import annotations
 
-import asyncio
 import json
 import time
 from pathlib import Path
@@ -343,13 +342,12 @@ def test_ceiling_rejects_oversized_challenger_diff_e2e(
     the champion pointer does not advance."""
     from tests._orchestrator_harness import (
         _bootstrap_workspace,
-        _harness_call_llm,
         _install_stub_adapter_factory,
         _install_telemetry_stubs,
         _make_aux_responder,
         _valid_proposer_response,
+        run_evolve_once,
     )
-    from zicato.orchestrator import evolve_once
 
     workspace, epoch_id = _bootstrap_workspace(tmp_path)
     _set_ceiling(workspace, epoch_id, 1.0)
@@ -360,13 +358,8 @@ def test_ceiling_rejects_oversized_challenger_diff_e2e(
         canned_pass_by_gen={"v0": True, "v1": True},
     )
 
-    outcome = asyncio.run(
-        evolve_once(
-            workspace_root=workspace,
-            epoch_id=epoch_id,
-            harness_call_llm=_harness_call_llm,
-            auxiliary_call_llm=_make_aux_responder([_valid_proposer_response()]),
-        )
+    outcome = run_evolve_once(
+        workspace, epoch_id, _make_aux_responder([_valid_proposer_response()])
     )
 
     assert outcome.tournament_decision == "rejected"
@@ -383,13 +376,12 @@ def test_ceiling_high_enough_promotes_the_same_diff_e2e(
     (complexity 2 <= 100) — the ceiling only vetoes over-budget diffs."""
     from tests._orchestrator_harness import (
         _bootstrap_workspace,
-        _harness_call_llm,
         _install_stub_adapter_factory,
         _install_telemetry_stubs,
         _make_aux_responder,
         _valid_proposer_response,
+        run_evolve_once,
     )
-    from zicato.orchestrator import evolve_once
 
     workspace, epoch_id = _bootstrap_workspace(tmp_path)
     _set_ceiling(workspace, epoch_id, 100.0)
@@ -400,13 +392,8 @@ def test_ceiling_high_enough_promotes_the_same_diff_e2e(
         canned_pass_by_gen={"v0": True, "v1": True},
     )
 
-    outcome = asyncio.run(
-        evolve_once(
-            workspace_root=workspace,
-            epoch_id=epoch_id,
-            harness_call_llm=_harness_call_llm,
-            auxiliary_call_llm=_make_aux_responder([_valid_proposer_response()]),
-        )
+    outcome = run_evolve_once(
+        workspace, epoch_id, _make_aux_responder([_valid_proposer_response()])
     )
     assert outcome.tournament_decision == "promoted"
 

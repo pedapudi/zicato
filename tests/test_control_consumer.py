@@ -31,6 +31,7 @@ from tests._orchestrator_harness import (
     _install_telemetry_stubs,
     _make_aux_responder,
     _valid_proposer_response,
+    run_evolve_once,
 )
 from zicato.runtime.control import (
     CMD_PAUSE_EPOCH,
@@ -353,13 +354,8 @@ def test_reject_override_flips_a_would_promote_round(
     # Operator queues a reject for the generation this round will mint (v1).
     write_command(workspace, ControlCommand(name=CMD_REJECT_PREFIX, arg="v1"))
 
-    outcome = asyncio.run(
-        orch.evolve_once(
-            workspace_root=workspace,
-            epoch_id=epoch_id,
-            harness_call_llm=_harness_call_llm,
-            auxiliary_call_llm=_make_aux_responder([_valid_proposer_response()]),
-        )
+    outcome = run_evolve_once(
+        workspace, epoch_id, _make_aux_responder([_valid_proposer_response()])
     )
     # The gate would have promoted (child scalar < parent), but the override
     # rejected it.
@@ -398,13 +394,8 @@ def test_promote_override_flips_a_would_reject_round(
     )
     write_command(workspace, ControlCommand(name=CMD_PROMOTE_PREFIX, arg="v1"))
 
-    outcome = asyncio.run(
-        orch.evolve_once(
-            workspace_root=workspace,
-            epoch_id=epoch_id,
-            harness_call_llm=_harness_call_llm,
-            auxiliary_call_llm=_make_aux_responder([_valid_proposer_response()]),
-        )
+    outcome = run_evolve_once(
+        workspace, epoch_id, _make_aux_responder([_valid_proposer_response()])
     )
     # The gate would have rejected (child regressed), but the override promoted.
     assert outcome.tournament_decision == "promoted"
@@ -437,13 +428,8 @@ def test_override_for_other_generation_does_not_fire(
     # Override targets v7 — not the v1 this round mints.
     write_command(workspace, ControlCommand(name=CMD_REJECT_PREFIX, arg="v7"))
 
-    outcome = asyncio.run(
-        orch.evolve_once(
-            workspace_root=workspace,
-            epoch_id=epoch_id,
-            harness_call_llm=_harness_call_llm,
-            auxiliary_call_llm=_make_aux_responder([_valid_proposer_response()]),
-        )
+    outcome = run_evolve_once(
+        workspace, epoch_id, _make_aux_responder([_valid_proposer_response()])
     )
     # The gate's own verdict (promote) stands.
     assert outcome.tournament_decision == "promoted"
@@ -476,15 +462,7 @@ def test_skip_round_aborts_evolve_once_cleanly(
 
     # The proposer responder would raise on a SECOND call; a clean skip never
     # proposes, so it is never consulted — a strong signal nothing ran.
-    outcome = asyncio.run(
-        orch.evolve_once(
-            workspace_root=workspace,
-            epoch_id=epoch_id,
-            harness_call_llm=_harness_call_llm,
-            auxiliary_call_llm=_make_aux_responder([]),
-            round_index=2,
-        )
-    )
+    outcome = run_evolve_once(workspace, epoch_id, _make_aux_responder([]), round_index=2)
     assert outcome.tournament_decision == "rejected"
     assert outcome.rejection_reason.startswith("skip_round")
     assert outcome.proposed_generation_id == ""

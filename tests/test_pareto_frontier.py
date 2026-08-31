@@ -36,6 +36,7 @@ from tests._orchestrator_harness import (
     _install_telemetry_stubs,
     _make_aux_responder,
     _valid_proposer_response,
+    run_evolve_once,
 )
 from zicato.core import DriftCount, ExpectationResult, LossProfile, MetricCount, ScoringWeights
 from zicato.epoch.pareto import (
@@ -484,15 +485,8 @@ def test_a_FIELD_round_that_crowns_the_placebo_leaves_the_record_untouched(
         tokens_by_gen={"v0": 1000, "v1": 1000, "v2": 1000, "v3": 1100},
     )
 
-    from zicato.orchestrator import evolve_once
-
-    outcome = asyncio.run(
-        evolve_once(
-            workspace_root=workspace,
-            epoch_id=epoch_id,
-            harness_call_llm=_harness_call_llm,
-            auxiliary_call_llm=_make_aux_responder(_distinct_field_responses(6)),
-        )
+    outcome = run_evolve_once(
+        workspace, epoch_id, _make_aux_responder(_distinct_field_responses(6))
     )
 
     # The round really did crown the placebo — otherwise this pins nothing.
@@ -1162,15 +1156,8 @@ def _drive_round(
     )
     _install_costed_run_single(monkeypatch, drift_by_gen=drift_by_gen, tokens_by_gen=tokens_by_gen)
 
-    from zicato.orchestrator import evolve_once
-
-    outcome = asyncio.run(
-        evolve_once(
-            workspace_root=workspace,
-            epoch_id=epoch_id,
-            harness_call_llm=_harness_call_llm,
-            auxiliary_call_llm=_make_aux_responder([_valid_proposer_response() for _ in range(6)]),
-        )
+    outcome = run_evolve_once(
+        workspace, epoch_id, _make_aux_responder([_valid_proposer_response() for _ in range(6)])
     )
     return workspace, epoch_id, outcome
 
@@ -1402,15 +1389,8 @@ def _drive_swiss_round(
     )
     _install_costed_run_single(monkeypatch, drift_by_gen=drift_by_gen, tokens_by_gen=tokens_by_gen)
 
-    from zicato.orchestrator import evolve_once
-
-    outcome = asyncio.run(
-        evolve_once(
-            workspace_root=workspace,
-            epoch_id=epoch_id,
-            harness_call_llm=_harness_call_llm,
-            auxiliary_call_llm=_make_aux_responder(_distinct_field_responses(2)),
-        )
+    outcome = run_evolve_once(
+        workspace, epoch_id, _make_aux_responder(_distinct_field_responses(2))
     )
     return workspace, epoch_id, outcome
 

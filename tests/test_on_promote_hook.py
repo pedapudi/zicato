@@ -38,6 +38,7 @@ from tests._orchestrator_harness import (
     _install_telemetry_stubs,
     _make_aux_responder,
     _valid_proposer_response,
+    run_evolve_once,
 )
 from tests.test_orchestrator_multi_challenger import (
     _bootstrap_swiss_workspace,
@@ -323,15 +324,8 @@ def test_gauntlet_promotion_fires_the_hook_once(
         canned_pass_by_gen={"v0": True, "v1": True},
     )
 
-    from zicato.orchestrator import evolve_once
-
-    outcome = asyncio.run(
-        evolve_once(
-            workspace_root=workspace,
-            epoch_id=epoch_id,
-            harness_call_llm=_harness_call_llm,
-            auxiliary_call_llm=_make_aux_responder([_valid_proposer_response()]),
-        )
+    outcome = run_evolve_once(
+        workspace, epoch_id, _make_aux_responder([_valid_proposer_response()])
     )
 
     assert outcome.tournament_decision == "promoted"
@@ -363,15 +357,8 @@ def test_a_rejected_round_never_fires_the_hook(
         canned_pass_by_gen={"v0": True, "v1": False},
     )
 
-    from zicato.orchestrator import evolve_once
-
-    outcome = asyncio.run(
-        evolve_once(
-            workspace_root=workspace,
-            epoch_id=epoch_id,
-            harness_call_llm=_harness_call_llm,
-            auxiliary_call_llm=_make_aux_responder([_valid_proposer_response()]),
-        )
+    outcome = run_evolve_once(
+        workspace, epoch_id, _make_aux_responder([_valid_proposer_response()])
     )
 
     assert outcome.tournament_decision == "rejected"
@@ -395,15 +382,8 @@ def test_multi_challenger_crowning_fires_the_hook_once(
         canned_pass_by_gen={"v0": True, "v1": True, "v2": True},
     )
 
-    from zicato.orchestrator import evolve_once
-
-    outcome = asyncio.run(
-        evolve_once(
-            workspace_root=workspace,
-            epoch_id=epoch_id,
-            harness_call_llm=_harness_call_llm,
-            auxiliary_call_llm=_make_aux_responder(_distinct_field_responses(2)),
-        )
+    outcome = run_evolve_once(
+        workspace, epoch_id, _make_aux_responder(_distinct_field_responses(2))
     )
 
     assert outcome.tournament_decision == "promoted"
@@ -444,15 +424,8 @@ def test_a_failing_hook_leaves_the_promotion_standing(
         canned_pass_by_gen={"v0": True, "v1": True},
     )
 
-    from zicato.orchestrator import evolve_once
-
-    outcome = asyncio.run(
-        evolve_once(
-            workspace_root=workspace,
-            epoch_id=epoch_id,
-            harness_call_llm=_harness_call_llm,
-            auxiliary_call_llm=_make_aux_responder([_valid_proposer_response()]),
-        )
+    outcome = run_evolve_once(
+        workspace, epoch_id, _make_aux_responder([_valid_proposer_response()])
     )
 
     # The round settled normally and the promotion is intact on every store.
@@ -487,16 +460,7 @@ def test_a_successful_hook_raises_no_finding(
         canned_pass_by_gen={"v0": True, "v1": True},
     )
 
-    from zicato.orchestrator import evolve_once
-
-    asyncio.run(
-        evolve_once(
-            workspace_root=workspace,
-            epoch_id=epoch_id,
-            harness_call_llm=_harness_call_llm,
-            auxiliary_call_llm=_make_aux_responder([_valid_proposer_response()]),
-        )
-    )
+    run_evolve_once(workspace, epoch_id, _make_aux_responder([_valid_proposer_response()]))
 
     assert _findings(_health_report(workspace, epoch_id, 1), "on_promote_hook_failed") == []
 
@@ -530,16 +494,7 @@ def test_resume_never_re_fires_a_settled_promotion(
         canned_pass_by_gen={"v0": True, "v1": True, "v2": False},
     )
 
-    from zicato.orchestrator import evolve_once
-
-    first = asyncio.run(
-        evolve_once(
-            workspace_root=workspace,
-            epoch_id=epoch_id,
-            harness_call_llm=_harness_call_llm,
-            auxiliary_call_llm=_make_aux_responder([_valid_proposer_response()]),
-        )
-    )
+    first = run_evolve_once(workspace, epoch_id, _make_aux_responder([_valid_proposer_response()]))
     assert first.tournament_decision == "promoted"
     assert [c["generation_id"] for c in calls] == ["v1"]
 
