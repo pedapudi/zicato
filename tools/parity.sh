@@ -37,6 +37,23 @@
 #   MOCK-GOLDEN-RACING-FAST
 #                  the racing field under --mode fast: every rung resolves
 #                  both competitors through the unit cache.
+#   MOCK-GOLDEN-TWO-ROUND-RACING
+#                  the racing field under --mode full for TWO rounds: the
+#                  promoted head advances, the crowned generation defends
+#                  the next round from its own patched snapshot, and the
+#                  epoch's round directories number on from 0.
+#   MOCK-GOLDEN-SWISS
+#                  a four-challenger Swiss field under --mode full: fixed
+#                  pairings over champion + challengers, Copeland
+#                  standings, and the leader's champion-gate confirmation.
+#   MOCK-GOLDEN-SINGLE-ELIM
+#                  a four-challenger single-elimination bracket under
+#                  --mode full: challenger-vs-challenger nodes, then the
+#                  champion-vs-survivor final.
+#   MOCK-GOLDEN-DOUBLE-ELIM
+#                  a four-challenger double-elimination field under --mode
+#                  full: winners' bracket, losers' bracket, grand final,
+#                  then the champion gate.
 #   MYPY           the mypy error count is not worse than the committed
 #                  baseline (a refactor should reduce it).
 #
@@ -154,6 +171,10 @@ _mock_golden_lane MOCK-GOLDEN racing_full
 _mock_golden_lane MOCK-GOLDEN-GAUNTLET gauntlet_full
 _mock_golden_lane MOCK-GOLDEN-GAUNTLET-FAST gauntlet_fast
 _mock_golden_lane MOCK-GOLDEN-RACING-FAST racing_fast
+_mock_golden_lane MOCK-GOLDEN-TWO-ROUND-RACING two_round_racing
+_mock_golden_lane MOCK-GOLDEN-SWISS swiss_full
+_mock_golden_lane MOCK-GOLDEN-SINGLE-ELIM single_elim_full
+_mock_golden_lane MOCK-GOLDEN-DOUBLE-ELIM double_elim_full
 
 # --- MYPY -------------------------------------------------------------------
 if _selected MYPY; then

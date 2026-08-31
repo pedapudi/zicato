@@ -1,0 +1,1687 @@
+{
+  "current_generation": "v1",
+  "experiments": {
+    "v1": {
+      "epoch_id": "<DATE>_t1_single_elim",
+      "format_version": 1,
+      "generation_id": "v1",
+      "hypothesis": {
+        "core_idea": "Tighten the researcher's instruction so it produces a compact bullet-point synthesis instead of long prose.",
+        "expected_drift_movements": [
+          {
+            "direction": "decrease",
+            "kind": "context_pressure",
+            "magnitude": "medium"
+          },
+          {
+            "direction": "neutral",
+            "kind": "stopped_early",
+            "magnitude": "small"
+          }
+        ],
+        "expected_metric_movements": [],
+        "expected_pass_rate_delta": "+0.05 to +0.10",
+        "modulating": [
+          "researcher_instruction"
+        ],
+        "risks": "Compact bullets may drop nuance the writer relied on; the writer's slide quality may regress if so.",
+        "why": "The current researcher prompt encourages a verbose, step-by-step synthesis; compact bullets give the writer a cleaner input and should reduce off-topic drift."
+      },
+      "id": "exp_<DATE>_t1_single_elim_v1",
+      "outcome": {
+        "champion_eval_mode": "full",
+        "drift_loss_delta": -1.6,
+        "drift_movements": [],
+        "eliminated_in_round": null,
+        "evidence": null,
+        "final_rank": 1,
+        "generalization_gap": null,
+        "holdout": null,
+        "holdout_loss": null,
+        "match_record": [
+          {
+            "delta_scalar": -0.4,
+            "match_id": "WB-R0-0",
+            "opponent": "v2",
+            "won": true
+          },
+          {
+            "delta_scalar": -0.7999999999999999,
+            "match_id": "WB-R1-0",
+            "opponent": "v3",
+            "won": true
+          },
+          {
+            "delta_scalar": -1.6,
+            "match_id": "final",
+            "opponent": "v0",
+            "won": true
+          }
+        ],
+        "metric_movements": [],
+        "operator_override": false,
+        "operator_override_reason": "",
+        "pass_rate_delta": 0.0,
+        "ran_at": "<TS>",
+        "rejection_reason": "",
+        "scalar_score_delta": -1.6,
+        "structure": "single_elim",
+        "tournament_decision": "promoted",
+        "train_loss": 0.4
+      },
+      "parent_generation_id": "v0",
+      "patch_ids": [
+        "<HEX32>"
+      ],
+      "proposed_at": "<TS>",
+      "round_index": 0
+    },
+    "v2": {
+      "epoch_id": "<DATE>_t1_single_elim",
+      "format_version": 1,
+      "generation_id": "v2",
+      "hypothesis": {
+        "core_idea": "Sharpen the coordinator's routing instruction so it stops re-dispatching the reviewer in a loop on files_not_found cases.",
+        "expected_drift_movements": [
+          {
+            "direction": "decrease",
+            "kind": "agent_transfer",
+            "magnitude": "medium"
+          },
+          {
+            "direction": "decrease_or_neutral",
+            "kind": "looping_reasoning",
+            "magnitude": "small"
+          }
+        ],
+        "expected_metric_movements": [],
+        "expected_pass_rate_delta": "+0.02 to +0.08",
+        "modulating": [
+          "coordinator_instruction"
+        ],
+        "risks": "An overly terse routing flow may skip the debugger when it was actually needed; watch the multi-turn entries.",
+        "why": "The current coordinator prompt is long and conflates two failure modes; a sharper routing flow reduces agent_transfer churn on the picky-stakeholder entry."
+      },
+      "id": "exp_<DATE>_t1_single_elim_v2",
+      "outcome": {
+        "champion_eval_mode": "full",
+        "drift_loss_delta": 0.0,
+        "drift_movements": [],
+        "eliminated_in_round": null,
+        "evidence": null,
+        "final_rank": 2,
+        "generalization_gap": null,
+        "holdout": null,
+        "holdout_loss": null,
+        "match_record": [
+          {
+            "delta_scalar": 0.4,
+            "match_id": "WB-R0-0",
+            "opponent": "v1",
+            "won": false
+          }
+        ],
+        "metric_movements": [],
+        "operator_override": false,
+        "operator_override_reason": "",
+        "pass_rate_delta": 0.0,
+        "ran_at": "<TS>",
+        "rejection_reason": "",
+        "scalar_score_delta": -1.2,
+        "structure": "single_elim",
+        "tournament_decision": "rejected",
+        "train_loss": 0.8
+      },
+      "parent_generation_id": "v0",
+      "patch_ids": [
+        "<HEX32>"
+      ],
+      "proposed_at": "<TS>",
+      "round_index": 0
+    },
+    "v3": {
+      "epoch_id": "<DATE>_t1_single_elim",
+      "format_version": 1,
+      "generation_id": "v3",
+      "hypothesis": {
+        "core_idea": "Require the researcher to attach a source citation to every claim so the writer stops inventing unsupported metrics.",
+        "expected_drift_movements": [
+          {
+            "direction": "decrease_or_neutral",
+            "kind": "context_pressure",
+            "magnitude": "small"
+          }
+        ],
+        "expected_metric_movements": [],
+        "expected_pass_rate_delta": "+0.02 to +0.06",
+        "modulating": [
+          "researcher_instruction"
+        ],
+        "risks": "Strict citation demands may slow the researcher down.",
+        "why": "Uncited claims drive the writer to fabricate numbers; demanding a citation per bullet tightens factual grounding."
+      },
+      "id": "exp_<DATE>_t1_single_elim_v3",
+      "outcome": {
+        "champion_eval_mode": "full",
+        "drift_loss_delta": 0.0,
+        "drift_movements": [],
+        "eliminated_in_round": null,
+        "evidence": null,
+        "final_rank": 3,
+        "generalization_gap": null,
+        "holdout": null,
+        "holdout_loss": null,
+        "match_record": [
+          {
+            "delta_scalar": -0.40000000000000013,
+            "match_id": "WB-R0-1",
+            "opponent": "v4",
+            "won": true
+          },
+          {
+            "delta_scalar": 0.7999999999999999,
+            "match_id": "WB-R1-0",
+            "opponent": "v1",
+            "won": false
+          }
+        ],
+        "metric_movements": [],
+        "operator_override": false,
+        "operator_override_reason": "",
+        "pass_rate_delta": 0.0,
+        "ran_at": "<TS>",
+        "rejection_reason": "",
+        "scalar_score_delta": -0.8,
+        "structure": "single_elim",
+        "tournament_decision": "rejected",
+        "train_loss": 1.2
+      },
+      "parent_generation_id": "v0",
+      "patch_ids": [
+        "<HEX32>"
+      ],
+      "proposed_at": "<TS>",
+      "round_index": 0
+    },
+    "v4": {
+      "epoch_id": "<DATE>_t1_single_elim",
+      "format_version": 1,
+      "generation_id": "v4",
+      "hypothesis": {
+        "core_idea": "Give the coordinator an explicit turn budget so it stops re-routing on revision turns once the budget is spent.",
+        "expected_drift_movements": [
+          {
+            "direction": "decrease",
+            "kind": "looping_reasoning",
+            "magnitude": "medium"
+          }
+        ],
+        "expected_metric_movements": [],
+        "expected_pass_rate_delta": "+0.01 to +0.05",
+        "modulating": [
+          "coordinator_instruction"
+        ],
+        "risks": "Too tight a budget may cut a revision the user wanted.",
+        "why": "Without a budget the coordinator re-dispatches the reviewer indefinitely; a hard turn cap halts the loop."
+      },
+      "id": "exp_<DATE>_t1_single_elim_v4",
+      "outcome": {
+        "champion_eval_mode": "full",
+        "drift_loss_delta": 0.0,
+        "drift_movements": [],
+        "eliminated_in_round": null,
+        "evidence": null,
+        "final_rank": 4,
+        "generalization_gap": null,
+        "holdout": null,
+        "holdout_loss": null,
+        "match_record": [
+          {
+            "delta_scalar": 0.40000000000000013,
+            "match_id": "WB-R0-1",
+            "opponent": "v3",
+            "won": false
+          }
+        ],
+        "metric_movements": [],
+        "operator_override": false,
+        "operator_override_reason": "",
+        "pass_rate_delta": 0.0,
+        "ran_at": "<TS>",
+        "rejection_reason": "",
+        "scalar_score_delta": -0.3999999999999999,
+        "structure": "single_elim",
+        "tournament_decision": "rejected",
+        "train_loss": 1.6
+      },
+      "parent_generation_id": "v0",
+      "patch_ids": [
+        "<HEX32>"
+      ],
+      "proposed_at": "<TS>",
+      "round_index": 0
+    }
+  },
+  "field_tournaments": {
+    "field-v1.json": {
+      "champion_generation_id": "v0",
+      "competitors": [
+        {
+          "generation_id": "v0",
+          "role": "champion",
+          "seed": 1
+        },
+        {
+          "generation_id": "v1",
+          "role": "challenger",
+          "seed": 2
+        },
+        {
+          "generation_id": "v2",
+          "role": "challenger",
+          "seed": 3
+        },
+        {
+          "generation_id": "v3",
+          "role": "challenger",
+          "seed": 4
+        },
+        {
+          "generation_id": "v4",
+          "role": "challenger",
+          "seed": 5
+        }
+      ],
+      "decision": "promoted",
+      "delta_scalar": -1.6,
+      "epoch_id": "<DATE>_t1_single_elim",
+      "field_status": [
+        {
+          "attempt_reasons": [],
+          "attempts": 1,
+          "generation_id": "v1",
+          "hypothesis": "Tighten the researcher's instruction so it produces a compact bullet-point synthesis instead of long prose.",
+          "reason": "",
+          "seed": 2,
+          "status": "applied"
+        },
+        {
+          "attempt_reasons": [],
+          "attempts": 1,
+          "generation_id": "v2",
+          "hypothesis": "Sharpen the coordinator's routing instruction so it stops re-dispatching the reviewer in a loop on files_not_found cases.",
+          "reason": "",
+          "seed": 3,
+          "status": "applied"
+        },
+        {
+          "attempt_reasons": [],
+          "attempts": 1,
+          "generation_id": "v3",
+          "hypothesis": "Require the researcher to attach a source citation to every claim so the writer stops inventing unsupported metrics.",
+          "reason": "",
+          "seed": 4,
+          "status": "applied"
+        },
+        {
+          "attempt_reasons": [],
+          "attempts": 1,
+          "generation_id": "v4",
+          "hypothesis": "Give the coordinator an explicit turn budget so it stops re-routing on revision turns once the budget is spent.",
+          "reason": "",
+          "seed": 5,
+          "status": "applied"
+        }
+      ],
+      "promoted_generation_id": "v1",
+      "ran_at": "<TS>",
+      "reason": "",
+      "rounds": [
+        {
+          "label": "Bracket round 1",
+          "matches": [
+            {
+              "board_fraction": null,
+              "bracket_slot": "WB-R0-0",
+              "bye": false,
+              "competitors": [
+                "v1",
+                "v2"
+              ],
+              "cut": [],
+              "decision": "rejected",
+              "delta_scalar": 0.4,
+              "live_progress": {},
+              "match_id": "WB-R0-0",
+              "pending": false,
+              "survivors": [],
+              "winner": "v1"
+            },
+            {
+              "board_fraction": null,
+              "bracket_slot": "WB-R0-1",
+              "bye": false,
+              "competitors": [
+                "v3",
+                "v4"
+              ],
+              "cut": [],
+              "decision": "rejected",
+              "delta_scalar": 0.40000000000000013,
+              "live_progress": {},
+              "match_id": "WB-R0-1",
+              "pending": false,
+              "survivors": [],
+              "winner": "v3"
+            }
+          ],
+          "stage_index": 0
+        },
+        {
+          "label": "Bracket round 2",
+          "matches": [
+            {
+              "board_fraction": null,
+              "bracket_slot": "WB-R1-0",
+              "bye": false,
+              "competitors": [
+                "v1",
+                "v3"
+              ],
+              "cut": [],
+              "decision": "rejected",
+              "delta_scalar": 0.7999999999999999,
+              "live_progress": {},
+              "match_id": "WB-R1-0",
+              "pending": false,
+              "survivors": [],
+              "winner": "v1"
+            }
+          ],
+          "stage_index": 1
+        },
+        {
+          "label": "Final",
+          "matches": [
+            {
+              "board_fraction": null,
+              "bracket_slot": "final",
+              "bye": false,
+              "competitors": [
+                "v0",
+                "v1"
+              ],
+              "cut": [],
+              "decision": "promoted",
+              "delta_scalar": -1.6,
+              "live_progress": {},
+              "match_id": "final",
+              "pending": false,
+              "survivors": [],
+              "winner": "v1"
+            }
+          ],
+          "stage_index": 3
+        }
+      ],
+      "standings": [
+        {
+          "generation_id": "v1",
+          "losses": 0,
+          "rank": 1,
+          "role": "challenger",
+          "scalar": 0.4,
+          "status": "champion",
+          "wins": 2
+        },
+        {
+          "generation_id": "v2",
+          "losses": 1,
+          "rank": 2,
+          "role": "challenger",
+          "scalar": 0.8,
+          "status": "eliminated",
+          "wins": 0
+        },
+        {
+          "generation_id": "v3",
+          "losses": 1,
+          "rank": 3,
+          "role": "challenger",
+          "scalar": 1.2,
+          "status": "eliminated",
+          "wins": 1
+        },
+        {
+          "generation_id": "v4",
+          "losses": 1,
+          "rank": 4,
+          "role": "challenger",
+          "scalar": 1.6,
+          "status": "eliminated",
+          "wins": 0
+        },
+        {
+          "generation_id": "v0",
+          "losses": 0,
+          "rank": 5,
+          "role": "champion",
+          "scalar": 2.0,
+          "status": "alive",
+          "wins": 0
+        }
+      ],
+      "state": "settled",
+      "structure": "single_elim",
+      "structure_params": {
+        "field_size": 4,
+        "replicates": 2
+      },
+      "tournament_id": "<DATE>_t1_single_elim:field:v1"
+    }
+  },
+  "gen_scores": {
+    "v0": {
+      "drift_loss_mean": 2.0,
+      "entry_count": 7,
+      "expectation_count": 7,
+      "generation_id": "v0",
+      "mean_score": 1.0,
+      "namespace_aggregates": {
+        "cost:": 0.0,
+        "drift:": 2.0,
+        "failure:": 0.0,
+        "judge:": 0.0,
+        "latency:": 0.0,
+        "output:": 0.0,
+        "rubric:": -0.0,
+        "runtime:": 0.0,
+        "schema:": 0.0
+      },
+      "pass_rate": 1.0,
+      "per_entry": {
+        "every_expectation_kind_demo": {
+          "drift_loss": 2.0,
+          "failure": 0.0,
+          "pass_fail": true,
+          "score": 1.0
+        },
+        "picky_stakeholder_emulated": {
+          "drift_loss": 2.0,
+          "failure": 0.0,
+          "pass_fail": true,
+          "score": 1.0
+        },
+        "q3_metrics_outline": {
+          "drift_loss": 2.0,
+          "failure": 0.0,
+          "pass_fail": true,
+          "score": 1.0
+        },
+        "transformers_lay_audience": {
+          "drift_loss": 2.0,
+          "failure": 0.0,
+          "pass_fail": true,
+          "score": 1.0
+        },
+        "transformers_progressive_scripted": {
+          "drift_loss": 2.0,
+          "failure": 0.0,
+          "pass_fail": true,
+          "score": 1.0
+        },
+        "waffles_revision_scripted": {
+          "drift_loss": 2.0,
+          "failure": 0.0,
+          "pass_fail": true,
+          "score": 1.0
+        },
+        "waffles_single": {
+          "drift_loss": 2.0,
+          "failure": 0.0,
+          "pass_fail": true,
+          "score": 1.0
+        }
+      },
+      "scalar": 2.0,
+      "scalar_components": {
+        "cost": 0.0,
+        "drift": 2.0,
+        "failure": 0.0,
+        "judge": 0.0,
+        "latency": 0.0,
+        "output": 0.0,
+        "pass": 0.0,
+        "rubric": -0.0,
+        "runtime": 0.0,
+        "schema": 0.0
+      },
+      "scalar_provenance": "builtin"
+    },
+    "v1": {
+      "drift_loss_mean": 0.4,
+      "entry_count": 7,
+      "expectation_count": 7,
+      "generation_id": "v1",
+      "mean_score": 1.0,
+      "namespace_aggregates": {
+        "cost:": 0.0,
+        "drift:": 0.4,
+        "failure:": 0.0,
+        "judge:": 0.0,
+        "latency:": 0.0,
+        "output:": 0.0,
+        "rubric:": -0.0,
+        "runtime:": 0.0,
+        "schema:": 0.0
+      },
+      "pass_rate": 1.0,
+      "per_entry": {
+        "every_expectation_kind_demo": {
+          "drift_loss": 0.4,
+          "failure": 0.0,
+          "pass_fail": true,
+          "score": 1.0
+        },
+        "picky_stakeholder_emulated": {
+          "drift_loss": 0.4,
+          "failure": 0.0,
+          "pass_fail": true,
+          "score": 1.0
+        },
+        "q3_metrics_outline": {
+          "drift_loss": 0.4,
+          "failure": 0.0,
+          "pass_fail": true,
+          "score": 1.0
+        },
+        "transformers_lay_audience": {
+          "drift_loss": 0.4,
+          "failure": 0.0,
+          "pass_fail": true,
+          "score": 1.0
+        },
+        "transformers_progressive_scripted": {
+          "drift_loss": 0.4,
+          "failure": 0.0,
+          "pass_fail": true,
+          "score": 1.0
+        },
+        "waffles_revision_scripted": {
+          "drift_loss": 0.4,
+          "failure": 0.0,
+          "pass_fail": true,
+          "score": 1.0
+        },
+        "waffles_single": {
+          "drift_loss": 0.4,
+          "failure": 0.0,
+          "pass_fail": true,
+          "score": 1.0
+        }
+      },
+      "scalar": 0.4,
+      "scalar_components": {
+        "cost": 0.0,
+        "drift": 0.4,
+        "failure": 0.0,
+        "judge": 0.0,
+        "latency": 0.0,
+        "output": 0.0,
+        "pass": 0.0,
+        "rubric": -0.0,
+        "runtime": 0.0,
+        "schema": 0.0
+      },
+      "scalar_provenance": "builtin"
+    },
+    "v2": {
+      "drift_loss_mean": 0.8,
+      "entry_count": 7,
+      "expectation_count": 7,
+      "generation_id": "v2",
+      "mean_score": 1.0,
+      "namespace_aggregates": {
+        "cost:": 0.0,
+        "drift:": 0.8,
+        "failure:": 0.0,
+        "judge:": 0.0,
+        "latency:": 0.0,
+        "output:": 0.0,
+        "rubric:": -0.0,
+        "runtime:": 0.0,
+        "schema:": 0.0
+      },
+      "pass_rate": 1.0,
+      "per_entry": {
+        "every_expectation_kind_demo": {
+          "drift_loss": 0.8,
+          "failure": 0.0,
+          "pass_fail": true,
+          "score": 1.0
+        },
+        "picky_stakeholder_emulated": {
+          "drift_loss": 0.8,
+          "failure": 0.0,
+          "pass_fail": true,
+          "score": 1.0
+        },
+        "q3_metrics_outline": {
+          "drift_loss": 0.8,
+          "failure": 0.0,
+          "pass_fail": true,
+          "score": 1.0
+        },
+        "transformers_lay_audience": {
+          "drift_loss": 0.8,
+          "failure": 0.0,
+          "pass_fail": true,
+          "score": 1.0
+        },
+        "transformers_progressive_scripted": {
+          "drift_loss": 0.8,
+          "failure": 0.0,
+          "pass_fail": true,
+          "score": 1.0
+        },
+        "waffles_revision_scripted": {
+          "drift_loss": 0.8,
+          "failure": 0.0,
+          "pass_fail": true,
+          "score": 1.0
+        },
+        "waffles_single": {
+          "drift_loss": 0.8,
+          "failure": 0.0,
+          "pass_fail": true,
+          "score": 1.0
+        }
+      },
+      "scalar": 0.8,
+      "scalar_components": {
+        "cost": 0.0,
+        "drift": 0.8,
+        "failure": 0.0,
+        "judge": 0.0,
+        "latency": 0.0,
+        "output": 0.0,
+        "pass": 0.0,
+        "rubric": -0.0,
+        "runtime": 0.0,
+        "schema": 0.0
+      },
+      "scalar_provenance": "builtin"
+    },
+    "v3": {
+      "drift_loss_mean": 1.2,
+      "entry_count": 7,
+      "expectation_count": 7,
+      "generation_id": "v3",
+      "mean_score": 1.0,
+      "namespace_aggregates": {
+        "cost:": 0.0,
+        "drift:": 1.2,
+        "failure:": 0.0,
+        "judge:": 0.0,
+        "latency:": 0.0,
+        "output:": 0.0,
+        "rubric:": -0.0,
+        "runtime:": 0.0,
+        "schema:": 0.0
+      },
+      "pass_rate": 1.0,
+      "per_entry": {
+        "every_expectation_kind_demo": {
+          "drift_loss": 1.2,
+          "failure": 0.0,
+          "pass_fail": true,
+          "score": 1.0
+        },
+        "picky_stakeholder_emulated": {
+          "drift_loss": 1.2,
+          "failure": 0.0,
+          "pass_fail": true,
+          "score": 1.0
+        },
+        "q3_metrics_outline": {
+          "drift_loss": 1.2,
+          "failure": 0.0,
+          "pass_fail": true,
+          "score": 1.0
+        },
+        "transformers_lay_audience": {
+          "drift_loss": 1.2,
+          "failure": 0.0,
+          "pass_fail": true,
+          "score": 1.0
+        },
+        "transformers_progressive_scripted": {
+          "drift_loss": 1.2,
+          "failure": 0.0,
+          "pass_fail": true,
+          "score": 1.0
+        },
+        "waffles_revision_scripted": {
+          "drift_loss": 1.2,
+          "failure": 0.0,
+          "pass_fail": true,
+          "score": 1.0
+        },
+        "waffles_single": {
+          "drift_loss": 1.2,
+          "failure": 0.0,
+          "pass_fail": true,
+          "score": 1.0
+        }
+      },
+      "scalar": 1.2,
+      "scalar_components": {
+        "cost": 0.0,
+        "drift": 1.2,
+        "failure": 0.0,
+        "judge": 0.0,
+        "latency": 0.0,
+        "output": 0.0,
+        "pass": 0.0,
+        "rubric": -0.0,
+        "runtime": 0.0,
+        "schema": 0.0
+      },
+      "scalar_provenance": "builtin"
+    },
+    "v4": {
+      "drift_loss_mean": 1.6,
+      "entry_count": 7,
+      "expectation_count": 7,
+      "generation_id": "v4",
+      "mean_score": 1.0,
+      "namespace_aggregates": {
+        "cost:": 0.0,
+        "drift:": 1.6,
+        "failure:": 0.0,
+        "judge:": 0.0,
+        "latency:": 0.0,
+        "output:": 0.0,
+        "rubric:": -0.0,
+        "runtime:": 0.0,
+        "schema:": 0.0
+      },
+      "pass_rate": 1.0,
+      "per_entry": {
+        "every_expectation_kind_demo": {
+          "drift_loss": 1.6,
+          "failure": 0.0,
+          "pass_fail": true,
+          "score": 1.0
+        },
+        "picky_stakeholder_emulated": {
+          "drift_loss": 1.6,
+          "failure": 0.0,
+          "pass_fail": true,
+          "score": 1.0
+        },
+        "q3_metrics_outline": {
+          "drift_loss": 1.6,
+          "failure": 0.0,
+          "pass_fail": true,
+          "score": 1.0
+        },
+        "transformers_lay_audience": {
+          "drift_loss": 1.6,
+          "failure": 0.0,
+          "pass_fail": true,
+          "score": 1.0
+        },
+        "transformers_progressive_scripted": {
+          "drift_loss": 1.6,
+          "failure": 0.0,
+          "pass_fail": true,
+          "score": 1.0
+        },
+        "waffles_revision_scripted": {
+          "drift_loss": 1.6,
+          "failure": 0.0,
+          "pass_fail": true,
+          "score": 1.0
+        },
+        "waffles_single": {
+          "drift_loss": 1.6,
+          "failure": 0.0,
+          "pass_fail": true,
+          "score": 1.0
+        }
+      },
+      "scalar": 1.6,
+      "scalar_components": {
+        "cost": 0.0,
+        "drift": 1.6,
+        "failure": 0.0,
+        "judge": 0.0,
+        "latency": 0.0,
+        "output": 0.0,
+        "pass": 0.0,
+        "rubric": -0.0,
+        "runtime": 0.0,
+        "schema": 0.0
+      },
+      "scalar_provenance": "builtin"
+    }
+  },
+  "lineage": {
+    "epochs": [
+      {
+        "closed_at": "",
+        "generations": [
+          {
+            "child_scalar": 0.4,
+            "created_at": "<TS>",
+            "delta_scalar": -1.6,
+            "id": "v1",
+            "parent_id": "v0",
+            "parent_scalar": 2.0,
+            "promoted": true,
+            "rejection_reason": "",
+            "round_index": 0
+          },
+          {
+            "child_scalar": 0.8,
+            "created_at": "<TS>",
+            "delta_scalar": -1.2,
+            "id": "v2",
+            "parent_id": "v0",
+            "parent_scalar": 2.0,
+            "promoted": false,
+            "rejection_reason": "",
+            "round_index": 0
+          },
+          {
+            "child_scalar": 1.2,
+            "created_at": "<TS>",
+            "delta_scalar": -0.8,
+            "id": "v3",
+            "parent_id": "v0",
+            "parent_scalar": 2.0,
+            "promoted": false,
+            "rejection_reason": "",
+            "round_index": 0
+          },
+          {
+            "child_scalar": 1.6,
+            "created_at": "<TS>",
+            "delta_scalar": -0.3999999999999999,
+            "id": "v4",
+            "parent_id": "v0",
+            "parent_scalar": 2.0,
+            "promoted": false,
+            "rejection_reason": "",
+            "round_index": 0
+          }
+        ],
+        "id": "<DATE>_t1_single_elim",
+        "name": "t1-single-elim",
+        "started_at": "<TS>",
+        "v0_parent": null
+      }
+    ],
+    "format_version": 1
+  },
+  "losses": {},
+  "round_logs": {
+    "0/round_log.jsonl": [
+      {
+        "payload": {
+          "contract_hash": "16fa4a1736dd4cf346c7a9af3dbfecdbd344994cfb52bda6ee71bdb777848329"
+        },
+        "seq": 1,
+        "ts": "<TS>",
+        "type": "round_opened"
+      },
+      {
+        "payload": {
+          "errors": [],
+          "slot_index": null
+        },
+        "seq": 2,
+        "ts": "<TS>",
+        "type": "proposal_attempted"
+      },
+      {
+        "payload": {
+          "experiment_id": "exp_<DATE>_t1_single_elim_v1"
+        },
+        "seq": 3,
+        "ts": "<TS>",
+        "type": "experiment_minted"
+      },
+      {
+        "payload": {
+          "generation_id": "v1"
+        },
+        "seq": 4,
+        "ts": "<TS>",
+        "type": "patches_applied"
+      },
+      {
+        "payload": {
+          "errors": [],
+          "slot_index": null
+        },
+        "seq": 5,
+        "ts": "<TS>",
+        "type": "proposal_attempted"
+      },
+      {
+        "payload": {
+          "experiment_id": "exp_<DATE>_t1_single_elim_v2"
+        },
+        "seq": 6,
+        "ts": "<TS>",
+        "type": "experiment_minted"
+      },
+      {
+        "payload": {
+          "generation_id": "v2"
+        },
+        "seq": 7,
+        "ts": "<TS>",
+        "type": "patches_applied"
+      },
+      {
+        "payload": {
+          "errors": [],
+          "slot_index": null
+        },
+        "seq": 8,
+        "ts": "<TS>",
+        "type": "proposal_attempted"
+      },
+      {
+        "payload": {
+          "experiment_id": "exp_<DATE>_t1_single_elim_v3"
+        },
+        "seq": 9,
+        "ts": "<TS>",
+        "type": "experiment_minted"
+      },
+      {
+        "payload": {
+          "generation_id": "v3"
+        },
+        "seq": 10,
+        "ts": "<TS>",
+        "type": "patches_applied"
+      },
+      {
+        "payload": {
+          "errors": [],
+          "slot_index": null
+        },
+        "seq": 11,
+        "ts": "<TS>",
+        "type": "proposal_attempted"
+      },
+      {
+        "payload": {
+          "experiment_id": "exp_<DATE>_t1_single_elim_v4"
+        },
+        "seq": 12,
+        "ts": "<TS>",
+        "type": "experiment_minted"
+      },
+      {
+        "payload": {
+          "generation_id": "v4"
+        },
+        "seq": 13,
+        "ts": "<TS>",
+        "type": "patches_applied"
+      },
+      {
+        "payload": {
+          "entry_id": "every_expectation_kind_demo",
+          "replicate": 0,
+          "side": "parent"
+        },
+        "seq": 14,
+        "ts": "<TS>",
+        "type": "unit_completed"
+      },
+      {
+        "payload": {
+          "entry_id": "every_expectation_kind_demo",
+          "replicate": 0,
+          "side": "child"
+        },
+        "seq": 15,
+        "ts": "<TS>",
+        "type": "unit_completed"
+      },
+      {
+        "payload": {
+          "entry_id": "picky_stakeholder_emulated",
+          "replicate": 0,
+          "side": "parent"
+        },
+        "seq": 16,
+        "ts": "<TS>",
+        "type": "unit_completed"
+      },
+      {
+        "payload": {
+          "entry_id": "picky_stakeholder_emulated",
+          "replicate": 0,
+          "side": "child"
+        },
+        "seq": 17,
+        "ts": "<TS>",
+        "type": "unit_completed"
+      },
+      {
+        "payload": {
+          "entry_id": "q3_metrics_outline",
+          "replicate": 0,
+          "side": "parent"
+        },
+        "seq": 18,
+        "ts": "<TS>",
+        "type": "unit_completed"
+      },
+      {
+        "payload": {
+          "entry_id": "q3_metrics_outline",
+          "replicate": 0,
+          "side": "child"
+        },
+        "seq": 19,
+        "ts": "<TS>",
+        "type": "unit_completed"
+      },
+      {
+        "payload": {
+          "entry_id": "transformers_lay_audience",
+          "replicate": 0,
+          "side": "parent"
+        },
+        "seq": 20,
+        "ts": "<TS>",
+        "type": "unit_completed"
+      },
+      {
+        "payload": {
+          "entry_id": "transformers_lay_audience",
+          "replicate": 0,
+          "side": "child"
+        },
+        "seq": 21,
+        "ts": "<TS>",
+        "type": "unit_completed"
+      },
+      {
+        "payload": {
+          "entry_id": "transformers_progressive_scripted",
+          "replicate": 0,
+          "side": "parent"
+        },
+        "seq": 22,
+        "ts": "<TS>",
+        "type": "unit_completed"
+      },
+      {
+        "payload": {
+          "entry_id": "transformers_progressive_scripted",
+          "replicate": 0,
+          "side": "child"
+        },
+        "seq": 23,
+        "ts": "<TS>",
+        "type": "unit_completed"
+      },
+      {
+        "payload": {
+          "entry_id": "waffles_revision_scripted",
+          "replicate": 0,
+          "side": "parent"
+        },
+        "seq": 24,
+        "ts": "<TS>",
+        "type": "unit_completed"
+      },
+      {
+        "payload": {
+          "entry_id": "waffles_revision_scripted",
+          "replicate": 0,
+          "side": "child"
+        },
+        "seq": 25,
+        "ts": "<TS>",
+        "type": "unit_completed"
+      },
+      {
+        "payload": {
+          "entry_id": "waffles_single",
+          "replicate": 0,
+          "side": "parent"
+        },
+        "seq": 26,
+        "ts": "<TS>",
+        "type": "unit_completed"
+      },
+      {
+        "payload": {
+          "entry_id": "waffles_single",
+          "replicate": 0,
+          "side": "child"
+        },
+        "seq": 27,
+        "ts": "<TS>",
+        "type": "unit_completed"
+      },
+      {
+        "payload": {
+          "attributable_regressions": [],
+          "challenger_scalar": 0.8,
+          "champion_scalar": 0.4,
+          "decision": "rejected",
+          "margin_required": 0.01,
+          "rule_fired": "challenger regressed: loss rose by 0.400000 (champion 0.400000 -> challenger 0.800000); a promotion needs the loss to drop by at least 0.010000"
+        },
+        "seq": 28,
+        "ts": "<TS>",
+        "type": "gate_evaluated"
+      },
+      {
+        "payload": {
+          "entry_id": "every_expectation_kind_demo",
+          "replicate": 0,
+          "side": "parent"
+        },
+        "seq": 29,
+        "ts": "<TS>",
+        "type": "unit_completed"
+      },
+      {
+        "payload": {
+          "entry_id": "every_expectation_kind_demo",
+          "replicate": 0,
+          "side": "child"
+        },
+        "seq": 30,
+        "ts": "<TS>",
+        "type": "unit_completed"
+      },
+      {
+        "payload": {
+          "entry_id": "picky_stakeholder_emulated",
+          "replicate": 0,
+          "side": "parent"
+        },
+        "seq": 31,
+        "ts": "<TS>",
+        "type": "unit_completed"
+      },
+      {
+        "payload": {
+          "entry_id": "picky_stakeholder_emulated",
+          "replicate": 0,
+          "side": "child"
+        },
+        "seq": 32,
+        "ts": "<TS>",
+        "type": "unit_completed"
+      },
+      {
+        "payload": {
+          "entry_id": "q3_metrics_outline",
+          "replicate": 0,
+          "side": "parent"
+        },
+        "seq": 33,
+        "ts": "<TS>",
+        "type": "unit_completed"
+      },
+      {
+        "payload": {
+          "entry_id": "q3_metrics_outline",
+          "replicate": 0,
+          "side": "child"
+        },
+        "seq": 34,
+        "ts": "<TS>",
+        "type": "unit_completed"
+      },
+      {
+        "payload": {
+          "entry_id": "transformers_lay_audience",
+          "replicate": 0,
+          "side": "parent"
+        },
+        "seq": 35,
+        "ts": "<TS>",
+        "type": "unit_completed"
+      },
+      {
+        "payload": {
+          "entry_id": "transformers_lay_audience",
+          "replicate": 0,
+          "side": "child"
+        },
+        "seq": 36,
+        "ts": "<TS>",
+        "type": "unit_completed"
+      },
+      {
+        "payload": {
+          "entry_id": "transformers_progressive_scripted",
+          "replicate": 0,
+          "side": "parent"
+        },
+        "seq": 37,
+        "ts": "<TS>",
+        "type": "unit_completed"
+      },
+      {
+        "payload": {
+          "entry_id": "transformers_progressive_scripted",
+          "replicate": 0,
+          "side": "child"
+        },
+        "seq": 38,
+        "ts": "<TS>",
+        "type": "unit_completed"
+      },
+      {
+        "payload": {
+          "entry_id": "waffles_revision_scripted",
+          "replicate": 0,
+          "side": "parent"
+        },
+        "seq": 39,
+        "ts": "<TS>",
+        "type": "unit_completed"
+      },
+      {
+        "payload": {
+          "entry_id": "waffles_revision_scripted",
+          "replicate": 0,
+          "side": "child"
+        },
+        "seq": 40,
+        "ts": "<TS>",
+        "type": "unit_completed"
+      },
+      {
+        "payload": {
+          "entry_id": "waffles_single",
+          "replicate": 0,
+          "side": "parent"
+        },
+        "seq": 41,
+        "ts": "<TS>",
+        "type": "unit_completed"
+      },
+      {
+        "payload": {
+          "entry_id": "waffles_single",
+          "replicate": 0,
+          "side": "child"
+        },
+        "seq": 42,
+        "ts": "<TS>",
+        "type": "unit_completed"
+      },
+      {
+        "payload": {
+          "attributable_regressions": [],
+          "challenger_scalar": 1.6,
+          "champion_scalar": 1.2,
+          "decision": "rejected",
+          "margin_required": 0.01,
+          "rule_fired": "challenger regressed: loss rose by 0.400000 (champion 1.200000 -> challenger 1.600000); a promotion needs the loss to drop by at least 0.010000"
+        },
+        "seq": 43,
+        "ts": "<TS>",
+        "type": "gate_evaluated"
+      },
+      {
+        "payload": {
+          "entry_id": "every_expectation_kind_demo",
+          "replicate": 0,
+          "side": "parent"
+        },
+        "seq": 44,
+        "ts": "<TS>",
+        "type": "unit_completed"
+      },
+      {
+        "payload": {
+          "entry_id": "every_expectation_kind_demo",
+          "replicate": 0,
+          "side": "child"
+        },
+        "seq": 45,
+        "ts": "<TS>",
+        "type": "unit_completed"
+      },
+      {
+        "payload": {
+          "entry_id": "picky_stakeholder_emulated",
+          "replicate": 0,
+          "side": "parent"
+        },
+        "seq": 46,
+        "ts": "<TS>",
+        "type": "unit_completed"
+      },
+      {
+        "payload": {
+          "entry_id": "picky_stakeholder_emulated",
+          "replicate": 0,
+          "side": "child"
+        },
+        "seq": 47,
+        "ts": "<TS>",
+        "type": "unit_completed"
+      },
+      {
+        "payload": {
+          "entry_id": "q3_metrics_outline",
+          "replicate": 0,
+          "side": "parent"
+        },
+        "seq": 48,
+        "ts": "<TS>",
+        "type": "unit_completed"
+      },
+      {
+        "payload": {
+          "entry_id": "q3_metrics_outline",
+          "replicate": 0,
+          "side": "child"
+        },
+        "seq": 49,
+        "ts": "<TS>",
+        "type": "unit_completed"
+      },
+      {
+        "payload": {
+          "entry_id": "transformers_lay_audience",
+          "replicate": 0,
+          "side": "parent"
+        },
+        "seq": 50,
+        "ts": "<TS>",
+        "type": "unit_completed"
+      },
+      {
+        "payload": {
+          "entry_id": "transformers_lay_audience",
+          "replicate": 0,
+          "side": "child"
+        },
+        "seq": 51,
+        "ts": "<TS>",
+        "type": "unit_completed"
+      },
+      {
+        "payload": {
+          "entry_id": "transformers_progressive_scripted",
+          "replicate": 0,
+          "side": "parent"
+        },
+        "seq": 52,
+        "ts": "<TS>",
+        "type": "unit_completed"
+      },
+      {
+        "payload": {
+          "entry_id": "transformers_progressive_scripted",
+          "replicate": 0,
+          "side": "child"
+        },
+        "seq": 53,
+        "ts": "<TS>",
+        "type": "unit_completed"
+      },
+      {
+        "payload": {
+          "entry_id": "waffles_revision_scripted",
+          "replicate": 0,
+          "side": "parent"
+        },
+        "seq": 54,
+        "ts": "<TS>",
+        "type": "unit_completed"
+      },
+      {
+        "payload": {
+          "entry_id": "waffles_revision_scripted",
+          "replicate": 0,
+          "side": "child"
+        },
+        "seq": 55,
+        "ts": "<TS>",
+        "type": "unit_completed"
+      },
+      {
+        "payload": {
+          "entry_id": "waffles_single",
+          "replicate": 0,
+          "side": "parent"
+        },
+        "seq": 56,
+        "ts": "<TS>",
+        "type": "unit_completed"
+      },
+      {
+        "payload": {
+          "entry_id": "waffles_single",
+          "replicate": 0,
+          "side": "child"
+        },
+        "seq": 57,
+        "ts": "<TS>",
+        "type": "unit_completed"
+      },
+      {
+        "payload": {
+          "attributable_regressions": [
+            "every_expectation_kind_demo",
+            "picky_stakeholder_emulated",
+            "q3_metrics_outline",
+            "transformers_lay_audience",
+            "transformers_progressive_scripted",
+            "waffles_revision_scripted",
+            "waffles_single"
+          ],
+          "challenger_scalar": 1.2,
+          "champion_scalar": 0.4,
+          "decision": "rejected",
+          "margin_required": 0.01,
+          "rule_fired": "challenger regressed: loss rose by 0.800000 (champion 0.400000 -> challenger 1.200000); a promotion needs the loss to drop by at least 0.010000"
+        },
+        "seq": 58,
+        "ts": "<TS>",
+        "type": "gate_evaluated"
+      },
+      {
+        "payload": {
+          "entry_id": "every_expectation_kind_demo",
+          "replicate": 0,
+          "side": "parent"
+        },
+        "seq": 59,
+        "ts": "<TS>",
+        "type": "unit_completed"
+      },
+      {
+        "payload": {
+          "entry_id": "every_expectation_kind_demo",
+          "replicate": 0,
+          "side": "child"
+        },
+        "seq": 60,
+        "ts": "<TS>",
+        "type": "unit_completed"
+      },
+      {
+        "payload": {
+          "entry_id": "picky_stakeholder_emulated",
+          "replicate": 0,
+          "side": "parent"
+        },
+        "seq": 61,
+        "ts": "<TS>",
+        "type": "unit_completed"
+      },
+      {
+        "payload": {
+          "entry_id": "picky_stakeholder_emulated",
+          "replicate": 0,
+          "side": "child"
+        },
+        "seq": 62,
+        "ts": "<TS>",
+        "type": "unit_completed"
+      },
+      {
+        "payload": {
+          "entry_id": "q3_metrics_outline",
+          "replicate": 0,
+          "side": "parent"
+        },
+        "seq": 63,
+        "ts": "<TS>",
+        "type": "unit_completed"
+      },
+      {
+        "payload": {
+          "entry_id": "q3_metrics_outline",
+          "replicate": 0,
+          "side": "child"
+        },
+        "seq": 64,
+        "ts": "<TS>",
+        "type": "unit_completed"
+      },
+      {
+        "payload": {
+          "entry_id": "transformers_lay_audience",
+          "replicate": 0,
+          "side": "parent"
+        },
+        "seq": 65,
+        "ts": "<TS>",
+        "type": "unit_completed"
+      },
+      {
+        "payload": {
+          "entry_id": "transformers_lay_audience",
+          "replicate": 0,
+          "side": "child"
+        },
+        "seq": 66,
+        "ts": "<TS>",
+        "type": "unit_completed"
+      },
+      {
+        "payload": {
+          "entry_id": "transformers_progressive_scripted",
+          "replicate": 0,
+          "side": "parent"
+        },
+        "seq": 67,
+        "ts": "<TS>",
+        "type": "unit_completed"
+      },
+      {
+        "payload": {
+          "entry_id": "transformers_progressive_scripted",
+          "replicate": 0,
+          "side": "child"
+        },
+        "seq": 68,
+        "ts": "<TS>",
+        "type": "unit_completed"
+      },
+      {
+        "payload": {
+          "entry_id": "waffles_revision_scripted",
+          "replicate": 0,
+          "side": "parent"
+        },
+        "seq": 69,
+        "ts": "<TS>",
+        "type": "unit_completed"
+      },
+      {
+        "payload": {
+          "entry_id": "waffles_revision_scripted",
+          "replicate": 0,
+          "side": "child"
+        },
+        "seq": 70,
+        "ts": "<TS>",
+        "type": "unit_completed"
+      },
+      {
+        "payload": {
+          "entry_id": "waffles_single",
+          "replicate": 0,
+          "side": "parent"
+        },
+        "seq": 71,
+        "ts": "<TS>",
+        "type": "unit_completed"
+      },
+      {
+        "payload": {
+          "entry_id": "waffles_single",
+          "replicate": 0,
+          "side": "child"
+        },
+        "seq": 72,
+        "ts": "<TS>",
+        "type": "unit_completed"
+      },
+      {
+        "payload": {
+          "attributable_regressions": [],
+          "challenger_scalar": 0.4,
+          "champion_scalar": 2.0,
+          "decision": "promoted",
+          "margin_required": 0.01,
+          "rule_fired": ""
+        },
+        "seq": 73,
+        "ts": "<TS>",
+        "type": "gate_evaluated"
+      },
+      {
+        "payload": {
+          "decision": "promoted",
+          "provenance": {
+            "operator_override": false,
+            "operator_override_reason": "",
+            "overrides": {},
+            "parent_generation_id": "v0",
+            "promoted_generation_id": "v1",
+            "promoted_generation_ids": [
+              "v1"
+            ],
+            "reason": "",
+            "structure": "single_elim"
+          }
+        },
+        "seq": 74,
+        "ts": "<TS>",
+        "type": "decision_recorded"
+      },
+      {
+        "payload": {},
+        "seq": 75,
+        "ts": "<TS>",
+        "type": "round_closed"
+      }
+    ]
+  }
+}
