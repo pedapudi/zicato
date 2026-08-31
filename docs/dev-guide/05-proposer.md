@@ -1,6 +1,6 @@
 # 05 — The Proposer
 
-> **Covers:** the entire proposer subsystem as it exists on this branch — the three
+> **Covers:** the entire proposer subsystem — the three
 > resolution paths behind `ProposerAgent`, every field of `ProposerContext`, the
 > single-shot engine loop (`propose_experiment`), the structured-output schema and
 > its two-pass validation, best-of-N sampling + screening + critique + the
@@ -8,20 +8,21 @@
 > the **restricted-visibility envelope** as a formal spec, the read-only proposer
 > tools registry, and experiment memory (same-epoch + cross-epoch).
 >
-> **Prerequisites:** 02-architecture.md §"The evolve round" (where the propose step
-> sits in a round), 03-contract-and-epochs.md §"The contract hash" (why editing the
-> proposer rolls the epoch), 04-evaluation-statistics.md §"Train/holdout split"
-> (what the train slice is — everything the proposer sees is train-slice-only).
+> **Prerequisites:** 02-architecture.md §3 (where the propose step sits in a
+> round — §3.9 is the propose step itself), 03-contract-and-epochs.md §3.2.6
+> (why editing the proposer rolls the epoch), 04-evaluation-statistics.md §5
+> (the Ladder budget over the holdout). The split itself is
+> `zicato.board.split` under `docs/design/OVERFITTING.md` §3; everything the
+> proposer sees is train-slice-only.
 >
 > **Invariants you must not break (each is expanded below):**
 > 1. **The proposer never sees the holdout, an entry id, task text, or a raw
 >    per-entry outcome.** Every channel into the prompt is banded, aggregated,
->    anonymized, or redacted at the render boundary (§"The restricted-visibility
->    envelope").
-> 2. **The mounted child tree must match the CHOSEN experiment** — bugs #6/#7
->    (§"Mounting the chosen candidate").
+>    anonymized, or redacted at the render boundary (§5.8).
+> 2. **The mounted child tree must match the CHOSEN experiment** — Cases 6
+>    and 7 of 12-bug-casebook.md (§5.6.5).
 > 3. **A screen can veto, never rank; and it can never fail a propose step**
->    (§"The candidate screen").
+>    (§5.6.2).
 > 4. **The proposer is a pure prompt-assembler over caller-supplied inputs** — it
 >    never reads the index, the journal, or the board itself on the text-shim
 >    path; the orchestrator assembles everything and threads it on the context.
@@ -38,27 +39,27 @@
 
 | File | What lives there | Approx. size |
 |---|---|---|
-| `src/zicato/proposer/agent.py` | `ProposerContext` (the frozen call-time bundle), the `ProposerAgent` protocol, `DefaultProposerAgent` (text-shim), `build_proposer_agent` (the 3-way selector) | 316 lines |
-| `src/zicato/proposer/adk_agent.py` | `ADKProposerAgent` — the tool-using agent on ADK's own `Runner` (built-in default AND custom `agent.py` loader), `build_default_adk_agent` | 501 lines |
-| `src/zicato/proposer/proposer.py` | `propose_experiment` — the single-shot compose → call → parse → validate → bounded-retry engine; `ProposerError`; `ExperimentValidator` | 494 lines |
-| `src/zicato/proposer/prompts.py` | Every prompt template + render helper; ALL banding/aggregation happens here (`_aggregate_pattern_detail`, `_bucket_scalar_delta`, `_band_rate`, `_band_quality`, …) | 1074 lines |
-| `src/zicato/proposer/structured.py` | `EXPERIMENT_JSON_SCHEMA`, `parse_experiment_json` (two-pass validation), `extract_json_object` (5-stage salvage), `ExperimentParseError`, `PostApplyValidationError` | 841 lines |
-| `src/zicato/proposer/best_of_n.py` | `BestOfNProposerAgent` (slate sampling, screen, revise, critique, heuristic, `_mount_chosen`), `CandidateScreenResult`, `ScreenRunner`, `wrap_with_proposer_quality` | 950 lines |
-| `src/zicato/proposer/hints.py` | `EDIT_CLASS_HINTS`, `FAILURE_MODE_HINTS`, `hint_for_slot`, `dominant_failure_mode` — the per-slot slate diversifier | 210 lines |
-| `src/zicato/proposer/tools.py` | The read-only tool registry (`DEFAULT_PROPOSER_TOOLS`), `ProposerToolContext`, `bind_proposer_tool_context` (the contextvar seam) | 588 lines |
+| `src/zicato/proposer/agent.py` | `ProposerContext` (the frozen call-time bundle), the `ProposerAgent` protocol, `DefaultProposerAgent` (text-shim), `build_proposer_agent` (the 3-way selector) | 486 lines |
+| `src/zicato/proposer/adk_agent.py` | `ADKProposerAgent` — the tool-using agent on ADK's own `Runner` (built-in default AND custom `agent.py` loader), `build_default_adk_agent` | 564 lines |
+| `src/zicato/proposer/proposer.py` | `propose_experiment` — the single-shot compose → call → parse → validate → bounded-retry engine; `ProposerError`; `ExperimentValidator` | 562 lines |
+| `src/zicato/proposer/prompts.py` | Every prompt template + render helper; ALL banding/aggregation happens here (`_aggregate_pattern_detail`, `_bucket_scalar_delta`, `_band_rate`, `_band_quality`, …) | 1561 lines |
+| `src/zicato/proposer/structured.py` | `EXPERIMENT_JSON_SCHEMA`, `parse_experiment_json` (two-pass validation), `extract_json_object` (5-stage salvage), `ExperimentParseError`, `PostApplyValidationError` | 880 lines |
+| `src/zicato/proposer/best_of_n.py` | `BestOfNProposerAgent` (slate sampling, screen, revise, critique, heuristic, `_mount_chosen`), `CandidateScreenResult`, `ScreenRunner`, `wrap_with_proposer_quality` | 1743 lines |
+| `src/zicato/proposer/hints.py` | `EDIT_CLASS_HINTS`, `FAILURE_MODE_HINTS`, `hint_for_slot`, `dominant_failure_mode` — the per-slot slate diversifier | 256 lines |
+| `src/zicato/proposer/tools.py` | The read-only tool registry (`DEFAULT_PROPOSER_TOOLS`), `ProposerToolContext`, `bind_proposer_tool_context` (the contextvar seam) | 585 lines |
 | `src/zicato/proposer/brief.py` | `ProposerBrief` / `load_brief` / `enforce_forbidden` — the operator's `brief.md` parser | 217 lines |
-| `src/zicato/proposer/skills.py` | `resolve_proposer_spec`, `load_proposer_skills`, `normalize_skill_body`, `parse_frontmatter` | 146 lines |
+| `src/zicato/proposer/skills.py` | `resolve_proposer_spec`, `load_proposer_skills`, `normalize_skill_body`, `parse_frontmatter` | 169 lines |
 | `src/zicato/core/proposer.py` | `ProposerSpec` / `ProposerSkill` — the hash-ready proposer identity types | — |
-| `src/zicato/epoch/screen.py` | The candidate-screen engine (`run_candidate_screen`, `select_screen_entries`, `ScreenPanel`, `SCREEN_REPLICATE_BASE`) | 448 lines |
-| `src/zicato/analyzer/process_exemplars.py` | The R1–R4 redaction machine for the opt-in process-exemplar channel | 724 lines |
+| `src/zicato/epoch/screen.py` | The candidate-screen engine (`run_candidate_screen`, `select_screen_entries`, `ScreenPanel`, `SCREEN_REPLICATE_BASE`) | 468 lines |
+| `src/zicato/analyzer/process_exemplars.py` | The four-rule redaction machine (§5.8.3) for the opt-in process-exemplar channel | 678 lines |
 | `src/zicato/index/query.py` | `prior_experiments_for_epoch` (experiment memory), `mutation_point_track_record` (fertility map) | — |
-| `src/zicato/epoch/round_log.py` | The round-log event vocabulary the propose step emits into | 621 lines |
-| `src/zicato/orchestrator.py` | The wiring: `_propose_child`, `_propose_and_apply_challenger`, `_build_candidate_screen_runner`, `_render_failure_profile`, `_render_process_exemplars_block`, `_load_prior_experiments`, `_load_mutation_track_records` | — |
+| `src/zicato/epoch/round_log.py` | The round-log event vocabulary the propose step emits into | 974 lines |
+| `src/zicato/evolve/` | The wiring, spread across the round pipeline: `propose_apply.py` (`_propose_child`, `_propose_and_apply_challenger`), `round_context.py` (`_build_candidate_screen_runner`, `_build_recombination_pair`, `_build_genealogy_items`), `decision_support.py` (`_render_failure_profile`, `_render_process_exemplars_block`, `_render_loss_summary`), `ingest.py` (`_load_prior_experiments`, `_load_mutation_track_records`). `src/zicato/orchestrator.py` is a 14-line re-export facade over `evolve_once` / `evolve_n_rounds` | — |
 
 Orchestrator call topology, per round:
 
 ```
-evolve_once (orchestrator.py)
+evolve_once (evolve/gauntlet.py)
  ├─ enumerate_mutations → split_board(train/holdout) → detect_patterns(TRAIN)
  ├─ _render_loss_summary(TRAIN losses)
  ├─ _render_failure_profile(TRAIN losses, weights)          # banded block or ""
@@ -71,14 +72,14 @@ evolve_once (orchestrator.py)
                 └─ prior_experiments = prior + tuple(siblings)   # in-flight cohort
 ```
 
-The agent itself was built ONCE per evolve invocation:
+The agent itself is built ONCE per evolve invocation:
 `build_proposer_agent(spec, proposer_path)` wrapped by
 `wrap_with_proposer_quality(inner, weights.proposer_quality)`.
 
 > ⚠️ TRAP — a new `ProposerContext` field must be threaded at BOTH propose sites.
-> `_propose_child` (`src/zicato/orchestrator.py`) is the single shared
-> context-builder both pipelines call precisely because a field used to land on
-> one path only. If you add a field, add it to `_propose_child`'s signature and
+> `_propose_child` (`src/zicato/evolve/propose_apply.py`) is the single shared
+> context-builder both pipelines call, so that a new field cannot reach one
+> path only. If you add a field, add it to `_propose_child`'s signature and
 > to BOTH of its callers (the gauntlet inline block and
 > `_propose_and_apply_challenger`), or the field silently defaults on one
 > pipeline.
@@ -88,11 +89,11 @@ The agent itself was built ONCE per evolve invocation:
 ## 5.1 The three resolution paths behind `ProposerAgent`
 
 A proposer is, on disk, a directory `proposers/<name>/` carrying `skills/*.md`
-(zero or more markdown skill modules) and an optional custom `agent.py`. Phase 1
-resolves that directory (or `None`) into a hash-ready `ProposerSpec`
-(`src/zicato/proposer/skills.py::resolve_proposer_spec`); Phase 2 turns the spec
-into a runnable agent via `build_proposer_agent`
-(`src/zicato/proposer/agent.py`). Three outcomes, in **resolution order**:
+(zero or more markdown skill modules) and an optional custom `agent.py`.
+`resolve_proposer_spec` (`src/zicato/proposer/skills.py`) resolves that
+directory (or `None`) into a hash-ready `ProposerSpec`;
+`build_proposer_agent` (`src/zicato/proposer/agent.py`) turns the spec into a
+runnable agent. Three outcomes, in **resolution order**:
 
 | # | Condition on the spec | Agent returned | Engine | Tools? | Model |
 |---|---|---|---|---|---|
@@ -123,15 +124,15 @@ The selector, verbatim:
     return DefaultProposerAgent(spec)
 ```
 
-> ⛔ NEVER assume "the default proposer is the text shim." That was true
-> historically and parts of `adk_agent.py`'s module docstring still narrate the
-> old world. The **selector** is the authority: the bare default (no proposer
+> ⛔ NEVER assume "the default proposer is the text shim." Parts of
+> `adk_agent.py`'s module docstring still describe it that way and are wrong.
+> The **selector** is the authority: the bare default (no proposer
 > dir) is the **tool-using ADK agent**. Configuring a skills-only proposer dir
 > is what OPTS INTO the text shim — you lose the tools when you do.
 
 > ⚠️ TRAP — misconfiguration path #1: a spec with `agent_source_sha256` set but
-> no `proposer_path` raises `ValueError` immediately. It deliberately does NOT
-> fall back to the default agent — a silently-swapped proposer would evaluate
+> no `proposer_path` raises `ValueError` immediately. It does NOT fall back
+> to the default agent — a silently-swapped proposer would evaluate
 > generations under a different rule than the contract hash claims.
 
 ### 5.1.1 Path 2 in detail — the built-in default (`builtin_default=True`)
@@ -171,8 +172,9 @@ So the tool-using default and the text shim see identical guidance and round
 context — only the execution engine differs.
 
 > ✅ ALWAYS keep `_render_task_text` in lockstep with `propose_experiment`'s
-> prompt assembly when you add a prompt channel. As of this branch the ADK task
-> text threads: `feedback` (retry), `prior_experiments`, `restrict_visibility`,
+> prompt assembly when you add a prompt channel. The ADK task
+> text threads these channels: `feedback` (retry), `prior_experiments`,
+> `restrict_visibility`,
 > `custom_judge_names`, `failure_profile`, `process_exemplars`, `sample_hint`,
 > and `mutation_track_records`. Note it does NOT thread the analyzer
 > `insights` block (the tool-using agent reads insights via its `read_insights`
@@ -195,13 +197,13 @@ no `agent` symbol).
 
 The **collusion guard** here is soft: the hard `is`-identity callable check
 (`zicato.core.workspace.assert_distinct_callables`) does not apply because the
-proposer runs on its OWN model, not the auxiliary callable. Instead
+proposer runs on its OWN model rather than the auxiliary callable. Instead
 `_warn_on_model_collusion` compares the agent's `model` string (or its
 `BaseLlm.model` attribute) against `ctx.model` and logs a WARNING on a match —
 advisory only, never raises. The warning is **intentionally skipped for the
-built-in default** (`if not self.builtin_default:`) because the default
-deliberately runs on the operator-configured auxiliary model — that match is
-the documented posture, not an author error.
+built-in default** (`if not self.builtin_default:`) because the default runs
+on the operator-configured auxiliary model by design; that match is the
+documented posture rather than an author error.
 
 ### 5.1.3 The shared post-response loop
 
@@ -228,7 +230,7 @@ round's snapshot / manifest / journal (§5.9). The auxiliary callable
 > runner's own behaviour plus the orchestrator-level round machinery. Do not
 > "fix" this by adding `asyncio.wait_for` around `_run_agent_once` without
 > deciding what a half-finished tool-calling session means — that is a design
-> change, not a bug fix.
+> change rather than a bug fix.
 
 **Tests:** `tests/test_proposer_agent.py` (selector + text shim),
 `tests/test_proposer_adk_agent.py` (builtin-default + custom loading + the
@@ -270,12 +272,12 @@ folded to counts), **REDACTED** (mechanically scrubbed content), **SANITIZED**
 | `validate_experiment` | `ExperimentValidator \| None = None` | orchestrator: `build_post_apply_validator(...)` (`src/zicato/evolve/round.py`) | both engines (post-parse hook); best-of-N `_mount_chosen` / `_revalidate` — the shared hook is what mounts the canonical `next_id` tree | MACHINERY |
 | `scratch_validator_factory` | `Callable[[], tuple[ExperimentValidator, Callable[[], None]]] \| None = None` | orchestrator: `build_scratch_validator_factory(...)` (`src/zicato/evolve/round.py`) | best-of-N only: one `(validate, cleanup)` lease per slate slot, each over its OWN disjoint scratch tree, so the slate can gather. `None` ⇒ the wrapper falls back to `validate_experiment` and runs the slate serially | MACHINERY |
 | `meta_loop_emitter` | `MetaLoopEmitter \| None = None` | orchestrator (one per `evolve_n_rounds`) | text shim only: `proposer_call_started`/`proposer_call_completed` bookends per attempt | MACHINERY (telemetry, best-effort) |
-| `custom_judge_names` | `frozenset[str] \| None = None` | orchestrator: `_declared_custom_judge_names(board, weights)` (board `JudgeSpec.name` ∪ `per_judge_weights` keys) | `parse_experiment_json` (drift-metric validation) ONLY — deliberately permissive, including zero-weight judges, so the prompt-side priority filter can never turn an accepted movement into a burned retry; the prompt vocabulary comes from `metric_priorities` | IDENTITY-FREE (judge names are contract identity, not board-entry identity) |
+| `custom_judge_names` | `frozenset[str] \| None = None` | orchestrator: `_declared_custom_judge_names(board, weights)` (board `JudgeSpec.name` ∪ `per_judge_weights` keys) | `parse_experiment_json` (drift-metric validation) ONLY — permissive by design, including zero-weight judges, so the prompt-side priority filter can never turn an accepted movement into a burned retry; the prompt vocabulary comes from `metric_priorities` | IDENTITY-FREE (judge names are contract identity rather than board-entry identity) |
 | `prior_experiments` | `tuple[PriorExperiment, ...] = ()` | orchestrator: `_load_prior_experiments` (+ the field loop appends in-flight `siblings`) | `render_prior_experiments_block` (prompt); `recent_prediction_accuracy` (best-of-N calibration) | BANDED under `restrict_visibility` (Δscalar bucketed; accuracy always banded); curated + capped at 12 (§5.10) |
 | `restrict_visibility` | `bool = False` (context default) — **default-ON in production** via `weights.overfitting.restrict_proposer_visibility` | orchestrator from the contract | `render_user_prompt` → `render_pattern_block(restrict=…)`, `_render_prior_experiment_line(restrict=…)`; the best-of-N critic re-renders under the SAME flag | MACHINERY (the envelope switch itself) |
 | `failure_profile` | `str = ""` | orchestrator: `_render_failure_profile(TRAIN losses, weights)` — pre-rendered, **already banded** | spliced as `## Failure-mode profile`; `hint_for_slot` parses its stable line shapes for the dominant mode | BANDED + AGGREGATED (every number through `_band_rate`/`_band_quality`; board-anonymous by construction) |
 | `metric_priorities` | `str = ""` | orchestrator: `render_metric_priorities_block(build_metric_priorities(board, weights, losses))` — pre-rendered, **already banded** | replaces the flat vocabulary inside `## Valid expectation targets`; also threaded into the recombination merge prompt | BANDED (within-channel weight ratios only — the raw coefficients are the objective function and stay orchestrator-side, §5.8) |
-| `process_exemplars` | `str = ""` | orchestrator: `_render_process_exemplars_block` — **opt-in** (`proposer_quality.process_exemplars > 0`), best-effort | spliced as `## Process exemplars` directly after the failure profile; also fed to the critic | REDACTED (R1–R4, §5.8.3); train-only; empty at default |
+| `process_exemplars` | `str = ""` | orchestrator: `_render_process_exemplars_block` — **opt-in** (`proposer_quality.process_exemplars > 0`), best-effort | spliced as `## Process exemplars` directly after the failure profile; also fed to the critic | REDACTED (the four redaction rules, §5.8.3); train-only; empty at default |
 | `sample_hint` | `str = ""` | the **best-of-N wrapper** (`replace(ctx, sample_hint=hint_for_slot(i, n, profile))`) — never the orchestrator | `render_user_prompt` → `## Edit-class hint (this sample)` at the very top | IDENTITY-FREE (static instruction strings only) |
 | `slot_index` | `int \| None = None` | the **best-of-N wrapper** (`replace(ctx, slot_index=sample)` in `_run_one_slot`) — never the orchestrator | the input capture only (§5.5.1), to tell one slot's records from a sibling's in the epoch's shared capture file; reaches NO renderer | MACHINERY |
 | `revise_feedback` | `str = ""` | the **best-of-N wrapper**, only on the ONE all-vetoed revise re-sample (`_render_revise_feedback`) | both engines seed the FIRST attempt's `feedback` slot with it; retries overwrite it | AGGREGATED (composed solely of counts-only screen reason strings + static text) |
@@ -296,7 +298,7 @@ folded to counts), **REDACTED** (mechanically scrubbed content), **SANITIZED**
 > later." The context IS the envelope boundary on the agent side: everything on
 > it either carries no board identity or was banded/redacted **before** it was
 > placed there (`failure_profile` and `process_exemplars` are pre-rendered
-> strings for exactly this reason — the agents only forward them). The one
+> strings for this reason — the agents only forward them). The one
 > exception is `patterns`, whose identity keys survive on the object and are
 > sanitized at the RENDER boundary under `restrict_visibility`; do not copy
 > that pattern for new channels (see §5.8.7's checklist — pre-render instead).
@@ -368,9 +370,9 @@ prepended ABOVE everything else and has three variants:
 screen-informed revise (§5.6.4) already renders the repair section — the same
 `feedback` slot a validation failure would populate on retry — with the
 slate's counts-only veto summary. For every non-revise call `revise_feedback`
-is `""`, `feedback` starts empty, and the first prompt is byte-identical to a
-world where the channel does not exist. Subsequent retries overwrite the seed
-with their own concrete errors exactly as before. The ADK agent seeds
+is `""`, `feedback` starts empty, and the first prompt renders byte-identically
+to one assembled without the channel. Subsequent retries overwrite the seed
+with their own concrete errors. The ADK agent seeds
 identically (`feedback = ctx.revise_feedback` in `ADKProposerAgent.propose`).
 
 ### 5.3.3 The post-apply validation hook (`validate_experiment`)
@@ -390,10 +392,10 @@ orchestrator supplies `build_post_apply_validator`
    — the tree the tournament later mounts, so no second apply is needed;
 4. runs `zicato.mutation.validator.validate_post_apply` and returns findings.
 
-Why this exists: a destructive patch (a dropped import, a vanished
-`# zicato:mutable` marker, broken syntax) used to cost an entire wasted
-tournament round — the orchestrator applied, validated, and rejected with no
-retry. The hook makes it cost **one bounded retry** with the concrete
+Why this exists: without the hook a destructive patch (a dropped import, a
+vanished `# zicato:mutable` marker, broken syntax) costs an entire wasted
+tournament round — applied, validated, and rejected with no retry. The hook
+makes it cost **one bounded retry** with the concrete
 validator strings fed back. The retry budget is **shared** with parse-error
 retries, so the per-round wall-clock stays bounded.
 
@@ -403,7 +405,7 @@ retries, so the per-round wall-clock stays bounded.
 > best-of-N the slate keeps out of that slot entirely: each slot validates
 > through a per-slot scratch lease (§5.3.3a) and the shared hook runs exactly
 > once, on the chosen candidate, after selection (§5.6.5). That is what bugs
-> #6/#7 cost the project — see 12-bug-casebook.md. If you write a new
+> Cases 6 and 7 cost the project — see 12-bug-casebook.md. If you write a new
 > consumer of `last_child_snapshot["path"]`, reason about WHICH candidate's
 > tree is mounted at the moment you read it: before `_mount_chosen` runs,
 > the slot holds nothing this round wrote.
@@ -453,7 +455,8 @@ working if you touch the shape:
   append-only journal entry, never a crashed loop);
 - the field path drops the slot and runs a **narrower field**, publishing the
   full `attempt_reasons` list to the dashboard's proposing tracker
-  (`_short_reject_reason` / `_trim_reason` in `src/zicato/orchestrator.py`);
+  (`_short_reject_reason` / `_trim_reason` in
+  `src/zicato/evolve/propose_apply.py`);
 - the best-of-N wrapper re-raises the LAST inner error when the whole slate
   failed, so single-sample call sites see the identical contract;
 - `_propose_child` emits one `proposal_attempted` round-log event **per failed
@@ -469,7 +472,7 @@ should crash an evolve loop; if one does, that is the bug.
 |---|---|---|
 | `proposer failed after N attempt(s): attempt 1: empty response…` in a rejected round's journal entry | the model burned its output budget on reasoning every attempt; the empty-variant repair prompt did not rescue it | gauntlet: `_persist_rejected_round`; the round journals `rejected` with `proposer_retries_exhausted` |
 | `attempt k: schema violation at hypothesis/modulating: …` | shape failure at pass 1; the next attempt carried the JSON-pointer path | §5.4.2 |
-| `attempt k: patch[0]: unknown mutation_id '…'` | the model targeted an id not in the manifest — usually it hallucinated a plausible-sounding id or reused one from the memory digest that no longer exists | §5.4.3; also re-checked post-propose by `check_patch_manifest_and_forbidden`, which RAISES `ValueError` (a hard error — by then the proposer already validated, so a stale id means the manifest changed under the round) |
+| `attempt k: patch[0]: unknown mutation_id '…'` | the model targeted an id not in the manifest — usually it hallucinated a plausible-sounding id or reused one from the memory digest that the current manifest does not carry | §5.4.3; also re-checked post-propose by `check_patch_manifest_and_forbidden`, which RAISES `ValueError` (a hard error — by then the proposer already validated, so a stale id means the manifest changed under the round) |
 | `attempt k: patches violate proposer-brief forbidden-edits list: …` | the brief's `# Forbidden edits` section named the id; the retry feedback names the offending ids | §5.3.1 row 4 |
 | `attempt k: patches failed post-apply validation: …` | the patch applied but broke the snapshot (dropped import / marker / syntax); `derive_generation` or `validate_post_apply` findings fed back | §5.3.3 |
 | `attempt k: derive_generation rejected the patch set: …` | `apply_patches`' own post-apply syntax gate raised `ValueError` — surfaced as a single retryable finding rather than crashing the loop | `build_post_apply_validator` step 2 |
@@ -486,9 +489,9 @@ should crash an evolve loop; if one does, that is the bug.
 `src/zicato/proposer/brief.py`. The proposer brief is the operator's running
 guidance to the proposer — an **epoch-level** concept (one brief governs every
 proposer call within an epoch) and a contract input (its normalized body is
-hashed by `_canon_brief`; a semantic edit rolls the epoch). It is deliberately
-distinct from the per-board-entry `Rubric` (an LLM-as-judge scorer for one
-entry); the two used to share the name "rubric" and no longer do.
+hashed by `_canon_brief`; a semantic edit rolls the epoch). It is distinct
+from the per-board-entry `Rubric`, which is an LLM-as-judge scorer for one
+entry.
 
 `load_brief(path)` — a MISSING file is a **hard `FileNotFoundError`**: "the
 proposer cannot operate without operator guidance, even if that guidance is an
@@ -512,7 +515,7 @@ The FULL brief text — everything outside the two structured sections included
 — passes verbatim into the system prompt, so free-form operator prose reaches
 the model.
 
-> ⚠️ TRAP — the forbidden check is enforced in THREE places, deliberately:
+> ⚠️ TRAP — the forbidden check is enforced in THREE places by design:
 > (1) inside both proposer engines per attempt (retryable feedback), (2)
 > post-propose by `check_patch_manifest_and_forbidden` (hard `ValueError` —
 > defense in depth against an agent implementation that skipped step 1), and
@@ -584,8 +587,8 @@ the retry prompt.
 
 Before any validation, the raw response goes through a 5-stage progressively
 more aggressive recovery. Each stage is a fallback ONLY when the prior one
-yielded nothing parseable, so a clean response is untouched (stage 1 is
-byte-identical to the historical behaviour):
+yielded nothing parseable, so a clean response is untouched (stage 1 alone
+handles a well-formed response):
 
 | Stage | What it tries | Rescues |
 |---|---|---|
@@ -597,7 +600,7 @@ byte-identical to the historical behaviour):
 
 From stage 3 onward the scan runs over the **reasoning-stripped** text so a
 JSON-ish blob inside a `<think>` block cannot be mistaken for the answer.
-A genuinely dangling `{` still yields nothing — unbalanced garbage is
+A dangling `{` still yields nothing — unbalanced garbage is
 rejected. An empty response and a salvage miss get **different** error
 messages (`"empty response: …"` vs `"could not extract a JSON object …"`), so
 the repair prompt can target the failure mode (the empty case triggers the
@@ -608,13 +611,13 @@ the repair prompt can target the failure mode (the empty case triggers the
 `EXPERIMENT_JSON_SCHEMA` (draft 2020-12) enforces required keys, types, and
 enum domains. Direction enum: `decrease | increase | neutral |
 decrease_or_neutral | increase_or_neutral`; magnitude: `small | medium |
-large`. `additionalProperties` is deliberately NOT set on most subobjects —
+large`. `additionalProperties` is left unset on most subobjects by design —
 the proposer may attach commentary keys; the parser reads only documented keys
 and ignores the rest. A violation renders the JSON-pointer path into the
 error: `schema violation at hypothesis/modulating: …`.
 
 > ⚠️ TRAP — the "at least one of `expected_drift_movements` /
-> `expected_metric_movements`" rule is enforced by the PARSER, not the schema
+> `expected_metric_movements`" rule is enforced by the PARSER rather than the schema
 > (a JSON-Schema `anyOf` obscures error messages in the retry path). If you
 > extend the hypothesis shape, follow that split: schema for shape, parser for
 > anything whose error message a model must act on.
@@ -674,7 +677,7 @@ that know the implementation detail naturally mangle this
 `drift:custom:file_findability`). The validator strips the known prefixes
 (`_JUDGE_METRIC_PREFIXES = ("drift:custom:", "drift:", "custom:")` — longest
 first, repeatedly) and accepts the movement iff the recovered bare token is a
-built-in drift kind OR a declared judge name; a genuinely unknown kind still
+built-in drift kind OR a declared judge name; an unknown kind still
 fails, with a teaching message that enumerates the declared judges and the
 built-in kinds.
 
@@ -710,8 +713,8 @@ future proposals as an advisory calibration signal. The full loop:
 3. `PriorExperiment.prediction_accuracy` carries the grade into the memory
    digest; `_render_prior_experiment_line` renders it **always banded**
    (`prediction:low|medium|high` via `_band_prediction_accuracy` — banded
-   regardless of `restrict_visibility`, since it is a calibration meta-signal,
-   not a board number).
+   regardless of `restrict_visibility`, since it is a calibration meta-signal
+   rather than a board number).
 4. The best-of-N selection consumes it: `recent_prediction_accuracy(ctx)`
    means the digest's graded values; when the mean clears
    `CALIBRATION_TRUST_BAR = 0.6` the lineage has EARNED trust and
@@ -821,9 +824,9 @@ Four properties to preserve when touching this:
   a 15-point manifest measures ~23 KB, so a default round (three slate slots
   plus the critique) writes on the order of 90 KB, and a 100-round epoch a few
   megabytes. Nothing prunes it — `zicato epoch gc` removes generation source
-  trees only — so if that growth ever bites, the fix is an opt-OUT knob, not a
-  default-off flag: a diagnostic nobody enabled in advance is absent from
-  exactly the round that needed it.
+  trees only — so if that growth ever bites, the fix is an opt-OUT knob rather
+  than a default-off flag: a diagnostic nobody enabled in advance is absent
+  from exactly the round that needed it.
 
 ---
 
@@ -835,8 +838,8 @@ when `config.best_of_n > 1`; at `best_of_n <= 1` it returns `inner`
 **unchanged** — not even a wrapper object in the call path. The DEFAULT
 contract is `best_of_n = 3` with `critique_enabled = True`
 (`ProposerQualityConfig`, `src/zicato/core/scoring_config.py`); pin
-`"proposer_quality": {"best_of_n": 1}` for the historical single-sample
-proposer (scripted/deterministic proposers do). Changing any knob rolls the
+`"proposer_quality": {"best_of_n": 1}` for a single-sample proposer
+(scripted/deterministic proposers do). Changing any knob rolls the
 epoch — a proposer that samples a slate proposes under a different rule.
 
 An inner proposer may implement `NativeSlateProposer.propose_slate`. In that
@@ -880,8 +883,8 @@ the N samples explore different edit strategies rather than re-rolling one
 idea. `hint_for_slot(sample_index, n, failure_profile)`
 (`src/zicato/proposer/hints.py`) is pure and deterministic:
 
-- **No dominant failure mode** (absent/empty/signal-free profile): the
-  historical exploratory rotation `EDIT_CLASS_HINTS[i % 3]` — (1) smallest
+- **No dominant failure mode** (absent/empty/signal-free profile): the plain
+  exploratory rotation `EDIT_CLASS_HINTS[i % 3]` — (1) smallest
   grounded fix, (2) structurally different mechanism than recent attempts,
   (3) target the highest-loss failure mode head-on.
 - **Dominant mode present, slots `0..n-2`:** the mode's `FAILURE_MODE_HINTS`
@@ -896,7 +899,7 @@ idea. `hint_for_slot(sample_index, n, failure_profile)`
 object) — directional markers (`=> over-retrieves` / `=> misses relevant
 items`) win; otherwise the banded rate tokens (`none` / `~N%` / `~all`) are
 decoded and the strictly-largest positive rate wins with fixed-order
-tie-breaking. Parsing the rendered string is a deliberate envelope property:
+tie-breaking. Parsing the rendered string is an envelope property by design:
 the mapping can never see a finer-grained number than the proposer itself does
 (the proposer already sees that exact string). Tests:
 `tests/test_proposer_hints.py`.
@@ -914,8 +917,7 @@ inner failure so callers see the identical single-sample contract.
 Opt-in: `proposer_quality.screen_entries > 0` **AND** `best_of_n > 1`
 (a single sample has no slate to screen). When off — the default — the
 orchestrator does not even construct a screen callable
-(`_build_candidate_screen_runner` returns `None`) and the propose path is
-byte-identical.
+(`_build_candidate_screen_runner` returns `None`) and no screen runs.
 
 The semantics are strictly **VETO-FIRST**, and this is a load-bearing
 invariant with four clauses:
@@ -931,7 +933,7 @@ invariant with four clauses:
 3. **Screening can NEVER fail a propose** ("guarded-never-fails-a-propose").
    Every screen call is wrapped: a raising runner, a malformed result (wrong
    length), or a per-candidate engine failure degrades to unscreened /
-   no-signal — logged at debug, selection proceeds byte-identically.
+   no-signal — logged at debug; the selection then runs over the whole slate.
 4. **Confirm-before-veto.** A pass-flip (the candidate FAILS a panel entry the
    champion's replicate-0 baseline PASSES) does not veto on one observation:
    the flipped entries re-run ONCE at the reserved confirm slot
@@ -949,7 +951,7 @@ NEVER `derive_generation`; the real lineage is untouched — under a phantom
 generation id `{parent}-screen-r{round}c{i}` (can never match a real `v\d+`),
 with the board stamped at `SCREEN_REPLICATE_BASE = 3000` so its unit-cache
 slots can never collide with — or pre-seed — a real duel (see
-06-tournament-and-selection.md §"The reserved replicate ladder"). The phantom
+06-tournament-and-selection.md §6.1.1). The phantom
 `generations/{screen-id}` dir the unit cache creates is removed in a
 `finally:` per candidate; `sweep_stale_screen_dirs` reaps crash leftovers at
 entry (self-heal).
@@ -982,29 +984,29 @@ Outcome classification per candidate, in order of precedence:
 
 ### 5.6.3 Where the screen runner comes from
 
-`_build_candidate_screen_runner` (`src/zicato/orchestrator.py`) builds ONE
+`_build_candidate_screen_runner` (`src/zicato/evolve/round_context.py`) builds ONE
 closure per round binding: the rotating train panel (`select_screen_entries`
 over the champion's replicate-0 baseline), the parent generation, the frozen
 weights/config, and the round index. Every propose site this round — the
 gauntlet's single challenger AND every slot of a multi-challenger field —
 screens on the SAME panel. Each invocation beats a `screening:r{round}`
 heartbeat phase first, so the stall detector attributes the extra
-propose-step wall-clock honestly (see 06-tournament-and-selection.md
-§"Heartbeat phases").
+propose-step wall-clock honestly (the phase strings are
+07-runtime-and-durability.md §7.6.1).
 
 ### 5.6.4 The all-vetoed REVISE pass (screen-informed, bounded to ONE)
 
 Trigger discipline — the revise fires on exactly ONE screen verdict: **an
 all-vetoed screened slate**, because that is the one state where proceeding is
 *knowingly* wasteful (the step would send a known-vetoed candidate to a full
-tournament round). Deliberately NOT triggers:
+tournament round). Two states that do NOT trigger it:
 
 - a cold-start slate whose survivors were merely crash-only screened
   (`ScreenPanel.baseline_pass_ids` empty — no pass-flip was ever detectable):
   a replacement would face the same crash-only panel and could earn no
   stronger signal than the survivors already hold;
 - a no-signal survivor (screen error): that is the screen's own
-  degrade-to-unscreened contract, not evidence against the slate.
+  degrade-to-unscreened contract rather than evidence against the slate.
 
 There is NO config knob — the revise rides `screen_entries > 0`, because a
 contract that opted into paying for the screen has already accepted the
@@ -1034,7 +1036,7 @@ Outcomes:
 |---|---|---|
 | `"chosen"` | replacement survived (or could not be screened — the guarded degrade) | the replacement is the pick, `selection_mode = "screen_revise_survivor"`, no critique call; it is mounted by the same unconditional `_mount_chosen` derive as any other pick |
 | `"fallback"` | replacement itself vetoed | critic-over-ALL over the original slate, mode prefixed `screen_all_vetoed_after_revise:` |
-| `"unavailable"` | inner proposer produced no replacement | degrade exactly as pre-revise (`screen_all_vetoed:` prefix). No tree restore is needed: the failed revise wrote only its own throwaway scratch tree, and the eventual pick is derived into `next_id` afterwards |
+| `"unavailable"` | inner proposer produced no replacement | degrade to critic-over-ALL (`screen_all_vetoed:` prefix). No tree restore is needed: the failed revise wrote only its own throwaway scratch tree, and the eventual pick is derived into `next_id` afterwards |
 
 ### 5.6.5 Mounting the chosen candidate — THE MOUNTED TREE MUST MATCH THE CHOSEN EXPERIMENT
 
@@ -1066,8 +1068,7 @@ one seam serving both pipelines (`BestOfNProposerAgent._mount_chosen`):
 
 That single hook call is the same idempotent clear-and-reapply a retry
 performs, so tree and experiment agree by construction. `validate_experiment
-is None` — a context with no derive hook, the pre-hook caller contract —
-mounts nothing and returns. The chosen candidate validated cleanly in scratch
+is None` — a context with no derive hook — mounts nothing and returns. The chosen candidate validated cleanly in scratch
 moments ago, so a finding here is unexpected (e.g. the parent tree changed
 underneath the slate); there is no other candidate whose tree is mounted, so
 there is nothing to fall back TO and the step raises the standard
@@ -1076,13 +1077,13 @@ there is nothing to fall back TO and the step raises the standard
 **What a divergence costs**, from the two recorded failures this seam exists
 to prevent — the casebook holds the full anatomy of each:
 
-- **Bug #6** (see 12-bug-casebook.md §"Bug #6"): on the gauntlet path, the
+- **Case 6** (12-bug-casebook.md): on the gauntlet path, the
   tournament mounted `last_child_snapshot["path"]` (the last-validated tree)
   while persisting the CHOSEN candidate's experiment — live on defaults
   (`best_of_n == 3`). The duel scored a tree that was not the experiment on
   record.
-- **Bug #7** — the field-diversity corollary (see 12-bug-casebook.md §"Bug
-  #7"): the multi-challenger path additionally judges the CHOSEN hypothesis's
+- **Case 7** — the field-diversity corollary (12-bug-casebook.md): the
+  multi-challenger path additionally judges the CHOSEN hypothesis's
   diversity signature (`_diversity_signature` — the `modulating` id-set + the
   normalized core idea) to soft-reject duplicate siblings. With the mismatch,
   the field's diversity decision was made on hypothesis A while the mounted
@@ -1122,19 +1123,19 @@ line for the integer token and range-checking it. Any failure — raise,
 timeout, unparseable, out-of-range — returns `(None, "")` and the selection
 falls back to the heuristic, so a flaky critic never blocks the step.
 
-> ✅ The parse stays BACKWARD COMPATIBLE with the bare-integer response the
-> prompt used to demand. A single-line `2`, a fenced `2`, or prose carrying
-> the index all select exactly the index they always did — they simply record
-> no rationale. A first line with no digits falls back to the historical
-> whole-response scan and keeps NO rationale, because the split that would
-> have separated index from reason is the thing that did not hold. A rejected
+> ✅ The parse accepts a BARE-INTEGER response as well as the index-plus-
+> sentence form the prompt asks for. A single-line `2`, a fenced `2`, or prose
+> carrying the index all select that index — they simply record no rationale.
+> A first line with no digits falls back to scanning the whole response and
+> keeps NO rationale, because the split that would have separated index from
+> reason is the thing that did not hold. A rejected
 > index discards the rationale with it: the sentence explains a CHOICE, so it
 > must never land beside a heuristic pick.
 
 > ⛔ The prompt asks for the bar CLAUSE and forbids the candidate NUMBER, and
-> that is load-bearing, not style. `_select_over` hands the critic the
+> that is load-bearing rather than a style choice. `_select_over` hands the critic the
 > SUB-slate of screen survivors, renumbered from 0 — its "candidate 1" is
-> `survivor_indices[1]`, not slate slot 1. The returned index is mapped back
+> `survivor_indices[1]` rather than slate slot 1. The returned index is mapped back
 > to slate coordinates, but free text cannot be mapped, so a sentence naming
 > a number would point at the wrong row of the event's own `slate` field.
 
@@ -1142,7 +1143,7 @@ The rationale is capped at `RATIONALE_CAP` (240) characters with whitespace
 collapsed, because it rides one `round_log.jsonl` line. The cap sits above the
 200 the prompt asks for, so a compliant sentence is never clipped — it catches
 runaway text, it does not enforce the ask. Both transports normalize through
-the one shared `normalize_selection_rationale`, so their records are genuinely
+the one shared `normalize_selection_rationale`, so their records are
 interchangeable. Each slate entry's `core_idea` goes through the SAME
 normalizer: it is unbounded model text (no `maxLength` in the proposer
 schema), and bounding one of the payload's two text fields would leave the
@@ -1189,7 +1190,7 @@ screens/vetoes off the events, but the mode string is what a human greps for):
 | `screen_revise_survivor` | an all-vetoed slate was rescued by the ONE revise re-sample |
 | `screen_all_vetoed:critique` / `screen_all_vetoed:heuristic` | all-vetoed, revise UNAVAILABLE (inner proposer failed) — the step knowingly forwards a vetoed candidate; frequent occurrences mean the proposer cannot act on the veto feedback |
 | `screen_all_vetoed_after_revise:critique` / `…:heuristic` | all-vetoed AND the revise replacement was itself vetoed — the round's edits are systematically regressing the panel; look at the brief/mutation surface |
-| any of the above + `:revalidate-fallback` | the chosen candidate no longer re-derived and the last-validated one was returned instead — investigate: the parent tree changed mid-propose, or the applier is non-idempotent (this suffix should be near-zero in a healthy loop) |
+| any of the above + `:revalidate-fallback` | the chosen candidate failed to re-derive and the last-validated one was returned instead — investigate: the parent tree changed mid-propose, or the applier is non-idempotent (this suffix should be near-zero in a healthy loop) |
 
 ### 5.6.7 What the critic must never see
 
@@ -1217,7 +1218,7 @@ evolve invocation start (once):
   build_proposer_agent(spec, None)     → ADKProposerAgent(builtin_default=True)
   wrap_with_proposer_quality(agent, q) → BestOfNProposerAgent(inner=…, n=3)
 
-per round (evolve_once, orchestrator.py):
+per round (evolve_once, evolve/gauntlet.py):
   mutations   = enumerate_mutations(adapter mutable trees)
   train split = split_board(board, overfitting, seed=rotation_seed(…, epoch))
   patterns    = detect_patterns(TRAIN losses/entries/events)
@@ -1293,7 +1294,7 @@ retroactively.)
 
 | Knob | Default | Effect | Inert when |
 |---|---|---|---|
-| `best_of_n` | `3` | slate size per propose step; `1` = historical single sample, no critique, no wrapper object | — |
+| `best_of_n` | `3` | slate size per propose step; `1` = a single sample, no critique, no wrapper object | — |
 | `critique_enabled` | `true` | the one cheap aux-LLM critic pass over the slate; `false` = deterministic heuristic only | `best_of_n == 1` |
 | `screen_entries` | `0` (OFF) | tryout-panel size per candidate; `> 0` builds the per-round screen closure | `best_of_n == 1` (no slate to screen) |
 | `screen_veto_only` | `false` | `true` suppresses BOTH screen tiebreak feeds (critic block + heuristic key) — the screen can only disqualify | `screen_entries == 0` |
@@ -1306,8 +1307,7 @@ And the sibling knobs this chapter leans on:
 `overfitting.restrict_proposer_visibility` (default `true` — the §5.8 master
 switch), `experiment_memory.cross_epoch` (default `false` — §5.10.3),
 `overfitting.random_baseline_every_n` (the placebo arm — proposer-adjacent
-but minted WITHOUT the proposer; see 06-tournament-and-selection.md §"The
-placebo duel").
+but minted WITHOUT the proposer; see 06-tournament-and-selection.md §6.13).
 
 ### 5.6.10 `CandidateScreenResult` — the screen's output shape
 
@@ -1320,7 +1320,7 @@ consumed by the wrapper. Frozen + slotted.)
 | `reason` | human-readable veto/clear summary | **COUNTS ONLY by contract** — never an entry id, never a question/output token; flows into the round log AND the restricted-visibility prompt via revise feedback |
 | `scalar` | aggregate panel scalar (lower = better) or `None` (no usable signal) | SELECTION-BIASED by construction — advisory tiebreak only, never journaled as evidence, never compared to tournament scalars |
 | `entries_screened` | panel size this candidate ran | `0` ⇒ "not screened (no signal)" in the critic block |
-| `baseline_passes` | champion replicate-0 passes on the panel — the flip-eligible subset | `0` on a cold start ⇒ crash-only screening, and (deliberately) no revise trigger |
+| `baseline_passes` | champion replicate-0 passes on the panel — the flip-eligible subset | `0` on a cold start ⇒ crash-only screening, and no revise trigger by design |
 | `candidate_passes` | candidate's panel passes | counts only |
 | `confirmed` | `True` iff the veto survived the confirm re-run (flipped twice) | immediate budget-abort vetoes carry `False` |
 
@@ -1337,7 +1337,7 @@ def wrap_with_proposer_quality(
     return BestOfNProposerAgent(inner=inner, config=config)
 ```
 
-### 5.6.11 The recombination slot (WS-REC)
+### 5.6.11 The mechanical recombination slot
 
 Opt-in (`proposer_quality.recombine` AND `best_of_n > 1`; default OFF —
 byte-identical propose path when off). The mechanism, in one sentence: **a
@@ -1350,8 +1350,8 @@ could.
 
 **The two halves.** Selection is a pure engine
 (`src/zicato/epoch/recombine.py`) fed by an IO builder
-(`_build_recombination_pair` in `src/zicato/orchestrator.py`, run ONCE per
-round at the screen-builder site); minting is a second pure function
+(`_build_recombination_pair` in `src/zicato/evolve/round_context.py`, run
+ONCE per round at the screen-builder site); minting is a second pure function
 (`src/zicato/proposer/recombine.py::mint_recombined_experiment`). The builder
 threads DATA — a `RecombinationPair` on `ProposerContext.recombine_pair` (§5.2)
 — never a callable, so the proposer stack stays IO-free. On the field path
@@ -1382,10 +1382,10 @@ soft-reject).
 8. **complementary improved sets** — both non-empty, neither ⊆ the other (each
    parent carries a distinct win the other lacks).
 
-Cross-regression is deliberately NOT a predicate — it is a ranking penalty
+Cross-regression is NOT a predicate by design — it is a ranking penalty
 (below), because per-entry single-sample verdicts are noisy (the screen's
 confirm-before-veto lesson, §5.6.2). Any failure anywhere → `None` → the mint
-is skipped and the round is byte-identical.
+is skipped and the slot samples the LLM as usual.
 
 **The 4-key deterministic ranking** (`rank_pairs`; each level only breaks the
 previous level's ties, so the pick is reproducible for any fixed pool in ANY
@@ -1432,27 +1432,28 @@ filter), so this closes the holdout-leak and preserves context-is-the-envelope.
 
 > ⚠️ **KNOWN NARROWING — pure drift-side complementary pairs are invisible.**
 > The improved/regressed sets are PASS-FLIP sets (a champion-failing entry the
-> challenger passes, and the inverse), NOT the matchup grid's drift-only
+> challenger passes, and the inverse) rather than the matchup grid's drift-only
 > `won_by`. Per-run drift folds every remaining defect into EVERY entry's loss,
 > so a strictly-better challenger "wins" all entries on drift and two
 > single-fix parents could never read as complementary — the pass bit is the
 > per-entry signal a fix actually OWNS. The consequence: a pair whose
 > improvements are PURELY drift-side (no pass flip — e.g. two independent
 > verbosity fixes on an all-passing board) never recombines mechanically. This
-> is DELIBERATE: per-entry drift deltas are noisy single-sample verdicts (the
-> same reason cross-regression is a ranking penalty, not a filter). Such pairs
+> is by design: per-entry drift deltas are noisy single-sample verdicts (the
+> same reason cross-regression is a ranking penalty rather than a filter).
+> Such pairs
 > remain reachable through the in-context genealogy channel (the LLM can merge
 > the ideas itself), and a drift-delta-with-confirmation variant is a
 > documented future seam. The rationale lives verbatim at the `KNOWN NARROWING`
 > comment in `_build_recombination_pair`.
 
-**Merge modes — `mechanical` (default) vs `llm` (WS-MERGE).**
+**Merge modes — `mechanical` (default) vs `llm`.**
 `proposer_quality.recombine_merge` chooses HOW the slot composes the union
 (design: PROPOSER.md §2.6.1; omit-at-default, `"llm"` rolls). `"mechanical"` is
 everything above. `"llm"` instead issues ONE auxiliary merge call — the DEPTH
 refinement role (`BestOfNProposerAgent._depth_call_llm`, exactly as the
 self-critique call), so it SUBSTITUTES the slot's own sample call (cost:
-`best_of_n` calls, a recombine-off round — not `n−1`). The merge prompt
+`best_of_n` calls, the same as a recombine-off round, rather than `n−1`). The merge prompt
 (`render_recombine_merge_prompt`) is rendered from the envelope-clean
 `RecombinationPair` (both parents' patches, core ideas, BANDED whole-candidate
 outcomes and counts-only complementarity — never an entry id); the response
@@ -1465,13 +1466,13 @@ sample (the mechanical mint's exact degrade). The ONLY selector change:
 SELECTION so an OVERLAPPING pair — which only an LLM can merge — is eligible,
 and overlap becomes ranking key level 2 (prefer less overlap at equal
 coverage); mechanical-mode survivors are disjoint by the #7 filter so their
-overlap key is a constant 0 and the mechanical selection is byte-identical.
+overlap key is a constant 0 and the mechanical selection is unaffected.
 
 **Seams noted, NOT built:** a chain depth cap; an index `recombined_from`
 column; the scaffold default-on decision (needs live evidence); and a
 `recombine_merge` distinction in the round log (the `recombined` flag already
-tells consumers a mint happened — the mode is a contract-hash fact, not a
-per-candidate one). Tests: `tests/test_recombine_engine.py` (predicate +
+tells consumers a mint happened — the mode is a contract-hash fact rather
+than a per-candidate one). Tests: `tests/test_recombine_engine.py` (predicate +
 ranking + order-independence + the relaxed-mode overlap ranking units),
 `tests/test_recombination_known_answer.py` (the two-marker mechanical OC
 full-loop: union minted round 3, `mode="recombined"`, promoted where
@@ -1503,39 +1504,9 @@ consumer:
   clean path of `extract_json_object` depends on well-behaved output staying
   cheap.
 
-### 5.8.8 Envelope audit playbook
-
-When reviewing ANY diff that touches proposer inputs, run these before
-approving (they catch the classic leaks mechanically):
-
-```bash
-# 1. Who renders into the prompt? The only legitimate renderers live here:
-grep -n "def render_" src/zicato/proposer/prompts.py
-
-# 2. Did anything new start reading holdout ids? (the only legit consumers
-#    of holdout_ids are the gate/ladder/tournament paths, never proposer-side)
-grep -rn "holdout_ids\|_holdout" src/zicato/proposer/ src/zicato/analyzer/
-
-# 3. Did a detector start putting raw input text into Pattern.detail?
-#    (details must stay ids/counts/rates — the strip relies on it)
-grep -rn "detail\[" src/zicato/patterns/detectors.py
-
-# 4. Any new f-string interpolating entry ids near prompt assembly?
-grep -rn "entry_id\|entry.id" src/zicato/proposer/ | grep -v test
-
-# 5. Exemplar policy drift: every _FIELD_POLICY case must match
-#    PROCESS-EXEMPLARS.md §3's table 1:1 (the doc is normative).
-grep -n "_FIELD_POLICY" -A 60 src/zicato/analyzer/process_exemplars.py
-```
-
-Then the adversarial fixtures: `uv run pytest tests/test_process_exemplars.py
-tests/test_proposer_prompts.py tests/test_outcome_marginals.py -q`. A clean
-grep + green fixtures is necessary, not sufficient — new channels still walk
-§5.8.7 by hand.
-
 ---
 
-### 5.6.13 The genealogy channel (WS-GENE)
+### 5.6.13 The genealogy channel
 
 Opt-in (`proposer_quality.genealogy > 0`; default `0` = OFF — byte-identical
 propose path when off). The in-context analogue of AlphaEvolve's prompt
@@ -1550,12 +1521,13 @@ contract are in **[PROPOSER.md §2.7](../design/PROPOSER.md)**;
 
 **The two halves.** The sampler is a pure, deterministic function
 (`sample_genealogy(records, ratings, k, *, champion_id)` — NO RNG, NO IO) fed
-by an IO builder (`_build_genealogy_items` in `src/zicato/orchestrator.py`,
+by an IO builder (`_build_genealogy_items` in
+`src/zicato/evolve/round_context.py`,
 run ONCE per round at the screen-builder site). The builder threads DATA — a
-`tuple[GenealogyItem, ...]` on `ProposerContext.genealogy` (§5.2), NOT a
-callable, so the proposer stack stays IO-free. Unlike the recombination pair,
-the SAME items ride EVERY best-of-N slot (and the critic) — genealogy is
-read-only context, not a per-slot mint.
+`tuple[GenealogyItem, ...]` on `ProposerContext.genealogy` (§5.2) rather than
+a callable, so the proposer stack stays IO-free. Unlike the recombination
+pair, the SAME items ride EVERY best-of-N slot (and the critic) — genealogy is
+read-only context rather than a per-slot mint.
 
 **What the sampler produces.** It partitions the reign's settled records:
 
@@ -1596,7 +1568,7 @@ not trusted to the caller.
 
 **Cost.** Render-side only — the meter is untouched (the process-exemplars
 precedent). `_build_genealogy_items` reads the durable records + one
-best-effort Elo fold; ANY exception → `()` → a byte-identical round.
+best-effort Elo fold; ANY exception → `()` → a round with no genealogy block.
 
 **Determinism = the leakage budget.** A byte-identical block round over round
 (while the reign's candidate set is unchanged) re-presents nothing new.
@@ -1617,8 +1589,8 @@ assert).
 The propose step traces itself into the round's durable event log
 (`epochs/{epoch}/rounds/{round}/round_log.jsonl` —
 `src/zicato/epoch/round_log.py`) through the `round_event_emitter` seam on the
-context. The seam exists so the proposer stack never imports the log module
-(WS8); the orchestrator threads `_RoundLogEmitter.emit`, and every emission is
+context. The seam exists so the proposer stack never imports the log module;
+the orchestrator threads `_RoundLogEmitter.emit`, and every emission is
 **best-effort by contract** — `_emit_round_event` guards the call so a raising
 emitter can never fail a propose step. The wire record keeps an event's
 type-specific `payload` separate from its type-independent `scope` envelope.
@@ -1629,7 +1601,7 @@ Events the propose step emits, **in required order** within one propose:
 |---|---|---|---|---|
 | 1..N | `candidate_sampled` | best-of-N wrapper, deterministic post-gather pass in SLOT order | `{i, n}` (`revise: false`); scope `{generation_id}` | a failed slot contributes a `proposal_attempted{errors, slot_index}` instead, so a sibling's success never discards its evidence (issue #141) |
 | N+1..2N | `candidate_screened` | `_screen_slate`, one per candidate AFTER the whole slate settled | `{index, vetoed, confirmed, screen_summary{entries_screened, baseline_passes, candidate_passes, reason}, revise: false}`; scope `{generation_id}` | counts-only by the `reason` contract; absent entirely for an unscreened round |
-| (opt) | `candidate_sampled` `{i: N, n, revise: true}` then `candidate_screened` `{index: N, …, revise: true}` | the ONE all-vetoed revise pass | the replacement's index is one past the original slate; both carry scope `{generation_id}` | additive fields with defaults — pre-revise logs decode identically |
+| (opt) | `candidate_sampled` `{i: N, n, revise: true}` then `candidate_screened` `{index: N, …, revise: true}` | the ONE all-vetoed revise pass | the replacement's index is one past the original slate; both carry scope `{generation_id}` | additive fields with defaults — a log written without them decodes identically |
 | last | `critique_selected` | the wrapper, after `_mount_chosen` | `{index, reason: selection_mode, slate: [{index, core_idea, mutation_ids}], rationale}`; scope `{generation_id}` | `index` is the FINAL slate index; both transports fill `slate`, and `rationale` is non-empty only when a critic chose. Emitted only once the chosen candidate's tree is mounted, so the event and the artifact cannot disagree |
 
 Then, from `_propose_child` (outside the wrapper):
@@ -1654,15 +1626,15 @@ third argument, and for the propose step it carries exactly one coordinate:
 candidate: every challenger in a field round writes through the same emitter
 while its candidate indexes restart at zero. A reader groups the three slate
 event types by `envelope.scope.generation_id`, never by their positions in the
-append-only file. Older records decode as the empty scope, so their slate
-cannot be split with certainty.
+append-only file. A record written without a scope decodes as the empty scope,
+so its slate cannot be split with certainty.
 
 There is no ordinal coordinate to group by, because the payload's
 own two numberings disagree: `candidate_sampled.i` is the slate SLOT, while
 `candidate_screened.index` and `critique_selected.index` count the survivors
 that reached the screen. They coincide only when no slot failed.
 
-> ⚠️ TRAP — ordering is semantic, not cosmetic. `candidate_screened` events
+> ⚠️ TRAP — ordering is semantic rather than cosmetic. `candidate_screened` events
 > come after ALL `candidate_sampled` events and before `critique_selected`
 > because the screen runs between the slate settling and the selection; the
 > `CandidateScreened` docstring pins this. A consumer (or a new emitter you
@@ -1696,9 +1668,9 @@ the flag because there is nothing to reveal even when it is off.
 
 | Forbidden material | Why | Where it is stopped |
 |---|---|---|
-| **Board entry ids** | the unit of special-casing: a named entry can be memorized and gamed | `_LEAKY_DETAIL_KEYS = {affected_entry_ids, entry_id, task_id, agent}` stripped by `_aggregate_pattern_detail`; exemplar R2/R4 (ids never emitted, scrubbed from free text); screen reasons counts-only; memory digest carries generation ids, never entry ids |
-| **Task / question text** | the input to memorize | detectors never put raw inputs in `detail`; exemplar R1 default-deny drops `run_started.goal_summary` ("goal_summary IS the task prompt") + R4 scrubs quotations of it |
-| **Model outputs** | answers to copy | exemplar R1 default-deny (`run_completed` / `task_completed` / `task_progress` summaries "ARE model output"); outcome marginals carry rates only |
+| **Board entry ids** | the unit of special-casing: a named entry can be memorized and gamed | `_LEAKY_DETAIL_KEYS = {affected_entry_ids, entry_id, task_id, agent}` stripped by `_aggregate_pattern_detail`; the exemplar window-local anonymization and identity scrub (ids never emitted, scrubbed from free text); screen reasons counts-only; memory digest carries generation ids, never entry ids |
+| **Task / question text** | the input to memorize | detectors never put raw inputs in `detail`; the exemplar field allowlist drops `run_started.goal_summary` ("goal_summary IS the task prompt") and the identity scrub removes quotations of it |
+| **Model outputs** | answers to copy | the exemplar field allowlist (`run_completed` / `task_completed` / `task_progress` summaries "ARE model output"); outcome marginals carry rates only |
 | **Anything holdout** | the holdout exists to detect memorization; showing it defeats the design | the orchestrator computes EVERY proposer input from the TRAIN slice (`split_board` + `rotation_seed`, step 4 of `evolve_once`); the exemplar extractor intersects pattern-named entries with `train_entry_ids` and "cannot widen the slice it is given"; `select_screen_entries` is handed the train board only |
 | **Raw per-entry outcomes** (which entry passed/failed, per-entry scores) | the response surface to climb entry-by-entry | losses reach the proposer only through aggregates: the one-line loss summary, the banded failure profile, pattern counts |
 | **Exact Δscalar / exact rates** (under the default posture) | the round-over-round response surface — lets the proposer climb the BOARD rather than true quality | `_bucket_scalar_delta` (improved/flat/regressed; flat band = 0.01 = the default promote margin), `_band_rate` (~10% steps), `_band_quality` (thirds) |
@@ -1714,14 +1686,14 @@ enforcing code, and the test that pins it.
 | **Experiment memory** | per-experiment verdict + bucketed Δscalar + targeted ids + core idea | `Δscalar=improved/flat/regressed` under restrict; cross-contract entries carry NO delta at all | `_render_prior_experiment_line(restrict=…)`, `_bucket_scalar_delta` | `tests/test_proposer_prior_experiments_block.py` |
 | **Failure-mode profile** | banded recall/precision decomposition, banded failure-mode rates, banded pass-rate/score | every number through `_band_rate` / `_band_quality`; summary object carries marginal rates only (no id/question/output token) | `render_failure_mode_profile` + `aggregate_outcome_marginals` (`src/zicato/analyzer/outcome_marginals.py`) | `tests/test_outcome_marginals.py`, `tests/test_proposer_prompts.py` |
 | **Operator outcome-marginals hook** | extra named banded rates (`- <name>: ~N% of runs`) | `run_operator_summarizer` sanitizes: numeric-only values, names filtered — the operator hook's output "cannot leak" | `src/zicato/analyzer/outcome_marginals.py::run_operator_summarizer` | `tests/test_outcome_marginals.py` |
-| **Process exemplars** (opt-in) | redacted event windows: relative offsets, case names, allowlisted fields, `task-N` tokens | R1–R4 (§5.8.3) | `src/zicato/analyzer/process_exemplars.py` | `tests/test_process_exemplars.py` (per-rule adversarial fixtures), `tests/test_process_exemplars_e2e.py` |
+| **Process exemplars** (opt-in) | redacted event windows: relative offsets, case names, allowlisted fields, `task-N` tokens | the four redaction rules (§5.8.3) | `src/zicato/analyzer/process_exemplars.py` | `tests/test_process_exemplars.py` (per-rule adversarial fixtures), `tests/test_process_exemplars_e2e.py` |
 | **Outcome marginals under the sanitizer** | folded into the failure profile above | banding + board-anonymity by construction | as above | as above |
 | **Fertility annotations** (mutation track records) | one advisory line per manifest point: `touched:N promoted:K/N Δscalar[best:… median:… worst:…] recent/stale (…; not causal)` | counts are experiment-level aggregates; deltas bucketed via `_bucket_scalar_delta`; recency a coarse flag; the HONESTY label ("experiments touching this point … not causal") is mandatory | `render_mutation_track_annotation`; the tool twin in `src/zicato/proposer/tools.py::mutation_track_record` | `tests/test_mutation_track_record.py` |
 | **Static hints** | the per-slot edit-class hint | static instruction strings only — nothing to transform | `src/zicato/proposer/hints.py` (docstring contract) | `tests/test_proposer_hints.py` |
-| **Loss summary** | one line of board-wide means | aggregation (mean drift loss, pass rate over N entries) | `_render_loss_summary` (`src/zicato/orchestrator.py`) | `tests/test_orchestrator.py` |
+| **Loss summary** | one line of board-wide means | aggregation (mean drift loss, pass rate over N entries) | `_render_loss_summary` (`src/zicato/evolve/decision_support.py`) | `tests/test_orchestrator.py` |
 | **Screen feedback** (revise + critic block) | counts-only veto/clear summaries | the `CandidateScreenResult.reason` counts-only contract; `_render_screen_note` / `_render_revise_feedback` compose only from it | `src/zicato/epoch/screen.py::_summarize`, `src/zicato/proposer/best_of_n.py` | `tests/test_candidate_screen.py`, `tests/test_proposer_best_of_n.py` |
-| **Telemetry insights** | the analyzer's LLM-summarized markdown | produced by the analyzer over the same round artifacts; see 09-dashboard-and-query.md §"Analyzer" for its own discipline | `load_latest_insights` | `tests/test_analyzer_insights.py` |
-| **Mutation manifest** | full code-span content | code identity, not board identity — unrelated to the split, deliberately untouched | `render_mutation_block` | — |
+| **Telemetry insights** | the analyzer's LLM-summarized markdown | produced by the analyzer (`src/zicato/analyzer/`) over the same round artifacts, under its own discipline | `load_latest_insights` | `tests/test_analyzer_insights.py` |
+| **Mutation manifest** | full code-span content | code identity rather than board identity — unrelated to the split, and left untouched | `render_mutation_block` | — |
 
 ### 5.8.3 Process exemplars: the R1–R4 redaction rules
 
@@ -1737,7 +1709,7 @@ the leakage budget is ≤ `cap` windows per (champion, pattern-set) state.
 
 | Rule | What it does | Implementation | Adversarial fixture behaviour the tests pin |
 |---|---|---|---|
-| **R1 — default-deny field allowlist** | every payload case not in `_FIELD_POLICY` renders as a bare case marker (offset + case name, NO fields): the window's SHAPE survives, its content does not. Listed cases enumerate `keep` (closed-vocabulary/structural/harness identity), `truncate` (free process text), `anonymize` (per-window id tokens), `plan_structure` (plans as `"N tasks, M edges"` counts — no titles) | `_CasePolicy`, `_FIELD_POLICY`, `_redact_event` | `run_started` (its `goal_summary` IS the task prompt), `run_completed`/`task_completed`/`task_progress`, and every LLM-call bookend are deliberately UNLISTED and must render field-less |
+| **R1 — default-deny field allowlist** | every payload case not in `_FIELD_POLICY` renders as a bare case marker (offset + case name, NO fields): the window's SHAPE survives, its content does not. Listed cases enumerate `keep` (closed-vocabulary/structural/harness identity), `truncate` (free process text), `anonymize` (per-window id tokens), `plan_structure` (plans as `"N tasks, M edges"` counts — no titles) | `_CasePolicy`, `_FIELD_POLICY`, `_redact_event` | `run_started` (its `goal_summary` IS the task prompt), `run_completed`/`task_completed`/`task_progress`, and every LLM-call bookend are UNLISTED by design and must render field-less |
 | **R2 — window-local anonymization** | task/invocation ids map to `task-1`, `task-2`, … **rebuilt per window** — "the same task keeps failing" stays visible inside a window, but nothing correlates across windows, rounds, or back to the board; entry ids are never emitted; offsets are anchor-relative (`0`), never absolute sequence numbers (absolute positions could fingerprint an entry) | `_WindowAnonymizer`, `ExemplarEvent.offset` | the same raw id in two windows gets independent tokens |
 | **R3 — free-text truncation** | `truncate`-class fields capped at 160 chars, head 120 / tail 24 joined by ` … `; runs AFTER R4 so a scrubbed text can never re-form an identity string across the split | `_truncate_free_text` | a long drift `detail` keeps its head+tail, elided middle |
 | **R4 — the identity corpus + scrub** | every DROPPED string value across the WHOLE file (≥ 12 chars — `_MIN_SCRUB_LEN`, so enum-ish strings don't mangle text) is substring-scrubbed out of every KEPT free-text value, longest-first; identity TOKENS (entry id, run/session/event ids, every raw task/invocation id) are scrubbed at ANY length on word boundaries; replacement is `[withheld]` | `_identity_corpus`, `_scrub_identity` | a drift detail that QUOTES the task prompt verbatim loses the quote mechanically — the defense-in-depth behind R1 |
@@ -1751,7 +1723,7 @@ to the canonical lowercase strings so the block speaks the pattern block's
 vocabulary.
 
 The channel is **opt-in and off by default** (`proposer_quality
-.process_exemplars = 0`), deliberately NOT set by the scaffold: the screen is
+.process_exemplars = 0`), and the scaffold does not set it: the screen is
 evaluation-side, but exemplars widen the proposer-visibility channel, so the
 operator opts in under the design doc's §5 harm-detection runbook. A non-zero
 cap rolls the epoch. Extraction is best-effort — any failure renders `""` and
@@ -1760,16 +1732,17 @@ the round proceeds untouched (`_render_process_exemplars_block` wraps it in
 
 ### 5.8.4 Train-slice plumbing (where the slice is decided)
 
-One place: `evolve_once` step 4 (`src/zicato/orchestrator.py`).
+One place: `evolve_once` step 4 (`src/zicato/evolve/gauntlet.py`).
 `rotation_seed(weights.overfitting, epoch_id)` + `split_board(board, …)`
 produce `train_ids`; `train_board` filters the board; the champion's
 `losses` are loaded for train entries only. Everything downstream —
 `detect_patterns`, `_render_loss_summary`, `_render_failure_profile`,
 `_render_process_exemplars_block`, `select_screen_entries` — is fed that
 slice. When the board is too small to split, the train slice IS the full
-board and every artifact is byte-identical to the pre-split behaviour (the
-default-safe degrade). See 04-evaluation-statistics.md §"Train/holdout split"
-for the split mechanics and the Ladder budget over the holdout.
+board and every artifact is computed over the whole board (the default-safe
+degrade). The split mechanics are `zicato.board.split`
+(`docs/design/OVERFITTING.md` §3); the Ladder budget over the holdout is
+04-evaluation-statistics.md §5.
 
 ### 5.8.5 Who else lives inside the envelope
 
@@ -1797,9 +1770,10 @@ this checklist. If you cannot tick every box, the channel does not ship:
 1. **Banded/aggregated/redacted?** No exact per-entry value, no exact
    round-over-round number; reuse the §5.8.6 vocabulary.
 2. **Train-only?** Sourced exclusively from the step-4 train slice; the
-   holdout must be structurally unreachable, not merely filtered late.
+   holdout must be structurally unreachable rather than merely filtered late.
 3. **Identity-free?** No entry id, task text, or model output can appear —
-   including via quotation inside free text (R4 is the precedent).
+   including via quotation inside free text (the exemplar identity scrub is
+   the precedent).
 4. **Capped?** A hard ceiling on rendered size, so the channel cannot flood
    the context window or smuggle arbitrary content by volume.
 5. **Empty-string sentinel at default?** Knob-off rounds byte-identical;
@@ -1809,12 +1783,42 @@ this checklist. If you cannot tick every box, the channel does not ship:
    `failure_profile`/`process_exemplars` pattern).
 7. **Tested with adversarial identity fixtures?** A test that PLANTS an entry
    id / task text / holdout entry in the channel's raw inputs and asserts the
-> rendered block does not contain it (`tests/test_process_exemplars.py` and
-> `tests/test_proposer_prompts.py` are the models).
+   rendered block does not contain it (`tests/test_process_exemplars.py` and
+   `tests/test_proposer_prompts.py` are the models).
 8. **Critic parity?** Decide explicitly whether the critic sees it (it should,
    if the proposer does) and thread it into `_critique`'s
    `render_user_prompt` call.
 9. **ADK parity?** Decide whether `_render_task_text` threads it (§5.1.1).
+
+### 5.8.8 Envelope audit playbook
+
+When reviewing ANY diff that touches proposer inputs, run these before
+approving (they catch the classic leaks mechanically):
+
+```bash
+# 1. Who renders into the prompt? The only legitimate renderers live here:
+grep -n "def render_" src/zicato/proposer/prompts.py
+
+# 2. Did anything new start reading holdout ids? (the only legit consumers
+#    of holdout_ids are the gate/ladder/tournament paths, never proposer-side)
+grep -rn "holdout_ids\|_holdout" src/zicato/proposer/ src/zicato/analyzer/
+
+# 3. Did a detector start putting raw input text into Pattern.detail?
+#    (details must stay ids/counts/rates — the strip relies on it)
+grep -rn "detail\[" src/zicato/patterns/detectors.py
+
+# 4. Any new f-string interpolating entry ids near prompt assembly?
+grep -rn "entry_id\|entry.id" src/zicato/proposer/ | grep -v test
+
+# 5. Exemplar policy drift: every _FIELD_POLICY case must match
+#    PROCESS-EXEMPLARS.md §3's table 1:1 (the doc is normative).
+grep -n "_FIELD_POLICY" -A 60 src/zicato/analyzer/process_exemplars.py
+```
+
+Then the adversarial fixtures: `uv run pytest tests/test_process_exemplars.py
+tests/test_proposer_prompts.py tests/test_outcome_marginals.py -q`. A clean
+grep plus green fixtures is necessary but not sufficient — new channels still
+walk §5.8.7 by hand.
 
 ---
 
@@ -1834,13 +1838,13 @@ challenger. The tools therefore read a module-level
 `contextvars.ContextVar[ProposerToolContext | None]`. That plumbing lives in
 `zicato/proposer/tool_context.py` and is re-exported from
 `zicato/proposer/tools.py`, so `from zicato.proposer.tools import
-ProposerToolContext, bind_proposer_tool_context` stays the import site it has
-always been; the split exists so `validate.py` can reach the context without
+ProposerToolContext, bind_proposer_tool_context` stays the import site; the
+split exists so `validate.py` can reach the context without
 importing the tool bodies (see the callout at the end of §5.9.2). The
 contextvar is what `ADKProposerAgent.propose` sets around each agent run via
 `bind_proposer_tool_context(tool_ctx)` — set on entry, **reset to the prior
-value on exit even on exception**. A `ContextVar` (not a plain global) means
-concurrent challengers — each agent on its own asyncio task — never leak
+value on exit even on exception**. A `ContextVar` rather than a plain global
+means concurrent challengers — each agent on its own asyncio task — never leak
 context into one another. A tool called with no bound context raises a clear
 `RuntimeError` ("proposer tools may only be called from within an
 ADKProposerAgent run") rather than returning a misleading empty result.
@@ -1878,11 +1882,11 @@ implementation. The sanctioned-surface question is therefore decided in
 `tools.py` and nowhere else. One server per challenger process: the context var
 is process-wide, so a shared server would cross-bind concurrent rounds.
 
-**The external proposer is not yet wired to it.** `SANCTIONED_TOOLS` in
-`zicato/proposer/pi_agent.py` is still `("propose_experiment",)` — the
+**The external proposer is not wired to it.** `SANCTIONED_TOOLS` in
+`zicato/proposer/pi_agent.py` is `("propose_experiment",)` — the
 terminating structured-output tool and nothing else — and the envelope
 assertion in `tests/test_proposer_pi_envelope.py` pins exactly that. Connecting
-the two is deliberately a separate step, and `pi_agent.py`'s module docstring
+the two is a separate step by design, and `pi_agent.py`'s module docstring
 states its shape: override `PiProposerAgent.tool_flags` to return the server's
 launch flags and declare the exposed names in `SANCTIONED_TOOLS`. Both are read
 by the launch *and* by the contract identity, so widening the external
@@ -1891,26 +1895,26 @@ wiring must go through those two constants rather than around them.
 
 **The `mutable_roots` path-shape lesson** (read this before touching path
 resolution): `list_mutation_points` advertises files **relative to the whole
-snapshot** (`agent/prompts.py`), but the old root derivation admitted only the
-narrower declared subtree (`<snapshot>/agent`) when an adapter declared one —
-so the manifest-advertised path resolved to `<snapshot>/agent/agent/prompts.py`
-and raised, while only the bare `prompts.py` worked. The mismatch was
-unconditional and surfaced whenever the model used the manifest's own path
-form. The fix: `ProposerToolContext.mutable_roots()` ALWAYS anchors the
-snapshot root FIRST, then each `source_root`-basename subtree — both path
-shapes resolve, and the escape guard still rejects any `..` out of whichever
-root matched, so widening the accepted roots never widens the readable surface
-beyond the snapshot.
+snapshot** (`agent/prompts.py`). A root derivation that admitted only the
+narrower declared subtree (`<snapshot>/agent`) when an adapter declares one
+would resolve that manifest-advertised path to
+`<snapshot>/agent/agent/prompts.py` and raise, leaving only the bare
+`prompts.py` working — an unconditional mismatch, hit whenever the model uses
+the manifest's own path form. `ProposerToolContext.mutable_roots()` therefore
+ALWAYS anchors the snapshot root FIRST, then each `source_root`-basename
+subtree: both path shapes resolve, and the escape guard still rejects any `..`
+out of whichever root matched, so widening the accepted roots never widens the
+readable surface beyond the snapshot.
 
 **Its corollary — never *walk* `mutable_roots()`.** That list is built for
-path *resolution*, and it deliberately overlaps: the declared subtrees are
+path *resolution*, and it overlaps by design: the declared subtrees are
 descendants of the snapshot root. A recursive walk that iterates it directly
 visits every file inside a declared subtree once per containing root, emitting
 the same line under a different relative path each time and spending the match
 budget several times over on revisits. `grep_mutable` therefore walks
 `_walk_roots(ctx)` — the roots not contained in another root, resolved first so
 the containment test is over real paths. Keep the filter on the OUTERMOST
-roots, not the innermost: both dedupe, but only the outermost keeps the whole
+roots rather than the innermost: both dedupe, but only the outermost keeps the whole
 snapshot readable, and reaching the non-mutable code that *consumes* a mutable
 value is the entire reason the snapshot root is a readable root. Any new
 recursive tool goes through `_walk_roots` too.
@@ -1935,26 +1939,25 @@ recursive tool goes through `_walk_roots` too.
 > drag the analyzer, and through it the board loader, into the closure).
 
 **The pre-image guard is the only reader of `MutationPoint.content_hash`.**
-That field's docstring claimed for years that "the patch applier checks this
-before applying a patch so a stale proposer round cannot clobber an
-already-rewritten region". The applier never did: the field was written by the
-enumerator, rendered by the CLI and the dashboard, and checked by nothing.
-Tier 1 of `validate_patches` is that check — it compares `content_hash` between
-the manifest bound on the tool context (what the proposal was drafted against)
-and a fresh enumeration of the parent snapshot, so a point rewritten under the
-proposer is caught while a fix is still cheap.
+The enumerator writes the field, the CLI and the dashboard render it, and the
+applier does not read it — despite that field's docstring having long claimed
+otherwise. Tier 1 of `validate_patches` is the one check that reads it: it
+compares `content_hash` between the manifest bound on the tool context (what
+the proposal was drafted against) and a fresh enumeration of the parent
+snapshot, so a point rewritten under the proposer is caught while a fix is
+still cheap.
 `tests/test_proposer_validate.py::test_content_hash_has_exactly_one_reader`
-pins that this stays the ONLY comparison site — "plenty of mentions, zero
-readers" is exactly how that docstring stayed wrong for so long.
+pins that this stays the ONLY comparison site; plenty of mentions with zero
+readers is how a docstring's claim goes unchecked.
 
 ### 5.9.3 Why tools do NOT fold into the contract hash
 
 `_canon_proposer` (`src/zicato/epoch/contract.py`) canonicalizes
 `{agent_id, tools (sorted), skills (name + normalized-body sha),
 agent_source_sha256}`. The `tools` field is present in the canonical form —
-but `ProposerSpec.tools` is **always empty** on this branch
-(`resolve_proposer_spec` sets `tools=()`; "tool declaration is a later
-phase"), for both the builtin and any dir proposer. The REGISTRY itself
+but `ProposerSpec.tools` is **always empty**
+(`resolve_proposer_spec` sets `tools=()`; the field is reserved for a future
+tool declaration), for both the builtin and any dir proposer. The REGISTRY itself
 (`DEFAULT_PROPOSER_TOOLS`) is zicato source code: it ships with the package,
 is versioned with the code, and is identical for every workspace on a given
 zicato version — so hashing it would roll every epoch on every zicato upgrade
@@ -2032,7 +2035,7 @@ retroactively). The rules, all enforced in
 
 | Rule | Enforcement |
 |---|---|
-| only epochs sharing the CURRENT epoch's **non-empty** `contract_hash` | the SQL join on `epochs.contract_hash`; legacy/pre-hash epochs (empty hash) are never treated as transferable |
+| only epochs sharing the CURRENT epoch's **non-empty** `contract_hash` | the SQL join on `epochs.contract_hash`; an epoch with an empty hash is never treated as transferable |
 | a DIFFERENT contract hash is never surfaced, knob or no knob | same predicate |
 | cross entries are clearly flagged | `same_contract=False`; rendered in their OWN separated block ("From PRIOR epochs under the same contract … directions only, deltas do not transfer") with epoch-tagged labels `epoch::generation` |
 | **no numbers transfer** | `scalar_score_delta=None` forced at the reader ("the restricted-visibility envelope must not depend on the renderer"); `prediction_accuracy=None` (calibration is same-epoch diagnostics) |
@@ -2124,7 +2127,7 @@ content with its own design doc).
    doc, mechanical (never LLM) redaction rules each implemented by a named
    function with its own test, an opt-in contract knob, and a harm-detection
    runbook.
-2. **Build the extractor/renderer next to its data**, not in the proposer:
+2. **Build the extractor/renderer next to its data** rather than in the proposer:
    analyzers in `src/zicato/analyzer/`, index reads in
    `src/zicato/index/query.py`. It must be a pure function of train-slice
    inputs, deterministic (no RNG/clock) so re-presentation leaks nothing new,
@@ -2147,7 +2150,7 @@ content with its own design doc).
    §5.5's table is the authority; update it in this guide). If the content is
    redacted material, prepend a banner restating the redaction contract (the
    process-exemplars precedent) so the model reads it as anonymized
-   mechanism, not named evidence.
+   mechanism rather than named evidence.
 7. **Contract accounting**: if the channel changes what the proposer can
    learn, it needs a knob on `ProposerQualityConfig` (or `OverfittingConfig`),
    omitted-at-default from the canonical form (`epoch/contract.py`'s
@@ -2155,8 +2158,9 @@ content with its own design doc).
    retroactively — and a non-default value MUST roll the epoch. Add the field
    to `tests/test_contract_serializer_completeness.py`'s expectations.
 8. **Tests — all four kinds or it does not ship**:
-   - *byte-identical-at-default*: knob off ⇒ prompts byte-equal to before
-     (`tests/test_proposer_prompts.py` has the pattern);
+   - *byte-identical-at-default*: knob off ⇒ prompts byte-equal to the same
+     round assembled without the field (`tests/test_proposer_prompts.py` has
+     the pattern);
    - *banding*: exact inputs ⇒ exact banded output vocabulary;
    - *adversarial identity*: plant an entry id, task text, AND a
      holdout-entry artifact in the raw inputs; assert none survives to the
@@ -2182,19 +2186,20 @@ content with its own design doc).
 
 ## 5.12 Cross-references
 
-- 03-contract-and-epochs.md §"The contract hash" — `_canon_proposer`, skill
-  normalization, omitted-at-default fields.
-- 04-evaluation-statistics.md §"Train/holdout split" — the slice everything in
-  §5.8 hangs off; the Ladder budget that governs holdout queries.
-- 06-tournament-and-selection.md §"The reserved replicate ladder" — where the
-  screen's 3000/3001 slots sit; §"The worker boundary" — why the screen's
-  ephemeral trees and phantom dirs matter to the reaper.
-- 07-runtime-and-durability.md §"Heartbeats" — the `proposing:`/`applying:`/
+- 03-contract-and-epochs.md §3.2.6 — `_canon_proposer` and skill
+  normalization; §3.4 — the omitted-at-default fields.
+- 04-evaluation-statistics.md §5 — the Ladder budget that governs holdout
+  queries; the slice everything in §5.8 hangs off is
+  `docs/design/OVERFITTING.md` §3.
+- 06-tournament-and-selection.md §6.1.1 — where the screen's 3000/3001 slots
+  sit; §6.3 — why the screen's ephemeral trees and phantom dirs matter to the
+  reaper.
+- 07-runtime-and-durability.md §7.6.1 — the `proposing:`/`applying:`/
   `screening:` phases the propose step beats.
-- 09-dashboard-and-query.md §"Proposal session" — how the round-log fold and
-  the proposing tracker render what §5.7 emits.
-- 12-bug-casebook.md §"Bug #6" / §"Bug #7" — the tree/selection mismatch pair
-  that §5.6.5's mount funnel exists to prevent.
+- 09-dashboard-and-query.md §9.11 — how the server-projected pipeline stepper
+  renders what §5.7 emits.
+- 12-bug-casebook.md Cases 6 and 7 — the tree/selection mismatch pair that
+  §5.6.5's mount funnel exists to prevent.
 - 13-recipes.md — the short-form index that points back at §5.11.
 
 ---
@@ -2255,7 +2260,7 @@ it:
   invisible to it;
 - inputs are stitched from the workspace: cached `mutations.json` (or a fresh
   enumeration), `--patterns-from <file>` (or fresh detectors), the epoch's
-  `brief.md` (with a legacy `rubric.md` fallback for pre-rename epochs);
+  `brief.md` (falling back to `rubric.md` when only that file exists);
 - there is **no post-apply validation hook** wired (no snapshot is derived),
   so a destructive patch that evolve would bounce in one retry survives here;
 - the result is written via `write_experiment` — I/O stays at the CLI layer
@@ -2291,7 +2296,7 @@ Where to add (and what will catch) a regression, by concern:
 | the tree/record agreement invariant, end to end with subprocess workers | `tests/test_best_of_n_tree_integrity.py` (+ the scripted slates in `tests/_best_of_n_slate_support.py`) |
 | slot hints + dominant-mode parsing | `tests/test_proposer_hints.py` |
 | screen engine: panel rotation, veto classes, confirm-before-veto, counts-only, phantom-dir hygiene | `tests/test_candidate_screen.py` |
-| exemplar redaction R1–R4 (adversarial fixtures) + threading | `tests/test_process_exemplars.py`, `tests/test_process_exemplars_e2e.py` |
+| exemplar redaction rules (adversarial fixtures) + threading | `tests/test_process_exemplars.py`, `tests/test_process_exemplars_e2e.py` |
 | outcome marginals + operator-hook sanitizer | `tests/test_outcome_marginals.py` |
 | memory digest curation/cap/cross-epoch | `tests/test_index_prior_experiments.py` |
 | memory threading + siblings + orchestrator wiring | `tests/test_orchestrator_prior_experiments.py`, `tests/test_proposer_prior_experiments.py` |

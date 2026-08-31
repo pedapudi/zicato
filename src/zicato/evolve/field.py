@@ -166,9 +166,9 @@ async def evolve_field_round(
     fast_mode = prepared.fast_mode
     beater = prepared.beater
     meta_loop_emitter = prepared.meta_loop_emitter
-    # Narration (a rejected round's summary sentence, the round epilogue) is
-    # auxiliary work, not proposing: it describes what the round did rather
-    # than generating a candidate. It therefore runs on the auxiliary
+    # Narration (a rejected round's summary sentence, the round epilogue)
+    # describes what the round did rather than generating a candidate, so it
+    # is auxiliary work. It therefore runs on the auxiliary
     # callable and the auxiliary model id — the two must name the same
     # endpoint, or a workspace with a dedicated proposer engine would send
     # the auxiliary callable a model id it does not serve. The proposer
@@ -177,8 +177,8 @@ async def evolve_field_round(
     auxiliary_call_llm = config.auxiliary_call_llm
     auxiliary_model = str(workspace_config.get("auxiliary_model", ""))
     field_n = strategy.field_size()
-    # WS8: a direct caller (tests) may not thread the opened emitter; bind
-    # one so every emit below is uniformly best-effort. ``evolve_once`` (the
+    # A direct caller (tests) may not thread the opened emitter; bind one
+    # so every emit below is uniformly best-effort. ``evolve_once`` (the
     # production caller) passes the emitter it already opened the round on.
     round_log = prepared.round_log or _RoundLogEmitter(workspace_root, epoch_id, round_index)
 
@@ -256,14 +256,14 @@ async def evolve_field_round(
         # return value and the loop continues. Still persist the
         # field-status so the dashboard's proposing-step tracker reads
         # "N proposed · 0 applied — all rejected" rather than an empty
-        # idle state (the recent all-failed run that prompted this).
+        # idle state.
         #
-        # The reason folds in the per-slot failures built just above. The
-        # bare "no challenger applied cleanly" was the same sentence
-        # whether every slot hit the same parse error (a broken proposer
-        # prompt) or each hit a different one (an unreachable mutable
-        # surface) — and the journal keeps this string, so the distinction
-        # was lost for good (issue #129).
+        # The reason folds in the per-slot failures built just above, so a
+        # field where every slot hit the same parse error (a broken
+        # proposer prompt) reads differently from one where each slot hit a
+        # different error (an unreachable mutable surface). The journal
+        # keeps this string verbatim, so a distinction dropped here is
+        # unrecoverable (issue #129).
         breakdown = _field_failure_summary(field_status)
         all_failed_reason = "multi-challenger field: no challenger applied cleanly"
         if breakdown:
@@ -282,8 +282,8 @@ async def evolve_field_round(
             phase=TournamentPhase.PROPOSING,
             entries=_field_entries(champion_only),
         )
-        # WS8: the round's terminal decision + close — the per-challenger
-        # proposal_attempted failures were already emitted as they settled.
+        # The round's terminal decision + close — the per-challenger
+        # proposal_attempted failures were emitted as they settled.
         round_log.emit(
             "decision_recorded",
             {
@@ -307,7 +307,7 @@ async def evolve_field_round(
             delta_scalar=0.0,
         )
 
-    # --- Optional random-baseline placebo arm (OVERFITTING.md #7) --------
+    # --- Optional random-baseline placebo arm (OVERFITTING.md §12 #7) ----
     # Every Nth epoch-cumulative round the field carries ONE extra slot: a
     # semantics-preserving no-op child of the champion, hypothesis marked
     # as the baseline arm (zicato.evolve.placebo). It flows through the
@@ -402,8 +402,8 @@ async def evolve_field_round(
     # round-level champion-eval mode is attributed to the CHAMPION
     # (``parent_id``) specifically: a challenger-vs-challenger duel runs
     # challengers fresh (they are new generations and MUST run), which
-    # says nothing about champion reuse. We therefore accumulate only the
-    # champion's tally across every matchup it appears in — a RUNTIME
+    # says nothing about champion reuse. Only the champion's tally is
+    # accumulated, across every matchup it appears in — a RUNTIME
     # provenance field, never a contract input.
     champion_cached_units = 0
     champion_fresh_units = 0
@@ -424,8 +424,9 @@ async def evolve_field_round(
     # run ``N × parallelism`` board units at once — overshooting the operator's
     # parallelism intent and the LLM endpoint's concurrency. One semaphore,
     # created here per round and handed to every ``run_matchup``, makes the
-    # whole round draw from ONE global cap. Sized exactly as a single
-    # matchup's would be, so a round with one matchup is unchanged.
+    # whole round draw from ONE global cap. Sized as a single matchup's cap
+    # would be, so a round with one matchup draws the same cap it would
+    # alone.
     round_unit_semaphore = asyncio.Semaphore(max(1, int(config.parallelism)))
 
     # --- run_matchup: one duel via the board-unit runner + unchanged gate.
@@ -434,7 +435,7 @@ async def evolve_field_round(
     # off the canonical cache slots, and ``cache_scores=False`` keeps a
     # single evidence draw's aggregates from overwriting the round-scored
     # ``gen_score.json`` the fast-mode champion reuse reads. Every strategy
-    # matchup uses the defaults, byte-identical to before.
+    # matchup uses the defaults.
     async def _run_matchup(
         m: Matchup, *, replicate_base: int = 0, cache_scores: bool = True
     ) -> MatchupResult:
@@ -451,7 +452,7 @@ async def evolve_field_round(
             left_gen=_generation_for(m.left.generation_id),
             right_gen=_generation_for(m.right.generation_id),
             # Internal selection scores on the TRAIN slice only (the holdout
-            # is confirmation-only, never used to pick the leader). A racing
+            # is confirmation-only, never consulted to pick the leader). A racing
             # rung's ``board_subset`` is intersected against the train board
             # inside ``run_matchup``. Empty holdout ⇒ ``train_board`` IS the
             # full board, so no entry is excluded.
@@ -587,7 +588,8 @@ async def evolve_field_round(
     # ``zicato repair index``, and any external consumer. Opening it here in
     # ``in_progress`` state — with the competitor field + proposing status
     # but no resolved bracket yet — means the in-flight round is visible to
-    # EVERY store the moment its challengers are minted, not only at settle.
+    # EVERY store the moment its challengers are minted, rather than only
+    # at settle.
     # The settle write below upserts this same record (same tournament_id)
     # to ``settled`` with the resolved bracket; the open + settle compose
     # idempotently, so a resume that re-opens an existing in_progress record
@@ -667,8 +669,8 @@ async def evolve_field_round(
         # Each extra crowning-pair duel runs through the SAME board-unit
         # runner and gate every other duel uses, so a replicate is scored
         # identically to the original duel. The reserved slot, the matchup
-        # id that encodes it, and the score-cache suppression are the
-        # factory's, not this round's — one implementation of the
+        # id that encodes it, and the score-cache suppression belong to the
+        # factory rather than to this round — one implementation of the
         # ReplicateDuel contract, exercised by the decision-procedure
         # oracle at the same seam production drives it from.
         replicate_duel = make_evidence_replicate_duel(_run_matchup)
@@ -794,8 +796,8 @@ async def evolve_field_round(
     crowning_holdout_child_scalar = crowning_confirm.holdout_child_scalar
     crowning_challenger_id = crowning_confirm.challenger_id
     crowning_challenger_train_scalar = crowning_confirm.challenger_train_scalar
-    # WS8: the crowning holdout release (a populated block always means a
-    # holdout existed and was consulted).
+    # The crowning holdout release (a populated block always means a holdout
+    # existed and was consulted).
     if crowning_holdout_block is not None:
         round_log.emit(
             "holdout_released",
@@ -860,7 +862,7 @@ async def evolve_field_round(
         field_overrides=field_overrides,
         structure=tournament_spec.structure,
     )
-    # WS8: the round's terminal decision + provenance (operator overrides
+    # The round's terminal decision + provenance (operator overrides
     # explicit, never silent) — the post-holdout/post-override truth.
     round_log.emit(
         "decision_recorded",
@@ -948,7 +950,7 @@ async def evolve_field_round(
         decision=effective_decision,
         state="settled",
         # Operator override readback (additive — omitted when no override
-        # fired, so a gate-decided field round's record is byte-identical).
+        # fired, so a gate-decided field round's record carries no such key).
         override_status=override_provenance or None,
         promoted_generation_ids=(sorted(promoted_ids) if len(promoted_ids) > 1 else None),
     )
@@ -1175,9 +1177,9 @@ async def evolve_field_round(
         # this one was cut — already computed above, including the
         # holdout-demotion and operator-override phrasings, and read back
         # off the outcome so the DAG and experiment.json cannot disagree —
-        # and its own standings scalar against the champion's. ``None``,
-        # not 0.0, when a challenger has no aggregate: a zero scalar is a
-        # legal measurement.
+        # and its own standings scalar against the champion's. ``None``
+        # rather than 0.0 when a challenger has no aggregate: a zero scalar
+        # is a legal measurement.
         settled = finalised_by_id.get(gid)
         gen_agg = _first_aggregate_for(gid, decision)
         lineage_parent_scalar = float(champion_agg["scalar"]) if champion_agg else None
@@ -1203,7 +1205,7 @@ async def evolve_field_round(
         # The marker MUST now name the crowned generation — a write that did
         # not stick (e.g. a read-only workspace) would leave a settled
         # ``promoted`` bracket whose champion never advanced. Re-read and
-        # raise rather than diverge silently (issue #20 acceptance #3).
+        # raise rather than diverge silently (issue #20).
         _crowned_head = generation_phase.current_generation(workspace_root, epoch_id)
         if _crowned_head != settlement.primary_promoted_generation_id:
             raise RuntimeError(
@@ -1213,7 +1215,7 @@ async def evolve_field_round(
                 "pointer did not advance to the promoted generation"
             )
 
-    # --- Post-promotion adapter hook (#125). One call after the champion
+    # --- Post-promotion adapter hook (issue #125). One call after the champion
     # marker advances, once per settled
     # promotion. Fires for the PRIMARY head only — an operator
     # multi-promote marks several candidates promoted in lineage, but
@@ -1301,12 +1303,12 @@ async def evolve_field_round(
 
     # The round summary's champion/challenger scalars MUST come from the gate's
     # CROWNING matchup — the same champion-vs-leader duel the rejection_reason is
-    # built from — not the per-pairing standings aggregate (`_first_aggregate_for`,
-    # which averages across all of the champion's pairings) and not the
-    # child-defaults-to-parent fallback (which reports delta 0.0 on a rejection
-    # even though the gate measured a real regression — issue #10). Resolve the
-    # crowning matchup's champion (the parent side) + challenger scalars; fall
-    # back to the aggregate only when no crowning duel ran.
+    # built from. Two other sources are wrong here: the per-pairing standings
+    # aggregate (`_first_aggregate_for`) averages across all of the champion's
+    # pairings, and the child-defaults-to-parent fallback reports delta 0.0 on a
+    # rejection even though the gate measured a real regression (issue #10).
+    # Resolve the crowning matchup's champion (the parent side) + challenger
+    # scalars; fall back to the aggregate only when no crowning duel ran.
     summary_parent_scalar = parent_scalar
     summary_child_scalar = child_scalar_crown
     summary_child_id = promoted_id or applied[0].generation_id
@@ -1322,8 +1324,9 @@ async def evolve_field_round(
         champ_is_left = crowning.left_id == parent_id
         summary_parent_scalar = crowning.left_scalar() if champ_is_left else crowning.right_scalar()
         summary_child_scalar = crowning.right_scalar() if champ_is_left else crowning.left_scalar()
-        # On a rejection the "proposed" gen reported is the LEADING challenger that
-        # reached the gate (the one the reason is about), not an arbitrary applied[0].
+        # On a rejection the "proposed" gen reported is the LEADING challenger
+        # that reached the gate (the one the reason is about) rather than an
+        # arbitrary ``applied[0]``.
         summary_child_id = promoted_id or (crowning.right_id if champ_is_left else crowning.left_id)
 
     # The effective decision is the post-holdout, post-integrity, and

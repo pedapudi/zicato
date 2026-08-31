@@ -1,8 +1,9 @@
 """The :class:`ProposerAgent` abstraction over the structured proposer.
 
-Phase 1 turned a proposer dir (or ``None``) into a hash-ready
-:class:`~zicato.core.types.ProposerSpec` (agent identity + skills). This
-module is the Phase 2a core: it wraps the single-shot
+Spec resolution (:mod:`zicato.proposer.skills`) turns a proposer dir (or
+``None``) into a hash-ready :class:`~zicato.core.types.ProposerSpec` — an
+agent identity plus its skills. This module turns that spec into something
+callable: it wraps the single-shot
 :func:`zicato.proposer.proposer.propose_experiment` engine behind a
 uniform :class:`ProposerAgent` protocol, threads a proposer's *skills*
 into the prompt the engine sends, and exposes a builder that the
@@ -127,7 +128,7 @@ class ProposerContext:
     #: (OVERFITTING.md §11). ``False`` renders the verbatim prompt.
     restrict_visibility: bool = False
     #: Pre-rendered, train-slice-only, BUCKETED outcome-marginal block
-    #: (Capability 2 of issue #18 — built by
+    #: telling the proposer which failure modes dominate (issue #18; built by
     #: :func:`~zicato.proposer.prompts.render_failure_mode_profile` from an
     #: :class:`~zicato.analyzer.outcome_marginals.OutcomeMarginalSummary` the
     #: orchestrator aggregates over the SAME train slice it passes to the
@@ -135,7 +136,7 @@ class ProposerContext:
     #: section is spliced into the user prompt so the proposer can target
     #: *why* answers are wrong. The string is already board-anonymized +
     #: banded by its renderer; the agents only forward it. Empty (the
-    #: default) omits the section, byte-identical to before this surface.
+    #: default) omits the section, leaving the prompt otherwise unchanged.
     failure_profile: str = ""
     #: Pre-rendered, BANDED statement of what the frozen contract scores —
     #: built by the orchestrator from the epoch's
@@ -166,7 +167,7 @@ class ProposerContext:
     #: user prompt directly after the failure-mode profile so the proposer
     #: sees HOW a detected failure unfolds — never WHICH entry it unfolded
     #: on. Empty (the default — every knob-off round) omits the section,
-    #: byte-identical to before this surface.
+    #: leaving the prompt otherwise unchanged.
     process_exemplars: str = ""
     #: Sampled genealogy items — the opt-in ``proposer_quality.genealogy``
     #: channel (``docs/design/PROPOSER.md`` §2.7). Built by the orchestrator
@@ -182,7 +183,7 @@ class ProposerContext:
     #: vocabulary) + CAPPED (proposer's own diff excerpts) by the sampler;
     #: NEVER an entry id, a per-entry result, an exact delta, or anything
     #: holdout-derived. Empty ``()`` (the default — every knob-off round) omits
-    #: the section, byte-identical to before this surface.
+    #: the section and leaves the rest of the prompt byte-identical.
     genealogy: tuple[GenealogyItem, ...] = ()
     #: Optional per-reign prediction-calibration summary — the opt-in
     #: ``proposer_quality.calibration_feedback`` channel
@@ -199,7 +200,7 @@ class ProposerContext:
     #: entry id, a per-entry result, an exact delta, or anything holdout-derived
     #: (the grader scores whole-candidate movement aggregates). ``None`` (the
     #: default — every knob-off round, and any round with no graded history)
-    #: omits the section, byte-identical to before this surface.
+    #: omits the section and leaves the rest of the prompt byte-identical.
     calibration: CalibrationSummary | None = None
     #: Optional per-sample edit-class steering line — the best-of-N slate
     #: diversifier (:data:`zicato.proposer.best_of_n.EDIT_CLASS_HINTS`). The
@@ -217,7 +218,7 @@ class ProposerContext:
     #: ``None`` (the default — every single-sample propose) records no slot.
     slot_index: int | None = None
     #: Optional seed for the repair-feedback loop's FIRST attempt — the
-    #: screen-informed revise channel (WS-R). The best-of-N wrapper stamps
+    #: screen-informed revise channel. The best-of-N wrapper stamps
     #: the all-vetoed slate's COUNTS-ONLY veto summary here (never an entry
     #: id — the restricted-visibility envelope) so the ONE bounded revise
     #: re-sample starts as a genuine repair turn: both engines thread it
@@ -235,7 +236,7 @@ class ProposerContext:
     #: credit; never causal) — inside the restricted-visibility envelope.
     #: ``None`` (the default) renders a byte-identical manifest.
     mutation_track_records: Mapping[str, MutationTrackRecord] | None = None
-    #: Optional best-effort ROUND-LOG event emitter (WS8), threaded by the
+    #: Optional best-effort round-log event emitter, threaded by the
     #: orchestrator so the proposer stack can trace its sampling decisions
     #: into the round's durable event log WITHOUT importing the log module
     #: (the proposer stays decoupled from :mod:`zicato.epoch.round_log`).
@@ -250,7 +251,7 @@ class ProposerContext:
     round_event_emitter: Callable[[str, dict[str, Any], Mapping[str, Any] | None], None] | None = (
         None
     )
-    #: Optional pre-tournament candidate-screen runner (tryouts; WS-S).
+    #: Optional pre-tournament candidate-screen runner (tryouts).
     #: The orchestrator builds ONE closure per round — via
     #: ``_build_candidate_screen_runner``, only when the contract opts in
     #: (``proposer_quality.screen_entries > 0`` AND ``best_of_n > 1``) —
@@ -259,10 +260,9 @@ class ProposerContext:
     #: slate settles: veto-first (a catastrophic regression is
     #: disqualified before the critic chooses), and any screen failure
     #: degrades to an unscreened selection — screening can never fail a
-    #: propose. ``None`` (the default) screens nothing and the propose
-    #: path is byte-identical.
+    #: propose. ``None`` (the default) screens nothing.
     screen_candidates: ScreenRunner | None = None
-    #: Optional recombination pair (WS-REC) — plain DATA, not a callable:
+    #: Optional recombination pair — plain DATA rather than a callable:
     #: the orchestrator's ``_build_recombination_pair`` selects it once per
     #: round from round-start state (rejected complementary challengers of
     #: the current reign) and threads the envelope-clean value here (counts
@@ -273,20 +273,20 @@ class ProposerContext:
     #: orchestrator threads the pair to SLOT 0 ONLY (identical mints across
     #: the field would collapse into diversity soft-rejects). ``None`` (the
     #: default — every knob-off round, and every round with no eligible
-    #: pair) mints nothing and the propose path is byte-identical.
+    #: pair) mints nothing and every slot samples normally.
     recombine_pair: RecombinationPair | None = None
-    #: Optional per-slot scratch-validator factory (WS-CONC) — the seam that
+    #: Optional per-slot scratch-validator factory — the seam that
     #: lets the best-of-N slate GATHER. Built once per round by the
     #: orchestrator beside the shared post-apply validator
     #: (:func:`zicato.evolve.round.build_scratch_validator_factory`); each
     #: call mints a FRESH, disjoint scratch child tree + a ``(validate,
     #: cleanup)`` lease. The best-of-N wrapper calls it once per slate slot so
     #: N slots validate concurrently into disjoint trees instead of all
-    #: deriving the shared ``next_id`` tree (the write that used to serialise
-    #: the slate). ``None`` (the default — single-sample proposers, and every
+    #: deriving the shared ``next_id`` tree (the write that would otherwise
+    #: serialise the slate). ``None`` (the default — single-sample proposers, and every
     #: unit-test context that threads no genstore) ⇒ the wrapper falls back to
-    #: the shared ``validate_experiment`` hook and runs the slate serially,
-    #: byte-identically to the pre-concurrency behaviour. The chosen candidate
+    #: the shared ``validate_experiment`` hook and runs the slate serially.
+    #: The chosen candidate
     #: is still mounted into the real ``next_id`` once, after selection, via
     #: ``validate_experiment`` — this factory never writes the canonical tree.
     scratch_validator_factory: (
@@ -298,8 +298,8 @@ class ProposerAgent(Protocol):
     """A proposer that turns a :class:`ProposerContext` into an experiment.
 
     The protocol is the single seam the orchestrator drives, regardless of
-    whether the proposer is the built-in single-shot agent or — in a later
-    phase — a custom agent that calls tools. An implementation MUST raise
+    whether the proposer is the built-in single-shot agent or a custom
+    agent that calls tools. An implementation MUST raise
     :class:`zicato.proposer.proposer.ProposerError` when it cannot produce
     a schema-valid experiment within its budget, matching the contract the
     orchestrator already handles at each propose site.
@@ -425,7 +425,8 @@ def build_proposer_agent(
        ``skills/*.md``). This returns a :class:`DefaultProposerAgent`, the
        single-shot text-shim engine, steered purely through its skills over
        the auxiliary callable. Configuring a proposer dir is the explicit
-       opt-in into this path; the bare default (#2) is the tool-using agent.
+       opt-in into this path; an unconfigured proposer gets the tool-using
+       agent instead.
 
     Every ``google.adk`` import is lazy, so importing this module never
     forces the optional ``google-adk`` extra — only constructing an

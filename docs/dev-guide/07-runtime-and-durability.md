@@ -15,22 +15,24 @@
 > contracts are 11-testing.md.
 >
 > **Invariants introduced in this chapter.** Each is load-bearing; violating
-> one is a data-corruption bug, not a style issue.
+> one is a data-corruption bug rather than a style issue. Prose below cites
+> each by the name in the second column; the id is the pointer back to this
+> table.
 >
-> | ID | Invariant |
-> |----|-----------|
-> | D1 | Files are canonical; the SQLite index is a derived, lag-only projection. Nothing may exist only in the index. |
-> | D2 | Every dual-write into the index is best-effort: any failure is logged at `debug` and swallowed; a round/run is never failed by an index write. |
-> | D3 | Every mutable JSON record write goes through the atomic-write helpers (`tmp` → `fsync` → `os.replace` → parent-dir `fsync`). Nobody bypasses them. |
-> | D4 | Torn-tail tolerance exists ONLY for append-only JSONL logs. An unparseable *interior* line raises; a mutable JSON record is never partially readable. |
-> | D5 | A generation store's unit of work is transactional: a child tree appears in full or not at all (`derive_generation` is all-or-nothing). |
-> | D6 | Every per-run ephemeral checkout lives under a `ztw-snap-*` mkdtemp parent in the OS temp dir — the exact shape the supervisor's crash-reaper is allowed to delete. |
-> | D7 | GC prunes source TREES only, never records; promoted / in-flight / lineage-unknown generations and the seed `v0` are never pruned. |
-> | D8 | A generation is journaled and appended to `lineage.json` only AFTER its outcome is decided. An un-outcomed generation has no lineage/journal entry, so discarding it on resume cannot corrupt either. |
-> | D9 | Process identity is `(pid, start_time)`, never a bare pid. Lock stealing and worker signalling both require the identity check. |
-> | D10 | Exactly one process appends to a given event log (single-writer `seq`); consumed control commands are claimed exactly once and always archived, never silently deleted. |
-> | D11 | RoundLog emission is best-effort: an emission failure must never fail a round. The canonical stores stay authoritative. |
-> | D12 | A reader refuses a canonical record stamped with a `format_version` it cannot read; it never silently misinterprets a newer shape. An index database with a newer `user_version` is never re-stamped down. |
+> | ID | Name | Invariant |
+> |----|------|-----------|
+> | D1 | files canonical, index derived | Files are canonical; the SQLite index is a derived, lag-only projection. Nothing may exist only in the index. |
+> | D2 | index writes are best-effort | Every dual-write into the index is best-effort: any failure is logged at `debug` and swallowed; a round/run is never failed by an index write. |
+> | D3 | mutable records are written atomically | Every mutable JSON record write goes through the atomic-write helpers (`tmp` → `fsync` → `os.replace` → parent-dir `fsync`). Nobody bypasses them. |
+> | D4 | torn-tail tolerance is for append-only logs only | Torn-tail tolerance exists ONLY for append-only JSONL logs. An unparseable *interior* line raises; a mutable JSON record is never partially readable. |
+> | D5 | a generation derivation is transactional | A generation store's unit of work is transactional: a child tree appears in full or not at all (`derive_generation` is all-or-nothing). |
+> | D6 | ephemeral checkouts live in one known shape | Every per-run ephemeral checkout lives under a `ztw-snap-*` mkdtemp parent in the OS temp dir — the exact shape the supervisor's crash-reaper is allowed to delete. |
+> | D7 | garbage collection prunes trees, never records | GC prunes source TREES only, never records; promoted / in-flight / lineage-unknown generations and the seed `v0` are never pruned. |
+> | D8 | journal and lineage only after the outcome | A generation is journaled and appended to `lineage.json` only AFTER its outcome is decided. An un-outcomed generation has no lineage/journal entry, so discarding it on resume cannot corrupt either. |
+> | D9 | process identity is pid plus start time | Process identity is `(pid, start_time)`, never a bare pid. Lock stealing and worker signalling both require the identity check. |
+> | D10 | one writer per event log | Exactly one process appends to a given event log (single-writer `seq`); consumed control commands are claimed exactly once and always archived, never silently deleted. |
+> | D11 | round-log emission is best-effort | RoundLog emission is best-effort: an emission failure must never fail a round. The canonical stores stay authoritative. |
+> | D12 | refuse a record format you cannot read | A reader refuses a canonical record stamped with a `format_version` it cannot read; it never silently misinterprets a newer shape. An index database with a newer `user_version` is never re-stamped down. |
 
 ---
 
@@ -72,7 +74,7 @@ Three consequences an agent extending zicato must internalize:
 2. **The index may lag and may be missing.** Readers of `index.db` (the
    Python query layer, the Rust supervisor) must degrade to an empty/partial
    answer when the database is absent, stale, or mid-rebuild. See
-   08-supervisor.md §"The read-only SQLite discipline" for the Rust side's
+   08-supervisor.md §8.9 (the read-only SQLite discipline) for the Rust side's
    contract.
 3. **`zicato repair index` is the recovery story.** It is a drop-and-rebuild:
    delete `index.db`, walk every epoch / generation / run under `.zicato/`,
@@ -134,7 +136,8 @@ Read the except clauses carefully — this is the doctrine's teeth:
 > ⛔ NEVER let an index write failure propagate into the evolve loop, a
 > tournament runner, or a worker. If you add an ingest call and it can raise
 > past its `try`, you have made an optional projection load-bearing —
-> invariant D2 is violated and a corrupt `index.db` can now halt evolution.
+> index-writes-are-best-effort (D2) is violated and a corrupt `index.db` can
+> now halt evolution.
 
 > ⛔ NEVER write a datum into `index.db` that has no canonical file source.
 > `rebuild_index` walks files; a row only you produced live will silently
@@ -145,9 +148,9 @@ Read the except clauses carefully — this is the doctrine's teeth:
 > UPDATE` keyed on the natural primary key). The live path and the rebuild
 > path both hit the same rows; a bare `INSERT` breaks the second writer.
 
-There is exactly ONE deliberate non-swallowed failure inside the index write
-path, and it is a refusal, not a crash of the loop (the outer dual-write
-`except Exception` still catches it and degrades):
+One failure inside the index write path is raised rather than swallowed
+there, and it is a refusal rather than a crash of the loop — the outer
+dual-write `except Exception` still catches it and degrades:
 
 ```python
     current = read_schema_version(conn)
@@ -161,9 +164,9 @@ path, and it is a refusal, not a crash of the loop (the outer dual-write
 ```
 — `src/zicato/index/schema.py`, `apply_schema`
 
-An older writer must never re-stamp a newer database DOWN (invariant D12).
-The recovery is always cheap because of D1: delete the file, `zicato
-reindex`.
+An older writer must never re-stamp a newer database DOWN (D12). The
+recovery is always cheap because the index is derived (D1): delete the file,
+`zicato reindex`.
 
 ### 7.1.2 `zicato repair index` — the drop-and-rebuild
 
@@ -183,8 +186,8 @@ index never re-implements a parse a canonical module already owns.
 Rust supervisor pins the same number as `EXPECTED_SCHEMA_VERSION` in
 `crates/supervisor/src/index_db.rs`, with a test on each side that fails if
 they drift. If you change the index schema, you are changing a **two-language
-contract** — see 08-supervisor.md §"The read-only SQLite discipline" and the
-REINDEX-DUMP parity gate in 11-testing.md §"Parity gates one by one".
+contract** — see 08-supervisor.md §8.9 (the read-only SQLite discipline) and
+the REINDEX-DUMP parity gate in 11-testing.md §11.7.
 
 ---
 
@@ -201,11 +204,11 @@ deciding *where a new datum belongs* and *what happens to it in a crash*.
 | Lineage / experiments / journal | `lineage.json`, `epochs/{e}/generations/{g}/experiment.json` + `patches/*.json`, `epochs/{e}/journal.md`, per-epoch `config.json` / `scoring.json` / `board.jsonl` / `brief.md`, cached `gen_score.json` | Canonical (the typed evolutionary record) | Orchestrator only, via `zicato.epoch.journal` / `lineage` / `lifecycle` routed through `StorageBackend` | Everything: resume, index ingest, dashboard, analyzer, GC's safety floor | Atomic per record (D3). `lineage.json` / journal are appended only post-outcome (D8), so an interrupted round leaves them untouched. |
 | Per-run records | `epochs/{e}/generations/{g}/runs/{entry}/loss.json` | Canonical — and the board-unit cache: keyed `(generation, entry, replicate)` | The run's worker subprocess | Tournament runner (cache hits), reducer, index ingest, resume (`_has_any_loss`) | Atomic write; a completed unit survives any crash and is a permanent cache HIT for resume. |
 | Telemetry | `epochs/.../runs/{entry}/events.jsonl` (one per BOARD UNIT — replicate `r>0` is the sibling `events.r{r}.jsonl`) | Canonical event capture (goldfive's format) | goldfive `JSONLPersistenceSink` inside the worker | Reducer (once), dashboard log panel, harmonograf | Append-only; the reducer tolerates a torn tail (D4). |
-| Runtime state | `runtime/heartbeat.json`, `runtime/lock.json`, `runtime/active_runs/*.json`, `runtime/active_tournament.events.jsonl`, `runtime/progress.events.jsonl`, `runtime/dashboard.json`, `runtime/inconclusive/*.json` | Canonical but EPHEMERAL — describes the live process, not history | Orchestrator + each run's worker (own file each) | Rust supervisor, dashboard, `prepare_resume` (which deletes it) | Discarded wholesale on restart by `clear_runtime_state`; the supervisor treats absence as "never booted". |
+| Runtime state | `runtime/heartbeat.json`, `runtime/lock.json`, `runtime/active_runs/*.json`, `runtime/active_tournament.events.jsonl`, `runtime/progress.events.jsonl`, `runtime/dashboard.json`, `runtime/inconclusive/*.json` | Canonical but EPHEMERAL — describes the live process rather than history | Orchestrator + each run's worker (own file each) | Rust supervisor, dashboard, `prepare_resume` (which deletes it) | Discarded wholesale on restart by `clear_runtime_state`; the supervisor treats absence as "never booted". |
 | Control protocol | `runtime/control/` (flags, targeted files, payload file), `runtime/control_log/` (audit sidecars) | Canonical commands + canonical audit trail | Dashboard / CLI / operator `touch` write; orchestrator consumes; supervisor writes `kill_requests/` markers on POST | Orchestrator safe-points; supervisor's kill loop | Claim-once move semantics; consume writes the audit log BEFORE deleting the source, so a crash mid-consume duplicates observably rather than losing (D10). |
 | RoundLog | `epochs/{e}/rounds/{n}/round_log.jsonl` | Canonical durable trace of one round's decisions (but emission is best-effort — D11) | Orchestrator's `_RoundLogEmitter` (single writer) | `fold_round_record` consumers: dashboard round timeline, tests, post-hoc analysis | Append-only, torn-tail tolerant (D4); survives resume (it lives under `epochs/`, never under `runtime/`). |
 | SQLite index | `index.db` | **Derived** — the only non-canonical store | Live dual-writes + `zicato repair index` | Python query layer (`zicato.query`), Rust supervisor (read-only) | Disposable. Delete + `zicato repair index` is always safe. |
-| Supervisor audit ledger | `<--ledger-dir>/audit_ledger.jsonl` — deliberately OUTSIDE the orchestrator's trees | Canonical, supervisor-owned (the orchestrator must not be able to rewrite it) | Rust supervisor only (`AuditLedger::append`) | `/statusz`, `/api/audit/verify`, operators | Hash-chained; torn tail truncated at open; fsync per append. See 08-supervisor.md §"The hash-chained ledger". |
+| Supervisor audit ledger | `<--ledger-dir>/audit_ledger.jsonl` — kept OUTSIDE the orchestrator's trees | Canonical, supervisor-owned (the orchestrator must not be able to rewrite it) | Rust supervisor only (`AuditLedger::append`) | `/statusz`, `/api/audit/verify`, operators | Hash-chained; torn tail truncated at open; fsync per append. See 08-supervisor.md §8.7 (the hash-chained audit ledger). |
 | Ephemeral checkouts | `${TMPDIR}/ztw-snap-{run_id}-*/` | Neither — throwaway working copies | `GenerationStore.checkout_ephemeral` | The one worker that mounted it | Discarded on clean run-end; orphans reaped by the supervisor's prefix-guarded crash-GC (D6). |
 
 Two placement rules fall out of the table:
@@ -216,12 +219,12 @@ Two placement rules fall out of the table:
 > is the difference between "record" and "will silently vanish on resume".
 
 > ⚠️ TRAP: `active_tournament.json` still has a path helper
-> (`zicato.runtime.paths.active_tournament_path`) but is a LEGACY snapshot —
-> the live producer writes the event log
+> (`zicato.runtime.paths.active_tournament_path`) but is a FALLBACK-ONLY
+> snapshot — the live producer writes the event log
 > (`active_tournament.events.jsonl`) and readers fold it
-> (`zicato.runtime.tournament_log.fold_active_tournament`), falling back to
-> the snapshot only when no log exists. New code must never write the
-> snapshot file.
+> (`zicato.runtime.tournament_log.fold_active_tournament`), reading the
+> snapshot only when no log exists. New code must never write the snapshot
+> file.
 
 ---
 
@@ -230,7 +233,7 @@ Two placement rules fall out of the table:
 There is exactly one definition of "atomic file write" in zicato, and it
 lives in `src/zicato/storage/_atomic.py`. Its public face is re-exported by
 `zicato.storage` (`atomic_write_json`, `atomic_write_text`, `atomic_claim`,
-`read_json`); a lint ban (`TID251`, see 11-testing.md §"Import contracts")
+`read_json`); a lint ban (`TID251`, see 11-testing.md §11.8)
 keeps everyone off the private module path.
 
 The pattern, verbatim from the module that owns it:
@@ -282,10 +285,10 @@ read side enforces the contract by *refusing to be lenient*:
 — `src/zicato/storage/_atomic.py`, `read_json`
 
 > ⛔ NEVER write a state/record file with `path.write_text(json.dumps(...))`
-> or `open(...).write(...)`. That was the historical bug class this module
-> exists to close (`src/zicato/epoch/_storage.py` documents the migration:
-> "a crash mid-write could leave a truncated `experiment.json` /
-> `lineage.json` / `config.json`"). If you find yourself needing a new
+> or `open(...).write(...)`. That is the bug class this module exists to
+> close: a crash mid-write can leave a truncated `experiment.json` /
+> `lineage.json` / `config.json` (`src/zicato/epoch/_storage.py` states it).
+> If you find yourself needing a new
 > record, compose a key helper in the domain's `_storage.py` and call
 > `backend.write_json`.
 
@@ -313,9 +316,9 @@ matters:
 
 ### 7.3.3 Torn-tail tolerance is for APPEND-ONLY logs only
 
-Invariant D4. Append-only JSONL streams cannot use rename-replace (they grow
-in place), so their crash mode is different: a crash mid-append can leave one
-torn final line, and readers of *exactly these files* tolerate it. The
+Append-only JSONL streams cannot use rename-replace (they grow in place), so
+their crash mode is different: a crash mid-append can leave one torn final
+line, and readers of *exactly these files* tolerate it — the whole of D4. The
 complete list of torn-tail-tolerant stores:
 
 | Log | Reader that tolerates the tail | Writer repair |
@@ -339,7 +342,7 @@ sloppiness — an interior tear is never tolerated:
 
 > ⛔ NEVER extend torn-tail tolerance to a mutable JSON record, and never
 > extend it to interior lines of a log. The tolerance is a theorem about
-> append-only single-writer files ("only the tail can be torn"), not a
+> append-only single-writer files ("only the tail can be torn") rather than a
 > general error-handling posture.
 
 ---
@@ -348,8 +351,8 @@ sloppiness — an interior tear is never tolerated:
 
 Generation source trees are the one data kind that is *not* record-shaped, so
 they get their own seam: the `GenerationStore` protocol
-(`src/zicato/epoch/genstore.py`), a **peer abstraction at the domain layer**,
-deliberately not a `StorageBackend` subtype (the reasoning is
+(`src/zicato/epoch/genstore.py`), a **peer abstraction at the domain layer**
+rather than a `StorageBackend` subtype (the reasoning is
 `docs/design/STORAGE.md` §4 and the module docstring). Two backends:
 
 | Backend | Selected by | A generation is | Derive cost | Per-run checkout |
@@ -374,8 +377,8 @@ generation records, or snapshot directories.
 
 The cross-backend contract is pinned by a conformance suite: every test in
 `tests/test_genstore_conformance.py` runs against BOTH backends. If you touch
-either backend, that suite is your first gate (see 11-testing.md §"The
-genstore conformance suite + session-template fixtures").
+either backend, that suite is your first gate (see 11-testing.md §11.6, the
+generation-store conformance suite and its session templates).
 
 ### 7.4.1 The domain → git mapping
 
@@ -399,8 +402,8 @@ Facts an agent needs before touching this module:
 - **The repo is private to zicato.** It lives at `{workspace_root}/repo/`
   *inside* `.zicato/`; the user's outer repository is never touched. It has a
   fixed committer identity (`_GIT_AUTHOR_NAME = "zicato"`,
-  `zicato@localhost`) — deliberately not a person and, per the repo-wide
-  rule, never a vendor name.
+  `zicato@localhost`) — an identity that names no person and, per the
+  repo-wide rule, no vendor.
 - **It shells out to the `git` CLI** (no `pygit2`/`GitPython` dependency).
   Every mutation is a command an operator can replay by hand against
   `repo/`; failures surface as `GitCommandError` carrying argv + exit code +
@@ -451,14 +454,14 @@ the **stale-worktree re-derive bug** (see 12-bug-casebook.md):
 
 The general lesson: **a tag is a moving handle; a worktree is a frozen
 checkout.** Any code path that can move a generation tag (`_tag_generation`
-uses `tag -f` precisely because retries move tags) must ask whether a
+uses `tag -f` because retries move tags) must ask whether a
 materialised worktree is now lying about that generation's content.
 
 > ⚠️ TRAP: the directory backend never exhibits this class of bug (it clears
 > and rebuilds the child tree on every derive), so a test that only runs the
 > directory backend will be green while the git default is broken. This is
 > exactly why the conformance suite parametrises over both backends — write
-> your genstore tests there, not in a single-backend file.
+> your genstore tests there rather than in a single-backend file.
 
 ### 7.4.3 `checkout_ephemeral` — per-run detached worktrees, and the prune-vs-add lock
 
@@ -530,7 +533,7 @@ Every prune→add(→detach→prune) window is wrapped in
 > any ephemeral-checkout code path, in ANY backend. Both properties are
 > load-bearing for the supervisor's crash-GC prefix guard
 > (`reap.rs::reapable_snapshot_root` refuses anything else) — see
-> 08-supervisor.md §"Confirmed-dead-only reaping".
+> 08-supervisor.md §8.6 (confirmed-dead-only reaping).
 
 ### 7.4.4 The derive-generation scratch flow
 
@@ -542,7 +545,8 @@ refuses to overwrite an existing target), so it uses a scratch swap:
    generation (the lineage is the commit DAG).
 2. `apply_patches(source_root=<parent worktree>, target_root=<workspace>/.derive-scratch)`
    — the applier validates the whole batch first and raises `ValueError`
-   without leaving a partial tree (this is what makes D5 hold).
+   without leaving a partial tree (this is what makes the all-or-nothing
+   derive, D5, hold).
 3. `_replace_working_tree(scratch)` — wipe the repo working tree (preserving
    `.git`), copy the patched tree in (artifact-filtered), restore the
    `.gitignore`.
@@ -634,8 +638,8 @@ hiccuped; every error is logged and swallowed.
 > do not count on it).
 
 > ⚠️ TRAP: idempotency of a re-run relies on `store.has_generation` — under
-> the directory backend a previously-pruned generation still *enumerates*
-> (its record directory survives by design) but has no tree left, and must
+> the directory backend a generation whose tree was already pruned still
+> *enumerates* (its record directory survives by design) but has no tree, and must
 > be reported as neither kept nor pruned. If you change enumeration
 > semantics in a backend, re-check `prune_generations`' candidate filter.
 
@@ -687,9 +691,9 @@ The division of labour:
   `seq` the loop stamps into the heartbeat. A terminal `SETTLED`-class event
   distinguishes "cleanly finished" from "stalled" (`tail_is_terminal`).
 - The supervisor's `SeqLiveness` tracker consumes this: seq present → age
-  since the last seq *change*; seq absent (legacy heartbeat) → timestamp-age
-  fallback. Warn-only either way — see 08-supervisor.md §"Warn-only
-  heartbeat".
+  since the last seq *change*; seq absent (a heartbeat written without one) →
+  timestamp-age fallback. Warn-only either way — see 08-supervisor.md §8.3
+  (the warn-only heartbeat).
 
 The **paused flag is not a heartbeat field**: pause state is the presence of
 the `runtime/control/pause_epoch` flag file (`is_paused` in
@@ -715,7 +719,7 @@ run without touching anything else. The schema (`ActiveRun` in
 | `pid_start_time` | the worker's `/proc` start-time token — pid-reuse immunity (D9) | `signal::is_same_process` in the supervisor; `fresh_run_count`'s identity gate in the query layer |
 | `pgid` | the worker's own process group (spawned with `start_new_session`, so `pgid == pid`) | group-kill upgrade (`resolve_kill_target`) |
 | `started_at`, `last_progress` | ISO-8601 UTC; `last_progress` is bumped every ~3s by `RunHeartbeatBeater` (a daemon thread that keeps beating through GIL-releasing LLM waits) | staleness trigger `decide_run` |
-| `wall_clock_budget_seconds`, `deadline` | the promised budget and the absolute deadline (`started_at + budget`) | deadline trigger `decide_run_deadline` — but note the supervisor treats the written deadline as UNTRUSTED and clamps it (08-supervisor.md §"Untrusted clamped deadlines") |
+| `wall_clock_budget_seconds`, `deadline` | the promised budget and the absolute deadline (`started_at + budget`) | deadline trigger `decide_run_deadline` — but note the supervisor treats the written deadline as UNTRUSTED and clamps it (08-supervisor.md §8.5) |
 | `events_jsonl_path` | the run's telemetry file | dashboard drill-down |
 | `entry_id`, `generation_id`, `epoch_id` | lineage coordinates | dashboard, reaper |
 | `snapshot_path` | the run's `ztw-snap-*` ephemeral checkout — recorded so the supervisor can GC it if the orchestrator dies mid-run | `reap_orphaned_snapshot` |
@@ -749,11 +753,11 @@ worker the client cannot see is gone.
 
 ### 7.6.3 The active-tournament event log and its fold
 
-The live tournament view was historically a mutable `active_tournament.json`
-that several writers read-modify-wrote — the lost-update race RUNTIME-V2
-names. It is now a **single-writer append-only event log**
+The live tournament view is a **single-writer append-only event log**
 (`runtime/active_tournament.events.jsonl`,
-`src/zicato/runtime/tournament_log.py`) with a four-token vocabulary:
+`src/zicato/runtime/tournament_log.py`) with a four-token vocabulary. A
+mutable `active_tournament.json` that several writers read-modify-wrote would
+lose updates against itself; one atomic append per transition cannot:
 
 | Event | Payload | Written by | Fold semantics |
 |---|---|---|---|
@@ -766,12 +770,11 @@ Every state transition is one atomic append — never a read-modify-write — so
 concurrent writers cannot lose each other's updates. Readers call
 `read_active_tournament(workspace_root)`
 (`zicato.runtime.state`), which folds the log via
-`tournament_log.fold_active_tournament` and falls back to the legacy snapshot
-only when no log exists. The fold **shares the merge helpers with the old
+`tournament_log.fold_active_tournament` and falls back to the snapshot file
+only when no log exists. The fold **shares the merge helpers with the
 snapshot writer** (`_fold_projected_into_live_progress`, `_fold_one_lane` in
-`state.py`) so the folded view is byte-identical to what the
-read-modify-write produced — producer/consumer parity by shared code, not by
-reimplementation.
+`state.py`) so the folded view is byte-identical to the snapshot's —
+producer/consumer parity by shared code rather than by reimplementation.
 
 Two behavioural details encoded in `_fold_one_lane` that dashboards depend
 on (both anti-flash / anti-thrash measures — change them and the UI regresses):
@@ -783,7 +786,7 @@ on (both anti-flash / anti-thrash measures — change them and the UI regresses)
   concurrent duels all write the champion lane, and last-writer-wins would
   thrash it.
 
-> ⛔ NEVER add a writer that rewrites the folded view or the legacy snapshot.
+> ⛔ NEVER add a writer that rewrites the folded view or the snapshot file.
 > If your feature needs to publish tournament state, add an event type to
 > `tournament_log` (one atomic append) and teach the fold — the single-writer
 > `seq` discipline (D10) is what keeps the dashboard's render gating and the
@@ -802,10 +805,10 @@ on (both anti-flash / anti-thrash measures — change them and the UI regresses)
 ## 7.7 The workspace lock
 
 Only one orchestrator may write under `.zicato/runtime/` at a time. The lock
-(`src/zicato/runtime/lock.py`) is deliberately a **pid-based JSON file**
-(`runtime/lock.json`), not `fcntl.flock`: the supervisor is a separate
-process, possibly a different language, and pid-based locks survive non-clean
-exits recoverably.
+(`src/zicato/runtime/lock.py`) is a **pid-based JSON file**
+(`runtime/lock.json`) rather than an `fcntl.flock`: the supervisor is a
+separate process, possibly in a different language, and pid-based locks
+survive non-clean exits recoverably.
 
 The stealing rules are a decision matrix over process identity, and identity
 is `(pid, start_time)` — invariant D9:
@@ -832,8 +835,8 @@ equality token; `is_same_process` then applies a conservative matrix — when
 identity cannot be proven either way, it refuses to steal:
 
 - pid dead → not the same process (steal is allowed);
-- pid alive, no recorded start time (legacy lock) → treat as alive (do not
-  steal);
+- pid alive, no recorded start time (a lock written without one) → treat as
+  alive (do not steal);
 - pid alive, current start time unreadable → treat as alive (cannot
   *disprove* identity);
 - both known → equal or not.
@@ -888,7 +891,7 @@ cached losses with a different snapshot).
 ### 7.8.2 The two phases and the classification table
 
 Phase 1 — `clear_runtime_state`: delete `heartbeat.json`, the
-active-tournament event log AND its legacy snapshot, and every
+active-tournament event log AND its snapshot file, and every
 `active_runs/*.json`. The workspace lock is not touched (acquisition already
 stole any stale one). Best-effort; an unlink race never aborts startup.
 
@@ -919,14 +922,15 @@ The `ResumePlan.classification` tokens, exhaustively:
 | `discard_partial_proposal` | no `experiment.json` at all | discard, re-propose |
 
 Note carefully what is NOT in this table: `deferred_infra` is not a resume
-classification. It is a *round decision* (§7.12) that deliberately leaves the
-experiment **un-outcomed** so that this very table handles the next start —
+classification. It is a *round decision* (§7.12) that leaves the experiment
+**un-outcomed** by design, so that this very table handles the next start —
 a deferred round with cached units resumes in place; one with none discards
 cleanly.
 
 ### 7.8.3 The invariant that makes discard safe
 
-Invariant D8, in the module's own words:
+The journal-and-lineage-only-after-the-outcome rule (D8), in the module's own
+words:
 
 ```python
 Lineage / journal safety
@@ -942,8 +946,8 @@ construction.
 
 > ⛔ NEVER write a lineage or journal entry for a generation before its
 > outcome is decided — not "provisionally", not "for the dashboard". The
-> moment an un-outcomed generation has an append-only record, `\_discard\_generation`
-> stops being safe and the whole resume protocol inherits a corruption mode.
+> moment an un-outcomed generation has an append-only record,
+> `_discard_generation` stops being safe and the whole resume protocol inherits a corruption mode.
 > If you need pre-outcome visibility, use the runtime tree (§7.6) — it is
 > deleted on resume by design.
 
@@ -951,7 +955,7 @@ Scope note: this first cut covers the **gauntlet** path. A multi-challenger
 field (swiss / elim / racing) under interruption is treated conservatively —
 in-flight challengers are discarded and the round re-runs. If you extend
 in-place resume through the non-gauntlet structures, the classification table
-and D8 are the contract you must preserve.
+and journal-only-after-the-outcome (D8) are the contract you must preserve.
 
 ---
 
@@ -960,7 +964,7 @@ and D8 are the contract you must preserve.
 `src/zicato/runtime/control.py` (transport) + `control_consumer.py` (evolve
 semantics). Small files under `.zicato/runtime/control/` request operator
 actions; the orchestrator polls at safe points and consumes each with an
-audit record. Files, not HTTP, on purpose: the supervisor is a separate
+audit record. Files rather than HTTP, on purpose: the supervisor is a separate
 process (possibly another language), crash-safety is trivial (an interrupted
 consume leaves the request in place and the next poll retries), and an
 operator can `touch .zicato/runtime/control/pause_epoch` in an emergency.
@@ -971,7 +975,7 @@ operator can `touch .zicato/runtime/control/pause_epoch` in an emergency.
 |---|---|---|---|---|
 | `pause_epoch` | flag file `control/pause_epoch` (optional JSON body `{"reason", "ts"}`) | dashboard POST `/api/control/pause` (Python service and Rust supervisor both), CLI, bare `touch` | `block_while_paused` — between rounds, and polled until cleared | scheduling held; resume = deleting the flag (`/api/control/resume` unlinks it — never a queued command) |
 | `skip_round` | flag file `control/skip_round` | dashboard / CLI | `claim_skip_round` at the top of `evolve_once` | round aborts cleanly, exactly like a wall-clock budget cut; a *between-rounds* stale skip is drained as a no-op |
-| `kill_runs/<run_id>` | one file per target under `control/kill_runs/` | dashboard POST `/api/control/kill/:run_id`; ALSO the Python parent writes here via `request_worker_kill` | the **Rust supervisor's** runs loop — not the orchestrator | the single-escalator kill handshake (see 08-supervisor.md §"The kill-request single-escalator handshake"); the supervisor clears the marker after escalating |
+| `kill_runs/<run_id>` | one file per target under `control/kill_runs/` | dashboard POST `/api/control/kill/:run_id`; ALSO the Python parent writes here via `request_worker_kill` | the **Rust supervisor's** runs loop — not the orchestrator | the single-escalator kill handshake (see 08-supervisor.md §8.10); the supervisor clears the marker after escalating |
 | `promote/<gen_id>` / `reject/<gen_id>` | one file per target | dashboard / CLI | `claim_gate_override` at the gate (gauntlet) / `claim_field_gate_overrides` (field structures) | overrides the gate's verdict for the *matching* in-flight generation; recorded explicitly as an operator override in the OutcomeRecord/journal, never silently |
 | `rubric_replacement.txt` | one payload file whose body IS the new brief text | dashboard / CLI | `claim_rubric_replacement` between rounds | a contract edit — the payload is written to the live brief and contract-hash auto-epoching rolls the epoch |
 
@@ -1029,8 +1033,9 @@ Also in this package: `zicato.runtime.channel.CommandQueue` — the
 generalised many-writer/claim-once queue built on `atomic_claim`, with
 `pending/` and `archive/` prefixes. The directory-tree control protocol above
 predates it; new producer-consumer channels should use `CommandQueue` or
-`EventLog` (`channel.py` is Phase 1 of RUNTIME-V2 and exists precisely so
-nobody hand-rolls a new file protocol).
+`EventLog` (`channel.py` is the generalised channel layer
+`docs/design/RUNTIME-V2.md` specifies, and exists so nobody hand-rolls a new
+file protocol).
 
 ---
 
@@ -1039,8 +1044,8 @@ nobody hand-rolls a new file protocol).
 `src/zicato/epoch/round_log.py` defines the ONE durable, replayable record of
 an evolve round: a typed, sequenced JSONL log at
 `epochs/{epoch}/rounds/{round}/round_log.jsonl`, plus the fold that reduces
-it to a `RoundRecord`. It lives under `epochs/` — not `runtime/` — precisely
-so it survives crashes and resume (§7.2's placement rule).
+it to a `RoundRecord`. It lives under `epochs/` rather than `runtime/`, so it
+survives crashes and resume (§7.2's placement rule).
 
 ### 7.10.1 Event schema and `seq`
 
@@ -1056,18 +1061,20 @@ keyed by its `TYPE` wire token:
 | Wire token | Dataclass | Carries |
 |---|---|---|
 | `round_opened` | `RoundOpened` | `contract_hash` |
-| `proposal_attempted` | `ProposalAttempted` | `errors` tuple (empty on success) |
-| `candidate_sampled` | `CandidateSampled` | `i`, `n`, `revise` |
+| `proposal_attempted` | `ProposalAttempted` | `errors` tuple (empty on success), `slot_index` (the best-of-N slate slot; `None` off the slate) |
+| `candidate_sampled` | `CandidateSampled` | `i`, `n`, `revise`, `recombined` |
 | `candidate_screened` | `CandidateScreened` | `index`, `vetoed`, `confirmed`, counts-only `screen_summary`, `revise` |
 | `critique_selected` | `CritiqueSelected` | `index`, `reason`, `slate` (both transports), `rationale` (when a critic chose) |
 | `experiment_minted` | `ExperimentMinted` | `experiment_id` |
 | `patches_applied` | `PatchesApplied` | `generation_id` |
+| `harness_loaded` | `HarnessLoaded` | `generation_id`, `entrypoint_file` (snapshot-relative), `trees_verified`, `trees_never_imported` |
 | `validation_failed` | `ValidationFailed` | `findings` tuple |
 | `unit_completed` | `UnitCompleted` | `entry_id`, `replicate`, `side` |
-| `gate_evaluated` | `GateEvaluated` | `rule_fired`, `decision` |
+| `gate_evaluated` | `GateEvaluated` | `rule_fired`, `decision`, and the gate's continuous axis — `champion_scalar`, `challenger_scalar`, `margin_required` (each `None` when the caller supplied none), plus `attributable_regressions` when non-empty |
 | `holdout_released` | `HoldoutReleased` | `confirmed` |
 | `evidence_replicated` | `EvidenceReplicated` | `ci_state` trace row |
 | `decision_recorded` | `DecisionRecorded` | `decision`, `provenance` dict |
+| `frontier_updated` | `FrontierUpdated` | `admitted`, `retired`, `size` — emitted only when the epoch's Pareto record moved |
 | `round_closed` | `RoundClosed` | — |
 
 Forward compatibility is built into the decoder: an unknown wire token reads
@@ -1086,7 +1093,7 @@ than by guessing from their position in the file.
 
 It names exactly two coordinates: `generation_id`, the challenger the event
 belongs to, and `step`, the lifecycle step. Every other coordinate travels in
-an open `attributes` map — today the duel's `matchup_id` and
+an open `attributes` map — the duel's `matchup_id` and
 `opponent_generation_id` — which is the extension point that lets a newer
 emitter add a coordinate without a schema change, and which an older reader
 preserves rather than drops. When a later reader names one of those
@@ -1135,8 +1142,8 @@ Three rules keep the envelope honest:
 > not a coordinate either: a record's round is the `rounds/{round}/` path it
 > was read from, which no writer can contradict.
 
-Legacy records predating the envelope decode to the empty scope, so their
-events simply cannot be attributed more precisely than the record permits.
+A record whose writer emitted no scope decodes to the empty scope, so its
+events carry no challenger and no step.
 
 ### 7.10.3 Torn-tail truncation on the write path
 
@@ -1175,11 +1182,12 @@ the evidence trail, and the terminal decision + provenance.
 ### 7.10.5 Emission is best-effort — the never-fail-a-round rule
 
 The orchestrator emits through `_RoundLogEmitter`
-(`src/zicato/evolve/round_reporting.py`), and its posture is invariant D11:
+(`src/zicato/evolve/round_reporting.py`), and its posture is
+round-log-emission-is-best-effort (D11):
 
 ```python
 class _RoundLogEmitter:
-    """Best-effort appender onto one round's durable RoundLog (WS8).
+    """Best-effort appender onto one round's durable RoundLog.
 
     A STORAGE failure must never fail a round — the live index dual-write
     (:func:`_ingest_experiment_into_index`) is the precedent: the canonical
@@ -1243,8 +1251,8 @@ The semantics, spelled out:
 - **Anything else ⇒ `RecordFormatError`** — the record was written by an
   incompatible (likely newer) zicato; refusing beats silently misreading a
   shape this build cannot promise to interpret (invariant D12).
-- **There are NO migration shims.** Bumping the constant is a deliberate
-  format break, not a routine version tick.
+- **There are NO migration shims.** Bumping the constant is a format break by
+  design rather than a routine version tick.
 
 The same refuse-on-newer stance appears twice more in the system, one per
 derived store: `IndexSchemaNewerError` for `index.db` (§7.1.1 — an older
@@ -1255,8 +1263,8 @@ dataclass fields get defaults, serde fields get `#[serde(default)]`, JSONL
 event payloads tolerate unknown keys.
 
 > ✅ ALWAYS prefer an additive, defaulted field over a `format_version` bump.
-> The bump exists for the day a shape genuinely cannot be read by an old
-> reader — it is the emergency brake, not the turn signal.
+> The bump exists for the day an older reader cannot read a shape at all;
+> reserve it for that.
 
 ---
 
@@ -1279,13 +1287,14 @@ worker crash, a prepare failure, or an unreadable result. A cleanly-reduced
 run (empty/`None` cause) is never one.
 
 **Enforcement point.** After the tournament settles in `evolve_once`
-(`src/zicato/orchestrator.py`): `_count_infra_aborted_runs(tournament_result)`
+(`src/zicato/evolve/decision_support.py`):
+`_count_infra_aborted_runs(tournament_result)`
 is compared against the threshold, and on a trip the round is settled by
 `_defer_round_infra_outage` with decision `DEFERRED_INFRA_DECISION`
 (`"deferred_infra"`).
 
-**What the deferral deliberately does NOT do** — this is the resume
-interaction, and it is load-bearing:
+**What the deferral does NOT do** — this is the resume interaction, and it is
+load-bearing:
 
 ```python
     Deliberately does NOT: cache either side's ``gen_score.json`` (a
@@ -1298,7 +1307,7 @@ interaction, and it is load-bearing:
     ``loss.json`` the round resumes in place (the cache HITs the done
     units), with none it discards cleanly and re-proposes.
 ```
-— `src/zicato/orchestrator.py`, `_defer_round_infra_outage`
+— `src/zicato/evolve/decision_support.py`, `_defer_round_infra_outage`
 
 So a deferred round costs almost nothing to retry: the next `evolve` start
 (or the loop's own continuation) flows through §7.8's table, cache-hits every
@@ -1408,7 +1417,7 @@ should *surface* the field (on `/statusz` or an API payload), add an
 into the route/statusz view — and remember the heartbeat-ts lesson: when a
 payload's *shape or semantics* change (not just an addition), the Python
 service and the Rust route must change in the same commit, or the two
-dashboards skew (see 08-supervisor.md §"When a Python payload change
+dashboards skew (see 08-supervisor.md §8.12, "When a Python payload change
 requires Rust parity").
 
 **Step 4 — Dashboard readback.** The Python dashboard's runtime view reads
@@ -1418,18 +1427,18 @@ Surface the field there with ONE spelling — the schema clean-break rule: one
 spelling per field across every payload, no alias coalescing on the client
 (the JS contracts are documented in
 `src/zicato/dashboard/static/js/CONTRACTS.md`). If the frontend renders it,
-add the node-suite assertion (11-testing.md §"Node suite conventions") that a
+add the node-suite assertion (11-testing.md §11.9) that a
 no-op beat does not churn DOM for it.
 
-**Step 5 — Golden / parity impact.** Runtime state is deliberately masked or
-absent from most goldens (timestamps are normalized to `<TS>` by
+**Step 5 — Golden / parity impact.** Runtime state is masked or absent by
+design from most goldens (timestamps are normalized to `<TS>` by
 `tools/parity/lib/normalize.py`), but check anyway:
 
 - if any dashboard payload fixture in `tests/` or
   `src/zicato/dashboard/static/test/` pins the heartbeat shape, extend it
   with the canonical spelling (never weaken an existing assertion);
 - run the parity harness — a new field that leaks into a captured surface
-  reds MOCK-GOLDEN, and that red is information, not noise.
+  reds MOCK-GOLDEN, and that red is information rather than noise.
 
 **Step 6 — Tests.** Round-trip test in `tests/` (write via
 `write_heartbeat`, read via `read_heartbeat`, assert the field; then read a
@@ -1481,7 +1490,7 @@ to `__all__`. Miss the first and the emitter silently drops your token
 typed consumer.
 
 **Step 3 — Emitter token.** Emission goes through the best-effort emitter —
-one call at the decision site in `src/zicato/orchestrator.py` (or via the
+one call at the decision site under `src/zicato/evolve/` (or via the
 proposer-side `round_event_emitter` callback if it originates in the
 proposer). The emitter takes THREE arguments: the wire token, the event's
 payload fields, and the event's optional plan `scope`:
@@ -1515,7 +1524,7 @@ never emitted it.
 **Step 4 — Fold.** Extend `fold_round_record`: add an accumulator variable,
 an `elif isinstance(event, PlaceboDrawn):` branch, and (if consumers need
 it) a field on `RoundRecord` — with a default, so an old log folds into the
-new record shape unchanged. Decide deliberately whether the field is
+new record shape unchanged. Decide explicitly whether the field is
 last-write-wins (like `decision`) or a trail (like `evidence_trail`), and
 say which in the docstring.
 
@@ -1531,7 +1540,7 @@ following the file's existing patterns:
   `RoundRecord` field, and a log WITHOUT it folds to the default;
 - if ordering relative to existing events matters to a consumer (e.g. it
   must land before `decision_recorded`), pin that with an emission-order
-  test at the orchestrator seam, not just a fold test.
+  test at the orchestrator seam rather than only a fold test.
 
 **Verify**
 

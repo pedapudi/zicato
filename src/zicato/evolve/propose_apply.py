@@ -82,7 +82,7 @@ def _short_reject_reason(attempts: list[str]) -> str:
     """Condense a proposer's attempt log into one short tracker reason.
 
     The proposer records one message per failed attempt (empty response /
-    invalid JSON / post-apply validation / mutation_id no longer resolves
+    invalid JSON / post-apply validation / mutation_id fails to resolve
     / forbidden-id violation). For the dashboard's proposing-step tracker
     we want a single short string, so take the LAST attempt's message
     (the final reason the proposer gave up) and trim it to a hovercard
@@ -140,7 +140,7 @@ async def _propose_child(
     the authoritative birth round the dashboard's round-grouping and the
     journal read (issue #16); the proposer's default is round 0.
 
-    ``round_emitter`` (WS8, best-effort) traces the propose step onto the
+    ``round_emitter`` (best-effort) traces the propose step onto the
     round's durable event log: the emitter callable rides
     ``ProposerContext.round_event_emitter`` so the best-of-N wrapper can
     emit ``candidate_sampled`` / ``critique_selected`` without importing the
@@ -258,10 +258,10 @@ async def _propose_and_apply_challenger(
     when the proposer exhausts its retry budget, together with a structured
     field-status record for the dashboard's proposing-step tracker. The
     ``reason`` is the same short string the evolve log carries (empty
-    response / invalid JSON / post-apply validation / mutation_id no longer
-    resolves); ``attempt_reasons`` is the FULL per-attempt failure list off
+    response / invalid JSON / post-apply validation / mutation_id fails to
+    resolve); ``attempt_reasons`` is the FULL per-attempt failure list off
     :attr:`ProposerError.attempts` (so a ``file_findability``-style
-    validation rejection is plainly visible on the dashboard, not just
+    validation rejection is plainly visible on the dashboard, rather than
     condensed to one line); ``attempts`` is its length; ``hypothesis`` is
     the one-line core idea when the challenger applies cleanly. A rejected
     challenger is thus legible on the dashboard rather than silently
@@ -331,7 +331,7 @@ async def _propose_and_apply_challenger(
 
     # The post-apply validation hook — the SAME shared
     # ``build_post_apply_validator`` (``zicato.evolve.round``) the gauntlet
-    # path uses; the previously-inlined closure was byte-identical.
+    # path uses, so both paths validate a child tree identically.
     _validate = build_post_apply_validator(
         genstore=genstore,
         epoch_id=epoch_id,
@@ -342,7 +342,7 @@ async def _propose_and_apply_challenger(
         round_index=round_index,
         last_child_snapshot=last_child_snapshot,
     )
-    # WS-CONC: per-slot scratch-validator factory (see the gauntlet path). The
+    # The per-slot scratch-validator factory (see the gauntlet path). The
     # field proposes challengers sequentially — sibling-conditioning is an
     # intentional diversity property — but each challenger's best-of-N slate
     # still gathers internally, so every slate slot needs its own scratch tree.
@@ -416,8 +416,8 @@ async def _propose_and_apply_challenger(
         )
         # Carry the FULL per-attempt failure list (parse error / validation
         # error WITH its exact message / post-apply error) so the dashboard
-        # can render every retry's specific reason, not just the condensed
-        # one-liner. Each entry is trimmed for legibility but kept distinct.
+        # can render every retry's specific reason rather than only the
+        # condensed one-liner. Each entry is trimmed for legibility but kept distinct.
         attempt_reasons = [_trim_reason(a) for a in exc.attempts]
         rejected = {
             "generation_id": next_id,
@@ -453,16 +453,16 @@ async def _propose_and_apply_challenger(
         round_index=round_index,
     )
     # Append the challenger to lineage.json AT CREATION with its birth
-    # round_index — not only at round settle. Every queryable store
-    # (lineage.json, the index, CLI status, external tooling) must reflect
-    # the in-flight round continuously, not just the last settled one
-    # (issue #16). The settle-time append_to_lineage upserts the same node
+    # round_index, rather than waiting for round settle. Every queryable
+    # store (lineage.json, the index, CLI status, external tooling) must
+    # reflect the in-flight round continuously rather than only the last
+    # settled one (issue #16). The settle-time append_to_lineage upserts the same node
     # to its final promoted/rejected state; append_to_lineage is an
     # idempotent update-in-place that preserves round_index, so the
     # creation-time write and the settle-time write compose cleanly.
     #
-    # The creation-time write is PENDING (promoted=null), NOT a dead branch
-    # (promoted=False). The challenger has applied a snapshot but has not
+    # The creation-time write is PENDING (promoted=null) rather than a dead
+    # branch (promoted=False). The challenger has applied a snapshot but has not
     # been crowned or cut — it is still racing. ``promoted=False`` reads as
     # REJECTED, so a False default would render an in-flight racer as a dead
     # branch on /api/lineage while it is mid-tournament. Pending → null →
@@ -476,7 +476,8 @@ async def _propose_and_apply_challenger(
         "attempts": 1,
         "attempt_reasons": [],
         # The proposer's hypothesis summary so the dashboard reads WHAT a
-        # successful challenger proposes, not just that it applied. Trimmed
+        # successful challenger proposes rather than only that it applied.
+        # Trimmed
         # to a tracker-friendly one line.
         "hypothesis": _trim_reason(experiment.hypothesis.core_idea),
         "seed": seed,
@@ -571,11 +572,12 @@ async def _maybe_run_placebo_arm_gauntlet(
 ) -> None:
     """Run the opt-in placebo duel after a settled gauntlet round.
 
-    OVERFITTING.md #7 on the single-challenger path: when the contract
-    sets ``overfitting.random_baseline_every_n`` and this round's
+    The random-baseline sanity check (OVERFITTING.md §12 #7) on the
+    single-challenger path: when the contract sets
+    ``overfitting.random_baseline_every_n`` and this round's
     epoch-cumulative number is a cadence tick, one EXTRA scheduled duel
     runs after the round — champion vs a semantics-preserving no-op copy
-    of itself (id ``{vN}-placebo``, deliberately non-``vN`` so round
+    of itself (id ``{vN}-placebo``, kept off the ``vN`` sequence so round
     numbering / id minting are untouched). The duel goes through the
     unchanged runner + gate; its outcome persists to ``experiment.json``
     (before the round's health assessment reads it) and to lineage as a
@@ -643,7 +645,7 @@ async def _maybe_run_placebo_arm_gauntlet(
         _ingest_experiment_into_index(workspace_root, epoch_id, placebo_id)
         # Lineage: ALWAYS a dead branch. Even a (pathological) promoted
         # verdict never advances the champion pointer — the arm measures
-        # the gate; the alarm is the health finding, not a crowning.
+        # the gate; the alarm is the health finding rather than a crowning.
         append_to_lineage(
             workspace_root,
             epoch_id,
@@ -676,8 +678,8 @@ def _diversity_signature(experiment: Experiment) -> tuple[frozenset[str], str]:
     N distinct experiments, wasting tournament compute on duplicates. The
     signature is the *declared* targeted mutation-point id-SET (order-
     insensitive) joined with a whitespace/-case-normalized core idea, so a
-    duplicate is detected by what the hypothesis TOUCHES and SAYS, not by
-    incidental ordering or capitalisation.
+    duplicate is detected by what the hypothesis TOUCHES and SAYS rather
+    than by incidental ordering or capitalisation.
     """
     ids = frozenset(experiment.hypothesis.modulating)
     core = " ".join(experiment.hypothesis.core_idea.split()).casefold()
@@ -693,7 +695,7 @@ def _duplicates_inflight_sibling(
     challenger whose ``modulating`` id-set AND core idea both match a sibling
     already minted THIS round is a duplicate that collapses the field, so the
     caller soft-rejects it. A challenger that touches the same ids but with a
-    genuinely different idea (or the same idea on different ids) is NOT a
+    different idea (or the same idea on different ids) is NOT a
     duplicate — it is a legitimately distinct experiment and is kept. An empty
     ``modulating`` set never collapses the field (there is nothing to
     duplicate), so it is never rejected on this basis.
@@ -751,7 +753,7 @@ def _mint_challenger_field(
 
     The field-diversity DECISION separated from its persistence I/O
     (FUNCTIONALITY-RECOMMENDATIONS.md §4.3 / EXPERIMENT-MEMORY.md §2.2), so
-    the previously e2e-only branches are unit-testable:
+    each branch below is unit-testable:
 
     1. An exact duplicate of an already-minted in-flight sibling (same
        modulating id-set AND core idea) collapses the field ⇒ soft-reject.
