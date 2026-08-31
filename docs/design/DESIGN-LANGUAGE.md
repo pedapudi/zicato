@@ -9,9 +9,9 @@ interface — purely from this document and reproduce the same look.
 
 The system ships in the Console dashboard, the sole front end. The token sheet
 is
-[`console4.css`](../../src/zicato/dashboard/static/css/variants/T/console4.css);
+[`console.css`](../../src/zicato/dashboard/static/css/console.css);
 the figure language is
-[`svg.js`](../../src/zicato/dashboard/static/js/variants/T/svg.js); the chrome
+[`svg.js`](../../src/zicato/dashboard/static/js/svg.js); the chrome
 and component vocabulary are in `shell.js`, `ui.js` and `views/**`. Where this
 document and any source disagree, **the code is authoritative** — re-grep and
 verify before treating a value here as current.
@@ -156,7 +156,7 @@ gogh-co.github.io/Gogh. One principled rule maps each onto the role contract:
 `caution ← yellow`, and `accent ← cyan`. Where a palette's cyan is a
 low-contrast neutral, `accent` takes its blue instead, as in Belafonte and
 Paper. A few accents and cautions sit off
-the source palette for contrast; see the comments in `console4.css`
+the source palette for contrast; see the comments in `console.css`
 §"Gogh palettes".
 
 ### 2.3 Derived colours
@@ -338,7 +338,7 @@ Sticky, blurred, hairline-bottomed (`console4.css` L1274; assembled in
 7. **`.dt-scale-pill`** — the page-scale slider (§4.4).
 8. **`.dt-status`** — the status pill (§4.5).
 
-> **Note — there is no command palette.** Nothing under `js/variants/T/**`
+> **Note — there is no command palette.** Nothing under `static/js/**`
 > implements one. Navigation is via the tree sidebar
 > (`tree.js`), the breadcrumbs, and the `↑ up` control. If you add a palette,
 > dock it from the top bar and theme it with the dropdown tokens (`.dt-cd-list`
@@ -382,7 +382,7 @@ header rather than the top bar.
 
 This is the distinctive part — the conventions that let you draw a **new** figure
 (an execution timeline, a Gantt, a flow) in-language. Every figure is built in
-[`svg.js`](../../src/zicato/dashboard/static/js/variants/T/svg.js) with a tiny
+[`svg.js`](../../src/zicato/dashboard/static/js/svg.js) with a tiny
 dependency-free helper layer (`svgEl`, `scale`, `extent`, `fmt`).
 
 ### 5.1 Stroke & ink conventions
@@ -693,7 +693,7 @@ re-dispatch wiping and rebuilding a panel every tick, flashing the screen, losin
 scroll position, and destroying hovercard/focus state.
 
 The mechanism is `gatedSwap(host, digest, build)` in
-[`ui.js` L19](../../src/zicato/dashboard/static/js/variants/T/ui.js):
+[`ui.js` L81](../../src/zicato/dashboard/static/js/ui.js):
 
 ```js
 export function gatedSwap(host, digest, build) {

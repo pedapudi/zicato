@@ -15,9 +15,9 @@
 > separate OS processes), 07-runtime-and-durability.md §7.1 (files
 > canonical / index derived), §7.6 (the runtime state files this layer
 > reads), §7.10 (the RoundLog whose fold the round timeline renders),
-> 08-supervisor.md §"The read-only SQLite discipline" (the Rust twin of
+> 08-supervisor.md §8.9 (the Rust twin of
 > every reader here). 04-evaluation-statistics.md §5
-> and §"The noise floor" ground the uncertainty-honest verdicts of §9.8.
+> and §3 ground the uncertainty-honest verdicts of §9.8.
 >
 > **Invariants introduced in this chapter.** Each is load-bearing: a violation
 > is a correctness or data-integrity bug rather than a style question. The ID is
@@ -205,7 +205,7 @@ def _current_champion(experiments: list[dict[str, Any]]) -> str | None:
 > scan LOOKS correct in every single-promotion fixture. Bug #4 only surfaces
 > on a multi-promotion epoch — which is exactly the epoch an operator cares
 > about. A regression test for a champion-selection change MUST use a
-> two-promotion lineage (see 11-testing.md §"Write a regression test"), and
+> two-promotion lineage (see 11-testing.md §11.15), and
 > when the two promotions are SIBLINGS the head is not derivable from the
 > lineage flags at all — it is the one the runner recorded
 > (`src/zicato/query/promoted_head.py`; the fixture is
@@ -1472,7 +1472,7 @@ mini-apps":
 > inline sentence; evidence became inline x-ray links; metadata collapsed to a
 > caption; and the ONE surviving pill is the adjudication verdict. Nav rode the
 > routes + tree, never a lens-local rail. See
-> `docs/design/CONSOLE-DESIGN-LANGUAGE.md` and BOARD-REFLECTION.md §"UI language".
+> `docs/design/CONSOLE-DESIGN-LANGUAGE.md` and BOARD-REFLECTION.md §"UI — the Instrument lens".
 
 ---
 
@@ -2333,12 +2333,12 @@ cargo test -p zicato-supervisor                # Rust parity, if applicable
   every reader degrades on a missing/stale index); §7.6 — the runtime state
   files `build_snapshot` reads; §7.9 — the control protocol the POST
   endpoints write into; §7.10 — the RoundLog fold behind the round timeline.
-- 08-supervisor.md §"The read-only SQLite discipline" — the Rust twin of
-  every reader here; §"When a Python payload change requires Rust parity" —
-  the reciprocal of the null-degrade and clean-break rules; §"Warn-only heartbeat" — the seq-vs-timestamp
+- 08-supervisor.md §8.9 — the Rust twin of
+  every reader here; §8.12 —
+  the reciprocal of the null-degrade and clean-break rules; §8.3 — the seq-vs-timestamp
   liveness the four run-states mirror.
 - 04-evaluation-statistics.md §4 — where the measured A/A
-  floor §9.8 reads comes from; §"Train/holdout split" — the board-status
+  floor §9.8 reads comes from; §5 — the board-status
   surface (`compute_board_split` / `boardStatusDigest`).
 - 05-proposer.md §5.7 — the round-log vocabulary the proposing tracker
   renders; §5.8.6 — the banding the dashboard must not un-band.
@@ -2346,7 +2346,7 @@ cargo test -p zicato-supervisor                # Rust parity, if applicable
   and `deciding_rule` come from before the readers join them.
 - 11-testing.md §11.9 — the digest / no-op / DOM-node-identity
   discipline as a test contract; §"The parity gates" — MOCK-GOLDEN /
-  REINDEX-DUMP; §"The import contracts" — the query-stays-dashboard-free pin.
+  REINDEX-DUMP; §"The seven import contracts" — the query-stays-dashboard-free pin.
 - 12-bug-casebook.md case 4 (the client champion scan) — the client champion-scan (first vs
   reigning) behind server authority.
 

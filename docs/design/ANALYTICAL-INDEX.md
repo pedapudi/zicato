@@ -14,7 +14,7 @@ operator's primary debugging interface and stays that way. The
 index is a sidecar: a cache that makes the cross-cutting views
 fast without ever becoming the source of truth.
 
-[RATIONALE.md §7](RATIONALE.md#7-why-filesystem-layout-not-sqlite)
+[RATIONALE.md §7](RATIONALE.md#7-why-the-canonical-layout-is-the-filesystem-rather-than-sqlite)
 sets the direction: when pattern queries become a bottleneck, add an
 index sidecar — one SQLite file used as a cache, regenerable from the
 filesystem — rather than making the filesystem layout itself the index.
@@ -585,7 +585,7 @@ full `zicato repair index`.
 
 ### 4.4 Reindex on resume
 
-The resume protocol (see [ROBUSTNESS.md §2.6](ROBUSTNESS.md#26-l6-atomic-writes-resume-markers)
+The resume protocol (see [ROBUSTNESS.md §2.6](ROBUSTNESS.md#26-atomic-writes-and-resume-markers)
 and [RUNTIME.md](RUNTIME.md)) brings the index current as one of
 its first steps when `zicato evolve` restarts after a crash.
 Because the index can only ever be *behind* the filesystem
@@ -1108,7 +1108,7 @@ Properties of the supervisor's read path:
 
 Why the supervisor reads the index rather than walking the
 filesystem itself: the supervisor is kept simple
-and LLM-free (see [ROBUSTNESS.md §2.4](ROBUSTNESS.md#24-l4-orchestrator-watchdog-rust-supervisor)).
+and LLM-free (see [ROBUSTNESS.md §2.4](ROBUSTNESS.md#24-the-orchestrator-watchdog-the-rust-supervisor)).
 Re-implementing the JSON-walk-and-aggregate logic in Rust would
 duplicate the projection rules that the Python dual-write
 already encodes, and the two would inevitably drift. Reading the
@@ -1121,7 +1121,7 @@ processes.
 
 | Topic | Document |
 |---|---|
-| The original "add an index sidecar" prediction | [RATIONALE.md §7](RATIONALE.md#7-why-filesystem-layout-not-sqlite) |
+| The original "add an index sidecar" prediction | [RATIONALE.md §7](RATIONALE.md#7-why-the-canonical-layout-is-the-filesystem-rather-than-sqlite) |
 | The storage concerns, from the storage side | [STORAGE.md §2](STORAGE.md#2-the-settled-mechanism-for-each-kind) |
 | Generation trees stored as git commits | [STORAGE.md](STORAGE.md) |
 | Event capture → `events.jsonl` (no SQLite) | [TELEMETRY.md](TELEMETRY.md) |

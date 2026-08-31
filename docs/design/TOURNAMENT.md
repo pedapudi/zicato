@@ -197,7 +197,7 @@ records (`isNonGauntlet` and the per-structure models in
 `src/zicato/dashboard/static/js/views/structure.js`, consumed by
 `views/epoch.js`). The persisted-record shape that
 backs the bracket is owned by the data-model design (see
-`TOURNAMENT-STRUCTURES.md §"interface from the data-model agent"`).
+`TOURNAMENT-STRUCTURES.md` §"The interface agreed with the data-model design").
 
 ## 2. The dashboard Tournament view
 

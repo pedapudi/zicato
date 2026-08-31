@@ -30,7 +30,7 @@ The defining constraint is that **the promote gate is unchanged.**
 test. The `SelectionStrategy` owns *scheduling + bracket bookkeeping +
 champion-advance + intra-tournament stopping*; it never re-decides a
 single duel. This keeps the per-task feasibility guarantee
-(`SELECTION.md §1.4`) intact for every structure.
+(`SELECTION.md` §1 #4) intact for every structure.
 
 ---
 

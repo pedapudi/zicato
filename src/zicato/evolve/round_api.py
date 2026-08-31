@@ -7,13 +7,7 @@ import logging
 import time  # noqa: F401  — kept as the ``orch.time`` clock seam (see __all__)
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
-
-if TYPE_CHECKING:
-    # Annotation-only — the proposer module is imported lazily inside
-    # ``evolve_once`` (see the module docstring on lazy imports), so its
-    # exception type is referenced here purely for type annotations.
-    pass
+from typing import Any
 
 log = logging.getLogger("zicato.orchestrator")
 

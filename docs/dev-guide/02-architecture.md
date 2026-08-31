@@ -479,7 +479,7 @@ every downstream proposer input flows through it:
 ```python
     # --- 4. Patterns ---
     # The proposer + detectors + loss summary see the TRAIN slice ONLY
-    # (OVERFITTING.md §11.1, §12 #1): the holdout's per-entry behaviour is
+    # (OVERFITTING.md §11 #1, §12 #1): the holdout's per-entry behaviour is
     # never surfaced to the proposer, so it cannot be memorized. When the
     # board is too small to split (the default-safe degrade), the train
     # slice IS the full board and every downstream artifact is byte-
@@ -1246,7 +1246,7 @@ scoring weights
 the weights must cross complete. A dropped field means the worker scores
 under defaults while the orchestrator believes otherwise (the
 `per_judge_weights` desync class; 03-contract-and-epochs.md
-§"serializer completeness").
+§"Serializer completeness").
 
 **Inside the worker** (`src/zicato/_tournament_worker.py`): rebuild the
 adapter and weights from the spec, attach the per-run goldfive

@@ -9,7 +9,7 @@ import time  # noqa: F401  — kept as the ``orch.time`` clock seam (see __all__
 from collections.abc import Awaitable, Callable
 from dataclasses import replace
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from zicato.core.types import (
     Generation,
@@ -29,12 +29,6 @@ from zicato.evolve.lifecycle_services import (
     _now_iso,
 )
 from zicato.util import best_effort
-
-if TYPE_CHECKING:
-    # Annotation-only — the proposer module is imported lazily inside
-    # ``evolve_once`` (see the module docstring on lazy imports), so its
-    # exception type is referenced here purely for type annotations.
-    pass
 
 log = logging.getLogger("zicato.orchestrator")
 

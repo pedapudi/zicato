@@ -292,7 +292,7 @@ Scorecard rates use the `dn-stat` idiom, redundancy and conflict read as one
 faint inline sentence, and evidence appears as inline x-ray links. Metadata
 collapses to a caption, the one pill is the adjudication verdict, and
 navigation rides the routes and the tree. The lens carries no internal rail and
-no per-row tags. See BOARD-REFLECTION.md §"UI language" and dev-guide ch. 09
+no per-row tags. See BOARD-REFLECTION.md §"UI — the Instrument lens" and dev-guide ch. 09
 §9.7.7.
 
 ## 5. Layout and interaction principles

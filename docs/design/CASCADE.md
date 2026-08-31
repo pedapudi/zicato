@@ -605,7 +605,7 @@ it reports the measurements.**
 The endorsed shape is **one nested frozen block** on the contract, layered
 under the existing `tournament_structure`, rather than a top-level structure
 or four independent knobs. It follows the omit-at-default discipline
-(`03-contract-and-epochs.md §"Omit-at-default"`; `SCORING.md §2.5`) so that
+(`03-contract-and-epochs.md` §"The omit-at-default discipline"; `SCORING.md §2.5`) so that
 **an absent `cascade` block canonicalizes byte-for-byte identically to
 today** and no existing epoch rolls:
 

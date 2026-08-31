@@ -270,7 +270,7 @@ with the gate's holdout logic). The exception is stated per type:
 suggestion's expected answer is also the family that will *judge* it, the
 eval is self-graded — the judge prefers its own family's output. The
 mitigation is the **independent-adjudicator discipline** (BOARD-REFLECTION.md
-§"adjudicator independence"): admission (§5) adjudicates a synthesised judge
+§"Scientific guardrails"): admission (§5) adjudicates a synthesised judge
 with a **different/stronger** model than the judge under test, reusing the
 `assert_distinct_callables` anti-collusion guard as the principle. A
 suggestion whose expected answer and judge share a model family is flagged in
@@ -380,7 +380,7 @@ known-answer test with zero live spend.
 - **The builder's suggestions inbox and the Instrument-lens links.** The board
   editor carries a **suggestions inbox**: the ranked suggestions as verdict-led
   list rows, the loop-health findings-panel treatment BOARD-REFLECTION.md
-  §"UI language" mandates rather than a bespoke card grid. Each row carries its
+  §"UI — the Instrument lens" mandates rather than a bespoke card grid. Each row carries its
   admission banner (flip rate and discrimination as `dn-stat` rather than
   chips) and a "stage to draft" affordance. The Instrument lens links a
   suggestion back to the x-ray of the episode that motivated it — the
@@ -392,7 +392,7 @@ known-answer test with zero live spend.
 **Reflection is operator-side (full visibility).** Everything eval synthesis
 produces — episodes, suggestions, admission statistics, the source spans — is
 **operator-facing only** and NEVER enters the proposer's prompt envelope
-(BOARD-REFLECTION.md §"the proposer envelope", inherited verbatim). A
+(BOARD-REFLECTION.md §"The proposer envelope", inherited verbatim). A
 proposer that could read a synthesised coverage entry before it was measured
 would optimise against the new channel — the collusion §4 defends against. If
 a future decision ever crosses synthesis signal to the proposer it MUST reuse

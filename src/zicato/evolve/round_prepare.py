@@ -20,9 +20,6 @@ from zicato.evolve.lifecycle_services import (
 from zicato.util import best_effort
 
 if TYPE_CHECKING:
-    # Annotation-only — the proposer module is imported lazily inside
-    # ``evolve_once`` (see the module docstring on lazy imports), so its
-    # exception type is referenced here purely for type annotations.
     from zicato.runtime.heartbeat import HeartbeatBeater
 
 log = logging.getLogger("zicato.orchestrator")

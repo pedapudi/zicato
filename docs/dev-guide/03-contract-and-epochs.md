@@ -1373,7 +1373,7 @@ screen is scaffolded and the process-exemplar channel is not.
          )
      ```
    - a knob that **widens what the proposer can see** of the board (the
-     overfitting boundary — 05-proposer.md §"The restricted-visibility envelope")
+     overfitting boundary — 05-proposer.md §5.8)
      must NOT be scaffolded. The precedent is `process_exemplars`: the candidate
      screen is evaluation-side, while exemplars widen the proposer-visibility
      channel, so the operator opts in under the harm-detection runbook in
@@ -1677,7 +1677,7 @@ Points where the trace changes under non-default inputs:
   never-hashed measurements of §3.6.
 - 05-proposer.md §5.3.8 (skills and `ProposerSpec` resolution) — the proposer component in
   full, and §"Why tools do NOT fold into the contract hash" (the registry
-  argument behind §3.2.6); §"The restricted-visibility envelope" — the
+  argument behind §3.2.6); §5.8 — the
   overfitting boundary the scaffold rule (§3.11 step 5) protects.
 - 06-tournament-and-selection.md §6.9 (the structure-independent walk) — how
   `tournament_structure` (a nested `ScoringWeights` field) folds into the

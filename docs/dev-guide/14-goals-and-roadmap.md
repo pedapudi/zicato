@@ -804,7 +804,7 @@ proposals demonstrably waste rounds vs a line search." A valid un-deferral
 proposal would:
 
 - **Quote that entry's reasoning** and confirm it still holds structurally (the applier's
-  `set_numeric` / `set_enum` ops exist — 05-proposer.md §"The patch-op table" —
+  `set_numeric` / `set_enum` ops exist — 05-proposer.md §5.4.3 —
   so the *mechanism* is there; only the *search* was deferred).
 - **Show a measurement of the trigger:** a shipped target whose mutation manifest is
   ≥ N numeric points (thresholds, budgets, weights as first-class mutation
@@ -1260,7 +1260,7 @@ refusal is a statement of what the system guarantees.
 |---|---|---|
 | add a scoring / gate / selection rule | 04-evaluation-statistics.md §13, 06-tournament-and-selection.md | this chapter §5.4 (measured acceptance) + §2.3 (the power oracle) |
 | add a contract knob | 03-contract-and-epochs.md §3.11 | §3.4 (omit-at-default) — a missed registration mass-rolls the fleet |
-| widen what the proposer sees | 05-proposer.md §"The restricted-visibility envelope" | this chapter §5.3 (design-first) — an overfitting-boundary change needs a note before code |
+| widen what the proposer sees | 05-proposer.md §5.8 | this chapter §5.3 (design-first) — an overfitting-boundary change needs a note before code |
 | touch storage / worktrees / caches | 07-runtime-and-durability.md | casebook cases 1, 2, 8, 9 (the identity-vs-location + slot-reuse classes) |
 | add a runtime tuning knob | 03-contract-and-epochs.md §3.12 | the choose-which table — a scoring rule mis-filed as runtime silently breaks comparability |
 | propose a live run | this chapter §3 (the item's preconditions) + §3.9 | the operator's per-run go-ahead — never an agent initiative |
