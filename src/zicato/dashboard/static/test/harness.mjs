@@ -351,7 +351,7 @@ async function _run() {
   // Drain the queue: each test file calls run() once, and the harness
   // module is shared across files when run-all imports them in turn —
   // so a run() consumes (and clears) only the tests registered since
-  // the previous run().
+  // the run() before it.
   const batch = _tests.splice(0, _tests.length);
   _fileCount += 1;
   let batchPassed = 0;

@@ -83,8 +83,8 @@ right, or to keep the proposer off a span you are changing by hand. The ids
 must match real mutation points — confirm them against the audit CLI:
 
 ```sh
-PY=/home/sunil/git/zicato/.venv/bin/python
-$PY -m zicato.cli mutations --workspace .zicato   # lists every mutable id
+PY=$ZICATO/.venv/bin/python   # ZICATO is your zicato checkout
+$PY -m zicato.cli inspect mutations --workspace .zicato   # lists every mutable id
 ```
 
 An empty `## Forbidden` (e.g. `None.`) is normal for a baseline epoch. As an
@@ -100,7 +100,7 @@ elsewhere.
 State any per-round edit budget and constraints in `## Goal` / `## Style`
 (e.g. "prefer one focused edit per round", "specialist instructions should be
 terse and imperative", "preserve double-backtick tool references so the LLM can
-resolve them to tool names"). The brief is advisory text to the proposer, not a
+resolve them to tool names"). The brief is advisory text to the proposer rather than a
 hard validator — be explicit and concrete.
 
 ## Workflow
@@ -113,7 +113,7 @@ hard validator — be explicit and concrete.
 
 ## A good brief
 
-- A `## Goal` that names the **dominant failure mode**, not a wish list.
+- A `## Goal` that names the **dominant failure mode** rather than a wish list.
 - `## Preferred edits` ranked by where signal actually lives (usually
   specialist instructions before tool descriptions).
 - A `## Forbidden` list that grows as the lineage matures.

@@ -22,7 +22,7 @@ export const CROWN = { current: '♛', former: '♔' };
 
 // Wire a mark with the styled, theme-aware HOVERCARD instead of a native,
 // off-brand <title> tooltip (positioned card on hover/focus; keyboard- and
-// reduced-motion-aware; a transient overlay, NOT part of the digest-gated
+// reduced-motion-aware; a transient overlay that sits outside the digest-gated
 function hov(node, tip) { attachHovercard(node, tip); return node; }
 
 // Wire a node as a pointer/keyboard activatable control (click + Enter/Space).
@@ -36,7 +36,7 @@ function clickable(node, fn) {
 }
 
 // A centered "no data yet" placeholder label appended to `parent` (an <svg>)
-// and returned — the ~15 identical empty-state blocks every figure shared (U5).
+// and returned — the one empty-state block every figure shares.
 function emptyState(parent, width, height, label) {
   const t = svgEl('text', { x: width / 2, y: height / 2, class: 'dn-empty-label', 'text-anchor': 'middle' });
   t.textContent = label;
@@ -69,7 +69,7 @@ export function scale(domain, range) {
   return (x) => r0 + ((x - d0) / span) * (r1 - r0);
 }
 
-// ── digestOpts — the SINGLE generic figure-opts digest (U5) ───────────
+// ── digestOpts — the single generic figure-opts digest ─────────────────
 //
 // The one content digest that replaced the per-figure hand-rolled `*Digest`
 // folds. Its rules are each LOAD-BEARING for the digest-gated no-op guarantee
@@ -84,7 +84,7 @@ export function scale(domain, range) {
 //     re-derived scalar wobbling in the 4th place) must NOT flip the digest.
 //   * NaN / undefined → null (a stable, JSON-safe sentinel; ±Infinity too).
 //   * `omit` names TOP-LEVEL opts keys to exclude (mode flags / volatile
-//     fields a given figure's fold deliberately ignored) so each wrapper keeps
+//     fields a given figure's fold ignores by design) so each wrapper keeps
 //     its own fold semantics.
 export function digestOpts(opts, omit = []) {
   const drop = new Set(Array.isArray(omit) ? omit : []);
@@ -318,7 +318,7 @@ function rungFieldLanes(rung, exclude) {
 // A rounded-corner orthogonal "pipe": a vertical drop from (x0,y0) to a
 // horizontal bus at busY, a run across to xt, then a short vertical into
 // (xt,yt). Corners are arc-rounded (radius rr) so the route reads as a calm
-// pipe, not a kinked wire. Direction-aware (target left OR right of source).
+// pipe rather than a kinked wire. Direction-aware (target left OR right of source).
 // Reproduces the study's `elbow()` (double-elim.html opt 7).
 export function elbowPath(x0, y0, xt, yt, busY, rr) {
   rr = rr || 6;
@@ -336,8 +336,8 @@ export function elbowPath(x0, y0, xt, yt, busY, rr) {
 }
 
 // A WB→LB demotion route that runs in a DEDICATED CHANNEL below the whole lane
-// stack — never on (or across) any competitor's lane row. The old elbow anchored
-// its horizontal bus a half-row beneath the SOURCE lane, so the run cut straight
+// stack — never on (or across) any competitor's lane row. Anchoring the
+// horizontal bus a half-row beneath the SOURCE lane would cut the run straight
 // across the rows (boxes / labels / dots) of every lane physically between the
 // WB column and the LB re-entry column; with two losers demoted from one node the
 // two buses straddled the intervening lanes and crossed each other. Here each
@@ -360,7 +360,7 @@ export function channelDropPath(x0, y0, xt, yt, chY, dx, rr) {
   const nx0 = x0 + dir * dx;        // nudged source vertical lane
   const nxt = xt - dir * dx;        // nudged target vertical lane
   // a short vertical stub off the dot before the jog, so the route leaves the
-  // node cleanly (and a same-column pair separates immediately, not at the dot).
+  // node cleanly (and a same-column pair separates immediately rather than at the dot).
   const stub = Math.min(6, Math.abs(chY - y0) * 0.25);
   const yA = y0 + stub;             // depth of the source stub before the jog
   const yB = yt + stub;             // height of the target stub before the rise
@@ -411,7 +411,7 @@ function laneProgressText(lane) {
 //               real deltas show as tiny wiggles, never a fabricated slope).
 //   o.markers — draw a dot per finite point (atop the line). Useful for
 //               FEW-points series, where a single segment reads as a skewed
-//               slash; a single point renders as a centred dot, not a line.
+//               slash; a single point renders as a centred dot rather than a line.
 //   o.responsive — OPT-IN aspect-locked sizing for a FULL-WIDTH hero panel (the
 //               cross-epoch trajectory). The dense, fixed-size call sites (fleet
 //               cards, board-status gap, dag sparks) are UNTOUCHED — they keep
@@ -860,7 +860,7 @@ export function sparkbar(opts) {
   // The verdict triangle as a FIXED-ASPECT (1:1 viewBox) overlay so it renders
   // as a true triangle — never sheared by the bars' non-uniform width stretch.
   // The bars SVG + the glyph SVG share an HTML positioning wrapper; the glyph
-  // pins to the top-right corner (where it sat inside the old stretched viewBox).
+  // pins to the top-right corner, the position it holds inside the stretched viewBox.
   const good = o.verdict === 'promoted';
   const r = 3.2;
   const tri = good ? `5,${5 - r} ${5 - r},${5 + r} ${5 + r},${5 + r}` : `5,${5 + r} ${5 - r},${5 - r} ${5 + r},${5 - r}`;
@@ -879,14 +879,15 @@ export function sparkbar(opts) {
 // as a shaded ground, and each mined episode as a bracketed overlay. It draws
 // STRAIGHT from the server-derived strip-model (§3.4) — every position/size is a
 // normalized [0,1] float the reader pre-computed; this figure never derives
-// domain math (DQ1). SHARED: the Traces view uses it at list + hero size, and the
-// suggestion provenance mini-strip (WS-SUGVIZ) calls it at `compact` card size.
+// domain math: the server computes and the client renders. SHARED: the Traces
+// view uses it at list + hero size, and the suggestion provenance mini-strip
+// calls it at `compact` card size.
 //
 // HONESTY (load-bearing, §1.1): the reduced DialectSignals carries aggregate
-// COUNTS, not per-event positions, so signal ticks render as a labelled cluster
-// evenly distributed by index in a DEDICATED lane — they do NOT claim a real
-// timeline moment. Each carries `positioned:false` from the model and is tagged
-// `data-positioned="false"` here, so a future positioned reducer is a deliberate
+// COUNTS rather than per-event positions, so signal ticks render as a labelled
+// cluster evenly distributed by index in a DEDICATED lane — they do NOT claim a
+// real timeline moment. Each carries `positioned:false` from the model and is
+// tagged `data-positioned="false"` here, so a positioned reducer would be a
 // change on both sides, never a silent lie.
 //
 // Colour is ONLY the design-language role tokens (§1.2): user/agent turns ride
@@ -1003,7 +1004,7 @@ export function trajectoryStrip(model, opts) {
 
   // ── the budget GROUND — a shaded region behind the lane whose fill ∝ the
   // fraction of the cost ceiling the trace reached; a crossed ceiling shades it
-  // fuller and flags `over`. A cost budget you can SEE, not read. ────────────
+  // fuller and flags `over`. The cost budget is shown rather than stated. ─────
   const b = m.budget || {};
   svg.appendChild(svgEl('rect', { x: pad, y: yLaneTop, width: innerW, height: dims.laneH, class: 'dn-strip-ground' }));
   if (b.shaded && isNum(b.fill) && b.fill > 0) {
@@ -1029,7 +1030,7 @@ export function trajectoryStrip(model, opts) {
     const x1 = pad + (isNum(k.x1) ? k.x1 : 0) * innerW;
     const span = Math.max(0, x1 - x0);
     // reserve the inter-mark GAP (≥1 px wherever the span allows it) so adjacent
-    // marks never touch and a run of turns reads as marks, not one slab; on an
+    // marks never touch and a run of turns reads as marks rather than one slab; on an
     // ultra-dense lane the gap degrades but the mark stays visible.
     const gap = Math.min(dims.gap, Math.max(0, span - MARK_MIN_W));
     const w = Math.max(MARK_MIN_W, span - gap);
@@ -1171,7 +1172,7 @@ export function valueBars(opts) {
     // value there overruns the 36px right gutter and clips the viewBox. When the
     // bar end lands in the right ~15% of the plot, right-anchor the value and
     // inset it just inside the bar end so it grows leftward and stays on-canvas.
-    // Shorter bars keep the value to the RIGHT of the bar, as before.
+    // A shorter bar keeps its value to the RIGHT of the bar.
     const plotEnd = w - 36;
     const inset = bx >= plotEnd - 0.15 * (plotEnd - x0);
     const vt = inset
@@ -1287,8 +1288,8 @@ export function pairedSlopegraph(opts) {
 // champion-gate keeps its seat treatment (ring + ♛ + name), reached by the
 // winner's spline. LIVE: an in-flight rung's entrant dots read neutral-pending
 // (or amber dn-proj when a server projection lands) + a thin per-lane "k/N
-// boards" progress sub-bar under the active dot — the same live idiom the band
-// funnel carried, in the new vocabulary.
+// boards" progress sub-bar under the active dot — the live idiom of the band
+// funnel, expressed in dots.
 //
 // opts (UNCHANGED contract): {
 //   rungs:[{label, competitors:[id], survivors:[id], cut:[id], board_fraction,
@@ -1533,7 +1534,7 @@ export function survivalFunnel(opts) {
 
   // a pending rung whose ONLY entrant is the excluded benchmark (the sole racer
   // heading into the gate) still signals "in flight" with a faint pending pip —
-  // the dot-idiom analogue of the old neutral pending band.
+  // the dot-idiom analogue of a neutral pending band.
   rungGeo.forEach((g) => {
     if (g.pending && g.E.length === 0) {
       svg.appendChild(hov(svgEl('circle', { cx: dotX(g.j), cy: midY, r: dotR, class: 'dn-funnel-dot dn-funnel-pending' }),
@@ -1691,9 +1692,9 @@ export function swissLadder(opts) {
   sHead.textContent = 'standings';
   svg.appendChild(sHead);
   const leaderId = standings.length ? String(standings[0].id) : null;
-  // distinguish the NEW champion (♛, accent) from the displaced incumbent
+  // distinguish the crowned champion (♛, accent) from the displaced incumbent
   // (♔ "former", dim). A bare round-leader gets ♔ only while no champion is
-  // crowned yet (live).
+  // crowned (live).
   const ladChampId = o.championId ? String(o.championId) : null;
   const ladBenchId = o.benchmarkId != null ? String(o.benchmarkId) : null;
   const ladFormerId = (ladChampId && ladBenchId && ladBenchId !== ladChampId) ? ladBenchId : null;
@@ -1793,14 +1794,14 @@ export function swissLadder(opts) {
 //     displaced incumbent (benchmark) reads CROWN.former.
 //   * a still-pending (live) leg is drawn dashed (the pending convention).
 //
-// Reads the SERVED elim model verbatim (DQ1: the server computes, the client
-// renders): `rounds` arrive PRE-SORTED (temporal WB → LB → GF) with a per-round
+// Reads the SERVED elim model verbatim — the server computes and the client
+// renders. `rounds` arrive PRE-SORTED (temporal WB → LB → GF) with a per-round
 // `bracket_side`, per-match `loser`, and duplicates already collapsed; the
 // per-generation states (played / advanced / lost / eliminated-vs-dropped /
 // side / LB entry / projected) arrive as the top-level `gen_states` fold
 // (`derive_elim_states`, mirrored in the Rust supervisor + the node mock).
-// The client-side re-sort, dedupe, elimination-vs-drop pass, and phantom-✕
-// guards that used to live here are DELETED — this figure is geometry only.
+// This figure holds no client-side re-sort, dedupe, elimination-versus-drop
+// pass, or phantom-✕ guard: it is geometry only.
 // `opts`:
 //   { rounds:[{label, bracket_side, matches:[{competitors, winner, loser,
 //       decision, pending, bye, projected}]}],
@@ -1900,7 +1901,7 @@ export function elimFlow(opts) {
   if (isDouble) for (const g of genState.values()) {
     const cols = [...g.played].sort((a, b) => a - b);
     for (const ci of cols) {
-      // a DROP is a non-terminal loss (served: lost here, not eliminated here).
+      // a DROP is a non-terminal loss (served as: lost here, still in play).
       const dropped = g.lostAt.has(ci) && g.eliminatedAt !== ci;
       if (!dropped) continue;
       const nextCi = cols.find((c) => c > ci);
@@ -2023,7 +2024,7 @@ export function elimFlow(opts) {
         + (m.delta != null ? ` · Δ ${fmtSigned(m.delta, 2)}` : '') + projTip;
       // an UNDECIDED (pending) match is the figure's primary in-flight signal:
       // the convergence node reads as "deciding" — slightly larger + a soft pulse
-      // (reduced-motion-safe) — since the lanes no longer draw a leg to the gate.
+      // (reduced-motion-safe), because no lane draws a leg to the gate.
       const node = svgEl('circle', { cx: x, cy: ymid, r: m.pending ? 3.2 : 3,
         class: 'dn-elimflow-convnode' + (m.pending ? ' dn-elimflow-deciding' : m.winner ? ' dn-elimflow-good' : '') + (projMatch ? ' dn-proj' : '') });
       svg.appendChild(hov(node, tip));
@@ -2046,8 +2047,8 @@ export function elimFlow(opts) {
       const pending = g.pendingAt.has(ci);
       const eliminated = g.eliminatedAt === ci;
       // a DROP: lost this column but plays again later (winners→losers second
-      // life) — not a terminal cut, not pending; its dot reads as a loss and a
-      // drop edge carries the lane into its next (losers'-bracket) column.
+      // life). It is neither a terminal cut nor pending: its dot reads as a loss
+      // and a drop edge carries the lane into its next (losers'-bracket) column.
       const dropped = g.lostAt.has(ci) && !eliminated;
       // the node dot at this round.
       const dotCls = 'dn-elimflow-dot ' + (eliminated || dropped ? 'dn-elimflow-bad' : advanced ? 'dn-elimflow-good' : 'dn-elimflow-pending');
@@ -2072,9 +2073,9 @@ export function elimFlow(opts) {
         //
         // LIVE-INITIALIZATION GAP: mid-tournament a lane can ADVANCE from a
         // non-final column while its NEXT match is not yet seeded into the
-        // bracket (nextCi null, not at the final column). Previously that drew
-        // NO segment, orphaning the dot so the lane read as "disconnected". We
-        // instead draw a short DASHED stub into the next column slot — "advanced,
+        // bracket (nextCi null, and not at the final column). Drawing no segment
+        // there would orphan the dot so the lane reads as "disconnected", so a
+        // short DASHED stub goes into the next column slot instead — "advanced,
         // awaiting its next match" — so the lane always connects forward.
         // FORWARD-EDGE COMMITMENT: a lane earns an edge TOWARD the outcome (the
         // next round / the champion-gate) only once it has actually ADVANCED
@@ -2510,7 +2511,7 @@ export function racingScalarTrack(opts) {
   // the FULL field of THIS rung: every lane racing it (all survivors), per the
   // shared contract — the union of live_progress keys ∪ competitors ∪
   // survivors/cut, minus the champion/benchmark (which defends at the gate). A
-  // rung with survivors v5 + v7 plots BOTH markers, not just the first matchup.
+  // rung with survivors v5 + v7 plots BOTH markers rather than the first matchup alone.
   const comps = rungFieldLanes(rung, benchId);
   const survSet = new Set((Array.isArray(rung.survivors) ? rung.survivors : []).map(String));
   const cutSet = new Set((Array.isArray(rung.cut) ? rung.cut : []).map(String));
@@ -2547,8 +2548,8 @@ export function racingScalarTrack(opts) {
 
   // NO-SCALAR SPREAD: a lane with no recoverable scalar (early in-flight, no
   // committed/delta/projected_scalar yet) must NOT pile at x=padL — it is SPREAD
-  // across the axis by its lane index so an entering rung reads as a field, not a
-  // stack. Once a projected/committed scalar arrives the marker positions by it.
+  // across the axis by its lane index so an entering rung reads as a field rather
+  // than a stack. Once a projected/committed scalar arrives the marker positions by it.
   const noScalar = marks.filter((m) => !isNum(m.v));
   const spreadX = (() => {
     const n = noScalar.length;
@@ -2686,8 +2687,8 @@ export function racingScalarTrack(opts) {
 
 // A stable digest of the racingScalarTrack model — changes ONLY when the visible
 // content does (so the digest-gated swap never re-renders on a no-op heartbeat).
-// A stable content digest of the racing model (U5: the generic digestOpts fold
-// — its 3dp number rounding subsumes the old per-scalar toFixed(3), so
+// A stable content digest of the racing model (the generic digestOpts fold,
+// whose 3dp number rounding covers every scalar, so
 // sub-precision projection jitter still does not flip the gate). Mode flags
 // (mini/responsive) + the hover callback are dropped so the hero mini and the
 // full figure gate on content alone.
@@ -2740,7 +2741,7 @@ export function gauntletFieldBars(opts) {
     if (c.lane && isNum(c.lane.projected_scalar)) return c.lane.projected_scalar;
     return null;
   };
-  // The SERVER outcome is authoritative (U5/DQ1): a challenger's cleared /
+  // The SERVER outcome is authoritative (the server computes and the client renders): a challenger's cleared /
   // failed / tied verdict is decided server-side against the gate, never
   // re-derived here. An absent outcome reads honestly as 'pending' (still on
   // boards / undecided) rather than a client guess vs champScalar.
@@ -2873,7 +2874,7 @@ export function gauntletFieldBars(opts) {
 }
 
 // A stable digest of the gauntletFieldBars model.
-// A stable content digest of the gauntlet field (U5: the generic digestOpts
+// A stable content digest of the gauntlet field (the generic digestOpts
 // fold). Mode flags + the hover callback are dropped so the hero mini and the
 // full figure gate on content alone.
 export function gauntletFieldBarsDigest(opts) {
@@ -2899,8 +2900,8 @@ export function gauntletFieldBarsDigest(opts) {
 // CONVERGENCE: a settled spoke renders byte-identically via the live or the
 // completed path.
 //
-// Reads the SERVED elim model verbatim (DQ1: the server computes, the client
-// renders) — the SAME served model elimFlow consumes, so a caller can swap
+// Reads the SERVED elim model verbatim — the server computes and the client
+// renders — the SAME served model elimFlow consumes, so a caller can swap
 // radial ↔ flow on the same payload. Rounds arrive PRE-SORTED with a per-round
 // `bracket_side`; the per-generation states (played / advanced / lost /
 // eliminated-vs-dropped / side / LB entry / projected) arrive as the top-level
@@ -2952,7 +2953,7 @@ export function elimRadial(opts) {
   }
   // per-generation live PROJECTED standing: the SERVED gen-state projection seeds
   // it; a pending match's own `projected` map (the live overlay the client stamps
-  // from SSE-fresh board progress — in-flight DECORATION, not re-derivation)
+  // from change-signal-fresh board progress — in-flight DECORATION rather than re-derivation)
   // refreshes it, since the runner can write a projection after the last publish.
   const projByGen = new Map();
   for (const gs of (Array.isArray(o.gen_states) ? o.gen_states : [])) {
@@ -3105,9 +3106,9 @@ export function elimRadial(opts) {
   // -a). BOTH endpoints sit EXACTLY on the outer node ring rr(0), so the connector
   // begins and ends ON a node — never out in empty space. Per-drop separation rides
   // the arc RADIUS (each successive drop nests a touch further in), NEVER the
-  // endpoints — so no stagger can drift an endpoint off its node. (The old code put
-  // the endpoints THEMSELVES on a staggered rim radius OUTSIDE the ring, so every
-  // arc past the first — and every arc in mini — began and ended at a radius where
+  // endpoints — so no stagger can drift an endpoint off its node. Putting the
+  // endpoints THEMSELVES on a staggered rim radius OUTSIDE the ring would make every
+  // arc past the first — and every arc in mini — begin and end at a radius where
   // no node exists: the connector floated, detached from the source and the target.)
   if (isDouble) {
     const nodeR = rr(0);   // the outer node ring — every spoke's outer (k=0) node
@@ -3121,7 +3122,7 @@ export function elimRadial(opts) {
       const [tx, ty] = pol(nodeR, a);        // target: EXACTLY the dropped lane's outer LB node
       // arcR == nodeR is the rim-hugging semicircle through the outward rim; a
       // per-drop increment flattens (nests) each further arc a touch inside so two
-      // drops never overlap — carried by the RADIUS, not the endpoints.
+      // drops never overlap — carried by the RADIUS rather than the endpoints.
       const arcR = nodeR + li * (mini ? 2 : 4); li++;
       // sweep to the OUTWARD side of the spoke: a downward chord (source upper →
       // target lower) hugs the rim on the right for a right-tilted spoke (cos a ≥ 0)
@@ -3152,7 +3153,7 @@ export function elimRadial(opts) {
   return svg;
 }
 
-// A stable content digest of the elimRadial model (U5: the generic digestOpts
+// A stable content digest of the elimRadial model (the generic digestOpts
 // fold — the same served model elimFlow gates on). Mode flags + the hover
 // callback are dropped so the hero mini and the full figure gate on content
 // alone; championId / benchmarkId / gateState / double / live / rounds /
@@ -3216,7 +3217,7 @@ export function radarSilhouette(opts) {
     svg.appendChild(svgEl('polygon', { points: pts, class: 'dn-radar-ring', fill: 'none' }));
   }
   // spokes + axis LABELS — render each axis's TEXT (opts.axes[].label) at the
-  // tip (the contract: the label, NOT an index 1..n), with the full label on
+  // tip (the contract names the label itself, never an index 1..n), with the full label on
   // hover. Long labels are TRUNCATED to a length that scales with the per-axis
   // angular budget, and labels near the top/bottom (where the radius runs out
   // before the next spoke) are ROTATED to follow the spoke so they don't overlap
@@ -3276,7 +3277,7 @@ export function radarSilhouette(opts) {
   // the BRADLEY–TERRY credible-interval BAND on an axis vertex (the scalar axis
   // carries `chalBand:{lo,hi}` in radius space) — a short radial whisker from the
   // inner to the outer credible radius along the spoke, so the candidate vertex
-  // reads as an interval, not a false point. Drawn UNDER the candidate polygon so
+  // reads as an interval rather than a false point. Drawn UNDER the candidate polygon so
   // the vertex dot still sits on top. Absent on every axis → byte-identical.
   axes.forEach((a, i) => {
     if (!a.chalBand || !isNum(a.chalBand.lo) || !isNum(a.chalBand.hi)) return;
@@ -3333,7 +3334,7 @@ export function radarSilhouette(opts) {
 }
 
 // A stable digest of the radarSilhouette model.
-// A stable content digest of the radar (U5: the generic digestOpts fold — 3dp
+// A stable content digest of the radar (the generic digestOpts fold — 3dp
 // rounding keeps a BT credible-interval tightening repainting while a no-op
 // beat stays byte-identical). `raw` (tooltip-only underlying values) + mode
 // flags + the hover callback are dropped.
@@ -3364,8 +3365,8 @@ export function sideBySideDiff(opts) {
   const body = el('div', { class: 'dn-sxs-body', role: 'list' });
   // Gutters count from the caller's first line number when it has one (the
   // patch diff's context expansion shows a slice of a file, so the gutter
-  // must read as the FILE's lines, not the slice's). Default 1 = the old
-  // span-relative numbering every other caller already gets.
+  // must read as the FILE's lines rather than the slice's). Default 1 gives the
+  // span-relative numbering every other caller gets.
   let ln = (Number.isFinite(o.leftStart) ? o.leftStart : 1) - 1;
   let rn = (Number.isFinite(o.rightStart) ? o.rightStart : 1) - 1;
   for (const r of rows) {
@@ -3540,7 +3541,7 @@ export function proposingTracker(opts) {
 // digest-gate the tracker swap (a no-op heartbeat writes ZERO DOM). Folds in
 // the attempt count + final reason so a slot transitioning proposing → retry
 // → settled re-stamps, but a steady no-op tick does not.
-// A stable content digest of the proposing field-status list (U5: digestOpts
+// A stable content digest of the proposing field-status list (digestOpts
 // over the normalized rows; the 'prop|' prefix is kept as the stable namespace).
 export function proposingDigest(fieldStatus) {
   const list = (Array.isArray(fieldStatus) ? fieldStatus : []).map((f) => f
@@ -3620,7 +3621,7 @@ export function diversityMatrix(opts) {
 // Digest for the diversity matrix — the membership (gid → sorted site ids) + the
 // highlighted pair, no floats / no timestamps. Empty (<2 members) → a stable
 // sentinel so the absent state is byte-identical beat-over-beat.
-// A stable content digest of the diversity matrix (U5: digestOpts over the
+// A stable content digest of the diversity matrix (digestOpts over the
 // NORMALIZED members — the < 2 collapse to the 'divmtx|none' sentinel is
 // load-bearing: fewer than two members is "no matrix", a single stable state).
 export function diversityMatrixDigest(opts) {
@@ -3793,7 +3794,7 @@ export function roundTimeline(opts) {
     // the GATE OUTCOME — promoted (merges onto the spine), held, or (in-flight)
     // PROPOSING: the field is still minting, so the gate has not decided yet.
     // The in-flight gate line carries the LIVE "N proposed · M applied" tally so
-    // the banner counts increment as the new round's field forms (issue #16).
+    // the banner counts increment as the round's field forms.
     if (r.inflight) {
       const proposed = r.challengers.length;
       const applied = r.challengers.filter((c) => c.status === 'applied').length;
@@ -3892,7 +3893,7 @@ export function waterfall(opts) {
       class: 'dn-waterfall-step', tabindex: o.onRound ? '0' : null,
       'aria-label': `Round ${s.round_index}: ` + (held ? 'champion held' : `${s.gen} promoted, Δ ${fmtSigned(s.delta, 1)}`),
     });
-    // the step bar: from the incoming floor DOWN to the new floor (a promotion);
+    // the step bar: from the incoming floor DOWN to the promoted floor;
     // a held round is a flat tick at the floor.
     if (!held && yFrom != null && yTo != null) {
       const yA = Math.min(yFrom, yTo);
@@ -4132,7 +4133,7 @@ export function metaLoopLedger(opts) {
     const improved = prevF == null ? true : (hasF && e.floor < prevF);
     const stepCls = open ? 'dn-metaledger-step-open'
       : improved ? 'dn-metaledger-step-good' : 'dn-metaledger-step-bad';
-    // riser from the previous held level to this one
+    // riser from the preceding held level to this one
     if (prevF != null && hasF) {
       svg.appendChild(svgEl('line', {
         x1: b.x0, y1: sy(prevF), x2: b.x0, y2: yy,
@@ -4345,7 +4346,7 @@ export function metaLoopLedger(opts) {
 // per-component change set (incl. proposer + structure). Two ledgers that
 // render byte-identically MUST produce the same digest — the live (open) and
 // settled (closed) paths included.
-// A stable content digest of the meta-loop ledger (U5: digestOpts over the
+// A stable content digest of the meta-loop ledger (digestOpts over the
 // NORMALIZED rows — the epoch_id filter + the absent-vs-empty collapse are
 // load-bearing: `{}` and `{epochs:[]}` must digest identically, and a
 // malformed `epochs` still yields a string).
@@ -4397,8 +4398,9 @@ export function calibrationTrend(opts) {
   const padX = 8;
   const padY = 8;
   // The `n_scored` caption gets its OWN gutter under the 0..1 band. Drawn at
-  // the frame's foot INSIDE the plot, a run of low fractions (the common case)
-  // struck straight through it. The plot loses the gutter, not the figure.
+  // the frame's foot INSIDE the plot, a run of low fractions — the common case —
+  // would strike straight through it. The gutter costs plot height rather than
+  // figure height.
   const capH = isNum(o.n_scored) ? 13 : 0;
   const plotB = H - padY - capH;   // the band's bottom edge (fraction 0)
   const svg = svgEl('svg', applyIntrinsic({
@@ -4411,7 +4413,7 @@ export function calibrationTrend(opts) {
     return emptyState(svg, W, H, 'no scored predictions yet');
   }
 
-  // the fraction band is a FIXED 0..1 (a calibration fraction, not a free scale)
+  // the fraction band is a FIXED 0..1 (a calibration fraction rather than a free scale)
   // so the line reads on an absolute "did the proposer call it" axis.
   const x = scale([0, Math.max(1, pts.length - 1)], [padX, W - padX]);
   const y = scale([0, 1], [plotB, padY]);
@@ -4497,8 +4499,8 @@ export function calibrationTrend(opts) {
 
   // THE SERVED READOUT: the latest scored fraction as an end label beside its
   // dot, and `n_scored` as the figure's caption ("N of M scored"). Both come
-  // straight off the payload — the figure was previously silent about the one
-  // number the payload names, and about how much of the lineage it rests on.
+  // straight off the payload, so the figure states the one number the payload
+  // names and how much of the lineage it rests on.
   if (isNum(latestFraction) && lastScoredI >= 0) {
     const lx = x(lastScoredI);
     const ly = y(Math.max(0, Math.min(1, latestFraction)));
@@ -4528,7 +4530,7 @@ export function calibrationTrend(opts) {
 // score_fraction, total_claims, decision). NO timestamps. Two trends that render
 // byte-identically MUST produce the same digest; a new scored generation (a
 // fraction moving past 2dp, a claim landing) flips it → repaint.
-// A stable content digest of the calibration trend (U5: digestOpts over the
+// A stable content digest of the calibration trend (digestOpts over the
 // NORMALIZED points — the generation_id filter + 3dp rounding keep sub-precision
 // score jitter from flipping the gate).
 export function calibrationTrendDigest(opts) {

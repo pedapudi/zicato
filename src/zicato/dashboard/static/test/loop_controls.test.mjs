@@ -1,9 +1,9 @@
-// test/loop_controls.test.mjs — the OPERATOR LOOP CONTROLS (WS4-A item 3).
+// test/loop_controls.test.mjs — the operator loop controls.
 //
 // The topbar pause/resume toggle + skip-round (shell.buildLoopControls) and
 // the per-run kill affordance on the live "what's running" rows
-// (live.killRunButton / live.runsByGeneration), all driving the previously-
-// dead postControl file-based control channel.
+// (live.killRunButton / live.runsByGeneration), all driving the postControl
+// file-based control channel.
 //
 // Pins:
 //   * the toggle REFLECTS `paused`: unpaused → "⏸ pause" fires onPause;

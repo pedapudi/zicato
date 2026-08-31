@@ -15,7 +15,7 @@
 //      pair of sparklines, with the reading (widening / stable) as a verdict.
 //
 // The panel prints FACTS at value weight and keeps every EXPLANATION one hover
-// away — the "?" mark (ui.js `moreMark`, the `#199` figCaption idiom) for the
+// away — the "?" mark (ui.js `moreMark`, the figCaption idiom) for the
 // where/when sentences and the gap explainer, a chip's own hovercard for the
 // board_meta wording. Six dim prose lines at one weight was a wall the eye
 // skipped; nothing was dropped, it moved behind the affordance.
@@ -161,7 +161,7 @@ function ladderModel(ep) {
 // record (from `#5`) MAY carry train_loss / holdout_loss / generalization_gap;
 // they are absent until the detector lands, so every read is type-guarded and
 // a record with neither loss contributes a null point (the sparkline draws a
-// gap, not a crash). Ordered by generation id for a stable trend.
+// gap rather than crashing). Ordered by generation id for a stable trend.
 function gapModel(ep) {
   const exps = Array.isArray(ep.experiments) ? ep.experiments : [];
   const points = [];
@@ -420,7 +420,7 @@ function ladderCard(ladder) {
 // 3 — GENERALIZATION-GAP TREND: train vs holdout loss across the lineage as a
 //     pair of sparklines. The numbers stay; what a widening gap MEANS collapses
 //     behind the "?" — the verdict line below already reports this run's
-//     reading, so the definition is reference, not news.
+//     reading, so the definition is reference material rather than news.
 function gapPanel(gap) {
   const wrap = el('div', { class: 'dn-bs-gap' });
   const head = el('div', { class: 'dn-bs-gap-head' }, [

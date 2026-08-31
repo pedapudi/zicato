@@ -1,9 +1,8 @@
-// test/variant_t_home_epoch.test.mjs — Variant T ("Console IV") unit tests:
-// Console IV round 7: the epoch-view round timeline (slim reel), compact
-// match cards on the generations page, and the density baseline.
+// test/variant_t_home_epoch.test.mjs — the epoch view's round timeline (the
+// slim reel), the compact match cards on the generations page, and the density
+// baseline.
 //
-// Split mechanically from the former variant_t.test.mjs (assertions
-// verbatim); shared fixtures + helpers live in ./fixtures.mjs.
+// Shared fixtures and helpers live in ./fixtures.mjs.
 
 import { installDom, test, run, assert, assertEqual, assertDeep, makeEvent } from './harness.mjs';
 
@@ -16,8 +15,8 @@ const {
 } = await import('./fixtures.mjs');
 
 // ====================================================================
-// Console IV folds (round 7): the SLIM REEL on the epoch view, the
-// compact MATCH CARDS on the generations page, and a DENSITY picker.
+// The SLIM REEL on the epoch view, the compact MATCH CARDS on the
+// generations page, and the DENSITY picker.
 // ====================================================================
 
 
@@ -36,7 +35,7 @@ test('epoch view: leads with the CHAMPION-SPINE ROUND TIMELINE (one episode per 
   // matchups fall under one round when there is no round_index stamp).
   const episodes = allByClass(host, 'dn-roundtl-ep');
   assert(episodes.length >= 1, 'the timeline renders ≥1 episode');
-  // the old reel + the lineage-bumps are GONE (subsumed by the timeline).
+  // the timeline subsumes the standalone reel and the lineage-bumps chart.
   assert(allByClass(host, 'tr-reel').length === 0, 'the old slim reel is GONE (subsumed by the timeline)');
   assert(allByClass(host, 'dn-bumps').length === 0, 'the old lineage-bumps chart is GONE');
   // the champion-loss annotation reads on the spine.
@@ -45,12 +44,12 @@ test('epoch view: leads with the CHAMPION-SPINE ROUND TIMELINE (one episode per 
   assert(allByClass(host, 'dn-heatmap')[0], 'the board×generation heatmap is still present on the epoch view');
 });
 
-// ---- (a2) the IN-FLIGHT round on the EPOCH VIEW (issue #16) ----------
+// ---- (a2) the IN-FLIGHT round on the EPOCH VIEW ---------------------
 // A multi-round gauntlet epoch where round 0 has SETTLED (v0 → v1 promoted) and
-// round 1 is now PROPOSING its field (v5/v6/v7 via the live envelope, not yet in
-// the journal/lineage). The epoch view must surface round 1 as its OWN in-flight
-// round with a LIVE badge + an incrementing "N proposed · M applied" banner —
-// NOT fold v5/v6/v7 under round 0.
+// round 1 is PROPOSING its field (v5/v6/v7 via the live envelope, with no entry
+// in the journal or lineage). The epoch view must surface round 1 as its OWN
+// in-flight round, with a LIVE badge and an incrementing "N proposed · M
+// applied" banner, rather than folding v5/v6/v7 under round 0.
 
 const INFLIGHT_EPOCH = '2026-06-09_inflight';
 function installInflightFetch(fieldStatus) {
@@ -282,7 +281,7 @@ test('epoch view: the proposer brief KEEPS its expanded state across a data-chan
   details.dispatchEvent({ type: 'toggle' });
 
   // A live heartbeat moves data → the epoch digest changes → gatedSwap REBUILDS
-  // the DOM. The brief must STAY expanded, not snap shut to its length default.
+  // the DOM. The brief must STAY expanded rather than snap shut to its length default.
   F['/api/epoch'].closed = true;
   await epoch.render(host, ctx, { epochId: EP });
   details = allByClass(host, 'dn-brief')[0];
@@ -316,16 +315,16 @@ test('generations view: the FIELD renders as the structure-flow graphic (duelFlo
   // a Δ=0 champion reference rule + a crowned champion-gate.
   assert(allByClass(flow, 'dn-duelflow-ref').length >= 1, 'the Δ=0 champion reference rule is drawn');
   assert(allByClass(flow, 'dn-duelflow-gate').length >= 1, 'a crowned champion-gate node is drawn');
-  // the per-challenger hypothesis lives ON HOVER (the hovercard), not in a box:
+  // the per-challenger hypothesis lives ON HOVER (the hovercard) rather than in a box:
   // the dot is hovercard-wired and the hypothesis text is NOT in the visible DOM.
   const dots = allByClass(flow, 'dn-duelflow-dot');
   assert(dots.length >= 2 && dots.every((d) => d.getAttribute('data-hovercard') === '1'), 'each challenger dot is hovercard-wired (hypothesis + Δ on hover)');
   assert(!flow.textContent.includes('Enforce explicit slide-structure output'), 'the hypothesis is NOT a visible box/label IN THE FIGURE — there it lives on the hovercard');
 
-  // DELIBERATE CHANGE (#194 §3): the hypothesis IS now visible on the page —
-  // threaded as a dim second line on the ROSTER rows, so a table of ids also
-  // says what each candidate tried. The FIGURE still keeps it on hover (above);
-  // this assertion pins the thread so the two placements cannot be confused.
+  // The hypothesis is also visible on the page, threaded as a dim second line
+  // on the ROSTER rows, so a table of ids also says what each candidate tried.
+  // The FIGURE keeps it on hover (above); this assertion pins the thread so the
+  // two placements cannot be confused.
   const threaded = allByClass(host, 'dn-coreidea');
   assert(threaded.length >= 1, 'the roster threads each candidate’s core idea as a dim second line');
   assert(threaded.some((n) => (n.getAttribute('title') || '').includes('Enforce explicit slide-structure output')),

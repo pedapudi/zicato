@@ -84,10 +84,10 @@ function ledgerRow(r, epochId, o) {
   // The ONE shared classifier owns the vocabulary: the server-stamped token
   // when there is one, `baseline` for the parentless seed (which faced no
   // gate and must not read as still racing), `pending` only when a candidate
-  // genuinely has not settled. Nothing is re-derived from the raw outcome.
+  // has not settled. Nothing is re-derived from the raw outcome.
   const decision = r.decision || 'pending';
   // `o.live === false` (a settled / interrupted epoch) puts a still-pending
-  // verdict in the past tense: the run ended without deciding it (#207 §2).
+  // verdict in the past tense: the run ended without deciding it.
   const live = o && o.live === false ? false : true;
   const delta = svg.isNum(r.scalar_score_delta) ? r.scalar_score_delta : null;
   const reason = (typeof r.rejection_reason === 'string' && r.rejection_reason) ? r.rejection_reason : null;
@@ -167,7 +167,7 @@ function sitesCell(raw) {
 
 // Digest fold: rounded, id-stable, timestamp-free. A no-op beat is
 // byte-identical; a settled experiment (a new decision / Δ / site) flips it.
-// The expand state is DELIBERATELY absent — expanding a row must not be able
+// The expand state is absent by design — expanding a row must not be able
 // to trigger a page rebuild that recreates the row it just expanded.
 export function ledgerDigest(ledger) {
   if (!ledger || typeof ledger !== 'object') return null;

@@ -1,10 +1,8 @@
-// test/variant_t_figures.test.mjs — Variant T ("Console IV") unit tests:
-// the evolve-rounds model + spine timeline, the de-chartjunk data-graphics,
-// the responsive structure-builder layer, and #18 continuous per-entry
-// scoring.
+// test/variant_t_figures.test.mjs — the console's figures: the evolve-rounds
+// model and spine timeline, the data-graphics that carry no chartjunk, the
+// responsive structure-builder layer, and continuous per-entry scoring.
 //
-// Split mechanically from the former variant_t.test.mjs (assertions
-// verbatim); shared fixtures + helpers live in ./fixtures.mjs.
+// Shared fixtures and helpers live in ./fixtures.mjs.
 
 import { installDom, test, run, assert, assertEqual, assertDeep, makeEvent } from './harness.mjs';
 
@@ -134,10 +132,10 @@ test('round model: degrades to a SINGLE round 0 when neither round_index nor fie
   assertDeep([...new Set(allChallengers)].sort(), ['v1', 'v2'], 'every challenger appears in the round model');
 });
 
-// ---- the IN-FLIGHT round (issue #16): a NEW round proposing/applying its
-// field — not yet in the journal/lineage NOR a settled tournament record —
-// surfaces as its OWN round, NOT folded under the prior settled round, and its
-// proposed/applied counts increment as the field mints. -------------------
+// ---- the IN-FLIGHT round: a round proposing and applying its field, with no
+// journal, lineage or settled tournament record yet, surfaces as its OWN round
+// rather than folded under the prior settled round, and its proposed and
+// applied counts increment as the field mints. ---------------------------
 
 test('round model (issue #16): a NEW round still PROPOSING surfaces as its own in-flight round (not folded under the settled prior round)', () => {
   // round 0 SETTLED: v0 → field {v1,v2}, v2 promoted. round 1 PROPOSING: the
@@ -498,7 +496,7 @@ test('duelFlow: the field renders as Δ-vs-champion lanes — good below / bad a
   assert(badDots.length >= 1, 'the regressed challenger reads --v2-bad (above the rule)');
   // status glyphs ↑ / ✕ / ○.
   assert(node.textContent.includes('↑') && node.textContent.includes('✕') && node.textContent.includes('○'), 'status glyphs ↑ promoted / ✕ cut / ○ pending');
-  // the hypothesis lives ON HOVER (the dot is hovercard-wired), not as a visible box.
+  // the hypothesis lives ON HOVER (the dot is hovercard-wired) rather than in a box.
   const dots = allByClass(node, 'dn-duelflow-dot');
   assert(dots.every((d) => d.getAttribute('data-hovercard') === '1'), 'each lane dot is hovercard-wired');
   assert(!node.textContent.includes('tighten the slide structure'), 'the hypothesis is NOT a visible label — it is on the hovercard');
@@ -859,7 +857,7 @@ function node0HasWin(node) {
 
 test('no-scalar layout: an early in-flight rung with NO recoverable scalar spreads its lanes across the axis by index (not piled at x=padL)', () => {
   // every lane is in-flight with no committed/delta/projected scalar yet → no
-  // recoverable scalar. They must SPREAD, not stack at the left.
+  // recoverable scalar. They must SPREAD rather than stack at the left.
   const rung = {
     match_id: 'rung0', label: 'Rung 0',
     competitors: ['v5', 'v6', 'v7', 'v8'],
@@ -892,14 +890,14 @@ test('radar axis labels: radarSilhouette renders the axis LABEL TEXT at each tip
   const labs = allByClass(node, 'dn-radar-axislab');
   assertEqual(labs.length, axes.length, 'one text label per axis at the tip');
   const texts = labs.map((t) => (t.textContent || '').trim());
-  // each label is derived from the axis NAME, not an index 1..n.
+  // each label is derived from the axis NAME rather than an index 1..n.
   assert(!texts.some((t) => /^\d+$/.test(t)), `axis labels are TEXT, never a bare index — got ${JSON.stringify(texts)}`);
   assert(texts.some((t) => t.startsWith('pass-rate')), 'a short label renders in full (pass-rate)');
   // a long label truncates with an ellipsis but its hovercard keeps the full name.
   const longLab = labs.find((t) => (t.textContent || '').startsWith('scalar'));
   assert(longLab, 'the long "scalar (inverse loss)" axis renders a label');
   assert((longLab.textContent || '').includes('…') || (longLab.textContent || '').length <= 16, 'a long axis label is truncated to its budget');
-  // no legacy index-tick markers remain (the retired dn-radar-axistick).
+  // no index-tick markers remain (the retired dn-radar-axistick).
   assertEqual(allByClass(node, 'dn-radar-axistick').length, 0, 'the retired index-tick (dn-radar-axistick) is GONE — labels replace it');
 });
 
@@ -925,7 +923,7 @@ test('radar mini: a mini radar suppresses tip labels (too small) but its vertice
 });
 
 // ====================================================================
-// #18 — continuous per-entry score + precision/recall surfaced on the
+// continuous per-entry score + precision/recall surfaced on the
 // candidate dossier + board view, degrading cleanly to pass/fail when the
 // score / metrics are absent (back-compat).
 // ====================================================================
@@ -1085,7 +1083,7 @@ test('board view: the drill-down shows the oracle + tags the overview already sh
   await board.render(host, { navigate() {}, href: router.href }, { epochId: EPOCH_ID, entry: 'waffles_single' });
   const t = host.textContent || '';
   // Both ride the SAME ep.board row the trellis reads, and this is the page an
-  // operator opens to ask what the entry actually checks — it used to show
+  // operator opens to ask what the entry actually checks. Showing
   // strictly less of the entry than the overview it is reached from.
   assert(t.includes('oracle'), 'the oracle (expectation_kind) stat renders');
   assert(t.includes('predicate'), 'and names the entry’s expectation kind');
@@ -1190,14 +1188,14 @@ test('#H4 metaLoopLedger heatstrip col-ids: width-gated so narrow bands never ov
     assert(textPx <= bandW, `a narrow col-id (${JSON.stringify(c.textContent)} ≈ ${textPx.toFixed(0)}px) must fit its ${bandW.toFixed(0)}px band — no overprint`);
     assertEqual(c.getAttribute('text-anchor'), 'middle', 'the col-id stays middle-anchored');
   }
-  // and the cap genuinely shrank below the original 14 in the narrow regime.
+  // and the cap shrank below the original 14 in the narrow regime.
   const maxLen = Math.max(...nCols.map((c) => (c.textContent || '').length));
   assert(maxLen < 14, `narrow col-ids must be truncated below the 14-char cap (saw max ${maxLen})`);
 
   // WIDE (common case): a single epoch owns the whole strip → the id keeps the
   // full 14-char cap. Per L9 the col-id now MIDDLE-truncates (midLabel) so two
   // prefix-sharing epoch ids stay distinguishable; an over-cap id therefore reads
-  // head…tail at the same 14-char budget rather than the old head-only stub.
+  // head…tail at the same 14-char budget rather than a head-only stub.
   const wide = svg.metaLoopLedger({ epochs: [{ epoch_id: 'abcdefghijklmnopqrstuvwxyz', generation_count: 4, floor: 0.5, changed_components: {} }], width: W });
   const wCols = colidsOf(wide);
   assertEqual(wCols.length, 1, 'the single-epoch ledger draws exactly one col-id');
@@ -1205,7 +1203,7 @@ test('#H4 metaLoopLedger heatstrip col-ids: width-gated so narrow bands never ov
   assertEqual(wCols[0].textContent.length, 14, 'the mid-truncated col-id still respects the 14-char width budget (no overrun vs the old cap)');
 });
 
-// H5 — swissLadder in-flight status must ride the cy+13 sub-line, NOT the
+// swissLadder in-flight status must ride the cy+13 sub-line rather than the
 // primary pairing label (which overruns the ~150px round column). The primary
 // `dn-swissladder-pairlab` label is just `a v b`; the "running N/M" status is
 // relocated to a sub-line, mirroring the decided branch's cy+13 winner sub-line.
@@ -1371,7 +1369,7 @@ test('survival funnel (H9): a long cut id is fit to the bracket-rail gutter — 
 test('waterfall H10: on an improved step the crown ♛ is lifted clear of the floor label (no overprint at the same cx)', () => {
   // every step IMPROVES (to < from), so each station carries both a crown and a
   // floor label centred on the same cx. The crown must sit well ABOVE the label
-  // (smaller y) — not the 2px overprint of the old yTo-8 vs yTo-6 placement.
+  // (smaller y), clear of the 2px overprint a yTo-8 versus yTo-6 placement gives.
   const steps = [
     { round_index: 0, from: 20, to: 14, delta: -6, promoted: true, gen: 'v1' },
     { round_index: 1, from: 14, to: 9, delta: -5, promoted: true, gen: 'v2' },
@@ -1434,7 +1432,7 @@ test('elimRadial double-elim: EVERY WB→LB transfer arc ANCHORS on real nodes �
   // SECOND-and-later drops began and ended a few px OUTSIDE it — detached from both
   // the source-mirror and the destination LB node. So this fixture forces THREE
   // drops (v2 + v4 off WB-R0, v3 off WB-R1) — the extra arcs are exactly the ones
-  // the old code floated. Served model (deriveElimStates) drives the side/drop read.
+  // a floating placement would drift. The served model (deriveElimStates) drives the side/drop read.
   const served = mock.deriveElimStates([
     { round_index: 0, label: 'R0', matches: [
       { competitors: ['v1', 'v2'], winner: 'v1', bracket_slot: 'WB-R0-0' },
@@ -1489,7 +1487,7 @@ test('elimRadial double-elim: EVERY WB→LB transfer arc ANCHORS on real nodes �
 });
 
 test('swissOverview (single round): the lone-round bump centers ONE dot per competitor — no start/end+label stack on the left gutter (M7)', () => {
-  // A one-round swiss (labels.length === 1) used to pin every competitor's start
+  // A one-round swiss (labels.length === 1) must not pin every competitor's start
   // dot, end dot, name label and #rank label onto a single x (padL) because
   // scale([0, max(1, nR-1)],…) maps the lone column to the left edge. The fix
   // centers the lone column AND collapses the coincident start/end pair to one dot.
@@ -1508,7 +1506,7 @@ test('swissOverview (single round): the lone-round bump centers ONE dot per comp
   const dots = allByClass(over, 'dn-swissover-dot');
   // ONE dot per competitor (not a doubled-up start/end pair on the same x).
   assertEqual(dots.length, 2, 'single-round swiss draws ONE dot per competitor, not a coincident start/end pair');
-  // the dots are centered in the plot band, not pinned to the padL=96 left gutter.
+  // the dots are centered in the plot band rather than pinned to the padL=96 left gutter.
   const padL = 96;
   const cxs = dots.map((d) => parseFloat(d.getAttribute('cx')));
   assert(cxs.every((cx) => cx > padL + 1),
@@ -1529,7 +1527,7 @@ test('Task 3 — elimFlow: a DEGENERATE column with a DUPLICATE match (same brac
       // the duplicate pair: same slot, same competitors — pending, then settled.
       { competitors: ['v5', 'v6'], winner: null, pending: true, bracket_slot: 'WB-R0-0' },
       { competitors: ['v5', 'v6'], winner: 'v5', decision: 'win', bracket_slot: 'WB-R0-0' },
-      // a genuinely DISTINCT match sharing the column (different competitors) must
+      // a DISTINCT match sharing the column (different competitors) must
       // be PRESERVED — it keeps its own key, its own convergence node.
       { competitors: ['v7', 'v8'], winner: 'v7', decision: 'win', bracket_slot: 'WB-R0-1' },
     ] },
@@ -1601,7 +1599,7 @@ test('radar axis labels: a full-size NON-legend radar CLAMPS the East/West horiz
 
 test('gauntletFieldBars: the field-worst challenger value is right-anchored INBOARD — never overruns the W=600 viewBox', () => {
   // champion is the field BEST, so the worst challenger's dot lands at the
-  // band's right edge (the scalar-domain max). Its 3dp value (~42px) used to be
+  // band's right edge (the scalar-domain max). Its 3dp value (~42px) would be
   // start-anchored at dx+7 and run off the right of the 600-unit viewBox.
   const node = svg.gauntletFieldBars({
     championId: 'v0', championScalar: 8.0, promoteMargin: 0.5,
@@ -1763,7 +1761,7 @@ test('duelFlow L1: a 3-integer-digit improving Δ (-128.4) at max keeps its outb
 // REGRESSION (L2): when the LAST rung settles with EVERY competitor cut and no
 // champion seated yet (survivors:[], championId null, gate still pending), the
 // converging gate-flow polygon must be SUPPRESSED — bandHalf(0) floors the flow
-// half-height to 6, so it used to draw a thin sliver into a champion-gate with
+// half-height to 6, so a naive draw puts a thin sliver into a champion-gate with
 // no runner feeding it (a disconnected/degenerate flow). A crowned gate whose
 // survivors array is empty but champion IS seated must still draw its flow.
 test('survival funnel: an all-cut/uncrowned last rung feeds NO spline into the gate, but a crowned survivor’s winner-spline reaches it', () => {
@@ -1795,7 +1793,7 @@ test('survival funnel: an all-cut/uncrowned last rung feeds NO spline into the g
 test('survival funnel L3: a wide entering field renders one dot per entrant, spread across the ladder (dot-ladder, not stacked on one y)', () => {
   // A wide rung-0 field (24 lanes) narrowing to just 2 survivors. In the dot
   // ladder every entrant is a dot spread symmetrically about the centre line —
-  // the entering rung is the widest column, not a single stacked row.
+  // the entering rung is the widest column rather than a single stacked row.
   const competitors = Array.from({ length: 24 }, (_, i) => `v${i + 1}`);
   const survivors = ['v1', 'v2'];
   const cut = competitors.filter((c) => !survivors.includes(c));
@@ -1852,7 +1850,7 @@ test('L5: swissLadder gate is never orphaned — rounds-but-no-leader feeds a st
   });
   // the gate box still renders (the gate column is always present)…
   assert(allByClass(orphan, 'dn-swissladder-gatebox')[0], 'the champion-gate box renders even with no committed leader');
-  // …but it is NO LONGER an orphan: a stub edge feeds it from the standings column.
+  // …and it is not an orphan: a stub edge feeds it from the standings column.
   const stub = allByClass(orphan, 'dn-swissladder-edge-stub');
   assertEqual(stub.length, 1, 'a single stub edge feeds the gate when rounds exist but no leader is committed (no orphan gate)');
   const ds = stub[0].getAttribute('d') || '';
@@ -1920,7 +1918,7 @@ test('calibrationTrend L6: sparse scored→null→scored bridges the null gap wi
 });
 
 test('swissOverview (L7): a CUSTOM round label (neither "round N" nor "gate", e.g. "Tiebreak 1") keeps its canonical text on the axis — not clipped to an ambiguous "Tiebrea…"', () => {
-  // A swiss with a custom middle round used to fall through to shortLabel(ls, 8),
+  // A swiss with a custom middle round must not fall through to shortLabel(ls, 8),
   // truncating "Tiebreak 1"/"Tiebreaker" to "Tiebrea…". The round/gate ticks stay
   // canonicalized (R1 / Gate); only the custom label widens to the 12-char cap.
   const over = svg.swissOverview({

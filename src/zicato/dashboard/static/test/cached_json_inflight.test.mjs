@@ -1,6 +1,6 @@
 // test/cached_json_inflight.test.mjs — cachedJson shares ONE in-flight request.
 //
-// data.js caches the PROMISE, not the resolved value. These pins guard the
+// data.js caches the PROMISE rather than the resolved value. These pins guard the
 // rules that follow from it: concurrent callers for one URL issue ONE GET, a
 // settled entry still serves from cache, a failure caches null (the honest
 // "unavailable" paint) without rejecting, and an invalidate() that lands
@@ -103,7 +103,7 @@ test('cachedJson: a failed fetch resolves to null, does not reject, and RETRIES 
   assertEqual(await b, null, 'the shared entry resolves to null too, never rejecting');
   assertEqual(gets, 1, 'the two concurrent callers shared the ONE failing GET');
   // The cached null is sticky (the view paints "unavailable" instead of
-  // spinning) — but a bust must genuinely retry, or a single transient 500
+  // spinning) — but a bust must actually retry, or a single transient 500
   // would wedge the pane until a hard refresh.
   assertEqual(await data.cachedJson('/api/health-report'), null, 'the null stays cached — no retry storm on every read');
   assertEqual(gets, 1, 'a repeat read after a failure does NOT refetch');
@@ -165,7 +165,7 @@ test('cachedJson: a pre-bust GET settling AFTER the re-read does not overwrite t
 
 // invalidateRunTranscript() is the bust that fires MOST often mid-flight: a
 // candidate running on the watched board re-reads its transcript every beat,
-// so a beat landing during a slow transcript GET is routine, not a corner case.
+// so a beat landing during a slow transcript GET is routine rather than a corner case.
 test('cachedJson: invalidateRunTranscript() mid-flight also survives the resolving fetch', async () => {
   fresh();
   const f = installGatedFetch();
@@ -195,7 +195,7 @@ test('dispatch shape: the shell tree and the home view issue ONE /api/workspace 
   globalThis.fetch = async (path) => {
     counts.set(path, (counts.get(path) || 0) + 1);
     // a real GET is not instantaneous; resolving on a later macrotask keeps the
-    // two fan-outs genuinely overlapped rather than accidentally serialised.
+    // two fan-outs overlapped rather than accidentally serialised.
     await new Promise((r) => setTimeout(r, 1));
     const v = fixtures.lookupFixture(fixtures.FIXTURE, path);
     if (v !== undefined) return { ok: true, json: async () => v };

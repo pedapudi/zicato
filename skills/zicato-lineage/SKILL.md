@@ -1,6 +1,6 @@
 ---
 name: zicato-lineage
-description: Read how the harness got here across epochs and generations — list epochs, read lineage.json, distinguish parent/child (lineage) from champion/challenger (tournament role), and drive the dashboard's side-by-side conversation diff for a board entry between two generations. Use this when you need the cross-epoch tree, not a single round's verdict.
+description: Read how the harness got here across epochs and generations — list epochs, read lineage.json, distinguish parent/child (lineage) from champion/challenger (tournament role), and drive the dashboard's side-by-side conversation diff for a board entry between two generations. Use this when you need the cross-epoch tree rather than a single round's verdict.
 ---
 
 # zicato lineage — read the tree across epochs and generations
@@ -162,7 +162,7 @@ view**, linked by a per-run drill-down
 4. Each side's per-board scoring drills into the individual run and its
    transcript. A **harmonograf** deep-link to the full turn-by-turn execution
    trace is rendered only while a run is LIVE (zicato's auto-launched
-   harmonograf dies with the run, so the link is gated on liveness, not merely
+   harmonograf dies with the run, so the link is gated on liveness rather than merely
    on a known URL). The competition view never renders a turn timeline; the
    execution view never renders a bracket — the drill-down stitches them.
    During a live tournament, **Open tournament traces** opens Harmonograf's

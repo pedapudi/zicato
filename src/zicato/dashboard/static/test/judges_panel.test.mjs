@@ -1,4 +1,4 @@
-// test/judges_panel.test.mjs — the board page's JUDGES panel (#194 §5).
+// test/judges_panel.test.mjs — the board page's JUDGES panel.
 //
 // The panel joins two payloads: the entry's own judges off the epoch payload's
 // additive `board_judges` map (authored), and the built-in roster after
@@ -14,7 +14,7 @@
 //     a python judge's dotted path shown and an inline judge's PROMPT never;
 //   * the scorecard link (epoch → reflection → judge) and its absence;
 //   * the degrades: goldfive absent, and no judges at all ("predicate/rubric
-//     only — no judges configured", which is information, not absence);
+//     only — no judges configured", which reports a fact rather than a gap);
 //   * the digest no-op gate;
 //   * full render: the panel mounts in the CONTRACT region (before the results),
 //     survives a no-op beat with zero DOM churn, and is absent entirely on a
@@ -32,8 +32,8 @@ const data = await import('../js/data.js');
 
 // ---- fixtures --------------------------------------------------------
 
-// The June target_1 shape, plus a genuinely-suppressed built-in so both halves
-// of the suppression story are on one payload.
+// The presentation target's roster shape, plus one suppressed built-in, so both
+// halves of the suppression case sit on one payload.
 const ROSTER = {
   epoch_id: 'e4',
   builtins: [

@@ -1,4 +1,4 @@
-// test/evals.test.mjs — the EVALS view (views/evals.js, EVAL-VIEW.md WS-MATRIX).
+// test/evals.test.mjs — the EVALS matrix view (views/evals.js, EVAL-VIEW.md).
 //
 // Covers: the router round-trip for the new epoch-scoped #/e/<id>/evals route;
 // the known-answer render off a fixture matrix payload (rows / columns / cells /
@@ -57,8 +57,8 @@ function setLive(live) {
 
 // A known-answer matrix payload (build_eval_matrix shape, EVAL-VIEW.md §3.1).
 // Columns: g0 (r0, spine) · g1 (r1, rejected) · g2 (r1, spine). Rows — the two
-// flip interpretations are DELIBERATELY separated (§5 / F6): flips-only means a
-// CROSS-COLUMN verdict change, NOT flip_rate>0.
+// The two flip interpretations are separated by design: flips-only means a
+// CROSS-COLUMN verdict change rather than flip_rate>0.
 //   task_login (train)   pass·rep | fail·single | pass·rep  flip 20%  → fail, CHANGE → in flips
 //   task_hold  (holdout) pass·rep | (null)      | pass·rep  unmeasured→ no fail, no change
 //   task_flat  (train)   fail·rep | fail·rep    | fail·rep  flip 40%  → fail, NO change → EXCLUDED
@@ -146,7 +146,7 @@ test('render: paints the entries × candidates matrix with the spine crown + dec
 test('decision pill: a null (in-flight) candidate renders the pending pill, distinct from rejected', async () => {
   fresh();
   const F = matrixFixture();
-  // g3: an in-flight candidate (promoted null) — never raced, not on the spine.
+  // g3: an in-flight candidate (promoted null) — never raced, and off the spine.
   F.candidates.push({ generation_id: 'g3', round_index: 2, promoted: null, decision: 'pending', decision_label: 'undecided', champion_spine: false });
   F.cells = F.cells.map((row) => [...row, null]); // its column is all-null cells
   installFixtureMap({ [EVALS_PATH]: F });
@@ -187,7 +187,7 @@ test('evidence: a single-sample cell renders faint; a replicated one firm (serve
   const singles = allByClass(host, 'dn-evalmtx-single');
   assert(singles.length >= 1, 'a single-sample cell renders in the single/faint tier');
   assert(singles.every((n) => (n.getAttribute('class') || '').includes('dn-faint')), 'a single cell carries dn-faint');
-  // the served evidence tier is stamped verbatim (DQ1 — never client re-derived).
+  // the served evidence tier is stamped verbatim and never client re-derived.
   assert(allByClass(host, 'dn-evalmtx-cell').some((n) => n.getAttribute('data-evidence') === 'single'),
     'the served evidence tier is stamped on the cell');
 });
@@ -242,7 +242,7 @@ test('filter flips-only: keeps CROSS-COLUMN changes (login + clean), NOT flip_ra
   await renderFiltered(host, 'flips');
   // task_login (pass→fail→pass) and task_clean (fail→pass) MOVED across columns.
   // task_flat has flip_rate 40% but NO cross-column change → excluded — proving
-  // flips-only is the verdict-change signal, not the entry-noise flip rate.
+  // flips-only is the verdict-change signal rather than the entry-noise flip rate.
   assertEqual(allByClass(host, 'dn-evalmtx-row').length, 2, 'exactly two rows change across columns');
   const shown = allByClass(host, 'dn-evalmtx-site').map((n) => n.getAttribute('data-entry'));
   assert(shown.includes('task_login') && shown.includes('task_clean'), 'the changing rows are login + clean');

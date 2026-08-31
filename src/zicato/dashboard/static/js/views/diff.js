@@ -1,4 +1,4 @@
-// js/views/diff.js — PER-CANDIDATE side-by-side patch diff (fix #2).
+// js/views/diff.js — the per-candidate side-by-side patch diff.
 //
 // The target of the candidate lifecycle's clickable "patch" node: this ONE
 // candidate's patches against THE GENERATION IT WAS DERIVED FROM, side by
@@ -22,7 +22,7 @@
 // The whole-file FALLBACK cannot honour the pick (its endpoint diffs against
 // the recorded parent only) and says so.
 //
-// PROVENANCE (issue #194 §6). Snapshot GC prunes generation trees and keeps the
+// PROVENANCE. Snapshot GC prunes generation trees and keeps the
 // records, so both sides of this view can outlive the tree they describe: the
 // patch payloads always do, and the baseline is reconstructed from the epoch's
 // frozen enumeration. The server captions what it had to reconstruct
@@ -61,7 +61,7 @@ export async function render(host, ctx, params) {
   // is what the candidate was derived from — its recorded parent — because
   // only a v1 off the seed has v0 for a parent, and a mid-chain candidate
   // (v3 → v5) diffed against v0 answers "what changed since the seed" under a
-  // heading that promises this one candidate's patch set (issue #253). The
+  // heading that promises this one candidate's patch set. The
   // operator can pick any OTHER generation as the baseline instead.
   const parentOf = new Map(gens.map((g) => [g.generation_id, g.parent_generation_id || null]));
   // A generation's own chain, itself first, then back through its parents.
@@ -78,7 +78,7 @@ export async function render(host, ctx, params) {
   // A picked baseline must be a generation that exists, is not the candidate
   // itself, and is not the recorded parent — picking the parent IS the
   // default view, and treating it as a pick would tint the strip and claim
-  // "picked, not v3" while showing v3. Anything else falls back to the parent
+  // "picked" against v3 while showing v3. Anything else falls back to the parent
   // rather than rendering a diff against nothing.
   const pickedBase = (askedBase && askedBase !== genId && askedBase !== recordedParent
     && knownGens.has(askedBase)) ? askedBase : null;
@@ -159,7 +159,7 @@ export async function render(host, ctx, params) {
   if (!myPatches.length) fileDiff = await D.diff(epochId, genId);
   const fileEntries = (fileDiff && Array.isArray(fileDiff.files)) ? fileDiff.files : [];
   // Whole-tree browsing does not survive snapshot GC; the patch-touched spans
-  // do, and the server captions which one it handed back (issue #194 §6).
+  // do, and the server captions which one it handed back.
   const fileNote = String((fileDiff && fileDiff.provenance_note) || '');
 
   const digest = JSON.stringify({
@@ -276,7 +276,7 @@ function patchBlock(genId, patch, baselineStr, site, ctx, epochId, baselineGen, 
   ]));
   // The rows are always this candidate's own patch set, but against a
   // baseline earlier than the parent the LINES are not. Say so at the block
-  // that is actually affected, not as a blanket page warning.
+  // that is actually affected, rather than as a blanket page warning.
   if (o.mixed) {
     block.appendChild(el('p', { class: 'dn-patch-note dn-faint', text: o.parent
       ? `${baselineGen || 'this baseline'} and ${o.parent} hold different text at this site, so these lines carry that difference too — not ${genId}’s change alone. Diff against ${o.parent} for that.`
@@ -344,7 +344,7 @@ function sameSpan(lines, anchor, recorded) {
 // The surrounding lines exist only in the generations' source trees, so the
 // controls appear only when both sides can be read back from a tree — a
 // generation GC pruned has a span and no file, and advertising an expansion
-// that cannot run is worse than not offering it (issue #253 follow-up).
+// that cannot run is worse than not offering it.
 //
 // Each click reveals CONTEXT_STEP more lines in that direction; the second
 // control goes to the file's edge. Each column stops at its OWN edge, and the
@@ -384,8 +384,8 @@ function expandableDiff(o) {
 
   if (!span) { paintDiff(); return wrap; }
 
-  // How much is still unseen — on the side that still has the MOST, not the
-  // least. The slice already clamps each column at its own file edge, so the
+  // How much is still unseen — on the side that still has the MOST rather than
+  // the least. The slice already clamps each column at its own file edge, so the
   // shorter side simply stops growing while the longer one keeps going; a
   // Math.min here would instead retire the bar with lines still unread on the
   // other column.
@@ -430,8 +430,8 @@ function expandableDiff(o) {
         D.fileContent(o.epochId, span.right.gen, span.right.path),
       ]);
       // A TRUNCATED or BINARY read is not the file: the endpoint caps an
-      // inline read, so the last line of a truncated body is a cut, not the
-      // file's end, and expanding "to file end" into one would label the cut
+      // inline read, so the last line of a truncated body is a cut rather than
+      // the file's end, and expanding "to file end" into one would label the cut
       // as the end. Both are the error path.
       const text = (r) => ((r && typeof r.content === 'string' && !r.error && !r.truncated && !r.binary)
         ? r.content : null);

@@ -9,7 +9,7 @@
 //   * the per-BOARD drill-down — one entry, every candidate: "which slices
 //     does this entry feed, and how are they moving?" Rows are candidates
 //     (the orientation the rest of that page uses, and the one that scales —
-//     an epoch grows candidates, not facets).
+//     an epoch grows candidates rather than facets).
 //
 // The orientations differ because the questions differ. Everything ELSE must
 // not: the column names, the direction arrows, the number formatting, the
@@ -32,9 +32,9 @@ import { attachHovercard } from './hovercard.js';
 export const SCALAR_LABEL = 'scalar ↓';
 export const MEAN_SCORE_LABEL = 'mean score ↑';
 
-//: The tail every facet caption carries. Facets are recorded against a
-//: candidate and read nowhere else: not the scalar the gate compares, not the
-//: gate, not scheduling, not Pareto admission.
+//: The tail every facet caption carries. A facet is recorded against a
+//: candidate and read nowhere else: it never enters the scalar the gate
+//: compares, the gate itself, scheduling, or Pareto admission.
 export const DIAGNOSTIC_NOTE = 'diagnostic, not gated';
 
 // A facet number at its rendered precision, or the absent-measurement glyph.
@@ -47,7 +47,7 @@ export function facetNum(value) {
 // A facet is a SLICE of the board, so a racing rung that runs a board subset
 // can leave most of a slice unrun — and the denominators are the only thing
 // that shows it. Sizing by what ran would render such a slice as "3",
-// indistinguishable from a slice that is genuinely complete.
+// indistinguishable from a slice that is complete.
 //
 // The three numbers answer three different questions and are NOT redundant:
 //   * `tagged` — how many entries the BOARD puts in the slice.

@@ -552,16 +552,16 @@ function practiceRow(c) {
     el('span', { class: 'dn-instr-frow-title', text: c.headline || c.check_id }),
   ]));
   if (c.rationale) row.appendChild(el('p', { class: 'dn-faint dn-instr-frow-why', text: String(c.rationale) }));
-  // The measured numbers behind the headline. Issue #129's render-conformance
-  // rule — the report already prints this dict, and a check whose evidence is
-  // dropped states a verdict the operator cannot check.
+  // The measured numbers behind the headline. The report already prints this
+  // dict, and a check that drops its evidence states a verdict the operator
+  // cannot check.
   const pev = formatEvidence(c.evidence);
   if (pev) row.appendChild(el('p', { class: 'dn-faint dn-instr-frow-ev', text: 'evidence · ' + pev }));
   // unmeasured: name the missing input faint (honesty over coverage).
   if (String(c.verdict).toLowerCase() === 'unmeasured' && c.unmeasured_reason) {
     row.appendChild(el('p', { class: 'dn-faint dn-instr-frow-missing', text: 'missing input · ' + String(c.unmeasured_reason) }));
   }
-  // a proposed op — practice checks ride practices.json, NOT findings.json, and
+  // a proposed op — practice checks ride practices.json rather than findings.json, and
   // `reflect apply` is finding-only (it takes a finding_id and reads
   // findings.json), so there is no CLI apply target: render the op as copyable
   // JSON with a faint "apply via the builder" note.
@@ -690,7 +690,7 @@ function scorecard(j, evidence, d, ctx) {
   ]));
   card.appendChild(caption(`+${isNum(j.ambiguous) ? j.ambiguous : 0} ambiguous · excluded from the rates (a large pile is itself a finding — the criterion is underspecified)`));
 
-  // the reader-owned rates as a quiet stat row (the dn-stat idiom, NOT tags).
+  // the reader-owned rates as a quiet stat row (the dn-stat idiom rather than tags).
   card.appendChild(el('div', { class: 'dn-row dn-instr-stats' }, [
     stat(num(j.precision, 2), 'precision'),
     stat(num(j.recall, 2), 'recall'),
@@ -774,7 +774,7 @@ function buildXray(d, ctx) {
 
 function transcriptPane(transcript, span, tone) {
   const pane = el('div', { class: 'dn-instr-xleft dn-panel' });
-  // the fidelity tier is metadata → a dn-faint caption, not a highlighted tag.
+  // the fidelity tier is metadata, so it is a dn-faint caption rather than a tag.
   pane.appendChild(caption('transcript · ' + fidelityLabel(transcript.fidelity)));
   const turns = Array.isArray(transcript.turns) ? transcript.turns : [];
   if (transcript.fidelity === 'unavailable' || !turns.length) {
@@ -800,7 +800,7 @@ function transcriptPane(transcript, span, tone) {
 }
 
 // Highlight the adjudicator's evidence_span when it is a verbatim substring of
-// the turn text (the reader hands a copied substring, not a char offset). No
+// the turn text (the reader hands a copied substring rather than a char offset). No
 // match ⇒ the plain text, unchanged.
 function highlightSpan(text, span, tone) {
   if (!span) return [text];

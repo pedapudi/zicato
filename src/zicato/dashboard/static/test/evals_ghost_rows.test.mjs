@@ -93,7 +93,7 @@ test('ghost rows: suggested board entries render below the real rows (already-on
   assert(ids.includes('ghost_probe') && ids.includes('ghost_plan'), 'both drafted ids show');
   assert(!ids.includes('task_login'), 'a draft whose id is already a board row is NOT ghosted');
   assert(!ids.includes('jx'), 'a judge suggestion never becomes a ghost row');
-  // the group caption states these are drafts, not scored.
+  // the group caption states these are drafts rather than scored entries.
   assert(hasClass(host, 'dn-evalmtx-ghostcaption'), 'the ghost group caption renders');
   assert(/drafts, not scored/.test(host.textContent), 'the caption states drafts-not-scored');
 });

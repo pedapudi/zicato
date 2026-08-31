@@ -1,12 +1,12 @@
 // test/live_conversation_entry.test.mjs — how an operator REACHES the live
-// conversation pane (issue #194 §2, "entry points" + the deep-linkable route).
+// conversation pane: its entry points and its deep-linkable route.
 //
 // The pane is only worth building if it is findable from where the operator
 // already is when they want it: a row that says a unit is running. Two such
 // rows exist — the live hero's "what's running" block and the candidate page's
 // in-flight table — and both must lead to the SAME deep-linkable place.
 //
-// The route deliberately EXTENDS the existing transcript route family rather
+// The route EXTENDS the existing transcript route family rather
 // than forking one: a followed conversation is the board route it already
 // lives on, plus a `~follow=1` suffix on the same `~k=v` mechanism `~cmp=`
 // uses. So these tests also pin that dropping the suffix lands you back on

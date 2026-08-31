@@ -80,7 +80,7 @@ behaviour does not exist.
   `loss.json` only, so there is one row per `(generation, entry)`; a replicate's
   sibling `loss.r<N>.json` is never ingested. `tournament_id`/`match_id` upsert under
   `COALESCE(excluded, existing)`, so a re-ingest that resolves a tag overwrites
-  (last non-NULL wins) and one that cannot resolve leaves the old value intact —
+  (last non-NULL wins) and one that cannot resolve leaves the stored value intact —
   an entry replayed across several matchups ends up tagged with the last one.
   Per-replicate and per-matchup detail lives in the workspace files.
 - **metric_counts** — `run_id`, `namespace`, `name`, `severity`, `count`.
@@ -99,7 +99,7 @@ behaviour does not exist.
   `tp`/`fp`/`fn`/`tn`/`ambiguous`, `precision`, `recall`, `f1`,
   `severity_accuracy`, `disagreement_rate`, `kappa`, `exercised`,
   `redundant_with_json`. Both tables are written by `zicato inspect reflection run` (board
-  reflection), not by the evolve loop — empty in a workspace that never reflected.
+  reflection) rather than by the evolve loop — empty in a workspace that never reflected.
 
 ## Read-only queries
 

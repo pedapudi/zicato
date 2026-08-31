@@ -28,7 +28,7 @@ export class AppState {
     // server that does not serve the block (the fold degrades).
     this.liveness = null;
 
-    // ── the orchestrator PROGRESS cursor (RUNTIME-V2 Phase 4) ────────
+    // ── the orchestrator PROGRESS cursor ─────────────────────────────
     // `lastSeq` is the highest progress `seq` seen (SSE frame or heartbeat)
     // — the TRUE liveness cursor: it advances ONLY on a genuine transition,
     // never on the heartbeat timer. Backs the seq no-op-skip gate (sse.js)
@@ -128,7 +128,7 @@ export class AppState {
     // so fold it into the progress cursor too — this keeps the cursor
     // current under plain /api/environment polling (no SSE) and gives the
     // run-state pill a consistent advance timestamp. A heartbeat with no
-    // seq key (pre-RUNTIME-V2) reads back as 0 server-side; the merge above
+    // seq key reads back as 0 server-side; the merge above
     // may also leave `seq` undefined on a minimal beat — noteProgress no-ops
     // on a non-numeric/unchanged seq, so a steady beat never moves the cursor.
     if (typeof this.heartbeat.seq === 'number') {
@@ -141,7 +141,7 @@ export class AppState {
   // Fold a frame's progress `(seq, terminal)` into the cursor. Returns
   // `{ advanced, rollover, present }` the SSE no-op-skip gate reads:
   //   present  — the frame carried a numeric seq (false ⇒ DEGRADE to the
-  //              legacy timestamp+signature path; byte-identical to today).
+  //              timestamp-plus-signature path).
   //   advanced — seq strictly INCREASED (forward progress), or it is the
   //              first seq ever seen.
   //   rollover — seq went BACKWARDS = the log was cleared on a fresh evolve

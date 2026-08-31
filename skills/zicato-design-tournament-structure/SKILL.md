@@ -31,7 +31,7 @@ standings/bracket afterward). Spec:
 > `rounds_n`, an elim bracket's rounds, a racing rung). Be explicit about
 > which you mean — they are unrelated counters.
 
-## The load-bearing invariant: the GATE protects the incumbent, not the bracket
+## The load-bearing invariant: the GATE, rather than the bracket, protects the incumbent
 
 Every structure consumes the **same, unchanged** promote gate
 (`zicato.tournament.gate.evaluate_gate`). The bracket/Swiss/racing logic only
@@ -45,7 +45,7 @@ a duel. Two consequences drive every design choice:
   incumbent, the champion stands. Bracket position never promotes anyone.
 - **Replication — not bracket shape — is the noise lever.** Loss is a noisy
   absolute measurement. The robust way to trust a duel is to run it more
-  times (`replicates`), not to give a candidate a "second life" in a losers'
+  times (`replicates`) rather than to give a candidate a "second life" in a losers'
   bracket. `replicates = 2` is the base default every structure inherits —
   gauntlet included, the noise-aware default. (`racing` is the exception: it
   gets replication intrinsically from escalating board slices, so it pins
@@ -74,7 +74,7 @@ Rules of thumb:
 - **You distrust the gauntlet's verdict** → stay on `gauntlet` and raise
   `replicates` past 2. That is strictly cheaper than switching to a bracket.
 
-## The params (read these off the strategy code, not docs/design/CLI.md)
+## The params (read these off the strategy code rather than docs/design/CLI.md)
 
 `field_size` and `replicates` are universal; the rest are per-structure.
 Defaults below are the strategy constructors' real defaults.
@@ -93,10 +93,10 @@ Defaults below are the strategy constructors' real defaults.
 
 Notes that bite:
 - A **racing rung CUTS, it does not crown.** Elimination at a rung is by RANK
-  on that rung's board slice (best-arm identification), not the gate. The gate
+  on that rung's board slice (best-arm identification) rather than the gate. The gate
   runs exactly once — at the final rung, on the FULL board, against the last
   survivor.
-- A **swiss/elim leader is confirmed, not crowned.** After the inner rounds,
+- A **swiss/elim leader is confirmed rather than crowned.** After the inner rounds,
   the top-standing/surviving challenger plays one champion-gate duel; only
   that duel can promote.
 - `double_elim`'s "second life" is implemented as a single-elim over the

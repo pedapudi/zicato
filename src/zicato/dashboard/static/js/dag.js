@@ -1,6 +1,6 @@
 // js/dag.js — the compact candidate-lifecycle DAG (Console).
 //
-// Self-contained, deliberately SMALL: a single static SVG (NO pan/zoom) that
+// Self-contained and SMALL: a single static SVG (NO pan/zoom) that
 // reads one candidate's life left-to-right as a flow of cause → effect →
 // verdict:
 //
@@ -420,7 +420,7 @@ export function lifecycleDag(spec) {
       const taggedRuns = raced && e.runs.some((rn) => rn.rung || rn.match_id);
       // The DISC carries the quantity the gate aggregated: on a scored board the
       // per-entry Δ score vs the champion (POSITIVE = better); on a drift-only
-      // board the drift loss, as before. The sublabel below it names both sides
+      // board the drift loss. The sublabel below it names both sides
       // — `0.415 → 1.000 ±0.065` — so an entry stuck at the floor and a control
       // held at the ceiling, which both move by 0.000, read as different facts.
       const discText = channel === 'score'

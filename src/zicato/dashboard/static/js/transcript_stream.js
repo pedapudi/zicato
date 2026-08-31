@@ -7,7 +7,7 @@
 // exists to prevent). This module holds no cache at all: it holds a CURSOR,
 // and each pull asks the server only for what landed after it.
 //
-// It is deliberately DOM-free and takes its fetcher by injection, so the whole
+// It is DOM-free by design and takes its fetcher by injection, so the whole
 // cursor protocol — including the gap heal — is testable without a server.
 //
 // The wire contract is js/CONTRACTS.md § `/transcript/delta`. The two rules
@@ -53,7 +53,7 @@ export function createTranscriptStream(coords, opts) {
 
     // Ask for everything past the cursor. Resolves to
     // { turns, annotations, reset } — `reset` true means the caller must
-    // REPLACE its turn list, not splice into it. Resolves to null on a
+    // REPLACE its turn list rather than splice into it. Resolves to null on a
     // transient failure (the next run_log frame retries); never throws.
     async pull() {
       let body = await this._get(this.cursor);

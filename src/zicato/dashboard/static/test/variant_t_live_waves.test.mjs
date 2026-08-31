@@ -1,10 +1,8 @@
-// test/variant_t_live_waves.test.mjs — Variant T ("Console IV") unit tests:
-// the live-run UX wave, the consolidation wave (live tournament
-// truthfulness), and integration wave 8 (match-grouped block, tree pulse,
-// elim generations-across-rounds).
+// test/variant_t_live_waves.test.mjs — console unit tests for the live run
+// surfaces: the live-run controls, live tournament truthfulness, the
+// match-grouped block, the tree pulse, and elim generations across rounds.
 //
-// Split mechanically from the former variant_t.test.mjs (assertions
-// verbatim); shared fixtures + helpers live in ./fixtures.mjs.
+// Shared fixtures and helpers live in ./fixtures.mjs.
 
 import { installDom, test, run, assert, assertEqual, assertDeep, makeEvent } from './harness.mjs';
 
@@ -32,7 +30,7 @@ test('svg.genDots: status glyphs are FIXED-ASPECT (1:1 viewBox, equal x/y) — r
     { label: 'v2', timeout: true, ran: true }, { label: 'v3', ran: false },
   ] });
   // the row spans the full width (flex, width:100%) but is NOT itself a
-  // preserveAspectRatio:'none' svg (which is what sheared the old glyphs).
+  // preserveAspectRatio:'none' svg, which would shear the glyphs.
   assert(row.localName !== 'svg', 'genDots returns an HTML flex row, not a stretched svg');
   const glyphs = svgsByClass(row, 'dn-glyph');
   assertEqual(glyphs.length, 4, 'one fixed-aspect glyph svg per candidate');
@@ -200,8 +198,8 @@ test('Match-ups (LIVE swiss): active-round pairings show in-flight board progres
   const F2 = liveUxFixture();
   F2['/api/active-tournament'] = { epoch_id: LIVE_UX_EPOCH, structure: 'swiss', phase: 'running', structure_params: { rounds: 3 }, competitors: [], rounds: [], standings: [] };
   installFixtureMap(F2);
-  // a genuinely-live just-started run carries a FRESH heartbeat (the staleness
-  // gate now reads a no-timestamp heartbeat as stale ⇒ not live).
+  // a just-started live run carries a FRESH heartbeat: the staleness gate reads
+  // a heartbeat with no timestamp as stale, and therefore as not live.
   coreState.state.setHeartbeat(freshHb({ phase: 'tournament:round_0', generation_id: '', epoch_id: LIVE_UX_EPOCH }));
   coreState.state.activeRuns = [];
   coreState.state.activeTournament = F2['/api/active-tournament'];
@@ -219,7 +217,7 @@ test('live hero (BLOOM): a RUNNING swiss with the applied field as competitors (
   coreState.state.connected = true; coreState.state.connecting = false;
   // the tournament has STARTED (running) — the applied field (v1..v3) are
   // competitors but no pairing has scored yet. The hero must BLOOM into the
-  // ladder seeded by these competitors, not stay on the proposing tracker.
+  // ladder seeded by these competitors rather than stay on the proposing tracker.
   coreState.state.setHeartbeat({ phase: 'tournament:round_0', generation_id: 'v1', epoch_id: HERO_EPOCH });
   coreState.state.activeRuns = [{ generation_id: 'v1', entry_id: 'b0', run_id: 'r1', progress: 0.5 }];
   coreState.state.activeTournament = {
@@ -502,12 +500,11 @@ test('crown glyphs: the shared CROWN constant is ♛ current / ♔ former; no �
 });
 
 // =====================================================================
-// INTEGRATION WAVE 8 — the LIVE match-grouped block (Task 1), the tree
-// live-activity pulse (Task 2), and the elim generations-across-rounds
-// flow (Task 3). All build on the consolidated live machinery
-// (buildLiveModel + the published rounds + active-runs overlay) and the
-// shared CROWN / glyph vocabulary — no per-structure synthesis, no new
-// glyph literals.
+// THREE SURFACES BUILT ON THE SHARED LIVE MODEL — the LIVE match-grouped
+// block, the tree live-activity pulse, and the elim generations-across-rounds
+// flow. Each reads buildLiveModel (the published rounds plus the active-runs
+// overlay) and the shared CROWN and glyph vocabulary: no per-structure
+// synthesis, and no glyph literal of its own.
 // =====================================================================
 
 // ── Task 1 — the match-grouped "what's running" block ──
@@ -672,7 +669,7 @@ test('Task 2 — tree pulse: a running gen / board entry gets a CSS pulse badge;
 test('Task 2 — treeLiveSet: derives the running gen+entry ids from active-runs, gated on running + scoped to the epoch', () => {
   const runs = [
     { generation_id: 'v1', entry_id: 'b0', epoch_id: EPOCH_ID },
-    { generation_id: 'v2', entry_id: 'b1' }, // no epoch tag → kept (legacy tolerance)
+    { generation_id: 'v2', entry_id: 'b1' }, // no epoch tag → kept (untagged run)
     { generation_id: 'v9', entry_id: 'bX', epoch_id: 'OTHER' }, // foreign epoch → dropped
   ];
   const set = livestatus.treeLiveSet({ activeRuns: runs, running: true, epochId: EPOCH_ID });
@@ -757,7 +754,7 @@ test('Task 3 — elimFlow: an UNDECIDED match draws a "deciding" node + a SHORT 
   const segs = allByClass(flow, 'dn-elimflow-seg');
   const good = segs.filter((s) => (s.getAttribute('class') || '').includes('dn-elimflow-good'));
   assertEqual(good.length, 0, 'an undecided match draws no committed advance (no good segment)');
-  // each pending leg is a SHORT stub, not a full leg to the gate.
+  // each pending leg is a SHORT stub rather than a full leg to the gate.
   const stubs = allByClass(flow, 'dn-elimflow-seg-pending');
   assert(stubs.length >= 1, 'an undecided lane draws a short in-flight stub');
   for (const s of stubs) {

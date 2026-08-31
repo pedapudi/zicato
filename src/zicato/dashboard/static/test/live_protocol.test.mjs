@@ -1,8 +1,8 @@
 // test/live_protocol.test.mjs — the LIVE PROTOCOL contract across structures.
 //
-// The new tournament-viz designs (Wave A/B) re-dispatch BOTH the single-round
-// structure figure (views/structure.js renderStructure / the builders) and the
-// LIVE HERO (live.js LiveController) to the same mini builders. This file pins the
+// The single-round structure figure (views/structure.js renderStructure and the
+// builders) and the LIVE HERO (live.js LiveController) both dispatch to the same
+// mini builders. This file pins the
 // live PROTOCOL the operator cares about — for EACH structure (racing, gauntlet,
 // single_elim, double_elim, swiss):
 //
@@ -769,8 +769,8 @@ test('racing multi-survivor — the Match-ups view renders ALL lanes of an in-fl
   assert(track, 'the in-flight rung renders the scalar track');
   assert(!/No rungs evaluated/.test(textOf(host)), 'the "No rungs evaluated yet." empty is NOT reached for an in-flight rung');
 
-  // the rung's FULL FIELD — both survivors (v5 AND v7) are on the track, not just
-  // matches[0]'s first lane (v5).
+  // the rung's FULL FIELD — both survivors (v5 AND v7) are on the track, rather
+  // than matches[0]'s first lane (v5) alone.
   const model = STRUCT.racingModel(built);
   const rung = model.rungs[0];
   assert(rung.competitors.indexOf('v5') >= 0 && rung.competitors.indexOf('v7') >= 0,
@@ -854,9 +854,9 @@ test('racing multi-survivor — the rung block dedup is anti-flash: a no-op tick
 
 // the TWO-RUNG racing topology that lands at RUNG 2 OF 2: rung 1 (round_index 0)
 // is SETTLED (survivors v1; cuts v2,v3) and rung 2 (round_index 1) is IN FLIGHT.
-// This is the operator's exact contradictory state — the OLD title read the
-// 0-indexed phase string ("rung 0"), the OLD subline read the topology ("rung 2
-// of 2"). Both rungs are real rungs (not the gate), so liveProgress focuses the
+// This is the state where a title sourced from the 0-indexed phase string
+// ("rung 0") contradicts a subline sourced from the topology ("rung 2 of 2").
+// Both rungs are real rungs rather than the gate, so liveProgress focuses the
 // in-flight rung 2 of 2.
 const HERO_RUNG2_AT = {
   structure: 'racing', phase: 'running', epoch_id: EPOCH,
@@ -877,7 +877,7 @@ const HERO_RUNG2_AT = {
 function heroAtRung2() {
   const c = new live.LiveController({});
   const at = JSON.parse(JSON.stringify(HERO_RUNG2_AT));
-  // the heartbeat phase string is 0-INDEXED "rung0…" — the OLD title's source.
+  // the heartbeat phase string is 0-INDEXED "rung0…" — the contradicting source.
   c.update({
     status: { running: true, structure: 'racing', label: 'racing · rung 0', inFlight: 7 },
     heartbeat: hb({ phase: 'tournament:round_0:rung0_m3' }),
@@ -978,7 +978,7 @@ test('hero redesign F10: an alive→idle→alive flap of the SAME runs keeps the
   const c = new live.LiveController({});
   const at = JSON.parse(JSON.stringify(HERO_RUNG2_AT));
   const beat = hb({ phase: 'tournament:round_1:rung1_m0' });
-  // spy on the ticker reset so we can pin the gate decision precisely.
+  // spy on the ticker reset, so the assertion can name which tick reset it.
   let resets = 0;
   const origReset = c.ticker.reset.bind(c.ticker);
   c.ticker.reset = () => { resets += 1; origReset(); };

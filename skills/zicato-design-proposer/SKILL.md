@@ -184,7 +184,7 @@ For example, generate alternatives economically but review them strongly:
 }
 ```
 
-These are implementation stages, not reasoning-effort settings. With
+These are implementation stages rather than reasoning-effort settings. With
 `best_of_n: 4`, generate normally makes four calls; review normally makes one
 selection call and zero or one repair call.
 
@@ -289,10 +289,10 @@ and `zicato-manage-epochs-and-rounds`.
   bespoke instruction** while keeping tools. That is the whole reason the
   custom-agent path exists.
 - **Set a custom proposer's model distinct from the target-side model.** It is your
-  responsibility, not a hard gate. (The built-in default inherits the
+  responsibility rather than a hard gate. (The built-in default inherits the
   `evaluation` engine on purpose — that smell test is skipped for it.)
 - **Treat a skill edit like a brief edit** — it rolls the epoch, so batch
   proposer changes with your other contract edits.
 - **Never start a live `zicato evolve` to test a proposer without the
   operator's explicit go-ahead.** Verify the spec resolves + the agent imports
-  via the test suite (e.g. the proposer-with-tools example), not a live run.
+  via the test suite (the proposer-with-tools example, for instance) rather than a live run.

@@ -43,7 +43,7 @@ scalar = pass_weight * (1 - mean_score) + Σ over channels of coefficient * mean
 
 No channel is privileged. Turning one off turns off exactly that one:
 `namespace_weights: {"drift:": 0.0}` stops scoring drift and leaves judges,
-failures and cost scoring exactly as before. The one coefficient you may not
+failures and cost scoring untouched. The one coefficient you may not
 zero is `"failure:"` — the loader rejects it, because a contract must not be
 able to make crashing free.
 
@@ -102,7 +102,7 @@ The shipped example (`examples/zicato_examples/target_1_presentation/scoring.jso
 | `namespace_weights` | `{"drift:":1.0,"judge:":1.0,"failure:":1.0,"runtime:":0.0,"cost:":0.001,"latency:":0.0001,"rubric:":-1.0,"output:":0.0,"schema:":5.0}` | The per-CHANNEL coefficients — every measured signal rides this map. The SIGN encodes the channel's "worse" direction — positive = higher is worse, negative = higher is better (rubric), `0.0` = tracked but not optimised. An explicit mapping REPLACES the defaults wholesale, so a channel you omit scores at `0.0`; `"failure:"` must be present and > 0 or the contract is rejected at load. |
 | `namespace_monotonicity` | `{"drift:":false,"rubric:":true,"schema:":true}` | Per-namespace gate guards. A `true` namespace rejects any child that moved in that namespace's worse direction, even when the combined scalar improves. **Default-on for `rubric:` and `schema:`** — see the gate section. |
 | `diff_complexity_weight` | `0.0` (off) | Opt-in parsimony/MDL term: adds `weight * (added + removed + patches)` to the challenger's scalar, biasing toward the smaller, more general edit. At `0.0` the term is exactly absent (omitted from the contract hash, so unset contracts never roll). |
-| `diff_complexity_ceiling` | `0.0` (off) | Opt-in parsimony CEILING — a hard gate rule, not a loss nudge. Any `<= 0` is off; above that, a challenger whose diff complexity exceeds it is rejected outright. |
+| `diff_complexity_ceiling` | `0.0` (off) | Opt-in parsimony CEILING — a hard gate rule rather than a loss nudge. Any `<= 0` is off; above that, a challenger whose diff complexity exceeds it is rejected outright. |
 
 (The dataclass also carries an optional `regression_gate_enabled` /
 `regression_test_command` test-suite gate; leave it off unless the snapshot
@@ -199,7 +199,7 @@ Two slots take a transform:
 - **`pass_transform`** reshapes the pass/miss term `(1 - mean_score)`.
   `{"op":"pow","exponent":2.0}` is the **replacement for the retired
   `pass_exponent`** field — express `pass_exponent=2` as this (a stray
-  `pass_exponent` key is rejected at load, not silently dropped). Absent /
+  `pass_exponent` key is rejected at load rather than silently dropped). Absent /
   `linear` = today's plain linear miss.
 - **`drift_kind_aggregation`** reshapes, per drift KIND, how that kind's *count*
   aggregates into drift loss. An absent kind = `linear` = today's
@@ -255,14 +255,14 @@ breakdown decomposes them into a per-side "which transform/plugin shaped this"
 view. Token shapes: `builtin`, `transform:pass=pow(2.0)`,
 `transform:drift{looping_reasoning=harmonic}`, `plugin:scalar_fn=<spec>`, and
 the **fail-open** form `<token> (fallback: <reason>)` — surfaced prominently
-(caution-colored) so a silently-degraded plugin is obvious, not buried in a log.
+(caution-colored) so a silently-degraded plugin is obvious rather than buried in a log.
 
 ## `scoring.json` is part of the evaluation contract
 
 Weights — AND the transforms and plugin specs — are frozen per epoch. Editing
 `scoring.json` (or a referenced plugin's body) changes the contract hash, and
 the next `evolve` (default auto-epoching) closes the current epoch and opens a
-fresh one. Tune between epochs, not mid-epoch.
+fresh one. Tune between epochs rather than mid-epoch.
 
 ## Calibrating `promote_margin` against measurement
 
@@ -277,7 +277,7 @@ measure the window it must sit inside — both are **live runs that spend budget
 
 `board audit` duels the champion against ITSELF and reports the A/A noise floor
 (persisted onto the epoch as `noise_floor`). `board preflight` adds the
-**degradation signal** — the champion versus deliberately degraded copies of
+**degradation signal** — the champion versus knowingly degraded copies of
 itself — and places `promote_margin` against the floor and that signal, naming
 the side it fell outside of. Every one of these is a WARNING; none stops a run:
 
@@ -292,7 +292,7 @@ the side it fell outside of. Every one of these is a WARNING; none stops a run:
   headroom is **UNMEASURED** (issue #119). Worth checking the margin against
   what a real fix is worth; NOT evidence the run is null. The signal is also a
   single-point lower bound (one mutation point per probe), so a margin
-  deliberately above single-point reach — recombination unions two sub-margin
+  set above single-point reach on purpose — recombination unions two sub-margin
   fixes — is expected.
 - `empty_window` (EMPTY) — the measured signal does not clear the noise floor,
   so **no** margin is defensible. Do not tune the margin; reduce evaluation

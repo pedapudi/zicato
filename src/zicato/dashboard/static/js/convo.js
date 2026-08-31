@@ -172,9 +172,9 @@ export function mountConversationPane(host, spec, opts) {
   // ---- rendering ------------------------------------------------------
   function render() {
     const out = reconcileTurns(scroller, pane.turns, pane.annotations, pane.execution);
-    // Turns that landed while the reader was scrolled up are a BACKLOG, not a
-    // reason to move them. Only a tailing reader has their view advanced (which
-    // reconcileTurns already did).
+    // Turns that landed while the reader was scrolled up are a BACKLOG rather
+    // than a reason to move them. Only a tailing reader has their view advanced,
+    // which reconcileTurns already did.
     if (out.appended > 0 && !out.pinned) pane.unseen += out.appended;
     if (out.pinned) pane.unseen = 0;
     paintPin();

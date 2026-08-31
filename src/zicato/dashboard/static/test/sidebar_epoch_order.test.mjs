@@ -46,7 +46,7 @@ test('sidebar tree: a ZERO-generation epoch keeps its chronological slot (A,B,C 
   freshState();
   // /api/workspace is timestamp-ordered: A (oldest), B (middle, EMPTY), C (newest,
   // current). The lineage carries rows ONLY for A and C — B has no trajectory yet,
-  // so under the old UNION order B would be appended LAST (A, C, B).
+  // so a plain union order would append B LAST (A, C, B).
   installFetch({
     '/api/workspace': {
       current_epoch_id: 'C',
@@ -65,7 +65,7 @@ test('sidebar tree: a ZERO-generation epoch keeps its chronological slot (A,B,C 
   const model = await shell.buildTreeModel({ params: {} });
 
   // the sidebar tree order MATCHES the fleet (the workspace chronological order):
-  // A, B, C — with the empty B in its correct MIDDLE slot, NOT appended last.
+  // A, B, C — with the empty B in its correct MIDDLE slot rather than appended last.
   assertDeep(model.epochs.map((e) => e.id), ['A', 'B', 'C'],
     'epochs are chronological (A,B,C), not union order (A,C,B)');
 

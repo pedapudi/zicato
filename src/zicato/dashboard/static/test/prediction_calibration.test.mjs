@@ -436,13 +436,12 @@ test('home view: a workspace with NO calibration data drops the trend (byte-iden
   assertEqual(allByClass(host, 'dn-caltrend').length, 0, 'no trend figure when nothing is scored');
 });
 
-// ── 10. THE SERVED READOUTS: `latest_fraction` + `n_scored` (A13) ───────────
+// ── 10. THE SERVED READOUTS: `latest_fraction` + `n_scored` ────────────────
 //
-// build_calibration_trend serves BOTH. The figure used to scan `points`
-// backwards to find the latest scored fraction and never printed it at all —
-// the duplicated-logic bug class. These pin that the SERVED value is what
-// renders, that `n_scored` reaches the operator, and that an absent field still
-// degrades honestly.
+// build_calibration_trend serves BOTH. A figure that scanned `points` backwards
+// for the latest scored fraction would duplicate the server's logic and could
+// disagree with it. These pin that the SERVED value is what renders, that
+// `n_scored` reaches the operator, and that an absent field degrades honestly.
 
 function textOfClass(host, cls) {
   const n = allByClass(host, cls)[0];
@@ -450,7 +449,7 @@ function textOfClass(host, cls) {
 }
 
 test('calibrationTrend: the end label reads the SERVED latest_fraction, NOT a client re-derivation', () => {
-  // A DELIBERATE divergence: the server says the latest scored fraction is 0.40
+  // The fixture diverges on purpose: the server says the latest scored fraction is 0.40
   // while the last plotted point carries 0.80. A client that re-derives prints
   // 80%; one that reads the payload prints 40%.
   const diverged = trendFixture();

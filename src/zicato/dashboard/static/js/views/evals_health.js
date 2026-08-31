@@ -23,7 +23,8 @@
 //
 // The panel derives every field DEFENSIVELY from the build_eval_health reader,
 // degrades to honest empties (never a fabricated number — §4), and is
-// RECOMMEND-ONLY: findings are pointers into reflect / the builder, not actions.
+// RECOMMEND-ONLY: a finding points into reflect or the builder and takes no
+// action itself.
 
 import { el } from '../core/dom.js';
 import * as svg from '../svg.js';
@@ -128,7 +129,7 @@ export function evalHealthModel(payload) {
   };
 }
 
-// ---- digest (U5: digest-gated render — a no-op beat rebuilds nothing) ----
+// ---- digest (digest-gated render — a no-op beat rebuilds nothing) --------
 
 export function evalHealthDigest(model) {
   const m = model || {};
@@ -223,7 +224,7 @@ function mdeStrip(mde) {
   return wrap;
 }
 
-// 2 — RANKED NOISY EVALS (§2.2): descending flip rate, measured only.
+// 2 — RANKED NOISY EVALS: descending flip rate, from measurement alone.
 function noisiestPanel(rows, mde, opts) {
   if (!rows.length) {
     const reason = mde.floorMeasured
@@ -301,7 +302,7 @@ function runtimePanel(rows, opts) {
 }
 
 // 5 — HOLDOUT BUDGET + ROTATION CADENCE. The Ladder's own accounting + the
-//     shipped refresh-cadence signal (bound, not re-derived — §5).
+//     served refresh-cadence signal, bound rather than re-derived.
 function lifecyclePanel(hb, rot, opts) {
   const nodes = [];
   // Holdout ladder budget spent.

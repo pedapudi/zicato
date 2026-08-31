@@ -57,7 +57,7 @@ round now see the identical finding set for anything already written to disk.
 | `margin_below_noise_floor` | `info` gate ON / `warning` gate OFF | `promote_margin` sits inside the measured A/A noise floor |
 | `preflight_signal_below_floor` | `critical` **only** under `runtime.preflight_gate="refuse"`, else `warning` | pre-flight verdict `refuse` — the measured signal is at/below the noise floor. The one pre-flight finding that can hard-stop a run, because it is the one measured honestly. Gate-aware on purpose: this re-fires from the persisted record every round, and two criticals in a row would stop a run the operator explicitly set to `"warn"` |
 | `preflight_inert_probe` | `warning` | every probed mutation point left the scalar exactly at the champion mean while the A/A draws varied — the signal is UNMEASURED, not zero |
-| `preflight_saturated_contract` | `warning` | pre-flight verdict `warn` — zero spread across every probe including a deliberately-degraded tree (the `1.000000` signature) |
+| `preflight_saturated_contract` | `warning` | pre-flight verdict `warn` — zero spread across every probe including a knowingly degraded tree (the `1.000000` signature) |
 | `preflight_margin_above_achievable` | `warning`, never gating | `promote_margin` ≥ the measured DEGRADATION signal — how far the scalar fell when a mutation point was destroyed. That does not bound how far a challenger can improve (issue #119), and the probe degrades ONE point so it under-reports even the movement it measures. Worth checking the margin; not evidence the run is null |
 | `preflight_margin_below_floor` | `warning` | the margin window's lower bound fails — margin inside the floor |
 | `tree_never_imported` | `warning`, one per (generation, tree) | no unit of a generation ever imported a mutable tree, so **mutations to it cannot have been under test** — the board scored code the loop never changed. Read `generations/<gen>/harness_load.json` |
@@ -74,7 +74,7 @@ fact — a later `zicato health` invocation cannot reconstruct them:
 
 | Detector | Severity | Fires when |
 |---|---|---|
-| `infra_outage` | `warning` | the round deferred on `runtime.infra_abort_round_threshold` — the endpoint, not the loop, is failing |
+| `infra_outage` | `warning` | the round deferred on `runtime.infra_abort_round_threshold` — the endpoint rather than the loop is failing |
 | `round_token_clipped` | `warning` | `runtime.max_tokens_per_round` clipped the round; the verdict rests on partial coverage |
 
 `detect_noisy_judge` (`warning` per judge whose test–retest disagreement
@@ -146,7 +146,7 @@ Only `critical` findings advance the streak, so warnings — including every
 `tree_never_imported`, and a `stalled_loop` — are loud but structurally
 unable to stop the loop. There is **no `--stop-on-degenerate` CLI flag** — it
 is not opt-in, it is the default behaviour; the opt-out lives at the API level
-(`stop_on_degenerate_health=False` on `evolve_n_rounds`), not on the CLI.
+(`stop_on_degenerate_health=False` on `evolve_n_rounds`) rather than on the CLI.
 Confirm the flag surface against `zicato evolve --help` (the design docs
 drift). Per project policy, never start a live `evolve` yourself — verify via
 the test suite (`test_orchestrator_health.py`) and the on-disk report files.
@@ -162,7 +162,7 @@ report) — see [zicato-watch-dashboard](../zicato-watch-dashboard/SKILL.md).
 
 - Cite only flags present in real `--help`. `zicato health` has no `--round` /
   `--format`; there is no `--stop-on-degenerate` evolve flag — degenerate-stop
-  is on by default, not a flag.
+  is on by default and needs no flag.
 - Don't promise the operator a finding `zicato health` cannot print:
   `infra_outage` and `round_token_clipped` are live-round-only (no persisted
   reader), so they live in the per-round report exclusively. Every other

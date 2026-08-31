@@ -92,7 +92,7 @@ test('strip: draws marks / signal cluster / budget / episode overlays from the r
   assertEqual(marks.length, 2, 'one mark per turn');
   assertEqual(allByClass(s, 'dn-strip-mark-user').length, 1, 'a user mark');
   assertEqual(allByClass(s, 'dn-strip-mark-agent').length, 1, 'an agent mark');
-  // budget ground: shaded (fill 0.02), not over.
+  // budget ground: shaded (fill 0.02) and under the ceiling.
   const budget = allByClass(s, 'dn-strip-budget');
   assertEqual(budget.length, 1, 'a budget fill rect');
   assertEqual(budget[0].getAttribute('data-over'), '0', 'not over a ceiling');
@@ -113,7 +113,7 @@ test('strip HONESTY: signals render as an unpositioned labelled cluster (§1.1)'
   const cluster = allByClass(s, 'dn-strip-signals');
   assertEqual(cluster.length, 1, 'a dedicated signal-cluster lane');
   assertEqual(cluster[0].getAttribute('data-positioned'), 'false', 'the cluster itself is unpositioned');
-  // the count rides the tick (the honesty label), not a fabricated position.
+  // the count rides the tick (the honesty label) rather than a fabricated position.
   assert(sigs.some((g) => g.getAttribute('data-count')), 'ticks carry their aggregate count');
 });
 
@@ -357,7 +357,7 @@ test('lane geometry: THE BLOB PIN — the inked marks cover a small fraction of 
   // The 30 % threshold is what the SHORT committed traces reach; the geometry's
   // own hard ceiling is LANE_BAR_FRAC (40 %), which a saturated lane of
   // uniformly-long turns legitimately approaches. A recapture that adds a long
-  // trace should compare against that ceiling, not tighten this number.
+  // trace should compare against that ceiling rather than tighten this number.
   const inkFraction = (model) => {
     const s = svg.trajectoryStrip(model, {});
     const lane = laneFrame(s);
@@ -387,7 +387,7 @@ test('lane geometry: THE BLOB PIN — the inked marks cover a small fraction of 
 test('lane geometry: the server CAPS each extent — no single turn walls the lane', () => {
   // The extent cap is the reader's (trace_view.LANE_EXTENT_CAP = 0.25); the JS
   // only draws it. Assert the served fixtures honour it and that a 2-turn lane
-  // is genuinely UNDER-filled (the lane is a capacity, not a pie).
+  // is UNDER-filled (the lane is a capacity rather than a pie).
   for (const t of LIST.traces) {
     const marks = t.strip_model.lane.marks;
     for (const m of marks) assert(m.x1 - m.x0 <= 0.2501, `${t.trace_id}: extent ${(m.x1 - m.x0).toFixed(4)} within the 0.25 cap`);
@@ -437,7 +437,7 @@ test('style: turn marks take the SOFT area treatment — never a raw --v2-ink la
     const op = /fill-opacity:\s*([0-9.]+)/.exec(body);
     assert(op && parseFloat(op[1]) < 0.7, `the ${name} mark fill is translucent (got ${op && op[1]})`);
   }
-  // and the two sides stay distinguishable (a density step, not a hue).
+  // and the two sides stay distinguishable (a density step rather than a hue).
   const uo = parseFloat(/fill-opacity:\s*([0-9.]+)/.exec(user)[1]);
   const ao = parseFloat(/fill-opacity:\s*([0-9.]+)/.exec(agent)[1]);
   assert(Math.abs(uo - ao) >= 0.1, 'user vs agent marks differ by a readable density step');
@@ -467,10 +467,9 @@ test('style: svg.dn-strip-hero caps max-WIDTH at the viewBox width — the figur
 // through the real builders in an isolated worker under a hard wall-clock timeout:
 // a spin fails BY TIMEOUT here instead of hanging the suite forever.
 //
-// No such loop was ever found in this tree (the unresponsive-page report that
-// prompted the search was traced to the capture tooling, not the product); the
-// pin stands as the standing GUARD that keeps it that way, not as evidence of a
-// past product defect.
+// No such loop exists in this tree; the unresponsive-page report that prompted
+// the search traced to the capture tooling rather than to the product. This pin
+// is the standing guard that keeps it that way.
 // ====================================================================
 test('termination: the real list + detail + dense-lane renders complete under a hard timeout', async () => {
   const budgetMs = 20_000;                       // ~60× the observed ~0.3 s run

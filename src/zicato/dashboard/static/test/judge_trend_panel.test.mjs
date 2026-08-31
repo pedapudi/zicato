@@ -1,4 +1,4 @@
-// test/judge_trend_panel.test.mjs — the PER-JUDGE TREND panel (WS4-A item 2).
+// test/judge_trend_panel.test.mjs — the per-judge trend panel.
 //
 // The epoch view's first consumer of the long-shipped
 // /api/epoch/{id}/per-judge-trend read (reader + endpoint + D.perJudgeTrend

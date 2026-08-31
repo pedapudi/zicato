@@ -1,9 +1,8 @@
-// test/variant_t_live_hero.test.mjs — Variant T ("Console IV") unit tests:
+// test/variant_t_live_hero.test.mjs — the console's live hero:
 // the SSE-driven live-run display (funnel/ladder transitions, activity
 // ticker, live hero) and the cross-epoch leakage fixes.
 //
-// Split mechanically from the former variant_t.test.mjs (assertions
-// verbatim); shared fixtures + helpers live in ./fixtures.mjs.
+// Shared fixtures and helpers live in ./fixtures.mjs.
 
 import { installDom, test, run, assert, assertEqual, assertDeep, makeEvent } from './harness.mjs';
 import { attachElimStates } from './mock_server.mjs';
@@ -36,7 +35,7 @@ const {
 // ====================================================================
 
 
-// the LIVE racing active-tournament topology used to drive the hero: rung 0 has
+// the LIVE racing active-tournament topology that drives the hero: rung 0 has
 // cut v2/v3 and carried v0/v1; rung 1 is still racing (no cut yet); v0 is the
 // champion the field is raced against (the benchmark seat in every rung).
 const HERO_LIVE_RACING = {
@@ -121,7 +120,7 @@ test('live hero: an active-tournament (racing, running) renders the live hero + 
 test('live hero: a phase/active-runs update mutates the live surfaces WITHOUT a full repaint (node identity preserved; structure digest gates the scalar track)', () => {
   try { globalThis.window.localStorage.clear(); } catch (e) { /* ignore */ }
   coreState.state.connected = true; coreState.state.connecting = false;
-  // A FRESH `ts` on every beat: the run is genuinely live across this whole
+  // A FRESH `ts` on every beat: the run is live across this whole
   // test, which is what it is about (in-place mutation vs repaint). Without
   // one the heartbeat cannot be aged, so the tri-state reads the workspace
   // as interrupted and tears the drawer down mid-test.
@@ -158,7 +157,7 @@ test('live hero: a phase/active-runs update mutates the live surfaces WITHOUT a 
   coreState.state._changed();
 
   // the scalar track rebuilt (the structure digest changed) — but the ticker LIST
-  // and the phase node are still the SAME persistent nodes (mutated, not replaced).
+  // and the phase node are still the SAME persistent nodes: mutated rather than replaced.
   assert(allByClass(root, 'dt-ticker-list')[0] === tickerListBefore, 'the ticker list is still the same node after a real change (append-only growth)');
   assert(allByClass(root, 'dt-live-hero-meta')[0] === metaNodeBefore, 'the metadata node is still the same node (patched, not rebuilt)');
   assert(allByClass(root, 'dt-ticker-row').length > rowsBefore, 'a real change (rung cut + run completed) appended new ticker rows');
@@ -275,7 +274,7 @@ test('live hero: a LIVE SWISS tournament shows the SWISS LADDER + round-based pr
 
 // a LIVE single-elim tournament for the current epoch — bracket, NO funnel.
 // the served live payload carries gen_states (attach_elim_states on the server;
-// the radial renders the SERVED model verbatim per U3 — no client re-derivation).
+// the radial renders the SERVED model verbatim, with no client re-derivation).
 const HERO_LIVE_ELIM_E3 = attachElimStates({
   structure: 'single_elim', phase: 'running', epoch_id: HERO_EPOCH,
   structure_params: { board_size: 4 },
@@ -419,7 +418,7 @@ test('live hero: a COMPLETED/idle racing tournament renders NO funnel (the funne
 
 // a CURRENT-epoch proposing-phase active-tournament carrying field_status:
 // two challengers minted, one applied, one rejected. No structure topology
-// yet (rounds empty) — so the tracker leads, not a figure.
+// yet (rounds empty), so the tracker leads rather than a figure.
 const HERO_PROPOSING_E3 = {
   structure: 'swiss', phase: 'proposing', epoch_id: HERO_EPOCH,
   structure_params: { rounds: 3 },
@@ -780,7 +779,7 @@ test('epoch view (cross-epoch): viewing e1 shows ONLY e1 gens — no leaked e0 c
 
   // the timeline's challenger fan reflects e1's OWN minted field (v1, v2) — a
   // leak would add e0's v3/v4 chips. The single-round episode lists exactly
-  // {v1, v2} (v0 is the carried champion on the spine, not a chip).
+  // {v1, v2} (v0 is the carried champion on the spine rather than a chip).
   const chips = allByClass(host, 'dn-roundtl-chip').map((c) => { const mono = allByClass(c, 'dn-mono')[0]; return mono ? (mono.textContent || '').trim() : ''; });
   assertDeep(chips.filter((s, i) => chips.indexOf(s) === i).sort(), ['v1', 'v2'], 'the e1 challenger fan is EXACTLY e1’s minted field {v1,v2} (no leaked v3/v4)');
 });
@@ -808,7 +807,7 @@ test('epoch view (cross-epoch): viewing e0 is unchanged — its full field {v0..
   assertDeep(chips.filter((s, i) => chips.indexOf(s) === i).sort(), ['v1', 'v2', 'v3', 'v4'], 'e0 reads its own full challenger fan {v1..v4}');
 });
 
-// ---- BUG 2: a proposing epoch shows the empty state, not e0's funnel -
+// ---- a proposing epoch shows the empty state rather than e0's funnel -
 
 test('epoch view (cross-epoch): a PROPOSING e1 shows the honest empty state — NOT e0’s completed funnel', async () => {
   freshState();

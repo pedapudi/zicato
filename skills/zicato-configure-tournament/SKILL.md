@@ -37,7 +37,7 @@ Specs: [TOURNAMENT-STRUCTURES.md](../../docs/design/TOURNAMENT-STRUCTURES.md),
 [SELECTION.md](../../docs/design/SELECTION.md). See
 [`../../AGENTS.md`](../../AGENTS.md) for operating rules (the live-run gate: never
 launch a real-LLM `evolve` without the user's explicit go-ahead; derive every
-flag from `--help`, not the stale design CLI doc).
+flag from `--help` rather than from the design CLI doc, which can be stale).
 
 ## 1. The two nested levels (read this first)
 
@@ -64,7 +64,7 @@ ACROSS-round: the EVOLUTION loop  ──  `zicato evolve --rounds N`
 
 These are unrelated counters. A non-gauntlet structure also has its OWN inner
 rounds (swiss `rounds_n`, an elim bracket's depth, a racing rung) — those are
-WITHIN one evolve round, not across. Be explicit about which "round" you mean.
+WITHIN one evolve round rather than across rounds. Be explicit about which "round" you mean.
 
 ## 2. The proposer learns ACROSS rounds even WITHOUT promotion (the core fact)
 
@@ -120,11 +120,11 @@ Two cross-cutting levers worth internalizing:
 ## 4. Recommended starting config
 
 **Check what you already have first.** `zicato init` scaffolds the operator's
-live `scoring.json` (next to the workspace, only when absent — never clobbered)
-with the *full recommended contract* spelled out: racing with `field_size 4`,
-`eta 2`, `board_fraction 0.4`, `replicates 2`, the Bradley–Terry evidence gate
-enabled explicitly (threshold `0.8`, a 32-replicate budget), and a 2-entry
-pre-tournament screen. That is the shipped recommendation for a new workspace —
+live `scoring.json` next to the workspace, writing it only when it is absent and
+never clobbering an existing one. The scaffold spells out the full recommended
+contract: racing with `field_size 4`, `eta 2`, `board_fraction 0.4` and
+`replicates 2`; the Bradley–Terry evidence gate enabled explicitly at threshold
+`0.8` with a 32-replicate budget; and a 2-entry pre-tournament screen. That is the shipped recommendation for a new workspace —
 read it before replacing it.
 
 **Start at gauntlet** when you want the cheapest thing that can evolve at all,
@@ -168,7 +168,7 @@ burns budget re-running settled units.
 One caveat that bites the noise lever: under `fast` **on the gauntlet the
 champion side is a frozen cached aggregate**, so raising `replicates` reduces
 CHALLENGER-side noise only, and repeated rounds are not independent draws of the
-contrast. When you need a genuinely fresh both-sides measurement of the duel,
+contrast. When you need a fresh both-sides measurement of the duel,
 that is what `full` is for.
 
 ## 5. Cost / runtime estimator
@@ -196,7 +196,7 @@ wall_clock ≈ board_runs × per_entry_budget ÷ parallelism
 - `rounds` is the OUTER evolve loop — total cost scales linearly in it.
 - `parallelism` is `RuntimeConfig.parallelism` (the run fan-out semaphore);
   raising it shortens wall-clock but, on a quota-limited endpoint, **invites
-  throttling** — the endpoint's own concurrency cap, not zicato's, is usually
+  throttling** — the endpoint's own concurrency cap rather than zicato's is usually
   the real ceiling.
 - `wall_clock_budget` × retries bites: a per-entry budget interacts badly with
   LLM retries — a retry can blow the budget and the run is recorded aborted
@@ -237,9 +237,9 @@ existing run artifacts, never launch a live loop to test):
       improving loss).
 - [ ] **Scalar reflects the objective.** Confirm via
       [`zicato-audit-board`](../zicato-audit-board/SKILL.md) that the scalar
-      isn't drift-dominated, so the proposer learns the real goal, not a proxy.
+      isn't drift-dominated, so the proposer learns the real goal rather than a proxy.
 - [ ] **Mode is intentional.** `--mode fast` (cache-first) vs `full` chosen
-      deliberately for the run's purpose.
+      knowingly for the run's purpose.
 
 ### Recipes to verify it (read-only)
 
@@ -285,7 +285,7 @@ shape (`core_idea`, `modulating`, `decision`, `scalar_score_delta`) — see
 - **Δscalar flat or worsening while `drift` improves** → the proposer is
   optimizing the wrong metric; the scalar is drift-dominated. Fix via
   [`zicato-audit-board`](../zicato-audit-board/SKILL.md) +
-  [`zicato-tune-scoring`](../zicato-tune-scoring/SKILL.md), not the tournament config.
+  [`zicato-tune-scoring`](../zicato-tune-scoring/SKILL.md) rather than the tournament config.
 - **Runtime/cost far above the estimate** → concurrency throttling on a
   quota-limited endpoint, or `wall_clock_budget` × LLM-retry blowups.
 

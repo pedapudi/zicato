@@ -1,18 +1,18 @@
 // js/views/candidate.js — CANDIDATE (one generation), comparison-first.
 //
-// Console IV's candidate screen is the P anchor folded with S's first-class
-// side-by-side COMPARE. By default it reads ONE candidate: the lifecycle DAG,
+// The candidate screen anchors on one generation and offers comparison as a
+// first-class mode. By default it reads ONE candidate: the lifecycle DAG,
 // the per-board scoring dot-plot, ALL match-ups, and the STACKED promote gate.
 // A "compare with…" picker SPLITS the detail into TWO candidates read side by
 // side (lifecycle · match-ups · per-board scoring · promote gate, A | B). Each
 // side paints into its own host so its digest gate fires independently.
 //
-// Round-5 fixes carried on EVERY candidate panel (A and B):
-//   * fix #1 — the STACKED, non-overlapping PROMOTE GATE lives on THIS page.
-//   * fix #2 — the lifecycle "patch" node is clickable → this candidate's
+// Three properties every candidate panel carries, on both the A and B side:
+//   * the STACKED, non-overlapping PROMOTE GATE lives on THIS page.
+//   * the lifecycle "patch" node is clickable → this candidate's
 //     SIDE-BY-SIDE diff (views/diff.js), preserving the compare target.
-//   * fix #3 — ALL match-ups the candidate was in (champion==gen ||
-//     challenger==gen), not just one. v0 shows v0→v1 AND v0→v2.
+//   * EVERY match-up the candidate was in (champion==gen ||
+//     challenger==gen), never one alone. v0 shows v0→v1 AND v0→v2.
 //
 // The compare target arrives as `route.cmp` (the 4th render arg the shell
 // passes alongside `route.params`); a test may also call render with
@@ -85,7 +85,7 @@ export async function render(host, ctx, params, route) {
   // The match-ups: the COMPLETED feed (bracket.matchups) UNION the LIVE published
   // rounds (current-epoch-scoped). A candidate running its FIRST round shows up
   // in the live rounds before any match commits to bracket.matchups, so a live
-  // run no longer reads "did not run in any round" while it is plainly racing.
+  // run never reads "did not run in any round" while it is plainly racing.
   const staticMatchups = (bracket && Array.isArray(bracket.matchups)) ? bracket.matchups : [];
   const at = state.activeTournament;
   // THE ONE LIVENESS READ for this view. Everything present-tense below hangs
@@ -176,8 +176,9 @@ export async function render(host, ctx, params, route) {
     reigns: reigns.map((r) => [r.id, r.fromRound, r.toRound, r.current]),
     a: candidateDigest(sideA), b: sideB ? candidateDigest(sideB) : null,
     // the racing FIELD model the field-relative panels draw — folded in so a real
-    // rung/field/projection change (the whole field, not just THIS candidate's
-    // scalars) repaints the panels, but a no-op heartbeat stays byte-identical.
+    // rung/field/projection change (the whole field, rather than THIS candidate's
+    // scalars alone) repaints the panels, while a no-op heartbeat stays
+    // byte-identical.
     racing: racingSt ? structureDigest(racingSt) : null,
   });
 
@@ -247,8 +248,8 @@ async function resolveCandidate(epochId, genId, genList, experiments, scalarByGe
   // The SERVER's per-entry champion-vs-candidate join for this round
   // (`/api/matchup-grid`): one row per board entry carrying both sides' score
   // and drift loss, the movement between them, the candidate's replicate
-  // spread, and which channel decided the entry. DQ1 — the join, the slice
-  // restriction and the verdict are the server's; this view only renders them.
+  // spread, and which channel decided the entry. The server computes the join,
+  // the slice restriction and the verdict; this view only renders them.
   // Absent when the candidate IS the champion, or has no champion to compare
   // against (a seed), in which case there is nothing to join.
   const compare = {};
@@ -398,8 +399,8 @@ async function resolveCandidate(epochId, genId, genList, experiments, scalarByGe
 
   // THE CHAMPION-GATE OPPONENT (racing). The racing-final match names both
   // sides in `competitors`; the one that is not this candidate is who it faced
-  // at the gate. The candidate's tournament-path strip previously said "final ·
-  // Δ · promoted/rejected" without ever naming the opponent.
+  // at the gate, so the tournament-path strip can name it rather than reading
+  // "final · Δ · promoted/rejected" with the opponent left out.
   const finalOpponent = racingFinalOpponent(racingSt, genId);
 
   return {
@@ -570,13 +571,13 @@ export function buildRadarModel({ primaryGate, championScalar, settledScalar, pr
 // predicate / namespace (parsed from that rule's detail). This is the data that
 // resolves "smaller Σ but rejected": a challenger can lose on rule 2 / 3 even
 // when its scalar is better.
-// ══ THE CANDIDATE'S IDENTITY (issue #194 §4) ════════════════════════════════
+// ══ THE CANDIDATE'S IDENTITY ════════════════════════════════════════════════
 //
-// A candidate IS its idea. The dossier used to open on "born from v0 by a
-// patch" — true of every candidate ever minted, and therefore about none of
-// them — while the core idea, the reasoning, the predicted movements and the
-// sites it touched were scattered across other pages. These three builders
-// put the identity at the top and the verdict directly under it.
+// A candidate is identified by its idea. "Born from v0 by a patch" is true of
+// every candidate ever minted and so distinguishes none of them, and the core
+// idea, the reasoning, the predicted movements and the sites it touched each
+// live on a different page. These three builders put the identity at the top
+// of the dossier and the verdict directly under it.
 
 // The PROPOSAL model for one experiment record: the proposer's own words +
 // its falsifiable claims + the sites its patches touched. PURE (node-testable).
@@ -617,9 +618,9 @@ export function buildProposalModel(exp) {
   let sites = patchIds.map((id) => ({ mutation_id: id, op: text(patches[id] && patches[id].op) }));
   if (!sites.length) sites = list(hyp.modulating).map(String).filter(Boolean).sort().map((id) => ({ mutation_id: id, op: null }));
 
-  // The DIFF SIZE, stated for exactly what it measures: the lines of NEW
-  // content the patches carry. It is not a +/- diff stat — we have the new
-  // side here, not the old — so it is never labelled as one.
+  // The DIFF SIZE, stated for what it measures: the lines of NEW content the
+  // patches carry. Only the new side is available here, so this is never a
+  // +/- diff stat and is never labelled as one.
   let newLines = 0;
   for (const id of patchIds) {
     const content = patches[id] && patches[id].new_content;
@@ -911,14 +912,14 @@ function candidateDigest(s) {
     matchups: s.mine.map((m) => [m.champion, m.challenger, m.decision, svg.isNum(m.delta_scalar) ? m.delta_scalar.toFixed(2) : null]),
     gates: s.gates.map((g, i) => g && Array.isArray(g.rules)
       ? [s.gateSpecs[i].champ, s.gateSpecs[i].chall, s.gateSpecs[i].role, g.decision, svg.isNum(g.delta_scalar) ? g.delta_scalar.toFixed(3) : null, g.rules.map((r) => [r.id, r.status, r.fired]),
-        // scalar-provenance decomposition (#19) folded in so a change to which
+        // scalar-provenance decomposition folded in so a change to which
         // transform/plugin shaped a side — or a fail-open event firing —
-        // repaints the gate, but a no-op heartbeat stays byte-identical. null
-        // (built-in / pre-#19) contributes nothing new (back-compat digest).
+        // repaints the gate, while a no-op heartbeat stays byte-identical. A
+        // null decomposition (a built-in scalar) contributes nothing.
         decompDigest(g.scalar_decomposition),
         // operator-override provenance folded in (kind+action+state+reason, NO
         // timestamp) so an override appearing/changing repaints the gate while a
-        // no-op beat stays byte-identical. null (none) → pre-override digest.
+        // no-op beat stays byte-identical. A null override contributes nothing.
         overrideDigest(g.override),
         // the ABSOLUTE-scalar endpoints (champion/challenger scalar + the live
         // projected challenger + integer board counts) folded in so a board
@@ -1098,7 +1099,7 @@ function paintCandidate(host, ctx, epochId, s, cmpId, isPrimary, narrow, structu
     championId, compare: s.compare, driftPresent: s.driftPresent,
     championSigma: s.championSigma,
     candidateSigma: s.candidateSigma, deltaSigma: s.deltaSigma, gateExplain: s.gateExplain,
-    // height is NO LONGER passed: lifecycleDag now DERIVES its viewBox height
+    // no height is passed: lifecycleDag DERIVES its viewBox height
     // from the (deduped) board-node count × a fixed row pitch, so the seed/
     // baseline (full board) and a racing challenger (deduped slice) render with
     // IDENTICAL per-row spacing and a spine centred on the fan — neither side
@@ -1119,8 +1120,8 @@ function paintCandidate(host, ctx, epochId, s, cmpId, isPrimary, narrow, structu
   host.appendChild(section('Lifecycle · cause → effect → verdict', dagCard));
 
   // ---- LIVE — this candidate's in-flight board runs (current-epoch-scoped) ----
-  // A candidate mid-run reads "N running" with per-board progress, NOT a static
-  // page. Rendered for ANY structure (active-runs is structure-agnostic); the
+  // A candidate mid-run reads "N running" with per-board progress rather than as
+  // a static page. Rendered for ANY structure (active-runs is structure-agnostic); the
   // dot-plot below covers COMPLETED boards, this covers the ones still running.
   const inflight = Array.isArray(s.inflight) ? s.inflight : [];
   // INTERRUPTED: say what was running when it stopped, in one past-tense line.
@@ -1203,9 +1204,9 @@ function paintCandidate(host, ctx, epochId, s, cmpId, isPrimary, narrow, structu
     host.appendChild(section('Live · boards running for this candidate', liveCard));
   }
 
-  // ══ THE DOSSIER BODY — coordinated, NOT sprawling (study opt 2 layout) ══
-  // The study folds the per-board read, the promote-gate ladder and the LABELED
-  // radar silhouette into ONE coordinated grid beneath the full-width lifecycle
+  // ══ THE DOSSIER BODY — one coordinated grid ═══════════════════════════
+  // The per-board read, the promote-gate ladder and the LABELED radar
+  // silhouette sit in ONE coordinated grid beneath the full-width lifecycle
   // spine, rather than a flat stack of full-bleed sections (the sprawl the
   // operator flagged). Left column = the per-board comparison + the gate ladder;
   // right column = the silhouette, STRETCHED to fill its column (no empty band).
@@ -1218,8 +1219,8 @@ function paintCandidate(host, ctx, epochId, s, cmpId, isPrimary, narrow, structu
   // (filled ●) ride a shared per-row value axis, joined by a connector coloured
   // improved (candidate left of champion) / regressed (right); the Δ (cand −
   // champ) + the pass/fail/timeout marker sit at the right edge, worst-first.
-  // This is the paired champ→cand read — NOT the old single-series dot-plot
-  // against one aggregate champion reference rule. Each per-entry record carries
+  // This is the paired champion-to-candidate read, rather than a single-series
+  // dot-plot against one aggregate champion reference. Each per-entry record carries
   // the tournament context it ran in (match_id / rung); the SAME board can appear
   // several times (raced across rungs / rounds), so we keep the short dim context
   // tag per row + route a click to that SPECIFIC run's board drill-down.
@@ -1330,8 +1331,8 @@ function paintCandidate(host, ctx, epochId, s, cmpId, isPrimary, narrow, structu
   // `axes[].label`). A live/projected candidate GHOSTS in dn-proj; a racing
   // candidate with too few settled axes shows a clearly-marked PROJECTED radar +
   // the "settled comparisons appear once boards finish" affordance instead of an
-  // empty pane. This REPLACES the old scalar-component bars (folded in). Vendor-
-  // clean. For racing the silhouette compares against the field-leader reference.
+  // empty pane. It carries the scalar components folded into its axes. For
+  // racing the silhouette compares against the field-leader reference.
   let radarSection = null;
   if (s.radar && Array.isArray(s.radar.axes)) {
     const racing = String(structure) === 'racing';
@@ -1375,7 +1376,7 @@ function paintCandidate(host, ctx, epochId, s, cmpId, isPrimary, narrow, structu
   ].filter(Boolean));
   host.appendChild(dossierGrid);
 
-  // ---- RACING VARIATION — racing is FIELD-relative, not pairwise ----
+  // ---- RACING VARIATION — racing is FIELD-relative rather than pairwise ----
   // Racing cuts the whole field rung-by-rung (successive-halving), so "how good"
   // only means anything against the field. When THIS candidate's structure is
   // racing the study swaps the pairwise read for field-relative panels (field
@@ -1495,7 +1496,7 @@ function facetRows(raw) {
 // counts quality, so the header states each direction rather than relying on
 // the reader to know.
 //
-// Deliberately plain: no verdict colour, no bars, no ordering by value. These
+// Plain by design: no verdict colour, no bars, no ordering by value. These
 // numbers carry NO noise threshold (BOARD-FORMAT.md §1.4) and a thin slice is
 // mostly noise, so the table must not read as a scoreboard. `scored` is shown
 // for the same reason — a scalar over one entry must not read like a scalar
@@ -1559,7 +1560,7 @@ function racingAffordance() {
 // (candidate left of champion) / regressed (right of champion); the Δ (cand −
 // champ) + the pass/fail/timeout marker ride the right edge; rows are passed
 // pre-sorted (worst-first). A de-emphasised dashed champion AGGREGATE tick sits
-// at the foot — context, NOT the per-row comparator. Rendered INLINE with
+// at the foot — context rather than the per-row comparator. Rendered INLINE with
 // svgEl(...) — NO builder is added to / modified in svg.js. Each row is a
 // clickable <g> (board name, either dot, the connector, the Δ) → onClick(row).
 // The shared-contract responsive flag (width:100% + viewBox) keeps it filling
@@ -1658,10 +1659,10 @@ function perBoardDumbbell(opts) {
       : `${r.label}: candidate ${svg.fmt(r.value, 2)}`) + scoreTip + seTip + (prTip ? ' · ' + prTip : ''));
     g.appendChild(candDot);
 
-    // CONTINUOUS SCORE (#18): a 0→1 mini-bar + the score number, then the
-    // compact precision/recall tag below it when the entry carries metrics.
-    // Only drawn for a scored row — a bool-only row leaves this column empty
-    // and relies on the ✓/✗ glyph at the edge exactly as before.
+    // CONTINUOUS SCORE: a 0→1 mini-bar + the score number, then the compact
+    // precision/recall tag below it when the entry carries metrics. Only drawn
+    // for a scored row; a bool-only row leaves this column empty and relies on
+    // the ✓/✗ glyph at the edge.
     if (scoreW > 0 && svg.isNum(r.score)) {
       const sbx = x1 + 6;                 // bar left, just past the value axis
       const sbw = 44;                     // FIXED bar width — the readout sits to
@@ -1762,7 +1763,7 @@ function racingFieldPanels(st, epochId, genId, championId, scalarByGen, liveProj
     const cut = new Set((r.cut || []).map(String));
     for (const c of (r.competitors || []).map(String)) {
       if (!racers.has(c)) racers.set(c, { id: c, scalar: scalarOf(c), survived: true, cut_rung: null });
-      // a racer cut at this rung is no longer surviving.
+      // a racer cut at this rung stops surviving from here on.
       if (cut.has(c)) { racers.get(c).survived = false; racers.get(c).cut_rung = ri; }
       else if (survivors.has(c)) { /* carries on */ }
     }
@@ -1863,9 +1864,9 @@ function allMatchupsPanel(mine, genId, championId, ctx, epochId) {
       { label: 'Δ scalar', class: 'dn-num' }, { label: 'hypothesis' }],
     rows: mine.map((m) => {
       const asChamp = m.champion === genId;
-      // Class B: a match-up with no recorded decision is still racing —
-      // PENDING, not a default "rejected". `decisionOf` reads the matchup's own
-      // stamped decision field; absent ⇒ pending.
+      // A match-up with no recorded decision is still racing, so it reads
+      // PENDING rather than defaulting to "rejected". `decisionOf` reads the
+      // matchup's own stamped decision field; absent ⇒ pending.
       const dec = decisionOf(m) || 'pending';
       const other = asChamp ? m.challenger : m.champion;
       return {
@@ -1946,8 +1947,8 @@ export function absoluteScalarsDigest(gate) {
 // posterior strength θ̂ with a credible interval, and the gate promotes only when
 // P(θ_child > θ_champion) clears the configured threshold. This block surfaces
 // that pre-gate as the operator's FIRST read — two θ̂ whiskers + the P-bar against
-// the threshold marker — so "why hasn't this promoted yet?" reads off the
-// evidence, not a bare "deferred". Every field comes from `gate.rating`
+// the threshold marker — so a candidate held back shows the evidence for the
+// hold rather than a bare "deferred". Every field comes from `gate.rating`
 // VERBATIM (build_rating_view): the keys are `present`/`credible`/`champion`/
 // `challenger` (each `{theta, se, ci_lo, ci_hi}|null`)/`p_stronger`/`threshold`/
 // `decision`/`ci_overlap`/`replicates_spent`/`n_duels`/`next_duel`/`ci_history`.
@@ -2126,7 +2127,7 @@ export function ratingBlock(rating) {
   wrap.appendChild(subhead('Bradley–Terry uncertainty · resolve before the gate'));
 
   const nDuels = svg.isNum(rating.n_duels) ? rating.n_duels : 0;
-  // below the credible-fit minimum: a placeholder, NOT a faked estimate.
+  // below the credible-fit minimum: a placeholder rather than a faked estimate.
   if (!rating.credible && nDuels < MIN_CREDIBLE_DUELS) {
     const need = MIN_CREDIBLE_DUELS - nDuels;
     wrap.appendChild(el('div', { class: 'dn-bt-forming dt-proj' }, [
@@ -2284,13 +2285,12 @@ export function diffComplexityDigest(gate) {
   return [champ, chall];
 }
 
-// fix #1 — the stacked, non-overlapping gate panel:
-// (a) decision header, (b) the rules ladder (each rule its own row).
-// The old (c) champion-vs-challenger SCALAR-COMPONENTS comparison block was
-// REMOVED — the FINAL liked study (single-generation.html opt 2) dropped it as
-// redundant with the RADAR SILHOUETTE (which now compares candidate vs champion
-// across the same scalar / pass-rate / per-judge axes). The deciding-rule detail
-// the components used to carry now reads off the gate-rule ladder + the radar.
+// The stacked, non-overlapping gate panel: (a) a decision header, then (b) the
+// rules ladder with each rule on its own row. It carries no champion-versus-
+// challenger scalar-components block, because the RADAR SILHOUETTE already
+// compares candidate against champion across the same scalar, pass-rate and
+// per-judge axes, and the deciding-rule detail reads off the gate-rule ladder
+// beside it.
 // The operator's expand/collapse of one DEFENDED round, keyed `champ>chall`.
 // The dossier is digest-gated, so without this an expanded defence would snap
 // shut on the next beat (the proposer-brief precedent in views/epoch.js).
@@ -2331,7 +2331,7 @@ export function buildGateStack(s) {
     const card = el('div', { class: 'dn-panel dn-gate-defences' });
     for (const d of defences) card.appendChild(defenceRow(d, { live: s.live }));
     // The caption must read true for the SEED too, which has no deciding round
-    // above it to point at — so it describes the rows, not their neighbours.
+    // above it to point at, so it describes the rows rather than their neighbours.
     card.appendChild(el('p', { class: 'dn-faint', style: 'font-size:11px;margin:8px 0 0;',
       text: 'rounds this candidate defended as champion · expand one for its full rule ladder' }));
     out.push(section(`Defended rounds · ${defences.length}`, card));
@@ -2362,7 +2362,7 @@ function defenceRow(d, opts) {
 
 export function gatePanel(gate, comparison, spec, opts) {
   const card = el('div', { class: 'dn-panel dn-gate' });
-  // Class B: a gate with no resolved decision is still pending, not rejected.
+  // A gate with no resolved decision is still pending rather than rejected.
   // The backend emits decision:"deferred" verbatim until BOTH aggregates
   // resolve — decisionOf threads it through to its caution-toned pill.
   const decision = decisionOf(gate) || 'pending';
@@ -2385,9 +2385,9 @@ export function gatePanel(gate, comparison, spec, opts) {
     // ABSOLUTE scalars sit LEFT of the Δ chips — the settled champion floor and
     // the candidate's absolute scalar (or, mid-flight, its PROJECTED scalar in
     // the projStat treatment) so the operator reads the two ENDPOINTS the Δ is
-    // taken between, not just the gap. Each side is absent-tolerant: a pre-#19 /
+    // taken between rather than the gap alone. Each side is absent-tolerant: an
     // unresolved aggregate (champion_scalar/challenger_scalar = null) drops its
-    // chip; absent everything → byte-identical to today (no abs block at all).
+    // chip, and with both absent no absolute block is drawn at all.
     absoluteScalars(gate),
     el('div', { class: 'dn-row dn-gate-deltas' }, [
       svg.isNum(gate.delta_scalar) ? stat(svg.fmtSigned(gate.delta_scalar, 2), 'Δ scalar (loss)') : null,
@@ -2439,11 +2439,11 @@ export function gatePanel(gate, comparison, spec, opts) {
     card.appendChild(ladder);
   }
 
-  // (c) the SCALAR DECOMPOSITION (#19): WHICH transform / plugin produced the
-  // pass term + drift component on each side, parsed from the recorded
-  // provenance tokens. Renders only when a transform / plugin actually fired
-  // (a plain built-in / pre-#19 round shows nothing — back-compat clean). A
-  // plugin that FAILED OPEN is surfaced loudly (caution-colored banner + row).
+  // (c) the SCALAR DECOMPOSITION: WHICH transform / plugin produced the pass
+  // term + drift component on each side, parsed from the recorded provenance
+  // tokens. Renders only when a transform or plugin fired; a round scored by
+  // the built-in scalar shows nothing here. A plugin that FAILED OPEN is
+  // surfaced loudly, as a caution-colored banner plus a row.
   const decomp = scalarDecomp(gate.scalar_decomposition);
   if (decomp) card.appendChild(decomp);
 
@@ -2700,13 +2700,13 @@ function scorecardDigest(scorecard) {
 }
 
 // Render the scalar-provenance decomposition for a gate. Returns null when no
-// transform / plugin fired on either side (built-in everywhere or a pre-#19
-// run with `present:false`) so a default round stays visually quiet. When a
-// transform / plugin DID shape the scalar, shows per-side which one produced
-// the pass term + drift component; a FAIL-OPEN plugin (one that fell back to
-// the built-in / transformed default) is flagged as a first-class caution
-// signal — a prominent banner plus a caution-colored row — so a silently
-// degraded plugin is obvious here, not buried in a WARNING log.
+// transform or plugin fired on either side — the built-in scalar everywhere, or
+// a run with `present:false` — so a default round stays visually quiet. When a
+// transform or plugin DID shape the scalar, this shows per side which one
+// produced the pass term and the drift component. A FAIL-OPEN plugin, one that
+// fell back to the built-in or transformed default, is flagged as a first-class
+// caution signal with a prominent banner and a caution-colored row, so a
+// silently degraded plugin is visible here rather than buried in a warning log.
 function scalarDecomp(d) {
   if (!d || !d.present) return null;
   const wrap = el('div', { class: 'dn-scalar-decomp' });
@@ -2730,11 +2730,10 @@ function scalarDecomp(d) {
 }
 
 // A content digest of the scalar-provenance decomposition: present + fail-open
-// + each side/seam's (kind, source, fail_open). null when absent / not present
-// (built-in / pre-#19) so it contributes NOTHING to the gate digest — a default
-// round's digest is byte-identical to the pre-#19 path (back-compat). Used by
-// the content-gated render so a provenance change repaints but a no-op
-// heartbeat does not.
+// + each side/seam's (kind, source, fail_open). It is null when no
+// decomposition is present — a round scored by the built-in scalar — so it
+// contributes NOTHING to the gate digest there. The content-gated render uses
+// it so a provenance change repaints while a no-op heartbeat does not.
 function decompDigest(d) {
   if (!d || !d.present) return null;
   const seam = (v) => v ? [v.kind || null, v.source || null, !!v.fail_open, v.fallback_reason || null] : null;

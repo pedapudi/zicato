@@ -249,8 +249,9 @@ test('entry_form: the JSON-schema spec shows a client parse hint (non-blocking)'
   assert(/parses as JSON/.test(hint.textContent), 'a valid schema flips the hint to OK');
 });
 
-// `context` round-tripped through the buffer with NO control, so an operator
-// could neither read an authored context nor write one — invisible, not lost.
+// `context` round-trips through the buffer. Without a control for it an operator
+// could neither read an authored context nor write one: invisible, though never
+// dropped.
 test('entry_form: an existing context is VISIBLE and round-trips through the form', () => {
   const buf = ef.entryToBuffer({ id: 'c', kind: 'single_turn', budget_s: 30, input: 'z',
     context: { locale: 'en-GB', tier: 2 } });
@@ -465,7 +466,8 @@ test('board editor: the open editor survives a digest re-render (module-state pi
   assert(form, 'the editor is STILL open after a re-render (module-state pin)');
   const budget2 = byAria(host, 'Entry budget seconds');
   assert(budget2, 'the budget control re-rendered');
-  // the pinned buffer kept the typed value: Save posts 300, not the original 180.
+  // the pinned buffer kept the typed value: Save posts 300 rather than the 180 it
+  // opened with.
   byAria(host, 'Save entry').dispatchEvent(makeEvent('click'));
   await tick();
   const call = OP_CALLS.find((c) => c.op === 'edit_board_entry');

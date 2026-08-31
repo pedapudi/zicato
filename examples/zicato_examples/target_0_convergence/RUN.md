@@ -1,16 +1,15 @@
 # target_0_convergence — the known-answer convergence demo
 
-This walkthrough runs `zicato evolve --rounds 3` against a
-planted-defect target where **no LLM exists anywhere** — the harness is
-deterministic, the proposer is a script — and the loop provably
-converges: the champion scalar drops from `3.6` to the exact known
-floor of `1.2` through a `promoted → rejected → promoted` decision
-sequence. It is the smallest end-to-end proof that the FULL shipped
-loop works: real propose → apply → validate → subprocess tournament
-workers → reduce → gate → persist, under the default git
-generation-store backend.
+This walkthrough runs `zicato evolve --rounds 3` against a target with
+a planted defect and **no language model anywhere**: the harness is
+deterministic and the proposer is a script. The loop provably converges.
+The champion scalar drops from `3.6` to the known floor of `1.2` through
+a `promoted → rejected → promoted` decision sequence. It is the smallest
+end-to-end proof that the whole loop works — propose, apply, validate,
+subprocess tournament workers, reduce, gate, persist — under the default
+git generation-store backend.
 
-The CI-runnable form of this demo is
+The same walkthrough runs in continuous integration as
 [`tests/test_convergence_known_answer.py`](../../../tests/test_convergence_known_answer.py),
 which also pins the exact per-round scalars and the on-disk artifacts.
 
@@ -60,8 +59,10 @@ rm -rf /tmp/zicato-smoke-t0
 mkdir -p /tmp/zicato-smoke-t0
 cd /tmp/zicato-smoke-t0
 
-EX=/home/sunil/git/zicato/examples/zicato_examples/target_0_convergence
-PY=/home/sunil/git/zicato/.venv/bin/python
+# ZICATO is your zicato checkout; the two paths below derive from it.
+ZICATO=${ZICATO:?set ZICATO to your zicato checkout}
+EX=$ZICATO/examples/zicato_examples/target_0_convergence
+PY=$ZICATO/.venv/bin/python
 
 # 1. Bootstrap the workspace.
 $PY -m zicato.cli init --workspace .zicato
@@ -105,7 +106,7 @@ cat > brief.md <<'EOF'
 EOF
 
 # 4. Inspect the mutation surface (exactly one id: style_rules).
-$PY -m zicato.cli mutations --workspace .zicato
+$PY -m zicato.cli inspect mutations --workspace .zicato
 
 # 5. Run the three scripted rounds — evolve auto-opens epoch e0 from
 #    the contract above, then: v1 PROMOTED (3.6 → 2.4), v2 REJECTED
@@ -121,14 +122,15 @@ $PY -m zicato.cli evolve --workspace .zicato \
 $PY -m zicato.cli epoch close --workspace .zicato
 ```
 
-> Why not `epoch new`? An explicit `zicato epoch new` currently freezes
-> the epoch WITHOUT the `contract.proposer_path` configured in step 2
-> (the CLI does not thread it into the frozen epoch config), so the
-> live contract hash differs and the first `evolve` auto-rolls to a
-> fresh epoch — same rounds, same numbers, but under an auto-named
-> epoch id. The streamlined flow above avoids the wart; the CI test
-> (`tests/test_convergence_known_answer.py`) pins the epoch by calling
-> `new_epoch(..., proposer_path=...)` directly.
+> The walkthrough opens the epoch through `evolve` rather than through
+> `zicato epoch new`. An explicit `epoch new` freezes the epoch without
+> the `contract.proposer_path` configured in step 2, because the CLI
+> does not thread that setting into the frozen epoch config. The live
+> contract hash then differs and the first `evolve` rolls to a fresh
+> epoch: the same rounds and the same numbers, but under an
+> automatically named epoch id. The test
+> (`tests/test_convergence_known_answer.py`) pins the epoch instead by
+> calling `new_epoch(..., proposer_path=...)` directly.
 
 ## The racing variant
 
@@ -136,19 +138,19 @@ $PY -m zicato.cli epoch close --workspace .zicato
 contract under a **racing** tournament (`field_size: 4`,
 `replicates: 2`) with the Bradley–Terry evidence pre-gate enabled
 (`promote_confidence_threshold: 0.8`). Use
-`mocks:racing_aux_llm` as the auxiliary callable — it serves four
-GENUINELY DISTINCT experiments per round whose defect-token sets form a
-strict superset chain, so the rung cuts are fully deterministic and the
-best-known arm (only `verbose-prose` left → scalar `1.2`) survives to
-be crowned.
+`mocks:racing_aux_llm` as the auxiliary callable. It serves four
+distinct experiments per round whose defect-token sets form a strict
+superset chain, so the rung cuts are deterministic and the best arm
+(only `verbose-prose` left, scalar `1.2`) survives to be crowned.
 
 One tuning note: `promote_confidence_replicates` is raised to `32`.
-With a fully deterministic harness every crowning duel is decisive in
-the same direction, and Bradley–Terry confidence intervals separate
-slowly on an all-decisive audit (the fit is evidence-starved, not
-noisy) — the pre-gate needs ~25 cache-cheap replicate duels before the
-CIs clear. The default budget of 3 would end the round `inconclusive`
-(champion stands) even at `P(theta_child > theta_champion) ≈ 0.95`.
+With a deterministic harness every crowning duel is decisive in the same
+direction, and Bradley–Terry confidence intervals separate slowly on an
+all-decisive audit, because the fit is starved of evidence rather than
+noisy. The pre-gate needs roughly 25 cache-cheap replicate duels before
+the intervals clear. The default budget of 3 would end the round
+`inconclusive` — the champion stands — even at
+`P(theta_child > theta_champion) ≈ 0.95`.
 
 Run it from a FRESH workspace (repeat steps 1–3 in a new scratch dir,
 publishing `scoring.effective.json` as the live `scoring.json`). Do not
@@ -177,11 +179,10 @@ $PY -m zicato.cli evolve --workspace .zicato \
 
 ## Deferred: the live variant
 
-A live variant of this target — same board, same predicates, but a real
-model editing the policy through the default tool-using proposer —
-is deliberately NOT part of this example yet. The value of target_0 is
-that its floor is exact; introducing a live proposer makes the decision
-sequence model-dependent and belongs in a separate exercise (with an
-operator go-ahead, real endpoints configured under `models`, and the
-dashboard watched live). Until then, the deterministic script is the
-canonical convergence check.
+This example carries no live variant — the same board and the same
+predicates, but a real model editing the policy through the default
+tool-using proposer. Its worth is that the floor is exact; a live
+proposer makes the decision sequence depend on the model, which belongs
+in a separate exercise with an operator go-ahead, real endpoints
+configured under `models`, and the dashboard watched live. The
+deterministic script is the canonical convergence check.

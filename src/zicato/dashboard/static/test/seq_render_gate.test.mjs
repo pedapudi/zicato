@@ -1,5 +1,5 @@
-// test/seq_render_gate.test.mjs — the SEQ-DRIVEN liveness + render gate
-// (RUNTIME-V2 Phase 4), the render-discipline BACKBONE.
+// test/seq_render_gate.test.mjs — the SEQ-DRIVEN liveness and render gate over
+// the orchestrator progress event log, the render-discipline BACKBONE.
 //
 // Pins, in four parts:
 //  1. state.noteProgress — the progress cursor: advance / repeat-no-op /
@@ -7,10 +7,10 @@
 //  2. core/sse.js — the SEQ NO-OP-SKIP GATE: a `state_change` frame whose seq
 //     does NOT advance issues NO /api/environment fetch (zero work, zero DOM);
 //     a real advance fetches; a rollover forces a fetch + resets the cursor; a
-//     frame with NO seq DEGRADES to the legacy always-refresh path.
+//     frame with NO seq DEGRADES to refreshing on every beat.
 //  3. livestatus.deriveLiveStatus — the FOUR-STATE run verdict (LIVE / STALLED
 //     / SETTLED / DEAD) keyed on the seq cursor + terminal marker, with the
-//     legacy timestamp degrade when no seq is known; + liveStatusDigest folds
+//     timestamp-derived degrade when no seq is known; + liveStatusDigest folds
 //     the discrete run-state but NOT the climbing advance-age (no re-stamp on a
 //     steady tick), + runStateLabel.
 //  4. the chrome — shell.mountShell paints the `dt-run-state` pill; a no-op beat
@@ -198,7 +198,7 @@ test('sse gate: a frame with NO seq DEGRADES to the legacy always-refresh path',
   resetCursor();
   const m = installMockSse();
   sse.connectSSE();
-  // a pre-RUNTIME-V2 server sends no seq — every beat must still refresh.
+  // a server that stamps no seq — every beat must still refresh.
   m.fire('state_change', { type: 'state_change', kind: 'progress', kinds: ['progress'], ts: 'a' });
   await settleDebounce();
   const after1 = m.envFetches();
@@ -287,7 +287,7 @@ test('run-state DEGRADE: with NO seq known (seq -1) it falls back to the timesta
   }, NOW);
   assertEqual(live.runState, RS.LIVE, 'no seq + a running timestamp verdict ⇒ LIVE (byte-identical degrade)');
   assertEqual(live.seqKnown, false, 'seqKnown is false on the degrade path');
-  // a frozen heartbeat (stale, not running) ⇒ DEAD.
+  // a frozen heartbeat — stale rather than running — ⇒ DEAD.
   const dead = livestatus.deriveLiveStatus({
     heartbeat: { phase: 'tournament:round_0:final', ts: NOW - (livestatus.STALE_HEARTBEAT_MS + 5000) },
     activeRuns: [], activeTournament: null,

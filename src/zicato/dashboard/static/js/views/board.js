@@ -7,7 +7,7 @@
 //     dot-plot (champion reference rule) and a tabular breakdown;
 //   * fix #5 — selecting a run shows its transcript INLINE within THIS view,
 //     side by side with the CHAMPION's transcript on the same board (two
-//     candidates' transcripts on that board), NOT a navigation to a separate
+//     candidates' transcripts on that board) rather than a navigation to a separate
 //     run page. The selected gen lives in the URL (#/e/<e>/board/<entry>/<gen>)
 //     so the inline transcript rebuilds only on a route change, never a beat.
 //
@@ -74,8 +74,8 @@ const KIND_LABEL = {
 // into a return visit to another entry and (seeing "seq unchanged") serve its
 // warm-but-stale cache without a refetch. A missing key (first render, or a
 // return after the seq advanced elsewhere) reads undefined ≠ lastSeq and so
-// BUSTS; state.lastSeq === -1 (no seq seen — a pre-RUNTIME-V2 server) degrades to
-// the legacy always-bust path.
+// BUSTS; state.lastSeq === -1 — no seq seen, from a server that stamps none —
+// degrades to always busting.
 const _lastBoardSeqByEntry = new Map();
 
 export async function render(host, ctx, params, route) {
@@ -105,7 +105,7 @@ export async function render(host, ctx, params, route) {
   ]);
   // The AUTHORED half of the Judges panel — this entry's custom judges, off the
   // epoch payload's additive `board_judges` map (omitted entirely by a board
-  // whose entries declare none, so `[]` here is the honest read, not a failure).
+  // whose entries declare none, so `[]` here is an honest read rather than a failure).
   const entryJudges = (ep.board_judges && ep.board_judges[entryId]) || [];
   const genList = rows0.length
     ? rows0.map((g) => ({ id: g.generation_id, parent: g.parent_generation_id || null, promoted: g.promoted == null ? null : !!g.promoted, decision: g.decision }))
@@ -179,7 +179,7 @@ export async function render(host, ctx, params, route) {
       // in-flight table folded into the breakdown as a progress column).
       progress: live ? progressRatio(live) : null,
       // CACHED-champion provenance: this row's scalar was reused (fast mode)
-      // from a prior epoch/run, not re-executed this round.
+      // from a prior epoch or run rather than re-executed this round.
       cached: !!(r && r.cached),
       sourceEpoch: (r && r.source_epoch) || null,
     });
@@ -232,7 +232,7 @@ export async function render(host, ctx, params, route) {
   // candidate's aggregate per facet. So the drill-down answers "this entry is
   // part of data_cleaning — how is data_cleaning doing across candidates?"
   // without a second round trip and without the client aggregating anything
-  // (DQ1: the server already did the grouping).
+  // (the server computes the grouping and the client renders it).
   const entryFacets = [];
   const facetByGen = new Map();
   genList.forEach((g, i) => {
@@ -310,12 +310,11 @@ export async function render(host, ctx, params, route) {
     })]),
     // The Judges panel is contract-frozen for the epoch, so its contribution is
     // a constant across a round's beats — it can never be the thing that busts
-    // this digest, and it repaints only when the panel genuinely changed.
+    // this digest, and it repaints only when the panel's own content changed.
     judges: judgesDigest(roster, entryJudges),
   });
   // The transcript STRUCTURE digest gates the frame (headers, columns, scroller
-  // shells, the streaming caption) — deliberately EXCLUDING the growing turn
-  // content. It folds only what changes the frame's SHAPE: the selected
+  // shells, the streaming caption), EXCLUDING the growing turn content. It folds only what changes the frame's SHAPE: the selected
   // candidates, their live flag + loss, and each column's coarse STATE
   // (nosel / err / wait / turns). Growing turns do NOT change this digest, so a
   // live beat that only APPENDS turns leaves the frame untouched and the turns
@@ -351,10 +350,10 @@ export async function render(host, ctx, params, route) {
       el('p', { class: 'dn-lede', text: 'How every candidate performed on this one board entry — lower drift loss is better. Select a candidate to read its transcript inline, side by side with the champion’s.' }),
     ]));
 
-    // The drill-down used to show LESS of the entry than the overview it is
-    // reached from: `expectation_kind` and `tags` ride the same ep.board row
-    // the trellis already reads, and this page — the one an operator opens to
-    // ask what this entry actually checks — dropped both.
+    // The drill-down must not show LESS of the entry than the overview it is
+    // reached from. `expectation_kind` and `tags` ride the same ep.board row
+    // the trellis already reads, and this page is the one an operator opens to
+    // ask what this entry actually checks.
     nodes.push(el('div', { class: 'dn-panel dn-row' }, [
       stat(def ? (KIND_LABEL[def.kind] || def.kind || '—') : '—', 'kind'),
       stat(def && def.expectation_kind ? String(def.expectation_kind) : '—', 'oracle'),
@@ -373,12 +372,12 @@ export async function render(host, ctx, params, route) {
       ]));
     }
 
-    // JUDGES (#194 §5) — the process half of the contract, beside the outcome
-    // half (kind / oracle / weight) the stat row above already names. It sits in
-    // the CONTRACT region of the page, before any result: what grades a run is
-    // part of the question, not part of the answer. A pre-feature server serves
-    // no roster AND the epoch payload carries no board_judges, so nothing is
-    // known and nothing is drawn — the page reads byte-identical to before.
+    // JUDGES — the process half of the contract, beside the outcome half (kind
+    // / oracle / weight) the stat row above already names. It sits in the
+    // CONTRACT region of the page, before any result: what grades a run is part
+    // of the question rather than part of the answer. When a server serves no
+    // roster and the epoch payload carries no board_judges, nothing is known and
+    // nothing is drawn.
     if (roster || entryJudges.length) {
       nodes.push(section('Judges · what grades this entry’s process',
         judgesPanel(roster, entryJudges, ctx, epochId)));
@@ -475,7 +474,7 @@ export async function render(host, ctx, params, route) {
     const tblCard = el('div', { class: 'dn-panel' });
     // the continuous-score column (#18) only appears when AT LEAST ONE
     // candidate scored this board; a wholly bool-only board keeps the
-    // pre-score column set so the table reads exactly as before.
+    // bool-only column set.
     const anyScored = rows.some((r) => svg.isNum(r.score));
     // the live-gated progress column appears only while a candidate is running
     // on this entry (C4); a wholly settled board keeps the pre-C4 column set.
@@ -613,7 +612,7 @@ export async function render(host, ctx, params, route) {
 // pane's cursor, its rendered turn nodes, and the reader's scroll position —
 // the three things the whole design exists to preserve. Every later render
 // finds the pane already there and leaves it alone; the pane keeps itself
-// current off the SSE growth signal, not off this view's render loop.
+// current off the transcript growth signal rather than this view's render loop.
 function syncFollowPane(host, xscriptHost, spec) {
   const wanted = !!(spec.route && spec.route.follow) && !!spec.selGen;
   let followHost = host.querySelector(':scope > [data-node="board-follow"]');
@@ -628,12 +627,12 @@ function syncFollowPane(host, xscriptHost, spec) {
     return;
   }
 
-  // The unit's verdict is re-derived on EVERY render, not just at mount. The
+  // The unit's verdict is re-derived on EVERY render rather than at mount alone. The
   // board paints before the environment read lands, so a pane mounted on that
   // first frame sees no active-run record yet and would otherwise be stuck
   // reading "interrupted" for a unit that is plainly running.
   //
-  // Composition, not a second derivation (#194 §1): the LOOP's liveness is
+  // This composes rather than deriving a second time: the LOOP's liveness is
   // per-workspace, and this unit is live only if the loop is live AND it has
   // an active-run record of its own. `state.activeRuns` is read raw here on
   // purpose — the gating lives in unitLiveness, so a dead loop yields
@@ -709,7 +708,7 @@ function transcriptColumn(sel, conv, championId, side) {
     el('span', { class: 'dn-mono', text: sel.gen + (sel.promoted ? ' ♛' : '') }),
     pill(pillCls, role),
     // A RUNNING candidate gets a live marker so the operator reads the column
-    // as a streaming transcript (it appends as new turns land), not a final one.
+    // as a streaming transcript (it appends as new turns land) rather than a final one.
     sel.running ? el('span', { class: 'dn-pill dn-live dn-xscript-live' }, [
       el('span', { class: 'dn-inflight-pulse', 'aria-hidden': 'true' }),
       el('span', { text: 'live' }),
@@ -717,10 +716,10 @@ function transcriptColumn(sel, conv, championId, side) {
     el('span', { class: 'dn-faint dn-mono', text: svg.isNum(sel.primary) ? ' · ' + (sel.channelLabel || 'value') + ' ' + svg.fmt(sel.primary, 2) : '' }),
   ].filter(Boolean)));
 
-  // The transcript is keyed on the (epoch, gen, entry) triple, NOT the per-entry
-  // run_id — so a candidate whose row carries no run_id can still render its
-  // transcript when the gen×entry events.jsonl exists. Only fall through to the
-  // honest messages when the triple genuinely resolves to nothing.
+  // The transcript is keyed on the (epoch, gen, entry) triple rather than the
+  // per-entry run_id, so a candidate whose row carries no run_id can still
+  // render its transcript when the gen×entry events.jsonl exists. Only fall
+  // through to the honest messages when the triple resolves to nothing.
   const sig = columnStateSig(sel, conv);
   if (sig.startsWith('err')) { col.appendChild(empty(conv.error)); return col; }
   if (sig === 'wait') {
@@ -751,7 +750,7 @@ function transcriptColumn(sel, conv, championId, side) {
 }
 
 // Coarse column STATE for the structure digest + the frame builder: the shape of
-// the column (which message vs a scroller), NOT its growing turn content. So a
+// the column (which message versus a scroller) rather than its growing turn content. So a
 // beat that only appends turns leaves this stable and the frame is kept.
 function columnStateSig(sel, conv) {
   if (!sel) return 'nosel';
@@ -798,8 +797,8 @@ function reconcileTranscript(hostEl, side, sel, conv) {
 // re-raced across rungs (multiple runs under one entry), it picks the
 // specific rung. We pass it along so the backend can select that rung, then
 // fall back to the run_id-keyed /api/conversation ONLY when the triple
-// genuinely resolves to nothing (e.g. a pre-feature workspace). A
-// genuinely-absent gen×entry stays empty → the honest "unavailable" message.
+// resolves to nothing — a workspace that records no such triple. An absent
+// gen×entry stays empty and yields the honest "unavailable" message.
 async function resolveTranscript(epochId, entryId, sel) {
   if (!sel || !sel.gen) return null;
   let conv = await D.runTranscript(epochId, sel.gen, entryId, sel.runId);
@@ -910,7 +909,7 @@ function builtinChip(b, weights) {
 
 // The Judges panel: armed built-ins, then this entry's custom judges. Both
 // halves degrade to a sentence that carries information — "no judges
-// configured" is a fact about the contract, not a missing payload.
+// configured" is a fact about the contract rather than a missing payload.
 export function judgesPanel(roster, entryJudges, ctx, epochId) {
   const weights = (roster && roster.per_judge_weights && typeof roster.per_judge_weights === 'object')
     ? roster.per_judge_weights : {};

@@ -57,7 +57,7 @@ turn default) or `conversation_end` (the whole transcript — a `single_turn`
 entry reading `conversation_end` is rejected). Design choice: prefer a
 deterministic matcher (`predicate`/`regex`/`json_schema`) whenever the behavior
 *can* be checked in code — deterministic matchers add zero noise to the
-pass-rate signal. Reserve `rubric` for genuinely fuzzy quality, and remember a
+pass-rate signal. Reserve `rubric` for quality that is truly fuzzy, and remember a
 rubric runs on the judge engine, so it costs a call and carries run-to-run variance.
 
 ## Judges — in-run PROCESS checks
@@ -74,7 +74,7 @@ goldfive `custom` drift tagged with the judge's `name`. Two modes:
 `severity` (`info` / `warning` / `critical`) is goldfive's `DriftSeverity` and
 sets how hard the violation weighs (see severity weighting below). `name` is a
 stable slug, board-unique, and becomes goldfive's `judge_name` — the key
-`per_judge_weights` uses, so choose it deliberately.
+`per_judge_weights` uses, so choose it with care.
 
 A model-backed judge engine is resolved **lazily** — the spec *shape* is still
 validated at worker startup, but the ADK import and model construction happen
@@ -85,14 +85,14 @@ as a `RoleResolutionError` in a process-wide register, and the worker turns a
 non-empty register into a non-zero exit (the board unit becomes an infra abort,
 never a clean zero-drift run).
 
-### Judge the tool-call ledger, not the narration
+### Judge the tool-call ledger rather than the narration
 
 A `python` judge that needs to grade *what the agent did* must read the real
 **tool-call ledger**, never the model's reasoning narration or its completion
 summary. goldfive dispatches custom judges only at **reasoning** observation
 points, so the `JudgeContext` it hands a judge carries the model's
 chain-of-thought (`ctx.reasoning_text`, the transcript window) — narration the
-agent merely *wrote*, not the tool round-trips it *ran*. A judge that scans that
+agent merely *wrote* rather than the tool round-trips it *ran*. A judge that scans that
 text for tool names grades a story the agent told about itself: text that
 mentions `read_files` twice will trip a "retry loop" signal while the agent
 never actually called the tool, and the same judge fires on unrelated chatter
@@ -116,9 +116,9 @@ the deliverable must read the agent's *real* output (`final_output` /
 field. See [`zicato-design-boards`](../zicato-design-boards/SKILL.md) and
 [`zicato-audit-board`](../zicato-audit-board/SKILL.md).
 
-### An expectation may now return a continuous per-entry score
+### An expectation may return a continuous per-entry score
 
-An OUTCOME `expectation` is no longer strictly pass/fail. A `predicate`-family
+An OUTCOME `expectation` is not restricted to pass/fail. A `predicate`-family
 matcher backed by a **scorer** callable may return a *continuous* score — a
 float in `[0.0, 1.0]` (an F1, a similarity, a partial-credit rubric) — and an
 optional `metrics` decomposition (e.g. `{"precision": .., "recall": ..}`). The
@@ -131,7 +131,7 @@ pre-score behaviour. Both `score` and `metrics` are carried out to `loss.json`
 proposer's failure-mode profile. The *scalar/drift scoring formula* over these
 numbers is owned by [`zicato-tune-scoring`](../zicato-tune-scoring/SKILL.md) —
 design here decides *whether a behavior wants a graded score vs a binary
-verdict*, not the weights.
+verdict* rather than the weights.
 
 ## How drift telemetry becomes loss
 
@@ -192,7 +192,7 @@ model-form engine does not turn them into Pi sessions or grant repository
 tools. That narrow protocol is intentional: a judge should return a bounded
 verdict, and an adjudicator should audit a frozen evidence package. A future
 agentic auditor would be a separate implementation with a declared, read-only
-tool surface and explicit visibility policy, not an engine substitution.
+tool surface and explicit visibility policy rather than an engine substitution.
 
 For channel-emitting backends, the opt-in reasoning-aware `call_llm` adapter
 returns answer content only and may make one bounded reasoning-disabled
@@ -206,7 +206,7 @@ Setting `judge_only: true` in the `board_meta` header (board-wide) keeps
 goldfive *judging* the wrapped agent — drift detectors and your process judges
 stay armed — but turns off **all steering**: no goal-derivation call, no
 replanning, no drift-triggered refine. Use it when the epoch's question is "how
-does the bare harness behave, measured but un-steered?", or when you are
+does the bare harness behave when nothing steers it?", or when you are
 evolving the steerer-free path itself. In this mode your judges and
 expectations *are* the entire signal (there is no steerer cleaning up drift
 before it's counted), so design them to stand alone. Default is `false`

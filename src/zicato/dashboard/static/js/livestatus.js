@@ -29,7 +29,7 @@ const IDLE_PHASES = new Set(['idle', 'done', 'complete', 'completed', 'finished'
 // tolerate a slow tick, short enough that a completed run reads idle promptly.
 export const STALE_HEARTBEAT_MS = 30_000;
 
-// SEQ-ADVANCE BUDGET (RUNTIME-V2 Phase 4). How long the orchestrator progress
+// SEQ-ADVANCE BUDGET. How long the orchestrator progress
 // `seq` may sit unchanged before the run reads STALLED rather than LIVE. A single
 // transition can legitimately run a while, so this is generous — distinctly LONGER
 // than the heartbeat-staleness window: a frozen-seq run whose heartbeat still
@@ -47,10 +47,10 @@ export const RUN_STATE = Object.freeze({
 //
 // The phase may be a colon-delimited path (`tournament:round_0:rung0_m3`,
 // `evolve_n_rounds:done`). The TERMINAL signal lives in the TAIL segment
-// (`…:done`), not just the head — so a phase is idle when its FULL string, its
-// HEAD segment, OR ITS TAIL (or any) segment is in IDLE_PHASES. Genuinely-active
-// phases (`tournament:round_0:rung0_m3`, `proposing:field`) keep no idle token
-// in any segment and stay active.
+// (`…:done`) as well as the head, so a phase is idle when its FULL string, its
+// HEAD segment, or its TAIL segment is in IDLE_PHASES. An active phase
+// (`tournament:round_0:rung0_m3`, `proposing:field`) carries no idle token in
+// any segment and stays active.
 export function isActivePhase(phase) {
   if (phase == null) return false;
   const p = String(phase).trim().toLowerCase();
@@ -87,19 +87,18 @@ function runTs(r) {
 
 // Active-run records that are ACTUALLY still beating.
 //
-// THE BUG (issue #194 §1): `active_runs/*.json` outlives the process that
-// wrote it. A killed run leaves its records on disk forever, and counting them
-// made a workspace dead since June report seven units in flight — which in
-// turn forced `pulsing`, so the run-state pill settled on STALLED (alive, no
-// progress) rather than DEAD, and the hero stayed up. Each record carries the
-// per-run beater's `last_progress`, so they can be aged exactly like the
-// orchestrator heartbeat.
+// `active_runs/*.json` outlives the process that wrote it: a killed run leaves
+// its records on disk indefinitely. Counting them makes a long-dead workspace
+// report units in flight, which forces `pulsing`, which settles the run-state
+// pill on STALLED (alive, no progress) instead of DEAD and keeps the hero up.
+// Each record carries the per-run beater's `last_progress`, so a record is aged
+// the same way the orchestrator heartbeat is.
 //
 // A record with NO ageable timestamp at all counts as fresh: the real producer
 // (ActiveRun) always writes `started_at`, so an untimestamped record is a
 // hand-built or minimal payload, and dropping it would silently under-report a
-// genuinely live run. The stale-forever case we are fixing always HAS a
-// timestamp — an old one.
+// live run. A record that lingers past its process always HAS a timestamp; it
+// is simply an old one.
 //
 // The SERVER now decides this per row and sends its verdict as `fresh`
 // (read_active_runs_view), and that verdict wins whenever it is present. It
@@ -219,8 +218,8 @@ function prettyStructure(structure) {
 //   activeRuns       — the /api/active-runs array (or state.activeRuns).
 //   activeTournament — the /api/active-tournament object (or null).
 //   seq              — the progress cursor (state.lastSeq); -1 / absent ⇒ no seq
-//                      known yet (a pre-RUNTIME-V2 server) → the run-state DEGRADES
-//                      to the legacy timestamp-derived running/idle/stale verdict.
+//                      known yet → the run-state DEGRADES to the
+//                      timestamp-derived running/idle/stale verdict.
 //   terminal         — the latest frame's terminal marker (state.terminal).
 //   lastSeqAdvanceAt — wall-clock ms the cursor last advanced (state); NaN until
 //                      the first advance.
@@ -280,21 +279,19 @@ export function deriveLiveStatus(
     ? phaseLabel(phase, structure)
     : (heartbeat || activeRuns || activeTournament ? 'idle' : 'done');
 
-  // ── the FOUR-STATE run verdict (seq-driven, NOT heartbeat-timestamp) ─
+  // ── the FOUR-STATE run verdict (seq-driven rather than timestamped) ──
   //   SETTLED — a terminal progress marker (cleanly ended). Authoritative.
   //   LIVE    — seq advanced within SEQ_STALL_BUDGET_MS (genuine progress).
   //   STALLED — no advance within budget, but the heartbeat still pulses.
   //   DEAD    — no advance within budget AND no fresh heartbeat.
-  // With NO seq known (pre-RUNTIME-V2: seq absent / -1) the run-state
-  // DEGRADES to the legacy timestamp verdict (byte-identical to today):
-  // running ⇒ LIVE, a frozen heartbeat ⇒ DEAD, an idle workspace ⇒ SETTLED.
+  // With NO seq known (absent or -1) the run-state DEGRADES to the timestamp
+  // verdict: running ⇒ LIVE, a frozen heartbeat ⇒ DEAD, idle ⇒ SETTLED.
   // A real transition is seq >= 1. `progress_log.tail_seq` returns 0 for an
   // ABSENT or empty log, which is exactly the workspace written before the
-  // progress log existed — so seq 0 is "no progress recorded", NOT a known
-  // cursor. Treating it as known was the other half of the stale-live bug:
-  // the client counts the first seq it ever sees as an advance and stamps
-  // `lastSeqAdvanceAt = now`, so a workspace dead since June reported that it
-  // had just progressed, and the run-state pill read LIVE on load.
+  // progress log existed — so seq 0 means "no progress recorded" rather than a
+  // known cursor. Treating it as known makes the client count the first seq it
+  // ever sees as an advance and stamp `lastSeqAdvanceAt = now`, so a long-dead
+  // workspace reports that it has just progressed and the pill reads LIVE.
   const seqKnown = typeof seq === 'number' && isFinite(seq) && seq > 0;
   const advanceAge = isFinite(lastSeqAdvanceAt) ? Math.max(0, now - lastSeqAdvanceAt) : NaN;
   const seqAdvancingFresh = seqKnown && isFinite(advanceAge) && advanceAge <= SEQ_STALL_BUDGET_MS;
@@ -307,7 +304,7 @@ export function deriveLiveStatus(
   if (terminal === true) {
     runState = RUN_STATE.SETTLED;
   } else if (!seqKnown) {
-    // legacy degrade — derive from the timestamp verdict (byte-identical).
+    // no seq cursor: derive from the timestamp verdict instead.
     runState = running ? RUN_STATE.LIVE
       : (heartbeatStale ? RUN_STATE.DEAD : RUN_STATE.SETTLED);
   } else if (seqAdvancingFresh) {
@@ -321,11 +318,11 @@ export function deriveLiveStatus(
   // ORCHESTRATOR-ALIVE — the hero-visibility gate. True while the run is LIVE or
   // STALLED (the orchestrator is still pulsing, whether or not the seq is
   // advancing); false once it SETTLES (terminal) or goes DEAD (no fresh pulse).
-  // This is deliberately BROADER than `running`: `running` drops the instant the
-  // heartbeat `phase` reads a non-active token and no run is in flight (which
-  // happens momentarily between transitions / during a long reasoning call),
-  // which made the hero FLICKER. Keying the hero on the live PULSE — not on the
-  // advancing seq — holds it steady through a long call. STALLED already means
+  // This is BROADER than `running` by design: `running` drops the instant the
+  // heartbeat `phase` reads a non-active token and no run is in flight, which
+  // happens momentarily between transitions and during a long reasoning call,
+  // and that makes the hero FLICKER. Keying the hero on the live PULSE rather
+  // than on the advancing seq holds it steady through a long call. STALLED already means
   // "alive, no progress", so a STALLED run keeps the hero (with its STALLED
   // chrome) instead of blinking the whole panel out.
   const alive = runState === RUN_STATE.LIVE || runState === RUN_STATE.STALLED;
@@ -406,8 +403,9 @@ export function livenessFor(appState, now = Date.now()) {
   return { status, liveness: deriveLiveness({ liveness: s.liveness, status }) };
 }
 
-// The server owns both clock and epoch scope. An absent epoch id is the legacy
-// single-epoch shape and remains trusted; the browser only compares identity.
+// The server owns both clock and epoch scope. An absent epoch id is the
+// untagged single-epoch shape and stays trusted; the browser only compares
+// identity.
 export function epochIsLive(appState, epochId, now = Date.now()) {
   const s = appState || {};
   const verdict = livenessFor(s, now).liveness;
@@ -442,7 +440,7 @@ export function livenessBandText(liveness, status) {
 // boundary). Empty string when unparseable — callers drop the date rather
 // than print "Invalid Date".
 //
-// UTC, deliberately. Every timestamp zicato writes is UTC, epoch ids are
+// The rendering is UTC. Every timestamp zicato writes is UTC, epoch ids are
 // UTC-dated (`2026-06-07_e4`), and the run-log rows render the ISO stamp
 // verbatim (views/logs.js). Rendering this one date in the viewer's local
 // zone would put a workspace 7 hours west into a state where the band says
@@ -464,7 +462,7 @@ export function shortDate(iso, now = new Date()) {
 // Format a heartbeat age (ms) into a short "last seen Ns ago" affordance.
 // `NaN` (an untimestamped frozen heartbeat) reads as a bare "stale" — there
 // is no age to report but the run is still not live. Used by the chrome to
-// show WHY a frozen run is no longer live, rather than a silent freeze.
+// show WHY a frozen run has stopped, rather than freezing silently.
 export function staleLabel(ageMs) {
   if (!isFinite(ageMs)) return 'stale';
   const s = Math.round(ageMs / 1000);
@@ -488,7 +486,7 @@ export function staleLabel(ageMs) {
 // idle workspace yields the empty set so no stale pulse lingers — and optionally
 // scoped to a viewed epoch when the active-runs records carry an epoch tag (a
 // foreign-epoch run must not light up the viewed epoch's rows; records with no
-// epoch tag are kept, the legacy single-epoch tolerance). Returns a Set of
+// epoch tag are kept, the untagged single-epoch case). Returns a Set of
 // string ids (both the generation_id and the entry_id of each in-flight run).
 export function treeLiveSet({ activeRuns, running, epochId } = {}) {
   const out = new Set();

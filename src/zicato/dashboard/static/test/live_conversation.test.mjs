@@ -1,4 +1,4 @@
-// test/live_conversation.test.mjs — the live conversation pane (issue #194 §2).
+// test/live_conversation.test.mjs — the live conversation pane.
 //
 // The four traps §2 names are the four things this file proves, because each
 // of them is invisible in a screenshot and only shows up as a bad feeling
@@ -189,7 +189,7 @@ test('the OPEN final turn growing re-renders only itself', async () => {
 });
 
 test('a LATE annotation on turn 1 re-decorates only turn 1', async () => {
-  // CAUGHT IN THE BROWSER, not by the earlier tests. Drift detections and judge
+  // Found in the browser rather than by the earlier tests. Drift detections and judge
   // verdicts anchor to the nearest PRECEDING turn, so a note arriving twenty
   // turns later re-decorates turn 1. Under a prefix-diff reconcile that read as
   // "the prefix diverged" and rebuilt the whole thread on nearly every beat —
@@ -277,7 +277,7 @@ test('settling stops the follow subscription', async () => {
 test('a corrected tri-state upgrades the pane IN PLACE, without a remount', async () => {
   // The board paints before the environment read lands, so a pane can mount
   // believing a plainly-running unit is interrupted. The correction must be a
-  // state change, not a remount — a remount here would discard the cursor and
+  // state change rather than a remount — a remount here would discard the cursor and
   // the turns already on screen.
   const srv = fakeServer().add('one');
   const bus = fakeBus();
@@ -525,7 +525,7 @@ test('a unit is live only when the LOOP is live and the unit has a record', () =
 });
 
 test('a record against a dead loop reads interrupted, NEVER live', () => {
-  // Issue #194 §1's headline bug in one assertion: the June-dead workspace
+  // The stale-liveness failure in one assertion: a workspace whose run died
   // rendered stale active-run records as units in flight. That unit was
   // mid-run when the loop died — its score was never committed.
   assertEqual(unitLiveness({ liveness: { live: false, state: 'interrupted' }, hasActiveRun: true }),

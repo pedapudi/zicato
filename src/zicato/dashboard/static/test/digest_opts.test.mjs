@@ -1,4 +1,4 @@
-// test/digest_opts.test.mjs — the generic figure-opts digest (U5).
+// test/digest_opts.test.mjs — the generic figure-opts digest.
 //
 // digestOpts is the SINGLE content digest that replaced the per-figure
 // hand-rolled *Digest folds. These pins guard its four load-bearing rules:

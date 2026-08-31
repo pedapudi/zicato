@@ -1,9 +1,9 @@
-// test/candidate_identity.test.mjs — THE CANDIDATE'S IDENTITY (issue #194 §4).
+// test/candidate_identity.test.mjs — THE CANDIDATE'S IDENTITY.
 //
-// The dossier used to open on "born from v0 by a patch" — true of every
-// candidate ever minted, and therefore about none of them. It now opens on the
-// PROPOSAL (core idea · why · what it expected to move · the sites it touched ·
-// the diff), with a ONE-LINE verdict sentence under it, and ranks its gates:
+// The dossier opens on the PROPOSAL (core idea · why · what it expected to move
+// · the sites it touched · the diff), with a ONE-LINE verdict sentence under it,
+// and ranks its gates. An opening line such as "born from v0 by a patch" is
+// true of every candidate ever minted and therefore about none of them:
 // the round that decided THIS candidate leads at full detail, the rounds it
 // merely defended collapse.
 //
@@ -79,7 +79,7 @@ test('buildProposalModel: lifts the proposer’s own words, claims, sites and di
 test('buildProposalModel: claims are keyed EXACTLY as the prediction grader keys them', () => {
   // The grader (query/hypothesis_view.py `_expected_index`) keys a metric claim
   // by its `metric_name` and a drift claim by its bare `kind`, into ONE target
-  // map — so "drift:off_topic" and "off_topic" are two targets, not one, and
+  // map — so "drift:off_topic" and "off_topic" are two targets rather than one, and
   // this header must show the same three claims the scorecard will score.
   const m = cand.buildProposalModel(expFixture());
   assertDeep(m.movements.map((mv) => mv.target), ['drift:off_topic', 'cost:tokens_spent', 'off_topic'],
@@ -281,7 +281,7 @@ test('buildGateStack: the DEFENDED rounds collapse to expandable summary rows �
   assert(summary.textContent.includes('vs v5'), 'the summary names the challenger it faced');
   assert(summary.textContent.includes('rejected'), 'and how the gate answered');
   assert(summary.textContent.includes('Δ +0.030'), 'and the Δ, at gate precision');
-  // the FULL panel is inside — collapsed, not discarded.
+  // the FULL panel is inside — collapsed rather than discarded.
   assert(allByClass(defences[0], 'dn-gate').length === 1, 'the full gate panel rides inside the collapsed row');
 });
 

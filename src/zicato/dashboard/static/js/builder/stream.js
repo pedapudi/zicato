@@ -60,7 +60,7 @@ export async function streamChat(path, body, opts) {
     return;
   }
   // A non-streaming JSON error body (the graceful-degrade 4xx path returns
-  // JSON, not an event-stream) — surface its message cleanly.
+  // JSON rather than an event-stream) — surface its message cleanly.
   const ctype = (res.headers && typeof res.headers.get === 'function') ? (res.headers.get('content-type') || '') : '';
   if (ctype.includes('application/json')) {
     try { const j = await res.json(); if (j && j.error) { onError(j.error); return; } } catch (e) { /* fall through */ }

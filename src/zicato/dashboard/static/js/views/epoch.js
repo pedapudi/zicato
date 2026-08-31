@@ -129,15 +129,17 @@ export async function render(host, ctx, params) {
 
   // ---- NON-GAUNTLET OVERVIEW data (the SHARED resolver — one source of truth) ----
   // Each non-gauntlet structure renders a compact at-a-glance overview from the
-  // SAME normalized `st` the Match-ups ladder + per-round drill-down use. Building
-  // it HERE through the SHARED resolveNonGauntletSt (live-first → reconstructRacing
-  // → completed per-tournament record) — instead of a divergent inline
-  // construction — is the SINGLE-SOURCE-OF-TRUTH guarantee: the epoch overview
-  // funnel/bump/flow can never drift from the Match-ups figure for the same run
-  // (the old inline racing path used `normalizeStructure(liveRaw,true)` — no
-  // progressive overlay / projected-standing re-rank / seeded-champ benchmark —
-  // and bypassed the completed per-tournament record, so it diverged live AND
-  // settled). Null model (→ honest brief line) when there is no data.
+  // SAME normalized `st` the Match-ups ladder and per-round drill-down use. It is
+  // built here through the SHARED resolveNonGauntletSt: live first, then
+  // reconstructRacing, then the completed per-tournament record. That shared
+  // resolver is what keeps the epoch overview's funnel, bump and flow from
+  // drifting away from the Match-ups figure for the same run.
+  //
+  // A divergent inline path calling `normalizeStructure(liveRaw,true)` would
+  // carry no progressive overlay, no projected-standing re-rank and no
+  // seeded-champion benchmark, and would bypass the completed per-tournament
+  // record, so it would diverge both live and settled. Null model (→ honest
+  // brief line) when there is no data.
   let racingFunnel = null;
   let swissOver = null;
   let elimOver = null;
@@ -149,13 +151,13 @@ export async function render(host, ctx, params) {
   // the live active-tournament envelope SCOPED to this epoch — fed to
   // epochRoundModel so a NEW round that is only proposing/applying (not yet
   // settled) surfaces as its OWN in-flight round (issue #16). Fetched for EVERY
-  // structure (a multi-challenger gauntlet has in-flight rounds too), not only
-  // the non-gauntlet overview path.
+  // structure (a multi-challenger gauntlet has in-flight rounds too), rather
+  // than for the non-gauntlet overview path alone.
   let liveInflight = null;
   let liveEnvelope = null;
   let liveIsLive = false;
   {
-    // SCOPE vs CLOCK (issue #194 §1). The envelope is read whenever it is this
+    // SCOPE versus CLOCK. The envelope is read whenever it is this
     // epoch's — an interrupted round's topology lives nowhere else, and
     // dropping it would blank the page rather than tell the operator what
     // happened. Liveness gates the present-tense OVERLAYS instead: the
@@ -218,9 +220,9 @@ export async function render(host, ctx, params) {
   // ---- THE EPOCH ROUND MODEL (the champion-spine timeline's source) ----
   // The SETTLED rounds are SERVED by /api/epoch/{id}/round-timeline; only the
   // LIVE overlay (projected standings + the in-flight proposing round) is
-  // applied client-side. The timeline SUBSUMES the old gauntlet reel + the
-  // non-gauntlet structure strip — one renderer for all structures, degrading
-  // to a single episode for --rounds 1 (and an honest empty when unserved).
+  // applied client-side. The timeline is the one renderer for all structures,
+  // covering both the gauntlet reel and the non-gauntlet structure strip, and
+  // degrading to a single episode for --rounds 1 (honest empty when unserved).
   const epochRounds = roundsFromTimeline({ timeline, bracket, gens, scalarBy: scalarByGen, structure, championId, projected: liveProjected, inflight: liveInflight });
 
   // The BOARD-STATUS surface (train/holdout split + ladder + generalization
@@ -314,10 +316,10 @@ export async function render(host, ctx, params) {
     nodes.push(el('p', { class: 'dn-faint', style: 'font-size:11px;margin:6px 0 0;',
       text: 'Δ scalar sums the per-experiment scalar_score_delta · the champion-spine sum counts PROMOTED hops only — the meta-loop’s actual progress · the gross sum includes rejected challengers and never enters the lineage (lower = better)' }));
 
-    // (NO in-content nav row here. The four buttons that used to sit under the
-    // stat tiles — Generations / Boards / Mutation surface / Publication —
-    // restated the rail's own epoch children one line below the rail that was
-    // already showing them, selected state and all. The RAIL is canonical: it
+    // (NO in-content nav row here. A row of Generations / Boards / Mutation
+    // surface / Publication buttons under the stat tiles would restate the
+    // rail's own epoch children one line below the rail already showing them,
+    // selected state and all. The RAIL is canonical: it
     // carries every child this row did, plus Evals and Instrument, and it shows
     // where you are. They carried no state the rail lacks, so nothing folded in.)
 
@@ -345,7 +347,7 @@ export async function render(host, ctx, params) {
     const ledgerPanel = buildExperimentsLedger(ledger, {
       epochId, hrefFor: (gen) => ctx.href('candidate', { epochId, gen }),
       // an experiment with no recorded decision is "racing…" only while the
-      // loop is running for this epoch; otherwise it went undecided (#207 §2).
+      // loop is running for this epoch; otherwise it went undecided.
       live: epochIsLive(state, epochId),
     });
     const ledgerSection = ledgerPanel
@@ -358,8 +360,8 @@ export async function render(host, ctx, params) {
     // ONE renderer for ALL structures: the champion spine across the epoch's
     // evolve rounds, each round an episode (incoming champion + a fan of that
     // round's challengers + a COMPACT per-round structure figure + the gate
-    // outcome). This SUBSUMES the old gauntlet reel + non-gauntlet strip — a
-    // single round (--rounds 1, every run so far) degrades to ONE episode.
+    // outcome). It covers the gauntlet reel and the non-gauntlet strip alike; a
+    // single round (--rounds 1) degrades to ONE episode.
     const params = (tournament && tournament.params) || {};
     const open = (gen) => { if (gen) ctx.navigate('candidate', { epochId, gen }); };
     const drill = (roundIndex) => ctx.navigate('gens', { epochId, round: roundIndex });
@@ -545,7 +547,7 @@ export function shortHash(h, n) {
 // fallback to the epoch's OWN brief TITLE — the first H1 (`# …`) of brief.md,
 // stripping a leading "Epoch eN — " / "Epoch eN: " prefix. This reads the
 // epoch's self-contained brief (no cross-epoch reach), so an auto-rolled epoch
-// whose goal was never frozen no longer reads "(no objective recorded)". Only
+// whose goal was never frozen still names an objective. Only
 // when neither a goal nor a brief title exists does it fall back to the honest
 // "(no objective recorded)".
 export function objectiveText(ep) {
@@ -559,9 +561,9 @@ export function objectiveText(ep) {
 // The verdict WORD the trajectory panel prints (full honesty phrasing).
 // loopVerdict owns every word that reports a problem, so the two surfaces
 // cannot disagree about one; this panel adds the good news the fleet card
-// deliberately stays quiet about. "improving" is spoken only when the promoted
-// spine actually advanced — the reader owns that test, and a stalled loop now
-// arrives here as "stalled", never as a green chip.
+// stays quiet about by design. "improving" is spoken only when the promoted
+// spine advanced — the reader owns that test, and a stalled loop arrives here
+// as "stalled", never as a green chip.
 function verdictLine(traj) {
   const v = loopVerdict(traj);
   if (v) return v;
@@ -759,7 +761,7 @@ export function buildJudgeTrendPanel(trend) {
     card.appendChild(el('div', { class: 'dn-judgetrend-row', 'data-judge': r.name }, [
       el('span', { class: 'dn-judgetrend-name', title: r.name, text: r.name }),
       // INTRINSIC width (the fleet-card treatment): the spark is 280px of real
-      // trend, not a lane stretched to the pane — a stretched 'none' scale
+      // trend rather than a lane stretched to the pane — a stretched 'none' scale
       // flattens every slope and smears the end dot into an ellipse.
       svg.sparkline({ width: 280, height: 26, intrinsic: true, values: r.vals, markers: true, goodDirection: 'down' }),
       el('span', { class: 'dn-judgetrend-last', text: svg.isNum(last) ? last.toFixed(3) : '—' }),

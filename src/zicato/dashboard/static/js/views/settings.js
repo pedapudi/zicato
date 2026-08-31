@@ -57,7 +57,7 @@ const MODEL_ROLES = [
 ];
 const SECTION_IDS = SECTIONS.map((s) => s.id);
 // The default section a bare `#/settings` opens — sourced from the router so the
-// view and the router's `up()` agree (the builder is no longer the default).
+// view and the router's `up()` agree on it.
 const DEFAULT_SECTION = DEFAULT_SETTINGS_SECTION;
 
 let _active = DEFAULT_SECTION;

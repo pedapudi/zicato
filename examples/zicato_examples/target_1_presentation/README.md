@@ -1,27 +1,22 @@
-# target_1_presentation — vendored presentation-agent example
+# target_1_presentation — the presentation-agent example
 
-This directory is the first dogfood target for zicato: a vendored copy
-of an upstream multi-agent presentation tree (coordinator + research
-+ web_developer + reviewer + debugger), annotated with mutation
-markers, accompanied by a board, a rubric, predicates, and seed
-scoring weights.
+A copy of a multi-agent presentation tree (coordinator, research,
+web_developer, reviewer, debugger) taken into this repository and
+annotated with mutation markers, with a board, a proposer brief,
+predicates, and scoring weights beside it. Pointing `zicato evolve` at
+this directory runs the whole loop; [`RUN.md`](./RUN.md) gives the
+commands.
 
-The intent of this example is to give the operator something concrete
-to point zicato at end-to-end before zicato's runtime is fully wired:
+The pieces:
 
-- An importable agent module (`agent/`) the harness adapter can load.
-- A board of seven entries (`board.jsonl`) covering single-turn,
-  multi-turn-scripted, and multi-turn-emulated kinds.
-- A set of pass/fail predicates (`predicates.py`) the board entries
-  reference by dotted path.
-- An initial operator rubric (`rubric.md`) the proposer reads each
-  round.
+- An importable agent module (`agent/`) the harness adapter loads.
+- A board of seven entries (`board.jsonl`) covering the single-turn,
+  scripted multi-turn, and emulated multi-turn kinds.
+- Pass/fail predicates (`predicates.py`) the board entries reference by
+  dotted path.
+- The proposer brief (`rubric.md`) the proposer reads each round.
 - Scoring weights (`scoring.json`) that hydrate into
   `zicato.core.types.ScoringWeights`.
-
-When the rest of zicato's runtime lands (the ADK adapter, the board
-loader, the runner, the proposer, the tournament), this directory is
-the input you point it at to see the whole loop end-to-end.
 
 ## Directory layout
 
@@ -30,10 +25,10 @@ target_1_presentation/
   README.md                 — this file
   agent/
     __init__.py             — re-exports root_agent + build_agent_tree
-    agent.py                — the vendored tree, annotated with
+    agent.py                — the agent tree, annotated with
                               # zicato:mutable markers
   board.jsonl               — 7 board entries
-  rubric.md                 — operator rubric for epoch e0
+  rubric.md                 — the proposer brief
   predicates.py             — pass/fail predicates referenced by entries
   scoring.json              — seed ScoringWeights (gauntlet, the default)
   scoring.racing.json       — same weights + a racing tournament block
@@ -47,64 +42,71 @@ per round). `scoring.racing.json` adds a `tournament` block selecting the
 the strategy races on escalating board slices before the survivor faces
 the champion through the unchanged promote gate.
 
-Both carry `per_judge_weights` for the declared inline judges
-(`no_fabricated_numbers`, `incorporates_feedback`, `audience_appropriate`)
-so those process judges actually MOVE the scalar when they fire. Together
-with `mocks.harness_llm` now reading the mutated instruction — where only
-the RESEARCHER's output carries the fabricated/cited marker, so a
-researcher-only mutation is the sole lever over it — and `mocks.aux_llm`
-now answering the REAL inline-judge runtime's `VIOLATION`/`OK` protocol
-(not just a JSON `{"pass": bool}` shape), a researcher-instruction mutation
-changes the output and is scored through the real judge runtime + reducer +
-scoring — the contract can distinguish a challenger from its champion
-(issue #84; before, every challenger tied and nothing could promote).
-`tests/test_example_target_1_discriminates.py` proves this end to end
-through the real judge runtime, reducer, and scoring (its end-to-end case
-fails against the pre-fix mock, where the real inline judge never fires);
-`RUN.md → "Why it now discriminates"` documents it and the remaining
-live-stack (`LLMPlanner` passthrough) gap.
-See
-[`RUN.md` → "Running a non-gauntlet tournament"](./RUN.md) for the two run
-recipes (point `evolve` at `scoring.racing.json`, or pass
-`--tournament-structure racing` flags) and
-`tests/test_example_target_1_racing.py` for the no-live-LLM test that runs
-it end to end.
+**The contract separates a challenger from its champion.** Both scoring
+files carry `per_judge_weights` for the declared inline judges
+(`no_fabricated_numbers`, `incorporates_feedback`,
+`audience_appropriate`), so a firing process judge moves the scalar.
+Three facts make a researcher-instruction mutation visible in the score:
 
-The vendored agent module is self-contained: it imports only from
-`google.adk` (and only inside `build_agent_tree`, so the file imports
-cleanly without ADK installed for static introspection tasks like the
-mutation-audit CLI). No harmonograf telemetry, no goldfive runner glue
-— those belong to upstream packages, not to a zicato target.
+- `mocks.harness_llm` reads the mutated instruction, and only the
+  researcher's output carries the fabricated-versus-cited marker, so a
+  researcher-only mutation is the sole lever over it.
+- `mocks.aux_llm` answers the inline-judge runtime's `VIOLATION`/`OK`
+  protocol, so the judge fires for real rather than through a stubbed
+  `{"pass": bool}` shape.
+- The mutated output is then scored through the judge runtime, the
+  reducer, and the scoring weights.
+
+`tests/test_example_target_1_discriminates.py` proves this end to end.
+[`RUN.md`](./RUN.md) documents the mechanism and the remaining gap in
+the live stack (the `LLMPlanner` passthrough), and gives two recipes for
+running the racing structure — point `evolve` at `scoring.racing.json`,
+or pass the `--tournament-structure racing` flags.
+`tests/test_example_target_1_racing.py` runs it end to end with no live
+model.
+
+The agent module is self-contained. It imports only from `google.adk`,
+and only inside `build_agent_tree`, so the file imports cleanly without
+the agent development kit installed — which is what lets the
+mutation-audit command introspect it statically. It carries no
+harmonograf telemetry and no goldfive runner glue; those belong to the
+packages that own them.
 
 ## Mutation surface
 
-`agent/agent.py` exposes 9 distinct mutation ids, each annotated with
-a `# zicato:mutable id="..." role="..."` comment immediately preceding
-the editable span. The ids are:
+`agent/agent.py` exposes 15 distinct mutation ids. A
+`# zicato:mutable id="..." role="..."` comment precedes each editable
+string span; a `# zicato:mutable:code` comment opens each editable code
+region and `# zicato:mutable:end` closes it. The ids are:
 
 | id | role | what it controls |
 |---|---|---|
 | `researcher_instruction` | `system_instruction` | research_agent's prompt — how it gathers facts for a topic |
 | `web_developer_instruction` | `system_instruction` | web_developer_agent's prompt — how it lays out the deck |
 | `reviewer_instruction` | `system_instruction` | reviewer_agent's prompt — what counts as a critical issue |
-| `debugger_instruction` | `system_instruction` | debugger_agent's prompt — when to patch vs locate |
+| `debugger_instruction` | `system_instruction` | debugger_agent's prompt — when to patch and when to locate |
 | `coordinator_instruction` | `coordinator_routing` | coordinator's prompt — the routing flow itself lives here |
-| `write_webpage_tool_description` | `tool_description` | docstring on the `write_webpage` ADK FunctionTool |
+| `coordinator_files_not_found_routing` | `coordinator_routing` | what the coordinator does when the reviewer reports `files_not_found` |
+| `web_developer_topic_naming` | `topic_naming` | the `topic` string the developer passes to `write_webpage` |
+| `reviewer_read_path` | `topic_naming` | the `topic` string the reviewer derives its read path from |
+| `topic_slugify_logic` | `path_logic` | how a topic is normalized into a directory-name slug |
+| `topic_output_dir_logic` | `path_logic` | how the absolute output directory is resolved from a topic |
+| `find_presentation_match_logic` | `path_logic` | how `find_presentation_files` matches a topic to an existing directory |
+| `write_webpage_tool_description` | `tool_description` | docstring on the `write_webpage` tool |
 | `read_presentation_files_tool_description` | `tool_description` | docstring on `read_presentation_files` |
 | `find_presentation_files_tool_description` | `tool_description` | docstring on `find_presentation_files` |
 | `patch_file_tool_description` | `tool_description` | docstring on `patch_file` |
 
-The audit CLI (`zicato inspect mutations`, see `docs/design/MUTATION-SURFACE.md`)
-walks these markers and renders them in a table. Until that command is
-implemented you can preview the surface with:
+`zicato inspect mutations` walks these markers and renders them in a
+table (see `docs/design/MUTATION-SURFACE.md`). To read the raw markers:
 
 ```bash
 grep -n 'zicato:mutable' examples/zicato_examples/target_1_presentation/agent/agent.py
 ```
 
-The proposer's `Patch` objects address these ids by their stable
-string handle; the `id` survives across generations even when the
-content's line range shifts.
+The proposer's `Patch` objects address these ids by their stable string
+handle; the `id` survives across generations even when the content's
+line range shifts.
 
 ## Board entries
 
@@ -145,11 +147,11 @@ it in one terse line fails. The `final_output` a live run scores is a
 short planner summary the agent does not author, so it carries almost
 none of the deck's content.
 
-WHERE under the output root the deck landed is deliberately not graded
-here — the write/read slug agreement is this board's designed
-difficulty and is scored as process drift by the `file_findability`
-judge. Grading it twice would double-count it and would make a good
-deck invisible for a naming reason.
+No entry grades where under the output root the deck landed. The
+write/read slug agreement is this board's designed difficulty, and the
+`file_findability` judge already scores it as process drift. Grading it
+here as well would count it twice, and would make a good deck invisible
+for a naming reason.
 
 The `regex`, `expected_text` and `json_schema` kinds match against
 `final_output` by construction, so an entry that grades the artifact
@@ -184,9 +186,9 @@ Notes on individual entries:
   plays a Q3-metrics stakeholder with a constraint set that pushes
   back, demands numbers, asks for revisions. The `stop_when` fires
   once the agent produces a revised deliverable that addresses the
-  latest feedback round. Weight 1.5 — this entry dominates the
-  scalar score, which is intentional: revision-handling is the most
-  realistic signal of agent quality.
+  latest feedback round. Its weight of 1.5 makes it dominate the scalar
+  score, because handling a revision is the most realistic signal of
+  agent quality this board can read.
 - **`every_expectation_kind_demo`** — a single-turn entry that uses
   the `regex` expectation kind directly, and enumerates the other
   OUTCOME expectation kinds (`predicate`, `expected_text`,
@@ -205,12 +207,13 @@ beyond plain OUTCOME expectations:
   kinds named here are user-interaction kinds with no mapped built-in
   judge, so on this board the header exercises the authoring API and
   round-trips through the contract without suppressing anything at run
-  time. It is not a switch that turns drift off — see
+  time. It suppresses judges rather than turning drift off; see
   [BOARD-FORMAT.md](../../../docs/design/BOARD-FORMAT.md). In judge-only
-  mode goldfive JUDGES the presentation agent (drift / process judges
-  stay armed) but does ZERO steering: no goal-derivation LLM call, no
-  planner replanning, no drift-triggered refine. The presentation agent is meant
-  to be evaluated as-is, not actively steered, so this board opts in.
+  mode goldfive judges the presentation agent — the drift and process
+  judges stay armed — and steers it not at all: no goal-derivation model
+  call, no planner replanning, no drift-triggered refine. This board opts
+  in because the presentation agent is to be evaluated as it stands,
+  without an outer loop steering it mid-run.
 - PROCESS `judges` on `transformers_lay_audience` and
   `picky_stakeholder_emulated`. Where an `expectation` grades the
   finished output, a judge observes *how* the run unfolds and reports
@@ -218,13 +221,15 @@ beyond plain OUTCOME expectations:
 
 ## Running
 
-This README is the place to ship concrete commands as the runtime
-lands. Until the CLI is wired, the example is consumed two ways:
+[`RUN.md`](./RUN.md) carries the end-to-end recipes: the gauntlet loop,
+the racing structure, what the run leaves on disk, and how to swap in
+real models. This section covers the two ways to read the example
+without running the loop.
 
 ### 1. Static inspection
 
-The mutation surface and the board can be inspected today without any
-of zicato's runtime:
+The mutation surface and the board are readable without starting a
+run:
 
 ```bash
 # Mutation surface preview
@@ -250,52 +255,23 @@ with open('examples/zicato_examples/target_1_presentation/scoring.json') as f:
 
 ### 2. Tests
 
-The example ships a small companion test at
-`tests/test_example_target_1_presentation.py` that:
+Seven test modules cover this example, all under `tests/`:
 
-- Imports `zicato_examples.target_1_presentation.agent` and asserts that
-  `root_agent` can be obtained (lazily, via `build_agent_tree(...)`
-  with a mock model when ADK is available; otherwise the test
-  exercises the module-level import only).
-- Walks `agent/agent.py` for `# zicato:mutable` markers and asserts
-  the unique-id count is >= 6.
-- Lazy-imports `zicato.board.jsonl.load_board` and validates
-  `board.jsonl` if the module exists; skips gracefully when the
-  loader hasn't landed in this branch yet (it ships from a parallel
-  branch and will arrive at integration time).
+| module | what it pins |
+|---|---|
+| `test_example_target_1_presentation.py` | the agent tree imports, the mutation markers parse and re-apply, every board entry validates, and the scoring weights hydrate |
+| `test_example_target_1_predicates.py` | each predicate in `predicates.py` on hand-built inputs |
+| `test_example_target_1_deck_predicates.py` | the deliverable predicates against a written deck |
+| `test_example_target_1_file_findability.py` | the write/read slug agreement the `file_findability` judge scores |
+| `test_example_target_1_discriminates.py` | that a researcher-instruction mutation moves the scalar through the real judge runtime |
+| `test_example_target_1_racing.py` | the racing structure end to end with no live model |
+| `test_example_target_1_measurement_mode.py` | that measurement mode is inert unless armed |
 
-Run it with:
+Run them with:
 
 ```bash
-pytest tests/test_example_target_1_presentation.py -v
+pytest tests/test_example_target_1_*.py -v
 ```
-
-### 3. End-to-end (future)
-
-Once the zicato CLI and runtime are wired, the canonical invocation
-will be (working names):
-
-```bash
-# Create an epoch pinned to this directory's board / rubric / scoring
-zicato epoch new e0 \
-    --board examples/zicato_examples/target_1_presentation/board.jsonl \
-    --rubric examples/zicato_examples/target_1_presentation/rubric.md \
-    --scoring examples/zicato_examples/target_1_presentation/scoring.json \
-    --target zicato_examples.target_1_presentation.agent
-
-# Inspect the mutation surface the proposer will see
-zicato inspect mutations
-
-# Run a single board entry under the seed generation
-zicato run waffles_single --generation v0
-
-# Kick off a tournament round
-zicato proposer propose
-zicato tournament
-```
-
-The exact subcommands and flags are documented under
-`docs/design/CLI.md`; this section will be updated once they freeze.
 
 ## Measurement mode — running the board as an instrument
 
@@ -325,51 +301,47 @@ the tool's `escalate` action and so spins `write_webpage` unboundedly.
 
 **Do not read a file-findability result out of a measurement-mode
 run.** Salvage guarantees a deck exists however the pipeline failed, so
-a scorer reading only the artifact cannot tell a working pipeline from
-a broken one, and the canonical dir makes the reviewer's read succeed
-whatever slug it asks for. A run with the mode on leaves a
-`MEASUREMENT_MODE` note in its output base saying exactly that, so an
+a scorer reading only the artifact cannot tell a working pipeline from a
+broken one. The canonical directory compounds this: it makes the
+reviewer's read succeed whatever slug it asks for. A run with the mode on leaves a
+`MEASUREMENT_MODE` note in its output base saying so, so an
 artifact tree read back later carries the caveat with it.
 
-Off is off: `tests/test_example_target_1_measurement_mode.py` pins that
-with the variable absent the tools are byte-identical to their
-pre-measurement-mode behaviour and no measurement artifact — not the
-canonical dir, not the history, neither marker — reaches disk. Only the
-exact string `1` arms the mode; anything else fails closed.
+`tests/test_example_target_1_measurement_mode.py` pins that the mode is
+inert when it is off: with the variable absent, no measurement artifact
+reaches disk — neither the canonical directory, nor the history, nor
+either marker. Only the string `1` arms the mode; any other value leaves
+it off.
 
-## Why vendor instead of cross-reference?
+## Why the tree is copied in rather than referenced
 
-The upstream `presentation_agent_orchestrated` reference dynamically
-loads its agent tree from goldfive's example by absolute file path.
-That works fine in harmonograf's test layout but is the wrong shape
-for a dogfood target: zicato must own the editable surface, and the
-proposer must be able to patch a snapshot of it without coordinating
-with two upstream repositories. Vendoring removes the dynamic
-filesystem-path coupling and gives the patch applier a flat,
-deterministic source tree to operate over.
+The `presentation_agent_orchestrated` reference this tree came from
+loads its agent tree from goldfive's example by absolute file path at
+run time. That suits harmonograf's test layout, but a zicato target
+needs the opposite: zicato owns the editable surface, and the proposer
+patches a snapshot of it without coordinating with two other
+repositories. Holding the copy here removes the filesystem-path coupling
+and gives the patch applier a flat, deterministic source tree.
 
-The vendored tree is byte-equivalent at the instruction-string level
-to the upstream agent at the time of vendoring (modulo formatting
-inside Python string concatenation). If upstream evolves materially,
-re-vendoring is a one-time operation; zicato's mutation ids remain
-stable across the re-vendor because they are addressed by id, not by
-line range or content hash.
+At the instruction-string level the copy matches the source agent as it
+stood when it was taken, apart from formatting inside Python string
+concatenation. Taking a fresh copy is a one-time operation; the mutation
+ids survive it, because a patch addresses an id rather than a line range
+or a content hash.
 
 ## Extending the target
 
-To add a new board entry: append a line to `board.jsonl`, validate it
-with `zicato.core.types.validate_board_entry`, and (if it uses a
-predicate expectation) add the predicate to `predicates.py`. The test
-walks `board.jsonl` and re-validates every entry; CI will catch
-malformed additions immediately.
+To add a board entry: append a line to `board.jsonl`, validate it with
+`zicato.core.types.validate_board_entry`, and add the predicate to
+`predicates.py` if the entry uses a predicate expectation. The test
+walks `board.jsonl` and re-validates every entry, so continuous
+integration catches a malformed addition.
 
-To add a new mutation point: pick an id, drop a `# zicato:mutable
-id="<id>" role="<role>"` comment immediately above the editable span,
-and add a row to the mutation-surface table in this README. The test
-walks the markers and asserts the count is >= 6; adding a new one
-will not regress that floor.
+To add a mutation point: pick an id, put a `# zicato:mutable id="<id>"
+role="<role>"` comment immediately above the editable span, and add a
+row to the mutation-surface table above. The test walks the markers and
+asserts a lower bound on the count, which a new marker cannot break.
 
-To change the rubric without opening a new epoch: don't. Rubric
-changes are an epoch boundary by design (see
-`docs/design/EPOCHS-AND-JOURNALING.md`); make a copy under a new
-epoch id instead.
+Editing the proposer brief is an epoch boundary by design (see
+`docs/design/EPOCHS-AND-JOURNALING.md`). To change it, open a new epoch
+with the edited copy rather than editing the frozen one in place.

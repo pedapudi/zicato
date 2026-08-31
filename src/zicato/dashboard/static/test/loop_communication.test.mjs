@@ -1,4 +1,4 @@
-// test/loop_communication.test.mjs — LOOP COMMUNICATION surfaces (WS4-A item 1).
+// test/loop_communication.test.mjs — the loop-communication surfaces.
 //
 // The reads: /api/epoch/{id}/trajectory (promotion rate + the UNCERTAINTY-
 // HONEST verdict + the measured A/A noise floor) and /api/epoch/{id}/cost
@@ -79,8 +79,8 @@ test('loopVerdict: no_signal renders the exact honest phrase, plateaued reads pl
   assertEqual(home.loopVerdict({}), null, 'a degraded read (verdict null) → no chip');
 });
 
-// ── 1b. issue #129: the STALLED verdict — challengers fielded, none promoted,
-// no A/A floor measured. This case used to fall through to "improving" on the
+// ── 1b. the STALLED verdict — challengers fielded, none promoted, and no
+// same-versus-same floor measured. Without this rule the case falls to "improving" on the
 // epoch view and to NOTHING on the fleet card, so the two surfaces disagreed
 // about the worst regime the loop has. Both must now say the same word.
 test('stalled: both surfaces render it, and neither surface can call a 0-promotion run improving', () => {
@@ -123,7 +123,7 @@ test('warming_up: no chip anywhere — an undecided loop is not an improving one
     'and so does the epoch panel — no verdict word is honest yet');
 });
 
-// ── 1d. issue #129: the fleet-card hero placeholder. "no trajectory yet" after
+// ── 1d. the fleet-card hero placeholder. "no trajectory yet" after
 // twenty settled rounds reads as a loop that never started; the honest reading
 // of a short spine with rejected challengers is a champion that held.
 test('heroPlaceholderText: a retained champion is reported, not called "no trajectory yet"', () => {
@@ -138,7 +138,7 @@ test('heroPlaceholderText: a retained champion is reported, not called "no traje
   assertEqual(home.heroPlaceholderText(null), 'no trajectory yet',
     'a null read (Rust supervisor) keeps the original placeholder');
 
-  // Settled rounds, not fielded ones: an in-flight challenger has retained
+  // Settled rounds rather than fielded ones: an in-flight challenger has retained
   // nothing yet, so counting it would report a round the loop has not
   // finished — the same over-claim the verdict ladder avoids one field over.
   assertEqual(home.heroPlaceholderText(trajFixture({ promoted_count: 0, challenger_count: 1, settled_count: 0 })),

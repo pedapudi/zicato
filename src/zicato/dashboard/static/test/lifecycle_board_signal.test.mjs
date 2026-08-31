@@ -196,12 +196,12 @@ test('the whole figure stays hovercard-wired (no native <title> regressions)', (
   }
 });
 
-// ── the client no longer joins the champion itself ──────────────────────────
-// The dossier used to fetch the champion's per-entry payload a SECOND time and
-// join, slice and sum it in the browser. That join, the slice restriction and
-// the verdict are the server's (DQ1): the view reads one matchup-grid row per
-// entry. A regression here would silently reintroduce a client-side definition
-// of "the same board slice", which is how the Σ and the gate drifted apart.
+// ── the client never joins the champion itself ─────────────────────────────
+// The join, the slice restriction and the verdict all belong to the server. The
+// dossier reads one matchup-grid row per entry; it never fetches the champion's
+// per-entry payload a second time to join, slice and sum it in the browser. A
+// regression here would reintroduce a client-side definition of "the same board
+// slice", which is how a Σ and a gate come to disagree.
 
 test('candidate dossier: the champion comparison is FETCHED as a matchup grid, never re-joined client-side', async () => {
   freshState();

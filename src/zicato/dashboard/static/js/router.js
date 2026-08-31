@@ -1,11 +1,8 @@
-// js/router.js — Console IV hash router under the bare `#/` prefix.
+// js/router.js — the console's hash router, under the bare `#/` prefix.
 //
-// Variant T ("Console IV") is the converged default UI: P's data-model TREE
-// sidebar (the hash encodes the FULL path through the hierarchy) folded with
-// S's first-class side-by-side COMPARE detail. T is now the ONLY variant UI, so
-// the old `#/T/` bake-off namespacing prefix is dropped — routes are bare `#/`.
-// The hash also carries an optional COMPARISON target so a split candidate pane
-// DEEP-LINKS:
+// The hash encodes the FULL path through the data-model hierarchy that the tree
+// sidebar mirrors, so every route is a deep link. It also carries an optional
+// COMPARISON target, so a split candidate pane deep-links too:
 //
 //   #/                                          → Environment (the fleet)
 //   #/e/<epochId>                               → Epoch overview (heatmap)
@@ -19,20 +16,20 @@
 //   #/e/<epochId>/mutations[/<mutId>]           → Mutation surface + diff
 //   #/e/<epochId>/paper                         → ACM publication
 //
-// The COMPARE target is a `~cmp=<gen>` suffix on the hash (S's convention) —
-// kept in the hash, not location.search, so one deep-link captures the whole
-// comparison state and a cold load hydrates the split. A missing / foreign
-// hash returns Environment so a deep-link never lands blank. `href(view,
+// The COMPARE target is a `~cmp=<gen>` suffix on the hash. It rides the hash
+// rather than location.search, so one deep link captures the whole comparison
+// state and a cold load hydrates the split. A missing or foreign hash returns
+// Environment, so a deep link never lands blank. `href(view,
 // params, opts)` takes a params OBJECT plus an optional `{cmp}` so the tree,
 // breadcrumb, back button, and every view share one signature.
 
 export const PREFIX = '#';
 export const VIEWS = ['home', 'epoch', 'gens', 'candidate', 'diff', 'boards', 'board', 'mutations', 'instrument', 'traces', 'evals', 'publication', 'builder', 'logs', 'settings'];
 
-// The Settings section a bare `#/settings` opens. The tournament builder used
-// to be the default Settings section; now that the builder is its OWN view,
-// Settings defaults to the read-mostly contract roll-up. Shared with
-// views/settings.js so the router's `up()` and the view agree on the default.
+// The Settings section a bare `#/settings` opens: the read-mostly contract
+// roll-up. The tournament builder is its own view rather than a Settings
+// section. Shared with views/settings.js so the router's `up()` and the view
+// agree on the default.
 export const DEFAULT_SETTINGS_SECTION = 'contract';
 
 // Split the hash into its path part and its `~k=v` suffix params (the compare
@@ -65,20 +62,21 @@ export function parseRoute(hash) {
   // bare `#/` prefix: the path part is everything after the leading slash.
   const parts = raw.replace(/^\/+/, '').split('/').filter(Boolean).map(dec);
   if (!parts.length || parts[0] === 'home') return { view: 'home', params: {}, cmp };
-  // SETTINGS (B3) homes the contract / models / appearance sections. The
-  // tournament builder is NO LONGER a Settings section — it is its own
-  // first-class VIEW (below); Settings keeps only a launcher to it.
+  // SETTINGS homes the contract / models / appearance sections. The tournament
+  // builder is its own first-class VIEW (below), and Settings keeps only a
+  // launcher to it.
   // `#/settings[/<section>]` deep-links a section; a bare `#/settings` opens
   // the default (contract) section.
   if (parts[0] === 'settings') return { view: 'settings', params: { section: parts[1] || null }, cmp };
-  // `#/builder` is the tournament builder's OWN first-class view (promoted out
-  // of Settings). The same route-agnostic builder module backs every entry
-  // point — the top-bar nav entry, this deep-link, the Settings launcher, and
-  // the standalone `zicato dashboard --view builder` CLI (which deep-links here) — but it now
-  // renders FULL-WIDTH in the main view host rather than nested in Settings.
+  // `#/builder` is the tournament builder's own first-class view. One
+  // route-agnostic builder module backs every entry point — the top-bar nav
+  // entry, this deep link, the Settings launcher, and the standalone
+  // `zicato dashboard --view builder` command, which deep-links here — and it
+  // renders FULL-WIDTH in the main view host.
   if (parts[0] === 'builder') return { view: 'builder', params: {}, cmp };
-  // `#/logs` is the workspace-level operator-log pane (LOGGING.md) — a peer of
-  // builder / settings, NOT epoch-scoped (the streams are per-invocation).
+  // `#/logs` is the workspace-level operator-log pane (LOGGING.md), a peer of
+  // builder and settings. It sits outside any epoch because the streams are
+  // per-invocation.
   if (parts[0] === 'logs') return { view: 'logs', params: {}, cmp };
   if (parts[0] !== 'e') return { view: 'home', params: {}, cmp };
 
@@ -256,8 +254,8 @@ export function up(route) {
     case 'evals': return { view: 'epoch', params: { epochId: p.epochId } };
     case 'board':
       // FOLLOWING a conversation steps back to the same board+candidate with
-      // the pane closed — one level, not two, so the back button does not skip
-      // the side-by-side the operator came through.
+      // the pane closed — one level rather than two, so the back button does
+      // not skip the side-by-side the operator came through.
       if (route.follow) return { view: 'board', params: { epochId: p.epochId, entry: p.entry, gen: p.gen } };
       // an inline-transcript selection steps up to the bare board first.
       if (p.gen) return { view: 'board', params: { epochId: p.epochId, entry: p.entry } };
@@ -292,8 +290,7 @@ export function up(route) {
 // LABELS ARE NOT ADDRESSES. The `gens` view is addressed `…/gens` for all time
 // (routes are API), but it answers to exactly ONE name in the interface —
 // ROUNDS — on the rail (tree.js), in this crumb, and in its page title
-// (views/gens.js). It used to answer to three (generations / Match-ups /
-// ROUNDS), which read as three different surfaces.
+// (views/gens.js). One surface carries one name, so it never reads as three.
 export function crumbTrail(route) {
   const p = route.params || {};
   const home = { label: 'environment', view: 'home', params: {} };

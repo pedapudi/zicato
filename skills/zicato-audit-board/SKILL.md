@@ -38,7 +38,7 @@ audit the run directories that already exist).
 - **For:** deciding whether the *board* can be trusted to tell you which
   candidate is better. It judges the harness mechanics: wiring, fidelity of the
   graded field, judges firing, scalar arithmetic, determinism.
-- **NOT for:** deciding whether a candidate is good. It deliberately ignores
+- **NOT for:** deciding whether a candidate is good. It ignores
   efficacy. "The baseline did well" is not an audit pass; "the known-wrong stub
   failed and the known-correct stub passed, the scalar ranked them correctly,
   every judge fired, and a re-run reproduced the verdict" is.
@@ -65,7 +65,7 @@ The fields the recipes below key on are the **real** on-disk fields:
 
 > `loss.json` is canonical for one run; `gen_score.json` is the aggregate the
 > tournament gate scores on. The SQLite `index.db` is **derived** — audit the
-> files, not the index (it lags to generation boundaries). See
+> files rather than the index, which lags to generation boundaries. See
 > [`zicato-read-telemetry`](../zicato-read-telemetry/SKILL.md).
 
 ## The core loop: build → baseline-run → audit
@@ -108,7 +108,7 @@ Each item: what to check, why, and the pass/fail bar.
       artifact, NOT the model's reasoning narration / completion summary.
       goldfive dispatches custom judges only at *reasoning* observation points,
       so a judge that scans `ctx.reasoning_text` / the transcript for tool names
-      is grading narration the agent *wrote*, not the tool round-trips it *ran*
+      is grading narration the agent *wrote* rather than the tool round-trips it *ran*
       — a judge that fires off narration is the process-side proxy bug (worked
       fix: `file_findability` in
       `examples/zicato_examples/target_1_presentation/judges.py`). See
@@ -185,7 +185,7 @@ jq -r '[.entry_id, (.pass_fail|tostring), .expectation_result.kind,
 **3. Confirm the graded field == the agent's real output — catch the proxy
 bug.** The expectation reads `final_output` / `conversation_end`; the raw
 `events.jsonl` carries the agent's actual final reply. Diff them for the same
-entry — divergence means you are grading a summary, not the work:
+entry — divergence means you are grading a summary rather than the work:
 
 ```sh
 ENTRY=recall_q1
@@ -199,7 +199,7 @@ jq -rs 'map(.payload // .) | map(select(.text? // .content?)) | last
 (The exact event shape is goldfive's; `events.jsonl` writes two envelope shapes
 — a camelCase `{...DecisionMade}` and a normalized `{kind,payload,...}` — see
 [`zicato-read-telemetry`](../zicato-read-telemetry/SKILL.md). The point is to
-read the *real* transcript, not trust a downstream summary the predicate
+read the *real* transcript rather than trusting a downstream summary the predicate
 consumed.)
 
 For a **process judge** the analogous proxy bug is grading the *tool-call
@@ -218,7 +218,7 @@ jq -rc 'select((.kind // .payload.kind) == "tool_observed")
            err:  (.payload.is_error  // .is_error)}' \
    "$RUNS"/v0/runs/$ENTRY/events.jsonl
 # a judge that fires on a tool name appearing in reasoning text — but with NO
-# matching tool_observed entry here — is grading narration, not the ledger.
+# matching tool_observed entry here — is grading narration rather than the ledger.
 ```
 
 **4. Recompute the scalar from its components — catch a mis-weighted/inverted
@@ -243,7 +243,7 @@ for g in "$RUNS"/*/gen_score.json; do
   jq -r '"\(.scalar)\t\(.generation_id)\tpass_rate=\(.pass_rate)\tdrift=\(.scalar_components.drift)\tpass=\(.scalar_components.pass)"' "$g"
 done | sort -n | awk -F'\t' '{printf "%s  scalar=%s  %s  %s  %s\n",$2,$1,$3,$4,$5}'
 # RED FLAG: the higher-pass-rate generation has the WORSE (larger) scalar
-# because `drift` dominates — the board ranks by drift, not the metric you want.
+# because `drift` dominates — the board ranks by drift rather than your metric.
 # Fix in zicato-tune-scoring (namespace_weights["drift:"] / pass_weight /
 # per_kind_weights).
 ```
@@ -301,11 +301,12 @@ Two more read-only checks automate audit items `health` does not cover:
     --harness-call-llm my_pkg.llms:harness --auxiliary-call-llm my_pkg.llms:aux
 ```
 
-`board preflight` spends a small measurement budget (K A/A draws plus the
-degradation probes), so it is not free the way `health` is — but a `warn`
-(every probe scored identically: the board is saturated) or `refuse` (the
-measured signal is at or below the floor) verdict is the mechanised form of
-"this board cannot resolve the difference you are asking it about."
+`board preflight` spends a small measurement budget: K same-versus-same draws
+plus the degradation probes. It is therefore not free the way `health` is. What
+it buys is a mechanised form of "this board cannot resolve the difference you
+are asking it about": a `warn` verdict means every probe scored identically, so
+the board is saturated, and a `refuse` verdict means the measured signal is at
+or below the noise floor.
 
 What `zicato health` does **not** yet automate — do these by hand (recipes 2,
 3, 5 above): **graded-artifact fidelity** (is the predicate reading the real
@@ -332,14 +333,14 @@ but it is inherently project-specific — see "Recommendations" below.)
   tournament/evolution on it; whenever a verdict surprises you; pass rates are
   flat/zero; a "good" candidate scores worst; judges seem to contribute nothing.
 - **Do NOT use when:** you already trust the board and only want to compare
-  candidates — that is candidate eval, not board audit. This skill deliberately
+  candidates — that is candidate eval rather than board audit. This skill
   ignores efficacy.
 
 ## When to escalate / re-baseline
 
 - **Fix the board** when an audit item fails structurally: wrong `reads:`
   target, a proxy-graded field, an unwinnable GT, a dead/mis-wired judge, an
-  inverted scalar. Board / scoring edits roll the epoch — make them deliberately
+  inverted scalar. Board / scoring edits roll the epoch — make them knowingly
   (see [`zicato-author-board`](../zicato-author-board/SKILL.md) /
   [`zicato-tune-scoring`](../zicato-tune-scoring/SKILL.md)).
 - **Re-run (don't edit)** when only the determinism check fails and the run was

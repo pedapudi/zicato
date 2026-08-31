@@ -1,47 +1,37 @@
-# Dashboard frontend — pinned contracts (Phase 1 foundation)
+# Dashboard frontend — pinned contracts
 
-This file is the contract every Phase-2 view agent codes against. It is
-**frozen** for the duration of the fan-out. If a view needs a contract
-change, it must be raised with the integration lead — never edited
-unilaterally, because that is how file collisions and silent breakage
-creep in.
+Every frontend module codes against the contracts stated here: the shape
+of each JSON payload the server serves, the change-signal frame types,
+the client state object, the render discipline, and the hash routes. A
+payload-shape change is a clean break — server and client change in the
+same commit, and this file changes with them.
 
-The frontend is split into disjoint modules so a large team can work in
-parallel with zero shared-file edits:
+The frontend is split into disjoint modules:
 
 ```
 static/
-  index.html            — page shell: header, nav rail, view containers, drawer
-  style.css             — global tokens + chrome styling (global-chrome agent)
-  app.js                — ES-module ENTRY POINT (foundation; do not edit in P2)
+  index.html            — page shell hosting `#variant-root`
+  css/console.css       — every design token and every SVG mark class
+  app_T.js              — ES-module entry point
   js/
-    core/               — the data/render spine (foundation; FROZEN in P2)
+    core/               — the data/render spine
       dom.js            — el, svgEl, clearChildren, patch helpers
       state.js          — AppState: the single client state object
       api.js            — fetchJson, loadEnvironment, postControl
       sse.js            — EventSource wiring + delta dispatch
-      router.js         — hash routing + deep links
-      bus.js            — tiny pub/sub event bus
+      bus.js            — a small publish/subscribe event bus
       harmonograf.js    — harmonograf URL builders
-    components/         — shared component library (foundation; FROZEN in P2)
-      card.js, table.js, badge.js, diff.js, chart.js, empty.js
-    views/              — ONE FILE PER VIEW — Phase-2 agents own these
-      overview.js       — Overview view  (overview agent)
-      lineage.js        — Lineage view   (lineage agent)
-      tournament.js     — Tournament view (tournament agent)
-      epoch.js          — Epoch view     (epoch agent)
-      files.js          — Files view     (files agent)
-      chrome.js         — header / nav / activity-log drawer (chrome agent)
-  test/                 — JS/DOM test harness (foundation)
+      admission_viz.js  — the suggestion-admission figures
+    router.js           — hash routing + deep links
+    shell.js            — chrome, sidebar-to-detail host, page-scale pill
+    ui.js               — gatedSwap, pills, tables, themes, typefaces
+    svg.js, dag.js      — the figure builders
+    data.js             — the per-epoch read accessors
+    views/              — one module per detail pane
+  test/                 — JS/DOM test harness
     harness.mjs         — minimal DOM + assert harness
     *.test.mjs          — per-module behaviour tests
 ```
-
-**Ownership rule:** a Phase-2 agent edits ONLY its own `views/<name>.js`
-file plus appending CSS to a clearly-fenced block. It never edits
-`core/`, `components/`, `index.html`, or another view's file. The
-backend agent owns `endpoints.py`, `server.py`, `sse.py`,
-`state_reader.py` only.
 
 ---
 
@@ -78,7 +68,7 @@ exception. Shape (as produced by `state_reader.build_environment`):
 `{ epoch_id, goal }` row per epoch directory on disk. `goal` is a
 one-line description distilled from that epoch's proposer brief (the
 `## Goal` section of `brief.md`), or `null` when the brief is absent or
-carries no goal. It lets the Overview's epochs table annotate each row
+carries no goal. It lets the home view's epochs table annotate each row
 with what the epoch is trying to accomplish without a per-epoch
 `/api/epoch` fetch. Folded into AppState as `state.epochs`.
 
@@ -88,20 +78,21 @@ workspace }`. It is NOT in the environment payload.
 
 The drill-down / lazy endpoints (unchanged):
 - `GET /api/run-log?after=<cursor>` — append-only tail batch.
-- `GET /api/tournaments/{gen}` — per-matchup detail. **NO client.** The
-  per-beat loader that used to pull it is deleted (§3); the Match-ups
-  surfaces read `/api/tournaments` (the bracket) + `/api/matchup-grid/...`
-  instead. Curl/operator surface only.
-- `GET /api/drift-movements/{gen}` — drift-kind movements. **NO client**
-  (same deletion). Curl/operator surface only.
+- `GET /api/tournaments/{gen}` — per-matchup detail. **No client reads
+  it**; it is an operator surface for direct HTTP requests. The match-up
+  surfaces read `/api/tournaments` (the bracket) and
+  `/api/matchup-grid/...` instead (§3).
+- `GET /api/drift-movements/{gen}` — drift-kind movements. **No client
+  reads it**; operator surface only.
 - `GET /api/score-trajectory` — same shape as `environment.score_trajectory`.
-- `GET /api/files...`, `GET /api/mutations/...` — Files view.
+- `GET /api/files...`, `GET /api/mutations/...` — the patch-diff and
+  mutation-surface panes.
 - `GET /api/conversation/{run}` — the run_id-keyed transcript
   (`D.conversation()`; `D.runTranscript()` is the preferred gen×entry read).
 - `GET /api/run/{epoch}/{gen}/{entry}/transcript/delta?after=<cursor>` — the
-  live conversation pane's **cursor-append** read (issue #194 §2). Returns
-  only what changed since `after`, so following a running unit never
-  re-sends a settled conversation:
+  live conversation pane's **cursor-append** read. It returns only what
+  changed since `after`, so following a running unit never re-sends a
+  settled conversation:
 
   ```jsonc
   { "found": true, "cursor": int,            // feed back as the next `after`
@@ -115,9 +106,9 @@ The drill-down / lazy endpoints (unchanged):
     "events_path": str|null }
   ```
 
-  The **cursor counts parsed events**, not goldfive `sequence` numbers: a
-  `multi_turn_emulated` entry restarts `sequence` at 0 per run, so only the
-  parsed-event count is monotone over the file. Being a count it sits one
+  The **cursor counts parsed events** rather than goldfive `sequence`
+  numbers: a `multi_turn_emulated` entry restarts `sequence` at 0 per run,
+  so only the parsed-event count is monotone over the file. Being a count it sits one
   past the last index it covers, so the server's filter is **inclusive**
   (`source_index >= after`) — which is what re-delivers the OPEN final turn
   when it grows, at its existing `turn_index`. Replaying an unchanged cursor
@@ -126,28 +117,26 @@ The drill-down / lazy endpoints (unchanged):
   run-log's own `clamp_run_log_limit`. This is a SEPARATE route from
   `/transcript` above, which keeps its full-payload shape for the
   side-by-side panes.
-- `GET /api/matchup/{entry_id}/conversations` — **NO client, by decision.**
-  It is a **curl / operator surface**, not a live drill-down: the champion-vs-
-  challenger transcript comparison the operator actually uses is the Board
-  view's inline side-by-side, which resolves each side through the
-  deterministic `(epoch, gen, entry)` triple (`D.runTranscript()`) rather
-  than an entry-keyed pair. Documented rather than wired so the next audit
-  reads this as deliberate.
-- `GET /api/epoch/{epoch_id}/journal.md` — **NO client, by decision.** The
-  raw `journal.md` bytes are a **curl / operator surface**; the dashboard
-  renders the same text from the `journal` field the `/api/epoch` payload
-  already carries, so a second fetch of the same file would be pure
-  duplication.
-- `GET /api/search` — **NO client and no CLI command:**
-  *unconsumed pending a search box.* Building one is new scope (a chrome-level
-  affordance + a results route), deliberately not taken on here.
+- `GET /api/matchup/{entry_id}/conversations` — **no client reads it.**
+  It is an operator surface for direct HTTP requests. The champion-versus-
+  challenger transcript comparison the console offers is the board view's
+  inline side-by-side, which resolves each side through the deterministic
+  `(epoch, gen, entry)` triple (`D.runTranscript()`) rather than through
+  an entry-keyed pair. The endpoint stays served for external callers.
+- `GET /api/epoch/{epoch_id}/journal.md` — **no client reads it.** The raw
+  `journal.md` bytes are an operator surface; the console renders the same
+  text from the `journal` field the `/api/epoch` payload already carries,
+  so a second fetch of the same file would duplicate it.
+- `GET /api/search` — **no client and no CLI command read it.** Consuming
+  it requires a search affordance in the chrome and a results route; the
+  console has neither.
 - `GET /api/matchup-grid/{epoch}/{champion}/{challenger}` — the
   per-entry A/B grid for a **completed** matchup, read straight off the
   persisted per-run loss files (NOT the SQLite index). `/api/tournaments/{gen}`
   sources its `ab_grid` from the analytical index, a best-effort
-  dual-write; a finished tournament whose index was never (re)built
-  carries an empty `ab_grid`, so the Tournament matchup-detail panel
-  loses its per-board outcomes. This endpoint reconstructs them from
+  dual-write; a finished tournament whose index was never rebuilt
+  carries an empty `ab_grid`, so a match-up detail read off that payload
+  has no per-board outcomes. This endpoint reconstructs them from
   `generations/{gen}/runs/{entry}/loss.json` (the reducer's `LossProfile`)
   for both generations plus the `generations/{gen}/gen_score.json`
   aggregates. Shape:
@@ -179,10 +168,11 @@ The drill-down / lazy endpoints (unchanged):
   `entry_grid` rows are sorted by entry id; an entry that ran on only
   one side still appears (the absent side is `null`).
 
-  **The verdict is the server's, and it names its channel.** `verdict` /
-  `won_by` resolve on the first channel that SEPARATES the two sides —
-  the continuous `score` (higher better), then the pass predicate, then
-  the drift loss (lower better) — and `decided_by` says which one did.
+  **The verdict is the server's, and it names its channel.** `verdict`
+  and `won_by` resolve on the first channel that SEPARATES the two
+  sides. The channels are tried in order: the continuous `score` (higher
+  is better), then the pass predicate, then the drift loss (lower is
+  better). `decided_by` names the channel that separated them.
   A channel populated but equal on both sides has separated nothing, so
   resolution falls through to the next; when none separates them the
   entry is `"flat"` and `decided_by` names the channel it was read on.
@@ -199,9 +189,10 @@ The drill-down / lazy endpoints (unchanged):
   **`drift_present`** is true when any run on either side recorded a
   drift event or a non-zero drift loss. An adapter that emits no drift
   stream writes a structural `0.000` everywhere, which reads on the wire
-  exactly like a clean run — so a client told `false` HIDES the drift
+  the same as a clean run — so a client told `false` HIDES the drift
   columns rather than painting zeroes. A payload that omits the field
-  predates it: treat the absence as unknown and keep showing drift.
+  leaves the question unanswered: treat the absence as unknown and keep
+  showing drift.
 
   **`score_se`** is the sample standard deviation of the challenger's
   replicate scores over the square root of their count — the
@@ -209,17 +200,17 @@ The drill-down / lazy endpoints (unchanged):
   full variance (the champion side is frequently a single cached draw).
   It is `null` below two draws and renders as `--`, never `±0.000`.
 
-  The **Epoch publication** view (`js/views/publication.js`) and the
-  **candidate dossier** (`js/views/candidate.js`, which feeds the
-  lifecycle figure in `js/dag.js`) are the renderers. The dossier reads
+  The renderers are the epoch publication (`js/views/publication.js`)
+  and the candidate dossier (`js/views/candidate.js`, which feeds the
+  lifecycle figure in `js/dag.js`). The dossier reads
   ONE grid for its champion comparison — it does not fetch the
   champion's per-entry rows to join and slice them itself. A malformed
   coordinate degrades to an empty grid (HTTP 200), never a 500.
 - `GET /api/generation/{epoch}/{generation}/per-entry` also carries
   `drift_present` — the same flag, scoped to one generation: true when
   any of its runs recorded a drift event or a non-zero drift loss. The
-  Boards trellis, the epoch heatmap and the per-board drill-down read it
-  to decide whether the drift channel is worth painting; each also
+  board trellis, the epoch heatmap and the per-board drill-down read it
+  to decide whether the drift channel is worth painting. Each also
   prefers a per-entry `score` over drift when the board carries one, so
   a figure never plots a quantity the verdict beside it did not use.
 
@@ -231,19 +222,18 @@ response carries `provenance_note`, the caption the view MUST render
 **verbatim**. The server knows *why* a tree is missing (pruned vs
 unreachable); the client does not, and must not re-word it.
 
-The Files-view endpoints in full:
+The file and mutation endpoints in full:
 - `GET /api/files` — `{ epochs:[{ epoch_id, generations:[{ generation_id,
   file_count, patch_count, has_tree }] }] }`. Generations are listed in
   store order; the last element is the latest generation. `has_tree:false`
-  with `file_count:0` means the tree was pruned, not that it was empty.
+  with `file_count:0` means the tree was pruned rather than empty.
 - `GET /api/files/{epoch}/{gen}/tree` — `{ epoch_id, generation_id,
-  entries:[{ path, is_dir, size }], error? }`. Still served by the
-  server (and exercised by tests) but no longer consumed by the
-  dashboard — the per-generation file browser was removed in favour of
-  the What-changed diff + the mutation-site browser. Reserved for
-  external clients / future tooling.
+  entries:[{ path, is_dir, size }], error? }`. Served and covered by
+  tests, but no client reads it: the console offers the changed-files
+  diff and the mutation-site browser instead of a per-generation file
+  browser. Reserved for external callers.
 - `GET /api/files/{epoch}/{gen}/content?path=` — one file's content.
-  Same reserved-for-external-use status as `/tree`.
+  Reserved for external callers in the same way as `/tree`.
 - `GET /api/files/{epoch}/{gen}/patches` — the applied patch set for a
   SINGLE generation (parent -> selected).
 - `GET /api/files/{epoch}/{gen}/diff` — the files the generation
@@ -254,9 +244,8 @@ The Files-view endpoints in full:
   new_content, old_binary, new_binary }], error? }`. `files` lists
   only files that differ, sorted by path; a seed generation
   (`parent_generation_id == null`) reads every file as `added`. The
-  Files view renders each entry as a side-by-side split diff
-  (`old_content` left, `new_content` right) via the `diff` component
-  in `mode:'split'`.
+  patch-diff pane renders each entry side by side, `old_content` on the
+  left and `new_content` on the right.
   When the generation's tree — or its RECORDED parent's — is gone,
   `files` instead carries the patch-touched SPANS reconstructed from the
   records, each flagged `reconstructed:true` with `span:{mutation_id, op,
@@ -277,15 +266,15 @@ The Files-view endpoints in full:
   champion surface, and naming it `v0` would be a guess — so the diff's
   left label reads "from records" rather than a generation id.
 
-The Files view's CUMULATIVE patch chain ("Patches applied to reach
-v{N}") is derived ON THE CLIENT — no new endpoint. The walk follows
-`parent_generation_id` through `state.lineage.generations` from the
-selected generation back to the seed, then fetches each ancestor's
-`/api/files/{epoch}/{gen}/patches` (cached in
-`filesState.patchCache`). Only the lineage path is on the chain;
-rejected sibling generations that share a parent edge are NOT walked.
+A cumulative patch chain — every patch applied to reach one generation
+— is derived ON THE CLIENT from the endpoints above, with no endpoint of
+its own. The walk follows `parent_generation_id` through
+`state.lineage.generations` from the selected generation back to the
+seed, then fetches each ancestor's `/api/files/{epoch}/{gen}/patches`.
+Only the lineage path is on the chain; rejected sibling generations that
+share a parent edge are NOT walked.
 
-## 2. SSE delta types
+## 2. Server-sent event frame types
 
 `GET /events` yields, in order:
 - `event: snapshot` — `{ type:"snapshot", data:{...build_snapshot...} }`
@@ -297,15 +286,15 @@ rejected sibling generations that share a parent edge are NOT walked.
   an append-only `/api/run-log?after=<cursor>` poll.
 - `: ping` — keepalive comment, ignored.
 
-**The structural rule (the flashing fix):** a delta NEVER rebuilds a
-panel's `innerHTML`. After `applyEnvironment`, the render layer diffs
-state and patches only the affected DOM node, keyed by a stable
-`data-*` id (see §4). The activity-log drawer is strictly append-only.
+**The structural rule:** a frame NEVER rebuilds a panel's `innerHTML`.
+After `applyEnvironment` the render layer diffs state and writes only the
+affected DOM node, keyed by a stable `data-*` id (§4). The run-log tail
+is strictly append-only.
 
 ## 3. The client state object — `AppState` (core/state.js)
 
-Single source of truth. Views are pure `render(state, route)`; they
-never fetch and never mutate state. Fields:
+AppState is the single source of truth. A pane's `render` reads it and
+never mutates it. Fields:
 
 ```
 state.connected / connecting / mock     — connection status
@@ -324,7 +313,7 @@ state.epoch           { id, generation, round, startedAt }
 state.epochDef        — full epoch contract
 state.epochs          — per-epoch goal summary [ { epoch_id, goal } ]
 state.workspace
-state.files / state.mutations         — Files-view scratch state
+state.files / state.mutations         — file + mutation pane scratch state
 ```
 
 Mutation methods: `applySnapshot(snap)`, `applyEnvironment(env)`,
@@ -332,20 +321,20 @@ Mutation methods: `applySnapshot(snap)`, `applyEnvironment(env)`,
 `setHealth(h)`, `setLogTail(t)`, `mergeLogTail(batch)`. State changes
 publish on the bus (§5).
 
-**Deleted, deliberately:** `matchupDetail` / `driftMovements` /
-`selectedMatchup` and their loader `loadMatchupDetail()`. They cached
-`/api/tournaments/{gen}` (whole payload, `ab_grid` included) and
-`/api/drift-movements/{gen}` on EVERY SSE beat and **no view ever read
-either field** — two per-beat round-trips, both discarded. The beat path
-now makes exactly ONE consolidated `/api/environment` read; per-matchup
-detail is an on-demand drill-down through `js/data.js`.
+**AppState holds no per-matchup cache.** There are no `matchupDetail`,
+`driftMovements` or `selectedMatchup` fields and no `loadMatchupDetail()`
+loader: caching `/api/tournaments/{gen}` and `/api/drift-movements/{gen}`
+on every change signal would cost two round-trips per beat that no view
+reads. The beat path makes exactly ONE consolidated `/api/environment`
+read, and per-matchup detail is an on-demand drill-down through
+`js/data.js`.
 
 ## 4. The render spine — digest-gated, no-flash
 
-The anti-flash mechanism is `gatedSwap` (ui.js): a view computes a cheap
-content digest; when the digest is unchanged the DOM is left strictly
-untouched (no builder run, no writes), and when it changed the panel's
-subtree is rebuilt and swapped in whole.
+The anti-flash mechanism is `gatedSwap` (`ui.js`). A pane computes a
+cheap content digest. When the digest is unchanged the DOM is left
+strictly untouched: no builder runs and nothing is written. When it
+changed, the panel's subtree is rebuilt and swapped in whole.
 
 `core/dom.js` exports the building blocks under that discipline:
 - `el(tag, props, children)`, `svgEl(...)`, `clearChildren(n)` —
@@ -353,10 +342,10 @@ subtree is rebuilt and swapped in whole.
 - `patchText(node, text)` — sets textContent only if changed.
 - `patchClass(node, name, on)` — toggles a class only if changed.
 
-Each view exposes `render(state, route)` and a `mount()` called once.
-A view's `render` is re-run after every state change but MUST gate all
-DOM writes on a digest (`gatedSwap`) or use the `patch*` helpers so
-unchanged nodes are untouched. A view never sets `container.innerHTML`.
+Each pane exports `render(host, ctx, params)`. It is re-run after every
+state change and MUST gate all DOM writes on a digest (`gatedSwap`) or
+use the `patch*` helpers, so unchanged nodes are untouched. A pane never
+sets `host.innerHTML`.
 
 ### 4a. Figure width — intrinsic, capped
 
@@ -365,11 +354,11 @@ reserved for tables and timelines, whose rows genuinely use it. An SVG at
 `width:100%` scales its own coordinate system, so every mark, radius and
 especially every `<text>` magnifies with the pane — a 340×64 trend rendered
 across 1000px draws its captions at 3× the size CSS asked for. Two builders in
-`svg.js` encode the choice: `applyIntrinsic` pins the viewBox width in CSS
-pixels (scale exactly 1) with `max-width:100%` + `xMinYMid meet`, so a narrow
-pane shrinks the whole figure uniformly; `applyResponsive` opts into the
-aspect-locked full-width hero mode and is legitimate ONLY for a builder that
-also ships a matched `svg.dn-*-hero` max-width cap in `console.css`. A
+`svg.js` encode the choice. `applyIntrinsic` pins the viewBox width in CSS
+pixels (scale exactly 1) with `max-width:100%` and `xMinYMid meet`, so a
+narrow pane shrinks the whole figure uniformly. `applyResponsive` opts into
+the aspect-locked full-width hero mode, and is legitimate only for a builder
+that also ships a matched `svg.dn-*-hero` max-width cap in `console.css`. A
 `preserveAspectRatio:'none'` figure stretched across a `1fr` grid lane is the
 same defect in its other shape — a horizontal-only scale that flattens slopes
 and smears dots into ellipses. Compact figures pack side by side into a shared
@@ -383,118 +372,166 @@ a full-width panel; each card keeps its own collapsed `figCaption` "?".
 - `route:changed` — `{ view, params }` — router resolved a new route.
 - `log:appended` — `{ events:[...] }` — new run-log rows to append.
 
-## 6. Shared component API (components/)
+## 6. Shared builders (`js/ui.js`, `js/svg.js`)
 
-All components are pure factories returning a detached DOM node (never
-mount themselves). Re-render-safe: call again with new data → same node
-identity if a `key` is supplied.
+Every builder is a pure factory returning a detached DOM node; none
+mounts itself, and none reads global state. A caller composes the nodes
+and hands them to `gatedSwap`.
 
-- `card({ title, meta, body, key })` → `<section class="card">`
-- `table({ columns, rows, key, onRowClick })` → keyed `<table>`,
-  rows reconciled by `row.key`.
-- `badge(text, kind)` — kind ∈ `ok|warn|err|muted|pending|info`.
-- `statusBadge(status)` — maps a run/entry status to a badge.
-- `diff(oldText, newText, { mode })` — line diff renderer; `mode` ∈
-  `unified|split`.
-- `lineChart({ points, x, y, width, height, svg })` — paints into a
-  provided `<svg>`; keyed, incremental.
-- `emptyLine(text)` — the single-line muted empty state.
+From `js/ui.js`:
+- `section(title, ...children)` → `<section class="dn-section">` with an
+  `<h2>` heading; `subhead(text)` is the smaller in-section label.
+- `dataTable({ columns, rows, class })` → a `<table>`. A cell is a
+  string, a number, `{ text, class, title }`, or `{ el, class }` for a
+  composed cell; a falsy cell is dropped, so a conditional column needs
+  no branch at the call site. A row may carry `class`, `dataset`,
+  `style` and `onClick`.
+- `deltaCell(value, opts)` — the sign-coloured delta cell spec for
+  `dataTable`. A positive delta is a regression (`dn-bad-t`), a negative
+  one an improvement (`dn-good-t`).
+- `pill(cls, word, extra)`, `chip(cls, word, extra)`,
+  `verdictPill(decision, opts)`, `stat(value, key)` — the small labelled
+  marks.
+- `figCaption(lines, opts)` — a figure caption that refuses to stack.
+  The first line stays visible; the rest collapse behind a focusable "?"
+  glyph (`moreMark`) that opens the singleton hovercard.
+- `empty(text)` / `loading(text)` — the single-line muted states.
+- `renderMarkdown(md, opts)` — the restricted Markdown renderer used for
+  the proposer brief, the journal, and the analysis report.
+- `renderView(host, ctx, spec)` — the standard view scaffold. It paints
+  a loading line into an empty host, resolves the route's epoch (and
+  paints an honest empty state when there is none), runs an optional
+  `guard`, awaits `load`, and swaps on `digest`/`build`. A view whose
+  flow diverges — parallel fetches, several hosts, a non-epoch gate —
+  keeps its own scaffold.
 
-## 7. Per-view one-paragraph specs
+From `js/svg.js`: the figure builders (`heatmap`, `valueDotPlot`,
+`sparkbar`, `sparkline`, `genDots`, `survivalFunnel`, `swissLadder`,
+`swissOverview`, `elimFlow`, `duelFlow`, `racingScalarTrack`,
+`gauntletFieldBars`, `radarSilhouette`, `roundTimeline`, `waterfall`,
+`reignGantt`, `metaLoopLedger`, `calibrationTrend`, `sideBySideDiff`,
+and the rest). Each returns an `<svg>`; each figure that a view gates on
+ships a matching `…Digest` function so the digest and the drawing read
+the same fields. `digestOpts(opts, omit)` folds a builder's options into
+that digest with the volatile keys named explicitly.
 
-- **Overview** (`views/overview.js`, container `#view-overview`): the
-  environment home. Identity block (workspace, instance, registered
-  inner-harness, # mutation sites, # epochs); a loop-health line; a
-  COMPACT live-activity card linking to the Tournament view (not the
-  full board); the environment-wide score trajectory (reuse
-  `build_score_trajectory`); an epochs table — each row carries the
-  epoch's goal (from `state.epochs`) alongside its stats; recent
-  experiments — an unfinished experiment reads as `incomplete`, and the
-  "Full experiment log" link lands on the Epoch view's Experiments
-  section; aggregate stats.
-- **Lineage** (`views/lineage.js`, container `#view-tree`): the
-  generation DAG, the navigation hub. Pan/zoom. Click a node → route to
-  its experiment / matchup. Terminology: parent/child.
-- **Tournament** (`views/tournament.js`, container `#view-tournament`):
-  3-zoom drill-down. (1) verdict summary — champion/challenger, verdict
-  distinguishing regression from near-miss, side-by-side scalars by
-  axis, a data-quality indicator ("14 runs: 9 completed / 5 failed"),
-  drift-kind movements (reuse `build_drift_movements`), tournament-level
-  harmonograf jump. (2) the board — one row per entry, champion+
-  challenger together, per-entry Δ contribution sorted by |Δ|, failure-
-  mode badges, per-board harmonograf jump. (3) matchup detail (expand a
-  row) — inline conversation diff + per-run loss breakdown + drift
-  events + per-run harmonograf jumps. Past-tournament selector.
-  **Matchup-click MUST work** — handlers survive deltas via §4.
-- **Epoch** (`views/epoch.js`, container `#view-epoch`): the epoch's
-  NARRATIVE. A header block — epoch id, open/closed status, and a stat
-  strip tallying experiments / promoted / rejected / `incomplete` / net
-  Δscalar. The proposer brief rendered as a readable block, framed as
-  the operator's goal for the epoch. The **Experiments section** (one
-  merged section — the experiment narrative AND the epoch journal as a
-  single chronological per-round log; there is NO separate Journal
-  section): one entry per experiment, **terse by default** — a one-line
-  summary (round ordinal · generation id · core idea · verdict ·
-  Δscalar) — and **expandable** to the full four-beat detail: *what*
-  (core idea + lineage), *hypothesis* (the pre-run structured
-  prediction: why, expected pass-rate move, predicted drift, risks,
-  modulating sites), *change* (the patch summary, with an expandable
-  line diff against the epoch baseline), and *outcome* (the tournament
-  verdict — did the challenger beat the champion — the scalar Δ and its
-  components, the rejection reason, a jump to the Tournament view). A
-  journal round's free prose folds into the matching entry as a
-  *journal note*; a "view raw journal" link to the journal endpoint is
-  offered (not its own section). An experiment whose tournament never
-  reached a verdict is `incomplete` and STILL appears here (the raw
-  journal drops it). The entry's left-edge accent is coloured by the
-  decision so the promoted/rejected/incomplete arc is scannable.
-  Supporting context panels: registered harness, board entries, scoring
-  weights, mutation surface, and the analysis report.
+`js/dag.js` builds the candidate lifecycle DAG, and `js/hovercard.js`
+owns the single hover-for-detail card every `moreMark` attaches to.
 
-  **Epoch data source.** Every field above comes from ONE read —
-  `state.epochDef`, populated from `GET /api/epoch` and the `epoch` key
-  on `/api/environment`. No new endpoint was needed: `build_epoch_view`
-  already exposes `experiments` (per-generation records carrying the
-  raw `hypothesis`, `outcome`, and `patches` keyed by mutation id),
-  `brief`, `journal`, `analysis_md`, and the contract blocks. An
-  experiment record's shape: `{ generation_id, parent_generation_id,
-  hypothesis:{core_idea, why, modulating[], expected_pass_rate_delta,
-  expected_drift_movements[], risks}, patches:{<mutId>:{mutation_id, op,
-  rationale, new_content|new_numeric|new_enum}}, outcome:{ran_at,
-  tournament_decision, scalar_score_delta, pass_rate_delta,
-  drift_loss_delta, rejection_reason} | null }`. The optional patch diff
-  reuses the lazy `/api/mutations/{epoch}/{site}` baseline read.
-- **Files** (`views/files.js`, container `#view-files`): route-driven
-  (`#/files/{epoch}/{gen}`). A "What changed" section — a generation
-  picker and a side-by-side (split) diff of every file the selected
-  generation changed vs its parent (or the `v0` baseline), via the
-  `diff` component in `mode:'split'`; the file-tree of the selected
-  generation's snapshot + its applied patches; the mutation-site
-  browser. Defaults to the current epoch's latest generation.
-- **Chrome** (`views/chrome.js`): persistent header (context: epoch /
-  generation / round / elapsed / connection); the collapsible,
-  append-only activity-log drawer; the route shell (nav rail active
-  state); the rebrand. Owns the footer.
+## 7. The detail panes (`js/views/`)
 
-## 8. Routes (js/router.js)
+The shell hosts one detail pane at a time, chosen by the route (§8).
+Each module under `js/views/` exports `render(host, ctx, params)`.
 
-Hash routes; `#/overview` is default. Each is deep-linkable:
-- `#/overview`
-- `#/tree`  (Lineage)
-- `#/tournament`  ·  `#/tournament/{genId}` (open a matchup)
-- `#/epoch`  ·  `#/epoch/{epochId}`
-- `#/files`  ·  `#/files/{epochId}/{genId}`
-- `#/conversation/{entryId}` (focused conversation diff)
+- **home** — the workspace as a fleet: a cross-epoch overview strip, one
+  compact card per epoch carrying its loss trendline, the composed
+  meta-loop ledger, and loop health.
+- **epoch** — one epoch's substrate: the objective, the collapsible
+  proposer brief, the rounds along the champion spine (or a compact
+  structure overview for a non-gauntlet structure), and the
+  board-by-generation drift-loss heatmap.
+- **gens** — the epoch's tournament rounds, optionally scoped to one
+  round.
+- **structure** — the configured tournament structure, drawn per
+  structure kind.
+- **candidate** — one generation, comparison-first: the lifecycle DAG,
+  the per-board scoring dot plot, every match-up, and the stacked
+  promote gate. A "compare with…" picker splits the pane into two
+  candidates read side by side.
+- **diff** — that candidate's patches against the generation it was
+  derived from, side by side, one block per mutation site.
+- **boards** — the board trellis: one small multiple per board entry.
+- **board** — one board entry across every candidate, with the
+  champion-versus-challenger transcript inline.
+- **boardstatus** — the train/holdout split and where each slice is
+  played, derived defensively from `/api/epoch`.
+- **evals** — the entries-by-candidates matrix: rows are board entries
+  (the instrument), columns are candidates (what it measured).
+- **evals_health** — the board read as a measuring device: the measured
+  same-versus-same noise floor, the minimum-detectable-effect ladder,
+  and the ranked instrument-quality findings.
+- **ledger** — the epoch's experiments as one list: each proposed idea,
+  the sites it touched, and how the gate settled it.
+- **instrument** — the board-reflection lens: the bill of health, the
+  practice review, the judge audit, and the adjudication x-ray.
+- **traces** — imported foreign trajectories: one trajectory strip per
+  trace over the reconstructed conversation, with the mined episodes
+  bracketed.
+- **mutations** — the mutation surface as a site-by-generation matrix,
+  with the selected cell's patch diffed side by side.
+- **publication** — the epoch write-up, typeset with live figures
+  spliced in at the `<!-- FIGURE:NAME -->` markers.
+- **builder** — the tournament builder: a rail of contract sections, the
+  active section's controls, a live preview with a cost estimate, and a
+  copilot chat pane. It edits a draft and writes only on confirmation.
+- **settings** — the contract roll-up, the model-engine configuration,
+  and appearance (theme, typeface, scale).
+- **logs** — the operator-log pane: one structured stream per `evolve`
+  or `reflect` invocation, tailed through the query layer. It sits at
+  workspace level rather than inside an epoch, because the streams are
+  per-invocation.
 
-The Files route is **route-driven**: the selected epoch + generation
-live in the hash. Bare `#/files` resolves to a default — the current
-epoch (`environment.epoch`) and that epoch's latest generation — and is
-canonicalised in place into `#/files/{epochId}/{genId}` so a reload or
-a shared link lands on the same generation. The Files view never falls
-through to Overview.
+**Where the epoch panes get their data.** `state.epochDef` is populated
+from `GET /api/epoch` and the `epoch` key on `/api/environment`, both
+built by `build_epoch_view`. It exposes `experiments` (per-generation
+records carrying the raw `hypothesis`, `outcome`, and `patches` keyed by
+mutation id), `brief`, `journal`, `analysis_md`, and the contract
+blocks. One experiment record's shape:
 
-`router.current()` → `{ view, params:{...} }`. `router.go(hash)`
-navigates. The router emits `route:changed` on the bus.
+```jsonc
+{ "generation_id", "parent_generation_id",
+  "hypothesis": { "core_idea", "why", "modulating": [],
+      "expected_pass_rate_delta", "expected_drift_movements": [], "risks" },
+  "patches": { "<mutId>": { "mutation_id", "op", "rationale",
+      "new_content" | "new_numeric" | "new_enum" } },
+  "outcome": { "ran_at", "tournament_decision", "scalar_score_delta",
+      "pass_rate_delta", "drift_loss_delta", "rejection_reason" } | null }
+```
+
+An experiment whose tournament never reached a verdict is `incomplete`
+and still appears; the raw journal drops it. The patch diff reuses the
+lazy `/api/mutations/{epoch}/{site}` baseline read.
+
+## 8. Routes (`js/router.js`)
+
+Hash routes under a bare `#/` prefix. Every route is deep-linkable, and
+an unrecognised hash resolves to home so a stale link never lands blank.
+
+```
+#/                                     the workspace (home)
+#/e/<epochId>                          epoch overview
+#/e/<epochId>/gens[/r/<round>]         rounds, optionally one round
+#/e/<epochId>/gen/<gen>[/<entry>]      candidate (lifecycle + gate)
+#/e/<epochId>/gen/<gen>/diff[/<mutId>] that candidate's patch diff
+#/e/<epochId>/boards                   the board trellis
+#/e/<epochId>/board/<entry>[/<gen>]    one board + inline transcript
+#/e/<epochId>/evals                    the entries × candidates matrix
+#/e/<epochId>/mutations[/<mutId>[/<gen>]]   mutation surface + diff
+#/e/<epochId>/instrument[/<reflectionId>[/<judge>[/<runRef>]]]
+#/e/<epochId>/traces[/<reflectionId>[/<traceId>]]
+#/e/<epochId>/paper                    the epoch publication
+#/builder                              the tournament builder
+#/logs                                 the operator-log pane
+#/settings[/<section>]                 contract / models / appearance
+```
+
+A bare `#/settings` opens the contract section
+(`DEFAULT_SETTINGS_SECTION`). Under `mutations`, a bare mutation id pins
+the site with every generation that patched it stacked; a trailing
+generation pins one site-by-generation cell.
+
+Suffix parameters ride the hash after a `~`, so one link captures the
+whole pane state and a cold load hydrates it:
+- `~cmp=<gen>` — the compare target that splits the candidate pane.
+- `~base=<gen>` — which version a patch diff is taken against (the
+  candidate's recorded parent when absent).
+- `~follow=1` — on a board route, open the selected candidate's
+  conversation in the live follow pane.
+
+`parseRoute(hash)` → `{ view, params, cmp }`. `href(view, params, opts)`
+builds a hash from a params object plus an optional `{ cmp }`, so the
+tree, the breadcrumb, the back button and every view share one
+signature. The router emits `route:changed` on the bus.
 
 ## 9. Harmonograf (core/harmonograf.js)
 
@@ -535,7 +572,7 @@ surfaces this as `adk_session_id` on run-like records:
   / `child_adk_session_id`) carry the ids too, but **no client fetches that
   endpoint** (§ drill-down list above), so that path is reachable code over
   unreachable data — it deep-links nothing today. `harmonografSessionId()`
-  still accepts those key names for back-compat;
+  still accepts those key names;
 - `active_tournament.entries[]` rows — the runner stamps the run's
   `adk_session_id` onto the per-(entry × side) row the instant the run
   finishes (read from the run's `LossProfile`, never from `events.jsonl`

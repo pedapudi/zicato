@@ -20,23 +20,23 @@ import { state } from './core/state.js';
 
 // A tiny module-level cache keyed by URL. Drill-down payloads are immutable
 // for a completed generation, so caching avoids re-fetching on every
-// SSE-driven re-render. The SSE refresh path busts keys via invalidate().
+// change-signal-driven re-render. The refresh path busts keys via invalidate().
 //
-// The cache holds the in-flight PROMISE, not the resolved value. Two callers
-// that ask for one URL in the same tick must share ONE request: the shell and
-// the home view both read /api/workspace at boot, and the per-epoch reads fan
-// out across views. A value-only cache fills only after the fetch resolves, so
-// it allowed every concurrent caller to issue its own duplicate GET.
+// The cache holds the in-flight PROMISE rather than the resolved value. Two
+// callers that ask for one URL in the same tick must share ONE request: the
+// shell and the home view both read /api/workspace at boot, and the per-epoch
+// reads fan out across views. A value-only cache fills only after the fetch
+// resolves, so every concurrent caller would issue its own duplicate GET.
 //
-// Caching the promise also removes a stale-write race. The old body wrote the
-// cache AFTER awaiting, so an invalidate() that landed mid-flight was clobbered
-// by the resolving fetch putting the pre-invalidation payload back — and since
-// invalidateLive() fires on every live-data change while reads are in flight,
-// the bust that was meant to surface a new candidate was routinely undone by
-// the very request it superseded. NOTHING may write the cache after the fetch
-// resolves. The abandoned promise still feeds the callers already holding it
-// (their render began pre-bust, so pre-bust data is the honest answer), but it
-// can never re-enter the map; the next caller starts a fresh fetch.
+// Caching the promise also removes a stale-write race. Writing the cache AFTER
+// awaiting would let a resolving fetch put the pre-invalidation payload back
+// over an invalidate() that landed mid-flight. Since invalidateLive() fires on
+// every live-data change while reads are in flight, a bust meant to surface a
+// fresh candidate would be undone by the very request it superseded. So NOTHING
+// may write the cache after the fetch resolves. An abandoned promise still feeds
+// the callers already holding it — their render began before the bust, so
+// pre-bust data is the honest answer — but it can never re-enter the map, and
+// the next caller starts a fresh fetch.
 const _cache = new Map();
 
 export function cachedJson(path) {
@@ -263,7 +263,7 @@ export function tournamentStructure(epochId, tournamentId) {
 // reason, attempts, attempt_reasons, hypothesis, seed?}. The `status`
 // "proposing" is the LIVE in-flight slot (the proposer is mid-attempt);
 // `attempt_reasons` is the FULL per-attempt failure list (so the SPECIFIC
-// validation/parse/post-apply message is visible, not just condensed);
+// validation/parse/post-apply message is visible rather than condensed);
 // `attempts` is the retry count; `hypothesis` is the applied challenger's
 // one-line core idea. Absent / malformed (old data, gauntlet) reads as []
 // so callers render an honest empty tracker rather than throwing.
@@ -407,7 +407,8 @@ export function fileContent(epochId, genId, path) {
   return cachedJson(`/api/files/${enc(epochId)}/${enc(genId)}/content?path=${enc(path)}`);
 }
 // ONE mutation site's baseline (v0) string content + per-generation versions —
-// the LEFT column of the side-by-side diff (.baseline.content, NOT the object).
+// the LEFT column of the side-by-side diff (.baseline.content — the string, not
+// the enclosing object).
 export function mutationDetail(epochId, mutationId) {
   return cachedJson(`/api/mutations/${enc(epochId)}/${enc(mutationId)}`);
 }
@@ -427,7 +428,8 @@ export function analysis(epochId) {
 // Thin, cached, failure-tolerant GETs over query/reflection_view.py (the four
 // /api/reflection* endpoints). A completed reflection is IMMUTABLE, so caching
 // is safe and the views render fetch-once. Every reader degrades to a same-
-// shape empty payload server-side (DQ3), so a null here means a transport
+// shape empty payload server-side, because every reader is best-effort; so a
+// null here means a transport
 // failure only.
 
 // Every reflection under the workspace, or one epoch when scoped (newest first).
@@ -476,7 +478,7 @@ export async function proposerRecommendations() {
 //
 // The persisted `imported/*.json` + `suggestions.json` under a reflection are
 // immutable once written, so these reads are the same cacheable, reflection-
-// scoped class as the summary/scorecards/x-ray above (the live bust deliberately
+// scoped class as the summary/scorecards/x-ray above (the live bust by design
 // spares `/api/reflection/` — data.js:95).
 //
 // The trace LIST for a reflection: per-trace strip-model + source/dialect/counts.
@@ -521,7 +523,7 @@ export function evalDossier(epochId, entryId) {
   return cachedJson(`/api/epoch/${enc(epochId)}/eval/${enc(entryId)}`);
 }
 
-// WHAT IS ARMED TO JUDGE A RUN on this epoch's board (#194 §5) — goldfive's
+// WHAT IS ARMED TO JUDGE A RUN on this epoch's board — goldfive's
 // built-in judge set with each entry marked `suppressed` by the board's
 // `disable_drift` header, the drift kinds that header names which NO built-in
 // emits (and so suppress nothing), the frozen per-judge weights, and the

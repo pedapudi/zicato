@@ -118,9 +118,9 @@ export function buildTree(host, model, route, toggles, ctx, onToggle, live) {
 
     // An epoch's direct children are ROUNDS; each round holds the generations
     // born / raced that round (epoch ⊃ rounds ⊃ generations). `showRounds` is
-    // about the CHILD LAYOUT (round nodes vs a flat generation list), not the
-    // name: the surface is called ROUNDS on the rail, in the crumb, and in the
-    // page title, whether or not the epoch recorded enough structure to nest.
+    // about the CHILD LAYOUT (round nodes versus a flat generation list) rather
+    // than the name: the surface is called ROUNDS on the rail, in the crumb, and
+    // in the page title, whether or not the epoch recorded enough structure to nest.
     const rounds = Array.isArray(bundle.rounds) ? bundle.rounds : [];
     const stamped = bundle.gens.some((g) => Number.isInteger(g.round_index));
     const showRounds = rounds.length > 1 || (stamped && rounds.length >= 1);
@@ -191,7 +191,7 @@ export function buildTree(host, model, route, toggles, ctx, onToggle, live) {
       // round_index stamp). A single round with no stamp degrades to today's
       // FLAT list (no redundant "Round 0" wrapper). Each round node carries its
       // gate outcome; the carried-in champion is shown as a reference
-      // (↑ from R{n-1}), not duplicated under the round.
+      // (↑ from R{n-1}) rather than duplicated under the round.
       if (showRounds) {
         const gensById = new Map(bundle.gens.map((g) => [String(g.id), g]));
         rounds.forEach((r, ri) => {
@@ -204,7 +204,7 @@ export function buildTree(host, model, route, toggles, ctx, onToggle, live) {
                     || (r.challengers || []).some((g) => g && String(g.id) === String(p.gen))));
           const promoted = r.gateOutcome && r.gateOutcome.kind === 'promoted';
           // the DEFENDING champion lives in the ROUND HEADER (e.g. "v3 defends ·
-          // — held" / "▲ v6 promoted"), NOT as a duplicate ↑-reference child row.
+          // — held" / "▲ v6 promoted") rather than as a duplicate ↑-reference child row.
           // The champion's full node still appears under its own BIRTH round.
           const champLabel = r.championId != null ? String(r.championId) : null;
           const gateSub = champLabel
@@ -279,12 +279,11 @@ export function buildTree(host, model, route, toggles, ctx, onToggle, live) {
     }));
 
     // Instrument lens (leaf) — a peer of Boards / Evals / Mutation surface.
-    // ALWAYS present: it used to appear only for an epoch that had already run a
-    // reflection, which made the lens unreachable by click from every epoch that
-    // had not — the operator could not find the surface that would tell them the
-    // instrument was worth auditing. The landing degrades honestly ("No
-    // reflections for this epoch yet."), so the node costs nothing and the route
-    // stops being a URL-only feature.
+    // ALWAYS present, including on an epoch that has run no reflection. Showing
+    // it only where a reflection exists makes the lens unreachable by click from
+    // exactly the epochs whose operator cannot yet know the instrument is worth
+    // auditing. The landing degrades honestly ("No reflections for this epoch
+    // yet."), so the node costs nothing and the route is not a URL-only feature.
     tree.appendChild(leafRow({
       depth: 2, kind: 'instrument', label: 'Instrument', glyph: '⌾', tag: null,
       selected: sel === 'instrument' && p.epochId === epoch.id,
@@ -364,7 +363,7 @@ function leafRow(o) {
     el('span', { class: 'dt-glyph dt-glyph-' + o.kind, 'aria-hidden': 'true', text: o.glyph || '·' }),
     el('span', { class: 'dt-text', text: o.label }),
     // a subtle, CSS-pulsing ● clue on rows with LIVE activity (a running gen or
-    // board entry). It is a clue, not a banner — reuses the dn-inflight-pulse
+    // board entry). It is a clue rather than a banner — reuses the dn-inflight-pulse
     // animation. Re-stamped only when the row ENTERS/LEAVES the live set (digest).
     o.live ? el('span', { class: 'dt-node-pulse dn-inflight-pulse', title: 'running', 'aria-label': 'running' }) : null,
     o.tag ? el('span', { class: 'dt-tag dt-tag-' + o.kind, text: o.tag }) : null,

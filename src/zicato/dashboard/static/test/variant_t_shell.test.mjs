@@ -1,9 +1,8 @@
-// test/variant_t_shell.test.mjs — Variant T ("Console IV") unit tests:
-// Console IV rounds 8-9: visual elements fit their panes; the page-wide
-// scale control, themes + swatch dropdown, and the fluid layout.
+// test/variant_t_shell.test.mjs — the console's shell: visual elements fit
+// their panes, the page-wide scale control, the themes and swatch dropdown,
+// and the fluid layout.
 //
-// Split mechanically from the former variant_t.test.mjs (assertions
-// verbatim); shared fixtures + helpers live in ./fixtures.mjs.
+// Shared fixtures and helpers live in ./fixtures.mjs.
 
 import { installDom, test, run, assert, assertEqual, assertDeep, makeEvent } from './harness.mjs';
 
@@ -16,8 +15,8 @@ const {
 } = await import('./fixtures.mjs');
 
 // ====================================================================
-// Console IV folds (round 8): visual elements FIT their panes, and the
-// density picker scales visual-element SIZE (not only spacing).
+// Visual elements FIT their panes, and the density picker scales
+// visual-element SIZE as well as spacing.
 // ====================================================================
 
 
@@ -122,11 +121,10 @@ test('lifecycle DAG height is DERIVED from the (deduped) board-node count, not a
 });
 
 // ====================================================================
-// Console IV folds (round 9): a PAGE-WIDE SCALE control + a FLUID,
-// resolution-responsive layout. The operator scales the WHOLE page
-// (text + diagrams) — NOT per-pane — and the content uses the full
-// viewport width so the side-by-side compare panes (and their SVGs)
-// render as large as the screen allows.
+// A PAGE-WIDE SCALE control and a FLUID, resolution-responsive layout. The
+// operator scales the WHOLE page (text and diagrams) rather than one pane, and
+// the content uses the full viewport width, so the side-by-side compare panes
+// and their SVGs render as large as the screen allows.
 // ====================================================================
 
 
@@ -148,12 +146,10 @@ test('page scale: ui exposes a 70–150% range (5% steps) with a 100% default an
 
 // ---- (b) the control lives in SETTINGS and drives a PAGE-WIDE scale ----
 //
-// DELIBERATE MOVE (issue #194 §7, topbar diet). The scale control used to be a
-// pill in the top-bar chrome; it is a set-once appearance preference and the
-// widest control on a bar that has to make room for the run state, so it
-// follows the typeface picker into Settings → Appearance. Same store, same
-// applyScale/resetScale path — these assertions moved with it, they were not
-// dropped.
+// The scale control lives in Settings → Appearance beside the typeface picker,
+// rather than as a pill in the top-bar chrome. It is a set-once appearance
+// preference and the widest control on a bar that has to make room for the run
+// state. It uses the same store and the same applyScale/resetScale path.
 
 async function appearanceBody(root) {
   const settings = await import('../js/views/settings.js');
@@ -187,7 +183,7 @@ test('page scale: the control lives in Settings → Appearance; setting it appli
   assertEqual(root.getAttribute('data-t-scale'), '100', 'the page starts at 100% scale');
 
   // DRAG / SET it → the WHOLE PAGE scales at the app ROOT (the zoom token
-  // changes on the variant root, NOT on any individual pane).
+  // changes on the app root rather than on any individual pane).
   range.value = '130';
   range.setAttribute('value', '130');
   range.dispatchEvent({ type: 'input', target: range });
@@ -437,7 +433,7 @@ test('colour picker is a SWATCH DROPDOWN: a closed trigger with the current swat
   shell.applyTheme('monokai');
   const root = mountLiveShell('#/');
 
-  // the colour control is a dropdown (NOT the old inline button row).
+  // the colour control is a dropdown rather than an inline button row.
   const dd = allByClass(root, 'dt-cd')[0];
   assert(dd, 'the colour control is a dropdown (dt-cd)');
   assertEqual(allByClass(root, 'dt-theme-btn').length, 0, 'no old inline colour buttons remain');
@@ -546,7 +542,7 @@ test('layout: the detail pane + compare grid are FLUID — not clamped to a narr
 
   // the compare split is a two-equal-column grid (1fr 1fr) — so within a FULL-
   // width detail pane each pane is half the FULL width (bigger SVGs on bigger
-  // screens). It only collapses to one column on genuinely small screens.
+  // screens). It collapses to one column only on a small screen.
   assert(/\.dt-split\s*\{[^}]*grid-template-columns:\s*1fr\s+1fr/.test(css.replace(/\n/g, ' ')),
     'the compare split is a two-equal-column grid that fills the detail width');
 

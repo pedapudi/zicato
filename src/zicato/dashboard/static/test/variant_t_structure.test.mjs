@@ -1,10 +1,8 @@
-// test/variant_t_structure.test.mjs — Variant T ("Console IV") unit tests:
-// configurable tournament structure: bracket / standings / racing renderers
+// test/variant_t_structure.test.mjs — the configurable tournament structure: bracket / standings / racing renderers
 // over mock structure payloads, the universal radar, and the non-gauntlet
 // epoch overview.
 //
-// Split mechanically from the former variant_t.test.mjs (assertions
-// verbatim); shared fixtures + helpers live in ./fixtures.mjs.
+// Shared fixtures and helpers live in ./fixtures.mjs.
 
 import { installDom, test, run, assert, assertEqual, assertDeep, makeEvent } from './harness.mjs';
 
@@ -170,7 +168,7 @@ test('proposing tracker: a rejected challenger shows its SPECIFIC reason INLINE 
   const attemptEls = allByClass(tracker, 'dn-prop-attempts');
   assertEqual(attemptEls.length, 1, 'the retried slot shows an attempt badge');
   assert(attemptEls[0].textContent.includes('2 attempts'), 'the badge reads "2 attempts"');
-  // The applied row renders its hypothesis as the detail line, not a reason.
+  // The applied row renders its hypothesis as the detail line rather than a reason.
   const okRow = allByClass(tracker, 'dn-prop-row-ok')[0];
   assert(okRow && okRow.textContent.includes('swap the greeting string'),
     'the applied slot shows its hypothesis');
@@ -330,15 +328,15 @@ test('structure: racing renders a fit-to-width survival funnel with cuts + board
 // rung model the all-rounds / epoch view does (the recurring "round view empty"
 // bug). A racing FIELD record carries `rounds: []` BY DESIGN — the rungs live in
 // the LIVE active-tournament envelope (in flight) and in reconstructRacing / the
-// per-tournament structure record (settled). The round drill-down used to read
-// `round.tournamentRef.rounds` directly, so it came up with ZERO rungs and showed
-// "No rungs evaluated yet." while the epoch view (live-first → reconstruct) showed
-// them. Both paths now resolve through ONE shared resolver (resolveNonGauntletSt),
-// so they CANNOT diverge — this pins LIVE and asserts live↔recorded convergence.
+// per-tournament structure record (settled). Reading `round.tournamentRef.rounds`
+// directly yields ZERO rungs and shows "No rungs evaluated yet." while the epoch
+// view, going live-first then reconstruct, shows them. Both paths resolve through
+// ONE shared resolver (resolveNonGauntletSt) so they CANNOT diverge; this pins
+// LIVE and asserts that live and recorded converge.
 
 // the per-round FIELD record the orchestrator opens at round start: it lists the
-// competitor field + proposing status but carries EMPTY rounds/standings (issue
-// #16, `state="in_progress"`). This is the e4 repro shape.
+// competitor field + proposing status but carries EMPTY rounds/standings
+// (`state="in_progress"`). This is the shape that reproduces the empty round.
 const RACING_FIELD_EMPTY = {
   tournament_id: '2026-05-30_e0:field:v1', epoch_id: EPOCH_ID, structure: 'racing',
   structure_params: { board_fraction: 0.5, eta: 2, field_size: 4 },
@@ -367,7 +365,7 @@ const RACING_LIVE_AT = {
 function racingRoundFixture({ live }) {
   const gens = RACING_FIELD_EMPTY.competitors.map((c) => ({ generation_id: c.generation_id, epoch_id: EPOCH_ID, parent_generation_id: c.role === 'champion' ? '' : 'v0', promoted: c.role === 'champion', round_index: 0 }));
   // SETTLED: the field record + the per-tournament structure record carry the
-  // resolved rungs (the orchestrator's settle upsert, issue #16). LIVE: both stay
+  // resolved rungs (the orchestrator's settle upsert). LIVE: both stay
   // empty (the in_progress shape) so the ONLY rung source is the live envelope.
   const settledRounds = live ? [] : RACING_LIVE_AT.rounds.map((r) => ({ ...r, round_index: r.stage_index }));
   const settledStandings = live ? [] : RACING_LIVE_AT.standings;
@@ -417,7 +415,7 @@ test('REGRESSION (round-view-empty): the per-ROUND racing drill-down builds a NO
   const host = await renderRacingView('gens', { epochId: EPOCH_ID, round: 0 }, { live: true });
   // the title is the round drill-down (not the all-rounds page).
   assert(host.textContent.includes('Round 0 · match-ups'), 'the round drill-down header reads "Round 0 · match-ups"');
-  // THE BUG: the round view used to show this empty state. It must NOT now.
+  // The round view must NOT show this empty state.
   assert(!host.textContent.includes('No rungs evaluated yet'), 'the round view does NOT show the "No rungs evaluated yet." empty state');
   // the racing scalar track + survival funnel render the rungs from the live envelope.
   assert(host.textContent.includes('Scalar track'), 'the racing Scalar track renders in the round drill-down');
@@ -683,7 +681,7 @@ test('candidate dossier: the RADAR is UNIVERSAL — a SETTLED racer shows the ra
   assert(allByClass(host, 'dn-radar-hot').length >= 3, 'the settled-racing radar is plottable (≥3 vertices)');
   const labels = allByClass(radar, 'dn-radar-axislab').map((n) => (n.textContent || '').trim()).filter(Boolean);
   assert(labels.includes('scalar') && labels.includes('pass-rate'), 'the settled-racing radar names its scalar + pass-rate axes');
-  // racing's field-relative panels render TOO (additive, not a swap).
+  // racing's field-relative panels render TOO (added rather than swapped in).
   assert(allByClass(host, 'dn-racing-field')[0], 'the racing field-relative panels render alongside the radar');
   assert(host.textContent.includes('FIELD-relative'), 'the racing field caption renders alongside the radar');
   // and the radar reads the FIELD-leader-reference caption for racing (not the
@@ -781,7 +779,7 @@ test('epoch timeline (single-elim): the elim episode embeds the GENERATIONS-ACRO
   assert(!host.textContent.includes('not a gauntlet'), 'the negative placeholder is GONE for elim too');
   assert(allByClass(host, 'dn-roundtl')[0], 'the round timeline rendered for the elim epoch');
   // ELIM PARITY (#1): the epoch hero leads with elimFlow (matching racing→funnel,
-  // swiss→bump), NOT the compact mini-bracket. The bracket tree lives in the
+  // swiss→bump) rather than the compact mini-bracket. The bracket tree lives in the
   // round drill-down (Match-ups).
   const flow = svgsByClass(host, 'dn-elimflow')[0];
   assert(flow, 'the elim episode embeds the generations-across-rounds flow (elimFlow)');

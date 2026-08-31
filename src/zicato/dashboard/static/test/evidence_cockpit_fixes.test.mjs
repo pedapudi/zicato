@@ -7,18 +7,18 @@
 //      phase · count) and the "last seen Ns ago" affordance INSIDE it; a no-op
 //      beat churns ZERO DOM.
 //   2. HERO VISIBILITY — the hero is gated on the orchestrator being ALIVE (a
-//      fresh heartbeat pulse / LIVE-or-STALLED), NOT the narrower `running`, so
+//      fresh heartbeat pulse / LIVE-or-STALLED) rather than the narrower `running`, so
 //      it does NOT flicker out when `running` momentarily drops mid long-call.
 //   4. IN-FLIGHT MATCHES — the "what's running" block shows the live matches
-//      whenever runs are genuinely in flight, even when a fresh epoch roll
+//      whenever runs are in flight, even when a fresh epoch roll
 //      transiently leaves the heartbeat's epoch tag out of step.
-//   5. PROGRESS — a TERMINAL run reads 100% (keyed to completion, not the
-//      wall-clock budget) — the "1/1 tasks completed but 0%" bug.
+//   5. PROGRESS — a TERMINAL run reads 100%, keyed to completion rather than
+//      to the wall-clock budget, so "1/1 tasks completed" never reads 0%.
 //   6. TRANSCRIPT DEDUP — consecutive identical goal turns (goldfive emits the
 //      goal on BOTH runStarted + goalDerived) collapse to one.
 //
-// (Fix 3 — the epoch-objective truncation — is a pure CSS change, not reachable
-// from the DOM harness; it is verified by inspection of console.css.)
+// (The epoch-objective truncation is a pure CSS change that the DOM harness
+// cannot reach; console.css is inspected for it instead.)
 
 import { installDom, test, run, assert, assertEqual } from './harness.mjs';
 
@@ -95,8 +95,8 @@ function mountChrome() {
 test('chrome: the liveness pill is the SINGLE run-state badge — the redundant standalone run-badge is gone', async () => {
   const root = mountChrome();
   await new Promise((r) => setTimeout(r, 0));
-  // exactly one run-state pill; the old separate `dt-run-badge` wrapper + the
-  // old pulse element are gone (the three competing "live" signals are one).
+  // exactly one run-state pill: no separate `dt-run-badge` wrapper and no
+  // separate pulse element, so the three competing "live" signals are one.
   assertEqual(allByClass(root, 'dt-run-state').length, 1, 'exactly one liveness pill in the chrome');
   assertEqual(allByClass(root, 'dt-run-badge').length, 0, 'the redundant standalone run-badge is removed');
   assertEqual(allByClass(root, 'dt-run-pulse').length, 0, 'the redundant run-badge pulse is removed');
@@ -168,7 +168,7 @@ test('chrome: a NO-OP beat (same seq) churns ZERO DOM in the consolidated pill',
 });
 
 // ════════════════════════════════════════════════════════════════════
-// FIX 2 — hero visibility gated on the orchestrator pulse (alive), not seq
+// hero visibility gated on the orchestrator pulse (alive) rather than seq
 // ════════════════════════════════════════════════════════════════════
 
 test('livestatus: `alive` is true for LIVE and STALLED, false for SETTLED and DEAD', () => {
@@ -230,11 +230,11 @@ test('hero: a SETTLED run hides the hero (alive:false) + resets the digests', ()
 });
 
 // ════════════════════════════════════════════════════════════════════
-// FIX 4 — the "what's running" matches show while runs are genuinely live
+// the "what's running" matches show while runs are live
 // ════════════════════════════════════════════════════════════════════
 
 // a racing tournament tagged to one epoch, with a heartbeat whose epoch tag is
-// transiently DIFFERENT (a fresh roll) — the old epoch gate blanked the matches.
+// transiently DIFFERENT (a fresh roll), which an epoch gate would blank.
 function racingInflight(epochTag, hbEpochTag) {
   return {
     at: {
@@ -271,7 +271,7 @@ test('matches: the "what\'s running" block shows in-flight matches while runs ar
 
 test('matches: a FOREIGN-epoch run (known-different) does NOT light up a stale tournament', () => {
   const c = new live.LiveController({});
-  // tournament in 'e1'; the heartbeat AND the only run are in 'e2' (a genuinely
+  // tournament in 'e1'; the heartbeat AND the only run are in 'e2' (a truly
   // foreign run) — the tournament has no corroborating run, so no matches show.
   const at = racingInflight('e1', 'e2').at;
   const heartbeat = { phase: 'tournament:rung1', epoch_id: 'e2', ts: Date.now() };
@@ -310,7 +310,7 @@ function racingSettledRoundsInflight(epochTag, runEpochTag) {
       ],
       // the ONLY published round is fully SETTLED (survivors + winner landed) —
       // liveMatchBlocks returns [] for it — but the next rung is warming up so a
-      // run is genuinely in flight on /api/active-runs.
+      // run is in flight on /api/active-runs.
       rounds: [
         { round_index: 0, label: 'Rung 1', matches: [
           { match_id: 'rung1_m0', competitors: ['v0', 'v7'], board_fraction: 0.5,
@@ -326,8 +326,8 @@ function racingSettledRoundsInflight(epochTag, runEpochTag) {
 
 test('matches: the "what\'s running" block falls back to the live runs when EVERY published round is settled but a run is still in flight', () => {
   const c = new live.LiveController({});
-  // all published rounds settled → liveMatchBlocks() === [] → the old panel read
-  // "no matches in flight right now…" while the run v7 is genuinely live.
+  // all published rounds settled → liveMatchBlocks() === [] → without the
+  // fallback the panel reads "no matches in flight right now…" while v7 runs.
   const { at, heartbeat, activeRuns } = racingSettledRoundsInflight('e1', 'e1');
   c.update({ status: { running: true, alive: true, structure: 'racing' }, heartbeat, activeRuns, activeTournament: at });
   const body = c._matchesBody;
@@ -340,8 +340,8 @@ test('matches: the "what\'s running" block falls back to the live runs when EVER
 
 test('matches: the all-settled fallback stays scoped — a known-FOREIGN-epoch run does NOT synthesize a block', () => {
   const c = new live.LiveController({});
-  // tournament in 'e1'; the only run is in 'e2' (genuinely foreign) — the fallback
-  // must honour the same epoch guard the FIX 4 gate asserts and show the placeholder.
+  // tournament in 'e1'; the only run is in 'e2' (truly foreign) — the fallback
+  // must honour the same epoch guard as above and show the placeholder.
   const { at, heartbeat, activeRuns } = racingSettledRoundsInflight('e1', 'e2');
   c.update({ status: { running: true, alive: true, structure: 'racing' }, heartbeat, activeRuns, activeTournament: at });
   const empty = allByClass(c._matchesBody, 'dt-live-matches-empty')[0];
@@ -361,7 +361,7 @@ test('matches: a NO-OP beat over the synthesized all-settled fallback churns ZER
 });
 
 // ════════════════════════════════════════════════════════════════════
-// FIX 5 — a terminal run reads 100% (completion, not wall-clock budget)
+// a terminal run reads 100% from completion rather than wall-clock budget
 // ════════════════════════════════════════════════════════════════════
 
 test('progress: a TERMINAL run reads 100% regardless of its elapsed/budget time-fraction', () => {
@@ -466,8 +466,8 @@ test('transcript: dedup is CONSERVATIVE — different text, tool calls, or a gap
 
     // Routed onto svg.edgeText: the near-edge label keeps its natural 'middle'
     // anchor and clamps x INWARD so its FULL rendered extent stays inside the box
-    // (the genuine no-clip invariant the old end-anchor/clamp mechanism stood in
-    // for). Extent computed with the same mono model edgeText uses (9px font,
+    // (the no-clip invariant itself, rather than an end-anchor-plus-clamp proxy
+    // for it). Extent computed with the same mono model edgeText uses (9px font,
     // CHAR_EM=0.6).
     const w = ('thr 0.95').length * 9 * 0.6;
     const left = anchor === 'end' ? x - w : anchor === 'start' ? x : x - w / 2;

@@ -125,15 +125,22 @@ treated as **always matching** — the orchestrator never rolls it spuriously.
 
 ### 4.3 What forces a roll (any contract change)
 
-Any change to the five components above. Concretely: a changed/added/removed
-board entry, an added or retuned judge, toggling `disable_drift`, editing the
-brief's `## Forbidden` list (or any brief text that survives canonicalization),
-retuning a weight / `per_judge_weight` / `promote_margin`, a different
-entrypoint, an added/removed mutable tree, **registering a proposer dir or
-semantically editing its `agent.py` / a `skills/*.md` module** (the roll
-message names the changed component as `proposer`) — **and changing the scoring
-`tournament` block**: switching `gauntlet → swiss`, or bumping a param like
-`swiss.rounds`. The tournament structure lives inside `scoring.json` and rides
+Any change to the five components above. Concretely, each of these rolls the
+epoch:
+
+- a changed, added or removed board entry;
+- an added or retuned judge;
+- toggling `disable_drift`;
+- editing the brief's `## Forbidden` list, or any brief text that survives
+  canonicalization;
+- retuning a weight, a `per_judge_weight`, or `promote_margin`;
+- a different entrypoint;
+- an added or removed mutable tree;
+- **registering a proposer dir, or semantically editing its `agent.py` or a
+  `skills/*.md` module** — the roll message names the changed component as
+  `proposer`;
+- **changing the scoring `tournament` block**, whether that means switching
+  `gauntlet → swiss` or bumping a param such as `swiss.rounds`. The tournament structure lives inside `scoring.json` and rides
 the existing scoring canonicalizer, so a structure change rolls the epoch
 exactly as a `promote_margin` retune does (the roll message names the changed
 component as `scoring` — the structure *is* scoring). The `evolve
@@ -142,7 +149,7 @@ writes the block into `scoring.json` *before* the hash is computed, so they
 auto-roll just like a hand-edit.
 
 What does NOT roll: named model-engine and role assignments (runtime
-configuration, not contract), advisory brief text that canonicalizes to the
+configuration rather than contract), advisory brief text that canonicalizes to the
 same bytes, and target source content. Change an engine's operator-declared
 `revision` when its logical deployment changes so provenance can distinguish
 it from a mere transport move. `champion_eval_mode` (§5) is runtime provenance,
@@ -292,7 +299,7 @@ hand, or to reclaim disk. Confirmed via `--help`, which is always canonical
   reason the hash **cannot see** (e.g. a regression-baseline rebase that did
   not touch any contract file).
 - **`--no-auto-epoch`** on `evolve` — to be *told* about contract drift and
-  decide deliberately, instead of rolling automatically.
+  decide for yourself, instead of rolling automatically.
 - **`epoch switch`** — to re-point at an earlier epoch for inspection (but a
   closed epoch is read-only; do not try to re-run it — start a fresh epoch
   instead, whose `v0` baselines off the closed epoch's head).

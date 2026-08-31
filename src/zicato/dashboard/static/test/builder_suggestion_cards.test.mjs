@@ -209,7 +209,7 @@ test('mini-strip: absent figure → the textual fallback renders from the REAL p
   assert(/turn\(s\).*signal\(s\).*episode\(s\)/.test(fallback.textContent), 'the fallback summarises the real strip-model');
   // the Traces detail link resolves to the REGISTERED route (the review caught a
   // substring-only assert passing on a misrouted `/trace/` URL) — pin the full
-  // #/e/<epoch>/traces/<reflection>/<trace> shape, not a fragment.
+  // #/e/<epoch>/traces/<reflection>/<trace> shape rather than a fragment.
   const link = firstClass(boot, 'dn-bld-sugtracelink');
   assert(link, 'the card carries a Traces detail link');
   const href = link.getAttribute('href') || '';
@@ -222,7 +222,7 @@ test('mini-strip: present figure → it renders, replacing the fallback', async 
   view._resetBuilderForTest();
   data.invalidate();
   installFetch();
-  // inject a synchronous figure factory (the guarded-import seam, WS-TRACES).
+  // inject a synchronous figure factory (the guarded-import seam).
   let seenModel = null;
   view._setStripFigureForTest((model, opts) => {
     seenModel = { model, opts };

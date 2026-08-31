@@ -1,10 +1,9 @@
 // js/views/publication.js — ACM-style epoch publication, as a TAB.
 //
-// The operator REJECTED K's paper-FIRST metaphor but judged K's publication
-// RENDERER the best of all variants — so N reuses K's approach (parse the
-// section markers; typeset eyebrow / title / meta / abstract / body; splice
-// live Tufte figures at <!-- FIGURE:NAME --> markers) but as a TAB, not the
-// home (fix #3). GFM **tables render** (N's ui.renderMarkdown). The aggregate
+// The publication is a TAB rather than the home page. It parses the section
+// markers; typesets eyebrow / title / meta / abstract / body; and splices live
+// Tufte figures at the <!-- FIGURE:NAME --> markers. GitHub-flavoured markdown
+// **tables render** (ui.renderMarkdown). The aggregate
 // generation-scores TABLE and its summary BAR CHART are COMBINED into ONE
 // cohesive visual; per-matchup detail (champion vs challenger per board) is
 // appended from the matchup grid.
@@ -115,7 +114,7 @@ export async function render(host, ctx, params) {
 
   // Is the loop running FOR THIS EPOCH? A publication of a settled epoch that
   // labels an undecided candidate "racing…" is describing a race that ended
-  // (#207 §2); `epochLive` is what puts that label in the past tense.
+  // `epochLive` is what puts that label in the past tense.
   const epochLive = epochIsLive(state, epochId);
   const figures = { gens, scalarByGen, matchups, grids, ctx, epochId, epochLive };
 
@@ -282,7 +281,7 @@ function aggregateScoresFigure(gens, scalarByGen, epochLive) {
     columns: [{ label: 'generation' }, { label: 'scalar (loss)', class: 'dn-num' }, { label: 'outcome' }],
     rows: items.map((it) => {
       // Class B: an unscored candidate reads pending, never rejected. And the
-      // pending WORD is tense-bound (#207 §2): a publication of a settled epoch
+      // pending WORD is tense-bound: a publication of a settled epoch
       // that says "racing…" is describing a race that finished. The pill's own
       // liveness-aware vocabulary decides it; this table only re-skins the two
       // labels it renders differently (the ♛ and the short "seed").

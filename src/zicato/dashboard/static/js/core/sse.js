@@ -18,14 +18,14 @@
 // only mutates state and the render layer patches keyed nodes, a delta
 // never rebuilds a panel's innerHTML: no flash.
 //
-// THE SEQ NO-OP-SKIP GATE (RUNTIME-V2 Phase 4). Every `state_change` /
-// `snapshot` frame carries a top-level progress `seq` + `terminal` — the
-// orchestrator's TRUE liveness cursor (advances only on a genuine
-// transition, never on the heartbeat timer). A `state_change` whose seq
-// does NOT advance (a coalesced beat re-emitting the same seq) writes ZERO
-// DOM: we skip the refresh. A backwards seq = the log was cleared on a
-// fresh boot (rollover) ⇒ we force a refresh + reset. A frame with NO seq
-// (a pre-RUNTIME-V2 server) DEGRADES to the legacy always-refresh path.
+// THE SEQ NO-OP-SKIP GATE. Every `state_change` and `snapshot` frame carries
+// a top-level progress `seq` plus `terminal` — the orchestrator's true liveness
+// cursor, which advances only on a real transition and never on the heartbeat
+// timer. A `state_change` whose seq does NOT advance (a coalesced beat
+// re-emitting the same seq) writes ZERO DOM: the refresh is skipped. A
+// backwards seq means the log was cleared on a fresh boot, so the client forces
+// a refresh and resets. A frame carrying NO seq degrades to refreshing on every
+// frame.
 
 import { state } from './state.js';
 import { bus } from './bus.js';
@@ -50,8 +50,8 @@ function refreshAfterEvent() {
     _refreshPending = false;
     try {
       // ONE consolidated read per beat — nothing else. The per-matchup detail
-      // + drift-movements re-fetch that used to ride here was FETCH-AND-DISCARD
-      // (no view read either cache); it is gone. Drill-downs are on demand.
+      // and drift-movement caches are not refetched here: no view reads them, so
+      // a per-beat fetch would be discarded. Drill-downs are on demand.
       await loadEnvironment();
     } catch (err) {
       console.warn('refresh failed:', err);
@@ -99,7 +99,7 @@ export function connectSSE() {
     // THE SEQ NO-OP-SKIP GATE. Refresh ONLY on a genuine seq advance (or a
     // rollover = restarted log); a repeat seq (a coalesced no-op beat)
     // writes ZERO DOM — no fetch, no state touched. A frame with no seq
-    // (pre-RUNTIME-V2) degrades to the legacy always-refresh path. The
+    // degrades to refreshing on every frame. The
     // run-state pill stays current off the heartbeat frame's own
     // `_changed()` pulse, so STALLED/SETTLED still paint without this fetch.
     let frame = null;
