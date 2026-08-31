@@ -54,9 +54,8 @@ scored.
 
 ## 2. Dialect 1 — `goldfive` (default)
 
-The current path, unchanged and byte-identical. The most powerful
-dialect: it consumes the full drift-instrument stream, so it is the only
-dialect that can carry
+The default dialect, and the most powerful one: it consumes the full
+drift-instrument stream, so it is the only dialect that can carry
 
 - **in-process drift instruments** — the live reasoning-stream detectors
   (`looping_reasoning`, `plan_divergence`, `intent_divergence`,

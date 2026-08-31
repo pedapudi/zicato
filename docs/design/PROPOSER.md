@@ -289,17 +289,17 @@ dependent-knob house style, as `screen_veto_only` is inert without
   a model can compose a genuine merge (resolving the shared edit) that a
   last-wins concatenation cannot.
 
-**What relaxes, and what never does.** Only predicate #7 (disjointness)
-relaxes, and only for PAIR SELECTION in `llm` mode — the model resolves the
+**What relaxes, and what never does.** Only the disjointness predicate
+relaxes, and only for pair selection in `llm` mode — the model resolves the
 overlap, which is the whole point. Overlap does not vanish: it becomes a
 RANKING consideration (prefer LESS overlap at equal coverage), slotted into the
 existing deterministic key immediately after coverage so that mechanical-mode
 selections — where every surviving pair has zero overlap — are byte-identical
-to before. Every OTHER predicate holds unchanged in both modes: #1 rejected,
-#2 current reign, #3 non-placebo, #4 non-recombined parent, #5 pair-not-tried,
-#6 manifest-valid patches, and #8 complementarity ESPECIALLY (each parent must
-still carry a distinct win the other lacks — an LLM merge of two identical
-fixes is nothing).
+to before. Every other predicate holds unchanged in both modes: rejected,
+current reign, non-placebo, non-recombined parent, pair-not-tried,
+manifest-valid patches, and complementarity above all — each parent must
+still carry a distinct win the other lacks, since an LLM merge of two
+identical fixes yields nothing.
 
 **The envelope (LOAD-BEARING).** The merge prompt carries ONLY
 proposer-authored artifacts, in the genealogy-channel redaction

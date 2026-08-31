@@ -590,7 +590,7 @@ changes** except the optional replication averaging, which is additive.
      `_gate_with_regression` (`runner.py:1421`) → `evaluate_gate`.
    - `_run_replicated(...)` — for `replicates > 1`, run the paired board
      N times and average per-entry losses before aggregation (§9 lever
-     1). Additive; `replicates == 1` is the current path.
+     1). Additive; `replicates == 1` runs the board once per side.
 
 4. **`src/zicato/orchestrator.py`** — refactor `evolve_once`
    (`orchestrator.py:386`):
