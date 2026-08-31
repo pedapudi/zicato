@@ -12,10 +12,12 @@ by name where the contract requires timestamp order is a real ordering bug —
 so every enumeration routes through :func:`iter_epochs` /
 :func:`list_epoch_ids`, and the order is uniform by construction.
 
-The ordering primitives (:func:`natural_key`, :func:`epoch_sort_key`,
-:func:`epoch_created_at`) live here as the single definition;
-:mod:`zicato.query.paths` re-exports them, so an import from either module
-resolves to the same function.
+The ordering primitives live here as the single definition. Epochs order by
+:func:`epoch_sort_key` over :func:`epoch_created_at` and :func:`natural_key`;
+generations order by :func:`generation_sort_key` over the round number
+:func:`generation_round_number` reads out of a ``vN`` id.
+:mod:`zicato.query.paths` re-exports the epoch primitives, so an import from
+either module resolves to the same function.
 """
 
 from __future__ import annotations
@@ -48,6 +50,30 @@ def natural_key(name: str) -> tuple[tuple[int, Any], ...]:
     return tuple(
         (1, int(part)) if part.isdigit() else (0, part) for part in _NUM_RUN.split(name) if part
     )
+
+
+def generation_round_number(generation_id: str) -> int | None:
+    """The round number encoded in a ``vN`` generation id, or ``None`` when the
+    id does not follow that scheme.
+
+    ``v0`` is the seed generation, so the number is also the count of rounds
+    that produced the generation. Callers that only need ordering should use
+    :func:`generation_sort_key` instead of comparing parsed numbers.
+    """
+    suffix = generation_id[1:]
+    return int(suffix) if generation_id.startswith("v") and suffix.isdigit() else None
+
+
+def generation_sort_key(generation_id: str) -> tuple[int, int, str]:
+    """Ascending order key for generation ids: ``v2`` before ``v10``.
+
+    Ids following the ``vN`` scheme order by their round number. An id
+    outside that scheme orders after every ``vN`` id, by name; the fallback
+    exists so a workspace carrying an id no minting path produces still
+    enumerates deterministically.
+    """
+    number = generation_round_number(generation_id)
+    return (0, number, generation_id) if number is not None else (1, 0, generation_id)
 
 
 def _read_json_value(path: Path) -> Any | None:

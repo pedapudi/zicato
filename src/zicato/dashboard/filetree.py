@@ -64,6 +64,7 @@ from zicato.epoch.journal import read_generation_patches
 from zicato.query import WorkspacePaths
 from zicato.query.paths import list_epoch_ids
 from zicato.storage import default_backend
+from zicato.workspace import natural_key
 
 #: Files larger than this are not inlined into the content response —
 #: the browser gets a truncation marker instead. The dashboard is a
@@ -202,7 +203,8 @@ def build_file_index(paths: WorkspacePaths) -> dict[str, Any]:
         except (FileNotFoundError, OSError, ValueError):
             source_generation_ids = []
         generation_ids = sorted(
-            set(source_generation_ids) | set(recorded_generation_ids(paths, epoch_id))
+            set(source_generation_ids) | set(recorded_generation_ids(paths, epoch_id)),
+            key=natural_key,
         )
         for generation_id in generation_ids:
             try:

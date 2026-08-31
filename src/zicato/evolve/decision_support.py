@@ -9,12 +9,12 @@ from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Any
 
-from zicato.evolve import generation_phase
 from zicato.evolve.lifecycle_services import (
     _beat,
 )
 from zicato.runtime.heartbeat import HeartbeatBeater
 from zicato.util import best_effort
+from zicato.workspace import generation_round_number
 
 log = logging.getLogger("zicato.orchestrator")
 
@@ -144,7 +144,7 @@ def _defer_round_infra_outage(
     health_summary, health_critical = _assess_and_persist_loop_health(
         workspace_root,
         epoch_id,
-        generation_phase.round_number(next_id) or round_index,
+        generation_round_number(next_id) or round_index,
         board,
         infra_outage=(infra_aborted, infra_threshold),
     )

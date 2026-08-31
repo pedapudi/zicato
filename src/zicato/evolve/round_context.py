@@ -41,6 +41,7 @@ from zicato.core.types import Experiment, Generation
 from zicato.evolve.ingest import _index_db_path
 from zicato.evolve.lifecycle_services import _beat
 from zicato.runtime.heartbeat import HeartbeatBeater
+from zicato.workspace import generation_sort_key
 
 if TYPE_CHECKING:
     from zicato.proposer.best_of_n import ScreenRunner
@@ -189,16 +190,11 @@ def _build_recombination_pair(
         if not gens_root.is_dir():
             return None
 
-        def _gen_sort_key(gid: str) -> tuple[int, str]:
-            # v-numbered ids sort numerically (v10 after v9); anything else
-            # falls back lexicographically after them.
-            if gid.startswith("v") and gid[1:].isdigit():
-                return (int(gid[1:]), "")
-            return (-1, gid)
-
+        # Most recent generation first: the recombination pool draws from the
+        # newest settled rejects.
         gen_ids = sorted(
             (d.name for d in gens_root.iterdir() if d.is_dir()),
-            key=_gen_sort_key,
+            key=generation_sort_key,
             reverse=True,
         )
 

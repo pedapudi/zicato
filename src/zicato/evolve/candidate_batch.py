@@ -22,6 +22,7 @@ from zicato.evolve.propose_apply import (
 )
 from zicato.evolve.round_context import _recombine_pair_for_slot
 from zicato.util import best_effort
+from zicato.workspace import generation_round_number
 
 if TYPE_CHECKING:
     from zicato.runtime.resume import ResumePlan
@@ -115,7 +116,7 @@ async def produce_candidate_batch(
         base_id = resume_plan.resume_generation_id
     else:
         base_id = generation_phase.next_generation_id(workspace_root, epoch_id)
-    base_n = generation_phase.round_number(base_id)
+    base_n = generation_round_number(base_id)
 
     settled_prior = tuple(
         _load_prior_experiments(

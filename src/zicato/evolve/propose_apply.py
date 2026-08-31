@@ -586,11 +586,11 @@ async def _maybe_run_placebo_arm_gauntlet(
     ``placebo_promoted`` loop-health finding. Best-effort by contract:
     any failure here never aborts the round.
     """
-    from zicato.evolve.generation_phase import round_number  # noqa: PLC0415
     from zicato.evolve.placebo import placebo_round_due  # noqa: PLC0415
+    from zicato.workspace import generation_round_number  # noqa: PLC0415
 
     every_n = int(getattr(weights.overfitting, "random_baseline_every_n", 0))
-    round_n = round_number(round_id)
+    round_n = generation_round_number(round_id)
     if not placebo_round_due(every_n, round_n) or not mutations:
         return
 

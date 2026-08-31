@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from zicato.workspace import WorkspaceLayout
+from zicato.workspace import WorkspaceLayout, generation_round_number, generation_sort_key
 
 
 @dataclass(frozen=True, slots=True)
@@ -56,11 +56,6 @@ class PreparedRound:
     custom_judge_names: frozenset[str]
 
 
-def round_number(generation_id: str) -> int | None:
-    suffix = generation_id[1:]
-    return int(suffix) if generation_id.startswith("v") and suffix.isdigit() else None
-
-
 def current_marker(workspace_root: Path, epoch_id: str) -> Path:
     return WorkspaceLayout.from_root(workspace_root).current_generation_marker(epoch_id)
 
@@ -74,11 +69,7 @@ def current_generation(workspace_root: Path, epoch_id: str) -> str:
     if not candidates:
         raise FileNotFoundError(f"no generations under {root}; the epoch has no baseline yet")
 
-    def key(name: str) -> tuple[int, int, str]:
-        number = round_number(name)
-        return (0, number, name) if number is not None else (1, 0, name)
-
-    return max(candidates, key=key)
+    return max(candidates, key=generation_sort_key)
 
 
 def safe_parent(workspace_root: Path, epoch_id: str | None) -> str:
@@ -112,7 +103,7 @@ def next_generation_id(workspace_root: Path, epoch_id: str) -> str:
     numbers = [
         number
         for generation_id in generation_ids
-        if (number := round_number(generation_id)) is not None
+        if (number := generation_round_number(generation_id)) is not None
     ]
     return f"v{max(numbers, default=-1) + 1}"
 
@@ -128,7 +119,6 @@ __all__ = [
     "current_generation",
     "mutable_trees",
     "next_generation_id",
-    "round_number",
     "safe_parent",
     "set_current_generation",
     "snapshot_root",
