@@ -39,6 +39,33 @@ export function go() {
 """
 
 
+RUST_FIXTURE = """//! Module doc comment.
+
+use std::fmt; // A trailing comment leaves the line executable.
+
+const SHAPE: &str = r#"{"key": "value"}"#;
+
+/* Block comment
+   /* nested */ over two lines. */
+/// Doc comment on the item.
+pub fn shape() -> &'static str {
+    /* A block ending before code. */ "a { balanced } pair in a string"
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn shape_keeps_its_braces() {
+        let closer = "} alone in a string";
+        assert_eq!(shape(), "a { balanced } pair in a string");
+        assert!(!closer.is_empty() && !SHAPE.is_empty());
+    }
+}
+"""
+
+
 def _report(*, total: int, production: int, logic: int = 0) -> Report:
     return Report(1, total, 1, production, logic, {}, {})
 
@@ -118,6 +145,14 @@ def test_javascript_comments_stay_out_of_the_logic_count(tmp_path: Path) -> None
 
     assert report.production_lines == 9
     assert report.production_logic_lines == 4
+
+
+def test_rust_comments_and_test_modules_stay_out_of_the_logic_count(tmp_path: Path) -> None:
+    report = _measure(tmp_path, {"crates/supervisor/src/a.rs": RUST_FIXTURE})
+
+    assert report.production_lines == 24
+    # The declaration, the constant, and the three lines of the function body.
+    assert report.production_logic_lines == 5
 
 
 def test_file_types_without_a_counter_keep_their_raw_count(tmp_path: Path) -> None:

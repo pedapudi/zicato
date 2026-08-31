@@ -1490,19 +1490,25 @@ numbers. `_excluded()` owns the narrow Markdown, lockfile, and
 per entry why the path holds no implementation. `_production()` owns the
 runtime subtotal. `_logic()` reduces each production file to its executable
 lines: `ast` and `tokenize` drop Python docstrings and comment-only lines, a
-left-stripping scan drops JavaScript `//` and `/* … */` lines, and a file type
-with no counter keeps its raw count. Prose and comments therefore reach the
-total and the production subtotal only, so deleting a docstring buys no room
-under the logic ceiling. The report groups the total by language and subsystem
-so movement is reviewable.
+left-stripping scan drops JavaScript `//` and `/* … */` lines, a character scan
+drops Rust comments and every line of an item carrying `#[cfg(test)]`, and a
+file type with no counter keeps its raw count. The Rust scan blanks string
+bodies, regular and raw alike, so a brace inside a literal cannot move the
+brace depth that finds a test module's close. Prose and comments therefore
+reach the total and the production subtotal only, so deleting a docstring buys
+no room under the logic ceiling. The report groups the total by language and
+subsystem so movement is reviewable.
 
 `.line-budget.json` contains hard limits without an allowance. Keep the three
 independent one-line-overage assertions in `tests/test_line_budget.py`: each
 proves that one limit fails at `limit + 1` while the other two are unchanged.
-Two fixture tests beside them pin the split the logic count makes — a Python
+Three fixture tests beside them pin the split the logic count makes — a Python
 file whose docstring and comment lines count in `production` and not in
-`production_logic`, and a JavaScript file with line and block comments — and
-one more pins that every path in `EXCLUDED_FROM_BUDGET` is tracked in the tree.
+`production_logic`, a JavaScript file with line and block comments, and a Rust
+file carrying doc comments, a nested block comment, a block comment that ends
+before code on the same line, a `#[cfg(test)]` module with nested braces, and
+string literals holding braces, one of them unbalanced — and one more pins
+that every path in `EXCLUDED_FROM_BUDGET` is tracked in the tree.
 Run:
 
 ```bash
