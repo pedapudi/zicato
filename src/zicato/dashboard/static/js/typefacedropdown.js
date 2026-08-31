@@ -10,11 +10,11 @@
 // the popover reads as a true type specimen.
 //
 // The CLOSED control is a button showing the current option's label + a tiny
-// preview in its faces; opening reveals the grouped listbox. Fully keyboard-
-// accessible like the colour picker: Enter/Space/ArrowDown open; within the open
-// list ArrowUp/ArrowDown move the active OPTION (skipping the group headers),
-// Enter/Space select (and apply via the injected onChoose), Esc closes; a click
-// outside also closes.
+// preview in its faces; opening reveals the grouped listbox. The open/close
+// behaviour, the keyboard map, and the cross-instance registry are
+// dropdown.js's — the same ones the colour picker reads. The group headers are
+// left out of the flat option list handed to it, so arrow-key navigation
+// skips them.
 //
 // The factory takes an `onChoose(id)` so the caller wires the apply path
 // (applyTypeface) — keeping this component free of any store import (no circular
@@ -23,33 +23,26 @@
 // trigger + checked option in lockstep when the typeface changes by ANY path
 // (top bar, settings, keyboard, restore). Returns { node, setValue }.
 
-import { el, clearChildren, patchText, patchClass } from './core/dom.js';
+import { el, clearChildren, patchText } from './core/dom.js';
 import {
   TYPE_OPTIONS, TYPE_MODE_ORDER, TYPE_MODE_LABEL, normaliseType, typeOption,
   FONTSIZE_OPTIONS, normaliseFontSize,
 } from './ui.js';
+import { createSyncRegistry, wireListboxDropdown } from './dropdown.js';
 
-// Live instances — every mounted dropdown registers its setValue so
-// applyTypeface can sync them all from one call (top bar ↔ settings, one store).
-const _instances = new Set();
-// The S/M/L font-size segmented controls registered for cross-instance sync,
-// mirroring _instances — applyFontSize fans out to every one so the top-bar and
-// Settings pickers always show the same size.
-const _sizeInstances = new Set();
+// The mounted typeface dropdowns, and — as its own registry — the S/M/L
+// font-size segmented controls that ride in their popover footers. The two
+// preferences are set independently, so each fans out on its own.
+const _registry = createSyncRegistry(normaliseType);
+const _sizeRegistry = createSyncRegistry(normaliseFontSize);
 
 // Sync EVERY live typeface dropdown to `value` — called from applyTypeface so
 // the top-bar and settings pickers always show the same selection.
-export function syncTypefaceDropdowns(value) {
-  const v = normaliseType(value);
-  for (const setValue of _instances) setValue(v);
-}
+export function syncTypefaceDropdowns(value) { _registry.sync(value); }
 
 // Sync EVERY live S/M/L font-size segmented control to `value` — called from
 // applyFontSize so the top-bar and settings pickers stay in lockstep.
-export function syncFontSizeSegments(value) {
-  const v = normaliseFontSize(value);
-  for (const setSize of _sizeInstances) setSize(v);
-}
+export function syncFontSizeSegments(value) { _sizeRegistry.sync(value); }
 
 // Build the compact S/M/L segmented control that lives in the typeface popover
 // footer. Keyboard-accessible like the rest of the picker (each segment is a
@@ -96,7 +89,7 @@ function buildFontSizeSegment(initial, onSizeChoose) {
     el('span', { class: 'dt-tf-foot-lab', 'aria-hidden': 'true', text: 'size' }),
     el('div', { class: 'dt-tf-sizeseg-wrap', role: 'radiogroup', 'aria-label': 'Text size' }, segs),
   ]);
-  _sizeInstances.add(setSize);
+  _sizeRegistry.register(setSize);
   return { node, setSize };
 }
 
@@ -123,7 +116,6 @@ function specimen(opt, cls) {
 export function buildTypefaceDropdown(initial, onChoose, opts) {
   const cfg = opts || {};
   let value = normaliseType(initial);
-  let open = false;
 
   const triggerSpec = specimen(typeOption(value), 'dt-tf-spec dt-tf-spec-sm');
   const triggerName = el('span', { class: 'dt-cd-name', text: typeOption(value).label });
@@ -152,7 +144,6 @@ export function buildTypefaceDropdown(initial, onChoose, opts) {
         el('span', { class: 'dt-cd-name dt-tf-name', text: o.label }),
         specimen(o, 'dt-tf-spec'),
       ]);
-      opt.addEventListener('click', () => { choose(o.id); });
       options.push(opt);
       listChildren.push(opt);
     }
@@ -172,23 +163,15 @@ export function buildTypefaceDropdown(initial, onChoose, opts) {
   const popover = el('div', { class: 'dt-tf-pop' }, popChildren);
   const node = el('div', { class: 'dt-cd dt-tf', role: 'group', 'aria-label': 'Typeface' }, [trigger, popover]);
 
-  const idxOf = (v) => options.findIndex((o) => o.getAttribute('data-type') === v);
-  let activeIdx = Math.max(0, idxOf(value));
-  function setActive(i) {
-    activeIdx = (i + options.length) % options.length;
-    options.forEach((o, k) => patchClass(o, 'dt-cd-active', k === activeIdx));
-  }
-  function setOpen(next) {
-    open = next;
-    patchClass(node, 'dt-cd-open', open);
-    trigger.setAttribute('aria-expanded', String(open));
-    if (open) setActive(Math.max(0, idxOf(value)));
-  }
-  function choose(id) {
-    value = normaliseType(id);
-    if (typeof onChoose === 'function') onChoose(value); // caller applies + persists + syncs
-    setOpen(false);
-  }
+  const wiring = wireListboxDropdown({
+    node, trigger, listbox, options, valueAttr: 'data-type',
+    getValue: () => value,
+    onChoose: (id) => {
+      value = normaliseType(id);
+      if (typeof onChoose === 'function') onChoose(value); // caller applies + persists + syncs
+    },
+  });
+
   function setValue(v) {
     value = normaliseType(v);
     const def = typeOption(value);
@@ -197,39 +180,11 @@ export function buildTypefaceDropdown(initial, onChoose, opts) {
     triggerSpec.appendChild(el('span', { class: 'dt-tf-spec-prose', style: `font-family:${def.prose}`, text: 'prose' }));
     triggerSpec.appendChild(el('span', { class: 'dt-tf-spec-data', style: `font-family:${def.data}`, text: '0.418' }));
     patchText(triggerName, def.label);
-    options.forEach((o) => o.setAttribute('aria-selected', String(o.getAttribute('data-type') === value)));
-  }
-
-  trigger.addEventListener('click', () => setOpen(!open));
-  trigger.addEventListener('keydown', (ev) => {
-    const k = ev.key;
-    if (k === 'ArrowDown' || k === 'Enter' || k === ' ' || k === 'Spacebar') {
-      ev.preventDefault(); setOpen(true);
-    }
-  });
-  listbox.addEventListener('keydown', (ev) => {
-    const k = ev.key;
-    if (k === 'Escape') { ev.preventDefault(); setOpen(false); }
-    else if (k === 'ArrowDown') { ev.preventDefault(); setActive(activeIdx + 1); }
-    else if (k === 'ArrowUp') { ev.preventDefault(); setActive(activeIdx - 1); }
-    else if (k === 'Enter' || k === ' ' || k === 'Spacebar') {
-      ev.preventDefault();
-      const id = options[activeIdx] && options[activeIdx].getAttribute('data-type');
-      if (id) choose(id);
-    }
-  });
-  // a click anywhere outside the control closes it.
-  if (typeof document !== 'undefined' && document.addEventListener) {
-    document.addEventListener('click', (ev) => {
-      if (!open) return;
-      let n = ev && ev.target;
-      while (n) { if (n === node) return; n = n.parentNode; }
-      setOpen(false);
-    });
+    wiring.markSelected();
   }
 
   // Register for cross-instance sync (top bar ↔ settings, one source of truth).
-  _instances.add(setValue);
+  _registry.register(setValue);
 
   // Expose the S/M/L segment's setSize when present so a caller can drive it too
   // (cross-instance sync already fans out via syncFontSizeSegments).

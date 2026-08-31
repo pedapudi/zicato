@@ -27,20 +27,11 @@
 
 import { el } from '../core/dom.js';
 import * as svg from '../svg.js';
-import { section, empty, truncate, hovercardBody, stat, chip, moreMark } from '../ui.js';
+import { section, empty, truncate, hovercardBody, stat, chip, moreMark, ENTRY_KIND_LABEL } from '../ui.js';
 import { attachHovercard } from '../hovercard.js';
 
 // The doc the popovers point at for "what does this mean" detail.
 const DOC_HREF = '/docs/design/OVERFITTING.md';
-
-// The FULL entry-kind vocabulary (core/board.py::BoardEntryKind) — the same
-// five labels the board + trellis views print, so one entry never reads as two
-// different things on two surfaces. An unknown key renders the raw token.
-const KIND_LABEL = {
-  single_turn: 'single-turn', multi_turn_scripted: 'scripted multi-turn',
-  multi_turn_emulated: 'emulated multi-turn',
-  synthetic_adversarial: 'synthetic adversarial', synthetic_clean: 'synthetic clean',
-};
 
 // ---- model ----------------------------------------------------------
 //
@@ -330,7 +321,7 @@ function entryCard(r) {
   const lines = [
     el('div', { class: 'dn-hc-title', text: r.entryId }),
   ];
-  if (r.kind) lines.push(el('div', { class: 'dn-hc-row', text: `kind: ${KIND_LABEL[r.kind] || r.kind}` }));
+  if (r.kind) lines.push(el('div', { class: 'dn-hc-row', text: `kind: ${ENTRY_KIND_LABEL[r.kind] || r.kind}` }));
   lines.push(el('div', { class: 'dn-hc-row', text: r.slice === 'holdout' ? 'slice: holdout' : 'slice: train' }));
   if (svg.isNum(r.weight)) lines.push(el('div', { class: 'dn-hc-row', text: `weight: ${svg.fmt(r.weight, 2)}` }));
   if (Array.isArray(r.tags) && r.tags.length) {

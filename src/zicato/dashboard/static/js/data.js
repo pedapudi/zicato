@@ -15,7 +15,7 @@
 // Each is a thin, cached, failure-tolerant GET — the same discipline as
 // core/api.js. Nothing here mutates AppState; callers own their cache.
 
-import { fetchJson } from './core/api.js';
+import { fetchJson, enc } from './core/api.js';
 import { state } from './core/state.js';
 
 // A tiny module-level cache keyed by URL. Drill-down payloads are immutable
@@ -608,5 +608,3 @@ export function runTranscript(epochId, genId, entryId, runId) {
   if (runId) url += `?run=${enc(runId)}`;
   return cachedJson(url);
 }
-
-function enc(s) { return encodeURIComponent(s == null ? '' : String(s)); }

@@ -19,7 +19,7 @@ import { state } from '../core/state.js';
 import { livenessFor } from '../livestatus.js';
 import * as D from '../data.js';
 import * as svg from '../svg.js';
-import { gatedSwap, section, empty, stat, densityTokens, prText, metricsDigest, scoreFmt, pill, dataTable, deltaCell } from '../ui.js';
+import { gatedSwap, section, empty, stat, densityTokens, prText, metricsDigest, scoreFmt, pill, dataTable, deltaCell, ENTRY_KIND_LABEL } from '../ui.js';
 import { splitFrame, captureScroll, restoreScroll } from '../compare.js';
 import * as facets from '../facets.js';
 import { buildTurnNode, dedupConsecutiveTurns, reconcileTurns } from '../turns.js';
@@ -58,14 +58,6 @@ function progressRatio(r) {
   if (p > 1) p = 1;
   return p;
 }
-
-// The FULL entry-kind vocabulary (core/board.py::BoardEntryKind) — a missing
-// key renders the entry unlabelled.
-const KIND_LABEL = {
-  single_turn: 'single-turn', multi_turn_scripted: 'scripted multi-turn',
-  multi_turn_emulated: 'emulated multi-turn',
-  synthetic_adversarial: 'synthetic adversarial', synthetic_clean: 'synthetic clean',
-};
 
 // The orchestrator progress-seq at our LAST render of a GIVEN (epoch, entry) —
 // the seam that gates the live transcript refetch on a genuine seq ADVANCE
@@ -355,7 +347,7 @@ export async function render(host, ctx, params, route) {
     // the trellis already reads, and this page is the one an operator opens to
     // ask what this entry actually checks.
     nodes.push(el('div', { class: 'dn-panel dn-row' }, [
-      stat(def ? (KIND_LABEL[def.kind] || def.kind || '—') : '—', 'kind'),
+      stat(def ? (ENTRY_KIND_LABEL[def.kind] || def.kind || '—') : '—', 'kind'),
       stat(def && def.expectation_kind ? String(def.expectation_kind) : '—', 'oracle'),
       stat(def && svg.isNum(def.weight) ? svg.fmt(def.weight, 1) : '—', 'weight'),
       stat(def && svg.isNum(def.budget_s) ? def.budget_s + 's' : '—', 'budget'),
