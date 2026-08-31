@@ -1,6 +1,6 @@
 ---
 name: zicato-override-seams
-description: Set up zicato's three override seams when a target or a metric diverges from the defaults — a custom HarnessAdapter for non-ADK targets (--adk module:factory), the predicate expectation for board entries needing partial credit or a metrics decomposition instead of a bare pass/fail, and outcome_summarizer_spec for proposer failure categories zicato does not compute. Use when deciding whether you need an override, writing one so zicato can consume what it returns, and wiring it onto the contract. Every seam attaches by DOTTED PATH — zicato imports your callable from your own package and never serializes your code.
+description: Set up zicato's three override seams when a target or a metric diverges from the defaults — a custom HarnessAdapter for non-ADK targets (hand-written config, no CLI flag), the predicate expectation for board entries needing partial credit or a metrics decomposition instead of a bare pass/fail, and outcome_summarizer_spec for proposer failure categories zicato does not compute. Use when deciding whether you need an override, writing one so zicato can consume what it returns, and wiring it onto the contract. Every seam attaches by DOTTED PATH — zicato imports your callable from your own package, and hashes its source into the epoch contract.
 ---
 
 # zicato override seams — custom adapters and scoring
@@ -20,72 +20,65 @@ that breaks, these seams can help bridge your system to zicato.
 
 `--adk my_pkg.agent:root_agent` runs the agent inside `goldfive.run()`, which
 captures model turns, streams tool calls into `events.jsonl`, evaluates in-run
-judges, and extracts `final_output` — all free. Override when the target is not
-an ADK `root_agent`: a custom class, a CLI, an external service, a black box.
-You then owe zicato the telemetry, final output, and results goldfive would
-have produced.
+judges, and extracts `final_output`. Override for anything else — a custom
+class, a CLI, a service, a black box — and you owe zicato all of that yourself.
 
 ### Implement
 
 ```python
-from zicato.adapters.base import HarnessAdapter, RunnableHarness
+from zicato.adapters import HarnessAdapter, RunnableHarness, entry_disable_drift
 from zicato.core.types import BoardEntry, RunResult, RuntimeConfig
+from zicato.judge_runtime import assemble_judges
 ```
 
 `load`, `mutable_subpaths`, and `mutation_points` are required
-(`base.py:REQUIRED_ADAPTER_METHODS`). Together they define the **mutation
-surface** — which files the proposer may rewrite.
-
-Each generation is a full copy of your source into a fresh `generation_root`.
-Most of that copy is support code the worker runs but the proposer must not
-touch, so two things narrow it: `mutable_subpaths` picks the directories, and
-the `# zicato:mutable` markers inside them pick what is editable. Too wide and
-the proposer can break the harness; too narrow and it finds nothing to change.
+(`base.py:REQUIRED_ADAPTER_METHODS`). Each generation is a full copy of your
+source into a fresh `generation_root`; `mutable_subpaths` picks which
+directories of it the proposer may rewrite and the `# zicato:mutable` markers
+inside them pick what is editable. Too wide and the proposer breaks the
+harness; too narrow and it finds nothing to change.
 
 - **`make_adapter() -> HarnessAdapter`** — zero-argument module-level factory.
   Returns the adapter instance at worker startup.
 - **`load(snapshot_root: Path) -> RunnableHarness`** — return a session bound to
-  `snapshot_root`. Prepend it to `sys.path` and reload modules so the worker
-  runs mutated code, not stale baseline code. Raise if the entrypoint will not
-  resolve, so zicato fails the candidate cleanly.
+  `snapshot_root` so the worker exercises mutated code rather than the baseline.
+  Raise if the entrypoint will not resolve, so zicato fails the candidate
+  cleanly.
 
-  ⚠️ If `load()` imports baseline source instead of `generation_root`, candidate
-  mutations never run and **every generation scores identically**.
+  ⚠️ Reach the snapshot WITHOUT importing it (`ast.parse`, read its files, or a
+  subprocess): it is proposer-patched code, and a destructive patch must score
+  badly rather than crash the worker. Bind to the baseline by mistake and
+  **every generation scores identically**.
 - **`mutable_subpaths(generation_root: Path) -> list[Path]`** — re-base your
-  declared trees onto the snapshot the worker runs. The rule is **basename, not
-  relative path**: a registered `./src/my_pkg` lands at
-  `generation_root / "my_pkg"`. That basename must be an importable top-level
-  module name, since `load()` only puts `generation_root` on `sys.path`. Return
-  only paths that exist; `[]` or a missing method falls back to the whole
-  snapshot.
+  declared trees onto the snapshot by **basename** rather than relative path: a
+  registered `./src/my_pkg` lands at `generation_root / "my_pkg"`. Return only
+  paths that exist; `[]` or a missing method falls back to the whole snapshot.
 
   ⚠️ Containment is never validated — a path outside `generation_root` is walked
   as given, so a stale repo path silently enumerates the BASELINE tree.
-- **`mutation_points(source_roots=None) -> list[Any]`** — return `[]` to use
-  zicato's scanner, which walks files for `# zicato:mutable`. Custom
-  `MutationPoint` objects come from `zicato.core.types`, NOT `adapters.base`.
-- **`worker_spec() -> dict[str, Any]`** — board entries run in a separate
-  killable subprocess your adapter object cannot cross, so instead of the
-  object zicato ships a recipe for rebuilding it:
-  `{"kind": "import", "factory": "my_pkg.harness:make_adapter"}`, plus an
-  optional `"args": [...]` passed positionally. The worker receives only that
-  string, which is why `make_adapter` must be importable and module-level.
-  Omit this method and only the built-in ADK shape is recognised — anything
-  else aborts the run.
+- **`mutation_points(source_roots=None)`** — required, but return `[]`: zicato's
+  own scanner walks the mutable trees for `# zicato:mutable`.
+- **`worker_spec() -> dict[str, Any]`** — entries run in a killable subprocess
+  your adapter object cannot cross, so zicato ships a recipe instead:
+  `{"kind": "import", "factory": "my_pkg.harness:make_adapter"}` plus an
+  optional JSON-serializable `"args": [...]` replayed positionally. Hence
+  `make_adapter` must be importable and module-level. Omit this method and only
+  the built-in ADK shape is recognised — anything else aborts the run.
 
-The worker calls your session once per `BoardEntry`:
+The worker `await`s your session once per `BoardEntry`:
 
 ```python
-session.run(entry: BoardEntry, sinks: Sequence[EventSink], config: RuntimeConfig) -> RunResult
+async def run(self, entry: BoardEntry, sinks: list[Any], config: RuntimeConfig) -> RunResult:
 ```
 
-Run `entry.input`, push lifecycle events to `sinks`, return
-`RunResult(run_id=..., entry_id=entry.id, aborted=True,
-abort_reason="wall_clock_budget")` past `entry.wall_clock_budget_seconds`, else
-the same call carrying `final_output=...` and `runtime_ms=...`. `run_id` and
-`entry_id` have no defaults, so every construction supplies them; the budget
-string is matched verbatim, and any other spelling leaves `budget_exceeded`
-false.
+Dispatch on `entry.kind` — `entry.input` is set only for `single_turn`; both
+multi-turn kinds leave it `None` and carry `entry.turns` / `entry.user_persona`
+instead. Push lifecycle events to `sinks` and return a `RunResult`. Five fields
+have no defaults — `run_id`, `entry_id`, `final_output`, `transcript`,
+`runtime_ms` — so every construction supplies all five, the abort path
+included: `RunResult(..., aborted=True, abort_reason="wall_clock_budget")` past
+`entry.wall_clock_budget_seconds`. That string is matched verbatim; any other
+spelling leaves `budget_exceeded` false.
 
 ⚠️ **The second parameter's name is load-bearing.** Zicato inspects your `run`
 signature, and if that parameter is called `sink_path` or `events_path` it
@@ -95,12 +88,9 @@ passed, and your returned `RunResult` is thrown away. Nothing errors — the run
 just scores as though the agent produced nothing. Call it `sinks`.
 
 **Telemetry is now your job.** Nothing but your adapter writes `events.jsonl`.
-Emit nothing and the whole drift half of the score is `0.0` — candidates get
-ranked on pass/fail alone, and nothing errors to tell you. Two mechanics: push
-to every sink in the list, which can be empty; and never `close()` one, because
-the worker owns them.
-
-There are two ways to produce the stream.
+Emit nothing and the whole drift half of the score is `0.0` — candidates rank
+on pass/fail alone. Push to every sink in the list, which can be empty, and
+never `close()` one; the worker owns them. Two ways to produce the stream:
 
 **Option A — let goldfive drive it.** Goldfive is not ADK-specific. Wrap your
 target in any shape it accepts — an `AgentAdapter`, an ADK agent or `Runner`, a
@@ -108,19 +98,24 @@ supported third-party SDK client factory, or a bare async
 `(task, session, tools) -> InvocationResult` callable — and pass it the sinks:
 
 ```python
+judges = assemble_judges(              # drop `judges=` below and NO judge runs
+    entry_judges=entry.judges, disable_drift=entry_disable_drift(entry),
+    aux_call_llm=config.effective_judge_call_llm(),   # aux, never the harness
+)
 outcome = await goldfive.run(
     my_target, entry.input, sinks=sinks, call_llm=config.harness_call_llm,
+    judges=judges,
 )
 ```
 
-You get the full instrumented stream for free — reasoning-drift detectors,
-custom judges, `plan_revised`, the terminal frame — and keep the default
-dialect. Use this whenever the target can run in-process.
+That gives the full instrumented stream on the default dialect — drift
+detectors, `plan_revised`, terminal events. Use it whenever the target is
+in-process.
 
 **Option B — emit the events yourself.** For a target you can only watch from
-outside: a CLI, a service, a black box. Push plain dicts from within the
-adapter and set `telemetry_dialect: "adk_events"` (a supported shape, not a
-workaround).
+outside: a CLI, a service, a black box. Push plain dicts from the adapter and
+set `"telemetry_dialect": "adk_events"` in **`scoring.json`** — a supported
+shape, and the one knob in this section that does NOT live in `config.json`.
 
 ```python
 async def emit(sinks, event: dict) -> None:
@@ -133,20 +128,11 @@ await emit(sinks, {"type": "tool_response", "tool": "search", "status": "error"}
 await emit(sinks, {"type": "agent_message", "text": final_output})
 ```
 
-One JSON object per line, discriminated by `type`: `tool_call`,
-`tool_response`, `error`, `agent_transfer`, `model_usage`, `agent_message`,
-`user_message`. Refer to
+One JSON object per line, discriminated by `type`. See
 [TELEMETRY-DIALECTS.md](../../docs/design/TELEMETRY-DIALECTS.md) §3.1–§3.3 for
-shapes, aliases, and derived signals — do not guess. ⚠️ An unrecognised `type`
-is skipped silently, so a typo looks exactly like an event you never sent.
-
-**The dialect you set decides what can be measured at all.**
-
-| Dialect | You emit | You can measure |
-|---|---|---|
-| `goldfive` (default) | goldfive proto events | everything |
-| `adk_events` | plain dicts, as above | tool calls, errors, cost, retry loops |
-| `transcript` | `{"role", "content"}` lines | predicates and rubrics only |
+the recognised types, their shapes, aliases, and derived signals — do not
+guess. ⚠️ An unrecognised `type` is skipped silently, so a typo is
+indistinguishable from an event you never sent.
 
 Dropping to `adk_events` permanently costs three signals, because they come from
 watching the agent think and an event log only records what it did:
@@ -154,23 +140,19 @@ watching the agent think and an event log only records what it did:
 never fire — so `per_judge_weights` multiplies zero while still looking active.
 ⚠️ Zicato warns about that mismatch but does not reject it.
 
-If you need those three, emit goldfive protos and keep the `goldfive` dialect.
-Build them with the `goldfive.events` factories rather than by hand, number each
-event with a `sequence` counting from `0`, and — for `custom:<judge_name>`
-attribution — emit a `judgement_emitted` immediately before each
-`drift_detected`.
-
-Whatever you emit, end every exit path with a terminal frame. Zicato writes
-`run_aborted` if the worker is killed from outside; your own clean and error
-paths are yours to close.
+If you need those three, emit goldfive protos and keep the `goldfive` dialect:
+build them with the `goldfive.events` factories, number each with a `sequence`
+from `0`, and for `custom:<judge_name>` attribution emit a `judgement_emitted`
+immediately before each `drift_detected`. Either way, close every exit path
+with a terminal event (`run_completed` / `conversation_ended`); zicato only
+writes `run_aborted` for a worker killed from outside.
 
 ### Apply
 
 ⚠️ **There is no CLI flag for this seam.** `zicato epoch register --adk` writes
-the ADK kind and nothing else, so pointing it at your factory registers an
-`ADKHarnessAdapter` on your dotted path rather than your adapter. Write the
-generic **import-kind `adapter` block** into `.zicato/config.json` yourself —
-the one shape both the adapter factory and the subprocess worker reconstruct:
+an `adk_entrypoint`, so pointing it at your factory registers an
+`ADKHarnessAdapter` wrapping your path rather than your adapter. Hand-write the
+import-kind `adapter` block into `.zicato/config.json` instead:
 
 ```json
 {
@@ -183,45 +165,35 @@ the one shape both the adapter factory and the subprocess worker reconstruct:
 }
 ```
 
-`register` merges into `config.json` rather than replacing it, so run it first
-for the contract paths if you want them pinned, then add the block.
+- **These are TOP-LEVEL keys.** The sibling `contract` block holds only
+  `board_path`, `rubric_path`, `scoring_path`, and an optional `proposer_path`.
+  Nothing reads an adapter key nested inside it.
+- **`factory` takes an optional `"args": [...]`** — JSON-serializable, replayed
+  positionally when the worker re-imports the path in a fresh interpreter.
+- **Write `mutable_trees` and `source_roots` to the same list.** Two names for
+  one concept; `zicato inspect mutations` and `zicato proposer propose` read
+  `source_roots`, and the snapshot is seeded from whichever is set — omit both
+  and `evolve` raises. `mutable_subpaths()` can only narrow within them. Scope
+  both to the code you want rewritten: leave support code and anything that
+  grades the run outside, or the proposer can edit the thing measuring it.
 
-- **These are TOP-LEVEL keys.** The sibling `contract` block holds only the
-  contract source paths — `board_path`, `rubric_path`, `scoring_path`, and an
-  optional `proposer_path`. Nothing reads an adapter key nested inside it.
-- **`factory` takes an optional `"args": [...]`**, passed positionally to
-  `make_adapter`. It must be JSON-serializable — the worker re-imports the path
-  and replays the args in a fresh interpreter.
-- **Write `mutable_trees` and `source_roots` to the same list.** They are one
-  concept under two historical names: `zicato inspect mutations` and
-  `zicato proposer propose` read `source_roots`.
-- ⚠️ **Neither key scopes an import-kind adapter.** For `kind: "adk"` the
-  factory passes `mutable_trees` into the adapter; for `kind: "import"` it
-  passes only `args`, so your own `mutable_subpaths()` is the sole authority on
-  what the proposer may rewrite. Keep the two in agreement — the config keys
-  still drive the mutation-surface readers above.
-
-Scope both to just the code you want rewritten — leave support code and
-anything that grades the run outside them, or the proposer can edit the thing
-measuring it.
-
-⚠️ With no `adapter` block, the factory falls back to a legacy top-level
-`adk_entrypoint`; with neither, it raises rather than defaulting.
+⚠️ With no `adapter` block, the factory falls back to a top-level
+`adk_entrypoint`; with neither, it raises rather than defaulting. The registered
+harness is a contract input — writing this block, or editing the adapter body
+later, rolls the epoch.
 
 ## 2. Board entry scoring: the `predicate` expectation
 
 ### When
 
 The built-in matchers (`expected_text`, `regex`, `json_schema`, `rubric`) emit a
-bare pass/fail bit. Reach for `predicate` when an entry needs partial credit (a
-continuous score, so the optimizer sees 0.8 > 0.2 instead of a cliff), a
-decomposition carried alongside the score, or scoring logic no matcher can
-express such as a weighted rubric.
+bare pass/fail bit. Reach for `predicate` when an entry needs partial credit (so
+the optimizer sees 0.8 > 0.2 instead of a cliff), a decomposition alongside the
+score, or logic no matcher expresses.
 
 Note `rubric` emits **neither `score` nor `metrics`** — only `passed` and a
-`detail` string. The grader's number and its per-dimension breakdown are
-formatted into that string and discarded. For numbers out of an LLM judge, call
-the auxiliary callable from inside a `predicate`.
+`detail` string; the grader's number and per-dimension breakdown are formatted
+into that string and discarded.
 
 ### Implement
 
@@ -239,29 +211,20 @@ epoch re-invokes it.
 
 **The return type IS the seam.**
 
-| Return | `score` | `pass_fail` | `metrics` |
-|---|---|---|---|
-| `True` / `False` | `1.0` / `0.0` | your bit | — |
-| `0.82` | clamped `[0,1]` | degenerate (`score > 0.0`) | — |
-| `(0.82, {...})` | clamped `[0,1]` | degenerate (`score > 0.0`) | your dict |
-| anything else | — | `False` | — |
-
-- **`bool`** signals binary pass/fail. A bool entry the champion passed scores
-  `1.0`, and under the default `per_entry` scope the challenger must still score
-  `1.0` — the only way to make an entry must-not-regress.
+- **`bool`** signals binary pass/fail; a bool entry the champion passed must
+  still pass under the default `per_entry` gate.
 - **`float`** gives the optimizer a gradient. The pass term runs on
-  `mean_score`, so 0.2 → 0.6 is rewarded even though neither is a pass.
-- **`(score, metrics)`** adds the per-entry decomposition.
-
-⚠️ One entry cannot do both. On a float return `passed` is `score > 0.0` —
-display-only, true for any credit at all. For a gradient AND a gate, use two
-entries.
+  `mean_score`, so 0.2 → 0.6 is rewarded even though neither is a pass. The
+  `per_entry` gate covers it too, allowing a dip of 0.02 before it trips.
+- **`(score, metrics)`** adds the per-entry decomposition. On a float return
+  `passed` is `score > 0.0` — display-only, true for any credit at all.
 
 **The `metrics` mapping.** A flat dict of name → number recording *why* the
 entry scored what it did: a 0.4 from poor recall reads differently from a 0.4
-from over-retrieval. Values must be plain numbers, and quantities an average is
-meaningful over — zicato means each key across replicates, so rates and scores
-work but ids and running totals do not. Names decide who can read the value:
+from over-retrieval. Values must be plain numbers an average is meaningful over
+— zicato means each key across replicates, so rates and scores work but ids and
+running totals do not. **`metrics` never affects scoring.** Names decide who
+can read the value:
 
 - **`precision` and `recall` are reserved** — those exact spellings feed the
   built-in outcome marginals that separate over-retrieval from misses.
@@ -270,22 +233,14 @@ work but ids and running totals do not. Names decide who can read the value:
   query views' `parent_metrics` / `child_metrics`.
 - ⚠️ No namespace routing. `"rubric:accuracy"` does NOT feed the `rubric:`
   namespace weight or the scalar — that colon convention belongs to
-  `metric_counts`, a separate surface. Use bare names.
+  `metric_counts`. Use bare names.
 
-Either way **`metrics` never affects scoring**; only the score moves a number
-that decides promotions.
-
-⚠️ **The mapping is the one part of this seam that is not fail-closed.** Every
-value is coerced with `float(v)`, outside the guard that catches your callable:
-a non-numeric one raises out of the expectation evaluation instead of returning
-a failed result with a `detail`, and an infinity is stored verbatim and carried
-into the replicate mean. Sanitize in your scorer. The §3 summarizer's mapping
-*is* filtered — do not assume the same of this one.
-
-**Everything fails closed** to `passed=False` plus an explanatory `detail`: an
-unimportable path, a non-callable target, a raise, a 2-tuple with a `bool` first
-element, a 2-tuple whose second element has no `.items()`, or any other return
-type. `NaN` clamps to `0.0`.
+**Everything fails closed** to `passed=False` plus a `detail`: an unimportable
+path, a non-callable target, a raise, a 2-tuple with a `bool` first element, a
+2-tuple whose second element has no `.items()`, any other return type. `NaN`
+clamps to `0.0`. ⚠️ The one exception is `metrics` itself — every value is
+coerced with `float(v)` outside that guard, so a non-numeric one raises out of
+the evaluation. Sanitize in your scorer.
 
 ### Apply
 
@@ -302,25 +257,22 @@ loop starts, and at run time an unresolvable path fails the entry closed.
 }
 ```
 
-Or build it with `Predicate.python(...)` from `zicato.board.predicates`. Bodies
-are never serialized — only the path lives in the board JSON.
-
-`reads` (`"final_output"` default; `"conversation_end"` is multi-turn only)
-selects what the runner puts in `RunResult.final_output` before calling you.
-`RunResult.transcript` is always available.
+Or build it with `Predicate.python(...)` from `zicato.board.predicates`; only
+the path lives in the board JSON, but the contract hash covers the resolved
+function's source, so editing the body rolls the epoch. `reads`
+(`"final_output"` default) is recorded but has no evaluation-time consumer —
+read `RunResult.transcript` yourself for anything past the last turn.
 
 ## 3. Proposer feedback: `outcome_summarizer_spec`
 
 ### When
 
 Each round zicato hands the proposer a **failure-mode profile** so it can target
-*why* answers are wrong, not just *that* a scalar moved. Eight marginals are
-built in: `empty_rate`, `terse_rate`, `looping_rate`, `pass_rate`, `mean_score`,
-`recall_mean` / `precision_mean`, and `over_retrieval_rate`.
-
-Override when your board has a failure mode none of those name — a
-domain-specific defect the proposer keeps re-introducing because nothing in the
-prompt says it exists.
+*why* answers are wrong. Eight marginals are built in: `empty_rate`,
+`terse_rate`, `looping_rate`, `pass_rate`, `mean_score`, `recall_mean` /
+`precision_mean`, `over_retrieval_rate`. Override when your board has a failure
+mode none of those name — a defect the proposer keeps re-introducing because
+nothing in the prompt says it exists.
 
 ### Implement
 
@@ -338,36 +290,30 @@ def board_marginals(losses: Sequence[LossProfile]) -> Mapping[str, float]:
 Runs once per round on the **train-slice** `LossProfile` list — the holdout is
 already excluded, and the hook reads no files, so it cannot widen its own slice.
 
-Return **board-wide rates only**, never per-entry rows. That is the contract:
-the proposer may learn properties of the agent's behaviour but must never see
-enough to reconstruct a board entry. Zicato enforces it — an entry is dropped
-unless the key is a non-empty lowercase `str` of at most 48 characters (no mixed
-case, spaces, or punctuation, so an entry id cannot ride in as a key) and the
-value is a finite `int` or `float` (`bool` is rejected, not coerced). A
-non-mapping return discards everything.
+Return **board-wide rates only**, never per-entry rows: the proposer may learn
+properties of the agent's behaviour but must never see enough to reconstruct a
+board entry. Zicato drops an entry unless the key is a non-empty lowercase
+`str` of at most 48 characters and the value is a finite `int` or `float`
+(`bool` is rejected). A non-mapping return discards everything. ⚠️ `_ - : .`
+all pass the key filter, so keep entry ids out of your keys yourself.
 
 **How the proposer sees it.** Each survivor becomes one line in the round's
 failure-mode profile, sorted by name and coarsened to the nearest 10%:
 
 ```
-- pass-rate: ~60% | mean score: mid
+- pass-rate: ~60% | mean score: medium (~0.6)
 - low_clarity_rate: ~30% of runs
 ```
 
-`none` means zero and `~all` means essentially every run. The blurring is
-deliberate: exact per-round rates would let the proposer work out which edit
-moved which number and tune itself to this particular board instead of getting
-genuinely better.
+`none` means zero, `~all` essentially every run. The blurring stops the
+proposer tuning itself to this particular board.
 
-Two things follow for your hook:
-
-- **Name keys for a reader.** The key is printed into the prompt verbatim, so
-  `low_clarity_rate` tells the model something and `m3` does not.
-- **Your marginals are read, not acted on.** Each round zicato samples several
-  candidate edits and steers each one with a hint chosen from whichever failure
-  mode dominates the profile — but that choice only recognises four built-in
-  modes. A custom marginal reaches the model as text it can reason about; it
-  never changes which hint a candidate gets.
+**Name keys for a reader.** The key is printed into the prompt verbatim, so
+`low_clarity_rate` tells the model something and `m3` does not. Names also
+steer: each round zicato picks one hint from whichever failure mode dominates
+the rendered profile by pattern-matching its text, so a key echoing a built-in
+mode (`looping`, `over-retrieval`, empty / terse) changes the hint every
+candidate gets.
 
 ⚠️ **The seam fails quiet.** An unresolvable spec, a non-callable target, or a
 raise yields an empty mapping and the round continues silently. Cover the hook
@@ -376,37 +322,30 @@ order: the spec resolves, the target is callable, it does not raise, every key
 survives the rules above.
 
 **What your hook can read.** `lp.metrics` holds your custom numbers only when a
-§2 predicate returned `(score, metrics)`. On a board of `rubric` / `regex` /
-`json_schema` entries it is empty, so a summarizer reading it finds nothing —
-and, because this seam fails quiet, reports no error. Always populated whatever
-the expectation kind: `drift_counts`, `output_chars`, `pass_fail`, and `score`.
-So §2 and §3 are coupled: you can only aggregate a per-dimension number if a
-scorer emitted it first. Read `LossProfile.metrics`, NOT
-`LossProfile.expectation_result.metrics` — the former is the replicate mean, the
-latter replicate 0's raw values.
+§2 predicate returned `(score, metrics)`; on a board of `rubric` / `regex` /
+`json_schema` entries it is empty, and the seam fails quiet, so you see no
+error. `drift_counts` and `output_chars` are always there, but `pass_fail` and
+`score` are `None` on aborted or skipped units — guard before arithmetic. Read
+`LossProfile.metrics`, NOT `LossProfile.expectation_result.metrics`: the former
+is the replicate mean, the latter replicate 0's raw values.
 
 ### Apply
 
 A plain `ScoringWeights` field — hand-edit `scoring.json`. No builder op, no CLI
-flag.
+flag. Default `""` means no hook; both dotted forms resolve as in §2.
 
 ```json
 {"outcome_summarizer_spec": "my_pkg.summarize:board_marginals"}
 ```
 
-Both dotted forms resolve (`pkg.mod:fn`, `pkg.mod.fn`). Default `""` means no
-hook.
-
-⚠️ Hand-editing `scoring.json` is unguarded: the loader builds `ScoringWeights`
-by enumerating its declared fields, so a key that is not one of them is never
-read. A misspelled knob does not error — it is silently ignored and whatever it
-meant to configure keeps its default.
+⚠️ Hand-editing `scoring.json` is unguarded: the loader enumerates the declared
+fields of `ScoringWeights`, so a key that is not one of them is never read. A
+misspelled knob is silently ignored and whatever it meant to configure keeps
+its default. The file and the resolved summarizer's source are both contract
+inputs, so either edit rolls the epoch.
 
 ## Reference
 
-- [BOARD-FORMAT.md](../../docs/design/BOARD-FORMAT.md) — the `expectation` schema and matcher kinds.
-- [SCORING.md](../../docs/design/SCORING.md) — the scalar, the gate, and the `scalar_fn` / `drift_reducer` seams.
-- [TELEMETRY-DIALECTS.md](../../docs/design/TELEMETRY-DIALECTS.md) — the three dialects and the `adk_events` shapes.
-- [TELEMETRY.md](../../docs/design/TELEMETRY.md) — `LossProfile` and the namespaced metric surface.
+- [BOARD-FORMAT.md](../../docs/design/BOARD-FORMAT.md) · [SCORING.md](../../docs/design/SCORING.md) · [TELEMETRY-DIALECTS.md](../../docs/design/TELEMETRY-DIALECTS.md) · [TELEMETRY.md](../../docs/design/TELEMETRY.md) — expectation schema, the scalar and gate, dialect shapes, `LossProfile`.
 - `skills/zicato-author-board`, `skills/zicato-tune-scoring` — board JSON, weights and gate knobs.
 - `examples/zicato_examples/target_0_convergence/` — a working import-kind adapter (`harness.py`) and the `config.json` block that wires it (`RUN.md` §2).
