@@ -290,8 +290,8 @@ function prettyStructureName(structure) {
 //
 // COLOR ROLES (the hero's fixed palette): accent green = the active rung
 // (alive/leading); muted ink = a completed rung (settled history) + the rail.
-// No caution/bad here — a cut/eliminated competitor reads on the track, not on
-// the stepper (the stepper is structural, not a verdict).
+// No caution/bad here — a cut or eliminated competitor reads on the track
+// rather than on the stepper, which carries structure and never a verdict.
 function rungStepper({ stepIndex, stepCount } = {}) {
   const n = (stepCount != null && stepCount > 0) ? stepCount : 0;
   const cur = (stepIndex != null && stepIndex > 0) ? stepIndex : 0;
@@ -314,7 +314,7 @@ function rungStepperDigest({ stepIndex, stepCount } = {}) {
   return 'step|' + (stepIndex == null ? '?' : stepIndex) + '/' + (stepCount == null ? '?' : stepCount);
 }
 
-// ── the ROUND-PIPELINE stepper (WS4-A item 4) ─────────────────────────
+// ── the ROUND-PIPELINE stepper ────────────────────────────────────────
 //
 // A compact propose → apply → run → gate stepper rendering the SERVER's
 // authoritative /api/live/pipeline projection VERBATIM — the reader owns
@@ -324,8 +324,8 @@ function rungStepperDigest({ stepIndex, stepCount } = {}) {
 // gate decision word once the round settles. An `epoch_open_step` (the A/A
 // noise-floor calibration, the contract pre-flight) leads the strip as the
 // active element while the four pipeline steps sit pending — that stretch is
-// real work, not a stalled round. Its label and detail are server-owned, so a
-// new epoch-open step renders here with no change on this side.
+// real work rather than a stalled round. Its label and detail are server-owned,
+// so a further epoch-open step renders here with no change on this side.
 // Pure: builds detached DOM.
 export function pipelineStepper(pipe) {
   const steps = (pipe && Array.isArray(pipe.steps)) ? pipe.steps : [];
@@ -495,7 +495,7 @@ export function liveMatchGroupedBlocks(blocks, onCompetitor, ctl) {
   return wrap;
 }
 
-// ── the per-run KILL affordance (WS4-A item 3d) ──────────────────────
+// ── the per-run KILL affordance ──────────────────────────────────────
 //
 // One small ✕ per IN-FLIGHT run on a competitor's row, posting the file-based
 // kill marker (postControl('kill/'+runId) at the call site). Confirm-on-click:
@@ -536,7 +536,7 @@ export function killRunButton(runInfo, onKill) {
 }
 
 // One "follow" affordance for one in-flight run — opens that unit's live
-// conversation pane (issue #194 §2). No confirm step: reading a conversation is
+// conversation pane. There is no confirm step: reading a conversation is
 // harmless and reversible, unlike the kill beside it. The click never bubbles
 // into the row's competitor navigation, which would take the operator to the
 // candidate page instead. Exported for the node behaviour tests.
@@ -589,7 +589,7 @@ export function runsByGeneration(activeRuns, at) {
 // The bar is the only flexible column (`1fr`) so it eats the freed middle space;
 // every other column is content-sized and right-anchored AS A COLUMN — nothing
 // floats against the card edge, and the boards-done `k/N` is a first-class
-// column (never the clipped trailing state glyph it used to be). When a side has
+// column rather than a clipped trailing state glyph. When a side has
 // no projection the scalar column is a faint placeholder so the grid stays
 // aligned across rows; once a side SETTLES the trailing tag carries its verdict
 // glyph (✓/✗/⏱) instead of PROJ, and the boards column reads its final k/N.
@@ -653,11 +653,11 @@ function liveMatchRow(e, onCompetitor, ctl) {
   row.appendChild(scalar);
   row.appendChild(boards);
   row.appendChild(tag);
-  // THE FOLLOW AFFORDANCE (issue #194 §2). One per in-flight run on this
-  // competitor: the operator can see a unit is running here, so this is where
-  // they should be able to open its conversation. Offered ONLY while the run
-  // is in flight — a settled unit's transcript is reached through its board,
-  // and offering "follow" against a dead loop is the §1 lie in miniature.
+  // THE FOLLOW AFFORDANCE. One per in-flight run on this competitor: the
+  // operator can see a unit is running here, so this is where its conversation
+  // opens. Offered ONLY while the run is in flight — a settled unit's transcript
+  // is reached through its board, and offering "follow" against a stopped loop
+  // would claim liveness the run does not have.
   const followRuns = (ctl && typeof ctl.onFollow === 'function' && !settled && Array.isArray(e.runs))
     ? e.runs.filter((r) => r && r.entry_id) : [];
   if (followRuns.length) {
@@ -690,10 +690,9 @@ function liveMatchRow(e, onCompetitor, ctl) {
 //     animates as rungs resolve / cuts fire without flashing;
 //   * an in-flight unit count + the activity ticker stream live events.
 //
-// THE DEMOTION (issue #194 §1). The hero used to be the top ~45% of every
-// view, and it appeared whenever the runtime FILES looked busy — so a
-// workspace dead since June opened every page with a breathing LIVE pill and
-// seven units "running". It is now two separate things:
+// THE LIVE SURFACE IS TWO THINGS. A single hero occupying the top of every
+// view, shown whenever the runtime FILES look busy, would open every page of a
+// long-idle workspace with a breathing LIVE pill and units "running". Instead:
 //
 //   * a ONE-LINE STATUS BAND, always present, that speaks in whatever tense
 //     is true: `● LIVE · racing · rung 1 · 7 units` while live,
@@ -718,8 +717,8 @@ export class LiveController {
     // the per-run kill sink (postControl('kill/'+runId) at the shell); null
     // (or canControl:false on update) hides every kill affordance.
     this.onKill = typeof o.onKill === 'function' ? o.onKill : null;
-    // the per-run FOLLOW sink (issue #194 §2) — navigates to the unit's live
-    // conversation pane. Read-only, so it is NOT gated on canControl.
+    // the per-run FOLLOW sink — navigates to the unit's live conversation
+    // pane. Read-only, so it is NOT gated on canControl.
     this.onFollow = typeof o.onFollow === 'function' ? o.onFollow : null;
     this._canControl = false;
     this._seq = 0;
@@ -849,24 +848,24 @@ export class LiveController {
     // the per-run kill affordances in the "what's running" rows.
     if (canControl != null) this._canControl = !!canControl;
     const running = !!(status && status.running);
-    // THE DRAWER GATE is the served tri-state, not file presence: the drawer
-    // exists only while liveness reads `live`. A caller that supplies no
+    // THE DRAWER GATE is the served tri-state rather than file presence: the
+    // drawer exists only while liveness reads `live`. A caller that supplies no
     // verdict (the structure fixtures) falls back to the four-state `alive`
-    // flag, which is what gated it before.
+    // flag.
     const alive = liveness
       ? !!liveness.live
       : !!(status && (status.alive != null ? status.alive : status.running));
     this._updateBand(liveness, status);
     this._applyDrawer(alive);
 
-    // ── the activity ticker: diff the snapshot, append the new events ──
+    // ── the activity ticker: diff the snapshot, append each fresh event ──
     const snap = liveSnapshot({ status, heartbeat, activeRuns, activeTournament });
     // On the idle→alive edge, clear the PREVIOUS run's dead rows BEFORE this
-    // tick's events land — but ONLY when the incoming run set is a genuinely NEW
-    // run (disjoint from the pre-idle set). A brief alive→idle→alive FLAP of the
+    // tick's events land — but ONLY when the incoming run set is a distinct run
+    // (disjoint from the pre-idle set). A brief alive→idle→alive FLAP of the
     // SAME still-running runs shares run keys with the pre-idle set, so the feed
-    // must survive it rather than momentarily blanking. Clearing here (not on the
-    // alive→idle edge) preserves a finishing run's completion events, which land
+    // must survive it rather than momentarily blanking. Clearing here, rather
+    // than on the alive→idle edge, preserves a finishing run's completion events, which land
     // in the same tick it settles.
     if (alive && !this._wasAlive) {
       const runKeys = snap.runs.map((r) => r.key);
@@ -881,21 +880,21 @@ export class LiveController {
     // next alive tick to cold-start deriveActivity, which re-emits EVERY
     // in-flight run as a phantom "matchup running" burst — the second half of
     // the idle-leak. Keeping it means re-activation diffs against the true prior
-    // snapshot: genuinely-new runs still surface, already-running ones do not.
+    // snapshot: a run that starts still surfaces, an already-running one does not.
     this._prevSnap = snap;
     if (!alive) {
       this._wasAlive = false;
-      // _matchesDigest/_stepDigest are gone (those gates now ride gatedSwap's
-      // host-attribute digest); the funnel + meta line still use their vars.
+      // there are no _matchesDigest/_stepDigest vars: those gates ride
+      // gatedSwap's host-attribute digest. The funnel and meta line keep theirs.
       this._funnelDigest = null; this._metaKey = null;
       this.updatePipeline(null);
       // TEAR THE DRAWER DOWN, don't just hide it — but only on an
       // AUTHORITATIVE end. A tri-state verdict of settled/interrupted means
       // the server watched the loop stop; there is then no live chrome worth
-      // keeping, and none for a later repaint to resurrect. The legacy
-      // `alive` flag (no verdict supplied) still FLICKERS between
+      // keeping, and none for a later repaint to resurrect. The four-state
+      // `alive` flag, used when no verdict is supplied, FLICKERS between
       // transitions, and tearing down on that would blank a running feed —
-      // so without a verdict we only hide.
+      // so without a verdict the drawer is only hidden.
       if (liveness) this._teardownDrawer();
       return false;
     }
@@ -1026,11 +1025,11 @@ export class LiveController {
     // FALLBACK — the published rounds can ALL be settled between rungs/rounds
     // (every match carries a winner/survivors/cut) while runs are STILL in
     // flight: liveMatchBlocks then returns [] yet "N units running" + the activity
-    // ticker read live (they consume activeRuns, not the settled rounds). Rather
-    // than falsely show "no matches in flight…", synthesize ONE honest block from
-    // the in-flight runs that genuinely BELONG to this tournament. The belonging
+    // ticker read live (they consume activeRuns rather than the settled rounds).
+    // Rather than falsely show "no matches in flight…", synthesize ONE honest
+    // block from the in-flight runs that BELONG to this tournament. The belonging
     // guard mirrors tournamentHasActiveRuns' epoch+roster check verbatim, so a
-    // known-foreign-epoch run never lights up a stale tournament (the FIX 4 gate).
+    // run from a known-different epoch never lights up a stale tournament.
     if (!blocks.length && structureDrawableRunning(at)
         && tournamentHasActiveRuns(at, activeRuns)) {
       const fb = runningEntriesFallbackBlock(at, activeRuns);
@@ -1098,8 +1097,8 @@ export class LiveController {
     if (digest === this._funnelDigest && this._funnelHost.firstChild) return; // no real change → no DOM, no flash.
     this._funnelDigest = digest;
     clear(this._funnelHost);
-    // a one-shot entrance class lets CSS ease the new figure in (reduced-motion
-    // suppresses it) — never an infinite/repaint loop.
+    // a one-shot entrance class lets CSS ease the replacement figure in
+    // (reduced-motion suppresses it) — never an infinite repaint loop.
     if (node.classList) node.classList.add('dt-live-enter');
     this._funnelHost.appendChild(node);
   }
@@ -1121,7 +1120,7 @@ export class LiveController {
   // helpers + championScalarOf) so the hero mini stays byte-consistent with the
   // full figure through all four lifecycle states (queued / in-flight via
   // live_progress / projected / settled, converging once settled). The digest the
-  // gated swap compares is the NEW builders' own `*Digest` (or the structure.js
+  // gated swap compares is each builder's own `*Digest` (or the structure.js
   // model digest), so a real content change repaints and a no-op heartbeat does
   // NOT — keyed by structure so a structure change is itself a digest change.
   //
@@ -1146,7 +1145,7 @@ export class LiveController {
       // FULL-WIDTH HERO: the scalar number-line IS the primary viz, so it scales
       // aspect-locked to fill the hero width (`responsive` → the svg.dn-scalartrack
       // -hero max-width cap governs). `mini` keeps the compact label/tick treatment
-      // (the rung stepper carries the structural progress, not a wide caption).
+      // (the rung stepper carries the structural progress, so no wide caption).
       const opts = {
         rungs: model.rungs, championId: model.championId, benchmarkId: model.benchmarkId,
         championScalar: model.championScalar, live: model.live, gateState: model.gateState,
@@ -1368,8 +1367,8 @@ function runningEntriesFallbackBlock(at, activeRuns) {
 
 // The active-tournament belongs to the current run iff its epoch matches the
 // heartbeat's epoch. When EITHER side carries no epoch_id we cannot prove the
-// tournament is foreign, so we keep it (legacy single-epoch tolerance); a pair
-// of KNOWN-and-DIFFERENT epoch_ids is always rejected.
+// tournament belongs to a different epoch, so it is kept; a pair of KNOWN and
+// DIFFERENT epoch_ids is always rejected.
 function liveBelongsToEpoch(at, heartbeat) {
   const tEpoch = (at && at.epoch_id != null && String(at.epoch_id) !== '') ? String(at.epoch_id) : null;
   const hbEpoch = (heartbeat && heartbeat.epoch_id != null && String(heartbeat.epoch_id) !== '') ? String(heartbeat.epoch_id) : null;
@@ -1384,10 +1383,10 @@ function liveBelongsToEpoch(at, heartbeat) {
 // digest (ZERO DOM writes) but a real board landing / re-rank fires the swap.
 // `.toFixed(3)` the scalar; integer board counts.
 //
-// NOTE: racing + single-elim + gauntlet now digest via the NEW builders' own
+// NOTE: racing, single-elim and gauntlet digest via their builders' own
 // `*Digest` (racingScalarTrackDigest / elimRadialDigest / gauntletModelDigest)
-// so the hero mini's swap compares the exact model those builders draw. Swiss +
-// double-elim still use these local model digests (swissLadder / the elimFlow
+// so the hero mini's swap compares the exact model those builders draw. Swiss and
+// double-elim use these local model digests (swissLadder / the elimFlow
 // combo, which carry no companion `*Digest` export).
 function projMatch(m) {
   return m && m.projected ? Object.keys(m.projected).sort().map((g) => {

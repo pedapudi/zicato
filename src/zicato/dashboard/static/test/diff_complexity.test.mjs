@@ -4,7 +4,8 @@
 // `diff_complexity` term that penalises a bigger patch. That term rides on
 // `gate.scalar_components.{champion,challenger}` (the SAME map the radar plots),
 // so we surface it two ways with NO new backend data:
-//   * the radar spoke gets a human label ("Diff complexity", not the raw key);
+//   * the radar spoke gets a readable label ("Diff complexity") rather than the
+//     raw key;
 //   * one extra INFORMATIONAL row slots into the gate rules ladder — neutral
 //     unless the candidate's patch is strictly costlier (then a caution tone),
 //     never short-circuiting (`fired` is never set).

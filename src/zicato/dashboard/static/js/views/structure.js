@@ -61,8 +61,8 @@ export function isNonGauntlet(structure) {
 
 // Does the live run (active tournament / heartbeat) belong to the VIEWED epoch?
 // Keyed off the active-tournament's epoch_id, falling back to the heartbeat's.
-// When NEITHER live signal carries an epoch tag it is a legacy single-epoch
-// payload, so we trust it for the viewed epoch.
+// When NEITHER live signal carries an epoch tag the payload cannot name an
+// epoch, so it is trusted for the viewed one.
 export function liveBelongsToEpoch(epochId, { heartbeat, activeTournament } = {}) {
   if (epochId == null) return false;
   const atEpoch = (activeTournament && activeTournament.epoch_id != null) ? activeTournament.epoch_id : null;
@@ -112,8 +112,8 @@ const RUN_TERMINAL_STATUS = new Set([
 // (the server's canonical entry-status vocabulary) or when every board has
 // landed (`boards_done`/`boards_total` — the ONE spelling; the speculative
 // tasks_*/done/completed aliases no server ever wrote are DELETED). Keyed to
-// COMPLETION, not the wall-clock budget, so a finished run never shows a
-// stale low time-fraction.
+// COMPLETION rather than to the wall-clock budget, so a finished run never
+// shows a stale low time-fraction.
 export function runIsTerminal(r) {
   if (!r || typeof r !== 'object') return false;
   const tok = String(r.status != null ? r.status : '').trim().toLowerCase();
@@ -161,8 +161,8 @@ export function normalizeStructure(st, live) {
     entries: Array.isArray(st.entries) ? st.entries : [],
     // The persisted within-tournament stage key is `stage_index` (a bracket
     // round / Swiss round / racing rung). Normalize it to the renderer's
-    // internal `round_index` here — accepting the legacy `round_index` key so
-    // workspaces written before the rename still render. (This axis is DISTINCT
+    // internal `round_index` here, and a payload that already spells it
+    // `round_index` is accepted as-is. (This axis is DISTINCT
     // from a generation's evolve `round_index`, which never flows through here.)
     rounds: (Array.isArray(st.rounds) ? st.rounds : []).map((r) =>
       (r && typeof r === 'object' && r.round_index == null && r.stage_index != null)
@@ -171,8 +171,8 @@ export function normalizeStructure(st, live) {
     // the SERVED per-generation elim states (derive_elim_states — sorted
     // rounds + bracket_side/loser ride on `rounds` above). Carried through
     // VERBATIM so the elim figures render the server's model and never
-    // re-derive eliminations client-side (DQ1). Absent for non-elim
-    // structures and under a payload that predates the fold.
+    // re-derive eliminations client-side: the server computes and the client
+    // renders. Absent for a non-elim structure and for a payload without the fold.
     gen_states: Array.isArray(st.gen_states) ? st.gen_states : null,
     standings: Array.isArray(st.standings) ? st.standings : [],
     // the per-challenger proposing-step outcomes (applied/rejected + reason),
@@ -185,8 +185,8 @@ export function normalizeStructure(st, live) {
     champion_lineage: lineageStr(st),
     // the LIVE aggregate scalars + per-gen projection maps — carried through
     // (additively) so championScalarOf can anchor the racing scalar track /
-    // gauntlet field bars on the champion's running scalar mid-race, not just on
-    // a settled standings row. Absent on a static index payload (⇒ null).
+    // gauntlet field bars on the champion's running scalar mid-race rather than
+    // on a settled standings row alone. Absent on a static index payload (⇒ null).
     partial_champion_agg: (st.partial_champion_agg && typeof st.partial_champion_agg === 'object') ? st.partial_champion_agg : null,
     projected: (st.projected && typeof st.projected === 'object') ? st.projected : null,
     source: running ? 'live' : (st.source || 'index'),
@@ -274,11 +274,12 @@ export function resolveNonGauntletSt(opts) {
   };
   if (liveSt && (liveSt.live || hasStreamingRacingRung(liveSt))
       && (liveHasContent(liveSt) || !o.completedRecord)) {
-    // ADOPTED-FROM-THE-ENVELOPE is not the same as LIVE (issue #194 §1). When
-    // the caller knows the run is over (`live: false`), the topology is still
-    // the right thing to render — it is the only account of an interrupted
-    // round — but every figure keyed on `st.live` must stop speaking in the
-    // present tense: no "deciding…" gate, no racing verdicts, no LIVE caption.
+    // Topology adopted from the envelope does not by itself mean the run is
+    // live. When the caller knows the run is over (`live: false`), the topology
+    // is still the right thing to render, because it is the only account of an
+    // interrupted round. But every figure keyed on `st.live` must then stop
+    // speaking in the present tense: no "deciding…" gate, no racing verdicts,
+    // and no LIVE caption.
     if (o.live === false && liveSt.live) {
       return { st: Object.assign({}, liveSt, { live: false, interrupted: true }), source: 'live' };
     }
@@ -459,7 +460,8 @@ function diversitySection(st, ctx, epochId) {
     ]));
   }
 
-  // a soft-reject chip reuses the DEFERRED pill vocabulary (held, not promoted).
+  // a soft-reject chip reuses the DEFERRED pill vocabulary: held rather than
+  // promoted.
   const softChip = soft > 0
     ? (() => { const p = verdictPill('deferred'); p.textContent = soft + ' soft-rejected'; return p; })()
     : null;
@@ -491,7 +493,7 @@ function diversitySection(st, ctx, epochId) {
 // overlap notch, the tolerance drawn as the dashed promote-threshold marker. The
 // fill earns its tone BY DIRECTION — at/above the tolerance is caution (the field
 // is collapsing), below is good. No tolerance (enforcement off) → a neutral fill
-// (the overlap is diagnostic, not a gate). Returns a Node.
+// (the overlap is diagnostic and never gates). Returns a Node.
 function overlapMeter(mean, max, tol) {
   const W = 260, H = 30, padX = 4, axW = W - 2 * padX;
   const fig = svgEl('svg', {
@@ -558,8 +560,8 @@ function diversityMembership(st) {
 // Read the per-challenger proposing outcomes (the v5 `field_status`) off a
 // tournament-structure payload — same shape data.fieldStatus() produces, []
 // if absent. Carries the v6 observability fields (status "proposing",
-// attempts, attempt_reasons, hypothesis) so the proposal phase is legible
-// post-hoc, not only live.
+// attempts, attempt_reasons, hypothesis) so the proposal phase stays legible
+// after the run as well as during it.
 export function fieldStatusOf(st) {
   const fs = st && st.field_status;
   if (!Array.isArray(fs)) return [];
@@ -663,13 +665,13 @@ export function elimModel(st) {
 // `bracket_side` stamped, so the ordering contract lives on the payload. The
 // figures read model.rounds / model.gen_states directly.)
 
-// The champion_lineage re-parsed to string ids — the ×5 identical guard the
-// figure models shared (U5). A non-array lineage degrades to [].
+// The champion_lineage re-parsed to string ids — the one guard every figure
+// model shares. A non-array lineage degrades to [].
 function lineageStr(obj) {
   return Array.isArray(obj && obj.champion_lineage) ? obj.champion_lineage.map(String) : [];
 }
 
-// The shared champion-gate CAPTION fragment (U5): the crowned / stands /
+// The shared champion-gate CAPTION fragment: the crowned / stands /
 // deciding phrase every figure's caption appends. An undecided gate → ''.
 function gateNoteFor(gateState, championId) {
   return gateState === 'crowned' ? ` · champion-gate: ${championId} promoted ${CROWN.current}`
@@ -963,7 +965,7 @@ export function swissOverviewModel(st) {
   }
   if (!labels.length) return null;
 
-  // CHAMPION ROLES (distinguish the NEW champion from the displaced incumbent):
+  // CHAMPION ROLES (distinguish the crowned champion from the displaced incumbent):
   //   crownId  — the champion AFTER this epoch: the promoted winner (championId),
   //              or the incumbent if it defended ('stands'). Gets the ♛ crown.
   //   formerId — the incumbent it displaced (only when a NEW champion was crowned).
@@ -1020,14 +1022,14 @@ function renderSwiss(st, ctx, epochId) {
       + gateNote
       + (model.live ? ' · LIVE — the winner is not committed until the final gate' : '') }));
   }
-  // ONE view: the ladder already lays out every round's pairings (with winners
-  // + Δ on hover) alongside the accumulating standings and the champion-gate —
-  // so the old standalone "Pairings · round by round" tables only duplicated the
-  // pairings. Collapsed into this single section.
+  // ONE view: the ladder lays out every round's pairings (with winners and Δ on
+  // hover) alongside the accumulating standings and the champion-gate, so a
+  // standalone "Pairings · round by round" table would only repeat the pairings.
+  // Everything lives in this single section.
   nodes.push(section(model.live ? 'Swiss · LIVE — rounds, standings & champion-gate' : 'Swiss · rounds, standings & champion-gate', lCard));
   // the Standings table rides BELOW the ladder so the per-challenger override
   // CONTROL plane (force promote/reject + provenance) is consistent across EVERY
-  // structure, not only the bracket/racing/gauntlet ones. The ladder already
+  // structure rather than the bracket, racing and gauntlet ones alone. The ladder
   // lays out pairings; this table carries the actionable per-row controls.
   const standings = standingsTable(st, ctx, epochId, !!(st && st.live));
   if (standings) nodes.push(section('Standings', standings));
@@ -1044,10 +1046,10 @@ function renderSwiss(st, ctx, epochId) {
 // (`[champion, challenger0]`) — a single lane. The rung's TRUE field is the
 // UNION across every matchup's competitors AND the lane keys of the authoritative
 // `live_progress`, minus the champion(s). This is what every lane racing the rung
-// is — feed it to the builders so EVERY survivor renders, not just the first.
+// is — feed it to the builders so EVERY survivor renders rather than the first alone.
 //
 // `championIds` is the set of gate-defender ids — the champion is the shared
-// `left` of EVERY rung matchup (the benchmark, not a lane), so it is excluded
+// `left` of EVERY rung matchup — the benchmark rather than a lane — so it is excluded
 // from the field UNLESS it is itself part of the rung's authoritative
 // survivors/cut (a settled `rung{N}` record ranks the champion among the field
 // too, so it can legitimately survive a rung). Returns { field, liveProgress }:
@@ -1125,7 +1127,7 @@ export function racingModel(st) {
     return ids;
   })();
   // the FULL challenger field — challengers from competitors + entries, minus
-  // the champion(s). Used to WIDEN a degenerate live entering rung (issue #8).
+  // the champion(s). It WIDENS a degenerate live entering rung (issue #8).
   const challengerField = (() => {
     const seen = new Set();
     const out = [];
@@ -1242,7 +1244,7 @@ export function racingModel(st) {
 // aggregate (`partial_champion_agg.scalar`); the live projected champion row;
 // and finally the benchmark's strategy-seeded champion lane on an in-flight rung
 // (`live_progress[bid].projected_scalar`). Returns null when the champion scalar
-// is genuinely unknown (the builders then fall back to a delta-only domain), so
+// is unknown (the builders then fall back to a delta-only domain), so
 // no fabricated benchmark (e.g. a 10.000-style default) ever leaks. PURE.
 export function championScalarOf(st, benchmarkId) {
   if (!st || typeof st !== 'object') return null;
@@ -1301,17 +1303,16 @@ function inflightByGen(activeRuns, epochGens) {
 
 // ── BUILD the unified LIVE model — published rounds + active-runs overlay ──
 //
-// The backend now PUBLISHES the live tournament topology on
+// The backend PUBLISHES the live tournament topology on
 // /api/active-tournament DURING the run: `rounds` (each round's matches, with
 // in-flight matches carrying `winner: null` + `pending: true`) and `standings`.
-// So the dashboard no longer SYNTHESISES rung/round topology from the field +
-// heartbeat — it consumes the published rounds verbatim and only OVERLAYS the
-// per-board PROGRESS that still lives in /api/active-runs (the contract pins
-// per-board progress there, not on the tournament).
+// So the dashboard SYNTHESISES no rung or round topology from the field and
+// heartbeat: it consumes the published rounds verbatim and only OVERLAYS the
+// per-board PROGRESS that lives in /api/active-runs (the contract pins
+// per-board progress there rather than on the tournament).
 //
-// This ONE path serves racing / swiss / single_elim / double_elim — the prior
-// per-structure synthesis builders were workarounds for the missing live data
-// and are gone. Each published, still-pending match is stamped with the
+// This ONE path serves racing / swiss / single_elim / double_elim; there is no
+// per-structure synthesis builder. Each published, still-pending match carries the
 // in-flight board count + a partial `done` tally (and, for racing, a per-lane
 // `live_progress` map) so the ladder/bracket/funnel fills board-by-board
 // without flashing. A finished match is carried through untouched.
@@ -1320,7 +1321,7 @@ function inflightByGen(activeRuns, epochGens) {
 // NEITHER competitors NOR rounds yet — the caller then shows the honest
 // "starting" placeholder.
 // Merge a reconstructed lane (computed from active-runs + the projected map)
-// with the strategy's AUTHORITATIVE published lane (racing B1 producer): the
+// with the strategy's AUTHORITATIVE published lane (the racing strategy): the
 // published projection / scalar / board-progress win when present; the
 // active-run reconstruction supplies only what the publisher omitted (e.g. the
 // running-board count, the partial Δ). A published lane that is in-flight stays
@@ -1352,7 +1353,8 @@ export function buildLiveModel(at, heartbeat, activeRuns, epochGens) {
   const inflight = inflightByGen(activeRuns, epochGens);
 
   // ── ISSUE #8: the FULL challenger field for a racing run ──
-  // The champion (v0) is the benchmark/gate defender, NOT a rung lane. Every
+  // The champion (v0) is the benchmark and gate defender rather than a rung
+  // lane. Every
   // OTHER competitor is a challenger that races the entering (rung-0) field.
   // Derived from `competitors` (role/side !== champion) and `entries`
   // (side === challenger), unioned + de-duped, so a DEGENERATE published rung-0
@@ -1433,9 +1435,9 @@ export function buildLiveModel(at, heartbeat, activeRuns, epochGens) {
   };
 
   // a partial aggregate Δ-vs-champion (challenger − champion) for racing lanes.
-  // FIX: `partial_*_agg` is a DICT ({scalar, ...}), NOT a number — the old
-  // `svg.isNum(at.partial_*_agg)` guard was ALWAYS false, so partialDelta was
-  // dead. Read the `.scalar` off the dict.
+  // `partial_*_agg` is a DICT ({scalar, ...}) rather than a number, so the
+  // `.scalar` is read off the dict. An `svg.isNum(at.partial_*_agg)` guard would
+  // be always false and leave partialDelta dead.
   const aggScalar = (a) => (a && typeof a === 'object' && svg.isNum(a.scalar)) ? a.scalar : null;
   const champAgg = aggScalar(at.partial_champion_agg);
   const challAgg = aggScalar(at.partial_challenger_agg);
@@ -1445,7 +1447,7 @@ export function buildLiveModel(at, heartbeat, activeRuns, epochGens) {
   // `at.projected` is the runner's `{generation_id: {scalar, boards_done,
   // boards_total, pass_rate}}` map, rewritten as each board lands. Read a
   // per-gen projection so a still-running competitor shows a climbing,
-  // visibly-"projected" standing (dashed, ~prefix, scored sub-bar).
+  // visibly projected standing (dashed, ~prefix, scored sub-bar).
   const projectedMap = (at.projected && typeof at.projected === 'object') ? at.projected : {};
   const projFor = (gid) => {
     const p = projectedMap[String(gid)];
@@ -1463,20 +1465,20 @@ export function buildLiveModel(at, heartbeat, activeRuns, epochGens) {
   // `entering` marks the rung-0 (the first entering rung of a racing run) — its
   // field is WIDENED to the full challenger set when the publisher emitted a
   // degenerate subset (issue #8): the live funnel's first rung must show ALL
-  // challengers racing, not just champion + first challenger.
+  // challengers racing rather than the champion and first challenger alone.
   // `rungField` / `rungPublished` (racing only) carry the rung's AUTHORITATIVE
   // FULL field + the union published live_progress, computed over the WHOLE rung
   // round (all N champion-vs-survivor matchups) BEFORE the per-match split — so
-  // the rung's slot-0 match becomes the single carrier of every lane (not just
-  // matches[0]'s `[champion, challenger0]`). `slot0` marks that carrier match;
+  // the rung's slot-0 match becomes the single carrier of every lane, rather
+  // than matches[0]'s `[champion, challenger0]`. `slot0` marks that carrier match;
   // the other per-duel matches drop their live_progress (the rung is read off
   // slot 0). When omitted (swiss/elim/gate, or a degenerate single-match rung)
-  // overlay falls back to the per-match field as before.
+  // overlay falls back to the per-match field.
   const overlay = (m, queued, entering, opts) => {
     if (settled(m)) return m;
     const total = totalFor(m);
-    // the champion-GATE (`racing-final`) is a 1v1 full-board duel, NOT a rung —
-    // it carries both sides (champion + lone survivor). Route it through the
+    // the champion-GATE (`racing-final`) is a 1v1 full-board duel rather than a
+    // rung, and carries both sides (champion + lone survivor). Route it through the
     // pairwise path (below) so both seats show their board progress + projected
     // scalar, reading the gate's OWN published `live_progress` (the per-board
     // `at.projected` map may carry only the survivor). Falling through the racing-
@@ -1609,8 +1611,9 @@ export function buildLiveModel(at, heartbeat, activeRuns, epochGens) {
     // ── RACING RUNG: compute the rung's AUTHORITATIVE full field + union
     // live_progress ONCE over the whole rung round (every champion-vs-survivor
     // matchup), then attach it to the slot-0 carrier match — so EVERY lane (every
-    // survivor) renders with its published projection, not just matches[0]'s first
-    // lane. The remaining per-duel matches keep their own lane but drop progress.
+    // survivor) renders with its published projection, rather than matches[0]'s
+    // first lane alone. The remaining per-duel matches keep their own lane but
+    // drop progress.
     let rungOpts = null;
     if (isRacing && !isGate) {
       const { field: rungField, liveProgress: rungPublished } = rungFullField(r, racingChampions);
@@ -1646,10 +1649,11 @@ export function buildLiveModel(at, heartbeat, activeRuns, epochGens) {
   }
 
   // ── OVERLAY the live PROJECTED standing onto the standings rows ──
-  // A competitor IN a still-pending (active, not queued) match is IN FLIGHT;
-  // overlay its server-side projected scalar + boards progress and mark the row
-  // `in_flight` so the table renders the "projected" treatment (dashed row,
-  // ~prefix, proj badge, scored sub-bar). Settled rows are left untouched.
+  // A competitor in a still-pending (active rather than queued) match is IN
+  // FLIGHT. Overlay its server-side projected scalar and boards progress, and
+  // mark the row `in_flight` so the table renders the projected treatment:
+  // dashed row, ~prefix, proj badge, scored sub-bar. Settled rows are left
+  // untouched.
   // Per-structure RANKING: elim/racing re-sort on the projected scalar (lower is
   // better) for the in-flight rows; SWISS does NOT project Copeland points — it
   // keeps the points-rank and only nudges the mean-scalar tiebreak. The backend
@@ -1730,11 +1734,12 @@ export function buildLiveElimModel({ at, heartbeat, activeRuns, epochGens } = {}
 
 // ── the MATCH-GROUPED LIVE BLOCKS — one block per IN-FLIGHT match ────
 //
-// The live-hero "what's running" hero (Task 1) groups the live state BY the
-// in-flight match so it is obvious which boards are running, in EVERY structure.
+// The live "what's running" hero groups the live state BY the in-flight match,
+// so which boards are running is legible in EVERY structure.
 // This is the pure data derivation: it consumes the UNIFIED live model
 // (buildLiveModel's published rounds + active-runs overlay — the single source)
-// and emits one block per ACTIVE (pending, not queued) match. A block is either:
+// and emits one block per ACTIVE match — pending rather than queued. A block is
+// either:
 //   * pairwise (swiss / elim / gauntlet): two sides, each a board ENTRY with a
 //     0..1 progress ratio + an outcome ('done'/'pending'/'queued'); or
 //   * rung-field (racing): one entry per lane in the rung's field.
@@ -1742,7 +1747,7 @@ export function buildLiveElimModel({ at, heartbeat, activeRuns, epochGens } = {}
 // `entries[].outcome` ∈ 'pending' (still running) | 'queued' (not started) and,
 // once the match settles, the side's verdict is read off the model: 'win' (the
 // winner / a survivor → ✓), 'loss' (the loser / a cut → ✗), 'timeout' (⏱). A
-// SETTLED match is NOT a block (it is no longer "running"); only in-flight
+// SETTLED match is not a block, because it has stopped running; only in-flight
 // matches surface here. Returns [] when nothing is in flight.
 //
 // Pure (model → plain array) so it unit-tests without a DOM and the hero can
@@ -1792,17 +1797,17 @@ export function liveMatchBlocks(model) {
   for (const r of rounds) {
     if (r.queued) continue; // a future, not-yet-started round carries no LIVE block.
     const matches = Array.isArray(r.matches) ? r.matches : [];
-    // ── RACING: ONE block per RUNG (not one per champion-vs-survivor matchup) ──
+    // ── RACING: ONE block per RUNG, rather than per matchup ────────────────
     // A live rung is published as N matchups (`rung{N}_m0..mK`); buildLiveModel
     // splits the rung's lanes across those per-duel matches, each carrying only
     // its own lane. So we group the WHOLE rung round here and build a single block
     // from the rung's AUTHORITATIVE full field + the union live_progress
     // (rungFullField), feeding EVERY lane (every survivor) into ONE block — never
     // one degenerate block per matchup. A rung whose every matchup has SETTLED
-    // (survivors/cut landed) is no longer in flight → no block.
+    // (survivors/cut landed) has stopped running → no block.
     if (isRacing) {
-      // the gate (`racing-final`) is a 1v1 duel, not a rung — fall through to the
-      // pairwise path below for it.
+      // the gate (`racing-final`) is a 1v1 duel rather than a rung, so it falls
+      // through to the pairwise path below.
       const m0 = matches[0] || {};
       if (!isFinal(m0.match_id)) {
         const liveMatches = matches.filter((m) => !m.queued && !settled(m));
@@ -1841,14 +1846,14 @@ export function liveMatchBlocks(model) {
     }
     for (const m of matches) {
       if (m.queued) continue;        // a queued match in the active round is not running.
-      if (settled(m)) continue;      // a settled match is no longer in flight.
-      // racing rungs were emitted as ONE block above; only the gate (1v1) reaches
+      if (settled(m)) continue;      // a settled match has stopped running.
+      // a racing rung is emitted as ONE block above; only the gate (1v1) reaches
       // the pairwise path here.
       if (isRacing && !isFinal(m.match_id)) continue;
       const comps = (Array.isArray(m.competitors) ? m.competitors : []).map(String);
       // pairwise (swiss / elim / gauntlet / racing-gate): a two-sided duel. Split the per-match
       // done tally evenly across the two seats (the contract pins per-match
-      // done/total, not per-seat), so each side reads the same board progress.
+      // done/total rather than per-seat), so each side reads the same board progress.
       const total = svg.isNum(m.total) ? m.total : null;
       const done = svg.isNum(m.done) ? m.done : 0;
       const seats = comps.length ? comps : ['tbd'];
@@ -1879,7 +1884,7 @@ export function liveMatchBlocks(model) {
 }
 
 // A stable digest of the live match blocks — the live CONTENT (which matches
-// exist + each board entry's progress BUCKET, not the raw float). Bucketed to
+// exist + each board entry's progress BUCKET rather than the raw float). Bucketed to
 // ~10% so a steady heartbeat with no real progress is a no-op (the bars animate
 // via CSS, the DOM is not rebuilt every tick). Mirrors the board-detail
 // live-transcript render discipline.
@@ -1925,7 +1930,7 @@ export function liveMatchupsForCandidate(at, genId) {
       // champion = the first seat; each other competitor is a challenger.
       const champion = comps[0] != null ? comps[0] : null;
       const challenger = comps.length > 1 ? comps[comps.length - 1] : (comps[0] || null);
-      // a racing rung is a multi-way cut, not a 1v1 — surface it as a row whose
+      // a racing rung is a multi-way cut rather than a 1v1, so it surfaces as a row whose
       // champion seat is the field's benchmark when present, else the first id.
       out.push({
         champion, challenger,
@@ -1992,8 +1997,8 @@ function renderRacing(st, ctx, epochId) {
   // The rung/gate model is the SINGLE source — racingModel builds each rung from
   // the FULL FIELD (the union of every rung matchup + the authoritative full-rung
   // live_progress), so an IN-FLIGHT rung published as N champion-vs-survivor
-  // matchups renders ALL lanes (every survivor), not just matches[0]'s first
-  // lane. The figures (scalar track + funnel) read straight off these rungs.
+  // matchups renders ALL lanes (every survivor), rather than matches[0]'s first
+  // lane alone. The figures (scalar track + funnel) read straight off these rungs.
   const rm = racingModel(st) || {};
   const rungs = Array.isArray(rm.rungs) ? rm.rungs : [];
   const championId = rm.championId || null;
@@ -2012,9 +2017,9 @@ function renderRacing(st, ctx, epochId) {
   // RENDER THE IN-FLIGHT RUNG: racingModel builds a rung (pending=true, full
   // field, live_progress) for a still-streaming rung even before any survivor/cut
   // commits — so `rungs.length > 0` and the scalar track renders ALL lanes
-  // racing. The "No rungs evaluated yet." empty is reachable ONLY when there is
-  // genuinely no rung in any source (no published/streaming rung, no completed
-  // record) — never while a multi-survivor rung is in flight.
+  // racing. The "No rungs evaluated yet." empty is reachable ONLY when no source
+  // holds a rung at all (no published or streaming rung, no completed record) —
+  // never while a multi-survivor rung is in flight.
   trackCard.appendChild(rungs.length
     ? svg.racingScalarTrack({
         rungs, championId, benchmarkId, championScalar, live, gateState,
@@ -2275,10 +2280,10 @@ function standingsTable(st, ctx, epochId, live) {
   // names the field round so the readback can attribute it.
   const settled = !live;
   // POLARITY: writable requires an EXPLICIT `read_only: false`, matching the
-  // topbar controls (shell.js). The truthy read here meant a health payload
-  // that had not arrived (or a server that omits the field) rendered the
-  // override controls ENABLED against a workspace that may reject the POST —
-  // the safe default for a control affordance is off, not on.
+  // topbar controls (shell.js). A truthy read would let a health payload that
+  // had not arrived — or a server that omits the field — render the override
+  // controls ENABLED against a workspace that may reject the POST. The safe
+  // default for a control affordance is off.
   const readOnly = !(state.health && state.health.read_only === false);
   const tournamentId = (st && st.tournament_id != null) ? String(st.tournament_id) : null;
   const bodyBase = {};
@@ -2290,7 +2295,7 @@ function standingsTable(st, ctx, epochId, live) {
   const onChange = () => { if (state && typeof state._changed === 'function') state._changed(); };
   // Racing (successive-halving / best-arm) has NO head-to-head winner/loser —
   // each rung ranks survivors by SCALAR and cuts the worst; the promote/reject
-  // is the gate, not a match record. So W/L are structurally always 0 for
+  // is the gate rather than a match record. So W/L are structurally always 0 for
   // racing and a permanently-zero column reads as broken. Drop W/L for racing
   // (scalar + status carry the standing); keep them for the bracket structures
   // that actually populate them (single_elim / double_elim / swiss).
@@ -2309,7 +2314,7 @@ function standingsTable(st, ctx, epochId, live) {
     if (live && (raw === 'champion' || raw === 'eliminated')) raw = 'competing';
     // INTERRUPTED — a row that was still in contention when the loop stopped
     // was never decided, and "racing" / "playing" / "in bracket" all claim it
-    // still is. Say what actually happened instead (issue #194 §3). Committed
+    // still is. The row says what happened instead. Committed
     // verdicts (champion / eliminated) are real and pass through untouched.
     const undecided = st.interrupted && raw !== 'champion' && raw !== 'eliminated';
     const status = undecided ? 'undecided when the run ended'
@@ -2318,7 +2323,7 @@ function standingsTable(st, ctx, epochId, live) {
     // champion / eliminated reads as the DEFERRED pill (still in contention).
     if (status !== 'champion' && status !== 'eliminated') anyDeferred = true;
     // PROJECTED — an in-flight row (boards still streaming) shows a projected
-    // scalar, not a settled one: dashed/dimmed row + a "proj" badge + the
+    // scalar rather than a settled one: dashed/dimmed row + a "proj" badge + the
     // ~prefix on the number + a scored board-progress sub-bar.
     // The PROJ badge and its progress bar are a claim that boards are streaming
     // in RIGHT NOW. They expire with liveness: an interrupted row shows the
@@ -2379,7 +2384,7 @@ function standingsTable(st, ctx, epochId, live) {
       readOnly, settled, existingOverride: durable, onPost, onChange,
     }) : null;
     // the per-row diversity badge — soft-rejected reuses the DEFERRED pill
-    // (held, not promoted); penalized reads as a caution chip. Absent → null.
+    // (held rather than promoted); penalized reads as a caution chip. Absent → null.
     const divBadge = diversityBadge(divStatus ? divStatus[gidStr] : null);
     return {
       class: rowCls,

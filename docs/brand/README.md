@@ -24,7 +24,7 @@ the project in one gesture:
    wavelength, decaying amplitude) — the loss curve settling generation over
    generation — and lands on a **bridge tick**.
 
-The geometry is generated, not drawn by hand: the spiral is sampled at 72 points
+The geometry is generated rather than drawn by hand. The spiral is sampled at 72 points
 along `θ ∈ [0, 8.6]`, rotated so its outer end leaves horizontal, and translated
 so that end meets the string at `(104, 80)`. The sparkline and bridge tick are
 fixed quadratic/line segments. The accent dot marks the pluck vertex `(170, 102)`.
@@ -35,15 +35,14 @@ and Tufte's data-ink ethic — every pixel of the mark is the line itself.
 
 ### Stroke weight & accent-dot size
 
-The line-art mark is drawn with **`stroke-width: 5.0`** (round caps + joins) and
-the green plucked-note accent dot has **radius `5.5`** in the mark's coordinate
-space (the same `viewBox="71 35 229 75"` the lockup uses). These are the
-operator-signed-off values; an earlier draft used a hairline `2.4` stroke with a
-`3.2` dot, which rendered visibly thinner than the `zicato` wordmark beside it and
-collapsed to sub-pixel at small sizes. The heavier `5.0` stroke now reads as *kin
-to the wordmark weight*, and the `5.5` dot stays visible (not sub-pixel) wherever
-the full spiral is used. `zicato-mark-mono.svg` carries the same `5.0` / `5.5`
-geometry with the dot filled in ink (it is a single-color print asset).
+The line-art mark is drawn with **`stroke-width: 5.0`** (round caps and joins),
+and the green plucked-note accent dot has **radius `5.5`** in the mark's
+coordinate space — the same `viewBox="71 35 229 75"` the lockup uses. At that
+weight the stroke reads as kin to the `zicato` wordmark beside it, and the dot
+stays above one pixel wherever the full spiral is used. A hairline stroke near
+`2.4` with a `3.2` dot reads visibly thinner than the wordmark and collapses to
+sub-pixel at small sizes. `zicato-mark-mono.svg` carries the same `5.0` and `5.5`
+geometry with the dot filled in ink; it is the single-color print asset.
 
 ## Color tokens — and the theme-adaptive rule
 
@@ -111,33 +110,32 @@ sizes. The rule:
 
 | Size band | Mark | Accent dot |
 |---|---|---|
-| **≥ 24px** | the **full spiral** (`zicato-mark.svg` / the lockup mark), stroke `5.0` | dot **kept**, r `5.5` (visible, not sub-pixel) |
+| **≥ 24px** | the **full spiral** (`zicato-mark.svg` / the lockup mark), stroke `5.0` | dot **kept**, r `5.5` (stays above one pixel) |
 | **< ~24px** | the **z + plucked-note favicon** (`zicato-favicon.svg`) — a bold `z` that stays legible small | dot **kept** (it reads fine at 16px) |
 | full spiral *forced* ≤ 24px (rare) | **drop the accent dot + thicken the stroke** — emit a no-dot heavier-stroke `zicato-mark-small.svg` only if an actual usage needs it | dot **dropped** |
 
-In practice the small-size case is handled by **swapping to the favicon-z form**,
-not by shrinking the spiral. The dashboard top bar does exactly this: its inline
-mark renders at ~17px (`.dt-brand-mark { height: 17px }`), so it draws the
-favicon `z` + green dot (theme-adaptive: `currentColor` stroke + `var(--zicato-accent)`
-dot, no tile background) rather than the full spiral. No `zicato-mark-small.svg`
-ships today because nothing forces the *full spiral* below 24px — the favicon
-swap covers every small render. The favicon **keeps** its accent dot at all sizes
-(it is legible at 16px); only the *forced-small full spiral* would ever drop it.
+In practice the small-size case is handled by swapping to the favicon `z` form
+rather than by shrinking the spiral. The dashboard top bar sits above the
+threshold and so keeps the full spiral: its inline mark renders at 26px
+(`.dt-brand-mark { height: 26px }`), theme-adaptive, with a `currentColor`
+stroke and a `var(--zicato-accent)` dot and no tile background. No
+`zicato-mark-small.svg` exists, because nothing forces the *full spiral* below
+24px; the favicon swap covers every small render. The favicon keeps its accent
+dot at every size, since it stays legible at 16px; only a full spiral forced
+below the threshold would drop it.
 
-### Why the wordmark / lockup accent dot does NOT move
+### The two green dots and where each sits
 
-There are **two** green dots in the lockup, and they obey different rules:
+The lockup carries **two** green dots, and each is positioned by a different
+rule:
 
-- **The mark dot** (cx `170`, cy `102`) — the pluck vertex of the spiral. Its
-  *radius* grew `3.2 → 5.5` in this revision; its *position* is fixed geometry.
-- **The wordmark dot** (cx `358.936`, cy `52`, r `4.2` in the lockup;
-  cx `50.977` in `wordmark.svg`) — the dot of the dotless **ı** (U+0131). Its
-  `cx` is **calibrated to the ı stem center** from a high-zoom raster of the
-  outlined `DejaVu Sans Mono` glyphs. That x-position is *correct as shipped* and
-  is **left unchanged** — moving it (earlier drafts tried 46.4 / 52.4 / 36 / 344)
-  slides the dot off the ı stem. The dot must sit exactly over the ı; `358.936`
-  (lockup) and `50.977` (wordmark) are the stem-correct values, so neither the
-  wordmark nor the lockup wordmark dot was touched here.
+- **The mark dot** (cx `170`, cy `102`, r `5.5`) sits at the pluck vertex of the
+  spiral. Its position is fixed geometry.
+- **The wordmark dot** (cx `358.936`, cy `52`, r `4.2` in the lockup; cx
+  `50.977` in `wordmark.svg`) is the dot of the dotless **ı** (U+0131). Its `cx`
+  is calibrated to the centre of the ı stem, measured from a high-zoom raster of
+  the outlined `DejaVu Sans Mono` glyphs. Those two values are the stem-correct
+  ones. Any other `cx` slides the dot off the stem, so neither value moves.
 
 ### The wordmark
 
@@ -146,11 +144,11 @@ The wordmark is `zıcato` set in a monospace stack
 (U+0131) — the green accent circle *is* the i's dot, tying the wordmark back to
 the plucked note.
 
-> **Note — outlined wordmark is a TODO.** `wordmark.svg` is text-based, so it
-> depends on a monospace font being present on the host. A font-independent
-> `wordmark-outlined.svg` (text converted to paths) is not shipped here because no
-> reliable text-to-path tool (`inkscape`, `picosvg`) was available in this
-> environment. When one is, emit it with
+> **TODO: a font-independent wordmark.** `wordmark.svg` is text-based, so it
+> depends on a monospace font being present on the host. There is no
+> `wordmark-outlined.svg` with the text converted to paths, because producing one
+> requires a text-to-path tool (`inkscape` or `picosvg`) that this repository does
+> not depend on. Remove this note once such a file exists; generate it with
 > `inkscape --export-type=svg --export-text-to-path wordmark.svg`.
 
 ## Usage

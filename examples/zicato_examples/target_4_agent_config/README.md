@@ -1,45 +1,46 @@
-# Target 4 — A Coding Agent's Configuration Package
+# A coding agent's configuration package
 
-This example is the **skeleton** for zicato's fourth dogfood target
-(issue #170): the system under test is an external coding agent, and the
-mutable surface is its *configuration package* — `AGENTS.md` plus
-`skills/*.md`. The agent loads that directory at startup (the path comes
-from `PI_CODING_AGENT_DIR`), so a generation snapshot of it literally is
-an agent identity, and promoting a generation promotes a configuration.
+The system under test is an external coding agent, and the mutable
+surface is its *configuration package*: `AGENTS.md` plus `skills/*.md`.
+The agent loads that directory at startup, from the path in
+`PI_CODING_AGENT_DIR`, so a generation snapshot of the directory is an
+agent identity and promoting a generation promotes a configuration.
 
-Skeleton means: the driver, the config-package fixture, a smoke board,
-and a test suite that runs against a hermetic stand-in binary. **No live
-agent runs in CI, and no `zicato evolve` runs live without an explicit
-operator go-ahead.** See "Before you believe a number" below — that gate
-is not ceremony here, it is the difference between a measurement and a
-coin flip.
+This directory carries the driver, the configuration-package fixture, a
+small board, and a test suite that runs against a hermetic stand-in
+binary. **No live agent runs in continuous integration, and no `zicato
+evolve` runs live without an explicit operator go-ahead.** That gate
+matters here more than elsewhere: without the noise floor described
+under "Establishing the noise floor" below, a promotion margin carries
+no information.
 
-## The two-instance role split
+## The two roles the binary plays
 
-"An agent improves itself" sounds circular. It is not, because it
-decomposes into two instances of the same binary in different roles, and
-neither one decides anything:
+Improving an agent with itself is not circular, because it decomposes
+into two instances of the same binary in different roles, and neither
+instance decides anything:
 
 - **Target** — the configuration package under `config_package/`,
-  registered as a zicato mutable tree. Runtime-loaded markdown; no build
-  step, no Python inside the tree.
-- **Entrypoint** — `driver.py`, deliberately *outside* the tree
-  (`adapter.kind = "import"`). It spawns the binary in rpc mode with the
-  agent directory pointed at the snapshot's package, runs one board
-  entry, and returns the transcript and the produced patch.
+  registered as a zicato mutable tree. It is markdown loaded at run
+  time: no build step, and no Python inside the tree.
+- **Entrypoint** — `driver.py`, which sits *outside* the tree
+  (`adapter.kind = "import"`). It spawns the binary in remote-procedure
+  mode with the agent directory pointed at the snapshot's package, runs
+  one board entry, and returns the transcript and the produced patch.
 - **Board** — coding tasks against a fixture repository, with typed
-  predicate expectations. Fixed, versioned, holdout-protected like any
-  board.
-- **Proposer** — any configured proposer, *frozen as contract*. Its
-  drafts are patches against the target snapshot.
+  predicate expectations. Fixed, versioned, and holdout-protected like
+  any board.
+- **Proposer** — any configured proposer, frozen as part of the
+  contract. Its drafts are patches against the target snapshot.
 
-The gate decides what survives — not either instance. Self-modification
-becomes: propose, validate, duel, promote under a protected incumbent.
+The gate alone decides what survives. Self-modification reduces to the
+ordinary sequence: propose, validate, duel, and promote under a
+protected incumbent.
 
 ## The mutable surface
 
-Four mutation points, all native markdown markers (`#154`; no Python
-shim in between):
+Four mutation points, each a markdown marker read directly, with no
+Python shim in between:
 
 | Mutation id | File | Kind |
 | --- | --- | --- |
@@ -54,21 +55,20 @@ sentinel, both owned by the operator and both *outside* the mutable
 range, so a patch is bounded by construction rather than by a resolution
 heuristic.
 
-Two things are deliberately **not** surface:
+Two things are outside the surface by design:
 
 - **`config_package/settings.json` is immutable.** Strict JSON cannot
-  host a comment, so it cannot host a marker — a marked `settings.json`
-  would not be JSON. This is not a gap waiting on tooling; it is a
-  property of the format. `.json` is correspondingly absent from the
-  enumerator's `TEXT_FILE_SUFFIXES`. If the knobs in it ever need to
-  evolve, the move is a `.jsonc`-shaped file, not a marker in this one.
-- **`extensions/*.ts` are not built yet.** TypeScript extensions are the
-  other half of a real configuration package, and they are the natural
-  follow-on — but the marker grammar's `TEXT_COMMENT_LEADERS` covers
-  `<!--` and `#` only, so a `//`-commented file has no marker syntax
-  today. That is one entry in the syntax table (issue #168). This
-  example ships no `extensions/` directory rather than shipping one that
-  silently enumerates nothing.
+  hold a comment, so it cannot hold a marker: a marked `settings.json`
+  would not be JSON. This is a property of the format rather than a gap
+  waiting on tooling, and `.json` is correspondingly absent from the
+  enumerator's `TEXT_FILE_SUFFIXES`. Evolving the knobs it holds would
+  mean a `.jsonc`-shaped file rather than a marker in this one.
+- **There is no `extensions/` directory.** TypeScript extensions are the
+  other half of a real configuration package, but the marker grammar's
+  `TEXT_COMMENT_LEADERS` covers `<!--` and `#` only, so a file commented
+  with `//` has no marker syntax. Adding that leader is one row in the
+  mutation syntax table. This example ships no `extensions/` directory
+  rather than one that silently enumerates nothing.
 
 ## How one run works
 
@@ -85,10 +85,11 @@ session to the snapshot, and each `run` does:
    through the `ZICATO_TARGET_4_AGENT_ENV_*` prefix. API keys and proxy
    settings in the caller's environment are dropped, so a run cannot
    reach the network by inheriting someone's shell.
-5. Speak newline-delimited JSON over stdin/stdout, forwarding each turn
-   to the run's sinks as `{"role", "content"}` — exactly what the
-   `transcript` dialect reads, and a shape the goldfive JSONL sink
-   serialises unchanged. No new plumbing, no goldfive, no ADK.
+5. Speak newline-delimited JSON over stdin and stdout, forwarding each
+   turn to the run's sinks as `{"role", "content"}` — the shape the
+   `transcript` dialect reads, and one the goldfive JSONL sink
+   serialises unchanged. No new plumbing is needed, and neither goldfive
+   nor the agent development kit is involved.
 6. Diff the working tree against the fixture and append that diff to
    `final_output` after a sentinel.
 
@@ -96,7 +97,7 @@ Step 6 is what makes the predicates honest. `RunResult` carries only
 what the agent *said*; for a coding agent the interesting evidence is
 what it *did*. Splitting on the sentinel gives a predicate both.
 
-### The rpc protocol
+### The remote-procedure protocol
 
 The driver writes one request line and reads events until a terminal
 one:
@@ -114,59 +115,55 @@ zicato-side shape; a binary speaking a different wire needs a shim in
 
 ### Naming the binary
 
-`ZICATO_TARGET_4_AGENT_BIN` is a command line (shlex-split), following
-target 1's `ZICATO_TARGET_1_MODEL` precedent of a target-local variable
-read at the point of use. `--mode rpc --no-session` is appended.
+`ZICATO_TARGET_4_AGENT_BIN` holds a command line, split with `shlex`,
+and `--mode rpc --no-session` is appended to it. It follows the
+presentation target's `ZICATO_TARGET_1_MODEL` precedent: a target-local
+variable read at the point of use.
 
-A `runtime.pi_bin` knob does now exist, added by #173 — but it belongs
-to the *other* surface. `zicato.proposer.pi_agent.resolve_pi_bin` reads
-it off `ExternalProposerConfig`, which configures the **proposer**; this
-adapter configures the **target**. #170 keeps those two roles apart on
-purpose, because "the same binary in two roles" is the entire safety
-argument, and a single knob naming both would erase the distinction it
-rests on. So the env var stays until a target-side knob exists.
+The proposer side has its own separate knob. `runtime.pi_bin` on
+`ExternalProposerConfig`, read by
+`zicato.proposer.pi_agent.resolve_pi_bin`, configures the **proposer**;
+this adapter configures the **target**. The two roles keep separate
+knobs because the whole safety argument is that the same binary occupies
+two roles, and one knob naming both would erase the distinction the
+argument rests on.
 
-**Resolved.** The proposer resolves a *pinned* install
+Version pinning is handled by procedure rather than by sharing a knob.
+The proposer resolves a pinned install
 (`integrations/pi/node_modules/.bin/pi`, at the version
-`integrations/pi/package.json` pins), while this target keeps its own
-knob. The roles stay **decoupled** — no shared knob — because "the same
-binary in two roles" is the safety argument, and one knob naming both
-would erase the distinction it rests on.
-
-The version-pinning concern is settled by **procedure, not coupling**:
-RUN.md's operator recipe recommends pointing
-`ZICATO_TARGET_4_AGENT_BIN` at that same pinned install, by path. Bare
-`pi` on `PATH` stays available as the explicitly degraded alternative,
-and an operator who takes it records the version by hand. Same binary
-pin, two independent knobs, distinction intact.
+`integrations/pi/package.json` pins), and the operator recipe in RUN.md
+recommends pointing `ZICATO_TARGET_4_AGENT_BIN` at that same install by
+path. A bare `pi` on `PATH` remains available as the degraded
+alternative, and an operator who takes it records the version by hand.
+The result is one binary pin reached through two independent knobs.
 
 The binary's `--version` is probed once per load and recorded beside the
-run. A version bump changes the system under test without changing the
-tree, so by convention it is an **epoch boundary** — rebase the
-baseline, do not compare across it.
+run. A version change changes the system under test without changing the
+tree, so by convention it is an **epoch boundary**: rebase the baseline
+rather than comparing across it.
 
-## Before you believe a number
+## Establishing the noise floor
 
 Every board entry is a full agentic run: slow, stochastic, and
-expensive. The campaign discipline applies *more* here than anywhere
-else in zicato, not less.
+expensive. The measurement discipline that applies to every zicato
+campaign applies with more force here.
 
-**The A/A floor comes first.** Before any promotion is believed, run the
-board against an unmodified champion versus itself and measure the
-spread. That number is the noise floor. A promotion margin smaller than
-it is not evidence of anything.
+**Measure the same-versus-same floor first.** Before believing any
+promotion, run the board with an unmodified champion against itself and
+measure the spread of the results. That spread is the noise floor. A
+promotion margin below it is indistinguishable from chance.
 
-`scoring.json` ships `promote_margin` at the framework default of
-`0.01`. That is a placeholder, not a measurement — it is what the file
-has to say before anyone has run the A/A duel, and it is almost
-certainly too small for a stochastic agentic board. Replace it from the
-floor you measure, and size replicates (`tournament.params.replicates`)
-from the same data. Paired workspaces per seed.
+`scoring.json` carries `promote_margin` at the framework default of
+`0.01`. That value is a placeholder standing in until someone runs the
+same-versus-same duel, and it is almost certainly too small for a
+stochastic agentic board. Replace it with the floor you measure, and
+size the replicate count (`tournament.params.replicates`) from the same
+data. Use paired workspaces per seed.
 
 The dialect is `transcript`, so the drift term is structurally zero and
-the scalar reduces to the pass term. The drift knobs are left at their
-defaults on purpose: setting them under this dialect is inert and earns
-a capability warning. Scoring here is predicates, and predicates only.
+the scalar reduces to the pass term. The drift knobs stay at their
+defaults, because setting them under this dialect does nothing and earns
+a capability warning. Scoring here is predicates alone.
 
 ## Files
 
@@ -187,26 +184,26 @@ a capability warning. Scoring here is predicates, and predicates only.
 
 ## What the board measures
 
-The four entries pull against each other on purpose, because a
-configuration that wins one by losing another is not an improvement:
+The four entries pull against each other by design, because a
+configuration that wins one by losing another has improved nothing:
 
 | Entry | Property |
 | --- | --- |
 | `t4_document_total` | Make the narrow edit that was asked for. |
-| `t4_fix_window` | Fix the code, not the check that catches it. |
+| `t4_fix_window` | Fix the code rather than the check that catches it. |
 | `t4_explain_only` | Answer a question without editing anything. |
 | `t4_vendor_boundary` | Stay out of `vendor/` when the request points at it. |
 
-`t4_vendor_boundary` is the entry the configuration package actually
-decides: the naive patch edits the vendored file the request names, and
-only an agent whose `patch-discipline` skill told it otherwise routes
-around it.
+`t4_vendor_boundary` is the entry the configuration package decides. The
+obvious patch edits the vendored file the request names; only an agent
+whose `patch-discipline` skill told it otherwise routes around it.
 
-## Related
+## Related surfaces
 
-- **#147** — the same binary as an external *proposer*; shares the
-  inclusion mechanism and this hygiene set.
-- **#169** — proposer self-improvement without boards aimed at the
-  proposer. The two compose: an evolved proposer can propose against
-  this target like any other.
-- **#168** — the `.ts` syntax-table entry that unblocks `extensions/`.
+- The same binary can serve as an external **proposer**, sharing the
+  inclusion mechanism and the hygiene rules above.
+- Proposer self-improvement runs without boards aimed at the proposer.
+  The two compose: an evolved proposer can propose against this target
+  like any other.
+- Adding `//` to the marker grammar's comment leaders is what would
+  unblock an `extensions/` directory of TypeScript files.

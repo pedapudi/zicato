@@ -74,8 +74,8 @@ const KIND_LABEL = {
 // into a return visit to another entry and (seeing "seq unchanged") serve its
 // warm-but-stale cache without a refetch. A missing key (first render, or a
 // return after the seq advanced elsewhere) reads undefined ≠ lastSeq and so
-// BUSTS; state.lastSeq === -1 (no seq seen — a pre-RUNTIME-V2 server) degrades to
-// the legacy always-bust path.
+// BUSTS; state.lastSeq === -1 — no seq seen, from a server that stamps none —
+// degrades to always busting.
 const _lastBoardSeqByEntry = new Map();
 
 export async function render(host, ctx, params, route) {
@@ -105,7 +105,7 @@ export async function render(host, ctx, params, route) {
   ]);
   // The AUTHORED half of the Judges panel — this entry's custom judges, off the
   // epoch payload's additive `board_judges` map (omitted entirely by a board
-  // whose entries declare none, so `[]` here is the honest read, not a failure).
+  // whose entries declare none, so `[]` here is an honest read rather than a failure).
   const entryJudges = (ep.board_judges && ep.board_judges[entryId]) || [];
   const genList = rows0.length
     ? rows0.map((g) => ({ id: g.generation_id, parent: g.parent_generation_id || null, promoted: g.promoted == null ? null : !!g.promoted, decision: g.decision }))
@@ -179,7 +179,7 @@ export async function render(host, ctx, params, route) {
       // in-flight table folded into the breakdown as a progress column).
       progress: live ? progressRatio(live) : null,
       // CACHED-champion provenance: this row's scalar was reused (fast mode)
-      // from a prior epoch/run, not re-executed this round.
+      // from a prior epoch or run rather than re-executed this round.
       cached: !!(r && r.cached),
       sourceEpoch: (r && r.source_epoch) || null,
     });
@@ -232,7 +232,7 @@ export async function render(host, ctx, params, route) {
   // candidate's aggregate per facet. So the drill-down answers "this entry is
   // part of data_cleaning — how is data_cleaning doing across candidates?"
   // without a second round trip and without the client aggregating anything
-  // (DQ1: the server already did the grouping).
+  // (the server computes the grouping and the client renders it).
   const entryFacets = [];
   const facetByGen = new Map();
   genList.forEach((g, i) => {
@@ -310,12 +310,11 @@ export async function render(host, ctx, params, route) {
     })]),
     // The Judges panel is contract-frozen for the epoch, so its contribution is
     // a constant across a round's beats — it can never be the thing that busts
-    // this digest, and it repaints only when the panel genuinely changed.
+    // this digest, and it repaints only when the panel's own content changed.
     judges: judgesDigest(roster, entryJudges),
   });
   // The transcript STRUCTURE digest gates the frame (headers, columns, scroller
-  // shells, the streaming caption) — deliberately EXCLUDING the growing turn
-  // content. It folds only what changes the frame's SHAPE: the selected
+  // shells, the streaming caption), EXCLUDING the growing turn content. It folds only what changes the frame's SHAPE: the selected
   // candidates, their live flag + loss, and each column's coarse STATE
   // (nosel / err / wait / turns). Growing turns do NOT change this digest, so a
   // live beat that only APPENDS turns leaves the frame untouched and the turns

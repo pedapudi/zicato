@@ -1,5 +1,5 @@
-// test/mutations_provenance.test.mjs — the mutation surface after the tree is
-// gone (issue #194 §6).
+// test/mutations_provenance.test.mjs — the mutation surface after the snapshot
+// tree is gone.
 //
 // A closed epoch's snapshot trees get pruned; the records do not. The server
 // then reconstructs the surface and captions what it did — `provenance_note`
@@ -135,9 +135,9 @@ test('mutations: the caption folds into the digest', async () => {
 
 test('mutations: a version with no content prints the reason, not nothing', async () => {
   // A set_numeric record whose constant sits outside the enumerated span has
-  // no faithful content to show. The old pane dropped the row entirely and
-  // told the operator the generation "did not patch this site" — which is
-  // false, and the payload says so.
+  // no faithful content to show. Dropping the row would tell the operator the
+  // generation "did not patch this site", which is false and which the payload
+  // contradicts.
   const reason = 'set_numeric 0.42 — the constant sits outside the recorded span';
   globalThis.fetch = async (path) => {
     const body = (() => {

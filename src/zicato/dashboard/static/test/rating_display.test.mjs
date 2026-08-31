@@ -2,11 +2,12 @@
 // three display surfaces (standings table, gens roster, candidate dossier).
 //
 // The server joins the Bradley–Terry triple (`elo` / `elo_se` / `elo_games`)
-// onto lineage nodes + standings entries; the client only FORMATS (DQ1):
-// mono `1512 ±34` in the quiet-precision register, a faint `provisional`
-// suffix under MIN_RATING_GAMES, `—` when the fold has not rated a
-// generation (or the payload omits the keys — the Rust lineage view). NO
-// chips. The rating is VISIBILITY-ONLY — nothing here feeds the gate.
+// onto lineage nodes and standings entries. The client only FORMATS it, since
+// the server computes and the client renders. The formats are: mono `1512 ±34`
+// in the quiet-precision register; a faint `provisional` suffix under
+// MIN_RATING_GAMES; and `—` when the fold has not rated a generation, or when
+// the payload omits the keys (the Rust lineage view). No chips. The rating is
+// VISIBILITY-ONLY and nothing here feeds the gate.
 // Digest guardrails per touched view: a no-op beat churns zero DOM; a rating
 // moving on reindex repaints.
 

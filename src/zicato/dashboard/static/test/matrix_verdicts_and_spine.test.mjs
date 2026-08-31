@@ -1,28 +1,28 @@
-// test/matrix_verdicts_and_spine.test.mjs — issue #207 §2 + §3.
+// test/matrix_verdicts_and_spine.test.mjs — the tense of a matrix verdict, and
+// a one-generation champion spine.
 //
-// TWO REDS, both found by browsing the post-#194 console against the June
-// workspace, both verified against its files before a line was changed:
+// Two failure modes this file guards against:
 //
-//   §2  THE EVALS MATRIX SAID "racing…" FOR EVERY CANDIDATE. Two bugs stacked.
-//       The matrix's decision source bypassed the shared classifier, so a
-//       settled rejection recorded in lineage.json arrived as `promoted: null`
-//       (fixed server-side; pinned in tests/test_query_eval_view.py). And null
-//       mapped to the PENDING pill, whose label is the present-tense "racing…"
-//       — the one inventory surface the #203 liveness sweep did not reach. An
-//       epoch that stopped in June is not racing anything.
+//   A matrix that says "racing…" for every candidate. That needs two faults at
+//   once: a decision source that bypasses the shared classifier, so a settled
+//   rejection recorded in lineage.json arrives as `promoted: null`; and a null
+//   that maps to the PENDING pill, whose label is the present-tense "racing…".
+//   An epoch whose loop stopped months ago is racing nothing. The server half
+//   is pinned in tests/test_query_eval_view.py.
 //
-//   §3  "No champion-spine trajectory" WITH THE SPINE PRESENT. e4's spine is
-//       [v0]: the seed reigned and every challenger was rejected. The spine
-//       derivation dropped the seed, so a one-generation reign read as no reign
-//       at all — and the empty state said "yet", promising a future that had
-//       already not happened.
+//   "No champion-spine trajectory" while the spine is present. A spine of [v0]
+//   means the seed reigned and every challenger was rejected. A derivation that
+//   drops the seed reads a one-generation reign as no reign at all, and an
+//   empty state that says "yet" promises a future that has already not happened.
 //
-// Pinned here (the CLIENT half — the server half lives in the Python suite):
+// Pinned here (the CLIENT half; the server half lives in the Python suite):
 //   * the pending pill is tense-bound: "racing…" only under a live-for-this-
-//     epoch loop, "undecided" on a settled / interrupted one, with the SAME
-//     `dn-pending` class either way (the vocabulary is not forked);
-//   * the seed column reads as the SEED, not as a candidate that won a gate;
-//   * the digest moves when the tense moves (no stale "racing…" left on screen);
+//     epoch loop, "undecided" on a settled or interrupted one, with the SAME
+//     `dn-pending` class either way, so the vocabulary stays unforked;
+//   * the seed column reads as the SEED rather than as a candidate that won a
+//     gate;
+//   * the digest moves when the tense moves, leaving no stale "racing…" on
+//     screen;
 //   * every empty spine / trajectory / attribution panel renders the SERVER's
 //     reason, and different causes render different sentences.
 
@@ -84,8 +84,8 @@ function setClock(kind) {
   globalThis.window.location = { hash: '', search: '' };
 }
 
-// The e4 matrix as the FIXED server now serves it: the seed on the spine, the
-// challengers settled-rejected, and one candidate genuinely undecided.
+// The e4 matrix as the server serves it: the seed on the spine, the challengers
+// settled-rejected, and one candidate still undecided.
 function e4Matrix(pendingLabel = 'undecided') {
   const cell = (pass) => ({ drift_loss: pass ? 0.2 : 0.9, pass_ratio: pass ? 1 : 0, pass_fail: pass,
     replicates: 2, cached: false, latest_run_id: 'r', evidence: 'replicated' });
@@ -222,9 +222,9 @@ test('trajectory: a ONE-GENERATION spine is a real trajectory — the seed is sp
   const text = textOf(host);
   assert(!/No champion-spine trajectory/.test(text),
     'the panel renders the reading — it does not claim the spine is absent');
-  // One point is a reading, not a trend: it is stated as a NUMBER, because a
-  // sparkline of one point is a lone dot in a wide frame — a broken-looking
-  // chart carrying one fact.
+  // One point is a reading rather than a trend, so it is stated as a NUMBER. A
+  // sparkline of one point is a lone dot in a wide frame: a chart that looks
+  // broken while carrying one fact.
   assert(/90\.50/.test(text), "the seed's reading on this entry is the content");
   assert(/drift loss · v0/.test(text), 'and it is attributed to the generation that took it');
   assert(/the reign never changed hands/.test(text), 'with the reason there is no slope');

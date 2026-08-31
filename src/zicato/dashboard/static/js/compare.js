@@ -1,8 +1,7 @@
-// js/compare.js — the side-by-side COMPARE primitives (S's signature,
-// ported self-contained into Console IV).
+// js/compare.js — the side-by-side COMPARE primitives.
 //
-// S's first-class comparison is folded into the P anchor: a candidate's detail
-// can SPLIT into two candidates read side by side. Two builders:
+// Comparison is first class in the console: a candidate's detail can SPLIT into
+// two candidates read side by side. Two builders:
 //
 //   comparePicker(o)  — a "compare with…" affordance: a labelled <select> of
 //     candidates that, on change, sets/clears the `cmp` target on the route

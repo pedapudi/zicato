@@ -6,9 +6,10 @@ patches against goldfive's own prompt + threshold surface; the runner
 mounts a fresh goldfive snapshot per generation; the tournament scores
 the snapshots against an adversarial board.
 
-If `examples/zicato_examples/target_1_presentation/RUN.md` is "drive a
-real ADK presentation agent end-to-end", this is "drive goldfive's own
-steering layer end-to-end".
+The presentation-agent walkthrough
+(`examples/zicato_examples/target_1_presentation/RUN.md`) drives an
+ordinary agent end to end. This one drives goldfive's own steering layer
+end to end.
 
 ## 0. Prerequisites
 
@@ -17,10 +18,10 @@ steering layer end-to-end".
   `make install` (runs `uv sync --all-extras`). This installs the
   `zicato-examples` package so `zicato_examples.*` is importable from
   anywhere — no symlink or `PYTHONPATH` hacks.
-* `goldfive` installed editable from the worktree that ships the
-  optimization manifest + adversarial testkit:
+* `goldfive` installed editable from a checkout that carries the
+  optimization manifest and the adversarial testkit:
   ```
-  pip install -e /home/sunil/git/goldfive-zicato-optimization-surface
+  pip install -e <goldfive checkout>
   ```
 * The mock callables in
   `examples/zicato_examples/target_2_goldfive_steering/mocks.py` are
@@ -56,9 +57,9 @@ mutable tree:
 
 ```
 python -m zicato.cli init --workspace .zicato
-python -m zicato.cli register --workspace .zicato \
+python -m zicato.cli epoch register --workspace .zicato \
     --adk zicato_examples.target_2_goldfive_steering.agent_under_test:agent \
-    --mutable-tree /home/sunil/git/goldfive-zicato-optimization-surface/goldfive
+    --mutable-tree <goldfive checkout>/goldfive
 ```
 
 The `--adk` flag points at the tiny `LlmAgent` shipped in this example
@@ -68,36 +69,35 @@ and **clean** entries use `goldfive.testkit.adversarial:LoopingAgent`
 resolved at runtime by `zicato.synthetic.resolve_adversarial_agent` so
 no separate registration is needed.
 
-> **`--mutable-tree` names the PACKAGE, not the repo (issue #110).** A
-> generation snapshot copies each mutable tree under its basename and the
-> loader only prepends the snapshot root to `sys.path`, which resolves
-> TOP-LEVEL module names — so the tree's basename must be the importable
-> package name. Registering the repo root
-> (`.../goldfive-zicato-optimization-surface`) is refused: nothing can import
-> a hyphenated directory name, so the snapshot's mutated copy could never be
-> shown to be the goldfive that ran. Registering
-> `.../goldfive-zicato-optimization-surface/goldfive` — the package directory
-> — is the supported form.
+> **`--mutable-tree` names the package directory rather than the
+> repository root.** A generation snapshot copies each mutable tree under
+> its basename, and the loader prepends only the snapshot root to
+> `sys.path`, which resolves top-level module names. The tree's basename
+> must therefore be the importable package name. A repository root whose
+> directory name is not importable — a hyphenated name, for instance — is
+> refused, because the snapshot's mutated copy could then never be shown
+> to be the goldfive that ran. The supported form is the `goldfive`
+> package directory inside the checkout.
 >
-> The entrypoint stays OUTSIDE the mutable tree, and that is fine: this is the
-> dependency shape (mutate goldfive; drive it from a harness module that
-> imports it). `register` accepts it and prints a NOTICE saying the trees must
-> be imported by the harness at run time. The verification moves to where
-> that truth exists — `load` asserts every registered tree resolves inside the
-> generation snapshot, and after each unit the worker records which trees were
-> actually imported in `generations/{gen}/harness_load.json`. A tree no unit of
-> a generation ever imported raises a WARNING loop-health finding
-> (`tree_never_imported`), which is the one signal that catches "the mutations
-> were never under test".
+> The entrypoint stays outside the mutable tree, which is the real
+> dependency shape: mutate goldfive, and drive it from a harness module
+> that imports it. `epoch register` accepts it and prints a notice saying
+> the trees must be imported by the harness at run time. Verification
+> happens where that truth exists. `load` asserts that every registered
+> tree resolves inside the generation snapshot, and after each unit the
+> worker records which trees were imported in
+> `generations/{gen}/harness_load.json`. A tree that no unit of a
+> generation ever imported raises a WARNING loop-health finding
+> (`tree_never_imported`) — the signal that catches mutations that were
+> never under test.
 
 ## 2. Enumerate the goldfive optimization surface
 
-The `mutations` command exercises the same enumeration the orchestrator
-will hit, and is the simplest way to confirm the manifest bridge is
-wired:
+`inspect mutations` runs the same enumeration the orchestrator runs, and
+is the simplest way to confirm the manifest bridge is wired:
 
 ```
-python -m zicato.cli mutations --workspace .zicato
+python -m zicato.cli inspect mutations --workspace .zicato
 ```
 
 You should see 31 mutation points — all `kind="span"`, sourced from
@@ -109,12 +109,12 @@ and is invoked from `zicato.mutation.enumerator.enumerate_mutations`.
 
 ## 3. Create the epoch
 
-The board / rubric / scoring files live next to this RUN.md, under
-`examples/zicato_examples/target_2_goldfive_steering/` in a checkout
-(adjust the absolute paths for your machine):
+The board, brief and scoring files live next to this file, under
+`examples/zicato_examples/target_2_goldfive_steering/` in a checkout:
 
 ```
-EX=/home/sunil/git/zicato/examples/zicato_examples/target_2_goldfive_steering
+ZICATO=${ZICATO:?set ZICATO to your zicato checkout}
+EX=$ZICATO/examples/zicato_examples/target_2_goldfive_steering
 python -m zicato.cli epoch new t2_smoke --workspace .zicato \
     --board   $EX/board.jsonl \
     --rubric  $EX/rubric.md \
@@ -126,22 +126,22 @@ The board ships 10 entries:
   RefusingAgent, WanderingAgent, RunawayDelegationAgent). Each
   declares `required_drift_kinds` — the steerer's recall target for
   that adversarial pattern.
-* 2 `synthetic_clean` (CleanAgent x2). The steerer's precision target
-  — these must NOT fire warning/critical drift.
-* 3 `single_turn` (normal correctness entries). The non-interference
-  target — the steerer must not degrade well-behaved workloads.
+* 2 `synthetic_clean` (two CleanAgent runs). The steerer's precision
+  target: these must not fire warning or critical drift.
+* 3 `single_turn` correctness entries. The non-interference target: the
+  steerer must not degrade a well-behaved workload.
 
-The rubric's preferred-edits section steers the proposer at the
+The proposer brief's preferred-edits section steers the proposer at the
 `refine_system_prompt`, `reasoning_judge_system_prompt`,
 `goal_drift_judge_prompt`, and the reasoning-judge threshold knobs.
 The forbidden-edits section blocks anything under
 `intervention_ladder/*`.
 
-`scoring.json` weighs **pass-rate heavily over drift count**: target
-2's loss is pass/fail correctness against synthetic ground truth, not
-drift volume. A child generation that lowers drift count by silencing
-the steerer will tank pass-rate on the adversarial board and be
-rejected.
+`scoring.json` weighs **pass rate far above drift count**, because the
+loss on this target is pass/fail correctness against synthetic ground
+truth rather than drift volume. A child generation that lowers its drift
+count by silencing the steerer collapses its pass rate on the
+adversarial board and is rejected.
 
 ## 4. Run the evolve loop
 
@@ -170,9 +170,9 @@ What happens, step by step:
    for v2).
 4. **Apply**: `zicato.mutation.applier.apply_patches` copies
    `v0/snapshot/` to `v1/snapshot/` and rewrites the targeted prompt
-   markdown body verbatim. Non-`.py` files take the verbatim path
-   (the historical Python-string-wrapping behaviour would corrupt
-   markdown).
+   markdown body verbatim. A file that is not `.py` takes the verbatim
+   path, because wrapping its content as a Python string would corrupt
+   the markdown.
 5. **Validate**: `zicato.mutation.validator.validate_post_apply`
    re-enumerates, checks the post-apply mutation point still
    resolves, and confirms `.py` files still parse. Non-`.py` files
@@ -184,10 +184,10 @@ What happens, step by step:
    adapter. Both paths drop events.jsonl under
    `epochs/{epoch}/generations/{vN}/runs/{entry_id}/`.
 7. **Gate**: `aggregate_generation_score` rolls per-run loss profiles
-   into a generation-level scalar; `evaluate_gate` compares
+   into a generation-level scalar, and `evaluate_gate` compares
    `child_scalar` against `parent_scalar + promote_margin`. The mock
-   patches don't move the needle, so v1 and v2 both **reject** for
-   "insufficient margin".
+   patches change the score by nothing measurable, so v1 and v2 are both
+   **rejected** for "insufficient margin".
 
 Expected output:
 ```
@@ -200,13 +200,12 @@ Expected output:
 ]
 ```
 
-Rejection is the **expected** outcome for the smoke test — the mocks
-don't write a substantively better prompt. What the smoke test proves
-is that the wiring works end-to-end: the manifest bridge produces
-real mutation ids, the proposer's patches address those ids, the
-applier rewrites the markdown bodies in the snapshot, the validator
-accepts the snapshot, and the tournament scores both generations
-without crashing.
+Rejection is the **expected** outcome here, because the mocks do not
+write a substantively better prompt. What the run proves is that the
+wiring works end to end: the manifest bridge produces real mutation ids,
+the proposer's patches address those ids, the applier rewrites the
+markdown bodies in the snapshot, the validator accepts the snapshot, and
+the tournament scores both generations without crashing.
 
 ## 5. Verify artifacts
 
@@ -250,67 +249,59 @@ python -m zicato.cli epoch close --workspace .zicato
 
 This writes:
 
-* `.zicato/epochs/{epoch}/analysis.md` — markdown narrative of the
-  epoch. Without an `aux_call_llm` argument the close-step writes a
-  short stub; the smoke test's mock aux_llm produces a placeholder
-  but the stub path is what the operator usually sees.
+* `.zicato/epochs/{epoch}/analysis.md` — a markdown narrative of the
+  epoch. Without an `aux_call_llm` argument the close step writes a
+  short stub, which is what an operator usually sees; this walkthrough's
+  mock produces a placeholder instead.
 * `.zicato/epochs/{epoch}/analysis.html` — self-contained HTML report
   with a lineage SVG (v0 -> v1 -> v2 boxes connected by colored
   edges), a score-trajectory chart, and per-experiment cards.
 
-## 7. What a real (non-mock) round would look like
+## 7. Running against real models
 
-The mocks here cover the wiring contract. A real round swaps two
-things:
+The mocks cover the wiring contract. Running against real models means
+replacing two callables.
 
-1. **harness_llm**: instead of canned JSON, pipe goldfive's planner /
-   goal-deriver / reasoning-judge calls to a real LLM. Goldfive's
-   planner produces a 5-20 task DAG instead of a single-task plan;
-   the reasoning judge fires `OFF_TOPIC` and `JUSTIFIED_DEVIATION`
-   verdicts based on actual reasoning content; the embedding-based
-   `OFF_TOPIC` / `LOOPING_REASONING` detectors land on the
-   WanderingAgent and LoopingAgent runs, which require an embedding
-   model the smoke test's mocks don't supply.
-2. **aux_llm**: instead of round-rotating between two canned patches,
-   the proposer reads the parent generation's pattern detector output
-   (e.g. "hot drift kind: hallucination_suspected") and proposes a
-   substantive rewrite of the relevant prompt or threshold. With a
-   real proposer driving:
-
-   * `pass_rate_delta` becomes the gate.
-     `scoring.json` already has `pass_rate_monotonicity: true`, so a
-     real proposer that lowers adversarial recall to suppress drift
-     loses on the gate even if `drift_loss_delta` improves.
-   * Patches that touch a `numeric` mutation (e.g.
-     `reasoning_judge_threshold_warning`) hit a current applier
-     limitation: the `set_numeric` op resolves the constant via a
-     `# zicato:mutable` marker comment, which the manifest bridge
-     does not synthesize. The forward path is to teach the applier
-     to resolve the constant via the manifest's `python_attr` field
-     instead. For now the smoke proposer sticks to `replace` ops
-     against prompt bodies.
+1. **harness_llm**: route goldfive's planner, goal-deriver, and
+   reasoning-judge calls to a real model instead of returning canned
+   JSON. Goldfive's planner then produces a task graph of five to twenty
+   tasks rather than a single-task plan, and the reasoning judge issues
+   `OFF_TOPIC` and `JUSTIFIED_DEVIATION` verdicts from the actual
+   reasoning content. The embedding-based `OFF_TOPIC` and
+   `LOOPING_REASONING` detectors need an embedding model, which the
+   mocks do not supply; with one, they land on the WanderingAgent and
+   LoopingAgent runs.
+2. **aux_llm**: instead of rotating between two canned patches, the
+   proposer reads the parent generation's pattern-detector output — for
+   example "hot drift kind: hallucination_suspected" — and proposes a
+   substantive rewrite of the relevant prompt or threshold. With a real
+   proposer driving, `pass_rate_delta` decides the round: `scoring.json`
+   sets `pass_rate_monotonicity: true`, so a proposer that lowers
+   adversarial recall to suppress drift loses at the gate however much
+   `drift_loss_delta` improves.
 
 ## 8. Known limitations
 
-* **Numeric mutations are enumerable but not patchable end-to-end**.
-  The applier's `set_numeric` path looks for a marker comment near
-  the constant; without manifest-bridge marker synthesis the lookup
-  fails. The fix is to extend the applier to honour
-  `MutationPoint.metadata["python_attr"]` and walk the AST for the
-  named module-level attribute. Tracked separately.
-* **Mixed event JSONL shapes**. Goldfive's persistence sink emits some
-  events as proto-JSON (camelCase, ISO-string timestamps) and others
-  as a snake_case + nested timestamp object. The reducer falls back
-  to plain `json.loads` per-line when the strict proto parser
-  refuses the file. The fix lives upstream in goldfive.
-* **Adversarial detectors are partially exercised**. Goldfive's
-  embedding-based detectors (OFF_TOPIC, LOOPING_REASONING) need a
-  real embedding model; the smoke test's mock harness_llm does not
-  supply one. The RefusingAgent and HallucinatingAgent agents trip
-  goldfive's lighter-weight rule-based detectors and DO fire drift
-  events; the LoopingAgent / WanderingAgent / RunawayDelegationAgent
-  produce reasoning + tool-call patterns that a real run would catch
-  but the smoke run does not.
+* **A numeric mutation can be enumerated but not patched end to end.**
+  The applier's `set_numeric` path looks for a `# zicato:mutable` marker
+  comment near the constant, and the manifest bridge synthesizes no such
+  marker, so the lookup fails. Closing this means teaching the applier to
+  honour `MutationPoint.metadata["python_attr"]` and to walk the AST for
+  the named module-level attribute. Until then the mock proposer uses
+  `replace` operations against prompt bodies only.
+* **The event log carries two shapes.** Goldfive's persistence sink
+  emits some events as proto-JSON (camelCase keys, ISO-string
+  timestamps) and others as snake_case with a nested timestamp object.
+  The reducer falls back to a plain per-line `json.loads` when the strict
+  proto parser refuses the file. The single-shape fix belongs in
+  goldfive.
+* **The adversarial detectors are only partly exercised.** Goldfive's
+  embedding-based detectors (OFF_TOPIC, LOOPING_REASONING) need a real
+  embedding model, which the mock `harness_llm` does not supply. The
+  RefusingAgent and HallucinatingAgent runs trip goldfive's rule-based
+  detectors and do fire drift events. The LoopingAgent, WanderingAgent
+  and RunawayDelegationAgent produce reasoning and tool-call patterns
+  that a run with real models would catch and this one does not.
 
-These limitations are documented as the forward path; they do not
-block the v0+1 smoke run from producing meaningful artifacts.
+None of these limitations stops the walkthrough from producing
+meaningful artifacts.

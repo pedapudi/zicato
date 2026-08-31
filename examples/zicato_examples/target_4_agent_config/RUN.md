@@ -13,7 +13,7 @@ This installs `zicato` and `zicato-examples` editable, so
 `zicato_examples.target_4_agent_config.*` resolves from anywhere —
 including inside the spawned tournament worker subprocesses.
 
-## The CI-runnable form
+## The form that runs in continuous integration
 
 [`tests/test_example_target_4_agent_config.py`](../../../tests/test_example_target_4_agent_config.py)
 is the executable version of everything below: it enumerates the
@@ -28,12 +28,13 @@ uv run pytest tests/test_example_target_4_agent_config.py
 
 ## 1. Drive one board entry, no model anywhere
 
-`stub_agent.py` is a stand-in binary: same argv, same rpc protocol,
-same `PI_CODING_AGENT_DIR`, scripted instead of decided. Point the
-driver at it and run an entry by hand.
+`stub_agent.py` is a stand-in binary. It takes the same argv, speaks the
+same remote-procedure protocol, and reads the same
+`PI_CODING_AGENT_DIR`; its responses are scripted rather than decided.
+Point the driver at it and run an entry by hand.
 
 ```bash
-cd /home/sunil/git/zicato
+cd <your zicato checkout>
 
 uv run python - <<'PYEOF'
 import asyncio, json, os, sys
@@ -67,18 +68,20 @@ of `NOTES.md` after the sentinel.
 
 ## 2. Wire a workspace and audit the surface
 
-`zicato epoch register`'s `--adk` flag covers only the ADK adapter kind, so
-the generic `import`-kind block is written into `config.json` directly —
-the same shape the adapter factory and the subprocess worker both
-reconstruct. This is the target-0 pattern.
+`zicato epoch register`'s `--adk` flag covers only the agent-kit adapter
+kind, so the generic `import`-kind block is written into `config.json`
+directly — the same shape the adapter factory and the subprocess worker
+both reconstruct. The convergence example uses the same pattern.
 
 ```bash
 rm -rf /tmp/zicato-smoke-t4
 mkdir -p /tmp/zicato-smoke-t4
 cd /tmp/zicato-smoke-t4
 
-EX=/home/sunil/git/zicato/examples/zicato_examples/target_4_agent_config
-PY=/home/sunil/git/zicato/.venv/bin/python
+# ZICATO is your zicato checkout; the two paths below derive from it.
+ZICATO=${ZICATO:?set ZICATO to your zicato checkout}
+EX=$ZICATO/examples/zicato_examples/target_4_agent_config
+PY=$ZICATO/.venv/bin/python
 
 # 1. Bootstrap the workspace.
 $PY -m zicato.cli init --workspace .zicato
@@ -110,7 +113,7 @@ cp $EX/brief.md     ./brief.md
 # 4. Audit the surface the proposer will see: four ids, three `code`
 #    regions and one `file`. settings.json is absent — strict JSON hosts
 #    no marker.
-$PY -m zicato.cli mutations --workspace .zicato
+$PY -m zicato.cli inspect mutations --workspace .zicato
 ```
 
 Expected:
@@ -127,10 +130,9 @@ Total: 4 mutation point(s)  [code=3, file=1]  ~29 mutable line(s)
 
 ## 3. A live round — operator-initiated only
 
-Everything above is hermetic. A real round is not, and it is **not**
-something an agent starts on its own: `zicato evolve` against this
-target spawns a real coding agent per board entry, per generation, per
-replicate.
+Everything above is hermetic. A live round is not, and no agent starts
+one on its own: `zicato evolve` against this target spawns a real coding
+agent for every board entry, in every generation, at every replicate.
 
 Before a live round is worth running:
 
@@ -138,24 +140,25 @@ Before a live round is worth running:
    default, and the same binary the proposer resolves:
 
    ```bash
-   export ZICATO_TARGET_4_AGENT_BIN=/home/sunil/git/zicato/integrations/pi/node_modules/.bin/pi
+   export ZICATO_TARGET_4_AGENT_BIN=$ZICATO/integrations/pi/node_modules/.bin/pi
    ```
 
    `npm install` in `integrations/pi/` materializes that path at the
-   version `integrations/pi/package.json` pins, so target and proposer
-   run the same pinned binary without sharing a knob. Bare `pi` on
-   `PATH` is the explicitly degraded alternative: it works, but nothing
+   version `integrations/pi/package.json` pins, so the target and the
+   proposer run the same pinned binary without sharing a knob. A bare
+   `pi` on `PATH` is the degraded alternative: it works, but nothing
    pins what it resolves to.
-2. Record the version. On the pinned route it is already fixed by
-   `integrations/pi/package.json`; on the degraded `PATH` route, run
-   `pi --version` and record it by hand. Either way a version bump is
-   an **epoch boundary** — rebase the baseline, do not compare across
-   it.
-3. **Measure the A/A floor.** Run the board champion-versus-itself and
-   look at the spread of the scalar. Until that number exists,
-   `promote_margin` in `scoring.json` is the framework default, not a
-   calibrated threshold, and a "promotion" is indistinguishable from
-   noise. Size `tournament.params.replicates` from the same data.
+2. Record the version. On the pinned route
+   `integrations/pi/package.json` already fixes it; on the `PATH` route,
+   run `pi --version` and record the result by hand. Either way a
+   version change is an **epoch boundary**: rebase the baseline rather
+   than comparing across it.
+3. **Measure the same-versus-same floor.** Run the board with the
+   champion against itself and look at the spread of the scalar. Until
+   that number exists, `promote_margin` in `scoring.json` is the
+   framework default rather than a calibrated threshold, and a
+   "promotion" is indistinguishable from noise. Size
+   `tournament.params.replicates` from the same data.
 4. Only then run the loop, with the dashboard up:
 
 ```bash
@@ -167,12 +170,14 @@ $PY -m zicato.cli evolve --workspace .zicato --rounds 1 --mode full
 
 ## Known limitations
 
-- **`extensions/*.ts` are not surface.** The marker grammar has no `//`
-  comment leader; that is issue #168, one syntax-table entry. Until it
-  lands this target evolves markdown only.
-- **`settings.json` is immutable, permanently.** Not a gap — strict JSON
-  cannot host a marker without ceasing to be JSON.
-- **The rpc protocol is zicato's shape, not a published one.** A binary
-  that speaks a different wire needs a shim in `driver.py`.
-- **Cost and noise are the real constraint**, not mechanism. Each entry
-  is a full agentic run. See README.md, "Before you believe a number".
+- **TypeScript files are not part of the surface.** The marker grammar
+  has no `//` comment leader, which is one row in the mutation syntax
+  table. This target evolves markdown only.
+- **`settings.json` is permanently immutable.** Strict JSON cannot hold
+  a marker without ceasing to be JSON.
+- **The remote-procedure protocol is zicato's own shape rather than a
+  published standard.** A binary that speaks a different wire needs a
+  shim in `driver.py`.
+- **Cost and noise are the binding constraint here, not mechanism.**
+  Each entry is a full agentic run. See README.md, "Establishing the
+  noise floor".

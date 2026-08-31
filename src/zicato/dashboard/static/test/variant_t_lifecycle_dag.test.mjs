@@ -1,10 +1,9 @@
-// test/variant_t_lifecycle_dag.test.mjs — Variant T ("Console IV") unit tests:
-// walkthrough bug fixes (mutation-surface click semantics), the lifecycle
-// DAG (board column, normalized layout, expandable runs, per-board loss),
-// the survival funnel, hovercard, rail sizing, and the up button.
+// test/variant_t_lifecycle_dag.test.mjs — console unit tests covering
+// mutation-surface click semantics, the lifecycle DAG (board column,
+// normalized layout, expandable runs, per-board loss), the survival funnel,
+// the hovercard, rail sizing, and the up button.
 //
-// Split mechanically from the former variant_t.test.mjs (assertions
-// verbatim); shared fixtures + helpers live in ./fixtures.mjs.
+// Shared fixtures and helpers live in ./fixtures.mjs.
 
 import { installDom, test, run, assert, assertEqual, assertDeep, makeEvent } from './harness.mjs';
 
@@ -19,15 +18,15 @@ const {
 } = await import('./fixtures.mjs');
 
 // ====================================================================
-// WALKTHROUGH bug fixes:
-//   BUG 1 — mutation-surface click semantics. A CELL (site × generation)
-//     opens ONLY that one generation's side-by-side diff for the site; the
-//     SITE row label opens ALL generations that patched the site, stacked.
-//   BUG 2 — the tree reliably lists an existing epoch on EVERY route; the
-//     "No epochs" empty state shows only when there are genuinely zero.
+// Two behaviours the mutation surface and the tree must hold:
+//   * mutation-surface click semantics. A CELL (site × generation) opens
+//     ONLY that one generation's side-by-side diff for the site; the SITE
+//     row label opens ALL generations that patched the site, stacked.
+//   * the tree lists an existing epoch on EVERY route; the "No epochs"
+//     empty state shows only when the workspace holds zero epochs.
 // ====================================================================
 
-// ---- BUG 1 (a): the router carries the per-cell generation -----------
+// ---- the router carries the per-cell generation ----------------------
 
 test('mutations route: a CELL pins mutId + gen; the SITE pins mutId only (round-trips)', () => {
   // a bare mutId → the SITE (all generations) selection.
@@ -54,7 +53,7 @@ test('mutations route: a CELL pins mutId + gen; the SITE pins mutId only (round-
   assert(!upSite.params.mutId, 'the mutation-surface root drops the mutId');
 });
 
-// ---- BUG 1 (a): clicking a CELL renders exactly ONE generation's diff ----
+// ---- clicking a CELL renders exactly ONE generation's diff -----------
 
 test('mutation surface: clicking a CELL renders exactly ONE generation’s side-by-side diff for that site (not all)', async () => {
   freshState(); installFetch();
@@ -79,7 +78,7 @@ test('mutation surface: clicking a CELL renders exactly ONE generation’s side-
   const cells = host.querySelectorAll('[class]').filter((n) => (n.getAttribute('class') || '').includes('dn-mtx-cell') && n.getAttribute('data-gen'));
   assert(cells.length >= 1, 'matrix cells carry data-gen + data-site (the cell’s generation + site identity)');
   assert(cells.every((c) => c.getAttribute('data-site')), 'every cell carries its data-site');
-  // the cell link targets the mutId+gen route (one generation), not the bare site.
+  // the cell link targets the mutId+gen route (one generation) rather than the site.
   const cellLink = allByClass(host, 'dn-mtx-celllink')[0];
   assert(cellLink && (cellLink.getAttribute('href') || '').endsWith('/mutations/coordinator_prompt/v1')
     || (cellLink.getAttribute('href') || '').includes('/mutations/'), 'a cell link routes to mutId/gen');
@@ -127,7 +126,7 @@ test('mutation surface: a no-op re-render does NOT clear-and-rebuild the DOM (re
   assertEqual(host.innerHTMLWriteCount(), writes1, 'no innerHTML writes on the no-op repaint');
 });
 
-// ---- BUG 1 (b): clicking the SITE row label renders ALL generations ----
+// ---- clicking the SITE row label renders ALL generations -------------
 
 test('mutation surface: clicking the SITE row label renders ALL generations that patched the site, stacked', async () => {
   freshState(); installFetch();
@@ -155,7 +154,7 @@ test('mutation surface: clicking the SITE row label renders ALL generations that
   assert(/\/mutations\/[^/]+$/.test(siteHref), 'the site link routes to the BARE mutId (all generations) — no trailing gen');
 });
 
-// ---- BUG 2: the tree lists an existing epoch on every route ----------
+// ---- the tree lists an existing epoch on every route -----------------
 
 test('tree (BUG 2): /api/lineage generations across an epoch make the tree LIST that epoch — never "No epochs"', async () => {
   freshState();
@@ -170,7 +169,7 @@ test('tree (BUG 2): /api/lineage generations across an epoch make the tree LIST 
       { generation_id: 'v1', epoch_id: PUB_EPOCH, parent_generation_id: 'v0', promoted: false },
     ] },
     '/api/tournaments': { epoch_id: PUB_EPOCH, champion_lineage: ['v0'], matchups: [] },
-    // NB: /api/epoch is deliberately absent → 404 (the publication-route case).
+    // /api/epoch is absent here → 404, which is the publication-route case.
   };
   globalThis.fetch = async (path) => {
     const v = lookupFixture(F, path);
@@ -269,7 +268,7 @@ test('lifecycle BOARD column: a RACING candidate dedupes to ONE node per distinc
   assert(childByClass(byKey['waffles_single'], 'ezn-board-mult'), 'waffles (raced ×2) carries a multiplicity badge');
   assert(!childByClass(byKey['picky_stakeholder_emulated'], 'ezn-board-mult'), 'a once-run entry carries NO multiplicity badge');
 
-  // representative loss = the LAST (racing-final / full-board) run, NOT rung0.
+  // representative loss = the LAST (racing-final / full-board) run, never rung0.
   const q3loss = childByClass(byKey['q3_metrics_outline'], 'ezn-board-loss');
   assertEqual(q3loss.textContent, svg.fmt(80.0, 0), 'the node shows the representative (final full-board) loss, not the rung0 loss');
 
@@ -396,12 +395,12 @@ test('lifecycle DAG (normalized): the structural spine is centred on the board f
       `${label}: the spine y-centre (${spineY}) equals the board fan's centre (${fanCenter}) — spine aligned with the fan`);
 
     // NO large empty top band: the first board row sits a small fixed distance
-    // below the column heads (one half-pitch + the header pad), NOT pushed to
-    // some arbitrary proportion of an inflated height.
+    // below the column heads (one half-pitch + the header pad), rather than at
+    // some proportion of an inflated height.
     const h = +svgNode.getAttribute('height');
     assert(cys[0] < h * 0.5, `${label}: the first board row (${cys[0]}) is in the UPPER half — no big top gap (h=${h})`);
     // and the figure's height closely fits the fan (top pad + fan + bottom pad),
-    // so it is NOT inflated well beyond the fan span (the old stretch symptom).
+    // so it is never inflated well beyond the fan span.
     const fanSpan = cys[cys.length - 1] - cys[0];
     assert(h - fanSpan < 120, `${label}: height (${h}) fits the fan span (${fanSpan}) closely — figure not inflated`);
   }
@@ -448,7 +447,7 @@ test('survival funnel: the SVG narrows N→…→1, marks cuts ✕ / survivors �
   assert((node.getAttribute('viewBox') || '').startsWith('0 0 '), 'carries a responsive viewBox (no pan/zoom)');
 
   // the DOT LADDER: a dot per competitor alive entering each rung (rung0 4 +
-  // rung1 2), replacing the old per-rung band polygon.
+  // rung1 2). No per-rung band polygon is drawn.
   const dots = node.querySelectorAll('[class]').filter((n) => n.localName === 'circle' && (n.getAttribute('class') || '').split(/\s+/).includes('dn-funnel-dot'));
   assert(dots.length >= 6, `a dot per competitor entering each rung (rung0 4 + rung1 2) — got ${dots.length}`);
   const txt = node.textContent;
@@ -465,11 +464,10 @@ test('survival funnel: the SVG narrows N→…→1, marks cuts ✕ / survivors �
   assert(!txt.includes('tbd'), 'a settled gate is not the empty tbd skeleton');
 });
 
-// The DOT-LADDER redesign: the WINNER lane is emphasised end-to-end
-// (dn-funnel-win) and its spline reaches the champion-gate; each cut drops a ✕
-// at its rung dot and grows no forward spline; the ladder draws NO band polygons.
-// (Replaces the old band-lower-edge dead-end-branch geometry pin — the bands are
-// gone; the survival signal is now the continuing/converging spline.)
+// The DOT LADDER: the WINNER lane is emphasised end-to-end (dn-funnel-win)
+// and its spline reaches the champion-gate; each cut drops a ✕ at its rung dot
+// and grows no forward spline; the ladder draws NO band polygons. The survival
+// signal is the continuing, converging spline.
 test('survival funnel: the WINNER lane is emphasised end-to-end + reaches the gate; cuts drop a ✕ and grow no forward spline; NO band polygons', () => {
   const rungs = [
     { label: 'Rung 0', competitors: ['v1', 'v2', 'v3', 'v4'], survivors: ['v3', 'v4'], cut: ['v1', 'v2'], board_fraction: 0.25, deltas: { v1: 25, v2: 3.3, v3: -0.16, v4: 0.002 } },
@@ -507,7 +505,7 @@ test('survival funnel: the WINNER lane is emphasised end-to-end + reaches the ga
   assertEqual(bands.length, 0, 'the dot ladder draws NO band polygons');
 
   // the dots converge toward the vertical centre: the entering rung spreads its
-  // dots off midY (a real spread, not a stack).
+  // dots off midY rather than stacking them.
   const dots = node.querySelectorAll('[class]').filter((n) => n.localName === 'circle' && (n.getAttribute('class') || '').split(/\s+/).includes('dn-funnel-dot'));
   const spread = Math.max(...dots.map((c) => Math.abs(parseFloat(c.getAttribute('cy')) - midY)));
   assert(spread > 6, `the entering rung spreads its dots vertically off the centre line (max |Δy|=${spread.toFixed(1)})`);
@@ -685,17 +683,18 @@ test('swiss ladder + elim flow: token-themed in the scoped stylesheet, no hardco
   // NO hardcoded hex in the swiss/elim rules (token-only).
   const slice = css.slice(css.indexOf('.dn-swissladder-head'), css.indexOf('.dn-elimflow-lane:focus-visible') + 80);
   assert(!/#[0-9a-fA-F]{3,6}\b/.test(slice), 'the swiss/elim mark rules carry NO hardcoded hex (theme-token only)');
-  // reduced-motion gate covers the new live transitions.
+  // the reduced-motion gate covers the live transitions.
   const rm = css.slice(css.indexOf('@media (prefers-reduced-motion: reduce)'));
   assert(/\.dn-swissladder/.test(rm) && /\.dn-elimflow/.test(rm), 'the swiss/elim live transitions are suppressed under reduced motion');
 });
 
 // ====================================================================
-// LIFECYCLE relates board runs to rungs/matchups (Change 1):
+// LIFECYCLE relates board runs to rungs/matchups:
 //   * a deduped board node is EXPANDABLE — it reveals its N per-run losses
-//     (an inline stack + a sparkline), no longer lossy on the values;
+//     as an inline stack plus a sparkline, so no value is dropped;
 //   * when the per-entry records carry `match_id`/`rung`, each run is LABELLED
-//     by its rung/matchup; when ABSENT (legacy), no rung labels are fabricated;
+//     by its rung/matchup; when those fields are absent, no rung labels are
+//     fabricated;
 //   * a CANDIDATE RUNG-PROGRESSION strip (rung0→rung1→final, each Δ + won/cut)
 //     relates the candidate to the rounds even without per-run tags;
 //   * a gauntlet candidate (one run per entry) renders unchanged.
@@ -727,7 +726,7 @@ test('lifecycle BOARD node: a re-raced entry is EXPANDABLE and reveals each run�
   assert(stack, 'the expandable node carries a per-run expansion panel');
   const rows = runRowsOf(q3);
   assertEqual(rows.length, 3, 'the panel reveals ONE row per run (3 runs)');
-  // every per-run loss value is shown (4.0 / 64.0 / 63.5) — no longer lossy.
+  // every per-run loss value is shown (4.0 / 64.0 / 63.5); none is dropped.
   const losses = rows.map((r) => r.querySelectorAll('[class]').filter((n) => (n.getAttribute('class') || '').includes('ezn-board-run-loss'))[0].textContent);
   assertDeep(losses, [svg.fmt(4.0, 1), svg.fmt(64.0, 1), svg.fmt(63.5, 1)], 'each run’s loss is revealed in order (rung0→final)');
   // a sparkline of the per-run losses renders too.
@@ -756,7 +755,7 @@ test('lifecycle BOARD node: per-run rows are LABELLED by rung when records carry
 });
 
 test('lifecycle BOARD node: with NO rung tags (legacy data) the per-run losses still show but NO rung labels are fabricated', () => {
-  // the current e0 legacy shape: repeated entries, NO match_id/rung fields.
+  // the untagged shape: repeated entries carrying NO match_id/rung fields.
   const entries = [
     { entry_id: 'q3_metrics_outline', run_id: 'r0', drift_loss: 4.0, pass_fail: true },
     { entry_id: 'q3_metrics_outline', run_id: 'r1', drift_loss: 64.0, pass_fail: false },
@@ -841,7 +840,7 @@ test('lifecycle Σ node: exposes candidate-Σ vs champion-Σ and the Δ between 
   assertEqual(agg.getAttribute('data-champ-sigma'), svg.fmt(166.0, 1), 'the Σ node exposes the champion Σ over the same slice');
   assertEqual(agg.getAttribute('data-delta-sigma'), svg.fmtSigned(537.0, 1), 'the Σ node exposes the Δ (candidate − champion) the gate acts on');
   assert((agg.getAttribute('class') || '').includes('ezn-cmp-worse'), 'a positive Σ Δ tints the node as worse');
-  // the Σ explanation now lives in the styled hovercard, not a native <title>.
+  // the Σ explanation lives in the styled hovercard rather than a native <title>.
   assert(hovercard.hasHovercard(agg), 'the Σ node is wired with the hovercard');
   assert(!hasNativeTitle(agg), 'the Σ node carries NO native <title>');
   const sigmaTip = hovercardTextOf(agg);
@@ -861,7 +860,7 @@ test('lifecycle GATE node: names the deciding rule + the Δ — a POSITIVE Δ re
   assertEqual(gate.getAttribute('data-deciding-rule'), 'scalar_margin', 'the GATE node names the deciding rule');
   assertEqual(gate.getAttribute('data-delta-scalar'), svg.fmtSigned(75.71, 2), 'the GATE node carries the decisive Δ scalar');
   assertEqual(gate.getAttribute('data-margin'), svg.fmt(-0.01, 2), 'the GATE node carries the promote margin');
-  // the GATE explanation now lives in the styled hovercard, not a native <title>.
+  // the GATE explanation lives in the styled hovercard rather than a native <title>.
   assert(hovercard.hasHovercard(gate), 'the GATE node is wired with the hovercard');
   assert(!hasNativeTitle(gate), 'the GATE node carries NO native <title> tooltip');
   const gateTip = hovercardTextOf(gate);
@@ -875,8 +874,8 @@ test('lifecycle GATE node: names the deciding rule + the Δ — a POSITIVE Δ re
 test('lifecycle GATE node: a MONOTONICITY rejection explains the regressed predicate even when the scalar is BETTER', () => {
   const entries = [{ entry_id: 'b', drift_loss: 10, pass_fail: false }];
   // scalar is BETTER (Δ negative) yet the candidate is rejected because it
-  // regressed a previously-passing predicate (rule 2). This is the "smaller Σ
-  // but rejected" case made legible.
+  // regressed a predicate that had been passing (pass-rate monotonicity). This
+  // is the "smaller Σ but rejected" case made legible.
   const gateExplain = { decision: 'rejected', decidingRule: 'pass_rate_monotonicity', decidingLabel: 'Pass-rate monotonicity',
     deltaScalar: -5.0, margin: null, regressed: 'no_fabricated_numbers', reason: 'regressed a passing predicate' };
   const svgNode = dag.lifecycleDag({ genId: 'v1', parentId: 'v0', entries, decision: 'rejected', height: 360,
@@ -896,19 +895,19 @@ test('lifecycle DAG: de-crowded to ONE concise key line + a "?" info hovercard (
   const entries = [{ entry_id: 'b', drift_loss: 10, pass_fail: false }];
   const svgNode = dag.lifecycleDag({ genId: 'v1', parentId: 'v0', entries, decision: 'rejected', height: 360, championId: 'v0' });
 
-  // exactly ONE always-on key line — short, de-crowded (the old two-block verbose
-  // prose is consolidated into this single line + the "?" hovercard).
+  // exactly ONE always-on key line, short and uncrowded: the detail lives in
+  // this single line plus the "?" hovercard.
   const keys = svgNode.querySelectorAll('[class]').filter((n) => (n.getAttribute('class') || '').includes('ezn-dag-key'));
   assertEqual(keys.length, 1, 'the DAG carries exactly ONE concise key line');
   const t = keys[0].textContent;
   assert(/Δ vs champion/.test(t) && /\+ = worse/.test(t), 'the key line states "Δ vs champion · + = worse"');
   assert(/lower loss better/.test(t) && /hover nodes for detail/.test(t), 'the key line states lower-loss-better + the hover-for-detail cue');
-  // the OLD verbose two-block prose is no longer crowding the figure as a key.
+  // no verbose two-block prose crowds the figure as a key.
   assert(!/Σ = their sum on the slice/.test(t), 'the verbose "Σ = their sum on the slice" prose is no longer in the always-on key');
   assert(!/no pass-rate\/namespace regression/.test(t), 'the verbose pass-rate/namespace prose is no longer in the always-on key');
 
-  // the full how-to walkthrough moved into the focusable "?" info affordance,
-  // surfaced via the hovercard (detail on demand, not always-on prose).
+  // the full how-to walkthrough lives in the focusable "?" info affordance,
+  // surfaced via the hovercard: detail on demand rather than always-on prose.
   const info = svgNode.querySelectorAll('[class]').filter((n) => (n.getAttribute('class') || '').split(/\s+/).includes('ezn-dag-info'))[0];
   assert(info, 'the DAG carries a "?" info affordance');
   assert(hovercard.hasHovercard(info), 'the "?" affordance is wired with the hovercard');
@@ -953,9 +952,9 @@ function lowestNodeBottomOf(svgNode) {
 
 test('lifecycle DAG: the key line clears the node row at a SINGLE board node (no overlap)', () => {
   // the not-yet-run / "no board entries scored" state — a single neutral box.
-  // The fan span is 0 here, the worst case for the old flat KEY_PAD: the key
-  // line used to render right through the node boxes. It must now sit strictly
-  // below the lowest node box's bottom edge, with a readable margin.
+  // The fan span is 0 here, the worst case for a flat key pad, where a key line
+  // can render right through the node boxes. It must sit strictly below the
+  // lowest node box's bottom edge, with a readable margin.
   const svgNode = dag.lifecycleDag({ genId: 'v1', parentId: 'v0', entries: [], decision: 'rejected', championId: 'v0' });
   const ky = keyLineYOf(svgNode);
   assert(ky != null, 'a single-node DAG still carries the key line');
@@ -1294,8 +1293,8 @@ test('rail sizing: the REGRESSION — with a non-100% page scale, the drag track
   shell.applyRail(300, root);
 
   // drag the pointer +120 VIEWPORT px. In layout space that is +120/1.2 = +100,
-  // so the rail must end at 400 — NOT 420 (the old clientX-driven bug would have
-  // over-tracked because --dt-rail is laid out unscaled).
+  // so the rail must end at 400 rather than 420. Tracking raw clientX would
+  // over-track, because --dt-rail is laid out unscaled.
   dragRail(handle, 600, 120);
   assertEqual(+root.getAttribute('data-t-rail'), 400,
     'the rail tracked the pointer in LAYOUT space (Δx/scale = 100), not raw viewport px (the jumpiness fix)');
@@ -1331,7 +1330,7 @@ test('rail sizing: a re-render MID-DRAG does NOT snap the width back to the pers
   shell.applyRail(300, root);
   assertEqual(ui.readRail(), 300, 'the persisted width is 300');
 
-  // start the drag and move +40 → 340 (live, not yet persisted).
+  // start the drag and move +40 → 340 (live, and not yet persisted).
   handle.dispatchEvent({ type: 'pointerdown', pointerId: 1, clientX: 500, preventDefault() {} });
   handle.dispatchEvent({ type: 'pointermove', pointerId: 1, clientX: 540, preventDefault() {} });
   assertEqual(+root.getAttribute('data-t-rail'), 340, 'mid-drag the rail tracks the pointer (340)');
@@ -1369,8 +1368,8 @@ test('rail sizing CSS: the body grid keys on --dt-rail and the handle has a col-
 });
 
 // ====================================================================
-// CHANGE 3 — the upper-left "back" button is relabelled "up" (its
-// function: navigate UP the selection hierarchy, not browser-back).
+// The upper-left button reads "up": it navigates UP the selection
+// hierarchy rather than acting as a browser-back control.
 // ====================================================================
 
 test('up button: the upper-left control reads "up" (not "back"), labels itself "navigate up", and still navigates to the parent route', async () => {

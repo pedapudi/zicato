@@ -6,8 +6,8 @@
 // to the SHARED draft so the form + preview re-render; an SSE `patch` frame
 // applied through the chat path updates the same shared draft; the chat pane
 // resize persists + clamps and the layout reflows without overlap; the
-// graceful-degrade path disables the chat input. Same harness style as
-// the variant_t_*.test.mjs suite.
+// graceful-degrade path disables the chat input. Same harness style as the
+// rest of the console suite.
 
 import { installDom, test, run, assert, assertEqual, makeEvent } from './harness.mjs';
 
@@ -80,10 +80,10 @@ const OP_CALLS = [];
 let SLOTS = [];
 let UNDO_HAS_HISTORY = false;
 
-// The `preflight` op's canned result. Default is the REFUSE case with a
-// pre-#106 report (no probed_points / window keys) so the backward-compatible
-// read stays exercised; a test replaces it to reach the inert / margin-window
-// branches.
+// The `preflight` op's canned result. Default is the REFUSE case with a report
+// that carries no probed_points or window keys, so the read that tolerates
+// their absence stays exercised; a test replaces it to reach the inert and
+// margin-window branches.
 const PREFLIGHT_REFUSE = {
   available: true, verdict: 'refuse', reason: '',
   report: {
@@ -193,7 +193,7 @@ function jsonRes(obj) {
   };
 }
 
-// install the minimal globals the view + chat touch (mirrors variant_t setup).
+// install the minimal globals the view + chat touch (the shared console setup).
 function installEnv() {
   globalThis.HashChangeEvent = function HashChangeEvent() {};
   globalThis.window = globalThis.window || {};
@@ -256,10 +256,11 @@ test('builder view: a structure pick calls /builder/op and applies the returned 
   // the applied diff rolls the epoch — the preview impact pill reflects it.
   const impact = firstClass(host, 'dn-bld-impact');
   assert(impact && impact.textContent.includes('rolls epoch'), 'the contract-impact pill shows the epoch roll');
-  // ── the VISUAL selected-state must follow the new structure (the bug) ──
+  // ── the VISUAL selected state follows the picked structure ─────────────
   // After the set_structure result is applied, the highlighted card must be
   // the picked one — derived from the draft's `tournament.structure`, never
-  // stuck on the first (Gauntlet) card. Assert on the DOM class, not the data.
+  // stuck on the first (Gauntlet) card. The assertion reads the DOM class
+  // rather than the data.
   const onCards = byClass(host, 'dn-bld-card').filter((c) => c.classList.contains('dn-bld-card-on'));
   assertEqual(onCards.length, 1, 'exactly one structure card carries the selected class');
   assert(onCards[0].textContent.toLowerCase().includes('swiss'), 'the SELECTED card is Swiss, not Gauntlet');
@@ -515,8 +516,8 @@ test('chat pane: is a 3-row flex column with the message log flex:1 and the comp
   assert(rows[0].classList.contains('dn-bld-chat-head'), 'row 1 is the header (pinned top)');
   assert(rows[1].classList.contains('dn-bld-chat-log'), 'row 2 is the scrollable message log');
   assert(rows[2].classList.contains('dn-bld-chat-composer'), 'row 3 is the composer, LAST → pinned at the bottom');
-  // the message log is the growable child the CSS gives flex:1 + overflow-y:auto
-  // (so long conversations scroll INSIDE the pane, not the page).
+  // the message log is the growable child the CSS gives flex:1 + overflow-y:auto,
+  // so a long conversation scrolls INSIDE the pane rather than moving the page.
   assertEqual(chat._log, rows[1], 'the streamed message log is the flex:1 middle row');
   // the composer holds the input + send (the bottom-pinned 3rd row).
   assert(rows[2].children.some((n) => n.classList.contains('dn-bld-chat-input')), 'the composer carries the input');
@@ -532,7 +533,7 @@ test('chat pane: the chat-disabled (degrade) state keeps the full-height frame �
   const rows = body.children;
   assertEqual(rows.length, 3, 'the disabled pane keeps the 3-row frame');
   assert(rows[2].classList.contains('dn-bld-chat-composer'), 'the composer is still the LAST row (bottom-pinned)');
-  // the degrade notice rides inside the (flex:1) log, not in place of the frame.
+  // the degrade notice rides inside the (flex:1) log rather than replacing the frame.
   const log = rows[1];
   assert(log.classList.contains('dn-bld-chat-log'), 'the middle row is still the flex:1 log');
   assert(log.children.some((n) => n.classList.contains('dn-bld-chat-degrade')), 'the degrade notice sits inside the growable log');
@@ -645,7 +646,8 @@ test('builder CSS: the chat log is the flex:1 scrollable middle row + the compos
 //
 // The JS estimateCost is the exact twin of operations.py's estimate_cost. The
 // under-reporting bug class: when `replicates` is UNSET the meter must default
-// to the STRUCTURE's own default (swiss / elim default to 2), not a flat 1, so
+// to the STRUCTURE's own default (swiss / elim default to 2) rather than to a
+// flat 1, so
 // the dashboard preview matches the Python estimator. These mirror the Python
 // cost tests (test_cost_swiss_unset_replicates_uses_strategy_default_two, the
 // explicit-override test, and the per-structure-default pin) number-for-number.
@@ -667,7 +669,7 @@ test('estimateCost: an explicit replicates is honored verbatim over the structur
   assertEqual(est3.board_runs_per_round, 192, 'explicit replicates=3 → 192 (4 × 2 × 3 × 8)');
 });
 
-// ── full knob coverage: the new sections drive the new ops ────────────
+// ── full knob coverage: every rail section drives its ops ──────────────
 
 // helper: mount the view and switch to the rail section whose label matches.
 async function mountAt(label) {
@@ -1100,8 +1102,8 @@ test('builder view: the Review pane runs the preflight op and renders the verdic
   // the REFUSE-severity validate warning surfaces in the Review pane itself.
   const refuse = byClass(host, 'dn-bld-warn-refuse')[0];
   assert(refuse && refuse.textContent.includes('noise floor'), 'the margin-vs-floor refuse warning renders beside apply');
-  // A pre-#106 report carries no probed_points; the count must read as the one
-  // probe it took, in the singular.
+  // A report with no probed_points must read as the one probe it took, in the
+  // singular.
   assert(reasons.textContent.includes('best of 1 probed point:'), 'a report with no probed_points reads as one probe, singular');
   assertEqual(byClass(host, 'dn-bld-pf-chip').length, 1, 'no window chip when the report carries no window failure');
 });

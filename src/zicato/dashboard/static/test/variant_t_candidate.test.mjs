@@ -1,10 +1,8 @@
-// test/variant_t_candidate.test.mjs — Variant T ("Console IV") unit tests:
-// the round-6 anchor wave: router/tree navigation, the candidate dossier
-// (promote gate, provenance, radar), side-by-side compare + diff, the board
-// transcript, live transcript, pickers + wordmark, and the under-render fix.
-//
-// Split mechanically from the former variant_t.test.mjs (assertions
-// verbatim); shared fixtures + helpers live in ./fixtures.mjs.
+// test/variant_t_candidate.test.mjs — console unit tests for the candidate
+// surfaces: router and tree navigation, the candidate dossier (promote gate,
+// provenance, radar), side-by-side compare and diff, the board transcript, the
+// live transcript, the pickers and wordmark, and the render-once discipline.
+// Shared fixtures and helpers live in ./fixtures.mjs.
 
 import { installDom, test, run, assert, assertEqual, assertDeep, makeEvent } from './harness.mjs';
 
@@ -26,7 +24,7 @@ test('router: hierarchical views parse with the epoch + the compare target', () 
   assert(!router.href('epoch', { epochId: EPOCH_ID }).includes('/T'), 'an epoch href carries no `/T` prefix');
   assertEqual(router.href('home', {}), '#/', 'home is the bare `#/` route');
   assertEqual(router.href('epoch', { epochId: EPOCH_ID }), `#/e/${EPOCH_ID}`, 'epoch href round-trips under the bare prefix');
-  // an old `#/T/...` link no longer resolves to an app view (the prefix is gone).
+  // routes carry no `#/T/` prefix, so such a link falls back to home.
   assertEqual(router.parseRoute(`#/T/e/${EPOCH_ID}`).view, 'home', 'a legacy `#/T/` link falls back to home');
   assertEqual(router.parseRoute('').view, 'home');
   assertEqual(router.parseRoute('#/').view, 'home');
@@ -177,7 +175,7 @@ test('#19 candidate gate: a FAIL-OPEN plugin is flagged prominently (banner + ca
 test('#19 candidate gate: a pre-#19 / built-in round renders NO decomposition (back-compat clean)', async () => {
   freshState();
   const F = { ...FIXTURE };
-  // A pre-#19 gate payload: no scalar_decomposition key at all.
+  // A gate payload carrying no scalar_decomposition key at all.
   const { scalar_decomposition: _drop, ...noProv } = FIXTURE[`/api/round/${EPOCH_ID}/v0/v1/gate`];
   F[`/api/round/${EPOCH_ID}/v0/v1/gate`] = noProv;
   installFixtureMap(F);
@@ -233,7 +231,7 @@ test('candidate view: the radar silhouette names its axes (scalar / pass-rate / 
   await candidate.render(host, { navigate() {}, href: router.href }, { epochId: EPOCH_ID, gen: 'v1' });
   const radar = svgsByClass(host, 'dn-radar')[0];
   assert(radar, 'the radar silhouette SVG rendered');
-  // the axis-label texts (dn-radar-axislab) — the meaningful names, not ticks.
+  // the axis-label texts (dn-radar-axislab) — the axis names rather than ticks.
   const labelEls = allByClass(radar, 'dn-radar-axislab');
   const labels = labelEls.map((n) => (n.textContent || '').trim()).filter(Boolean);
   assert(labels.length >= 3, 'the radar paints text axis labels (≥3 named axes), not bare index ticks');
@@ -251,11 +249,11 @@ test('candidate view: the radar silhouette names its axes (scalar / pass-rate / 
     'no numeric index-tick fallback while the axes are within the labeled range');
 });
 
-// ---- the dossier is REORGANISED per the study (coordinated, not sprawling) ----
-// The study folds the per-board read + gate ladder + labeled radar into ONE
-// coordinated grid beneath the full-width lifecycle spine. Assert the sections
-// are present AND arranged: a 2-column dossier grid (per-board + gate LEFT,
-// silhouette RIGHT), with the lifecycle spine above and generalization below.
+// ---- the dossier reads as one coordinated layout ----
+// The per-board read, the gate ladder and the labelled radar sit in ONE grid
+// beneath the full-width lifecycle spine. Assert the sections are present AND
+// arranged: a 2-column dossier grid (per-board + gate LEFT, silhouette RIGHT),
+// with the lifecycle spine above and generalization below.
 test('candidate view: the dossier reads as one organized layout — coordinated grid (per-board + gate | radar), spine above, generalization below', async () => {
   freshState(); installFetch();
   const candidate = await import('../js/views/candidate.js');
@@ -328,7 +326,7 @@ test('candidate view (RACING): an in-flight candidate ghosts a PROJECTED radar +
     assert(radar, 'a projected radar silhouette renders for the in-flight candidate (not omitted)');
     const ghosted = allByClass(radar, 'dn-radar-cand').some((n) => (n.getAttribute('class') || '').split(/\s+/).includes('dn-proj'));
     assert(ghosted, 'the candidate polygon is GHOSTED (dn-proj) — clearly marked projected');
-    // it still names its axes (labels, not indices).
+    // it still names its axes with labels rather than indices.
     const labels = allByClass(radar, 'dn-radar-axislab').map((n) => (n.textContent || '').trim()).filter(Boolean);
     assert(labels.includes('scalar'), 'the projected radar still labels its scalar axis');
     // the racing affordance surfaces so the dossier is not bare.
@@ -415,7 +413,8 @@ test('candidate view: "compare with…" SPLITS the detail into TWO candidates si
 // the compare panes are EQUAL-WIDTH columns, so BOTH lifecycle DAGs must use the
 // SAME (narrow) viewBox width — otherwise the fit-to-width B pane scales down vs
 // A and renders smaller with an empty top band. The DAG width is keyed on the
-// SPLIT-LAYOUT flag (true for both A and B), not the per-side cmpId (null on B).
+// SPLIT-LAYOUT flag (true for both A and B) rather than the per-side cmpId
+// (null on B).
 function dagViewBoxWidths(host) {
   return allByClass(host, 'ezn-dag').map((svg) => {
     const vb = (svg.getAttribute('viewBox') || '').split(/\s+/);
@@ -963,7 +962,7 @@ test('board view (LIVE): a BOTTOM-PINNED reader stays pinned across in-place gro
   assertEqual(scroller.scrollTop, 1000, 'bottom-pinned reader is re-pinned to the bottom after in-place growth');
 
   // GENUINE rebuild path (an EARLIER turn changes) → still re-pinned.
-  fakeScrollMetrics(scroller, 1200, 200, 1000); // pinned again at the new height
+  fakeScrollMetrics(scroller, 1200, 200, 1000); // pinned again at the grown height
   firstText = 'A completely different opening prompt turn.';
   coreState.state.lastSeq = 52;
   await board.render(bhost, ctx, params);
@@ -995,7 +994,7 @@ test('board view (LIVE): a SCROLLED-UP reader is NOT yanked across in-place grow
   await board.render(bhost, ctx, params);
   assertEqual(scroller.scrollTop, 100, 'scrolled-up reader keeps their exact offset across in-place growth');
 
-  // GENUINE rebuild path → prior offset restored, not clamped to 0.
+  // GENUINE rebuild path → prior offset restored rather than clamped to 0.
   fakeScrollMetrics(scroller, 1200, 200, 100);
   firstText = 'A completely different opening prompt turn.';
   coreState.state.lastSeq = 62;
@@ -1054,8 +1053,8 @@ test('board view (LIVE): a seq advance while viewing another entry busts on retu
   cleanupV3Live();
 });
 
-// (c) The live card + transcript path is STRUCTURE-AGNOSTIC — it is driven by
-// active-runs, not by any tournament structure. Verify for swiss + elim.
+// (c) The live card + transcript path is STRUCTURE-AGNOSTIC: active-runs drive
+// it, and no tournament structure does. Verify for swiss + elim.
 for (const structure of ['swiss', 'single_elim']) {
   test(`board view (LIVE): the live transcript path is structure-agnostic (${structure})`, async () => {
     freshState();
@@ -1095,7 +1094,8 @@ for (const structure of ['swiss', 'single_elim']) {
   });
 }
 
-// ---- FIX #6: trellis in the Boards view, NOT the epoch overview ----
+// ---- the trellis lives in the Boards view, and the epoch overview
+// ---- carries the heatmap alone ----
 
 test('de-dup: the trellis lives in the Boards view; the epoch overview has the heatmap only', async () => {
   freshState(); installFetch();
@@ -1155,10 +1155,10 @@ test('back button: navigates UP and renders the destination into the MAIN detail
   assert(rail && detail && backBtn, 'the shell painted a rail, a detail pane, and a back button');
 
   // THE RESEARCH-PREVIEW PILL — a quiet product-status tag pinned NEXT TO the
-  // "zıcato console" wordmark in the top bar (NOT a Settings card, NOT a lower-
-  // right corner note). It lives inside the brand block, carries the "research"
-  // / "preview" label STACKED on two lines, and is the OPPOSITE of the retired
-  // light-up card: NO accent-tinted pulsing `dn-respreview` banner exists.
+  // "zıcato console" wordmark in the top bar, rather than a Settings card or a
+  // corner note. It lives inside the brand block and carries the "research" /
+  // "preview" label STACKED on two lines. No accent-tinted pulsing
+  // `dn-respreview` banner exists anywhere.
   const pill = allByClass(root, 'dt-respreview')[0];
   assert(pill, 'the research-preview pill is mounted in the shell (top-bar chrome)');
   const brand = allByClass(root, 'dt-brand')[0];
@@ -1181,7 +1181,7 @@ test('back button: navigates UP and renders the destination into the MAIN detail
   await new Promise((r) => setTimeout(r, 0));
 
   assertEqual(location.hash, `#/e/${EPOCH_ID}/gens`, 'back navigated UP to the generations group');
-  // THE FIX: the destination view lands in the MAIN DETAIL pane, NOT the rail.
+  // the destination view lands in the MAIN DETAIL pane rather than the rail.
   assert(detail.textContent.toLowerCase().includes('generation'), 'the destination view rendered into the MAIN detail pane');
   // the rail host still holds the tree (it was not used as the back destination).
   assert(allByClass(rail, 'dt-tree')[0], 'the rail host is unchanged — still the navigation tree, not the destination view');
@@ -1228,7 +1228,8 @@ test('pickers: typeface (T7 default, 12 finalized faces / 4 per mode) + colour (
   assertEqual(ui.readType(), 'E5', 'typeface persisted');
   assertEqual(ui.normaliseColor('nonsense'), 'monokai', 'unknown colour → monokai');
   assertEqual(ui.normaliseType('nonsense'), 'T7', 'unknown typeface → T7 default');
-  // LEGACY MIGRATION: the old mode ids map to a sensible finalized id in-group.
+  // MIGRATION ON READ: a stored mode id from an earlier scheme resolves to a
+  // typeface id in the same family.
   assertEqual(ui.normaliseType('technical'), 'T7', 'legacy "technical" migrates to T7');
   assertEqual(ui.normaliseType('editorial'), 'E5', 'legacy "editorial" migrates to E5');
   assertEqual(ui.normaliseType('display'), 'D2', 'legacy "display" migrates to D2');
@@ -1273,12 +1274,12 @@ test('brand wordmark: renders "zıcato" with a dotless ı (U+0131) and the accen
   assertEqual(text.textContent, shell.WORDMARK_TEXT, 'the wordmark text is the brand string');
   assert(text.textContent.includes('ı'), 'the wordmark uses the dotless ı (U+0131)');
   assert(!text.textContent.includes('i'), 'no dotted "i" in the wordmark');
-  // the letters fill with currentColor (theme-adaptive), not a hardcoded colour.
+  // the letters fill with currentColor (theme-adaptive) rather than a fixed colour.
   assertEqual(text.getAttribute('fill'), 'currentColor', 'the letters fill with currentColor (theme token)');
 
   // THE CENTERING GUARANTEE: the accent dot's cx EQUALS the computed ı stem
-  // centre (pinned to the monospace advance grid). This is the exact assertion
-  // the prior centering pain point demands — a number-equality, not an eyeball.
+  // centre, pinned to the monospace advance grid. Asserting the numbers are
+  // equal catches a drift that reading the rendered mark would miss.
   const dot = allByClass(mark, 'dt-brand-dot')[0];
   assert(dot, 'the wordmark has the accent dot');
   assertEqual(Number(dot.getAttribute('cx')), shell.wordmarkDotCx(), 'the dot cx equals the ı stem centre');
@@ -1315,8 +1316,8 @@ test('top bar: NO typeface picker and NO scale pill (both → Settings only); co
 
   const topbar = allByClass(root, 'dt-topbar')[0];
   assert(topbar, 'the top bar painted');
-  // the TYPEFACE picker (grouped popover OR the old button group) is GONE from
-  // the top bar — it lives ONLY in Settings → Appearance now.
+  // no TYPEFACE picker — neither a grouped popover nor a button group — sits in
+  // the top bar. The picker lives only under Settings → Appearance.
   assertEqual(allByClass(topbar, 'dt-tf').length, 0, 'no typeface picker in the top bar (moved to Settings)');
   assertEqual(allByClass(topbar, 'dt-tf-trigger').length, 0, 'no typeface popover trigger in the top bar');
   assertEqual(allByClass(topbar, 'dt-tf-option').length, 0, 'no typeface option rows in the top bar');

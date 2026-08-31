@@ -1,9 +1,8 @@
-// test/variant_t_epoch_scoping.test.mjs — Variant T ("Console IV") unit tests:
-// drill-down views scoped to the viewed epoch, pending (unscored)
-// candidates, fleet cards, and cross-epoch tree/gens gating.
+// test/variant_t_epoch_scoping.test.mjs — console unit tests: drill-down views
+// scoped to the viewed epoch, pending (unscored) candidates, fleet cards, and
+// cross-epoch tree/gens gating.
 //
-// Split mechanically from the former variant_t.test.mjs (assertions
-// verbatim); shared fixtures + helpers live in ./fixtures.mjs.
+// Shared fixtures and helpers live in ./fixtures.mjs.
 
 import { installDom, test, run, assert, assertEqual, assertDeep, makeEvent } from './harness.mjs';
 
@@ -159,8 +158,8 @@ test('Tier1 (cross-epoch): publication view scopes lineage/figures to the viewed
   // the aggregate-scores table lists e1's own gens only; v2 belongs to e0.
   assert(!host.textContent.includes('v2'), 'no leaked e0 generation v2 in the e1 publication figures');
   // the unscored challenger reads as still-unsettled, never "rejected" — and
-  // the WORD is tense-bound (#207 §2): this fixture has no live signals, so the
-  // settled reading "undecided" is correct and "racing…" would be the lie.
+  // the WORD is tense-bound: this fixture carries no live signals, so the settled
+  // reading "undecided" is correct and "racing…" would claim liveness it lacks.
   assert(!/rejected/.test(host.textContent) || /racing|undecided/.test(host.textContent),
     'an unscored gen reads undecided/racing, not a default rejected');
 });
@@ -174,7 +173,7 @@ test('Tier1 (cross-epoch): publication view scopes lineage/figures to the viewed
 // showed e0. Root cause: the header read `D.epoch()` (always the current epoch)
 // instead of the routed `D.epoch(epochId)`. With per-epoch `?epoch=<id>`
 // contracts (e0 closed → "closed" + e0's objective; e1 open → "open"), the H1
-// and STATE pill must now match the ROUTED epoch, not the current one.
+// and STATE pill must match the ROUTED epoch rather than the current one.
 test('Tier1 (header scoping): the epoch view H1 + STATE pill read the ROUTED epoch, not the current one', async () => {
   freshState();
   // distinct per-epoch contracts: e0 (SC_OLD) is closed with its own objective;
@@ -198,12 +197,12 @@ test('Tier1 (header scoping): the epoch view H1 + STATE pill read the ROUTED epo
   assertEqual(h1.textContent, `Epoch ${SC_OLD}`, 'the H1 reads the ROUTED epoch (e0), not the current one (e1)');
   assert(!h1.textContent.includes(SC_NEW), 'the current epoch id (e1) does NOT leak into the e0 header');
 
-  // the STATE pill (the stat row's "state" tile) reads e0's "closed", not e1's "open".
+  // the STATE pill (the stat row's "state" tile) reads e0's "closed" rather than e1's "open".
   const stats = allByClass(host, 'dn-stat').map((n) => n.textContent);
   assert(stats.some((t) => t.includes('closed') && t.includes('state')), 'the STATE pill reads e0’s "closed"');
   assert(!stats.some((t) => t.includes('open') && t.includes('state')), 'the STATE pill is NOT e1’s "open"');
 
-  // the OBJECTIVE is e0's, not e1's.
+  // the OBJECTIVE is e0's rather than e1's.
   assert(host.textContent.includes('Sharpen e0’s drift floor.'), 'the objective is e0’s');
   assert(!host.textContent.includes('e1 live objective.'), 'e1’s objective does NOT leak into the e0 header');
 
@@ -310,11 +309,11 @@ test('svg.heatmap: higher-contrast theme-aware cell scale — wider range, monot
   assert(opOf(lo) < opOf(mid) && opOf(mid) < opOf(hi), 'fill-opacity is monotonic in drift');
   assert(mixOf(lo) < mixOf(mid) && mixOf(mid) < mixOf(hi), 'cool→hot mix is monotonic in drift');
 
-  // (2) WIDER contrast than the OLD opacity-only ramp. The old scale was a
-  // SINGLE ink at op = 0.18 + 0.82*t with NO colour axis (mix spread = 0). The
-  // new scale adds a cool→hot mix spanning a wide range, so the combined
-  // high-vs-low contrast metric is strictly greater than the old one.
-  const OLD_op = (t) => 0.18 + 0.82 * t; // the previous mapping, for reference
+  // (2) WIDER contrast than an opacity-only ramp. `OLD_op` below is that
+  // reference: a SINGLE ink at op = 0.18 + 0.82*t with NO colour axis (mix
+  // spread = 0). The shipped scale adds a cool→hot mix spanning a wide range,
+  // so its combined high-vs-low contrast metric is strictly greater.
+  const OLD_op = (t) => 0.18 + 0.82 * t; // the opacity-only reference ramp
   const tLo = 0, tHi = 1; // lo is the min (t=0), hi is the max (t=1)
   const oldContrast = OLD_op(tHi) - OLD_op(tLo);            // = 0.82, opacity only
   const newOpContrast = opOf(hi) - opOf(lo);                // density axis
@@ -385,8 +384,8 @@ test('candidate view: the per-board figure renders the champion○ → candidate
   const candidate = await import('../js/views/candidate.js');
   const host = document.createElement('div');
   await candidate.render(host, { navigate() {}, href: router.href }, { epochId: EPOCH_ID, gen: 'v1' });
-  // the dumbbell SVG is present + responsive (width-filling); the OLD single-series
-  // valueDotPlot (dn-valdot + its aggregate reference rule) is GONE from the dossier.
+  // the dumbbell SVG is present + responsive (width-filling), and no single-series
+  // valueDotPlot (dn-valdot + its aggregate reference rule) remains in the dossier.
   const dumbbell = svgsByClass(host, 'dn-dumbbell')[0];
   assert(dumbbell, 'the per-board champion○ → candidate● dumbbell SVG rendered');
   assertEqual(dumbbell.getAttribute('width'), '100%', 'the dumbbell is responsive (fills its dossier column)');
@@ -453,7 +452,7 @@ test('candidate view (Task B): the train→holdout generalization slope RENDERS 
     assert(gap, 'the gap label renders');
     const gt = gap.textContent || '';
     assert(gt.includes('gap') && gt.includes('OK'), 'the gap label reads the gap + the within-tolerance OK verdict');
-    // within tolerance → the caution tone, NOT the over-tolerance bad tone.
+    // within tolerance → the caution tone rather than the over-tolerance bad tone.
     assert((gap.getAttribute('class') || '').includes('dn-caution'), 'a within-tolerance gap reads the caution tone (not over-tolerance bad)');
   } finally {
     FIXTURE['/api/epoch'] = saved;
@@ -649,7 +648,7 @@ test('tree model (cross-epoch): EVERY epoch node lists its OWN generations (e0 n
   coreState.state.activeRuns = [];
   coreState.state.activeTournament = null;
 
-  // route at the CURRENT epoch (e1) — the OLD epoch (e0) is the non-current one.
+  // route at the CURRENT epoch (e1); e0 is the other, non-current epoch.
   const model = await shell.buildTreeModel(router.parseRoute(`#/e/${TWO_EP_NEW}`));
 
   // both epochs are nodes.
@@ -680,10 +679,10 @@ test('tree model (cross-epoch): EVERY epoch node lists its OWN generations (e0 n
 //
 // buildTreeModel read the champion pointer ONCE, from a bare `D.epoch()` (the
 // CURRENT epoch), then gated the crown on `isContractEpoch`. That flag tests
-// CURRENT, not closed, so every promoted generation in every OTHER epoch fell
-// to `formerChampion`: that epoch's own reigning champion read "former
-// champion" and nothing there was crowned. Each epoch node now reads its OWN
-// `?epoch=`-scoped pointer.
+// CURRENT rather than closed, so every promoted generation in every OTHER epoch
+// falls to `formerChampion`: that epoch's own reigning champion reads "former
+// champion" and nothing there is crowned. Each epoch node reads its OWN
+// `?epoch=`-scoped pointer instead.
 // ====================================================================
 
 // the two-epoch fixture + the SCOPED /api/epoch payloads that carry each
@@ -726,7 +725,7 @@ test('tree model (cross-epoch): EACH epoch crowns its OWN champion — a NON-CUR
 
   const byId = (epochId) => new Map(model.byEpoch[epochId].gens.map((g) => [g.id, g]));
 
-  // e0 (non-current): v4 REIGNS, v0 is the former champion.
+  // e0 (not the current epoch): v4 REIGNS and v0 is the displaced champion.
   const e0 = byId(TWO_EP_OLD);
   assert(e0.get('v4').currentChampion === true, 'e0 crowns its own champion v4');
   assert(e0.get('v4').formerChampion === false, 'e0’s reigning v4 is NOT a former champion');
