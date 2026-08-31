@@ -12,11 +12,17 @@ import sys
 import tokenize
 from collections import Counter
 from collections.abc import Callable, Iterable, Iterator
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, astuple, dataclass
 from pathlib import Path, PurePosixPath
 
 ROOT = Path(__file__).resolve().parents[1]
 CONFIG = ROOT / ".line-budget.json"
+LEDGER_PATH = "docs/design/LINE-BUDGET.md"
+LEDGER = ROOT / LEDGER_PATH
+LEDGER_HEADING = "## Deliberate increases"
+MEASUREMENTS = ("total", "production", "production_logic")
+# A ledger row's first cell: the change's name, then the measurement it moves.
+LEDGER_LABEL = re.compile(r"(?P<label>.+) \((?P<measurement>total|production|production logic)\)")
 LOCKFILES = {"Cargo.lock", "uv.lock", "package-lock.json", "npm-shrinkwrap.json"}
 # The paths the budget does not count at all, and the reason each one holds no
 # implementation that simplifying the repository could reach. Everything else
@@ -342,17 +348,137 @@ def check(report: Report, config_path: Path = CONFIG) -> list[str]:
     return errors
 
 
+@dataclass(frozen=True)
+class LedgerRow:
+    """One deliberate increase: which measurement it moved, and from what to what."""
+
+    label: str
+    measurement: str
+    previous: int
+    delta: int
+    new: int
+
+    def __str__(self) -> str:
+        return f"{self.label} ({self.measurement}) {self.previous:,} {self.delta:+,} {self.new:,}"
+
+
+def _ledger_number(cell: str) -> int:
+    return int(cell.replace(",", "").replace("+", ""))
+
+
+def parse_ledger(text: str) -> tuple[list[LedgerRow], list[str]]:
+    """Read the deliberate-increases table into rows, naming any row that will not parse.
+
+    A row is its label, the measurement the label's parenthetical names, and the
+    three numbers. The reason cell is dropped, so rewording one leaves the row
+    unchanged.
+    """
+    rows: list[LedgerRow] = []
+    errors: list[str] = []
+    section = text.partition(LEDGER_HEADING)[2].partition("\n## ")[0]
+    for line in section.splitlines():
+        if not line.startswith("|"):
+            continue
+        cells = [cell.strip() for cell in line.strip().strip("|").split("|")]
+        if cells[0] == "Change" or set(cells[0]) <= set("-:"):
+            continue
+        named = LEDGER_LABEL.fullmatch(cells[0])
+        if len(cells) != 5 or named is None:
+            errors.append(f"unreadable row: {line.strip()}")
+            continue
+        try:
+            numbers = [_ledger_number(cell) for cell in cells[1:4]]
+        except ValueError:
+            errors.append(f"unreadable numbers: {cells[0]}")
+            continue
+        measurement = named["measurement"].replace(" ", "_")
+        rows.append(LedgerRow(named["label"], measurement, *numbers))
+    if not rows:
+        errors.append(f"no rows found under '{LEDGER_HEADING}'")
+    return rows, errors
+
+
+def _dropped_rows(rows: list[LedgerRow], base_text: str) -> list[str]:
+    """Name every base-revision row that is absent from the working tree's ledger."""
+    present = {astuple(row) for row in rows}
+    base = parse_ledger(base_text)[0]
+    return [
+        f"{row}: present in the base ledger and missing here"
+        for row in base
+        if astuple(row) not in present
+    ]
+
+
+def check_ledger(text: str, base_text: str | None = None, config_path: Path = CONFIG) -> list[str]:
+    """Check the deliberate-increases ledger's arithmetic, chaining, and completeness.
+
+    Four rules hold over the table, the first three read from the ledger alone:
+
+    1. Every row's previous value plus its signed delta equals its new value.
+    2. Each row's parenthetical names one of the three measurements.
+    3. Within one measurement, a row starts no higher than the value the
+       preceding row for that measurement reached. A start below it is a
+       reduction, which ratchets the limit with no row of its own; a start above
+       it means a row was dropped or invented.
+    4. The last row for a measurement stands at or above that measurement's
+       enforced limit in ``.line-budget.json``. An increase sets the limit to
+       the value its row states, so where the last recorded event is an
+       increase the two are equal, and a reduction can only carry the limit
+       further down. A last row below the limit therefore means the increase
+       that raised the limit to where it stands was never written down. The
+       logic rows sit above their limit by a second amount the ledger explains:
+       a ``production_logic`` value in the table is measured over a definition
+       reaching only Python and JavaScript.
+
+    With ``base_text``, a fifth rule makes the table append-only: every row the
+    base revision records must still be present with the same label,
+    measurement, and numbers. The reason cell is free to be reworded.
+    """
+    rows, errors = parse_ledger(text)
+    limits = json.loads(config_path.read_text())["limits"]
+    reached: dict[str, int] = {}
+    for row in rows:
+        if row.previous + row.delta != row.new:
+            errors.append(f"{row}: the sum is {row.previous + row.delta:,}")
+        standing = reached.get(row.measurement)
+        if standing is not None and row.previous > standing:
+            errors.append(f"{row}: starts above the {standing:,} the preceding row reached")
+        reached[row.measurement] = row.new
+    for measurement in MEASUREMENTS:
+        ceiling = int(limits[measurement])
+        if measurement not in reached:
+            errors.append(f"{measurement}: no row records it")
+        elif reached[measurement] < ceiling:
+            errors.append(
+                f"{measurement}: the last row reaches {reached[measurement]:,}, "
+                f"below the enforced {ceiling:,}"
+            )
+    return errors + (_dropped_rows(rows, base_text) if base_text is not None else [])
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--ref", help="measure a commit instead of the worktree")
     parser.add_argument("--check", action="store_true", help="enforce configured limits")
+    parser.add_argument(
+        "--check-ledger",
+        action="store_true",
+        help="check the deliberate-increases ledger instead of measuring",
+    )
+    parser.add_argument("--base", help="ref whose ledger rows must all still be present")
     parser.add_argument("--json", action="store_true", dest="as_json")
     args = parser.parse_args(argv)
-    report = measure(args.ref)
-    print(json.dumps(asdict(report), indent=2) if args.as_json else render(report))
-    errors = check(report) if args.check else []
+    if args.check_ledger:
+        base = _content(LEDGER_PATH, args.base, ROOT).decode() if args.base else None
+        errors = check_ledger(LEDGER.read_text(), base)
+        subject = "line-budget ledger"
+    else:
+        report = measure(args.ref)
+        print(json.dumps(asdict(report), indent=2) if args.as_json else render(report))
+        errors = check(report) if args.check else []
+        subject = "line budget"
     if errors:
-        message = "line budget failed:\n" + "\n".join(f"  {error}" for error in errors)
+        message = f"{subject} failed:\n" + "\n".join(f"  {error}" for error in errors)
         print(message, file=sys.stderr)
         return 1
     return 0

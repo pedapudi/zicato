@@ -6,11 +6,13 @@ from pathlib import Path
 
 from tools.line_budget import (
     EXCLUDED_FROM_BUDGET,
+    LEDGER,
     ROOT,
     Report,
     _excluded,
     _production,
     check,
+    check_ledger,
     measure,
 )
 
@@ -176,3 +178,80 @@ def test_check_rejects_one_line_production_logic_overage(tmp_path: Path) -> None
     assert check(_report(total=10, production=5, logic=4), config) == [
         "production_logic: 4 exceeds 3 by 1"
     ]
+
+
+LEDGER_FIXTURE = """# Line budgets
+
+## Ratchet policy
+
+Prose the parser walks past.
+
+## Deliberate increases
+
+| Change | Previous | Delta | New | Reason |
+|---|---:|---:|---:|---|
+| First change (total) | 100 | +10 | 110 | The reason it was worth ten lines. |
+| First change (production) | 50 | +5 | 55 | The reason it was worth five lines. |
+| First change (production logic) | 30 | +4 | 34 | The reason it was worth four lines. |
+| Second change (total) | 108 | +6 | 114 | A reduction to 108 landed between the two rows. |
+"""
+
+LEDGER_LIMITS = {"total": 114, "production": 55, "logic": 34}
+
+
+def _ledger_config(tmp_path: Path) -> Path:
+    return _config(tmp_path / "ledger-budget.json", **LEDGER_LIMITS)
+
+
+def test_the_repository_ledger_passes_its_own_check() -> None:
+    assert check_ledger(LEDGER.read_text()) == []
+
+
+def test_a_well_formed_ledger_passes(tmp_path: Path) -> None:
+    assert check_ledger(LEDGER_FIXTURE, config_path=_ledger_config(tmp_path)) == []
+
+
+def test_a_row_whose_delta_misses_its_new_value_fails(tmp_path: Path) -> None:
+    broken = LEDGER_FIXTURE.replace("| 50 | +5 | 55 |", "| 50 | +5 | 57 |")
+
+    errors = check_ledger(broken, config_path=_ledger_config(tmp_path))
+
+    assert errors == ["First change (production) 50 +5 57: the sum is 55"]
+
+
+def test_a_row_starting_above_the_preceding_row_fails(tmp_path: Path) -> None:
+    """A start above the last recorded value means a row was dropped or invented."""
+    broken = LEDGER_FIXTURE.replace("| 108 | +6 | 114 |", "| 120 | +6 | 126 |")
+
+    errors = check_ledger(broken, config_path=_ledger_config(tmp_path))
+
+    assert errors == [
+        "Second change (total) 120 +6 126: starts above the 110 the preceding row reached"
+    ]
+
+
+def test_a_row_the_base_records_may_not_leave_the_table(tmp_path: Path) -> None:
+    rows = LEDGER_FIXTURE.splitlines(keepends=True)
+    trimmed = "".join(row for row in rows if not row.startswith("| First change (total) |"))
+
+    errors = check_ledger(trimmed, LEDGER_FIXTURE, _ledger_config(tmp_path))
+
+    assert errors == [
+        "First change (total) 100 +10 110: present in the base ledger and missing here"
+    ]
+
+
+def test_a_reworded_reason_keeps_the_row(tmp_path: Path) -> None:
+    reworded = LEDGER_FIXTURE.replace(
+        "The reason it was worth five lines.", "The same five lines, said another way."
+    )
+
+    assert check_ledger(reworded, LEDGER_FIXTURE, _ledger_config(tmp_path)) == []
+
+
+def test_a_measurement_whose_last_row_sits_below_its_limit_fails(tmp_path: Path) -> None:
+    config = _config(tmp_path / "raised.json", total=200, production=55, logic=34)
+
+    errors = check_ledger(LEDGER_FIXTURE, config_path=config)
+
+    assert errors == ["total: the last row reaches 114, below the enforced 200"]

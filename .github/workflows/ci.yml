@@ -11,9 +11,18 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          # The ledger check reads the base branch's copy of the table, so the
+          # base ref has to exist locally.
+          fetch-depth: 0
 
       - name: Report and enforce line budgets
         run: python tools/line_budget.py --check
+
+      - name: Check the ledger's arithmetic and that no row was dropped
+        run: |
+          python tools/line_budget.py --check-ledger \
+            --base "origin/${{ github.base_ref || github.ref_name }}"
 
   prose-lint:
     name: prose lint

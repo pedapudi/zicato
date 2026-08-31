@@ -50,7 +50,7 @@ above the baseline and negative where it stands below.
 
 | Measurement | Baseline (`f9052dd`) | Enforced limit | Limit minus baseline |
 |---|---:|---:|---:|
-| Total | 408,661 | 456,842 | +48,181 |
+| Total | 408,661 | 457,056 | +48,395 |
 | Production | 197,702 | 203,336 | +5,634 |
 | Production logic | 110,276 | 114,000 | +3,724 |
 
@@ -75,6 +75,19 @@ and comments do not qualify as simplification. Any classification change
 receives the same review as a budget increase; where it corrects an exclusion
 and so brings real source into a measurement, the ceiling rises by the lines the
 correction exposes and the entry records that reason.
+
+The appendix below is append-only, and `python tools/line_budget.py
+--check-ledger` enforces it. Read from the table alone, every row's previous
+value plus its signed delta must equal its new value, each row must start no
+higher than the value the preceding row for the same measurement reached, and
+the last row for a measurement must stand at or above that measurement's
+enforced limit, because an increase ends at the limit it sets and a reduction
+carries the limit further down with no row. Given a base revision (`--base
+origin/main`), every row that revision records must still be present with the
+same label, measurement, and numbers, while a reason is free to be reworded.
+The line-budget job in CI runs the check against the pull request's base
+branch, so a merge that resolves the table toward one side fails with the
+dropped rows named.
 
 ## Deliberate increases
 
@@ -178,3 +191,4 @@ correction exposes and the entry records that reason.
 | The field round decomposed into phases (production) | 202,792 | +548 | 203,340 | Issue #316: the same change. Almost all of it is runtime source, because the only test edits name the new home of a call site that moved. |
 | The field round decomposed into phases (production logic) | 113,803 | +278 | 114,081 | Issue #316: the net across six files. `evolve/field.py` loses 910 executable lines and is left a 59-line facade. `evolve/settlement.py` adds 441, which is the settlement tail the issue asks for — the module held only result dataclasses before. `evolve/field_execution.py` adds 350, `evolve/field_candidates.py` 258, `evolve/gate.py` 112, and `evolve/generation_phase.py` 27 for the round-state type. A closure reads its enclosing locals without declaring them; a function must declare, receive, and return them, and that accounting is the whole increase. |
 | Index write statements derived from the schema (total) | 456,588 | +254 | 456,842 | Issue #324: `tests/test_index_statements.py`, which holds each writer's descriptor against the DDL and pins the three re-ingest departures that a column-by-column rewrite would erase — the preserved tournament link and match tag, the ratings columns the Elo fold owns, and the field status only the settled round knows. Production falls by 4 and production logic by 81, and both machine limits ratchet down to the measured totals: `index/ingest.py` loses 143 executable lines as fourteen hand-written column lists become descriptor calls, against 62 added to `index/schema.py` for the descriptor and the column derivation. |
+| Ledger arithmetic and append-only rows (total) | 456,842 | +214 | 457,056 | Issue #324: `--check-ledger` in `tools/line_budget.py` — the table parser, the per-row sum and per-measurement chaining rules, the last-row-against-the-limit rule, and the base-revision comparison that names every row the working tree dropped — with its six fixture cases, the check over the repository's own ledger, and the second step in the line-budget job. Production is unchanged: the tool and its test sit outside the runtime package. |
