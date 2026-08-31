@@ -428,11 +428,11 @@ class RoundEventScope:
     The scope names the challenger on EVERY event a single challenger owns,
     including the events whose payload already states it (``patches_applied``,
     ``harness_loaded``). The repetition is deliberate. A reader that groups by
-    challenger must be able to read one place on every record; if the scope
-    were left empty wherever the payload happened to carry the id, every such
-    reader would need a per-event-type table saying where to look — the
-    guessing this envelope exists to remove. The two values cannot disagree:
-    each call site writes both from one variable.
+    challenger reads one place on every record. Were the scope left empty
+    wherever the payload happened to carry the id, that reader would need a
+    per-event-type table saying where to look — the guessing this envelope
+    exists to remove. The two values cannot disagree: each call site writes
+    both from one variable.
 
     An event no single challenger owns leaves the coordinate empty rather than
     inventing one: the round's own boundaries, its terminal decision, and its

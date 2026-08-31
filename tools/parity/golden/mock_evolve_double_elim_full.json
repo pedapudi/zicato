@@ -924,6 +924,7 @@
         "payload": {
           "contract_hash": "39bbaee88168b06f089551e9b09d099a13fd45815f00db9f51a6cd7bb03dcfa1"
         },
+        "scope": {},
         "seq": 1,
         "ts": "<TS>",
         "type": "round_opened"
@@ -933,6 +934,10 @@
           "errors": [],
           "slot_index": null
         },
+        "scope": {
+          "generation_id": "v1",
+          "step": "propose"
+        },
         "seq": 2,
         "ts": "<TS>",
         "type": "proposal_attempted"
@@ -941,6 +946,10 @@
         "payload": {
           "experiment_id": "exp_<DATE>_t1_double_elim_v1"
         },
+        "scope": {
+          "generation_id": "v1",
+          "step": "propose"
+        },
         "seq": 3,
         "ts": "<TS>",
         "type": "experiment_minted"
@@ -948,6 +957,10 @@
       {
         "payload": {
           "generation_id": "v1"
+        },
+        "scope": {
+          "generation_id": "v1",
+          "step": "apply"
         },
         "seq": 4,
         "ts": "<TS>",
@@ -958,6 +971,10 @@
           "errors": [],
           "slot_index": null
         },
+        "scope": {
+          "generation_id": "v2",
+          "step": "propose"
+        },
         "seq": 5,
         "ts": "<TS>",
         "type": "proposal_attempted"
@@ -966,6 +983,10 @@
         "payload": {
           "experiment_id": "exp_<DATE>_t1_double_elim_v2"
         },
+        "scope": {
+          "generation_id": "v2",
+          "step": "propose"
+        },
         "seq": 6,
         "ts": "<TS>",
         "type": "experiment_minted"
@@ -973,6 +994,10 @@
       {
         "payload": {
           "generation_id": "v2"
+        },
+        "scope": {
+          "generation_id": "v2",
+          "step": "apply"
         },
         "seq": 7,
         "ts": "<TS>",
@@ -983,6 +1008,10 @@
           "errors": [],
           "slot_index": null
         },
+        "scope": {
+          "generation_id": "v3",
+          "step": "propose"
+        },
         "seq": 8,
         "ts": "<TS>",
         "type": "proposal_attempted"
@@ -991,6 +1020,10 @@
         "payload": {
           "experiment_id": "exp_<DATE>_t1_double_elim_v3"
         },
+        "scope": {
+          "generation_id": "v3",
+          "step": "propose"
+        },
         "seq": 9,
         "ts": "<TS>",
         "type": "experiment_minted"
@@ -998,6 +1031,10 @@
       {
         "payload": {
           "generation_id": "v3"
+        },
+        "scope": {
+          "generation_id": "v3",
+          "step": "apply"
         },
         "seq": 10,
         "ts": "<TS>",
@@ -1008,6 +1045,10 @@
           "errors": [],
           "slot_index": null
         },
+        "scope": {
+          "generation_id": "v4",
+          "step": "propose"
+        },
         "seq": 11,
         "ts": "<TS>",
         "type": "proposal_attempted"
@@ -1016,6 +1057,10 @@
         "payload": {
           "experiment_id": "exp_<DATE>_t1_double_elim_v4"
         },
+        "scope": {
+          "generation_id": "v4",
+          "step": "propose"
+        },
         "seq": 12,
         "ts": "<TS>",
         "type": "experiment_minted"
@@ -1023,6 +1068,10 @@
       {
         "payload": {
           "generation_id": "v4"
+        },
+        "scope": {
+          "generation_id": "v4",
+          "step": "apply"
         },
         "seq": 13,
         "ts": "<TS>",
@@ -1034,6 +1083,14 @@
           "replicate": 0,
           "side": "parent"
         },
+        "scope": {
+          "attributes": {
+            "matchup_id": "WB-R0-0",
+            "opponent_generation_id": "v2"
+          },
+          "generation_id": "v1",
+          "step": "run"
+        },
         "seq": 14,
         "ts": "<TS>",
         "type": "unit_completed"
@@ -1043,6 +1100,14 @@
           "entry_id": "picky_stakeholder_emulated",
           "replicate": 0,
           "side": "child"
+        },
+        "scope": {
+          "attributes": {
+            "matchup_id": "WB-R0-0",
+            "opponent_generation_id": "v1"
+          },
+          "generation_id": "v2",
+          "step": "run"
         },
         "seq": 15,
         "ts": "<TS>",
@@ -1054,6 +1119,14 @@
           "replicate": 0,
           "side": "parent"
         },
+        "scope": {
+          "attributes": {
+            "matchup_id": "WB-R0-0",
+            "opponent_generation_id": "v2"
+          },
+          "generation_id": "v1",
+          "step": "run"
+        },
         "seq": 16,
         "ts": "<TS>",
         "type": "unit_completed"
@@ -1063,6 +1136,14 @@
           "entry_id": "q3_metrics_outline",
           "replicate": 0,
           "side": "child"
+        },
+        "scope": {
+          "attributes": {
+            "matchup_id": "WB-R0-0",
+            "opponent_generation_id": "v1"
+          },
+          "generation_id": "v2",
+          "step": "run"
         },
         "seq": 17,
         "ts": "<TS>",
@@ -1074,6 +1155,14 @@
           "replicate": 0,
           "side": "parent"
         },
+        "scope": {
+          "attributes": {
+            "matchup_id": "WB-R0-0",
+            "opponent_generation_id": "v2"
+          },
+          "generation_id": "v1",
+          "step": "run"
+        },
         "seq": 18,
         "ts": "<TS>",
         "type": "unit_completed"
@@ -1083,6 +1172,14 @@
           "entry_id": "transformers_lay_audience",
           "replicate": 0,
           "side": "child"
+        },
+        "scope": {
+          "attributes": {
+            "matchup_id": "WB-R0-0",
+            "opponent_generation_id": "v1"
+          },
+          "generation_id": "v2",
+          "step": "run"
         },
         "seq": 19,
         "ts": "<TS>",
@@ -1094,6 +1191,14 @@
           "replicate": 0,
           "side": "parent"
         },
+        "scope": {
+          "attributes": {
+            "matchup_id": "WB-R0-0",
+            "opponent_generation_id": "v2"
+          },
+          "generation_id": "v1",
+          "step": "run"
+        },
         "seq": 20,
         "ts": "<TS>",
         "type": "unit_completed"
@@ -1103,6 +1208,14 @@
           "entry_id": "waffles_single",
           "replicate": 0,
           "side": "child"
+        },
+        "scope": {
+          "attributes": {
+            "matchup_id": "WB-R0-0",
+            "opponent_generation_id": "v1"
+          },
+          "generation_id": "v2",
+          "step": "run"
         },
         "seq": 21,
         "ts": "<TS>",
@@ -1117,6 +1230,14 @@
           "margin_required": 0.01,
           "rule_fired": "challenger regressed: loss rose by 0.400000 (champion 0.400000 -> challenger 0.800000); a promotion needs the loss to drop by at least 0.010000"
         },
+        "scope": {
+          "attributes": {
+            "matchup_id": "WB-R0-0",
+            "opponent_generation_id": "v1"
+          },
+          "generation_id": "v2",
+          "step": "gate"
+        },
         "seq": 22,
         "ts": "<TS>",
         "type": "gate_evaluated"
@@ -1126,6 +1247,14 @@
           "entry_id": "picky_stakeholder_emulated",
           "replicate": 0,
           "side": "parent"
+        },
+        "scope": {
+          "attributes": {
+            "matchup_id": "WB-R0-1",
+            "opponent_generation_id": "v4"
+          },
+          "generation_id": "v3",
+          "step": "run"
         },
         "seq": 23,
         "ts": "<TS>",
@@ -1137,6 +1266,14 @@
           "replicate": 0,
           "side": "child"
         },
+        "scope": {
+          "attributes": {
+            "matchup_id": "WB-R0-1",
+            "opponent_generation_id": "v3"
+          },
+          "generation_id": "v4",
+          "step": "run"
+        },
         "seq": 24,
         "ts": "<TS>",
         "type": "unit_completed"
@@ -1146,6 +1283,14 @@
           "entry_id": "q3_metrics_outline",
           "replicate": 0,
           "side": "parent"
+        },
+        "scope": {
+          "attributes": {
+            "matchup_id": "WB-R0-1",
+            "opponent_generation_id": "v4"
+          },
+          "generation_id": "v3",
+          "step": "run"
         },
         "seq": 25,
         "ts": "<TS>",
@@ -1157,6 +1302,14 @@
           "replicate": 0,
           "side": "child"
         },
+        "scope": {
+          "attributes": {
+            "matchup_id": "WB-R0-1",
+            "opponent_generation_id": "v3"
+          },
+          "generation_id": "v4",
+          "step": "run"
+        },
         "seq": 26,
         "ts": "<TS>",
         "type": "unit_completed"
@@ -1166,6 +1319,14 @@
           "entry_id": "transformers_lay_audience",
           "replicate": 0,
           "side": "parent"
+        },
+        "scope": {
+          "attributes": {
+            "matchup_id": "WB-R0-1",
+            "opponent_generation_id": "v4"
+          },
+          "generation_id": "v3",
+          "step": "run"
         },
         "seq": 27,
         "ts": "<TS>",
@@ -1177,6 +1338,14 @@
           "replicate": 0,
           "side": "child"
         },
+        "scope": {
+          "attributes": {
+            "matchup_id": "WB-R0-1",
+            "opponent_generation_id": "v3"
+          },
+          "generation_id": "v4",
+          "step": "run"
+        },
         "seq": 28,
         "ts": "<TS>",
         "type": "unit_completed"
@@ -1187,6 +1356,14 @@
           "replicate": 0,
           "side": "parent"
         },
+        "scope": {
+          "attributes": {
+            "matchup_id": "WB-R0-1",
+            "opponent_generation_id": "v4"
+          },
+          "generation_id": "v3",
+          "step": "run"
+        },
         "seq": 29,
         "ts": "<TS>",
         "type": "unit_completed"
@@ -1196,6 +1373,14 @@
           "entry_id": "waffles_single",
           "replicate": 0,
           "side": "child"
+        },
+        "scope": {
+          "attributes": {
+            "matchup_id": "WB-R0-1",
+            "opponent_generation_id": "v3"
+          },
+          "generation_id": "v4",
+          "step": "run"
         },
         "seq": 30,
         "ts": "<TS>",
@@ -1210,6 +1395,14 @@
           "margin_required": 0.01,
           "rule_fired": "challenger regressed: loss rose by 0.400000 (champion 1.200000 -> challenger 1.600000); a promotion needs the loss to drop by at least 0.010000"
         },
+        "scope": {
+          "attributes": {
+            "matchup_id": "WB-R0-1",
+            "opponent_generation_id": "v3"
+          },
+          "generation_id": "v4",
+          "step": "gate"
+        },
         "seq": 31,
         "ts": "<TS>",
         "type": "gate_evaluated"
@@ -1219,6 +1412,14 @@
           "entry_id": "picky_stakeholder_emulated",
           "replicate": 0,
           "side": "parent"
+        },
+        "scope": {
+          "attributes": {
+            "matchup_id": "WB-R0-0",
+            "opponent_generation_id": "v3"
+          },
+          "generation_id": "v1",
+          "step": "run"
         },
         "seq": 32,
         "ts": "<TS>",
@@ -1230,6 +1431,14 @@
           "replicate": 0,
           "side": "child"
         },
+        "scope": {
+          "attributes": {
+            "matchup_id": "WB-R0-0",
+            "opponent_generation_id": "v1"
+          },
+          "generation_id": "v3",
+          "step": "run"
+        },
         "seq": 33,
         "ts": "<TS>",
         "type": "unit_completed"
@@ -1239,6 +1448,14 @@
           "entry_id": "q3_metrics_outline",
           "replicate": 0,
           "side": "parent"
+        },
+        "scope": {
+          "attributes": {
+            "matchup_id": "WB-R0-0",
+            "opponent_generation_id": "v3"
+          },
+          "generation_id": "v1",
+          "step": "run"
         },
         "seq": 34,
         "ts": "<TS>",
@@ -1250,6 +1467,14 @@
           "replicate": 0,
           "side": "child"
         },
+        "scope": {
+          "attributes": {
+            "matchup_id": "WB-R0-0",
+            "opponent_generation_id": "v1"
+          },
+          "generation_id": "v3",
+          "step": "run"
+        },
         "seq": 35,
         "ts": "<TS>",
         "type": "unit_completed"
@@ -1259,6 +1484,14 @@
           "entry_id": "transformers_lay_audience",
           "replicate": 0,
           "side": "parent"
+        },
+        "scope": {
+          "attributes": {
+            "matchup_id": "WB-R0-0",
+            "opponent_generation_id": "v3"
+          },
+          "generation_id": "v1",
+          "step": "run"
         },
         "seq": 36,
         "ts": "<TS>",
@@ -1270,6 +1503,14 @@
           "replicate": 0,
           "side": "child"
         },
+        "scope": {
+          "attributes": {
+            "matchup_id": "WB-R0-0",
+            "opponent_generation_id": "v1"
+          },
+          "generation_id": "v3",
+          "step": "run"
+        },
         "seq": 37,
         "ts": "<TS>",
         "type": "unit_completed"
@@ -1280,6 +1521,14 @@
           "replicate": 0,
           "side": "parent"
         },
+        "scope": {
+          "attributes": {
+            "matchup_id": "WB-R0-0",
+            "opponent_generation_id": "v3"
+          },
+          "generation_id": "v1",
+          "step": "run"
+        },
         "seq": 38,
         "ts": "<TS>",
         "type": "unit_completed"
@@ -1289,6 +1538,14 @@
           "entry_id": "waffles_single",
           "replicate": 0,
           "side": "child"
+        },
+        "scope": {
+          "attributes": {
+            "matchup_id": "WB-R0-0",
+            "opponent_generation_id": "v1"
+          },
+          "generation_id": "v3",
+          "step": "run"
         },
         "seq": 39,
         "ts": "<TS>",
@@ -1308,6 +1565,14 @@
           "margin_required": 0.01,
           "rule_fired": "challenger regressed: loss rose by 0.800000 (champion 0.400000 -> challenger 1.200000); a promotion needs the loss to drop by at least 0.010000"
         },
+        "scope": {
+          "attributes": {
+            "matchup_id": "WB-R0-0",
+            "opponent_generation_id": "v1"
+          },
+          "generation_id": "v3",
+          "step": "gate"
+        },
         "seq": 40,
         "ts": "<TS>",
         "type": "gate_evaluated"
@@ -1317,6 +1582,14 @@
           "entry_id": "picky_stakeholder_emulated",
           "replicate": 0,
           "side": "parent"
+        },
+        "scope": {
+          "attributes": {
+            "matchup_id": "LB-R1-0",
+            "opponent_generation_id": "v4"
+          },
+          "generation_id": "v2",
+          "step": "run"
         },
         "seq": 41,
         "ts": "<TS>",
@@ -1328,6 +1601,14 @@
           "replicate": 0,
           "side": "child"
         },
+        "scope": {
+          "attributes": {
+            "matchup_id": "LB-R1-0",
+            "opponent_generation_id": "v2"
+          },
+          "generation_id": "v4",
+          "step": "run"
+        },
         "seq": 42,
         "ts": "<TS>",
         "type": "unit_completed"
@@ -1337,6 +1618,14 @@
           "entry_id": "q3_metrics_outline",
           "replicate": 0,
           "side": "parent"
+        },
+        "scope": {
+          "attributes": {
+            "matchup_id": "LB-R1-0",
+            "opponent_generation_id": "v4"
+          },
+          "generation_id": "v2",
+          "step": "run"
         },
         "seq": 43,
         "ts": "<TS>",
@@ -1348,6 +1637,14 @@
           "replicate": 0,
           "side": "child"
         },
+        "scope": {
+          "attributes": {
+            "matchup_id": "LB-R1-0",
+            "opponent_generation_id": "v2"
+          },
+          "generation_id": "v4",
+          "step": "run"
+        },
         "seq": 44,
         "ts": "<TS>",
         "type": "unit_completed"
@@ -1357,6 +1654,14 @@
           "entry_id": "transformers_lay_audience",
           "replicate": 0,
           "side": "parent"
+        },
+        "scope": {
+          "attributes": {
+            "matchup_id": "LB-R1-0",
+            "opponent_generation_id": "v4"
+          },
+          "generation_id": "v2",
+          "step": "run"
         },
         "seq": 45,
         "ts": "<TS>",
@@ -1368,6 +1673,14 @@
           "replicate": 0,
           "side": "child"
         },
+        "scope": {
+          "attributes": {
+            "matchup_id": "LB-R1-0",
+            "opponent_generation_id": "v2"
+          },
+          "generation_id": "v4",
+          "step": "run"
+        },
         "seq": 46,
         "ts": "<TS>",
         "type": "unit_completed"
@@ -1378,6 +1691,14 @@
           "replicate": 0,
           "side": "parent"
         },
+        "scope": {
+          "attributes": {
+            "matchup_id": "LB-R1-0",
+            "opponent_generation_id": "v4"
+          },
+          "generation_id": "v2",
+          "step": "run"
+        },
         "seq": 47,
         "ts": "<TS>",
         "type": "unit_completed"
@@ -1387,6 +1708,14 @@
           "entry_id": "waffles_single",
           "replicate": 0,
           "side": "child"
+        },
+        "scope": {
+          "attributes": {
+            "matchup_id": "LB-R1-0",
+            "opponent_generation_id": "v2"
+          },
+          "generation_id": "v4",
+          "step": "run"
         },
         "seq": 48,
         "ts": "<TS>",
@@ -1401,6 +1730,14 @@
           "margin_required": 0.01,
           "rule_fired": "challenger regressed: loss rose by 0.800000 (champion 0.800000 -> challenger 1.600000); a promotion needs the loss to drop by at least 0.010000"
         },
+        "scope": {
+          "attributes": {
+            "matchup_id": "LB-R1-0",
+            "opponent_generation_id": "v2"
+          },
+          "generation_id": "v4",
+          "step": "gate"
+        },
         "seq": 49,
         "ts": "<TS>",
         "type": "gate_evaluated"
@@ -1410,6 +1747,14 @@
           "entry_id": "picky_stakeholder_emulated",
           "replicate": 0,
           "side": "parent"
+        },
+        "scope": {
+          "attributes": {
+            "matchup_id": "LB-R1-0",
+            "opponent_generation_id": "v2"
+          },
+          "generation_id": "v3",
+          "step": "run"
         },
         "seq": 50,
         "ts": "<TS>",
@@ -1421,6 +1766,14 @@
           "replicate": 0,
           "side": "child"
         },
+        "scope": {
+          "attributes": {
+            "matchup_id": "LB-R1-0",
+            "opponent_generation_id": "v3"
+          },
+          "generation_id": "v2",
+          "step": "run"
+        },
         "seq": 51,
         "ts": "<TS>",
         "type": "unit_completed"
@@ -1430,6 +1783,14 @@
           "entry_id": "q3_metrics_outline",
           "replicate": 0,
           "side": "parent"
+        },
+        "scope": {
+          "attributes": {
+            "matchup_id": "LB-R1-0",
+            "opponent_generation_id": "v2"
+          },
+          "generation_id": "v3",
+          "step": "run"
         },
         "seq": 52,
         "ts": "<TS>",
@@ -1441,6 +1802,14 @@
           "replicate": 0,
           "side": "child"
         },
+        "scope": {
+          "attributes": {
+            "matchup_id": "LB-R1-0",
+            "opponent_generation_id": "v3"
+          },
+          "generation_id": "v2",
+          "step": "run"
+        },
         "seq": 53,
         "ts": "<TS>",
         "type": "unit_completed"
@@ -1450,6 +1819,14 @@
           "entry_id": "transformers_lay_audience",
           "replicate": 0,
           "side": "parent"
+        },
+        "scope": {
+          "attributes": {
+            "matchup_id": "LB-R1-0",
+            "opponent_generation_id": "v2"
+          },
+          "generation_id": "v3",
+          "step": "run"
         },
         "seq": 54,
         "ts": "<TS>",
@@ -1461,6 +1838,14 @@
           "replicate": 0,
           "side": "child"
         },
+        "scope": {
+          "attributes": {
+            "matchup_id": "LB-R1-0",
+            "opponent_generation_id": "v3"
+          },
+          "generation_id": "v2",
+          "step": "run"
+        },
         "seq": 55,
         "ts": "<TS>",
         "type": "unit_completed"
@@ -1471,6 +1856,14 @@
           "replicate": 0,
           "side": "parent"
         },
+        "scope": {
+          "attributes": {
+            "matchup_id": "LB-R1-0",
+            "opponent_generation_id": "v2"
+          },
+          "generation_id": "v3",
+          "step": "run"
+        },
         "seq": 56,
         "ts": "<TS>",
         "type": "unit_completed"
@@ -1480,6 +1873,14 @@
           "entry_id": "waffles_single",
           "replicate": 0,
           "side": "child"
+        },
+        "scope": {
+          "attributes": {
+            "matchup_id": "LB-R1-0",
+            "opponent_generation_id": "v3"
+          },
+          "generation_id": "v2",
+          "step": "run"
         },
         "seq": 57,
         "ts": "<TS>",
@@ -1494,6 +1895,14 @@
           "margin_required": 0.01,
           "rule_fired": ""
         },
+        "scope": {
+          "attributes": {
+            "matchup_id": "LB-R1-0",
+            "opponent_generation_id": "v3"
+          },
+          "generation_id": "v2",
+          "step": "gate"
+        },
         "seq": 58,
         "ts": "<TS>",
         "type": "gate_evaluated"
@@ -1503,6 +1912,14 @@
           "entry_id": "picky_stakeholder_emulated",
           "replicate": 0,
           "side": "parent"
+        },
+        "scope": {
+          "attributes": {
+            "matchup_id": "GF",
+            "opponent_generation_id": "v1"
+          },
+          "generation_id": "v0",
+          "step": "run"
         },
         "seq": 59,
         "ts": "<TS>",
@@ -1514,6 +1931,14 @@
           "replicate": 0,
           "side": "child"
         },
+        "scope": {
+          "attributes": {
+            "matchup_id": "GF",
+            "opponent_generation_id": "v0"
+          },
+          "generation_id": "v1",
+          "step": "run"
+        },
         "seq": 60,
         "ts": "<TS>",
         "type": "unit_completed"
@@ -1523,6 +1948,14 @@
           "entry_id": "q3_metrics_outline",
           "replicate": 0,
           "side": "parent"
+        },
+        "scope": {
+          "attributes": {
+            "matchup_id": "GF",
+            "opponent_generation_id": "v1"
+          },
+          "generation_id": "v0",
+          "step": "run"
         },
         "seq": 61,
         "ts": "<TS>",
@@ -1534,6 +1967,14 @@
           "replicate": 0,
           "side": "child"
         },
+        "scope": {
+          "attributes": {
+            "matchup_id": "GF",
+            "opponent_generation_id": "v0"
+          },
+          "generation_id": "v1",
+          "step": "run"
+        },
         "seq": 62,
         "ts": "<TS>",
         "type": "unit_completed"
@@ -1543,6 +1984,14 @@
           "entry_id": "transformers_lay_audience",
           "replicate": 0,
           "side": "parent"
+        },
+        "scope": {
+          "attributes": {
+            "matchup_id": "GF",
+            "opponent_generation_id": "v1"
+          },
+          "generation_id": "v0",
+          "step": "run"
         },
         "seq": 63,
         "ts": "<TS>",
@@ -1554,6 +2003,14 @@
           "replicate": 0,
           "side": "child"
         },
+        "scope": {
+          "attributes": {
+            "matchup_id": "GF",
+            "opponent_generation_id": "v0"
+          },
+          "generation_id": "v1",
+          "step": "run"
+        },
         "seq": 64,
         "ts": "<TS>",
         "type": "unit_completed"
@@ -1564,6 +2021,14 @@
           "replicate": 0,
           "side": "parent"
         },
+        "scope": {
+          "attributes": {
+            "matchup_id": "GF",
+            "opponent_generation_id": "v1"
+          },
+          "generation_id": "v0",
+          "step": "run"
+        },
         "seq": 65,
         "ts": "<TS>",
         "type": "unit_completed"
@@ -1573,6 +2038,14 @@
           "entry_id": "waffles_single",
           "replicate": 0,
           "side": "child"
+        },
+        "scope": {
+          "attributes": {
+            "matchup_id": "GF",
+            "opponent_generation_id": "v0"
+          },
+          "generation_id": "v1",
+          "step": "run"
         },
         "seq": 66,
         "ts": "<TS>",
@@ -1587,6 +2060,14 @@
           "margin_required": 0.01,
           "rule_fired": ""
         },
+        "scope": {
+          "attributes": {
+            "matchup_id": "GF",
+            "opponent_generation_id": "v0"
+          },
+          "generation_id": "v1",
+          "step": "gate"
+        },
         "seq": 67,
         "ts": "<TS>",
         "type": "gate_evaluated"
@@ -1594,6 +2075,10 @@
       {
         "payload": {
           "confirmed": true
+        },
+        "scope": {
+          "generation_id": "v1",
+          "step": "gate"
         },
         "seq": 68,
         "ts": "<TS>",
@@ -1615,12 +2100,16 @@
             "structure": "double_elim"
           }
         },
+        "scope": {
+          "step": "decide"
+        },
         "seq": 69,
         "ts": "<TS>",
         "type": "decision_recorded"
       },
       {
         "payload": {},
+        "scope": {},
         "seq": 70,
         "ts": "<TS>",
         "type": "round_closed"

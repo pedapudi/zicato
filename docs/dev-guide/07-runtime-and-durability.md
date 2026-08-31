@@ -1197,11 +1197,10 @@ proposer-side callback (`ProposerContext.round_event_emitter`) so both sides
 share one signature.
 
 Best-effort covers the disk rather than the schema. Building the typed event
-happens
-outside the guard, so a payload field no event declares raises rather than
-dropping the event: `seq` is derived from the file's tail, so a silently
-dropped event leaves a gap-free log that reads as a round which never
-emitted it. That is why `scope` is a separate argument and never a
+happens outside the guard, so a payload field no event declares raises rather
+than dropping the event. The reason is that `seq` comes from the file's tail:
+a silently dropped event leaves a gap-free log, which reads as a round that
+never emitted it. That is also why `scope` is a separate argument and never a
 reserved payload key — no emitter on the seam can forward it into a
 constructor that would reject it.
 
@@ -1502,15 +1501,16 @@ even if your payload also carries it (§7.10.2). Then add the token to
 `_STEPLESS_EVENTS` if it has none. The correspondence test fails if
 you add it to neither or to both, so steplessness cannot happen by omission.
 
-Never construct/append a `RoundLog` directly from loop code, and never let a
-STORAGE failure fail a round (D11): `_RoundLogEmitter.emit` swallows the
-append's `OSError` — keep it that way by passing only pre-computed,
-exception-free payload values (compute the dict *outside* any `getattr` chain
-that could throw, or mirror `_emit_tournament_units`' defensive shape). A
-payload field no event declares is a different matter: the constructor runs
-outside that guard and RAISES, because `seq` comes from the file's tail and a
-silently dropped event would leave a gap-free log no reader can tell from a
-round that never emitted it.
+Never construct or append a `RoundLog` directly from loop code, and never let
+a STORAGE failure fail a round (D11). `_RoundLogEmitter.emit` swallows the
+append's `OSError`; keep it that way by passing only pre-computed,
+exception-free payload values — compute the dict *outside* any `getattr` chain
+that could throw, or mirror `_emit_tournament_units`' defensive shape.
+
+A payload field no event declares is a different matter. The constructor runs
+outside that guard and RAISES, because `seq` comes from the file's tail: a
+silently dropped event would leave a gap-free log that reads as a round which
+never emitted it.
 
 **Step 4 — Fold.** Extend `fold_round_record`: add an accumulator variable,
 an `elif isinstance(event, PlaceboDrawn):` branch, and (if consumers need

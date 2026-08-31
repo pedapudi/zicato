@@ -303,8 +303,8 @@ def test_an_attributes_coordinate_is_promoted_once_a_field_names_it(tmp_path):
 
     A writer that predates a named coordinate puts it where every unknown
     name goes — ``attributes``. Reading only the named field would leave that
-    value invisible to the reader that now names it, which is exactly the
-    forward compatibility the extension point exists to provide.
+    value invisible to the reader that now names it, which is the forward
+    compatibility the extension point exists to provide.
     """
     scope = RoundEventScope.from_payload({"attributes": {"step": "gate", "unknown": 1}})
     assert scope.step == "gate"

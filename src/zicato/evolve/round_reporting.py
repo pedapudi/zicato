@@ -139,9 +139,9 @@ class _RoundLogEmitter:
 
     A SCHEMA mistake is not swallowed. Building the typed event happens
     outside that guard, so a payload field no event declares raises from the
-    constructor rather than dropping the event: ``seq`` is derived from the
-    file's tail, so a silently dropped event leaves a gap-free log that no
-    reader can tell from a round which never emitted the event at all.
+    constructor rather than dropping the event. The reason is that ``seq``
+    comes from the file's tail: a silently dropped event leaves a gap-free
+    log, which reads as a round that never emitted the event at all.
 
     ``emit`` takes the wire ``type_token``, its payload fields and its
     optional plan ``scope`` — the same three-argument string-token seam the
