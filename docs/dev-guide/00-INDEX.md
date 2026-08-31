@@ -168,8 +168,9 @@ python tools/prose_lint.py \
   --baseline tools/prose_lint_baseline.json              # 11. prose gate (ratchet)
 ```
 
-> ✅ **ALWAYS** run rung 10. It is the cheapest rung and the one whose failure is
-> least recoverable — a vendor leak in a pushed commit means a history rewrite.
+> ✅ **ALWAYS** run the vendor scan (rung 10). It is the cheapest rung and the one
+> whose failure is least recoverable: a vendor leak in a pushed commit means a
+> history rewrite.
 
 ---
 

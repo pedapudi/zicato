@@ -1391,7 +1391,7 @@ both plain-`python` runs of a stdlib-only tool.
 
 ## 11.11 The pre-commit checklist
 
-Copy-paste this before a nontrivial commit. The eleven steps run in order:
+Copy-paste this before a nontrivial commit. The twelve steps run in order:
 the fast lane for quick signal, the full suite, format and lint, types,
 import contracts, the parity gates, the node suite, the two oracles, the
 Rust supervisor, the line budgets, and the vendor scan. Each step is a gate
@@ -1525,15 +1525,15 @@ python tools/prose_lint.py --baseline tools/prose_lint_baseline.json
 python tools/prose_lint.py --write-baseline tools/prose_lint_baseline.json
 ```
 
-CI runs the third form. `tools/prose_lint_baseline.json` holds one count per
-rule and the run fails only where a count rises above it, so the check guards
-the tree while the standing backlog is worked through.
+CI runs the `--baseline` form. `tools/prose_lint_baseline.json` holds one count
+per rule, and the run fails only where a count rises above its ceiling, so the
+check guards the tree while the standing backlog is worked through.
 
 A cleanup change leaves the baseline file alone. Lowering a count is always
 green against a higher ceiling, so a prose-fixing branch touches only the prose
 and never contends for the shared file — several such branches can be in flight
 at once without conflicting. Once they have merged, one change of its own
-regenerates the file with the fourth form and lands it, ratcheting every
+regenerates the file with `--write-baseline` and lands it, ratcheting every
 ceiling down to the measured floor. Regenerate on a tree that is current with
 `main`: the counts are whole-tree totals, so a baseline captured before someone
 else's merge can record a floor the merged tree fails to meet.
