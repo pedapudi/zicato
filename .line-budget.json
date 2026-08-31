@@ -2,12 +2,14 @@
   "baseline": {
     "ref": "f9052dd",
     "raw_non_markdown": 425755,
-    "total": 408547,
-    "production": 197588
+    "total": 408661,
+    "production": 197702,
+    "production_logic": 117024
   },
   "limits": {
-    "total": 453362,
-    "production": 203751,
+    "total": 453648,
+    "production": 203864,
+    "production_logic": 121581,
     "note": "Final measured limits; see docs/design/LINE-BUDGET.md."
   }
 }

@@ -1,44 +1,71 @@
 # Line budgets
 
 Line count is a deliberately blunt proxy for structural simplicity. The
-simplification program constrains both tracked non-documentation lines and the
-production subset, so deleting tests cannot conceal runtime growth. Detailed
-measurement and verification instructions live in
+simplification program constrains tracked non-documentation lines, the
+production subset of them, and the executable lines inside that subset, so
+neither deleting tests nor deleting prose can stand in for reducing logic.
+Detailed measurement and verification instructions live in
 [`docs/dev-guide/11-testing.md`](../dev-guide/11-testing.md#line-budget-gate).
 
 ## Measurement contract
 
-The total counts newline characters in tracked files, excluding Markdown,
-dependency lockfiles, and a fixed list of generated artifacts. Production is
-the subset under the runtime package, crate source directories, integrations,
-and the build hook; tests and assets remain outside that subtotal. The checker
-owns the exact classifications.
+Three counts are taken over the tracked files, and each carries its own
+ceiling.
 
-The baseline and the enforced limit use that same metric. Both limits below are
-the ones `.line-budget.json` holds, and the last column subtracts the baseline
-from the limit: it is positive where the limit stands above the baseline and
-negative where it stands below.
+**Total** counts newline characters in tracked files, excluding Markdown,
+dependency lockfiles, and the paths `EXCLUDED_FROM_BUDGET` in
+`tools/line_budget.py` names, each with the reason it holds no implementation
+a simplification could reach.
+
+**Production** is the subset of those files under the runtime package, crate
+source directories, integrations, and the build hook; tests and assets stay
+outside that subtotal.
+
+**Production logic** counts, over those same production files, only the lines
+that execute: for Python, a line that is neither blank, nor a comment, nor part
+of a docstring; for JavaScript, a line that is neither blank nor comment-only;
+for every other file type, the raw newline count, because the tool holds no
+comment syntax for them. A comment or docstring sharing a line with code leaves
+that line executable.
+
+Documentation and comments therefore reach the total and the production
+subtotal and never the logic count. Writing them spends two budgets and
+deleting them relieves neither ceiling that measures logic, so the third
+ceiling can only be moved by removing code. The checker owns the exact
+classifications.
+
+The baseline and the enforced limit use the same metric within each row. All
+three limits below are the ones `.line-budget.json` holds, and the last column
+subtracts the baseline from the limit: it is positive where the limit stands
+above the baseline and negative where it stands below.
 
 | Measurement | Baseline (`f9052dd`) | Enforced limit | Limit minus baseline |
 |---|---:|---:|---:|
-| Total | 408,547 | 453,362 | +44,815 |
-| Production | 197,588 | 203,751 | +6,163 |
+| Total | 408,661 | 453,648 | +44,987 |
+| Production | 197,702 | 203,864 | +6,162 |
+| Production logic | 117,024 | 121,581 | +4,557 |
 
-The earlier raw count of 425,755 included lockfiles and generated artifacts and
-is retained in `.line-budget.json` for provenance; it is not the enforced
-metric.
+The baseline row is the reference `f9052dd` measured by the classification the
+checker holds, which counts the console's hand-written entry point
+`src/zicato/dashboard/static/app_T.js` (114 lines at that reference). A
+provenance record of 408,547 total and 197,588 production for the same
+reference is that measurement taken while the exclusion list also named that
+file. The raw count of 425,755 retained in `.line-budget.json` includes
+lockfiles and excluded paths and is not an enforced metric.
 
 ## Ratchet policy
 
-There is no temporary allowance. A change exceeding either limit fails. A
-deliberate increase must update the limit and record the previous value, signed
-delta, new value, issue, and reason in this document. Reductions ratchet both
-machine limits directly to the new measured totals.
+There is no temporary allowance. A change exceeding any of the three limits
+fails. A deliberate increase must update the limit and record the previous
+value, signed delta, new value, issue, and reason in this document. Reductions
+ratchet each machine limit directly to the new measured total.
 
 Minification, concatenation, moving implementation into excluded paths,
-checked-in generated replacements, or weakening tests do not qualify as
-simplification. Any classification change receives the same review as a budget
-increase.
+checked-in generated replacements, weakening tests, or deleting documentation
+and comments do not qualify as simplification. Any classification change
+receives the same review as a budget increase; where it corrects an exclusion
+and so brings real source into a measurement, the ceiling rises by the lines the
+correction exposes and the entry records that reason.
 
 ## Deliberate increases
 
@@ -116,3 +143,6 @@ increase.
 | Prose lint for hidden-context constructions (total) | 441,476 | +558 | 442,034 | The dependency-free checker over the documentation, README, CHANGELOG, runtime, example, skill, and tool trees; its per-rule fixture suite; the committed per-rule baseline; and the ratchet job in CI. Production is unchanged: the tool sits outside the runtime package. |
 | Temporal hedges and the changelog exemption (total) | 441,975 | +46 | 442,021 | The seventh prose rule with its per-phrase and severity coverage, the per-file rule-exemption table with its changelog regression, and the seventh entry in the committed baseline. Production is unchanged: the checker sits outside the runtime package. |
 | Reader parity over every workspace reader (total) | 442,021 | +11,341 | 453,362 | Issue #324: the recorded golden is 9,869 of the delta — 88 labelled reader outputs over a fixture with two epochs, eleven generations, per-run replicates, two board reflections, three round logs and a derived index; the remaining 1,472 are the fixture builder, the capture, and the ordering and reproducibility gates. The golden is the coverage: before it the analyzer, reflection, health, index, workspace and CLI readers had no pinned output at all, so any of them could change what it returns without a test noticing. Production is unchanged: the change adds only tests and fixtures. |
+| Executable-line measurement (total) | 453,362 | +173 | 453,535 | Issue #324: the per-language logic counters in `tools/line_budget.py`, the third enforced ceiling, the stated reason beside each excluded path, and the docstring, comment, and block-comment fixtures that pin what the logic count drops. |
+| The console entry point counted (total) | 453,535 | +113 | 453,648 | Issue #324: `src/zicato/dashboard/static/app_T.js` is hand-written source, so it is absent from the exclusion list and its lines are measured like the rest of the console. |
+| The console entry point counted (production) | 203,751 | +113 | 203,864 | Issue #324: the same correction, in the subtotal the file belongs to as runtime source under `src/zicato/`. |

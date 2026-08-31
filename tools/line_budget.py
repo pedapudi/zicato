@@ -3,28 +3,43 @@
 from __future__ import annotations
 
 import argparse
+import ast
+import io
 import json
 import subprocess
 import sys
+import tokenize
 from collections import Counter
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from dataclasses import asdict, dataclass
 from pathlib import Path, PurePosixPath
 
 ROOT = Path(__file__).resolve().parents[1]
 CONFIG = ROOT / ".line-budget.json"
 LOCKFILES = {"Cargo.lock", "uv.lock", "package-lock.json", "npm-shrinkwrap.json"}
-GENERATED = (
+# The paths the budget does not count at all, and the reason each one holds no
+# implementation that simplifying the repository could reach. Everything else
+# tracked by git counts, so a file lands here only on one of these grounds.
+EXCLUDED_FROM_BUDGET = (
+    # Screenshots kept as the record of a console review. They are binary, so
+    # the newline count of one is an artifact of how the image compressed.
     "artifacts/visual-inspection/",
-    "docs/presentation/contact-sheet.png",
+    # Rebuilt from the slide sources by docs/presentation/build.py: the deck
+    # viewer with the slides re-inlined, the printed deck, and the contact
+    # sheet. Editing one is undone by the next build.
     "docs/presentation/index.html",
-    "docs/presentation/slides/",
     "docs/presentation/zicato-deck.pdf",
-    "src/zicato/dashboard/static/app_T.js",
+    "docs/presentation/contact-sheet.png",
+    # The deck's hand-drawn source art. Its SVG path data measures how much is
+    # drawn on a slide, which no simplification of the repository changes.
+    "docs/presentation/slides/",
+    # Captured payloads that tests replay as recorded evidence of what a
+    # producer emitted. Shortening one to save lines would destroy the record.
     "src/zicato/dashboard/static/test/fixtures/trace_view/",
     "tests/data/reader_parity_snapshot.json",
 )
 ASSET_SUFFIXES = {".ico", ".pdf", ".png", ".svg", ".woff2"}
+DOCSTRING_HOLDERS = (ast.Module, ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)
 
 
 @dataclass(frozen=True)
@@ -33,6 +48,7 @@ class Report:
     lines: int
     production_files: int
     production_lines: int
+    production_logic_lines: int
     languages: dict[str, int]
     subsystems: dict[str, int]
 
@@ -55,7 +71,7 @@ def _excluded(path: str) -> bool:
     return (
         PurePosixPath(path).suffix.lower() in {".md", ".markdown"}
         or name in LOCKFILES
-        or any(path == item or path.startswith(item) for item in GENERATED)
+        or any(path == item or path.startswith(item) for item in EXCLUDED_FROM_BUDGET)
     )
 
 
@@ -86,6 +102,82 @@ def _language(path: str) -> str:
     }.get(suffix, suffix.removeprefix(".").upper() or "Other")
 
 
+def _python_logic(source: str) -> int:
+    """Count Python lines that are neither blank, comment-only, nor docstring.
+
+    A docstring's own lines are prose; a comment sharing a line with code
+    leaves that line executable. Unparseable source falls back to every
+    non-blank line, which never undercounts.
+    """
+    lines = source.splitlines()
+    prose: set[int] = set()
+    try:
+        tree = ast.parse(source)
+        tokens = list(tokenize.generate_tokens(io.StringIO(source).readline))
+    except (SyntaxError, ValueError, tokenize.TokenError):
+        return sum(1 for line in lines if line.strip())
+    for node in ast.walk(tree):
+        if not isinstance(node, DOCSTRING_HOLDERS) or not node.body:
+            continue
+        head = node.body[0]
+        if not isinstance(head, ast.Expr) or not isinstance(head.value, ast.Constant):
+            continue
+        if not isinstance(head.value.value, str):
+            continue
+        shared = bool(lines[head.lineno - 1][: head.col_offset].strip())
+        prose.update(range(head.lineno + shared, (head.end_lineno or head.lineno) + 1))
+    for token in tokens:
+        row, column = token.start
+        if token.type == tokenize.COMMENT and not lines[row - 1][:column].strip():
+            prose.add(row)
+    return sum(1 for row, line in enumerate(lines, 1) if line.strip() and row not in prose)
+
+
+def _javascript_logic(source: str) -> int:
+    """Count JavaScript lines that are neither blank nor comment-only.
+
+    Comment openers are stripped from the left of each line, so a line keeping
+    any other text is executable. A line beginning with a string literal that
+    contains a comment opener is the one shape this reads as a comment.
+    """
+    count = 0
+    inside = False
+    for line in source.splitlines():
+        text = line.strip()
+        while text:
+            if inside:
+                end = text.find("*/")
+                inside = end < 0
+                text = "" if inside else text[end + 2 :].strip()
+            elif text.startswith("//"):
+                text = ""
+            elif text.startswith("/*"):
+                inside = True
+                text = text[2:]
+            else:
+                break
+        count += bool(text)
+    return count
+
+
+LOGIC_COUNTERS: dict[str, Callable[[str], int]] = {
+    ".js": _javascript_logic,
+    ".mjs": _javascript_logic,
+    ".py": _python_logic,
+}
+
+
+def _logic(path: str, data: bytes, lines: int) -> int:
+    """Count executable lines, keeping the raw count for file types with no counter."""
+    counter = LOGIC_COUNTERS.get(PurePosixPath(path).suffix.lower())
+    if counter is None:
+        return lines
+    try:
+        return counter(data.decode())
+    except UnicodeDecodeError:
+        return lines
+
+
 def _subsystem(path: str) -> str:
     parts = PurePosixPath(path).parts
     if parts[:2] == ("src", "zicato"):
@@ -98,14 +190,15 @@ def _subsystem(path: str) -> str:
 def measure(ref: str | None = None, cwd: Path = ROOT) -> Report:
     languages: Counter[str] = Counter()
     subsystems: Counter[str] = Counter()
-    files = lines = production_files = production_lines = 0
+    files = lines = production_files = production_lines = production_logic_lines = 0
     for path in _paths(ref, cwd):
         if _excluded(path):
             continue
         try:
-            count = _content(path, ref, cwd).count(b"\n")
+            data = _content(path, ref, cwd)
         except FileNotFoundError:
             continue
+        count = data.count(b"\n")
         files += 1
         lines += count
         languages[_language(path)] += count
@@ -113,11 +206,13 @@ def measure(ref: str | None = None, cwd: Path = ROOT) -> Report:
         if _production(path):
             production_files += 1
             production_lines += count
+            production_logic_lines += _logic(path, data, count)
     return Report(
         files,
         lines,
         production_files,
         production_lines,
+        production_logic_lines,
         dict(languages.most_common()),
         dict(subsystems.most_common()),
     )
@@ -130,8 +225,10 @@ def _format_rows(rows: Iterable[tuple[str, int]]) -> str:
 def render(report: Report) -> str:
     return "\n".join(
         (
-            f"total       {report.lines:>9,} lines  {report.files:>5,} files",
-            f"production  {report.production_lines:>9,} lines  "
+            f"total             {report.lines:>9,} lines  {report.files:>5,} files",
+            f"production        {report.production_lines:>9,} lines  "
+            f"{report.production_files:>5,} files",
+            f"production logic  {report.production_logic_lines:>9,} lines  "
             f"{report.production_files:>5,} files",
             "by language",
             _format_rows(report.languages.items()),
@@ -148,6 +245,7 @@ def check(report: Report, config_path: Path = CONFIG) -> list[str]:
     for key, actual in (
         ("total", report.lines),
         ("production", report.production_lines),
+        ("production_logic", report.production_logic_lines),
     ):
         ceiling = int(limits[key])
         if actual > ceiling:
