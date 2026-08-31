@@ -1315,10 +1315,10 @@ grouping is by DOMINANT view and a few assertions cross seams.
 
 ## 11.10 CI
 
-`.github/workflows/ci.yml` runs two jobs. The Python job matrixes over 3.11
-and 3.12 and runs the gates in order: ruff → import contracts → mypy →
-pytest. Dependencies install with `--frozen` (exactly what `uv.lock` pins,
-failing if the lock is stale — reproducible CI):
+`.github/workflows/ci.yml` runs one job per gate family. The Python job
+matrixes over 3.11 and 3.12 and runs the gates in order: ruff → import
+contracts → mypy → pytest. Dependencies install with `--frozen` (exactly
+what `uv.lock` pins, failing if the lock is stale — reproducible CI):
 
 ```yaml
       - name: Sync dependencies
@@ -1330,15 +1330,17 @@ failing if the lock is stale — reproducible CI):
       - name: Mypy
         run: uv run mypy src/zicato/
       - name: Pytest
-        run: uv run pytest tests/
+        run: uv run pytest tests/ tools/test_prose_lint.py
 ```
 — `.github/workflows/ci.yml`
 
-The second job builds and tests the Rust supervisor: `cargo fmt --check`,
+The Rust job builds and tests the supervisor: `cargo fmt --check`,
 `cargo clippy --all-targets -- -D warnings`, `cargo test`. A change that
 touches a two-language contract (the index schema, the runtime state serde,
-the `_is_safe_id` / `to_snake` / start-time twins) must pass BOTH jobs —
-CI is where the Python/Rust parity is enforced end to end.
+the `_is_safe_id` / `to_snake` / start-time twins) must pass BOTH of those
+jobs — CI is where the Python/Rust parity is enforced end to end. Two more
+jobs need no dependency install: the line-budget check and the prose gate,
+both plain-`python` runs of a stdlib-only tool.
 
 > ⚠️ TRAP — CI runs `ruff check .` and `lint-imports` over the WHOLE tree and
 > installs with `--frozen`. Two failure modes bite here that a local `make
@@ -1393,6 +1395,10 @@ python tools/line_budget.py --check
 #     product / model identifiers; VENDOR must be your local pattern, kept
 #     out of the tree. The diff must be clean.
 git diff --cached | grep -riE "$VENDOR" && echo "VENDOR LEAK" || echo "clean"
+
+# 12. Prose gate — no new hidden-context constructions in docs, README,
+#     docstrings, or comments (ratchet against the committed baseline).
+python tools/prose_lint.py --baseline tools/prose_lint_baseline.json
 ```
 
 `make check` collapses steps 3–5 + 2 + 7 into one target
@@ -1442,6 +1448,60 @@ python tools/line_budget.py --check
 
 The stable measurement contract, final arithmetic, and ratchet policy live in
 `docs/design/LINE-BUDGET.md`; implementation mechanics live only here.
+
+### Prose gate
+
+Repository prose is read by people who have the tree and none of its
+development history. `tools/prose_lint.py` reports six constructions that need
+that history to decode: invented short labels used as vocabulary, wording about
+what the tree stopped doing, a subject defined by contrast with an absent
+alternative, adverbs asserting conviction in place of information, a trailing
+verb with no subject or result, and an issue number standing where a statement
+belongs. The tool's docstring states each rule and its reason in full;
+`tools/test_prose_lint.py` pins one hitting and one clean sentence per rule, so
+a widened pattern that starts swallowing ordinary sentences turns red.
+
+It reads the Markdown, and the Python docstrings and comments, under seven
+roots — `CHANGELOG.md`, `README.md`, `docs/`, `examples/`, `skills/`,
+`src/zicato/`, and `tools/` — which is every tree whose prose a reader is
+expected to act on. Two paths under those roots are skipped, because a hit in
+either is owned somewhere else and cannot be fixed where it appears:
+`docs/design/CLI.md` is generated from `zicato --help`, so its text is help
+literals owned by the command definitions, and the captured bytes under
+`tools/parity/golden/` are a record of what a run produced. JavaScript comments
+are out of scope, so the dashboard client is unread.
+
+Fenced blocks and backtick spans are quoted material and are masked before
+matching, so a document may cite an identifier freely. Python strings other
+than docstrings are out of scope. Layer numbers inside standard collocations (a
+squared norm, a load balancer or a processor cache at a numbered level) pass
+through an allowlist. The adverb rule reports at severity `review` and never
+fails a run on its own.
+
+```bash
+python tools/prose_lint.py                        # report; fails on any hit
+python tools/prose_lint.py --rule codename-label  # one rule
+python tools/prose_lint.py --baseline tools/prose_lint_baseline.json
+python tools/prose_lint.py --write-baseline tools/prose_lint_baseline.json
+```
+
+CI runs the third form. `tools/prose_lint_baseline.json` holds one count per
+rule and the run fails only where a count rises above it, so the check guards
+the tree while the standing backlog is worked through.
+
+A cleanup change leaves the baseline file alone. Lowering a count is always
+green against a higher ceiling, so a prose-fixing branch touches only the prose
+and never contends for the shared file — several such branches can be in flight
+at once without conflicting. Once they have merged, one change of its own
+regenerates the file with the fourth form and lands it, ratcheting every
+ceiling down to the measured floor. Regenerate on a tree that is current with
+`main`: the counts are whole-tree totals, so a baseline captured before someone
+else's merge can record a floor the merged tree fails to meet.
+
+Where a token is quoted from an external system and has to stay, waive it in
+place with `prose-lint: allow <rule-id>` on the offending line or the line
+above it (several ids may be listed, or `all`). A waiver claims the reader can
+decode the token without the repository's history; state that reason beside it.
 
 ---
 

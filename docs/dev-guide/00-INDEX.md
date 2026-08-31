@@ -162,9 +162,11 @@ uv run pytest tests/test_convergence_known_answer.py \
              tests/test_decision_procedure_power.py -q # 8. the two oracles (G4)
 python tools/line_budget.py --check                      # 9. simplification budgets
 git log -p <base>..HEAD | grep -icE "$pat"    # 10. vendor scan (G1): assemble $pat per 01-orientation §G1 → 0
+python tools/prose_lint.py \
+  --baseline tools/prose_lint_baseline.json              # 11. prose gate (ratchet)
 ```
 
-> ✅ **ALWAYS** end at rung 10. It is the cheapest rung and the one whose failure is
+> ✅ **ALWAYS** run rung 10. It is the cheapest rung and the one whose failure is
 > least recoverable — a vendor leak in a pushed commit means a history rewrite.
 
 ---
