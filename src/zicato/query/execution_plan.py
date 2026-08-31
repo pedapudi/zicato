@@ -25,8 +25,8 @@ Two sources, two jobs
   definition of "what counts as a draw for this cell" — so the plan and
   the eval matrix can never disagree about how many times something ran.
 
-Every execution, not only the duels
------------------------------------
+Every execution, including the non-duel draws
+--------------------------------------------
 The replicate namespace is partitioned by owner, and only two of its
 ranges are a cell's evidence. The rest ran too: the A/A noise-floor
 calibration, the contract pre-flight's deliberately-degraded probes, the
@@ -37,10 +37,10 @@ per stage, holding one node per draw — so the plan accounts for every
 non-attempt loss file on disk and nothing executed is invisible.
 
 A band is not a work unit and must never read as one. The pre-flight band
-in particular describes DEGRADED copies of the champion's code cached
-under the champion's own id: its label and every draw's purpose say so,
-because a reader who meets one of those nodes without its parent must
-still not mistake a probe's failure for champion behaviour. An index no
+in particular describes DEGRADED copies of the champion's code, cached
+under the champion's own id. Its label and every draw's purpose say so, so
+that a reader who meets one of those nodes without its parent still does
+not mistake a probe's failure for champion behaviour. An index no
 owner claims lands in the ``unclaimed`` band rather than being admitted
 quietly.
 
@@ -52,30 +52,29 @@ plausible tree that the files never held. A reader who opens
 records: a node whose facts are incomplete reads ``partial`` and names
 what it could not resolve, and a future round shows its existence and
 nothing else. The provenance vocabulary reserves ``inferred`` for a
-future node that is genuinely derived rather than read; nothing here
-emits it.
+future node that is derived rather than read; nothing here emits it.
 
-Best-effort throughout (DQ3): every input may be missing, pruned, or
-torn, and each failure narrows the tree rather than raising.
+Best-effort throughout: every input may be missing, pruned, or torn, and
+each failure narrows the tree rather than raising.
 
 Durable model, separate live overlay
 ------------------------------------
 This module builds the typed account of settled files. The live reader
 renders this same model with a runtime overlay instead of rewriting it.
-Two features remain deliberately absent here:
+Two features are absent by design:
 
 * The ``depth`` parameter. The whole plan is served in one response; a
   client that wants a spine reads the top of the tree and ignores the
-  rest. Measured against the largest epoch available at the time
+  rest. Measured against the largest epoch available for measurement
   (``2026-06-07_e4``, 56 loss files): the whole served payload is 37.7 KB,
   well under the 200 KB at which paging the tree would start to pay for
   its own complexity. The payload is close to linear in executed draws —
   that epoch's 64 nodes cost ~0.59 KB each — so the number to re-measure
-  before revisiting this is executed draws per epoch, not rounds.
-* Absolute-timeline placement for units written before the wall-clock
-  span landed on the loss profile. Those nodes carry a duration and read
+  before revisiting this is executed draws per epoch rather than rounds.
+* Absolute-timeline placement for a unit whose loss profile records no
+  wall-clock span. Those nodes carry a duration and read
   ``partial``. A start time is NEVER derived from a file mtime — that
-  measures when a file was written, not when the work ran.
+  measures when a file was written rather than when the work ran.
 """
 
 from __future__ import annotations
@@ -127,12 +126,12 @@ from zicato.query.runtime_view import read_active_tournament_dict
 
 # --- the served vocabularies ------------------------------------------------
 
-#: Execution status of a node. ``failed`` describes the EXECUTION, not the
-#: verdict: a board entry that ran cleanly and failed its predicate is
+#: Execution status of a node. ``failed`` describes the EXECUTION rather than
+#: the verdict: a board entry that ran cleanly and failed its predicate is
 #: ``done`` carrying ``pass_fail: false``, while one that aborted is
 #: ``failed``. ``skipped`` is the load-bearing one — a step the loop
 #: decided not to take (a holdout it never released) must be visible as an
-#: absence the server states, not as a gap the reader has to notice.
+#: absence the server states rather than as a gap the reader has to notice.
 STATUS_PLANNED = "planned"
 STATUS_RUNNING = "running"
 STATUS_DONE = "done"
@@ -176,9 +175,9 @@ class PlanNode:
 
     The two open dicts divide cleanly: ``coordinates`` says WHERE the node
     sits in the workspace (``epoch_id`` / ``generation_id`` / ``entry_id``
-    / ``replicate`` / ``match_id``, one spelling each — DQ2), and
+    / ``replicate`` / ``match_id``, one spelling each), and
     ``outcome`` says WHAT it produced. ``started_at`` / ``ended_at`` are
-    integer milliseconds since the epoch (DQ2's ``ts`` type), ``None``
+    integer milliseconds since the epoch (the ``ts`` wire type), ``None``
     when nothing on disk records the position; ``duration_ms`` can be
     known without them.
     """
@@ -210,7 +209,7 @@ class PlanNode:
             "kind": self.kind,
             "label": self.label,
             "purpose": self.purpose,
-            # ``is not None``, not truthiness: an overlay that resolves a
+            # ``is not None`` rather than truthiness: an overlay that resolves a
             # node's status to the empty string is stating a status, and
             # falling back to the node's own would silently overrule it.
             "status": status if status is not None else self.status,
@@ -282,7 +281,7 @@ def _rolled(provenance: str, children: tuple[PlanNode, ...]) -> str:
 
 
 def _ts_ms(value: Any) -> int | None:
-    """An ISO-8601 timestamp as integer milliseconds since the epoch (DQ2)."""
+    """An ISO-8601 timestamp as integer milliseconds since the epoch."""
     if not isinstance(value, str) or not value:
         return None
     try:
@@ -552,7 +551,7 @@ def _sweep_node(
     total = len(board_entry_ids) if board_entry_ids else None
     missing = [eid for eid in board_entry_ids if eid not in covered]
     # Progress counts BOARD entries only: a run directory left behind by an
-    # entry the board no longer carries is real work, but counting it would
+    # entry the board does not carry is real work, but counting it would
     # report a sweep as more than complete.
     on_board = covered.intersection(board_entry_ids)
     off_board = sorted(covered.difference(board_entry_ids))
@@ -590,7 +589,7 @@ def _sweep_node(
 #: round. A band draw's loss file records its coordinates, its timing and its
 #: verdict, but never a round, so the honest placement is the stage that owns
 #: the generation the draws sit under — which is where that generation was
-#: minted, not necessarily when the draws were taken.
+#: minted, and not necessarily when the draws were taken.
 _UNSTATED_ATTRIBUTION = (
     "the draw files record no round; this band hangs under the stage that owns "
     "its generation, which is where that generation was minted and not "
@@ -913,8 +912,8 @@ def _decide_step(
 ) -> PlanNode:
     """The round's terminal decision, with each candidate's recorded fate.
 
-    ``promoted`` is the tri-state from ``lineage.json`` — lineage owns
-    topology (DQ14) — and the deltas beside it are journal detail from
+    ``promoted`` is the tri-state from ``lineage.json``, which owns
+    topology, and the deltas beside it are journal detail from
     the generation's own experiment record.
     """
     decisions = _typed(events, DecisionRecorded)
@@ -1112,7 +1111,7 @@ def _planned_rounds(
 
 
 def _empty_plan_model(epoch_id: str | None, note: str) -> ExecutionPlan:
-    """The empty typed model behind the one durable degrade shape (DQ3)."""
+    """The empty typed model behind the one durable degrade shape."""
     return ExecutionPlan(epoch_id=epoch_id, generated_at=_iso(_utc_now()), note=note)
 
 
@@ -1147,8 +1146,8 @@ def build_execution_plan(paths: WorkspacePaths, epoch_id: str | None = None) -> 
     ``<generation_id>/<entry_id>/r<replicate>``.
 
     Degrades to the empty plan — same shape, a ``note`` saying why — for an
-    absent, unknown, or path-unsafe epoch and for any failure underneath
-    (DQ3): no reader here raises.
+    absent, unknown, or path-unsafe epoch and for any failure underneath:
+    no reader here raises.
     """
     return build_execution_plan_model(paths, epoch_id).payload()
 
@@ -1156,9 +1155,9 @@ def build_execution_plan(paths: WorkspacePaths, epoch_id: str | None = None) -> 
 def build_execution_plan_model(paths: WorkspacePaths, epoch_id: str | None = None) -> ExecutionPlan:
     """Build the typed model used by both execution-plan endpoints.
 
-    This is the shared reader seam. It follows the public endpoint's DQ3
-    guarantee and always returns a model, including for an absent or unreadable
-    epoch.
+    This is the shared reader seam. It keeps the public endpoint's
+    best-effort guarantee and always returns a model, including for an absent
+    or unreadable epoch.
     """
     try:
         resolved = _resolve_epoch_id(paths, epoch_id)
@@ -1168,7 +1167,7 @@ def build_execution_plan_model(paths: WorkspacePaths, epoch_id: str | None = Non
         return _empty_plan_model(None, "no epoch")
     try:
         return _build(paths, resolved)
-    except Exception:  # noqa: BLE001 — DQ3: the endpoint never returns a 500
+    except Exception:  # noqa: BLE001 — the endpoint never returns a 500
         return _empty_plan_model(resolved, "epoch could not be read")
 
 

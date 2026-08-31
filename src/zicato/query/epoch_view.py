@@ -75,7 +75,7 @@ def _parse_board(path: Path) -> list[dict[str, Any]] | None:
         if not isinstance(obj, dict):
             continue
         # The board's first JSONL line is a `board_meta` header object
-        # (it carries `disable_drift`, not an entry's fields). Skip it
+        # (it carries `disable_drift` rather than an entry's fields). Skip it
         # so it does not surface as a spurious all-`—` board row.
         if obj.get("board_meta") is True:
             continue
@@ -89,7 +89,7 @@ def _parse_board(path: Path) -> list[dict[str, Any]] | None:
         entries.append(
             {
                 # ONE spelling on the wire: `entry_id` (the board JSONL's own
-                # `id` is an input-format detail, not a payload field).
+                # `id` is an input-format detail rather than a payload field).
                 "entry_id": obj.get("id"),
                 "kind": obj.get("kind"),
                 "input_preview": _board_input_preview(obj),
@@ -273,9 +273,9 @@ def _read_text_best_effort(path: Path) -> str:
 def _read_epoch_brief(epoch_dir: Path) -> str:
     """The proposer brief text for an epoch.
 
-    ``brief.md`` post-rename; ``rubric.md`` is the legacy name and is
-    read as a fallback so pre-rename epochs still resolve. Any read
-    error degrades to an empty string.
+    ``brief.md`` is the current filename; ``rubric.md`` is read as a
+    fallback, so an epoch created under the older name still resolves. Any
+    read error degrades to an empty string.
     """
     for name in ("brief.md", "rubric.md"):
         try:
@@ -308,8 +308,8 @@ def _distill_brief_goal(brief: str) -> str | None:
     halves are joined directly (``multi-`` + ``agent`` → ``multi-agent``).
 
     A leading list-item or sub-heading line is still skipped, so the
-    summary reads as prose rather than a bullet fragment. Note this is a
-    paragraph, not necessarily one sentence — the goal paragraph's own
+    summary reads as prose rather than a bullet fragment. This is a
+    paragraph, which is not necessarily one sentence — the goal paragraph's own
     trailing clause ("… Specifically:") is part of what the operator
     wrote and is kept. Returns ``None`` when the brief has no ``Goal``
     section or no prose line within it.
@@ -338,7 +338,7 @@ def _distill_brief_goal(brief: str) -> str | None:
         if not in_goal:
             continue
         # Skip list items / blockquotes / code fences — the summary should
-        # read as prose, not a bullet fragment. Once a paragraph has
+        # read as prose rather than a bullet fragment. Once a paragraph has
         # started, such a line CLOSES it rather than being skipped over:
         # the paragraph ends where the next block begins.
         if not line or _opens_a_block(line):
@@ -390,7 +390,7 @@ def _splits_a_word(text: str) -> bool:
 
     A single trailing hyphen preceded by a word character; a ``--`` tail is
     punctuation, and a hyphen preceded by whitespace is a dash the operator
-    typed, not a wrap.
+    typed rather than a wrap.
     """
     return len(text) >= 2 and text.endswith("-") and not text.endswith("--") and text[-2].isalnum()
 
@@ -497,7 +497,8 @@ def _current_champion(
     (:mod:`zicato.query.promoted_head` states where that authority lives).
     ``recorded_heads`` is the set the runner recorded, and it resolves the
     branch. Natural order is the deterministic TIEBREAK for a branch no
-    record survives to explain — a stable answer, not a correct one.
+    record survives to explain, which yields a stable answer rather than a
+    correct one.
     """
     by_gen: dict[str, dict[str, Any]] = {}
     promoted: set[str] = set()
@@ -615,7 +616,7 @@ def compute_epoch_delta_summary(
     # the sum of `scalar_score_delta` for every promoted hop the spine
     # walks. The tile reads "—" when the spine has zero or one promoted
     # generation: a single promotion is the default first-tournament
-    # outcome (parent → first child), not yet meta-loop progress.
+    # outcome (parent → first child) and not yet meta-loop progress.
     chain: list[str] = []
     if roots:
         chain = [sorted(roots)[0]]
@@ -688,13 +689,13 @@ def _tournament_block_from_scoring(scoring: Any) -> dict[str, Any] | None:
 def _overfitting_block_from_scoring(scoring: Any) -> dict[str, Any] | None:
     """Extract the ``overfitting`` block from a frozen scoring dict.
 
-    The overfitting Phase A surface freezes its config on
+    The train/holdout split surface freezes its config on
     :class:`~zicato.core.types.ScoringWeights.overfitting` and serializes
     it into ``scoring.json`` under an ``"overfitting"`` key. The dashboard
-    reads it back DEFENSIVELY: the block is optional (an epoch that
-    predates the feature — or one that left the holdout disabled — carries
-    no key), every field is read with a type guard, and an unreadable /
-    absent block degrades to ``None`` so the caller renders a clean
+    reads it back DEFENSIVELY. The block is optional: an epoch that left
+    the holdout disabled, or whose record predates the block, carries no
+    key. Every field is read with a type guard, and an unreadable or
+    absent block degrades to ``None``, so the caller renders a clean
     "no holdout configured" state rather than crashing.
 
     Returns a normalized ``{enabled, holdout_fraction, holdout_tags,
@@ -947,15 +948,15 @@ def build_epoch_view(
     if board is not None:
         view["board"] = board
 
-    # Proposer brief: ``brief.md`` post-rename; ``rubric.md`` is the
-    # legacy name (read as a fallback). Any read error -> empty string.
+    # Proposer brief: ``brief.md`` is the current filename; ``rubric.md`` is
+    # read as a fallback. Any read error -> empty string.
     view["brief"] = _read_epoch_brief(epoch_dir)
 
     scoring = _read_json_value(epoch_dir / "scoring.json")
     if scoring is not None:
         view["scoring"] = scoring
 
-    # Train/holdout split (overfitting Phase A). Computed SERVER-SIDE from
+    # Train/holdout split. Computed SERVER-SIDE from
     # the board entries + the frozen ``overfitting`` block on scoring.json,
     # so the frontend gets the SAME slices the gate plays without re-deriving
     # the deterministic selection. Always present (every entry reads as
@@ -1040,9 +1041,8 @@ def build_epoch_view(
     # Frozen goal — Task #178's first-class field on EpochConfig and
     # the index ``epochs.goal`` column. The index is best-effort; on a
     # never-indexed workspace fall back to the goal recorded in
-    # ``config.json`` (the canonical durable copy). Brief-distilled
-    # fallback is preserved for legacy epochs whose ``config.json``
-    # predates the field.
+    # ``config.json`` (the canonical durable copy). The brief-distilled
+    # fallback covers an epoch whose ``config.json`` carries no goal field.
     goal_text = ""
     if isinstance(cfg, dict):
         raw_goal = cfg.get("goal")
@@ -1075,10 +1075,10 @@ def build_epoch_view(
     # DEDICATED ``/api/epoch/{id}/analysis`` route — the one the publication
     # view actually fetches — and NOT here.
     #
-    # It used to be rendered here too, on the plain ``/api/epoch`` read, which
-    # meant a full ``gather_epoch_report_data`` + report render on the most
-    # frequently polled payload in the dashboard, for a field no client ever
-    # read off THIS view. The key stays (its absence would be a payload-shape
+    # Rendering it on the plain ``/api/epoch`` read as well would mean a full
+    # ``gather_epoch_report_data`` and report render on the most frequently
+    # polled payload in the dashboard, for a field no client reads off THIS
+    # view. The key stays (its absence would be a payload-shape
     # change, and every reader-parity fixture pins it) but it is now always the
     # empty string here, which is what those fixtures already record. A caller
     # that wants the fragment asks the route whose job it is.
@@ -1111,14 +1111,11 @@ def build_epoch_analysis(paths: WorkspacePaths, epoch_id: str) -> dict[str, Any]
     so both surfaces look like a paper. The raw markdown ``analysis_md``
     is the FALLBACK, rendered client-side when the inline HTML is empty.
 
-    That order was inverted here for as long as the fields existed, and
-    the description was wrong in the direction that hid a cost: the
-    dashboard read only ``analysis_md`` and re-rendered markdown itself,
-    so the expensive server render this docstring called the primary path
-    was built and discarded on every request. The reader now prefers the
-    inline HTML, which is what makes the render worth doing.
+    Preferring the inline HTML is what makes the server render worth doing:
+    a client that reads only ``analysis_md`` and re-renders the markdown
+    itself leaves that render built and discarded on every request.
 
-    Best-effort (DQ3): a missing ``analysis.md`` reads as the empty
+    Best-effort: a missing ``analysis.md`` reads as the empty
     string; a failed fragment render degrades to ``""``; never raises.
     """
     analysis_md_path = paths.epochs / epoch_id / "analysis.md"

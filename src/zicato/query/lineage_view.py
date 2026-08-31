@@ -1,4 +1,10 @@
-"""lineage_view — extracted from the former dashboard state_reader monolith (pure move)."""
+"""The lineage feed: one node per generation directory, across every epoch.
+
+Each node carries the generation's identity, its parent, the tri-state
+promotion flag, and the settle-time facts ``lineage.json`` recorded. The
+visibility rating triple is joined onto each node server-side from the
+analytical index.
+"""
 
 from __future__ import annotations
 
@@ -20,7 +26,7 @@ from zicato.workspace import iter_epochs
 # Lineage view (directory-derived)
 # ---------------------------------------------------------------------------
 #
-# The decision classifier lives in ``readers.decisions`` — the ONE module the
+# The decision classifier lives in :mod:`zicato.query.decisions` — the ONE module the
 # lineage view, the epoch experiments feed, and every other reader share, so
 # the payloads cannot disagree about what counts as a promotion.
 
@@ -50,12 +56,12 @@ def build_lineage_view(
     honest degrade as an epoch with no generations.
 
     Each node also carries the visibility rating triple ``elo`` /
-    ``elo_se`` / ``elo_games`` (DQ2 snake_case), joined server-side from
-    the analytical index (never re-derived by the client — DQ1). The join
-    is best-effort (DQ3): an absent / cold index — or a generation the
-    fold has not rated (zero settled duels, or a pre-reindex file) — reads
-    as the null triple, never an error. The rating is visibility-only; it
-    never gates promotion.
+    ``elo_se`` / ``elo_games``, in one snake_case spelling, joined
+    server-side from the analytical index and never re-derived by the
+    client. The join is best-effort: an absent or cold index — or a
+    generation the fold has not rated (zero settled duels, or a file
+    written before the last reindex) — reads as the null triple, never an
+    error. The rating is visibility-only; it never gates promotion.
     """
     legacy: dict[tuple[str, str], dict[str, Any]] = {}
     lineage_file = _read_json_value(paths.lineage)
@@ -74,7 +80,7 @@ def build_lineage_view(
                     "parent_id": gen.get("parent_id"),
                     "created_at": gen.get("created_at") or None,
                     "promoted": gen.get("promoted"),
-                    # The settle-time facts the DAG now records (issue
+                    # The settle-time facts the DAG records (issue
                     # #124) — passed through verbatim below.
                     "rejection_reason": gen.get("rejection_reason"),
                     "parent_scalar": gen.get("parent_scalar"),
@@ -111,10 +117,11 @@ def build_lineage_view(
                 promoted = promoted if isinstance(promoted, bool) else None
 
                 # The evolve-round that MINTED this generation (its birth round
-                # within the epoch's outer loop). A separate stamp writes this to
-                # experiment.json; until it lands the field is simply absent and
-                # the dashboard derives the rounds from the field-tournament
-                # records / lineage instead. Read it tolerantly (int only).
+                # within the epoch's outer loop), stamped onto experiment.json
+                # when the generation is minted. On a generation whose record
+                # carries no stamp the field is simply absent, and the dashboard
+                # derives the rounds from the field-tournament records and
+                # lineage instead. Read it tolerantly (int only).
                 round_index: int | None = None
                 if experiment is not None:
                     raw_round = experiment.get("round_index")
@@ -155,8 +162,9 @@ def build_lineage_view(
                 else:
                     node["decision"], node["decision_label"] = "pending", "undecided"
                 # Only surface round_index when the stamp is present, so a
-                # pre-feature payload stays byte-identical (the key is absent,
-                # not null) and the dashboard's lineage fallback kicks in.
+                # payload written before the stamp existed stays byte-identical
+                # (the key is absent rather than null) and the dashboard's
+                # lineage fallback applies.
                 if round_index is not None:
                     node["round_index"] = round_index
                 # The gate's own account of the decision (issue #124):
@@ -176,7 +184,7 @@ def build_lineage_view(
                 generations.append(node)
 
     # The visibility rating triple, joined server-side from the index
-    # (best-effort — the null triple when the index is absent/cold, DQ3).
+    # (best-effort — the null triple when the index is absent or cold).
     # ``include_ratings=False`` skips the index open entirely for internal
     # consumers that discard the triple (rounds/gate/judge composition —
     # they read lineage topology, never ratings); the endpoint path and the

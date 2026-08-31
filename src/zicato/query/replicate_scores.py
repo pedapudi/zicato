@@ -12,14 +12,14 @@ module, so "what counts as a draw for this cell" has one definition:
   (:func:`zicato.query.tournament_view.build_matchup_grid`).
 
 The replicate namespace is partitioned by OWNER, and only two of its ranges
-are evidence for a cell. The rest are real executions with other meanings —
-a noise-floor trace, a degraded probe, a veto screen, a judge
-meta-evaluation — and this module enumerates those too, as named
-:class:`MeasurementBand` draws (:func:`measurement_band_draws_indexed`), so
-a reader that wants "everything that ran" gets it from the same walk that
-decides what counts as evidence rather than from a second, divergent one.
+are evidence for a cell. The rest are real executions with other meanings: a
+noise-floor trace, a degraded probe, a veto screen, a judge meta-evaluation.
+This module enumerates those too, as named :class:`MeasurementBand` draws
+(:func:`measurement_band_draws_indexed`). A reader that wants "everything
+that ran" therefore gets it from the same walk that decides what counts as
+evidence, rather than from a second, divergent one.
 
-Best-effort throughout (DQ3): an unreadable file is skipped and a pruned or
+Best-effort throughout: an unreadable file is skipped and a pruned or
 absent run directory yields an empty list, never an error.
 """
 
@@ -44,10 +44,11 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
 # holdout-ladder confirmation re-runs, which reuse the low duel slots), the
 # evidence-gate's paired draws sit at 4000+ (EVIDENCE_REPLICATE_BASE). Those two
 # ranges are FRESH measurements of THIS cell, so they raise its evidence tier.
-# EXCLUDED: A/A calibration at 1000+ (that is the champion NOISE-FLOOR trace — it
-# feeds the flip badge, not the cell), the contract pre-flight at 2000+, the
-# pre-tournament candidate screen at 3000+ (an ephemeral veto probe), and
-# reflection draws at 5000+ (a meta-evaluation of the judges, not the candidate).
+# EXCLUDED: A/A calibration at 1000+ (the champion NOISE-FLOOR trace, which
+# feeds the flip badge rather than the cell), the contract pre-flight at 2000+,
+# the pre-tournament candidate screen at 3000+ (an ephemeral veto probe), and
+# reflection draws at 5000+ (a meta-evaluation of the judges rather than of the
+# candidate).
 # Every one of those excluded ranges IS enumerated, as its own measurement band:
 # see :data:`MEASUREMENT_BANDS` below.
 CELL_EVIDENCE_REPLICATE_RANGES: tuple[tuple[int, int], ...] = ((0, 1000), (4000, 5000))
@@ -109,8 +110,8 @@ def measurement_bands() -> tuple[MeasurementBand, ...]:
     The bounds are LITERAL MIRRORS of the owning modules' constants
     (``CALIBRATION_REPLICATE_BASE``/``_SPAN``, ``PREFLIGHT_REPLICATE_BASE``/
     ``_SPAN``, ``SCREEN_REPLICATE_BASE``, ``EVIDENCE_REPLICATE_BASE``,
-    ``REFLECTION_REPLICATE_BASE``, ``SYNTHESIS_REPLICATE_BASE``), not
-    imports: the owners pull in the pre-flight, screening, and reflection
+    ``REFLECTION_REPLICATE_BASE``, ``SYNTHESIS_REPLICATE_BASE``) rather than
+    imports of them: the owners pull in the pre-flight, screening, and reflection
     machinery, and reflection reaches the dashboard — chains the query
     layer's import contracts forbid. The correspondence test in
     ``tests/test_query_execution_plan.py`` imports both sides and pins the
@@ -346,7 +347,7 @@ def standard_error(values: Sequence[float]) -> float | None:
     """Standard error of the mean over ``values``: sample sd / sqrt(n).
 
     Uses the SAMPLE standard deviation (Bessel-corrected, ``n - 1`` denominator),
-    so this is the spread of the *mean* of the draws, not of one draw. ``None``
+    so this is the spread of the *mean* of the draws rather than of one draw. ``None``
     for fewer than two values: a single draw measures no spread and must render
     as "unavailable", never as ``±0.000``.
     """

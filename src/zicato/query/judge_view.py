@@ -69,18 +69,18 @@ def build_per_judge_trend(paths: WorkspacePaths, epoch_id: str) -> dict[str, Any
 
     Best-effort: a never-indexed workspace yields empty ``judges`` (the
     lineage-derived ``generations`` spine still renders — this reader
-    degrades field-by-field, not whole-payload).
+    degrades field by field rather than whole-payload).
     """
     from zicato.index.query import judge_loss_trend  # noqa: PLC0415
 
     # Discover the set of judges seen in this epoch by walking the
     # generations directly. The trend query is per-judge so we need a
-    # judge list before we can call it. Routed through the READ-ONLY
-    # index discipline: the bare write-mode connect this replaced both
-    # contended for the write lock with the ingest writer AND created a
-    # stray empty ``index.db`` on a never-indexed workspace (whose
-    # presence then flipped LATER readers' degrade branches — the
-    # order-contamination the U3 golden re-capture retired).
+    # judge list before this reader can call it. Routed through the READ-ONLY
+    # index discipline, which a bare write-mode connect would break twice: it
+    # contends for the write lock with the ingest writer, and it creates a
+    # stray empty ``index.db`` on a never-indexed workspace. That stray file
+    # then flips LATER readers' degrade branches, so one reader's order
+    # changes another's answer.
     judges: set[str] = set()
     index_absent = True
     with open_index_ro_or_none(paths.index_db) as conn:
@@ -102,13 +102,13 @@ def build_per_judge_trend(paths: WorkspacePaths, epoch_id: str) -> dict[str, Any
                 pass
 
     # Resolve the spine — the promoted lineage when available, else
-    # every generation in directory order. The L1 heatmap renders only
-    # promoted-spine generations so the columns stay narrow.
+    # every generation in directory order. The epoch-level heatmap renders
+    # only promoted-spine generations so the columns stay narrow.
     #
-    # SCOPED at the walk. This used to walk every epoch and then filter
-    # down to one, and the walk reads a JSON file per generation
-    # directory — so a 60-epoch workspace read all of them to render one
-    # epoch's matrix. ``epoch_id`` now does that filtering inside the
+    # SCOPED at the walk. The walk reads a JSON file per generation
+    # directory, so walking every epoch and then filtering down to one would
+    # read all of a 60-epoch workspace to render one epoch's matrix.
+    # ``epoch_id`` does that filtering inside the
     # walk; an unknown id still yields the empty feed it always did.
     lineage_view = build_lineage_view(paths, epoch_id, include_ratings=False)
     epoch_gens = lineage_view.get("generations", [])
@@ -145,7 +145,7 @@ def build_per_judge_trend(paths: WorkspacePaths, epoch_id: str) -> dict[str, Any
         # tournament_view / build_per_judge_for_generation): an ABSENT index
         # carries the actionable degrade note. The generations spine still
         # renders (field-by-field degrade) — a built-but-empty index gets no
-        # note, only a genuinely un-built one.
+        # note, only an un-built one.
         out["note"] = "index not built; run zicato repair index"
     return out
 
@@ -225,8 +225,8 @@ def build_per_entry_for_generation(
     it (e.g. ``"rung 0"``, ``"final"``) via
     :func:`zicato.selection.strategy.rung_for_match_id`. Both are ``None``
     for an untagged run: a gauntlet duel (which never carries a
-    ``match_id``) or a legacy run persisted before the tag existed —
-    additive, never an error.
+    ``match_id``) or a run persisted before the tag existed — additive,
+    never an error.
 
     A never-indexed workspace yields empty ``entries`` with a ``note``.
     """
@@ -273,7 +273,7 @@ def build_per_entry_for_generation(
     def _match_id_of(row: Any) -> str | None:
         # ``match_id`` lands in schema v4. A stale index opened before
         # the migration ran would not carry the column; tolerate its
-        # absence (and a NULL value) so an old index loads, not errors.
+        # absence (and a NULL value) so an old index loads rather than errors.
         if "match_id" not in _row_keys(row):
             return None
         value = row["match_id"]
@@ -299,8 +299,7 @@ def build_per_entry_for_generation(
         # decomposition (#18) live in the raw ``loss_json`` blob the index
         # stores verbatim, NOT in a dedicated column — so a stale index
         # without new columns still surfaces the score. Absent / malformed
-        # blob -> (None, None), which renders by the bool pass bit exactly
-        # as before.
+        # blob -> (None, None), which renders by the bool pass bit alone.
         if "loss_json" not in _row_keys(row):
             return None, None
         lj = _opt_json(row["loss_json"])
@@ -325,7 +324,8 @@ def build_per_entry_for_generation(
                 "pass_fail": _opt_bool(r["pass_fail"]),
                 # Continuous per-entry outcome + precision/recall (#18),
                 # parsed from the row's loss_json blob. ``None`` for a
-                # pre-score entry (renders by pass_fail as before).
+                # entry recorded before the continuous score existed, which
+                # renders by pass_fail alone.
                 "score": entry_score,
                 "metrics": entry_metrics,
                 "runtime_ms": (int(r["runtime_ms"]) if isinstance(r["runtime_ms"], int) else None),
@@ -333,7 +333,8 @@ def build_per_entry_for_generation(
                 if r["wall_clock_budget_exceeded"] is not None
                 else None,
                 # Per-board-run tournament provenance (additive). ``None``
-                # for an untagged run (gauntlet duel / legacy run).
+                # for an untagged run (a gauntlet duel, or a run persisted
+                # before the tag existed).
                 "match_id": match_id,
                 "rung": rung_for_match_id(match_id),
                 # Cached-champion provenance (additive). When the champion was
@@ -347,7 +348,7 @@ def build_per_entry_for_generation(
                 "source_run": _opt_str(r, "source_run"),
                 # The ``facet:`` slices this entry belongs to (BOARD-FORMAT.md
                 # §1.4), sorted. Carried on the ROW because it is a property of
-                # the entry, not of the run: the per-board drill-down reads it
+                # the entry rather than of the run: the per-board drill-down reads it
                 # to name the slices the entry feeds without re-reading the
                 # board. ``[]`` for an untagged entry.
                 "facets": list(entry_facets.get(r["entry_id"], ())),
@@ -373,7 +374,7 @@ def build_per_entry_for_generation(
         "drift_present": drift_present,
         # This candidate re-aggregated per ``facet:`` board tag, plus the
         # same aggregate over every entry as the ``overall`` row to compare
-        # against (BOARD-FORMAT.md §1.4). Computed server-side: DQ1 keeps
+        # against (BOARD-FORMAT.md §1.4). Computed server-side, which keeps
         # the group-by off the client. Empty facets ⇒ the table does not
         # paint. Diagnostic: nothing downstream of this key feeds a decision.
         "facet_scores": facet_scores_for_generation(paths, epoch_id, generation_id, entry_facets),
@@ -500,12 +501,12 @@ def resolve_run_id_for_entry(
 ) -> str:
     """Recover the persisted run id for one entry replicate.
 
-    The L4 dashboard view routes by board-entry id; the index keys every
+    The run-level dashboard view routes by board-entry id; the index keys every
     per-judge row by run id. ``run_id`` can select either the validated
     runtime identity or the goldfive id persisted inside a loss sibling;
     ``replicate_index`` is the coordinate-only alternative. With neither,
     replicate 0 remains byte-compatible. Missing data degrades to the
-    requested run id or entry id (DQ3 — never raises).
+    requested run id or entry id, and never raises.
     """
     loss_path = _entry_loss_path(
         paths,
@@ -532,7 +533,7 @@ def build_per_judge_for_entry(
     run_id: str | None = None,
     replicate_index: int | None = None,
 ) -> dict[str, Any]:
-    """Per-judge breakdown for an exactly selected entry replicate."""
+    """Per-judge breakdown for one explicitly selected entry replicate."""
     loss_path = _entry_loss_path(
         paths,
         epoch_id,
@@ -619,12 +620,12 @@ def build_expectation_outcomes_for_run(
     generation_id: str,
     entry_id: str,
 ) -> dict[str, Any]:
-    """Structured expectation outcomes for a single run (L4).
+    """Structured expectation outcomes for a single run.
 
     The reducer stamps a single ``expectation_result`` on each run's
     ``loss.json`` — a dict shaped ``{kind, passed, detail}`` (see
     :class:`zicato.core.types.ExpectationResult`). This reader projects
-    it into a list-shaped payload so the L4 view can render a uniform
+    it into a list-shaped payload so the run view can render a uniform
     table regardless of whether the entry carried zero, one, or
     (forward-compat) several expectations.
 
@@ -646,7 +647,7 @@ def build_expectation_outcomes_for_run(
 
     An entry with no expectation (``expectation_result`` is ``None``)
     or no on-disk ``loss.json`` yields an empty ``outcomes`` list — the
-    L4 view shows ``(no expectations recorded for this run)``.
+    run view shows ``(no expectations recorded for this run)``.
     """
     empty: dict[str, Any] = {
         "epoch_id": epoch_id,
@@ -661,8 +662,8 @@ def build_expectation_outcomes_for_run(
     if raw is None:
         return empty
 
-    # The reducer stamps a single dict today; we normalise to a list to
-    # keep the wire shape stable when multi-expectation entries land.
+    # The reducer stamps a single dict; this reader normalises it to a list
+    # to keep the wire shape stable when multi-expectation entries land.
     if isinstance(raw, dict):
         items: list[Any] = [raw]
     elif isinstance(raw, list):
@@ -714,12 +715,12 @@ def build_run_header(
     generation_id: str,
     entry_id: str,
 ) -> dict[str, Any]:
-    """Per-run header metrics (L4).
+    """Per-run header metrics.
 
     Projects the numeric / verdict header fields from a board-entry
-    run's ``loss.json``. The L4 page already shows ``drift_loss`` and
+    run's ``loss.json``. The run page already shows ``drift_loss`` and
     ``pass_fail`` from the per-entry table; this reader surfaces the
-    remaining header fields the previous placeholder promised:
+    remaining header fields:
 
     * ``runtime_ms`` — total wall-clock duration in ms.
     * ``tokens_spent`` — LLM token cost as recorded by the harness.
@@ -736,13 +737,13 @@ def build_run_header(
     * ``drift_loss``, ``pass_fail``, ``run_id``.
 
     Also surfaces the ADK session id persisted in ``loss.json`` by the
-    reducer, so the L4 header can deep-link into harmonograf at the
+    reducer, so the run header can deep-link into harmonograf at the
     run's execution trace without a second roundtrip to ``events.jsonl``:
 
     * ``adk_session_id`` — the goldfive/ADK session id for this run.
 
     Every field defaults to ``None`` when ``loss.json`` is absent or
-    missing the key; the response shape is stable so the L4 renderer
+    missing the key; the response shape is stable so the run renderer
     never branches on whether the file exists.
     """
     keys = (
@@ -795,7 +796,7 @@ def build_run_header(
 _MUTATION_COUNT_TTL_S: float = 5.0
 
 #: ``{(workspace root, *source roots): (expires_at_monotonic, count)}``. The
-#: workspace root is IN the key, not just the trees: the surface is activated
+#: workspace root is IN the key rather than only the trees: the surface is activated
 #: from that workspace's contract, so two workspaces over identical trees can
 #: legitimately enumerate different counts and must not share an entry.
 _MUTATION_COUNT_CACHE: dict[tuple[str, ...], tuple[float, int]] = {}
@@ -810,8 +811,8 @@ def _mutation_point_count(workspace_root: Path, source_roots: list[str]) -> int:
     failure reads as ``0``.
 
     The surface is ACTIVATED from the workspace first, so the count is of the
-    surface the RUN sees — the contract's declared file types, not the built-ins
-    alone. Counting the built-in surface would under-report every workspace that
+    surface the RUN sees — the contract's declared file types rather than the
+    built-ins alone. Counting the built-in surface would under-report every workspace that
     declares extra file types, which is the whole point of declaring them.
 
     That activation installs a PROCESS-GLOBAL table, and a cache hit skips it —
@@ -853,10 +854,9 @@ def _mutation_point_count(workspace_root: Path, source_roots: list[str]) -> int:
 
 
 def build_workspace_identity(paths: WorkspacePaths) -> dict[str, Any]:
-    """Structured workspace identity block — Phase 1's L0 env object.
+    """Structured workspace identity block — the workspace-level environment.
 
-    Replaces the bare ``str(paths.root)`` previously surfaced as
-    ``state.workspace``. Returns an object with the fields the L0 view's
+    Returns an object with the fields the workspace view's
     environment-configuration table renders:
 
     * ``root`` — absolute path to the ``.zicato`` directory.
@@ -966,10 +966,10 @@ def build_environment(
     is trying to accomplish without a per-epoch ``/api/epoch`` fetch.
 
     ``workspace`` is now a structured identity block (see
-    :func:`build_workspace_identity`) so the L0 view can render
+    :func:`build_workspace_identity`) so the workspace view can render
     entrypoint / source roots / contract paths / mutation-point count
-    without a second fetch. The legacy callers that expected a plain
-    string still find the root path on ``workspace.root``.
+    without a second fetch. A caller that expects a plain string still
+    finds the root path on ``workspace.root``.
 
     Every component degrades independently: a missing or unreadable
     input becomes an empty / ``None`` value, never an exception, so this
@@ -982,9 +982,9 @@ def build_environment(
     #
     # ONE lineage walk for the whole payload. Two fields need the generations
     # feed — ``generations`` serves it verbatim and ``score_trajectory`` reads
-    # its order — and each used to build it independently. The walk reads a
-    # JSON file per generation, so that second build was the single largest
-    # cost in this reader (cProfile: 84% of build_environment, ncalls=2).
+    # its order. The walk reads a JSON file per generation, so building it
+    # twice measured as the single largest cost in this reader (cProfile:
+    # 84% of build_environment, ncalls=2).
     generations = build_lineage_view(paths)
     epoch_id = read_current_epoch(paths)
     epoch_generations = {

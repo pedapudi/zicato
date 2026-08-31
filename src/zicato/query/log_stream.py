@@ -29,8 +29,8 @@ _STREAM_SUFFIX = ".jsonl"
 #: Reverse-tail byte budget for the INITIAL (``after is None``) tail. The
 #: reader block-reads backward from EOF looking for ``limit`` complete lines
 #: but never scans more than this many bytes, so the initial paint's read +
-#: RSS is bounded no matter how large the stream has grown (a 250 MB stream
-#: was formerly ``read_text``-ed WHOLE on every follow tick / SSE beat).
+#: RSS is bounded no matter how large the stream has grown: a 250 MB stream
+#: costs the same bounded read as a small one on every follow tick.
 #: Records older than the budget are simply not in the initial tail; the
 #: ``after=`` byte cursor then streams everything appended from there on.
 _TAIL_BYTE_BUDGET = 4 * 1024 * 1024

@@ -1,22 +1,20 @@
-"""racing_view — the settled racing-field payload, served (not fabricated).
+"""The settled racing ladder for one epoch, joined from the persisted records.
 
-A racing tournament is persisted as ONE record PER CHALLENGER (the durable
-RoundRecord lands in a later phase); the rung/gate ladder the dashboard
-renders therefore has to be JOINED out of those per-challenger records. The
-frontend used to do that join itself (``reconstructRacing`` parsed
-``{epoch}:{champ}->{chall}`` id strings client-side); this reader is that
-join moved server-side, so the client reads ONE settled racing-field payload
-and never re-derives rungs / survivors / the crowned winner.
+A racing tournament is persisted as ONE record PER CHALLENGER, so the rung
+and gate ladder the dashboard renders has to be JOINED out of those
+per-challenger records. This reader owns that join, so the client reads ONE
+settled racing-field payload and never re-derives rungs, survivors, or the
+crowned winner.
 
 ``GET /api/epoch/{epoch_id}/racing-field`` serves :func:`build_racing_field`.
 The payload uses the SAME structure envelope shape as
 ``/api/tournament-structure`` (``structure`` / ``structure_params`` /
 ``competitors`` / ``rounds`` / ``standings`` + ``champion_lineage``), with
-``present: false`` when the epoch has no racing records (the frontend then
-renders its honest empty state — never a client-side reconstruction).
+``present: false`` when the epoch has no racing records. The frontend then
+renders its honest empty state and reconstructs no ladder of its own.
 
-When the durable RoundRecord lands, this reader's internals swap to reading
-it directly; the payload shape (and the frontend) stay unchanged.
+That payload shape is the contract the frontend renders against; how this
+reader assembles it is internal.
 """
 
 from __future__ import annotations

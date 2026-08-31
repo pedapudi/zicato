@@ -113,13 +113,12 @@ def _bracket_from_conn(
     ]
     champion_lineage = _champion_lineage(generations)
 
-    # Select the structure-aware columns alongside the legacy
-    # per-matchup ones. The v3 columns (structure / *_json) may be
-    # absent on an index that predates the migration — the SELECT is
-    # split so a missing-column error on the structure columns does
-    # not blank out the legacy matchups (back-compat: gauntlet reads
-    # must stay intact). ``_query`` swallows the sqlite error and
-    # returns [] for the structure-aware query in that case.
+    # Select the structure-aware columns alongside the per-matchup ones. The
+    # v3 columns (structure / *_json) may be absent on an index that predates
+    # the migration, so the SELECT is split: a missing-column error on the
+    # structure columns must not blank out the per-matchup rows, which is what
+    # a gauntlet read needs. ``_query`` swallows the sqlite error and returns
+    # [] for the structure-aware query in that case.
     tour_rows = _query(
         conn,
         "SELECT t.tournament_id, t.parent_generation_id, t.child_generation_id, "
@@ -134,7 +133,7 @@ def _bracket_from_conn(
     )
     # The per-matchup ladder is the per-challenger crowning rows only.
     # A FIELD-level row (``{epoch}:field:{...}``) is the whole-tournament
-    # structure record, not a champion-vs-challenger duel (it carries no
+    # structure record rather than a champion-vs-challenger duel (it carries no
     # parent/child), so it is excluded here — it surfaces through the
     # structure-aware ``tournaments[]`` envelope below instead.
     matchups = [
@@ -154,7 +153,7 @@ def _bracket_from_conn(
     # Structure-aware envelope (§3.1). Read the v3 columns
     # defensively: if they are absent (pre-migration index) the query
     # returns [] and the structure degenerates to gauntlet — leaving
-    # the legacy ``matchups`` / ``champion_lineage`` byte-identical.
+    # the ``matchups`` and ``champion_lineage`` fields byte-identical.
     # The champion-eval columns are v8; a pre-v8 (or fixture) index lacks
     # them, and a SELECT naming a missing column errors → _query returns []
     # → the whole structure envelope degrades. So include them only when the
@@ -181,7 +180,7 @@ def _bracket_from_conn(
     # The per-round CHAMPION (id + scalar + eval provenance: champion_eval_mode
     # / champion_run_ref — cached vs re-run) is carried on the per-CHALLENGER
     # rows: each has parent_generation_id = the round's champion. A FIELD row
-    # has an EMPTY parent (a field is a round, not a duel), so resolve a field
+    # has an EMPTY parent (a field is a round rather than a duel), so resolve a field
     # record's champion from a sibling per-challenger row keyed by the
     # CHALLENGER (whose child is one of the field's competitors).
     champ_by_child: dict[str, dict[str, Any]] = {}
@@ -192,7 +191,7 @@ def _bracket_from_conn(
             champ_by_child[str(cg)] = {
                 "id": str(pg),
                 "scalar": r["parent_scalar"],
-                # A legacy row (pre-v8 index) has the column as NULL, and the
+                # A row from a pre-v8 index has the column as NULL, and the
                 # schema's rule for that is "mode unknown, treat as full". The
                 # default belongs HERE, on the read of a real row — not on the
                 # assembled champion, where it would also fire for a round that
@@ -204,7 +203,7 @@ def _bracket_from_conn(
     def _field_champion(comps: list[Any]) -> dict[str, Any] | None:
         """The champion of a FIELD row, whose own parent column is empty.
 
-        A field row is a round, not a duel, so ``_upsert_field_tournament``
+        A field row is a round rather than a duel, so ``_upsert_field_tournament``
         leaves its parent/child columns empty on purpose. The champion has to
         come from the competitor list, and the two ways of reading that list
         are NOT equivalent:
@@ -288,10 +287,11 @@ def _bracket_from_conn(
             "id": base["id"],
             "scalar": coerce_float(sc),
             # No default here: every path that read a ROW already applied the
-            # legacy "NULL ⇒ full" rule above, so an absent mode means there was
-            # no row to read — a round whose champion has not been evaluated yet
-            # (the field row is written at OPEN, before any crowning row). That
-            # is genuinely unknown, and the round timeline already carries
+            # "NULL ⇒ full" rule above, so an absent mode means there was no
+            # row to read. That is a round whose champion has not been
+            # evaluated yet, because the field row is written at OPEN, before
+            # any crowning row. That
+            # is unknown, and the round timeline already carries
             # ``eval_mode: None`` for it; the tree renders plain "defends"
             # rather than claiming "defends · re-run".
             "eval_mode": base.get("eval_mode"),
@@ -345,7 +345,7 @@ def _bracket_from_conn(
         # An elim record is enriched with the served elim model (sorted
         # rounds + bracket_side/loser + gen_states) — the per-round minis
         # read these entries by tournamentRef, so the model must ride here
-        # exactly as it does on /api/tournament-structure (DQ1).
+        # exactly as it does on /api/tournament-structure.
         tournaments.append(
             attach_elim_states(
                 {
@@ -627,7 +627,8 @@ def _read_run_loss_files(
     ``entry_id`` field inside the ``loss.json`` payload when present.
     ``score`` (continuous outcome in ``[0, 1]``) and ``metrics`` (e.g.
     precision/recall) are carried through when present and ``None``
-    otherwise — a pre-score loss.json reads exactly as before. Missing /
+    otherwise: a loss.json written before the ``score`` field existed carries
+    both as ``None``. Missing /
     malformed files are skipped silently — a generation with no telemetry
     yet yields ``{}``.
     """
@@ -651,12 +652,13 @@ def _read_run_loss_files(
             "drift_loss": coerce_float(drift),
             "pass_fail": _opt_bool(loss.get("pass_fail")),
             # Continuous per-entry outcome + its optional precision/recall
-            # decomposition (#18). ``None`` for a pre-score loss.json.
+            # decomposition (#18). ``None`` for a loss.json written before
+            # the ``score`` field existed.
             "score": _opt_score(loss.get("score")),
             "metrics": _opt_metrics(loss.get("metrics")),
             "run_id": loss.get("run_id") if isinstance(loss.get("run_id"), str) else run_dir.name,
-            # Seam-1 drift-reduction provenance (#19). ``None`` on a pre-#19
-            # loss.json (the field did not exist) — surfaced so the gate
+            # Seam-1 drift-reduction provenance (#19). ``None`` on a
+            # loss.json that recorded none — surfaced so the gate
             # breakdown can show which transform / plugin shaped drift_loss.
             "scoring_provenance": str(prov) if isinstance(prov, str) and prov else None,
             # Did this run OBSERVE drift at all? An adapter that emits no drift
@@ -701,12 +703,12 @@ def _entry_outcome(
 
     A channel populated on both sides but equal on them has not separated
     anything, so resolution falls through to the next one: two entries that both
-    fail their predicate are still told apart by their drift losses, exactly as
-    before this fall-through existed. When no channel separates them the entry is
+    fail their predicate are still told apart by their drift losses. When no
+    channel separates them the entry is
     ``"flat"`` and ``decided_by`` names the first channel it was READ on, so the
     client knows which quantity the tie is a tie in.
 
-    Resolution is per row (DQ3): a board where only some entries carry a
+    Resolution is per row: a board where only some entries carry a
     continuous score, or a champion generation scored before the ``score`` field
     existed, degrades entry by entry rather than dropping the entry or falling
     back to one channel for the whole grid. ``decided_by`` is ``None`` only when
@@ -841,9 +843,10 @@ def build_matchup_grid(
             "parent_pass": p.get("pass_fail") if p else None,
             "child_pass": c.get("pass_fail") if c else None,
             # Continuous per-entry outcome (#18) + its optional
-            # precision/recall decomposition. ``None`` for a pre-score
-            # loss.json, so a bool-only entry carries score/metrics ==
-            # None and renders by its pass bit exactly as before.
+            # precision/recall decomposition. ``None`` for a loss.json
+            # written before the ``score`` field existed, so a bool-only entry
+            # carries score and metrics as None and renders by its pass bit
+            # alone.
             "parent_score": parent_score,
             "child_score": child_score,
             "parent_metrics": p.get("metrics") if p else None,
@@ -863,7 +866,7 @@ def build_matchup_grid(
             # entry, and the standard error of their mean score. This is the
             # candidate's own measurement precision on the entry — it does NOT
             # fold in the champion side, which is often a single cached draw —
-            # so it bounds how much of ``delta_score`` is readable, not the
+            # so it bounds how much of ``delta_score`` is readable rather than the
             # delta's full variance. ``score_se`` is null below two draws:
             # one draw measures no spread and must never render as ±0.000.
             "score_replicates": len(child_replicates),
@@ -991,14 +994,14 @@ def _empty_tournament_structure(epoch_id: str, tournament_id: str, source: str) 
 
 
 # ---------------------------------------------------------------------------
-# The served ELIM MODEL — rounds canonicalized + per-generation states (DQ1)
+# The served ELIM MODEL — rounds canonicalized + per-generation states
 # ---------------------------------------------------------------------------
 
 _ELIM_STRUCTURES = frozenset({"single_elim", "double_elim"})
 
 
 def _round_sort_key(r: dict[str, Any], position: int) -> tuple[Any, int]:
-    """The temporal sort key: ``round_index`` (legacy) / ``stage_index``.
+    """The temporal sort key: ``stage_index``, or ``round_index``.
 
     The persisted within-tournament stage key is ``stage_index``
     (selection/strategy.py); ``round_index`` is accepted for records
@@ -1015,7 +1018,7 @@ def _round_sort_key(r: dict[str, Any], position: int) -> tuple[Any, int]:
 
 
 def _scalar_id(v: Any) -> str | None:
-    """A competitor/winner id under the DQ1 scalar contract, or ``None``.
+    """A competitor/winner id as the scalar the client renders, or ``None``.
 
     Only a string or a real number is an id: a ``bool`` (an ``int``
     subclass — dropped explicitly), ``dict``/``list``/``None``/other type
@@ -1060,14 +1063,14 @@ def _match_pending(m: dict[str, Any], winner: str | None) -> bool:
 def derive_elim_states(rounds: Any) -> dict[str, Any]:
     """The SERVER-SIDE elim fold — the model the bracket figures render.
 
-    The client (``svg.js`` elimFlow, and its radial twin) used to derive
-    this whole model per render: re-sorting mis-ordered caller columns,
-    de-duplicating backend-duplicated matches, classifying each loss as an
-    elimination vs a winners→losers drop, and guarding against phantom
-    eliminations. That derivation was a DQ1 breach living behind an
-    under-specified payload; this fold is it, moved server-side, so every
-    consumer (Python service, Rust supervisor, the node mock) serves ONE
-    identical model. Ported line-for-line into
+    This fold owns the whole derivation: it re-sorts mis-ordered caller
+    columns, de-duplicates backend-duplicated matches, classifies each loss as
+    an elimination or a winners→losers drop, and guards against phantom
+    eliminations. Doing it server-side is what lets every consumer (Python
+    service, Rust supervisor, the node mock) serve ONE identical model; a
+    client (``svg.js`` elimFlow and its radial twin) that derived it per render
+    would be re-deriving what the server already owns. Ported line-for-line
+    into
     ``crates/supervisor/src/elim_states.rs`` — the shared fixture
     ``tests/data/elim_states_fixture.json`` pins the two folds together.
 
@@ -1091,11 +1094,11 @@ def derive_elim_states(rounds: Any) -> dict[str, Any]:
       The elimination-vs-drop rule is the client's, verbatim: a loss with
       NO later appearance is an elimination there; a loss followed by a
       later appearance is a winners→losers drop (the second life).
-      ``null`` = undecided (DQ2); ``side_by_round`` keys are stringified
+      ``null`` = undecided; ``side_by_round`` keys are stringified
       column indices (JSON object keys).
 
-    Pure + best-effort: a malformed blob degrades to empty lists, never
-    raises (DQ3).
+    Pure + best-effort: a malformed blob degrades to empty lists and never
+    raises.
     """
     raw = [r for r in (rounds if isinstance(rounds, list) else []) if isinstance(r, dict)]
     ordered = sorted(range(len(raw)), key=lambda i: _round_sort_key(raw[i], i))
@@ -1138,7 +1141,7 @@ def derive_elim_states(rounds: Any) -> dict[str, Any]:
                 by_key[key] = m
                 key_order.append(key)
             else:
-                # F4: only a still-pending first-seen yields to a decided
+                # Only a still-pending first-seen yields to a decided
                 # duplicate. Two DIFFERENT decided winners for the same slot
                 # is corrupt data — the first-seen (most-decided) one wins
                 # deterministically rather than flapping by iteration order.
@@ -1664,12 +1667,12 @@ def _enrich_standings_ratings(
 ) -> dict[str, Any]:
     """Attach the visibility rating triple to every standings entry (additive).
 
-    Each ``standings`` record gains ``elo`` / ``elo_se`` / ``elo_games`` (DQ2
-    snake_case), joined server-side from the analytical index so the client
-    renders the rating column without re-deriving anything (DQ1). Best-effort
-    by contract (DQ3): an absent / cold index — or a generation the fold has
-    not rated (zero settled duels; a pre-reindex file) — attaches the null
-    triple, never an error.
+    Each ``standings`` record gains ``elo`` / ``elo_se`` / ``elo_games``, in
+    one snake_case spelling, joined server-side from the analytical index so
+    the client renders the rating column without re-deriving anything.
+    Best-effort by contract: an absent or cold index — or a generation the
+    fold has not rated (zero settled duels, or a file written before the last
+    reindex) — attaches the null triple, never an error.
 
     Settled-vs-live: the structure payload is request-scoped (the GET handler
     calls this reader once per fetch — there is no SSE/heartbeat recompute),

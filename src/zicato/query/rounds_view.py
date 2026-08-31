@@ -1,4 +1,4 @@
-"""rounds_view — the epoch ROUND TIMELINE, served (not joined client-side).
+"""The epoch ROUND TIMELINE, joined server-side.
 
 Within ONE epoch the outer evolve loop runs N ROUNDS. Each round =
 (an incoming CHAMPION, carried from the prior round) + (a freshly-minted
@@ -6,12 +6,11 @@ FIELD of challengers) -> a TOURNAMENT -> a GATE (one challenger may be
 promoted). The epoch is therefore a CHAMPION SPINE threaded through the
 rounds.
 
-The frontend used to derive this model by JOINING four endpoints
-(``/api/epoch`` + ``/api/lineage`` + ``/api/score-trajectory`` +
-``/api/tournaments``) in ``rounds.js``. This reader is that join moved
-server-side: ``GET /api/epoch/{id}/round-timeline`` serves the SETTLED
-rounds, the LIVE in-flight round, and the loss-floor waterfall. The client
-only renames fields for its renderer.
+This reader owns the join of the four feeds that model spans — the epoch
+record, the lineage, the score trajectory, and the tournaments.
+``GET /api/epoch/{id}/round-timeline`` serves the SETTLED rounds, the LIVE
+in-flight round, and the loss-floor waterfall, so the client only renames
+fields for its renderer.
 
 SOURCE PRIORITY (degrades gracefully when ``round_index`` is absent):
   (1) per-generation ``round_index`` (the authoritative birth-round stamp);
@@ -188,7 +187,7 @@ def build_round_timeline(paths: WorkspacePaths, epoch_id: str | None = None) -> 
                 if isinstance(ref, dict) and ref.get("tournament_id") is not None
                 else None
             )
-            # INVARIANT (09-dashboard-and-query.md DQ14, "lineage owns
+            # INVARIANT (09-dashboard-and-query.md, "lineage owns
             # topology"): the lineage flags own WHETHER the round promoted; they
             # cannot own WHICH member of a promoted set headed it, because every
             # member carries the same flag. So the head is the RECORDED one,
@@ -237,7 +236,7 @@ def build_round_timeline(paths: WorkspacePaths, epoch_id: str | None = None) -> 
             champ_id = str(ref_champ["id"]) if ref_champ else carried
             # The record stays the champion source, but the spine is now a real
             # cross-check: ``carried`` advances by the recorded head above, so a
-            # divergence here is two records disagreeing, not the known
+            # divergence here is two records disagreeing rather than the known
             # first-match weakness. Surfaced as a log line, never a payload
             # field — the served answer is the record either way.
             if ref_champ is not None and carried is not None and champ_id != str(carried):
@@ -361,18 +360,19 @@ def build_round_timeline(paths: WorkspacePaths, epoch_id: str | None = None) -> 
             if gid is None:
                 continue
             ri_raw = g.get("round_index")
-            # The seed champion is carried, not minted, so it has NO birth round
-            # — whatever it is stamped with. Guarding only on an ABSENT stamp let
-            # a numerically-stamped seed through, and it carries ``round_index:
-            # 0`` by default, so it formed a bucket of its own: a phantom round 0
-            # whose only member is dropped again downstream (the carried champion
-            # is never a minted challenger), leaving a round with an empty field.
+            # The seed champion is carried rather than minted, so it has NO birth round
+            # — whatever it is stamped with. Guarding only on an ABSENT stamp
+            # would let a numerically-stamped seed through, and it carries
+            # ``round_index: 0`` by default. It would then form a bucket of
+            # its own: a phantom round 0 whose only member is dropped again
+            # downstream, because the carried champion is never a minted
+            # challenger. That leaves a round with an empty field.
             if str(gid) == str(seed_id) and not g.get("parent_generation_id"):
                 # The seed test is PARENTAGE, the same rule the writer's base
-                # computation uses — never the id alone: ``seed_id`` prefers the
-                # lineage root, and a lineage whose root is a MINTED generation
-                # (an unpromoted or absent v0) must not have that real round
-                # dropped from its bucket.
+                # computation uses, and never the id alone. ``seed_id`` prefers
+                # the lineage root, and a lineage whose root is a MINTED
+                # generation (an unpromoted or absent v0) must not have that
+                # real round dropped from its bucket.
                 continue
             ri = int(ri_raw) if isinstance(ri_raw, int | float) else 0
             buckets.setdefault(ri, []).append(str(gid))

@@ -1,12 +1,13 @@
-"""conversations_view — the champion/challenger matchup conversations, served.
+"""The champion and challenger conversations for one board entry.
 
-The side-by-side conversation payload used to be assembled inside the
-dashboard endpoints; this is that join moved into the query layer. The
-transcript reconstructor lives in ``zicato.dashboard.transcript`` and the
-query layer must stay dashboard-free (the import-linter contract), so
-:func:`build_matchup_conversations` takes it as an INJECTED callable —
-``None`` degrades each side to a transcript-less record (DQ3, never
-raises).
+This module owns the join that pairs the two sides of a matchup and
+reconstructs both transcripts, so the dashboard endpoint renders what it
+is handed. The transcript reconstructor lives in
+``zicato.dashboard.transcript`` and the query layer must stay
+dashboard-free (the import-linter contract), so
+:func:`build_matchup_conversations` takes it as an INJECTED callable.
+Passing ``None`` degrades each side to a record without a transcript; no
+reader here raises.
 """
 
 from __future__ import annotations
@@ -35,11 +36,12 @@ def build_matchup_conversations(
     transcript on disk is the one this generation produced when it was
     the live challenger in its *original* tournament, persisted under
     its own generation directory. The active-tournament's per-entry
-    ``generation_id`` (stamped by ``_normalize_tournament_statuses``
-    from the tournament-level parent / child fields) is the correct
-    lookup key — using it routes cached sides through the cached
-    generation's own runs directory, and live sides through the
-    in-progress round's runs directory, in one uniform code path.
+    ``generation_id`` is the correct lookup key;
+    ``_normalize_tournament_statuses`` stamps it from the
+    tournament-level parent and child fields. One code path then serves
+    both sides: it routes a cached side through the cached generation's
+    own runs directory and a live side through the in-progress round's
+    runs directory.
     """
     result: dict[str, Any] = {"champion": None, "challenger": None}
     tournament = read_active_tournament_dict(paths)
@@ -48,9 +50,8 @@ def build_matchup_conversations(
 
     # Index per-(entry, side) so the side resolver can read both the
     # generation_id and the producer's status spelling. The normalizer
-    # has already stamped a generation_id on every entry — but we keep a
-    # tournament-level fallback for older payloads (or a producer that
-    # writes only the tournament-level fields).
+    # stamps a generation_id on every entry; the tournament-level fields
+    # stay a fallback for a payload that carries only them.
     entries_index: dict[tuple[str, str], dict[str, Any]] = {}
     raw_entries = tournament.get("entries")
     if isinstance(raw_entries, list):
@@ -69,7 +70,8 @@ def build_matchup_conversations(
         # Prefer the per-entry generation_id (stamped explicitly so a
         # cached row can carry a generation distinct from the current
         # round's champion-of-this-round id, if those ever differ). Fall
-        # back to the tournament-level field for legacy payloads.
+        # back to the tournament-level field for a payload that carries
+        # only it.
         entry = entries_index.get((entry_id, side))
         if entry is not None:
             gen_id = entry.get("generation_id")
@@ -93,7 +95,7 @@ def build_matchup_conversations(
         if reconstruct is not None:
             try:
                 transcript = reconstruct(events_path, partial_ok=True).to_dict()
-            except Exception as exc:  # noqa: BLE001 — best-effort, never raises (DQ3)
+            except Exception as exc:  # noqa: BLE001 — best-effort, never raises
                 transcript = {"error": f"transcript failed: {exc}"}
         # Surface a small projection of the sibling ``loss.json`` so the
         # frontend can render an honest "timed out" panel for a run that

@@ -3,8 +3,8 @@
 Every payload that names a tournament decision funnels through here so the
 server ships ONE canonical vocabulary and the frontend never re-classifies:
 
-* :data:`PROMOTED_DECISIONS` / :func:`experiment_decision` — hoisted from
-  ``lineage_view`` (the lineage classifier is the historical authority).
+* :data:`PROMOTED_DECISIONS` / :func:`experiment_decision` — the token set
+  and the reader that the lineage view classifies promotions with.
 * :func:`canonical_decision` — maps any recorded token onto the canonical
   ``promoted`` / ``rejected`` / ``deferred`` wire vocabulary
   (:class:`zicato.core.tournament.TournamentDecision`); an unrecognised
@@ -19,14 +19,15 @@ from __future__ import annotations
 from typing import Any
 
 #: Recorded tokens that count as a promotion. The canonical wire token is
-#: ``"promoted"`` (``TournamentDecision.PROMOTED``); the rest are legacy
-#: spellings older workspaces recorded.
+#: ``"promoted"`` (``TournamentDecision.PROMOTED``); the rest are spellings
+#: that older workspaces recorded and that still appear on disk.
 PROMOTED_DECISIONS = frozenset({"promoted", "promote", "accepted", "accept", "win", "won"})
 
 #: Recorded tokens that count as a rejection.
 REJECTED_DECISIONS = frozenset({"rejected", "reject", "lose", "lost"})
 
-#: Recorded tokens that count as a deferral (kept for analysis, not crowned).
+#: Recorded tokens that count as a deferral: kept for analysis, and never
+#: advancing the champion.
 DEFERRED_DECISIONS = frozenset({"deferred", "defer"})
 
 
@@ -74,9 +75,10 @@ def canonical_decision(raw: str | None) -> str | None:
 def promoted_tristate(raw: str | None) -> bool | None:
     """The tri-state ``promoted`` stamp for a recorded decision token.
 
-    ``None`` when no decision is recorded (in-flight / never raced) —
-    NEVER a default ``False`` (the Class-B bug); else exactly the boolean
-    the lineage view derives (``token in PROMOTED_DECISIONS``).
+    ``None`` when no decision is recorded (in-flight / never raced), and
+    never a default ``False``, which would report an undecided promotion
+    as a rejection. Otherwise the same boolean the lineage view derives
+    (``token in PROMOTED_DECISIONS``).
     """
     if raw is None:
         return None

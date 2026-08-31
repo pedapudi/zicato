@@ -61,11 +61,11 @@ def _run_id_of_events_file(events_path: Path) -> str | None:
 
 
 # Cache: workspace epochs dir → {run_id: events.jsonl path}. The board-run
-# layout names run directories by ENTRY id, not run id, so the only way to
-# map a run id to its events file is to read the ``runId`` field out of
+# layout names run directories by ENTRY id rather than run id, so the only way
+# to map a run id to its events file is to read the ``runId`` field out of
 # each current events file. Cache each file independently: a live append keeps
-# the already-discovered id, while a new, replaced, truncated, or previously
-# empty file is reparsed. This avoids reopening the entire workspace on every
+# the already-discovered id, while a file that is new, replaced, truncated, or
+# was empty at the last scan is reparsed. This avoids reopening the entire workspace on every
 # event appended by an in-progress run.
 _RunIdFileState = tuple[int, int, int, int, str | None]
 _RunIdIndexState = tuple[dict[str, _RunIdFileState], dict[str, Path]]
@@ -124,7 +124,7 @@ def _loss_twin(events_path: Path) -> Path | None:
 
 
 def _nested_events_for_disambiguator(run_dir: Path, disambiguator: str) -> Path | None:
-    """Resolve one legacy nested-rung transcript inside an entry run dir."""
+    """Resolve one transcript in the nested-rung layout inside an entry run dir."""
     direct = run_dir / disambiguator / "events.jsonl"
     if direct.exists():
         return direct
@@ -150,10 +150,10 @@ def _build_run_id_index(paths: WorkspacePaths) -> dict[str, Path]:
     """Scan ``epochs/*/generations/*/runs/*/events.jsonl`` → ``{run_id: path}``.
 
     Matches on the ``runId`` carried inside each events file rather than on
-    the run-directory name (which is the board ENTRY id, not the run id).
-    Results are cached per file. Appending to a stream whose id is already
-    known reuses that id without reopening the file; new/replaced/truncated
-    streams and previously-empty streams are parsed on demand.
+    the run-directory name, which is the board ENTRY id rather than the run
+    id. Results are cached per file. Appending to a stream whose id is already
+    known reuses that id without reopening the file; a stream that is new,
+    replaced, truncated, or was empty at the last scan is parsed on demand.
     """
     epochs = paths.epochs
     cache_key = str(epochs)
@@ -212,7 +212,8 @@ def _find_run_events_in_index(paths: WorkspacePaths, run_id: str) -> Path | None
 # gen×entry it belongs to (the run directory it lives under). Mapping every
 # such ``run_id`` to its gen×entry ``events.jsonl`` lets a transcript-less
 # reuse run_id resolve to the one real transcript for that pair. Memoized
-# on the epochs-dir mtime (the reuse records are settled, not live streams).
+# on the epochs-dir mtime (the reuse records are settled rather than live
+# streams).
 _REUSE_RUN_ID_INDEX_CACHE: dict[str, tuple[float, dict[str, Path]]] = {}
 
 
@@ -269,7 +270,7 @@ def find_run_events_path(paths: WorkspacePaths, run_id: str) -> Path | None:
        ``epochs/*/generations/*/runs/*/events.jsonl`` and matching on the
        ``runId`` field inside the file. This is the layout the board
        runner actually writes: run directories are named by board ENTRY
-       id, not run id, so the run id only appears inside the events.
+       id rather than run id, so the run id only appears inside the events.
 
     Returns ``None`` when nothing matches.
     """
@@ -317,7 +318,7 @@ def find_generation_entry_events(
     live in the entry's OWN run directory
     (``generations/<gen>/runs/<entry>/events.jsonl``) — no fallback to an
     arbitrary sibling run dir. This is the right primitive for the
-    successive-halving champion fallback: a genuinely-absent gen×entry
+    successive-halving champion fallback: an absent gen×entry
     must NOT fabricate some other entry's transcript. Returns ``None`` when
     no such file exists.
     """
@@ -352,7 +353,7 @@ def resolve_transcript_events(
     1. Locate ``generations/<gen>/runs/<entry>`` in the requested
        ``epoch_id`` (then any epoch carrying that generation, since a
        generation id is unique workspace-wide).
-    2. Disambiguator: a ``match_id`` first selects the legacy nested-rung
+    2. Disambiguator: a ``match_id`` first selects the nested-rung
        layout; a ``run_id`` first selects an exact sibling
        ``events.rN.jsonl`` by validated runtime id, event ``runId``, or its
        matching loss record. Each then falls back to the other layout.
@@ -385,8 +386,8 @@ def resolve_transcript_events(
 
     disambiguator = run_id or match_id
     if disambiguator:
-        # A match id is a rung coordinate. Prefer the deliberately-supported
-        # legacy nested layout before looking at top-level loss metadata: the
+        # A match id is a rung coordinate. Prefer the nested-rung layout
+        # before looking at top-level loss metadata: the
         # canonical replicate's loss can carry the same match id and must not
         # shadow the rung's own transcript.
         if match_id:
@@ -473,8 +474,8 @@ def read_run_result(run_dir: Path) -> dict[str, Any] | None:
 
     Returns ``None`` when the run directory has no readable
     ``loss.json`` — the frontend then falls back to the existing
-    "This run produced no transcript turns" message (DQ3 — the degrade
-    is the same-shaped ``None`` the happy caller already handles).
+    "This run produced no transcript turns" message. The degrade is the
+    same-shaped ``None`` the caller already handles.
     """
     if not isinstance(run_dir, Path):
         return None
@@ -534,18 +535,18 @@ def read_run_result(run_dir: Path) -> dict[str, Any] | None:
 
 
 # ---------------------------------------------------------------------------
-# Phase-0 redesign: level-aligned views (L0 workspace, L1 contract diff)
+# Level-aligned views: the workspace summary and the epoch contract diff
 # ---------------------------------------------------------------------------
 
 
 def build_workspace_view(paths: WorkspacePaths) -> dict[str, Any]:
-    """L0 (workspace-level) cross-epoch summary.
+    """The workspace-level cross-epoch summary.
 
-    Returns the whole-workspace ribbon the new dashboard's Workspace shell
+    Returns the whole-workspace ribbon the dashboard's Workspace shell
     needs: the per-epoch lineage with a single best (lowest) scalar
     surfaced per epoch, plus a flat ``sparkline`` list of those best
-    scalars in epoch (directory) order so the L0 view can paint a tiny
-    cross-epoch curve without re-fanning to per-epoch endpoints.
+    scalars in epoch (directory) order so the workspace view can paint a
+    tiny cross-epoch curve without re-fanning to per-epoch endpoints.
 
     Each epoch row carries:
 
@@ -565,7 +566,7 @@ def build_workspace_view(paths: WorkspacePaths) -> dict[str, Any]:
       "no config" cases — open is the only reasonable default).
 
     The single live ``epoch_id`` (the current epoch marker on disk) is
-    surfaced as the top-level ``current_epoch_id`` so the L0 view can
+    surfaced as the top-level ``current_epoch_id`` so the workspace view can
     render the active row with a "live" affordance.
 
     Every component degrades independently: a missing or unreadable
@@ -597,7 +598,8 @@ def build_workspace_view(paths: WorkspacePaths) -> dict[str, Any]:
 
             # Goal — prefer the frozen ``epochs.goal`` field (Task #178);
             # fall back to ``config.json`` then to the brief's ``## Goal``
-            # heading so legacy epochs still surface something.
+            # heading, so an epoch whose record carries no goal field still
+            # surfaces something.
             goal: str | None = None
             if isinstance(cfg, dict):
                 raw_goal = cfg.get("goal")
@@ -631,8 +633,8 @@ def build_workspace_view(paths: WorkspacePaths) -> dict[str, Any]:
                         best_scalar = scalar
                         best_gen_id = gid
                 # Promotion count comes from experiment.json (durable on
-                # disk), not the index, so this is robust to an absent /
-                # stale ``promotions`` table.
+                # disk) rather than the index, so this is robust to an absent
+                # or stale ``promotions`` table.
                 for gid in gen_ids:
                     exp = _read_json_value(gens_dir / gid / "experiment.json")
                     if isinstance(exp, dict):
@@ -642,10 +644,10 @@ def build_workspace_view(paths: WorkspacePaths) -> dict[str, Any]:
                                 promoted_count += 1
 
             # Lineage edge — read ``parent_epoch_id`` from the index
-            # when available so the L0 lineage table can render arrows
-            # between consecutive epochs. Best-effort: a v1 / never-
-            # indexed database surfaces ``None`` and the L0 view falls
-            # back to directory order.
+            # when available so the workspace lineage table can render arrows
+            # between consecutive epochs. Best-effort: a v1 or never-indexed
+            # database surfaces ``None`` and the workspace view falls back to
+            # directory order.
             parent_epoch_id: str | None = None
             if conn is not None:
                 try:
@@ -673,11 +675,11 @@ def build_workspace_view(paths: WorkspacePaths) -> dict[str, Any]:
             rows.append(row)
             sparkline.append({"epoch_id": epoch_id, "scalar": best_scalar})
 
-    # The cross-epoch COMPOSED META-LOOP LEDGER matrix (study opt 7): one
+    # The cross-epoch COMPOSED META-LOOP LEDGER matrix: one
     # ordered row per epoch carrying the held floor, the champion that set it,
     # the generation_count (effort), the frozen structure, and the
     # per-component change map vs the predecessor — including the ``proposer``
-    # + ``structure`` levers the L1 contract-diff omits. Derived from the same
+    # + ``structure`` levers the epoch contract-diff omits. Derived from the same
     # on-disk records; degrades independently to an empty list. Surfaced as a
     # sibling field so the home view reads the ledger from the SAME
     # ``/api/workspace`` read it already consumes (no extra fan-out).
@@ -710,8 +712,8 @@ def _read_contract_components(paths: WorkspacePaths, epoch_id: str) -> dict[str,
     breakdown is written next to ``config.json`` as
     ``contract_components.json`` when an epoch is created or rolled.
     Returns an empty dict when the file is missing or unreadable so the
-    diff caller can render a "no breakdown available" state for legacy
-    epochs.
+    diff caller can render a "no breakdown available" state for an epoch
+    that has no breakdown file.
     """
     path = layout_of(paths).contract_components(epoch_id)
     raw = _read_json_value(path)
@@ -721,7 +723,7 @@ def _read_contract_components(paths: WorkspacePaths, epoch_id: str) -> dict[str,
 
 
 def build_contract_diff(paths: WorkspacePaths, epoch_id: str) -> dict[str, Any]:
-    """L1 (epoch-level) contract diff vs the predecessor epoch.
+    """The epoch-level contract diff against the predecessor epoch.
 
     Compares the named epoch's ``contract_components.json`` against the
     immediately preceding epoch's. The predecessor is resolved as the
@@ -740,10 +742,10 @@ def build_contract_diff(paths: WorkspacePaths, epoch_id: str) -> dict[str, Any]:
             "any_changed": bool,
         }
 
-    A component is listed even when both hashes are missing (so the L1
-    view can render a stable five-row matrix). ``changed`` is ``True``
-    iff the two hashes differ AND both are non-empty (an unknown
-    predecessor hash is "no diff signal", not "everything changed").
+    A component is listed even when both hashes are missing, so the
+    contract-diff view renders a stable five-row matrix. ``changed`` is
+    ``True`` iff the two hashes differ AND both are non-empty: an unknown
+    predecessor hash is "no diff signal" rather than "everything changed".
 
     The first epoch on disk reports ``predecessor_epoch_id = None`` and
     every component as not-changed: there is nothing to diff against.
@@ -800,12 +802,14 @@ def build_contract_diff(paths: WorkspacePaths, epoch_id: str) -> dict[str, Any]:
 # contract-diff endpoint omits:
 #
 #   * ``structure`` — NOT a ``contract_components.json`` sub-hash (structure is
-#     a per-epoch tournament attribute, not a contract-hash component). It is
+#     a per-epoch tournament attribute rather than a contract-hash component).
+#     It is
 #     derived from each epoch's frozen ``scoring.json`` ``tournament.structure``
 #     and folded in as its own change signal so a structure roll is attributed.
 #   * ``proposer`` — IS persisted in ``contract_components.json`` (the
-#     orchestrator's :func:`compute_component_hashes` emits it), but the L1
-#     contract-diff endpoint surfaces only the original five. The meta-loop
+#     orchestrator's :func:`compute_component_hashes` emits it), but the epoch
+#     contract-diff endpoint surfaces only the five contract sub-hashes. The
+#     meta-loop
 #     ledger restores it: "proposer/skills change rolls the epoch", so it must
 #     read as a first-class lever in the cross-epoch attribution.
 _LEDGER_COMPONENT_NAMES = (
@@ -859,7 +863,8 @@ def build_meta_loop_ledger(paths: WorkspacePaths) -> dict[str, Any]:
       surfaced contract components PLUS ``structure`` and ``proposer``).
       A component is ``True`` iff it has a comparable signal that differs
       from the predecessor: contract sub-hashes are compared when BOTH are
-      present (an absent legacy hash is "no signal", not "changed");
+      present (a hash absent from an older record is "no signal" rather than
+      "changed");
       ``structure`` is compared by its derived token. The first epoch has
       an all-``False`` map (nothing to diff against).
     * ``changed_list``     — the changed components as an ordered list (a
@@ -937,7 +942,8 @@ def build_meta_loop_ledger(paths: WorkspacePaths) -> dict[str, Any]:
                 is_changed = False
                 if not first:
                     if name == "structure":
-                        # structure is derived per epoch, not a sub-hash; a
+                        # structure is derived per epoch rather than being a
+                        # sub-hash; a
                         # change is a token difference (always comparable).
                         is_changed = prev_structure is not None and structure != prev_structure
                     else:
