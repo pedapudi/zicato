@@ -21,7 +21,7 @@ negative where it stands below.
 
 | Measurement | Baseline (`f9052dd`) | Enforced limit | Limit minus baseline |
 |---|---:|---:|---:|
-| Total | 408,547 | 442,021 | +33,474 |
+| Total | 408,547 | 453,362 | +44,815 |
 | Production | 197,588 | 203,751 | +6,163 |
 
 The earlier raw count of 425,755 included lockfiles and generated artifacts and
@@ -115,3 +115,4 @@ increase.
 | Scoped round-log events (production) | 203,422 | +380 | 203,802 | Issue #307 step 1: scope serialization, decoding and attribute promotion in `round_log.py`, the scope argument on `_RoundLogEmitter.emit` / `_emit_tournament_units` / `_emit_gate_evaluated`, the shared `_duel_scope` builder, the declared stepless-token set, and the field, persist and best-of-N call sites. |
 | Prose lint for hidden-context constructions (total) | 441,476 | +558 | 442,034 | The dependency-free checker over the documentation, README, CHANGELOG, runtime, example, skill, and tool trees; its per-rule fixture suite; the committed per-rule baseline; and the ratchet job in CI. Production is unchanged: the tool sits outside the runtime package. |
 | Temporal hedges and the changelog exemption (total) | 441,975 | +46 | 442,021 | The seventh prose rule with its per-phrase and severity coverage, the per-file rule-exemption table with its changelog regression, and the seventh entry in the committed baseline. Production is unchanged: the checker sits outside the runtime package. |
+| Reader parity over every workspace reader (total) | 442,021 | +11,341 | 453,362 | Issue #324: the recorded golden is 9,869 of the delta — 88 labelled reader outputs over a fixture with two epochs, eleven generations, per-run replicates, two board reflections, three round logs and a derived index; the remaining 1,472 are the fixture builder, the capture, and the ordering and reproducibility gates. The golden is the coverage: before it the analyzer, reflection, health, index, workspace and CLI readers had no pinned output at all, so any of them could change what it returns without a test noticing. Production is unchanged: the change adds only tests and fixtures. |
