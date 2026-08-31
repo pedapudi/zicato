@@ -38,6 +38,7 @@ from zicato.query.paths import (
     layout_of,
 )
 from zicato.query.replicate_scores import cell_replicate_draws
+from zicato.workspace import read_loss, run_entry_ids
 
 # The live MDE ladder's operating characteristics (EVAL-VIEW.md §4.3, pinned to
 # CAMPAIGN.md §3): the two-sample form at α=.05 / power .80 (with a relaxed α=.10
@@ -423,15 +424,8 @@ def _per_entry_flip_rates(
 
     # Discover which entries have a champion run dir (the calibration wrote one
     # replicate file per board entry under the champion generation).
-    runs_root = layout_of(paths).epoch_dir(epoch_id) / "generations" / gen / "runs"
-    if not runs_root.exists():
-        return {}
-
     out: dict[str, float | None] = {}
-    for child in sorted(runs_root.iterdir()):
-        if not child.is_dir():
-            continue
-        entry_id = child.name
+    for entry_id in run_entry_ids(layout_of(paths), epoch_id, gen):
         draws: list[bool | None] = []
         for i in range(runs):
             replicate = CALIBRATION_REPLICATE_BASE + i
@@ -1023,7 +1017,7 @@ def build_eval_dossier(
     # where BOTH sides have a verdict (see :func:`_discrimination_by_entry`). NOT
     # ``loss_profiles`` match_id pairs (the PK is one row per (gen, entry), so
     # those pairs cannot exist).
-    experiments = _read_epoch_experiments(layout_of(paths).epoch_dir(resolved))
+    experiments = _read_epoch_experiments(layout_of(paths), resolved)
     disc_rate, disc_n = _discrimination_by_entry(paths, resolved, experiments).get(
         entry_id, (None, 0)
     )
@@ -1324,7 +1318,7 @@ def build_eval_health(paths: WorkspacePaths, epoch_id: str | None = None) -> dic
     holdout = _holdout_ids(paths, resolved, board_entries)
     calibration = _calibration(paths, resolved)
     flips = _per_entry_flip_rates(paths, resolved, calibration)
-    experiments = _read_epoch_experiments(layout_of(paths).epoch_dir(resolved))
+    experiments = _read_epoch_experiments(layout_of(paths), resolved)
     instrument = _instrument_by_entry(paths, resolved, candidates, experiments)
 
     def _slice(eid: str) -> str:
@@ -1466,15 +1460,11 @@ def _generation_loss_profiles(
     """
     from zicato.telemetry.reducer import loss_profile_from_dict  # noqa: PLC0415
 
-    runs_dir = layout_of(paths).runs_dir(epoch_id, generation_id)
-    if not runs_dir.is_dir():
-        return []
+    layout = layout_of(paths)
     out: list[Any] = []
-    for run_dir in sorted(runs_dir.iterdir()):
-        if not run_dir.is_dir():
-            continue
-        raw = _read_json_value(run_dir / "loss.json")
-        if not isinstance(raw, dict):
+    for entry_id in run_entry_ids(layout, epoch_id, generation_id):
+        raw = read_loss(layout, epoch_id, generation_id, entry_id)
+        if raw is None:
             continue
         try:
             out.append(loss_profile_from_dict(raw))

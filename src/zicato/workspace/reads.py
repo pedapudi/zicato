@@ -1,16 +1,37 @@
-"""Typed canonical reads of the per-epoch / per-generation files.
+"""Typed canonical reads of the per-epoch / per-generation records.
 
-The small set of best-effort readers the dashboard consumes, routed through
-:class:`~zicato.workspace.layout.WorkspaceLayout` so the leaf filename joins
-live in one place. Each reader returns the *raw* canonical structure (the
-parsed JSON dict / list, or the parsed JSONL line dicts for the board) and
-leaves view-specific shaping to the caller — the goal here is to own the
-path math and the degrade-graceful parsing rather than to re-implement the
-per-endpoint projections.
+Two jobs live here. The first is enumeration: :func:`generation_ids`,
+:func:`run_entry_ids` and :func:`round_indices` answer "which generation /
+run / round records does this epoch hold", and they are the ONLY place in
+the tree that asks. The second is the leaf reads the enumerations feed —
+board, experiment, generation score, telemetry, loss — each routed through
+:class:`~zicato.workspace.layout.WorkspaceLayout` so the filename joins live
+in one place. Each reader returns the *raw* canonical structure (the parsed
+JSON dict / list, or the parsed JSONL line dicts for the board) and leaves
+view-specific shaping to the caller.
 
-Every reader is **best-effort**, returning the same empty / ``None`` value
-the prior inline readers returned on a missing / unreadable / malformed
-file — never a new exception.
+Enumeration goes over the storage seam
+(:meth:`~zicato.storage.StorageBackend.list_namespaces`) rather than a bare
+``Path.iterdir()``. Each of these records is a directory of files rather
+than a single file, so :meth:`~zicato.storage.StorageBackend.list_keys` on
+``generations/`` reports nothing at all and cannot answer. Routing through
+the seam is what makes "the storage backend answers which records exist"
+true of records as well as patches.
+
+Order is the reason the enumerations are worth centralising. A generation
+directory named ``v10`` sorts between ``v1`` and ``v2`` lexically and after
+``v9`` numerically, and readers that disagreed about this presented the same
+epoch's lineage in two different orders. Generations and board-entry run
+directories come back in :func:`~zicato.workspace.epochs.natural_key` order
+(numeric-aware, so ``v2`` precedes ``v10`` and entry ``t2`` precedes ``t10``);
+round directories come back as ascending integers.
+
+Every reader is **best-effort**: a missing directory, an unreadable one, a
+malformed leaf file, or an id that is not a legal storage key yields the
+empty / ``None`` value rather than an exception. A record whose directory
+exists but whose ``experiment.json`` was never written (an interrupted
+round) is still enumerated — the directory IS the record's existence — and
+simply drops out of the readers that need the file.
 """
 
 from __future__ import annotations
@@ -18,8 +39,71 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from zicato.workspace.epochs import _read_json_value
+from zicato.storage import FileStorageBackend
+from zicato.workspace.epochs import _read_json_value, natural_key
 from zicato.workspace.layout import WorkspaceLayout
+
+
+def _namespace_names(layout: WorkspaceLayout, *parts: str) -> list[str]:
+    """The names of the record namespaces directly under a workspace key.
+
+    ``parts`` are joined into a storage key relative to the workspace root.
+    Returns bare names in the backend's lexical order; each enumeration
+    below imposes the canonical order on top. An id that cannot form a legal
+    key — empty, or carrying a path separator or ``..`` — names no records
+    and yields the empty list rather than escaping the workspace.
+    """
+    try:
+        keys = FileStorageBackend(layout.root).list_namespaces("/".join(parts))
+    except ValueError:
+        return []
+    return [key.rsplit("/", 1)[-1] for key in keys]
+
+
+def generation_ids(layout: WorkspaceLayout, epoch_id: str) -> list[str]:
+    """Every generation id one epoch holds a record for, in round-number order.
+
+    A generation's record directory is written by the journal under both
+    generation-source backends and survives source pruning
+    (:mod:`zicato.epoch.gc`), so this is the durable answer to "which
+    generations did this epoch mint" and the way to tell a pruned generation
+    (recorded, no source tree) from one that never existed.
+    :meth:`~zicato.epoch.genstore.GenerationStore.list_generations` answers
+    the different question of which generations still have a source tree.
+
+    Order is numeric-aware, so ``v2`` precedes ``v10``.
+    """
+    return sorted(_namespace_names(layout, "epochs", epoch_id, "generations"), key=natural_key)
+
+
+def run_entry_ids(layout: WorkspaceLayout, epoch_id: str, generation_id: str) -> list[str]:
+    """Every board-entry id one generation holds a run record for, in order.
+
+    One directory per board entry the generation was measured on. Order is
+    numeric-aware, so entry ``t2`` precedes entry ``t10``. The board file
+    remains the authority on which entries the contract defines; this
+    reports which of them left a run on disk.
+    """
+    return sorted(
+        _namespace_names(layout, "epochs", epoch_id, "generations", generation_id, "runs"),
+        key=natural_key,
+    )
+
+
+def round_indices(layout: WorkspaceLayout, epoch_id: str) -> list[int]:
+    """Every evolve round index one epoch holds a record directory for, ascending.
+
+    A directory whose name is not a decimal integer is not a round record
+    and is skipped. An epoch with no ``rounds/`` directory yields the empty
+    list, which is the honest report that nothing ran rather than an error.
+    """
+    out: list[int] = []
+    for name in _namespace_names(layout, "epochs", epoch_id, "rounds"):
+        try:
+            out.append(int(name))
+        except ValueError:
+            continue
+    return sorted(out)
 
 
 def read_board(layout: WorkspaceLayout, epoch_id: str) -> list[dict[str, Any]] | None:
@@ -66,25 +150,17 @@ def read_experiment(
 def read_experiments(layout: WorkspaceLayout, epoch_id: str) -> list[tuple[str, dict[str, Any]]]:
     """Every generation's raw ``experiment.json`` for one epoch, in order.
 
-    Walks ``generations/*`` in numeric-aware id order and yields
-    ``(generation_id, experiment_dict)`` for each generation that has a
-    readable ``experiment.json``. Generations without one are skipped. The
-    raw experiment dict is returned untouched — callers add per-view
-    shaping (patches, generation_id stamping, etc.). Returns an empty list
-    when the epoch has no ``generations/`` directory.
+    Enumerates the epoch's generation records (:func:`generation_ids`, so
+    numeric-aware order) and yields ``(generation_id, experiment_dict)`` for
+    each generation that has a readable ``experiment.json``. Generations
+    without one are skipped. The raw experiment dict is returned untouched —
+    callers add per-view shaping (patches, generation_id stamping, etc.).
     """
-    from zicato.workspace.epochs import natural_key  # noqa: PLC0415 — avoid import cycle
-
-    gens_dir = layout.generations_dir(epoch_id)
-    if not gens_dir.is_dir():
-        return []
     out: list[tuple[str, dict[str, Any]]] = []
-    for gen_dir in sorted(gens_dir.iterdir(), key=lambda p: natural_key(p.name)):
-        if not gen_dir.is_dir():
-            continue
-        exp = _read_json_value(gen_dir / "experiment.json")
-        if isinstance(exp, dict):
-            out.append((gen_dir.name, exp))
+    for generation_id in generation_ids(layout, epoch_id):
+        exp = read_experiment(layout, epoch_id, generation_id)
+        if exp is not None:
+            out.append((generation_id, exp))
     return out
 
 

@@ -99,7 +99,6 @@ from zicato.epoch.round_log import (
     RoundRecord,
     ValidationFailed,
     fold_round_record,
-    rounds_dir,
 )
 from zicato.query.board_scan import board_entry_id, iter_board_rows
 from zicato.query.lineage_view import build_lineage_view
@@ -122,6 +121,13 @@ from zicato.query.replicate_scores import (
     replicate_index,
 )
 from zicato.query.runtime_view import read_active_tournament_dict
+from zicato.workspace import (
+    generation_ids as recorded_generation_ids,
+)
+from zicato.workspace import (
+    round_indices,
+    run_entry_ids,
+)
 
 # --- the served vocabularies ------------------------------------------------
 
@@ -301,26 +307,6 @@ def _span(events: list[RoundLogEnvelope]) -> tuple[int | None, int | None, int |
     return first, last, last - first
 
 
-def _subdirectory_names(path: Path) -> list[str]:
-    """The names of a directory's subdirectories, in natural order.
-
-    Every coordinate the plan enumerates — rounds, generations, board
-    entries — is a directory name, and each of those directories may be
-    absent or pruned, so one tolerant walk serves all three.
-    """
-    try:
-        children = list(path.iterdir())
-    except OSError:
-        return []
-    return sorted((c.name for c in children if c.is_dir()), key=_natural_key)
-
-
-def _round_indices(paths: WorkspacePaths, epoch_id: str) -> list[int]:
-    """Every round index with a directory under the epoch, ascending."""
-    names = _subdirectory_names(rounds_dir(paths.root, epoch_id))
-    return sorted(int(name) for name in names if name.isdigit())
-
-
 #: One round log's read: its decoded events, and whether the file read
 #: cleanly to the end. Both halves are needed at once — the events build the
 #: spine, the flag decides whether the round can claim ``exact`` provenance.
@@ -339,11 +325,6 @@ def _read_round_events(paths: WorkspacePaths, epoch_id: str, index: int) -> _Rou
         return RoundLog(paths.root, epoch_id, index).read(), True
     except Exception:  # noqa: BLE001 — best-effort, mirrors the sibling readers
         return [], False
-
-
-def _generation_ids(paths: WorkspacePaths, epoch_id: str) -> list[str]:
-    """Every generation directory in the epoch, in natural id order."""
-    return _subdirectory_names(layout_of(paths).generations_dir(epoch_id))
 
 
 def _board_facts(paths: WorkspacePaths, epoch_id: str) -> tuple[str, list[str]]:
@@ -542,7 +523,7 @@ def _sweep_node(
     sweep_id = f"{parent_id}/{generation_id}"
     units: list[PlanNode] = []
     covered: set[str] = set()
-    for entry_id in _subdirectory_names(layout_of(paths).runs_dir(epoch_id, generation_id)):
+    for entry_id in run_entry_ids(layout_of(paths), epoch_id, generation_id):
         entry_units = _unit_nodes(paths, epoch_id, generation_id, entry_id, sweep_id)
         if entry_units:
             covered.add(entry_id)
@@ -652,7 +633,7 @@ def _band_steps(
     draws: dict[str, list[PlanNode]] = {}
     contributors: dict[str, set[str]] = {}
     for generation_id in generation_ids:
-        for entry_id in _subdirectory_names(layout.runs_dir(epoch_id, generation_id)):
+        for entry_id in run_entry_ids(layout, epoch_id, generation_id):
             run_dir = layout.run_dir(epoch_id, generation_id, entry_id)
             for replicate, band, profile in measurement_band_draws_indexed(
                 paths, epoch_id, generation_id, entry_id
@@ -1172,7 +1153,7 @@ def build_execution_plan_model(paths: WorkspacePaths, epoch_id: str | None = Non
 
 def _build(paths: WorkspacePaths, epoch_id: str) -> ExecutionPlan:
     digest, board_entry_ids = _board_facts(paths, epoch_id)
-    indices = _round_indices(paths, epoch_id)
+    indices = round_indices(layout_of(paths), epoch_id)
 
     # Which candidates each round evaluated, from the round log alone. A
     # generation is claimed by the FIRST round that names it, so a champion
@@ -1193,7 +1174,7 @@ def _build(paths: WorkspacePaths, epoch_id: str) -> ExecutionPlan:
                 named.append(generation_id)
         per_round[index] = [gid for gid in named if claimed.setdefault(gid, index) == index]
 
-    on_disk = _generation_ids(paths, epoch_id)
+    on_disk = recorded_generation_ids(layout_of(paths), epoch_id)
 
     # A leftover candidate-screen snapshot is not a baseline champion: it is
     # an ephemeral tree whose name states the round it served, and whose only

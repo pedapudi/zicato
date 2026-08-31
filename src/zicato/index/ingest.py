@@ -75,6 +75,12 @@ from zicato.index.schema import (
     raise_if_newer,
     read_schema_version,
 )
+from zicato.workspace import (
+    WorkspaceLayout,
+    generation_ids,
+    round_indices,
+    run_entry_ids,
+)
 
 log = logging.getLogger("zicato.index")
 
@@ -797,29 +803,19 @@ def _load_loss_profile(path: Path) -> LossProfile | None:
 
 
 def _iter_generation_dirs(workspace_root: Path, epoch_id: str) -> Iterable[str]:
-    """Yield generation ids that have a directory on disk under ``epoch_id``.
+    """The generation ids that have a record on disk under ``epoch_id``.
 
     The lineage DAG is the authoritative generation list, but a run can
-    land before lineage is updated; walking the directory tree as well
-    means :func:`rebuild_index` never misses a generation that has
-    telemetry on disk.
+    land before lineage is updated; reading the records as well means
+    :func:`rebuild_index` never misses a generation that has telemetry on
+    disk.
     """
-    gens_root = workspace_root / "epochs" / epoch_id / "generations"
-    if not gens_root.exists():
-        return []
-    out: list[str] = []
-    for child in sorted(gens_root.iterdir()):
-        if child.is_dir():
-            out.append(child.name)
-    return out
+    return generation_ids(WorkspaceLayout.from_root(workspace_root), epoch_id)
 
 
 def _iter_run_entry_ids(workspace_root: Path, epoch_id: str, generation_id: str) -> list[str]:
-    """Yield board-entry ids that have a ``runs/`` subdirectory on disk."""
-    runs_root = workspace_root / "epochs" / epoch_id / "generations" / generation_id / "runs"
-    if not runs_root.exists():
-        return []
-    return sorted(child.name for child in runs_root.iterdir() if child.is_dir())
+    """The board-entry ids that have a run record under one generation."""
+    return run_entry_ids(WorkspaceLayout.from_root(workspace_root), epoch_id, generation_id)
 
 
 def _load_field_tournaments(workspace_root: Path, epoch_id: str) -> list[dict[str, Any]]:
@@ -1465,26 +1461,18 @@ def _epoch_signals(
     """
     from zicato.core.workspace import (  # noqa: PLC0415
         experiment_json_path,
-        generations_dir,
         loss_profile_path,
         reflections_dir,
     )
-    from zicato.epoch.round_log import rounds_dir  # noqa: PLC0415
 
+    layout = WorkspaceLayout.from_root(workspace_root)
     experiments = 0
     runs = 0
-    gens_root = generations_dir(workspace_root, epoch_id)
-    try:
-        gen_children = sorted(gens_root.iterdir())
-    except OSError:
-        gen_children = []
-    for child in gen_children:
-        if not child.is_dir():
-            continue
-        if experiment_json_path(workspace_root, epoch_id, child.name).is_file():
+    for generation_id in generation_ids(layout, epoch_id):
+        if experiment_json_path(workspace_root, epoch_id, generation_id).is_file():
             experiments += 1
-        for entry_id in _iter_run_entry_ids(workspace_root, epoch_id, child.name):
-            if loss_profile_path(workspace_root, epoch_id, child.name, entry_id).is_file():
+        for entry_id in _iter_run_entry_ids(workspace_root, epoch_id, generation_id):
+            if loss_profile_path(workspace_root, epoch_id, generation_id, entry_id).is_file():
                 runs += 1
 
     lineage_generations = 0
@@ -1495,7 +1483,7 @@ def _epoch_signals(
     return (
         experiments,
         runs,
-        _count_dirs(rounds_dir(workspace_root, epoch_id)),
+        len(round_indices(layout, epoch_id)),
         _count_dirs(reflections_dir(workspace_root, epoch_id)),
         lineage_generations,
     )

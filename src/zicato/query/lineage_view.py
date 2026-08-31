@@ -19,7 +19,7 @@ from zicato.query.paths import (
     layout_of,
 )
 from zicato.query.ratings import RATING_FIELDS, rating_by_generation
-from zicato.workspace import iter_epochs
+from zicato.workspace import generation_ids, iter_epochs, read_experiment
 
 # ---------------------------------------------------------------------------
 # Lineage view (directory-derived)
@@ -93,91 +93,86 @@ def build_lineage_view(
     # this enumeration order is not load-bearing for the OUTPUT — but routing
     # it through ``iter_epochs`` keeps the workspace walk in one place and
     # reuses the cached ``created_at`` each typed ``Epoch`` already carries.
-    for epoch in iter_epochs(layout_of(paths)):
+    layout = layout_of(paths)
+    for epoch in iter_epochs(layout):
         if epoch_id is not None and epoch.id != epoch_id:
             continue
         eid = epoch.id
         epoch_created[eid] = epoch.created_at
-        gens_dir = epoch.directory / "generations"
-        if gens_dir.is_dir():
-            for gen_dir in sorted(gens_dir.iterdir(), key=lambda p: _natural_key(p.name)):
-                if not gen_dir.is_dir():
-                    continue
-                generation_id = gen_dir.name
-                meta = legacy.get((eid, generation_id), {})
-                experiment = _read_json_value(gen_dir / "experiment.json")
-                experiment = experiment if isinstance(experiment, dict) else None
+        for generation_id in generation_ids(layout, eid):
+            meta = legacy.get((eid, generation_id), {})
+            experiment = read_experiment(layout, eid, generation_id)
 
-                # lineage.json is the single authority for topology and gate
-                # outcome. experiment.json remains proposal metadata only.
-                parent = meta.get("parent_id")
-                promoted = meta.get("promoted")
-                promoted = promoted if isinstance(promoted, bool) else None
+            # lineage.json is the single authority for topology and gate
+            # outcome. experiment.json remains proposal metadata only.
+            parent = meta.get("parent_id")
+            promoted = meta.get("promoted")
+            promoted = promoted if isinstance(promoted, bool) else None
 
-                # The evolve-round that MINTED this generation, stamped onto
-                # experiment.json at mint time. Absent on a record carrying no
-                # stamp, where the dashboard derives the rounds from the
-                # field-tournament records and lineage. Read tolerantly (int).
-                round_index: int | None = None
-                if experiment is not None:
-                    raw_round = experiment.get("round_index")
-                    if isinstance(raw_round, bool):
-                        raw_round = None
-                    if isinstance(raw_round, int):
-                        round_index = raw_round
-                    elif isinstance(raw_round, str) and raw_round.strip().lstrip("-").isdigit():
-                        round_index = int(raw_round.strip())
+            # The evolve-round that MINTED this generation, stamped onto
+            # experiment.json at mint time. Absent on a record carrying no
+            # stamp, where the dashboard derives the rounds from the
+            # field-tournament records and lineage. Read tolerantly (int).
+            round_index: int | None = None
+            if experiment is not None:
+                raw_round = experiment.get("round_index")
+                if isinstance(raw_round, bool):
+                    raw_round = None
+                if isinstance(raw_round, int):
+                    round_index = raw_round
+                elif isinstance(raw_round, str) and raw_round.strip().lstrip("-").isdigit():
+                    round_index = int(raw_round.strip())
 
-                created_at: str | None = None
-                if experiment is not None:
-                    for key in ("proposed_at", "created_at"):
-                        val = experiment.get(key)
-                        if isinstance(val, str) and val:
-                            created_at = val
-                            break
-                if created_at is None:
-                    legacy_created = meta.get("created_at")
-                    if isinstance(legacy_created, str) and legacy_created:
-                        created_at = legacy_created
-                if created_at is None:
-                    try:
-                        ctime = gen_dir.stat().st_ctime
-                        created_at = _iso(_dt.datetime.fromtimestamp(ctime, _dt.UTC))
-                    except OSError:
-                        created_at = None
+            created_at: str | None = None
+            if experiment is not None:
+                for key in ("proposed_at", "created_at"):
+                    val = experiment.get(key)
+                    if isinstance(val, str) and val:
+                        created_at = val
+                        break
+            if created_at is None:
+                legacy_created = meta.get("created_at")
+                if isinstance(legacy_created, str) and legacy_created:
+                    created_at = legacy_created
+            if created_at is None:
+                try:
+                    ctime = layout.generation_dir(eid, generation_id).stat().st_ctime
+                    created_at = _iso(_dt.datetime.fromtimestamp(ctime, _dt.UTC))
+                except OSError:
+                    created_at = None
 
-                node: dict[str, Any] = {
-                    "generation_id": generation_id,
-                    "epoch_id": eid,
-                    "parent_generation_id": parent if isinstance(parent, str) else None,
-                    "promoted": promoted,
-                    "created_at": created_at,
-                }
-                if meta:
-                    node["decision"], node["decision_label"] = decision_surface(parent, promoted)
-                else:
-                    node["decision"], node["decision_label"] = "pending", "undecided"
-                # Only surface round_index when the stamp is present, so a
-                # payload written before the stamp existed stays byte-identical
-                # (the key is absent rather than null) and the dashboard's
-                # lineage fallback applies.
-                if round_index is not None:
-                    node["round_index"] = round_index
-                # The gate's own account of the decision (issue #124):
-                # why the generation was cut, and the two scalars it was
-                # cut on. Surfaced only when lineage recorded them, on the
-                # same absent-not-null discipline as round_index — a node
-                # written before the field existed keeps its prior payload,
-                # and the reason is empty on anything but a settled
-                # rejection (append_to_lineage enforces that at the write).
-                reason = meta.get("rejection_reason")
-                if isinstance(reason, str) and reason:
-                    node["rejection_reason"] = reason
-                for field in ("parent_scalar", "child_scalar", "delta_scalar"):
-                    value = meta.get(field)
-                    if isinstance(value, int | float) and not isinstance(value, bool):
-                        node[field] = float(value)
-                generations.append(node)
+            node: dict[str, Any] = {
+                "generation_id": generation_id,
+                "epoch_id": eid,
+                "parent_generation_id": parent if isinstance(parent, str) else None,
+                "promoted": promoted,
+                "created_at": created_at,
+            }
+            if meta:
+                node["decision"], node["decision_label"] = decision_surface(parent, promoted)
+            else:
+                node["decision"], node["decision_label"] = "pending", "undecided"
+            # Only surface round_index when the stamp is present, so a
+            # payload written before the stamp existed stays byte-identical
+            # (the key is absent rather than null) and the dashboard's
+            # lineage fallback applies.
+            if round_index is not None:
+                node["round_index"] = round_index
+            # The gate's own account of the decision (issue #124):
+            # why the generation was cut, and the two scalars it was
+            # cut on. Surfaced only when lineage recorded them, on the
+            # same absent-not-null discipline as round_index — a node
+            # written before the field existed keeps its prior payload,
+            # and the reason is empty on anything but a settled
+            # rejection (append_to_lineage enforces that at the write).
+            reason = meta.get("rejection_reason")
+            if isinstance(reason, str) and reason:
+                node["rejection_reason"] = reason
+            for field in ("parent_scalar", "child_scalar", "delta_scalar"):
+                value = meta.get(field)
+                if isinstance(value, int | float) and not isinstance(value, bool):
+                    node[field] = float(value)
+            generations.append(node)
 
     # The visibility rating triple, joined server-side from the index
     # (best-effort — the null triple when the index is absent or cold).

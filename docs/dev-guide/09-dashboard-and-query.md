@@ -614,7 +614,41 @@ loop-view is the model — note the two distinct degrade notes:
 > database must ALL degrade, and you cannot enumerate every failure a
 > future SQLite/file layout can throw.
 
-### 9.3.2 `WorkspacePaths` and the traversal guard
+### 9.3.2 The record enumerations — `zicato.workspace.reads`
+
+Almost every reader in this chapter starts by asking which records to read:
+which generations the epoch minted, which board entries left a run, which
+rounds ran. None of them answers that itself. `zicato.workspace.reads` holds
+the four enumerations and the one order each carries:
+
+| Reader | Question | Order |
+|---|---|---|
+| `iter_epochs(layout)` / `list_epoch_ids(layout)` | which epochs exist | recorded creation time, numeric-aware id as tiebreaker |
+| `generation_ids(layout, epoch_id)` | which generations have a record | numeric-aware: `v2` before `v10` |
+| `run_entry_ids(layout, epoch_id, generation_id)` | which board entries have a run record | numeric-aware: `t2` before `t10` |
+| `round_indices(layout, epoch_id)` | which rounds have a directory | ascending integer |
+
+`layout` is a `WorkspaceLayout` — `layout_of(paths)` converts the
+`WorkspacePaths` a reader is handed. The enumerations read through
+`StorageBackend.list_namespaces`, the listing for records stored as a
+directory of files; 07-runtime-and-durability.md §7.3.4 has the storage side
+and the reason `list_keys` cannot answer.
+
+Two behaviours matter when composing a view on top of them. A record
+directory with no readable leaf file is still enumerated, because the
+directory is what makes the record exist — so a generation from an
+interrupted round appears in `generation_ids` and drops out of
+`read_experiments`, which is what lets a view distinguish "in flight" from
+"never proposed". And an epoch or generation id that could not be a legal
+storage key enumerates nothing rather than resolving to a path outside the
+workspace, which is a third line of defence behind the two below.
+
+> ⛔ NEVER walk `generations/`, `runs/` or `rounds/` from a view. The
+> orderings diverged exactly this way before consolidation, and
+> `tests/test_record_enumeration_single_owner.py` now fails the commit that
+> reintroduces one.
+
+### 9.3.3 `WorkspacePaths` and the traversal guard
 
 `WorkspacePaths(root)` (`src/zicato/query/paths.py`) is the typed
 `.zicato/` layout — `root` is the `.zicato` directory itself, with
@@ -647,7 +681,7 @@ This is the SECOND line of defence behind `_is_safe_id` in the endpoint
 (§9.5); the endpoint rejects a malformed coordinate before it reaches the
 reader, and the reader re-validates against the actual epoch set.
 
-### 9.3.3 The coercers — `coerce_float`, `to_snake`
+### 9.3.4 The coercers — `coerce_float`, `to_snake`
 
 `coerce_float` is THE numeric payload coercer — it replaced dozens of
 inline `float(x) if isinstance(x, int|float) else None` copies, and it
@@ -690,7 +724,7 @@ def to_snake(name: str) -> str:
 > reconstructor (`dashboard/transcript.py`) reuses this exact helper for the
 > same reason — one normalization, three consumers.
 
-### 9.3.4 The read-only index open
+### 9.3.5 The read-only index open
 
 Every SQLite read opens the index **read-only** and swallows a query error
 to an empty result, so a mid-rebuild or newer-schema database can never
@@ -717,7 +751,7 @@ def _query(conn: sqlite3.Connection, sql: str, params: tuple[Any, ...]) -> list[
 "never built" (attach the `run zicato repair index` note) from "unreadable"
 (attach the generic note) — the two degrade notes in §9.3.1.
 
-### 9.3.5 The composite reads
+### 9.3.6 The composite reads
 
 Two readers coalesce the whole environment so the client fetches once, not
 six times:
@@ -1087,7 +1121,7 @@ row, because they are three different promises to the caller:
 
 > ⛔ NEVER let a coordinate reach a reader unvalidated, and never answer a
 > malformed coordinate with a 500. Validate the id before it touches the workspace: `_is_safe_id` first, then the reader
-> re-validates against the on-disk set (`_resolve_epoch_id`, §9.3.2). The
+> re-validates against the on-disk set (`_resolve_epoch_id`, §9.3.3). The
 > degrade shape MUST match the reader's own empty shape byte-for-byte so the
 > client cannot tell a malformed-coordinate empty from a genuinely-empty one
 > — both paint the same honest empty panel.
@@ -2180,7 +2214,7 @@ malformed/truncated line is skipped, a missing file yields an empty
 transcript, mirroring the reducer's plain-JSON fallback and the supervisor's
 run-log tailer that parse the same growing file. It handles both goldfive
 envelope shapes (camelCase persistence-sink keys and the reducer's
-normalized `{kind, payload, ...}`), reusing `to_snake` (§9.3.3) for key
+normalized `{kind, payload, ...}`), reusing `to_snake` (§9.3.4) for key
 normalization so the transcript speaks the one stable vocabulary. The
 endpoints import it behind a guarded `try/except` so the whole server still
 starts if it is unavailable in a stripped install.

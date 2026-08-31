@@ -364,6 +364,64 @@ sloppiness — an interior tear is never tolerated:
 > append-only single-writer files ("only the tail can be torn") rather than a
 > general error-handling posture.
 
+### 7.3.4 Which records exist — the two listings, and the one reader
+
+Reading a record needs its key. Deciding *which* records to read needs a
+listing, and `StorageBackend` offers two, because zicato stores records in two
+shapes:
+
+| Listing | Returns | The records it answers for |
+|---|---|---|
+| `list_keys(prefix)` | the keys of the files directly under the prefix | records that are one file: `runtime/active_runs/{run_id}.json`, a control flag, a patch |
+| `list_namespaces(prefix)` | the keys of the sub-namespaces directly under the prefix | records that are a directory of files: a generation, a board-entry run, a round |
+
+Both are non-recursive and lexically sorted. The file backend implements the
+second as "the subdirectories of this directory"; the in-memory backend infers
+it from its flat keys, so a test running against either observes the same
+records.
+
+The distinction matters because a generation record is not a file. Its
+directory holds `experiment.json`, `patches/`, `runs/`, a cached
+`gen_score.json` and more, so `list_keys("epochs/{e}/generations")` correctly
+returns nothing at all, and a caller who tried it would conclude the epoch had
+minted no generations. Before `list_namespaces` existed there was no listing
+that could answer, and every caller reached past the seam to `Path.iterdir()`.
+
+`zicato.workspace.reads` is the single caller of that listing and the single
+answer to the question:
+
+| Reader | Question | Order |
+|---|---|---|
+| `generation_ids(layout, epoch_id)` | which generations does this epoch hold a record for | numeric-aware: `v2` before `v10` |
+| `run_entry_ids(layout, epoch_id, generation_id)` | which board entries left a run record | numeric-aware: `t2` before `t10` |
+| `round_indices(layout, epoch_id)` | which evolve rounds have a directory | ascending integer |
+| `iter_epochs(layout)` / `list_epoch_ids(layout)` | which epochs exist | recorded creation time, numeric id as tiebreaker |
+
+Order is the reason these are worth centralising rather than the path math.
+Sorting generation directories lexically puts `v10` between `v1` and `v2`, so
+a reader that sorted that way and a reader that sorted numerically presented
+the same epoch's lineage in two different orders — a class of disagreement
+that survives every individual reader looking correct.
+
+The record directory is what makes a record exist. A generation whose
+`experiment.json` was never written — an interrupted round — is still
+enumerated, and drops out of the readers that need the file. Symmetrically, a
+generation record survives source pruning (§7.5), which is how a PRUNED
+generation is told apart from one that never existed:
+`generation_ids` reports it and `GenerationStore.list_generations` does not.
+
+> ⛔ NEVER build `epochs/{e}/generations` (or `runs/`, or `rounds/`) and walk
+> it. `tests/test_record_enumeration_single_owner.py` parses every module under
+> `src/zicato` and fails on a record enumeration outside the reader and the
+> storage backends, so a re-fork is caught at the commit rather than at the
+> next ordering bug.
+
+> ✅ ALWAYS distinguish "records exist" from "sources exist".
+> `generation_ids` answers the first from the journal's durable records;
+> `GenerationStore.list_generations` answers the second from the source store
+> and is filtered to generations that still have a tree. Conflating them
+> reports a garbage-collected epoch as empty.
+
 ---
 
 ## 7.4 The generation store — and the git backend in depth

@@ -28,7 +28,7 @@ from zicato.query.paths import (
 from zicato.query.ratings import RATING_FIELDS, rating_by_generation
 from zicato.query.replicate_scores import replicate_scores, standard_error
 from zicato.query.runtime_view import read_active_tournament_dict
-from zicato.workspace import read_gen_score
+from zicato.workspace import read_gen_score, read_loss, run_entry_ids
 
 
 def _champion_lineage(generations: list[dict[str, Any]]) -> list[str]:
@@ -632,18 +632,14 @@ def _read_run_loss_files(
     yet yields ``{}``.
     """
     out: dict[str, dict[str, Any]] = {}
-    runs_dir = layout_of(paths).runs_dir(epoch_id, generation_id)
-    if not runs_dir.is_dir():
-        return out
-    for run_dir in sorted(runs_dir.iterdir()):
-        if not run_dir.is_dir():
-            continue
-        loss = _read_json_value(run_dir / "loss.json")
-        if not isinstance(loss, dict):
+    layout = layout_of(paths)
+    for run_entry_id in run_entry_ids(layout, epoch_id, generation_id):
+        loss = read_loss(layout, epoch_id, generation_id, run_entry_id)
+        if loss is None:
             continue
         entry_id = loss.get("entry_id")
         if not isinstance(entry_id, str) or not entry_id:
-            entry_id = run_dir.name
+            entry_id = run_entry_id
         drift = loss.get("drift_loss")
         prov = loss.get("scoring_provenance")
         cell: dict[str, Any] = {
@@ -655,7 +651,7 @@ def _read_run_loss_files(
             # the ``score`` field existed.
             "score": _opt_score(loss.get("score")),
             "metrics": _opt_metrics(loss.get("metrics")),
-            "run_id": loss.get("run_id") if isinstance(loss.get("run_id"), str) else run_dir.name,
+            "run_id": (loss.get("run_id") if isinstance(loss.get("run_id"), str) else run_entry_id),
             # Seam-1 drift-reduction provenance (#19). ``None`` on a
             # loss.json that recorded none — surfaced so the gate
             # breakdown can show which transform / plugin shaped drift_loss.

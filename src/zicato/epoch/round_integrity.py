@@ -117,6 +117,7 @@ from zicato.epoch.round_log import (
     round_log_path,
     rounds_dir,
 )
+from zicato.workspace import WorkspaceLayout, round_indices
 
 
 class RoundStatus(StrEnum):
@@ -853,16 +854,7 @@ def epoch_round_integrity(
     must render the round count: an epoch nothing ever ran is not a
     healthy epoch, it is an unmeasured one.
     """
-    base = rounds_dir(workspace_root, epoch_id)
-    indices: list[int] = []
-    if base.is_dir():
-        for child in base.iterdir():
-            if not child.is_dir():
-                continue
-            try:
-                indices.append(int(child.name))
-            except ValueError:
-                continue  # not a round directory
+    indices = round_indices(WorkspaceLayout.from_root(workspace_root), epoch_id)
     return EpochRoundIntegrity(
         epoch_id=epoch_id,
         rounds=tuple(

@@ -181,6 +181,23 @@ class StorageBackend(ABC):
         backend uses during an atomic write) are never returned.
         """
 
+    @abstractmethod
+    def list_namespaces(self, prefix: str) -> list[str]:
+        """Return the sub-namespaces directly under ``prefix``, sorted.
+
+        The companion of :meth:`list_keys` for records that are themselves
+        namespaces rather than single values. A generation record is a
+        namespace: ``epochs/{epoch}/generations/{id}`` holds an
+        ``experiment.json``, a ``runs/`` subtree and more, so
+        :meth:`list_keys` on ``epochs/{epoch}/generations`` reports nothing
+        and the question "which generations exist" needs this method.
+
+        Returns the immediately nested namespaces — not a recursive walk —
+        each as a full key with ``prefix`` included, sorted
+        lexicographically. Returns an empty list when the prefix names
+        nothing.
+        """
+
     # -- JSONL streams ------------------------------------------------------
 
     @abstractmethod

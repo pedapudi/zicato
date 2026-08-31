@@ -41,7 +41,7 @@ from zicato.core.types import Experiment, Generation
 from zicato.evolve.ingest import _index_db_path
 from zicato.evolve.lifecycle_services import _beat
 from zicato.runtime.heartbeat import HeartbeatBeater
-from zicato.workspace import natural_key
+from zicato.workspace import WorkspaceLayout, generation_ids
 
 if TYPE_CHECKING:
     from zicato.proposer.best_of_n import ScreenRunner
@@ -174,7 +174,6 @@ def _build_recombination_pair(
         return None
     try:
         from zicato.core.experiment import PLACEBO_HYPOTHESIS_MARKER  # noqa: PLC0415
-        from zicato.core.workspace import generations_dir  # noqa: PLC0415
         from zicato.epoch.journal import read_experiment  # noqa: PLC0415
         from zicato.epoch.recombine import (  # noqa: PLC0415
             RECOMBINE_POOL_MAX,
@@ -186,17 +185,10 @@ def _build_recombination_pair(
         from zicato.query.paths import WorkspacePaths  # noqa: PLC0415
         from zicato.query.tournament_view import build_matchup_grid  # noqa: PLC0415
 
-        gens_root = generations_dir(workspace_root, epoch_id)
-        if not gens_root.is_dir():
-            return None
-
         # Most recent generation first: the recombination pool draws from the
         # newest settled rejects.
-        gen_ids = sorted(
-            (d.name for d in gens_root.iterdir() if d.is_dir()),
-            key=natural_key,
-            reverse=True,
-        )
+        layout = WorkspaceLayout.from_root(workspace_root)
+        gen_ids = list(reversed(generation_ids(layout, epoch_id)))
 
         # One pass over the records: collect the pool of most-recent
         # settled rejects (capped) and the already-tried pair set (#5 —
@@ -388,22 +380,14 @@ def _build_genealogy_items(
         return ()
     try:
         from zicato.core.experiment import PLACEBO_HYPOTHESIS_MARKER  # noqa: PLC0415
-        from zicato.core.workspace import generations_dir  # noqa: PLC0415
         from zicato.epoch.journal import read_experiment  # noqa: PLC0415
         from zicato.proposer.genealogy import (  # noqa: PLC0415
             GenealogyRecord,
             sample_genealogy,
         )
 
-        gens_root = generations_dir(workspace_root, epoch_id)
-        if not gens_root.is_dir():
-            return ()
-
         records: list[GenealogyRecord] = []
-        for gen_dir in gens_root.iterdir():
-            if not gen_dir.is_dir():
-                continue
-            gid = gen_dir.name
+        for gid in generation_ids(WorkspaceLayout.from_root(workspace_root), epoch_id):
             # NB: the reigning champion (``parent_id``) is NOT skipped — the
             # pure sampler walks the champion's ``parent_generation_id`` chain
             # from ``champion_id``, so the champion's own promoted record is the
@@ -508,16 +492,11 @@ def _build_calibration_summary(
         return None
     try:
         from zicato.core.experiment import PLACEBO_HYPOTHESIS_MARKER  # noqa: PLC0415
-        from zicato.core.workspace import generations_dir  # noqa: PLC0415
         from zicato.epoch.journal import read_experiment  # noqa: PLC0415
         from zicato.proposer.calibration import (  # noqa: PLC0415
             CalibrationClaim,
             sample_calibration,
         )
-
-        gens_root = generations_dir(workspace_root, epoch_id)
-        if not gens_root.is_dir():
-            return None
 
         # ONE best-effort grader read — the reign's per-hypothesis
         # (matches, predictions), keyed by generation id. An absent / degraded
@@ -533,10 +512,7 @@ def _build_calibration_summary(
             log.debug("calibration: prediction-accuracy read skipped (%s)", exc)
 
         claims: list[CalibrationClaim] = []
-        for gen_dir in gens_root.iterdir():
-            if not gen_dir.is_dir():
-                continue
-            gid = gen_dir.name
+        for gid in generation_ids(WorkspaceLayout.from_root(workspace_root), epoch_id):
             try:
                 exp = read_experiment(workspace_root, epoch_id, gid)
             except Exception as exc:  # noqa: BLE001 — unreadable record: skip

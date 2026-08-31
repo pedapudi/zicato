@@ -55,6 +55,7 @@ from pathlib import Path
 from typing import Any, ClassVar
 
 from zicato.util.iso_time import now_iso as _now_iso
+from zicato.workspace import WorkspaceLayout
 
 # ---------------------------------------------------------------------------
 # Path convention — epochs/{epoch}/rounds/{round}/round_log.jsonl
@@ -66,7 +67,7 @@ ROUND_LOG_FILENAME = "round_log.jsonl"
 
 def rounds_dir(workspace_root: Path, epoch_id: str) -> Path:
     """Return ``epochs/{epoch}/rounds/`` for a workspace (pure path math)."""
-    return workspace_root / "epochs" / epoch_id / "rounds"
+    return WorkspaceLayout.from_root(workspace_root).rounds_dir(epoch_id)
 
 
 def round_dir(workspace_root: Path, epoch_id: str, round_index: int) -> Path:

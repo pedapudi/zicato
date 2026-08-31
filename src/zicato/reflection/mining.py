@@ -1011,7 +1011,7 @@ def _load_experiments(paths: Any, epoch_id: str) -> list[dict[str, Any]]:
     from zicato.query.paths import layout_of  # noqa: PLC0415
 
     try:
-        return _read_epoch_experiments(layout_of(paths).epoch_dir(epoch_id))
+        return _read_epoch_experiments(layout_of(paths), epoch_id)
     except Exception:  # noqa: BLE001
         return []
 

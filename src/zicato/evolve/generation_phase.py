@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from zicato.workspace import WorkspaceLayout, natural_key
+from zicato.workspace import WorkspaceLayout, generation_ids
 from zicato.workspace import epochs as workspace_epochs
 
 
@@ -104,12 +104,14 @@ def current_generation(workspace_root: Path, epoch_id: str) -> str:
     marker = current_marker(workspace_root, epoch_id)
     if marker.exists() and (value := marker.read_text(encoding="utf-8").strip()):
         return value
-    root = WorkspaceLayout.from_root(workspace_root).generations_dir(epoch_id)
-    candidates = [path.name for path in root.iterdir() if path.is_dir()] if root.exists() else []
+    layout = WorkspaceLayout.from_root(workspace_root)
+    candidates = generation_ids(layout, epoch_id)
     if not candidates:
-        raise FileNotFoundError(f"no generations under {root}; the epoch has no baseline yet")
-
-    return max(candidates, key=natural_key)
+        raise FileNotFoundError(
+            f"no generations under {layout.generations_dir(epoch_id)}; "
+            "the epoch has no baseline yet"
+        )
+    return candidates[-1]
 
 
 def safe_parent(workspace_root: Path, epoch_id: str | None) -> str:
@@ -135,9 +137,8 @@ def snapshot_root(workspace_root: Path, epoch_id: str, generation_id: str) -> Pa
 
 def next_generation_id(workspace_root: Path, epoch_id: str) -> str:
     """The id to mint for this epoch's next generation, read from disk."""
-    root = WorkspaceLayout.from_root(workspace_root).generations_dir(epoch_id)
-    names = [path.name for path in root.iterdir() if path.is_dir()] if root.is_dir() else []
-    return workspace_epochs.next_generation_id(names)
+    layout = WorkspaceLayout.from_root(workspace_root)
+    return workspace_epochs.next_generation_id(generation_ids(layout, epoch_id))
 
 
 def mutable_trees(adapter: Any, snapshot: Path) -> list[Path]:

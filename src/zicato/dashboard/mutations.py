@@ -82,7 +82,7 @@ from zicato.mutation.enumerator import enumerate_mutations
 from zicato.query import WorkspacePaths
 from zicato.query.paths import layout_of
 from zicato.storage import default_backend
-from zicato.workspace import natural_key
+from zicato.workspace import generation_ids, natural_key
 from zicato.workspace_loader import activate_mutation_surface
 
 #: The seed / baseline generation id. ``v0`` is the original tree every
@@ -219,13 +219,7 @@ def recorded_generation_ids(paths: WorkspacePaths, epoch_id: str) -> list[str]:
     no tree) from one that never existed. The ids come back in round-number
     order (``v2`` before ``v10``).
     """
-    gens_root = layout_of(paths).generations_dir(epoch_id)
-    try:
-        return sorted(
-            (child.name for child in gens_root.iterdir() if child.is_dir()), key=natural_key
-        )
-    except (FileNotFoundError, NotADirectoryError, OSError):
-        return []
+    return generation_ids(layout_of(paths), epoch_id)
 
 
 def _generation_ids(

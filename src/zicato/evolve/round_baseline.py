@@ -43,13 +43,9 @@ def _recorded_generation_ids(workspace_root: Path, epoch_id: str) -> list[str]:
     (:mod:`zicato.epoch.gc`), so it is the durable answer to "has this
     epoch minted a generation".
     """
-    from zicato.workspace import WorkspaceLayout  # noqa: PLC0415
+    from zicato.workspace import WorkspaceLayout, generation_ids  # noqa: PLC0415
 
-    gens_root = WorkspaceLayout.from_root(workspace_root).generations_dir(epoch_id)
-    try:
-        return sorted(child.name for child in gens_root.iterdir() if child.is_dir())
-    except (FileNotFoundError, NotADirectoryError, OSError):
-        return []
+    return generation_ids(WorkspaceLayout.from_root(workspace_root), epoch_id)
 
 
 def _atomic_write_text(path: Path, text: str) -> None:
@@ -322,47 +318,47 @@ def _materialize_carried_champion(
         log.debug("materialise champion: reducer unavailable (%s); skipping", exc)
         return
 
-    src_gen_dir = generation_dir(workspace_root, source_epoch, source_generation)
-    src_runs_root = src_gen_dir / "runs"
+    from zicato.workspace import WorkspaceLayout, run_entry_ids  # noqa: PLC0415
+
+    layout = WorkspaceLayout.from_root(workspace_root)
     materialised_entries: list[str] = []
-    if src_runs_root.exists():
-        for entry_dir in sorted(p for p in src_runs_root.iterdir() if p.is_dir()):
-            entry_id = entry_dir.name
-            dst_run_dir = run_dir(workspace_root, epoch_id, generation_id, entry_id)
-            any_for_entry = False
-            # Canonical loss.json (replicate 0) + any loss.r<r>.json siblings.
-            # Attempt siblings are excluded: they describe a superseded
-            # execution in the SOURCE epoch, and carrying one forward would
-            # present it as this generation's measurement.
-            for src_loss in sorted(entry_dir.glob("loss*.json")):
-                if is_unit_attempt_slot(src_loss):
-                    continue
-                try:
-                    replicate = 0 if src_loss.name == "loss.json" else int(src_loss.stem[6:])
-                    profile = read_loss_profile(src_loss)
-                except (OSError, ValueError, KeyError, json.JSONDecodeError) as exc:
-                    log.debug("materialise champion: unreadable %s: %s", src_loss, exc)
-                    continue
-                carried = replace(
-                    profile,
-                    generation_id=generation_id,
-                    epoch_id=epoch_id,
-                    run_id=run_id_for_unit(generation_id, entry_id, replicate),
-                    cached=True,
-                    source_epoch=source_epoch,
-                    source_run=profile.run_id,
-                )
-                try:
-                    write_loss_profile(carried, dst_run_dir / src_loss.name)
-                    any_for_entry = True
-                except OSError as exc:
-                    log.debug("materialise champion: write %s skipped: %s", src_loss.name, exc)
-            if any_for_entry:
-                materialised_entries.append(entry_id)
+    for entry_id in run_entry_ids(layout, source_epoch, source_generation):
+        entry_dir = layout.run_dir(source_epoch, source_generation, entry_id)
+        dst_run_dir = run_dir(workspace_root, epoch_id, generation_id, entry_id)
+        any_for_entry = False
+        # Canonical loss.json (replicate 0) + any loss.r<r>.json siblings.
+        # Attempt siblings are excluded: they describe a superseded
+        # execution in the SOURCE epoch, and carrying one forward would
+        # present it as this generation's measurement.
+        for src_loss in sorted(entry_dir.glob("loss*.json")):
+            if is_unit_attempt_slot(src_loss):
+                continue
+            try:
+                replicate = 0 if src_loss.name == "loss.json" else int(src_loss.stem[6:])
+                profile = read_loss_profile(src_loss)
+            except (OSError, ValueError, KeyError, json.JSONDecodeError) as exc:
+                log.debug("materialise champion: unreadable %s: %s", src_loss, exc)
+                continue
+            carried = replace(
+                profile,
+                generation_id=generation_id,
+                epoch_id=epoch_id,
+                run_id=run_id_for_unit(generation_id, entry_id, replicate),
+                cached=True,
+                source_epoch=source_epoch,
+                source_run=profile.run_id,
+            )
+            try:
+                write_loss_profile(carried, dst_run_dir / src_loss.name)
+                any_for_entry = True
+            except OSError as exc:
+                log.debug("materialise champion: write %s skipped: %s", src_loss.name, exc)
+        if any_for_entry:
+            materialised_entries.append(entry_id)
 
     # Carry the aggregate (gen_score.json) with the same provenance so a
     # fast first round reuses the champion rather than re-running it.
-    src_score = src_gen_dir / "gen_score.json"
+    src_score = layout.gen_score(source_epoch, source_generation)
     if src_score.exists():
         try:
             raw = json.loads(src_score.read_text(encoding="utf-8"))

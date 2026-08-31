@@ -43,12 +43,11 @@ from zicato.core.workspace import (
     epoch_dir,
     experiment_json_path,
     generation_dir,
-    generations_dir,
 )
 from zicato.epoch.journal import write_experiment
 from zicato.proposer.brief import load_brief
 from zicato.proposer.proposer import ProposerError, propose_experiment
-from zicato.workspace import natural_key, next_generation_id
+from zicato.workspace import WorkspaceLayout, generation_ids, next_generation_id
 
 
 def _epoch_brief_path(workspace_root: Path, epoch_id: str) -> Path:
@@ -111,10 +110,7 @@ def _list_generations(workspace_dir: Path, epoch_id: str) -> list[str]:
     hide the workspace's real contents.
     """
 
-    gen_dir = generations_dir(workspace_dir, epoch_id)
-    if not gen_dir.exists():
-        return []
-    return sorted((p.name for p in gen_dir.iterdir() if p.is_dir()), key=natural_key)
+    return generation_ids(WorkspaceLayout.from_root(workspace_dir), epoch_id)
 
 
 def _load_mutations(workspace_dir: Path, epoch_id: str, parent_gen: str) -> list[MutationPoint]:

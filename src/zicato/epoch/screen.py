@@ -184,14 +184,15 @@ def sweep_stale_screen_dirs(workspace_root: Path, epoch_id: str) -> int:
     skipped (the reserved replicate base keeps even a stale slot from
     colliding with anything real).
     """
-    from zicato.core.workspace import generations_dir  # noqa: PLC0415
+    from zicato.workspace import WorkspaceLayout, generation_ids  # noqa: PLC0415
 
-    root = generations_dir(workspace_root, epoch_id)
+    layout = WorkspaceLayout.from_root(workspace_root)
     removed = 0
-    try:
-        candidates = [d for d in root.iterdir() if d.is_dir() and _SCREEN_ID_MARKER in d.name]
-    except OSError:
-        return 0
+    candidates = [
+        layout.generation_dir(epoch_id, generation_id)
+        for generation_id in generation_ids(layout, epoch_id)
+        if _SCREEN_ID_MARKER in generation_id
+    ]
     for stale in candidates:
         try:
             shutil.rmtree(stale)

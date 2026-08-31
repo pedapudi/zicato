@@ -58,7 +58,12 @@ from zicato.telemetry.reducer import (
     write_loss_profile,
 )
 from zicato.tournament.unit_cache import persisted_loss_slots, unit_events_path
-from zicato.workspace import WorkspaceLayout, list_epoch_ids
+from zicato.workspace import (
+    WorkspaceLayout,
+    generation_ids,
+    list_epoch_ids,
+    run_entry_ids,
+)
 from zicato.workspace_loader import scoring_weights_from_dict
 
 
@@ -151,15 +156,9 @@ def _iter_runs(workspace_root: Path) -> list[tuple[str, str, str]]:
     layout = WorkspaceLayout.from_root(workspace_root)
     out: list[tuple[str, str, str]] = []
     for epoch_id in list_epoch_ids(layout):
-        gens_root = layout.generations_dir(epoch_id)
-        if not gens_root.is_dir():
-            continue
-        for gen_dir in sorted(p for p in gens_root.iterdir() if p.is_dir()):
-            runs_root = layout.runs_dir(epoch_id, gen_dir.name)
-            if not runs_root.is_dir():
-                continue
-            for run_dir_path in sorted(p for p in runs_root.iterdir() if p.is_dir()):
-                out.append((epoch_id, gen_dir.name, run_dir_path.name))
+        for generation_id in generation_ids(layout, epoch_id):
+            for entry_id in run_entry_ids(layout, epoch_id, generation_id):
+                out.append((epoch_id, generation_id, entry_id))
     return out
 
 

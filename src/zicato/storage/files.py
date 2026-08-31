@@ -154,6 +154,21 @@ class FileStorageBackend(StorageBackend):
             out.append(f"{norm}/{entry.name}")
         return out
 
+    def list_namespaces(self, prefix: str) -> list[str]:
+        """Return the keys of subdirectories directly under ``prefix``, sorted.
+
+        Non-recursive, and only directories — regular files are skipped, so
+        this and :meth:`list_keys` partition a directory's contents between
+        them. An absent or unreadable prefix directory yields an empty list.
+        """
+        norm = _normalise_key(prefix)
+        directory = self._root / norm
+        try:
+            entries = sorted(directory.iterdir())
+        except OSError:
+            return []
+        return [f"{norm}/{entry.name}" for entry in entries if entry.is_dir()]
+
     # -- JSONL streams ------------------------------------------------------
 
     def append_jsonl(self, key: str, record: Any) -> None:

@@ -1011,6 +1011,16 @@ def _capture_workspace_reads(ws: Path, snap: dict[str, Any]) -> None:
         snap[f"zicato.workspace.read_experiments::{epoch_id}"] = wsp.read_experiments(
             layout, epoch_id
         )
+        # The three record enumerations every other reader in the tree now
+        # calls. Pinning them here means one golden fixes the order the
+        # whole read surface presents generations, board-entry runs and
+        # rounds in.
+        snap[f"zicato.workspace.generation_ids::{epoch_id}"] = wsp.generation_ids(layout, epoch_id)
+        snap[f"zicato.workspace.round_indices::{epoch_id}"] = wsp.round_indices(layout, epoch_id)
+        for generation_id in _epoch_generation_ids(epoch_id):
+            snap[f"zicato.workspace.run_entry_ids::{epoch_id}::{generation_id}"] = (
+                wsp.run_entry_ids(layout, epoch_id, generation_id)
+            )
     epoch_id = RICH_EPOCH_ID
     for generation_id in ("v0", "v2", "v10"):
         snap[f"zicato.workspace.read_experiment::{generation_id}"] = wsp.read_experiment(
@@ -1317,7 +1327,12 @@ def capture_reader_snapshot(ws: Path) -> dict[str, Any]:
 ORDER_ENFORCED: dict[str, str | int | None] = {
     # Numeric-aware generation order: v2 before v10.
     "zicato.workspace.read_experiments::e2": 0,
+    "zicato.workspace.generation_ids::e2": None,
     "zicato.cli.health.generation_ids::e2": None,
+    # Numeric-aware board-entry order: t2 before t10.
+    "zicato.workspace.run_entry_ids::e2::v0": None,
+    # Ascending round index: 2 before 10.
+    "zicato.workspace.round_indices::e2": None,
     # The index's generation rows order by recorded creation time, which the
     # fixture's lineage makes agree with the numeric order above.
     "zicato.index.generations_for_epoch::e2": "generation_id",
