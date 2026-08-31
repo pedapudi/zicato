@@ -409,14 +409,6 @@ def test_normalize_gauntlet_side_unchanged() -> None:
 # ---------------------------------------------------------------------------
 
 
-@pytest.fixture
-def static_dir(tmp_path: Path) -> Path:
-    d = tmp_path / "static"
-    d.mkdir()
-    (d / "index.html").write_text("<!doctype html><title>z</title>", encoding="utf-8")
-    return d
-
-
 def test_tournament_structure_route(swiss_workspace: Path, static_dir: Path) -> None:
     app = create_app(swiss_workspace, static_dir, read_only=True)
     with TestClient(app) as c:

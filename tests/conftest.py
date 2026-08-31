@@ -30,8 +30,6 @@ Also provides shared scaffolding for the CLI tests that invoke
 
 from __future__ import annotations
 
-import asyncio
-import json
 import os
 import signal
 import subprocess
@@ -41,6 +39,8 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+
+from tests._dashboard_spawn import FakeDashboardProc, install_spawn_mock
 
 # tests/conftest.py -> repository root.
 _REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -238,34 +238,6 @@ def _stub_harmonograf_launch(
 _DASHBOARD_ARGV_MARKER = "-m zicato.dashboard"
 
 
-class FakeDashboardProc:
-    """Minimal stand-in for an ``asyncio.subprocess.Process``.
-
-    Records terminate/kill so a test can assert the teardown path while
-    never starting a real OS process. Mirrors the ``_FakeProc`` used by
-    ``test_cli_dashboard.py`` so the two CLI test modules behave the same.
-    """
-
-    def __init__(self, argv: tuple[str, ...]) -> None:
-        self.argv = argv
-        self.returncode: int | None = None
-        self.terminated = False
-        self.killed = False
-
-    def terminate(self) -> None:
-        self.terminated = True
-        self.returncode = 0
-
-    def kill(self) -> None:  # pragma: no cover - escalation path
-        self.killed = True
-        self.returncode = -9
-
-    async def wait(self) -> int:
-        if self.returncode is None:
-            self.returncode = 0
-        return self.returncode
-
-
 @pytest.fixture
 def mock_dashboard_spawn(monkeypatch: pytest.MonkeyPatch) -> list[FakeDashboardProc]:
     """Patch ``asyncio.create_subprocess_exec`` with a non-spawning fake.
@@ -275,37 +247,7 @@ def mock_dashboard_spawn(monkeypatch: pytest.MonkeyPatch) -> list[FakeDashboardP
     a normal conclusion must use this (directly or transitively) so the
     real dashboard child is never launched and then orphaned.
     """
-    spawned: list[FakeDashboardProc] = []
-
-    async def _fake_exec(*args: Any, **kwargs: Any) -> FakeDashboardProc:
-        del kwargs
-        argv = tuple(str(a) for a in args)
-        proc = FakeDashboardProc(argv)
-        spawned.append(proc)
-        # If this is the dashboard spawn, publish a fake endpoint file so the
-        # CLI's bound-port readback resolves immediately instead of polling
-        # the full fallback timeout (the real server would write this once it
-        # bound a port).
-        if "zicato.dashboard" in argv and "--workspace" in argv:
-            ws = Path(argv[argv.index("--workspace") + 1])
-            host = "127.0.0.1"
-            if "--host" in argv:
-                host = argv[argv.index("--host") + 1]
-            port = 7892
-            if "--port" in argv:
-                port = int(argv[argv.index("--port") + 1])
-            from zicato.runtime.paths import dashboard_endpoint_path
-
-            endpoint = dashboard_endpoint_path(ws)
-            endpoint.parent.mkdir(parents=True, exist_ok=True)
-            endpoint.write_text(
-                json.dumps({"host": host, "port": port}),
-                encoding="utf-8",
-            )
-        return proc
-
-    monkeypatch.setattr(asyncio, "create_subprocess_exec", _fake_exec)
-    return spawned
+    return install_spawn_mock(monkeypatch)
 
 
 def _dashboard_workspace_arg(args: str) -> str | None:
@@ -459,3 +401,19 @@ def epoch_root(tmp_path: Path) -> tuple[Path, str]:
     epoch_id = "2026-04-08_test"
     (ws / "epochs" / epoch_id).mkdir(parents=True)
     return ws, epoch_id
+
+
+@pytest.fixture()
+def static_dir(tmp_path: Path) -> Path:
+    """A static asset root holding the one file the dashboard server requires.
+
+    The server refuses to start without an ``index.html`` to serve. Its
+    content is never asserted by the suites that use this fixture — they
+    exercise endpoints, not the served page — so it is the shortest
+    well-formed document. A suite whose subject IS the served page builds
+    its own root.
+    """
+    d = tmp_path / "static"
+    d.mkdir()
+    (d / "index.html").write_text("<!doctype html><title>z</title>", encoding="utf-8")
+    return d

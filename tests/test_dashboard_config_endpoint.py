@@ -19,7 +19,6 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-import pytest
 from starlette.testclient import TestClient
 
 from zicato.dashboard.server import create_app
@@ -36,14 +35,6 @@ _RECORDED = {
     "runtime.host_worker_permits": {"value": 20, "source": SOURCE_HOST_CPU_COUNT},
     "health.max_generation_age_days": {"value": 30, "source": SOURCE_WORKSPACE},
 }
-
-
-@pytest.fixture
-def static_dir(tmp_path: Path) -> Path:
-    d = tmp_path / "static"
-    d.mkdir()
-    (d / "index.html").write_text("<!doctype html><title>z</title>", encoding="utf-8")
-    return d
 
 
 def _workspace(tmp_path: Path) -> Path:

@@ -16,7 +16,6 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-import pytest
 from starlette.testclient import TestClient
 
 from zicato.dashboard.server import create_app
@@ -218,14 +217,6 @@ def test_lineage_view_scopes_to_one_epoch(tmp_path: Path) -> None:
     # unscoped stays workspace-global.
     everything = build_lineage_view(WorkspacePaths(ws))
     assert {g["generation_id"] for g in everything["generations"]} == ids | {"w0"}
-
-
-@pytest.fixture
-def static_dir(tmp_path: Path) -> Path:
-    d = tmp_path / "static"
-    d.mkdir()
-    (d / "index.html").write_text("<!doctype html><title>z</title>", encoding="utf-8")
-    return d
 
 
 def test_lineage_endpoint_scopes_and_rejects_bad_epoch(tmp_path: Path, static_dir: Path) -> None:
