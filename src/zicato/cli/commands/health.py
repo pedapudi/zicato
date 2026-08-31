@@ -40,7 +40,7 @@ from zicato.health.inputs import (
     epoch_tree_import_gaps,
     workspace_preflight_gate,
 )
-from zicato.workspace import generation_sort_key
+from zicato.workspace import natural_key
 
 #: ANSI-ish colour names click understands, keyed by finding severity.
 _SEVERITY_COLOR: dict[str, str] = {
@@ -65,16 +65,16 @@ def _resolve_epoch_id(workspace_dir: Path, override: str | None) -> str:
 def _generation_ids(workspace_dir: Path, epoch_id: str) -> list[str]:
     """Return generation ids under the epoch in lineage order.
 
-    Ordering is :func:`zicato.workspace.generation_sort_key`, so ``v2``
-    precedes ``v10``; a lexical sort would invert them and feed the
-    window-based detectors a scrambled history.
+    Ordering is :func:`zicato.workspace.natural_key`, so ``v2`` precedes
+    ``v10``; a lexical sort would invert them and feed the window-based
+    detectors a scrambled history.
     """
     gens_root = generations_dir(workspace_dir, epoch_id)
     if not gens_root.exists():
         return []
     return sorted(
         (child.name for child in gens_root.iterdir() if child.is_dir()),
-        key=generation_sort_key,
+        key=natural_key,
     )
 
 

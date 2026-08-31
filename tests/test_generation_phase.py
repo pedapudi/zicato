@@ -90,7 +90,9 @@ def test_generation_head_prefers_marker_then_falls_back_to_highest_vn(tmp_path: 
     for name in ("v2", "v10", "named"):
         (root / name).mkdir(parents=True)
 
-    assert current_generation(tmp_path, "e1") == "named"
+    # The fallback is the highest round number. An id outside the vN scheme —
+    # which no minting path produces — no longer outranks every round.
+    assert current_generation(tmp_path, "e1") == "v10"
     set_current_generation(tmp_path, "e1", "v2")
     assert current_generation(tmp_path, "e1") == "v2"
     assert next_generation_id(tmp_path, "e1") == "v11"

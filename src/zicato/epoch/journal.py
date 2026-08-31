@@ -58,6 +58,7 @@ from zicato.epoch._storage import (
     patch_key,
 )
 from zicato.storage import StorageBackend
+from zicato.workspace import generation_round_number
 
 
 @dataclass(frozen=True, slots=True)
@@ -93,15 +94,15 @@ def _field(name: str, text: str) -> str:
 
 
 def _version_label(generation_id: str) -> str:
-    """Render ``v3`` as ``v3``; otherwise prefix.
+    """Render a journal heading for one generation id.
 
-    The convention is that generation ids start with ``v`` (``v0``,
-    ``v1``, ...), but ``Experiment.generation_id`` is a free string
-    field — adapters that name generations differently still want a
-    legible journal heading. If the id already begins with ``v`` we
-    keep it; otherwise we wrap it in backticks to look stable.
+    The convention is that generation ids are ``v`` followed by the round
+    number (``v0``, ``v1``, ...), but ``Experiment.generation_id`` is a free
+    string field — an adapter that names generations differently still wants a
+    legible heading. An id following the convention is rendered as it stands;
+    any other is wrapped in backticks to look stable.
     """
-    if generation_id.startswith("v") and generation_id[1:].lstrip("0123456789") == "":
+    if generation_round_number(generation_id) is not None:
         return generation_id
     return f"`{generation_id}`"
 

@@ -13,12 +13,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from zicato.workspace import (
-    WorkspaceLayout,
-    generation_round_number,
-    generation_sort_key,
-    natural_key,
-)
+from zicato.workspace import WorkspaceLayout, generation_round_number, natural_key
 
 #: v0 through v10: the smallest epoch whose lexical order is wrong.
 ELEVEN = [f"v{n}" for n in range(11)]
@@ -38,13 +33,10 @@ def test_ordering_primitives_agree_on_round_number_order() -> None:
     # The premise every test here defends: sorted() alone inverts v2/v10.
     assert LEXICAL.index("v10") < LEXICAL.index("v2")
     assert sorted(LEXICAL, key=natural_key) == ELEVEN
-    assert sorted(LEXICAL, key=generation_sort_key) == ELEVEN
     # Descending, as the recombination pool walks it: newest generation first.
-    assert sorted(LEXICAL, key=generation_sort_key, reverse=True) == ELEVEN[::-1]
+    assert sorted(LEXICAL, key=natural_key, reverse=True) == ELEVEN[::-1]
     assert generation_round_number("v10") == 10
     assert generation_round_number("named") is None
-    # An id outside the vN scheme still sorts deterministically.
-    assert sorted(["v10", "named", "v2"], key=generation_sort_key) == ["v2", "v10", "named"]
 
 
 def test_epoch_analysis_collects_experiments_in_round_number_order(tmp_path: Path) -> None:

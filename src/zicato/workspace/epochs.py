@@ -14,10 +14,11 @@ so every enumeration routes through :func:`iter_epochs` /
 
 The ordering primitives live here as the single definition. Epochs order by
 :func:`epoch_sort_key` over :func:`epoch_created_at` and :func:`natural_key`;
-generations order by :func:`generation_sort_key` over the round number
-:func:`generation_round_number` reads out of a ``vN`` id.
-:mod:`zicato.query.paths` re-exports the epoch primitives, so an import from
-either module resolves to the same function.
+generations order by :func:`natural_key` alone, which puts ``v2`` before
+``v10``. :func:`generation_round_number` is the single parser of the round
+number a ``vN`` id encodes, for the callers that need the number rather than
+the order. :mod:`zicato.query.paths` re-exports the epoch primitives, so an
+import from either module resolves to the same function.
 """
 
 from __future__ import annotations
@@ -57,23 +58,12 @@ def generation_round_number(generation_id: str) -> int | None:
     id does not follow that scheme.
 
     ``v0`` is the seed generation, so the number is also the count of rounds
-    that produced the generation. Callers that only need ordering should use
-    :func:`generation_sort_key` instead of comparing parsed numbers.
+    that produced the generation. Callers that only need ordering use
+    :func:`natural_key`, which orders ``vN`` ids by the same number without
+    parsing them.
     """
     suffix = generation_id[1:]
     return int(suffix) if generation_id.startswith("v") and suffix.isdigit() else None
-
-
-def generation_sort_key(generation_id: str) -> tuple[int, int, str]:
-    """Ascending order key for generation ids: ``v2`` before ``v10``.
-
-    Ids following the ``vN`` scheme order by their round number. An id
-    outside that scheme orders after every ``vN`` id, by name; the fallback
-    exists so a workspace carrying an id no minting path produces still
-    enumerates deterministically.
-    """
-    number = generation_round_number(generation_id)
-    return (0, number, generation_id) if number is not None else (1, 0, generation_id)
 
 
 def _read_json_value(path: Path) -> Any | None:

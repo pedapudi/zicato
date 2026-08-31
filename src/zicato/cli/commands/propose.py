@@ -48,6 +48,7 @@ from zicato.core.workspace import (
 from zicato.epoch.journal import write_experiment
 from zicato.proposer.brief import load_brief
 from zicato.proposer.proposer import ProposerError, propose_experiment
+from zicato.workspace import generation_round_number, natural_key
 
 
 def _epoch_brief_path(workspace_root: Path, epoch_id: str) -> Path:
@@ -102,38 +103,25 @@ def _resolve_epoch(workspace_dir: Path, override: str | None) -> str:
 
 
 def _list_generations(workspace_dir: Path, epoch_id: str) -> list[str]:
-    """List existing generation ids under one epoch, sorted by suffix.
+    """List existing generation ids under one epoch, in round-number order.
 
-    Generation ids follow the ``v0``, ``v1``, ... convention; sorting by
-    the integer suffix gives the right ordering. Ids that don't match
-    the pattern are kept but ordered lexicographically after the typed
-    ones — they shouldn't exist in a healthy workspace but we'd rather
-    surface them than silently drop them.
+    Generation ids follow the ``v0``, ``v1``, ... convention, so ``v2``
+    precedes ``v10``. An id that does not follow it is kept rather than
+    dropped — it should not exist in a healthy workspace, and hiding it would
+    hide the workspace's real contents.
     """
 
     gen_dir = generations_dir(workspace_dir, epoch_id)
     if not gen_dir.exists():
         return []
-    entries = [p.name for p in gen_dir.iterdir() if p.is_dir()]
-
-    def _sort_key(name: str) -> tuple[int, int, str]:
-        if name.startswith("v") and name[1:].isdigit():
-            return (0, int(name[1:]), name)
-        return (1, 0, name)
-
-    return sorted(entries, key=_sort_key)
+    return sorted((p.name for p in gen_dir.iterdir() if p.is_dir()), key=natural_key)
 
 
 def _next_generation_id(existing: list[str]) -> str:
     """Choose the id for the new child generation."""
 
-    max_v = -1
-    for name in existing:
-        if name.startswith("v") and name[1:].isdigit():
-            v = int(name[1:])
-            if v > max_v:
-                max_v = v
-    return f"v{max_v + 1}"
+    numbers = [n for n in map(generation_round_number, existing) if n is not None]
+    return f"v{max(numbers, default=-1) + 1}"
 
 
 def _load_mutations(workspace_dir: Path, epoch_id: str, parent_gen: str) -> list[MutationPoint]:

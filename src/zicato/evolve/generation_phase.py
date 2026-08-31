@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from zicato.workspace import WorkspaceLayout, generation_round_number, generation_sort_key
+from zicato.workspace import WorkspaceLayout, generation_round_number, natural_key
 
 
 @dataclass(frozen=True, slots=True)
@@ -69,7 +69,7 @@ def current_generation(workspace_root: Path, epoch_id: str) -> str:
     if not candidates:
         raise FileNotFoundError(f"no generations under {root}; the epoch has no baseline yet")
 
-    return max(candidates, key=generation_sort_key)
+    return max(candidates, key=natural_key)
 
 
 def safe_parent(workspace_root: Path, epoch_id: str | None) -> str:

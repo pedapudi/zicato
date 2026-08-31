@@ -41,7 +41,7 @@ from zicato.core.types import Experiment, Generation
 from zicato.evolve.ingest import _index_db_path
 from zicato.evolve.lifecycle_services import _beat
 from zicato.runtime.heartbeat import HeartbeatBeater
-from zicato.workspace import generation_sort_key
+from zicato.workspace import natural_key
 
 if TYPE_CHECKING:
     from zicato.proposer.best_of_n import ScreenRunner
@@ -194,7 +194,7 @@ def _build_recombination_pair(
         # newest settled rejects.
         gen_ids = sorted(
             (d.name for d in gens_root.iterdir() if d.is_dir()),
-            key=generation_sort_key,
+            key=natural_key,
             reverse=True,
         )
 

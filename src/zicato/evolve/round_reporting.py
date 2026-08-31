@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, TypeGuard
 
 from zicato.util import best_effort
-from zicato.workspace import WorkspaceLayout, generation_sort_key
+from zicato.workspace import WorkspaceLayout, natural_key
 
 if TYPE_CHECKING:
     # No annotation-only imports: every cross-module reference in this file
@@ -474,7 +474,7 @@ def _collect_epoch_health_inputs(
 
     gen_ids = sorted(
         (p.name for p in gens_root.iterdir() if p.is_dir()),
-        key=generation_sort_key,
+        key=natural_key,
     )
     for gen_id in gen_ids:
         gen_losses: list[Any] = []

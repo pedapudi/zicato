@@ -47,7 +47,6 @@ the caption to render.
 
 from __future__ import annotations
 
-import re
 from dataclasses import asdict
 from typing import Any
 
@@ -64,7 +63,7 @@ from zicato.epoch.journal import read_generation_patches
 from zicato.query import WorkspacePaths
 from zicato.query.paths import list_epoch_ids
 from zicato.storage import default_backend
-from zicato.workspace import natural_key
+from zicato.workspace import generation_round_number, natural_key
 
 #: Files larger than this are not inlined into the content response —
 #: the browser gets a truncation marker instead. The dashboard is a
@@ -358,11 +357,6 @@ def build_generation_patches(
     }
 
 
-#: A generation id of the form ``v<N>`` — used to fall back to the
-#: numerically-preceding generation when no parent is recorded.
-_VERSION_RE = re.compile(r"^v(\d+)$")
-
-
 def _recorded_parent(paths: WorkspacePaths, epoch_id: str, generation_id: str) -> str | None:
     """The lineage edge from the generation's OWN record — no tree needed.
 
@@ -410,13 +404,11 @@ def _resolve_parent_generation(
     if recorded is not None and store.has_generation(epoch_id, recorded):
         return recorded
 
-    match = _VERSION_RE.match(generation_id)
-    if match is not None:
-        index = int(match.group(1))
-        if index > 0:
-            candidate = f"v{index - 1}"
-            if store.has_generation(epoch_id, candidate):
-                return candidate
+    index = generation_round_number(generation_id)
+    if index is not None and index > 0:
+        candidate = f"v{index - 1}"
+        if store.has_generation(epoch_id, candidate):
+            return candidate
 
     if generation_id != "v0" and store.has_generation(epoch_id, "v0"):
         return "v0"
