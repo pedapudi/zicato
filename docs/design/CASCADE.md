@@ -258,11 +258,11 @@ zicato already ships:
    decision procedure (the `placebo_promoted` CRITICAL finding, elevated
    from "the gate promoted noise" to "the cascade promoted noise").
 
-The synthesis: zicato already owns every building block the correction
-needs — **per-slice A/A floors** (calibration, extended to measure the
-floor at each stage's slice size), **the evidence gate** as the
-selection-independent re-measurement, **the holdout/Ladder** as the
-never-selected-on anchor, and **the placebo** as the whole-pipeline
+zicato already owns every building block the correction needs. **Per-slice
+A/A floors** come from calibration, extended to measure the floor at each
+stage's slice size. **The evidence gate** supplies the
+selection-independent re-measurement. **The holdout and its Ladder** supply
+the never-selected-on anchor, and **the placebo** is the whole-pipeline
 control. What is missing is the object that *composes* them with the
 selectivity accounting — and the measured evidence that the composition is
 sound. That evidence is §4.
@@ -371,11 +371,12 @@ result is a legitimate and expected outcome of the harness.**
 ### 4.5 Slot-integrity and the cross-stage independence proof
 
 Because a cascade adds stages and reserved bases, the harness must include
-a `persist=True` slot-integrity test (`§13.2`, `§8.1` step 5): assert the
-canonical r0 slots are byte-identical across a full cascade run, and every
-stage's draws persist **only** under that stage's reserved base — the
-proof that no stage replays an upstream stage's sample (the §3.2
-independence invariant made mechanical). This is the
+a `persist=True` slot-integrity test (`§13.2`, `§8.1` step 5). That test
+asserts two things: the canonical r0 slots are byte-identical across a full
+cascade run, and every stage's draws persist **only** under that stage's
+reserved base. Together they prove that no stage replays an upstream
+stage's sample, which is the §3.2 independence invariant made mechanical.
+This is the
 `test_full_mode_evidence_loop_never_touches_canonical_slots` pattern
 lifted to the whole pipeline.
 
@@ -389,13 +390,13 @@ machine-readable JSON report and a printed summary) and
 `tests/test_cascade_oc_harness.py` (the pinned assertions behind the
 `cascade_oc` pytest marker, **excluded from the default run**; one cheap
 unmarked smoke test keeps the harness from rotting). The cascade under
-measurement is a *simulated* composition of the shipped stages — the draws
+measurement is a *simulated* composition of the shipped stages. The draws
 flow through `runner._run_single` (the documented monkeypatch anchor) on the
-seeded convergence-example noise model, but every **decision** is the shipped code: the
-real `measure_noise_floor` (per-slice floors), the real
-`RacingStrategy._apply_cut` rung, the real `evaluate_gate` / `holdout_confirms`,
-and the real evidence-gated `resolve_tournament` terminal. Nothing about the
-cascade itself was built.
+seeded convergence-example noise model. Every **decision**, however, is the
+shipped code: the real `measure_noise_floor` (per-slice floors), the real
+`RacingStrategy._apply_cut` rung, the real `evaluate_gate` /
+`holdout_confirms`, and the real evidence-gated `resolve_tournament`
+terminal. Nothing about the cascade itself was built.
 
 **The numbers below are estimates rather than verdicts.** The end-to-end
 promotion rates are proportions from a finite trial count: the Experiment-B
@@ -404,10 +405,10 @@ Experiment-B **effect** condition and every Experiment-C cell on **16**. Each
 rate therefore carries sampling error, reported as a **95% Wilson score
 interval** (the count and interval travel with each rate in the tables). The
 per-slice A/A **floors** (Experiment A) and the **board-unit budgets**
-(Experiment C's `board-units` columns) are the exception: a floor is a measured
-standard deviation and a budget is an **exact count** — a deterministic
-function of the seeds, counted once per `runner._run_single` call, carrying
-**no** sampling error. So in every table below the *rates* carry intervals and
+(Experiment C's `board-units` columns) are the exception. A floor is a measured
+standard deviation. A budget is an **exact count**, a deterministic function of
+the seeds, counted once per `runner._run_single` call and carrying **no**
+sampling error. So in every table below the *rates* carry intervals and
 the *budgets* do not.
 
 ### 5.1 Chosen parameters (§4.2 leaves these underspecified)
@@ -463,7 +464,7 @@ This is the coarse-cut discipline of §3.1 and step 4 of §4.2: a rung may not b
 trusted to resolve an effect below its slice floor. The **veto stage**
 (screen) follows the confirm-before-veto squaring: measured false-veto rate
 **0.035 ≈ σ² (0.048)**, an order below the naive any-flip alternative's
-**0.195 ≈ σ** on the identical seeded draws — the noisiest stage is allowed
+**0.195 ≈ σ** on the identical seeded draws. The noisiest stage is allowed
 only the coarsest (categorical-breakage) cut.
 
 ### 5.3 Experiment B — end-to-end P(promote | ·), cascade ON vs single-stage OFF
@@ -697,9 +698,10 @@ Experiment B's null bar (§4.3) and never ship.
      above the single-stage contract's rate, which is the hard soundness
      requirement (fact #4). **Passed** (§5.3): zero promotions over 60 null
      trials for the cascade, the single stage, **and** the naive
-     gate-at-every-rung alternative on identical draws through the same
-     terminal, with a 95% Wilson upper bound of ~0.06 each, so the terminal
-     rather than the rung rule carries the soundness. The power the cascade
+     gate-at-every-rung alternative, all on identical draws through the same
+     terminal, with a 95% Wilson upper bound of ~0.06 each. The terminal
+     rather than the rung rule therefore carries the soundness. The power the
+     cascade
      holds at the 1× and sub-1× planted δ is nevertheless well *below* the
      single-stage contract — 0.50–0.56 over 16 trials (95% CI 0.28–0.77)
      against 0.94–1.00 (0.72–1.00). That is a quantified staging cost and

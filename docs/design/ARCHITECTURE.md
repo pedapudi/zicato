@@ -117,9 +117,9 @@ asks for `load`, `mutable_subpaths`, and `mutation_points`, plus
 `run(entry, sinks, config) -> RunResult` on the loaded harness — and a
 workspace declares a non-ADK harness through `adapter.kind = "import"`.
 A target that emits no drift events is scored on its predicates, rubrics,
-and any other metric namespaces it reports; the loss surface accepts
-arbitrary namespaced metrics (`drift:*`, `cost:*`, `latency:*`), so drift
-is one input to the scalar rather than a precondition for having one.
+and any other metric namespaces it reports. The loss surface accepts
+arbitrary namespaced metrics (`drift:*`, `cost:*`, `latency:*`). Drift is
+one input to the scalar rather than a precondition for having one.
 
 One setting decouples a target from goldfive: `scoring.json`'s
 `telemetry_dialect`. The default, `goldfive`, is the only
@@ -966,9 +966,9 @@ files.
    │    lock.json (pid-based)       │         │  watches heartbeat.json +  │
    │  • writes heartbeat.json (2s)  │         │  active_runs/*.            │
    │  • runs each tournament run    │         │  Heartbeat-stale → flag    │
-   │    IN-PROCESS today            │         │  orchestrator stalled.     │
-   │    (L3 subprocess workers      │         │  Run stale/past deadline → │
-   │     are planned)               │         │  SIGTERM → grace → SIGKILL.│
+   │    in a subprocess worker,     │         │  orchestrator stalled.     │
+   │    so a hung run cannot        │         │  Run stale/past deadline → │
+   │    wedge the orchestrator      │         │  SIGTERM → grace → SIGKILL.│
    │  • writes active_runs/{id}.json│         │  Serves /statusz.          │
    │  • PLANNED: read control/ at   │         └────────────────────────────┘
    │    safe points                 │  spawn  ┌────────────────────────────┐
@@ -995,11 +995,11 @@ Three properties hold across the runtime layer:
    process — the orchestrator, the dashboard service, or one
    tournament worker. No locking beyond the pid-based `lock.json`.
 
-**Supervisor-binary ownership.** The Rust watchdog binary splits
-cleanly along the library/driver boundary: *packaging* belongs to the
-root wheel — the hatchling build hook (`hatch_build.py`) compiles the
-crate and bundles the artifact at `zicato/_bin/zicato-supervisor`, so
-every wheel install carries it — while *resolution* is CLI policy.
+**Supervisor-binary ownership.** The Rust watchdog binary splits along
+the library/driver boundary. *Packaging* belongs to the root wheel: the
+hatchling build hook (`hatch_build.py`) compiles the crate and bundles
+the artifact at `zicato/_bin/zicato-supervisor`, so every wheel install
+carries it. *Resolution* is CLI policy.
 `zicato.cli.commands.evolve._resolve_supervisor_binary` decides which
 binary actually runs (the `--supervisor-binary` flag / config pin, the
 freshest of the bundled `_bin/` copy vs. a dev checkout's

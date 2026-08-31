@@ -203,9 +203,9 @@ a live evolve's heartbeat value wins; the dashboard only fills when absent.
 ## 5. Liveness vs post-mortem
 
 `harmonografIsLive()` is true when EITHER (a) a run is in flight (an
-active tournament OR ≥1 active run) — the evolve-launched server exists
-only then — OR (b) `harmonograf_persistent === true` (a standalone
-dashboard resolved a per-workspace server that does NOT die with a run).
+active tournament OR ≥1 active run), OR (b) `harmonograf_persistent ===
+true` (a standalone dashboard resolved a per-workspace server that does
+NOT die with a run). The evolve-launched server exists only in case (a).
 So a post-mortem dashboard over a finished workspace still lights up both
 surfaces, because `ensure_workspace_harmonograf` relaunched a server over
 the persisted db and `state_reader` injected the URL + meta session id.
@@ -254,7 +254,7 @@ harmonograf builds the span tree from `AgentInvocationStarted.parent_invocation_
 parent from a module-level `contextvars.ContextVar` (`_current_span_id`) and
 sets itself as the current id for its body. Because `asyncio` copies the
 context when a task is created, a `gather`-fanned child (a board unit, a slate
-slot) inherits its enclosing span **automatically** — the fan-out renders as
+slot) inherits its enclosing span **automatically**. The fan-out renders as
 nested, overlapping lifelines with no explicit parent bookkeeping and no new
 parameter on any intervening signature. The emitter itself is reached the same
 way: `evolve_n_rounds` binds it to a second contextvar (`_current_emitter`,

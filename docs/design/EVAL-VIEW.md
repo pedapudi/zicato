@@ -22,10 +22,11 @@ Three lenses, each a view (§5):
 1. **OUTCOMES** — the entries × candidates matrix. One cell = how candidate
    *c* scored on entry *e*. The transpose of the candidate dossier's
    board-breakdown. (The Evals matrix view.)
-2. **INSTRUMENT QUALITY** — every eval as a measurement channel: its noise
-   when the champion is duelled against itself (the flip rate), its
-   discrimination (whether it ever separates two candidates), its redundancy
-   (whether another eval says the same thing), and its cost (runtime). This
+2. **INSTRUMENT QUALITY** — every eval as a measurement channel with four
+   properties. Its noise is the flip rate when the champion is duelled
+   against itself. Its discrimination is whether it ever separates two
+   candidates, its redundancy whether another eval says the same thing, and
+   its cost the runtime. This
    takes the noise-floor and minimum-detectable-effect doctrine down to the
    *per-entry* grain. (The per-entry dossier covers one entry; the
    instrument-quality panel covers the epoch.)
@@ -110,11 +111,11 @@ Each derived quantity, with the binding it reads:
 
 ### 2.1 The matrix cell (entry × candidate)
 The `loss_profiles` row for `(entry_id, generation_id)` supplies cell
-MEMBERSHIP (which candidate columns an entry appears in) plus `cached` /
-`latest_run_id`; `drift_loss` / `pass_fail` and the continuous `score` /
-`metrics` (parsed from the `loss_json` blob the same way
-`build_per_entry_for_generation` parses it, `judge_view.py:255`) are its
-fallback values. But **the replicate count and the evidence come from the
+MEMBERSHIP, meaning which candidate columns an entry appears in, plus
+`cached` / `latest_run_id`. The row's `drift_loss` / `pass_fail` and its
+continuous `score` / `metrics` are fallback values; they are parsed from the
+`loss_json` blob the same way `build_per_entry_for_generation` parses it
+(`judge_view.py:255`). But **the replicate count and the evidence come from the
 durable replicate FILES rather than the row count**, which is always 1 — see
 the primary key above.
 
@@ -124,13 +125,13 @@ siblings that exist under `generations/<gen>/runs/<entry>/`. It keeps only the
 replicate ranges that count as fresh evidence for that cell: the **duel
 replicates `[0, 1000)`** (replicate 0 canonical, plus the low duel slots the
 holdout-ladder confirmation re-runs reuse) and the **evidence-gate draws
-`[4000, 5000)`** (`EVIDENCE_REPLICATE_BASE`). EXCLUDED, because each is a
-different measurement rather than this cell's evidence: the
-champion-against-itself **calibration `[1000, 2000)`**
-(the champion noise-floor trace; it feeds the flip badge, §2.2), the
-contract **pre-flight `[2000, 3000)`**, the pre-tournament candidate
-**screen `[3000, 4000)`** (an ephemeral veto probe), and **reflection
-`[5000, …)`** (a meta-evaluation of the judges). `pass_ratio` / `pass_fail`
+`[4000, 5000)`** (`EVIDENCE_REPLICATE_BASE`). Four ranges are EXCLUDED, because each
+is a different measurement rather than this cell's evidence. The
+champion-against-itself **calibration `[1000, 2000)`** is the champion
+noise-floor trace and feeds the flip badge (§2.2). The contract
+**pre-flight `[2000, 3000)`** and the pre-tournament candidate **screen
+`[3000, 4000)`** are veto probes. **Reflection `[5000, …)`** is a
+meta-evaluation of the judges. `pass_ratio` / `pass_fail`
 / `drift_loss` / `score` are averaged over those same qualifying draws; the
 cell falls back to the single index row only when the `runs/` dir was pruned.
 `cached` / `source_epoch` / `source_run` mark a carried-over champion result

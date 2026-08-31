@@ -296,10 +296,11 @@ suggestion, thresholds never auto-reject silently.
    the reserved-replicate ledger (dev-guide 04 §8.1: *"5000 is claimed by
    board reflection; the next free base is 6000"*; CASCADE.md §6 confirms
    6000). The admission pipeline declares the constant with the §8.1 claiming
-   procedure: pick 6000, declare `SYNTHESIS_REPLICATE_BASE`, cross-reference the ledger
-   (this doc + `EVIDENCE_REPLICATE_BASE`'s docstring + `calibration.py` /
-   `preflight.py` / `screen.py` / `corpus.py` + the dev-guide §8 table),
-   stamp-AND-key with the same index, and prove r0 isolation with the
+   procedure, in four steps. Pick 6000 and declare
+   `SYNTHESIS_REPLICATE_BASE`. Cross-reference the ledger (this doc +
+   `EVIDENCE_REPLICATE_BASE`'s docstring + `calibration.py` /
+   `preflight.py` / `screen.py` / `corpus.py` + the dev-guide §8 table).
+   Stamp and key with the same index. Prove r0 isolation with the
    `test_full_mode_evidence_loop_never_touches_canonical_slots` pattern. A
    high flip rate ⇒ a noisy eval; the number rides the suggestion.
 
@@ -448,12 +449,13 @@ whether a cold workspace yields no fabricated episodes.
 `src/zicato/reflection/mining.py`. Pure extraction functions per §2 kind + one
 orchestrating `mine_episodes(paths, epoch_id) -> list[MinedEpisode]`:
 
-- **`MinedEpisode`** — a frozen, slotted dataclass carrying `episode_id`
-  (content-stable sha256), `episode_type` (the five §2 kinds), `subject`
-  (entry / judge / mutation_id / metric / claim), the three ranking keys
-  (§2), a one-line `summary`, an `evidence` bag, a `suggestion_hint` (which
-  §3 type it seeds), and the §4 `provenance` fields (`source_episodes`,
-  `source_refs`, `source_lineage_ids`, `miner_version`).
+- **`MinedEpisode`** — a frozen, slotted dataclass. It identifies the
+  episode with `episode_id` (a content-stable sha256), `episode_type` (the
+  five §2 kinds) and `subject` (entry / judge / mutation_id / metric /
+  claim). It carries the three §2 ranking keys, a one-line `summary`, an
+  `evidence` bag, and a `suggestion_hint` naming which §3 type it seeds.
+  Last come the §4 `provenance` fields (`source_episodes`, `source_refs`,
+  `source_lineage_ids`, `miner_version`).
 - **Pure extractors** — `failure_episodes(observations)`,
   `judge_disagreement_episodes(adjudications)`,
   `coverage_gap_episodes(mutation_churn, health)`,

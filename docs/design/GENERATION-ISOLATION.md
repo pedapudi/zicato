@@ -72,8 +72,8 @@ materialised. Both are fixed.
    so a scratch tree is invisible to `list_generations`, the garbage
    collector, the reindex, the lineage reader, and every dashboard reader.
    That invisibility is what makes the best-of-N slate gatherable. Each
-   candidate slot validates into its own disjoint scratch root, and the one
-   `derive_generation` into the canonical `next_id` tree — the shared step
+   candidate slot validates into its own disjoint scratch root.
+   The one `derive_generation` into the canonical `next_id` tree — the shared step
    that would otherwise serialize the gather — happens once, for the winner,
    in `BestOfNProposerAgent._mount_chosen` (`zicato.proposer.best_of_n`,
    through the round's shared `validate_experiment` hook,
@@ -116,10 +116,10 @@ Two of the cautions below turned out to be load-bearing:
   benchmarked and **rejected** (serial cost ~1.5–2.5× a worktree add, and the
   Python-side `tarfile` extraction serialises catastrophically under threads —
   16 concurrent: ~163 ms / ~1.36 s versus 14–41 ms for adds). The shipped
-  answer keeps the worktree but **detaches it immediately**: the `.git`
-  pointer file is unlinked and the registration pruned right after the add,
-  leaving a plain throwaway tree with no path back into the private repo and
-  no cleanup path that depends on git state. The `prune → add → detach →
+  answer keeps the worktree but **detaches it immediately**. The `.git`
+  pointer file is unlinked and the registration pruned right after the add.
+  What is left is a plain throwaway tree with no path back into the private
+  repo and no cleanup path that depends on git state. The `prune → add → detach →
   prune` window is serialised per repo by `_worktree_admin_lock`, because
   git's own repo lock covers each *command* and a concurrent prune can
   otherwise collect a half-registered entry (raced in
@@ -127,7 +127,7 @@ Two of the cautions below turned out to be load-bearing:
 - The Risks section flagged teardown discipline. Two mechanisms own it. The
   first is placement: every backend must create its ephemeral parent as a
   `ztw-snap-*` mkdtemp directory in the OS temp dir
-  (`EPHEMERAL_SNAPSHOT_PREFIX`), which is the shape the Rust supervisor's
+  (`EPHEMERAL_SNAPSHOT_PREFIX`). That is the shape the Rust supervisor's
   crash reaper matches (`crates/supervisor/src/reap.rs`, `SNAPSHOT_PREFIX` /
   `reapable_snapshot_root`), so a crashed run's tree is reaped even when
   `cleanup()` never runs. The second is retention: long-lineage disk growth is
@@ -139,10 +139,10 @@ Two of the cautions below turned out to be load-bearing:
 
 **Corollary — one non-goal became a shipped mechanism.** The Non-goals
 section excluded enforcement of *"did the mutation escape its sandbox"* as an
-OS-sandbox concern. It shipped anyway, as auditing rather than confinement:
-the supervisor re-hashes every child snapshot out-of-band
+OS-sandbox concern. It shipped anyway, as auditing rather than confinement.
+The supervisor re-hashes every child snapshot out-of-band
 (`crates/supervisor/src/diff_containment.rs`) and alarms on a write outside
-the registered `mutable_trees`; an opt-in, default-off in-band twin
+the registered `mutable_trees`. An opt-in, default-off in-band twin
 (`ScoringWeights.block_on_containment_violation`, enforced pre-persist in
 `orchestrator._integrity_block_reason`, mirrored in `evolve/gate.py`) flips a
 violating promotion to REJECTED. The note's claim that an overlay `upper`

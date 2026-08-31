@@ -564,9 +564,10 @@ result. There is nothing else to update, which is why none of the three
 needed a promotion hook.
 
 A target can be evolvable through a source tree while its *operative*
-state lives somewhere the tree cannot reach: a prompt or policy row in a
-database, a config served to a fleet, a compiled artifact in an object
-store, a cache the running system reads. For such a target, the champion
+state lives somewhere the tree cannot reach. That state may be a prompt or
+policy row in a database, a config served to a fleet, a compiled artifact
+in an object store, or a cache the running system reads. For such a target,
+the champion
 advancing is not the end of the round; it is the trigger for a write the
 loop knows nothing about.
 

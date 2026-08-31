@@ -5,16 +5,15 @@
 > does not change selection, scoring, or the tournament structure. Every
 > claim below is reconciled against `src/zicato/proposer/`,
 > `src/zicato/evolve/`, and the analytical index (`src/zicato/index/`).
-> The implementing symbols are
-> [`prior_experiments_for_epoch`](../../src/zicato/index/query.py) (the
-> same-epoch reader), the `PriorExperiment` dataclass and the
-> `EXPERIMENT_MEMORY_MAX_ENTRIES` cap defined in
-> `zicato/core/experiment.py` and re-exported from
-> [`core/types.py`](../../src/zicato/core/types.py),
-> [`render_prior_experiments_block`](../../src/zicato/proposer/prompts.py)
-> (the `## What's already been tried` prompt section), and the loop wiring
-> in `zicato/evolve/` — `_load_prior_experiments` in `evolve/ingest.py`
-> plus `produce_candidate_batch` in `evolve/candidate_batch.py`, which
+> Four pieces implement it. The same-epoch reader is
+> [`prior_experiments_for_epoch`](../../src/zicato/index/query.py). The
+> `PriorExperiment` dataclass and the `EXPERIMENT_MEMORY_MAX_ENTRIES` cap
+> are defined in `zicato/core/experiment.py` and re-exported from
+> [`core/types.py`](../../src/zicato/core/types.py). The prompt section
+> `## What's already been tried` is rendered by
+> [`render_prior_experiments_block`](../../src/zicato/proposer/prompts.py).
+> The loop wiring is `_load_prior_experiments` in `evolve/ingest.py` plus
+> `produce_candidate_batch` in `evolve/candidate_batch.py`, which
 > accumulates the in-flight siblings. §5 describes that shipped code.
 > **Cross-contract transfer** (§3.4 and §5.2) — a `PriorExperiment` from a
 > different epoch under the *same* `contract_hash`, marked
@@ -54,11 +53,11 @@ round's present state:
 - `failure_profile` — the bucketed, board-anonymized **outcome-marginal
   failure-mode profile**
   (`zicato.evolve.decision_support._render_failure_profile` →
-  `render_failure_mode_profile`): board-wide rates for *why* answers
-  failed (over-retrieval / misses / empty answers, plus precision/recall
-  when the board's continuous scores carry it), computed over the
-  **train slice only** and coarsened so no entry id, question, or output
-  leaks. This is the §11.5 channel in
+  `render_failure_mode_profile`). It gives board-wide rates for *why*
+  answers failed: over-retrieval, misses, empty answers, plus precision
+  and recall when the board's continuous scores carry them. The rates are
+  computed over the **train slice only** and coarsened so no entry id,
+  question, or output leaks. This is the §11.5 channel in
   [`OVERFITTING.md`](OVERFITTING.md); it carries the same
   marginal-not-joint, holdout-integrity guarantees as the rest of the
   proposer feed.
@@ -340,7 +339,7 @@ must read in full. *Countermeasure:* the hard cap of §3.3
 (`EXPERIMENT_MEMORY_MAX_ENTRIES`, default 12), the compact
 one-line-per-experiment render of §3.5 (no full `why`, no patch bodies),
 and the curation that keeps the highest-signal entries when the cap
-binds — every win, plus the sharpest recent rejections.
+binds. Those are every win, plus the sharpest recent rejections.
 
 **Over-anchoring and conservatism.** A prominent list of rejected things
 can make the proposer timid, refusing to revisit a direction that failed

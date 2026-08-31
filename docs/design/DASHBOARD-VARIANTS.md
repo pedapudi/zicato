@@ -247,11 +247,12 @@ appears in that variant rather than that the variants share code.
   L–W).
 
 ### Match cards / standings (champion-defends)
-- **Encodes:** the tournament as live standings — a champion "defending the
-  title" banner (champion id · loss · defence count · promoted pill) + a
-  responsive wrapping grid of one match card per challenger round (challenger vs
-  champion · verdict pill · signed Δscalar · one-line truncated hypothesis ·
-  decisive-driver judge). The standings double as navigation; cards stay short
+- **Encodes:** the tournament as live standings. A champion "defending the
+  title" banner carries champion id · loss · defence count · promoted pill.
+  Beneath it a responsive wrapping grid holds one match card per challenger
+  round: challenger vs champion · verdict pill · signed Δscalar · one-line
+  truncated hypothesis · decisive-driver judge.
+  The standings double as navigation; cards stay short
   and the grid wraps, scaling to many generations.
 - **Binds:** `/api/tournaments` + `/api/lineage` + `/api/round/.../gate` (the
   decisive-driver line) + `/api/score-trajectory` (season sparkline).
@@ -354,10 +355,11 @@ appears in that variant rather than that the variants share code.
   first-class compare model across the whole detail pane.)
 
 ### Side-by-side compare model (whole-pane)
-- **Encodes:** a "compare with…" affordance that splits the SAME detail pane into
-  two candidate panels A | B (lifecycle · gate · match-ups · per-board scoring),
-  each in its own digest-gated host; the compare target rides in the hash
-  (`~cmp=<gen>` / `~runs=<a>,<b>`) so it deep-links. Never navigates away.
+- **Encodes:** a "compare with…" affordance that splits the SAME detail pane
+  into two candidate panels A | B (lifecycle · gate · match-ups · per-board
+  scoring), each in its own digest-gated host. The compare target rides in
+  the hash (`~cmp=<gen>` / `~runs=<a>,<b>`) so it deep-links. Never
+  navigates away.
 - **Binds:** the per-candidate endpoints, twice (once per side).
 - **Used by:** S (origin), T, U, V, W (folded into the round-6 anchor and siblings).
 

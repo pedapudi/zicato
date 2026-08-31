@@ -574,11 +574,12 @@ per-entry field. It is recorded once on the optional `board_meta`
 header line at the top of the JSONL — see
 [BOARD-FORMAT.md](BOARD-FORMAT.md) §1.0.
 
-Enum-valued fields serialize as their **bare wire tokens** — the
-lowercase string value of the enum: `"warning"` / `"critical"` for
-severity, `"final_output"` / `"conversation_end"` for `reads`,
-`"inline"` / `"python"` for a judge's `mode`, `"rubric"` / `"regex"` /
-`"predicate"` / … for an expectation's `kind`. (The enums subclass
+Enum-valued fields serialize as their **bare wire tokens**, the
+lowercase string value of the enum. Severity writes `"warning"` or
+`"critical"`; `reads` writes `"final_output"` or `"conversation_end"`;
+a judge's `mode` writes `"inline"` or `"python"`; an expectation's
+`kind` writes `"rubric"`, `"regex"`, `"predicate"` and the rest of its
+roster. (The enums subclass
 `str`, so the value *is* the token.) The reader rejects an
 unrecognised value loudly at `zicato board add` time. See §7.
 

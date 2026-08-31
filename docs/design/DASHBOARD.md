@@ -680,7 +680,7 @@ Four surfaces carry uncertainty, and each states what it measured.
   candidate leads, how tight its interval is, and how many replicates
   it has earned. The elitist iterated racing strategy eliminates
   dominated candidates on that same evidence, so the standings are a
-  ranked field rather than a bracket — see
+  ranked field rather than a bracket. See
   [SELECTION.md §2 Family ③](SELECTION.md#family--single-elimination-bracket-triage-by-resource)
   and [§6](SELECTION.md#6-why-not-double-elimination-or-swiss-the-explicit-verdict)
   for why a bracket suits a small field of expensive, noisy candidates

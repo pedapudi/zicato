@@ -540,8 +540,8 @@ tokens** (short lowercase strings like `"user_steer"`,
 turned off for every entry on the board. The tokens are the bare enum
 values rather than a `DRIFT_KIND_*` constant form. It is a
 **board-wide** setting carried on the `board_meta` header line
-(§1.0 / §10) rather than a per-entry field, and it suppresses
-**built-ins by kind only** — custom judges are removed by deleting
+(§1.0 / §10) rather than a per-entry field. It suppresses
+**built-ins by kind only**: custom judges are removed by deleting
 them from `judges`, never via `disable_drift`. Changing `disable_drift` changes which signals score
 the board, so it is part of the evaluation contract and rolls the
 epoch (see [EPOCHS-AND-JOURNALING.md](EPOCHS-AND-JOURNALING.md) §10).

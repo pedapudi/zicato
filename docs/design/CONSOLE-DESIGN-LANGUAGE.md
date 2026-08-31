@@ -335,10 +335,10 @@ no per-row tags. See BOARD-REFLECTION.md §"UI language" and dev-guide ch. 09
   rebuilds the other. Champion-vs-challenger transcripts read side by side
   inline on the board view.
 - **The picked BASELINE.** The patch diff is taken against the candidate's
-  recorded parent. A *"baseline"* picker — the same select, carrying the accent
-  because it is that page's one control — sets a `~base=<gen>` suffix on the
-  hash and moves the LEFT column to that generation; the right column and the
-  rows stay the candidate's own. The parent is the default and carries no
+  recorded parent. A *"baseline"* picker sets a `~base=<gen>` suffix
+  on the hash and moves the LEFT column to that generation; the right column
+  and the rows stay the candidate's own. It is the same select, and it carries
+  the accent because it is that page's one control. The parent is the default and carries no
   suffix, so the default view keeps one canonical URL, and a non-default choice
   tints the strip rather than changing the diff quietly.
 
@@ -453,7 +453,7 @@ the console aesthetic (§8.3).
 The `CONSOLE` chrome brand, the monospace data face (the default Technical
 typeface sets data, labels and code in Google Sans Mono), and the
 terminal-derived palettes together give the surface a **terminal-and-console
-voice** — the instrument reads like a power-user's console rather than a
+voice**. The instrument reads like a power-user's console rather than a
 consumer report.
 
 ### 8.4 The chess / tournament metaphor

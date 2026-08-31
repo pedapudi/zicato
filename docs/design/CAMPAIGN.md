@@ -98,11 +98,12 @@ was not rescored against a renegotiated threshold, since a threshold fixed in
 advance stays fixed once the numbers are in. §4 states the repair: every
 threshold is pre-registered **on the same scale as the quantity it gates**.
 
-Six further defects were filed from the same effort: pre-flight probed only the
-first mutation point (#106); the proposer goal was truncated (#107); replicate
-averaging took replicate 0 (#108); `--mode fast` ignored `replicates` (#109);
-the gate recorded scalars only on a reject (#111); and pre-flight never checked
-margin achievability (#112). The first and the last of those together mean
+Six further defects were filed from the same effort. Pre-flight probed only the
+first mutation point (#106). The proposer goal was truncated (#107). Replicate
+averaging took replicate 0 (#108). The `--mode fast` setting ignored
+`replicates` (#109). The gate recorded scalars only on a reject (#111).
+Pre-flight never checked margin achievability (#112). The first and the last of
+those together mean
 **pre-flight would have passed every invalid run** — a pre-flight that cannot
 fail when champion and challenger run identical code gates nothing.
 
@@ -120,11 +121,11 @@ design (**measured**, both runs):
 
 - **12 arms × K=12 paired seeds = 144 cells**, **3 rounds per cell**.
 - Board: **single-turn, 5 entries**. `promote_margin` **0.20**.
-- Ten arms are the ones §§1–2 name — BASE, genealogy, screening, mechanical
+- Ten arms are the ones §§1–2 name: BASE, genealogy, screening, mechanical
   recombination, LLM-merge recombination, breadth/depth proposer roles,
   genealogy + calibration feedback, screening + recombination, a best-of-1
-  ablation, process exemplars — **plus both controls in the same batch**: an
-  **A/A duplicate of BASE** and a **planted-defect arm**.
+  ablation, and process exemplars. **Both controls run in the same batch** —
+  an **A/A duplicate of BASE** and a **planted-defect arm**.
 - **Endpoint:** per-duel challenger improvement
   `d = loss(champion) − loss(challenger)`, averaged to a **cell mean**, compared
   with the **cell** as the unit of analysis (§3.1).
@@ -793,7 +794,7 @@ deviation for non-degraded arms is **~0.12** (**measured**).
 
 (The ~15 h is anchored on the 6-rounds-per-cell run; §5 explains why that rate
 does not transfer to a 3-round design without re-anchoring. **The "8 arms"
-column counts the earlier 8-arm screening design rather than §2's matrix** — the
+column counts the earlier 8-arm screening design rather than §2's matrix.** The
 executed matrix is **12** arms (9 treatments, BASE, and 2 controls), so the same
 0.05 sizing against §2 is 12 × ~6 ≈ **72** cells rather than 48. Re-multiply for
 whatever matrix you run.)
@@ -808,8 +809,8 @@ The executed runs went to **K=12** and achieved a derived floor of **0.040**
 (**derived**, and every figure below recomputes from `0.0400 · √(12/K)`):
 K=6 → ≈0.057, K=32 → ≈0.025, and the **~0.013** affordability wall the operator
 names would need **≈114 cells/arm**. Run 1's floor of 0.0378 gives the same
-curve one notch tighter — K=32 → ≈0.023, which is the operator's own sizing
-figure; **quote the anchor with the number**, because the two differ by more
+curve one notch tighter: K=32 → ≈0.023, which is the operator's own sizing
+figure. **Quote the anchor with the number**, because the two differ by more
 than the third decimal the sizing table is read to.
 
 **Why a 6-cell screen cannot be justified by assumption.** The earlier design
@@ -956,7 +957,7 @@ direction a confirmatory read would then authorize):**
   recombination does not itself graduate, the LLM-merge arm is moot. **The
   contrast between the two recombination arms is bundled:** `"llm"` merge
   changes both the merge *method* (one auxiliary merge call rather than
-  mechanical concatenation) **and** the candidate-pair eligibility — it reaches
+  mechanical concatenation) **and** the candidate-pair eligibility. It reaches
   OVERLAPPING rejected pairs that the mechanical mint's disjointness predicate
   rejects (`proposer/best_of_n.py` §2.6.1). The rule reads the *bundle*.
 - **Screening (the `screen_entries` knob, arm A2) — reversed null.** The
@@ -978,9 +979,9 @@ direction a confirmatory read would then authorize):**
   conditions — `generalization_gap` quiet **and** the placebo arm never
   promoting — because a scaffold flip is the irreversible step those conditions
   guard. `calibration_feedback` may flip on either the primary endpoint **or** a
-  `≥ +0.10` absolute lift in the hypothesis-calibration fraction (its designed
-  effect is calibration rather than raw proposal quality — §1 rank 6), provided
-  the primary endpoint does not regress below BASE's lower confidence bound.
+  `≥ +0.10` absolute lift in the hypothesis-calibration fraction, provided the
+  primary endpoint does not regress below BASE's lower confidence bound. Its
+  designed effect is calibration rather than raw proposal quality (§1 rank 6).
 - **`best_of_n` (BASE against the ABLATION arm):** keep the `best_of_n=3`
   default if `E1(BASE) − E1(ABLATION) ≥ floor`. Otherwise flag the auxiliary-call
   cost of `best_of_n=3` as **unearned** and revert the recommendation toward
@@ -1057,10 +1058,11 @@ figures are recorded here:
 0.8 s is a fast single-turn completion; a `target_1` board run drives a
 coordinator plus specialists whose turns are long and partly serial.
 
-**Interpolate from the per-cell row rather than the per-board-run row.** The per-cell
-figure is the one that composes with the anchors and with concurrency: 144 cells
-at 12 concurrent is 12 waves, each gated by its slowest cell, at ≈2,000 s ⇒
-≈6.7 h, against a **measured ≈7.5 h for both sweeps** (run 1 at 7 h 23 m). The
+**Interpolate from the per-cell row rather than the per-board-run row.** The
+per-cell figure is the one that composes with the anchors and with concurrency.
+144 cells at 12 concurrent is 12 waves, each gated by its slowest cell, at
+≈2,000 s, which gives ≈6.7 h. The **measured** time was **≈7.5 h for both
+sweeps** (run 1 at 7 h 23 m). The
 per-board-run figure is **derived** from the per-cell figure by dividing
 through the **planning** 7-entry shape's 14 board runs per round (14 × 3 ≈ 42
 per cell). The executed board carried **5 entries** with a structurally empty
@@ -1472,8 +1474,8 @@ measurement.
 best-of-N wrapper emits one `proposal_attempted` per failed slot, carrying that
 slot's attempts verbatim (`proposer/best_of_n.py`, issue #141). A
 credential-lapsed slate therefore leaves its evidence in the log and voids by the
-**hard-infra rule** (rule 3) on the matched marker, putting the endpoint's own
-words in the report — which the reach predicate alone could never give the
+**hard-infra rule** (rule 3) on the matched marker. That puts the endpoint's own
+words in the report, which the reach predicate alone could never give the
 operator. **The reach predicate is the backstop.** It needs no evidence to have
 been written, so it still holds if a future proposer path forgets to emit one or
 an endpoint's prose matches no marker. The marker scan, in turn, holds when a
@@ -1490,10 +1492,11 @@ strings that begin with a **transport-shaped prefix** — the templates the
 proposer emits when a request failed before a response came back (`auxiliary LLM
 call raised …`, `auxiliary LLM call timed out after …`, `proposer agent run
 raised …`). Every other string in a round's error trail is a *post-response
-content rejection* that quotes text zicato does not control: validator findings
-over the child agent's own source, mutation ids taken from the operator's own
-`# zicato:mutable` markers and brief, the built-in drift-kind list, and the
-model's own offending values echoed back by a schema violation. Anchoring is
+content rejection* that quotes text zicato does not control. Four sources
+supply that text: validator findings over the child agent's own source,
+mutation ids taken from the operator's own `# zicato:mutable` markers and
+brief, the built-in drift-kind list, and the model's own offending values
+echoed back by a schema violation. Anchoring is
 what makes those structurally ineligible rather than merely unlikely. (One
 zicato-authored tag may sit in front of the prefix and is stripped before the
 anchor is tested: `slot 0: `, which an all-failed best-of-N slate puts on each
@@ -1505,10 +1508,9 @@ error came from.) Three consequences the executor must understand:
   burns the arm's retry budget. Because arms differ in how often they emit
   invalid patches, it also deletes rounds in an **arm-correlated** pattern, which
   is the contamination shape R.5 describes. A false negative merely falls
-  through
-  to the no-evidence rule, **which still voids a real credential lapse** — see
-  the next paragraph for what that fallthrough rests on, because the obvious
-  reason ("nothing mints a reach token") is *not* the one that holds.
+  through to the no-evidence rule, **which still voids a real credential
+  lapse**. The next paragraph gives what that fallthrough rests on: the
+  obvious reason ("nothing mints a reach token") is *not* the one that holds.
 - **The excluded tokens stay excluded, as defense in depth.** Bare `timeout`
   (one attempt timing out while a later one returns a real, if invalid, proposal
   is a real measurement), bare `forbidden` (the proposer's own forbidden-id

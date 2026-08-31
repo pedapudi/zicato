@@ -663,8 +663,8 @@ for a root `v0`. An absent parent is `null` and never the empty string,
 so a lineage walker can distinguish a root from a generation whose
 parent is literally named with an empty id. Each row also carries a `promoted`
 flag (`true` / `false` / `null` while the generation is still in
-flight), the `round_index` that minted it, and — from the settle-time
-write — the gate's `rejection_reason` plus the duel's `parent_scalar` /
+flight) and the `round_index` that minted it. The settle-time write adds
+the gate's `rejection_reason` plus the duel's `parent_scalar` /
 `child_scalar` / `delta_scalar`. The reason is non-empty **only** on a
 settled rejection: an empty reason means promoted or pending
 everywhere else in the system, and the DAG must not disagree. The
@@ -1022,11 +1022,11 @@ invocation, before the round loop starts:
    - **Current epoch's hash differs** (the contract drifted). With
      auto-epoching on, `evolve` closes the current epoch (generating
      `analysis.md`), opens a fresh one carrying the new contract, and
-     runs against it. The roll prints a clear message naming which
-     component(s) changed — the label is the literal component name(s)
+     runs against it. The roll prints a message naming which
+     components changed. The label is the literal component names
      (`board`, `brief`, `scoring`, `entrypoint`, `mutable_trees`,
-     `proposer`), comma-joined, or a generic `contract` when the epoch stores no
-     per-component breakdown to compare against:
+     `proposer`), comma-joined. It falls back to a generic `contract` when
+     the epoch stores no per-component breakdown to compare against:
      ```
      contract changed (brief) — rolled 2026-05-15_e0 -> 2026-05-15_e1
      ```

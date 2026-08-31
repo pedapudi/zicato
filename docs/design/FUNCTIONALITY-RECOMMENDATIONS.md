@@ -19,10 +19,10 @@
 
 The review asked how to make zicato work better rather than only read more
 cleanly, which is what `REIMPLEMENTATION.md` addresses. Six fronts were
-investigated against the live code, the Rust crate, and the design documents:
-running tournaments reliably (§1), running them efficiently (§2), the division
-of labour between Rust and Python (§3), proposal-generation quality (§4),
-candidate rating and winner resolution (§5), and the remaining
+investigated against the live code, the Rust crate, and the design documents.
+They are running tournaments reliably (§1), running them efficiently (§2), the
+division of labour between Rust and Python (§3), proposal-generation quality
+(§4), candidate rating and winner resolution (§5), and the remaining
 documented-but-unbuilt capabilities (§6). Sections 5 and 6 answer two questions
 the operator asked outright: whether a tournament's records can produce an Elo
 rating, and how a Bradley–Terry paired-comparison model should be used.
@@ -165,9 +165,9 @@ process owns it.
 The boundary above invites rewriting the per-entry **tournament worker**
 (`_tournament_worker.py`) in Rust. It should stay Python. The worker's job is
 to run the *candidate harness*, and that candidate is a **mutated Python source
-tree**: the worker `chdir`s into the generation snapshot, **imports it
+tree**. The worker `chdir`s into the generation snapshot, **imports it
 in-process**, and drives it through the agent-development-kit adapter to
-goldfive (`adapters/adk.py`), with judges, emulator, and the loss reducer all in
+goldfive (`adapters/adk.py`). Judges, emulator, and the loss reducer all run in
 that same interpreter. The system under evaluation is Python, which is zicato's
 premise — the mutation surface is `# zicato:mutable` Python spans and the
 applier does AST surgery. A Rust worker could not import and run a Python agent;
@@ -284,11 +284,11 @@ existing overfitting-restricted context channels:
    DISTINCT per-slot edit-class hint (`proposer/hints.py::hint_for_slot` /
    `EDIT_CLASS_HINTS`), conditioning slots `0..N-2` on the failure profile's
    DOMINANT mode (*over-retrieves / misses / empty / looping*) and keeping
-   the last slot exploratory. Per-slot *strategy* rotation shipped alongside
-   it (`hints.py::STRATEGY_HINTS` / `strategy_for_slot` — MINIMAL-SURGICAL /
-   STRUCTURAL-REWORK / DEFENSIVE-HARDENING / CONTRARIAN, rotated
-   deterministically per `(slot, round)`), composed with the edit-class hint,
-   so the N samples inside one best-of-N slate are drawn from N distinct
+   the last slot exploratory. Per-slot *strategy* rotation ships alongside
+   it (`hints.py::STRATEGY_HINTS` / `strategy_for_slot`), rotating
+   MINIMAL-SURGICAL, STRUCTURAL-REWORK, DEFENSIVE-HARDENING and CONTRARIAN
+   deterministically per `(slot, round)`. Composed with the edit-class hint,
+   it draws the N samples inside one best-of-N slate from N distinct
    prompts rather than from one. What remains unbuilt is *decoding*
    diversity: every slot shares one sampling strategy and temperature. The
    `aux_call_llm` seam is `(system, user, model) -> str` and carries no

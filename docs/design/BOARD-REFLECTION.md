@@ -51,9 +51,9 @@ noise floor, seeded-bootstrap decision-flip, judge self-consistency fed to
 differentiation, the entry×candidate matrix, greedy Pearson redundancy
 clustering, closed-form power analysis, coverage), with no LLM calls of its own.
 The decision-flip bootstrap resamples k draws with replacement and takes their
-mean, matching the mean-of-K estimator the gate reads, and returns
-`p_flip=None` with a stated reason when a unit has fewer than two replicates or
-a candidate has no observations, rather than a fabricated `0.0`. Judge
+mean, matching the mean-of-K estimator the gate reads. It returns
+`p_flip=None` with a stated reason, rather than a fabricated `0.0`, when a unit
+has fewer than two replicates or a candidate has no observations. Judge
 self-consistency feeds the detector a pooled disagreement rate and keeps the
 worst-unit rate as a secondary diagnostic. `sigma_from_noise_floor()` derives
 the per-unit σ the power analysis needs, and the bootstrap seed folds in the
@@ -291,10 +291,11 @@ identifies a property worth holding fixed through later contract edits. So
 `sound` verdicts are **reported, never suppressed.**
 
 **Placement — the free passive tier.** The practice review makes **zero LLM
-calls**: it is a pure read over the contract (`board` / `scoring` / `epoch`), the
-operating history (`experiments`, the persisted `noise_floor` / `preflight`), and
-the reflection artifacts (`scorecards` / the corpus term-contributions) when a
-`reflect run` produced them. It therefore rides the same passive, always-free tier
+calls**. It is a pure read over three inputs: the contract (`board` / `scoring`
+/ `epoch`), the operating history (`experiments`, the persisted `noise_floor` /
+`preflight`), and the reflection artifacts (`scorecards` / the corpus
+term-contributions) when a `reflect run` produced them.
+It therefore rides the same passive, always-free tier
 as continuous reflection — and a dedicated `zicato inspect reflection practices` runs the
 contract+history checks on **any** epoch instantly, with no corpus at all.
 
@@ -640,9 +641,9 @@ onto the epoch record and surfaces through the loop-health channel.
   result means the signal is *unmeasured* rather than zero, so it never
   refuses; it is rare, because a probe scoring the champion's mean to the last
   digit requires a quantized scoring scale. The `refuse` verdict's health finding is
-  **critical only under `preflight_gate="refuse"`** and a warning otherwise,
-  because it re-fires from the persisted record every round: grading it
-  critical under the default gate would trip the degenerate-health breaker and
+  **critical only under `preflight_gate="refuse"`** and a warning otherwise.
+  It re-fires from the persisted record every round, so grading it critical
+  under the default gate would trip the degenerate-health breaker and
   hard-stop a run the operator chose to let run. A probe-selection
   configuration error — an unknown pinned id, an over-wide ceiling — also
   refuses under the hard gate, since the best-effort path exists to absorb
@@ -791,23 +792,24 @@ endpoint-gated list. The **transcript x-ray** is the surface the others lead to:
 clicking any statistic opens the conversation the judge actually graded, with
 the disagreement highlighted.
 
-- **Bill of health (landing)** — a top-line verdict over **the four pillars** as
-  a **gauge quadrant**: *Reliability* (the noise floor and the probability that
-  the gate's decision flips), *Discrimination* (the share of entries that
-  differentiate, plus coverage), *Validity* (the aggregate judge F1 score and
-  the count of coherence divergences), and *Calibration* (margin-to-noise and
-  loss-term balance). The golden-spiral mark also serves as the convergence
-  motif.
+- **Bill of health (landing)** — a top-line verdict over **the four pillars**,
+  drawn as a **gauge quadrant**. *Reliability* reports the noise floor and the
+  probability that the gate's decision flips. *Discrimination* reports the
+  share of entries that differentiate, plus coverage. *Validity* reports the
+  aggregate judge F1 score and the count of coherence divergences.
+  *Calibration* reports margin-to-noise and loss-term balance. The
+  golden-spiral mark also serves as the convergence motif.
 - **Transcript x-ray (the surface the others lead to)** — a split view: the
   conversation with the judge's **claimed span** highlighted, beside the
   independent meta-judge's adjudication rationale and a **confirm / deny**
   toggle. The colour grammar is fixed: **TP** is a quiet-green seam, **FP** is a
   red mark where the transcript was clean, and **FN** is the highlighted span
   the judge stayed silent on.
-- **Judge audit** — per judge: the **2×2 confusion matrix** (TP/FP/FN/TN) with
-  `precision`, `recall`, `f1`, and `fpr`; a **self-consistency κ** gauge; a strip
-  of **evidence chips** for the FP and FN piles, each clicking into the x-ray;
-  and the **cross-judge redundancy and conflict graph**. A judge that never fired
+- **Judge audit** — four panels per judge. The **2×2 confusion matrix**
+  (TP/FP/FN/TN) carries `precision`, `recall`, `f1`, and `fpr`. A
+  **self-consistency κ** gauge sits beside it. A strip of **evidence chips**
+  covers the FP and FN piles, each clicking into the x-ray. Last comes the
+  **cross-judge redundancy and conflict graph**. A judge that never fired
   is greyed and labelled *"never fired."*
 - **Coherence scatter** — runs plotted by **|scalar move| against adjudicated
   severity**. The diagonal holds the runs whose scores match their observed
