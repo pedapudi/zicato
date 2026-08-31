@@ -3,6 +3,12 @@
 Advanced APIs live in their owning subpackages. The package root intentionally
 exports only the evolve loop, harness protocols, board/config loaders, and
 scoring types.
+
+Everything the loop exports comes from :mod:`zicato.orchestrator`, which is
+the public dispatch surface over the round pipeline in :mod:`zicato.evolve`.
+Naming one home for all three loop exports keeps the pipeline's internal
+layout free to move: a caller reaching past the dispatch surface pins the
+module a function is defined in, which the pipeline is free to change.
 """
 
 from __future__ import annotations
@@ -16,7 +22,7 @@ __version__ = "0.3.0"
 #: module object itself is the export.
 _EXPORTS: dict[str, tuple[str, str | None]] = {
     "evolve_once": ("zicato.orchestrator", "evolve_once"),
-    "evolve_n_rounds": ("zicato.evolve.loop", "evolve_n_rounds"),
+    "evolve_n_rounds": ("zicato.orchestrator", "evolve_n_rounds"),
     "EvolveRoundOutcome": ("zicato.orchestrator", "EvolveRoundOutcome"),
     "load_workspace_config": ("zicato.workspace_loader", "load_workspace_config"),
     "load_board": ("zicato.board", "load_board"),
@@ -62,7 +68,7 @@ if TYPE_CHECKING:  # static-analysis view of the lazy surface
     from zicato.core.scoring_config import (
         recommended_scaffold_weights as recommended_scaffold_weights,
     )
-    from zicato.evolve.loop import evolve_n_rounds as evolve_n_rounds
     from zicato.orchestrator import EvolveRoundOutcome as EvolveRoundOutcome
+    from zicato.orchestrator import evolve_n_rounds as evolve_n_rounds
     from zicato.orchestrator import evolve_once as evolve_once
     from zicato.workspace_loader import load_workspace_config as load_workspace_config
