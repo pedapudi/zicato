@@ -39,8 +39,9 @@ the parent held (no version bump; the next round proposes again
 against the same parent).
 
 **Pattern aggregates reset at epoch boundaries.** Drift counts from
-epoch A do not flow into epoch B's pattern detection. The contract
-changed; the past is no longer comparable.
+epoch A do not flow into epoch B's pattern detection. Counts gathered
+under one contract are not comparable with counts gathered under
+another.
 
 ### 1.1 What causes an epoch boundary
 
@@ -65,23 +66,23 @@ An operator starts a new epoch when any of the following hold:
   harness happened outside the loop and the parent `v0` of the next
   epoch is a fresh snapshot).
 
-Since the contract-hash auto-epoching feature landed (§10), the common
-workflow is automated: `zicato evolve` detects a material contract
-change and rolls the epoch for the operator. `zicato epoch new` /
-`close` / `switch` remain as manual escape hatches. The list above is
-still the authoritative definition of "what counts as a boundary" —
-auto-epoching simply applies it mechanically via a hash.
+The common workflow is automated by contract-hash auto-epoching (§10):
+`zicato evolve` detects a material contract change and rolls the epoch
+for the operator. `zicato epoch new` / `close` / `switch` are the manual
+escape hatches. The list above is the authoritative definition of what
+counts as a boundary; auto-epoching applies it mechanically through a
+hash.
 
 ### 1.2 What does NOT cause an epoch boundary
 
-- Proposer-brief text edits that don't change `## Forbidden`. The
-  proposer brief is *steering*, not contract. The proposer reads it
-  fresh every round.
+- Proposer-brief text edits that do not change `## Forbidden`. The
+  proposer brief steers the proposer rather than binding the contract.
+  The proposer reads it fresh every round.
 - Stylistic edits to the inner harness's source that don't add or
   remove mutation points.
-- New `auxiliary_call_llm` model swaps. The model identity is
-  configuration, not contract — though epoch boundary is a good time
-  to swap if the operator wants to.
+- An `auxiliary_call_llm` model swap. The model identity is
+  configuration rather than contract, though an epoch boundary is a
+  convenient moment to swap.
 - Adding a tag to existing entries. Tags are advisory; pattern
   slicing changes, the entries themselves do not.
 
@@ -155,8 +156,11 @@ directory.
       analysis.html
 ```
 
-(The proposer-brief filename is canonically `brief.md`; `rubric.md` is
-a legacy fallback some examples still pass to `epoch new --brief`.)
+(The proposer-brief filename is `brief.md`. When no `brief.md` sits
+beside the `.zicato/` directory, the resolver falls back to `rubric.md`
+in the same place, and a workspace `config.json` is read for the brief
+path under either a `contract.brief_path` or a `contract.rubric_path`
+key.)
 
 A few specifics:
 
@@ -175,8 +179,9 @@ A few specifics:
 
 ## 3. The Experiment
 
-The proposer's output is NOT a bare `list[Patch]` — it is a typed
-`Experiment` carrying both a hypothesis and the patches that test it.
+The proposer's output is a typed `Experiment` carrying both a
+hypothesis and the patches that test it, rather than a bare
+`list[Patch]`.
 
 ### 3.1 Hypothesis schema (mandatory)
 
@@ -288,15 +293,14 @@ dangling reference to a missing patch file, which IS harmful.
 write helper round-trips back to the same tuple of dataclasses on
 read.
 
-**Legacy inline form.** Workspaces produced before this layout
-landed used an inline `patches: [{...}, ...]` array directly on
-`experiment.json`. The read helper transparently accepts that old
-shape for backward compatibility; new writes always use the
-per-patch layout (and stamp `format_version: 1` — see STORAGE.md §8).
-The one-shot `zicato.epoch.migrate` converter was deleted once nothing
-live called it.
+**The two accepted read shapes.** The read helper accepts either an
+`experiment.json` carrying `patch_ids` with a sibling `patches/`
+directory, or one carrying an inline `patches: [{...}, ...]` array.
+Some workspaces hold the inline shape on disk. Every write uses the
+per-patch layout and stamps `format_version: 1` (see STORAGE.md §8);
+there is no converter between the two, because the reader handles both.
 
-The patch is referenced by mutation id, not by file path. The
+The patch is referenced by mutation id rather than by file path. The
 applier resolves the id to a location and rewrites it. See
 [MUTATION-SURFACE.md](MUTATION-SURFACE.md) for validator constraints.
 
@@ -339,7 +343,7 @@ The fields (the `OutcomeRecord` dataclass):
 | Field | Meaning |
 |---|---|
 | `ran_at` | ISO-8601 UTC timestamp when the experiment finished evaluating. |
-| `drift_movements` | Per-kind realized movements. Each carries `from_rate` (parent per-run mean), `to_rate` (child per-run mean), `hypothesis_match` (did the realized movement match the prediction within the magnitude bucket?), and an optional `note`. |
+| `drift_movements` | Per-kind realized movements. Each carries `from_rate` (parent per-run mean), `to_rate` (child per-run mean), `hypothesis_match` (whether the realized movement matched the prediction within the magnitude bucket), and an optional `note`. |
 | `pass_rate_delta` | Candidate's board-wide pass-rate minus parent's. Range `[-1.0, 1.0]`. |
 | `drift_loss_delta` | Change in mean drift loss across the board. Negative = improvement. |
 | `scalar_score_delta` | Change in the combined tournament scalar; its sign gates `tournament_decision`. |
@@ -361,16 +365,16 @@ is written — and dual-written into the analytical index's `experiments`
 table (`tournament_decision`, `rejection_reason`, `scalar_score_delta`)
 — it becomes an input to the *next* round's proposer. A capped, curated
 digest of prior experiments (each one's `core_idea`, its `modulating`
-ids, its verdict, and its Δscalar) is surfaced to the proposer in a new
+ids, its verdict, and its Δscalar) is surfaced to the proposer in the
 `## What's already been tried` prompt section, so it stops re-proposing
-known failures and can deliberately build on known wins. The proposer's
+known failures and can build on known wins. The proposer's
 own pre-run hypothesis (§3.1) is what makes this digest legible: the
 record that began as "what the proposer was thinking" closes the loop as
 "what the proposer should remember it already tried".
 
-This is advisory context, not a constraint — it never enters the hard
-hypothesis schema, and the only mechanical gate on the proposer stays
-the brief's `## Forbidden` list (§7). It is scoped to the current
+The digest is advisory context rather than a constraint: it never
+enters the hard hypothesis schema, and the only mechanical gate on the
+proposer stays the brief's `## Forbidden` list (§7). It is scoped to the current
 evaluation contract (one epoch = one contract), because a Δscalar from a
 different board is not comparable. The full design — the two scopes
 (settled cross-round history plus intra-round sibling awareness in a
@@ -554,8 +558,8 @@ half-written one.
 
 At `zicato epoch close`:
 
-1. The LLM analysis pass runs as before (§5 above), producing
-   the narrative sections.
+1. The LLM analysis pass runs (§5 above), producing the narrative
+   sections.
 2. `render_html_report` runs once more, this time embedding the
    narrative sections in the dedicated `<section>` blocks.
 3. The final `analysis.html` is written atomically.
@@ -578,7 +582,7 @@ The two coexist intentionally:
   the live view; `analysis.html` exists as the current snapshot
   but the dashboard supersedes it.
 - Between `evolve` invocations (or after the epoch closes), the
-  dashboard URL no longer works (supervisor has exited);
+  dashboard URL does not answer, because the supervisor has exited;
   `analysis.html` is opened directly via `file://` for the
   same data.
 - For sharing — sending a link to a teammate, attaching to a
@@ -591,7 +595,7 @@ different sources and serve different roles, but the operator
 sees roughly the same lineage and score trajectory in both
 (rendered by the same shared component library).
 
-### 5.3 Why LLM analysis at close, not continuously
+### 5.3 Why the LLM analysis runs at close rather than continuously
 
 Generating the LLM analysis pass that lives inside `analysis.md`
 is expensive (a multi-thousand-token LLM call) and the output is
@@ -603,9 +607,10 @@ dashboard, and the deterministically-generated
 ## 6. Lineage
 
 `lineage.json` lives at `.zicato/lineage.json` (one file, all epochs)
-and records the cross-cutting DAG.
+and records how generations descend from one another across epoch
+boundaries, as a directed acyclic graph (DAG).
 
-`zicato init` scaffolds the file as an empty DAG in the same
+`zicato init` scaffolds the file as an empty graph in the same
 epoch-keyed shape the loader reads:
 
 ```json
@@ -652,8 +657,11 @@ list, each epoch carrying its `generations`:
 }
 ```
 
-Each generation row carries its `parent_id` (the generation it was
-forked from; `null`/cross-epoch `epoch:gen` for `v0`), a `promoted`
+Each generation row carries its `parent_id` — the generation it was
+forked from, written as the cross-epoch `epoch:gen` form or as `null`
+for a root `v0`. An absent parent is `null` and never the empty string,
+so a lineage walker can distinguish a root from a generation whose
+parent is literally named with an empty id. Each row also carries a `promoted`
 flag (`true` / `false` / `null` while the generation is still in
 flight), the `round_index` that minted it, and — from the settle-time
 write — the gate's `rejection_reason` plus the duel's `parent_scalar` /
@@ -683,15 +691,14 @@ hardened_research    2026-04-08 14:31     (open)               2         0      
 inner harness. It is markdown, no schema enforcement: the proposer
 reads it verbatim into its system prompt each round.
 
-> **Naming note.** The proposer brief was previously called the epoch
-> "rubric" (the file `rubric.md`). It is renamed to **proposer
-> brief** to disambiguate it from the per-entry `Rubric.score()`
-> outcome check on a board entry (see
-> [BOARD-AUTHORING.md](BOARD-AUTHORING.md) §2.2). The two were
-> distinct concepts sharing a word — one steers the proposer
-> epoch-wide, the other grades one entry's output. They now have
-> distinct names: *proposer brief* for the epoch steering document,
-> *rubric* for the per-entry graded outcome check.
+> **Naming note.** Two separate objects are easy to confuse. The
+> **proposer brief** is this epoch-wide steering document. A **rubric**
+> is the per-entry `Rubric.score()` outcome check that grades one board
+> entry's output (see [BOARD-AUTHORING.md](BOARD-AUTHORING.md) §2.2).
+> The brief steers the proposer for a whole epoch; a rubric grades one
+> entry. A workspace whose steering file is named `rubric.md` still
+> resolves as the brief, and `config.json` still accepts the brief path
+> under a `contract.rubric_path` key.
 
 A typical structure:
 
@@ -820,7 +827,7 @@ comparable), so it lives in `scoring.json` under a `tournament` key:
 
 It is modeled as a frozen field on `ScoringWeights` (a
 `TournamentStructure` dataclass), so it is frozen for the epoch's
-lifetime exactly like the weights are.
+lifetime in the same way as the weights.
 
 ### 9.2 Contract-hash interaction (it rolls the epoch)
 
@@ -828,12 +835,12 @@ Because the `tournament` block lives inside `scoring.json`, it factors
 into the contract hash through the **existing** scoring canonicalizer —
 `_scoring_to_canon` already serializes every public `ScoringWeights`
 field. **Changing the structure or any param therefore rolls the
-epoch:** switching `gauntlet → swiss`, or bumping `swiss.rounds` from 4
-to 6, changes the scoring component's canonical form, changes the hash,
-and `zicato evolve`'s auto-roll path (§10) closes the current epoch and
-opens a fresh one — exactly as a `promote_margin` retune does today. The
-roll message names the changed component as `scoring` (the structure
-*is* scoring); no new component label is introduced.
+epoch.** Switching `gauntlet → swiss`, or bumping `swiss.rounds` from 4
+to 6, changes the scoring component's canonical form and so changes the
+hash. The auto-roll path of §10 then closes the current epoch and opens
+a fresh one, as a `promote_margin` retune does. The roll message names
+the changed component as `scoring`, because the structure is part of
+scoring; there is no separate component label for it.
 
 This is the desired behaviour: it keeps the invariant that all
 generations within one epoch were selected under one comparable
@@ -908,9 +915,9 @@ cost per round.
 | `fast-degraded` | Fast was requested but no cache covered the needed boards (the seed/first champion, or a not-yet-covered subset), so the champion ran live **once** to seed the cache. |
 
 Reader's caveat: when `champion_eval_mode` is `fast`, the champion's per-run
-numbers were *reused*, not freshly sampled — a flat champion trajectory does
-not mean "the champion didn't move", it means it wasn't re-run. Re-run with
-`--mode full` for a clean re-sample.
+numbers were reused rather than freshly sampled. A flat champion trajectory
+then records that the champion was not re-run; it says nothing about whether
+the champion's behaviour held steady. Re-run with `--mode full` for a clean re-sample.
 
 ## 10. Contract-hash auto-epoching
 
@@ -921,7 +928,7 @@ Contract-hash auto-epoching is the mechanism that makes that true.
 
 ### 10.1 What's in the contract
 
-The **evaluation contract** is exactly five things:
+The **evaluation contract** has five components, and no others:
 
 1. **The board** — test inputs, `expectations`, `judges`, and the
    board's `disable_drift` set (`board.jsonl`).
@@ -944,8 +951,8 @@ The **evaluation contract** is exactly five things:
 A change to any one of these means generations on either side are no
 longer directly comparable, so the epoch must roll.
 
-The inner harness's *source content* is deliberately **not** in the
-contract — that source is exactly what zicato mutates within an epoch.
+The inner harness's *source content* is **not** in the contract: that
+source is what zicato mutates within an epoch.
 Only the harness *identity* (which agent, which trees) is contractual;
 the bytes inside those trees are not.
 
@@ -986,7 +993,7 @@ so spurious edits do not roll the epoch:
 | scoring | Parse into a fully-defaulted `ScoringWeights` — **including the `tournament` structure block** (§9) — round every float to 6 decimal places, `json.dumps(sort_keys=True)`. Partial vs full documents and float-precision noise are no-ops; a structure or param change is NOT a no-op (it rolls the epoch). |
 | entrypoint | The string verbatim. |
 | mutable_trees | Sorted tuple of absolute path strings. Registration order is a no-op. |
-| proposer | Resolve the proposer dir (or the builtin default) to a `ProposerSpec` and serialize sorted-key: `agent_id`, sorted `tools`, per-skill normalized-body hashes sorted by name, and the custom `agent.py` source hash. Each skill body is normalized exactly like the proposer brief, so a whitespace-only skill edit is a no-op; a semantic skill edit (or adding / removing / renaming a skill, or editing `agent.py`) rolls the epoch. The builtin default canonicalizes to a stable form, so a workspace that never registers a proposer keeps a stable hash. |
+| proposer | Resolve the proposer dir (or the builtin default) to a `ProposerSpec` and serialize sorted-key: `agent_id`, sorted `tools`, per-skill normalized-body hashes sorted by name, and the custom `agent.py` source hash. Each skill body is normalized in the same way as the proposer brief, so a whitespace-only skill edit is a no-op; a semantic skill edit (or adding / removing / renaming a skill, or editing `agent.py`) rolls the epoch. The builtin default canonicalizes to a stable form, so a workspace that never registers a proposer keeps a stable hash. |
 
 The canonical forms are concatenated and hashed. Missing files are
 treated as the empty string for that component (so a board-less
@@ -1010,16 +1017,16 @@ invocation, before the round loop starts:
      first epoch (`e0`) from the contract and runs against it. With
      `--no-auto-epoch`, it errors and tells the operator to run
      `zicato epoch new`.
-   - **Current epoch's hash matches** (or is empty — see §10.6).
+   - **Current epoch's hash matches** (or is unrecorded — see §10.6).
      No roll; `evolve` runs against the current epoch.
    - **Current epoch's hash differs** (the contract drifted). With
      auto-epoching on, `evolve` closes the current epoch (generating
      `analysis.md`), opens a fresh one carrying the new contract, and
      runs against it. The roll prints a clear message naming which
      component(s) changed — the label is the literal component name(s)
-     (`board`, `brief`, `scoring`, `entrypoint`, `mutable_trees`),
-     comma-joined, or a generic `contract` when no per-component
-     breakdown is available (a legacy epoch with no stored components):
+     (`board`, `brief`, `scoring`, `entrypoint`, `mutable_trees`,
+     `proposer`), comma-joined, or a generic `contract` when the epoch stores no
+     per-component breakdown to compare against:
      ```
      contract changed (brief) — rolled 2026-05-15_e0 -> 2026-05-15_e1
      ```
@@ -1033,22 +1040,23 @@ loop never re-rolls mid-flight. Passing `--epoch <id>` explicitly
 
 When the auto-roll creates a new epoch, its `v0` baseline is the
 **promoted head of the previous epoch** — the last promoted
-generation's snapshot — not the originally-registered harness. This
-continues the lineage: the new epoch starts from the best result of
-the old one. If the previous epoch had no promoted generations beyond
-`v0`, the new epoch seeds from the registered mutable trees as usual.
+generation's snapshot — rather than the registered baseline harness.
+The lineage therefore continues: the rolled epoch starts from the best
+result its predecessor reached. If the predecessor had no promoted
+generations beyond `v0`, the rolled epoch seeds from the registered
+mutable trees.
 
 The cross-epoch link is recorded in `lineage.json` as the new epoch's
 `v0_parent`, pointing back at the closed predecessor.
 
-### 10.6 Legacy workspaces and the empty hash
+### 10.6 An epoch that records no contract hash
 
-`EpochConfig.contract_hash` defaults to the empty string. An epoch with
-an empty `contract_hash` is an epoch created **before** auto-epoching
-landed. Such epochs are treated as **always matching** — the
-orchestrator never rolls a legacy workspace spuriously. The operator
-keeps full manual control via `zicato epoch new` until they create
-their first hash-carrying epoch.
+`EpochConfig.contract_hash` is `None` when the epoch's `config.json`
+records no hash; an empty string on disk reads back as `None`, so the
+absent case has exactly one in-memory representation. An epoch with no
+recorded hash is treated as **always matching**, so `evolve` never rolls
+it. The operator keeps full manual control through `zicato epoch new`
+until an epoch carrying a hash is created.
 
 ### 10.7 Auto-epoch naming
 
@@ -1069,8 +1077,8 @@ fill it in with `zicato epoch set-goal --epoch <id> --goal "..."` (§10.8).
 unchanged. They are the manual escape hatches:
 
 - `--no-auto-epoch` makes `evolve` strict: it errors on contract drift
-  instead of rolling. Use this when you want to be told about drift
-  and decide deliberately.
+  instead of rolling. Use it to be told about drift and choose the
+  response.
 - `zicato epoch new` is still the way to start an epoch with a
   hand-chosen name, or to roll for a reason the hash cannot see (e.g.
   a regression-baseline rebase that did not touch any contract file).
