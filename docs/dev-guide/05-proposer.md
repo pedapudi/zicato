@@ -1620,16 +1620,17 @@ The propose step traces itself into the round's durable event log
 context. The seam exists so the proposer stack never imports the log module
 (WS8); the orchestrator threads `_RoundLogEmitter.emit`, and every emission is
 **best-effort by contract** — `_emit_round_event` guards the call so a raising
-emitter can never fail a propose step.
+emitter can never fail a propose step. The wire record keeps an event's
+type-specific `payload` separate from its type-independent `scope` envelope.
 
 Events the propose step emits, **in required order** within one propose:
 
 | # | Event | Emitted by | Payload | Notes |
 |---|---|---|---|---|
-| 1..N | `candidate_sampled` | best-of-N wrapper, deterministic post-gather pass in SLOT order | `{i, n}` (`revise: false`) | a failed slot contributes a `proposal_attempted{errors, slot_index}` instead, so a sibling's success never discards its evidence (issue #141) |
-| N+1..2N | `candidate_screened` | `_screen_slate`, one per candidate AFTER the whole slate settled | `{index, vetoed, confirmed, screen_summary{entries_screened, baseline_passes, candidate_passes, reason}, revise: false}` | counts-only by the `reason` contract; absent entirely for an unscreened round |
-| (opt) | `candidate_sampled` `{i: N, n, revise: true}` then `candidate_screened` `{index: N, …, revise: true}` | the ONE all-vetoed revise pass | the replacement's index is one past the original slate | additive fields with defaults — pre-revise logs decode identically |
-| last | `critique_selected` | the wrapper, after `_mount_chosen` | `{index, reason: selection_mode, slate: [{index, core_idea, mutation_ids}], rationale}` | `index` is the FINAL slate index; both transports fill `slate`, and `rationale` is non-empty only when a critic chose. Emitted only once the chosen candidate's tree is mounted, so the event and the artifact cannot disagree |
+| 1..N | `candidate_sampled` | best-of-N wrapper, deterministic post-gather pass in SLOT order | `{i, n}` (`revise: false`); scope `{generation_id}` | a failed slot contributes a `proposal_attempted{errors, slot_index}` instead, so a sibling's success never discards its evidence (issue #141) |
+| N+1..2N | `candidate_screened` | `_screen_slate`, one per candidate AFTER the whole slate settled | `{index, vetoed, confirmed, screen_summary{entries_screened, baseline_passes, candidate_passes, reason}, revise: false}`; scope `{generation_id}` | counts-only by the `reason` contract; absent entirely for an unscreened round |
+| (opt) | `candidate_sampled` `{i: N, n, revise: true}` then `candidate_screened` `{index: N, …, revise: true}` | the ONE all-vetoed revise pass | the replacement's index is one past the original slate; both carry scope `{generation_id}` | additive fields with defaults — pre-revise logs decode identically |
+| last | `critique_selected` | the wrapper, after `_mount_chosen` | `{index, reason: selection_mode, slate: [{index, core_idea, mutation_ids}], rationale}`; scope `{generation_id}` | `index` is the FINAL slate index; both transports fill `slate`, and `rationale` is non-empty only when a critic chose. Emitted only once the chosen candidate's tree is mounted, so the event and the artifact cannot disagree |
 
 Then, from `_propose_child` (outside the wrapper):
 
@@ -1645,6 +1646,21 @@ The fold (`fold_round_record`) reduces these into
 `ProposalSession{attempts, errors, candidates_sampled, candidates_screened,
 screen_vetoes, critique_index, critique_reason, experiment_ids}` — the shape
 the dashboard and loop health read.
+
+Every one of those events travels with a `RoundEventScope` — the log-wide
+coordinate envelope (07-runtime-and-durability.md §7.10.2) — on the emitter's
+third argument, and for the propose step it carries exactly one coordinate:
+`generation_id`. That coordinate scopes the whole slate rather than any one
+candidate: every challenger in a field round writes through the same emitter
+while its candidate indexes restart at zero. A reader groups the three slate
+event types by `envelope.scope.generation_id`, never by their positions in the
+append-only file. Older records decode as the empty scope, so their slate
+cannot be split with certainty.
+
+There is no ordinal coordinate to group by, because the payload's
+own two numberings disagree: `candidate_sampled.i` is the slate SLOT, while
+`candidate_screened.index` and `critique_selected.index` count the survivors
+that reached the screen. They coincide only when no slot failed.
 
 > ⚠️ TRAP — ordering is semantic, not cosmetic. `candidate_screened` events
 > come after ALL `candidate_sampled` events and before `critique_selected`

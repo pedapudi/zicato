@@ -127,7 +127,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import Awaitable, Callable, Sequence
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass, replace
 from typing import Any, cast
 
@@ -477,6 +477,16 @@ def normalize_selection_rationale(rationale: str) -> str:
     return " ".join(rationale.split())[:RATIONALE_CAP]
 
 
+def _slate_scope(ctx: ProposerContext) -> dict[str, Any]:
+    """The durable plan scope shared by every event from one challenger slate.
+
+    A field round drives several challengers through the same round-log
+    emitter while each slate's candidate indexes restart at zero, so the
+    challenger id is the only thing that keeps two slates apart in the log.
+    """
+    return {"generation_id": ctx.new_generation_id}
+
+
 def _screened_event_fields(
     index: int, res: CandidateScreenResult, revise: bool = False
 ) -> dict[str, Any]:
@@ -573,25 +583,28 @@ def _emit_round_event(
     ctx: ProposerContext,
     type_token: str,
     fields: dict[str, Any] | Callable[[], dict[str, Any]],
+    scope: Mapping[str, Any] | None = None,
 ) -> None:
     """Best-effort round-log emission through the context's optional emitter.
 
-    The emitter seam keeps the proposer decoupled from the round-log module
-    (WS8): the orchestrator threads an ``emitter(type_token, fields)``
+    The emitter seam keeps the proposer decoupled from the round-log module:
+    the orchestrator threads an ``emitter(type_token, fields, scope)``
     callable on :attr:`ProposerContext.round_event_emitter`; ``None`` (every
     caller that does not opt in) emits nothing. Guarded here so a raising
     emitter can never fail a propose step.
 
-    ``fields`` may be a THUNK for a payload that costs something to build.
-    It is called only after the ``None`` check and inside the guard, so an
-    unwired emitter pays nothing and a raising builder cannot fail a propose
-    any more than a raising emitter can.
+    ``scope`` is the event's PLAN coordinates and travels separately from the
+    payload, so it can never be mistaken for one of the typed event's own
+    fields. ``fields`` may be a THUNK for a payload that costs something to
+    build. It is called only after the ``None`` check and inside the guard, so
+    an unwired emitter pays nothing and a raising builder cannot fail a
+    propose any more than a raising emitter can.
     """
     emitter = ctx.round_event_emitter
     if emitter is None:
         return
     try:
-        emitter(type_token, fields() if callable(fields) else fields)
+        emitter(type_token, fields() if callable(fields) else fields, scope)
     except Exception as exc:  # noqa: BLE001 — emission must never fail a propose
         log.debug("round-log %s emission skipped: %s", type_token, exc)
 
@@ -795,7 +808,7 @@ class BestOfNProposerAgent:
             raise ProposerError(["best-of-N produced no candidates"])  # pragma: no cover
 
         for type_token, event_fields in staged:
-            _emit_round_event(ctx, type_token, event_fields)
+            _emit_round_event(ctx, type_token, event_fields, _slate_scope(ctx))
 
         if len(candidates) == 1:
             # Even a sole survivor is mounted into the real ``next_id`` — its
@@ -813,6 +826,7 @@ class BestOfNProposerAgent:
                 ctx,
                 "critique_selected",
                 lambda: _selected_event_fields(candidates, 0, "sole_candidate"),
+                _slate_scope(ctx),
             )
             return candidates[0]
 
@@ -843,6 +857,7 @@ class BestOfNProposerAgent:
                 ctx,
                 "critique_selected",
                 lambda: _selected_event_fields(candidates, chosen, selection_mode),
+                _slate_scope(ctx),
             )
             return candidates[chosen]
 
@@ -895,6 +910,7 @@ class BestOfNProposerAgent:
             ctx,
             "critique_selected",
             lambda: _selected_event_fields(candidates, chosen, selection_mode, rationale),
+            _slate_scope(ctx),
         )
         return candidates[chosen]
 
@@ -1312,7 +1328,9 @@ class BestOfNProposerAgent:
             )
             return None
         for i, res in enumerate(results):
-            _emit_round_event(ctx, "candidate_screened", _screened_event_fields(i, res))
+            _emit_round_event(
+                ctx, "candidate_screened", _screened_event_fields(i, res), _slate_scope(ctx)
+            )
         return results
 
     async def _revise_all_vetoed(
@@ -1403,7 +1421,12 @@ class BestOfNProposerAgent:
             return "unavailable"
         finally:
             cleanup()
-        _emit_round_event(ctx, "candidate_sampled", {"i": revise_index, "n": n, "revise": True})
+        _emit_round_event(
+            ctx,
+            "candidate_sampled",
+            {"i": revise_index, "n": n, "revise": True},
+            _slate_scope(ctx),
+        )
         result = await self._screen_replacement(replacement, revise_index, ctx)
         candidates.append(replacement)
         if result is not None and result.vetoed:
@@ -1439,7 +1462,12 @@ class BestOfNProposerAgent:
             )
             return None
         res = results[0]
-        _emit_round_event(ctx, "candidate_screened", _screened_event_fields(index, res, True))
+        _emit_round_event(
+            ctx,
+            "candidate_screened",
+            _screened_event_fields(index, res, revise=True),
+            _slate_scope(ctx),
+        )
         return res
 
     async def _select_over(

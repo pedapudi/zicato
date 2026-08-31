@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import logging
 import time  # noqa: F401  — kept as the ``orch.time`` clock seam (see __all__)
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, TypeGuard
 
@@ -63,22 +63,93 @@ async def _regenerate_epoch_report(
 # ---------------------------------------------------------------------------
 
 
+#: Wire token -> the execution plan's lifecycle step. The values are exactly
+#: the step keys :data:`zicato.query.execution_plan.ROUND_STEPS` defines: a
+#: step this table invents is one the plan cannot place a node under, so the
+#: coordinate would name a position no reader can resolve. Kept as a literal
+#: table here rather than imported, so ``evolve`` does not depend on
+#: ``query``; a correspondence test holds the two sides equal
+#: (``test_round_log_emission.py``).
+_ROUND_LOG_STEP: dict[str, str] = {
+    "proposal_attempted": "propose",
+    "candidate_sampled": "propose",
+    "candidate_screened": "propose",
+    "critique_selected": "propose",
+    "experiment_minted": "propose",
+    "patches_applied": "apply",
+    "validation_failed": "apply",
+    "harness_loaded": "run",
+    "unit_completed": "run",
+    "gate_evaluated": "gate",
+    "holdout_released": "gate",
+    "evidence_replicated": "gate",
+    "decision_recorded": "decide",
+    "frontier_updated": "decide",
+}
+
+#: Tokens that DELIBERATELY carry no step. The round's own boundaries are not
+#: steps within it — the plan has five steps, and open/close are neither. This
+#: set exists so steplessness is a stated decision rather than an omission: the
+#: correspondence test requires every known event token to appear in exactly
+#: one of these two tables, so a new token cannot become silently stepless.
+_STEPLESS_EVENTS: frozenset[str] = frozenset({"round_opened", "round_closed"})
+
+
+def _duel_scope(
+    *,
+    generation_id: str = "",
+    opponent_generation_id: str = "",
+    matchup_id: str = "",
+) -> dict[str, Any]:
+    """The plan scope shared by both events a settled duel emits.
+
+    The unit and gate emitters describe the same duel from two angles, so
+    they must describe it with the same shape: one challenger coordinate and
+    the pair's identity beside it. Built here once so the two cannot drift
+    into different keys or a different key order. The opponent and the
+    matchup ride
+    ``attributes`` because neither is a named coordinate in the envelope's
+    vocabulary yet; that is a schema decision for the reader that needs them.
+    """
+    scope: dict[str, Any] = {}
+    if generation_id:
+        scope["generation_id"] = str(generation_id)
+    attributes = {
+        **({"matchup_id": matchup_id} if matchup_id else {}),
+        **(
+            {"opponent_generation_id": str(opponent_generation_id)}
+            if opponent_generation_id
+            else {}
+        ),
+    }
+    if attributes:
+        scope["attributes"] = attributes
+    return scope
+
+
 class _RoundLogEmitter:
     """Best-effort appender onto one round's durable RoundLog (WS8).
 
-    Emission failures must NEVER fail a round — the live index dual-write
+    A STORAGE failure must never fail a round — the live index dual-write
     (:func:`_ingest_experiment_into_index`) is the precedent: the canonical
     stores (``experiment.json``, lineage, journal) stay authoritative and
     the event log is a derived, replayable trace. A bind failure degrades
-    to a permanent no-op emitter; every append failure is logged at
-    ``debug`` and swallowed.
+    to a permanent no-op emitter; an append that cannot reach the disk is
+    logged at ``debug`` and swallowed.
 
-    ``emit`` takes the wire ``type_token`` plus its payload fields and
-    resolves the typed event through
-    :data:`zicato.epoch.round_log.EVENT_TYPES` — the same string-token seam
-    the proposer-side callback uses (:attr:`ProposerContext
-    .round_event_emitter`), so one signature serves both sides. An unknown
-    token is silently dropped (never a crash on a vocabulary skew).
+    A SCHEMA mistake is not swallowed. Building the typed event happens
+    outside that guard, so a payload field no event declares raises from the
+    constructor rather than dropping the event. The reason is that ``seq``
+    comes from the file's tail: a silently dropped event leaves a gap-free
+    log, which reads as a round that never emitted the event at all.
+
+    ``emit`` takes the wire ``type_token``, its payload fields and its
+    optional plan ``scope`` — the same three-argument string-token seam the
+    proposer-side callback uses (:attr:`ProposerContext
+    .round_event_emitter`), so one signature serves both sides. Scope is a
+    separate argument and never a payload key, so no emitter on the seam can
+    forward it into an event constructor. An unknown token is silently
+    dropped (never a crash on a vocabulary skew).
     """
 
     __slots__ = ("_log",)
@@ -92,22 +163,50 @@ class _RoundLogEmitter:
         except Exception as exc:  # noqa: BLE001 — emission must never fail a round
             log.debug("round-log emitter unavailable: %s", exc)
 
-    def emit(self, type_token: str, fields: dict[str, Any] | None = None) -> None:
-        """Append one typed event; any failure is swallowed at debug level."""
+    def emit(
+        self,
+        type_token: str,
+        fields: dict[str, Any] | None = None,
+        scope: Mapping[str, Any] | None = None,
+    ) -> None:
+        """Append one typed event under its plan ``scope``.
+
+        The emitter fills exactly one coordinate itself: the lifecycle
+        ``step`` its wire token maps to in :data:`_ROUND_LOG_STEP`, which no
+        payload carries. A token in :data:`_STEPLESS_EVENTS` gets none.
+        Everything else comes from the caller, because only the caller knows
+        it. In particular ``replicate`` is never derived from the payload: the
+        one event that carries a replicate is ``unit_completed``, whose value
+        is the aggregate placeholder ``0`` rather than the draw's true index
+        (see :func:`_emit_tournament_units`), so promoting it would state a
+        plan coordinate the loss files contradict.
+        """
         if self._log is None:
             return
-        try:
-            from zicato.epoch.round_log import EVENT_TYPES  # noqa: PLC0415
+        from zicato.epoch.round_log import EVENT_TYPES  # noqa: PLC0415
 
-            cls = EVENT_TYPES.get(type_token)
-            if cls is None:
-                return
-            self._log.append(cls(**(fields or {})))
-        except Exception as exc:  # noqa: BLE001 — emission must never fail a round
+        cls = EVENT_TYPES.get(type_token)
+        if cls is None:
+            return
+        event = cls(**(fields or {}))
+        coordinates = dict(scope or {})
+        step = _ROUND_LOG_STEP.get(type_token)
+        if step:
+            coordinates.setdefault("step", step)
+        try:
+            self._log.append(event, scope=coordinates)
+        except OSError as exc:
             log.debug("round-log emit %s skipped: %s", type_token, exc)
 
 
-def _emit_tournament_units(round_log: _RoundLogEmitter, tournament_result: Any) -> None:
+def _emit_tournament_units(
+    round_log: _RoundLogEmitter,
+    tournament_result: Any,
+    *,
+    parent_generation_id: str = "",
+    child_generation_id: str = "",
+    matchup_id: str = "",
+) -> None:
     """Emit ``unit_completed`` events for a settled duel's board units.
 
     Emitted as an AGGREGATE after the duel settles (per-unit emission at
@@ -117,17 +216,35 @@ def _emit_tournament_units(round_log: _RoundLogEmitter, tournament_result: Any) 
     ``replicate=0`` (the runner's per-entry map carries the canonical
     replicate; extra replicates fold into the aggregates upstream and are
     not re-derivable here). Best-effort like every emission.
+
+    ``parent_generation_id`` / ``child_generation_id`` NAME the two sides.
+    A field round settles several matchups into ONE round log, so the same
+    ``entry_id`` arrives with ``side="child"`` once per challenger; without
+    the generation id those events collide and no reader can separate them.
+    ``matchup_id`` distinguishes repeat or field matchups involving the same
+    generation. The entry and the side stay payload fields and are NOT copied
+    into the scope: a coordinate the payload already states does not need a
+    second copy that could drift from it. The placeholder replicate reaches
+    neither — the absent ``replicate`` coordinate is the honest statement that
+    this event does not name a draw.
     """
     per_entry = getattr(tournament_result, "per_entry_losses", None) or {}
     try:
         entry_ids = sorted(per_entry)
     except Exception:  # noqa: BLE001 — emission must never fail a round
         return
+    side_generations = {"parent": parent_generation_id, "child": child_generation_id}
+    side_opponents = {"parent": child_generation_id, "child": parent_generation_id}
     for entry_id in entry_ids:
         for side in ("parent", "child"):
             round_log.emit(
                 "unit_completed",
                 {"entry_id": str(entry_id), "replicate": 0, "side": side},
+                _duel_scope(
+                    generation_id=side_generations[side],
+                    opponent_generation_id=side_opponents[side],
+                    matchup_id=matchup_id,
+                ),
             )
 
 
@@ -179,6 +296,10 @@ def _emit_harness_loaded(
                 "trees_verified": verified,
                 "trees_never_imported": never_imported,
             },
+            # ALSO in the scope, though the payload states it: a reader that
+            # groups by challenger must not have to know which event types
+            # happen to repeat the id in their own payload.
+            {"generation_id": gen_id},
         )
 
 
@@ -195,6 +316,9 @@ def _emit_gate_evaluated(
     parent_agg: Any = None,
     child_agg: Any = None,
     weights: Any = None,
+    generation_id: str = "",
+    opponent_generation_id: str = "",
+    matchup_id: str = "",
 ) -> None:
     """Emit the ``gate_evaluated`` event for one settled duel's gate verdict.
 
@@ -238,7 +362,17 @@ def _emit_gate_evaluated(
     margin = getattr(weights, "promote_margin", None)
     if _is_real_number(margin):
         fields["margin_required"] = float(margin)
-    round_log.emit("gate_evaluated", fields)
+    # A field round gates each matchup into ONE round log; without the
+    # challenger's id every verdict reads as the round's own.
+    round_log.emit(
+        "gate_evaluated",
+        fields,
+        _duel_scope(
+            generation_id=generation_id,
+            opponent_generation_id=opponent_generation_id,
+            matchup_id=matchup_id,
+        ),
+    )
 
 
 def _promoted_entry_regressions(tournament_result: Any) -> dict[str, dict[str, Any]] | None:

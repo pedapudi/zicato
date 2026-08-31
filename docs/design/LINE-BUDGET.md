@@ -18,8 +18,8 @@ The baseline and final ratchet use the same metric:
 
 | Measurement | Baseline (`f9052dd`) | Current limit | Net reduction |
 |---|---:|---:|---:|
-| Total | 408,547 | 437,550 | -29,003 |
-| Production | 197,588 | 203,422 | -5,834 |
+| Total | 408,547 | 441,476 | -32,929 |
+| Production | 197,588 | 203,802 | -6,214 |
 
 The earlier raw count of 425,755 included lockfiles and generated artifacts and
 is retained in `.line-budget.json` for provenance; it is not the enforced
@@ -108,3 +108,5 @@ increase.
 | Exact scalar aggregation (total) | 429,572 | +205 | 429,777 | Issue #310: the six-case exactness suite with its two witnesses, the `math.fsum` conversions and their stated invariant, the interpreter-independent reference implementations in the scoring-seam suite, and the parity job's Python matrix. |
 | Exact scalar aggregation (production) | 203,386 | +36 | 203,422 | Issue #310: `math.fsum` in place of the builtin sum and of running float accumulators across the seven modules on the served-scalar path, plus the invariant stated in the aggregation module's docstring. |
 | Multi-round and non-racing golden lanes (total) | 429,777 | +7,773 | 437,550 | Issue #316: four additional mock-evolve captures — a two-round racing run and one each for the swiss, single-elimination, and double-elimination structures — which are 7,506 of the delta; plus their three contract variants, the lane table's round-count axis with its persisted carry-over assertions, and the four gates. The captures are the coverage: before them no golden ran a second round against a crowned parent, and the three non-racing registries executed in no golden at all. |
+| Scoped round-log events (total) | 437,550 | +3,926 | 441,476 | Issue #307 step 1: 3,161 of the delta is the eight mock-evolve goldens, which gain a `scope` object per round-log record and lose no line; the remaining 765 are the `RoundEventScope` envelope with its coordinate vocabulary and grouping key, the emitter's third scope argument across the propose and duel call sites, the two registry-correspondence tests holding the step table equal to the plan's, and the round-trip, forward-compatibility, slate-scope and duel-wiring regressions. |
+| Scoped round-log events (production) | 203,422 | +380 | 203,802 | Issue #307 step 1: scope serialization, decoding and attribute promotion in `round_log.py`, the scope argument on `_RoundLogEmitter.emit` / `_emit_tournament_units` / `_emit_gate_evaluated`, the shared `_duel_scope` builder, the declared stepless-token set, and the field, persist and best-of-N call sites. |

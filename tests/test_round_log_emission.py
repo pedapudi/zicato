@@ -21,7 +21,7 @@ from typing import Any
 import pytest
 
 from zicato.core.types import Experiment, HypothesisSpec, ProposerQualityConfig
-from zicato.epoch.round_log import RoundLog, fold_round_record
+from zicato.epoch.round_log import RoundEventScope, RoundLog, fold_round_record
 from zicato.evolve.round_reporting import _RoundLogEmitter
 from zicato.proposer.agent import ProposerContext
 from zicato.proposer.best_of_n import BestOfNProposerAgent
@@ -73,6 +73,16 @@ class TestRoundLogEmitter:
         emitter.emit("round_closed")
         events = RoundLog(tmp_path, "e1", 3).read()
         assert [e.type for e in events] == ["round_opened", "experiment_minted", "round_closed"]
+        # The emitter derives exactly one coordinate: the lifecycle step of
+        # the wire token. The round comes from the log's own path rather
+        # than a field, and the round's own boundaries are not steps WITHIN
+        # it — the plan has five steps and open/close are neither, so both
+        # are stepless.
+        assert [event.scope for event in events] == [
+            RoundEventScope(),
+            RoundEventScope(step="propose"),
+            RoundEventScope(),
+        ]
         record = fold_round_record(events)
         assert record.complete
         assert record.contract_hash == "abc"
@@ -83,13 +93,97 @@ class TestRoundLogEmitter:
         emitter.emit("not_a_real_event", {"x": 1})
         assert RoundLog(tmp_path, "e1", 0).read() == []
 
-    def test_bad_fields_never_raise(self, tmp_path: Path) -> None:
+    def test_a_payload_field_no_event_declares_raises(self, tmp_path: Path) -> None:
+        """A schema mistake is a BUG, and must not be swallowed as a mishap.
+
+        ``seq`` is derived from the file's tail, so a dropped event leaves a
+        gap-free log: the round reads back as one that never emitted the
+        event at all, and nothing distinguishes the two afterwards. Only a
+        STORAGE failure is best-effort (``test_unwritable_log_never_raises``).
+        """
         emitter = _RoundLogEmitter(tmp_path, "e1", 0)
-        # An unexpected field is a constructor TypeError — swallowed.
-        emitter.emit("round_opened", {"no_such_field": True})
+        with pytest.raises(TypeError):
+            emitter.emit("round_opened", {"no_such_field": True})
         emitter.emit("round_opened", {"contract_hash": "ok"})
         events = RoundLog(tmp_path, "e1", 0).read()
         assert [e.type for e in events] == ["round_opened"]
+
+    def test_scope_travels_beside_the_payload_and_duplicates_none_of_it(
+        self, tmp_path: Path
+    ) -> None:
+        """Scope is a separate argument, and carries only what the payload lacks."""
+        emitter = _RoundLogEmitter(tmp_path, "e1", 3)
+        emitter.emit(
+            "unit_completed",
+            {"entry_id": "entry-1", "replicate": 2, "side": "child"},
+            {"generation_id": "gen-7"},
+        )
+        event = RoundLog(tmp_path, "e1", 3).read()[0]
+        # The entry, the side and the replicate stay where the payload
+        # already states them — a second copy could only drift from the
+        # first. The scope adds the challenger the payload cannot name.
+        assert event.scope == RoundEventScope(generation_id="gen-7", step="run")
+        assert event.payload == {"entry_id": "entry-1", "replicate": 2, "side": "child"}
+
+    def test_a_null_coordinate_reads_back_as_absent(self, tmp_path: Path) -> None:
+        emitter = _RoundLogEmitter(tmp_path, "e1", 1)
+        emitter.emit("round_opened", {"contract_hash": "h"}, {"generation_id": None})
+        event = RoundLog(tmp_path, "e1", 1).read()[0]
+        # Never the literal string "None" — a null coordinate is an absent one.
+        assert event.scope.generation_id == ""
+
+    def test_proposal_lifecycle_events_share_the_next_generation_scope(
+        self, tmp_path: Path
+    ) -> None:
+        """The outer proposer events carry the challenger their slate builds."""
+        from types import SimpleNamespace
+
+        from zicato.evolve.propose_apply import _propose_child
+
+        class _Proposer:
+            async def propose(self, _ctx: ProposerContext) -> Experiment:
+                return _experiment("v1", "idea")
+
+        async def _aux(_system: str, _user: str, _model: str) -> str:
+            return ""
+
+        asyncio.run(
+            _propose_child(
+                proposer_agent=_Proposer(),
+                epoch_id="e1",
+                parent_id="v0",
+                next_id="v1",
+                patterns=(),
+                mutations=(),
+                brief=SimpleNamespace(text="", forbidden_ids=frozenset()),
+                loss_summary="",
+                auxiliary_call_llm=_aux,
+                auxiliary_model="test",
+                max_proposer_retries=1,
+                workspace_root=tmp_path,
+                generation_root=tmp_path,
+                validate_experiment=None,
+                meta_loop_emitter=None,
+                custom_judge_names=frozenset(),
+                prior_experiments=(),
+                restrict_visibility=True,
+                failure_profile="",
+                round_index=3,
+                round_emitter=_RoundLogEmitter(tmp_path, "e1", 3),
+            )
+        )
+        events = RoundLog(tmp_path, "e1", 3).read()
+        assert [event.type for event in events] == [
+            "proposal_attempted",
+            "experiment_minted",
+            "patches_applied",
+        ]
+        # EVERY event of the propose names its challenger in the SCOPE, so a
+        # reader groups by one field on every record. ``patches_applied``
+        # states the id in its payload too; the repetition is deliberate, and
+        # the two cannot disagree because one variable writes both.
+        assert [event.scope.generation_id for event in events] == ["v1", "v1", "v1"]
+        assert events[-1].payload["generation_id"] == "v1"
 
     def test_unwritable_log_never_raises(self, tmp_path: Path) -> None:
         # Bind onto a path whose parent is a FILE, so every append fails —
@@ -340,17 +434,21 @@ class TestBestOfNEmission:
             inner=_Inner(),
             config=ProposerQualityConfig(best_of_n=3, critique_enabled=False),
         )
-        ctx = _ctx(lambda token, fields: emitted.append((token, fields)))
+        ctx = _ctx(lambda token, fields, scope: emitted.append((token, fields, scope)))
         asyncio.run(agent.propose(ctx))
-        tokens = [t for t, _f in emitted]
+        tokens = [t for t, _f, _s in emitted]
         assert tokens == [
             "candidate_sampled",
             "candidate_sampled",
             "candidate_sampled",
             "critique_selected",
         ]
-        assert [f["i"] for t, f in emitted if t == "candidate_sampled"] == [0, 1, 2]
-        assert all(f["n"] == 3 for t, f in emitted if t == "candidate_sampled")
+        assert [f["i"] for t, f, _s in emitted if t == "candidate_sampled"] == [0, 1, 2]
+        assert all(f["n"] == 3 for t, f, _s in emitted if t == "candidate_sampled")
+        # Every event of a slate names the challenger it is building: a field
+        # round drives several through this one seam while their candidate
+        # indexes all restart at zero.
+        assert all(s == {"generation_id": "v1"} for _t, _f, s in emitted)
         critique = emitted[-1][1]
         assert critique["reason"] == "heuristic"
         assert isinstance(critique["index"], int)
@@ -380,7 +478,7 @@ class TestBestOfNEmission:
             inner=_Inner(),
             config=ProposerQualityConfig(best_of_n=3, critique_enabled=False),
         )
-        result = asyncio.run(agent.propose(_ctx(lambda t, f: emitted.append((t, f)))))
+        result = asyncio.run(agent.propose(_ctx(lambda t, f, s: emitted.append((t, f)))))
         assert result.generation_id == "v1"
         assert [t for t, _f in emitted] == [
             "candidate_sampled",
@@ -411,7 +509,7 @@ class TestBestOfNEmission:
             inner=_Inner(),
             config=ProposerQualityConfig(best_of_n=2, critique_enabled=False),
         )
-        asyncio.run(agent.propose(_ctx(lambda t, f: emitted.append((t, f)))))
+        asyncio.run(agent.propose(_ctx(lambda t, f, s: emitted.append((t, f)))))
         assert [t for t, _f in emitted] == [
             "candidate_sampled",
             "candidate_sampled",
@@ -509,6 +607,14 @@ class TestSlateEvidenceReachesTheReader:
         from zicato.epoch.round_integrity import RoundStatus, round_integrity
 
         self._run_slate(tmp_path, survivors=1, n=3)
+        slate_events = [
+            event
+            for event in RoundLog(tmp_path, "e1", 1).read()
+            if event.type in {"candidate_sampled", "critique_selected"}
+        ]
+        assert slate_events
+        assert {event.scope.generation_id for event in slate_events} == {"v1"}
+        assert {event.scope.step for event in slate_events} == {"propose"}
         verdict = round_integrity(tmp_path, "e1", 1)
 
         assert verdict.status == RoundStatus.VOID
@@ -541,3 +647,162 @@ class TestSlateEvidenceReachesTheReader:
         )
         # ... and no slot-tagged transport error was mistaken for a patch.
         assert not verdict.invalid_patch
+
+
+class TestDuelScopeWiring:
+    """What the unit and gate emitters actually WRITE as plan coordinates.
+
+    These records are write-once: a dropped keyword or a reversed side map
+    corrupts the durable log for every round emitted before anyone notices,
+    and no re-run repairs it. So the assertions are on the scope that
+    reaches the log rather than on the arguments the call site passes.
+    """
+
+    class _Result:
+        per_entry_losses = {"entry-b": 0.2, "entry-a": 0.1}
+        parent_agg = {"scalar": 0.6}
+        child_agg = {"scalar": 0.9}
+        outcome = type("_O", (), {"reason": "", "decision": "promote"})()
+
+    def _events(self, tmp_path: Path, type_token: str) -> list[Any]:
+        return [e for e in RoundLog(tmp_path, "e1", 4).read() if e.type == type_token]
+
+    def _scopes(self, tmp_path: Path, type_token: str) -> list[RoundEventScope]:
+        return [e.scope for e in self._events(tmp_path, type_token)]
+
+    def test_units_name_the_generation_on_each_side(self, tmp_path: Path) -> None:
+        from zicato.evolve.round_reporting import _emit_tournament_units
+
+        _emit_tournament_units(
+            _RoundLogEmitter(tmp_path, "e1", 4),
+            self._Result(),
+            parent_generation_id="v-champ",
+            child_generation_id="v-chal",
+            matchup_id="m-7",
+        )
+
+        events = self._events(tmp_path, "unit_completed")
+        scopes = [e.scope for e in events]
+        # One per (entry, side), entries in sorted order. The entry and the
+        # side are the payload's own; the scope adds the generation each ran.
+        assert [
+            (e.payload["entry_id"], e.payload["side"], e.scope.generation_id) for e in events
+        ] == [
+            ("entry-a", "parent", "v-champ"),
+            ("entry-a", "child", "v-chal"),
+            ("entry-b", "parent", "v-champ"),
+            ("entry-b", "child", "v-chal"),
+        ]
+        # The opponent is the OTHER side, never the same generation twice.
+        assert [s.attributes["opponent_generation_id"] for s in scopes] == [
+            "v-chal",
+            "v-champ",
+            "v-chal",
+            "v-champ",
+        ]
+        # The aggregate placeholder reaches NO coordinate, named or open:
+        # its absence is the honest statement that this event names no draw.
+        assert all("replicate" not in s.attributes for s in scopes)
+        assert {s.attributes["matchup_id"] for s in scopes} == {"m-7"}
+        assert {s.step for s in scopes} == {"run"}
+
+    def test_the_gate_names_the_challenger_and_its_opponent(self, tmp_path: Path) -> None:
+        from zicato.evolve.round_reporting import _emit_gate_evaluated
+
+        _emit_gate_evaluated(
+            _RoundLogEmitter(tmp_path, "e1", 4),
+            self._Result.outcome,
+            parent_agg=self._Result.parent_agg,
+            child_agg=self._Result.child_agg,
+            generation_id="v-chal",
+            opponent_generation_id="v-champ",
+            matchup_id="m-7",
+        )
+
+        (scope,) = self._scopes(tmp_path, "gate_evaluated")
+        assert (scope.generation_id, scope.step) == ("v-chal", "gate")
+        assert scope.attributes == {"opponent_generation_id": "v-champ", "matchup_id": "m-7"}
+
+    def test_an_unnamed_duel_still_emits_an_unscoped_record(self, tmp_path: Path) -> None:
+        """No ids to give (the default call): coordinates are absent, never invented."""
+        from zicato.evolve.round_reporting import _emit_gate_evaluated, _emit_tournament_units
+
+        emitter = _RoundLogEmitter(tmp_path, "e1", 4)
+        _emit_tournament_units(emitter, self._Result())
+        _emit_gate_evaluated(emitter, self._Result.outcome)
+
+        units = self._scopes(tmp_path, "unit_completed")
+        (gate,) = self._scopes(tmp_path, "gate_evaluated")
+        assert {s.generation_id for s in units} == {""}
+        assert [s.attributes for s in units] == [{}] * len(units)
+        assert (gate.generation_id, gate.attributes) == ("", {})
+
+
+def test_the_step_vocabulary_is_the_execution_plan_s() -> None:
+    """The emitter's steps are exactly the steps the plan can place.
+
+    ``evolve`` keeps its own literal table rather than importing ``query``
+    (the layering forbids the dependency), so the two can drift apart in
+    silence. A step this table invents is a coordinate naming a position no
+    plan node has, which is worse than an absent one. The test imports both
+    sides — the #272 registry-correspondence idiom.
+    """
+    from zicato.evolve.round_reporting import _ROUND_LOG_STEP
+    from zicato.query.execution_plan import ROUND_STEPS
+
+    assert set(_ROUND_LOG_STEP.values()) == {key for key, _, _ in ROUND_STEPS}
+
+
+def test_every_event_token_is_stepped_or_declared_stepless() -> None:
+    """No event token is stepless by omission — only by declaration.
+
+    A token missing from the step table would silently emit a scope with no
+    step, which reads as a token whose steplessness was intended.
+    Requiring every known token in exactly one of the two tables makes a new
+    event type state which it is.
+    """
+    from zicato.epoch.round_log import EVENT_TYPES
+    from zicato.evolve.round_reporting import _ROUND_LOG_STEP, _STEPLESS_EVENTS
+
+    stepped = set(_ROUND_LOG_STEP)
+    assert not (stepped & _STEPLESS_EVENTS), "a token cannot be both stepped and stepless"
+    assert stepped | _STEPLESS_EVENTS == set(EVENT_TYPES)
+
+
+def test_the_duel_call_site_names_the_generations_it_gates() -> None:
+    """The one duel driver passes the ids rather than only accepting them.
+
+    Every round now settles its matchups through ``field.py``'s
+    ``_run_matchup`` — the gauntlet reaches it as a one-challenger field — so
+    there is exactly ONE place that names the two sides of a duel, and it
+    must keep naming them.
+
+    The emitters default their scope arguments to ``""`` so an unscoped
+    caller still emits a well-formed record. That default is what makes a
+    dropped keyword silent: the round runs, the log is written, and only the
+    attribution is gone — permanently, since these records are write-once.
+    Driving a whole field round here would cost minutes, so the call site is
+    pinned structurally instead, the way ``test_generation_phase`` already
+    pins this package's shape.
+    """
+    import ast
+
+    required = {
+        "_emit_tournament_units": {"parent_generation_id", "child_generation_id"},
+        "_emit_gate_evaluated": {"generation_id", "opponent_generation_id"},
+    }
+    module = Path(__file__).resolve().parents[1] / "src" / "zicato" / "evolve" / "field.py"
+    seen: dict[str, set[str]] = {}
+    for node in ast.walk(ast.parse(module.read_text())):
+        if not isinstance(node, ast.Call) or not isinstance(node.func, ast.Name):
+            continue
+        if node.func.id in required:
+            # One call site each; a second would silently overwrite here, so
+            # the count is asserted rather than assumed.
+            assert node.func.id not in seen, f"{node.func.id} now has more than one call site"
+            seen[node.func.id] = {kw.arg or "" for kw in node.keywords}
+
+    assert set(seen) == set(required)
+    for name, keywords in sorted(seen.items()):
+        missing = required[name] - keywords
+        assert not missing, f"field.py: {name} does not name {sorted(missing)}"

@@ -202,6 +202,7 @@
         "payload": {
           "contract_hash": "292fa8d36d30644be17cf0e11ce1fba0ea7c4fb757d2574bf92b48e29c071e47"
         },
+        "scope": {},
         "seq": 1,
         "ts": "<TS>",
         "type": "round_opened"
@@ -212,6 +213,10 @@
           "n": 3,
           "recombined": false,
           "revise": false
+        },
+        "scope": {
+          "generation_id": "v1",
+          "step": "propose"
         },
         "seq": 2,
         "ts": "<TS>",
@@ -224,6 +229,10 @@
           "recombined": false,
           "revise": false
         },
+        "scope": {
+          "generation_id": "v1",
+          "step": "propose"
+        },
         "seq": 3,
         "ts": "<TS>",
         "type": "candidate_sampled"
@@ -234,6 +243,10 @@
           "n": 3,
           "recombined": false,
           "revise": false
+        },
+        "scope": {
+          "generation_id": "v1",
+          "step": "propose"
         },
         "seq": 4,
         "ts": "<TS>",
@@ -268,6 +281,10 @@
             }
           ]
         },
+        "scope": {
+          "generation_id": "v1",
+          "step": "propose"
+        },
         "seq": 5,
         "ts": "<TS>",
         "type": "critique_selected"
@@ -277,6 +294,10 @@
           "errors": [],
           "slot_index": null
         },
+        "scope": {
+          "generation_id": "v1",
+          "step": "propose"
+        },
         "seq": 6,
         "ts": "<TS>",
         "type": "proposal_attempted"
@@ -285,6 +306,10 @@
         "payload": {
           "experiment_id": "exp_<DATE>_t1_gauntlet_v1"
         },
+        "scope": {
+          "generation_id": "v1",
+          "step": "propose"
+        },
         "seq": 7,
         "ts": "<TS>",
         "type": "experiment_minted"
@@ -292,6 +317,10 @@
       {
         "payload": {
           "generation_id": "v1"
+        },
+        "scope": {
+          "generation_id": "v1",
+          "step": "apply"
         },
         "seq": 8,
         "ts": "<TS>",
@@ -303,6 +332,14 @@
           "replicate": 0,
           "side": "parent"
         },
+        "scope": {
+          "attributes": {
+            "matchup_id": "gauntlet",
+            "opponent_generation_id": "v1"
+          },
+          "generation_id": "v0",
+          "step": "run"
+        },
         "seq": 9,
         "ts": "<TS>",
         "type": "unit_completed"
@@ -312,6 +349,14 @@
           "entry_id": "picky_stakeholder_emulated",
           "replicate": 0,
           "side": "child"
+        },
+        "scope": {
+          "attributes": {
+            "matchup_id": "gauntlet",
+            "opponent_generation_id": "v0"
+          },
+          "generation_id": "v1",
+          "step": "run"
         },
         "seq": 10,
         "ts": "<TS>",
@@ -323,6 +368,14 @@
           "replicate": 0,
           "side": "parent"
         },
+        "scope": {
+          "attributes": {
+            "matchup_id": "gauntlet",
+            "opponent_generation_id": "v1"
+          },
+          "generation_id": "v0",
+          "step": "run"
+        },
         "seq": 11,
         "ts": "<TS>",
         "type": "unit_completed"
@@ -332,6 +385,14 @@
           "entry_id": "transformers_lay_audience",
           "replicate": 0,
           "side": "child"
+        },
+        "scope": {
+          "attributes": {
+            "matchup_id": "gauntlet",
+            "opponent_generation_id": "v0"
+          },
+          "generation_id": "v1",
+          "step": "run"
         },
         "seq": 12,
         "ts": "<TS>",
@@ -346,6 +407,14 @@
           "margin_required": 0.01,
           "rule_fired": ""
         },
+        "scope": {
+          "attributes": {
+            "matchup_id": "gauntlet",
+            "opponent_generation_id": "v0"
+          },
+          "generation_id": "v1",
+          "step": "gate"
+        },
         "seq": 13,
         "ts": "<TS>",
         "type": "gate_evaluated"
@@ -353,6 +422,10 @@
       {
         "payload": {
           "confirmed": true
+        },
+        "scope": {
+          "generation_id": "v1",
+          "step": "gate"
         },
         "seq": 14,
         "ts": "<TS>",
@@ -374,12 +447,16 @@
             "structure": "gauntlet"
           }
         },
+        "scope": {
+          "step": "decide"
+        },
         "seq": 15,
         "ts": "<TS>",
         "type": "decision_recorded"
       },
       {
         "payload": {},
+        "scope": {},
         "seq": 16,
         "ts": "<TS>",
         "type": "round_closed"

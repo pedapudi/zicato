@@ -344,7 +344,7 @@ async def test_the_round_log_records_the_winner_and_its_rationale() -> None:
     out = await agent.propose(
         _replace(
             _context(critic, patterns=(_pattern(("router__sp",)),)),
-            round_event_emitter=lambda t, f: events.append((t, f)),
+            round_event_emitter=lambda t, f, s: events.append((t, f)),
         )
     )
 
@@ -377,7 +377,7 @@ async def test_a_heuristic_pick_records_no_rationale() -> None:
     await agent.propose(
         _replace(
             _context(_CapturingCriticLLM("no integer here"), patterns=(_pattern(("router__sp",)),)),
-            round_event_emitter=lambda t, f: events.append((t, f)),
+            round_event_emitter=lambda t, f, s: events.append((t, f)),
         )
     )
 
@@ -601,7 +601,7 @@ async def test_chosen_earlier_candidate_rederives_its_child_tree() -> None:
     ctx = _replace(
         _context(_CapturingCriticLLM("0")),
         validate_experiment=hook,
-        round_event_emitter=lambda t, f: events.append((t, f)),
+        round_event_emitter=lambda t, f, s: events.append((t, f)),
     )
     agent = BestOfNProposerAgent(inner=inner, config=ProposerQualityConfig(best_of_n=3))
     out = await agent.propose(ctx)
@@ -947,7 +947,7 @@ async def test_sole_survivor_mode_string_and_event_ordering() -> None:
         inner=inner, config=ProposerQualityConfig(best_of_n=2, screen_entries=2)
     )
     ctx = _screened_context(
-        _CapturingCriticLLM("0"), screen, round_event_emitter=lambda t, f: events.append((t, f))
+        _CapturingCriticLLM("0"), screen, round_event_emitter=lambda t, f, s: events.append((t, f))
     )
     await agent.propose(ctx)
     # candidate_sampled xN, then candidate_screened xN, then critique_selected.
@@ -1003,7 +1003,9 @@ async def test_all_vetoed_slate_degrades_to_critic_over_all() -> None:
     agent = BestOfNProposerAgent(
         inner=inner, config=ProposerQualityConfig(best_of_n=2, screen_entries=2)
     )
-    ctx = _screened_context(critic, screen, round_event_emitter=lambda t, f: events.append((t, f)))
+    ctx = _screened_context(
+        critic, screen, round_event_emitter=lambda t, f, s: events.append((t, f))
+    )
     out = await agent.propose(ctx)
     assert out is cand1  # the critic still chose — the step never empties
     assert len(critic.user_prompts) == 1
@@ -1025,7 +1027,7 @@ async def test_all_vetoed_heuristic_mode_string() -> None:
         config=ProposerQualityConfig(best_of_n=2, critique_enabled=False, screen_entries=2),
     )
     ctx = _screened_context(
-        _CapturingCriticLLM("0"), screen, round_event_emitter=lambda t, f: events.append((t, f))
+        _CapturingCriticLLM("0"), screen, round_event_emitter=lambda t, f, s: events.append((t, f))
     )
     out = await agent.propose(ctx)
     assert out is cand0  # smaller diff wins under the heuristic
@@ -1043,7 +1045,7 @@ async def test_raising_screen_proceeds_unscreened() -> None:
         inner=inner, config=ProposerQualityConfig(best_of_n=2, screen_entries=2)
     )
     ctx = _screened_context(
-        critic, _RaisingScreen(), round_event_emitter=lambda t, f: events.append((t, f))
+        critic, _RaisingScreen(), round_event_emitter=lambda t, f, s: events.append((t, f))
     )
     out = await agent.propose(ctx)
     # Screening must never fail a propose: the critic selected as if
@@ -1209,7 +1211,9 @@ async def test_all_vetoed_revise_survivor_is_chosen() -> None:
     agent = BestOfNProposerAgent(
         inner=inner, config=ProposerQualityConfig(best_of_n=2, screen_entries=2)
     )
-    ctx = _screened_context(critic, screen, round_event_emitter=lambda t, f: events.append((t, f)))
+    ctx = _screened_context(
+        critic, screen, round_event_emitter=lambda t, f, s: events.append((t, f))
+    )
     out = await agent.propose(ctx)
     # The surviving replacement IS the choice — no critique call needed.
     assert out is candidates[2]
@@ -1231,7 +1235,9 @@ async def test_revise_also_vetoed_falls_back_with_distinct_mode_string() -> None
     agent = BestOfNProposerAgent(
         inner=inner, config=ProposerQualityConfig(best_of_n=2, screen_entries=2)
     )
-    ctx = _screened_context(critic, screen, round_event_emitter=lambda t, f: events.append((t, f)))
+    ctx = _screened_context(
+        critic, screen, round_event_emitter=lambda t, f, s: events.append((t, f))
+    )
     out = await agent.propose(ctx)
     # The critic chose over the ORIGINAL slate; the vetoed replacement is
     # never returned, and the budget is exactly one revise (no recursion).
@@ -1271,7 +1277,9 @@ async def test_revise_round_log_ordering_and_markers() -> None:
     agent = BestOfNProposerAgent(
         inner=inner, config=ProposerQualityConfig(best_of_n=2, screen_entries=2)
     )
-    ctx = _screened_context(critic, screen, round_event_emitter=lambda t, f: events.append((t, f)))
+    ctx = _screened_context(
+        critic, screen, round_event_emitter=lambda t, f, s: events.append((t, f))
+    )
     await agent.propose(ctx)
     # Slate samples, slate screens, THEN the revise sample + its screen,
     # then the selection — the existing vocabulary end to end.
@@ -1313,7 +1321,7 @@ async def test_screening_off_never_revises_byte_identical() -> None:
     from dataclasses import replace as _replace
 
     out = await agent.propose(
-        _replace(_context(critic), round_event_emitter=lambda t, f: events.append((t, f)))
+        _replace(_context(critic), round_event_emitter=lambda t, f, s: events.append((t, f)))
     )
     # No screen runner on the context ⇒ no screen, no revise: exactly the
     # N slate samples, no revise feedback anywhere, and the pre-revise
@@ -1343,7 +1351,9 @@ async def test_revise_malformed_screen_result_treated_as_unscreened_survivor() -
     agent = BestOfNProposerAgent(
         inner=inner, config=ProposerQualityConfig(best_of_n=2, screen_entries=2)
     )
-    ctx = _screened_context(critic, screen, round_event_emitter=lambda t, f: events.append((t, f)))
+    ctx = _screened_context(
+        critic, screen, round_event_emitter=lambda t, f, s: events.append((t, f))
+    )
     out = await agent.propose(ctx)
     assert out is candidates[2]
     assert dict(events)["critique_selected"]["reason"] == "screen_revise_survivor"
@@ -1478,7 +1488,7 @@ async def test_recombination_mint_happy_path() -> None:
     ctx = _replace(
         _context(critic),
         recombine_pair=_rec_pair(),
-        round_event_emitter=lambda t, f: events.append((t, f)),
+        round_event_emitter=lambda t, f, s: events.append((t, f)),
     )
     agent = BestOfNProposerAgent(inner=inner, config=ProposerQualityConfig(best_of_n=3))
     out = await agent.propose(ctx)
@@ -1525,7 +1535,7 @@ async def test_recombination_mint_validation_failure_degrades_to_fresh_sample() 
         _context(_CapturingCriticLLM("2")),
         recombine_pair=_rec_pair(),
         validate_experiment=hook,
-        round_event_emitter=lambda t, f: events.append((t, f)),
+        round_event_emitter=lambda t, f, s: events.append((t, f)),
     )
     agent = BestOfNProposerAgent(inner=inner, config=ProposerQualityConfig(best_of_n=3))
     out = await agent.propose(ctx)
@@ -1611,7 +1621,7 @@ async def test_vetoed_mint_stays_an_ordinary_slate_member() -> None:
         _context(_CapturingCriticLLM("0")),
         recombine_pair=_rec_pair(),
         screen_candidates=_screen,
-        round_event_emitter=lambda t, f: events.append((t, f)),
+        round_event_emitter=lambda t, f, s: events.append((t, f)),
     )
     agent = BestOfNProposerAgent(
         inner=inner,
@@ -1977,7 +1987,7 @@ async def test_failed_slot_errors_are_logged_even_when_a_sibling_survives() -> N
     events: list[tuple[str, dict]] = []
     ctx = _replace(
         _context(_CapturingCriticLLM("0")),
-        round_event_emitter=lambda t, f: events.append((t, f)),
+        round_event_emitter=lambda t, f, s: events.append((t, f)),
     )
     inner = _TwoDieOneSurvives()
     agent = BestOfNProposerAgent(inner=inner, config=ProposerQualityConfig(best_of_n=3))
@@ -2066,7 +2076,7 @@ async def test_all_failed_slate_does_not_double_report_its_attempts() -> None:
 
     ctx = _replace(
         _context(_CapturingCriticLLM("0")),
-        round_event_emitter=lambda t, f: events.append((t, f)),
+        round_event_emitter=lambda t, f, s: events.append((t, f)),
     )
     agent = BestOfNProposerAgent(inner=_AllFail(), config=ProposerQualityConfig(best_of_n=3))
     with pytest.raises(ProposerError):
@@ -2106,7 +2116,7 @@ async def test_swallowed_merge_call_error_reaches_the_log() -> None:
     ctx = _replace(
         _context(aux),
         recombine_pair=_rec_pair(),
-        round_event_emitter=lambda t, f: events.append((t, f)),
+        round_event_emitter=lambda t, f, s: events.append((t, f)),
     )
     agent = BestOfNProposerAgent(
         inner=inner,
@@ -2145,7 +2155,7 @@ async def test_a_clean_slate_emits_no_attempt_events() -> None:
     events: list[tuple[str, dict]] = []
     ctx = _replace(
         _context(_CapturingCriticLLM("0")),
-        round_event_emitter=lambda t, f: events.append((t, f)),
+        round_event_emitter=lambda t, f, s: events.append((t, f)),
     )
     agent = BestOfNProposerAgent(inner=inner, config=ProposerQualityConfig(best_of_n=3))
     await agent.propose(ctx)
