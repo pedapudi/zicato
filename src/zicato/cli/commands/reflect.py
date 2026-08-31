@@ -1107,8 +1107,9 @@ def suggest_cmd(
 ) -> None:
     """Mine episodes, synthesise suggestions, (optionally) admission-stamp, persist.
 
-    The eval-synthesis surface (EVAL-SYNTHESIS.md §6): WS-MINE extracts episodes
-    (endpoint-free), WS-SYNTH drafts suggestions, WS-ADMIT measures them. The
+    The eval-synthesis surface (EVAL-SYNTHESIS.md §6) runs three stages: episode
+    mining extracts episodes without calling an endpoint, suggestion synthesis
+    drafts a suggestion from each, and admission measurement scores them. The
     live admission probes SPEND real champion budget and are endpoint-gated —
     they run ONLY under ``--probe`` (default OFF: plan-mode shows what they would
     spend, spending nothing). Suggestions persist beside ``findings.json`` and
@@ -1158,8 +1159,8 @@ def suggest_cmd(
     synthesize = sug_mod.resolve_synthesize()
     if synthesize is None:
         raise click.ClickException(
-            "no synthesis seam available (WS-SYNTH's reflection.synthesis.synthesize is "
-            "not importable). Mining ran; suggestion drafting needs the synthesiser."
+            "no synthesis seam available (reflection.synthesis.synthesize is not "
+            "importable). Mining ran; suggestion drafting needs the synthesiser."
         )
     if imported_traces:
         # The bootstrap tier needs the reconstructions to draft entries (§7's
@@ -1181,8 +1182,8 @@ def suggest_cmd(
         admit = sug_mod.resolve_admit()
         if admit is None:
             click.echo(
-                "warning: --probe requested but no admission seam (WS-ADMIT) is available; "
-                "persisting UNMEASURED suggestions.",
+                "warning: --probe requested but no admission-measurement seam is "
+                "available; persisting UNMEASURED suggestions.",
                 err=True,
             )
         else:
