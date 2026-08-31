@@ -15,24 +15,25 @@
 > Python dashboard service is 09-dashboard-and-query.md; the cargo gates are
 > summarised in 11-testing.md §"THE PRE-COMMIT CHECKLIST".
 >
-> **Invariants introduced in this chapter.**
+> **Invariants introduced in this chapter.** The ID is the locator that other
+> documents cite; the Name is what prose uses.
 >
-> | ID | Invariant |
-> |----|-----------|
-> | S1 | The supervisor is a separate OS process that communicates with the orchestrator ONLY through atomic state files. It never shares memory, sockets, or locks with the loop it audits. |
-> | S2 | The supervisor never kills the orchestrator. `decide_heartbeat` has no `Kill` variant by construction; a deeply stale heartbeat escalates the WARNING, nothing else. |
-> | S3 | A worker pid is signalled only after the full vetting chain: `is_signalable_run_pid` (never pid ≤ 1, never self, never a protected pid) AND `is_same_process(pid, pid_start_time)` (pid-reuse immunity). |
-> | S4 | Orchestrator-written deadlines are untrusted: the enforced cutoff is clamped to `started_at + max_run_seconds`, so a run is always killable no matter what deadline was written. |
-> | S5 | Reaping (orphan workers + `ztw-snap-*` snapshots + state-file finalization) happens ONLY after a CONFIRMED orchestrator death — an identity check on the heartbeat pid, never a stale timestamp. |
-> | S6 | Snapshot GC removes only a `ztw-snap-*` root that is a strict descendant of the system temp dir. Any other path is refused, however it got into the record. |
-> | S7 | The audit ledger is append-only, hash-chained, fsynced per append, torn-tail-repaired at open, and verified on startup. It records; it never gates. |
-> | S8 | The supervisor opens `index.db` read-only, refuses a `user_version` that does not equal its pinned `EXPECTED_SCHEMA_VERSION`, and every index-backed endpoint degrades to an empty/`null` payload with a `note` rather than a 500. |
-> | S9 | The supervisor is the SOLE signaller of worker pids on the escalation path. The Python parent requests kills by writing markers; it never signals workers itself. |
-> | S10 | Every integrity-notary check (diff containment, promotion gate, divergence) is read-only and fail-open on the supervisor side: it alarms on positive observed evidence and reports nothing when the attestation cannot be made. |
-> | S11 | The two loops (`heartbeat_loop`, `runs_loop`) are the only active code. Each is a pure-decision-function-plumbed `tokio::time::interval` select-loop; `runs_loop` applies its per-run triggers in a FIXED priority order (confirmed-death reap → kill-request → deadline → staleness), and every escalation is mirrored to the in-memory action ring AND — when configured — the ledger. |
-> | S12 | The live surface never blocks and never leaks write intermediates: the filesystem watcher drops `*.tmp` atomic-write intermediates and per-file-debounces; the SSE broker is a bounded broadcast that drops a slow client rather than blocking the watcher or other clients. |
-> | S13 | The supervisor holds NO cached state across ticks except the explicitly-carried trackers (`SeqLiveness`, the integrity de-dup sets, the ledger tail) and the process-lifetime counters. `WorkspacePaths` is read fresh every tick and is the Rust twin of `zicato.runtime.paths`. |
-> | S14 | The HTTP read surface is operational. Analytical tournament and health projections belong to `zicato.query`; the supervisor may inspect the index for alarms but never serves it as business truth. |
+> | ID | Name | Invariant |
+> |----|------|-----------|
+> | S1 | out-of-band supervision | The supervisor is a separate OS process that communicates with the orchestrator ONLY through atomic state files. It never shares memory, sockets, or locks with the loop it audits. |
+> | S2 | the never-kill-the-orchestrator rule | The supervisor never kills the orchestrator. `decide_heartbeat` has no `Kill` variant by construction; a deeply stale heartbeat escalates the WARNING, nothing else. |
+> | S3 | the vetted-pid-signalling rule | A worker pid is signalled only after the full vetting chain: `is_signalable_run_pid` (never pid ≤ 1, never self, never a protected pid) AND `is_same_process(pid, pid_start_time)` (pid-reuse immunity). |
+> | S4 | the clamped-deadline rule | Orchestrator-written deadlines are untrusted: the enforced cutoff is clamped to `started_at + max_run_seconds`, so a run is always killable no matter what deadline was written. |
+> | S5 | the confirmed-death-before-reaping rule | Reaping (orphan workers + `ztw-snap-*` snapshots + state-file finalization) happens ONLY after a CONFIRMED orchestrator death — an identity check on the heartbeat pid, never a stale timestamp. |
+> | S6 | the path-confined snapshot collection rule | Snapshot GC removes only a `ztw-snap-*` root that is a strict descendant of the system temp dir. Any other path is refused, however it got into the record. |
+> | S7 | the ledger-records-never-gates rule | The audit ledger is append-only, hash-chained, fsynced per append, torn-tail-repaired at open, and verified on startup. It records; it never gates. |
+> | S8 | the read-only version-pinned index rule | The supervisor opens `index.db` read-only, refuses a `user_version` that does not equal its pinned `EXPECTED_SCHEMA_VERSION`, and every index-backed endpoint degrades to an empty/`null` payload with a `note` rather than a 500. |
+> | S9 | the sole-worker-signaller rule | The supervisor is the SOLE signaller of worker pids on the escalation path. The Python parent requests kills by writing markers; it never signals workers itself. |
+> | S10 | the read-only fail-open integrity check | Every integrity-notary check (diff containment, promotion gate, divergence) is read-only and fail-open on the supervisor side: it alarms on positive observed evidence and reports nothing when the attestation cannot be made. |
+> | S11 | the two-loops fixed-trigger-priority rule | The two loops (`heartbeat_loop`, `runs_loop`) are the only active code. Each is a pure-decision-function-plumbed `tokio::time::interval` select-loop; `runs_loop` applies its per-run triggers in a FIXED priority order (confirmed-death reap → kill-request → deadline → staleness), and every escalation is mirrored to the in-memory action ring AND — when configured — the ledger. |
+> | S12 | the never-block-never-leak live surface rule | The live surface never blocks and never leaks write intermediates: the filesystem watcher drops `*.tmp` atomic-write intermediates and per-file-debounces; the SSE broker is a bounded broadcast that drops a slow client rather than blocking the watcher or other clients. |
+> | S13 | the no-cached-state-across-ticks rule | The supervisor holds NO cached state across ticks except the explicitly-carried trackers (`SeqLiveness`, the integrity de-dup sets, the ledger tail) and the process-lifetime counters. `WorkspacePaths` is read fresh every tick and is the Rust twin of `zicato.runtime.paths`. |
+> | S14 | the operational-not-analytical HTTP surface rule | The HTTP read surface is operational. Analytical tournament and health projections belong to `zicato.query`; the supervisor may inspect the index for alarms but never serves it as business truth. |
 
 ---
 
@@ -50,14 +51,14 @@ records is not a trustworthy witness to them. So the supervisor is:
   the files chapter 07 defines, read fresh each tick through
   `crates/supervisor/src/reader.rs`. Because every Python writer is atomic
   (tmp→fsync→rename), the supervisor never needs a lock and never observes a
-  torn record (invariant S1);
+  torn record — out-of-band supervision;
 - **never a peer in memory** — no shared queues, no IPC channel, no port the
   orchestrator must answer on. The one "write channel" back toward the loop
   is the same control-file protocol everyone else uses (§8.5, §8.11).
 
 This is what makes its guarantees meaningful: a deadline kill fires even when
-the orchestrator's event loop is parked, precisely because nothing about the
-supervisor depends on the orchestrator being responsive.
+the orchestrator's event loop is parked, because nothing about the supervisor
+depends on the orchestrator being responsive.
 
 ```rust
 //! Deadline enforcement is a first-class, default-on trigger: every
@@ -116,11 +117,10 @@ integrity-notary scans plus ledger transition observation).
 
 ## 8.3 Guarantee: the warn-only heartbeat — no `Kill` variant by construction
 
-The historical bug this encodes (it is the headline finding of
-`docs/design/FUNCTIONALITY-RECOMMENDATIONS.md`): a watchdog that killed the
-orchestrator on a stale heartbeat killed healthy runs, because a slow LLM
-call ages the timestamp while the loop is making genuine progress. The fix is
-not a bigger threshold — it is removing the capability:
+A watchdog that kills the orchestrator on a stale heartbeat kills healthy runs,
+because a slow LLM call ages the timestamp while the loop makes real progress.
+This is the headline finding of `docs/design/FUNCTIONALITY-RECOMMENDATIONS.md`,
+and the answer is to remove the capability rather than to raise the threshold:
 
 ```rust
 /// **The watchdog never kills the orchestrator.** An orchestrator whose
@@ -154,15 +154,14 @@ session, or one slow model call destroys hours of in-flight tournament work.
 The `heartbeat_stale_kill` threshold survives only as the *deep-stale*
 boundary that raises `Warn` → `Stale`.
 
-Liveness itself is seq-first (see 07-runtime-and-durability.md §"heartbeat
-— liveness, seq-vs-timestamp, and the paused flag"): the `SeqLiveness`
-tracker, shared between `heartbeat_loop` (which advances it) and `/statusz`
-(which reads it without advancing), classifies on the age of the last **seq
-change** when the heartbeat carries a `seq`, and falls back to timestamp age
-for a legacy heartbeat. A fresh timestamp over an unmoving seq is treated as
-stale — the wedged-loop false-negative closed; a slow call between two
-transitions no longer reads as dead — the false-positive closed. Both paths
-share `classify_age`, and neither can return a kill.
+Liveness itself is seq-first (see 07-runtime-and-durability.md §7.6.1). The `SeqLiveness` tracker
+is shared between `heartbeat_loop`, which advances it, and `/statusz`, which
+reads it without advancing. It classifies on the age of the last **seq change**
+when the heartbeat carries a `seq`, and falls back to timestamp age for a
+heartbeat that carries none. A fresh timestamp over an unmoving seq
+reads as stale, which catches a wedged loop; a slow call between two transitions
+reads as alive, which spares a working one. Both paths share `classify_age`, and
+neither can return a kill.
 
 > ⛔ NEVER add a code path that signals the pid carried by
 > `heartbeat.json`. If you believe you need one, you are re-introducing the
@@ -172,7 +171,8 @@ share `classify_age`, and neither can return a kill.
 
 ## 8.4 Guarantee: pid-safety and `(pid, start_time)` identity
 
-Every signal the supervisor sends passes a two-stage guard (invariant S3).
+Every signal the supervisor sends passes a two-stage guard: the
+vetted-pid-signalling rule.
 
 **Stage 1 — the signalable set** (`is_signalable_run_pid`): never pid ≤ 1
 (pid 0 addresses the whole process group; pid 1 is init), never the
@@ -194,7 +194,7 @@ comment in `crates/supervisor/src/state.rs`).
 `resolve_kill_target` upgrades a vetted single-pid kill to a group kill only
 when ALL of: the record carries a `pgid`; that pgid IS the vetted leader's
 own pid (a pgid ≠ pid is a foreign group nobody identity-matched — refuse);
-and `is_negatable_pgid` passes (pgid > 1, not the supervisor's or
+and `is_negatable_pgid` passes (pgid > 1, and neither the supervisor's nor the
 orchestrator's own group, computed by `protected_pgids`). Any failure falls
 back to the always-safe single-pid `KillTarget::Leader`.
 
@@ -211,7 +211,8 @@ never collect anything else.
 
 The per-run deadline is orchestrator-written and therefore untrusted — a
 far-future value (bug or hostility) would silently disable the watchdog. The
-enforced cutoff is the clamped `effective_deadline` (invariant S4):
+enforced cutoff is the clamped `effective_deadline`, which is the
+clamped-deadline rule:
 
 ```rust
 /// The deadline a run record carries is orchestrator-written and untrusted:
@@ -236,19 +237,18 @@ pub fn effective_deadline(
 
 `decide_run_deadline` then walks: before the effective deadline → `None`;
 past it within `--run-kill-grace` → `Sigterm`; past it + grace with the
-worker still alive → `Sigkill`. Pid vetting (S3) applies before anything is
-sent; a worker that exits during the grace collapses back to `None`.
+worker still alive → `Sigkill`. Pid vetting applies before anything is sent; a worker that exits during the grace collapses back to `None`.
 
 The staleness trigger (`decide_run`) is separate and complementary: it fires
 on `last_progress` not advancing. Its kill threshold is `2 × the run's own
-budget` when the record carries one (the fixed `run_stale_kill` is only the
-backstop for budget-less records) — with the worker's `RunHeartbeatBeater`
-bumping every ~3s, staleness past that means the worker process itself is
-wedged, not merely waiting on a slow model.
+budget` when the record carries one; the fixed `run_stale_kill` is the backstop
+for budget-less records. The worker's `RunHeartbeatBeater` bumps every ~3s, so
+staleness past that threshold means the worker process itself is wedged rather
+than merely waiting on a slow model.
 
 **What goes wrong without the clamp:** one malformed deadline makes one run
 immortal; the whole point of an out-of-band budget enforcer evaporates on
-exactly the input it exists for. `--max-run-seconds` defaults to 6h — far
+the very input it exists for. `--max-run-seconds` defaults to 6h — far
 above any per-board budget, so legitimate runs are never clipped.
 
 ---
@@ -257,9 +257,10 @@ above any per-board budget, so legitimate runs are never clipped.
 
 When the orchestrator dies mid-run, its workers are orphaned and each run's
 ephemeral checkout (`${TMPDIR}/ztw-snap-*`) is leaked. The supervisor is the
-only process positioned to clean up — and the danger is cleaning up a
-*slow* orchestrator's live work. Two rails (`crates/supervisor/src/reap.rs`,
-invariants S5 + S6):
+only process positioned to clean up, and the danger is cleaning up a
+*slow* orchestrator's live work. Two rails carry the
+confirmed-death-before-reaping rule and the path-confined snapshot collection
+rule (`crates/supervisor/src/reap.rs`):
 
 **Rail 1 — conservative dead determination.** `decide_orchestrator_dead`
 returns true ONLY when the heartbeat's pid fails the identity check (gone, or
@@ -329,10 +330,9 @@ pub const SNAPSHOT_PREFIX: &str = "ztw-snap-";
 > forever (the reaper refuses to touch them); break the third and a
 > malformed or hostile `snapshot_path` can delete an arbitrary tree.
 
-**What goes wrong without the dead-confirmation rail:** the pre-fix
-behaviour — a slow orchestrator's runs get reaped out from under it, which
-is the same class of self-inflicted kill §8.3 closed for the orchestrator
-itself.
+**What goes wrong without the dead-confirmation rail:** a slow orchestrator's
+runs get reaped out from under it, which is the same class of self-inflicted
+kill that §8.3 closes for the orchestrator itself.
 
 ---
 
@@ -340,7 +340,8 @@ itself.
 
 Everything else the supervisor observes lands in state the orchestrator can
 rewrite. The ledger (`crates/supervisor/src/ledger.rs`) is the record the
-audited party cannot edit undetected (invariant S7): opt-in via
+audited party cannot edit undetected, under the ledger-records-never-gates
+rule: opt-in via
 `--ledger-dir` (which should point OUTSIDE the orchestrator's mutable trees),
 one JSONL file `audit_ledger.jsonl`, one hash-chained record per line:
 
@@ -395,7 +396,7 @@ watchdog-only mode).
 > ✅ ALWAYS route a new supervisor-observed event through
 > `AuditLedger::append` with a new additive `RecordKind` — never write the
 > ledger file directly, and never make ledger success a precondition for the
-> action itself (S7: it records, it never gates).
+> action itself. The ledger records; it never gates.
 
 ---
 
@@ -404,7 +405,7 @@ watchdog-only mode).
 All three are per-tick scans in `runs_loop`, off by default, each behind its
 own flag, each writing its latest result into a shared findings store that
 `/statusz` surfaces and (when configured) the ledger records. All three obey
-invariant S10 — read-only, alarm-only, fail-open.
+the read-only fail-open integrity check: read-only, alarm-only, fail-open.
 
 ### 8.8.1 Diff containment (`--diff-containment`, record #2)
 
@@ -434,7 +435,7 @@ when the contract opts into
 ```
 — `src/zicato/evolve/containment.py` (module docstring)
 
-The two are kept in lockstep deliberately — mutable-tree basenames as the
+The two are kept in lockstep — mutable-tree basenames as the
 in-bounds surface, empty `mutable_trees` ⇒ the whole snapshot is in-bounds,
 coarse file granularity, fail-open skips. If you change the rule on either
 side, change both in the same commit and say so in both docstrings; a skew
@@ -474,15 +475,15 @@ per-generation `promoted` / `parent_generation_id` divergence, (b) epoch
 never resolved past `--divergence-stuck-age-seconds` (default 3600).
 Unresolved in-flight generations are SKIPPED for join (a) — mid-tournament
 the canonical decision is legitimately `None` and the index may lag, so
-comparing would be a false positive; check (c) is what catches the genuinely
-stuck ones. A missing index degrades to "nothing to cross-check".
+comparing would be a false positive; check (c) catches the stuck ones. A missing index degrades to "nothing to cross-check".
 
 ---
 
 ## 8.9 Guarantee: the read-only SQLite discipline
 
 `crates/supervisor/src/index_db.rs` is the only module that touches
-`index.db`, and it enforces invariant S8 at three layers:
+`index.db`, and it enforces the read-only version-pinned index rule at three
+layers:
 
 **Layer 1 — read-only connections.** Every open uses
 `SQLITE_OPEN_READ_ONLY` (there is a unit test, `open_is_read_only`, proving a
@@ -500,7 +501,7 @@ reindex` + live dual-writes); the supervisor never writes a byte of it.
 ```
 — `crates/supervisor/src/index_db.rs`
 
-A database whose `user_version` ≠ `EXPECTED_SCHEMA_VERSION` (currently `10`)
+A database whose `user_version` ≠ `EXPECTED_SCHEMA_VERSION` (currently `14`)
 returns `IndexError::StaleSchema` instead of risking rows decoded against
 the wrong schema generation. The cross-language pin has teeth on both sides:
 a cargo test asserts the constant equals the Python value, and a Python-side
@@ -524,7 +525,8 @@ get. Otherwise the full dashboard surface: the embedded static UI (`/`,
 **What degrades on the index being absent/stale.** File-backed endpoints
 (heartbeat, active runs, active tournament, run log) keep working. Integrity
 audits report no claim when their index side cannot be read. Analytical
-endpoints are not mounted here; add them to `zicato.query`, not the supervisor.
+endpoints are not mounted here; add them to `zicato.query` rather than to the
+supervisor.
 
 > ⛔ NEVER return a 500 from a supervisor GET because a workspace file or
 > the index is missing. The supervisor's contract is to run against a
@@ -536,8 +538,8 @@ endpoints are not mounted here; add them to `zicato.query`, not the supervisor.
 
 ## 8.10 The kill-request single-escalator handshake
 
-Invariant S9. Both halves, each in its own language, each pointing at the
-other:
+The sole-worker-signaller rule has two halves, each in its own language, each
+pointing at the other:
 
 **Python writes markers.** When the parent decides a worker must die (its
 own budget logic, an operator's dashboard kill), it writes
@@ -556,8 +558,8 @@ own budget logic, an operator's dashboard kill), it writes
 **The supervisor is the sole signaller.** In `runs_loop`, the kill-request
 trigger is "Trigger 0" — highest priority among the per-run triggers (the
 parent already decided; no deadline/staleness condition applies).
-`decide_run_kill_request` applies the standard vetting (S3: signalable +
-alive; identity via the escalation path); `resolve_kill_target` upgrades to
+`decide_run_kill_request` applies the standard vetting (signalable and alive;
+identity via the escalation path); `resolve_kill_target` upgrades to
 a group kill when safe; `escalate_target` runs SIGTERM → grace → SIGKILL.
 The marker is cleared afterwards — and also when there is nothing safe to
 signal (absent/unsafe/dead pid), so a request is never retried forever:
@@ -594,7 +596,7 @@ marker shape, so operator kills flow through the identical vetted path.
 **Building.** `make supervisor` → `cargo build --release -p
 zicato-supervisor`. The full local gate is `make supervisor-check` →
 `cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo
-test`, which is exactly what CI's Rust job runs.
+test`, which is what CI's Rust job runs.
 
 **Packaging.** A hatchling build hook (`hatch_build.py`, wired via
 `[tool.hatch.build.targets.wheel.hooks.custom]` in `pyproject.toml`)
@@ -639,8 +641,7 @@ supervisor's 7920–7930; see the `--port` doc in `main.rs`).
 
 ## 8.12 The Rust dev workflow
 
-**The gates.** Every supervisor change must pass, locally, exactly what CI
-runs:
+**The gates.** Every supervisor change must pass, locally, what CI runs:
 
 ```bash
 cargo fmt --check
@@ -683,7 +684,7 @@ work is required when:
 | Additive field the supervisor should ignore | none (serde ignores unknown keys; defaults cover absence) |
 | Additive field the supervisor must surface | mirror field in `state.rs` + wire into the route/statusz view + a deserialization test |
 | Semantic/shape change to a served payload | change the Python service AND the Rust route in the same commit — the heartbeat-ts lesson: when the dashboard schema clean-break made `ts` THE one typed liveness timestamp (integer ms, stamped server-side from `last_heartbeat`), both the Python reader and the Rust supervisor's heartbeat route had to move atomically, or the two dashboards would disagree about liveness (see 12-bug-casebook.md) |
-| Index schema change | bump Python `SCHEMA_VERSION` AND Rust `EXPECTED_SCHEMA_VERSION` together, update the row readers, re-capture the REINDEX-DUMP golden (11-testing.md §"Parity gates one by one") |
+| Index schema change | bump Python `SCHEMA_VERSION` AND Rust `EXPECTED_SCHEMA_VERSION` together, update the row readers, re-capture the REINDEX-DUMP golden (11-testing.md §11.7) |
 | Control-file shape change | update the Rust marker writers in `routes.rs` AND the Python consumer in the same commit (§8.13's checklist) |
 
 > ✅ ALWAYS grep BOTH languages when you touch a shared name. The shared
@@ -768,7 +769,7 @@ command survive an epoch roll (pause does) or must it be drained
   `control_log/` audit record (name, arg, source, reason).
 
 **Step 6 — frontend + docs.** If the dashboard UI grows a button, the node
-suite needs the behaviour test (11-testing.md §"Node suite conventions");
+suite needs the behaviour test (11-testing.md §11.9);
 `--help` text changes ripple into the CLI-HELP parity golden only if you
 added a CLI verb.
 
@@ -811,7 +812,8 @@ them together.
 
 The `SeqLiveness` tracker is a *shared* `Arc<Mutex>`: `heartbeat_loop` advances it
 (the only writer) and `/statusz` reads it without advancing, so both agree on the
-last seq-change age (S11). This is the structural half of the seq-first liveness
+last seq-change age, under the two-loops fixed-trigger-priority rule. This is
+the structural half of the seq-first liveness
 of §8.3.
 
 ### 8.14.1 `heartbeat_loop` — observe, classify, warn (never kill)
@@ -838,11 +840,12 @@ of §8.3.
 
 There is no fourth arm. `decide_heartbeat` cannot produce a `Kill` (§8.3), so the
 loop that consumes it structurally cannot signal the orchestrator pid. That is
-invariant S2 enforced by exhaustiveness — a reviewer adding a kill would have to
-add a `HeartbeatAction` variant first, which is exactly the diff §8.3's `⛔ NEVER`
+the never-kill-the-orchestrator rule enforced by exhaustiveness — a reviewer
+adding a kill would have to
+add a `HeartbeatAction` variant first, which is the diff §8.3's `⛔ NEVER`
 tells you to reject.
 
-### 8.14.2 `runs_loop` — the fixed trigger priority (S11)
+### 8.14.2 `runs_loop` — the fixed trigger priority
 
 Each tick, `runs_loop` first runs the enabled integrity scans (ledger transition
 observation, diff-containment, promotion-gate, divergence — §8.7/§8.8), computes
@@ -852,7 +855,7 @@ runs, and then applies FOUR triggers in strict priority order:
 
 | Priority | Trigger | Fires when | State file |
 |---|---|---|---|
-| −1 (highest) | **confirmed orchestrator death** | `decide_orchestrator_dead` (pid identity fails, not a stale timestamp) AND runs exist | REMOVED (no orchestrator left to finalize) |
+| −1 (highest) | **confirmed orchestrator death** | `decide_orchestrator_dead` (pid identity fails; a stale timestamp does not count) AND runs exist | REMOVED (no orchestrator left to finalize) |
 | 0 | **kill-request** | the parent wrote `control/kill_requests/{run_id}` | LEFT for the orchestrator reaper; the marker is cleared |
 | 1 | **wall-clock deadline** | `decide_run_deadline` past the clamped `effective_deadline` | LEFT for the orchestrator reaper |
 | 2 | **staleness** | `decide_run` — `last_progress` not advancing past the run's own `2×budget` | REMOVED (so it is not re-escalated) |
@@ -862,7 +865,7 @@ orchestrator is gone; the per-run triggers are moot), and Trigger 0 `continue`s
 the per-run loop iteration (the parent already decided; do not also apply the
 deadline/staleness thresholds). The confirmed-death reaper does three things per
 run — the same vetted escalation the live triggers use, then the snapshot GC,
-then the state-file finalization the dead orchestrator can no longer do:
+then the state-file finalization the dead orchestrator cannot do:
 
 ```rust
         // 1. Group-kill the orphaned worker, when there is a live, vetted pid.
@@ -906,11 +909,12 @@ tamper-evident audit trail (§8.7, §8.19).
 ### 8.14.4 The integrity-scan de-dup sets
 
 `runs_loop` carries three `HashSet`s across ticks so a STANDING violation alarms
-ONCE, not every tick: `quarantined` (diff-containment, keyed by `(epoch, gen)`),
+ONCE rather than every tick: `quarantined` (diff-containment, keyed by `(epoch, gen)`),
 `gate_flagged` (promotion-gate, same key), and `divergence_seen` (keyed by
 `(code, gen)`), plus the stateful `TransitionObserver` (§8.17). These are the
 ONLY state the loop keeps across ticks besides the ledger tail — everything else
-is re-read fresh each tick (S13). A new integrity scan you add must carry its own
+is re-read fresh each tick, under the no-cached-state-across-ticks rule. A new
+integrity scan you add must carry its own
 de-dup set the same way, or it will re-alarm on a steady-state condition forever.
 
 ---
@@ -918,7 +922,7 @@ de-dup set the same way, or it will re-alarm on a steady-state condition forever
 ## 8.15 The reader and the path map
 
 `crates/supervisor/src/reader.rs` is the supervisor's entire input surface: it
-turns the runtime state files into typed snapshots, read FRESH each tick (S13).
+turns the runtime state files into typed snapshots, read FRESH each tick.
 Its `WorkspacePaths` struct is the Rust twin of `zicato.runtime.paths` — the same
 path map, in the other language:
 
@@ -930,12 +934,14 @@ path map, in the other language:
 - `read_heartbeat` / `read_active_runs` / `read_kill_requests` /
   `read_active_tournament` (folding the event log — §8.18) / `build_snapshot`
   (the composite `/api/state` shape). Each is best-effort: a missing/malformed
-  file degrades to `None`/empty, never a panic (S8's file-side twin).
+  file degrades to `None`/empty, never a panic — the file-side twin of the
+  read-only version-pinned index rule.
 
 Because every Python writer is atomic (tmp→fsync→rename — 07-runtime-and-
 durability.md §"The atomic-write contract"), the reader never needs a lock and
 never observes a torn record — it reads the whole file and deserializes it in one
-shot. That is the concrete meaning of §8.1's invariant S1: the supervisor shares
+shot. That is the concrete meaning of out-of-band supervision (§8.1): the
+supervisor shares
 no memory, no lock, no socket with the orchestrator; the atomic file rename IS
 the synchronization.
 
@@ -1071,7 +1077,7 @@ carry the weight.
 
 The `0x1f` unit separators between fields are what stop a boundary attack (moving
 bytes between `ts` and `kind` cannot produce the same preimage), and the digest
-covers `kind.as_str()` — the raw string, not an enum discriminant — which is why
+covers `kind.as_str()`, the raw string rather than an enum discriminant, which is why
 a new `RecordKind` is purely additive: an older verifier still hash-checks a
 record whose kind it does not recognize (§8.7's closed-enum-but-additive
 property). `prev` binds each record to its predecessor's digest; genesis links to
@@ -1088,14 +1094,14 @@ property). `prev` binds each record to its predecessor's digest; genesis links t
 ```
 — `crates/supervisor/src/ledger.rs`, `repair_torn_tail`
 
-It operates on BYTES, not lines-as-strings, because a torn append can split a
+It operates on BYTES rather than on lines-as-strings, because a torn append can split a
 multi-byte UTF-8 character (a string read would fail outright). It finds the last
 non-empty line, trims trailing whitespace/newlines, and truncates iff that final
 record does not parse — the ONE shape that is provably a torn append (the writer
 emits exactly one `line + '\n'` per record and never rewrites earlier bytes). An
 interior tear is left for `verify_chain` to flag: this is the same torn-tail
 doctrine as `RoundLog` (07-runtime-and-durability.md §"Torn-tail tolerance is for
-APPEND-ONLY logs only") — "only the tail can be torn" is a theorem, not a general
+APPEND-ONLY logs only") — "only the tail can be torn" is a theorem rather than a general
 error-handling posture.
 
 ### 8.17.3 `append` — best-effort tail, and `verify` reads fresh
@@ -1135,7 +1141,7 @@ handful of records per run), which in turn is what makes the fsync-per-append of
 ## 8.18 The live surface: the filesystem watcher and SSE
 
 The supervisor's dashboard tier is fed by an inotify/FSEvents watcher and an SSE
-broker, both built to satisfy S12 (never block, never leak write intermediates).
+broker, both built to satisfy the never-block-never-leak live surface rule.
 
 ### 8.18.1 The watcher — debounce + the `.tmp` filter
 
@@ -1178,7 +1184,7 @@ A new client gets a `snapshot` event (a full `build_snapshot` — §8.15) follow
 by live `state_change` events as files mutate, with a 15s keep-alive `ping`. The
 channel is a bounded `tokio::sync::broadcast`: a slow client that cannot keep up
 is DROPPED (`filter_map(res.ok())` discards its lag errors) rather than
-back-pressuring the watcher or other clients — S12. The `/events` route serves
+back-pressuring the watcher or other clients. The `/events` route serves
 this; it is part of the full-dashboard tier, so it is absent under
 `--no-dashboard` (§8.9).
 
@@ -1249,8 +1255,8 @@ index or the snapshots and never write.
 
 ### 8.20.1 `check_row` — re-applying the gate's scalar rule (record #3)
 
-The promotion-gate notary re-derives exactly the gate's Rule 1 (06-tournament-
-and-selection.md §"Rule 1 — the scalar margin") and returns a four-way verdict:
+The promotion-gate notary re-derives the gate's scalar-margin rung
+(06-tournament-and-selection.md §6.6.1) and returns a four-way verdict:
 
 ```rust
 pub fn check_row(row: &TournamentRow, promote_margin: f64) -> RowVerdict {
@@ -1291,13 +1297,14 @@ disagree about what counts as a promotion.
 ### 8.20.2 The read-only SQLite open, in code (record #3/#4's substrate)
 
 Both the promotion-gate and divergence scans read through `index_db.rs`, which is
-where invariant S8's three layers live. The schema pin, verbatim:
+where the read-only version-pinned index rule's three layers live. The schema
+pin, verbatim:
 
 ```rust
 /// Opening a database whose `user_version` does not
 /// match this constant returns [`IndexError::StaleSchema`] rather than
 /// risking a row decoded against the wrong schema.
-pub const EXPECTED_SCHEMA_VERSION: i64 = 10;
+pub const EXPECTED_SCHEMA_VERSION: i64 = 14;
 ```
 — `crates/supervisor/src/index_db.rs`
 
@@ -1321,9 +1328,10 @@ check, fail-open":
 ```
 — `crates/supervisor/src/promotion_gate.rs`, `scan_current_epoch`
 
-This is S8 and the null-degradation contract (§8.9) meeting at the scan layer: a
+This is the read-only version-pinned index rule and the null-degradation
+contract (§8.9) meeting at the scan layer: a
 stale or absent index degrades the notary to "scanned, no contradiction", never a
-false alarm and never a crash. `EXPECTED_SCHEMA_VERSION = 10` is the cross-
+false alarm and never a crash. `EXPECTED_SCHEMA_VERSION = 14` is the cross-
 language pin — bump it in lockstep with the Python `SCHEMA_VERSION` (07-runtime-
 and-durability.md §"`zicato repair index`"), and a cargo test in this module reds if
 they drift (§8.12's canonical "Python change requires Rust parity" example).
@@ -1366,6 +1374,7 @@ what "escaped" means.
 - 11-testing.md — `make supervisor-check` in the pre-commit checklist; the
   REINDEX-DUMP gate that pins the shared index schema; route-test patterns.
 - 12-bug-casebook.md — the watchdog-kills-orchestrator finding that
-  produced S2; the heartbeat-ts payload-parity lesson; the reaper incidents.
+  produced the never-kill-the-orchestrator rule; the heartbeat timestamp
+  payload-parity lesson; the reaper incidents.
 - `docs/design/RUNTIME.md` §3–4 and `docs/design/ROBUSTNESS.md` §2 — the
   design record for the watchdog's promises.

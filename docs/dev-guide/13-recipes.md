@@ -1,10 +1,10 @@
 # 13 — Recipes (the cookbook)
 
 > **Covers.** Fourteen self-contained recipes for the changes agents make most
-> often, each grounded in the code you will actually edit. This is the chapter to
-> open first: every recipe stands alone — you can complete it without reading
-> another chapter — and its traps LINK to the casebook (12-bug-casebook.md) or
-> the deep chapter when you need the theory behind a step.
+> often, each grounded in the code you will edit. Open this chapter first: every
+> recipe stands alone, so you can complete one without reading another chapter.
+> Each recipe's traps LINK to the casebook (12-bug-casebook.md) or to the chapter
+> that carries the theory behind a step.
 >
 > **Prerequisites.** None to *use* a recipe. Each recipe names its own files and
 > commands. The recipes assume you have run the one-time setup once:
@@ -17,16 +17,16 @@
 >
 > | Section | What it gives you |
 > |---|---|
-> | **When to use** | the one-line trigger — is this the right recipe? |
+> | **When to use** | the one-line trigger that says whether this is the right recipe |
 > | **Files touched** | every file you will edit, with the symbol in it |
 > | **Steps** | numbered, naming real symbols — do them in order |
-> | **Traps** | ⚠️ the mistakes that cause bugs, each linked to a bug # or chapter |
+> | **Traps** | ⚠️ the mistakes that cause bugs, each linked to a casebook case or a chapter |
 > | **Verify** | the exact commands that prove you are done |
 > | **Definition of done** | the finish line, in one sentence |
 >
 > **The two commands every recipe ends near.** Before you propose ANY commit,
-> the two oracles must be green (Golden Rule G4), no matter how unrelated your
-> change feels:
+> the two oracles must be green (the two-oracles rule, 01-orientation.md §4),
+> however unrelated the change seems:
 >
 > ```bash
 > uv run pytest tests/test_convergence_known_answer.py -q   # the known-answer loop
@@ -47,11 +47,11 @@
 | 6 | Extend the deterministic example target | 11-testing.md |
 | 7 | Add an index table / column | 07-runtime-and-durability.md |
 | 8 | Add an epoch-open step | 03-contract-and-epochs.md |
-| 9 | Touch the orchestrator safely | 02-architecture.md |
+| 9 | Change the round pipeline safely | 02-architecture.md |
 | 10 | Run the full local verification ladder | 11-testing.md |
 | 11 | Investigate a red parity gate | 11-testing.md |
-| 12 | Debug a failing tournament e2e | 06/07 |
-| 13 | Safely bump a pinned OC number | 04-evaluation-statistics.md |
+| 12 | Debug a failing tournament e2e | 06-tournament-and-selection.md, 07-runtime-and-durability.md |
+| 13 | Safely bump a pinned operating-characteristic number | 04-evaluation-statistics.md |
 | 14 | Add a `skills/` entry | 10-builder-cli-library.md |
 
 ---
@@ -99,7 +99,7 @@ or "the judge panel has gone silent".
 2. **Choose severity honestly.** `info` is advisory; `warning`/`critical` mark
    the loop *unhealthy* (any warning-or-critical flips `LoopHealth.healthy` to
    `False`, and the CLI exits non-zero on a `critical`). Reserve `critical` for
-   "the loop is not measuring what it thinks it is."
+   a loop that is not measuring what the operator believes it measures.
 3. **Register it in the run list.** `assess_loop_health` is the dispatch — a
    hard-coded sequence of `findings.extend(detect_*(...))` calls. Add one line
    for your detector there. There is no decorator registry; the run list IS the
@@ -123,7 +123,7 @@ or "the judge panel has gone silent".
    re-export it from `src/zicato/health/__init__.py`.
 5. **Add a threshold only via `HealthConfig`.** If your detector needs a tunable
    bound, add a typed field to `zicato.config.HealthConfig` (the `health` block
-   of `config.json`) and read it via `_resolve_health_config` — never a bare
+   of `config.json`) and read it via `_resolve_health_config`. Never use a bare
    constant an operator cannot change, and never an environment variable (see
    10-builder-cli-library.md §"the merited env-var set").
 6. **Thread new inputs through the orchestrator only if needed.** If your
@@ -136,34 +136,34 @@ or "the judge panel has gone silent".
    that does NOT (assert empty). If you touched the orchestrator threading, add
    a case to `tests/test_orchestrator_health.py`.
 
-**The five-slot evidence convention — a RENDER conformance rule.**
+**The five-slot evidence convention — a rendering conformance rule.**
 
-A detector's job does not end at detecting. Issue #129 generalised eleven
-reports into one complaint — zicato says something is wrong and does not say
-what — and every instance was a surface that had the numbers in hand and
-rendered a verdict instead.
+A detector's job does not end at detecting. Eleven operator-facing reports
+shared one complaint: zicato said something was wrong without saying what
+(issue #129). In each of them the surface held the numbers and printed a bare
+verdict.
 
-Read that carefully, because it decides where the rule binds. The collection
-layer was already in good shape: all nineteen `HealthFinding` sites populate
-`detail`, fifteen of them write an explicit `detail["recommendation"]`, and
-`PracticeCheck` carries a structured `evidence` dict beside every verdict. The
-codebase has now collected well-shaped evidence **twice** and dropped it at the
-last hop **both times** — `_summarise_loop_health` skipped `detail` because its
-text walker accepted only string attributes, and `_render_practice_section`
-simply never read `evidence`. A third well-shaped field on a third dataclass
-would reproduce the bug, not fix it.
+The rule binds on the renderer rather than on the data shape. Collection is
+already sound: `HealthFinding` sites populate `detail`, most of them with an
+explicit `detail["recommendation"]`, and `PracticeCheck` carries a structured
+`evidence` dict beside every verdict. Both known instances of the defect dropped
+that evidence at the last hop. `_summarise_loop_health` skipped `detail` because
+its text walker accepted only string attributes, and `_render_practice_section`
+never read `evidence`. Adding a third well-shaped field to a third dataclass would
+reproduce the defect rather than remove it.
 
-So the rule is about renderers, not about data shapes:
+The rule:
 
 > **Any renderer that consumes a diagnostic structure must surface that
 > structure's evidence.** Adding a field is not the fix; reading it is.
 
-The two pins in `tests/test_issue_129_pins.py` are the enforcement precedents —
+Two tests in `tests/test_issue_129_pins.py` enforce it:
 `test_loop_health_summary_carries_the_detector_s_recommendation` and
-`test_practice_review_renders_the_evidence_behind_its_verdict`. Both assert a
-measured quantity appears in rendered operator-facing output, and neither
-asserts the phrasing around it. Write a new one in that shape when you add a
-renderer: pin the number reaching the reader, leave the prose free to change.
+`test_practice_review_renders_the_evidence_behind_its_verdict`. Both assert that
+a measured quantity appears in rendered operator-facing output, and neither
+asserts the phrasing around it. Write a test in that shape when you add a
+renderer: pin the number reaching the reader, and leave the prose free to
+change.
 
 The evidence a renderer must carry fills five slots:
 
@@ -175,10 +175,10 @@ The evidence a renderer must carry fills five slots:
 | Remedy | what to change | `raise promote_margin above the measured floor` |
 | Remedy safety | why the remedy is or is not proposed | `recommendation_raises_margin=False` |
 
-Not every slot applies to every message — a detector with no actionable remedy
-should say nothing rather than invent one — but a message that fills *only* the
-verdict slot is the defect this convention exists to prevent. The two
-collection-side precedents to read before writing a new one:
+Not every slot applies to every message. A detector with no actionable remedy
+should say nothing rather than invent one. A message that fills *only* the
+verdict slot is the defect this convention exists to prevent. Read these two
+collection-side examples before you write a new renderer:
 
 - `check_promotion_hygiene` (`reflection/practices.py`) fills all five. It
   carries the numbers inline in its `headline`, the structured pair in
@@ -197,20 +197,20 @@ models it as `VERDICT_UNMEASURED` plus an `unmeasured_reason` naming the missing
 input, so "measured, and it is fine" never collapses into "there was nothing to
 measure". Any surface that degrades when its input is absent — a run where the
 champion is never unseated, a workspace that never ran noise-floor calibration —
-needs that third state; reporting the reassuring value in its place is the
-worst form of this bug, because it reads as an answer.
+needs that third verdict. Reporting the reassuring value in its place is worse
+than reporting nothing, because a reader takes it for an answer.
 
-*Registered, not built.* Nothing in the workspace persists **rounds since the
-last promotion**. Every surface that wants it re-derives it from whatever it
-happens to hold — the promoted spine, the experiment list, the tournament rows
-— and each one invents its own degradation when the derivation runs short:
-`optimization_trajectory` reports `plateaued=False` because the promoted spine
-is too short to plateau, and the dashboard's verdict gates on a measured noise
-floor that opt-in calibration may never have produced. Those are separate
-symptoms of one missing field. Persisting the counter once, at the point a
-round settles, would make the whole class unrepresentable rather than patched
-per surface — but it touches the epoch record's shape, so it is a design pass,
-not a render fix, and it is recorded here for one.
+**A gap this chapter records rather than closes.** Nothing in the workspace
+persists the number of rounds since the last promotion. Every surface that wants
+that number re-derives it from whatever it happens to hold — the promoted spine,
+the experiment list, the tournament rows — and each invents its own degradation
+when the derivation runs short. `optimization_trajectory` reports
+`plateaued=False` because the promoted spine is too short to plateau, and the
+dashboard's verdict gates on a measured noise floor that opt-in calibration may
+never have produced. Those two symptoms come from one missing field. Persisting
+the counter once, at the point a round settles, would make the whole class
+unrepresentable instead of patched per surface. That counter changes the epoch
+record's shape, which makes it a design change rather than a rendering fix.
 
 **Traps.**
 
@@ -219,12 +219,13 @@ not a render fix, and it is recorded here for one.
   *operator-facing* (it renders in `zicato health` and the dashboard, which the
   operator sees) — so naming the offending entry id is correct and useful. Do
   NOT confuse it with the restricted-visibility envelope that governs the
-  proposer (Golden Rule G8; 05-proposer.md §"The restricted-visibility
-  envelope"). A health detector is not inside that envelope.
+  proposer (01-orientation.md §4; the formal spec is 05-proposer.md §"The
+  restricted-visibility envelope"). A health detector is not inside that
+  envelope.
 - ⚠️ **A detector must never raise into `assess_loop_health`.** The whole health
   subsystem is best-effort — the orchestrator lazy-imports it and degrades to
   `("", False)` if the `zicato.health` sibling is absent (mypy treats it as an
-  optional module for exactly this reason). A detector that raises on malformed
+  optional module for that reason). A detector that raises on malformed
   input turns a best-effort surface into a crash. Guard your parsing; return
   `[]` on data you cannot read.
 - ⚠️ **Keep it pure and deterministic.** No clock, no RNG, no filesystem read
@@ -242,7 +243,7 @@ uv run ruff check src/zicato/health/ && uv run mypy src/zicato/health/
 **Definition of done.** The detector fires on the failure condition with the
 right severity and structured detail, does nothing on healthy input, is in the
 `assess_loop_health` run list and both `__all__`s, and its test is green — and
-the two oracles (G4) still pass.
+the two oracles still pass.
 
 ---
 
@@ -307,8 +308,8 @@ gates.
 
 - ⚠️ **A new identity-bearing `detail` key that is not in `_LEAKY_DETAIL_KEYS`
   leaks the board to the proposer.** This is the restricted-visibility envelope
-  (Golden Rule G8; 05-proposer.md §"The channel-author's checklist"). The leak
-  is SILENT — the prompt is only ever read by the model, and nothing else in CI
+  (01-orientation.md §4; 05-proposer.md §"The channel-author's checklist"). The
+  leak is SILENT — the prompt is only ever read by the model, and nothing else in CI
   reads it — so the adversarial banding test is not optional. Plant an entry id
   in your detail and assert it does not survive `render_pattern_block(...,
   restrict=True)`.
@@ -329,7 +330,7 @@ uv run ruff check src/zicato/patterns/ && uv run mypy src/zicato/patterns/
 **Definition of done.** The detector emits a stable-id `Pattern` on the failure
 condition, is registered in `ALL_DETECTORS` (or via `register_detector`), any new
 identity key is banded under restrict (proven by a test), and the two oracles
-(G4) pass.
+pass.
 
 ---
 
@@ -362,8 +363,8 @@ colon) whose weighted mean folds into the generation scalar.
    Once a `MetricCount` under your prefix exists, it flows AUTOMATICALLY:
    `tournament/scoring.py::aggregate_namespaced_metrics` computes
    `{namespace: weight * mean}`, and `builtin_scalar`'s namespace loop folds it
-   into the scalar. You usually do NOT edit `builtins.py` at all — adding a
-   namespace is a data + weight change, not a seam change.
+   into the scalar. You usually do NOT edit `builtins.py` at all: adding a
+   namespace changes data and weights rather than a seam.
 3. **Understand the scalar composition.** The generation scalar is
    `builtin_scalar` building a `scalar_components` dict (`drift`, `pass`, each
    namespace, `diff_complexity`) and summing it. **Term order in that dict is
@@ -386,12 +387,12 @@ colon) whose weighted mean folds into the generation scalar.
    ```
 
    A namespace folds in via that loop — no edit to `builtin_scalar` needed; the
-   `diff_complexity` term is appended LAST and only when opted in, so the default
-   is byte-identical to the pre-feature formula.
+   `diff_complexity` term is appended LAST and only when opted in, so at its
+   default the scalar is byte-identical to the same sum without that term.
 4. **Monotonicity, if wanted.** To make the gate refuse a promotion that
    regresses your namespace, add your key to `ScoringWeights.namespace_monotonicity`
    (a `{namespace: bool}` map). `tournament/gate.py::_regressed_namespaces`
-   consumes it. See 04-evaluation-statistics.md §"The promote gate" for the
+   consumes it. See 04-evaluation-statistics.md §2 for the
    monotonicity scope semantics.
 5. **Builder + omit-at-default.** The builder already edits `namespace_weights`
    via `set_namespace_weights` (10-builder-cli-library.md §"The op inventory"),
@@ -400,8 +401,8 @@ colon) whose weighted mean folds into the generation scalar.
    non-default value MUST roll — that is the contract).
 6. **Test** in `tests/test_scoring_multi_objective.py` (the namespace composes
    into the scalar with the right sign and weight) and `tests/test_scoring_seams.py`
-   (byte-identity at default: the namespace absent/zero produces the exact prior
-   scalar).
+   (byte-identity at default: with the namespace absent or zero-weighted, the
+   scalar equals the scalar computed without it).
 
 **Traps.**
 
@@ -410,14 +411,15 @@ colon) whose weighted mean folds into the generation scalar.
   your term where the composition naturally places it and do not reorder the
   existing terms.
 - ⚠️ **A namespace that changes the scalar at default rolls every epoch.** Follow
-  the omit-at-default discipline (Golden Rule G6; 03-contract-and-epochs.md
-  §"Omit-at-default fields"): default weight `0` (or the key absent from the
-  canonical form) means existing epochs hash identically; a real weight rolls the
-  epoch, which is correct — a new objective is a new contract.
+  the omit-at-default rule (01-orientation.md §4; 03-contract-and-epochs.md
+  §3.4): default weight `0` (or the key absent from the
+  canonical form) means existing epochs hash identically. A real weight rolls the
+  epoch, which is correct: a new objective is a new contract.
 - ⚠️ **Do NOT reshape a term into a seam edit when a weight will do.** A reshape
   (a transform, a reducer) belongs in the declarative `pass_transform` /
-  `drift_kind_aggregation` registry or a `scalar_fn` plugin — not a hand-edit to
-  `builtin_scalar`. See 04-evaluation-statistics.md §"The scoring seams".
+  `drift_kind_aggregation` registry or in a `scalar_fn` plugin, rather than in a
+  hand-edit to `builtin_scalar`. See 04-evaluation-statistics.md §1.1 and §1.3
+  (the two scoring seams).
 
 **Verify.**
 
@@ -428,9 +430,9 @@ uv run pytest tests/test_epoch_contract.py -q      # omit-at-default: default di
 ```
 
 **Definition of done.** The namespace folds into the scalar with the right sign
-and weight, its metric is emitted by the reducer, the default is byte-identical
-to before (no retroactive roll), monotonicity works if you wired it, and both
-oracles (G4) pass.
+and weight, its metric is emitted by the reducer, the default scalar is
+byte-identical to the one without the namespace (no retroactive roll),
+monotonicity works if you wired it, and both oracles pass.
 
 ---
 
@@ -491,16 +493,16 @@ built-in kinds (`expected_text`, `regex`, `json_schema`, `predicate`, `rubric`).
   which MUST be distinct from the harness callable.** The collusion guard
   (`assert_distinct_callables`) exists so the thing being judged cannot also be
   the judge. If your matcher calls a model, it takes `aux_call_llm` (never the
-  harness `call_llm`), exactly as `_eval_rubric` forwards to
-  `zicato.board.rubric.evaluate_rubric_judge`. See 03-contract-and-epochs.md
-  §"The board" for the judge-collusion contract.
-- ⚠️ **An unknown kind must RAISE, not default.** `evaluate_expectation` raising
-  `ValueError` on an unrecognized token is the safety property — a
+  harness `call_llm`), in the same way `_eval_rubric` forwards to
+  `zicato.board.rubric.evaluate_rubric_judge`. See 03-contract-and-epochs.md §3.2.1 for the judge-collusion contract.
+- ⚠️ **An unknown kind must RAISE rather than fall through.**
+  `evaluate_expectation` raising `ValueError` on an unrecognized token is the
+  safety property — a
   silently-skipped expectation is a board entry that scores nothing and passes
   vacuously. Do not add a fallthrough `else: return passed`.
 - ⚠️ **The kind folds into the contract hash.** A board with your new expectation
   hashes differently — that is correct (the board is a contract input;
-  03-contract-and-epochs.md §"The contract hash"). Confirm the JSONL round-trip
+  03-contract-and-epochs.md §3.7). Confirm the JSONL round-trip
   (write → load) preserves the token so the hash is stable across a reload.
 
 **Verify.**
@@ -514,7 +516,7 @@ uv run ruff check src/zicato/board/ && uv run mypy src/zicato/board/
 
 **Definition of done.** An operator can author the expectation, the worker
 evaluates it to a uniform `ExpectationResult`, an unknown token raises, the JSONL
-round-trip is stable, and the two oracles (G4) pass.
+round-trip is stable, and the two oracles pass.
 
 ---
 
@@ -523,8 +525,8 @@ round-trip is stable, and the two oracles (G4) pass.
 **When to use.** You want the scalar to weight a goldfive drift signal
 differently — e.g. give a specific drift kind extra loss, or route a custom
 judge's drift to a named per-judge weight. Drift kinds originate in goldfive; a
-brand-new kind can be *weighted* with zero code change, so reach for this recipe
-only when you need custom routing or a genuinely new wire kind.
+kind the maps already carry can be *weighted* with zero code change, so reach for
+this recipe only when you need custom routing or a wire kind the maps lack.
 
 **Files touched.**
 
@@ -537,8 +539,8 @@ only when you need custom routing or a genuinely new wire kind.
 
 **Steps.**
 
-1. **First ask: is the kind already known?** If goldfive already emits your drift
-   kind (it is in `_DRIFT_KIND_INT_TO_STR`), you weight it with **zero code
+1. **Check whether the kind is already known.** If goldfive already emits your
+   drift kind (it is in `_DRIFT_KIND_INT_TO_STR`), you weight it with **zero code
    change**: add its string key to `ScoringWeights.per_kind_weights`. The
    multiplier resolves through `_kind_multiplier(kind, weights)`:
 
@@ -559,14 +561,14 @@ only when you need custom routing or a genuinely new wire kind.
    surfaced by `compute_per_judge_loss(drift_counts, weights)`, weighted by
    `per_judge_weights.get(name, default_judge_weight)`. To give a judge a
    distinct weight, set `per_judge_weights["<judge_name>"]`.
-3. **Only for a genuinely NEW wire-int kind** (goldfive added an integer the map
+3. **Only for a wire-int kind the maps lack** (goldfive added an integer the map
    does not know): add an entry to `_DRIFT_KIND_INT_TO_STR` in `reducer.py` AND
-   append the member to the `DriftKind` mirror enum in
-   `zicato.core.drift_kinds` (in goldfive's declaration order — the order is
-   observable in `valid values are: ...` errors; `GOLDFIVE_DRIFT_KINDS` derives
-   from it, and `tests/test_no_goldfive_import.py::test_mirror_matches_goldfive`
-   fails until the mirror matches upstream). The maps must agree — the reducer
-   aliases the shared normalizer.
+   append the member to the `DriftKind` mirror enum in `zicato.core.drift_kinds`,
+   in goldfive's declaration order. That order is observable in the
+   `valid values are: ...` errors, `GOLDFIVE_DRIFT_KINDS` derives from it, and
+   `tests/test_no_goldfive_import.py::test_mirror_matches_goldfive` fails until
+   the mirror matches upstream. The maps must agree — the reducer aliases the
+   shared normalizer.
 4. **Where it lands.** Drift loss is computed by `compute_drift_loss(...)` →
    `resolve_drift_loss(DriftContext(... builtin_loss=builtin_drift_loss(...)))`
    (the killable-worker seam), and the top reducer `reduce_loss` folds it into a
@@ -579,8 +581,8 @@ only when you need custom routing or a genuinely new wire kind.
 
 - ⚠️ **The per-kind multiplier is duplicated on purpose.** `reducer.py` and
   `scoring/builtins.py` each carry a `_kind_multiplier` — the builtins copy is
-  dependency-free because it runs on the seam-2 scalar path. If you change the
-  multiplier's LOGIC (not just add a weight), change BOTH or the two seams
+  dependency-free because it runs on the per-generation scalar path. If you
+  change the multiplier's LOGIC (not just add a weight), change BOTH or the two seams
   disagree. Adding a weight to `per_kind_weights` touches neither copy — that is
   why zero-code weighting works.
 - ⚠️ **A new wire-int kind added to only ONE of the two maps mis-normalizes.**
@@ -588,8 +590,8 @@ only when you need custom routing or a genuinely new wire kind.
   contract; a kind in one but not the other reads as `"custom"` (or raises) on
   the other path. Add to both in the same commit.
 - ⚠️ **`per_judge_weights` changes are contract changes.** They roll the epoch
-  (they shape the loss). Follow omit-at-default (Golden Rule G6) so an empty map
-  is byte-identical to before.
+  (they shape the loss). Follow the omit-at-default rule so an empty map hashes
+  identically to a contract with no such map at all.
 
 **Verify.**
 
@@ -600,7 +602,7 @@ uv run pytest tests/test_telemetry_reducer.py tests/test_telemetry_reducer_metri
 
 **Definition of done.** The drift kind gets the intended multiplier (per-kind or
 per-judge), a new wire-int kind is in both maps, the default empty-weights case
-is byte-identical, and both oracles (G4) pass.
+is byte-identical, and both oracles pass.
 
 ---
 
@@ -609,7 +611,7 @@ is byte-identical, and both oracles (G4) pass.
 **When to use.** You want to add a new defect token + predicate to the
 `target_0_convergence` example — usually to exercise a new board/scoring feature
 end-to-end under the known-answer harness (no live LLM). This is the target the
-convergence oracle (G4) runs.
+convergence oracle runs.
 
 **Files touched.**
 
@@ -659,7 +661,7 @@ convergence oracle (G4) runs.
 
 - ⚠️ **Update BOTH oracles, honestly — never tune one to pass.** The gauntlet
   (`scoring.json`) and racing (`scoring.effective.json`) oracles are the repo's
-  end-to-end truth anchors (Golden Rule G4). Changing the floor math and only
+  end-to-end truth anchors (the two-oracles rule). Changing the floor math and only
   fixing one, or nudging an `EXPECTED_*` constant until the test goes green
   without re-deriving it, deletes a measurement. Re-derive the floor from
   `scalar = tokens + (1 − passes/N)` and write down the arithmetic in the commit
@@ -667,13 +669,14 @@ convergence oracle (G4) runs.
   v3=1.2`.
 - ⚠️ **`mocks.py` callables must stay module-level.** The proposer/aux callables
   are serialized as dotted paths and re-imported in the subprocess worker
-  (Golden Rule G9; 12-bug-casebook.md §"module-level callables across the worker
-  boundary"). A closure or a lambda cannot cross the boundary — keep them
+  (the module-level-callable rule, 01-orientation.md §4; 06-tournament-and-selection.md §6.3.1). A closure or a lambda
+  cannot cross the boundary — keep them
   top-level functions and rewind counters via `reset`.
 - ⚠️ **The floor must remain a strict, hand-computable number.** The value of
   this target is that its answer is known exactly. If your token makes the
-  outcome depend on noise, you have moved it out of the Tier-1 known-answer class
-  into the `NoisyPolicyAdapter` Tier-2 class — a different test.
+  outcome depend on noise, you have moved it out of the exact known-answer class
+  and into the seeded-noise class that `NoisyPolicyAdapter` drives — a different
+  test.
 
 **Verify.**
 
@@ -685,7 +688,7 @@ bash tools/parity.sh --only MOCK-GOLDEN                     # the deterministic 
 
 **Definition of done.** The new token drives its predicate, both oracles converge
 on the re-derived floor, `mocks.py` callables are module-level, the MOCK-GOLDEN
-gate is green, and the convergence oracle (G4) passes with the new arithmetic
+gate is green, and the convergence oracle passes with the new arithmetic
 documented in the commit.
 
 ---
@@ -695,8 +698,8 @@ documented in the commit.
 **When to use.** You want a new analytics fact queryable from the derived SQLite
 index (`index.db`) — e.g. a new column on `generations`, or a whole new table.
 Remember the doctrine first: the index is DERIVED. The fact must already exist in
-a canonical file; the index row is a projection (07-runtime-and-durability.md
-§"files canonical, index derived").
+a canonical file; the index row is a projection (the files-canonical rule —
+07-runtime-and-durability.md §7.1, invariant `D1`).
 
 **Files touched.**
 
@@ -709,7 +712,7 @@ a canonical file; the index row is a projection (07-runtime-and-durability.md
 
 **Steps.**
 
-1. **Bump `SCHEMA_VERSION`.** It is a module int in `schema.py` (currently `10`).
+1. **Bump `SCHEMA_VERSION`.** It is a module int in `schema.py` (currently `14`).
    Increment it. The schema is dual-stamped (`PRAGMA user_version` + a
    `schema_meta` row).
 2. **Add to the fresh-build shape.** Edit the relevant `CREATE TABLE` in
@@ -718,7 +721,7 @@ a canonical file; the index row is a projection (07-runtime-and-durability.md
 3. **Add to the incremental-open migration.** A pre-existing older database is
    migrated in place. Add a `_V<N>_ADDED_COLUMNS` tuple and a new `if current <
    N:` block in `_migrate_inplace` that `ALTER TABLE … ADD COLUMN`s it (additive
-   only — never drop/rename). The v10 wave is the model:
+   only — never drop/rename). The version-10 column additions are the model:
 
    ```python
    # src/zicato/index/schema.py — the v10 column-add tuple
@@ -732,14 +735,14 @@ a canonical file; the index row is a projection (07-runtime-and-durability.md
    half-applied open is safe to re-run.
 4. **Populate it in ingest.** Teach the upsert writer (`_upsert_<table>` in
    `ingest.py`) to read the value off the canonical record and add it to the
-   `INSERT … ON CONFLICT DO UPDATE` column list — `COALESCE` for a nullable
-   provenance column so a re-ingest never nulls a set value. For a
+   `INSERT … ON CONFLICT DO UPDATE` column list. Use `COALESCE` for a nullable
+   provenance column, so a re-ingest never nulls a value already set. For a
    derived-analytics column, follow the `_fold_elo` precedent (a post-ingest
    fold run by `rebuild_index`).
 5. **Read it back-compatibly.** In `query.py`, expose the column through
    `_select_optional_columns`, which emits `NULL AS <col>` when the column is
-   absent — so a LEGACY index (built before your bump) still loads. Never `SELECT
-   <col>` directly from a table that a legacy index lacks.
+   absent — so an index built before your bump still loads. Never `SELECT
+   <col>` directly from a table that an older-schema index lacks.
 6. **Re-capture the goldens.** Update the exact column-contract lists in
    `tests/test_index_schema.py` and add a `tests/test_index_v<N>_schema.py`
    mirroring `test_index_v10_schema.py` (fresh-build columns + a migration test
@@ -751,11 +754,12 @@ a canonical file; the index row is a projection (07-runtime-and-durability.md
   column added to `_TABLE_STATEMENTS` but not to a migration block means a
   freshly-built index has it and an upgraded one does not (and vice-versa). Both
   paths must reach the same shape; `test_index_v<N>_schema.py` tests both a fresh
-  build AND a migration, precisely to catch this.
+  build AND a migration, to catch this.
 - ⚠️ **The reader refuses a NEWER index; never re-stamp it down.** `apply_schema`
   raises `IndexSchemaNewerError` when the on-disk `user_version` exceeds
-  `SCHEMA_VERSION` — invariant D12 (07-runtime-and-durability.md §"refuse-on-
-  newer"). This is why the index is safe to throw away:
+  `SCHEMA_VERSION` — the refuse-a-newer-record-format rule
+  (07-runtime-and-durability.md §7.11, invariant `D12`). This is why the index is
+  safe to throw away:
 
   ```python
   # src/zicato/index/schema.py — IndexSchemaNewerError (why the refusal exists)
@@ -768,12 +772,13 @@ a canonical file; the index row is a projection (07-runtime-and-durability.md
       """
   ```
 
-  An operator on an older build gets a clear refusal, not silent
-  misinterpretation. Do not add a down-migration — the recovery is `zicato
-  reindex`, not a schema downgrade.
+  An operator on an older build gets a clear refusal instead of a silent
+  misinterpretation. Do not add a down-migration; the recovery is `zicato
+  reindex` rather than a schema downgrade.
 - ⚠️ **A row with no canonical file source vanishes on `zicato repair index`.** The
-  index is derived (invariant D1); if your column has no file to re-derive from,
-  it disappears on the next rebuild and the vanish looks like someone else's bug.
+  index is derived (the files-canonical rule — 07-runtime-and-durability.md,
+  invariant `D1`). If your column has no file to re-derive from, it disappears on
+  the next rebuild, and the disappearance looks like someone else's bug.
   Land the fact in a canonical record first.
 
 **Verify.**
@@ -786,9 +791,9 @@ bash tools/parity.sh --only REINDEX-DUMP        # the rebuilt-index golden
 ```
 
 **Definition of done.** A new database and an upgraded one reach the same schema,
-the column is populated by ingest from a canonical record, a legacy index still
-loads (optional-column read), the REINDEX-DUMP golden is re-captured, and the two
-oracles (G4) pass.
+the column is populated by ingest from a canonical record, an older-schema index
+still loads (optional-column read), the REINDEX-DUMP golden is re-captured, and
+the two oracles pass.
 
 ---
 
@@ -857,12 +862,12 @@ is the contract pre-flight and the noise-floor calibration.
   your field is NOT among them. Add it as an *additive* config field written by
   `set_epoch_<field>`, and pin the hash-unchanged assertion. If your datum ever
   DOES belong in the hash, it is not an epoch-open measurement — it is a contract
-  component, and it rolls the epoch (03-contract-and-epochs.md §"The contract
-  hash").
+  component, and it rolls the epoch (03-contract-and-epochs.md §3.7).
 - ⚠️ **Fire exactly once per epoch, and best-effort.** The gate checks the field
   is unset before measuring, so a resumed or re-entered epoch does not re-measure
-  (and re-spend the budget). Wrap it in `best_effort` — a measurement failure
-  must never fail the round (invariant D11-style discipline).
+  (and re-spend the budget). Wrap it in `best_effort`: a measurement failure must
+  never fail the round, the same discipline as the best-effort-round-log rule
+  (07-runtime-and-durability.md, invariant `D11`).
 - ⚠️ **Do not persist a DRAFT measurement as the live epoch's.** Contrast the
   builder's `preflight` (10-builder-cli-library.md §"The statistical pre-flight"),
   which measures a draft and is recommend-only, NEVER persisted — because the
@@ -879,7 +884,7 @@ uv run pytest tests/test_epoch_contract.py -q      # the field did not enter the
 
 **Definition of done.** The step computes once per epoch, gated by a config knob,
 best-effort, persisted on the epoch record, provably never in the contract hash
-(hash-unchanged test), and the two oracles (G4) pass.
+(hash-unchanged test), and the two oracles pass.
 
 ---
 
@@ -910,44 +915,47 @@ pipeline only.
    `_mint_challenger_field`; an override rule goes in the PURE
    `_apply_field_overrides`.
 2. **Edit the seam, never inline the logic into a pipeline.** These are extracted
-   shared helpers precisely so a step "can never land on one pipeline only" — the
-   gauntlet and the field paths BOTH call them. Inlining your step into one path
-   is the exact shape of bugs #6 and #7 (12-bug-casebook.md §"Case 6" / §"Case
-   7"): the gauntlet got a fix the field path did not.
+   shared helpers so a step can never land on one pipeline only — the gauntlet
+   and the field paths BOTH call them. Inlining your step into one path is the
+   shape of the best-of-N tree-mismatch case and its field-path extension
+   (12-bug-casebook.md §"Case 6" and §"Case 7"): the gauntlet got a fix the field
+   path did not.
 3. **Patch the owner in tests.** A field-strategy test patches
    `zicato.evolve.field`; a gate test patches `zicato.evolve.gate`; a loop test
    patches `zicato.evolve.loop`. Do not add a forwarding function to the
    dispatcher to preserve a private test seam. Module-level functions remain
    important at worker boundaries, where dotted callable resolution requires
-   them (G9).
+   them (the module-level-callable rule).
 4. **Emit the right RoundLog events at the right seam.** Follow the duty column:
    `_propose_child` emits the propose events; the DECISION site (the caller of
    `_finalize_generation`, e.g. `_persist_rejected_round`) emits
-   `decision_recorded` / `round_closed`. Emission is best-effort (invariant D11)
-   — compute the payload OUTSIDE any `getattr` chain that could throw, and never
-   let emission fail the round (07-runtime-and-durability.md §"Emission is
-   best-effort").
+   `decision_recorded` / `round_closed`. Emission is best-effort (the
+   best-effort-round-log rule — 07-runtime-and-durability.md §7.10.4, invariant
+   `D11`): compute the payload OUTSIDE any `getattr` chain that could throw, and
+   never let emission fail the round.
 5. **Keep the pure seams pure.** `_mint_challenger_field` and
    `_apply_field_overrides` return decisions (`_FieldMintDecision`, a tuple) and
    do NO I/O — that is what makes them unit-testable without a workspace. If your
-   change needs to WRITE, it belongs in the caller, not the pure seam.
+   change needs to WRITE, it belongs in the caller rather than in the pure seam.
 6. **Test at the seam.** `tests/test_orchestrator_decomposition.py` monkeypatch-
    calls the pure seams by name; add your case there. For the I/O seams, the two
-   oracles (G4) exercise the full loop — a seam regression turns one of them red.
+   oracles exercise the full loop — a seam regression turns one of them red.
 
 **Traps.**
 
-- ⚠️ **Inlining a step into one pipeline is the bug #6/#7 shape.** The whole
-  reason these seams exist is that a best-of-N tree fix landed on the gauntlet
-  and not the field path, mounting the wrong child tree (12-bug-casebook.md
-  §"Case 6" and §"Case 7"). Edit the shared seam; if the gauntlet and field
-  paths genuinely need different behaviour, branch INSIDE the seam, visibly.
-- ⚠️ **Patch the owner, not the dispatcher.** A private dispatcher alias couples
-  a test to an integration accident. Patch the phase module's module-level
+- ⚠️ **Inlining a step into one pipeline reproduces the tree-mismatch case.** The
+  whole reason these seams exist is that a best-of-N tree fix landed on the
+  gauntlet rather than the field path, mounting the wrong child tree
+  (12-bug-casebook.md §"Case 6" and §"Case 7"). Edit the shared seam; if the
+  gauntlet and field paths need different behaviour, branch INSIDE the seam,
+  visibly.
+- ⚠️ **Patch the owner rather than the dispatcher.** A private dispatcher alias
+  couples a test to an integration accident. Patch the phase module's module-level
   callable so the test exercises the real call path.
 - ⚠️ **RoundLog emission must never raise.** A round is authoritative in the
-  canonical stores; the RoundLog is a durable trace, emitted best-effort
-  (invariant D11). A `getattr` in the payload that throws would fail the round
+  canonical stores; the RoundLog is a durable trace, emitted best-effort (the
+  best-effort-round-log rule — 07-runtime-and-durability.md, invariant `D11`). A
+  `getattr` in the payload that throws would fail the round
   through the emit path — mirror the defensive payload shapes already in place.
 
 **Verify.**
@@ -960,7 +968,7 @@ uv run mypy src/zicato/orchestrator.py src/zicato/evolve/
 
 **Definition of done.** The step lives on the correct shared seam (never inlined
 into one pipeline), tests patch phase owners, RoundLog duties
-are honored best-effort, the pure seams stayed pure, and both oracles (G4) pass.
+are honored best-effort, the pure seams stayed pure, and both oracles pass.
 
 ---
 
@@ -1003,8 +1011,7 @@ a different class of break.
    uv run lint-imports
    ```
 
-5. **The two oracles (Golden Rule G4) — no matter how unrelated your change
-   feels:**
+5. **The two oracles — however unrelated the change seems:**
 
    ```bash
    uv run pytest tests/test_convergence_known_answer.py -q
@@ -1018,7 +1025,7 @@ a different class of break.
    uv run pytest -q
    ```
 
-7. **The parity gates + the node suite (Golden Rule G5):**
+7. **The parity gates and the node suite (the green-gates rule):**
 
    ```bash
    bash tools/parity.sh        # PYTEST, CONTRACT-HASH, CLI-HELP, REINDEX-DUMP, eight MOCK-GOLDEN lanes, MYPY
@@ -1045,16 +1052,16 @@ a different class of break.
 
 - ⚠️ **`uv sync` without `--all-extras` silently removes your test tools.** The
   next `uv run pytest` fails with a mysterious import error; the fix is to
-  re-sync WITH `--all-extras` (Golden Rule G2; 01-orientation.md §"Set up"). Make
-  it muscle memory.
+  re-sync WITH `--all-extras` (the all-extras sync rule; 01-orientation.md
+  §"Set up"). Always pass the flag.
 - ⚠️ **A green unit-test run hides an integration break.** Steps 5 and 7 exist
   because unit tests pass while the loop is broken — the next contributor bisects
   YOUR commit out of a red oracle or a red parity gate. Never skip the oracles
-  because "my change is unrelated."
+  on the grounds that a change looks unrelated.
 - ⚠️ **Never start a live model run to "verify."** Verification is the test suite
   and the deterministic gates — the two oracles run the full loop with mock
   callables, no live LLM. A live `zicato evolve` requires the operator's explicit
-  go-ahead (Golden Rule G3); it is never part of your local ladder.
+  go-ahead (the live-run go-ahead rule); it is never part of your local ladder.
 
 **Verify.** The ladder IS the verification. Green top to bottom = ready to
 propose a commit.
@@ -1068,9 +1075,10 @@ changed, `cargo test -p zicato-supervisor`.
 
 ## Recipe 11 — Investigate a red parity gate
 
-**When to use.** `bash tools/parity.sh` reports a red gate and you need to decide:
-did I legitimately change the captured surface (update the golden) or did I break
-it (fix the code)? This is a decision tree, not a "re-capture and move on."
+**When to use.** `bash tools/parity.sh` reports a red gate and you need to decide
+whether you legitimately changed the captured surface (update the golden) or
+broke it (fix the code). Work through the decision below rather than re-capturing
+the golden and moving on.
 
 **Files touched.** Depends on the verdict — either the code you changed, or the
 golden under `tools/parity/golden/` (only after you have justified the update).
@@ -1088,13 +1096,13 @@ golden under `tools/parity/golden/` (only after you have justified the update).
    | `MYPY` | the mypy error count vs. the committed baseline | types (the count must not get WORSE) |
    | `PYTEST` | the full suite | anything |
 
-2. **Decide legitimate-update vs regression.** Ask: *did I intend to change this
-   surface?* If you edited scoring and `CONTRACT-HASH` moved — legitimate, the
-   hash is supposed to track the contract. If you edited an UNRELATED file and
-   `CONTRACT-HASH` moved — regression; something leaked into the hash. The gate
-   is INFORMATION: a red on a surface you did not mean to touch is the gate doing
-   its job.
-3. **For a legitimate update, re-capture — deliberately.** The goldens are
+2. **Decide legitimate-update vs regression.** Settle whether you intended to
+   change that surface. If you edited scoring and `CONTRACT-HASH` moved —
+   legitimate, the hash is supposed to track the contract. If you edited an
+   UNRELATED file and `CONTRACT-HASH` moved — regression; something leaked into
+   the hash. The gate is INFORMATION: a red on a surface you did not mean to
+   touch is the signal the gate exists to give.
+3. **For a legitimate update, re-capture and read the diff.** The goldens are
    normalized (timestamps → `<TS>`, tmp paths and date-prefixed epoch ids masked
    by `tools/parity/lib/normalize.py`) so only real content diffs. Re-capture:
 
@@ -1118,15 +1126,15 @@ golden under `tools/parity/golden/` (only after you have justified the update).
   `ZICATO_PARITY_UPDATE=1` makes ANY red go green — that is the danger. Always
   `git diff tools/parity/golden/` and confirm each line. A blind re-capture
   converts a caught regression into a committed one.
-- ⚠️ **`MYPY` red means the error count got WORSE, not that mypy is clean.** The
-  gate is a ratchet against the committed baseline. Do not "fix" it by adding
-  `# type: ignore` unless the ignore is genuinely warranted (and `warn_unused_
+- ⚠️ **`MYPY` red means the error count got WORSE; it does not mean mypy is
+  clean.** The gate is a ratchet against the committed baseline. Do not "fix" it
+  by adding `# type: ignore` unless the ignore is warranted (and `warn_unused_
   ignores` will flag a stale one).
 - ⚠️ **A moved statistical golden is the same trap as a widened test bound.** If
-  `MOCK-GOLDEN` shows a decision that flipped, the loop's BEHAVIOUR changed —
-  either your change is wrong, or the new behaviour is honest and the commit
-  documents it (the same discipline as Recipe 13; 12-bug-casebook.md §"Case 3"
-  is the cautionary A/A false-zero-floor tale of a pinned number that was wrong).
+  `MOCK-GOLDEN` shows a decision that flipped, the loop's BEHAVIOUR changed.
+  Either your change is wrong, or the new behaviour is honest and the commit
+  documents it — the same discipline as Recipe 13. The A/A false-zero-floor case
+  is a pinned number that was itself wrong (12-bug-casebook.md §"Case 3").
 
 **Verify.**
 
@@ -1160,7 +1168,7 @@ leaves its `tmp_path` workspace; a live run leaves `.zicato/`.)
 | Heartbeat | `.zicato/runtime/heartbeat.json` | the live PHASE (`proposing` / `screening:r{n}` / `tournament:…` / `holdout` / `gate`) |
 | Active runs | `.zicato/runtime/active_runs/{run_id}.json` | in-flight runs; one present-but-unsettled = a worker that never returned |
 | Worker args | a temp file (`python -m zicato._tournament_worker <args-file>`) | the worker spec + `config_pins` (ephemeral — cleaned in a `finally`) |
-| Journal + lineage | `epochs/{epoch}/journal…`, `lineage.json` | only OUTCOMED generations (invariant D8) |
+| Journal + lineage | `epochs/{epoch}/journal…`, `lineage.json` | only OUTCOMED generations (the outcome-before-journal-and-lineage rule — `07-runtime-and-durability.md`, invariant `D8`) |
 | Health report | `epochs/{epoch}/health/round_{N}.json` | the per-round `LoopHealth` findings |
 
 **Steps.**
@@ -1189,32 +1197,35 @@ leaves its `tmp_path` workspace; a live run leaves `.zicato/`.)
    that did not return.
 5. **Inspect the worker args file for the spawn.** The runner spawns `python -m
    zicato._tournament_worker <args-file>`; the args file carries the worker spec
-   and the `config_pins` (10-builder-cli-library.md §"Flags cross the worker
-   boundary via config_pins"). It is a TEMP file cleaned up in a `finally`, so
-   capture it during a hang (or from a crash that skipped cleanup) — it tells you
-   exactly what the worker was told to run.
+   and the `config_pins` (10-builder-cli-library.md §10.10). It is a TEMP file cleaned up in a `finally`, so
+   capture it during a hang (or from a crash that skipped cleanup) — it records
+   what the worker was told to run.
 6. **Cross-check the journal + lineage.** `journal` and `lineage.json` record only
-   OUTCOMED generations (invariant D8); a generation in the round log but absent
-   from lineage was never given an outcome — which on resume is discarded safely,
-   and in a debug is the un-finished generation.
+   OUTCOMED generations (the outcome-before-journal-and-lineage rule —
+   07-runtime-and-durability.md, invariant `D8`). A generation in the round log
+   but absent from lineage was never given an outcome: on resume it is discarded
+   safely, and in a debugging session it is the unfinished generation.
 
 **Traps.**
 
 - ⚠️ **An absent round-log event does NOT mean the step did not happen.** RoundLog
-  emission is best-effort (invariant D11; 07-runtime-and-durability.md §"Emission
-  is best-effort") — the canonical stores (`loss.json`, the journal, lineage)
+  emission is best-effort (the best-effort-round-log rule —
+  07-runtime-and-durability.md §7.10.4, invariant `D11`) — the canonical stores
+  (`loss.json`, the journal, lineage)
   stay authoritative. Corroborate a missing event against the canonical files
   before concluding the step was skipped.
 - ⚠️ **`runs/<entry>/loss.json` is the canonical `r0` slot — do not confuse it
   with a replicate.** Replicate 0 IS the canonical run; replicates >0 live under
   reserved bases in the unit cache. A tool that overwrites `loss.json` with a
-  replicate's bytes is exactly the replicate-cache clobber (12-bug-casebook.md
-  §"Case 1"). When reading, treat `loss.json` as `r0`, not "the latest run."
-- ⚠️ **A hung run may be a killed CONCURRENT process, not your loop.** The reaper
-  kills by process-group; a test-suite reaper `killpg`-ing a concurrently-running
-  evolve looks like a hang in the wrong process (12-bug-casebook.md §"Case 5").
-  Confirm the pid/start-time identity (invariant D9) before blaming the loop
-  under test.
+  replicate's bytes is the replicate-cache clobbering case (12-bug-casebook.md
+  §"Case 1"). When reading, treat `loss.json` as replicate 0 rather than as the
+  most recent run.
+- ⚠️ **A hung run may be a killed CONCURRENT process rather than your loop.** The
+  reaper kills by process-group; a test-suite reaper `killpg`-ing a
+  concurrently-running evolve looks like a hang in the wrong process
+  (12-bug-casebook.md §"Case 5"). Confirm the pid-plus-start-time identity
+  (07-runtime-and-durability.md, invariant `D9`) before blaming the loop under
+  test.
 
 **Verify.**
 
@@ -1234,13 +1245,14 @@ concurrent-process or best-effort-emission artifact.
 
 ---
 
-## Recipe 13 — Safely bump a pinned OC number
+## Recipe 13 — Safely bump a pinned operating-characteristic number
 
 **When to use.** A change to the decision procedure (the margin gate, replication,
-the Bradley–Terry pre-gate, the screen) moves a pinned **operating characteristic**
-— a false-promotion rate, a power number, a CI-separation requirement — and you
-need to change the number the power harness asserts. These numbers are the repo's
-statistical truth; changing one is a deliberate, documented act.
+the Bradley–Terry pre-gate, the screen) moves a pinned **operating
+characteristic** — a false-promotion rate, a power number, a confidence-interval
+separation requirement. You then need to change the number the power harness
+asserts. These numbers are the repo's statistical truth; changing one is a
+documented act with a stated reason.
 
 **Files touched.**
 
@@ -1261,12 +1273,12 @@ statistical truth; changing one is a deliberate, documented act.
 2. **Measure, do not guess.** The power harness (`tests/test_decision_procedure_
    power.py`) runs deterministic seeded trials — an A/A null world and planted
    deltas at 0.5×/1×/3× the floor. Run it and READ the printed rates; the new
-   number is the one the harness MEASURES, not the one you hoped for.
+   number is the one the harness MEASURES rather than the one you expected.
 3. **Keep the failing alternative visible.** An OC test documents the rule it
    replaces by computing the naive rule's rate on the IDENTICAL seeded draws
    (04-evaluation-statistics.md §"Operating characteristics as pinned tests").
-   Preserve that comparison — the pin is "rule A beats rule B on these draws," not
-   "rule A hits a bound."
+   Preserve that comparison: the pin records that the new rule beats the naive
+   one on those draws, rather than that the new rule clears a bound.
 4. **Change the number and the bound together, tightly.** Pin acceptance bounds
    loose enough to survive re-seeding but tight enough to catch a regression.
    Never widen a bound just to make a flaky-looking test pass (see Traps).
@@ -1281,21 +1293,22 @@ statistical truth; changing one is a deliberate, documented act.
 **Traps.**
 
 - ⚠️ **Never "stabilize" a statistical test by widening its bound until it
-  passes.** These tests are deterministic given their seeds — if a rate moved,
+  passes.** These tests are deterministic given their seeds. If a rate moved,
   the PROCEDURE's behaviour moved, and the correct responses are (a) your change
   is wrong, or (b) the new rate is the honest new characteristic and the commit
   documents it. A silently widened bound is a DELETED measurement
   (04-evaluation-statistics.md §"Operating characteristics as pinned tests").
-- ⚠️ **A pinned number can be WRONG — that is exactly bug #3.** The A/A
-  calibration once pinned a false-zero floor because a replicate index never
-  reached the harness (12-bug-casebook.md §"Case 3"). If a number looks too good
-  (a zero floor, a perfect rate), suspect the measurement before you pin it — an
-  OC that cannot be wrong is not measuring anything.
+- ⚠️ **A pinned number can itself be WRONG.** The A/A calibration pinned a
+  false-zero floor because a replicate index never reached the harness
+  (12-bug-casebook.md §"Case 3"). If a number looks too good (a zero floor, a
+  perfect rate), suspect the measurement before you pin it: an operating
+  characteristic that cannot come out badly is not measuring the procedure.
 - ⚠️ **If your change touches persistence or replicate indices, add a
   slot-integrity test.** Prove the canonical `r0` bytes are unchanged and your
   draws land under your RESERVED base for every side (the
-  `test_full_mode_evidence_loop_never_touches_canonical_slots` pattern) — this is
-  the bug #1 / bug #8 guard (12-bug-casebook.md §"Case 1", §"Case 8").
+  `test_full_mode_evidence_loop_never_touches_canonical_slots` pattern). That
+  test guards against the replicate-cache clobbering and evidence-gate slot-reuse
+  cases (12-bug-casebook.md §"Case 1", §"Case 8").
 
 **Verify.**
 
@@ -1304,10 +1317,10 @@ uv run pytest tests/test_decision_procedure_power.py tests/test_convergence_know
 git log -1 --format='%B'      # the commit message NAMES the moved number and why
 ```
 
-**Definition of done.** The moved OC number is the one the power harness measures
-(not a guess), every other pinned number still stands, the failing alternative is
-still shown hot on the same draws, and the commit message documents the old→new
-change and its justification.
+**Definition of done.** The moved operating-characteristic number is the one the
+power harness measures rather than a guess, every other pinned number still
+stands, the failing alternative is still computed on the same draws, and the
+commit message documents the old→new change and its justification.
 
 ---
 
@@ -1356,10 +1369,10 @@ task. Skills are the operator-facing counterpart to this guide's recipes.
 
 **Traps.**
 
-- ⚠️ **No vendor names, anywhere — Golden Rule G1.** Nothing in git references the
-  model vendor. A skill body that names a model provider (or an attribution
-  trailer in your commit) violates the durable repo rule (01-orientation.md
-  §"G1 — The vendor rule"). Write model-agnostic instructions.
+- ⚠️ **No vendor names, anywhere — the vendor rule.** Nothing in git references
+  the model vendor. A skill body that names a model provider (or an attribution
+  trailer in your commit) violates the durable repo rule (01-orientation.md §4).
+  Write model-agnostic instructions.
 - ⚠️ **`name:` must match the directory exactly.** The loader keys on the
   frontmatter `name`; a mismatch with the directory name makes the skill
   unresolvable.
@@ -1374,7 +1387,7 @@ task. Skills are the operator-facing counterpart to this guide's recipes.
 # frontmatter sanity — name matches the directory, description is one line:
 head -4 skills/zicato-<verb-noun>/SKILL.md
 grep -n 'zicato-<verb-noun>' skills/README.md          # the catalog row exists
-# G1 vendor scan — the skill must name no model vendor (01-orientation.md §"G1").
+# Vendor-rule scan — the skill must name no model vendor (01-orientation.md §4).
 # The pattern is assembled at runtime so this guide never spells the stems:
 pat="$(printf 'c%s|a%s' 'laude' 'nthropic')"
 grep -rilE "$pat" skills/zicato-<verb-noun>/           # must print nothing
@@ -1391,12 +1404,13 @@ and nothing references a model vendor.
 
 Each recipe's owning chapter carries the theory the recipe applies:
 
-- 02-architecture.md §"The evolve round" — the pipeline the orchestrator seams
+- 02-architecture.md §3 — the pipeline the orchestrator seams
   (Recipe 9) sit in; the four processes Recipe 12's forensics span.
-- 03-contract-and-epochs.md §"The contract hash" / §"Omit-at-default fields" —
+- 03-contract-and-epochs.md §3.7 (computing the hash) and §3.4 (the
+  omit-at-default discipline) —
   what rolls the epoch (Recipes 3, 4, 8); §"The board" — the judge-collusion
   contract (Recipe 4).
-- 04-evaluation-statistics.md §"The scoring seams" (Recipe 3, 5), §"The promote
+- 04-evaluation-statistics.md §1.1 and §1.3 (the two scoring seams) (Recipe 3, 5), §"The promote
   gate" (Recipe 3 monotonicity), §"Operating characteristics as pinned tests" +
   §"Recipe: proving a change to the decision procedure" (Recipe 13).
 - 05-proposer.md §"The restricted-visibility envelope" + §"The channel-author's
@@ -1404,10 +1418,12 @@ Each recipe's owning chapter carries the theory the recipe applies:
 - 06-tournament-and-selection.md §"The reserved replicate ladder" — the base
   ledger Recipes 8, 13 draw on (duels 0.., calibration 1000, preflight 2000,
   screening 3000/3001, evidence 4000).
-- 07-runtime-and-durability.md §"files canonical, index derived" + §"refuse-on-
-  newer" (Recipe 7), §"Emission is best-effort" (Recipes 9, 12), §"RoundLog"
-  (Recipe 12).
-- 08-supervisor.md §"The health surface" — the consumer of Recipe 1's detector.
+- 07-runtime-and-durability.md §7.1 the files-canonical rule (invariant `D1`)
+  and §7.11 the refuse-a-newer-record-format rule (invariant `D12`) — Recipe 7;
+  §7.10.4 the best-effort-round-log rule (invariant `D11`) — Recipes 9 and 12;
+  §7.10 the durable round log — Recipe 12.
+- 04-evaluation-statistics.md §1.9 (the loop-health detectors over the
+  measurement chain) — the layer Recipe 1's detector joins.
 - 10-builder-cli-library.md §"The op inventory" (Recipe 3's builder surface),
   §"CLI.md is a GENERATED artifact" (Recipe 11), §"Flags cross the worker
   boundary via config_pins" (Recipe 12).

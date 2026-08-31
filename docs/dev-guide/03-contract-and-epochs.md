@@ -1,12 +1,12 @@
 # 03 — The Contract and Epochs
 
-> **Covers:** the entire epoch/contract subsystem as it exists on this branch —
+> **Covers:** the entire epoch/contract subsystem —
 > the five contract components and the six canonical forms they reduce to, the
 > per-component canonicalizer (`_canon_board` incl. judge/predicate source
 > folding, `_canon_brief`, `_canon_scoring` + the recursive `scoring_to_canon`,
-> `_canon_entrypoint`, `_canon_mutable_trees` and its bug-#10
-> normalized-never-resolved story, `_canon_proposer` incl. skill hashing but
-> NOT the runtime tool registry), the ONE source-hashing mechanism
+> `_canon_entrypoint`, `_canon_mutable_trees` and its normalize-never-resolve
+> rule, `_canon_proposer` incl. skill hashing but excluding the runtime tool
+> registry), the ONE source-hashing mechanism
 > (`_canon_dotted_spec`/`spec_with_source_hash`), the omit-at-default discipline
 > (`_SCORING_OMIT_AT_DEFAULT_FIELDS`), the field-enumerating serializer and its
 > completeness guard, `EpochConfig`'s never-hashed additive fields
@@ -14,43 +14,43 @@
 > the auto-roll (`ensure_epoch_for_contract`), lineage semantics (the `promoted`
 > tri-state), and record-format versioning + refuse-on-newer.
 >
-> **Prerequisites:** 01-orientation.md §"Workspace layout" (what an epoch /
-> generation / round is on disk), 02-architecture.md §"The evolve round" (where
-> the auto-roll sits), 04-evaluation-statistics.md §"The A/A noise floor" (what
+> **Prerequisites:** 01-orientation.md §2.6 (the workspace on disk) (what an epoch /
+> generation / round is on disk), 02-architecture.md §3 (where
+> the auto-roll sits), 04-evaluation-statistics.md §4 (what
 > `noise_floor` measures and why it is not a contract input). The proposer half
-> of the contract is 05-proposer.md §"`_canon_proposer` and skills"; the runtime
+> of the contract is 05-proposer.md §5.3.8 (skills and `ProposerSpec` resolution); the runtime
 > half of the storage seam is 07-runtime-and-durability.md.
 >
-> **Invariants you must not break (each is expanded below):**
-> 1. **The contract hash identifies the CONTRACT, not the checkout.**
->    `_canon_mutable_trees` NORMALIZES paths, it never `resolve()`s them — no
+> **The eight invariants you must not break** (each expanded below):
+> 1. **The contract hash identifies the contract rather than the checkout.**
+>    `_canon_mutable_trees` NORMALIZES paths and never `resolve()`s them — no
 >    cwd, absolute path, hostname, or clock may fold into any contract-identity
->    input (§3.2.6; bug #10).
+>    input (§3.2.5).
 > 2. **Byte-identical-at-default.** A contract that does not opt into a knob
->    canonicalizes byte-for-byte identically to one that predates the knob, and
->    hashes identically. Every purely-additive default-off field is registered
->    in `_SCORING_OMIT_AT_DEFAULT_FIELDS` (§3.4).
+>    canonicalizes byte-for-byte identically to one written before the knob
+>    existed, and so hashes identically. Every purely-additive default-off field
+>    is registered in `_SCORING_OMIT_AT_DEFAULT_FIELDS` (§3.4).
 > 3. **Serializer completeness.** Every `ScoringWeights` field (and every field
 >    of every nested config dataclass) round-trips through `to_json`/`from_json`
 >    and appears in the frozen snapshot. A dropped field silently rolls every
 >    epoch on the next `evolve` (§3.5; issue #13).
 > 4. **Edit-the-body-rolls.** A grading plugin's SOURCE folds into the hash
->    through the ONE source-hashing mechanism (`_canon_dotted_spec`) — editing
->    the resolved plugin body rolls the epoch, not only swapping the dotted
->    string (§3.3).
+>    through the ONE source-hashing mechanism (`_canon_dotted_spec`). Both a
+>    change to the dotted string and an edit to the resolved plugin body roll
+>    the epoch (§3.3).
 > 5. **Runtime measurements are never hashed.** `EpochConfig.noise_floor` and
 >    `.preflight` (and everything on `RuntimeConfig`) are recorded
 >    post-creation and never fold into `contract_hash`; writing them never rolls
 >    the epoch (§3.6, §3.12).
-> 6. **Legacy-never-rolls is `is None`, not `== ""`.** A `None` stored
->    `contract_hash` reads as always-matching; a corrupt/empty *real* hash must
->    roll rather than read as legacy (§3.8.4).
+> 6. **A legacy `contract_hash` is `None` rather than the empty string.** A
+>    `None` stored hash reads as always-matching; a corrupt or empty *real* hash
+>    must roll rather than read as legacy (§3.8.4).
 > 7. **Refuse-on-newer.** A canonical JSON record stamped with a
->    `format_version` this build cannot read is refused loudly, never silently
->    misread; an absent stamp reads as version 1 (§3.10).
+>    `format_version` this build cannot read is refused with an error rather
+>    than misread; an absent stamp reads as version 1 (§3.10).
 > 8. **The lineage `promoted` tri-state.** An applied-but-unresolved in-flight
->    generation persists `promoted=null`, never `False` (`False` reads as a
->    rejected dead branch); the settle-time upsert resolves it (§3.9).
+>    generation persists `promoted=null` rather than `False`, because `False`
+>    reads as a rejected dead branch; the settle-time upsert resolves it (§3.9).
 
 ---
 
@@ -68,7 +68,7 @@
 | `src/zicato/epoch/_storage.py` | `RECORD_FORMAT_VERSION`, `RecordFormatError`, `check_record_format` (refuse-on-newer), storage-key helpers | — |
 | `src/zicato/epoch/contract_serde.py` | `dataclass_to_jsonable` / `jsonable_to_dataclass` — the field-enumerating serde both the frozen snapshot and the loader route through | — |
 | `src/zicato/scoring/plugins.py` | `spec_with_source_hash` — the source-hash half of `_canon_dotted_spec` | — |
-| `src/zicato/core/runtime.py` | `RuntimeConfig` — the runtime knobs that DELIBERATELY never roll the epoch (§3.12) | — |
+| `src/zicato/core/runtime.py` | `RuntimeConfig` — the runtime knobs that never roll the epoch (§3.12) | — |
 | `src/zicato/runtime_factory.py` | `make_runtime_config` — parses the workspace-config `runtime` block into a `RuntimeConfig` | — |
 
 The topology, per `evolve` invocation (the roll decision runs once, before any round):
@@ -125,17 +125,18 @@ five things that make it up (`src/zicato/epoch/contract.py`):
    configured `proposers/<name>/` dir (or the built-in default when none is
    configured).
 
-Five conceptual components, **six canonical forms**: harness identity (#4)
-splits into `entrypoint` and `mutable_trees` because they canonicalize by
-different rules (a verbatim string vs a sorted normalized path set) and because
-`compute_component_hashes` reports them separately so the auto-roll message can
-say precisely which moved.
+Five conceptual components reduce to **six canonical forms**: harness identity
+(item 4) splits into `entrypoint` and `mutable_trees`. The two canonicalize by
+different rules — a verbatim string against a sorted normalized path set — and
+`compute_component_hashes` reports them separately, so the auto-roll message can
+name which of the two moved.
 
-The through-line: **a change to any component means generations on either side
-of the change are no longer directly comparable, so the epoch must roll.** A
-generation crowned under board A is not evidence about board B; a challenger
-scored under margin 0.01 is not comparable to one scored under margin 0.05. The
-contract hash is the mechanical detector for "the ground shifted."
+One rule motivates all of it: **a change to any component means generations
+scored on either side of the change are not directly comparable, so the epoch
+must roll.** A generation crowned under one board is not evidence about a
+different board; a challenger scored under margin 0.01 is not comparable to one
+scored under margin 0.05. The contract hash is the mechanical detector for a
+component change.
 
 > ⛔ NEVER add the inner-harness's *source content* to the contract. The
 > docstring is explicit: "The inner harness's *source content* is deliberately
@@ -170,16 +171,16 @@ The last three all canonicalize into the single `proposer` component: which
 agent proposes, and under what self-imposed checks.
 
 `resolve_contract_inputs(workspace_root)` builds it by reading the workspace's
-`config.json`: `contract.board_path` / `brief_path` (legacy alias
-`rubric_path`) / `scoring_path`, `adk_entrypoint`, `mutable_trees` (legacy alias
-`source_roots`), the optional `contract.proposer_path`,
+`config.json`: `contract.board_path` / `brief_path` (also accepted as
+`rubric_path`) / `scoring_path`, `adk_entrypoint`, `mutable_trees` (also
+accepted as `source_roots`), the optional `contract.proposer_path`,
 `runtime.proposer_agent`, and `contract.proposer_static_checks`. A relative
 `proposer_path` is absolutized against the workspace's *parent* (the operator's
 project root). A missing `config.json` raises `FileNotFoundError` telling the
 operator to run `zicato epoch register`.
 
 > ⚠️ TRAP — the live contract files sit NEXT TO the `.zicato/` directory (the
-> operator's project root), not inside it. `_default_contract_path` resolves
+> operator's project root) rather than inside it. `_default_contract_path` resolves
 > `<workspace_root>.parent / filename` "so the operator's live copies are not
 > confused with the per-epoch frozen copies under `epochs/{id}/`." The frozen
 > copies are what a *created* epoch hashes; the live copies are what the *next*
@@ -190,16 +191,17 @@ operator to run `zicato epoch register`.
 > `new_epoch` takes the resolved `ContractInputs` whole (`contract=`) and
 > re-points only its three file paths at the copies it just froze; both
 > creators — `zicato epoch new` and `_create_epoch_from_contract` — pass what
-> `resolve_contract_inputs` returned. Passing one keyword per component is how
-> issue #186 happened: `epoch new` carried `entrypoint` and `mutable_trees`
-> only, so a workspace with a registered `proposer_path` froze `None` and ran
-> the whole epoch under the built-in proposer, while both creators dropped
-> `external_proposer` and `proposer_static_checks` and could never match the
-> hash `evolve` recomputes. `tests/test_epoch_contract_carryover.py` is the
-> guard: a component added to `ContractInputs` fails it until the fixture
-> registers it. The `entrypoint` / `mutable_trees` / `proposer_path` keywords
-> that remain on `new_epoch` are shorthand for callers with no workspace
-> config to resolve — tests.
+> `resolve_contract_inputs` returned. Passing one keyword per component drops
+> whichever component the call site forgets. A creator that carries only
+> `entrypoint` and `mutable_trees` freezes `proposer_path` as `None`, so a
+> workspace with a registered proposer dir runs its whole epoch under the
+> built-in proposer. A creator that omits `external_proposer` and
+> `proposer_static_checks` can never match the hash `evolve` recomputes
+> (issue #186). `tests/test_epoch_contract_carryover.py` is the guard: a
+> component added to `ContractInputs` fails it until the fixture registers it.
+> The `entrypoint` / `mutable_trees` / `proposer_path` keywords on `new_epoch`
+> are shorthand for callers with no workspace config to resolve, which in
+> practice means tests.
 
 ### 3.1.1 The on-disk epoch layout
 
@@ -222,46 +224,48 @@ operator to run `zicato epoch register`.
 
 The three FROZEN contract files (`board.jsonl` / `brief.md` / `scoring.json`)
 are the per-epoch copies the stored `contract_hash` was computed over. They are
-deliberately distinct from the operator's LIVE editable copies next to
-`.zicato/` (§3.1's trap): editing a frozen copy after the fact would desync the
-stored hash from the file it claims to describe. The auto-roll also writes
+distinct from the operator's LIVE editable copies next to `.zicato/` (§3.1's
+trap): editing a frozen copy after the fact would desync the stored hash from
+the file it claims to describe. The auto-roll also writes
 `contract_components.json` next to `config.json` (the per-component sub-hashes,
 §3.8.3) and, on a roll, a roll-seed marker recording where the new epoch's `v0`
 seeds from. Epoch ids are `{YYYY-MM-DD}_{slug}`; a same-name-same-day collision
 gets a numeric suffix (`_make_epoch_id`).
 
 Generations live under each epoch (`generations/{id}/`, resolved by the storage
-layout, not spelled in this docstring): a `snapshot/` source tree, an
+layout rather than spelled in this docstring): a `snapshot/` source tree, an
 `experiment.json` + `patches/{id}.json` per-generation record (§3.9.2), and the
 `events.jsonl` / `loss.json` the tournament writes. The `current_generation`
 marker names the promoted head — what a cross-epoch roll seeds the next epoch's
 `v0` from (`_promoted_head_snapshot`).
 
 > ⚠️ TRAP — the epoch directory is created with `mkdir(..., exist_ok=False)`
-> (`new_epoch` step 3): re-creating an existing epoch id is a hard error, not an
-> overwrite. `list_epochs` silently skips a directory under `epochs/` with no
-> readable `config.json` (a presumed torn `epoch new` from a crash), but it
-> LOUDLY refuses one whose `config.json` carries a future `format_version`
-> (§3.10) — the record is intact, so the operator must know why it won't load.
+> (`new_epoch` step 3): re-creating an existing epoch id raises rather than
+> overwriting. `list_epochs` silently skips a directory under `epochs/` with no
+> readable `config.json`, which it presumes is a torn `epoch new` from a crash.
+> It LOUDLY refuses one whose `config.json` carries a future `format_version`
+> (§3.10): that record is intact, so the operator must know why it will not load.
 
 ---
 
 ## 3.2 The canonicalizer, component by component
 
-Every `_canon_*` function answers the same question: what edits are *spurious*
-(whitespace, reordering, float-format noise, path spelling) and must leave the
-hash fixed, versus what is *semantic* and must move it? Get the boundary wrong
-in either direction and you get one of two failures: a **false roll** (a
-cosmetic edit orphans the lineage and discards the warm start) or a **missed
-roll** (an incomparable board is silently compared against the old one). Both
-are severe; §3.5's guard tests exist to pin the boundary.
+Every `_canon_*` function draws the same boundary. Spurious edits — whitespace,
+reordering, float-format noise, path spelling — must leave the hash fixed, and
+semantic edits must move it. Getting the boundary wrong in either direction
+produces one of two failures. A **false roll** lets a cosmetic edit orphan the
+lineage and discard the warm start, which is the promoted tree the next epoch
+would otherwise seed from. A **missed roll** lets generations scored under two
+different contracts be compared as if comparable.
+Both are severe; the sensitivity/stability matrix (§3.2.7) pins the boundary
+with a paired test per row.
 
 ### 3.2.1 board — `_canon_board`
 
 Semantic content only, id-sorted (`src/zicato/epoch/contract.py::_canon_board`):
 
 - the board is loaded through `zicato.board.jsonl.load_board`, so the canonical
-  form is the *validated parsed shape*, not raw bytes;
+  form is the *validated parsed shape* rather than raw bytes;
 - entries are **sorted by id** and each serialized to a sorted-key JSON dict, so
   reordering rows or reformatting the JSONL leaves the hash unchanged; editing an
   entry's input / expectation / weight changes it;
@@ -275,16 +279,16 @@ Semantic content only, id-sorted (`src/zicato/epoch/contract.py::_canon_board`):
 `_canon_board_meta` reads the board-level object *defensively* — it prefers a
 `zicato.board.jsonl.load_board_meta` callable if the board API exposes one,
 otherwise scans the raw JSONL for a line carrying `judges` / `disable_drift` /
-`judge_only` but no entry `id`. (The board API exposes `load_board_with_meta`,
-not `load_board_meta`, so in practice the raw-scan branch is the live path; the
-loader branch is kept for the day that API lands.) `judge_only` is folded in
-**only when `True`**, so a board that never set it (every board written before
-the flag existed) hashes byte-for-byte identically to before — the
-omit-at-default discipline (§3.4) applied at the board level.
+`judge_only` but no entry `id`. The board API exposes `load_board_with_meta`
+rather than `load_board_meta`, so the raw-scan branch is the live path; the
+loader branch stays in place for a board API that exposes `load_board_meta`.
+`judge_only` is folded in **only when `True`**, so a board that leaves it unset
+keeps the hash it would carry without the flag — the omit-at-default discipline
+(§3.4) applied at the board level.
 
 `_canon_disable_drift` canonicalizes `disable_drift` as the **sorted,
-de-duplicated set of drift-kind wire strings** — not as a bare "any / none"
-flag. Each named kind drops the built-in judge that emits it
+de-duplicated set of drift-kind wire strings** rather than as a bare
+"any / none" flag. Each named kind drops the built-in judge that emits it
 (`zicato.judge_runtime.disable`), so *which* kinds are named decides which
 judges are armed and therefore the loss surface; swapping `tool_error` for
 `goal_drift` has to roll the epoch just as adding a judge does. Tokens are
@@ -292,54 +296,53 @@ reduced through `judge_runtime.disable.kind_to_wire_string` so `DriftKind`
 members (from the loader branch) and bare strings (from the raw scan) agree on
 one form. Declaration order and repeated kinds are no-ops.
 
-The empty set canonicalizes to `false`, **not** `[]` — omit-at-default paid at
-the *value* level. `false` is the byte this form has always carried for "nothing
-disabled", so every board that disables nothing, including every board written
-before `disable_drift` existed, keeps the exact hash it already has and no
-workspace rolls its epoch for the kind-set change. A board that *does* name
-kinds re-hashes once, by design.
+The empty set canonicalizes to `false` rather than to `[]` — omit-at-default
+paid at the *value* level. `false` is this form's encoding of "nothing
+disabled", so a board that disables no kind carries the same bytes as a board
+written without the field at all, and neither rolls its epoch. A board that
+*does* name kinds hashes differently from one that names none.
 
 `_canon_judges` reduces the judges list to an order-independent form: each judge
 is normalized to a sorted-key dict, then the list is sorted by its serialized
 form, so declaration order does not move the hash but adding / removing /
 editing a judge does. A **python-mode judge** (`mode == "python"`) has its
 `body` dotted-spec expanded through `_canon_dotted_spec` (§3.3), so editing the
-judge's *source* rolls the epoch — not only swapping the dotted string.
+judge's *source* rolls the epoch, as does swapping the dotted string.
 
 `_fold_entry_grading_source` does the same at the entry level: a `predicate`
 expectation's `spec` and each python-mode per-entry judge's `body` get a
 `spec_source` / `body_source` key carrying their source hash. Non-predicate
-expectations (text / regex / json_schema / rubric — not dotted plugins) and
-inline judges are left untouched, so a board that names no plugin canonicalizes
-byte-for-byte as before this mechanism existed.
+expectations (text / regex / json_schema / rubric, none of which name a dotted
+plugin) and inline judges are left untouched, so a board that names no plugin
+gains no `spec_source` or `body_source` key at all.
 
 > ✅ ALWAYS route a NEW board-level or per-entry grading channel through the
 > defensive `_meta_get` / `_scan_raw_board_meta` pattern AND fold it at its
 > default only when non-default. The `judge_only`-only-when-`True` line is the
 > model: `if judge_only: canon["judge_only"] = True`
 > (`src/zicato/epoch/contract.py::_canon_board_meta`). Emitting a new key
-> unconditionally rolls every board that predates it — invariant #2 broken at
+> unconditionally rolls every board already on disk — invariant #2 broken at
 > the board component.
 
 ### 3.2.2 brief — `_canon_brief`
 
-The proposer brief (`brief.md`) is normalized exactly like a skill body: CRLF →
-LF, per-line trailing whitespace stripped, leading/trailing blank lines dropped
-(`src/zicato/epoch/contract.py::_canon_brief`). "Whitespace-only edits
+The proposer brief (`brief.md`) is normalized the same way as a skill body: CRLF
+→ LF, per-line trailing whitespace stripped, leading and trailing blank lines
+dropped (`src/zicato/epoch/contract.py::_canon_brief`). "Whitespace-only edits
 (re-indenting, CRLF churn, trailing-newline changes) do not move the hash;
 editing the actual prose does." A missing brief hashes as empty with a warning.
 
 The brief is an **epoch-level** concept — one brief governs every proposer call
 within an epoch — and its normalized body is a contract input, so a semantic
-edit rolls the epoch. This is why the proposer's per-round guidance lives in
-the brief and not in code (see 05-proposer.md §"Where `brief_text` comes from").
+edit rolls the epoch. That is why the proposer's per-round guidance lives in
+the brief rather than in code (see 05-proposer.md §5.3.7).
 `tests/test_epoch_contract.py::test_hash_stable_across_whitespace_only_brief_edits`
 plants a CRLF + trailing-space + blank-line re-spelling and asserts the hash
 holds.
 
 ### 3.2.3 scoring — `_canon_scoring` and `scoring_to_canon`
 
-The subtlest component. `_canon_scoring` does NOT hash the raw `scoring.json`;
+This is the subtlest component. `_canon_scoring` does NOT hash the raw `scoring.json`;
 it parses the file into a **fully-defaulted `ScoringWeights`** and serializes
 *that* (`src/zicato/epoch/contract.py::_canon_scoring`):
 
@@ -352,21 +355,22 @@ it parses the file into a **fully-defaulted `ScoringWeights`** and serializes
     return json.dumps(round_floats(scoring_to_canon(weights)), sort_keys=True)
 ```
 
-Why route through `ScoringWeights` rather than hash the JSON? Because the
-operator's live `scoring.json` is commonly a *partial* document (only the fields
-they care about) while the per-epoch frozen copy is the *full* serialized form.
-Both must canonicalize identically or the stored hash would never match the
-re-derived one and the epoch would roll on every `evolve`. Passing both through
-the same fully-defaulted `ScoringWeights` collapses the two spellings.
+Routing through `ScoringWeights` is what makes the live and frozen copies
+agree. The operator's live `scoring.json` is commonly a *partial* document —
+only the fields they care about — while the per-epoch frozen copy is the *full*
+serialized form. Both must canonicalize identically, or the stored hash would
+never match the re-derived one and the epoch would roll on every `evolve`.
+Passing both through the same fully-defaulted `ScoringWeights` collapses the two
+spellings.
 
 `round_floats` rounds every float to 6 decimal places, so `0.1` and
 `0.10000000001` collapse and float-format noise below the threshold does not
 move the hash
 (`tests/test_epoch_contract.py::test_hash_stable_across_scoring_float_noise`).
 
-`scoring_to_canon(weights)` walks `dataclasses.fields()` — so it covers every
-field automatically and can never desync from the dataclass — and does four
-things per field:
+`scoring_to_canon(weights)` walks `dataclasses.fields()`, so it covers every
+field automatically and can never desync from the dataclass. It handles each
+field in one of four ways:
 
 | Field kind | Handling |
 |---|---|
@@ -375,20 +379,20 @@ things per field:
 | a nested frozen dataclass (`overfitting`, `tournament_structure`, `proposer_quality`, `experiment_memory`, `ladder`) | **recursed** via `scoring_to_canon` — the nested block canonicalizes structurally, and the SAME omit-at-default check applies to its fields |
 | a mapping / tuple / scalar | dict-ified / list-ified / passed through via `_canon_value` |
 
-The recursion is what folds the tournament structure, the overfitting block, and
-the proposer-quality block into the scoring hash "with zero new plumbing"
-(`ScoringWeights` field comments) — and, critically, it is what lets a
-default-off knob *nested* on `OverfittingConfig` or `ProposerQualityConfig`
-(`random_baseline_every_n`, `screen_entries`, `screen_veto_only`,
-`process_exemplars`) be omitted at its default: the same `_SCORING_OMIT_AT_DEFAULT_FIELDS`
-name check runs at every recursion depth (§3.4).
+The recursion folds the tournament structure, the overfitting block, and the
+proposer-quality block into the scoring hash with no additional code. It is also
+what lets a default-off knob *nested* on `OverfittingConfig` or
+`ProposerQualityConfig` — `random_baseline_every_n`, `screen_entries`,
+`screen_veto_only`, `process_exemplars` — be omitted at its default: the same
+`_SCORING_OMIT_AT_DEFAULT_FIELDS` name check runs at every recursion depth
+(§3.4).
 
-The flat omit set is not a second registry. `contract_knobs()` walks every
-declared scoring field once at import time, preserving its owner, default,
-omit rule, and builder mapping. `omit_at_default_fields()` projects the omit
-set from those records, and the builder completeness guards consume the same
-records. Generated equivalents are runtime values only; no derived source is
-committed.
+The flat omit set is a projection rather than a second registry.
+`contract_knobs()` walks every declared scoring field once at import time,
+preserving its owner, default, omit rule, and builder mapping.
+`omit_at_default_fields()` projects the omit set from those records, and the
+builder completeness guards consume the same records. Nothing derived from the
+registry is committed to the tree; the records exist only at runtime.
 
 > ⚠️ TRAP — a nested config dataclass folds into the scoring hash the moment it
 > becomes a `ScoringWeights` field, whether you intended it or not. That is the
@@ -401,7 +405,7 @@ committed.
 
 ### 3.2.4 entrypoint — `_canon_entrypoint`
 
-The simplest: the registered `--adk` entrypoint string, verbatim
+The simplest component: the registered `--adk` entrypoint string, verbatim
 (`_canon_entrypoint(entrypoint) -> entrypoint`). Changing the entrypoint (e.g.
 `pkg.mod:agent` → `pkg.mod:OTHER_agent`) points the loop at a different inner
 harness, which is a different contract, so it rolls
@@ -409,12 +413,12 @@ harness, which is a different contract, so it rolls
 no normalization — an entrypoint is an identifier, and any byte difference is
 semantic.
 
-### 3.2.5 mutable_trees — `_canon_mutable_trees` (the bug-#10 story)
+### 3.2.5 mutable_trees — `_canon_mutable_trees` normalizes without resolving
 
-The registered `--mutable-tree` paths — *which subtrees of the target are
-mutable*. This is the single most instructive canonicalizer in the module,
-because it is the one that was *wrong* and had to be fixed (bug #10; see
-12-bug-casebook.md §"Case 10"). The current, correct body:
+The registered `--mutable-tree` paths name *which subtrees of the target are
+mutable*. This canonicalizer carries the sharpest constraint in the module, and
+the casebook records what a violation costs (12-bug-casebook.md §"Case 10").
+The body:
 
 ```python
 # src/zicato/epoch/contract.py — _canon_mutable_trees (body)
@@ -423,9 +427,9 @@ because it is the one that was *wrong* and had to be fixed (bug #10; see
 ```
 
 The identity being hashed is *which subtrees are mutable* — a property of the
-**registration**, not of where the checkout happens to live. Paths are
+**registration** rather than of where the checkout happens to live. Paths are
 **normalized** (`.`/`..`/separator spelling collapsed, POSIX-rendered, sorted)
-but **NEVER resolved against the filesystem**. The bug was the earlier body:
+but **NEVER resolved against the filesystem**. The form that must never return:
 
 ```python
 # BEFORE (bug #10) — do NOT reintroduce
@@ -433,14 +437,14 @@ but **NEVER resolved against the filesystem**. The bug was the earlier body:
     return "\n".join(resolved)
 ```
 
-`Path(p).resolve()` folds the **process cwd** (for a relative registration) and
-the **absolute checkout location** into the hashed string. Consequence: the same
-workspace hashed *differently* when `evolve` ran from a different directory — or
-after the workspace was moved — and **spuriously rolled its epoch** (lineage
-reset, warm-start lost, an "epoch roll" event with no contract change). The fix
-was taken as a **declared BREAKING change** (CHANGELOG'd, one-time hash move,
-standard contract-roll behavior) rather than a compatibility shim: the hash was
-wrong; keeping it stable would have frozen the wrongness.
+`Path(p).resolve()` folds the **process working directory** (for a relative
+registration) and the **absolute checkout location** into the hashed string. A
+workspace then hashes differently when `evolve` runs from a different directory,
+or after the workspace moves, and rolls its epoch with no contract change —
+resetting the lineage and discarding the warm start. Correcting that moved every
+affected hash once, and `CHANGELOG.md` declares the move as a breaking change
+rather than hiding it behind a compatibility shim: a hash that encodes the
+checkout is wrong, and holding it stable would preserve the error.
 
 The regression test makes cwd-invariance an explicit axis
 (`tests/test_epoch_contract.py::test_contract_hash_is_cwd_and_checkout_invariant`):
@@ -464,30 +468,29 @@ The regression test makes cwd-invariance an explicit axis
     assert compute_from(tmp_path) == compute_from(other)
 ```
 
-Registration order still never moves the hash (sorted); adding or removing a
-tree still does
+Registration order does not move the hash, because the list is sorted; adding or
+removing a tree does
 (`test_hash_stable_across_mutable_tree_reordering`,
 `test_hash_changes_on_adding_a_mutable_tree`).
 
 > ⛔ NEVER call `Path.resolve()` — or `expanduser()`, `os.getcwd()`,
 > `socket.gethostname()`, a tempdir name, a pid, or the wall clock — in ANY
 > contract-identity, cache-key, seed-tuple, or dedup-fingerprint computation.
-> This is invariant #1, and it generalizes the whole "identity vs location"
-> lesson (12-bug-casebook.md §"Case 10"). `Path.resolve()` in a hash context is a
-> review red flag. If you add a path-shaped field to `ContractInputs`,
-> canonicalize it with `os.normpath` + `PurePosixPath.as_posix`, never a
+> This is invariant #1, and it generalizes the identity-versus-location lesson
+> (12-bug-casebook.md §"Case 10"). `Path.resolve()` in a hash context should stop
+> a review. If you add a path-shaped field to `ContractInputs`,
+> canonicalize it with `os.normpath` + `PurePosixPath.as_posix` rather than a
 > filesystem-touching call.
 
 > ⚠️ TRAP — the `compute_contract_hash` *summary docstring* still describes
-> `mutable_trees` as "sorted tuple of absolute path strings." That line is STALE
-> (pre-bug-#10) and contradicts the code. The authority is `_canon_mutable_trees`
-> (normalized, never resolved), not the summary; the two-line body above is what
-> actually runs. Trust the function. (Fixing the stale docstring is a fine
-> drive-by, but do not "fix" the *code* to match the stale prose.)
+> `mutable_trees` as "sorted tuple of absolute path strings." That line is stale
+> and contradicts the code. The authority is `_canon_mutable_trees` (normalized,
+> never resolved) rather than the summary; the two-line body above is what runs.
+> Correcting the docstring is welcome; do not change the code to match it.
 
-### 3.2.6 proposer — `_canon_proposer` (skills yes, runtime tools no)
+### 3.2.6 proposer — `_canon_proposer` (skills fold in, the tool registry does not)
 
-The sixth component. `_canon_proposer(proposer_path)` resolves the proposer dir
+The sixth canonical form. `_canon_proposer(proposer_path)` resolves the proposer dir
 (or `None` ⇒ the built-in default) to a `ProposerSpec` via
 `zicato.proposer.skills.resolve_proposer_spec`, then reduces it to a sorted-key
 JSON string (`src/zicato/epoch/contract.py::_canon_proposer`):
@@ -508,11 +511,11 @@ What folds in, and what rolls the epoch:
 | Element | Canonical form | Rolls when |
 |---|---|---|
 | `agent_id` | `"builtin:default"` or `"dir:<name>"` | you configure a proposer dir (builtin → dir), or rename the dir |
-| `tools` | the tool names, **sorted** | — (see the trap below: always empty on this branch) |
+| `tools` | the tool names, **sorted** | — (always empty; see the trap below) |
 | `skills` | `[{"name", "sha256"}]` sorted by name; each `sha256` is over the **normalized** body | a semantic skill edit; adding / removing / renaming a skill |
 | `agent_source_sha256` | SHA-256 of a custom `agent.py`'s bytes, or `null` | any byte of the custom agent |
 
-Skill bodies are normalized exactly like the brief (`normalize_skill_body`
+Skill bodies are normalized the same way as the brief (`normalize_skill_body`
 mirrors `_canon_brief`), so a whitespace-only skill edit does not move the hash
 while a semantic one does
 (`tests/test_epoch_contract.py::test_proposer_whitespace_only_skill_edit_is_stable`
@@ -521,28 +524,29 @@ vs `::test_proposer_skill_body_edit_changes_hash`). Skills are discovered
 hash (`::test_proposer_hash_stable_across_filesystem_reorder`).
 
 > ⚠️ TRAP — the `tools` key is present in the canonical form but
-> `ProposerSpec.tools` is **always empty** on this branch: `resolve_proposer_spec`
-> sets `tools=()` for both the builtin and any dir proposer ("tool declaration is
-> a later phase"). The read-only tool REGISTRY (`DEFAULT_PROPOSER_TOOLS`) is
-> zicato *source code* — it ships with the package, is versioned with the code,
-> and is identical for every workspace on a given zicato version — so hashing it
-> would roll every epoch on every zicato upgrade without changing the operator's
-> authored contract. The tools a custom `agent.py` constructs itself DO roll,
-> because that choice lives in `agent_source_sha256`. See 05-proposer.md §"Why
-> tools do NOT fold into the contract hash" for the full argument.
+> `ProposerSpec.tools` is **always empty**: `resolve_proposer_spec` sets
+> `tools=()` for both the built-in proposer and any dir proposer, because no
+> proposer declares its tools. The read-only tool REGISTRY
+> (`DEFAULT_PROPOSER_TOOLS`) is zicato *source code*: it ships with the package,
+> is versioned with the code, and is identical for every workspace on a given
+> zicato version. Hashing it would therefore roll every epoch on every zicato
+> upgrade without changing the operator's authored contract. The tools a custom
+> `agent.py` constructs itself DO roll, because that choice lives in
+> `agent_source_sha256`. See 05-proposer.md §"Why tools do NOT fold into the
+> contract hash" for the full argument.
 
-The built-in default (`proposer_path=None`) produces a stable canonical string,
-and an *empty proposer dir* is deliberately NOT the builtin — its `agent_id` is
-`"dir:<name>"` while the builtin's is `"builtin:default"`, so the two
-canonicalize differently
+The built-in default (`proposer_path=None`) produces a stable canonical string.
+An *empty proposer dir* does not canonicalize as the built-in default: its
+`agent_id` is `"dir:<name>"` while the built-in's is `"builtin:default"`, so the
+two canonicalize differently
 (`tests/test_epoch_contract.py::test_proposer_builtin_differs_from_empty_dir`).
 
 ### 3.2.7 The sensitivity / stability matrix
 
-The whole point of the canonicalizer is captured in one table: which concrete
-operator edit moves which component, and which edits are deliberately invisible.
-Each row is pinned by a named test in `tests/test_epoch_contract.py` — this is the
-matrix to consult when you are unsure whether an edit "should" roll.
+One table gives the whole boundary: which operator edit moves which component,
+and which edits leave every component fixed. Each row is pinned by a named test
+in `tests/test_epoch_contract.py`. Consult it when you are unsure whether an
+edit should roll.
 
 | Operator edit | Component | Rolls? | Pinning test |
 |---|---|---|---|
@@ -580,8 +584,8 @@ a dotted Python spec (`pkg.mod:fn`) — a scalar function, a drift reducer, an
 outcome summarizer, a board predicate, a python judge. If the hash folded in
 only the dotted STRING, editing the plugin's *body* without changing its name
 would leave the contract hash fixed while silently scoring under different code
-— a missed roll. The fix is the ONE source-hashing mechanism every grading
-plugin shares (issue #19 cross-cutting #1), `_canon_dotted_spec`
+— a missed roll. One source-hashing mechanism, shared by every grading plugin,
+closes that gap (issue #19): `_canon_dotted_spec`
 (`src/zicato/epoch/contract.py`):
 
 ```python
@@ -593,13 +597,12 @@ plugin shares (issue #19 cross-cutting #1), `_canon_dotted_spec`
 
 `zicato.scoring.plugins.spec_with_source_hash(dotted)` resolves the module,
 hashes its source bytes, and returns `{"spec": <dotted>, "source_sha256":
-<hash-or-null>}`. An empty / non-string spec expands to `{"spec": "",
-"source_sha256": null}` — **byte-identical to "no plugin"** — so a board or
-contract that names no plugin canonicalizes exactly as it did before this
-mechanism existed.
+<hash-or-null>}`. An empty or non-string spec expands to `{"spec": "",
+"source_sha256": null}`, so a board or contract that names no plugin carries no
+plugin-derived bytes in its canonical form.
 
-The one mechanism is applied uniformly in four places, so there is exactly one
-answer to "does editing a plugin body roll the epoch?" (yes, everywhere):
+The mechanism is applied at four sites, so editing a plugin body rolls the epoch
+wherever the plugin is named:
 
 | Channel | Where the fold happens |
 |---|---|
@@ -612,9 +615,9 @@ answer to "does editing a plugin body roll the epoch?" (yes, everywhere):
 > never fold the bare string. If you add a `ScoringWeights` field that holds a
 > grading dotted spec, add its name to `_SCORING_PLUGIN_SPEC_FIELDS`. If it is a
 > board-level channel, extend `_fold_entry_grading_source` / `_canon_judges`. The
-> failure mode of forgetting is silent and severe: an operator edits their
-> scorer, the loop keeps scoring under the new code, but the contract hash says
-> the epoch is unchanged and generations from before and after the edit are
+> failure mode of forgetting is silent and severe. An operator edits their
+> scorer and the loop keeps scoring under the edited code, but the contract hash
+> reports the epoch unchanged, so generations from before and after the edit are
 > compared as if comparable.
 
 > ⚠️ TRAP — a plugin whose module is not importable at hash time expands to a
@@ -624,15 +627,15 @@ answer to "does editing a plugin body roll the epoch?" (yes, everywhere):
 > contract is not identity-free; but do not rely on the source hash to detect an
 > edit to a plugin that could not be imported. The guard tests
 > (`tests/test_contract_serializer_completeness.py`) use bare `pkg.mod:...`
-> strings precisely because the degraded-null path is a legitimate state.
+> strings because the degraded-null path is a legitimate state.
 
 ---
 
 ## 3.4 The omit-at-default discipline
 
 This is the single discipline a contract-knob author most often gets wrong, and
-the one with the most expensive failure mode. It exists to reconcile two
-requirements that pull in opposite directions:
+the one with the most expensive failure mode. It reconciles two requirements
+that conflict:
 
 - **completeness** — the canonical scoring form must be *complete* and
   independent of which fields the operator spelled out, so that a partial live
@@ -695,37 +698,35 @@ spells the field's default. Pinned by
 (omit == explicit-default) and
 `::test_hash_changes_when_screening_opted_in` (any opt-in rolls).
 
-**The failure mode of getting it wrong:** the guard docstring is blunt — a
+**The failure mode of getting it wrong:** the guard docstring states it — a
 field "added AFTER the parity goldens were captured; emitting it unconditionally
 would inject a new key into the scoring hash and roll EVERY existing epoch (and
 turn the CONTRACT-HASH parity gate red) the moment the field exists." A missed
-registration is not a subtle bug; it mass-rolls the fleet on upgrade.
+registration is not a subtle bug; it rolls every workspace on disk at upgrade.
 
 > ⛔ NEVER register a field in `_SCORING_OMIT_AT_DEFAULT_FIELDS` unless it is
 > **purely additive and default-off** — the docstring says "Only purely-additive,
 > default-off fields belong here." A field whose default is *behaviorally active*
-> (e.g. `promote_margin = 0.01`, `best_of_n = 3`) must appear in the canonical
-> form always: omitting it would make a contract that pins the default hash
-> identically to one that predates the field, which is fine, but the field's
-> *meaning* is not "off at default" — it is "0.01 / 3 at default." Omitting an
-> active-default field hides real contract content. Only "0 / False / empty ⇒
-> the feature does nothing" fields qualify.
+> (`promote_margin = 0.01`, `best_of_n = 3`) must always appear in the canonical
+> form. Its default is a real rule the tournament runs under, and omitting it
+> hides that rule from the hash. Only a field whose default makes the feature do
+> nothing — `0`, `False`, empty — qualifies.
 
 > ⚠️ TRAP — omit-at-default and behavior-at-default are two different questions,
 > and the answer to both must agree. `best_of_n` defaults to `3` (an active
-> default, NOT omitted, always in the hash); `screen_entries` defaults to `0`
-> (an inert default, omitted). Both live on `ProposerQualityConfig`. If you
+> default: it is never omitted and always in the hash); `screen_entries` defaults
+> to `0` (an inert default, omitted). Both live on `ProposerQualityConfig`. If you
 > confuse them — omit `best_of_n`, or emit `screen_entries` unconditionally — you
-> either hide the sampling rule from the hash or mass-roll the fleet. Decide "is
-> the default inert?" first; the omit registration follows from the answer.
+> either hide the sampling rule from the hash or roll every existing workspace.
+> Decide whether the default is inert first; the omit registration follows from
+> that answer.
 
-### 3.4.1 The recursion, traced (why a nested omit "just works")
+### 3.4.1 Why a nested omit registration works — the recursion traced
 
-The single fact that trips people up: `screen_entries` lives on
-`ProposerQualityConfig`, not on `ScoringWeights`, yet its name is in
-`_SCORING_OMIT_AT_DEFAULT_FIELDS` (a set that reads like it is about
-`ScoringWeights` fields). Here is exactly why that works, step by step, for a
-default `ScoringWeights()`:
+`screen_entries` lives on `ProposerQualityConfig` rather than on
+`ScoringWeights`, yet its name sits in `_SCORING_OMIT_AT_DEFAULT_FIELDS`, whose
+name suggests it governs `ScoringWeights` fields only. The trace below, over a
+default `ScoringWeights()`, shows why the registration reaches it:
 
 ```
 scoring_to_canon(ScoringWeights())
@@ -744,9 +745,9 @@ scoring_to_canon(ScoringWeights())
 
 The omit check matches on the field NAME, and `scoring_to_canon` is the SAME
 function at every recursion depth, so a name in the set is omitted wherever it
-appears in the nested tree — `random_baseline_every_n` (on `OverfittingConfig`),
-`screen_entries` / `screen_veto_only` / `process_exemplars` (on
-`ProposerQualityConfig`), `experiment_memory` (a whole nested block on
+appears in the nested tree. That covers `random_baseline_every_n` (on
+`OverfittingConfig`), `screen_entries` / `screen_veto_only` / `process_exemplars`
+(on `ProposerQualityConfig`), and `experiment_memory` (a whole nested block on
 `ScoringWeights`, compared by value against its `default_factory()`). This is why
 `test_hash_stable_when_screening_fields_at_default` passes: the default nested
 block canonicalizes to `{"best_of_n": 3, "critique_enabled": true}` whether the
@@ -754,10 +755,11 @@ operator omitted `proposer_quality` entirely or spelled out its OFF defaults.
 
 > ⚠️ TRAP — the omit set is a FLAT set of names, but the fields it governs live at
 > different depths. If two DIFFERENT nested dataclasses ever declared a field with
-> the SAME name, one omit-registration would silently govern both. No two do today,
-> but if you add a nested field whose name collides with an existing omit entry,
-> the recursion will omit it too — audit the whole `_SCORING_OMIT_AT_DEFAULT_FIELDS`
-> set against `fields()` of every nested config before adding a name.
+> the SAME name, one omit-registration would silently govern both. No two nested
+> dataclasses share an omit-registered name today. If you add a nested field
+> whose name collides with an existing omit entry, the recursion omits it too, so
+> audit the whole `_SCORING_OMIT_AT_DEFAULT_FIELDS` set against `fields()` of
+> every nested config before adding a name.
 
 ---
 
@@ -772,14 +774,14 @@ fields exist:
   `_scoring_from_dict` in `src/zicato/epoch/lifecycle.py`,
   `scoring_weights_from_dict` in the loader).
 
-Historically the snapshot path was a hand-maintained, field-by-field dict. When
-a new field was threaded through the canonicalizer but NOT the hand-written
-writer, the frozen `scoring.json` silently dropped it; on the next `evolve` the
-live contract hashed differently from the frozen one and the orchestrator
-performed a **spurious epoch auto-roll** (issue #13 — the same class as
-`per_judge_weights` / `pass_rate_monotonicity_scope` / `drift_kind_aggregation`
-desyncs). The fix routes BOTH `to_json` and `from_json` through the
-field-enumerating serde (`zicato.epoch.contract_serde`):
+A hand-maintained, field-by-field dict on the snapshot path drops whichever
+field its author forgets. The frozen `scoring.json` then omits that field, the
+live contract hashes differently from the frozen one on the next `evolve`, and
+the orchestrator performs a **spurious epoch auto-roll** (issue #13; the
+`per_judge_weights`, `pass_rate_monotonicity_scope`, and `drift_kind_aggregation`
+desyncs are instances of it). Both `to_json` and `from_json` therefore route
+through the field-enumerating serde (`zicato.epoch.contract_serde`), which
+enumerates `dataclasses.fields()` and cannot miss a field:
 
 ```python
 # src/zicato/core/scoring_config.py — ScoringWeights.to_json
@@ -789,9 +791,9 @@ field-enumerating serde (`zicato.epoch.contract_serde`):
 ```
 
 `from_json` is the exact inverse: `ScoringWeights.from_json(w.to_json()) == w`
-for every field. It is tolerant of a partial / absent payload (a missing key
-falls back to the field's dataclass default, so a legacy `scoring.json` loads
-cleanly) and re-runs `__post_init__` validation (a corrupt transform spec fails
+for every field. It is tolerant of a partial or absent payload (a missing key
+falls back to the field's dataclass default, so a `scoring.json` that omits keys
+loads cleanly) and re-runs `__post_init__` validation (a corrupt transform spec fails
 fast). One defensive coercion lives at this seam: a
 `pass_rate_monotonicity_scope` token outside `{"per_entry", "aggregate"}` (a
 corrupt / future args file) is coerced back to the default rather than desyncing
@@ -827,16 +829,16 @@ field:
 ```
 
 > ✅ ALWAYS add a serde field through the dataclass (`ScoringWeights` or a nested
-> config), never through a hand-written dict. `dataclass_to_jsonable` /
+> config) rather than through a hand-written dict. `dataclass_to_jsonable` /
 > `jsonable_to_dataclass` cover it automatically; a bespoke serialization path
-> re-introduces the issue-#13 drop-a-field class. The one place a field is
-> spelled by hand is the guard table — and that is deliberate: the hand-curated
-> value is a *test input*, and the test raises with an actionable message
-> (`"add one to _NONDEFAULT_VALUES"`) if it is missing.
+> can drop a field again (issue #13). The one place a field is spelled by hand is
+> the guard table, where the hand-curated value is a *test input*; the test
+> raises with an actionable message (`"add one to _NONDEFAULT_VALUES"`) when one
+> is missing.
 
-> ⚠️ TRAP — the tournament structure is persisted under the legacy `"tournament"`
-> key, NOT `"tournament_structure"` (the field name). `scoring_to_dict` remaps it
-> for byte-compatibility with every on-disk `scoring.json` and the dashboard
+> ⚠️ TRAP — the tournament structure is persisted under the key `"tournament"`
+> rather than under the field name `"tournament_structure"`. `scoring_to_dict`
+> remaps it for byte-compatibility with every on-disk `scoring.json` and the dashboard
 > builder (`tests/test_contract_serializer_completeness.py::test_tournament_block_uses_legacy_key`).
 > If you rename a contract field, decide explicitly whether the on-disk key moves
 > — a moved key is itself a format change that strands existing snapshots.
@@ -856,16 +858,16 @@ dataclass; its fields split into three classes:
 | **Runtime measurements** | `noise_floor`, `preflight` | **NEVER** (§3.6.1) |
 
 `contract_hash` is the sha256 computed at epoch-creation time (§3.7). Its default
-is `None`, which means "epoch created before contract-hash auto-epoching landed"
-— such legacy epochs are treated as *always matching* (§3.8.4). A legacy on-disk
-`""` is normalized to `None` on read (`_config_from_dict`).
+is `None`, which marks an epoch created by a zicato build that recorded no hash;
+such a legacy epoch is treated as *always matching* (§3.8.4). An on-disk `""`
+normalizes to `None` on read (`_config_from_dict`).
 
-### 3.6.1 `noise_floor` and `preflight` — recorded, never hashed
+### 3.6.1 `noise_floor` and `preflight` are recorded without being hashed
 
 `noise_floor` (the measured A/A noise floor) and `preflight` (the contract
-pre-flight verdict) are RUNTIME measurements recorded *post-creation*, exactly
-like `goal`. They are written to `config.json` alongside the contract, but they
-are **not contract inputs** — writing them does not touch `contract_hash` and
+pre-flight verdict) are RUNTIME measurements recorded *post-creation*, in the
+same way as `goal`. They are written to `config.json` alongside the contract, but
+they are **not contract inputs**: writing them does not touch `contract_hash` and
 never rolls the epoch. `_config_to_dict` writes them as additive keys:
 
 ```python
@@ -883,8 +885,8 @@ field, and write back — `set_epoch_noise_floor` and `set_epoch_preflight`
 (`src/zicato/epoch/lifecycle.py`), mirroring `set_epoch_goal`. Re-measuring
 overwrites the prior record.
 
-**Why never hashed?** Because a measurement of the contract's noise is not part
-of the contract — it is an *observation about* the contract. If the noise floor
+**Why a measurement never hashes.** A measurement of the contract's noise is an
+*observation about* the contract rather than part of it. If the noise floor
 folded into the hash, re-measuring it (running `zicato board audit` again, or the
 opt-in evolve-start calibration) would roll the epoch and orphan the lineage you
 were trying to calibrate. The whole point of `noise_floor` is to *inform* the
@@ -896,19 +898,19 @@ loop-health detector — not a rule the tournament scores under.
 > ⛔ NEVER add a *measurement* to the contract hash. Measurements (noise floors,
 > pre-flight verdicts, fertility maps, calibration accuracy) describe how the
 > contract *behaves*; the contract is the *rules*. This is invariant #5, and it
-> is the flip side of §3.1's "no source in the hash": both keep the hash a pure
-> function of the operator's authored rules. If you find yourself wanting to roll
-> the epoch when a measurement changes, you have confused the map for the
-> territory — the measurement belongs on `EpochConfig` as an additive
-> never-hashed field with a `set_epoch_*` mutator, or on `RuntimeConfig` (§3.12).
+> is the counterpart of §3.1's rule that source content never enters the hash:
+> both keep the hash a pure function of the operator's authored rules. If you
+> find yourself wanting to roll the epoch when a measurement changes, the
+> measurement belongs on `EpochConfig` as an additive never-hashed field with a
+> `set_epoch_*` mutator, or on `RuntimeConfig` (§3.12).
 
 > ⚠️ TRAP — because `noise_floor` and `preflight` are additive `config.json`
-> keys, an epoch `config.json` written before they existed lacks them, and
-> `_config_from_dict` must default them to `None`. It does (`raw_floor if
+> keys, an epoch `config.json` written without them must still load, and
+> `_config_from_dict` defaults them to `None` (`raw_floor if
 > isinstance(raw_floor, dict) else None`). If you add another additive
 > `EpochConfig` field, give it the same absent-reads-as-default treatment on the
-> read side, or a legacy `config.json` fails to load — the `format_version` guard
-> (§3.10) protects the *record shape*, not individual missing keys.
+> read side, or a `config.json` without the key fails to load — the `format_version` guard
+> (§3.10) protects the *record shape* rather than individual missing keys.
 
 ---
 
@@ -928,7 +930,7 @@ component drifted (§3.8.3). The two functions share every `_canon_*` helper, so
 they can never disagree about a component's canonical bytes.
 
 At epoch creation, `new_epoch` computes the hash over the just-written *frozen*
-copies (§3.8.1), so the stored hash is exactly what a later
+copies (§3.8.1), so the stored hash is the same value a later
 `resolve_contract_inputs` over equivalent *live* files produces — the invariant
 that makes the drift check meaningful.
 
@@ -962,15 +964,14 @@ an epoch. Its steps, in order:
 6. write `config.json`, register the epoch in `lineage.json`;
 7. point the `current_epoch` marker at the new id.
 
-The key design property: when given in-memory objects, `new_epoch` owns
-canonicalization and persistence end to end — "the on-disk files the contract
-hash is computed from are this function's responsibility, not the caller's." A
-caller never needs a prior `.save()`.
+The key design property: given in-memory objects, `new_epoch` owns
+canonicalization and persistence end to end. It writes the on-disk files the
+contract hash is computed from, so a caller never needs a prior `.save()`.
 
-`entrypoint`, `mutable_trees`, and `proposer_path` default to empty / `None` so
-existing callers keep working — an epoch created without them hashes those
-components as empty (stable and back-compatible), and `proposer_path=None`
-canonicalizes to the built-in default's stable form.
+`entrypoint`, `mutable_trees`, and `proposer_path` default to empty / `None`, so
+a caller may omit them. An epoch created without them hashes those components as
+empty, and `proposer_path=None` canonicalizes to the built-in default's stable
+form.
 
 > ⚠️ TRAP — `new_epoch`'s `auto_close_previous` default is `True`, but the
 > auto-roll path (§3.8.3) passes `auto_close_previous=False` because
@@ -1010,7 +1011,7 @@ orchestrator resolves an epoch. It computes the live contract hash and compares:
         return cur
 ```
 
-The four outcomes:
+The decision, by stored-hash state and `auto_epoch` setting:
 
 | State | `auto_epoch=True` | `auto_epoch=False` |
 |---|---|---|
@@ -1018,16 +1019,21 @@ The four outcomes:
 | stored hash `None` (legacy) or `== live` | return `cur` (no roll) | return `cur` (no roll) |
 | stored hash drifts | close `cur`, open `e{N}` seeded from `cur`'s promoted head, return the new id | raise `RuntimeError` naming the changed component |
 
-On an auto-roll it: closes the drifted epoch (async, generating `analysis.md`),
-re-stamps the persisted closed report, creates the new epoch (auto-named
-`e{len(list_epochs)}`), writes the new epoch's per-component sub-hashes to
-`contract_components.json`, records where the new epoch's `v0` seeds from (the
-closed epoch's promoted head, via a roll-seed marker), **drains stale gate
-overrides** (a pending override targets a bare `v3` id, which restarts at `v0`
-in the new epoch, so a survivor would mis-fire), and logs/prints a
-`contract changed (<components>) — rolled cur -> new` line. The changed-component
-label comes from `_component_diff_label` comparing the stored vs live
-sub-hashes.
+An auto-roll performs seven steps, in order:
+
+- **close the drifted epoch** — asynchronously, generating `analysis.md`;
+- **re-stamp the persisted closed report**;
+- **create the new epoch**, auto-named `e{len(list_epochs)}`;
+- **write the new epoch's per-component sub-hashes** to
+  `contract_components.json`;
+- **record where the new epoch's `v0` seeds from** — the closed epoch's promoted
+  head, written as a roll-seed marker;
+- **drain stale gate overrides** — a pending override targets a bare `v3` id,
+  and generation ids restart at `v0` in the new epoch, so a surviving override
+  would mis-fire;
+- **log and print** a `contract changed (<components>) — rolled cur -> new`
+  line, whose changed-component label comes from `_component_diff_label`
+  comparing the stored sub-hashes against the live ones.
 
 The `--no-auto-epoch` path raises with the *same* changed-component label so the
 operator knows what to revert:
@@ -1037,9 +1043,9 @@ evaluation contract has drifted from the current epoch '2026-…' (changed:
 scoring); either revert the contract files or run `zicato epoch new` …
 ```
 
-> ✅ ALWAYS report the changed component, not just "the contract changed." The
-> auto-roll path names it (`_component_diff_label`) from the stored
-> `contract_components.json`. When you add a new contract component, extend
+> ✅ ALWAYS name the changed component rather than reporting only that the
+> contract changed. The auto-roll path names it (`_component_diff_label`) from
+> the stored `contract_components.json`. When you add a new contract component, extend
 > `compute_component_hashes` so the diff label can name it — otherwise a drift on
 > your component falls back to the generic `"contract"` and the operator cannot
 > tell what moved.
@@ -1050,23 +1056,23 @@ scoring); either revert the contract files or run `zicato epoch new` …
 > blank goal as a bug; it is the expected state after a roll, filled in
 > post-hoc. Consumers that render the goal must handle "" as "no goal recorded."
 
-### 3.8.4 Legacy-never-rolls: `is None`, not `== ""`
+### 3.8.4 The legacy check is `is None`
 
-The legacy rule is subtle and load-bearing: a stored `contract_hash` of `None`
-means "created before auto-epoching" and reads as *always matching* — so a
-workspace that predates the feature never spuriously rolls. But the check is
-`cfg.contract_hash is None`, **NOT `== ""`**. A corrupted or empty *real* hash
-must roll (it means something went wrong at write time), not silently read as
+The legacy rule is subtle and load-bearing. A stored `contract_hash` of `None`
+marks an epoch whose record carries no hash, and it reads as *always matching*,
+so such a workspace never spuriously rolls. The check is
+`cfg.contract_hash is None` rather than `== ""`. A corrupt or empty *real* hash
+means something went wrong at write time and must roll rather than read as
 legacy. `EpochConfig.contract_hash`'s docstring and `_config_from_dict` both
-enforce this — a legacy on-disk `""` is normalized to `None` on read, and only
-`is None` reads as legacy downstream.
+enforce this — an on-disk `""` normalizes to `None` on read, and only `is None`
+reads as legacy downstream.
 
 > ⛔ NEVER widen the legacy check to `not cfg.contract_hash` or `cfg.contract_hash
 > in (None, "")`. That would make a corrupt empty hash read as legacy and
 > suppress a roll that should happen — the loop would keep comparing generations
-> under a contract it can no longer verify. This is invariant #6; the `is None`
-> spelling is deliberate and tested implicitly by the round-trip through
-> `_config_from_dict` (which produces `None`, never `""`).
+> under a contract it cannot verify. This is invariant #6, and the `is None`
+> spelling is what the round-trip through `_config_from_dict` relies on: that
+> function produces `None` and never `""`.
 
 ---
 
@@ -1098,7 +1104,7 @@ of three states, and the difference between "rejected" and "still racing" is a
 |---|---|---|
 | `True` | crowned by a tournament | a promoted head |
 | `False` | a rejected dead branch (kept for analysis) | rejected |
-| `null` (pending) | applied-but-unresolved in-flight challenger — has a snapshot + parent + birth round, not yet crowned or cut | neither (still racing) |
+| `null` (pending) | applied-but-unresolved in-flight challenger — has a snapshot + parent + birth round, and is neither crowned nor cut | neither (still racing) |
 
 Why the tri-state matters: an in-flight racer (a multi-challenger field slot
 that has landed its snapshot but not yet been resolved) is written with
@@ -1115,21 +1121,21 @@ pending node counts toward neither column.
 > ⛔ NEVER append an in-flight generation with `pending=False`. Invariant #8: an
 > applied-but-unresolved generation MUST persist `promoted=null`. The field loop
 > (`_mint_challenger_field`) appends each accepted sibling with `pending=True`
-> precisely so a racer is not mistaken for a rejection; the tournament's settle
+> so a racer is not mistaken for a rejection; the tournament's settle
 > path upserts the resolution. Writing `False` early is a data-corruption bug —
 > the lineage would record a live experiment as a dead branch, and cross-epoch
 > seeding (which reads the promoted head) could pick the wrong baseline.
 
 > ⚠️ TRAP — `round_index` on a lineage node is the BIRTH round and NEVER changes
-> once set. `append_to_lineage`'s upsert deliberately re-stamps `round_index`
-> from the generation on every write, but a champion carried into later rounds
-> keeps its ORIGINAL birth round (it is re-recorded with the same value, not the
-> current round). If you add a per-round lineage field, decide whether it is
+> once set. `append_to_lineage`'s upsert re-stamps `round_index` from the
+> generation on every write, but a champion carried into later rounds keeps its
+> birth round: it is re-recorded with the same value rather than the current
+> round. If you add a per-round lineage field, decide whether it is
 > birth-stamped (set once) or defense-updated (re-stamped) — mixing the two makes
 > the "Epoch → Round → challengers minted that round" grouping lie.
 
-`lineage.json` reads are deliberately more forgiving than the storage backend's
-default: a missing / unreadable / malformed document collapses to the empty DAG
+`lineage.json` reads are more forgiving than the storage backend's
+default: a missing, unreadable, or malformed document collapses to the empty DAG
 (the file is rebuilt forward by the mutators). The ONE exception is a
 future-`format_version` document — that is an INTACT record this build cannot
 interpret, so it refuses loudly rather than silently dropping history (§3.10).
@@ -1141,16 +1147,17 @@ workspace snapshot the epoch starts from (or, after a roll, the closed
 predecessor's promoted head). But every downstream consumer (the analyzer report
 loader, the index dual-write, the dashboard lineage walker) expects every
 generation directory to carry an `experiment.json`. `write_seed_experiment`
-(`src/zicato/epoch/journal.py`) writes a seed-shaped marker to keep the on-disk
-shape uniform without inventing tournament numbers: `id = "exp_{epoch}_v0"`,
-`parent_generation_id = None` (the seed has no in-epoch parent — cross-epoch
-lineage lives in `lineage.json`), `hypothesis.core_idea = "baseline seed"`, and
-`outcome = None` (the seed never ran a tournament round, so loaders render its
-row with empty deltas and decision `"baseline"`). The write is idempotent —
-`experiment.json` already present ⇒ return `False` without rewriting.
+(`src/zicato/epoch/journal.py`) writes a seed-shaped marker that keeps the
+on-disk shape uniform without inventing tournament numbers. It sets
+`id = "exp_{epoch}_v0"`, `parent_generation_id = None` (the seed has no in-epoch
+parent, and cross-epoch lineage lives in `lineage.json`),
+`hypothesis.core_idea = "baseline seed"`, and `outcome = None`. The seed runs no
+tournament round, so loaders render its row with empty deltas and decision
+`"baseline"`. The write is idempotent: an `experiment.json` already present
+returns `False` without rewriting.
 
-> ⚠️ TRAP — a seed's `parent_generation_id` is `None` (JSON `null`), and a legacy
-> on-disk `""` is normalized to `None` on read (`read_experiment`,
+> ⚠️ TRAP — a seed's `parent_generation_id` is `None` (JSON `null`), and an
+> on-disk `""` normalizes to `None` on read (`read_experiment`,
 > `_config_from_dict` do the same for their `None`-defaulting fields). Do not
 > write `""` for "no parent" — a downstream lineage walker distinguishes "root"
 > (`None`) from "parent is the generation literally named empty-string." The
@@ -1169,19 +1176,18 @@ leaves *orphan patch files* (harmless — no reader picks them up because the
 patch file. Each individual write is atomic (the storage backend's tmp → fsync →
 rename discipline; 07-runtime-and-durability.md §"The atomic-write contract").
 `experiment.json` is stamped with `RECORD_FORMAT_VERSION` at write and checked
-with `check_record_format` at read (§3.10); the reader accepts BOTH the new
-per-patch shape (`patch_ids`) and the legacy inline shape (`patches: [...]`) for
-back-compat.
+with `check_record_format` at read (§3.10); the reader accepts BOTH the
+per-patch shape (`patch_ids`) and the inline shape (`patches: [...]`).
 
 `update_experiment_outcome` re-reads the experiment, `replace`s only its
 `outcome`, and rewrites `experiment.json` (the patch files are NOT rewritten —
 the same `patch_ids` list rides along). This is the tournament's settle-time
-write: the proposer landed the experiment with `outcome=None`; the tournament
-fills the outcome and re-journals in one swoop.
+write: the proposer wrote the experiment with `outcome=None`, and the tournament
+fills the outcome and re-journals in a single write.
 
 `append_journal_entry` renders one markdown section per experiment (`journal.md`)
 — the running narrative operators read via `zicato journal show`. The section is
-appended before the run (hypothesis landed) and again after (verdict): "appending
+appended before the run (hypothesis recorded) and again after (verdict): "appending
 twice is fine — operators see the proposal then the verdict." The append is a
 read-modify-write of the whole text through the atomic `write_text`, so a crash
 leaves the prior journal intact rather than a truncated file.
@@ -1201,7 +1207,7 @@ the typed companion to a `lineage.json` entry. Its two subtle fields:
 - `promoted` — `True` iff crowned; the epoch's current head is the most-recent
   promoted generation, and `promoted=False` generations are dead branches kept for
   analysis. On disk the lineage node carries the tri-state (`True`/`False`/`null`,
-  §3.9); the `Generation` dataclass default is `False`, which is exactly why an
+  §3.9); the `Generation` dataclass default is `False`, which is why an
   in-flight append must pass `pending=True` to persist `null` instead.
 - `round_index` — the evolve round that MINTED this generation, its BIRTH round.
   Zero-based; the epoch's genesis seed `v0` is round `0`. A champion carried into
@@ -1210,22 +1216,23 @@ the typed companion to a `lineage.json` entry. Its two subtle fields:
   {challengers minted that round}`; a mis-stamped `round_index` breaks that
   grouping (§3.9's trap).
 
-The cross-epoch edge is what a roll (§3.8.3) rides. When `ensure_epoch_for_contract`
+A roll (§3.8.3) writes the cross-epoch edge. When `ensure_epoch_for_contract`
 rolls, it resolves the closed epoch's promoted head snapshot
 (`_promoted_head_snapshot` reads the `current_generation` marker and returns that
-generation's `snapshot/` dir) and writes a roll-seed marker so the new epoch's
-first `evolve` seeds its `v0` from that snapshot — the new lineage's baseline is
-the old lineage's best, not a from-scratch reset. If the closed epoch has no
+generation's `snapshot/` dir) and writes a roll-seed marker, so the new epoch's
+first `evolve` seeds its `v0` from that snapshot. The new epoch's baseline is
+therefore the closed epoch's best generation rather than a from-scratch reset.
+If the closed epoch has no
 promoted generation beyond an unrun seed (or the snapshot dir is empty), the
 resolver returns `None` and the caller falls back to seeding from the registered
 mutable trees.
 
 > ⚠️ TRAP — a roll opens a **fresh, incomparable contract**, and generation ids
 > restart at `v0`/`v1` in the new epoch (§3.13's trap). Cross-epoch continuity is
-> carried by the SNAPSHOT (the promoted head's source tree becomes the new `v0`),
-> NOT by the generation id or any per-epoch scalar — the numbers do not transfer
-> across a roll (the same reason cross-epoch experiment memory carries directions
-> only, never deltas; 05-proposer.md §"Cross-epoch memory"). Seeding the tree
+> carried by the SNAPSHOT: the promoted head's source tree becomes the new `v0`,
+> rather than the generation id or any per-epoch scalar. The numbers do not
+> transfer across a roll, which is also why cross-epoch experiment memory carries
+> directions and never deltas (05-proposer.md §"Cross-epoch memory"). Seeding the tree
 > warm-starts the search; it does not make the two epochs' scalars comparable.
 
 ---
@@ -1253,17 +1260,18 @@ stamped at write time and checked at read time (`src/zicato/epoch/_storage.py`):
 
 The rules (`RECORD_FORMAT_VERSION = 1` on this branch):
 
-- **absent ⇒ version 1** — every pre-stamp workspace / fixture keeps loading;
+- **absent ⇒ version 1** — a workspace or fixture written without the stamp
+  still loads;
 - **equal ⇒ fine**;
 - **higher ⇒ refuse** — a record written by a newer zicato whose shape this
   build cannot promise to interpret. The reader raises `RecordFormatError` with
   upgrade guidance rather than silently misreading a future shape.
 
-There are **NO migration shims**; bumping the constant is a deliberate format
-break. `list_epochs` treats a torn in-progress write (unparseable JSON) as a
-silent skip, but a future-`format_version` record is a LOUD refusal — "unlike a
-torn in-progress write, the record is intact and the operator must know why it
-won't load."
+There are **NO migration shims**; bumping the constant is a format break with no
+migration path. `list_epochs` treats a torn in-progress write (unparseable JSON)
+as a silent skip. A future-`format_version` record is a LOUD refusal instead:
+"unlike a torn in-progress write, the record is intact and the operator must know
+why it won't load."
 
 > ⛔ NEVER bump `RECORD_FORMAT_VERSION` for an *additive* change. Adding an
 > optional field that reads back as a default (the `noise_floor` / `preflight` /
@@ -1271,31 +1279,32 @@ won't load."
 > a change that would make an *old reader misinterpret* a record — a renamed key
 > an old reader would read as absent-and-default, a changed value semantics.
 > Because there are no migration shims, a bump is a hard break: every older
-> zicato refuses every record the new one writes. This is invariant #7; see
-> 07-runtime-and-durability.md §"Record format versioning" for the storage-wide
-> view (D12).
+> zicato refuses every record the new one writes. This is invariant #7; for the
+> storage-wide view, see the refuse-a-newer-record-format rule
+> (`07-runtime-and-durability.md`, invariant `D12`).
 
 > ⚠️ TRAP — the SQLite index has its OWN versioning (`user_version`) and its own
-> rule: a newer `user_version` is never re-stamped down (07-runtime-and-durability.md
-> D12). Do not conflate the two. `format_version` guards canonical *file* records;
+> rule: a newer `user_version` is never re-stamped down (the same
+> refuse-a-newer-record-format rule — `07-runtime-and-durability.md`, invariant
+> `D12`). Do not conflate the two. `format_version` guards canonical *file* records;
 > `user_version` guards the derived *index*. A file record is authoritative; the
 > index is a rebuildable projection. When you add a versioned record, use
-> `check_record_format` at every read seam that reconstructs it, exactly as
+> `check_record_format` at every read seam that reconstructs it, as
 > `load_epoch`, `read_experiment`, and `_load_raw` (lineage) do.
 
 ---
 
-## 3.11 FLAGSHIP RECIPE: Add a contract knob end-to-end
+## 3.11 Recipe: add a contract knob end-to-end
 
 Goal: add a new operator-tunable knob that is part of the frozen evaluation
 contract — so a non-default value rolls the epoch, and a default value never
-rolls one already on disk. This is the highest-blast-radius change class in the
-subsystem: get the omit-at-default or serializer step wrong and you mass-roll
-the fleet (§3.4) or silently compare incomparable generations (§3.5).
+rolls one already on disk. This change class has the widest reach in the
+subsystem: get the omit-at-default or serializer step wrong and you roll every
+existing workspace (§3.4) or silently compare incomparable generations (§3.5).
 
-The worked example is a hypothetical nested `ProposerQualityConfig` knob, so we
-can lean on the **screening-scaffolded-vs-exemplars-NOT-scaffolded asymmetry**
-(step 5) — the real, shipped decision about whether the scaffold sets a knob.
+The worked example is a new nested `ProposerQualityConfig` knob, which lets step
+5 reuse the rule that decides whether the scaffold sets a knob: the candidate
+screen is scaffolded and the process-exemplar channel is not.
 
 1. **Add the dataclass field + validation.** Put the field on the right
    dataclass — a scoring weight on `ScoringWeights`, a proposer-quality lever on
@@ -1316,7 +1325,7 @@ can lean on the **screening-scaffolded-vs-exemplars-NOT-scaffolded asymmetry**
    `python -c` line above IS that check. `tests/test_core_types.py` holds the
    dataclass-level pins that do exist (`ScoringWeights.per_judge_weights`,
    `RuntimeConfig.parallelism`), and `tests/test_knob_registry.py` is the guard
-   that reds when a knob's declaration is inconsistent with the registries.
+   that fails when a knob's declaration is inconsistent with the registries.
 
 2. **Register omit-at-default (if the default is inert).** Add the field NAME to
    `_SCORING_OMIT_AT_DEFAULT_FIELDS` (`src/zicato/epoch/contract.py`). For a
@@ -1334,8 +1343,8 @@ can lean on the **screening-scaffolded-vs-exemplars-NOT-scaffolded asymmetry**
    non-default value for the field to `_NONDEFAULT_VALUES` in
    `tests/test_contract_serializer_completeness.py` (under the field's class).
    The value must be constraint-VALID (the dataclass validates on construct) and
-   genuinely different from the default (the test asserts non-vacuousness). This
-   is what makes the structural round-trip + no-roll guards cover your field.
+   different from the default (the test asserts that it is not the default).
+   This is what makes the structural round-trip + no-roll guards cover your field.
    **Verify:**
    ```bash
    uv run pytest tests/test_contract_serializer_completeness.py -q
@@ -1352,11 +1361,11 @@ can lean on the **screening-scaffolded-vs-exemplars-NOT-scaffolded asymmetry**
        -k "round_trip or lifecycle or loader" -q
    ```
 
-5. **Make the scaffold decision — the asymmetry.** Decide whether
+5. **Make the scaffold decision.** Decide whether
    `recommended_scaffold_weights` (`src/zicato/core/scoring_config.py`) sets your
-   knob. The rule is a real distinction, not taste:
+   knob. The rule is a real distinction rather than a matter of taste:
    - an **evaluation-side** knob that only changes how candidates are *measured*
-     may be scaffolded — the shipped precedent is the candidate screen, which the
+     may be scaffolded — the precedent is the candidate screen, which the
      scaffold enables explicitly:
      ```python
      # src/zicato/core/scoring_config.py — recommended_scaffold_weights (tail)
@@ -1365,16 +1374,18 @@ can lean on the **screening-scaffolded-vs-exemplars-NOT-scaffolded asymmetry**
      ```
    - a knob that **widens what the proposer can see** of the board (the
      overfitting boundary — 05-proposer.md §"The restricted-visibility envelope")
-     must NOT be scaffolded. The shipped precedent is `process_exemplars`: it is
-     "evaluation-side, while exemplars widen the proposer-visibility channel, so
-     the operator opts in deliberately under the doc's §5 harm-detection runbook"
+     must NOT be scaffolded. The precedent is `process_exemplars`: the candidate
+     screen is evaluation-side, while exemplars widen the proposer-visibility
+     channel, so the operator opts in under the harm-detection runbook in
+     `docs/design/PROCESS-EXEMPLARS.md` §5
      (`ProposerQualityConfig.process_exemplars` docstring). It defaults `0` and
      the scaffold leaves it `0`.
-   In both cases the in-code default stays OFF; only the scaffold (what a NEW
-   workspace's `scoring.json` spells out) differs. If your knob touches proposer
-   visibility, treat it like `process_exemplars`: design-note first (§3.11 is not
-   enough — 14-goals-and-roadmap.md §"Design-first zones"), and leave the scaffold
-   alone.
+   In both cases the in-code default stays OFF; only the scaffold — what a
+   freshly created workspace's `scoring.json` spells out — differs. If your knob
+   touches proposer visibility, treat it like `process_exemplars`: write the
+   design note first, because this recipe alone does not cover a
+   visibility-widening knob (14-goals-and-roadmap.md §"Design-first zones"), and
+   leave the scaffold alone.
    **Verify:**
    ```bash
    uv run pytest tests/test_scaffold_contract.py -q
@@ -1382,9 +1393,9 @@ can lean on the **screening-scaffolded-vs-exemplars-NOT-scaffolded asymmetry**
    ```
 
 6. **Wire the builder op + GUI + copilot.** Operators set contract knobs through
-   the tournament builder, not by hand-editing `scoring.json`. There are three
-   surfaces that COMPOSE on the same nested block (so they never clobber each
-   other):
+   the tournament builder rather than by hand-editing `scoring.json`. Three
+   surfaces COMPOSE on the same nested block, so they never clobber each
+   other:
    - the op in `src/zicato/builder/operations.py` (`set_proposer_quality` /
      `set_screening` are the models — each `dataclasses.replace`s only its keys
      on the nested `proposer_quality` block and returns a `DraftPatch`);
@@ -1406,18 +1417,18 @@ can lean on the **screening-scaffolded-vs-exemplars-NOT-scaffolded asymmetry**
    )
    ```
    Add `builder_arg` only when the op's arg name differs from the field name
-   (`screen_entries` → `entries`); use a DOTTED value (`"ladder.threshold"`)
-   when the op takes the knob as a subkey of a partial-mapping argument, so
-   the GUI-row and node-test checks bind to the subkey rather than being
-   satisfied vacuously by a sibling's row.
+   (`screen_entries` → `entries`). Use a DOTTED value (`"ladder.threshold"`) when
+   the op takes the knob as a subkey of a partial-mapping argument. The dotted
+   form binds the GUI-row and node-test checks to that subkey, so a sibling's row
+   cannot satisfy them vacuously.
 
-   > ⚠️ TRAP — a knob with NO `builder_op` used to be invisible to the pin,
-   > which is how `holdout_margin` / `holdout_entry_regression_budget` shipped
-   > with a working gate and no way to set them from the builder. A second
-   > guard now refuses that silence: every contract knob field must either
-   > carry a `builder_op` or be listed in `_NO_BUILDER_OP_KNOBS` with the
-   > reason it should not be exposed (nested container, dotted callable spec,
-   > open TransformSpec mapping). "Not wired yet" is not one of the reasons.
+   > ⚠️ TRAP — the knob-coverage pin sees a knob only through its
+   > declaration, so a knob carrying no `builder_op` at all would slip past it
+   > with a working gate and no way to set it from the builder. A second guard
+   > refuses that silence: every contract knob field must either carry a
+   > `builder_op` or be listed in `_NO_BUILDER_OP_KNOBS` with the reason it
+   > should not be exposed (nested container, dotted callable spec, open
+   > TransformSpec mapping). "Not wired yet" is not one of the reasons.
 
    **Verify:**
    ```bash
@@ -1426,15 +1437,15 @@ can lean on the **screening-scaffolded-vs-exemplars-NOT-scaffolded asymmetry**
    node src/zicato/dashboard/static/test/builder.test.mjs
    ```
 
-7. **Answer the cost-meter question.** Does your knob change how many board runs
-   a round costs? The builder's `estimate_cost` (`src/zicato/builder/operations.py`)
-   prices the round; a read-side-only knob (like `process_exemplars`, which only
-   adds prompt content) leaves it untouched, while an evaluation-side knob (like
-   `screen_entries`, which adds `proposes × best_of_n × panel` panel runs) MUST
-   add a `CostLine` so the operator sees and prices the extra spend before opting
-   in. Decide explicitly which yours is; if it adds runs, add the line and label
+7. **Answer the cost-meter question.** Decide whether your knob changes how many
+   board runs a round costs. The builder's `estimate_cost`
+   (`src/zicato/builder/operations.py`) prices the round. A read-side-only knob leaves it untouched, as
+   `process_exemplars` does by only adding prompt content. An evaluation-side knob
+   MUST add a `CostLine` so the operator sees and prices the extra spend before
+   opting in; `screen_entries` adds `proposes × best_of_n × panel` panel runs, and
+   its cost line says so. If your knob adds runs, add the line and label
    auxiliary-LLM-call costs separately from the board-runs headline (the existing
-   `candidate-screen runs` vs `best-of-N propose calls` split is the model).
+   `candidate-screen runs` and `best-of-N propose calls` split is the model).
    **Verify:**
    ```bash
    uv run pytest tests/test_builder_operations.py -k "cost or estimate" -q
@@ -1442,11 +1453,11 @@ can lean on the **screening-scaffolded-vs-exemplars-NOT-scaffolded asymmetry**
 
 8. **Add the contract-hash byte-identity tests.** In
    `tests/test_epoch_contract.py`, pin BOTH halves against the on-disk
-   `scoring.json` shape (not just the dataclass): a contract at the default
-   hashes identically to one that omits the field
+   `scoring.json` shape rather than against the dataclass alone. A contract at
+   the default must hash identically to one that omits the field
    (`test_hash_stable_when_screening_fields_at_default` is the model), and any
-   non-default value rolls it (`test_hash_changes_when_screening_opted_in` is the
-   model). Test through `compute_contract_hash` over a written `scoring.json`, so
+   non-default value must roll it (`test_hash_changes_when_screening_opted_in` is
+   the model). Test through `compute_contract_hash` over a written `scoring.json`, so
    you exercise the full parse → `ScoringWeights` → canon path.
    **Verify:**
    ```bash
@@ -1454,13 +1465,13 @@ can lean on the **screening-scaffolded-vs-exemplars-NOT-scaffolded asymmetry**
    ```
 
 9. **CHANGELOG the behavior-affecting default (if any).** If your change alters a
-   *default* that shipping workspaces do not pin, it is a BREAKING default: those
+   *default* that existing workspaces do not pin, it is a BREAKING default: those
    workspaces auto-roll on the next `evolve`. Add a `CHANGELOG.md` entry under
-   the existing `⚠️ BREAKING DEFAULTS` idiom, stating exactly which knob to pin to
-   keep an epoch byte-stable (the noise-aware-defaults and bug-#10 entries are the
-   template — loud, declared, with the pin spelled out). A purely-additive
-   default-off knob (the common case) is NOT breaking and needs only a normal
-   changelog line.
+   the existing `⚠️ BREAKING DEFAULTS` idiom, naming the knob to pin to keep an
+   epoch byte-stable (the noise-aware-defaults entry and the contract-hash
+   cwd-independence entry are the template — declared up front, with the pin
+   spelled out). A purely-additive default-off knob, the common case, is NOT
+   breaking and needs only a normal changelog line.
    **Verify:**
    ```bash
    grep -n "<your-knob>" CHANGELOG.md   # the entry exists
@@ -1481,15 +1492,15 @@ uv run mypy src/zicato/core/scoring_config.py src/zicato/epoch/contract.py
 ```
 
 If you skip step 2, every existing epoch rolls on upgrade (invariant #2 broken).
-If you skip step 3 or 8, a future field that drops in serialization rolls the
-fleet silently (issue #13, invariant #3). If you skip step 5's asymmetry and
-scaffold a visibility-widening knob, you default-enable an overfitting channel
-the operator never consented to (05-proposer.md §"The channel-author's
-checklist").
+If you skip step 3 or 8, a later field that drops out of serialization rolls
+every existing workspace silently (issue #13, invariant #3). If you skip step
+5's scaffold rule and scaffold a visibility-widening knob, you default-enable an
+overfitting channel the operator never consented to (05-proposer.md §"The
+channel-author's checklist").
 
 ---
 
-## 3.12 MIRROR RECIPE: Add a runtime-only knob
+## 3.12 Recipe: add a runtime-only knob
 
 Goal: add a knob that tunes *how the loop runs* without changing *what it
 measures* — so it must NEVER roll the epoch. This is the mirror of §3.11: same
@@ -1498,7 +1509,7 @@ measures* — so it must NEVER roll the epoch. This is the mirror of §3.11: sam
 workspace-config `runtime` block and CLI flags — it is not part of the frozen
 contract and is not serialized into any epoch snapshot.
 
-The shipped precedents are `diversity_tolerance`, `infra_abort_round_threshold`,
+The precedents are `diversity_tolerance`, `infra_abort_round_threshold`,
 and `max_tokens_per_round` — each docstring says the same thing verbatim: "A
 RUNTIME tuning knob, NOT part of the frozen evaluation contract — flipping it
 does not roll the epoch."
@@ -1537,46 +1548,47 @@ does not roll the epoch."
    uv run pytest tests/test_epoch_contract.py -q   # unchanged; your knob is invisible here
    ```
 
-### The choose-which decision table
+### Choosing between a contract knob and a runtime knob
 
-Before you add ANY knob, answer one question: *does its value change what a
-promotion means?* If two generations crowned under different values of the knob
-are still directly comparable, it is runtime; if not, it is contract.
+Before you add any knob, decide whether its value changes what a promotion
+means. If two generations crowned under different values of the knob are
+directly comparable, the knob is runtime; if they are not, it is contract.
 
 | Question | Contract knob (§3.11) | Runtime knob (§3.12) |
 |---|---|---|
 | Does it change what/how candidates are *measured* or *selected*? | yes | no |
-| Are generations across two values still directly comparable? | **no** — must roll | **yes** — must not roll |
+| Are generations across two values directly comparable? | **no** — must roll | **yes** — must not roll |
 | Home | `ScoringWeights` / nested config | `RuntimeConfig` |
 | Source of value | frozen `scoring.json` (per-epoch) | workspace-config `runtime` block + CLI flags (per-run) |
 | Folds into `contract_hash`? | yes (unless omitted-at-default) | never |
 | Serializer guard | `_NONDEFAULT_VALUES` completeness table | — |
 | Examples | `promote_margin`, `screen_entries`, `best_of_n`, `holdout_fraction`, `tournament_structure`, a grading `scalar_fn` | `parallelism`, `diversity_tolerance`, `infra_abort_round_threshold`, `max_tokens_per_round`, `scrub_worker_env` |
 
-The tell: `parallelism` (how many boards run at once), `max_tokens_per_round` (a
-scheduling budget), and `diversity_tolerance` (a field-dedup ceiling) all change
-*how fast / how cheaply* a round runs, but a challenger crowned under
-`parallelism=4` is exactly as comparable to one crowned under `parallelism=8` as
-two crowned under the same value — the *rule of comparison* is untouched. That is
-the invariant-#5 line: runtime knobs describe execution, contract knobs describe
-comparison.
+Three runtime knobs show the test applied. `parallelism` (how many boards
+run at once), `max_tokens_per_round` (a scheduling budget), and
+`diversity_tolerance` (a field-dedup ceiling) all change how fast and how cheaply
+a round runs. A challenger crowned under `parallelism=4` is as comparable to one
+crowned under `parallelism=8` as two crowned under the same value, because the
+*rule of comparison* is untouched. That is invariant #5: runtime knobs describe
+execution, contract knobs describe comparison.
 
 > ⛔ NEVER put a knob on `RuntimeConfig` if changing it makes two generations
-> incomparable. `diversity_tolerance` is a borderline-looking case that resolves
-> correctly: it *soft-rejects* overlapping siblings from a field, changing which
-> experiments run — but every experiment that DOES run is still scored under the
-> same contract, so the promoted generation is comparable across tolerance
-> values. If your knob changes the *scoring or gating rule* (what counts as a
-> win), it is a contract knob no matter how "operational" it feels — put it on
-> `ScoringWeights` and roll the epoch.
+> incomparable. `diversity_tolerance` looks borderline and resolves to runtime.
+> It *soft-rejects* overlapping siblings from a field, changing which experiments
+> run, but every experiment that DOES run is scored under the same contract, so
+> the promoted generation is comparable across tolerance values. If your knob
+> changes the *scoring or gating rule* — what counts as a win — it is a contract
+> knob no matter how operational it feels; put it on `ScoringWeights` and roll
+> the epoch.
 
 > ⚠️ TRAP — a `RuntimeConfig` knob does NOT get a `format_version` bump, a
-> CHANGELOG BREAKING entry, or an epoch-roll, but it DOES need a byte-identical
-> default: a workspace that omits the `runtime` key must run byte-for-byte as
-> before (`make_runtime_config` defaults the whole block to `{}`). The
-> `scrub_worker_env=False` / `max_tokens_per_round=0` / `infra_abort_round_threshold=0`
-> defaults are all "OFF ⇒ today's behavior exactly" for this reason. An inert
-> default is the runtime-side analogue of §3.4's byte-identical-at-default.
+> CHANGELOG BREAKING entry, or an epoch-roll, but it DOES need an inert default.
+> A workspace that omits the `runtime` key must run byte-for-byte as one that
+> spells out every knob's default; `make_runtime_config` defaults the whole block
+> to `{}`. The `scrub_worker_env=False` / `max_tokens_per_round=0` /
+> `infra_abort_round_threshold=0` defaults are all inert for this reason: off
+> means the loop behaves as though the knob did not exist. An inert default is
+> the runtime-side analogue of §3.4's byte-identical-at-default.
 
 ---
 
@@ -1584,8 +1596,8 @@ comparison.
 
 The full sequence under stock defaults — `zicato epoch register` has recorded the
 contract in `config.json`, and the operator runs `zicato evolve` — annotated
-with the file that owns each step. Read this once before your first
-contract-adjacent change; every trap in this chapter appears in situ here.
+with the file that owns each step. Read it once before your first
+contract-adjacent change.
 
 ```
 first `evolve` on a fresh workspace (no current_epoch marker):
@@ -1635,8 +1647,8 @@ Points where the trace changes under non-default inputs:
 - a **whitespace-only** edit to `brief.md` (CRLF churn, trailing spaces) →
   `_canon_brief` normalizes it away, `current_hash` is UNCHANGED, no roll
   (§3.2.2).
-- a **legacy** workspace (its `e0` predates auto-epoching, stored hash `None`) →
-  the drift check short-circuits at `is None`, never rolls (§3.8.4), whatever
+- a workspace whose `e0` carries no stored hash (`None`, the legacy state) →
+  the drift check short-circuits at `is None` and never rolls (§3.8.4), whatever
   the live files say.
 - an edit to a **grading plugin body** the scoring `scalar_fn` points at, with
   the dotted string unchanged → `_canon_scoring` → `_canon_dotted_spec` folds
@@ -1656,28 +1668,29 @@ Points where the trace changes under non-default inputs:
 
 ## 3.14 Cross-references
 
-- 01-orientation.md §"Workspace layout" — where `epochs/{id}/`, `current_epoch`,
+- 01-orientation.md §2.6 (the workspace on disk) — where `epochs/{id}/`, `current_epoch`,
   `lineage.json`, and the operator's live contract files sit.
-- 02-architecture.md §"The evolve round" — where `ensure_epoch_for_contract`
+- 02-architecture.md §3 — where `ensure_epoch_for_contract`
   runs in the round pipeline.
-- 04-evaluation-statistics.md §"The A/A noise floor" — what `noise_floor`
+- 04-evaluation-statistics.md §4 — what `noise_floor`
   measures; §"Contract pre-flight" — what `preflight` records. Both are the
   never-hashed measurements of §3.6.
-- 05-proposer.md §"`_canon_proposer` and skills" — the proposer component in
+- 05-proposer.md §5.3.8 (skills and `ProposerSpec` resolution) — the proposer component in
   full, and §"Why tools do NOT fold into the contract hash" (the registry
   argument behind §3.2.6); §"The restricted-visibility envelope" — the
-  overfitting boundary the scaffold asymmetry (§3.11 step 5) protects.
-- 06-tournament-and-selection.md §"The tournament structure" — how
+  overfitting boundary the scaffold rule (§3.11 step 5) protects.
+- 06-tournament-and-selection.md §6.9 (the structure-independent walk) — how
   `tournament_structure` (a nested `ScoringWeights` field) folds into the
   contract via the same recursion as `overfitting` (§3.2.3).
-- 07-runtime-and-durability.md §"Record format versioning" (D12) — the
-  storage-wide view of §3.10; §"The generation store" — what a generation
-  snapshot the lineage nodes point at actually is.
-- 10-builder-cli-library.md §"Builder operations" — the `set_screening` /
-  `set_proposer_quality` surface the flagship recipe's step 6 wires into.
-- 12-bug-casebook.md §"Case 10" — the contract-hash-embeds-checkout bug behind
-  invariant #1 and §3.2.5; §"The meta-lessons" (M1) — the shared-mutable-state
-  class the lineage tri-state (§3.9) avoids.
+- 07-runtime-and-durability.md — the refuse-a-newer-record-format rule
+  (invariant `D12`), which is the storage-wide view of §3.10, and §"The
+  generation store", which says what the snapshot a lineage node points at
+  actually is.
+- 10-builder-cli-library.md §10.2 — the `set_screening` /
+  `set_proposer_quality` surface step 6 of §3.11 wires into.
+- 12-bug-casebook.md §"Case 10" — the case where the contract hash embedded the
+  checkout path, behind invariant #1 and §3.2.5; §"The meta-lessons" — the
+  shared-mutable-state lesson the lineage tri-state (§3.9) avoids.
 - 14-goals-and-roadmap.md §"Design-first zones" — why a contract-hash or
   overfitting-boundary knob needs a design note before code.
 
@@ -1690,13 +1703,13 @@ Where to add (and what will catch) a regression, by concern:
 | Concern | Tests |
 |---|---|
 | hash stability (whitespace / reorder / float noise) + sensitivity (board / scoring / entrypoint / mutable trees) | `tests/test_epoch_contract.py` |
-| bug-#10 cwd/checkout invariance + path-spelling normalization | `tests/test_epoch_contract.py::test_contract_hash_is_cwd_and_checkout_invariant` |
+| cwd and checkout invariance + path-spelling normalization | `tests/test_epoch_contract.py::test_contract_hash_is_cwd_and_checkout_invariant` |
 | board-level meta (judges / disable_drift) + per-entry grading source folding | `tests/test_epoch_contract.py` (`test_canon_board_meta_*`, `test_canon_judges_*`) |
 | proposer component: skill body / add / remove / rename / agent source / whitespace / fs-reorder / builtin-vs-dir | `tests/test_epoch_contract.py` (`test_proposer_*`) |
 | omit-at-default (screening / experiment_memory) omit == explicit-default, opt-in rolls | `tests/test_epoch_contract.py`, `tests/test_contract_serializer_completeness.py::test_experiment_memory_omitted_from_canon_at_default` |
 | serializer completeness (no dropped field, round-trip identity, no spurious roll) — structural, covers future fields | `tests/test_contract_serializer_completeness.py` |
 | lifecycle round-trip (parser + loader agree) | `tests/test_contract_serializer_completeness.py` (`test_scoring_lifecycle_round_trip_every_field`, `test_lifecycle_parser_and_loader_agree`) |
-| `resolve_contract_inputs` (config keys, legacy `rubric_path`, defaults, proposer_path) | `tests/test_epoch_contract.py` (`test_resolve_contract_inputs_*`) |
+| `resolve_contract_inputs` (config keys, the `rubric_path` alias, defaults, proposer_path) | `tests/test_epoch_contract.py` (`test_resolve_contract_inputs_*`) |
 | epoch lifecycle (new / close / list / switch, id construction, stub analysis) | `tests/test_epoch_lifecycle.py` |
 | auto-roll decision (legacy no-roll, drift rolls, `--no-auto-epoch` raises, component label) | `tests/test_auto_epoch.py` (the decision in isolation), `tests/test_evolve_auto_epoch.py` (through a full `evolve` loop) |
 | stale gate overrides drained on roll | `tests/test_control_consumer.py` (`drain_stale_gate_overrides`) |

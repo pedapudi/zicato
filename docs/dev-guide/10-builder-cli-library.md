@@ -1,41 +1,43 @@
 # 10 — The Builder, the CLI, and the Library boundary
 
-> **Covers.** The three *drivers* that sit on top of the zicato library and the
-> boundary that keeps them honest: (1) the **builder** — the contract IDE, a
-> deterministic draft/ops/dispatch/copilot backend that the form GUI and the
-> chat copilot both drive through ONE mutation surface, plus its honest cost
-> meter, its statistical pre-flight, its margin-vs-floor validate, and its
-> fork/compare slots; (2) the **CLI** — the auto-discovered `click` command
-> tree, the flag → pin → config-knob → worker-propagation layer, `zicato config
-> env`, and the generated `CLI.md`; (3) the **library facade** — the small
-> lazy `zicato` surface, the five import-linter contracts, the TID251 bans, and
-> how a name (or a driver edge) is added; and (4) **packaging** — the wheel, the
+> **Covers.** The drivers that sit on top of the zicato library, and the import
+> boundary between them and it. Four subjects: (1) the **builder** — the
+> contract IDE, a deterministic draft/ops/dispatch/copilot backend that the form
+> GUI and the chat copilot both drive through ONE mutation surface, plus its
+> honest cost meter, its statistical pre-flight, its margin-vs-floor validate,
+> and its fork/compare slots; (2) the **CLI** — the auto-discovered `click`
+> command tree, the flag → pin → config-knob → worker-propagation layer, `zicato
+> config env`, and `CLI.md`; (3) the **library facade** — the small lazy
+> `zicato` surface, the seven import-linter contracts, the TID251 bans, and how a
+> name (or a driver edge) is added; and (4) **packaging** — the wheel, the
 > extras, the uv workspace member, and the supervisor-binary build hook.
 >
-> **Prerequisites.** 01-orientation.md §"Library first, three drivers on top"
-> (the shape this chapter formalizes) and §"The Golden Rules" (G5 import
-> contracts, G6 omit-at-default, G9 module-level callables across the worker
-> boundary); 02-architecture.md §"orchestrator vs workers vs supervisor vs
-> dashboard" (the four OS processes the pins and the env-var contracts cross);
-> 03-contract-and-epochs.md §"The contract hash" (what "rolls the epoch" means —
-> the builder's entire reason to exist); 04-evaluation-statistics.md §"The A/A
-> noise floor" (what the pre-flight measures and what the margin must clear);
-> 06-tournament-and-selection.md §"The evidence gate" (the `budget × 2 × board`
-> term that dominates the cost meter).
+> **Prerequisites.** 01-orientation.md §1.3 "Library first, three drivers on
+> top" (the shape this chapter formalizes) and §4 "The Golden Rules" — the
+> green-gates rule (parity gates, import contracts, the node suite), the
+> omit-at-default rule, and the module-level-callable rule for callables that
+> cross the worker boundary; 02-architecture.md §1 "The process topology" (the
+> four OS processes the pins and the environment-variable contracts cross);
+> 03-contract-and-epochs.md §3.7 "Computing the hash" (what "rolls the epoch"
+> means — the builder's entire reason to exist); 04-evaluation-statistics.md §4
+> "A/A noise-floor calibration" (what the pre-flight measures and what the
+> promote margin must clear) and §6 "The evidence gate" (the `budget × 2 ×
+> board` term that dominates the cost meter).
 >
-> **Invariants introduced in this chapter.** Each is load-bearing; the numbered
-> callouts below expand every one.
+> **Invariants introduced in this chapter.** Later sections expand every one.
+> Prose cites the name; the `ID` column stays because documents outside this
+> chapter cite the ids.
 >
-> | ID | Invariant |
-> |----|-----------|
-> | L1 | **One mutation surface.** Every editable contract change flows through exactly one function in `zicato/builder/operations.py`. The form, the copilot, and the REST dispatch all call the same op — never a second edit path. |
-> | L2 | **Full-coverage.** A new contract knob is not shipped until it has an op (`operations.py`) + a dispatch arm (`api.py::_dispatch_op`) + a copilot tool (`copilot_tools.py::DEFAULT_BUILDER_TOOLS`) + a GUI control-or-documented-exception + a cost line if it changes the schedule + a `validate` consideration if it can be unsound. Machine-pinned including the GUI surface — the op↔dispatch↔copilot triple by `test_default_builder_tools_registry_covers_every_op`, and the GUI-control-or-exception by `test_builder_gui_coverage.py`. |
-> | L3 | **The cost meter is honest and twinned.** Every board-run multiplier the runtime will spend gets a `CostLine`; auxiliary LLM calls are labelled and excluded from the board-runs headline; the Python estimator and the JS twin must agree (a py↔js parity test). |
-> | L4 | **Recommend-only.** The builder never hard-blocks `apply`. Even a `refuse`-severity warning or a `refuse` pre-flight verdict informs the operator — it never gates the write. |
-> | L5 | **The builder never rolls the epoch and never starts a live evolve.** `apply(confirm=True)` writes the contract source files and lets the auto-epoch machinery roll on the next resolve; the copilot's apply tool is always `confirm=False`. |
-> | L6 | **Flags cross the worker boundary via `config_pins`, never an env var.** No environment variable is a configuration knob; operator knobs are CLI flags (pinned via `pin_overrides`) and `config.json` blocks. |
-> | L7 | **The library facade is lazy and pure.** `import zicato` imports only `zicato`; every facade name is `is`-identical to its home-module attribute; the `TYPE_CHECKING` mirror is the static view of the runtime lazy surface. |
-> | L8 | **The library never imports a driver.** The only driver→driver edges are `cli → dashboard` and `dashboard → builder`; the five import-linter contracts pin exactly that. |
+> | ID | Name | Invariant |
+> |----|------|-----------|
+> | L1 | the one-mutation-surface rule | Every editable contract change flows through exactly one function in `zicato/builder/operations.py`. The form, the copilot, and the REST dispatch all call the same op; there is never a second edit path. |
+> | L2 | the full-coverage rule for a new knob | A new contract knob ships only once it has an op (`operations.py`), a dispatch arm (`api.py::_dispatch_op`), a copilot tool (`copilot_tools.py::DEFAULT_BUILDER_TOOLS`), a GUI control or a documented exception, a cost line if it changes the schedule, and a `validate` consideration if it can be unsound. Two tests — **the knob-coverage pins** — machine-pin the wiring: `test_default_builder_tools_registry_covers_every_op` for the op↔dispatch↔copilot triple, and `test_builder_gui_coverage.py` for the GUI control or exception. |
+> | L3 | the honest-twinned-cost-meter rule | Every board-run multiplier the runtime will spend gets a `CostLine`; auxiliary LLM calls are labelled and excluded from the board-runs headline; the Python estimator and the JS twin must agree (a py↔js parity test). |
+> | L4 | the recommend-only rule | The builder never hard-blocks `apply`. Even a `refuse`-severity warning or a `refuse` pre-flight verdict informs the operator; it never gates the write. |
+> | L5 | the builder-never-rolls-the-epoch rule | The builder never rolls the epoch and never starts a live evolve. `apply(confirm=True)` writes the contract source files and lets the auto-epoch machinery roll on the next resolve; the copilot's apply tool is always `confirm=False`. |
+> | L6 | the config-pins-not-environment rule | Flags cross the worker boundary via `config_pins`, never an environment variable. No environment variable is a configuration knob; operator knobs are CLI flags (pinned via `pin_overrides`) and `config.json` blocks. |
+> | L7 | the lazy-pure-facade rule | `import zicato` imports only `zicato`; every facade name is `is`-identical to its home-module attribute; the `TYPE_CHECKING` mirror is the static view of the runtime lazy surface. |
+> | L8 | the library-never-imports-a-driver rule | The only driver→driver edges are `cli → dashboard` and `dashboard → builder`; the five import-linter contracts pin exactly that. |
 
 ---
 
@@ -72,14 +74,14 @@ forbidden** — §10.11 is the enforcement.
 | `src/zicato/builder/draft.py` | `TournamentDraft` (the mutable editable contract), `DraftStore` (sessions + named slots), `ContractDiff` | ~450 lines |
 | `src/zicato/builder/operations.py` | **THE mutation surface** — every `set_*` op, `estimate_cost`, `validate`, `compare_drafts`, `preflight`, `apply`, and their result dataclasses | ~1,600 lines |
 | `src/zicato/builder/api.py` | `_dispatch_op` + the Starlette routes (`builder_routes`) | ~490 lines |
-| `src/zicato/builder/copilot.py` / `copilot_tools.py` | the chat copilot (B1b) + its tool registry `DEFAULT_BUILDER_TOOLS` | ~470 lines |
+| `src/zicato/builder/copilot.py` / `copilot_tools.py` | the chat copilot + its tool registry `DEFAULT_BUILDER_TOOLS` | ~470 lines |
 | `src/zicato/dashboard/static/js/views/builder.js` | the form GUI: rail sections, per-section controls, the Review pane | ~950 lines |
 | `src/zicato/dashboard/static/js/builder/model.js` | `paramSpecsFor`, the schematic preview model, and the **client-side cost twin** (`estimateCost`) | ~515 lines |
 | `src/zicato/cli/discovery.py` | `build_cli_root`, `ZicatoGroup`, the command auto-discovery | ~370 lines |
 | `src/zicato/cli/commands/*.py` | one command (or sub-group) per file — the inventory in §10.9 | — |
 | `src/zicato/config.py` | `pin_overrides` / `pinned_override` / `load_config` + `describe_env_vars` | ~690 lines |
 | `src/zicato/__init__.py` | the lazy `_EXPORTS` facade + `__getattr__` + `TYPE_CHECKING` mirror | 153 lines |
-| `pyproject.toml` | the five import-linter contracts, TID251 bans, extras, uv workspace, wheel packaging | 422 lines |
+| `pyproject.toml` | the seven import-linter contracts, TID251 bans, extras, uv workspace, wheel packaging | 422 lines |
 | `hatch_build.py` | the custom build hook that bundles `zicato-supervisor` into the wheel | ~98 lines |
 
 ---
@@ -90,8 +92,8 @@ The builder edits an **evaluation contract** (board + proposer brief + scoring +
 proposer dir) as a *draft*, previews the cost and epoch-roll consequences, and
 writes it back — at which point the ordinary auto-epoch machinery rolls the
 epoch on the next resolve. It does all of this with **no LLM dependency in the
-data layer** (the copilot is a thin driver on top) and, critically, through one
-shared mutation surface. The module docstring states the doctrine:
+data layer** (the copilot is a thin driver on top) and through one shared
+mutation surface. The module docstring states the doctrine:
 
 ```python
 # src/zicato/builder/operations.py (module docstring, head)
@@ -106,11 +108,11 @@ there is exactly one place each mutation's semantics live.
 
 There are three layers, top to bottom, and each is a driver of the one below it:
 
-1. **The draft (`draft.py`).** `TournamentDraft` is a deliberately **mutable**
-   working copy of a whole contract — `scoring: ScoringWeights`,
+1. **The draft (`draft.py`).** `TournamentDraft` is a **mutable** working copy
+   of a whole contract — `scoring: ScoringWeights`,
    `entries: list[BoardEntry]`, `brief: str`, `proposer_path: Path | None`.
    `DraftStore` keys one draft per `session_id` and holds store-global **named
-   slots** for the fork/compare lifecycle (§10.7). A session new to the store is
+   slots** for the fork/compare lifecycle (§10.6). A session new to the store is
    lazily initialised from the CURRENT live contract via
    `TournamentDraft.from_workspace`, so the builder opens pre-filled with what is
    running.
@@ -130,7 +132,7 @@ There are three layers, top to bottom, and each is a driver of the one below it:
    a chat turn.
 
 > ⛔ NEVER edit a `TournamentDraft` field directly from the API layer, the
-> copilot, or the GUI (invariant **L1**). If a mutation is not expressible as a
+> copilot, or the GUI (the one-mutation-surface rule). If a mutation is not expressible as a
 > call to an `operations.py` function, the fix is to add (or extend) an op —
 > never to reach around it. Two edit paths means two places for the semantics to
 > drift, and the second one will not be the one the cost meter and `validate`
@@ -140,7 +142,8 @@ There are three layers, top to bottom, and each is a driver of the one below it:
 > `field → {"from": old, "to": new}` only for fields it actually moved. Every
 > existing op skips a no-op assignment (it compares to the current value before
 > recording the change), so the chat/UI renders a truthful "what changed"
-> summary and a re-issued identical edit reads as a no-op, not a phantom change.
+> summary and a re-issued identical edit reads as a no-op rather than a phantom
+> change.
 
 ### 10.1.1 The draft as the mutable mirror of the frozen contract
 
@@ -159,15 +162,16 @@ concurrent builder sessions never tread on each other.
 `scoring` is itself a frozen `ScoringWeights`; every `set_*` op **replaces** it
 wholesale with `dataclasses.replace(...)` (the helper `_replace_scoring`). Board
 entries are likewise replaced, never mutated in place — which is what makes
-`DraftStore._copy_draft` a real fork with only a shallow list copy (§10.7).
+`DraftStore._copy_draft` a real fork with only a shallow list copy (§10.6).
 
 The draft's `diff_vs_live` and its three canonicalizers (`_board_canon`,
-`_brief_canon`, `_scoring_canon`) deliberately **agree with the contract-hash /
-epoch-roll rule**: they reuse `zicato.epoch.contract.round_floats` /
+`_brief_canon`, `_scoring_canon`) **agree with the contract-hash and epoch-roll
+rule** by construction: they reuse `zicato.epoch.contract.round_floats` /
 `scoring_to_canon`, the same normalizers the contract hash uses. That agreement
 is the reason the builder can honestly tell an operator "this edit rolls the
 epoch" before they apply — the diff can never report a change the hash would not
-see, nor hide one it would (see 03-contract-and-epochs.md §"The contract hash").
+see, nor hide one it would (see 03-contract-and-epochs.md §3.7 "Computing the
+hash").
 
 > ⚠️ TRAP — the six diff *components* are not all epoch-rollers. `ContractDiff`
 > reports `board` / `brief` / `scoring` / `proposer` / `structure` /
@@ -181,19 +185,19 @@ see, nor hide one it would (see 03-contract-and-epochs.md §"The contract hash")
 
 The copilot model comes only from the workspace `models.builder` role; endpoint,
 credential-variable name, and custom callable therefore use the same validation
-and secret boundary as every other role. `builder.json` is deliberately narrower:
-it may select builder skills and an optional UI theme. It lives at
+and secret boundary as every other role. `builder.json` is narrower: it selects
+builder skills and an optional UI theme. It lives at
 `<workspace>/builder.json` or `<workspace>/.zicato/builder.json`; absent fields
 default. `GET /builder/config` derives `chat_enabled` from `models.builder` and
-never serializes engine credentials. This removes the former ambiguity between
-two model settings while leaving form editing available without a model.
+never serializes engine credentials. One place names the copilot's model, and
+form editing stays available on a workspace that configures no model at all.
 
 ### 10.1.3 The two front doors — the REST surface and the copilot
 
 Both front doors call the same ops and return the same envelope
-(`{draft, patch, cost, warnings, diff}`), which is the concrete form of invariant
-**L1**. The REST surface (`api.py::builder_routes`, mounted by the dashboard at
-`/builder/*`):
+(`{draft, patch, cost, warnings, diff}`), which is the concrete form of the
+one-mutation-surface rule. The REST surface (`api.py::builder_routes`, mounted
+by the dashboard at `/builder/*`):
 
 | Method + route | Handler | What it does |
 |---|---|---|
@@ -212,33 +216,34 @@ one of the two pre-op capture seams behind the `undo` op (§10.6). A `read_only`
 server returns 403 for the POST ops and apply while keeping the GETs live — the
 dashboard's read-only mode never lets a viewer mutate a contract.
 
-The copilot (B1b) is a thin ADK agent whose tools are `DEFAULT_BUILDER_TOOLS`
+The copilot is a thin ADK agent whose tools are `DEFAULT_BUILDER_TOOLS`
 (§10.7). Each tool pulls the session's draft from a contextvar bound by
 `bind_builder_tool_context`, calls the matching op, and returns the SAME summary
-shape the REST envelope carries — "one source of truth" for what an edit did,
+shape the REST envelope carries. One shape therefore describes what an edit did,
 whether it came from a control or a chat turn. `builder_chat` streams the
 copilot's frames over SSE (`token` / `tool` / `patch` / `done` / `error`), and the
 form applies a `patch` frame to the shared draft exactly as it applies a
 `/builder/op` response, then re-renders. The copilot's apply tool is
 `preview_apply`, which is ALWAYS `confirm=False` — the chat can preview an apply
-but never rolls the epoch (invariant **L5**).
+but never rolls the epoch (the builder-never-rolls-the-epoch rule).
 
-> ⚠️ TRAP — the copilot tool context is a contextvar, not a parameter. A copilot
+> ⚠️ TRAP — the copilot tool context arrives through a contextvar rather than a
+> parameter. A copilot
 > tool NEVER accepts the draft/session as an argument (the agent is constructed
 > once per session and reused); it calls `_active_context()` on its first line.
 > If you add a tool that takes the context as a parameter, the agent cannot
 > supply it and every call fails — mirror the existing tools exactly. This is the
 > same contextvar-seam pattern the proposer tools use (see 05-proposer.md
-> §"The contextvar binding").
+> §5.9.1 "The contextvar binding").
 
-### 10.1.4 The board editor — the flagship GUI (B2)
+### 10.1.4 The board editor — a GUI surface that adds no ops
 
 Board authoring is the builder's largest form surface, and it is built on the
 same doctrine as every other control: **it drives existing ops only.** The
 Board section renders each entry as a clickable row (id + kind + at-a-glance
-badges) that toggles an **inline accordion editor** — there is no modal
-machinery in the console, and the accordion fits the `gatedSwap` + `section`
-idiom the rest of the view uses.
+badges) that toggles an **inline accordion editor**. The console carries no
+modal machinery, and the accordion fits the `gatedSwap` + `section` idiom the
+rest of the view uses.
 
 The editor lives in `dashboard/static/js/builder/entry_form.js`, a **pure
 DOM-builder module** with no fetching and no module state of its own. It is a
@@ -261,17 +266,19 @@ function of three things:
 existing `edit_board_entry` op (a replace-by-id) — there is no separate mutation
 path for individual fields, and no per-field ops. A judges-list edit, an
 expectation change, and a budget bump all ride the one whole-entry replace on
-Save. This is invariant **L1** in its most literal form: the flagship form adds
-zero ops. `tests/test_builder_api.py::test_builder_op_edit_board_entry_whole_entry_round_trip`
+Save. This is the one-mutation-surface rule in its most literal form: the
+largest form surface in the builder adds no ops.
+`tests/test_builder_api.py::test_builder_op_edit_board_entry_whole_entry_round_trip`
 pins the byte-stability per kind — the re-read row equals
 `entry_to_dict(validate_board_entry(payload))`, which is exactly the save/reopen
 loop the editor relies on. Delete drives `remove_board_entry` behind a two-click
 confirm; a per-judge badge's × drives `remove_judge` directly; the board-level
-`board_meta` panel (drift suppression + judge-only) drives `set_board_meta`,
-closing B0's documented GUI exception.
+`board_meta` panel (drift suppression and judge-only) drives `set_board_meta`,
+so the board header is an ordinary GUI control rather than a documented
+exception.
 
-**No client validation twin (invariant L4).** The form carries NO port of
-`BoardEntry.validate`. Save is gated only on the PRESENCE of an id (a
+**No client validation twin (the recommend-only rule).** The form carries NO
+port of `BoardEntry.validate`. Save is gated only on the PRESENCE of an id (a
 presence-only enable/disable, never a semantic check); every structural
 objection is the server's field-precise `ValueError`, rendered verbatim in the
 editor's inline error strip — and the editor stays open so the operator can fix
@@ -308,10 +315,10 @@ the good ones).
 
 ## 10.2 The op inventory
 
-Every editable contract knob has exactly one write op. This is the enumerable
-that invariant **L2** hangs off — memorize its shape, because "add a knob" means
-"add a row here plus its four companions" (§10.6). The op string equals the
-function name in every case.
+Every editable contract knob has exactly one write op. The full-coverage rule
+for a new knob is stated over this table: adding a knob means adding a row here
+plus its five companion surfaces (§10.7). The op string equals the function name
+in every case.
 
 | Op / function | Mutates (contract knob) | Key args / knobs |
 |---|---|---|
@@ -332,14 +339,14 @@ function name in every case.
 | `set_brief` | `draft.brief` | `text: str` |
 | `set_board_meta` | the board-level `board_meta` header (`draft.disable_drift` / `draft.judge_only`) | `disable_drift` (wholesale token list, validated; `[]` clears, `None` unchanged), `judge_only` |
 
-Three structural facts to internalize:
+Three structural facts:
 
 - **The scoring ops compose on nested blocks.** `set_proposer_quality` and
   `set_screening` both edit the *same* `proposer_quality` block — each touches
-  only its own fields and replaces the block with a `dataclasses.replace`. That
-  is deliberate: they are two operator-facing concerns (slate quality vs.
-  tryout screening) over one contract sub-object. Do not merge them; do not let
-  one clobber the other's fields.
+  only its own fields and replaces the block with a `dataclasses.replace`. They
+  are two operator-facing concerns — slate quality and tryout screening — over
+  one contract sub-object. Do not merge them; do not let one clobber the
+  other's fields.
 - **Every op validates at the boundary, never silently coerces.** `set_gate`
   raises `ValueError` on an invalid `monotonicity_scope`; `set_namespace_weights`
   raises on a negative `diff_complexity_weight`; `edit_board_entry` calls
@@ -347,16 +354,17 @@ Three structural facts to internalize:
   corrupting the draft — the dispatch layer turns the raise into a 400.
 - **Mapping fields are edited wholesale.** `set_weights`'s `per_kind_weights` /
   `per_judge_weights` / `severity_weights` and `set_gate`'s
-  `namespace_monotonicity` REPLACE the whole mapping. The builder is a
-  contract editor, not a merge tool; a caller that wants to add one judge weight
-  sends the full new mapping.
+  `namespace_monotonicity` REPLACE the whole mapping. The builder edits a
+  contract rather than merging into one; a caller that wants to add one judge
+  weight sends the full new mapping.
 
-> ⚠️ TRAP — the "`0` means what?" asymmetry. Across the ops, `None` is
-> universally "leave unchanged", but the meaning of an explicit `0` varies by
-> field and is documented per-op: `set_holdout(max_generations_per_contract=0)`
-> **clears** the ceiling (the field's real "off" is `None`, which the op
-> reserves for "unchanged"), while `set_screening(entries=0)` turns the screen
-> **off**. When you add a knob whose natural "off" is `None`, you cannot use
+> ⚠️ TRAP — an explicit `0` does not mean the same thing everywhere. Across the
+> ops, `None` is universally "leave unchanged". The meaning of an explicit `0`
+> varies by field and is documented per-op:
+> `set_holdout(max_generations_per_contract=0)` **clears** the ceiling, because
+> that field's real "off" is `None` and the op reserves `None` for "unchanged";
+> `set_screening(entries=0)` turns the screen **off**.
+> When you add a knob whose natural "off" is `None`, you cannot use
 > `None` as the "unchanged" sentinel too — pick an explicit sentinel (`0`, a
 > flag) and document it in the op docstring, exactly as `set_holdout` does.
 
@@ -404,8 +412,8 @@ the auxiliary line) adds into `per_round`:
 | `crowning-confirm runs (evidence gate)` | `budget × 2 × board` | `promote_confidence_threshold` is set |
 | `placebo-baseline runs (amortized)` | `ceil(replicates × board / random_baseline_every_n)` | `random_baseline_every_n > 0` |
 
-The default `replicates` is read from the selection layer, not hard-coded — the
-comment is the load-bearing part:
+The default `replicates` is read from the selection layer rather than
+hard-coded — the comment carries the reason:
 
 ```python
 # src/zicato/builder/operations.py — estimate_cost
@@ -452,25 +460,26 @@ Worked example — the recommended scaffold on a 20-entry train board, gauntlet,
 | `crowning-confirm runs` = `32 × 2 × 20` | **1,280** |
 | **board-runs-per-round (headline)** | **1,370** |
 
-The evidence-confirm budget is ~16× the base schedule. That is the whole reason
-the meter exists: an operator flipping the evidence gate on with the scaffold's
+The evidence-confirm budget is 16× the base schedule here. That multiple is why
+the meter exists. An operator who turns the evidence gate on with the scaffold's
 32-replicate budget has multiplied their per-round board spend, and the meter
 says so in a line they can read *before* they apply. The op docstring names it:
 "with the scaffold's 32-replicate budget this is typically the LARGEST term."
 
 > ✅ ALWAYS add a `CostLine` for any new contract knob that multiplies the
-> per-round board sweeps (invariant **L3**). The meter's contract is that its
-> headline is a coarse upper-ish bound on the *board runs* a round actually
-> spends — a knob that adds runs without a line makes the meter lie by
-> omission, and the operator learns the true cost only from their model bill.
+> per-round board sweeps (the honest-twinned-cost-meter rule). The meter's
+> contract is that its headline is a coarse upper-ish bound on the *board runs*
+> a round actually spends. A knob that adds runs without a line leaves the
+> headline short, and the operator learns the true cost only from their model
+> bill.
 
 > ⚠️ TRAP — auxiliary LLM calls are NOT board runs. The `best-of-N propose
-> calls` line is appended to the breakdown but deliberately NOT added to
-> `per_round`: those are proposer-side model calls, not board evaluations. Keep
-> that distinction when you add a term — if your knob spends model calls that
-> are not board sweeps, label the line "auxiliary" and leave it out of the
-> headline sum, exactly as best-of-N does. Conflating the two double-charges the
-> board-runs headline.
+> calls` line is appended to the breakdown but NOT added to `per_round`: those
+> are proposer-side model calls rather than board evaluations. Keep that
+> distinction when you add a term. If your knob spends model calls that are not
+> board sweeps, label the line "auxiliary" and leave it out of the headline sum,
+> exactly as best-of-N does. Conflating the two double-charges the board-runs
+> headline.
 
 ### 10.3.3 The cost twin — the meter is computed twice and must agree
 
@@ -497,10 +506,10 @@ pins the agreement (see `src/zicato/dashboard/static/test/builder.test.mjs`).
 > ⛔ NEVER change a cost term in `operations.py::estimate_cost` (or
 > `_racing_cost`) without making the identical change in
 > `builder/model.js::estimateCost` (and `racingCost`) in the same commit. The
-> two are a twinned pair by design (invariant **L3**); a one-sided edit reds the
-> py↔js parity test — and if you "fix" that by deleting the assertion, the two
-> meters silently diverge and a frozen-contract preview quotes a different price
-> than the live builder for the same contract.
+> two are a twinned pair by design (the honest-twinned-cost-meter rule), and
+> a one-sided edit reds the py↔js parity test. If you "fix" that red by deleting
+> the assertion, the two meters silently diverge, and a frozen-contract preview
+> quotes a different price than the live builder for the same contract.
 
 ---
 
@@ -547,23 +556,25 @@ measured noise floor.
 
 Two properties an extender must preserve:
 
-- **The verdict is recommend-only and never persisted** (invariants **L4**,
-  **L5**). The draft is not the live contract, so its measurement must never
-  masquerade as the live epoch's — `preflight` never writes onto the epoch
-  record. Contrast the epoch-open pre-flight (13-recipes.md §"Add an epoch-open
-  step"), which DOES persist onto the never-hashed epoch record.
+- **The verdict is recommend-only and never persisted** (the recommend-only
+  rule and the builder-never-rolls-the-epoch rule). The draft is not the live
+  contract, so its measurement must never be mistaken for the live epoch's —
+  `preflight` never writes onto the epoch record. The epoch-open pre-flight
+  (13-recipes.md Recipe 8, "Add an epoch-open step") behaves the other way: it
+  DOES persist onto the never-hashed epoch record.
 - **It never starts a live evolve.** It spends only the small K-draw calibration
   budget and is cache-idempotent with `zicato board audit` (re-running is a
-  cache hit). See 04-evaluation-statistics.md §"The calibration cache" for the
-  reserved replicate base (1000) it draws on.
+  cache hit). It draws on two claimed replicate bases — 1000 for the A/A
+  calibration and 2000 for the pre-flight probes. See
+  04-evaluation-statistics.md §8 "THE RESERVED REPLICATE-BASE LEDGER".
 
 > ⚠️ TRAP — the pre-flight measures the DRAFT contract but borrows the LIVE
 > target. `run_contract_preflight` consumes the draft's `board` and `weights`
 > directly (no on-disk materialization) but takes the champion generation,
 > adapter, and runtime from the workspace. If you extend the pre-flight to a new
 > contract component the builder edits, thread it from the draft; if you extend
-> it to a new *target* fact, thread it from the workspace — never invert those,
-> or the pre-flight measures a contract the operator did not draft.
+> it to a new *target* fact, thread it from the workspace. Inverting either
+> direction makes the pre-flight measure a contract the operator did not draft.
 
 ---
 
@@ -571,7 +582,7 @@ Two properties an extender must preserve:
 
 `validate(draft, workspace_root=None, *, noise_floor_max_abs_delta=None) ->
 list[Warning]` returns a list of advisory warnings — **never a blocking verdict**
-(invariant **L4**). Each warning carries a stable `code`, a human `message`, and
+(the recommend-only rule). Each warning carries a stable `code`, a human `message`, and
 a `severity`:
 
 ```python
@@ -585,8 +596,7 @@ class Warning:
 
 The severity ladder is `info` (advisory) / `warning` (likely a mistake) /
 `refuse` (statistically unsound) — and the docstring on the field is emphatic
-that even `refuse` "never hard-blocks apply." The warnings the current build
-emits:
+that even `refuse` "never hard-blocks apply." The warnings `validate` emits:
 
 | Code | Severity | Fires when |
 |---|---|---|
@@ -605,7 +615,7 @@ emits:
 | `margin_below_noise_floor` | **refuse** | see below |
 
 The board-authoring codes are **Python-only**: the JS twin
-(`builder/model.js::validateContract`) deliberately mirrors the entry-free
+(`builder/model.js::validateContract`) mirrors the entry-free
 subset only (its scope comment names the excluded codes), because the
 read-only frozen-contract preview it serves never has the full entry
 objects. Do not twin an entry-level code into the JS.
@@ -619,7 +629,7 @@ objects. Do not twin an entry-level code into the JS.
 > runtime context. The posture is recorded in `validate`'s docstring; keep
 > any future path/spec check on the shape side of that line.
 
-### 10.5.1 The margin-vs-floor check — the one `refuse`
+### 10.5.1 The margin-vs-floor check — the statistical `refuse`
 
 The statistically load-bearing check pairs the promote margin against the
 measured A/A noise floor. If a floor is known (passed in from a just-run
@@ -658,20 +668,20 @@ from the diff, the pre-flight panel (a chip rendering `ok` / `warn` / `refuse` /
 `unavailable`), a `refuse`-warnings panel (`severity === 'refuse'` warnings under
 a ⛔ glyph), the fork/compare diff, and a **two-click Dry-run / Apply** confirm
 (`postApply` → `POST /builder/apply`). The rail marks Review "done" only when
-`_diff.rolls_epoch` — i.e. there is something to apply.
+`_diff.rolls_epoch` — that is, only when there is something to apply.
 
 > ✅ ALWAYS give a new `validate` warning a stable symbolic `code`. The UI keys
 > on it (`refuseWarningsPanel` filters on severity; the rail and chips key on
 > codes), and a copilot turn may cite it. A message-only warning with no code is
 > unstyleable and untestable.
 
-> ⛔ NEVER make `validate` (or the pre-flight verdict) block `apply` (invariant
-> **L4**). The builder's posture is that the operator is the authority: it
-> surfaces the unsoundness in the loudest recommend-only form it has (`refuse` +
-> a ⛔ chip) and writes the contract anyway if they confirm. If a check ever
-> *must* block, that is a contract-validation concern for
-> `epoch/contract.py`, not a builder warning — and it will block every write
-> path, not just the builder's.
+> ⛔ NEVER make `validate` (or the pre-flight verdict) block `apply` (the
+> recommend-only rule). The builder's posture is that the operator is the
+> authority: it surfaces the unsoundness in the loudest recommend-only form it
+> has (`refuse` + a ⛔ chip) and writes the contract anyway if they confirm. If a
+> check ever *must* block, it belongs to contract validation in
+> `epoch/contract.py` rather than to a builder warning — and it will then block
+> every write path rather than only the builder's.
 
 ### 10.5.3 The apply path — dry-run vs confirm, and why apply does not roll
 
@@ -693,12 +703,12 @@ becoming) the live contract. It returns an `ApplyResult` carrying `confirmed`,
   publish, recorded under `config.json`'s `contract` key. The result recomputes
   the hash from the now-written live contract and sets `rolled=diff.rolls_epoch`.
 
-The critical design point (invariant **L5**): **`apply` writes contract *source
-files*; it never opens an epoch.** The ordinary auto-epoch machinery rolls the
-epoch on the NEXT `zicato evolve` resolve, exactly as it would for a hand-edited
-`scoring.json`. The builder is a contract *editor*, not an epoch driver — it
-reuses the existing write paths so there is one epoch-roll mechanism, not a
-second one the builder owns:
+The critical design point (the builder-never-rolls-the-epoch rule): **`apply`
+writes contract *source files*; it never opens an epoch.** The ordinary
+auto-epoch machinery rolls the epoch on the NEXT `zicato evolve` resolve,
+exactly as it would for a hand-edited `scoring.json`. The builder edits a
+contract; it does not drive epochs. It reuses the existing write paths, so one
+mechanism rolls the epoch and the builder owns no second one:
 
 ```python
 # src/zicato/builder/operations.py — apply (confirm branch)
@@ -724,14 +734,15 @@ second one the builder owns:
 > input, thread it into BOTH `_predicted_contract_hash`'s `ContractInputs` and
 > the live `resolve_contract_inputs` path, or the preview quotes a hash the apply
 > does not produce — and the operator's "this rolls to X" promise breaks. This is
-> the builder's local instance of the contract-hash cwd/checkout hazard
-> (12-bug-casebook.md §"Bug #10").
+> the builder's local instance of the contract-hash cwd/checkout hazard — the
+> case where the contract hash embedded the checkout path
+> (`12-bug-casebook.md` Case 10).
 
-> ⚠️ TRAP — the draft must round-trip EVERY board-file component, not just the
-> entries. The board's optional `board_meta` header (`disable_drift` /
+> ⚠️ TRAP — the draft must round-trip EVERY board-file component, the header as
+> well as the entries. The board's optional `board_meta` header (`disable_drift` /
 > `judge_only`) is part of the contract, and `apply` rewrites the whole
 > `board.jsonl`: a draft loaded through the entries-only loader would silently
-> STRIP the header from the live contract on apply (the B0 bug).
+> STRIP the header from the live contract on apply.
 > `TournamentDraft.from_workspace` therefore loads via
 > `load_current_board_with_meta`, the draft carries `disable_drift` /
 > `judge_only` fields, and BOTH writers (`_write_contract` and
@@ -740,7 +751,8 @@ second one the builder owns:
 > `save_board`'s emit rule (`zicato.board.jsonl.board_meta_to_dict` is the
 > shared header builder), so the diff agrees with the on-disk bytes the
 > contract hash sees. If you add another board-level header field, thread it
-> through all four seams in the same commit.
+> through the same four seams in one commit: the loader, both writers, and
+> `_board_canon`.
 
 ---
 
@@ -774,9 +786,9 @@ def _copy_draft(draft: TournamentDraft) -> TournamentDraft:
     )
 ```
 
-Slots are process-local — they never persist to disk, inheriting the contract
-that "drafts have never outlived the dashboard process." `fork` raises on a
-malformed or already-taken name (it never silently overwrites a variant).
+Slots are process-local and never persist to disk: a draft does not outlive the
+dashboard process. `fork` raises on a malformed or already-taken name (it never
+silently overwrites a variant).
 
 **The compare read-op (`compare_drafts`, `operations.py`).** A keyed diff between
 any two drafts, over the SAME canonicalizers the epoch-roll rule uses, so
@@ -790,14 +802,14 @@ hash would not see.
 > ⚠️ TRAP — the copilot's `compare` tool resolves the literal names `"session"`
 > and `"live"` specially (current working draft, and a fresh
 > `from_workspace`), in addition to slot names. If you add a resolvable name,
-> add it to BOTH the copilot's `compare` tool and any API compare path — the
-> two share the operator's mental model of "what can I compare against".
+> add it to BOTH the copilot's `compare` tool and any API compare path, so both
+> surfaces offer the operator the same set of things to compare against.
 
 ### 10.6.1 Undo and revert — the two restore ops
 
 Two lifecycle ops let an operator walk edits back, and both are ops
-(invariant **L1** — the GUI's Undo/Reset buttons and the copilot's tools call
-the same functions, never a second edit path):
+(the one-mutation-surface rule — the GUI's Undo/Reset buttons and the copilot's
+tools call the same functions, never a second edit path):
 
 - **`revert_to_live`** discards the session draft's edits by restoring it
   from a fresh `TournamentDraft.from_workspace(root)`. The restore is
@@ -810,9 +822,9 @@ the same functions, never a second edit path):
   session)` records the PRE-op state at BOTH front doors — `builder_op` calls
   it immediately before every `_dispatch_op` write, and
   `BuilderToolContext.draft()` (the accessor every copilot tool starts with)
-  does the same — so a form edit and a chat edit share ONE history and either
-  door can undo the other's edit. `remember` dedups against the newest
-  snapshot by field equality (a read tool records nothing); `pop_undo`
+  does the same. A form edit and a chat edit therefore share ONE history, and
+  either door can undo the other's edit. `remember` dedups against the newest
+  snapshot by field equality, so a read tool records nothing. `pop_undo`
   discards snapshots equal to the current state on the way down and hands
   back the newest one that differs. An exhausted history yields a
   `DraftPatch(op="undo", note="nothing to undo")` — never an error.
@@ -826,10 +838,11 @@ the same functions, never a second edit path):
 
 ---
 
-## 10.7 The full-coverage invariant, and how it is enforced
+## 10.7 The full-coverage rule, and how it is enforced
 
-Invariant **L2** is the discipline that keeps the three front doors in lockstep.
-A new contract knob is not shipped until it lands on **six** surfaces:
+The full-coverage rule for a new knob keeps the two front doors and the GUI in
+step with the op set. A new contract knob is not shipped until it lands on
+**six** surfaces:
 
 | # | Surface | File | Enforced by |
 |---|---|---|---|
@@ -840,9 +853,10 @@ A new contract knob is not shipped until it lands on **six** surfaces:
 | 5 | a cost line (if it changes the schedule) | `operations.py::estimate_cost` + `model.js::estimateCost` | py↔js parity test |
 | 6 | a `validate` consideration (if it can be unsound) | `operations.py::validate` | `tests/test_builder_operations.py` |
 
-Surfaces 1–4 are **mechanically pinned**. The dispatch is a flat if/elif chain
-that falls through to a raise, so an op missing its arm is a 400 the API tests
-catch; the copilot registry is pinned by an explicit anti-drift test:
+Surfaces 2–4 are **mechanically pinned**, surfaces 3 and 4 by the two tests
+this chapter calls **the knob-coverage pins**. The dispatch is a flat if/elif
+chain that falls through to a raise, so an op missing its arm is a 400 the API
+tests catch. The copilot registry is pinned by an explicit anti-drift test:
 
 ```python
 # tests/test_builder_copilot.py — test_default_builder_tools_registry_covers_every_op
@@ -863,44 +877,47 @@ and the GUI surface is pinned by a second registry-derived test:
 ```
 
 `test_builder_gui_coverage.py` derives the write/lifecycle op set from
-`DEFAULT_BUILDER_TOOLS` (minus the pure-read tools — `estimate_cost`, `validate`,
-`preflight`, `list_drafts`, `compare`, `preview_apply`), reads `views/builder.js`
-+ `builder/entry_form.js` as TEXT, and demands each op is wired as
-`runOp('<op>'` / `postOp('<op>'` OR justified in its `GUI_EXCEPTIONS` dict. The
-one standing exception today is `add_judge` (judge authoring rides the whole-entry
-`edit_board_entry` round-trip — the entry_form judges editor — rather than a
-second authoring path). A stale exception (an op that has since gained a control)
-reds just as loudly as a missing control, so the doctrine cannot rot in either
-direction.
+`DEFAULT_BUILDER_TOOLS`, minus the pure-read tools (`estimate_cost`, `validate`,
+`preflight`, `list_drafts`, `compare`, `preview_apply`). It then reads
+`views/builder.js` + `builder/entry_form.js` as TEXT and demands each op is
+wired as `runOp('<op>'` / `postOp('<op>'` OR justified in its `GUI_EXCEPTIONS`
+dict. The one standing exception is `add_judge` (judge authoring rides the
+whole-entry `edit_board_entry` round-trip — the entry_form judges editor —
+rather than a
+second authoring path). A stale exception (an op that has gained a control since
+the exception was written) reds just as loudly as a missing control, so the
+coverage claim stays true in both directions.
 
-Surfaces 5–6 are **discipline plus parity**: there is no single per-knob test
-that asserts "this knob has a cost line AND a validate check", but the py↔js cost
-parity test pins any cost line you add to be mirrored, and the design doc
-(`docs/design/TOURNAMENT-BUILDER.md` §"The consequence-forward principle") makes
-the cost + epoch-roll surfacing a stated requirement of the two builder skills.
+Surfaces 5–6 are **discipline plus parity**. No single per-knob test asserts
+"this knob has a cost line AND a validate check". What holds them is narrower:
+the py↔js cost parity test forces any cost line you add to be mirrored, and the
+design doc (`docs/design/TOURNAMENT-BUILDER.md` §4, "The consequence-forward
+principle") makes the cost and epoch-roll surfacing a stated requirement of the
+two builder skills.
 
 > ⛔ NEVER add an op to `operations.py` and its `_dispatch_op` arm but skip the
-> copilot tool (invariant **L2**). `test_default_builder_tools_registry_covers_
-> every_op` reds immediately — that red is the invariant working. The fix is a
-> one-line addition to `DEFAULT_BUILDER_TOOLS` (and its module `__all__`), not a
-> weakening of the test.
+> copilot tool (the full-coverage rule).
+> `test_default_builder_tools_registry_covers_
+> every_op` reds immediately — that red is the rule working. The fix is a
+> one-line addition to `DEFAULT_BUILDER_TOOLS` (and its module `__all__`) rather
+> than a weakening of the test.
 
-> ✅ ALWAYS decide surface 4's "GUI control-or-documented-exception" explicitly —
-> `test_builder_gui_coverage.py` now forces the choice. The GUI renders every
+> ✅ ALWAYS decide surface 4's "GUI control-or-documented-exception" —
+> `test_builder_gui_coverage.py` forces the choice. The GUI renders every
 > `paramSpecsFor` spec as a number input; a boolean knob is a hard-coded toggle in
-> a section builder; a knob deliberately left form-invisible (an advanced/rare
-> lever) is an entry in that test's `GUI_EXCEPTIONS` dict with a one-line
-> justification, not an oversight. A new op with neither a control nor an
+> a section builder; a knob left form-invisible (an advanced or rare lever) is an
+> entry in that test's `GUI_EXCEPTIONS` dict carrying a one-line justification
+> rather than an unrecorded omission. A new op with neither a control nor an
 > exception reds the pin, naming the op and the two remedies.
 
-### 10.7.1 The declarative knob registry (Finding 3)
+### 10.7.1 The declarative knob registry
 
 The six surfaces above are the *op-level* net (every op has a dispatch arm, a
 copilot tool, a GUI control). One layer finer sits the **per-field knob
-registry**: for a scoring/proposer knob the same field was historically
-mirrored across seven hand-kept sites, and the omit-at-default set was a
-hand-maintained literal a typo could silently corrupt. Finding 3 makes the
-**field declaration the source of truth**.
+registry**, which makes the **field declaration the source of truth** for a
+scoring or proposer knob. Without it the same field would be mirrored across
+seven hand-kept sites, and the omit-at-default set would be a hand-maintained
+literal that a typo could silently corrupt.
 
 Each field on `ScoringWeights` and its nested config dataclasses is exposed by
 `core/scoring_config.py::contract_knobs()`. The registry is derived at import
@@ -930,13 +947,13 @@ introspection/source-scan. Forgetting ANY one reds this ONE test with a message
 naming exactly which touchpoint is missing for which knob (e.g. *"knob
 'genealogy' … is missing touchpoint (b): an API dispatch entry"*).
 
-> ✅ **The new discipline for adding an omit-at-default / proposer-quality knob:
-> declare the field + its `_knob(...)` metadata, then let the runtime registry
-> feed canonicalization and let the guard test tell
-> you every remaining touchpoint.** Run `test_every_builder_op_knob_is_fully_wired`
-> and fix each named gap until it is green; you do not have to remember the five
-> sites, the test enumerates the ones you missed. The ops are **not**
-> code-generated from the metadata — this is enforcement, not generation. The
+> ✅ **To add an omit-at-default or proposer-quality knob: declare the field and
+> its `_knob(...)` metadata, then let the runtime registry feed canonicalization
+> and let the guard test name every remaining touchpoint.** Run
+> `test_every_builder_op_knob_is_fully_wired` and fix each named gap until it is
+> green. You do not have to remember the five sites; the test enumerates the ones
+> you missed. The ops are **not** code-generated from the metadata: the registry
+> enforces the wiring rather than producing it. The
 > op-level pins (`test_builder_gui_coverage.py`) and the serializer-completeness
 > table (`test_contract_serializer_completeness.py`) stay as the coarser nets.
 
@@ -947,9 +964,9 @@ The recipe that walks all six op-level surfaces is §10.8.
 ## 10.8 Recipe: add a builder op end-to-end
 
 Goal: add a new editable contract knob to the builder so the form, the copilot,
-the cost meter, and `validate` all know about it — satisfying invariant **L2**.
-The worked example: exposing a hypothetical `set_gate(min_holdout_confirms=…)`
-knob. The steps generalize to any knob.
+the cost meter, and `validate` all know about it — satisfying the full-coverage
+rule. The worked example: exposing a hypothetical
+`set_gate(min_holdout_confirms=…)` knob. The steps generalize to any knob.
 
 1. **Write the op in `operations.py`.** Add (or extend) a `set_*` function.
    Mutate through `_replace_scoring` (or the entry helpers) — never assign a
@@ -963,7 +980,8 @@ knob. The steps generalize to any knob.
    arm that pulls typed args out of the request dict (use `_opt_int` / `_opt_bool`
    for the tri-state numeric/boolean knobs) and calls your op. The chain falls
    through to `raise ValueError(f"unknown builder op {op!r}")`, which the handler
-   turns into a 400 — so a missing arm is a test failure, not a silent no-op.
+   turns into a 400, so a missing arm fails a test rather than passing as a
+   silent no-op.
 3. **Add the copilot tool in `copilot_tools.py`.** Write a module-level function
    that pulls the draft from `_active_context()`, calls your op, and returns
    `_result_json(_summary(patch))` (the shared envelope). Its docstring is
@@ -976,28 +994,30 @@ knob. The steps generalize to any knob.
    a boolean or a scoring-block field, add a hard-coded control to the relevant
    section builder in `views/builder.js` (a `checkInput` toggle, a `numInput`,
    or a `<select>`), wired to `runOp('set_…', {…})` (or `postOp('set_…', {…})`
-   for the board-editor ops). If the knob is deliberately form-invisible, add it
+   for the board-editor ops). If the knob is meant to stay form-invisible, add it
    to `tests/test_builder_gui_coverage.py::GUI_EXCEPTIONS` with a one-line
-   justification — invariant **L2**'s "documented exception". `runOp`/`postOp`
-   with the op string is what the coverage pin greps for, so wire the string
+   justification — the full-coverage rule's "documented exception".
+   `runOp`/`postOp` with the op string is what the coverage pin greps for, so
+   wire the string
    literally (never build the op name dynamically).
 5. **Add the cost line if it changes the schedule.** If the knob multiplies
    per-round board runs, add a `CostLine` in `operations.py::estimate_cost` AND
    the mirror term in `builder/model.js::estimateCost` in the SAME commit
-   (invariant **L3**; §10.3.3). Label auxiliary LLM-call terms and leave them
-   out of the headline sum.
-6. **Add the `validate` consideration if it can be unsound.** If a value can
-   make the contract statistically unsound (a margin that cannot clear the noise
-   floor, a field that degrades a structure), emit a `Warning` with a stable
-   `code` and the right `severity` (`refuse` only for genuine unsoundness) in
-   `operations.py::validate`. Recommend-only — never block (invariant **L4**).
+   (the honest-twinned-cost-meter rule; §10.3.3). Label auxiliary LLM-call terms
+   and leave them out of the headline sum.
+6. **Add the `validate` consideration if it can be unsound.** A value is
+   unsound when it stops the contract from telling a real improvement from
+   noise — a margin that cannot clear the noise floor, or a field that degrades
+   a structure. Emit a `Warning` from `operations.py::validate` with a stable
+   `code` and the right `severity`, reserving `refuse` for real unsoundness.
+   Recommend-only — never block (the recommend-only rule).
 7. **Contract accounting.** The knob lives on `ScoringWeights` (or a nested
    block). Confirm it is omitted-at-default from the canonical scoring form
    (`epoch/contract.py`'s omit-at-default set) so existing epochs do not roll
    retroactively, and that a non-default value DOES roll the epoch — the builder
    diff and `apply(rolled=…)` derive from that canonical form. See
-   03-contract-and-epochs.md §"Omit-at-default fields".
-8. **Tests — four kinds:**
+   03-contract-and-epochs.md §3.4 (the omit-at-default discipline).
+8. **Tests — five kinds:**
    - *op semantics* in `tests/test_builder_operations.py` (the `changed` map,
      the no-op-when-unchanged behaviour, the raise-on-bad-input);
    - *dispatch* in `tests/test_builder_api.py` (the knob dispatches through
@@ -1028,9 +1048,10 @@ knob. The steps generalize to any knob.
    a frozen-contract preview would quote the wrong price.
 
 **Definition of done.** The knob is editable from a form control and a chat
-turn, it prices correctly on the meter (both implementations), `validate` warns
-if it can be unsound, a non-default value rolls the epoch while the default is
-byte-identical to before, and all four test kinds are green.
+turn, it prices correctly on both implementations of the meter, and `validate`
+warns if it can be unsound. A non-default value rolls the epoch, while the
+default leaves the canonical contract form byte-identical so existing epochs do
+not roll. All five test kinds are green.
 
 ---
 
@@ -1039,8 +1060,8 @@ byte-identical to before, and all four test kinds are green.
 The `zicato` executable is `zicato.cli:main`, which builds a `click` root group
 by **auto-discovery**: every importable module under `zicato.cli.commands` is
 imported, and each top-level `click.Command` / `click.Group` it defines is
-attached to the root. Parallel workstreams ship one command per file without
-ever editing the root:
+attached to the root. A contributor ships one command per file without ever
+editing the root:
 
 ```python
 # src/zicato/cli/discovery.py — build_cli_root (tail)
@@ -1060,7 +1081,7 @@ ever editing the root:
             continue
 ```
 
-Three robustness rules are baked in: a broken command module logs a warning and
+Three robustness rules hold: a broken command module logs a warning and
 is skipped (one bad plugin never kills the CLI); a module with no `click.Command`
 is silently ignored (modules can hold helpers); and a duplicate command name is
 refused first-wins. The root is a `ZicatoGroup` (a `click.Group` subclass) that
@@ -1081,7 +1102,7 @@ and the advanced/debugging commands — instead of one flat list.
 | `health.py` | `health` | — |
 | `mutations.py` | `mutations` | — |
 | `propose.py` | `propose` | — |
-| `reflect.py` | `reflect` (group) | `run`, `report`, `apply` — board reflection (BOARD-REFLECTION.md R4); `apply` reaches the builder via `zicato.reflection.apply` (a library edge), not a direct `cli → builder` import |
+| `reflect.py` | `reflect` (group) | `run`, `report`, `apply` — board reflection (`docs/design/BOARD-REFLECTION.md`); `apply` reaches the builder via `zicato.reflection.apply` (a library edge) rather than a direct `cli → builder` import |
 | `register.py` | `register` | — |
 | `tournament.py` | `tournament` | — |
 | `reindex.py` | `reindex`, `reindex-generations`, `repair-tournament-fk` | — |
@@ -1091,9 +1112,9 @@ and the advanced/debugging commands — instead of one flat list.
 | `repair_v0_baseline.py` | `repair-v0-baseline` | — |
 
 A module publishes multiple top-level commands via its `__all__` (`epoch.py`,
-`reindex.py`). `init_cmd.py` is a helper module (`initialize_workspace`), not a
-command — it has no `click` decorators, and `discovery.py` skips `_`-prefixed
-modules regardless.
+`reindex.py`). `init_cmd.py` is a helper module (`initialize_workspace`) rather
+than a command — it has no `click` decorators, and `discovery.py` skips
+`_`-prefixed modules regardless.
 
 > ✅ ALWAYS ship a new command as a new file under `zicato/cli/commands/` with a
 > top-level `@click.command(name="…")` (or a `@click.group`). Do not edit
@@ -1116,14 +1137,15 @@ every command and mirroring the output. Its header states the contract:
 ```
 — `docs/design/CLI.md` (header)
 
-> ⚠️ TRAP — `--help` is the source of truth, CLI.md is the mirror. When you add
-> or change a command, flag, default, or help string, re-run `uv run zicato …
-> --help` and update CLI.md to match — including its "Last reconciled …" date and
-> its command-list census (the header enumerates every command by name to catch
-> a phantom/renamed command). A CLI change that leaves CLI.md stale is a
-> documentation regression, not a harmless omission. See
-> 11-testing.md §"The CLI-HELP parity gate" for the byte-check that guards the
-> help text itself.
+> ⚠️ TRAP — `--help` is the source of truth and CLI.md is the mirror. When you
+> add or change a command, flag, default, or help string, re-run `uv run zicato
+> … --help` and update CLI.md to match. The update includes its "Last reconciled
+> …" date and its command-list census; that census enumerates every command by
+> name so a phantom or renamed command is caught. A CLI change that leaves
+> CLI.md stale is a
+> documentation regression rather than a harmless omission. See
+> 11-testing.md §11.7.3 "CLI-HELP" for the byte-check that guards the help text
+> itself.
 
 ---
 
@@ -1133,8 +1155,8 @@ The single most bug-prone thing about the CLI is how an operator flag reaches
 the code that consumes it — especially code that runs in a **worker
 subprocess**, a different OS process than the one that parsed the flag. zicato
 solves this with a **process-pinned override** layer, and the rule that falls
-out of it is invariant **L6**: *no environment variable is a configuration
-knob*. The config module states it at the top:
+out of it is the config-pins-not-environment rule: *no environment variable is a
+configuration knob*. The config module states it at the top:
 
 ```python
 # src/zicato/config.py (module docstring, excerpt)
@@ -1164,9 +1186,10 @@ them as a nested `{section: {field: value}}` override. `evolve` does this in
         pin_overrides(pins)
 ```
 
-**Hop 2 — pin into the config tree.** `pin_overrides` validates eagerly (an
-unknown section/field raises at the pin site, not later as a silently-defaulted
-knob) and merges into a process-wide store. `load_config` layers the pins on top
+**Hop 2 — pin into the config tree.** `pin_overrides` validates eagerly: an
+unknown section or field raises at the pin site rather than surfacing later as a
+silently-defaulted knob. It merges into a process-wide store, and `load_config`
+layers the pins on top
 of the dataclass defaults — so every later `load_config()`, however deep in the
 call graph, sees the flag:
 
@@ -1189,7 +1212,7 @@ For the rare call site that must tell "explicitly pinned" from "at its default"
 `config.json` value but the mere default must not), there is `pinned_override(
 section, field)` returning the pinned value or `None`.
 
-**Hop 3 — pins cross into the worker via the args file, NOT env.** The
+**Hop 3 — pins cross into the worker through the args file.** The
 tournament runner writes the current pins into each worker's JSON args file
 under a `config_pins` key:
 
@@ -1201,8 +1224,8 @@ def _config_pins() -> dict[str, dict[str, Any]]:
 ```
 
 The runner writes `"config_pins": _config_pins()` into the args file it hands
-the worker. This is deliberate — a flag consumed inside the worker crosses the
-process boundary through the args file, not an environment variable.
+the worker. A flag consumed inside the worker therefore crosses the process
+boundary through the args file rather than an environment variable.
 
 **Hop 4 — the worker re-pins before any `load_config`.** The fresh worker
 interpreter reads the args file and re-pins before it touches config:
@@ -1216,9 +1239,9 @@ interpreter reads the args file and re-pins before it touches config:
 ```
 
 > ⛔ NEVER add an environment variable to carry an operator knob across the
-> worker boundary (invariant **L6**). The lesson that motivated this whole layer:
-> a flag value read via `os.environ` in the worker is invisible to the orchestrator's
-> validation, cannot be pinned-vs-default-distinguished, and drifts from the
+> worker boundary (the config-pins-not-environment rule). A flag value read via
+> `os.environ` in the worker is invisible to the orchestrator's validation,
+> cannot be told apart from a default, and drifts from the
 > `config.json` fallback. Pin the flag (`pin_overrides`), and let the runner's
 > `config_pins` args-file channel carry it. The worker re-pins; `load_config`
 > then resolves it identically on both sides of the boundary.
@@ -1229,12 +1252,12 @@ interpreter reads the args file and re-pins before it touches config:
 > args-file write silently drops or corrupts it and the worker runs on the
 > default. Pin the primitive, resolve the object worker-side.
 
-### 10.10.2 The merited env-var set — `zicato inspect environment`
+### 10.10.2 The merited env-var set — `zicato config env`
 
-The env vars zicato *does* touch are a small MERITED set — each a
-process-boundary contract, never a knob — introspectable via `zicato config
-env`, which reads `describe_env_vars()` so the command can never drift from the
-code. Each entry carries a **boundary-kind role** (NOT a process label):
+The env vars zicato *does* touch are a small MERITED set, each one a
+process-boundary contract and never a knob. `zicato config env` prints the set
+by reading `describe_env_vars()`, so the command can never drift from the code.
+Each entry carries a **boundary-kind role** (NOT a process label):
 
 | Role | Meaning | Members |
 |---|---|---|
@@ -1251,9 +1274,9 @@ harness"). The backing type is `EnvVarInfo(name, role, description)`.
 
 > ⛔ NEVER add an operator tuning knob to `_MERITED_ENV_VARS`. The set is for
 > process-boundary contracts only. If your feature needs an operator knob, it is
-> a CLI flag (pinned) plus a `config.json` block — the same posture the six
-> deleted `ZICATO_HEALTH_*` thresholds moved to. A new env var must justify its
-> role from the five above, or it does not belong.
+> a CLI flag (pinned) plus a `config.json` block, the posture every operator
+> threshold takes. A new env var must justify its role from the five above, or
+> it does not belong.
 
 ### 10.10.3 Recipe: add a CLI flag the right way
 
@@ -1268,8 +1291,8 @@ Goal: add an operator flag to `evolve` (or any command) so it shadows a
 2. **Add the `@click.option`.** In the command file, add the option with a help
    string that NAMES the config knob it shadows (the CLI-HELP convention — every
    flag's `--help` says which `config.json` knob it overrides and that the flag
-   wins). Type it precisely (`int | None`, `float | None`) so "unset" is
-   distinguishable from a real value.
+   wins). Give it an exact type (`int | None`, `float | None`) so "unset"
+   is distinguishable from a real value.
 3. **Pin it.** In the command's pin helper (`_pin_config_flags` for `evolve`),
    map the non-`None` flag to its `{section: {field: value}}` pin and ensure
    `pin_overrides(pins)` runs once at startup. Do NOT read the flag again
@@ -1292,8 +1315,8 @@ Goal: add an operator flag to `evolve` (or any command) so it shadows a
    bash tools/parity.sh --only CLI-HELP
    ```
    If you skipped step 3 and read the flag inline, the worker never sees it
-   (invariant **L6**) — the value silently reverts to the `config.json` default
-   inside every duel. If you skipped the CLI.md reconcile, the CLI-HELP parity
+   (the config-pins-not-environment rule) — the value silently reverts to the
+   `config.json` default inside every duel. If you skipped the CLI.md reconcile, the CLI-HELP parity
    gate or the doc census reds.
 
 **Definition of done.** The flag shadows a real `config.json` knob, wins over it,
@@ -1311,8 +1334,8 @@ surface is limited to evolve entry points, harness protocols, board/config
 loaders, and scoring types. The reasoning-aware model boundary is an advanced
 API at `zicato.reasoning`. `__all__` is derived from `_EXPORTS`.
 
-Advanced APIs live in their owning subpackages. Removed root exports have no
-forwarding aliases.
+Advanced APIs live in their owning subpackages, and the facade carries no
+forwarding aliases to them.
 
 ### 10.11.1 The laziness contract
 
@@ -1330,8 +1353,8 @@ def __getattr__(name: str) -> Any:
     return value
 ```
 
-Two properties are load-bearing (invariant **L7**), and both are machine-pinned
-in `tests/test_public_api.py`:
+Two properties are load-bearing (the lazy-pure-facade rule), and both are
+machine-pinned in `tests/test_public_api.py`:
 
 - **`import zicato` imports only `zicato`.** The module body imports nothing but
   `importlib` and `typing`; every export resolves lazily on first touch. This is
@@ -1386,20 +1409,21 @@ touch-points, and the tests catch a half-done addition:
 ### 10.11.3 The five import-linter contracts
 
 The library/driver boundary is enforced by `import-linter` (`uv run
-lint-imports`, wired into `make check` and CI — Golden Rule G5). There are
-exactly five contracts in `pyproject.toml`, all of type `forbidden`:
+lint-imports`, wired into `make check` and CI — the green-gates rule,
+`01-orientation.md §4`). There are exactly five contracts in `pyproject.toml`,
+all of type `forbidden`:
 
 | # | Name | Forbids |
 |---|---|---|
-| 1 | the library must not import the drivers (cli / dashboard / builder) | any of ~31 library packages → `zicato.cli` / `zicato.dashboard` / `zicato.builder` |
+| 1 | the library must not import the drivers (cli / dashboard / builder) | any of the 34 listed library packages → `zicato.cli` / `zicato.dashboard` / `zicato.builder` |
 | 2 | dashboard driver: no import of the cli | `zicato.dashboard` → `zicato.cli` |
 | 3 | builder driver: no import of the other drivers | `zicato.builder` → `zicato.cli` / `zicato.dashboard` |
 | 4 | cli driver: no direct import of the builder | `zicato.cli` → `zicato.builder` (`allow_indirect_imports = true`) |
 | 5 | the query layer stays dashboard-free | `zicato.query` → `zicato.dashboard` |
 
 Contract 1 lists every library package explicitly as a `source_module` —
-including `zicato.query`, which is deliberately **library** (the workspace query
-layer the dashboard consumes), not a driver. Contract 4 sets
+including `zicato.query`, which is **library** code (the workspace query
+layer the dashboard consumes) rather than a driver. Contract 4 sets
 `allow_indirect_imports = true` on purpose: the CLI legitimately reaches the
 builder *transitively* through the two declared edges (cli → dashboard.server →
 builder.api mount); what it forbids is the CLI growing its OWN direct builder
@@ -1418,15 +1442,15 @@ builder` (the server mounts the builder REST routes).
 > its own PR and a rewrite of the contract with a documented rationale.
 
 > ✅ ALWAYS add a new library package to contract 1's `source_modules` list when
-> you create one. The list is explicit (not a wildcard) precisely so a new
+> you create one. The list is explicit rather than a wildcard, so a new
 > package is a conscious addition; a package omitted from the list is silently
 > unprotected and can grow a driver import nobody notices until it ships.
 
 ### 10.11.4 TID251 — the banned private-reach paths
 
-Ruff's `flake8-tidy-imports` (TID251) bans 13 specific cross-module private
-reaches that a refactor retired — each promoted to a public seam at its honest
-home. The ban keeps the old underscore path from regrowing:
+Ruff's `flake8-tidy-imports` (TID251) bans twenty specific cross-module private
+reaches. Every banned name has a public seam at its owning module, and the ban
+stops the underscore path from reappearing:
 
 ```toml
 # pyproject.toml — [tool.ruff.lint.flake8-tidy-imports.banned-api] (excerpt)
@@ -1441,10 +1465,11 @@ and its unit test carry a per-file TID251 ignore; everyone else goes through the
 public `zicato.storage` face.
 
 > ⚠️ TRAP — when you promote a private helper to a public name, add a TID251 ban
-> for the OLD path in the same commit. Otherwise the underscore import regrows
-> the moment someone copies an old call site, and the promotion's whole point —
-> one honest public seam — is undone silently. The ban message names the
-> replacement, so the offender gets an actionable error, not a mystery.
+> for the private path in the same commit. Otherwise the underscore import
+> reappears the moment someone copies a call site written before the promotion,
+> and the promotion's whole point — one honest public seam — is undone silently.
+> The ban message names the replacement, so the offender gets an actionable
+> error rather than a mystery.
 
 ---
 
@@ -1457,8 +1482,8 @@ extender touches:
 composes the browser, builder route, terminal renderer, and live telemetry;
 `all` installs every shipped runtime feature. The base retains the core loop
 and JSONL telemetry. `docs/design/INSTALL-PROFILES.md` is the profile contract.
-The memory rule from 01-orientation.md §G2 restated: **always `uv sync
---all-extras`** — a bare `uv sync` deletes dev tooling from `.venv`.
+The all-extras sync rule (`01-orientation.md §4`) applies here: **always `uv
+sync --all-extras`** — a bare `uv sync` deletes dev tooling from `.venv`.
 
 **The uv workspace member.** The vendored dogfood targets under `examples/` are a
 separate distribution (`zicato-examples`), declared as a uv workspace member so
@@ -1480,8 +1505,8 @@ workspace member and map it in `[tool.uv.sources]`.
 
 **The wheel + its exclusions.** The wheel ships `src/zicato` (hatchling strips the
 `src/` prefix) and *excludes* `src/zicato/dashboard/static/test` — the JS test
-harness is a developer tool (run by `tests/test_dashboard_js.py`), not part of
-the shipped bundle.
+harness is a developer tool, run by `tests/test_dashboard_js.py`, and stays out
+of the shipped bundle.
 
 **The supervisor binary — `_bin` ownership.** `zicato evolve` spawns a compiled
 `zicato-supervisor` watchdog. To make it available to every install, a custom
@@ -1510,39 +1535,44 @@ workspace `target/release/` walk. The sdist carries the crate source
 (`crates`, `Cargo.toml`, `Cargo.lock`, `hatch_build.py`) so a downstream wheel
 build can still run the hook.
 
-> ⚠️ TRAP — the supervisor binary is generated, not VCS-tracked, so it must be
-> `force_include`d (not matched by a package glob) or it never lands in the
-> wheel. It is owned by exactly one build target (the wheel); the sdist carries
-> source instead and rebuilds at wheel-build time. See 08-supervisor.md
-> §"Resolving the binary" for the runtime fallback chain, and 14-goals-and-
-> roadmap.md §"the boundary" for the future physical wheel split (`zicato-lib` /
-> `zicato-cli` / `zicato-dashboard`) where exactly one wheel would own `_bin/`.
+> ⚠️ TRAP — the supervisor binary is generated rather than VCS-tracked, so it
+> must be `force_include`d (a package glob will not match it) or it never lands
+> in the wheel. It is owned by exactly one build target (the wheel); the sdist
+> carries source instead and rebuilds at wheel-build time. See 08-supervisor.md
+> §8.11 "Build, packaging, and binary resolution" for the runtime fallback
+> chain, and the wheel-split row of the deferred register
+> (14-goals-and-roadmap.md §4) for the split into `zicato-lib` / `zicato-cli` /
+> `zicato-dashboard`, where exactly one wheel would own `_bin/`.
 
 ---
 
 ## 10.13 Cross-references
 
-- 01-orientation.md §"Library first, three drivers on top" — the shape this
-  chapter formalizes; §"G5 parity gates + import contracts", §"G9 module-level
-  callables across the worker boundary" (the reason pins, not env, cross to
-  workers).
-- 02-architecture.md §"orchestrator vs workers vs supervisor vs dashboard" —
-  the four processes the pins and env-var contracts cross.
-- 03-contract-and-epochs.md §"The contract hash" / §"Omit-at-default fields" —
-  what the builder's diff, `rolls_epoch`, and `apply` are computed against.
-- 04-evaluation-statistics.md §"The A/A noise floor" — what the builder
-  pre-flight measures and what `margin_below_noise_floor` compares against.
-- 06-tournament-and-selection.md §"The evidence gate" — the `budget × 2 × board`
-  crowning-confirm term that dominates the cost meter.
-- 08-supervisor.md §"Resolving the binary" — the runtime fallback chain for the
-  `_bin/` supervisor this chapter's build hook bundles.
-- 09-dashboard-and-query.md §"The builder view" — the front end of the builder
-  backend documented here; the CONTRACTS.md payload discipline the REST envelope
-  obeys.
-- 11-testing.md §"parity gates" (the CLI-HELP gate), §"Node suite conventions"
-  (the py↔js cost twin parity), §"import contracts".
-- 13-recipes.md §"Add a CLI flag the RIGHT way" / §"Add a builder op end-to-end"
-  — the short-form cookbook entries that point back at §10.8 and §10.10.3.
-- `docs/design/TOURNAMENT-BUILDER.md` — the full builder design record (B1a/B1b/B2
-  decomposition, the consequence-forward principle); `docs/design/CLI.md` — the
-  generated command reference kept in lockstep with `--help`.
+- 01-orientation.md §1.3 "Library first, three drivers on top" — the shape this
+  chapter formalizes; §4 "The Golden Rules" for the green-gates rule (parity
+  gates plus import contracts) and the module-level-callable rule (why pins
+  rather than environment variables cross to workers).
+- 02-architecture.md §1 "The process topology" — the four processes the pins and
+  the environment-variable contracts cross.
+- 03-contract-and-epochs.md §3.7 "Computing the hash" and §3.4 "The
+  omit-at-default discipline" — what the builder's diff, `rolls_epoch`, and
+  `apply` are computed against.
+- 04-evaluation-statistics.md §4 "A/A noise-floor calibration" — what the
+  builder pre-flight measures and what `margin_below_noise_floor` compares
+  against; §6 "The evidence gate" — the `budget × 2 × board` crowning-confirm
+  term that dominates the cost meter; §8 "THE RESERVED REPLICATE-BASE LEDGER" —
+  the bases the pre-flight draws on.
+- 08-supervisor.md §8.11 "Build, packaging, and binary resolution" — the runtime
+  fallback chain for the `_bin/` supervisor this chapter's build hook bundles.
+- 09-dashboard-and-query.md §9.4.3 "The route table" — where the server mounts
+  the builder REST routes documented here, and the payload discipline the
+  builder envelope obeys.
+- 11-testing.md §11.7 "The six parity gates, one by one" (including the CLI-HELP
+  gate), §11.9 "Node behaviour-suite conventions" (the py↔js cost-twin parity),
+  and §11.8 "The seven import contracts + the TID251 bans".
+- 13-recipes.md — the short-form cookbook; §10.8 and §10.10.3 here are the
+  long-form builder-op and CLI-flag procedures.
+- `docs/design/TOURNAMENT-BUILDER.md` — the full builder design record (the
+  operations layer, the copilot, and the form GUI; §4 "The consequence-forward
+  principle"); `docs/design/CLI.md` — the generated command reference kept in
+  lockstep with `--help`.

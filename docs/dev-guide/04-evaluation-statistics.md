@@ -2,14 +2,16 @@
 
 > **Covers:** the full measurement chain (goldfive events → reducer → `LossProfile` →
 > `aggregate_generation_score` → scalar), the promote gate's rule ladder, the noise
-> doctrine and its measured facts, A/A noise-floor calibration, the Ladder-mediated
-> holdout, the Bradley–Terry evidence gate, replication semantics, the reserved
+> doctrine and its measured facts, A/A noise-floor calibration (repeat draws of
+> one generation measured against itself), the Ladder-mediated holdout, the
+> Bradley–Terry evidence gate, replication semantics, the reserved
 > replicate-base ledger, contract pre-flight, judge test–retest, the placebo arm,
 > the overfitting program map, and the power-harness methodology for proving any
 > statistical change.
 >
 > **Prerequisites:** 01-orientation.md (what a generation / epoch / board is),
-> 03-contract-and-epochs.md §"The contract hash" (what rolls an epoch),
+> 03-contract-and-epochs.md §3.1–§3.2 (what the contract hash covers and what
+> rolls an epoch),
 > 06-tournament-and-selection.md §"Structures" (who calls the gate).
 >
 > **Invariants introduced in this chapter:**
@@ -29,23 +31,23 @@
 > 7. **Replicate indices are a partitioned namespace** (the reserved-base
 >    ledger, §8). Never run an out-of-tournament evaluation at an index you
 >    have not formally claimed.
-> 8. **The holdout is confirmation-only and Ladder-mediated.** It can flip a
->    train-win to reject; it never promotes, never steers the proposer, and its
->    raw per-entry results never leave the gate.
+> 8. **The holdout is confirmation-only and mediated by the Ladder**, the
+>    budgeted holdout-reuse mechanism of §5. It can flip a train-win to reject;
+>    it never promotes, never steers the proposer, and its raw per-entry results
+>    never leave the gate.
 > 9. **The evidence gate can only hold a promotion, never force one.** The
 >    protected-incumbent invariant strictly strengthens through it.
 > 10. **Soundness devices and power devices are different things.** The
 >     evidence gate buys soundness; replication buys power. Do not "fix" low
 >     power by weakening a soundness device.
 
-This chapter is the one that keeps you from making an unsound change. zicato's
-whole reason to exist is that its promotion decisions are *trustworthy*: when
-the loop says "this child is better than its parent," an operator must be able
-to believe it. Every mechanism below exists because a naive version was tried
-(or measured) and demonstrated to promote noise, memorize the board, or corrupt
-its own evidence. If you change anything in this chapter's territory without
-reproducing the corresponding measurement, you are guessing — and the history in
-12-bug-casebook.md shows what guessing costs.
+This chapter is the one that keeps you from making an unsound change. zicato
+exists to produce promotion decisions an operator can trust: when the loop says
+"this child is better than its parent," the claim has to hold. Every mechanism
+below replaces a naive version that was measured promoting noise, memorizing the
+board, or corrupting its own evidence. Changing anything in this chapter's
+territory without reproducing the corresponding measurement is guessing, and
+12-bug-casebook.md records what each such guess cost.
 
 ---
 
@@ -64,9 +66,9 @@ stages. Every stage has exactly one home:
 
 The reducer is the **only** zicato component that walks raw goldfive events.
 Everything downstream — pattern detectors, tournament scoring, journal
-rendering, the dashboard — reads `LossProfile`. That single narrow seam is
-deliberate: goldfive's event schema evolves upstream, and zicato wants exactly
-one place that knows the wire form.
+rendering, the dashboard — reads `LossProfile`. The seam is narrow by design:
+goldfive's event schema evolves upstream, so exactly one place in zicato knows
+the wire form.
 
 > ✅ ALWAYS route any new signal you want to score through the reducer into a
 > `LossProfile` field (or a namespaced `MetricCount`). Never have a scorer or a
@@ -95,8 +97,8 @@ scalar is **Seam 1**. Its formula lives in
 
 Facts a change here must respect:
 
-- This is the `drift:` CHANNEL, not the run's whole loss. Task failures and
-  the not-completed charge are the `failure:` channel, wall-clock is
+- This computes the `drift:` CHANNEL rather than the run's whole loss. Task
+  failures and the not-completed charge are the `failure:` channel, wall-clock is
   `runtime:`, and custom judges are `judge:` — each derived from the profile
   by `LossProfile.unified_metrics` and coefficiented by `namespace_weights`.
   `builtin_drift_loss` sees `task_failure_ratio` / `runtime_ms` nowhere; the
@@ -109,9 +111,9 @@ Facts a change here must respect:
   the `custom` kind is rejected at contract load for the same reason.
 - `_kind_multiplier` is `per_kind_weights.get(kind, 1.0)` — a first-class
   kind's multiplier, stacked on the severity weight.
-- The reducer applies one piece of **reducer policy** *around* this formula,
-  not inside it: the `task_failure_ratio` floor to 1.0 for a run that never
-  completed. It stays in `telemetry/reducer.py`. Do not move it into the
+- The reducer applies one piece of **reducer policy** *around* this formula
+  rather than inside it: the `task_failure_ratio` floor to 1.0 for a run that
+  never completed. It stays in `telemetry/reducer.py`. Do not move it into the
   builtin — the builtin is the *inner per-run formula only*, and the worker
   imports it without importing the reducer.
 
@@ -127,17 +129,17 @@ Facts a change here must respect:
    `src/zicato/scoring/api.py`) instead of re-implementing it.
 
 The dependency direction is one-way by construction: `scoring/builtins.py`
-owns its own judge-kind test rather than importing the reducer, precisely so
-the worker can import the builtin without pulling the reducer's world in.
-`tests/test_scoring_seams.py` holds a deliberately INDEPENDENT second
-implementation of both formulas and pins the two against each other
-bit-for-bit across a representative corpus.
+owns its own judge-kind test rather than importing the reducer, so the worker
+can import the builtin without pulling the reducer's world in.
+`tests/test_scoring_seams.py` holds a second, INDEPENDENT implementation of
+both formulas and pins the two against each other bit-for-bit across a
+representative corpus.
 
 > ⛔ Do not change a default scoring behavior by editing
 > `src/zicato/scoring/builtins.py` alone. An operator-facing shape change
 > rides *on top* via the dispatcher (`src/zicato/scoring/dispatch.py` —
 > declarative transforms in `scoring/transforms.py`, dotted-spec plugins in
-> `scoring/plugins.py`). A genuine change to the COMPOSITION — the kind that
+> `scoring/plugins.py`). A change to the COMPOSITION itself — the kind that
 > rolls every epoch in the wild — must move the builtin, the dispatcher's
 > mirroring path, and the seam test's second implementation together, and
 > must say so in the release note.
@@ -145,9 +147,9 @@ bit-for-bit across a representative corpus.
 ### 1.3 Seam 2 — the per-generation scalar, and why the sum is sorted
 
 **Seam 2** synthesizes the per-generation scalar: one bounded pass/miss term
-plus every already-weighted channel. The composition in `builtin_scalar`
-looks redundant — build a dict, then `sum` its values — and a well-meaning
-"simplification" into a running accumulation is exactly the wrong move:
+plus every already-weighted channel. The composition in `builtin_scalar` looks
+redundant, since it builds a dict and then sums its values. Collapsing it into a
+running accumulation would break reproducibility:
 
 ```python
 # src/zicato/scoring/builtins.py — builtin_scalar (core)
@@ -171,13 +173,12 @@ run and different in the next. Sorting makes the result reproducible; the
 dict-then-`sum` shape keeps the surfaced `scalar_components` and the summed
 value from ever disagreeing.
 
-Concretely: `(a + b) + c != a + (b + c)` for IEEE-754 doubles in general. A
-last-bit flip in the scalar sounds harmless until you remember that (a) the
-gate compares scalars against a margin with strict inequalities, (b) persisted
-`gen_score.json` files are compared byte-for-byte by parity goldens and by the
-crash-resume path, and (c) the A/A calibration measures *spread* — a formula
-that produces different bytes for the same inputs on different code paths
-manufactures phantom noise.
+Concretely: `(a + b) + c != a + (b + c)` for IEEE-754 doubles in general. Three
+consumers make a last-bit flip in the scalar matter. The gate compares scalars
+against a margin with strict inequalities. Parity goldens and the crash-resume
+path compare persisted `gen_score.json` files byte-for-byte. The A/A
+calibration measures *spread*, so a formula that produces different bytes for
+the same inputs on different code paths manufactures phantom noise.
 
 Three more properties of Seam 2 that any extension must preserve:
 
@@ -189,14 +190,14 @@ Three more properties of Seam 2 that any extension must preserve:
   `drift_loss` and the `drift:` MetricCount mirrors are excluded from the
   generic namespace walk.
 - **Key collisions collapse to the last writer** (two namespaces stripping to
-  the same component name), exactly as the original inline code behaved. This
-  is documented, mirrored behavior — not a bug to "fix."
+  the same component name). That is the specified behaviour, mirrored across
+  both seams; treat it as a documented property rather than a defect to fix.
 - **New terms append LAST and must be exactly absent at their default.** The
   `diff_complexity` term is the template: it is appended after the
   float-order-sensitive namespace accumulation, only when
   `weights.diff_complexity_weight > 0.0` AND a `diff_size` was threaded.
   Otherwise the key is never written and `sum(...)` is byte-identical to the
-  pre-feature formula. `diff_complexity_component` in `builtins.py` is the
+  same formula with no diff-complexity term at all. `diff_complexity_component` in `builtins.py` is the
   single seam both `builtin_scalar` and `aggregate_generation_score` read, so
   the appended scalar term and the surfaced `scalar_components` entry can
   never disagree.
@@ -204,12 +205,13 @@ Three more properties of Seam 2 that any extension must preserve:
 > ✅ ALWAYS follow the `diff_complexity` template when adding a scalar term:
 > (1) a `ScoringWeights` field defaulting to the inert value, (2) omitted from
 > the contract canonical form at that default (see 03-contract-and-epochs.md
-> §"Omit-at-default fields") so existing epochs never roll, (3) the component
+> §3.4, the omit-at-default discipline) so existing epochs never roll, (3) the component
 > computed by ONE shared function, (4) appended last, (5) a golden test that
 > proves byte-identity when off. If you skip (2), every existing workspace
 > auto-rolls its epoch on upgrade; if you skip (4), you shift every namespace
 > term's accumulated rounding and break the goldens; if you skip (5), you will
-> not notice either failure until an operator does.
+> notice neither the spurious epoch roll nor the broken goldens until an
+> operator does.
 
 ### 1.4 `pass_rate` vs `mean_score` — the uniform outcome axis
 
@@ -224,7 +226,7 @@ Three more properties of Seam 2 that any extension must preserve:
   clamped to `[0, 1]` (non-finite ⇒ `0.0`, so a rogue scorer can never poison
   the mean) and a bool maps to exactly `float(pass_fail)`.
 
-The scalar's pass component runs on `mean_score`, not `pass_rate`. On an
+The scalar's pass component runs on `mean_score` rather than `pass_rate`. On an
 all-bool board every entry with a `pass_fail` also produces a score and vice
 versa, so `mean_score == pass_rate` **byte-for-byte** — that identity is the
 back-compat proof, and it is pinned by test. On a graded board, `mean_score`
@@ -232,9 +234,9 @@ tracks quality continuously with no threshold cliff.
 
 `per_entry` rows carry `{"drift_loss", "pass_fail", "score"}` — the gate's
 per-entry monotonicity scope reads `score` through `_row_score`
-(`tournament/gate.py`), which falls back to the binary bit for pre-score
-aggregates. Keep that fallback intact: it is what makes historical persisted
-aggregates score identically today.
+(`tournament/gate.py`), which falls back to the binary bit for an aggregate
+that carries no `score` field. Keep that fallback intact: it is what lets an
+aggregate persisted under any earlier schema score identically today.
 
 ### 1.5 Namespace aggregates
 
@@ -259,8 +261,8 @@ Mechanics worth knowing before you extend this function:
 
 - The `drift:` namespace is special-cased to
   `namespace_weights["drift:"] * mean(LossProfile.drift_loss)` — parity with
-  the drift-loss-mean term, so a consumer of only the namespace surface gets
-  the same drift contribution it used to derive from `drift_loss_mean`. Drift
+  the drift-loss-mean term, so a consumer that reads only the namespace surface
+  gets the same drift contribution `drift_loss_mean` carries. Drift
   `MetricCount` mirror entries are *skipped* in the metric walk to avoid
   double-counting.
 - Per-loss sums are computed within one loss first, then folded — a loss with
@@ -298,13 +300,13 @@ new consumer that reads `abort_cause`, route the classification through
 
 Skipped units (a matchup whose wall-clock budget ran out before the unit
 launched) are synthesized as budget-exceeded losses by `_skipped_unit_loss`
-(`src/zicato/tournament/unit_cache.py`) through the SAME aborted-run path a
-killed worker uses — so a partial aggregate scores *consistently pessimistic*
-(worst-case for the side that got clipped) and the skipped unit is a cache hit
-next time. The statistical implication: a budget-clipped duel is biased
-*against* whichever side had more units pending — the cut-short event is
-always logged, never silent, and an operator comparing scalars across duels
-with different clip states should know they are not exchangeable.
+(`src/zicato/tournament/unit_cache.py`), through the SAME aborted-run path a
+killed worker uses. A partial aggregate therefore scores *consistently
+pessimistic* — worst-case for the side that got clipped — and the skipped unit
+is a cache hit next time. The statistical implication: a budget-clipped duel is
+biased *against* whichever side had more units pending. The cut-short event is
+always logged, so an operator comparing scalars across duels with different clip
+states can see that the two are not exchangeable.
 
 ### 1.7 The dispatch layer — provenance and the plugin contract
 
@@ -334,10 +336,10 @@ Rules the dispatch layer enforces that a change must not weaken:
 The whole chain is hand-computable on the target_0 convergence example, and
 you should be able to reproduce this arithmetic before you change anything in
 the chain. From `examples/zicato_examples/target_0_convergence` under its
-contract (`severity_weights.info = 1.0`, and the shipped channel defaults —
-`drift:` and `pass_weight` at `1.0`, `runtime:` at `0.0`; the zero runtime
-coefficient is load-bearing, because per-run wall clock varies and any
-nonzero coefficient would break the exact floor):
+contract (`severity_weights.info = 1.0`, plus the shipped channel defaults:
+`drift:` and `pass_weight` at `1.0`, `runtime:` at `0.0`). The zero runtime
+coefficient is load-bearing, because per-run wall clock varies and any nonzero
+coefficient would break the exact floor. Under that contract:
 
 - the policy carries `tokens` defect tokens; the harness emits one
   `drift_detected` frame at severity `info` per remaining token per run, so
@@ -363,32 +365,32 @@ nonzero coefficient would break the exact floor):
 `tests/test_convergence_known_answer.py` pins these numbers through the FULL
 loop — real subprocess workers, the git generation store, no tournament
 stubs. If your change to any stage of the chain moves any of these bytes, the
-oracle tells you before an operator does. The same arithmetic seeded the
-power harness's planted deltas (§13.4): one full token fix is a true effect
-of 1.2 in scalar units, measured as `1.2·(1 − 2σ)` under measurement-flip
-noise σ.
+oracle tells you before an operator does. The power harness's planted deltas
+(§13.4) rest on the same arithmetic: one full token fix is a true effect of 1.2
+in scalar units, which measurement-flip noise σ attenuates to `1.2·(1 − 2σ)`.
 
-> **The two-marker (two-defect) harness variant** — the WS-REC recombination
-> oracle. The example harness carries an additive `STYLE_RULES_EXTRA` support
-> (byte-identical when unused, so §1.8's numbers above are untouched) that
-> plants TWO independent defect markers instead of one: v0 scalar 2.4, a
-> single-fix A and a single-fix B each worth Δ = 1.2, and the UNION worth
-> Δ = 2.4. The contract pins `promote_margin = 1.5` STRICTLY BETWEEN the single
-> and the union deltas — so A and B EACH REJECT (1.2 < 1.5) while the mechanical
-> recombination of their disjoint patches PROMOTES (2.4 > 1.5). This is the
-> planted-defect world that proves the recombination slot (05-proposer.md
-> §5.6.11) earns its keep: `tests/test_recombination_known_answer.py` runs it
+> **The two-marker harness variant — the recombination oracle.** The example
+> harness carries an additive `STYLE_RULES_EXTRA` support (byte-identical when
+> unused, so the numbers above are untouched) that plants TWO independent defect
+> markers instead of one: v0 scalar 2.4, a fix for either marker alone worth
+> Δ = 1.2, and the UNION of both fixes worth Δ = 2.4. The contract pins
+> `promote_margin = 1.5` STRICTLY BETWEEN the single-marker and the union
+> deltas, so each single-marker fix REJECTS (1.2 < 1.5) while the mechanical
+> recombination of their disjoint patches PROMOTES (2.4 > 1.5). That
+> planted-defect world is what measures the value of the recombination slot
+> (05-proposer.md §5.6.11): `tests/test_recombination_known_answer.py` runs it
 > through the full loop and pins the union minted in round 3, chosen
-> `mode="recombined"`, promoted — with the STALL CONTROL (same script,
-> `recombine` off ⇒ the champion stays v0, neither single fix ever clears the
-> margin). The two-marker policy template lives in that test.
+> `mode="recombined"`, promoted. Its stall control runs the same script with
+> `recombine` off, where the champion stays v0 because neither single-marker fix
+> clears the margin. The two-marker policy template lives in that test.
 
 ### 1.9 The observability layer: loop-health detectors over the chain
 
-Statistics you cannot see rot silently. `src/zicato/health/diagnostics.py` is
-the recommend-only observability layer over everything in this chapter — each
-detector is a pure function over persisted history, surfaced per round. The
-ones that watch the measurement chain and decision procedure:
+Nothing in the measurement chain reports its own degradation, so a separate
+layer watches it. `src/zicato/health/diagnostics.py` is the recommend-only
+observability layer over everything in this chapter: each detector is a pure
+function over persisted history, surfaced per round. The detectors that watch
+the measurement chain and the decision procedure:
 
 | Finding code | Watches | Fires when |
 |---|---|---|
@@ -399,31 +401,34 @@ ones that watch the measurement chain and decision procedure:
 | `dead_judge` | judge emissions | a declared judge never fires |
 | `noisy_judge` | §10's test–retest | pairwise disagreement above `0.25` |
 | `margin_below_noise_floor` | §4 | `promote_margin` inside the measured A/A spread |
-| `generalization_gap` | §12 #5 | `holdout_loss − train_loss` widened past threshold |
-| `refresh_cadence` | §12 #6 | contract mined past `max_generations_per_contract` |
+| `generalization_gap` | the generalization-gap lever (§12) | `holdout_loss − train_loss` widened past threshold |
+| `refresh_cadence` | the rotation and refresh cadence (§12) | contract mined past `max_generations_per_contract` |
 | `placebo_promoted` | §11 | CRITICAL: a no-op won a tournament |
 | `preflight_signal_below_floor` / `preflight_saturated_contract` | §9 | the persisted pre-flight verdict re-surfaced every round (severity follows `preflight_gate` — §9.5) |
 | `stalled_loop` | the round stream | no genuine progress (placebo arms filtered out first) |
 
-Three rules when extending this family: detectors are **recommend-only** (they
-never gate, never mutate); they must **filter calibration probes out of
-optimization-stream logic** — a placebo arm is rejected by design every
-cadence tick, and a detector that counts it as "another failed round" will
-cry stall on a healthy loop; and a finding that re-fires from PERSISTED state
-every round must not be `critical` unless the operator opted into a hard gate,
-because `has_critical` feeds `DegenerateHealthPolicy` and a repeating critical
-is a stop, not a report (§9.5).
+Three rules govern any extension of this family:
+
+- Detectors are **recommend-only**: they never gate and never mutate.
+- They must **filter calibration probes out of optimization-stream logic**. A
+  placebo arm is rejected by design every cadence tick, and a detector that
+  counts it as another failed round reports a stall on a healthy loop.
+- A finding that re-fires from PERSISTED state every round must not be
+  `critical` unless the operator opted into a hard gate. `has_critical` feeds
+  `DegenerateHealthPolicy`, so a repeating critical stops the loop instead of
+  reporting on it (§9.5).
 
 ---
 
 ## 2. The gate's rule ladder
 
 `evaluate_gate` (`src/zicato/tournament/gate.py`) is the single promotion
-decision function. Its rules apply **in order**; the first rejection wins and
-is the one named in the journal. The full ladder, including the pieces wired
-around `evaluate_gate` by the runner:
+decision function. Its rungs apply **in order**; the first rejection wins and
+is the one named in the journal. Prose elsewhere cites each rung by the name in
+the second column. The full ladder, including the pieces wired around
+`evaluate_gate` by the runner:
 
-| Order | Rule | Knob | Rejects when | Reject reason prefix |
+| Order | Rung | Knob | Rejects when | Reject reason prefix |
 |---|---|---|---|---|
 | 0 | Regression suite | `regression_gate_enabled` (default `False`) | the snapshot's own pytest suite fails or times out | (runner-level; see `tournament/regression.py`) |
 | 1 | Scalar margin | `promote_margin` (default `0.01`) | `child_scalar > parent_scalar - promote_margin` | `challenger regressed:` / `insufficient improvement:` |
@@ -431,16 +436,16 @@ around `evaluate_gate` by the runner:
 | 3 | Namespace monotonicity | `namespace_monotonicity` flags | any flagged namespace's weighted aggregate rose past tolerance | `monotonicity_regression on namespace=` |
 | 4 | Holdout confirmation | `overfitting.*` (default on, auto-degrades) | the train-win fails to hold on the holdout | `holdout_not_confirmed:` |
 
-**Rule 0** runs *before* the scoring gate, in `_gate_with_regression` on the
-runner path: a patch can trivially improve `drift_loss`/`pass_rate` on the
-board while breaking the inner harness's own invariants, and no scoring signal
-may override a failing suite. It is opt-in because many adapters ship no
+**The regression-suite rung** runs *before* the scoring gate, in
+`_gate_with_regression` on the runner path: a patch can improve
+`drift_loss`/`pass_rate` on the board while breaking the inner harness's own
+invariants, and no scoring signal may override a failing suite. It is opt-in because many adapters ship no
 tests; a snapshot with no `tests/` directory is a silent, journaled skip
 (`"no tests/ directory; skipped"`), never a stall. A timeout counts as a
 failure with the distinct summary `"timeout after <N>s"`.
 
-**Rule 1 — the promote-margin semantics.** The scalar is a loss, so the
-literal check is:
+**The scalar-margin rung — promote-margin semantics.** The scalar is a loss, so
+the literal check is:
 
 ```python
 # src/zicato/tournament/gate.py — evaluate_gate, rule 1
@@ -461,64 +466,65 @@ literal check is:
 ```
 
 A promotion requires the child's loss to *drop by at least* `promote_margin`.
-The two reject flavors are deliberately distinct — a child that improved but
-not enough ("insufficient improvement") is different evidence from a child
-that got worse ("challenger regressed") — and both state the real
-child-minus-parent delta. `promote_margin` is a **noise threshold**, not a
-quality bar: §4 explains why it must sit above the measured A/A floor and what
+The two reject flavors are distinct because they carry different evidence: a
+child that improved but not enough ("insufficient improvement") differs from a
+child that got worse ("challenger regressed"). Both state the real
+child-minus-parent delta. `promote_margin` is a **noise threshold** rather than
+a quality bar; §4 explains why it must sit above the measured A/A floor and what
 happens when it does not.
 
-**Rule 2 — the two monotonicity scopes.** The scope knob exists because the
-right policy depends on what the board *is*:
+**The pass-rate-monotonicity rung — its two scopes.** The scope knob exists
+because the right policy depends on what the board *is*:
 
 - `"per_entry"` (default): for every entry the parent scored, the child's
   continuous score may not drop below the parent's by more than
   `PER_ENTRY_SCORE_MONOTONICITY_TOLERANCE` (`0.02`). A bool entry the parent
-  passed has score `1.0`, so the child must still pass — the historical
-  must-still-pass rule, exactly. A vanished row reads as `0.0` (dropping
-  ground truth is a regression). Right for invariant / regression-suite
-  boards, where each entry is a promise.
+  passed has score `1.0`, so the child must still pass. A vanished row reads as
+  `0.0`, because dropping ground truth is a regression. This scope suits
+  invariant and regression-suite boards, where each entry is a promise.
 - `"aggregate"`: reject only when the overall `mean_score` fell by more than
   `PASS_RATE_MONOTONICITY_TOLERANCE` (`1e-9`, pure float-noise padding). The
-  child may trade individual entries as long as the net holds. Right for
-  sampled/noisy evaluation boards — under per-entry scope, a single
-  noise-flipped entry vetoes a genuinely better challenger (measured in §3).
+  child may trade individual entries as long as the net holds. This scope suits
+  sampled or noisy evaluation boards: under per-entry scope, a single
+  noise-flipped entry vetoes a truly better challenger (measured in §3).
 
-There is deliberately no `"off"` scope value; disable the rule with
+There is no `"off"` scope value; disable the rung with
 `pass_rate_monotonicity=False` so existing contracts stay byte-identical.
 
-**Rule 3** compares per-namespace *weighted aggregates* (already
-sign-unified, §1.5) with `NAMESPACE_MONOTONICITY_TOLERANCE` (`0.0`).
-Zero-weight namespaces are skipped even when flagged — an operator who zeroed
-a namespace's scoring contribution must not be surprised by it gating. Every
-regressing namespace is named in the reason, not just the first.
+**The namespace-monotonicity rung** compares per-namespace *weighted
+aggregates* (already sign-unified, §1.5) with
+`NAMESPACE_MONOTONICITY_TOLERANCE` (`0.0`). Zero-weight namespaces are skipped
+even when flagged: an operator who zeroed a namespace's scoring contribution
+must not be surprised by it gating. The reason names every regressing namespace
+rather than only the first.
 
-**Rule 4** — holdout confirmation — is applied only after the three train
-rules would promote, so a train reject always fires first with its specific
-reason. Both `None` holdout arguments (small board, split disabled) skip the
-step entirely: the decision is byte-identical to the pre-split gate. Details
-in §5.
+**The holdout-confirmation rung** is applied only after the three train rungs —
+scalar margin, pass-rate monotonicity, namespace monotonicity — would promote,
+so a train reject always fires first with its specific reason. Both `None`
+holdout arguments (small board, split disabled) skip the step entirely, and the
+decision is then byte-identical to a gate with no train/holdout split at all.
+Details in §5.
 
 > ⚠️ TRAP: the gate's reject *reasons* are a stable surface. The dashboard's
 > decision classifier and several tests consume the structured verdict fields
 > (`deciding_rule`, `margin`, `regressed_*` — served by the reader layer, see
 > 09-dashboard-and-query.md), but the human-readable strings also appear in
 > journals that operators grep. If you must reword a reason, sweep consumers;
-> never encode NEW machine-readable data only inside a reason string — that is
-> exactly the client-side re-derivation anti-pattern bug #4 in
-> 12-bug-casebook.md exists to teach.
+> never encode NEW machine-readable data only inside a reason string. That is
+> the client-side re-derivation anti-pattern taught by the client champion-scan
+> case (`12-bug-casebook.md` case 4).
 
 `GateOutcome` records `delta_scalar` and `delta_pass_rate` **regardless of the
-decision**, so the journal always has the same evidence shape whether the
-experiment promoted, rejected, or deferred. Preserve that: dashboards render
-rejected rounds too.
+decision**, so the journal always has the same evidence shape whether the round
+promoted, rejected, or deferred. Preserve that: dashboards render rejected
+rounds too.
 
 ---
 
 ## 3. The noise doctrine
 
-This section is the heart of the chapter. Read it before touching *anything*
-that decides between two generations.
+Read this section before touching *anything* that decides between two
+generations.
 
 **Every measurement in zicato is a random draw.** Agents under test are
 LLM-backed and vary run to run; judges are LLM-backed and disagree with
@@ -527,26 +533,26 @@ scalar. The decision procedure — margin gate, replication, monotonicity scope,
 evidence gate, screen, holdout — is a statistical test executed against those
 draws. It therefore has *operating characteristics*: a false-promotion rate
 under the null (a challenger identical to the champion), and power at a given
-true effect size. Those characteristics are **measured, pinned facts** in this
-repository, not vibes. The measurement instrument is
-`tests/test_decision_procedure_power.py` (the Tier-2 power harness, §13),
-driving the *real* tournament machinery under seeded noise.
+true effect size. This repository holds those characteristics as **measured,
+pinned facts**. The measurement instrument is
+`tests/test_decision_procedure_power.py` (the decision-procedure power harness,
+§13), driving the *real* tournament machinery under seeded noise.
 
 ### 3.1 The measured facts
 
-Commit these to memory. They are the reason the defaults are what they are,
-and any change you make must not silently invalidate them.
+These facts are the reason the defaults are what they are, and any change you
+make must not silently invalidate them.
 
 | # | Fact | Where measured / pinned |
 |---|---|---|
 | 1 | **A single naive duel promotes pure noise.** With `promote_margin=0.01` far below a measured A/A floor of ~0.66 (σ=0.22 harness) and no evidence gate, a challenger *identical* to the champion cleared the gate in **20 of 60** seeded A/A trials (the pinned test bound is ≥ 15/60). | `test_margin_below_noise_floor_without_evidence_gate_is_unsound` |
-| 2 | **The Bradley–Terry evidence gate's CIs separate only after ~37 duels of an essentially unbroken win streak** on a two-contestant field; ANY mixed record never separates. It is therefore a pure **soundness** device — noise cannot manufacture 37 consistent wins — and never a power device. | module docstring + `EFFECTIVE_BUDGET = 38` calibration in the power harness; `evidence_gate.py` docstring |
+| 2 | **The Bradley–Terry (BT) evidence gate's confidence intervals (CIs) separate only after ~37 duels of an essentially unbroken win streak** on a two-contestant field; ANY mixed record never separates. It is therefore a pure **soundness** device — noise cannot manufacture 37 consistent wins — and never a power device. | module docstring + `EFFECTIVE_BUDGET = 38` calibration in the power harness; `evidence_gate.py` docstring |
 | 3 | **Power is bought with replication.** Averaging 32 replicates shrinks the per-duel delta sd from ~0.66 to ~0.12, turning a 0.5×-floor true effect (~0.34) into a ~3-sigma-per-duel signal the win streak can sustain. | `EFFECTIVE_REPLICATES = 32` commentary + `test_power_at_planted_deltas` |
 | 4 | **The evidence-gated contract's false-promotion rate under the A/A null is zero** over the pinned seeded trials — either the replicated crowning duel fails the margin, or the defer→replicate loop terminates `inconclusive`. | `test_aa_effective_contract_false_promotion_rate_is_zero` |
 | 5 | **The naive default misses small true effects the effective contract catches**: at a ~0.5×-floor planted improvement, the naive contract promotes in ≤ half the trials; the effective contract's rate is pinned ≥ naive + 0.25 on the same seeds. | `test_naive_default_misses_small_effects_the_evidence_gate_catches` |
 | 6 | **A 3×-floor effect is unmissable** (power 1.0 across every seeded trial) and power is monotone in effect size. | `test_power_at_planted_deltas` |
-| 7 | **Screen false-veto ≈ flip-rate² under confirm-before-veto.** At per-entry flip noise σ=0.10 the confirmed rule measures ~1.0% false vetoes (pinned ≤ 2%) while the naive any-flip rule measures ~10% (pinned ≥ 5%, and confirmed ≤ naive/3). At the deliberately hot σ=0.22 the squaring still holds (~σ² ≈ 4.8%) but *no* single-confirm rule can reach 2% there. | `test_screen_false_veto_rate_confirm_beats_naive_any_flip` |
-| 8 | **The A/A noise floor of a deterministic harness is exactly 0.0**, and of the σ=0.22 harness ≈ 0.663 (analytically `1.6·sqrt(σ(1−σ))` for that harness's structure). A measured floor of ~0 on a stochastic harness means the *seeding is broken*, not that the harness is quiet — see bug #3 in 12-bug-casebook.md. | `test_aa_null_calibration_measures_the_noise_floor` |
+| 7 | **Screen false-veto ≈ flip-rate² under confirm-before-veto.** At per-entry flip noise σ=0.10 the confirmed rule measures ~1.0% false vetoes (pinned ≤ 2%) while the naive any-flip rule measures ~10% (pinned ≥ 5%, and confirmed ≤ naive/3). At the hot σ=0.22 world the squaring still holds (~σ² ≈ 4.8%) but *no* single-confirm rule can reach 2% there. | `test_screen_false_veto_rate_confirm_beats_naive_any_flip` |
+| 8 | **The A/A noise floor of a deterministic harness is exactly 0.0**, and of the σ=0.22 harness ≈ 0.663 (analytically `1.6·sqrt(σ(1−σ))` for that harness's structure). A measured floor of ~0 on a stochastic harness means the *seeding is broken* rather than that the harness is quiet — see the A/A false-zero-floor case (`12-bug-casebook.md` case 3). | `test_aa_null_calibration_measures_the_noise_floor` |
 
 ### 3.2 What the doctrine demands of a change
 
@@ -555,50 +561,50 @@ and any change you make must not silently invalidate them.
   scalar < parent scalar − margin, margin calibrated above the measured A/A
   floor, replicated K times" is.
 - **Any new veto/gate needs a measured false-positive rate under the null.**
-  The screen's confirm-before-veto design (§ in 05-proposer.md) exists because
-  the naive rule's false-veto rate was measured at ~σ per flip-capable entry —
-  an order of magnitude too hot.
+  The screen's confirm-before-veto design (§3.3; the proposer-side wiring lives
+  in 05-proposer.md) exists because the naive rule's false-veto rate measures ~σ
+  per flip-capable entry, an order of magnitude above what the screen can
+  accept.
 - **Any claim of improved power needs the planted-delta measurement**, at
   effect sizes stated in multiples of the measured floor (the harness plants
   0.5×, 1×, 3×).
 - **Soundness may not be traded for power silently.** The evidence gate is
-  opt-in *in code* precisely because its honest cost (a ~37-duel streak,
-  ~32×2×board fresh runs per crowning) would freeze a small-budget default;
-  the scaffolded contracts (`zicato init`, the builder's blank draft) enable
-  it **explicitly** with an honest replicate budget so operators see the bill.
-  If you are tempted to make it default-on with a small budget "so everyone
-  gets soundness," you will instead freeze every true promotion at
-  `inconclusive` — that trade was measured and rejected.
+  opt-in *in code* because its cost — a ~37-duel streak, ~32×2×board fresh runs
+  per crowning — would freeze a small-budget default. The scaffolded contracts
+  (`zicato init`, the builder's blank draft) enable it **explicitly** with an
+  honest replicate budget, so an operator sees that cost before paying it.
+  Making it default-on with a small budget freezes every true promotion at
+  `inconclusive` instead; that trade was measured and rejected.
 
 > ⛔ NEVER assert a statistical property in a docstring, commit message, or
-> test name without a pinned measurement behind it. The phrase to internalize
-> from the power harness: operating characteristics are "measured, not
-> asserted by hope."
+> test name without a pinned measurement behind it. The power harness states the
+> rule directly: an operating characteristic is reported only where it has been
+> measured.
 
 > ⚠️ TRAP: deterministic test contracts hide noise bugs. The convergence
 > oracle (`tests/test_convergence_known_answer.py`) runs a σ=0 world where a
-> cache replay and a fresh draw are *equal by value* — so a procedure that
-> accidentally replays one sample N times looks correct there. This is
-> exactly how bug #8 (evidence replicates were not independent samples) hid
-> behind a green deterministic e2e. Every statistical mechanism needs at
-> least one knob-ON test under σ>0. See 12-bug-casebook.md §"Meta-lessons".
+> cache replay and a fresh draw are *equal by value*, so a procedure that
+> replays one sample N times looks correct there. That is how the evidence-gate
+> replicate-slot reuse case (`12-bug-casebook.md` case 8) — where evidence
+> replicates were not independent samples — passed a green deterministic
+> end-to-end test. Every statistical mechanism needs at least one knob-ON test
+> under σ>0. See 12-bug-casebook.md §"Meta-lessons".
 
 ### 3.3 The screen's statistical doctrine: veto-first, selection bias, confirm-before-veto
 
 The pre-tournament candidate screen (`src/zicato/epoch/screen.py`; the
-proposer-side wiring is 05-proposer.md) deserves its own doctrinal note here
-because it is the clearest worked example of designing a *new* decision
-surface under the noise doctrine — and of what a weaker estimator is and is
-not allowed to decide.
+proposer-side wiring is in 05-proposer.md) is the worked example of designing a
+*new* decision surface under the noise doctrine, and of what a weaker estimator
+may and may not decide.
 
 The screen is a **worse-powered estimator than the tournament it precedes**:
-1–2 entries × 1 replicate versus a full board × replicates. The design pass
-measured what that means — a 2-entry screen ranking close candidates is
-approximately random choice plus winner's curse. The design that survived:
+1–2 entries × 1 replicate against a full board × replicates. The measurement of
+that gap: a 2-entry screen ranking close candidates is approximately random
+choice plus winner's curse. Four rules follow.
 
 - **Veto-first, never ranking.** The screen's high-confidence regime is
   *categorical failure* — a candidate that flips entries the champion passes,
-  or blows its wall-clock budget, is detectably broken even at n=1. So the
+  or exhausts its wall-clock budget, is detectably broken even at n=1. So the
   screen DISQUALIFIES; the best-of-N critic/heuristic still chooses among
   survivors; an all-vetoed slate falls back to critic-over-all (a veto can
   narrow but never empty a propose step, and a screen *error* degrades to
@@ -612,8 +618,8 @@ approximately random choice plus winner's curse. The design that survived:
   champion-passing train entries chosen *for the veto*. It is advisory
   tiebreak material inside the slate only, and it is **never journaled as
   evidence, never compared against tournament scalars**. Winner's curse on
-  the survivor is tolerable exactly because the tournament re-measures with
-  fresh draws and the Ladder/holdout still guards promotion.
+  the survivor is tolerable because the tournament re-measures with
+  fresh draws and the holdout confirmation still guards promotion (§5).
 - **Restricted visibility holds**: the panel is train-slice only (the holdout
   is never eligible), and every result string carries counts only — never an
   entry id (`_summarize` in `screen.py`).
@@ -627,16 +633,17 @@ approximately random choice plus winner's curse. The design that survived:
 
 ## 4. A/A noise-floor calibration
 
-**What it is.** The oldest trick in A/B testing: evaluate the SAME generation
-K times and look at the spread of the resulting scalars. Any two draws form an
-A/A duel whose true effect is exactly zero, so the observed `delta_scalar`
-spread IS the noise floor. Home: `src/zicato/tournament/calibration.py`.
+**What it is.** The standard A/A test of A/B methodology: evaluate the SAME
+generation K times and look at the spread of the resulting scalars. Any two
+draws form an A/A duel — two arms carrying identical treatment — whose true
+effect is exactly zero, so the observed `delta_scalar` spread IS the noise
+floor. Home: `src/zicato/tournament/calibration.py`.
 
 **How it measures.** `measure_noise_floor` runs K (default
 `DEFAULT_CALIBRATION_RUNS = 5`, giving 10 pairwise deltas) fresh draws of the
 champion through `_run_board_units_fast` — the *same* board-unit machinery,
 subprocess workers, scoring, and per-unit persistence every duel uses — so the
-floor is measured under exactly the conditions duels run under. Each draw runs
+floor is measured under the same conditions duels run under. Each draw runs
 at a distinct reserved replicate index (`CALIBRATION_REPLICATE_BASE = 1000`,
 `1000 + draw`), which does two things at once:
 
@@ -648,7 +655,8 @@ at a distinct reserved replicate index (`CALIBRATION_REPLICATE_BASE = 1000`,
    reach the harness, and a seeded harness derives its noise draw from the
    *stamped* index. Without the stamp, every "fresh" draw re-rolls the
    identical seed and a stochastic harness measures a floor of exactly 0.0.
-   That was a real shipped bug (case #3 in 12-bug-casebook.md).
+   That failure shipped once, as the A/A false-zero-floor case
+   (`12-bug-casebook.md` case 3).
 
 ```python
 # src/zicato/tournament/calibration.py — measure_noise_floor (the stamp)
@@ -704,7 +712,7 @@ The health finding `margin_below_noise_floor`
 (`src/zicato/health/diagnostics.py::detect_margin_below_noise_floor`) fires as
 a **warning** when the evidence gate is off ("duels are decided by the margin
 alone") and downgrades to **info** when the gate is on (the defer→replicate
-loop still holds promotions to CI separation). It never hard-refuses a run —
+loop still holds promotions to separation of the rating CIs). It never hard-refuses a run —
 calibration is recommend-only, like every board-reflection surface.
 
 > ✅ ALWAYS treat `NoiseFloor.to_json()` as a tolerant read on the consumer
@@ -712,10 +720,11 @@ calibration is recommend-only, like every board-reflection surface.
 > contract. A dashboard or health reader that raises on a missing floor breaks
 > every workspace that never calibrated.
 
-> ⚠️ TRAP: a floor of exactly `0.0` has two very different meanings — a
-> genuinely deterministic harness (target_0's planted-defect adapter measures
-> exactly 0.0 by design), or a seeding bug where every draw re-rolled the same
-> sample. If you see 0.0 on a harness you believe is stochastic, suspect the
+> ⚠️ TRAP: a floor of exactly `0.0` has two very different meanings. Either the
+> harness is deterministic (the convergence example's planted-defect adapter in
+> `examples/zicato_examples/target_0_convergence` measures exactly 0.0 by
+> design), or a seeding bug made every draw re-roll the same sample. If you see
+> 0.0 on a harness you believe is stochastic, suspect the
 > stamp path first (`_stamp_replicate_index` must reach the entries the run
 > actually consumes), and confirm with the power harness's floor test which
 > asserts the σ=0.22 world lands in `[0.4, 1.0]`.
@@ -724,15 +733,13 @@ calibration is recommend-only, like every board-reflection surface.
 
 ## 5. The Ladder-mediated holdout
 
-Phase A of the overfitting program (§12) built the train/holdout split
-(`src/zicato/board/split.py`) and the gate's confirmation step (§2 rule 4).
-That makes a *single* holdout query trustworthy. It does nothing about the
-deeper failure: the loop queries the *same* holdout every round, adaptively,
-and a reused holdout "gets used up" — its confirmations become an
+The train/holdout split (`src/zicato/board/split.py`) and the gate's
+holdout-confirmation rung (§2) make a *single* holdout query trustworthy. They
+do nothing about the deeper failure: the loop queries the *same* holdout every
+round, adaptively, and reuse spends a holdout — its confirmations become an
 optimistically-biased signal the optimizer can climb. The Ladder
-(`src/zicato/tournament/ladder.py`) is the Blum–Hardt 2015 mechanism for
-exactly this "submit, see score, submit again" loop, in its parameter-free
-variant.
+(`src/zicato/tournament/ladder.py`) is the Blum–Hardt 2015 mechanism for that
+"submit, see score, submit again" loop, in its parameter-free variant.
 
 ### 5.1 The two rules
 
@@ -758,22 +765,22 @@ does not count. The threshold seeds from the gate's existing `promote_margin`
 
 **Budget rule.** Every query that consults the holdout charges one unit of the
 per-epoch budget (`LadderConfig.budget`), charged *before* the release
-decision — a withheld query still pays, because the holdout was consulted to
+decision. A withheld query still pays, because the holdout was consulted to
 learn the gap was inside the band. When the budget is exhausted, nothing is
 released and the state is returned unchanged: the loop degrades to the
-train-only decision — a train-win is no longer holdout-gated, exactly Phase-A
-behavior with no holdout.
+train-only decision, in which a train-win is not holdout-gated at all — the same
+behaviour as holdout confirmation on an empty holdout.
 
 ### 5.2 The released-non-confirmation-is-the-only-flip rule
 
 Put the two rules together and you get the invariant a weaker agent must not
 break: **the only thing that can flip a train-measured promotion to a reject
 via the holdout is a RELEASED non-confirmation.** A withheld query cannot flip
-anything (its result does not count this round); an exhausted budget cannot
-flip anything; and the proposer is only ever shown the threshold-gated
-confirmation *bit* — never the raw per-entry holdout result, never the raw
-holdout scalar of an unreleased round. `LadderRelease.confirmed` on a withheld
-query is the *previous best* bit, deliberately stale.
+anything, because its result does not count this round, and an exhausted budget
+cannot flip anything either. The proposer is only ever shown the
+threshold-gated confirmation *bit*, never the raw per-entry holdout result and
+never the raw holdout scalar of an unreleased round. `LadderRelease.confirmed` on a withheld
+query is the *previous best* bit, stale by design.
 
 ### 5.3 The asymmetry rationale
 
@@ -781,20 +788,21 @@ The holdout confirmation itself (`_holdout_confirms` in
 `tournament/gate.py`) is asymmetric on purpose:
 
 - it rejects when the challenger's holdout loss **rose past** the champion's
-  by more than `promote_margin` (a real holdout regression, not noise), or
+  by more than `promote_margin`, which marks a real holdout regression rather
+  than noise, or
   when the holdout shows a pass-rate regression under the SAME
   `pass_rate_monotonicity_scope` the train slice uses (one consistent policy —
   per-entry on both sides, or aggregate on both);
 - it is **never** asked to clear `promote_margin` in the *improving*
-  direction. A train-measured win that merely holds flat on the holdout is a
-  confirmation, not a failure.
+  direction. A train-measured win that merely holds flat on the holdout counts
+  as a confirmation rather than a failure.
 
 This asymmetry is what makes the holdout a guard against *board
 memorization* rather than a second, stricter promotion bar. If you "tighten"
 it into requiring holdout improvement, you halve the loop's power for zero
-soundness gain — the holdout slice is small, its per-round measurement is
-noisier than the train slice, and demanding improvement on it is demanding a
-signal the slice cannot statistically deliver.
+soundness gain. The holdout slice is small and its per-round measurement is
+noisier than the train slice, so demanding improvement on it demands a signal
+the slice cannot statistically deliver.
 
 ### 5.4 State, persistence, and the record shape
 
@@ -811,16 +819,17 @@ populated block always means a holdout existed.
 When the holdout is empty — a board under
 `overfitting.min_board_size_for_split` (default 6) with no explicit `holdout`
 tag, or the split disabled — the Ladder is never consulted and behavior is
-byte-identical to Phase A. When `LadderConfig.enabled` is `False`, the runner
-runs the raw Phase-A confirmation directly (no budget, no release rule).
+byte-identical to holdout confirmation without the Ladder. When
+`LadderConfig.enabled` is `False`, the runner runs that raw confirmation
+directly, with no budget and no release rule.
 
-Holdout confirmation is wired through **every** structure, not just the
-gauntlet: the multi-challenger path routes its crowning through
+Holdout confirmation is wired through **every** structure rather than the
+gauntlet alone: the multi-challenger path routes its crowning through
 `runner.confirm_crowning_holdout` (see 06-tournament-and-selection.md
 §"Holdout through structures").
 
-> ⛔ NEVER surface a raw holdout artifact to the proposer: not a per-entry
-> result, not an unreleased scalar, not an entry id. The proposer's holdout
+> ⛔ NEVER surface a raw holdout artifact to the proposer — no per-entry
+> result, no unreleased scalar, no entry id. The proposer's holdout
 > view is exactly one bit (the released/re-reported confirmation), by
 > Blum–Hardt design. Any widening of that channel re-opens adaptive
 > overfitting of the holdout and invalidates the reuse guarantee — this is an
@@ -829,7 +838,7 @@ gauntlet: the multi-challenger path routes its crowning through
 
 ---
 
-## 6. The evidence gate (Bradley–Terry pre-gate), post-fix mechanics
+## 6. The evidence gate — the Bradley–Terry pre-gate
 
 Home: `src/zicato/selection/evidence_gate.py` (pure verdict machinery) +
 `src/zicato/selection/driver.py::confirm_promotion_with_evidence` (the
@@ -852,12 +861,12 @@ answers for the crowning pair:
 - **`inconclusive`** — budget exhausted, CIs still overlap. Terminal;
   recorded to the dead-letter queue; the champion stands.
 
-A fit is only trusted at `MIN_CREDIBLE_DUELS = 3` resolved duels for the pair
-— below that the Fisher-information SE is dominated by the prior and a CI
-computed there would defer (or crown) on noise, so the verdict is the gate's
-own (`credible=False`, no override). The recommended threshold the scaffolds
-write is `0.8` — deliberately below the 0.95 the CI level speaks at, because
-CI separation is the sharp half of the test.
+A fit is only trusted at `MIN_CREDIBLE_DUELS = 3` resolved duels for the pair.
+Below that, the standard error (SE) from the Fisher information is dominated by
+the prior, and a CI computed there would defer or crown on noise, so the verdict
+is the gate's own (`credible=False`, no override). The recommended threshold the
+scaffolds write is `0.8`, below the 0.95 the CI level speaks at, because CI
+separation is the stricter half of the test.
 
 ### 6.2 The reserved base 4000 and both-sides-fresh
 
@@ -883,22 +892,24 @@ wiring:
         matchup_id = f"bt-replicate:r{replicate_slot}:{left_id}:{right_id}"
 ```
 
-Three properties, each of which was a *shipped bug* before the fix
-(12-bug-casebook.md case #8):
+Three properties the reserved slot buys. All three failed in a shipped build,
+and together they form the evidence-gate replicate-slot reuse case
+(`12-bug-casebook.md` case 8):
 
-1. **Fresh, not replayed** (fast mode). At slot 0 the child cache-read its
-   canonical `loss.json`, so every "replicate" was a byte-identical replay —
-   duplicate data shrank the BT SE by repetition alone until CIs separated:
-   an unsound promotion path in the exact device that exists for soundness.
+1. **Fresh draws rather than replays** (fast mode). At slot 0 the child
+   cache-read its canonical `loss.json`, so every "replicate" was a
+   byte-identical replay: duplicate data shrank the BT SE by repetition alone
+   until CIs separated, an unsound promotion path inside the device that exists
+   for soundness.
 2. **Never clobber canonical** (full mode). A force-fresh re-run at slot 0
    re-persisted over the child's canonical `loss.json` — the file reindex and
    crash-resume key on.
-3. **Both sides fresh** (full mode). The champion side was never re-drawn —
+3. **Both sides fresh** (full mode). The champion side was never re-drawn, and
    one-sided sampling makes the CIs narrower than the truth.
 
 ### 6.3 The duplicate-audit refusal
 
-The driver's loop enforces independence *structurally*, not by trust:
+The driver's loop enforces independence *structurally* rather than by trust:
 
 ```python
 # src/zicato/selection/driver.py — confirm_promotion_with_evidence
@@ -940,11 +951,12 @@ selection strategy:
   refits; budget exhausted with overlapping CIs terminates `inconclusive`.
 
 An `inconclusive` terminal maps onto the closed decision enum's `DEFERRED`
-token (kept for analysis, lineage head unchanged) and fires
-`on_inconclusive`, which the orchestrator wires to the dead-letter writer:
-one record per unresolved duel at `runtime/inconclusive/<generation_id>.json`
-(`src/zicato/selection/dead_letter.py`) carrying the full `gate.rating` block
-and the per-refit `ci_history` — **nothing is silently dropped**. The record
+token, which keeps the duel for analysis and leaves the lineage head unchanged.
+It also fires `on_inconclusive`, which the orchestrator wires to the
+dead-letter writer: one record per unresolved duel at
+`runtime/inconclusive/<generation_id>.json`
+(`src/zicato/selection/dead_letter.py`), carrying the full `gate.rating` block
+and the per-refit `ci_history`. **Nothing is silently dropped.** The record
 is additive: it exists only on runs that opted into the pre-gate and reached
 the terminal, so every other run's runtime tree is byte-identical.
 
@@ -958,17 +970,17 @@ the terminal, so every other run's runtime tree is byte-identical.
 > threshold / accept overlapping CIs after N tries." Each of those converts
 > the soundness device into a noise-promotion device. If separations are not
 > happening for *true* improvements, the deficiency is measurement variance —
-> raise per-duel `replicates` (fact #3 in §3.1) or the effect is genuinely
-> below the contract's resolvable floor (run `zicato board preflight`, §9).
+> raise per-duel `replicates` (fact #3 in §3.1) or the effect is below the
+> contract's resolvable floor (run `zicato board preflight`, §9).
 
 ### 6.5 Inside the fit — why ~37 wins, and what the prior is doing
 
 The fit itself (`src/zicato/selection/rating.py::fit_bradley_terry`) is a
-pure-Python Newton solve of the Bradley–Terry maximum likelihood: contestant
-`i` has latent strength `theta_i`, `P(i beats j) = sigma(theta_i − theta_j)`,
-each duel outcome is one Bernoulli win (a replicate of the same pairing is a
-separate outcome — that is how replication sharpens the fit natively). The
-properties a consumer must understand:
+pure-Python Newton solve of the Bradley–Terry maximum likelihood. Contestant
+`i` has latent strength `theta_i`, and `P(i beats j) = sigma(theta_i −
+theta_j)`. Each duel outcome is one Bernoulli win, and a replicate of the same
+pairing is a separate outcome, which is how replication sharpens the fit
+natively. The properties a consumer must understand:
 
 - **The ridge prior (`prior=1.0`) is what makes the model identifiable.** BT
   strengths are only defined up to an additive constant, and a contestant
@@ -982,8 +994,8 @@ properties a consumer must understand:
   saturates toward 1 and each win adds *less*. The compounding effect on a
   two-contestant field: the 95% CIs (`theta ± 1.96·se`) first separate at
   ~37 duels of an essentially unbroken streak, and any mixed record never
-  separates — the measured fact #2 in §3.1. This is a *property of the
-  shipped fit with its shipped prior*, not a tunable; if you change `prior`,
+  separates — the measured fact #2 in §3.1. This is a *property of the shipped
+  fit with its shipped prior* rather than a tunable; if you change `prior`,
   you have changed the soundness/cost point and must re-measure the
   separation cost on the power harness.
 - **Ties are not observations.** `audit_duels` feeds only resolved
@@ -996,7 +1008,8 @@ properties a consumer must understand:
   sharper, correlated-information-free half of the test.
 
 The fit is opt-in as a *standings* device too (`params["rating"]` selects
-`theta_rank` ordering — see 06-tournament-and-selection.md §"Rating layer");
+`theta_rank` ordering — see 06-tournament-and-selection.md §6.10.5, the opt-in
+rating and resolver layer);
 in that role it only ever proposes an ordering. The gate is never involved.
 
 ### 6.6 The visibility rating fold (index-side BT on the Elo scale)
@@ -1016,36 +1029,37 @@ The fold writes the three columns and nothing gate-side ever reads them back
 them; `evaluate_gate` / the selection strategies never touch them (pinned by
 `test_rating_columns_are_never_read_gate_side`). Facts a consumer must hold:
 
-- **Batch and order-independent.** The fold is a batch MLE over the
-  de-duplicated game list (crowning rows + field-bracket rows, keyed
+- **Batch and order-independent.** The fold is a batch maximum-likelihood fit
+  over the de-duplicated game list (crowning rows + field-bracket rows, keyed
   `(tournament_id, match_id, {sides})`), so the same ledger yields identical
   ratings and SEs in any fold order — re-derived from scratch at every
   ingest, never incrementally updated.
-- **Margins are deliberately ignored.** BT is fit on win/loss only; the
+- **Margins are ignored.** BT is fit on win/loss only; the
   `|delta_scalar|` magnitude rides the *gate* (§2), and folding it into the
   rating would double-count the same evidence.
-- **Zero games ⇒ NULL, not a carried prior.** A generation that never played
+- **Zero games ⇒ NULL rather than a carried prior.** A generation that never played
   a settled two-competitor duel has no measured strength; its columns stay
   NULL and the display renders `—` (honest-degrade, never a fabricated
   number).
-- **Racing rungs are rated (Plackett–Luce).** A racing intermediate rung
+- **Racing rungs are rated with the Plackett–Luce (PL) model.** A racing
+  intermediate rung
   persists a survivor/cut *set* with no single named winner. The fold's fit is
-  `fit_plackett_luce`, a strict generalisation of `fit_bradley_terry`: a
+  `fit_plackett_luce`, a strict generalisation of `fit_bradley_terry`. A
   two-competitor game is the singleton case where PL's choice probability
-  `p_i/(p_i+p_j)` *is* the BT logistic (so pairwise ratings are byte-unchanged,
-  pinned by a reduction test), and a rung is a grouped observation — survivor
-  set `S` above cut set `C`, scored by the **exact marginal over the within-`S`
-  orderings** (`|S|!` sequential-choice terms; the within-`C` orderings
-  marginalise to one). So a generation cut only at a rung is now rated where
-  the earlier BT fold left it NULL. `elo_games` therefore counts *observations
-  a generation appeared in* — a game counts for its two sides, a rung group
-  counts once per participant. Guards: a survivor set over
+  `p_i/(p_i+p_j)` *is* the BT logistic, so pairwise ratings stay byte-identical
+  to the BT fit, pinned by a reduction test. A rung is a grouped observation:
+  survivor set `S` above cut set `C`, whose likelihood is the **exact marginal
+  over the within-`S` orderings** (`|S|!` sequential-choice terms; the
+  within-`C` orderings marginalise to one). A generation cut only at a rung
+  therefore carries a rating, which a pairwise-only fit cannot give it.
+  `elo_games` counts *observations a generation appeared in*: a game counts for
+  its two sides, and a rung group counts once per participant. Guards: a survivor set over
   `PL_MAX_SURVIVORS = 8` is skipped with a debug log (never approximated —
   the marginal is factorial in `|S|`, and racing fields are single-digit);
-  rung groups de-dup on `(tournament_id, rung_id)`. Slice size is deliberately
-  **unweighted** in v1 (a thin-slice rung is noisier evidence but weighs the
-  same — acceptable because the rating never gates; variance-aware weighting
-  is future work).
+  rung groups de-dup on `(tournament_id, rung_id)`. Slice size is
+  **unweighted**: a thin-slice rung is noisier evidence but weighs the same,
+  which is acceptable because the rating never gates. Variance-aware weighting
+  is registered as future work.
 - **Display honesty.** Below `MIN_RATING_GAMES = 5` games the surfaces
   append a faint `provisional` suffix (the per-candidate analogue of §6.1's
   `MIN_CREDIBLE_DUELS` honesty states); the SE always rides beside the
@@ -1067,7 +1081,8 @@ runs paired replicates; `run_fast_mode` remains a one-sided debug API.
 loss map *before* aggregation.
 
 Scoring never sees the individual replicates, so a field the fold does not
-aggregate is DISCARDED, not merely unaveraged. The rule the fold holds to is:
+aggregate is DISCARDED rather than merely unaveraged. The rule the fold holds
+to is:
 **a field the scalar or the gate reads is aggregated; a field neither reads
 carries the representative replicate (slot 0)**, and its docstring names every
 pass-through with the reason it may be one.
@@ -1076,52 +1091,53 @@ Aggregated:
 
 - `drift_loss` — the arithmetic mean; reaches the scalar as the `"drift"`
   component;
-- `score` — the mean of each replicate's **resolved outcome**, i.e. of
-  `entry_score(replicate)`, not of the raw `score` field. This is the field
-  `entry_score` reads FIRST, hence the continuous outcome axis the duel actually
-  turns on, and folding the resolved outcome is what makes the fold correct in
-  the two cases where the raw field is unset. Only ONE of them is an
-  abstention: an entry with **no expectation at all** produces no outcome on any
-  replicate and folds to `None`, excluded from `mean_score` exactly as before
-  replication. An **aborted** replicate (spent budget, infra kill) records
-  `score=None` with `pass_fail=False` — it observed a failure, not nothing — so
-  `entry_score` maps it to `0.0` and it votes. Treating that as an abstention is
-  how a K-replicate duel silently reverts to slot 0: one clean pass plus one
-  abort reported the clean replicate's `1.0` verbatim while `pass_fail`'s
-  majority said `False`, a folded profile contradicting itself. Folding the
-  resolved outcome also means an all-bool board (score-less, `pass_fail` only)
-  gets the same arithmetic as a scored one — 1 of 4 replicates passing reads
-  `0.25`, not the single majority bit;
+- `score` — the mean of each replicate's **resolved outcome**, that is of
+  `entry_score(replicate)` rather than of the raw `score` field. `entry_score`
+  reads that resolved outcome FIRST, so it is the continuous outcome axis the
+  duel turns on, and folding it is what makes the fold correct in the two cases
+  where the raw field is unset. Only ONE of those two is an abstention. An entry
+  with **no expectation at all** produces no outcome on any replicate and folds
+  to `None`, excluded from `mean_score` the same way a single unreplicated draw
+  is. An **aborted** replicate (spent budget, infra kill) records `score=None`
+  with `pass_fail=False`, because it observed a failure rather than nothing, so
+  `entry_score` maps it to `0.0` and it votes. Treating an abort as an
+  abstention is how a K-replicate duel silently collapses back to slot 0: one
+  clean pass plus one abort reports the clean replicate's `1.0` verbatim while
+  `pass_fail`'s majority says `False`, giving a folded profile that contradicts
+  itself. Folding the resolved outcome also means an all-bool board (score-less,
+  `pass_fail` only) gets the same arithmetic as a scored one — 1 of 4 replicates
+  passing reads `0.25` rather than the single majority bit;
 - `metrics` — per-key mean over the replicates reporting the key, so the
   decomposition decomposes the folded `score` beside it;
 - `metric_counts` (and the `tokens_spent` / `output_chars` / `schema_failures`
   scalars) — namespace-bearing via `aggregate_namespaced_metrics`, whose
   per-namespace values are summed into the scalar for any contract with a
   non-zero `cost:` / `output:` / `schema:` weight. Meaned with an
-  absent-bucket-contributes-zero divisor, which is exactly the per-run-mean
-  model that aggregator uses — so the namespace aggregate over the fold equals
+  absent-bucket-contributes-zero divisor, which is the per-run-mean model that
+  aggregator uses — so the namespace aggregate over the fold equals
   the aggregate over the replicates it folded;
 - `per_judge_loss` — meaned per judge; it rides `ScalarContext`, so a scalar
   plugin can read it;
 - `pass_fail` — the **strict-majority vote** (`true_count * 2 > len(votes)`; an
   even split is a fail), with `None` preserved when no replicate produced a
-  pass/fail. NOTE: now that `score` is folded, this vote no longer decides the
-  scalar — `entry_score` returns the folded continuous outcome before it can
-  consult `pass_fail`. The vote still drives the binary `pass_rate` and the
-  gate's `pass_fail` fallback for score-less aggregates, so it stays a majority
-  rather than a mean, and it can legitimately disagree in sign with the folded
-  `score` (2 of 5 replicates passing is `pass_fail` `False` and `score` `0.4`).
-  That is the binary and continuous views of one duel, not an inconsistency.
+  pass/fail. This vote does not decide the scalar: `entry_score` returns the
+  folded continuous outcome before it can consult `pass_fail`. The vote drives
+  the binary `pass_rate` and the gate's `pass_fail` fallback for score-less
+  aggregates, so it stays a majority rather than a mean, and it can disagree in
+  sign with the folded `score` (2 of 5 replicates passing is `pass_fail` `False`
+  and `score` `0.4`). Those are the binary and the continuous view of one duel
+  rather than an inconsistency.
 
 Pass-through from slot 0, and why each may be: `run_id` /
 `expectation_result` (raw provenance of the representative replicate — the fold
 is not a run and has no matcher verdict of its own); `drift_counts` (the
-`"drift:"` namespace is explicitly excluded from the namespace terms precisely
-because `drift_loss`, which IS meaned, owns the drift axis); `runtime_ms` /
+`"drift:"` namespace is excluded from the namespace terms because `drift_loss`,
+which IS meaned, owns the drift axis); `runtime_ms` /
 `abort_cause` / cache provenance and friends (they describe ONE execution and
 have no meaningful fold).
 
-A noisy single run no longer decides a duel; the gate itself is unchanged.
+A single noisy run therefore cannot decide a duel, and the gate sees only the
+folded loss.
 
 ### 7.2 Per-structure defaults
 
@@ -1130,7 +1146,7 @@ noise-aware default (`src/zicato/selection/strategy.py`). Per structure:
 
 | Structure | Default `replicates` | Rationale (from the strategy docstrings) |
 |---|---|---|
-| gauntlet | 2 (inherits base) | pin `"replicates": 1` in params for the historical single-run behavior |
+| gauntlet | 2 (inherits base) | pin `"replicates": 1` in params for single-run behavior |
 | single_elim | 2 | a single-elim knockout has no second chance; replication is its noise defense |
 | double_elim | 2 | replication rather than relying on the losers' bracket for noise correction |
 | swiss | 2 | per-pairing replication is how a swiss earns trustworthy standings |
@@ -1154,21 +1170,22 @@ Corollaries you must not violate:
 
 - **The canonical r0 slot is written by the tournament's own replicate-0 run
   and by nothing else.** The worker routes its write through
-  `_unit_loss_path(..., _entry_replicate_index(entry))` — before that fix
-  (12-bug-casebook.md case #1), later replicates clobbered r0 with the last
-  draw.
+  `_unit_loss_path(..., _entry_replicate_index(entry))`. Without that routing,
+  later replicates clobber r0 with the last draw — the replicate-cache
+  clobbering case (`12-bug-casebook.md` case 1).
 - **Replication is incremental.** Requesting R replicates when r<R already
   exist runs only the missing R−r; cached samples are reused, never re-run.
   (Cheap replication is why the evidence gate's `DEFAULT_REPLICATE_BUDGET` can
   be small.)
 - **`replicate_base` shifts the whole window**: replicate `i` runs, caches,
   and stamps its harness noise draw at `replicate_base + i`. Base 0 is every
-  tournament matchup, byte-identical to before the parameter existed; reserved
-  bases are §8's ledger.
+  tournament matchup; the reserved bases are §8's ledger.
 - The stamped index and the cache index must be the **same number** — the
   stamp is what a seeded harness derives its draw from, the key is where the
-  draw persists. Diverge them and you either alias draws or mislabel slots
-  (bugs #1 and #3 are the two halves of getting this wrong).
+  draw persists. Diverge them and you either alias draws or mislabel slots —
+  the replicate-cache clobbering case and the A/A false-zero-floor case
+  (`12-bug-casebook.md` cases 1 and 3) are the two halves of getting this
+  wrong.
 
 `champion_eval_mode` provenance (`"full"` / `"fast"` / `"fast-degraded"`) is
 derived from the LEFT side's pre-run cache state and is journal provenance
@@ -1185,19 +1202,19 @@ missing replicate one. Missing slots run and persist independently. Full mode
 forces both competitors fresh. The power analysis therefore describes the
 paired production contrast.
 
-The standalone `run_fast_mode` library API accepts a historical aggregate and
-evaluates only the challenger. Direct callers of that API have a one-sided
+The standalone `run_fast_mode` library API accepts an aggregate measured
+earlier and evaluates only the challenger. Direct callers of that API have a one-sided
 contrast and must not apply the paired-variance formula. The evolve pipeline
 does not call that API.
 
 Both replicate loops also stop scheduling FURTHER slots once the per-round
-token budget is spent, and settle the fold over the slots that completed. The
-alternative is worse than it looks: a spent budget turns the remaining slots'
-units into skips — synthesised worst-case budget-exceeded losses — and
-`budget_exhausted` is the one cache-*persistable* abort cause, so those worst
-cases would be both averaged into entries that already measured cleanly AND
-written to their cache slots, making the penalty a permanent HIT for the rest
-of the epoch on units that were never attempted.
+token budget is spent, and settle the fold over the slots that completed.
+Scheduling the remaining slots anyway would corrupt the cache. A spent budget
+turns those units into skips, which are synthesised worst-case budget-exceeded
+losses, and `budget_exhausted` is the one cache-*persistable* abort cause. Those
+worst cases would be averaged into entries that already measured cleanly AND
+written to their cache slots, making the penalty a permanent HIT for the rest of
+the epoch on units that were never attempted.
 
 ---
 
@@ -1206,8 +1223,8 @@ of the epoch on units that were never attempted.
 This is a formal registry. The replicate-index space of every
 `(generation, entry)` unit is partitioned by convention, and the convention is
 enforced only by this ledger plus the cross-referencing docstring on
-`EVIDENCE_REPLICATE_BASE` — there is no runtime collision checker. Treat it
-like a port-number registry.
+`EVIDENCE_REPLICATE_BASE`. There is no runtime collision checker, so an
+unclaimed base is caught in review or not at all.
 
 | Base | Range in practice | Owner | Constant | Purpose |
 |---|---|---|---|---|
@@ -1251,21 +1268,21 @@ audit, a new confirmation loop), follow this procedure exactly:
    `zicato.selection.evidence_gate.EVIDENCE_REPLICATE_BASE` (the canonical
    in-code ledger) and every sibling docstring that enumerates the ladder
    (`calibration.py`, `preflight.py`, `screen.py`, `reflection/corpus.py`,
-   `reflection/admission.py`) — and this table, and the G7 row in
-   `00-INDEX.md`.
-3a. **Decide what READERS may do with your slots.** A slot cached under a real
+   `reflection/admission.py`) — and this table, and the reserved-replicate-base
+   row in `00-INDEX.md` (invariant `G7`).
+4. **Decide what READERS may do with your slots.** A slot cached under a real
    generation id is visible to anything walking that generation's `runs/`
    directory, so `zicato.tournament.unit_cache.is_own_code_board_draw` — the
    allow-list the passive reflection corpus and the proposer's baseline reader
    both filter through — must learn your base. It answers `False` for any
-   unclaimed index, so a new base is EXCLUDED until you admit it: correct for a
-   degraded probe (the 2000 block) or a panel-subset draw (the 3000 block),
-   and something you must change explicitly for a clean full-board draw of the
-   generation's own code.
-4. **Stamp AND key** with the same index (`_stamp_replicate_index` +
+   unclaimed index, so a new base is EXCLUDED until you admit it. Exclusion is
+   correct for a degraded probe (the 2000 block) or a panel-subset draw (the
+   3000 block). For a clean full-board draw of the generation's own code you
+   must admit the base explicitly.
+5. **Stamp AND key** with the same index (`_stamp_replicate_index` +
    `replicate_index=`/`replicate_base=`), through the same board-unit runner
    every duel uses.
-5. **Prove isolation with a test**: canonical r0 slots byte-identical across
+6. **Prove isolation with a test**: canonical r0 slots byte-identical across
    your new evaluation (the pattern in
    `test_full_mode_evidence_loop_never_touches_canonical_slots`), and your
    draws persisted under your base for every side you run.
@@ -1280,20 +1297,21 @@ grep -rn "REPLICATE_BASE\b *[:=]" src/zicato --include="*.py"
 
 ### 8.2 The corruption that follows from squatting
 
-What actually goes wrong if you run an out-of-band evaluation at an
-unreserved index — every one of these is a *measured* failure mode, not a
-hypothetical:
+What goes wrong if you run an out-of-band evaluation at an unreserved index.
+Every entry below is a *measured* failure mode:
 
-- **At 0**: you either replay the canonical sample as if it were fresh
-  (fast-mode: repetition masquerading as evidence — the unsound-promotion half
-  of bug #8) or you overwrite the canonical `loss.json` that reindex and
-  crash-resume key on (full-mode: a crash mid-loop resumes onto your
-  corrupted r0 — the clobber half of bug #8, and the whole of bug #1).
+- **At 0**, one of two things happens. In fast mode you replay the canonical
+  sample as if it were fresh, counting repetition as evidence — the
+  unsound-promotion half of the evidence-gate replicate-slot reuse case. In full
+  mode you overwrite the canonical `loss.json` that reindex and crash-resume key
+  on, so a crash mid-loop resumes onto your corrupted r0 — the clobber half of
+  that same case, and the whole of the replicate-cache clobbering case
+  (`12-bug-casebook.md` cases 8 and 1).
 - **At 0..R-1 generally**: you pre-seed slots a later replicated duel will
   cache-HIT, so *its* "fresh" samples are your probe's draws — your evaluation
-  leaks into tournament evidence. This is the cache-leakage trap the screen's
-  design pass identified before it shipped: screen-selection luck would have
-  inflated the subsequent tournament score on the screened entries.
+  leaks into tournament evidence. The screen's design pass identified this
+  cache-leakage trap: screen-selection luck would otherwise inflate the
+  subsequent tournament score on the screened entries.
 - **In another owner's range**: you make their idempotence a lie. A re-run
   `board audit` would silently read your draws as its own, reporting a floor
   measured on the wrong distribution.
@@ -1307,13 +1325,13 @@ hypothetical:
 
 Home: `src/zicato/epoch/preflight.py`. Before an epoch burns rounds, two cheap
 measurements answer the one question that decides whether an evolve loop can
-work at all: **is the movement this contract can measure larger than its own
-noise floor?**
+work at all: **whether the movement this contract can measure is larger than
+its own noise floor**.
 
 - **(a) the A/A floor** — reuses `measure_noise_floor`'s draws (same cache
   slots as `zicato board audit`; idempotent between the two surfaces);
-- **(b) the scripted-perturbation duels** — the champion vs deliberately
-  degraded copies of itself: each probed mutation point has its span
+- **(b) the scripted-perturbation duels** — the champion against degraded
+  copies of itself: each probed mutation point has its span
   blanked/scrambled (`degraded_content_for`: spans reverse
   character-by-character, code regions become `pass`, `.py` files blank to a
   comment) in an **ephemeral** scratch copy via the real applier. The degraded
@@ -1331,23 +1349,23 @@ preflight's `_stamp_replicate_index(board, 5000 + j)` +
 `REFLECTION_REPLICATE_BASE` (5000), voiding any infra-aborted draw with
 `ReflectionDrawInconclusive` just as the preflight voids on `NoiseFloorInconclusive`.
 
-### 9.1 Probe selection — a sample, not a point (issue #106)
+### 9.1 Probe selection draws a sample of mutation points (issue #106)
 
-The pre-flight originally degraded `points[0]` and nothing else, which made the
-measurement a statement about ONE mutation point rather than about the
-contract. `enumerate_mutations` sorts by `(source_root, file, line_start, id)`
-— deterministic, but it carries **no information about which points matter** —
-so when the first point happened to be **inert** under the current contract,
-a perfectly healthy board measured signal 0 and got condemned. Deterministically,
-every round, never flakily.
+Degrading only `points[0]` would make the measurement a statement about ONE
+mutation point rather than about the contract. `enumerate_mutations` sorts by
+`(source_root, file, line_start, id)`, which is deterministic but carries **no
+information about which points matter**. When the first point is **inert** under
+the current contract, a single-point probe measures signal 0 on a healthy board
+and condemns it — the same way every round, with no flakiness to expose the
+error (issue #106).
 
-The canonical inert point, from the field report: the presentation target
-enumerates `write_webpage_tool_description` alongside its instruction spans.
-Configure the deliverable to come from a **structured-output schema** on the
-producing sub-agent rather than from that tool call, and the tool's description
-stops reaching the artifact at all. Degrading it is a no-op; degrading
-`coordinator_instruction` — exercised on literally every run — moves the scalar
-a lot.
+A concrete inert point: the presentation-agent target enumerates
+`write_webpage_tool_description` alongside its instruction spans. Configure the
+deliverable to come from a **structured-output schema** on the producing
+sub-agent rather than from that tool call, and the tool's description stops
+reaching the artifact at all. Degrading it changes nothing, while degrading
+`coordinator_instruction` — exercised on every run — moves the scalar
+substantially.
 
 `select_probe_points` (pure, deterministic, unit-tested in
 `tests/test_preflight_probe_and_margin_window.py`) fixes selection in three
@@ -1367,31 +1385,32 @@ layers:
    order is the enumeration's, so the sample is fully deterministic.
 3. **Explicit pin.** `runtime.preflight_probe_mutation_ids` (or
    `zicato board preflight --degrade-mutation-id`) names the points outright,
-   in order, ignoring the limit. A pinned id that no longer enumerates raises
+   in order, ignoring the limit. A pinned id the enumeration does not produce
+   raises
    `PreflightConfigError` rather than silently falling back to the automatic
    sample — a silent fallback would report a verdict measured on points the
    operator did not choose, which is worse than no answer.
 
 **Selection runs BEFORE the floor is measured.** Enumeration and selection are
 pure filesystem reads, and every way they can fail is a deterministic property
-of the snapshot or of the operator's config — so `run_contract_preflight`
-validates them first and only then spends K champion draws on the A/A floor. It
-used to be the other way round, which charged an operator K real evaluations to
-be told they had mistyped a knob. `RuntimeConfig.__post_init__` catches the
+of the snapshot or of the operator's config, so `run_contract_preflight`
+validates them first and only then spends K champion draws on the A/A floor. The
+reverse order would charge an operator K real evaluations before reporting a
+mistyped knob. `RuntimeConfig.__post_init__` catches the
 cheapest case earlier still: `preflight_probe_points` must be in
 `1..PREFLIGHT_PROBE_POINTS_MAX`, the width of the reserved replicate block
 (mirrored from `PREFLIGHT_REPLICATE_SPAN`, since `zicato.core` cannot import
 `zicato.epoch`; a test pins the two equal).
 
-**The cost is a ceiling, not a spend.** Probing stops at the first probe whose
-signal clears `max(floor_max_abs_delta, promote_margin)` — past that bound no
-further probe can change either verdict, so continuing would only spend
-champion evaluations refining a number nothing reads. A healthy contract
-therefore still costs exactly **one** degraded draw, identical to pre-#106; the
-extra evidence is bought only on a contract that is about to be called
-unmeasurable. Note the bound is the *margin*, not just the floor:
-short-circuiting at the floor alone would let the reported signal understate
-the true maximum and spuriously trip §9.3's `margin_above_achievable`.
+**`preflight_probe_points` is a ceiling rather than a spend.** Probing stops at
+the first probe whose signal clears `max(floor_max_abs_delta, promote_margin)`.
+Past that bound no further probe can change either verdict, so continuing would
+only spend champion evaluations refining a number nothing reads. A healthy
+contract therefore costs exactly **one** degraded draw, and the extra evidence
+is bought only on a contract that is about to be called unmeasurable. The bound
+is the *margin* rather than the floor alone: short-circuiting at the floor would
+let the reported signal understate the true maximum and falsely trip §9.3's
+`margin_above_achievable`.
 
 Every point considered lands on `PreflightReport.probed_points` (additive) with
 its per-point signal or the reason it cost no draw (`no_op_patch` /
@@ -1408,25 +1427,25 @@ whole probe set:
 
 | Verdict | Condition | Pathology |
 |---|---|---|
-| `warn` (saturated) | spread across ALL probes — every A/A draw plus the best degraded draw — is **exactly zero** | zero variance / saturation: even a deliberately-broken tree scores identically. The historical signature is the `1.000000` null run — the loop spins forever with nothing to climb. The board, not the noise, is the problem. |
-| `inert` | `signal == 0` exactly, while the champion's own draws DID vary | the probe, not the contract. Two facts hold at once: the harness demonstrably can move the scalar, and the degradation moved it by nothing. So the signal is **unmeasured**, not measured-as-zero. Fix = pick a representative point. NARROW — see the honest reading below. |
+| `warn` (saturated) | spread across ALL probes — every A/A draw plus the best degraded draw — is **exactly zero** | zero variance / saturation: even a broken tree scores identically. The signature is the `1.000000` null run — the loop spins forever with nothing to climb. The board rather than the noise is the problem. |
+| `inert` | `signal == 0` exactly, while the champion's own draws DID vary | the probe rather than the contract. Two facts hold at once: the harness can move the scalar, and the degradation moved it by nothing. So the signal is **unmeasured** rather than measured as zero. Fix = pick a representative point. NARROW — see the honest reading below. |
 | `refuse` (recommended) | `0 < signal <= floor_max_abs_delta` | noise swamps the margin: an A/A re-roll moves the scalar as much as a deliberate degradation does; every duel is decided by noise. The contract cannot possibly resolve the *smaller* improvements a proposer will offer. |
-| `ok` | otherwise | signal demonstrably clears noise |
+| `ok` | otherwise | signal clears noise |
 
-Saturation is checked **first**, deliberately: a saturated contract trivially
-also has `signal == floor == 0`, and the saturation diagnosis is the
+Saturation is checked **first**: a saturated contract also has
+`signal == floor == 0`, and the saturation diagnosis is the
 actionable one. `inert` is checked second, before the floor comparison, so that
 "the probe moved nothing" is never reported as "the board is noise-limited".
 
-> ⚠️ **The honest reading of `inert` — it is narrower than it looks, and it is
-> NOT what protects #106's board.** The branch needs BOTH champion spread `> 0`
-> AND the degraded scalar exactly equal to `mean(champion_scalars)`. Work
-> through the two realistic harnesses and neither reaches it:
+> ⚠️ **The honest reading of `inert`.** The branch is narrower than it looks,
+> and it is not what protects a healthy board from the false refusal issue #106
+> reported. It needs BOTH champion spread `> 0` AND the degraded scalar exactly
+> equal to `mean(champion_scalars)`. Neither realistic harness reaches it:
 >
 > - **Noisy (continuous) harness** — hitting the arithmetic mean of K noisy
 >   draws exactly is measure-zero. A live point the deliverable merely routes
->   around measures a small NON-zero signal, so it lands in **`refuse`**, not
->   `inert`.
+>   around measures a small NON-zero signal, so it lands in **`refuse`** rather
+>   than `inert`.
 > - **Deterministic harness** — the champion's draws do not vary, so a
 >   behaviourally-identical degraded tree gives spread `== 0` and the
 >   **saturation** branch claims the case first.
@@ -1434,9 +1453,9 @@ actionable one. `inert` is checked second, before the floor comparison, so that
 > What is left is the **quantized** case: a discrete scoring scale on which the
 > champion mean is itself an attainable score (e.g. draws {0.4, 0.6}, degraded
 > 0.5). There `inert` fires, and there it is correct and useful. The verdict is
-> kept for exactly that reason — additive, right when it fires, and removing it
-> would churn the persisted schema — but do not credit it with issue #106's
-> false refusal.
+> kept for that case: it is additive, correct when it fires, and removing it
+> would churn the persisted schema. It does not address the false refusal issue
+> #106 reported.
 >
 > **What actually protects a healthy board from a false `refuse` is (1) the
 > role-diverse multi-point sample of §9.1, which out-measures a routed-around
@@ -1450,16 +1469,16 @@ The verdict persists onto the epoch record (`config.json`'s additive
 under `preflight_gate="refuse"`, warning otherwise, §9.5 — / warning
 `preflight_saturated_contract` / warning `preflight_inert_probe`).
 
-### 9.3 The promote-margin window (issue #112, corrected by #119)
+### 9.3 The promote-margin window (issues #112 and #119)
 
-"Can this contract out-signal its own noise?" and "is `promote_margin` set
-sanely?" are **different questions**. Measured on a real 24-cell, 72-duel
-campaign: floor `delta_std` 0.080–0.106, best single-round improvement across
-all 72 duels **+0.041**, configured `promote_margin` **0.10** ⇒ **71 of 72
-duels rejected**, every cell terminated at its starting generation, and the
-comparison the run existed to make could not return anything but a null. The
-pre-flight raised nothing, because the contract *could* out-signal its noise in
-the sense the pre-flight tested. The failure was one level up.
+Whether a contract can out-signal its own noise and whether `promote_margin` is
+set sanely are **different questions**. A 24-cell, 72-duel campaign measured the
+gap: floor `delta_std` 0.080–0.106, best single-round improvement across all 72
+duels **+0.041**, configured `promote_margin` **0.10**, giving **71 of 72 duels
+rejected**. Every cell terminated at its starting generation, and the comparison
+the campaign existed to make could only return a null. The pre-flight raised
+nothing, because the contract *could* out-signal its noise in the sense the
+pre-flight tested. The failure sat one level above that test.
 
 `preflight_window_verdict` places the margin against the floor and the measured
 signal and names the side it fell outside of, because the two sides have
@@ -1483,62 +1502,64 @@ Bounds are inclusive on the failing side (`>=` / `<=`): a margin exactly AT the
 measured signal exceeds everything the probe saw, and one exactly at the floor
 is indistinguishable from noise.
 
-> ⛔ **The signal is DEGRADATION headroom, and it was labelled as achievable
-> IMPROVEMENT (issue #119).** `signal = |degraded_scalar − champion_mean|` is
-> how far the scalar moved when a mutation point was **destroyed** — how much
-> this champion has left to **lose**. A promotion needs movement the other way.
-> The two quantities are unrelated in general and diverge hardest exactly where
-> an evolve loop is most often started: a champion seeded near the failing end
-> has little left to break (small degradation headroom) and everything to gain
-> (large improvement headroom). Enforcing the margin against it therefore failed
-> in both directions — a **false refuse** for a floor-anchored champion whose
-> margin the board could clear, and a **silent false OK** for a champion at the
-> score ceiling, whose large degradation headroom said nothing about the
-> improvement that was in fact unavailable.
+> ⛔ **The signal measures DEGRADATION headroom and never achievable
+> IMPROVEMENT.** `signal = |degraded_scalar − champion_mean|` is how far the
+> scalar moves when a mutation point is **destroyed**, which is how much this
+> champion has left to **lose**. A promotion needs movement the other way. The
+> two quantities are unrelated in general, and they diverge hardest where an
+> evolve loop is most often started: a champion seeded near the failing end has
+> little left to break (small degradation headroom) and much to gain (large
+> improvement headroom). Enforcing the margin against degradation headroom
+> therefore fails in both directions — a **false refuse** for a floor-anchored
+> champion whose margin the board could clear, and a **silent false OK** for a
+> champion at the score ceiling, whose large degradation headroom says nothing
+> about an improvement that is unavailable (issue #119).
 >
-> The fix is an honest relabel, not a new number. The measurement is kept and
-> persisted under `degradation_signal` (with the legacy `signal` key retained
-> so existing readers keep working); `margin_above_achievable` became a
-> **warning that can no longer hard-refuse a run**, even under
-> `preflight_gate="refuse"`; and every operator-facing string says what was
-> measured. `effective_gate_verdict` additionally declines to escalate a
-> *persisted* `margin_above_achievable` refusal, so epochs pre-flighted before
-> the demotion do not keep stopping on the retracted finding.
+> The correction is a relabel rather than a new number. The measurement persists
+> under `degradation_signal`, and the `signal` key is retained beside it so
+> existing readers keep working. `margin_above_achievable` is a **warning that
+> cannot hard-refuse a run**, even under `preflight_gate="refuse"`, and every
+> operator-facing string says what was measured. `effective_gate_verdict` also
+> declines to escalate a *persisted* `margin_above_achievable` refusal, so an
+> epoch pre-flighted while that finding still refused does not keep stopping on
+> it.
 >
-> **The tempting fix is unsafe.** "Improvement headroom = `champion_mean − 0`"
-> assumes the scalar's reachable floor is zero, and it is not: a namespace with
-> a **negative** weight (a rubric, where higher is better) pushes the scalar
-> below zero, so that subtraction would fabricate a bound. Deriving a real one
-> from the namespace weights is **registered, not built** — improvement headroom
-> is currently **unmeasured**, and the code says so.
+> **One tempting fix is unsafe.** Defining improvement headroom as
+> `champion_mean − 0` assumes the scalar's reachable floor is zero, which it is
+> not: a namespace with a **negative** weight (a rubric, where higher is better)
+> pushes the scalar below zero, so that subtraction would fabricate a bound.
+> Deriving a real bound from the namespace weights is **registered as future
+> work and not built**; improvement headroom is **unmeasured**, and the code
+> says so.
 
-> ⚠️ **The signal is also a SINGLE-POINT lower bound.** Independently of the
-> above, the probe degrades one mutation point per draw, so it under-reports even
-> the movement it *does* measure. A patch that touches several points exceeds it,
-> and **recombination does so by design**: `recombine` exists precisely to union
-> two individually sub-margin fixes into a promotable one (see the known-answer
-> tests in `tests/test_recombination_known_answer.py`). This is a second,
-> independent reason the finding is a **warning** rather than a critical — a
-> critical would trip `evolve_n_rounds`'s degenerate-health circuit breaker
-> (`_DEGENERATE_HEALTH_STOP_THRESHOLD`) and kill exactly that legitimate run.
+> ⚠️ **The signal is also a SINGLE-POINT lower bound.** Separately from the
+> labelling problem above, the probe degrades one mutation point per draw, so it
+> under-reports even the movement it *does* measure. A patch that touches
+> several points exceeds it, and **recombination does so by design**: `recombine`
+> exists to union two individually sub-margin fixes into a promotable one (see
+> the known-answer tests in `tests/test_recombination_known_answer.py`). That is
+> a second, independent reason the finding is a **warning** rather than a
+> critical: a critical would trip `evolve_n_rounds`'s degenerate-health circuit
+> breaker (`_DEGENERATE_HEALTH_STOP_THRESHOLD`) and kill the legitimate run
+> recombination was built for.
 
 ### 9.3.1 The holdout's own bound (issue #118)
 
-The window above places the **train** margin. When the split is active a
+The window above places the **train** margin. When the split is active, a
 promotion must also survive the holdout confirmation, which applies its own
-scalar tolerance and its own pass-rate rule to a **smaller** slice — and a slice
-of N entries moves its scalar in `1/N` steps, so the holdout's steps are the
-coarse ones and its bound can be the binding one while the train window looks
-perfectly healthy.
+scalar tolerance and its own pass-rate rule to a **smaller** slice. A slice of N
+entries moves its scalar in `1/N` steps, so the holdout's steps are the coarse
+ones. Its bound can therefore be the binding one while the train window looks
+healthy.
 
-`promote_margin` used to serve as that tolerance too (plus the Ladder's release
-threshold — one knob, three duties). On the DEFAULT-produced 12-train /
-6-holdout split with one holdout entry flipping, **no margin value promotes**:
-Rule 1 needs `margin <= 2/12` and tolerating the holdout needs `margin >= 1/6`,
-which are the same number, and float rounding closes even that single point.
-Past the scalar bound the holdout's pass-rate rule — carrying only its
-float-noise tolerance and no operator knob at all — rejects at every margin
-anyway.
+Without a separate knob, `promote_margin` serves as that tolerance as well as
+the Ladder's release threshold — one knob with three duties. On the
+DEFAULT-produced 12-train / 6-holdout split with one holdout entry flipping,
+**no margin value promotes** under that arrangement: the scalar-margin rung
+needs `margin <= 2/12` while tolerating the holdout needs `margin >= 1/6`, which
+are the same number, and float rounding closes even that single point. Past the
+scalar bound, the holdout's pass-rate rule — carrying only its float-noise
+tolerance and no operator knob at all — rejects at every margin anyway.
 
 Two additive, default-inert contract fields split the bounds off
 (`ScoringWeights`, both omitted from the canonical form at their default so no
@@ -1546,15 +1567,15 @@ existing epoch's hash moves):
 
 | Field | Default | Effect |
 |---|---|---|
-| `holdout_margin` | `None` | The holdout confirmation's scalar tolerance (`gate.effective_holdout_margin`). `None` ⇒ fall back to `promote_margin`, exactly as before. Scoped to the confirmation only — it does not move the Ladder's release threshold, which gates a *train*-measured improvement. |
+| `holdout_margin` | `None` | The holdout confirmation's scalar tolerance (`gate.effective_holdout_margin`). `None` ⇒ fall back to `promote_margin`. Scoped to the confirmation only — it does not move the Ladder's release threshold, which gates a *train*-measured improvement. |
 | `holdout_entry_regression_budget` | `0` | How many holdout entries may regress before the confirmation rejects. `0` ⇒ today's zero-tolerance rule. Applies under both monotonicity scopes — per-entry as a count, aggregate as a widened `budget / entries` band, so one budget unit means one entry either way. |
 
 For commensurable bounds set `holdout_margin ≈ promote_margin × N_train /
-N_holdout` (roughly double, on the default split). The rationale for the budget
-is the gate's own doctrine: the holdout **confirms** rather than re-decides — a
-train-measured win "must merely not regress" — and a confirmation that no
-achievable margin can satisfy is not a confirmation, it is a second gate. The
-TRAIN side keeps its zero-tolerance rule; this cannot loosen the primary
+N_holdout`, roughly double on the default split. The budget follows the gate's
+own doctrine: the holdout **confirms** rather than re-decides, so a
+train-measured win must merely avoid regressing. A confirmation that no
+achievable margin can satisfy acts as a second gate instead. The TRAIN side
+keeps its zero-tolerance rule, so neither field can loosen the primary
 decision.
 
 `preflight.holdout_window_note` renders the feasibility note — prose on the
@@ -1567,8 +1588,8 @@ holdout margin cannot fix.
 
 ### 9.4 The floor statistic a recommendation may scale
 
-Relatedly (#112, and a trap the campaign above walked straight into): the
-measured floor is surfaced as `max_abs_delta` — a **range** statistic, whose
+The 24-cell campaign of §9.3 also walked into a second trap (issue #112). The
+measured floor is surfaced as `max_abs_delta`, a **range** statistic whose
 expectation grows without bound in K. Recommending a margin above *that* means
 the recommendation **drifts upward on an unchanged board as calibration
 improves**, pushing the margin toward — and in the campaign's case past — the
@@ -1577,7 +1598,7 @@ better is backwards.
 
 `recommended_promote_margin` (in `tournament/calibration.py`) scales
 `delta_std` instead: the standard deviation of the A/A `delta_scalar`, i.e. of
-exactly the difference the promote gate thresholds, already computed and
+the difference the promote gate thresholds, already computed and
 persisted alongside the range by `delta_spread`. It is a consistent
 estimator — more draws sharpen it rather than inflate it. The multiple is
 `MARGIN_NOISE_MULTIPLE = 2.5` (≈1.2% two-sided chance an A/A pair clears the
@@ -1587,58 +1608,59 @@ entry point; it falls back to the range only when a record carries no usable
 positive std). The recommendation rides along on the pre-flight record as the
 additive `recommended_margin`.
 
-> Use `max_abs_delta` for the *comparison* ("is my margin inside the noise?" —
-> `margin_below_floor`) and `delta_std` for the *recommendation*. Conflating
-> the two is the bug.
+> Use `max_abs_delta` for the *comparison* that asks whether a margin sits
+> inside the noise (`margin_below_floor`), and `delta_std` for the
+> *recommendation*. Conflating the two is the defect.
 
 ### 9.5 Gating at evolve start (issue #84)
 
 The pre-flight is **default-on**: at evolve start the loop measures it once per
-epoch (idempotent, best-effort) unless the runtime opts out, and acts on
-`effective_gate_verdict` — which collapses the two verdicts of §9.2 and §9.3
-into the one answer the gate needs (`refuse` when either refuses, else the
-signal verdict verbatim) — per the runtime-only `RuntimeConfig.preflight_gate`
-knob (never rolls the epoch — a runtime tuning knob like
-`infra_abort_round_threshold`):
+epoch, idempotently and best-effort, unless the runtime opts out. It then acts
+on `effective_gate_verdict`, which collapses the two verdicts of §9.2 and §9.3
+into the one answer the gate needs — `refuse` when either refuses, else the
+signal verdict verbatim. The runtime-only `RuntimeConfig.preflight_gate` knob
+chooses what that answer does, and like `infra_abort_round_threshold` it never
+rolls the epoch:
 
 | `preflight_gate` | On a refuse-worthy / saturated / inert verdict, or any window failure |
 |---|---|
 | `"warn"` (**default**) | LOUD `log.warning` at evolve start + the per-round health finding at **warning** severity; the run **proceeds** (recommend-only philosophy) |
 | `"refuse"` | additionally raises `PreflightRefusedError` when the SIGNAL verdict refuses (signal at/below the floor); `evolve_n_rounds` catches it and stops with reason `preflight_refused` **before spending rounds**, no traceback. The health finding is **critical** here (and moot: no round runs) |
-| `"off"` | skip the measurement entirely — byte-identical to the pre-#84 behavior (the escape hatch deterministic oracles use so the orthogonal probe never runs the champion) |
+| `"off"` | skip the measurement entirely, so no pre-flight runs at all (the escape hatch deterministic oracles use so the orthogonal probe never runs the champion) |
 
 Only the **floor-based** refusal reaches the hard gate. §9.3's window verdicts
-are all warnings since #119 — they compare the margin against numbers that do
-not bound a challenger's reach — and an `inert` verdict is **never** a refusal
-under any gate mode: the probe came up short, not the contract, and
-hard-stopping a possibly-healthy board there is exactly what #106 filed.
-`effective_gate_verdict` reads the persisted record rather than the live
-`PreflightReport` so a resumed / later round reaches the identical decision as
-the round that measured — which is also why it skips a *persisted*
-`margin_above_achievable` refusal written before the demotion, rather than
-re-refusing every round on the finding #119 retracted.
+are all warnings, because they compare the margin against numbers that do not
+bound a challenger's reach (issue #119). An `inert` verdict is **never** a
+refusal under any gate mode: the probe came up short rather than the contract,
+and hard-stopping a possibly-healthy board there is the failure issue #106
+reported. `effective_gate_verdict` reads the persisted record rather than the
+live `PreflightReport`, so a resumed or later round reaches the identical
+decision as the round that measured. That is also why it skips a *persisted*
+`margin_above_achievable` refusal instead of re-refusing every round on a
+finding that does not refuse.
 
-> ⛔ **The health finding's severity MUST follow the gate mode.** This is not
-> presentation polish; it is the difference between the two gate modes actually
-> differing. `detect_preflight_verdict` re-emits from the **persisted** record,
+> ⛔ **The health finding's severity MUST follow the gate mode.** It is what
+> makes the two gate modes differ at all. `detect_preflight_verdict` re-emits
+> from the **persisted** record,
 > so a refuse verdict re-fires identically every round for as long as the epoch
 > carries it. A `critical` there is therefore never one finding — it is an
 > unbroken critical streak, and `diagnostics.py`'s `healthy` flag counts
 > warnings but `orchestrator.py`'s `has_critical` counts only criticals, which
-> is exactly what `evolve_n_rounds` feeds to `DegenerateHealthPolicy`. Two
+> is what `evolve_n_rounds` feeds to `DegenerateHealthPolicy`. Two
 > rounds and the loop stops with reason `degenerate_health`. Under the DEFAULT
-> `"warn"` that made the knob a lie: the operator asked to be warned and got a
-> hard stop two rounds later, i.e. `"refuse"` with extra steps. So
+> `"warn"` that would contradict the knob: an operator who asked to be warned
+> would get a hard stop two rounds later. So
 > `preflight_signal_below_floor` is `critical` only under
 > `preflight_gate="refuse"` — where the run already stopped at the pre-flight,
 > so the breaker cannot fire anyway — and `warning` under `"warn"` / `"off"`,
 > where it stays fully visible in `zicato health`, the round report and the
 > dashboard (any warning makes `LoopHealth.healthy` false) while being
 > structurally unable to stop the run. The gate mode reaches the detector via
-> `zicato.health.inputs.workspace_preflight_gate` (the `runtime` block is the
-> knob's only source) — shared by both the orchestrator's per-round assessment
-> and the standalone `zicato health` CLI — and rides along on the finding's
-> `detail["preflight_gate"]` so a persisted report says which choice graded it.
+> `zicato.health.inputs.workspace_preflight_gate`, whose only source is the
+> `runtime` block, and which both the orchestrator's per-round assessment and
+> the standalone `zicato health` CLI share. The mode also rides along on the
+> finding's `detail["preflight_gate"]`, so a persisted report says which choice
+> graded it.
 
 **A config typo must not silently disable a `refuse` gate.** The evolve-start
 hook runs under `best_effort` because *an outage never disqualifies a
@@ -1646,9 +1668,9 @@ contract* — a transient endpoint failure must skip the pre-flight and
 re-measure next round, never condemn the board. But that reasoning is about
 NONDETERMINISTIC infra. A misspelled `runtime.preflight_probe_mutation_ids`
 entry, or a probe ceiling the replicate block cannot hold, is deterministic
-operator error: it will fail identically every round, and swallowing it left a
-`preflight_gate="refuse"` run proceeding with **no gate at all** because of a
-typo. Those two failures raise `PreflightConfigError` (a `ValueError` subclass,
+operator error: it will fail identically every round, and swallowing it would
+leave a `preflight_gate="refuse"` run proceeding with **no gate at all** because
+of a typo. Those two failures raise `PreflightConfigError` (a `ValueError` subclass,
 so existing handlers still catch it), and `_maybe_contract_preflight` escalates
 it to `PreflightRefusedError` under `"refuse"` while leaving the loud warning
 alone under `"warn"`.
@@ -1656,21 +1678,21 @@ alone under `"warn"`.
 The evolve-start warning is **per-verdict prose** (`_preflight_diagnosis` in
 `orchestrator.py`): "noise swamps the signal", "the probe was inert", "the
 margin exceeds what we measured" and "the margin is inside the noise" have four
-different fixes, and both #106 and #112 trace wasted operator time to their having been
-reported in the same words.
+different fixes, and issues #106 and #112 both record operator time wasted when
+those cases were reported in the same words.
 
 Surfaces: `zicato board preflight` (manual, always recommend-only; carries
 `--degrade-mutation-id` and `--probe-points`, prints every probe and the window
 verdict) + the epoch-open hook `"contract_preflight": K` still sets the number
 of A/A draws K (absent ⇒ `DEFAULT_CALIBRATION_RUNS`). Like the calibration it
-is serial and front-loaded — K A/A draws plus the degraded probes over every
-board entry before the round's first duel — so it owns the heartbeat for its
-duration (`PREFLIGHT_PHASE`, owned by `epoch/preflight.py`) and logs its whole
-expected cost first: K A/A draws + up to `preflight_probe_points` degraded
-probes x every board entry. `run_contract_preflight`'s `on_probe` callback
-reports `{done}/{total}` as each A/A draw and each probe settles — one count
-over both stages, since each is one pass over the board — and `total` is the
-ceiling the probe loop may stop short of. The phase restores to
+is serial and front-loaded: K A/A draws plus the degraded probes over every
+board entry, before the round's first duel. It therefore owns the heartbeat for
+its duration (`PREFLIGHT_PHASE`, owned by `epoch/preflight.py`) and logs its
+whole expected cost first — K A/A draws plus up to `preflight_probe_points`
+degraded probes, times every board entry. `run_contract_preflight`'s `on_probe`
+callback reports `{done}/{total}` as each A/A draw and each probe settles, one
+count over both stages because each stage is one pass over the board, and
+`total` is the ceiling the probe loop may stop short of. The phase restores to
 `evolve_once:round_{N}` in a `finally` on every path, refusal included; the
 served projection renders it beside the calibration
 (`loop_view._EPOCH_OPEN_STEPS`). Because the measurement
@@ -1680,18 +1702,18 @@ is never re-run" must set `runtime.preflight_gate: "off"`.
 **The knobs are RUNTIME knobs.** `preflight_probe_points` (ceiling, default
 `PREFLIGHT_PROBE_POINTS_DEFAULT = 5` — one per declared role on a realistic
 multi-agent harness) and `preflight_probe_mutation_ids` live on `RuntimeConfig`
-under `runtime.*`, deliberately NOT on `ScoringWeights`: which points a
+under `runtime.*` rather than on `ScoringWeights`: which points a
 diagnostic probe degrades is not part of the frozen evaluation contract, so
 tuning it must not roll the epoch or invalidate every existing epoch's
 comparability. `propose_parallelism` is the precedent, and the property is
 asserted directly (`test_probe_knobs_do_not_move_the_contract_hash`) rather
 than trusted.
 
-Note the connection to 14-goals-and-roadmap.md: target_1's structural
-mock-null (`mocks.py` discards the system prompt, so no instruction patch can
-move any measurement) is precisely the saturation pathology — the pre-flight
-exists so that class of dead contract is caught at the door instead of in
-round 7.
+Note the connection to 14-goals-and-roadmap.md: the presentation-agent target's
+structural mock-null (`mocks.py` discards the system prompt, so no instruction
+patch can move any measurement) is the saturation pathology. The pre-flight
+exists so that class of dead contract is caught before the epoch spends rounds
+on it.
 
 ---
 
@@ -1707,7 +1729,7 @@ then judge one frozen transcript `k` times (default `DEFAULT_RETEST_K = 3`).
 
 The compared quantity is the `drift_emitted` flag — the bit that becomes (or
 does not become) a `custom:<judge_name>` `DriftCount` on a real run, i.e.
-exactly the noise the judge injects into the scalar. The disagreement measure
+the noise the judge injects into the scalar. The disagreement measure
 is pairwise and pure:
 
 ```python
@@ -1723,7 +1745,7 @@ A deterministic judge scores `0.0`; a coin-flip judge tends to ~`0.5`; a
 strict alternator at k=2 scores `1.0`. Above
 `NOISY_JUDGE_DISAGREEMENT_THRESHOLD = 0.25` the `noisy_judge` health finding
 fires (warning, recommend-only), and its recommendation points at
-`per_judge_weights` — the contract's routing knob for exactly this signal:
+`per_judge_weights` — the contract's routing knob for this signal:
 down-weight the noisy judge rather than letting it thrash the scalar.
 
 Surface: `zicato board judges --test-retest [--retest-k K]
@@ -1743,8 +1765,8 @@ contract canonical form at the default). Every Nth epoch-cumulative round the
 orchestrator fields ONE extra challenger whose patch is a
 **semantics-preserving no-op**: the first enumerated mutation point's current
 value re-emitted unchanged (with the applier-aware span handling in
-`placebo_noop_content` so a `.py` span re-emits its resolved *value*, not an
-assignment echo). The placebo is a genuine lineage child derived through the
+`placebo_noop_content` so a `.py` span re-emits its resolved *value* rather than
+an assignment echo). The placebo is a genuine lineage child derived through the
 real `GenerationStore.derive_generation` seam — never a synthetic score
 injection — and its hypothesis `core_idea` opens with
 `PLACEBO_HYPOTHESIS_MARKER` so every consumer can recognize the arm.
@@ -1752,10 +1774,9 @@ injection — and its hypothesis `core_idea` opens with
 The arm measures **the gate itself**:
 
 - **rejected** — the expected outcome, every time: identical behavior leaves
-  no improvement to clear `promote_margin`. Each cadence tick quietly
-  recalibrates the fact that the gate can still tell "no change" from
-  "improvement."
-- **promoted** — the alarm. A no-op that wins a tournament means the decision
+  no improvement to clear `promote_margin`. Each cadence tick re-confirms that
+  the gate still separates no change from improvement.
+- **promoted** — the alarm case. A no-op that wins a tournament means the decision
   procedure is promoting noise — margin under the floor, a broken reducer, a
   rigged gate. `detect_placebo_promoted` raises the CRITICAL
   `placebo_promoted` health finding, and the correct operator reading is:
@@ -1764,19 +1785,20 @@ The arm measures **the gate itself**:
   happened to expose.
 
 Placebo experiments are filtered out of the optimization-stream health
-detectors (an always-rejected control must not read as a stall), and on the
+detectors, because an always-rejected control must not read as a stall. On the
 gauntlet path the placebo runs as an extra scheduled duel that never advances
-the champion pointer; on a multi-challenger field it is one extra slate slot
-through the unchanged strategy + gate.
+the champion pointer. On a multi-challenger field it is one extra slate slot,
+passed through the unchanged strategy and gate.
 
 ---
 
 ## 12. The overfitting program map
 
 The threat model: the board is reused adaptively across rounds, so the
-optimizer can Goodhart it — memorize entries instead of improving true
-quality. `docs/design/OVERFITTING.md` is the survey; this table is the
-program's shipped state and where each lever lives.
+optimizer can optimize the measure instead of the quality it stands for
+(Goodhart's law), memorizing entries rather than improving true quality.
+`docs/design/OVERFITTING.md` is the survey; this table is the program's shipped
+state and where each lever lives.
 
 | # | Lever | Status / default | Home |
 |---|---|---|---|
@@ -1784,7 +1806,7 @@ program's shipped state and where each lever lives.
 | 2 | Ladder/Thresholdout noisy budgeted holdout query | SHIPPED, default-on (no-op when holdout empty) | `src/zicato/tournament/ladder.py` (§5) |
 | 3 | Restricted proposer visibility | SHIPPED, default-on (`restrict_proposer_visibility`) — patterns train-slice-only, per-entry identities aggregated to counts/rates, exact failing inputs withheld; plus the sanitized outcome-marginal channel | `patterns/`, `proposer/prompts.py`, `analyzer/outcome_marginals.py` |
 | 3b | **Banding** (part of #3) | Δscalar in experiment memory coarsened to `improved` / `flat` / `regressed` buckets via `_bucket_scalar_delta` — never the exact number | `src/zicato/proposer/prompts.py` |
-| 4 | Diff-complexity (parsimony/MDL) regularization | SHIPPED in FULL — both the opt-in loss term (`diff_complexity_weight`, default 0.0, exactly absent when off) AND the complexity-*ceiling* half (`diff_complexity_ceiling`, default 0.0 = off; a Rule-0 reject in `tournament/gate.py::evaluate_gate` for a challenger whose diff complexity exceeds the budget) | `scoring/builtins.py::diff_complexity_component`, `scoring/diff_complexity.py`, `tournament/gate.py::evaluate_gate` |
+| 4 | Diff-complexity regularization (parsimony, or minimum description length) | SHIPPED in FULL — both the opt-in loss term (`diff_complexity_weight`, default 0.0, exactly absent when off) AND the complexity-*ceiling* half (`diff_complexity_ceiling`, default 0.0 = off; a structural admissibility veto in `tournament/gate.py::evaluate_gate`, checked before the scalar-margin rung, for a challenger whose diff complexity exceeds the budget) | `scoring/builtins.py::diff_complexity_component`, `scoring/diff_complexity.py`, `tournament/gate.py::evaluate_gate` |
 | 5 | Generalization-gap detector | SHIPPED — fires warning/critical when `holdout_loss − train_loss` **widened** since the first measured generation AND exceeds the threshold; a flat or narrowing gap is healthy regardless of magnitude | `health/diagnostics.py::detect_generalization_gap` |
 | 6 | Rotation / refresh cadence | SHIPPED — `rotate_holdout` (default `True`) folds the epoch id into the split hash so a different slice is held out each epoch (stable within an epoch; explicit tags never rotate); `max_generations_per_contract` surfaces a refresh *recommendation*, never an auto-roll | `board/split.py` (`rotation_seed`), `detect_refresh_cadence` |
 | 7 | Random-baseline placebo | SHIPPED, opt-in (`random_baseline_every_n`, default 0) | `evolve/placebo.py` (§11) |
@@ -1810,19 +1832,20 @@ Two boundary rules for anyone extending near this table:
 
 Every mechanism above ships with measured operating characteristics. When you
 change one — or add one — you extend the same instrument:
-`tests/test_decision_procedure_power.py` (Tier 2 of the convergence harness).
-Its design is the methodology; internalize the five pillars.
+`tests/test_decision_procedure_power.py`, the decision-procedure power harness.
+Its design is the methodology, stated as five rules in §13.1 to §13.5.
 
 ### 13.1 Seeded noise from stable identifiers only
 
 The noise model is the target_0 example harness's own
 (`examples/zicato_examples/target_0_convergence/harness.py`):
-`stable_noise_seed` derives the RNG seed **only** from
+`stable_noise_seed` derives the random-number-generator (RNG) seed **only**
+from
 `(workspace_seed, generation_id, entry_id, replicate_index)`. No wall clock,
 no global RNG, no process ids, no tempdir names. Consequences:
 
 - trials are exactly reproducible (the asserted "rates" are deterministic
-  functions of the chosen seeds — *calibrated documentation*, not flaky
+  functions of the chosen seeds — *calibrated documentation* rather than flaky
   statistics);
 - trials vary by advancing the workspace seed; replicates vary by the stamped
   replicate index; sides vary because the generation id is in the seed (the
@@ -1861,10 +1884,10 @@ licensed by an end-to-end anchor.
 ### 13.3 A/A nulls first
 
 Before any power claim, measure the null. The harness plants σ=0.22 and
-derives the analytic floor (~0.663); `_measure_noise_floor` runs 60 seeded
-A/A single-sample duels and asserts the measured sd lands in `[0.4, 1.0]` — a
-floor of ~0 would mean the draws stopped varying (a seeding regression), a
-wild floor would mean the noise model broke. Then the null is run through the
+derives the analytic floor (~0.663). `_measure_noise_floor` runs 60 seeded A/A
+single-sample duels and asserts the measured sd lands in `[0.4, 1.0]`. A floor
+of ~0 would mean the draws stopped varying, which is a seeding regression, and a
+floor outside that band would mean the noise model broke. Then the null is run through the
 *decision procedures*: the naive contract's noise-promotion rate (fact #1) and
 the effective contract's zero false promotions (fact #4).
 
@@ -1898,7 +1921,7 @@ document the measured rates in printed output, (b) pin acceptance bounds loose
 enough to survive re-seeding but tight enough to catch a regression, and (c)
 include the **failing alternative** as documentation — e.g. the screen tests
 compute the naive any-flip rate *on the identical seeded draws the engine
-consumed*, so the comparison is between rules, not samples.
+consumed*, so the comparison is between rules rather than between samples.
 
 ### 13.6 Recipe: proving a change to the decision procedure
 
@@ -1913,7 +1936,7 @@ consumed*, so the comparison is between rules, not samples.
    `DELTA_CASES` (or extend the token vocabulary if your effect shape is
    new — `sometimes-<pct>-<token>` gives continuously tunable true effects).
 4. **Include the failing alternative** as a measured, printed, pinned
-   comparison — the naive rule you are replacing must be shown hot on the
+   comparison — the naive rule you are replacing must be shown failing on the
    same draws.
 5. **If your change touches persistence or replicate indices**, add a
    slot-integrity test with `persist=True`: canonical r0 bytes unchanged,
@@ -1921,8 +1944,9 @@ consumed*, so the comparison is between rules, not samples.
    `test_full_mode_evidence_loop_never_touches_canonical_slots` pattern).
 6. **Re-run the whole power file and the convergence oracle** — your change
    must leave every existing pinned number standing, or the commit message
-   must say exactly which number moved and why that is honest (the eb55266
-   message updating "budget 48 → confirmed" expectations is the model).
+   must say exactly which number moved and why that is honest (commit eb55266,
+   which updated the "budget 48 → confirmed" expectations, is the example to
+   follow).
 7. **Verify**:
 
 ```bash
@@ -1997,11 +2021,12 @@ uv run zicato board audit --workspace <ws>   # then inspect the epoch record + h
    without a budget gets you `DEFAULT_REPLICATE_BUDGET = 3` — sound, but a
    true improvement will usually terminate `inconclusive`.
 2. Price it before running: each evidence replicate is a fresh
-   2-sides × board sweep. The builder's cost meter line exists for exactly
-   this (10-builder-cli-library.md §"Cost meter").
+   2-sides × board sweep. The builder's cost meter line exists for this purpose
+   (10-builder-cli-library.md §"Cost meter").
 3. Expect and monitor the dead-letter queue
    (`runtime/inconclusive/*.json`) — an `inconclusive` terminal is a designed
-   outcome, not an error; a *stream* of them means the budget cannot resolve
+   outcome rather than an error; a *stream* of them means the budget cannot
+   resolve
    the effect sizes your proposer produces (raise `replicates`, or accept the
    holds).
 4. Both params live in `TournamentStructure.params`, so enabling rolls the
@@ -2023,7 +2048,7 @@ uv run pytest tests/test_gauntlet_evidence_gate_e2e.py tests/test_driver_evidenc
 | `PER_ENTRY_SCORE_MONOTONICITY_TOLERANCE` | `0.02` | `tournament/gate.py` |
 | `PASS_RATE_MONOTONICITY_TOLERANCE` | `1e-9` | `tournament/gate.py` |
 | `NAMESPACE_MONOTONICITY_TOLERANCE` | `0.0` | `tournament/gate.py` |
-| `_TASK_FAILURE_RATIO_MULTIPLIER` | `10.0` (pinned, not a knob) | `scoring/builtins.py` |
+| `_TASK_FAILURE_RATIO_MULTIPLIER` | `10.0` (a pinned constant rather than a knob) | `scoring/builtins.py` |
 | `DEFAULT_CALIBRATION_RUNS` | `5` | `tournament/calibration.py` |
 | `CALIBRATION_REPLICATE_BASE` | `1000` | `tournament/calibration.py` |
 | `PREFLIGHT_REPLICATE_BASE` | `2000` | `epoch/preflight.py` |

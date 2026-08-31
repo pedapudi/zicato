@@ -241,7 +241,8 @@ in its own `_load_probe.py` and is reached by *spawning* a subprocess, not by
 importing the adapter factory; the contextvar plumbing moved to
 `tool_context.py` so the validator can reach the context without dragging the
 analyzer, and through it the board loader, into its import closure; and the
-R3/R4 redaction primitives moved to `analyzer/redaction.py` so the exemplar
+free-text-truncation and identity-corpus-scrub redaction primitives moved to
+`analyzer/redaction.py` so the exemplar
 channel and the query surface apply byte-identical redaction. Those three
 splits are what make the governing principle enforceable *structurally* — an
 import-linter contract forbids the validator any path to the board, the
@@ -831,7 +832,7 @@ canonical pinned deterministic contract).
   Contract-declared shell commands were deliberately not adopted as an
   alternative carrier — see ARCHITECTURE.md §4.1.1.
 
-### Dashboard — decision-centric console (Variant T)
+### Dashboard — decision-centric console
 - **Cross-epoch meta-loop ledger** on the home view: the fleet of epochs
   and the champion lineage across them now lead the environment overview,
   replacing the full-width cross-epoch sparkline. Each contract change and
@@ -1278,8 +1279,8 @@ break in patch releases until v0.2.
 - Multi-turn scripted/emulated drivers abort some examples with
   TypeErrors; the reducer treats those entries as zero-signal and the
   tournament continues. Cleanup is v1.0.1 work.
-- Subprocess tournament workers (L3 robustness) and orchestrator
-  control-file consumer (v1.3) are NOT yet implemented; see
-  `docs/design/ROBUSTNESS.md` for the phasing plan.
-- Git-backed generation storage (G1-G10) is documented but not yet
-  implemented; v0 uses directory snapshots + per-patch JSON files.
+- Subprocess tournament workers (the worker-boundary layer of the robustness
+  stack) and the orchestrator control-file consumer (v1.3) are NOT yet
+  implemented; see `docs/design/ROBUSTNESS.md` for the layering plan.
+- Git-backed generation storage is documented but not yet implemented; storage
+  uses directory snapshots plus per-patch JSON files.

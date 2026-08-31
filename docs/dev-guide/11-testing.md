@@ -3,18 +3,18 @@
 > **Covers.** How zicato proves it works: the pytest suite conventions and
 > the autouse fixtures (`tests/conftest.py`), the deterministic-contract
 > pinning philosophy (`tests/_contract_pins.py`) and its countermeasure
-> duty, the two convergence oracles (the known-answer end-to-end proof and
-> the decision-procedure power harness), the subprocess-worker test support,
+> duty, the two oracles (the known-answer convergence proof and the
+> decision-procedure power harness), the subprocess-worker test support,
 > the markers and lanes (`make test` / `test-fast` / `node-test` / `check`),
-> the six `tools/parity.sh` gates one by one, the five import contracts +
-> the TID251 bans, the Node behaviour-suite conventions, the genstore
-> conformance session-templates, CI, and the pre-commit checklist — plus the
-> two recipes every contributor eventually needs: write a regression test
-> for a bug, and add a test that spawns real workers.
+> the `tools/parity.sh` gates one by one, the seven import contracts +
+> the TID251 bans, the Node behaviour-suite conventions, the
+> generation-store conformance session templates, CI, and the pre-commit
+> checklist — plus the two recipes every contributor eventually needs: write
+> a regression test for a bug, and add a test that spawns real workers.
 >
 > **Prerequisites.** 02-architecture.md (orchestrator / worker / supervisor
 > / dashboard as separate processes — what the subprocess and node suites
-> actually exercise), 03-contract-and-epochs.md §"The contract hash" (what
+> actually exercise), 03-contract-and-epochs.md §3.7 (what
 > CONTRACT-HASH pins), 04-evaluation-statistics.md (the gate / replication /
 > noise-floor machinery the power harness characterizes), 07-runtime-and-
 > durability.md (the durability invariants the conformance suites protect),
@@ -23,18 +23,21 @@
 > **Invariants introduced in this chapter.** Each is a testing discipline;
 > breaking one lets a real regression ship green.
 >
-> | ID | Invariant |
-> |----|-----------|
-> | V1 | **The full suite is the default; the fast lane is opt-in.** `make test` runs everything. A `slow`/`integration` test's runtime IS its coverage — never a candidate for stubbing. |
-> | V2 | **A regression test MUST fail with the fix stashed.** A test that passes both before and after a fix proves nothing about the fix. |
-> | V3 | **Never weaken an assertion to make a test pass.** Fix the code, or pin the new value with a measured justification in the commit. A pinned number moves only with a measured reason. |
-> | V4 | **Deterministic contracts pin interacting knobs OFF — AND carry the countermeasure.** Pinning best-of-1 / replicates-1 / gate-off makes a script deterministic, but every shipped default also needs a knob-ON adversarial test. Pinning-only is how bugs #6 and #8 hid. |
-> | V5 | **A worker subprocess resolves its adapter and callables from a dotted import path** — never a closure or a `sys.modules` monkeypatch. Those do not cross the process boundary. |
-> | V6 | **Autouse fixtures isolate process-global state on BOTH sides** (clear before AND after) so a test neither inherits nor bequeaths a pin. |
-> | V7 | **The dashboard reaper selects by workspace provenance and never signals its own process group.** Bug #5: a provenance-blind reaper group-killed an innocent concurrent evolve. |
-> | V8 | **The six parity gates are GREEN on unchanged behaviour; a RED gate is information.** A golden is re-captured only with a stated behavioural reason, and a re-capture never bakes an unrelated sibling change. |
-> | V9 | **The library never imports a driver; the query layer stays dashboard-free; the retired private paths stay retired.** These are import-linter / TID251 violations, caught by `lint-imports` / `ruff`, not a test. |
-> | V10 | **A node suite's real signal is the PROCESS EXIT CODE, not the tail line.** The `mock_server` mirrors the Python readers; a divergence is a bug in the mock. |
+> Every sentence below cites these disciplines by the name in the second
+> column; the ID column is the locator other documents use.
+>
+> | ID | Name | Invariant |
+> |----|------|-----------|
+> | V1 | the full-suite-is-the-default rule | **The full suite is the default; the fast lane is opt-in.** `make test` runs everything. A `slow`/`integration` test's runtime IS its coverage — never a candidate for stubbing. |
+> | V2 | the must-fail-with-the-fix-stashed rule | **A regression test MUST fail with the fix stashed.** A test that passes both before and after a fix proves nothing about the fix. |
+> | V3 | the never-weaken-an-assertion rule | **Never weaken an assertion to make a test pass.** Fix the code, or pin the new value with a measured justification in the commit. A pinned number moves only with a measured reason. |
+> | V4 | the pin-off-and-carry-the-countermeasure rule | **Deterministic contracts pin interacting knobs OFF — AND carry the countermeasure.** Pinning best-of-1 / replicates-1 / gate-off makes a script deterministic, but every shipped default also needs a knob-ON adversarial test. Pinning alone is how the best-of-N tree-mismatch case and the evidence-gate replicate-reuse case hid (`12-bug-casebook.md` cases 6 and 8). |
+> | V5 | the dotted-path-callable rule | **A worker subprocess resolves its adapter and callables from a dotted import path** — never a closure or a `sys.modules` monkeypatch. Those do not cross the process boundary. |
+> | V6 | the clear-global-state-on-both-sides rule | **Autouse fixtures isolate process-global state on BOTH sides** (clear before AND after) so a test neither inherits nor bequeaths a pin. |
+> | V7 | the provenance-scoped-reaper rule | **The dashboard reaper selects by workspace provenance and never signals its own process group.** A provenance-blind reaper once group-killed an innocent concurrent evolve (`12-bug-casebook.md` case 5). |
+> | V8 | the parity-green-on-unchanged-behaviour rule | **Every parity gate is GREEN on unchanged behaviour; a RED gate is information.** A golden is re-captured only with a stated behavioural reason, and a re-capture never bakes an unrelated sibling change. |
+> | V9 | the contracts-are-lint rule | **The library never imports a driver; the query layer stays dashboard-free; the retired private paths stay retired.** The import linter (`lint-imports`) and `ruff` catch these as violations; no pytest test does. |
+> | V10 | the exit-code-is-the-node-signal rule | **A node suite's real signal is the PROCESS EXIT CODE rather than the tail line.** The `mock_server` mirrors the Python readers; a divergence is a bug in the mock. |
 
 ---
 
@@ -42,14 +45,14 @@
 
 | File / tool | What it is |
 |---|---|
-| `tests/conftest.py` | the suite root: `sys.path` pin + the four autouse fixtures (pin isolation, default-proposer text-shim, harmonograf launch stub, the provenance-scoped dashboard reaper) |
+| `tests/conftest.py` | the suite root: `sys.path` pin + the six autouse fixtures (config-pin isolation, mutation-syntax-table isolation, worker-permit redirection, the default-proposer text-shim, the harmonograf launch stub, the provenance-scoped dashboard reaper) |
 | `tests/_contract_pins.py` | `pin_deterministic` / `deterministic_weights` — the deterministic scripted-test knob pins |
 | `tests/_subprocess_worker_support.py` | module-level importable adapters + callables the worker subprocess resolves by dotted path (the worker-boundary test support) |
-| `tests/_best_of_n_slate_support.py` | the scripted best-of-N slate (the fabricate-metrics decoy that plants bugs #6/#7 pre-fix) |
-| `tests/test_convergence_known_answer.py` | **oracle 1** — the full loop to an exact, hand-computable floor, no tournament stubs |
-| `tests/test_decision_procedure_power.py` | **oracle 2** — the operating characteristics of the decision procedure under seeded noise |
+| `tests/_best_of_n_slate_support.py` | the scripted best-of-N slate whose slot-2 fabricates its metrics, so a wrongly mounted tree is detectable |
+| `tests/test_convergence_known_answer.py` | **the convergence oracle** — the full loop to an exact, hand-computable floor, no tournament stubs |
+| `tests/test_decision_procedure_power.py` | **the power oracle** — the operating characteristics of the decision procedure under seeded noise |
 | `tests/test_genstore_conformance.py` | the cross-backend `GenerationStore` conformance suite + the session-template fixtures |
-| `tests/test_conftest_dashboard_reaper.py` | the bug #5 regression pins for the reaper (provenance scoping + no self-group-kill) |
+| `tests/test_conftest_dashboard_reaper.py` | the reaper's regression pins (provenance scoping + no self-group-kill) |
 | `tools/parity.sh` | the behavior-preserving refactor gates (PYTEST / CONTRACT-HASH / CLI-HELP / REINDEX-DUMP / eight MOCK-GOLDEN lanes / MYPY) |
 | `tools/parity/lib/*.py` | the gate helpers: `contract_hash.py`, `cli_help.py`, `normalize.py`, `mock_evolve_capture.py`, `test_mock_golden.py`, `test_reindex_golden.py` |
 | `tools/parity/golden/` | the committed golden baselines |
@@ -67,8 +70,8 @@ with no per-test fixes.
 > ⚠️ TRAP — the repo root is pinned on `sys.path` explicitly by
 > `tests/conftest.py`, NOT left to pytest's implicit `rootdir` insertion.
 > `tests/` is an importable package (`tests._subprocess_worker_support` is
-> loaded by directly-spawned worker subprocesses), and once `zicato` moved
-> under `src/` the implicit path handling stopped being reliable. If you add
+> loaded by directly-spawned worker subprocesses), and `zicato` lives under
+> `src/`, where pytest's implicit path handling is not reliable. If you add
 > a helper module under `tests/` that a subprocess must import, it resolves
 > because of that pin — do not "clean it up".
 
@@ -95,7 +98,7 @@ The three markers and what they tag:
 | Marker | Tags | In the default run? |
 |---|---|---|
 | `node` | the in-pytest shim (`tests/test_dashboard_js.py`) that re-runs the whole standalone Node suite inside pytest | NO — excluded by `addopts` `-m 'not node'` (it would duplicate `make node-test`) |
-| `slow` | real-subprocess / real-server tests (worker isolation, live server boots, live harmonograf launches, git-native genstore) whose runtime IS the coverage | YES (the full suite is the default) |
+| `slow` | real-subprocess / real-server tests (worker isolation, live server boots, live harmonograf launches, the git-backed generation store) whose runtime IS the coverage | YES (the full suite is the default) |
 | `integration` | any test crossing a process or network boundary | YES |
 
 The Makefile lanes:
@@ -124,8 +127,9 @@ check: lint import-lint typecheck test node-test
 
 > ⛔ NEVER stub a `slow`-marked test's real subprocess / server / git call to
 > "speed it up". The marker's whole point is that the runtime IS the coverage
-> (V1): a worker-isolation test proves a real subprocess writes to a real
-> discarded checkout; a live-server test proves a real port binds. Stub it and
+> (the full-suite-is-the-default rule): a worker-isolation test proves a real
+> subprocess writes to a real discarded checkout; a live-server test proves a
+> real port binds. Stub it and
 > you have kept the assertion and deleted the thing it asserts. If the fast
 > lane needs to skip it, that is what the marker is for — the FULL suite stays
 > the default and runs it before every merge.
@@ -159,8 +163,8 @@ pythonpath = ["."]
   in-process run for debugging (`pytest -n0 tests/test_foo.py::test_bar`).
 - **`pythonpath = ["."]`** — pins the repo root so the src-layout `zicato`
   package resolves via the editable install AND `tests.*` helper imports
-  resolve from a subprocess (the `sys.path` pin in `conftest.py` is the
-  belt to this suspenders).
+  resolve from a subprocess; the `sys.path` pin in `conftest.py` covers the
+  same need a second time.
 - **The fixture idiom is scope-then-copy.** An expensive immutable artifact
   is session-scoped and copied per test (§11.6); process-global state is
   cleared on both sides of the `yield` (§11.2.1); a real subprocess is
@@ -177,13 +181,23 @@ pythonpath = ["."]
 
 ## 11.2 The autouse fixtures — `tests/conftest.py`
 
-Four autouse fixtures shape every test. Three neuter production defaults
-that would otherwise drag optional deps or real I/O into a suite about the
-LOOP; the fourth is a session-scoped safety net. All follow the same
-opt-out shape: a `frozenset` of module names that exercise the REAL path
-and so skip the stub.
+Six autouse fixtures shape every test.
 
-### 11.2.1 Pin isolation (V6)
+- **Three isolate process-global state**, so a test neither inherits nor
+  bequeaths it. `_isolate_config_pins` clears the pinned config overrides
+  (§11.2.1). `_isolate_mutation_syntax_table` restores the built-in mutation
+  syntax table, so a workspace that declares an extra file suffix cannot
+  change what a later test enumerates as mutable surface.
+  `_isolate_host_worker_permits` points the host-wide worker-permit pool at
+  a session-private directory, so the suite neither throttles nor is
+  throttled by an operator's concurrent run.
+- **Two neuter production defaults** that would otherwise drag optional
+  dependencies or real I/O into a suite about the loop (§11.2.2). Each of
+  the two takes a `frozenset` of module names that exercise the real path
+  and so skip the stub.
+- **One is a session-scoped safety net**: the dashboard reaper (§11.2.3).
+
+### 11.2.1 Config-pin isolation
 
 CLI commands pin flag values process-wide via `config.pin_overrides`; the
 pins are module-global and would leak across tests. `_isolate_config_pins`
@@ -207,8 +221,9 @@ def _isolate_config_pins() -> Iterator[None]:
 ```
 — `tests/conftest.py`, `_isolate_config_pins`
 
-> ✅ ALWAYS clear process-global state on BOTH sides of the `yield` (V6). A
-> before-only clear leaks a pin FORWARD (the test that set it poisons the
+> ✅ ALWAYS clear process-global state on BOTH sides of the `yield` (the
+> clear-global-state-on-both-sides rule). A before-only clear leaks a pin
+> FORWARD (the test that set it poisons the
 > next); an after-only clear leaks a pin BACKWARD (a stray earlier pin
 > poisons this test). Under `-n auto` the leak is nondeterministic — the two
 > tests may not even land on the same worker — so a one-sided clear produces
@@ -218,10 +233,10 @@ def _isolate_config_pins() -> Iterator[None]:
 
 The production DEFAULT proposer is the tool-using ADK agent, which pulls in
 the optional `google-adk` extra and a real model at propose time. The
-orchestrator/evolve suites are about the loop, not the proposer model, so
-this fixture pins the builtin-default spec to the text-shim engine driven by
-the stubbed auxiliary callable — while EVERY other spec (a custom `agent.py`,
-a skills-only dir) still flows through the real builder:
+orchestrator/evolve suites are about the loop rather than the proposer
+model. This fixture therefore pins the builtin-default spec to the text-shim
+engine driven by the stubbed auxiliary callable. EVERY other spec (a custom
+`agent.py`, a skills-only dir) still flows through the real builder:
 
 ```python
     module_name = request.module.__name__.rsplit(".", 1)[-1]
@@ -254,19 +269,19 @@ path returns, saving ~50s of real server startup across the suite, with
 launch decision itself.
 
 > ⚠️ TRAP — these two fixtures are why an evolve/orchestrator test runs with
-> no `google-adk` and no real model traffic. If you write a test that
-> genuinely needs the ADK default agent or the real harmonograf launch, add
+> no `google-adk` and no real model traffic. If you write a test that needs
+> the ADK default agent or the real harmonograf launch, add
 > your module to the matching opt-out `frozenset` — do NOT monkeypatch around
 > the fixture inside your test (a fixture-fighting monkeypatch is fragile and
 > hides which path you actually exercise). The opt-out list IS the registry of
 > "tests that use the real thing".
 
-### 11.2.3 The provenance-scoped dashboard reaper (bug #5, V7)
+### 11.2.3 The provenance-scoped dashboard reaper
 
 The most instructive fixture. It kills a real `python -m zicato.dashboard`
-child a test leaks — but its FAILURE mode, observed live, was killing a
-dashboard it did NOT own. This is the provenance-scoped-reaper + process-
-group lesson of bug #5.
+child that a test leaks. The failure it must avoid is killing a dashboard it
+does NOT own, and two rules keep it from doing so. Together those rules are
+the provenance-scoped-reaper rule.
 
 **Selection is workspace-scoped.** Only dashboards whose `--workspace` argv
 points INSIDE this session's pytest temp root are ever selected. The
@@ -337,22 +352,23 @@ child never survives the SESSION, so one sweep at session end (per xdist
 worker) keeps that contract at ~0 cost. Tests should never leak a real
 dashboard in the first place — the `mock_dashboard_spawn` fixture patches
 `asyncio.create_subprocess_exec` with a non-spawning `FakeDashboardProc` so
-an `evolve` CLI test (which deliberately leaves the dashboard serving at a
+an `evolve` CLI test (which by design leaves the dashboard serving at a
 normal conclusion) never launches a real child.
 
 > ⛔ NEVER write a process-reaper that classifies "leaked" by a before/after
 > pid snapshot, and never `killpg` without first checking the target's group
-> against your own. That IS bug #5: the snapshot heuristic saw a concurrent
-> evolve's dashboard appear mid-session, called it "leaked", and group-killed
-> it — taking the innocent evolve down. Scope by an OWNERSHIP fingerprint (the
+> against your own. A snapshot heuristic once saw a concurrent evolve's
+> dashboard appear mid-session, called it "leaked", and group-killed it,
+> taking the innocent evolve down (`12-bug-casebook.md` case 5). Scope by an
+> OWNERSHIP fingerprint (the
 > workspace path under this session's tmp root), and never signal your own
 > process group. This lesson recurs anywhere a test spawns real OS processes
 > (§11.16).
 
 ### 11.2.4 The CLI-evolve scaffolding — `FakeDashboardProc`
 
-A CLI `evolve` test runs the real command to a normal conclusion — and
-`evolve` deliberately LEAVES the dashboard serving at a clean end. So a test
+A CLI `evolve` test runs the real command to a normal conclusion, and
+`evolve` LEAVES the dashboard serving at a clean end by design. So a test
 that lets the real spawn happen ORPHANS a dashboard subprocess. The
 `mock_dashboard_spawn` fixture patches `asyncio.create_subprocess_exec` with
 a non-spawning `FakeDashboardProc` that records terminate/kill without
@@ -373,8 +389,8 @@ CLI's bound-port readback resolves IMMEDIATELY instead of polling the full
 fallback timeout — the real server would write that file once it bound a
 port, so the fake short-circuits the wait. Any CLI test that runs `evolve`
 to a normal conclusion must use `mock_dashboard_spawn` (directly or
-transitively); the session reaper (§11.2.3) is the belt to this suspenders
-for a spawn that slips through.
+transitively); the session reaper (§11.2.3) catches a spawn that slips
+through.
 
 > ✅ ALWAYS use `mock_dashboard_spawn` in a CLI test that runs `evolve` to
 > completion. The two-layer defence is deliberate: the fixture stops the real
@@ -385,18 +401,17 @@ for a spawn that slips through.
 
 ---
 
-## 11.3 The `_contract_pins` philosophy — pin OFF, then attack ON (V4)
+## 11.3 The deterministic contract pins — pin off, then attack on
 
 The shipped defaults are **noise-aware**: best-of-3 proposer sampling, two
 averaged replicates per gauntlet duel, the Bradley–Terry evidence gate
 opt-in. But most orchestrator/e2e tests drive SCRIPTED single-shot proposers
 and stub reducers whose call sequences assume exactly one propose per round
-and one paired run per duel. Those contracts must pin the historical
-deterministic knobs explicitly — the way a deterministic-harness operator
-would.
+and one paired run per duel. Such a test pins the interacting knobs
+explicitly, the way an operator running a deterministic harness would.
 
-`pin_deterministic(weights)` restores the single-run, gate-off duel and the
-single-sample proposer:
+`pin_deterministic(weights)` gives the test a single-run, gate-off duel and
+a single-sample proposer:
 
 ```python
 #: The param pins that restore the historical single-run, gate-off duel.
@@ -408,8 +423,8 @@ DETERMINISTIC_PARAM_PINS: dict[str, Any] = {
 — `tests/_contract_pins.py`
 
 and, for any key the caller did not already pin, sets `best_of_n=1` on the
-proposer quality config. The module docstring states the philosophy — this
-is by-design, not a workaround:
+proposer quality config. The module docstring states why the pinning is a
+design choice rather than a workaround:
 
 ```python
 """Pinned deterministic contract knobs for scripted orchestrator tests.
@@ -425,30 +440,33 @@ the new value instead.
 ### 11.3.1 The countermeasure duty — knob-ON adversarial tests
 
 Pinning is necessary but NOT sufficient. A suite that ONLY pins the
-interacting knobs OFF has zero coverage of the knobs when they are ON — and
-that is exactly the blind spot that let bugs #6 and #8 ship. Every pinned-off
-knob owes a knob-ON adversarial test.
+interacting knobs OFF has zero coverage of the knobs when they are ON, and
+that blind spot is how the two defects below shipped. Every pinned-off knob
+owes a knob-ON adversarial test.
 
-- **Bug #6/#7 hid behind best-of-1.** With `best_of_n=1` the mounted child
-  tree is trivially the only candidate's, so the tree-mismatch cannot
-  manifest. The bug existed only at `best_of_n>1` (the default), where the
-  slate derived one shared on-disk tree per sample while the selection could
-  pick an earlier candidate. Today the slate derives per-slot scratch trees
-  and the pick is mounted once after selection (05-proposer.md §5.6.5), but
-  the coverage lesson is unchanged. The
-  countermeasure is `tests/test_best_of_n_tree_integrity.py` driving REAL
-  evolve rounds at the default `best_of_n`, with a scripted slate
-  (`tests/_best_of_n_slate_support.py`) whose slot-2 is a fabricate-metrics
-  decoy — a known-answer scalar detects a wrong mounted tree both by content
-  and by arithmetic.
-- **Bug #8 hid behind gate-off.** The evidence-gate replicate-reuse bug only
-  exists when the evidence pre-gate is ON; a deterministic contract with
+- **The best-of-N tree-mismatch case hid behind best-of-1**
+  (`12-bug-casebook.md` cases 6 and 7). With `best_of_n=1` the mounted child
+  tree is the only candidate's, so a tree mismatch cannot manifest. The
+  defect reached only `best_of_n>1`, the default, where one shared on-disk
+  tree served every sample while the selection could pick an earlier
+  candidate. The slate now derives per-slot scratch trees and mounts the pick
+  once after selection (05-proposer.md §5.6.5); the
+  pin-off-and-carry-the-countermeasure rule applies to that knob all the
+  same. The countermeasure is `tests/test_best_of_n_tree_integrity.py`
+  driving REAL evolve rounds at the default `best_of_n`, with a scripted
+  slate (`tests/_best_of_n_slate_support.py`) whose slot-2 fabricates its
+  metrics — a known-answer scalar then detects a wrong mounted tree both by
+  content and by arithmetic.
+- **The evidence-gate replicate-reuse case hid behind gate-off**
+  (`12-bug-casebook.md` case 8). That defect exists only when the evidence
+  pre-gate is ON; a deterministic contract with
   `promote_confidence_threshold: None` never runs it. The countermeasure is a
   test whose SUBJECT is the gate — it pins the gate ON and attacks the reuse.
 
 > ⛔ NEVER let a shipped default be tested ONLY through contracts that pin it
-> OFF. That is precisely how bugs #6 and #8 shipped green: every scripted test
-> pinned the noise-aware machinery off, so nothing exercised it. V4: for every
+> OFF. That is how the tree-mismatch and replicate-reuse defects shipped
+> green: every scripted test pinned the noise-aware machinery off, so nothing
+> exercised it. Under the pin-off-and-carry-the-countermeasure rule, for every
 > knob a deterministic contract pins off, there is at least one test whose
 > SUBJECT is that knob ON, driving the real machinery with an adversarial
 > fixture designed to expose the failure the knob enables.
@@ -458,7 +476,7 @@ knob owes a knob-ON adversarial test.
 > proposer sequence, a stubbed reducer). Reach for the bare `ScoringWeights()`
 > defaults when your test's subject is a DEFAULT (the sampling, the
 > replication, the gate). The `_contract_pins` helper and the noise-aware
-> default are the two halves — a healthy suite uses both, deliberately.
+> default are the two halves, and a healthy suite uses both.
 
 ---
 
@@ -469,7 +487,7 @@ stubs the thing it proves. One proves the loop CONVERGES when measurement is
 exact; the other proves the DECISION PROCEDURE has the right operating
 characteristics when measurement is noisy.
 
-### 11.4.1 Oracle 1 — the known-answer convergence harness
+### 11.4.1 The known-answer convergence harness
 
 `tests/test_convergence_known_answer.py` is the end-to-end proof that the
 shipped evolve loop converges on a planted-defect target: real propose →
@@ -512,7 +530,7 @@ a loop that reaches the right number by the wrong path is still broken:
 - **The real git backend actually backed it:** `default_generation_store`
   returns a `GitGenerationStore`, `repo/.git` exists, and
   `store.list_generations(epoch_id) == ["v0","v1","v2","v3"]`.
-- **Per-round RoundLog (WS8):** the durable event log's exact transition
+- **The per-round durable event log (`RoundLog`):** its exact transition
   sequence is pinned, and the fold reproduces the round:
 
 ```python
@@ -536,8 +554,8 @@ a loop that reaches the right number by the wrong path is still broken:
   predicates passing), asserted entry by entry.
 - **Index uniqueness:** the `runs` table keeps every generation's rows
   (`per_gen == {gid: BOARD_SIZE for gid in ("v0","v1","v2","v3")}`,
-  `4 * BOARD_SIZE` unique run ids) — the pin for task #11's reused-run-id
-  regression.
+  `4 * BOARD_SIZE` unique run ids) — the pin against reused run ids, which
+  would let a later generation's rows overwrite an earlier one's.
 - **Loop health:** no `degenerate_scoring` / `non_differentiating_entry`
   finding in any round (a planted-defect design that stopped differentiating
   generations would trip those).
@@ -546,7 +564,8 @@ A sibling test, `test_racing_field_best_arm_survives_to_floor`, drives the
 same target through a REAL multi-challenger racing round (field 4, replicates
 2, evidence pre-gate at 0.8) and asserts the best-known arm survives every
 rung, clears the champion gate, and is promoted at the exact floor — the
-knob-ON counterpart (V4) to the gauntlet oracle.
+knob-ON counterpart, under the pin-off-and-carry-the-countermeasure rule, to
+the gauntlet oracle.
 
 > ✅ ALWAYS extend this oracle (not a new stubbed test) when you change the
 > scoring formula, the gate, the storage backend default, or the RoundLog
@@ -563,20 +582,21 @@ knob-ON counterpart (V4) to the gauntlet oracle.
 > default-proposer pin. Do not "simplify" it to the bare default — the point
 > is that a real, disk-resolved proposer drives the real loop.
 
-### 11.4.2 Oracle 2 — the decision-procedure power harness
+### 11.4.2 The decision-procedure power harness
 
-`tests/test_decision_procedure_power.py` is Tier 2: where oracle 1 proves
-convergence under exact measurement, this proves the decision procedure
-itself — the margin gate, replication, pass-rate monotonicity scope, and the
-Bradley–Terry evidence pre-gate — has the right OPERATING CHARACTERISTICS
-when measurement is noisy, the way it is in production.
+Where the convergence oracle proves the loop converges under exact
+measurement, `tests/test_decision_procedure_power.py` proves the decision
+procedure itself — the margin gate, replication, pass-rate monotonicity
+scope, and the Bradley–Terry evidence pre-gate — has the right OPERATING
+CHARACTERISTICS when measurement is noisy, the way it is in production.
 
-**The methodology.** Every trial is exactly reproducible: the noise model is
+**The methodology.** Every trial is reproducible: the noise model is
 the example harness's own `draw_measured_tokens`, seeded from the stable
 tuple `(workspace seed, generation id, entry id, replicate index)` via
 `stable_noise_seed`. Nothing derives from the clock or a global RNG, so the
 "rates" the test asserts are DETERMINISTIC functions of the chosen seeds —
-calibrated documentation of the procedure's behaviour, not flaky statistics:
+calibrated documentation of the procedure's behaviour rather than flaky
+statistics:
 
 ```python
 """Operating characteristics of the DECISION PROCEDURE under seeded noise.
@@ -631,12 +651,12 @@ DELTA_CASES: dict[str, tuple[tuple[str, ...], float]] = {
 4. **Pinned OC numbers.** The NAIVE contract (`replicates=1`, fixed
    `promote_margin=0.01`, no gate) and the EFFECTIVE contract
    (`replicates=32`, aggregate-scope monotonicity, the BT evidence pre-gate
-   at 0.8) each get their operating characteristics pinned. The load-bearing
-   measured fact — that a two-contestant BT CI only separates after ~37 duels
-   of an unbroken win streak, so the pre-gate is a pure SOUNDNESS device and
-   POWER must be bought with replication — is stated and both halves are
-   pinned (`EFFECTIVE_REPLICATES = 32`, `EFFECTIVE_THRESHOLD = 0.8`,
-   `EFFECTIVE_BUDGET = 38`).
+   at 0.8) each get their operating characteristics pinned. One measured fact
+   carries the design: a two-contestant Bradley–Terry confidence interval
+   only separates after about 37 duels of an unbroken win streak. The
+   pre-gate is therefore a SOUNDNESS device alone, and POWER must be bought
+   with replication. Both halves are pinned (`EFFECTIVE_REPLICATES = 32`,
+   `EFFECTIVE_THRESHOLD = 0.8`, `EFFECTIVE_BUDGET = 38`).
 
 **When you may move a pinned OC number.** These numbers are the procedure's
 characterized behaviour. They move ONLY with a measured justification in the
@@ -644,7 +664,8 @@ commit — never nudged to make a red test green.
 
 > ⛔ NEVER change a pinned rate / trial count / threshold in the power harness
 > to make it pass. Those numbers ARE the decision procedure's measured
-> operating characteristics (V3). If a change to the gate or replication moves
+> operating characteristics (the never-weaken-an-assertion rule). If a change
+> to the gate or replication moves
 > them, that is the test doing its job — the RED tells you the procedure's
 > false-promote rate or its power changed. Re-derive the new number from the
 > seeded model, WRITE the derivation in the commit (the file's own arithmetic
@@ -653,7 +674,8 @@ commit — never nudged to make a red test green.
 > sound.
 
 > ⚠️ TRAP — the harness monkeypatches `runner._run_single` (the ONE
-> documented anchor), not the gate or the strategy. If you add a NEW subprocess
+> documented anchor) rather than the gate or the strategy. If you add a NEW
+> subprocess
 > seam, do not monkeypatch it here — thread your in-process evaluator through
 > `_run_single` so the REAL gate and REAL strategy still run. The whole value
 > is that everything above the worker boundary is production code; a second
@@ -685,14 +707,14 @@ class _NoisyWorld:
 — `tests/test_decision_procedure_power.py`, `_NoisyWorld`
 
 Two properties make this a legitimate substitute rather than a stub of the
-thing under test: (1) it reproduces the EXACT reduction Tier 1 (the
-convergence oracle) already pinned end-to-end through real subprocess
+thing under test: (1) it reproduces the EXACT reduction the convergence
+oracle already pinned end-to-end through real subprocess
 workers, so the in-process path and the real path score identically; (2) it
 reads the replicate index from `entry.context` — the same stamp the real
-worker consumes — so the production REPLICATION threading is exercised, not
-bypassed. Everything ABOVE the worker boundary — `run_matchup`'s scheduling
-and averaging, `resolve_tournament`'s gauntlet strategy, the evidence
-pre-gate's defer→replicate loop, the gate — is production code. The final
+worker consumes — so the production REPLICATION threading is exercised
+rather than bypassed. Everything ABOVE the worker boundary — `run_matchup`'s
+scheduling and averaging, `resolve_tournament`'s gauntlet strategy, the
+evidence pre-gate's defer→replicate loop, the gate — is production code. The final
 test in the file drives the ACTUAL `NoisyPolicyAdapter` through real
 subprocess workers to prove the seeded draw crosses the process boundary
 intact, closing the loop between the fast in-process trials and the real
@@ -703,25 +725,26 @@ rates stay meaningful: `AA_TRIALS = 60` cheap single-sample null duels,
 `AA_EFFECTIVE_TRIALS = 24` and `POWER_TRIALS = 12` for the replicated
 procedure (each effective trial runs up to ~39 replicated duels, ~12k board
 units in-process). These counts are pinned like every other OC number — they
-move only with a measured reason (§11.4.2, V3).
+move only with a measured reason (§11.4.2, the never-weaken-an-assertion
+rule).
 
-> ⚠️ TRAP — `_NoisyWorld` is a substitute for the WORKER, not for the
+> ⚠️ TRAP — `_NoisyWorld` is a substitute for the WORKER rather than for the
 > decision procedure. Its `install()` silences the best-effort dashboard-live
 > append and the per-unit cache persist (orthogonal side channels), but it
 > does NOT touch the gate, the strategy, or the averaging — those are the
 > subject. If you find yourself patching one of THOSE to make a power trial
 > pass, stop: you are stubbing the thing the harness exists to characterize,
-> and the pinned rate you are trying to hit no longer means anything.
+> and the pinned rate you are trying to hit means nothing.
 
 ---
 
-## 11.5 The worker-boundary test support (V5)
+## 11.5 The worker-boundary test support
 
 `zicato._tournament_worker` runs in a SEPARATE OS process. So the adapter
 and `call_llm` callables it uses CANNOT be closures or
 `sys.modules`-monkeypatched stubs — they must be real, importable,
 module-level objects the worker subprocess can resolve from a dotted path.
-`tests/_subprocess_worker_support.py` provides exactly that:
+`tests/_subprocess_worker_support.py` provides them:
 
 ```python
 """Importable stub adapter + callables for the subprocess-worker tests.
@@ -754,8 +777,8 @@ importable adapter because each must survive the process crossing:
 
 | Adapter | Behaviour it forces | What it tests |
 |---|---|---|
-| `StubAdapter` | legacy `run(entry, sink_path)`, writes an empty events file | the happy path, no goldfive dependency |
-| `SnapshotWritingAdapter` | writes runtime output INTO the mounted snapshot | the L3 isolation fix — the write must land in a discarded per-run copy, never the canonical snapshot |
+| `StubAdapter` | the two-argument `run(entry, sink_path)` form, writing an empty events file | the happy path, no goldfive dependency |
+| `SnapshotWritingAdapter` | writes runtime output INTO the mounted snapshot | per-run checkout isolation — the write must land in a discarded per-run copy, never the canonical snapshot |
 | `SleepingAdapter` | a BLOCKING `time.sleep` that wedges the worker's own event loop | forces the PARENT's `wait_for` + SIGTERM/SIGKILL escalation (the cooperative budget can't fire) |
 | `CooperativeAdapter` | a CANCELLABLE `asyncio.sleep` | the worker's own cooperative budget fires and it self-aborts, exit 0 |
 | `EmittingThenSleepingAdapter` | emits one `run_started` frame then sleeps to cancellation | the terminal-event fix leaves a `run_aborted` frame on disk |
@@ -786,7 +809,8 @@ def make_sigterm_ignoring_adapter() -> SleepingAdapter:
 > `monkeypatch.setattr`, or a `sys.modules` injection. NONE of those cross a
 > `fork`/`exec` boundary — the child re-imports fresh and sees the real
 > module. A worker stub MUST be a module-level object with a dotted `factory`
-> path (V5). If your test needs the worker to do something new, add a named
+> path (the dotted-path-callable rule). If your test needs the worker to do
+> something new, add a named
 > adapter + `make_*` factory to `_subprocess_worker_support.py`, do not reach
 > for a monkeypatch that silently no-ops in the child.
 
@@ -799,20 +823,20 @@ def make_sigterm_ignoring_adapter() -> SleepingAdapter:
 
 ---
 
-## 11.6 The genstore conformance suite — session-templates (WS7)
+## 11.6 The generation-store conformance suite and its session templates
 
 `tests/test_genstore_conformance.py` is the cross-backend contract: every
 test runs against BOTH `DirectoryGenerationStore` AND `GitGenerationStore`,
 parametrised on a single `backend` axis. A backend that diverges from the
 `GenerationStore` protocol fails here — this is the suite the stale-worktree
 bug (07-runtime-and-durability.md §7.4.2) and the prune-vs-add race would
-have caught, and the reason a genstore change is written HERE, not in a
-single-backend file.
+have caught, and the reason a generation-store change is written HERE rather
+than in a single-backend file.
 
-The WS7 pattern is the **session-template fixture**: seeding the git backend
+The pattern is the **session-template fixture**. Seeding the git backend
 costs a dozen-plus `git` subprocess spawns, so the seeded workspace is built
-ONCE per backend (session-scoped) and `copytree`-d per test — each test still
-gets a private, writable workspace, but the per-test spawn storm is gone:
+ONCE per backend (session-scoped) and `copytree`-d per test. Each test still
+gets a private, writable workspace, without the per-test spawn storm:
 
 ```python
 @pytest.fixture(scope="session")
@@ -840,7 +864,7 @@ session-scoped vs per-test**:
   setup itself — `test_seed_generation_materialises_tree`,
   `test_seed_generation_excludes_run_artifacts`,
   `test_seed_generation_raises_for_missing_source` all seed a FRESH store,
-  because they are testing the seeding, not reading a pre-seeded tree.
+  because their subject is the seeding rather than a pre-seeded tree.
 
 There is one git-specific subtlety the template must handle: a materialised
 git worktree registers its ABSOLUTE path inside the repo, which cannot
@@ -869,22 +893,23 @@ prunes the registrations so each copy re-materialises its own on first
 > on — those seed fresh. Getting this wrong trades a spawn storm for a
 > nondeterministic flake, which is a worse deal.
 
-> ✅ ALWAYS write a new genstore test in the conformance suite (parametrised
-> over both backends), not in `tests/test_epoch_genstore.py` (the directory-
-> specific file). The directory backend clears + rebuilds the child tree on
-> every derive, so a directory-only test is GREEN while the git default is
-> broken — exactly the stale-worktree bug. The conformance parametrisation is
-> what makes a backend divergence a test failure instead of a production
-> surprise.
+> ✅ ALWAYS write a new generation-store test in the conformance suite
+> (parametrised over both backends) rather than in
+> `tests/test_epoch_genstore.py` (the
+> directory-specific file). The directory backend clears + rebuilds the child
+> tree on every derive, so a directory-only test is GREEN while the git
+> default is broken — the stale-worktree case. The conformance
+> parametrisation is what makes a backend divergence a test failure instead
+> of a production surprise.
 
 ---
 
-## 11.7 The six parity gates, one by one
+## 11.7 The parity gates, one by one
 
 `tools/parity.sh` is the behavior-preserving refactor oracle: a fixed set of
-gates, each GREEN on unchanged behaviour. The goldens were captured from the
-feature-complete base, so a refactor that moves any observable behaviour
-turns a gate RED (V8):
+gates, each GREEN on unchanged behaviour. The goldens record the behaviour
+of the feature-complete base, so a refactor that moves any observable
+behaviour turns a gate RED (the parity-green-on-unchanged-behaviour rule):
 
 ```
 # The contract: on UNCHANGED behavior every gate is GREEN. The refactor is
@@ -893,6 +918,11 @@ turns a gate RED (V8):
 # base, so a refactor that moves any observable behavior turns a gate RED.
 ```
 — `tools/parity.sh` (header)
+
+The script reports a separate verdict for each of thirteen gates: the full
+test suite, three golden diffs (the contract hash, the CLI help text, the
+index dump), the eight mock-evolve lanes of §11.7.5, and the mypy error
+count. The sections below take them in that order, one kind at a time.
 
 Usage: `bash tools/parity.sh` runs every gate; `--only GATE` / `--skip GATE`
 scope it; `--update` re-captures every golden. Exit code is 0 only if every
@@ -935,10 +965,11 @@ the hash depends only on committed file contents + those literals, never on
 anything host- or clock-derived.
 
 **Checkout-independence** is the related in-suite pin
-(`tests/test_epoch_contract.py::test_contract_hash_is_cwd_and_checkout_invariant`,
-bug #10): registration-relative mutable trees previously resolved against the
-process cwd, folding the absolute checkout path into the hash — the same
-workspace hashed differently run from a different directory:
+(`tests/test_epoch_contract.py::test_contract_hash_is_cwd_and_checkout_invariant`).
+It guards against the case where registration-relative mutable trees resolve
+against the process cwd and fold the absolute checkout path into the hash, so
+that the same workspace hashes differently when run from a different
+directory (`12-bug-casebook.md` case 10):
 
 ```python
 def test_contract_hash_is_cwd_and_checkout_invariant(tmp_path, monkeypatch):
@@ -1002,7 +1033,7 @@ real markers, run the rungs + cuts, crown through the champion gate,
 confirm on the holdout, persist the audit.
 
 **Why eight.** One capture pins one configuration, and the evolve round
-branches on three axes that select genuinely different code: the tournament
+branches on three axes that select different code: the tournament
 structure the frozen contract declares, the runtime mode, and how many
 rounds the invocation runs. Each lane has its own golden and its own gate,
 so a red names the configuration that moved:
@@ -1063,17 +1094,17 @@ field, or any serialization detail moves these bytes and fails the gate.
 **Reds legitimately** when any loss / scalar / decision / id / structural
 field / round-log event / serialization detail changes. **Update:**
 `ZICATO_PARITY_UPDATE=1` (all lanes), or `-k <lane>` for one.
-The capture replicates the two conftest autouse fixtures itself (it lives
-OUTSIDE `tests/`, so that conftest's autouse fixtures do not fire) — pinning
-the default proposer to the text shim and neutering the harmonograf launch —
-so the captured behaviour matches what the unit suite asserts.
+The capture lives OUTSIDE `tests/`, so that conftest's autouse fixtures do
+not fire; it replicates the two it needs — pinning the default proposer to
+the text shim and neutering the harmonograf launch — so the captured
+behaviour matches what the unit suite asserts.
 
 ### 11.7.6 The masking discipline (why goldens don't flap)
 
 `normalize.py` masks the handful of fields that are wall-clock / host-path /
 date-stamped / random-uuid by construction — timestamps → `<TS>`, the
 date-prefixed epoch id → `<DATE>`, a `uuid4().hex` patch id → `<HEX32>`, the
-tmp root → `<TMP>`. The masking is deliberately NARROW: only fields
+tmp root → `<TMP>`. The masking is NARROW by design: only fields
 known-nondeterministic by construction are touched, so a refactor that
 silently changes a REAL field still surfaces as a diff:
 
@@ -1089,13 +1120,13 @@ changes a real field will still surface as a diff.
 
 ### 11.7.7 MYPY
 
-Not a golden — a not-worse-than-baseline count. `mypy src/zicato/` must
-produce no MORE `error:` lines than the committed baseline (a refactor
-should REDUCE it). **Update:** `--update` writes the current count as the new
-baseline — do this only when you have LEGITIMATELY reduced errors, never to
-paper over a regression.
+A count rather than a golden. `mypy src/zicato/` must produce no MORE
+`error:` lines than the committed baseline (a refactor should REDUCE it).
+**Update:** `--update` writes the current count as the new baseline — do this
+only when you have LEGITIMATELY reduced errors, never to paper over a
+regression.
 
-### 11.7.8 The never-bake-a-sibling-change rule (V8)
+### 11.7.8 Never bake a sibling change into a golden
 
 A golden re-capture is a CLAIM that the new bytes are correct. That claim is
 only reviewable if the re-capture contains ONLY the change under review.
@@ -1107,9 +1138,10 @@ only reviewable if the re-capture contains ONLY the change under review.
 > baseline — the next person sees a green gate and trusts a golden nobody
 > vetted. Re-capture the ONE gate your change legitimately moved
 > (`--only MOCK-GOLDEN`), review the diff, and commit the golden WITH the code
-> that justifies it (V8).
+> that justifies it (the parity-green-on-unchanged-behaviour rule).
 
-> ⚠️ TRAP — a RED parity gate is INFORMATION, not a chore. A CONTRACT-HASH red
+> ⚠️ TRAP — a RED parity gate is INFORMATION to read before it is a chore.
+> A CONTRACT-HASH red
 > means an operator's epoch would spuriously roll; a MOCK-GOLDEN red means a
 > loss / scalar / decision moved; a REINDEX-DUMP red means the index
 > projection changed. Read the diff before you reach for `--update` — the
@@ -1118,18 +1150,18 @@ only reviewable if the re-capture contains ONLY the change under review.
 
 ---
 
-## 11.8 The five import contracts + the TID251 bans (V9)
+## 11.8 The seven import contracts + the TID251 bans
 
 Two static gates keep the architecture from eroding: the import-linter
 library/driver contracts (`uv run lint-imports`) and the ruff TID251
 banned-api list. Neither is a pytest test — a violation reds the linter, so
 they run in `make check` and CI.
 
-### 11.8.1 The five import contracts
+### 11.8.1 The seven import contracts
 
 zicato is a LIBRARY first — the surface in `zicato/__init__.py` — with three
 DRIVERS on top: `zicato.cli`, `zicato.dashboard`, `zicato.builder`. The
-contracts pin exactly which edges exist:
+contracts pin which edges exist:
 
 | # | Contract | Forbids |
 |---|---|---|
@@ -1137,7 +1169,9 @@ contracts pin exactly which edges exist:
 | 2 | dashboard driver: no import of the cli | `zicato.dashboard` → `zicato.cli` (the `dashboard → builder` mount is the ONE allowed dashboard→driver edge) |
 | 3 | builder driver: no import of the other drivers | `zicato.builder` → `cli` / `dashboard` |
 | 4 | cli driver: no DIRECT import of the builder | `zicato.cli` → `zicato.builder` directly (`allow_indirect_imports = true` — the cli reaches the builder legitimately via `cli → dashboard.server → builder.api`) |
-| 5 | the query layer stays dashboard-free | `zicato.query` → `zicato.dashboard` (DQ4 — 09-dashboard-and-query.md §9.1) |
+| 5 | the query layer stays dashboard-free | `zicato.query` → `zicato.dashboard` (the query-layer-is-library-code rule — 09-dashboard-and-query.md §9.1, doctrine `DQ4`) |
+| 6 | tui driver: no import of the other drivers | `zicato.tui` → `cli` / `dashboard` / `builder` (the terminal console speaks HTTP to the served payloads) |
+| 7 | the proposer's patch validator has no path to the board | `zicato.proposer`'s validator reaching the board loader, which is what keeps entry text out of the validator's import closure |
 
 The declared driver→driver edges are exactly two: `cli → dashboard` (the CLI
 launches the server and resolves its static bundle) and `dashboard →
@@ -1159,10 +1193,10 @@ allow_indirect_imports = true
 
 ### 11.8.2 The TID251 bans — retired private reaches
 
-The library/driver restructure PROMOTED a set of cross-module private
-helpers to public seams at their honest homes. The TID251 (flake8-tidy-
-imports banned-api) list keeps the old underscore paths from regrowing —
-each ban names the move so a reader of the violation knows the fix:
+A set of cross-module helpers live at public seams on their home modules.
+The TID251 (flake8-tidy-imports banned-api) list rejects any import of the
+retired underscore paths, and each ban names the replacement so a reader of
+the violation knows the fix:
 
 ```
 [tool.ruff.lint.flake8-tidy-imports.banned-api]
@@ -1185,23 +1219,24 @@ instruction). Both tell you the fix directly.
 
 > ⛔ NEVER "fix" an import-contract or TID251 failure by loosening the
 > contract or deleting the ban. The failure is telling you a NEW edge would
-> break the architecture (V9) — a lib package started importing a driver, or
-> a retired private path regrew. The fix is on YOUR side: move the shared code
+> break the architecture (the contracts-are-lint rule) — a lib package has
+> started importing a driver, or a retired private path has regrown. The fix
+> is on YOUR side: move the shared code
 > to a public seam (the ban's `.msg` names it), or invert the dependency.
 > Editing `pyproject.toml` to permit the edge is editing the architecture, and
-> that is a design decision, not a lint fix.
+> that is a design decision rather than a lint fix.
 
 > ⚠️ TRAP — pre-commit lints only CHANGED files, but CI runs `ruff check .`
 > and `lint-imports` over the WHOLE tree. A cross-module edge you add can pass
 > your local pre-commit (it only saw your one file) and red in CI (which sees
 > the contract over the whole graph). Run `make import-lint` and `uv run ruff
-> check .` before pushing a structural change — the `known-first-party` isort
-> mismatch was found exactly this way (local pre-commit missed it, CI's
-> repo-wide check caught it).
+> check .` before pushing a structural change. A `known-first-party` isort
+> mismatch was found this way: the local pre-commit missed it and CI's
+> repo-wide check caught it.
 
 ---
 
-## 11.9 Node behaviour-suite conventions (V10)
+## 11.9 Node behaviour-suite conventions
 
 The dashboard JS has its own behaviour suite under
 `src/zicato/dashboard/static/test/`, run by `make node-test` (and mirrored by
@@ -1209,11 +1244,11 @@ the `node`-marked `tests/test_dashboard_js.py` shim, excluded from the
 default pytest run). The conventions are the enforcement arm of the
 digest-gated rendering spec (09-dashboard-and-query.md §9.7).
 
-### 11.9.1 Verify by exit code, never the tail line
+### 11.9.1 Verify by exit code
 
 The runner aggregates every `*.test.mjs`, but each file prints its OWN
-"X passed" line — so the FINAL printed line is just the LAST file's count,
-not the grand total. The real signal is the PROCESS EXIT CODE:
+"X passed" line, so the FINAL printed line is the LAST file's count rather
+than the grand total. The real signal is the PROCESS EXIT CODE:
 
 ```javascript
 // FOOTGUN THIS GUARDS AGAINST: each file's harness prints its own
@@ -1236,9 +1271,9 @@ an operating-system process.
 
 > ⚠️ TRAP — a green-looking tail line can hide a failing FILE. `make node-test`
 > is the canonical run and it propagates the exit code; if you ever run
-> `node run-all.mjs` by hand, check `echo $?`, not the last line. This is V10
-> and it is exactly the kind of thing a weaker agent trusts (the tail looks
-> green) and ships a broken suite behind.
+> `node run-all.mjs` by hand, check `echo $?` rather than the last line. This
+> is the exit-code-is-the-node-signal rule, and reading the tail instead is
+> how a broken suite ships behind a green-looking line.
 
 ### 11.9.2 The digest / no-op / DOM-identity assertions
 
@@ -1251,14 +1286,14 @@ models — the latter is the render-discipline backbone (the `noteProgress`
 cursor, the `core/sse.js` seq skip gate, the four run-states, the chrome
 pill's zero-DOM no-op beat).
 
-### 11.9.3 The mock_server parity pin (V10)
+### 11.9.3 The mock_server parity pin
 
-The two SERVED joins (round-timeline, racing-field) are computed on the
-server now (09-dashboard-and-query.md §9.2.5), but the node fixtures still
-describe workspaces in terms of the granular endpoints — so
-`test/mock_server.mjs` PLAYS THE SERVER, deriving the two served payloads
-from a fixture map exactly as the Python readers do. Its own rule: any
-divergence is a bug in the mock, never grounds to re-derive in prod:
+The server computes the round-timeline and racing-field joins
+(09-dashboard-and-query.md §9.2.5), while the node fixtures describe
+workspaces in terms of the granular endpoints. `test/mock_server.mjs`
+therefore PLAYS THE SERVER, deriving those two served payloads from a
+fixture map the way the Python readers do. Its own rule: any divergence is a
+bug in the mock, never grounds to re-derive in prod:
 
 ```javascript
 // It is TEST-ONLY scaffolding — nothing
@@ -1271,27 +1306,28 @@ The Python side of that pin is `tests/test_dashboard_racing_and_rounds.py`,
 which asserts the real readers produce what the mock mirrors. When you change
 `build_round_timeline` / `build_racing_field`, update `mock_server.mjs` to
 match (09-dashboard-and-query.md §9.16, step 3) — the mock is a parity
-witness, not a second implementation.
+witness rather than a second implementation.
 
 > ⛔ NEVER re-derive a served join in prod JS to make a node test pass. If the
-> mock and the prod client disagree, the mock is wrong (V10) — it exists to
-> prove the client reads the server's answer, not to license the client to
-> compute its own. Fixing the divergence in `mock_server.mjs` (to mirror the
-> Python reader) is the correct move; re-deriving in `views/*.js` re-opens the
-> client/server drift the served join was created to close (DQ1).
+> mock and the prod client disagree, the mock is wrong (the
+> exit-code-is-the-node-signal rule) — it exists to prove the client reads the
+> server's answer, and never to license the client to compute its own. Fixing
+> the divergence in `mock_server.mjs` (to mirror the Python reader) is the
+> correct move; re-deriving in `views/*.js` re-opens the client/server
+> drift the served join closes (the server-computes-client-renders rule —
+> 09-dashboard-and-query.md, doctrine `DQ1`).
 
-The mock now mirrors THREE served joins: round-timeline, racing-field, and the
+The mock mirrors THREE served joins: round-timeline, racing-field, and the
 elim `gen_states` fold (`attachElimStates`, mirroring `derive_elim_states` —
 09-dashboard-and-query.md §9.2.5). The elim mirror's Python parity witness is
 the shared `tests/data/elim_states_fixture.json`, asserted by BOTH the Python
 `derive_elim_states` and the Rust `elim_states.rs` fold.
 
-### 11.9.4 The test-file map — the ex-monolith, split by view
+### 11.9.4 The console test-file map, by view
 
-`variant_t.test.mjs` was a 10,828-line accretion monolith (374 tests). It was
-split MECHANICALLY (assertions verbatim, count unchanged) by dominant view into
-ten files, with the shared preamble (the `FIXTURE` map + `freshHb` / `installFetch`
-/ `allByClass` helpers) hoisted to `fixtures.mjs`:
+The console's behaviour tests are grouped by dominant view into ten files,
+with the shared preamble (the `FIXTURE` map plus the `freshHb` /
+`installFetch` / `allByClass` helpers) in `fixtures.mjs`:
 
 | file | covers |
 |---|---|
@@ -1304,12 +1340,14 @@ ten files, with the shared preamble (the `FIXTURE` map + `freshHb` / `installFet
 | `variant_t_lifecycle_dag.test.mjs` | the mutation surface + lifecycle DAG |
 | `variant_t_live.test.mjs` / `variant_t_live_hero.test.mjs` / `variant_t_live_waves.test.mjs` | the SSE-driven live hero / ticker / funnel transitions |
 
-`digest_opts.test.mjs` pins the four `digestOpts` rules (drop-functions,
-key-sort, 3dp rounding, NaN→null) directly; `bracket.test.mjs` re-pins its six
-topology tests on the served `gen_states` fixtures. When you split or rename a
-node test file, the runner (`run-all.mjs`) globs `*.test.mjs` so it needs no
-registration — but grep the split target for the assertion you rely on; the
-grouping is by DOMINANT view and a few assertions cross seams.
+`digest_opts.test.mjs` pins the `digestOpts` rules directly — functions are
+dropped, key order is irrelevant, a non-integer number rounds to three
+decimal places, and a non-finite number folds to `null`. `bracket.test.mjs`
+pins six bracket-topology tests on the served `gen_states` fixtures. When you
+split or rename a node test file, the runner (`run-all.mjs`) globs
+`*.test.mjs` so it needs no registration — but grep the split target for the
+assertion you rely on; the grouping is by DOMINANT view and a few assertions
+cross seams.
 
 ---
 
@@ -1353,10 +1391,11 @@ both plain-`python` runs of a stdlib-only tool.
 
 ## 11.11 The pre-commit checklist
 
-Copy-paste this before a nontrivial commit. It runs the fast lane first
-(quick signal), then the full suite, then the static gates, then the
-oracles, then the vendor scan. Each line is a gate a real regression could
-hide behind.
+Copy-paste this before a nontrivial commit. The twelve steps run in order:
+the fast lane for quick signal, the full suite, format and lint, types,
+import contracts, the parity gates, the node suite, the two oracles, the
+Rust supervisor, the line budgets, and the vendor scan. Each step is a gate
+a real regression could hide behind.
 
 ```bash
 # 1. Fast lane — quick signal while you iterate.
@@ -1415,7 +1454,8 @@ already-closing task group rejects it; otherwise garbage collection reports a
 false-clean server exit as an un-awaited coroutine.
 
 > ✅ ALWAYS run `uv sync --all-extras` (never bare `uv sync`) when your
-> environment might be stale. Bare `uv sync` in zicato DELETES the dev tooling
+> environment might be stale — the all-extras sync rule (`01-orientation.md`
+> §4). Bare `uv sync` in zicato DELETES the dev tooling
 > from `.venv` — pytest, mypy, ruff, even uv itself — because they live in the
 > `dev` extra. A green checklist run on a `.venv` missing half its tools is a
 > false green.
@@ -1485,15 +1525,15 @@ python tools/prose_lint.py --baseline tools/prose_lint_baseline.json
 python tools/prose_lint.py --write-baseline tools/prose_lint_baseline.json
 ```
 
-CI runs the third form. `tools/prose_lint_baseline.json` holds one count per
-rule and the run fails only where a count rises above it, so the check guards
-the tree while the standing backlog is worked through.
+CI runs the `--baseline` form. `tools/prose_lint_baseline.json` holds one count
+per rule, and the run fails only where a count rises above its ceiling, so the
+check guards the tree while the standing backlog is worked through.
 
 A cleanup change leaves the baseline file alone. Lowering a count is always
 green against a higher ceiling, so a prose-fixing branch touches only the prose
 and never contends for the shared file — several such branches can be in flight
 at once without conflicting. Once they have merged, one change of its own
-regenerates the file with the fourth form and lands it, ratcheting every
+regenerates the file with `--write-baseline` and lands it, ratcheting every
 ceiling down to the measured floor. Regenerate on a tree that is current with
 `main`: the counts are whole-tree totals, so a baseline captured before someone
 else's merge can record a floor the merged tree fails to meet.
@@ -1510,7 +1550,7 @@ decode the token without the repository's history; state that reason beside it.
 Two disciplines govern every test change. They are the difference between a
 suite that catches regressions and one that rubber-stamps them.
 
-### 11.12.1 A regression test MUST fail with the fix stashed (V2)
+### 11.12.1 A regression test must fail with the fix stashed
 
 A test written to lock a bug fix is only a regression test if it FAILS
 against the buggy code. A test that passes both before and after the fix
@@ -1520,11 +1560,12 @@ touched.
 > ⛔ NEVER commit a "regression test" without first proving it fails with the
 > fix reverted. `git stash` the fix (or check out the parent commit's source
 > for the fixed module), run the new test, and SEE IT RED. Then restore the
-> fix and see it green. A test you never watched fail is a test you cannot
+> fix and see it green (the must-fail-with-the-fix-stashed rule). A test you
+> never watched fail is a test you cannot
 > trust to catch the regression's return — and the whole point of a casebook
 > regression test (§11.15) is that it catches the return.
 
-### 11.12.2 Never weaken an assertion — pin or justify (V3)
+### 11.12.2 Never weaken an assertion — pin or justify
 
 When a test goes red, there are exactly two honest responses: fix the code,
 or — if the new behaviour is CORRECT — update the assertion to the new value
@@ -1534,7 +1575,8 @@ the test's coverage.
 
 > ⛔ NEVER weaken an assertion to make a test pass. A pinned number
 > (`EXPECTED_FLOOR == 1.2`, a power-harness rate, a golden byte) moves ONLY
-> with a stated, measured reason in the commit (V3). If the convergence oracle
+> with a measured reason stated in the commit (the never-weaken-an-assertion
+> rule). If the convergence oracle
 > reds, either the loop broke (fix it) or the scalar formula legitimately
 > changed (re-derive `EXPECTED_FLOOR`, state the derivation, move the pin). If
 > a power-harness rate reds, re-derive it from the seeded model and justify it.
@@ -1546,7 +1588,7 @@ the test's coverage.
 > harness is seeded and deterministic; the parity goldens mask only
 > known-nondeterministic fields. A "flake" in one of those is a real
 > nondeterminism you introduced (an unseeded RNG, a wall-clock in a digest, a
-> leaked pin — §11.2.1), not statistical noise. Find the nondeterminism; do
+> leaked pin — §11.2.1) rather than statistical noise. Find it; do
 > not paper over it with a wider assertion.
 
 ---
@@ -1555,14 +1597,14 @@ the test's coverage.
 
 `tests/_reader_parity_harness.py` is the model for a whole class of test:
 the **snapshot oracle** for a refactor/migration. It builds a deterministic
-multi-epoch fixture that mirrors a real bug, captures EVERY public `build_*`
-reader response into one canonical-JSON snapshot, and lets you assert
-"nothing observable moved" across a migration — the same discipline as the
-MOCK-GOLDEN parity gate (§11.7.5), applied to the query readers.
+multi-epoch fixture, captures EVERY public `build_*` reader response into one
+canonical-JSON snapshot, and lets you assert "nothing observable moved"
+across a change to the readers — the same discipline as the MOCK-GOLDEN
+parity gate (§11.7.5), applied to the query readers.
 
-The fixture is engineered to expose the exact bug the migration fixes — an
-epoch-ordering bug where directory-name order disagrees with `created_at`
-order, plus an empty epoch:
+The fixture is built to expose one defect class: epoch ordering, where
+directory-name order disagrees with `created_at` order. It also carries an
+empty epoch:
 
 ```python
 # Chronological (created_at) order — the canonical/correct order:
@@ -1586,11 +1628,11 @@ enumerations, and freezes the whole read surface in one diffable document.
 
 ### 11.13.1 The split: byte-identity vs order-aware equality
 
-The harness's cleverness is that a MIGRATION legitimately changes ONE thing
-(epoch ordering) and must change NOTHING else. So it splits the assertions:
-every NON-epoch-list response must be BYTE-IDENTICAL; every epoch-list
-response must carry the same SET of epochs with identical per-epoch content,
-now in the canonical timestamp-first order:
+A change to epoch ordering legitimately moves ONE thing and must move
+NOTHING else, so the harness splits its assertions. Every NON-epoch-list
+response must be BYTE-IDENTICAL. Every epoch-list response must carry the
+same SET of epochs with identical per-epoch content, in the canonical
+timestamp-first order:
 
 ```python
 # The labels whose epoch ordering the fix corrects. For these the harness
@@ -1616,8 +1658,8 @@ lineage generation list) so the harness can assert it equals the canonical
 ### 11.13.2 The masking discipline — narrow, or you weaken a check
 
 Like every snapshot oracle, it masks ONLY the fields that are
-non-deterministic by construction, and the docstrings state the boundary
-precisely — the response-stamp `generated_at` is masked, but on-disk-derived
+non-deterministic by construction, and the docstrings state the boundary —
+the response-stamp `generated_at` is masked, but on-disk-derived
 timestamps (`created_at`/`proposed_at`) are deterministic in the fixture and
 are NOT masked:
 
@@ -1640,9 +1682,9 @@ non-determinism narrowly, so a REAL field change still surfaces as a diff.
 > readers (the query layer, a serializer, a canonicalizer): capture every
 > response BEFORE, refactor, capture AFTER, assert byte-identity except for
 > the ONE thing you meant to change (which gets its own order-aware / value-
-> aware assertion). It is the cheapest possible proof that a large mechanical
-> change is behaviour-preserving, and it is exactly what CONTRACT-HASH /
-> MOCK-GOLDEN / REINDEX-DUMP do at the whole-system scale.
+> aware assertion). It is the cheapest proof that a large mechanical change
+> is behaviour-preserving, and it is what CONTRACT-HASH / MOCK-GOLDEN /
+> REINDEX-DUMP do for the whole system.
 
 > ⚠️ TRAP — a snapshot oracle is only as honest as its masking is narrow. Mask
 > a field that CAN carry a real change (e.g. blanket-masking every `*_id`
@@ -1654,7 +1696,8 @@ non-determinism narrowly, so a REAL field change still surfaces as a diff.
 
 ## 11.14 The conformance-suite pattern — one contract, every backend
 
-Two suites (genstore §11.6 and storage) share a design pattern worth naming:
+Two suites — the generation store (§11.6) and the storage backends — share a
+design pattern worth naming:
 a **cross-backend conformance suite** parametrised on a backend axis, so a
 new backend is a one-line registration and the whole contract is asserted
 against it automatically. `tests/test_storage_conformance.py` is the model:
@@ -1704,22 +1747,23 @@ Every test takes `backend` and asserts an observable semantic — a missing
 record reads `None`, a write-then-read round-trips, a write replaces the
 prior value, the atomic-write contract holds (07-runtime-and-durability.md
 §7.3). The `StorageBackend` contract that the file backend, the in-memory
-backend, and the planned git backend must ALL satisfy is exactly this file.
+backend, and the planned git backend must ALL satisfy is this file.
 
-The genstore conformance suite (§11.6) is the same pattern over a DIFFERENT
-seam — parametrised on `{directory, git}`, asserting the `GenerationStore`
-protocol. The two are the durability-side twins of the reader-side snapshot
-oracle (§11.13): where the snapshot oracle freezes ONE implementation's whole
-output, a conformance suite proves N implementations share ONE observable
-contract.
+The generation-store conformance suite (§11.6) is the same pattern over a
+DIFFERENT seam — parametrised on `{directory, git}`, asserting the
+`GenerationStore` protocol. Both are the durability-side counterpart to the
+reader-side snapshot oracle (§11.13): the snapshot oracle freezes ONE
+implementation's whole output, while a conformance suite proves several
+implementations share ONE observable contract.
 
 > ✅ ALWAYS add a backend/implementation to its conformance suite's registry
 > (`BACKENDS` / `_BACKENDS`), never to a single-backend test file. The whole
 > value is that the contract is asserted against every implementation
 > automatically — a new backend that reds one conformance test is a backend
-> that is not yet a drop-in. This is how the git genstore was held to the
-> exact contract the directory backend shipped (07-runtime-and-durability.md
-> §7.4), and how the stale-worktree bug would have been caught.
+> that is not yet a drop-in. This is how the git generation store was held to
+> the exact contract the directory backend already met
+> (07-runtime-and-durability.md §7.4), and how the stale-worktree case would
+> have been caught.
 
 > ⛔ NEVER assert a backend-SPECIFIC behaviour in the conformance suite (a git
 > tag name, a directory layout). The conformance suite pins the SHARED
@@ -1734,14 +1778,14 @@ contract.
 
 Every bug in 12-bug-casebook.md has a regression test that fails with the
 fix stashed. This is the template. Worked scenario: the client champion-scan
-(bug #4) — the server picked "first promoted" instead of the reigning
-(last-promoted) champion.
+case (`12-bug-casebook.md` case 4), in which the server picked the first
+promoted generation instead of the reigning, last-promoted one.
 
-**Step 1 — Reproduce the bug in a test that FAILS on the buggy code (V2).**
+**Step 1 — Reproduce the bug in a test that FAILS on the buggy code.**
 Write the assertion for CORRECT behaviour first, against a fixture that
-distinguishes right from wrong. For bug #4 the distinguishing fixture is a
-TWO-promotion lineage — a single-promotion lineage reads identically either
-way (09-dashboard-and-query.md §9.2.1):
+distinguishes right from wrong. For the champion-scan case the
+distinguishing fixture is a TWO-promotion lineage; a single-promotion lineage
+reads identically either way (09-dashboard-and-query.md §9.2.1):
 
 ```python
 def test_current_champion_is_the_reigning_not_the_first_promotion(tmp_path):
@@ -1756,7 +1800,7 @@ def test_current_champion_is_the_reigning_not_the_first_promotion(tmp_path):
 check out the pre-fix source for `_current_champion`), run the test, SEE IT
 RED (it returns `"v1"`), then restore the fix and see it green. If it passes
 on the buggy code, your fixture does not distinguish the bug — a
-single-promotion lineage would do exactly that. Fix the fixture until the
+single-promotion lineage would do that. Fix the fixture until the
 test discriminates.
 
 **Step 3 — Choose the right home.** A bug lives in the suite that owns its
@@ -1765,22 +1809,26 @@ subsystem, at the layer the bug lives at:
 - a cross-backend durability bug → `tests/test_genstore_conformance.py`
   (both backends), NOT a single-backend file (§11.6);
 - a knob-ON bug that a deterministic contract would hide → a test whose
-  SUBJECT is the knob ON, at the default (§11.3.1) — bugs #6/#7 live in
-  `tests/test_best_of_n_tree_integrity.py` at `best_of_n=3`;
+  SUBJECT is the knob ON, at the default (§11.3.1) — the tree-mismatch cases
+  live in `tests/test_best_of_n_tree_integrity.py` at `best_of_n=3`;
 - a two-language contract bug → both the Python test AND
   `cargo test -p zicato-supervisor`;
 - a reaper / process-hygiene bug → `tests/test_conftest_dashboard_reaper.py`
   with a faked `ps` table (§11.2.3), never a real leak.
 
-**Step 4 — Assert the ROOT invariant, not just the symptom.** Bug #4's
-symptom was a wrong champion in one payload; its root is DQ1/DQ10 (the client
-must not re-derive; the reigning champion is the spine END). Assert the
-invariant so the test catches the bug's return through a DIFFERENT surface,
-not only the one that broke.
+**Step 4 — Assert the ROOT invariant rather than only the symptom.** The
+champion-scan case showed as a wrong champion in one payload. Its root is two
+dashboard doctrines — server-computes-client-renders and the champion is the
+reigning spine end (09-dashboard-and-query.md, doctrines `DQ1` and `DQ10`):
+the server computes and the client renders, so the client must not re-derive;
+and the reigning champion is the spine END. Assert the
+invariant so the test catches the bug's return through a DIFFERENT surface as
+well as the one that broke.
 
 **Step 5 — Name it after the invariant it protects.** A name like
 `test_current_champion_is_the_reigning_not_the_first_promotion` documents the
-casebook entry — a future reader greps the invariant, not a ticket number.
+casebook entry, so a future reader greps the invariant rather than a ticket
+number.
 
 **Verify**
 
@@ -1805,11 +1853,12 @@ uv run pytest tests/path::test_name -q      # MUST be GREEN
 
 Some contracts can only be proven by a REAL subprocess (worker isolation,
 budget escalation, config-crossing-the-boundary). These are `slow` /
-`integration` tests whose runtime IS the coverage (V1). The discipline is
+`integration` tests whose runtime IS the coverage (the
+full-suite-is-the-default rule). The discipline is
 about staying bounded and leaving nothing behind.
 
-**Step 1 — Make the worker's behaviour a module-level importable adapter
-(V5).** Add a named adapter + `make_*` factory to
+**Step 1 — Make the worker's behaviour a module-level importable adapter.**
+Under the dotted-path-callable rule, add a named adapter + `make_*` factory to
 `tests/_subprocess_worker_support.py` (§11.5); its `worker_spec()` returns
 the dotted `factory` path. A closure or monkeypatch WILL NOT cross the
 process boundary — the child re-imports fresh.
@@ -1818,9 +1867,9 @@ process boundary — the child re-imports fresh.
 wedged-run test does not need a real 30-minute budget — it needs a budget
 short enough that the escalation fires in the test's runtime. Pin a tiny
 `wall_clock_budget_seconds` and a short SIGTERM→SIGKILL grace so the
-escalation completes in seconds. The `_SleepingSession` sleeps 3600s
-precisely so it OUTLASTS any test budget and forces the parent's
-`wait_for` + kill escalation:
+escalation completes in seconds. The `_SleepingSession` sleeps 3600s so that
+it OUTLASTS any test budget and forces the parent's `wait_for` + kill
+escalation:
 
 ```python
 class _SleepingSession:
@@ -1846,7 +1895,7 @@ worker SELF-aborts, exit 0) IS the test matrix: one proves the escalation
 layer, the other proves the cooperative budget.
 
 **Step 3 — Mark it `slow` / `integration`.** So the fast lane drops it and
-the marker documents that its runtime is intentional (V1). Never stub the
+the marker documents that its runtime is intentional. Never stub the
 subprocess to speed it up — that deletes the coverage.
 
 **Step 4 — Set a hard timeout and assert NO LEAK.** The test must bound its
@@ -1858,10 +1907,10 @@ _isolated_tempdir.iterdir()) == []` after cleanup; §11.6). A test that
 leaks a real subprocess or a `ztw-snap-*` tree is a test that will flake the
 NEXT test under xdist.
 
-**Step 5 — Prove the boundary crossing, not just the outcome.** If the test
-is about something crossing INTO the worker (a pinned config flag), read it
-back from INSIDE the worker — `ConfigProbeAdapter` writes the worker's
-resolved `load_config()` view to `config_probe.json` so the test proves the
+**Step 5 — Prove the boundary crossing rather than only the outcome.** If the
+test is about something crossing INTO the worker (a pinned config flag), read
+it back from INSIDE the worker. `ConfigProbeAdapter` writes the worker's
+resolved `load_config()` view to `config_probe.json`, so the test proves the
 value crossed via the args file with NO env var involved (§11.5). Asserting
 the outcome alone can pass for the wrong reason.
 
@@ -1877,13 +1926,13 @@ ls ${TMPDIR:-/tmp} | grep ztw-snap && echo "LEAK" || echo "clean"
 ```
 
 > ⛔ NEVER spawn a real worker in a test without a hard self-timeout and a
-> no-leak assertion. An unbounded wait on a genuinely-wedged worker hangs the
+> no-leak assertion. An unbounded wait on a wedged worker hangs the
 > whole suite (and under xdist, a whole worker's shard); a leaked subprocess
 > or `ztw-snap-*` tree flakes the next test. Bound the wait to
 > budget + grace + margin, assert the temp dir is empty at the end, and
 > reuse the `is_same_process` / process-group discipline of §11.2.3 for any
-> signalling — the reaper lesson (bug #5) applies to every test that touches
-> real OS processes.
+> signalling — the provenance-scoped-reaper rule applies to every test that
+> touches real OS processes.
 
 > ⚠️ TRAP — a blocking `time.sleep` and a cancellable `asyncio.sleep` test
 > DIFFERENT layers and are not interchangeable. `time.sleep` wedges the
@@ -1897,8 +1946,8 @@ ls ${TMPDIR:-/tmp} | grep ztw-snap && echo "LEAK" || echo "clean"
 
 ## 11.17 Cross-references
 
-- 03-contract-and-epochs.md §"The contract hash" — what CONTRACT-HASH and
-  the checkout-independence test (bug #10) pin.
+- 03-contract-and-epochs.md §3.7 — what CONTRACT-HASH and the
+  checkout-independence test (`12-bug-casebook.md` case 10) pin.
 - 04-evaluation-statistics.md — the gate / replication / monotonicity-scope
   / noise-floor machinery the power harness (§11.4.2) characterizes; the
   train/holdout split the convergence oracle stays below.
@@ -1908,7 +1957,8 @@ ls ${TMPDIR:-/tmp} | grep ztw-snap && echo "LEAK" || echo "clean"
   drives; the racing structure the MOCK-GOLDEN capture and the convergence
   oracle's racing test exercise.
 - 07-runtime-and-durability.md §7.1 (files canonical / index derived — why
-  REINDEX-DUMP can drop-and-rebuild), §7.4 (the genstore conformance suite),
+  REINDEX-DUMP can drop-and-rebuild), §7.4 (the generation store and its git
+  backend, the contract the conformance suite asserts),
   §7.13/§7.14 (the runtime-state / RoundLog round-trip test recipes).
 - 08-supervisor.md — the Rust `cargo test` job and the two-language
   contracts (schema version, state serde, the `_is_safe_id` / start-time
@@ -1928,17 +1978,17 @@ where to ADD) a test, by concern.
 
 | Concern | Where |
 |---|---|
-| the autouse fixtures + the dashboard reaper (bug #5) | `tests/conftest.py`, `tests/test_conftest_dashboard_reaper.py` |
+| the autouse fixtures + the dashboard reaper | `tests/conftest.py`, `tests/test_conftest_dashboard_reaper.py` |
 | deterministic contract pins | `tests/_contract_pins.py` (used by the scripted orchestrator suites) |
-| the knob-ON countermeasure (bugs #6/#7) | `tests/test_best_of_n_tree_integrity.py` + `tests/_best_of_n_slate_support.py` (real evolve, default `best_of_n`) |
-| oracle 1 — full-loop convergence to an exact floor | `tests/test_convergence_known_answer.py` |
-| oracle 2 — decision-procedure operating characteristics under noise | `tests/test_decision_procedure_power.py` |
+| the knob-ON countermeasure for the tree-mismatch cases | `tests/test_best_of_n_tree_integrity.py` + `tests/_best_of_n_slate_support.py` (real evolve, default `best_of_n`) |
+| the convergence oracle — full-loop convergence to an exact floor | `tests/test_convergence_known_answer.py` |
+| the power oracle — decision-procedure operating characteristics under noise | `tests/test_decision_procedure_power.py` |
 | worker-boundary stubs (module-level, importable) | `tests/_subprocess_worker_support.py` |
-| cross-backend genstore contract + session-templates | `tests/test_genstore_conformance.py` |
+| cross-backend generation-store contract + session templates | `tests/test_genstore_conformance.py` |
 | cross-backend storage contract | `tests/test_storage_conformance.py` |
-| the reader snapshot oracle (ordering migration) | `tests/_reader_parity_harness.py` + its consuming test |
-| the six behavior-preserving gates | `tools/parity.sh` + `tools/parity/lib/*.py` + `tools/parity/golden/` |
-| contract-hash checkout-independence (bug #10) | `tests/test_epoch_contract.py::test_contract_hash_is_cwd_and_checkout_invariant` |
+| the reader snapshot oracle (epoch ordering) | `tests/_reader_parity_harness.py` + its consuming test |
+| the behavior-preserving parity gates | `tools/parity.sh` + `tools/parity/lib/*.py` + `tools/parity/golden/` |
+| contract-hash checkout-independence | `tests/test_epoch_contract.py::test_contract_hash_is_cwd_and_checkout_invariant` |
 | the CLI surface is canonical | `tools/parity/lib/cli_help.py` (regen: `--update`) |
 | the index projection is pure | `tools/parity/lib/test_reindex_golden.py` |
 | the whole end-to-end audit bytes | `tools/parity/lib/test_mock_golden.py` + `mock_evolve_capture.py` |
