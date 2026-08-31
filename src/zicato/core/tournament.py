@@ -11,6 +11,8 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Any, Literal
 
+from zicato.core.constraints import KnobConstraint
+
 # ---------------------------------------------------------------------------
 # Tournament decision / structure
 # ---------------------------------------------------------------------------
@@ -95,6 +97,18 @@ VALID_TOURNAMENT_STRUCTURES: tuple[str, ...] = (
 )
 
 
+#: Bounds on the structure params that carry a domain regardless of which
+#: structure reads them. The params mapping is otherwise opaque to the data
+#: layer, and a strategy that clamps what it reads (``max(1, ...)``) cannot
+#: tell an operator their setting was ignored — so a nonsensical value is
+#: refused at contract load instead of silently corrected at round start.
+#: ``replicates`` is how many times a duel is re-run and averaged, so fewer
+#: than one is not a cheaper tournament but no measurement at all.
+TOURNAMENT_PARAM_CONSTRAINTS: Mapping[str, KnobConstraint] = {
+    "replicates": KnobConstraint(minimum=1, label='tournament params["replicates"]'),
+}
+
+
 @dataclass(frozen=True, slots=True)
 class MatchOutcome:
     """One match a generation played inside its tournament.
@@ -147,11 +161,13 @@ class TournamentStructure:
     params:
         A structure-specific JSON object, stored and round-tripped
         verbatim as an opaque ``Mapping[str, Any]`` (the same
-        forward-compat posture :attr:`BoardEntry.context` takes). The
-        data layer enforces only that this is a mapping; per-key
-        semantics (``field_size``, ``replicates``, ``swiss.rounds_n``,
-        ``racing.eta`` / ``board_fraction`` / ``rung0_board_size``, …)
-        are owned by the selection strategy that reads them.
+        forward-compat posture :attr:`BoardEntry.context` takes). Per-key
+        semantics (``field_size``, ``swiss.rounds_n``, ``racing.eta`` /
+        ``board_fraction`` / ``rung0_board_size``, …) are owned by the
+        selection strategy that reads them; the data layer enforces that
+        this is a mapping and that any key in
+        :data:`TOURNAMENT_PARAM_CONSTRAINTS` holds a value in its
+        declared range.
 
     The default factory :meth:`gauntlet` yields the fully-defaulted
     gauntlet spec an absent ``tournament`` block resolves to.
@@ -171,6 +187,9 @@ class TournamentStructure:
                 f"tournament params must be a JSON object (mapping), got "
                 f"{type(self.params).__name__}"
             )
+        for key, constraint in TOURNAMENT_PARAM_CONSTRAINTS.items():
+            if key in self.params:
+                constraint.check(key, self.params[key])
 
     @classmethod
     def gauntlet(cls) -> TournamentStructure:

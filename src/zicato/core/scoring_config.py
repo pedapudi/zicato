@@ -6,11 +6,16 @@ Split out of :mod:`zicato.core.types`; re-exported from there and from
 
 from __future__ import annotations
 
-import math
 from collections.abc import Mapping
 from dataclasses import MISSING, dataclass, field, fields
-from typing import Any
+from typing import Any, get_args
 
+from zicato.core.constraints import (
+    KnobConstraint,
+    require_finite_mapping,
+    require_finite_number,
+    validate_knobs,
+)
 from zicato.core.tournament import (
     PassRateMonotonicityScope,
     TournamentStructure,
@@ -43,6 +48,12 @@ KNOWN_TELEMETRY_DIALECTS: frozenset[str] = frozenset(
     {DIALECT_GOLDFIVE, DIALECT_ADK_EVENTS, DIALECT_TRANSCRIPT}
 )
 
+#: How the recombination slot composes the patch union of two rejected
+#: challengers: ``"mechanical"`` concatenates two disjoint patches with no
+#: model call, ``"llm"`` issues one merge call that can also resolve an
+#: overlap. See :attr:`ProposerQualityConfig.recombine_merge`.
+RECOMBINE_MERGE_MODES: tuple[str, ...] = ("mechanical", "llm")
+
 
 # ---------------------------------------------------------------------------
 # Declarative knob metadata (REIMPLEMENTATION.md — Finding 3)
@@ -54,6 +65,7 @@ def _knob(
     omit_at_default: bool = False,
     builder_op: str | None = None,
     builder_arg: str | None = None,
+    constraint: KnobConstraint | None = None,
 ) -> dict[str, Any]:
     """Per-field knob metadata — the declarative source of truth.
 
@@ -82,48 +94,34 @@ def _knob(
     would vacuously cover every sibling — which is how ``ladder.threshold``
     came to ship with no GUI row at all.
 
-    Two guard tests keep the registry honest. A completeness guard asserts
+    Three guard tests keep the registry honest. A completeness guard asserts
     every ``builder_op`` knob is wired through all five touchpoints (op
     signature, API dispatch, copilot tool, GUI row, node test), naming which
     one is missing for which knob. A companion guard asserts every contract
     knob field either CARRIES a ``builder_op`` or sits in an explicitly
     justified exemption set, so a knob cannot skip the builder by omitting
-    this metadata.
+    this metadata. A third guard feeds every declared ``constraint`` an
+    inadmissible value and requires the loader and the builder to refuse it
+    with the same message.
 
-    Defaults and validation are unaffected: they stay on the field
-    declaration and ``__post_init__``. This is metadata only.
+    ``constraint`` — the values the knob admits
+    (:class:`zicato.core.constraints.KnobConstraint`). ``__post_init__``
+    applies it through :func:`~zicato.core.constraints.validate_knobs`, and
+    the builder consults the SAME declaration through
+    :func:`~zicato.core.constraints.require_knob`, so an out-of-range value
+    is refused with one wording whichever surface catches it. ``None`` means
+    the field carries no machine-checkable domain (a bool, a mapping, a
+    knob whose rule needs prose).
+
+    Defaults stay on the field declaration; a rule too rich for a
+    ``KnobConstraint`` stays in ``__post_init__``.
     """
     return {
         "omit_at_default": omit_at_default,
         "builder_op": builder_op,
         "builder_arg": builder_arg,
+        "constraint": constraint,
     }
-
-
-def _require_finite_number(name: str, value: object) -> None:
-    """Reject a non-numeric or non-finite evaluation-contract knob.
-
-    A scoring contract controls promotion decisions, so ``NaN`` and infinities
-    cannot be treated as ordinary numeric values.  In particular, comparison
-    with ``NaN`` is always false and can otherwise bypass a gate condition.
-    JSON accepts those spellings by default, and direct dataclass construction
-    can supply them too, so validation belongs at the frozen-contract boundary.
-    This is the same policy :func:`zicato.scoring.transforms.validate_transform_spec`
-    already applies to transform params, generalized to the rest of the contract.
-    """
-    if isinstance(value, bool) or not isinstance(value, int | float):
-        raise ValueError(f"{name} must be a finite number, got {value!r}")
-    # An ``int`` is finite by construction, and JSON can carry one too large to
-    # convert — ``float(10**400)`` raises ``OverflowError``, which would escape
-    # this function instead of the ``ValueError`` every caller expects.
-    if isinstance(value, float) and not math.isfinite(value):
-        raise ValueError(f"{name} must be finite, got {value!r}")
-
-
-def _require_finite_mapping(name: str, values: Mapping[str, object]) -> None:
-    """Validate every numeric coefficient in one scoring-weight mapping."""
-    for key, value in values.items():
-        _require_finite_number(f"{name}[{key!r}]", value)
 
 
 # ---------------------------------------------------------------------------
@@ -184,26 +182,32 @@ class LadderConfig:
         default=True, metadata=_knob(builder_op="set_holdout", builder_arg="ladder.enabled")
     )
     threshold: float | None = field(
-        default=None, metadata=_knob(builder_op="set_holdout", builder_arg="ladder.threshold")
+        default=None,
+        metadata=_knob(
+            builder_op="set_holdout",
+            builder_arg="ladder.threshold",
+            constraint=KnobConstraint(minimum=0.0, allow_none=True, label="ladder.threshold"),
+        ),
     )
     budget: int = field(
-        default=16, metadata=_knob(builder_op="set_holdout", builder_arg="ladder.budget")
+        default=16,
+        metadata=_knob(
+            builder_op="set_holdout",
+            builder_arg="ladder.budget",
+            constraint=KnobConstraint(minimum=0, label="ladder.budget"),
+        ),
     )
     noise_scale: float = field(
-        default=0.0, metadata=_knob(builder_op="set_holdout", builder_arg="ladder.noise_scale")
+        default=0.0,
+        metadata=_knob(
+            builder_op="set_holdout",
+            builder_arg="ladder.noise_scale",
+            constraint=KnobConstraint(minimum=0.0, label="ladder.noise_scale"),
+        ),
     )
 
     def __post_init__(self) -> None:
-        if self.threshold is not None:
-            _require_finite_number("ladder.threshold", self.threshold)
-        _require_finite_number("ladder.budget", self.budget)
-        _require_finite_number("ladder.noise_scale", self.noise_scale)
-        if self.threshold is not None and self.threshold < 0.0:
-            raise ValueError(f"ladder.threshold must be >= 0 or None, got {self.threshold!r}")
-        if self.budget < 0:
-            raise ValueError(f"ladder.budget must be >= 0, got {self.budget!r}")
-        if self.noise_scale < 0.0:
-            raise ValueError(f"ladder.noise_scale must be >= 0, got {self.noise_scale!r}")
+        validate_knobs(self)
 
     @classmethod
     def defaults(cls) -> LadderConfig:
@@ -299,7 +303,10 @@ class OverfittingConfig:
     holdout_fraction: float = field(
         default=0.3, metadata=_knob(builder_op="set_holdout", builder_arg="fraction")
     )
-    min_board_size_for_split: int = field(default=6, metadata=_knob(builder_op="set_holdout"))
+    min_board_size_for_split: int = field(
+        default=6,
+        metadata=_knob(builder_op="set_holdout", constraint=KnobConstraint(minimum=0)),
+    )
     restrict_proposer_visibility: bool = field(
         default=True, metadata=_knob(builder_op="set_holdout")
     )
@@ -308,36 +315,29 @@ class OverfittingConfig:
     )
     rotate_holdout: bool = field(default=True, metadata=_knob(builder_op="set_holdout"))
     max_generations_per_contract: int | None = field(
-        default=None, metadata=_knob(builder_op="set_holdout")
+        default=None,
+        metadata=_knob(
+            builder_op="set_holdout",
+            constraint=KnobConstraint(minimum=1, allow_none=True),
+        ),
     )
     random_baseline_every_n: int = field(
         default=0,
-        metadata=_knob(omit_at_default=True, builder_op="set_holdout"),
+        metadata=_knob(
+            omit_at_default=True,
+            builder_op="set_holdout",
+            constraint=KnobConstraint(minimum=0),
+        ),
     )
 
     def __post_init__(self) -> None:
-        _require_finite_number("holdout_fraction", self.holdout_fraction)
-        _require_finite_number("min_board_size_for_split", self.min_board_size_for_split)
-        if self.max_generations_per_contract is not None:
-            _require_finite_number(
-                "max_generations_per_contract", self.max_generations_per_contract
-            )
-        _require_finite_number("random_baseline_every_n", self.random_baseline_every_n)
+        validate_knobs(self)
+        # An open interval rather than a floor, so it stays here: a fraction of
+        # 0 would hold nothing out and a fraction of 1 would leave nothing to
+        # train on, and neither end is admissible.
+        require_finite_number("holdout_fraction", self.holdout_fraction)
         if not 0.0 < self.holdout_fraction < 1.0:
             raise ValueError(f"holdout_fraction must be in (0, 1), got {self.holdout_fraction!r}")
-        if self.min_board_size_for_split < 0:
-            raise ValueError(
-                f"min_board_size_for_split must be >= 0, got " f"{self.min_board_size_for_split!r}"
-            )
-        if self.max_generations_per_contract is not None and self.max_generations_per_contract < 1:
-            raise ValueError(
-                f"max_generations_per_contract must be >= 1 or None, got "
-                f"{self.max_generations_per_contract!r}"
-            )
-        if self.random_baseline_every_n < 0:
-            raise ValueError(
-                f"random_baseline_every_n must be >= 0, got {self.random_baseline_every_n!r}"
-            )
 
     @classmethod
     def defaults(cls) -> OverfittingConfig:
@@ -558,7 +558,7 @@ class ProposerQualityConfig:
 
     best_of_n: int = field(
         default=3,
-        metadata=_knob(builder_op="set_proposer_quality"),
+        metadata=_knob(builder_op="set_proposer_quality", constraint=KnobConstraint(minimum=1)),
     )
     critique_enabled: bool = field(
         default=True,
@@ -566,7 +566,12 @@ class ProposerQualityConfig:
     )
     screen_entries: int = field(
         default=0,
-        metadata=_knob(omit_at_default=True, builder_op="set_screening", builder_arg="entries"),
+        metadata=_knob(
+            omit_at_default=True,
+            builder_op="set_screening",
+            builder_arg="entries",
+            constraint=KnobConstraint(minimum=0),
+        ),
     )
     screen_veto_only: bool = field(
         default=False,
@@ -574,7 +579,11 @@ class ProposerQualityConfig:
     )
     process_exemplars: int = field(
         default=0,
-        metadata=_knob(omit_at_default=True, builder_op="set_proposer_quality"),
+        metadata=_knob(
+            omit_at_default=True,
+            builder_op="set_proposer_quality",
+            constraint=KnobConstraint(minimum=0),
+        ),
     )
     recombine: bool = field(
         default=False,
@@ -582,42 +591,31 @@ class ProposerQualityConfig:
     )
     genealogy: int = field(
         default=0,
-        metadata=_knob(omit_at_default=True, builder_op="set_proposer_quality"),
+        metadata=_knob(
+            omit_at_default=True,
+            builder_op="set_proposer_quality",
+            constraint=KnobConstraint(minimum=0),
+        ),
     )
     calibration_feedback: int = field(
         default=0,
-        metadata=_knob(omit_at_default=True, builder_op="set_proposer_quality"),
+        metadata=_knob(
+            omit_at_default=True,
+            builder_op="set_proposer_quality",
+            constraint=KnobConstraint(minimum=0),
+        ),
     )
     recombine_merge: str = field(
         default="mechanical",
-        metadata=_knob(omit_at_default=True, builder_op="set_proposer_quality"),
+        metadata=_knob(
+            omit_at_default=True,
+            builder_op="set_proposer_quality",
+            constraint=KnobConstraint(choices=RECOMBINE_MERGE_MODES),
+        ),
     )
 
     def __post_init__(self) -> None:
-        for name in (
-            "best_of_n",
-            "screen_entries",
-            "process_exemplars",
-            "genealogy",
-            "calibration_feedback",
-        ):
-            _require_finite_number(name, getattr(self, name))
-        if self.best_of_n < 1:
-            raise ValueError(f"best_of_n must be >= 1, got {self.best_of_n!r}")
-        if self.screen_entries < 0:
-            raise ValueError(f"screen_entries must be >= 0, got {self.screen_entries!r}")
-        if self.process_exemplars < 0:
-            raise ValueError(f"process_exemplars must be >= 0, got {self.process_exemplars!r}")
-        if self.genealogy < 0:
-            raise ValueError(f"genealogy must be >= 0, got {self.genealogy!r}")
-        if self.calibration_feedback < 0:
-            raise ValueError(
-                f"calibration_feedback must be >= 0, got {self.calibration_feedback!r}"
-            )
-        if self.recombine_merge not in ("mechanical", "llm"):
-            raise ValueError(
-                f"recombine_merge must be 'mechanical' or 'llm', got {self.recombine_merge!r}"
-            )
+        validate_knobs(self)
 
     @classmethod
     def defaults(cls) -> ProposerQualityConfig:
@@ -1007,7 +1005,9 @@ class ScoringWeights:
         Validated fail-fast in :meth:`__post_init__`.
     """
 
-    pass_weight: float = field(default=1.0, metadata=_knob(builder_op="set_weights"))
+    pass_weight: float = field(
+        default=1.0, metadata=_knob(builder_op="set_weights", constraint=KnobConstraint())
+    )
     severity_weights: Mapping[str, float] = field(
         default_factory=_default_severity_weights,
         metadata=_knob(builder_op="set_weights"),
@@ -1018,14 +1018,22 @@ class ScoringWeights:
     per_judge_weights: Mapping[str, float] = field(
         default_factory=dict, metadata=_knob(builder_op="set_weights")
     )
-    default_judge_weight: float = field(default=1.0, metadata=_knob(builder_op="set_weights"))
-    plan_revision_weight: float = field(default=0.5, metadata=_knob(builder_op="set_weights"))
+    default_judge_weight: float = field(
+        default=1.0, metadata=_knob(builder_op="set_weights", constraint=KnobConstraint())
+    )
+    plan_revision_weight: float = field(
+        default=0.5, metadata=_knob(builder_op="set_weights", constraint=KnobConstraint())
+    )
     # The two ``failure:`` channel magnitudes. They live on the contract (not
     # as module constants) so retuning them rolls the epoch through the normal
     # hash mechanism — a mid-epoch retune would otherwise let the unit cache
     # fold old- and new-formula losses together undetectably.
-    task_failure_weight: float = field(default=10.0, metadata=_knob(builder_op="set_weights"))
-    not_completed_weight: float = field(default=50.0, metadata=_knob(builder_op="set_weights"))
+    task_failure_weight: float = field(
+        default=10.0, metadata=_knob(builder_op="set_weights", constraint=KnobConstraint())
+    )
+    not_completed_weight: float = field(
+        default=50.0, metadata=_knob(builder_op="set_weights", constraint=KnobConstraint())
+    )
     # Opt-in parsimony / MDL term (OVERFITTING.md §5 / §12 #4). DEFAULT 0.0 ⇒
     # the diff-complexity term is exactly absent and the scalar / contract hash
     # / every golden are byte-identical to a contract without this field (the
@@ -1035,7 +1043,11 @@ class ScoringWeights:
     # challenger's scalar so a shorter-description edit is preferred.
     diff_complexity_weight: float = field(
         default=0.0,
-        metadata=_knob(omit_at_default=True, builder_op="set_namespace_weights"),
+        metadata=_knob(
+            omit_at_default=True,
+            builder_op="set_namespace_weights",
+            constraint=KnobConstraint(minimum=0),
+        ),
     )
     # Parsimony CEILING (OVERFITTING.md §5 / §12 #4 — the ceiling half of the
     # diff-complexity regularizer, paired with the loss-term weight above).
@@ -1046,9 +1058,21 @@ class ScoringWeights:
     # not a loss nudge. Any value ``<= 0`` is treated as OFF.
     diff_complexity_ceiling: float = field(
         default=0.0,
-        metadata=_knob(omit_at_default=True, builder_op="set_namespace_weights"),
+        metadata=_knob(
+            omit_at_default=True,
+            builder_op="set_namespace_weights",
+            constraint=KnobConstraint(minimum=0),
+        ),
     )
-    promote_margin: float = field(default=0.01, metadata=_knob(builder_op="set_gate"))
+    # A TOLERANCE the challenger must clear, so a negative value is not an
+    # aggressive setting but an inverted gate: the scalar rule
+    # ``delta_scalar <= -promote_margin`` would then promote a challenger that
+    # scored WORSE than the champion by up to the margin. Refused at contract
+    # load, like every other out-of-domain knob.
+    promote_margin: float = field(
+        default=0.01,
+        metadata=_knob(builder_op="set_gate", constraint=KnobConstraint(minimum=0)),
+    )
     # The holdout confirmation's OWN bounds (issue #118). ``promote_margin``
     # was calibrated against the train slice and reused verbatim on the
     # holdout, whose 1/N quantization is coarser; the two uses then pull one
@@ -1063,7 +1087,9 @@ class ScoringWeights:
     )
     holdout_entry_regression_budget: int = field(
         default=0,
-        metadata=_knob(omit_at_default=True, builder_op="set_gate"),
+        metadata=_knob(
+            omit_at_default=True, builder_op="set_gate", constraint=KnobConstraint(minimum=0)
+        ),
     )
     pass_rate_monotonicity: bool = field(
         default=True,
@@ -1071,14 +1097,23 @@ class ScoringWeights:
     )
     pass_rate_monotonicity_scope: PassRateMonotonicityScope = field(
         default="per_entry",
-        metadata=_knob(builder_op="set_gate", builder_arg="monotonicity_scope"),
+        metadata=_knob(
+            builder_op="set_gate",
+            builder_arg="monotonicity_scope",
+            # The accepted tokens come from the annotation itself, so the
+            # closed set is stated once.
+            constraint=KnobConstraint(choices=get_args(PassRateMonotonicityScope)),
+        ),
     )
     regression_gate_enabled: bool = field(default=False, metadata=_knob(builder_op="set_gate"))
     regression_test_command: tuple[str, ...] = field(
         default=("pytest", "tests/", "-q"),
         metadata=_knob(builder_op="set_gate"),
     )
-    regression_timeout_s: int = field(default=600, metadata=_knob(builder_op="set_gate"))
+    regression_timeout_s: int = field(
+        default=600,
+        metadata=_knob(builder_op="set_gate", constraint=KnobConstraint(minimum=1)),
+    )
     # Multi-objective surface — see the helpers above for the rationale
     # behind the default coefficient choices.
     namespace_weights: Mapping[str, float] = field(
@@ -1211,6 +1246,7 @@ class ScoringWeights:
             omit_at_default=True,
             builder_op="set_telemetry_dialect",
             builder_arg="dialect",
+            constraint=KnobConstraint(choices=tuple(sorted(KNOWN_TELEMETRY_DIALECTS))),
         ),
     )
     # Opt-in INTEGRITY BLOCKING modes (both default OFF — the alarm-only
@@ -1265,15 +1301,23 @@ class ScoringWeights:
     )
 
     def __post_init__(self) -> None:
-        """Validate the declarative transform specs fail-fast at construction.
+        """Validate the contract fail-fast at construction.
 
         Runs at contract load (the loader builds a :class:`ScoringWeights`
-        from ``scoring.json``), so a malformed transform — unknown op,
-        non-finite / missing / typo'd param — is rejected here with a clear
-        error rather than silently defaulting or surfacing as a ``NaN`` scalar
-        partway through a run. By the time the scoring dispatchers call
+        from ``scoring.json``), so an out-of-range knob, a non-finite weight
+        and a malformed transform — unknown op, non-finite / missing / typo'd
+        param — are all rejected here with a clear error rather than silently
+        defaulting or surfacing as a ``NaN`` scalar partway through a run. By
+        the time the scoring dispatchers call
         :func:`zicato.scoring.transforms.apply_transform`, every spec on this
         instance is already known-good.
+
+        Each knob's admissible range or closed vocabulary is declared on the
+        field itself and applied by
+        :func:`~zicato.core.constraints.validate_knobs`; the checks written
+        out below are the rules a declaration cannot carry — cross-field
+        invariants, mapping contents, and bounds whose message must say more
+        than the bound.
 
         The dotted-spec scoring PLUGINS (``drift_reducer`` / ``scalar_fn``,
         issue #19) are validated HERE only as strings — resolution +
@@ -1283,25 +1327,13 @@ class ScoringWeights:
         """
         from zicato.scoring.transforms import validate_transform_spec  # noqa: PLC0415
 
-        for name in (
-            "pass_weight",
-            "default_judge_weight",
-            "plan_revision_weight",
-            "task_failure_weight",
-            "not_completed_weight",
-            "diff_complexity_weight",
-            "diff_complexity_ceiling",
-            "promote_margin",
-            "holdout_entry_regression_budget",
-            "regression_timeout_s",
-        ):
-            _require_finite_number(name, getattr(self, name))
+        validate_knobs(self)
         if self.holdout_margin is not None:
-            _require_finite_number("holdout_margin", self.holdout_margin)
-        _require_finite_mapping("severity_weights", self.severity_weights)
-        _require_finite_mapping("per_kind_weights", self.per_kind_weights)
-        _require_finite_mapping("per_judge_weights", self.per_judge_weights)
-        _require_finite_mapping("namespace_weights", self.namespace_weights)
+            require_finite_number("holdout_margin", self.holdout_margin)
+        require_finite_mapping("severity_weights", self.severity_weights)
+        require_finite_mapping("per_kind_weights", self.per_kind_weights)
+        require_finite_mapping("per_judge_weights", self.per_judge_weights)
+        require_finite_mapping("namespace_weights", self.namespace_weights)
 
         # A run that did not complete is charged in the ``failure:`` channel,
         # so a contract that zeroes (or omits) that channel makes crashing
@@ -1345,29 +1377,15 @@ class ScoringWeights:
                     f"{plugin_field} must be a dotted-spec string (got "
                     f"{type(value).__name__}); resolution happens at scoring time"
                 )
-        # Reject an unknown telemetry dialect fail-fast — the "refuse" half of
-        # the warn-or-refuse story (TELEMETRY-DIALECTS.md §4.2). A capability
-        # MISMATCH (drift weights under a drift-incapable dialect) is only
-        # WARNED, recommend-only, in the reducer; an unknown NAME is a genuine
-        # config error rejected here, like an unknown transform op.
-        if self.telemetry_dialect not in KNOWN_TELEMETRY_DIALECTS:
-            known = ", ".join(sorted(KNOWN_TELEMETRY_DIALECTS))
-            raise ValueError(
-                f"telemetry_dialect must be one of {{{known}}}, got " f"{self.telemetry_dialect!r}"
-            )
-        # The holdout's own bounds (issue #118). Both are tolerances, so a
-        # negative value is meaningless rather than merely aggressive — reject
-        # at contract load like every other out-of-domain knob, instead of
-        # letting it invert the confirmation into a bar the holdout must clear.
+        # The holdout confirmation's own margin (issue #118). A tolerance, so a
+        # negative value is meaningless rather than merely aggressive — it would
+        # invert the confirmation into a bar the holdout must clear. Stated here
+        # rather than as a declared bound so the message can name the fallback
+        # the ``None`` token selects.
         if self.holdout_margin is not None and self.holdout_margin < 0.0:
             raise ValueError(
                 f"holdout_margin must be >= 0 (or None to reuse promote_margin), "
                 f"got {self.holdout_margin!r}"
-            )
-        if self.holdout_entry_regression_budget < 0:
-            raise ValueError(
-                f"holdout_entry_regression_budget must be >= 0, got "
-                f"{self.holdout_entry_regression_budget!r}"
             )
 
     def to_json(self) -> dict[str, Any]:

@@ -41,9 +41,9 @@ above the baseline and negative where it stands below.
 
 | Measurement | Baseline (`f9052dd`) | Enforced limit | Limit minus baseline |
 |---|---:|---:|---:|
-| Total | 408,661 | 453,648 | +44,987 |
-| Production | 197,702 | 203,864 | +6,162 |
-| Production logic | 117,024 | 121,581 | +4,557 |
+| Total | 408,661 | 453,957 | +45,296 |
+| Production | 197,702 | 204,031 | +6,329 |
+| Production logic | 117,024 | 121,627 | +4,603 |
 
 The baseline row is the reference `f9052dd` measured by the classification the
 checker holds, which counts the console's hand-written entry point
@@ -146,3 +146,6 @@ correction exposes and the entry records that reason.
 | Executable-line measurement (total) | 453,362 | +173 | 453,535 | Issue #324: the per-language logic counters in `tools/line_budget.py`, the third enforced ceiling, the stated reason beside each excluded path, and the docstring, comment, and block-comment fixtures that pin what the logic count drops. |
 | The console entry point counted (total) | 453,535 | +113 | 453,648 | Issue #324: `src/zicato/dashboard/static/app_T.js` is hand-written source, so it is absent from the exclusion list and its lines are measured like the rest of the console. |
 | The console entry point counted (production) | 203,751 | +113 | 203,864 | Issue #324: the same correction, in the subtotal the file belongs to as runtime source under `src/zicato/`. |
+| Contract knob bounds declared once (total) | 453,648 | +309 | 453,957 | Issue #324: the shared constraint type with its finiteness, range and closed-vocabulary checks; the bound declared on each of the twenty-four contract knobs that has one; the `replicates` bound on the otherwise opaque tournament-structure params; and the guard pairing every declared bound against both the contract loader and the builder operation the knob's own metadata names. Two knobs gained a bound they never had: `promote_margin`, where a negative value inverted the promote gate into promoting a regression, and `replicates`, which every selection strategy silently clamped up to one. |
+| Contract knob bounds declared once (production) | 203,864 | +167 | 204,031 | Issue #324: `core/constraints.py`, the declarations on the field definitions, and the params check in `TournamentStructure`, against which the builder's twelve private copies of the same rules are removed. |
+| Contract knob bounds declared once (production logic) | 121,581 | +46 | 121,627 | Issue #324: the net across four files. `core/constraints.py` adds 51 executable lines — the constraint dataclass, its check, the finiteness helpers moved out of `core/scoring_config.py`, and the two lookups the builder calls. `builder/operations.py` loses 18, the twelve inline range and vocabulary checks replaced by one call each. `core/scoring_config.py` nets +6: about twenty range and finiteness statements leave its four `__post_init__` bodies, and the field declarations that now carry a bound wrap onto more lines than they did. `core/tournament.py` adds 7 for the structure-params bound table and the loop that applies it. |
