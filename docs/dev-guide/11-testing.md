@@ -1042,7 +1042,7 @@ so a red names the configuration that moved:
 | --- | --- | --- |
 | `MOCK-GOLDEN` | racing field 4 · full · 1 | the multi-challenger rungs, cuts, and crowning duel |
 | `MOCK-GOLDEN-GAUNTLET` | gauntlet · full · 1 | the `field_n == 1` branches: one crowning duel with no rungs or cuts, and the crowning holdout confirmation on it |
-| `MOCK-GOLDEN-GAUNTLET-FAST` | gauntlet · fast · 1 | cache-first slot resolution under a single challenger |
+| `MOCK-GOLDEN-GAUNTLET-FAST` | gauntlet · fast · 1 | cache-first slot resolution under a single challenger, and a fast round's crowning holdout confirmation |
 | `MOCK-GOLDEN-RACING-FAST` | racing field 4 · fast · 1 | every rung resolving both competitors through the unit cache |
 | `MOCK-GOLDEN-TWO-ROUND-RACING` | racing field 4 · full · 2 | the between-round carry-over: the promoted head advancing off the seeded `v0`, the crowned generation defending the next round, that generation's patched snapshot supplying the next round's mutable surface, round directories numbering on from `0`, and round 1's settled snapshot naming round 0's winner as its champion |
 | `MOCK-GOLDEN-SWISS` | swiss field 4 · full · 1 | fixed-round pairings over champion + challengers, Copeland standings, and the leader's final champion-gate confirmation |
@@ -1059,6 +1059,18 @@ Every lane drives `evolve_n_rounds`, single-round lanes included: at
 `rounds=1` the loop's persisted artifacts are byte-identical to a bare
 `evolve_once`, so the round count is an ordinary lane parameter rather than
 a second code path.
+
+Every lane also holds part of its board back, so every golden witnesses the
+train-slice selection and the crowning holdout confirmation. Which entries
+are held back is hash-derived and salted by the epoch id, so a lane's
+`epoch_name` decides it; under a name that puts no entry in the holdout, the
+split degrades to the whole board and the lane exercises no holdout rule
+while still capturing and still passing. `test_lane_board_splits_to_a_non_
+empty_holdout` asserts the property per lane, under the same `-k <lane name>`
+selector as the byte comparison. When it fails, choose a different
+`epoch_name` for that lane and recapture it: the name is the salt, so a
+descriptive alternative that splits non-empty is usually one or two tries
+away.
 
 The two fast lanes pre-seed the champion's per-board `loss.json` for every
 replicate slot the contract requests and install the PERSISTING reducer
