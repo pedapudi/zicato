@@ -44,7 +44,7 @@ the proposer can break the harness; too narrow and it finds nothing to change.
 
 - **`make_adapter() -> HarnessAdapter`** — zero-argument module-level factory.
   Returns the adapter instance at worker startup.
-- **`load(snapshot_root: Path) -> HarnessSession`** — return a session bound to
+- **`load(snapshot_root: Path) -> RunnableHarness`** — return a session bound to
   `snapshot_root`. Prepend it to `sys.path` and reload modules so the worker
   runs mutated code, not stale baseline code. Raise if the entrypoint will not
   resolve, so zicato fails the candidate cleanly.
@@ -80,9 +80,12 @@ session.run(entry: BoardEntry, sinks: Sequence[EventSink], config: RuntimeConfig
 ```
 
 Run `entry.input`, push lifecycle events to `sinks`, return
-`RunResult(aborted=True, abort_reason='wall_clock_budget')` past
-`entry.wall_clock_budget_seconds`, else `RunResult(final_output=...,
-runtime_ms=...)`.
+`RunResult(run_id=..., entry_id=entry.id, aborted=True,
+abort_reason="wall_clock_budget")` past `entry.wall_clock_budget_seconds`, else
+the same call carrying `final_output=...` and `runtime_ms=...`. `run_id` and
+`entry_id` have no defaults, so every construction supplies them; the budget
+string is matched verbatim, and any other spelling leaves `budget_exceeded`
+false.
 
 ⚠️ **The second parameter's name is load-bearing.** Zicato inspects your `run`
 signature, and if that parameter is called `sink_path` or `events_path` it
@@ -163,27 +166,47 @@ paths are yours to close.
 
 ### Apply
 
-```sh
-.venv/bin/zicato register --workspace .zicato \
-    --adk harness:make_adapter --mutable-tree ./my_pkg
-```
-
-Equivalently in `.zicato/config.json`:
+⚠️ **There is no CLI flag for this seam.** `zicato epoch register --adk` writes
+the ADK kind and nothing else, so pointing it at your factory registers an
+`ADKHarnessAdapter` on your dotted path rather than your adapter. Write the
+generic **import-kind `adapter` block** into `.zicato/config.json` yourself —
+the one shape both the adapter factory and the subprocess worker reconstruct:
 
 ```json
 {
-  "instance_id": "my-project",
-  "contract": {
-    "adk": "harness:make_adapter",
-    "mutable_trees": ["./my_pkg"]
-  }
+  "adapter": {
+    "kind": "import",
+    "factory": "my_pkg.harness:make_adapter"
+  },
+  "mutable_trees": ["./my_pkg"],
+  "source_roots": ["./my_pkg"]
 }
 ```
 
-`adk` must resolve to your factory from the workspace root. Scope
-`mutable_trees` to just the code you want rewritten — leave support code and
-anything that grades the run outside it, or the proposer can edit the thing
+`register` merges into `config.json` rather than replacing it, so run it first
+for the contract paths if you want them pinned, then add the block.
+
+- **These are TOP-LEVEL keys.** The sibling `contract` block holds only the
+  contract source paths — `board_path`, `rubric_path`, `scoring_path`, and an
+  optional `proposer_path`. Nothing reads an adapter key nested inside it.
+- **`factory` takes an optional `"args": [...]`**, passed positionally to
+  `make_adapter`. It must be JSON-serializable — the worker re-imports the path
+  and replays the args in a fresh interpreter.
+- **Write `mutable_trees` and `source_roots` to the same list.** They are one
+  concept under two historical names: `zicato inspect mutations` and
+  `zicato proposer propose` read `source_roots`.
+- ⚠️ **Neither key scopes an import-kind adapter.** For `kind: "adk"` the
+  factory passes `mutable_trees` into the adapter; for `kind: "import"` it
+  passes only `args`, so your own `mutable_subpaths()` is the sole authority on
+  what the proposer may rewrite. Keep the two in agreement — the config keys
+  still drive the mutation-surface readers above.
+
+Scope both to just the code you want rewritten — leave support code and
+anything that grades the run outside them, or the proposer can edit the thing
 measuring it.
+
+⚠️ With no `adapter` block, the factory falls back to a legacy top-level
+`adk_entrypoint`; with neither, it raises rather than defaulting.
 
 ## 2. Board entry scoring: the `predicate` expectation
 
@@ -204,6 +227,7 @@ the auxiliary callable from inside a `predicate`.
 
 ```python
 from zicato.core.types import RunResult
+
 
 def grade_retrieval(result: RunResult) -> bool | float | tuple[float, dict[str, float]]:
     ...
@@ -235,10 +259,9 @@ entries.
 
 **The `metrics` mapping.** A flat dict of name → number recording *why* the
 entry scored what it did: a 0.4 from poor recall reads differently from a 0.4
-from over-retrieval. Values must be plain numbers (non-numeric and infinite are
-dropped silently) and quantities an average is meaningful over — zicato means
-each key across replicates, so rates and scores work but ids and running totals
-do not. Names decide who can read the value:
+from over-retrieval. Values must be plain numbers, and quantities an average is
+meaningful over — zicato means each key across replicates, so rates and scores
+work but ids and running totals do not. Names decide who can read the value:
 
 - **`precision` and `recall` are reserved** — those exact spellings feed the
   built-in outcome marginals that separate over-retrieval from misses.
@@ -252,6 +275,13 @@ do not. Names decide who can read the value:
 Either way **`metrics` never affects scoring**; only the score moves a number
 that decides promotions.
 
+⚠️ **The mapping is the one part of this seam that is not fail-closed.** Every
+value is coerced with `float(v)`, outside the guard that catches your callable:
+a non-numeric one raises out of the expectation evaluation instead of returning
+a failed result with a `detail`, and an infinity is stored verbatim and carried
+into the replicate mean. Sanitize in your scorer. The §3 summarizer's mapping
+*is* filtered — do not assume the same of this one.
+
 **Everything fails closed** to `passed=False` plus an explanatory `detail`: an
 unimportable path, a non-callable target, a raise, a 2-tuple with a `bool` first
 element, a 2-tuple whose second element has no `.items()`, or any other return
@@ -259,8 +289,10 @@ type. `NaN` clamps to `0.0`.
 
 ### Apply
 
-Module and callable are separated by a **colon**; the form is validated at
-contract load, not at run time.
+Both dotted forms resolve, as everywhere else in zicato: `pkg.mod:fn` and
+`pkg.mod.fn`. Parsing the board does not check that the path imports — the
+`zicato evolve` preflight does, reporting `predicate_unresolvable` before the
+loop starts, and at run time an unresolvable path fails the entry closed.
 
 ```json
 "expectation": {
@@ -377,3 +409,4 @@ meant to configure keeps its default.
 - [TELEMETRY-DIALECTS.md](../../docs/design/TELEMETRY-DIALECTS.md) — the three dialects and the `adk_events` shapes.
 - [TELEMETRY.md](../../docs/design/TELEMETRY.md) — `LossProfile` and the namespaced metric surface.
 - `skills/zicato-author-board`, `skills/zicato-tune-scoring` — board JSON, weights and gate knobs.
+- `examples/zicato_examples/target_0_convergence/` — a working import-kind adapter (`harness.py`) and the `config.json` block that wires it (`RUN.md` §2).
