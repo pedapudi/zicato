@@ -175,8 +175,10 @@ inner harness's source. zicato is the only thing that does either.
   `call_llm(system: str, user: str, model: str) -> str` callable. The
   core never imports a vendor SDK.
 - Not framework-coupled. The inner harness can be anything that exposes
-  a `HarnessAdapter`. Google ADK is the only concrete adapter
-  shipped; plain-callable and LangChain adapters are planned.
+  a `HarnessAdapter`. Google ADK is the only adapter implemented in the
+  tree (`zicato/adapters/adk.py`); any other harness is registered
+  through the generic `adapter.kind = "import"` shape, which resolves a
+  dotted path the operator supplies (`zicato/adapter_factory.py`).
 - Not a runtime steerer. Live runs go through goldfive (and
   harmonograf, if the operator wants the console). zicato only acts
   between runs.
@@ -970,7 +972,7 @@ files.
    │    so a hung run cannot        │         │  Run stale/past deadline → │
    │    wedge the orchestrator      │         │  SIGTERM → grace → SIGKILL.│
    │  • writes active_runs/{id}.json│         │  Serves /statusz.          │
-   │  • PLANNED: read control/ at   │         └────────────────────────────┘
+   │  • reads control/ at           │         └────────────────────────────┘
    │    safe points                 │  spawn  ┌────────────────────────────┐
    └────────────────────────────────┼────────►│  dashboard service (Python)│
                                      │         │  ────────────────────────  │
@@ -980,8 +982,8 @@ files.
                                      │         │  runtime/ + index.db +     │
                                      │         │  epochs/. POST /api/       │
                                      │         │  control/* writes control/ │
-                                     │         │  files (consume side       │
-                                     │         │  planned).                 │
+                                     │         │  files; the orchestrator   │
+                                     │         │  consumes them.            │
                                      │         └────────────────────────────┘
 ```
 
@@ -1035,11 +1037,24 @@ The runtime layer ships in stages (see [ROBUSTNESS.md](ROBUSTNESS.md)
 * the `.zicato/runtime/` state files;
 * the dashboard, served as a **separate Python service** rather than as
   a role of the Rust binary, with its GET API, its server-sent-events
-  stream, and the write side of the control endpoints.
+  stream, and both sides of the control endpoints. The orchestrator
+  consumes `control/` commands at safe points
+  (`zicato.runtime.control_consumer`, called from `evolve/loop.py`,
+  `epoching.py`, `field.py`, `gauntlet.py` and `gate.py`) and archives
+  each consumed command into `control_log/`;
+* the conservative crash-resume protocol
+  (`zicato.runtime.resume.prepare_resume`, called from `evolve/loop.py`),
+  which resumes an interrupted epoch where the durable markers allow it
+  and discards partial work where they do not.
 
-**Planned:** the crash-resume protocol and the orchestrator's
-consumption of `control/` commands. The git-backed generation store is
-described in [STORAGE.md](STORAGE.md) §7.
+Generation source trees are stored in a private git repository per
+workspace, which is the default backend that `zicato init` records
+(`DEFAULT_GENERATION_SOURCE_BACKEND` in `epoch/genstore.py`; the
+implementation is `epoch/git_genstore.py`). The directory-snapshot
+backend remains fully supported and is selected with
+`generation_source_backend: "directory"` for an environment where a
+private git repository is unwanted. [STORAGE.md](STORAGE.md) §7
+specifies the git backend.
 
 Because each run crosses a process boundary, the run's inputs are
 serialised to a temp args file and rebuilt inside the worker. The

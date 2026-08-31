@@ -3,15 +3,17 @@
 zicato optimizes systems it is pointed at, and this document specifies
 three of them, in increasing order of risk: a presentation agent, the
 steering layer of the sibling project goldfive, and zicato applied to
-itself. Only the presentation agent runs on the shipped stack. The other
-two are specified here anyway, because each forces a commitment that the
-shipped surface has to have made before that target arrives, and making
-such a commitment upfront is cheaper than reshaping the surface later.
+itself. The presentation agent and the steering layer both run on the
+shipped stack, each with an example directory below. Applying zicato to
+itself is specified without being built, because it forces commitments
+the shipped surface has to have made before that target arrives, and
+making such a commitment upfront is cheaper than reshaping the surface
+later.
 
 | Target | Example directory | What still has to land | What it forces |
 |---|---|---|---|
 | A presentation agent — a multi-agent tree from harmonograf's reference set | `examples/zicato_examples/target_1_presentation/` | nothing; it runs on the shipped stack | nothing extra; it exercises the whole stack end to end |
-| goldfive's own steering layer | `examples/zicato_examples/target_2_goldfive_steering/` | the runner for the synthetic board-entry kinds (§2.5) | mutation across two source trees; a loss signal that is not drift |
+| goldfive's own steering layer | `examples/zicato_examples/target_2_goldfive_steering/` | nothing; the synthetic board-entry runner ships in `zicato/synthetic/` | mutation across two source trees; a loss signal that is not drift |
 | zicato applied to itself | none; not built | nested zicato instances, and a curated benchmark of labeled proposer inputs and ideal outputs (§3.4) | recursion guards across nested instances |
 
 The examples tree carries two further directories that this document does
@@ -349,8 +351,8 @@ ignoring drift that is not there, at a reasonable number of judge calls.
 
 ### 2.7 Commitments the shipped design makes for the steering target
 
-The steering target is not yet reachable, and the shipped design must
-admit it without a schema break:
+Five commitments let the steering target run without a schema break.
+All five hold in the shipped design:
 
 1. **Two `call_llm` callables.** Pinned in
    [EMULATOR.md](EMULATOR.md) to keep the emulator from colluding with
@@ -360,12 +362,13 @@ admit it without a schema break:
 2. **`mutation_points()` over a list of source roots.** Pinned in
    [MUTATION-SURFACE.md](MUTATION-SURFACE.md) §5. A single-tree target
    registers one root; the steering target registers two.
-3. **`BoardEntry.kind` reserves the synthetic slots.**
+3. **`BoardEntry.kind` carries the synthetic slots.**
    Pinned in [BOARD-FORMAT.md](BOARD-FORMAT.md) §6. `synthetic_adversarial`
-   and `synthetic_clean` ship today as reserved members of the
-   `BoardEntryKind` literal, with their discriminant fields and
-   `validate` rules already in `BoardEntry`, so the steering target
-   lands a runner and leaves the schema alone.
+   and `synthetic_clean` are members of the `BoardEntryKind` literal,
+   with their discriminant fields and `validate` rules in `BoardEntry`.
+   Their runner is `zicato/synthetic/` (`run_adversarial_entry` and
+   `run_clean_entry`), dispatched by `_tournament_worker.py` ahead of the
+   adapter session, so the steering target needed no schema change.
 4. **`LossProfile` is open-ended on new fields.** Pinned in
    [TELEMETRY.md](TELEMETRY.md). The cost, adversarial, and specificity
    fields plug in.
@@ -373,8 +376,8 @@ admit it without a schema break:
    in [SCORING.md](SCORING.md). Weights for the new loss terms drop
    into `scoring.json`.
 
-Without those five commitments, the steering target would force a
-schema-breaking change. None of the five is expensive to make upfront.
+Without those five commitments, the steering target would have forced a
+schema-breaking change. Each was cheap to make upfront.
 
 ## 3. Target 3 — zicato itself
 
