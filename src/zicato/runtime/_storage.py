@@ -1,10 +1,10 @@
 """Bridge between the ``runtime/`` domain and the storage seam.
 
-The ``runtime/`` modules historically reached straight for the atomic-file
-helpers (:mod:`zicato.storage`) and :class:`pathlib.Path` math. As
-of the storage-layer refactor they go through :class:`StorageBackend`
-instead — this module is the thin adapter that makes that routing
-ergonomic without changing any public ``runtime/`` signature.
+The ``runtime/`` modules reach persistence through :class:`StorageBackend`
+rather than for the atomic-file helpers (:mod:`zicato.storage`) and
+:class:`pathlib.Path` math directly. This module is the thin adapter that
+makes that routing ergonomic without putting a backend in any public
+``runtime/`` signature.
 
 Two responsibilities:
 
@@ -67,21 +67,21 @@ def lock_key() -> str:
 
 
 def active_tournament_key() -> str:
-    """Storage key for the legacy active-tournament SNAPSHOT record.
+    """Storage key for the active-tournament SNAPSHOT record.
 
-    Retained only for the compat reader: an ``active_tournament.json``
-    snapshot written by a pre-RUNTIME-V2 producer (or a hand-edited
-    file) is still read when no event log is present. The live producer
-    no longer writes it — see :func:`active_tournament_log_key`.
+    Read only as a fallback: an ``active_tournament.json`` file with no
+    event log beside it is still folded into a live view. Nothing writes
+    this key — the live producer appends to the event log instead (see
+    :func:`active_tournament_log_key`).
     """
     return f"{RUNTIME_NS}/active_tournament.json"
 
 
 def active_tournament_log_key() -> str:
-    """Storage key for the active-tournament EVENT LOG (RUNTIME-V2 Phase 3).
+    """Storage key for the active-tournament EVENT LOG.
 
-    The single-writer, append-only JSONL log that replaces the mutable
-    ``active_tournament.json`` snapshot. The orchestrator/runner appends
+    The single-writer, append-only JSONL log that carries the in-progress
+    tournament's live state. The orchestrator/runner appends
     one typed event per state transition (a full-envelope ``Snapshot``
     plus ``EntryUpdate`` / ``PartialAggregate`` / ``ProjectedUpdate``
     deltas); a reader folds the log into the live view. Single-writer
@@ -91,14 +91,14 @@ def active_tournament_log_key() -> str:
 
 
 def progress_log_key() -> str:
-    """Storage key for the ORCHESTRATOR progress EVENT LOG (RUNTIME-V2 Phase 4).
+    """Storage key for the ORCHESTRATOR progress EVENT LOG.
 
     A single-writer, append-only JSONL log the evolve loop appends one
     typed event to on each genuine orchestrator transition (round start,
     propose, apply, tournament start/settle, gate, promote/reject). Its
     monotonic ``seq`` is the TRUE liveness signal: it advances only on real
     progress, never on a timer, so a wedged loop whose heartbeat thread
-    keeps stamping ``now()`` no longer reads as alive. The tail ``seq`` is
+    keeps stamping ``now()`` does not read as alive. The tail ``seq`` is
     stamped into ``heartbeat.json`` and the dashboard SSE frames.
     """
     return f"{RUNTIME_NS}/progress.events.jsonl"

@@ -1,13 +1,13 @@
 """Consume operator control commands at the evolve loop's safe points.
 
 The dashboard (and CLI / a bare ``touch``) *produce* control commands under
-``.zicato/runtime/control/`` via :mod:`zicato.runtime.control`. For a long
-time nothing *consumed* them — the pause / skip / promote / reject / brief
-buttons wrote files that no process ever read (RUNTIME-V2.md Phase 2 calls
-this "the dead producer-consumer").
+``.zicato/runtime/control/`` via :mod:`zicato.runtime.control`. This module
+is the consumer that gives the pause / skip / promote / reject / brief
+buttons their effect; without it those buttons would write files no process
+ever reads.
 
-This module is the consumer. It is deliberately thin: the claim-once + audit
-archive mechanics already live in :mod:`zicato.runtime.control`
+The module is thin: the claim-once + audit archive mechanics live in
+:mod:`zicato.runtime.control`
 (:func:`~zicato.runtime.control.list_pending_commands` +
 :func:`~zicato.runtime.control.consume_command`, which atomically moves a
 command file into ``control_log/`` with a JSON sidecar). What this module
@@ -18,8 +18,8 @@ Safe points
 -----------
 
 The loop coordinates with running tournament writes only at quiescent
-boundaries (RUNTIME-V2.md: "between rounds, between board units, at the gate
-— never mid-tournament-write"):
+boundaries: between rounds, between board units, and at the gate, never
+part-way through a tournament write.
 
 * :func:`consume_between_rounds` — drained in :func:`evolve_n_rounds` before
   scheduling the next round. Handles ``pause_epoch`` (block scheduling until

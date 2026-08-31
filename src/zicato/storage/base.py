@@ -22,7 +22,7 @@ Design stance — read these before adding a method here:
 * **Honest to zicato's model.** The interface is read/write/list/delete of
   JSON records, append to JSONL streams, and atomic write semantics, all
   keyed by a logical *key* (a ``/``-separated relative path). It is
-  deliberately NOT an ORM and NOT a relational schema — the store of
+  NOT an ORM and NOT a relational schema — the store of
   record is files holding JSON, and the interface says exactly that.
 * **Synchronous.** Unlike harmonograf's server-side ``Store``, zicato's
   persistence is plain in-process function calls on the orchestrator's
@@ -192,7 +192,7 @@ class StorageBackend(ABC):
         ``\\n``. Unlike :meth:`write_json`, this is an *append* — existing
         lines are preserved. JSONL streams are zicato's append-only event
         log shape (telemetry); a backend need only guarantee that a
-        complete line is appended, not cross-process append atomicity.
+        complete line is appended rather than cross-process append atomicity.
         """
 
     @abstractmethod

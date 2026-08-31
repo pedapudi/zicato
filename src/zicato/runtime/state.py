@@ -40,11 +40,11 @@ from zicato.runtime._storage import (
 )
 from zicato.runtime.paths import ensure_runtime_dirs
 
-# RUNTIME-V2 Phase 3: the active-tournament live state is an event log, not a
-# mutable snapshot. The public helpers below keep their signatures but delegate
-# to :mod:`zicato.runtime.tournament_log` (imported lazily inside each, since
+# The active-tournament live state is an append-only event log rather than a
+# mutable snapshot. The public helpers below delegate to
+# :mod:`zicato.runtime.tournament_log`, imported lazily inside each, since
 # that module folds back through ``ActiveTournament`` / the merge helpers here
-# and a top-level import would cycle).
+# and a top-level import would cycle.
 # Single second-precision UTC stamper, shared via :mod:`zicato.util.iso_time`.
 # Kept under this module's historical name so tests can monkeypatch
 # ``zicato.runtime.state._utc_now_iso`` and in-module writers stay unchanged.
@@ -139,7 +139,7 @@ class Heartbeat:
         supervisor compute elapsed-in-round without re-reading any other
         state file.
     seq:
-        The orchestrator's TRUE liveness cursor (RUNTIME-V2 Phase 4): the
+        The orchestrator's TRUE liveness cursor: the
         tail ``seq`` of the progress event log
         (:mod:`zicato.runtime.progress_log`) at the last genuine
         transition. Unlike ``last_heartbeat`` — which the beater thread
@@ -216,8 +216,8 @@ class Heartbeat:
             phase=str(d.get("phase", "")),
             round_index=int(d.get("round_index", 0)),
             round_started_at=str(d.get("round_started_at", "")),
-            # Absent seq reads back as 0 — the safe back-compat default for
-            # a heartbeat written before RUNTIME-V2 Phase 4 (no progress log).
+            # Absent seq reads back as 0 — the safe default for a heartbeat
+            # written by a workspace that keeps no progress log.
             seq=int(d.get("seq", 0)),
             harmonograf_url=str(d.get("harmonograf_url", "")),
             harmonograf_meta_session=str(d.get("harmonograf_meta_session", "")),
@@ -289,9 +289,9 @@ class ActiveRun:
         so the supervisor can GROUP-kill the worker AND any grandchildren
         the inner harness spawned (shells, helper tools) by negating this
         id, rather than leaking them when it kills the worker pid alone.
-        ``None`` for a legacy record written before this field existed (or
-        on a platform without process groups); the supervisor then falls
-        back to the single-pid kill.
+        ``None`` for a record that omits the field, and on a platform
+        without process groups; the supervisor then falls back to the
+        single-pid kill.
     snapshot_path:
         Absolute path-as-string to the run's ephemeral snapshot checkout
         (the ``ztw-snap-*`` temp directory the generation store
@@ -300,8 +300,8 @@ class ActiveRun:
         backend). The runner discards it on a clean run-end, but if the
         ORCHESTRATOR dies mid-run the directory is orphaned; recording it
         here lets the supervisor GC the leftover ``ztw-snap-*`` tree
-        after an orchestrator death. ``None`` for a legacy record, or a
-        run that mounted no ephemeral snapshot.
+        after an orchestrator death. ``None`` for a record that omits the
+        field, and for a run that mounted no ephemeral snapshot.
     """
 
     run_id: str
@@ -642,9 +642,9 @@ class ActiveTournament:
         dashboard) sees a real server-side scalar climb as the
         tournament runs rather than 0.00 until the round ends. Empty
         dict before the first board unit completes; old readers ignore
-        the fields. ``from_dict`` still accepts the legacy
-        ``partial_parent_agg`` / ``partial_child_agg`` key names so an
-        ``active_tournament.json`` written before this rename loads.
+        the fields. ``from_dict`` also accepts the
+        ``partial_parent_agg`` / ``partial_child_agg`` spellings, so an
+        ``active_tournament.json`` using either name loads.
     projected:
         The **live projected standing** per in-flight competitor, keyed by
         ``generation_id``. Each value is ``{scalar, boards_done,
@@ -675,8 +675,8 @@ class ActiveTournament:
     # ── NEW: the structure envelope (data-model §2.2) ──
     # All default to the gauntlet reading so an old active_tournament.json
     # loads unchanged. For ``structure == "gauntlet"`` the runner keeps
-    # writing ``parent_generation_id`` / ``child_generation_id`` exactly
-    # as today and MAY leave these empty; a non-gauntlet structure
+    # writing ``parent_generation_id`` / ``child_generation_id`` and MAY
+    # leave these empty; a non-gauntlet structure
     # populates them as the authoritative field set.
     structure: str = "gauntlet"
     structure_params: dict[str, Any] = field(default_factory=dict)
@@ -723,9 +723,9 @@ class ActiveTournament:
 
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> ActiveTournament:
-        # Accept the legacy `partial_parent_agg` / `partial_child_agg`
-        # key names so an active_tournament.json written before the
-        # champion/challenger rename still loads.
+        # Accept the `partial_parent_agg` / `partial_child_agg` spellings
+        # alongside the champion/challenger names, so an
+        # active_tournament.json using either pair loads.
         raw_champion = d.get("partial_champion_agg", d.get("partial_parent_agg"))
         raw_challenger = d.get("partial_challenger_agg", d.get("partial_child_agg"))
         return cls(
@@ -757,11 +757,10 @@ class ActiveTournament:
 
 
 def read_active_tournament_snapshot(workspace_root: Path) -> ActiveTournament | None:
-    """Read the LEGACY ``active_tournament.json`` snapshot, or ``None``.
+    """Read the ``active_tournament.json`` snapshot alone, or ``None``.
 
-    The compat reader the event-log fold falls back to when no log
-    exists (a pre-RUNTIME-V2 producer or a hand-edited snapshot). The
-    live producer no longer writes this file — use
+    The fallback the event-log fold uses when no log exists beside the
+    snapshot. Nothing writes this file; for the live view use
     :func:`read_active_tournament`, which folds the event log.
     """
     raw = backend_for(workspace_root).read_json(active_tournament_key())
@@ -773,10 +772,10 @@ def read_active_tournament_snapshot(workspace_root: Path) -> ActiveTournament | 
 def read_active_tournament(workspace_root: Path) -> ActiveTournament | None:
     """Read the live active tournament by FOLDING the event log, or ``None``.
 
-    RUNTIME-V2 Phase 3: the live state is an append-only single-writer
-    event log (:mod:`zicato.runtime.tournament_log`); this folds it into
-    the same :class:`ActiveTournament` the old snapshot held. Falls back
-    to the legacy snapshot when no log exists.
+    The live state is an append-only single-writer event log
+    (:mod:`zicato.runtime.tournament_log`); this folds it into an
+    :class:`ActiveTournament`. Falls back to reading the plain
+    ``active_tournament.json`` snapshot when no log exists.
     """
     from zicato.runtime import tournament_log  # noqa: PLC0415
 
@@ -786,10 +785,9 @@ def read_active_tournament(workspace_root: Path) -> ActiveTournament | None:
 def write_active_tournament(workspace_root: Path, t: ActiveTournament) -> None:
     """Publish a full-envelope ``Snapshot`` to the active-tournament log.
 
-    RUNTIME-V2 Phase 3: an authoritative whole-envelope publish appends a
-    ``Snapshot`` event (one atomic append) rather than overwriting the
-    mutable snapshot file. The fold restarts from the latest ``Snapshot``,
-    so a republish supersedes the prior state exactly as an overwrite did.
+    An authoritative whole-envelope publish is one atomic append of a
+    ``Snapshot`` event. The fold restarts from the latest ``Snapshot``, so a
+    republish supersedes every earlier event.
     """
     from zicato.runtime import tournament_log  # noqa: PLC0415
 
@@ -822,16 +820,15 @@ def _apply_entry_update(
 def update_tournament_entry(workspace_root: Path, entry_id: str, side: str, **updates: Any) -> None:
     """Append an ``EntryUpdate`` for one ``(entry_id, side)`` row.
 
-    RUNTIME-V2 Phase 3: one atomic append, never a read-modify-write of a
-    shared mutable file — so this writer and the runner's concurrent
-    aggregate/projection writers cannot lose each other's updates. The
-    fold applies the override to the first row matching the
-    ``(entry_id, side)`` pair (see :func:`_apply_entry_update`); a typo in
-    an override name surfaces there, when the log is folded.
+    One atomic append rather than a read-modify-write of a shared mutable
+    file, so this writer and the runner's concurrent aggregate and
+    projection writers cannot lose each other's updates. The fold applies
+    the override to the first row matching the ``(entry_id, side)`` pair
+    (see :func:`_apply_entry_update`); a typo in an override name would
+    otherwise surface only there, when the log is folded.
 
-    Validate the override names eagerly (against the row dataclass) so an
-    unknown keyword still raises at the CALL site, preserving the
-    fail-fast contract the snapshot writer had via ``replace``.
+    So the override names are validated eagerly against the row dataclass,
+    and an unknown keyword raises at the CALL site.
     """
     valid = set(ActiveTournamentEntry.__dataclass_fields__)
     unknown = set(updates) - valid
@@ -854,7 +851,7 @@ def update_tournament_partial_aggregate(
     (the dashboard) sees a real server-side ``scalar`` accumulate as the
     tournament runs — rather than 0.00 until the whole round ends.
 
-    RUNTIME-V2 Phase 3: one atomic append carrying only the side(s)
+    One atomic append carrying only the side(s)
     supplied; the fold replaces the matching
     :attr:`ActiveTournament.partial_champion_agg` /
     :attr:`ActiveTournament.partial_challenger_agg` field(s). No
@@ -895,10 +892,10 @@ def update_tournament_projected(
     :func:`_overlay_projected_live_progress` runs at rung START when nothing
     has landed and never again that rung. Folding here — at the single point
     each board lands — refreshes the live rung continuously, independent of
-    the driver's once-per-batch cadence, so the dashboard's rung no longer
-    freezes at ``{boards_total, inflight}`` mid-rung. The fold mirrors the
-    overlay's merge exactly so the live-arrived render is byte-identical to
-    a fresh republish + overlay.
+    the driver's once-per-batch cadence, so the dashboard's rung does not
+    freeze at ``{boards_total, inflight}`` mid-rung. The fold mirrors the
+    overlay's merge exactly, so the live-arrived render is byte-identical to
+    a fresh republish plus overlay.
 
     ANTI-FLASH: a lane is mutated ONLY when a rounded value actually changes
     (the dashboard digest-gates renders on the rounded scalar + integer
@@ -916,13 +913,13 @@ def update_tournament_projected(
     Per-challenger lanes are keyed by challenger id (one writer each) so
     they take the projected scalar directly.
 
-    RUNTIME-V2 Phase 3: this is now ONE atomic append of a
-    ``ProjectedUpdate`` delta; the ``projected`` merge AND the
-    ``live_progress`` fold (via :func:`_fold_projected_into_live_progress`)
-    run in the READER's fold, so concurrent duels appending their
-    projection rows cannot lose each other's updates. The merge semantics
-    (champion-max-progress, the rounding gate) are identical — they share
-    :func:`_fold_one_lane` with the fold.
+    This is ONE atomic append of a ``ProjectedUpdate`` delta; the
+    ``projected`` merge AND the ``live_progress`` fold (via
+    :func:`_fold_projected_into_live_progress`) run in the READER's fold, so
+    concurrent duels appending their projection rows cannot lose each
+    other's updates. Writer and fold share :func:`_fold_one_lane`, so the
+    merge semantics (champion-max-progress, the rounding gate) cannot drift
+    apart.
     """
     if not projected:
         return
@@ -1029,11 +1026,11 @@ def _fold_one_lane(lane: dict[str, Any], proj: dict[str, Any], *, is_champion: b
 
 
 def clear_active_tournament(workspace_root: Path) -> None:
-    """Clear the active tournament (the event log + legacy snapshot). Idempotent.
+    """Clear the active tournament (event log and snapshot). Idempotent.
 
-    RUNTIME-V2 Phase 3: removes the event log so a folded read returns
-    ``None``; also drops any legacy ``active_tournament.json`` snapshot so
-    the compat reader cannot resurrect a stale tournament.
+    Removes the event log so a folded read returns ``None``, and drops any
+    ``active_tournament.json`` snapshot so the fallback reader cannot
+    resurrect a stale tournament.
     """
     from zicato.runtime import tournament_log  # noqa: PLC0415
 

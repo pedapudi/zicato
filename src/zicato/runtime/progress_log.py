@@ -1,9 +1,8 @@
-"""The ORCHESTRATOR progress EVENT LOG (RUNTIME-V2 Phase 4).
+"""The ORCHESTRATOR progress EVENT LOG.
 
-Liveness was historically inferred from the heartbeat *timestamp* age: the
-supervisor / dashboard read ``heartbeat.json`` and treated a ``last_heartbeat``
-more than a few intervals old as a stalled orchestrator. That signal is
-both false-positive and false-negative:
+The age of a heartbeat *timestamp* is not a liveness signal for this loop.
+Reading ``heartbeat.json`` and treating a ``last_heartbeat`` more than a few
+intervals old as a stalled orchestrator is wrong in both directions:
 
 * **False-positive.** A single slow LLM call ages the timestamp past the
   threshold even though the loop is making genuine progress — the beater
@@ -12,17 +11,18 @@ both false-positive and false-negative:
   ``now()`` (or whose periodic timer keeps firing) looks alive forever
   even though no real transition has happened in minutes.
 
-This module is the fix: a **single-writer, append-only EVENT LOG**
+This module supplies a signal that is right in both directions: a
+**single-writer, append-only EVENT LOG**
 (built on :class:`zicato.runtime.channel.EventLog`) that the evolve loop
 appends ONE typed event to on each *genuine* orchestrator transition —
 round start, propose, apply, tournament start / settle, gate,
 promote / reject. The log's monotonic ``seq`` therefore advances only on
 real progress, never on a timer, so it is the TRUE liveness signal:
 
-* a watchdog asks "has ``seq`` advanced since I last looked?" instead of
-  "is the timestamp fresh?" — a slow LLM call no longer reads as stalled
-  (the round is between two transitions), and a wedged loop no longer
-  reads as alive (``seq`` is frozen);
+* a watchdog asks "has ``seq`` advanced since I last looked?" rather than
+  "is the timestamp fresh?", so a slow LLM call does not read as stalled
+  (the round is simply between two transitions) and a wedged loop does not
+  read as alive (``seq`` is frozen);
 * a SETTLED run is distinguishable from a STALLED one because the loop
   appends a terminal :data:`SETTLED` event on a clean end — the tail
   event ``type`` names the terminal state rather than leaving the reader
@@ -34,12 +34,13 @@ exactly: the single producer appends typed deltas; a reader cursors on
 workspace, guarded by the workspace lock), which is the precondition that
 makes the gap-free ``seq`` correct.
 
-Additive + back-compat
------------------------
+Degrading when the log is absent
+--------------------------------
 The log lives at its own storage key (``runtime/progress.events.jsonl``),
-so an orchestrator / workspace that never writes it leaves every existing
-file byte-identical. :func:`tail_seq` reads ``0`` for an absent log, which
-is the safe default a heartbeat written before this phase reads back as.
+and touches no other file. :func:`tail_seq` reads ``0`` for an absent log,
+which is also what a heartbeat carrying no ``seq`` field reads back as, so
+a workspace with no progress log degrades to "no progress observed" rather
+than to an error.
 """
 
 from __future__ import annotations

@@ -6,9 +6,9 @@ is **epoch / generation enumeration and ordering**: there is exactly one
 definition of the canonical epoch ordering (:func:`epoch_sort_key`,
 timestamp-first) and exactly one place that enumerates the ``epochs/``
 directory (:func:`iter_epochs` / :func:`list_epoch_ids`). Every dashboard
-reader that used to call ``paths.epochs.iterdir()`` with its own (and, in
-two sites, divergent) sort routes through here instead, so a single
-ordering authority governs every epoch-list-bearing response.
+reader routes through here rather than calling ``paths.epochs.iterdir()``
+with a sort of its own, so a single ordering authority governs every
+epoch-list-bearing response.
 
 The package also owns the per-epoch / per-generation **path math**
 (:class:`WorkspaceLayout`) and the small set of **typed canonical reads**

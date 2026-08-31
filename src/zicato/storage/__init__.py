@@ -1,12 +1,12 @@
 """zicato's storage abstraction — a clean, pluggable persistence seam.
 
 zicato persists a handful of record shapes (live runtime state, epoch
-journals, telemetry streams) and historically each domain did its own
-file I/O. This package formalises that into one honest interface:
+journals, telemetry streams). Rather than each domain doing its own file
+I/O, they share one interface:
 :class:`StorageBackend` — keyed read/write/list/delete of JSON records,
 append to JSONL streams, atomic write semantics.
 
-The seam is deliberately thin. Files stay the canonical store of record;
+The seam is thin. Files stay the canonical store of record;
 :class:`~zicato.storage.files.FileStorageBackend` IS the existing
 file-based mechanism, byte-for-byte, and is the default. The abstraction
 makes the mechanism *swappable for tests and future backends* — it does

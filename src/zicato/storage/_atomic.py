@@ -4,10 +4,9 @@ This is the one definition of "atomic file write" in zicato. The file
 storage backend (:mod:`zicato.storage.files`) is its primary consumer —
 it delivers the :class:`~zicato.storage.base.StorageBackend` atomic-write
 contract by routing every write through here. The module sits in the
-``storage`` package (not ``runtime``, where it historically lived) so the
-storage layer is self-contained: ``runtime`` depends on ``storage``, never
-the reverse. :mod:`zicato.storage` re-exports these names as the public face for any
-caller still importing from the old path.
+``storage`` package so that the storage layer is self-contained:
+``runtime`` depends on ``storage``, never the reverse. :mod:`zicato.storage`
+re-exports these names as the public face for callers outside the package.
 
 The goal is a hard guarantee: no reader ever observes a half-written
 file. A crash mid-write leaves the on-disk file either untouched (at the
@@ -58,7 +57,7 @@ def _fsync_dir(directory: Path) -> None:
     fsync is micro-cost (verified against the full test-suite
     wall-clock).
 
-    Best-effort by necessity, not by choice: some platforms cannot open
+    Best-effort by necessity rather than by choice: some platforms cannot open
     a directory fd at all (Windows raises ``PermissionError``), and
     some filesystems reject directory fsync. Those environments simply
     keep the pre-existing durability level; POSIX gets the upgrade.

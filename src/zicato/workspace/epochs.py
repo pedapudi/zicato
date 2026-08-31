@@ -5,18 +5,17 @@ that enumerates the ``epochs/`` directory. The canonical order is
 timestamp-first (:func:`epoch_sort_key`): an epoch's recorded ``created_at``
 from its ``config.json``, with the numeric-aware id as a deterministic
 tiebreaker and the fallback when the timestamp is absent. Generations order
-by the numeric-aware key of their id within an epoch (as today).
+by the numeric-aware key of their id within an epoch.
 
-Before this layer existed, ~19 sites re-enumerated ``epochs/`` and several
-sorted divergently — two by name (``_natural_key``) where the contract
-requires timestamp order, mirroring a real ordering bug. Routing every
-enumeration through :func:`iter_epochs` / :func:`list_epoch_ids` makes the
-order uniform.
+Enumerating ``epochs/`` at each call site invites divergent sorts — sorting
+by name where the contract requires timestamp order is a real ordering bug —
+so every enumeration routes through :func:`iter_epochs` /
+:func:`list_epoch_ids`, and the order is uniform by construction.
 
 The ordering primitives (:func:`natural_key`, :func:`epoch_sort_key`,
 :func:`epoch_created_at`) live here as the single definition;
-:mod:`zicato.query.paths` re-exports them for back-compat so
-existing imports keep working.
+:mod:`zicato.query.paths` re-exports them, so an import from either module
+resolves to the same function.
 """
 
 from __future__ import annotations

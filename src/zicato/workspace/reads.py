@@ -5,7 +5,7 @@ The small set of best-effort readers the dashboard consumes, routed through
 live in one place. Each reader returns the *raw* canonical structure (the
 parsed JSON dict / list, or the parsed JSONL line dicts for the board) and
 leaves view-specific shaping to the caller — the goal here is to own the
-path math and the degrade-graceful parsing, not to re-implement the
+path math and the degrade-graceful parsing rather than to re-implement the
 per-endpoint projections.
 
 Every reader is **best-effort**, returning the same empty / ``None`` value

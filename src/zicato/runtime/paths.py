@@ -86,12 +86,12 @@ def active_tournament_path(workspace_root: Path) -> Path:
 
 
 def active_tournament_log_path(workspace_root: Path) -> Path:
-    """Return the path to the active-tournament EVENT LOG (RUNTIME-V2 §3)."""
+    """Return the path to the active-tournament EVENT LOG."""
     return runtime_dir(workspace_root) / "active_tournament.events.jsonl"
 
 
 def progress_log_path(workspace_root: Path) -> Path:
-    """Return the path to the orchestrator progress EVENT LOG (RUNTIME-V2 §4).
+    """Return the path to the orchestrator progress EVENT LOG.
 
     The single-writer append-only JSONL whose monotonic ``seq`` is the
     true orchestrator-produced liveness signal (advances only on a genuine
