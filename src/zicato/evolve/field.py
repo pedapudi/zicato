@@ -742,8 +742,21 @@ async def evolve_field_round(
         # Preserve the full refit trail for confirmed and inconclusive
         # terminals. Matchup events prove that each replicate ran; these
         # events preserve the statistical state produced after every refit.
+        # Scoped to the challenger the refits are about — two challengers can
+        # reach an evidence terminal in one round, and the id is what keeps
+        # their trails apart. Same derivation as the dead-letter record above.
+        _evidence_verdict = evaluation.evidence.verdict
+        _evidence_challenger = (
+            _evidence_verdict.challenger.generation_id
+            if _evidence_verdict.challenger is not None
+            else first_challenger_id
+        )
         for ci_row in evaluation.evidence.ci_history:
-            round_log.emit("evidence_replicated", {"ci_state": dict(ci_row)})
+            round_log.emit(
+                "evidence_replicated",
+                {"ci_state": dict(ci_row)},
+                {"generation_id": _evidence_challenger},
+            )
 
     # --- Final champion-gate Ladder-mediated holdout confirmation
     # (OVERFITTING.md §3/§4). The structure resolved its leader on the TRAIN

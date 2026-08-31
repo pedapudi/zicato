@@ -431,22 +431,28 @@ class RoundEventScope:
     payload and the scope leaves that field empty, rather than storing a
     second copy that can drift from the first.
 
-    The named coordinates, each empty where it does not apply:
+    Two coordinates are named fields, because two have writers today:
 
     * ``generation_id`` — the challenger the event belongs to.
     * ``step`` — the round's lifecycle step: open, propose, apply, run,
       gate, decide, close.
-    * ``entry_id`` and ``replicate`` — the board entry, and the draw within
-      it.
-    * ``side`` — ``parent`` or ``child`` of a duel.
-    * ``band`` — the measurement band.
 
-    There is deliberately NO slate ordinal: ``candidate_sampled``'s ``i``
-    numbers slate SLOTS while ``candidate_screened`` / ``critique_selected``
-    number the SURVIVORS that reached the screen, so those numbers diverge as
-    soon as one slot fails and no single coordinate can carry both. Settling
-    one slate ordinal is a payload decision, not an envelope one. The round is
-    not a coordinate either: a record's round is the
+    A coordinate gets a named field when it gets a WRITER, and not before. A
+    named field nobody fills is not a neutral placeholder: it is a claim that
+    the coordinate's meaning is settled, and the shape of the plan's
+    coordinates is exactly what is still open across the remaining node kinds
+    (board sweeps, measurement bands, screen units). Naming a field early
+    locks that shape the same way a slate ordinal would, so anything an
+    interim writer needs rides ``attributes`` — where the duel's
+    ``matchup_id`` and ``opponent_generation_id`` already travel — until the
+    coordinate is settled across every node kind that must carry it.
+
+    A slate ordinal is the standing example of why. ``candidate_sampled``'s
+    ``i`` numbers slate SLOTS while ``candidate_screened`` /
+    ``critique_selected`` number the SURVIVORS that reached the screen, so
+    those numbers diverge as soon as one slot fails and no single coordinate
+    can carry both; settling one is a payload decision, not an envelope one.
+    The round is not a coordinate either: a record's round is the
     ``rounds/{round}/round_log.jsonl`` path it was read from, and a copy the
     writer restated could only disagree with it.
 
@@ -468,10 +474,6 @@ class RoundEventScope:
 
     generation_id: str = ""
     step: str = ""
-    entry_id: str = ""
-    replicate: int | None = None
-    side: str = ""
-    band: str = ""
     attributes: dict[str, Any] = field(default_factory=dict)
 
     #: DELIBERATELY unhashable. ``frozen=True`` would otherwise generate a
@@ -512,10 +514,6 @@ class RoundEventScope:
             # because it is neither "" nor None.
             generation_id=str(coordinate("generation_id") or ""),
             step=str(coordinate("step") or ""),
-            entry_id=str(coordinate("entry_id") or ""),
-            replicate=coordinate("replicate"),
-            side=str(coordinate("side") or ""),
-            band=str(coordinate("band") or ""),
             attributes=extras,
         )
 
@@ -534,7 +532,7 @@ class RoundEventScope:
     def to_payload(self) -> dict[str, Any]:
         """Return the compact, forward-compatible JSON shape for this scope."""
         payload: dict[str, Any] = {}
-        for name in ("generation_id", "step", "entry_id", "replicate", "side", "band"):
+        for name in ("generation_id", "step"):
             value = getattr(self, name)
             if value not in ("", None):
                 payload[name] = value

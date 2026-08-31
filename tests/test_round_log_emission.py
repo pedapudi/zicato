@@ -696,9 +696,8 @@ class TestDuelScopeWiring:
             "v-chal",
             "v-champ",
         ]
-        # The aggregate placeholder reaches NO coordinate: an absent
-        # ``replicate`` is the honest statement that this event names no draw.
-        assert {s.replicate for s in scopes} == {None}
+        # The aggregate placeholder reaches NO coordinate, named or open:
+        # its absence is the honest statement that this event names no draw.
         assert all("replicate" not in s.attributes for s in scopes)
         assert {s.attributes["matchup_id"] for s in scopes} == {"m-7"}
         assert {s.step for s in scopes} == {"run"}
@@ -735,35 +734,40 @@ class TestDuelScopeWiring:
         assert (gate.generation_id, gate.attributes) == ("", {})
 
 
-def test_every_duel_call_site_names_the_generations_it_gates() -> None:
-    """Both round drivers PASS the ids, not just accept them.
+def test_the_duel_call_site_names_the_generations_it_gates() -> None:
+    """The one duel driver PASSES the ids, not merely accepts them.
+
+    Every round now settles its matchups through ``field.py``'s
+    ``_run_matchup`` — the gauntlet reaches it as a one-challenger field — so
+    there is exactly ONE place that names the two sides of a duel, and it
+    must keep naming them.
 
     The emitters default their scope arguments to ``""`` so an unscoped
     caller still emits a well-formed record. That default is what makes a
     dropped keyword silent: the round runs, the log is written, and only the
     attribution is gone — permanently, since these records are write-once.
-    Driving a whole field round here would cost minutes, so the call sites
-    are pinned structurally instead, the way ``test_generation_phase``
-    already pins this package's shape.
+    Driving a whole field round here would cost minutes, so the call site is
+    pinned structurally instead, the way ``test_generation_phase`` already
+    pins this package's shape.
     """
     import ast
 
-    src = Path(__file__).resolve().parents[1] / "src" / "zicato" / "evolve"
     required = {
         "_emit_tournament_units": {"parent_generation_id", "child_generation_id"},
         "_emit_gate_evaluated": {"generation_id", "opponent_generation_id"},
     }
-    seen: dict[tuple[str, str], set[str]] = {}
-    for module in ("field.py", "gauntlet.py"):
-        for node in ast.walk(ast.parse((src / module).read_text())):
-            if not isinstance(node, ast.Call) or not isinstance(node.func, ast.Name):
-                continue
-            if node.func.id in required:
-                seen[(module, node.func.id)] = {kw.arg or "" for kw in node.keywords}
+    module = Path(__file__).resolve().parents[1] / "src" / "zicato" / "evolve" / "field.py"
+    seen: dict[str, set[str]] = {}
+    for node in ast.walk(ast.parse(module.read_text())):
+        if not isinstance(node, ast.Call) or not isinstance(node.func, ast.Name):
+            continue
+        if node.func.id in required:
+            # One call site each; a second would silently overwrite here, so
+            # the count is asserted rather than assumed.
+            assert node.func.id not in seen, f"{node.func.id} now has more than one call site"
+            seen[node.func.id] = {kw.arg or "" for kw in node.keywords}
 
-    assert set(seen) == {
-        (module, name) for module in ("field.py", "gauntlet.py") for name in required
-    }
-    for (module, name), keywords in sorted(seen.items()):
+    assert set(seen) == set(required)
+    for name, keywords in sorted(seen.items()):
         missing = required[name] - keywords
-        assert not missing, f"{module}: {name} no longer names {sorted(missing)}"
+        assert not missing, f"field.py: {name} no longer names {sorted(missing)}"

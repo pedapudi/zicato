@@ -306,11 +306,11 @@ def test_an_attributes_coordinate_is_promoted_once_a_field_names_it(tmp_path):
     value invisible to the reader that now names it, which is exactly the
     forward compatibility the extension point exists to provide.
     """
-    scope = RoundEventScope.from_payload({"attributes": {"band": "warmup", "unknown": 1}})
-    assert scope.band == "warmup"
+    scope = RoundEventScope.from_payload({"attributes": {"step": "gate", "unknown": 1}})
+    assert scope.step == "gate"
     # And it is not left behind as a second copy that could drift.
     assert scope.attributes == {"unknown": 1}
-    assert scope.to_payload() == {"band": "warmup", "attributes": {"unknown": 1}}
+    assert scope.to_payload() == {"step": "gate", "attributes": {"unknown": 1}}
 
     # End to end: a legacy line on disk decodes through the named field.
     path = round_log_path(tmp_path, "epoch-01", 8)
@@ -328,8 +328,8 @@ def test_an_attributes_coordinate_is_promoted_once_a_field_names_it(tmp_path):
 
 def test_a_scope_has_a_canonical_hashable_grouping_key():
     """Open extension data groups through a snapshot, not a mutable hash key."""
-    left = RoundEventScope(generation_id="v7", entry_id="e1", attributes={"x": [1, 2]})
-    right = RoundEventScope(generation_id="v7", entry_id="e1", attributes={"x": [1, 2]})
+    left = RoundEventScope(generation_id="v7", step="run", attributes={"x": [1, 2]})
+    right = RoundEventScope(generation_id="v7", step="run", attributes={"x": [1, 2]})
     assert left.grouping_key() == right.grouping_key()
     assert len({left.grouping_key(), right.grouping_key(), RoundEventScope().grouping_key()}) == 2
     assert {left.grouping_key(): "group"}[right.grouping_key()] == "group"
