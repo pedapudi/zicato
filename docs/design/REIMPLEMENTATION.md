@@ -1,33 +1,38 @@
-# zicato — cleaner reimplementation roadmap (behavior-preserving)
+# zicato reimplementation roadmap
 
-> **Status: historical implementation roadmap.** Several steps have shipped;
-> the development guide describes the present system. This document preserves
-> the original behavior-preserving roadmap and target storage design.
+> **Status: a plan.** This document holds a behavior-preserving refactoring
+> roadmap for `src/zicato/` and the target data model and storage design that
+> roadmap aims at. Sections that record work already built say so in place.
+> For the system as it stands, read the development guide under
+> `docs/dev-guide/`.
 > Companion to [`ARCHITECTURE.md`](ARCHITECTURE.md), [`STORAGE.md`](STORAGE.md),
 > and [`TOURNAMENT-DATA-MODEL.md`](TOURNAMENT-DATA-MODEL.md).
 
 ## Context
 
 `src/zicato/` is ~73k LOC of Python across ~24 modules, backed by 165 test files.
-It works and ships, but a three-domain agent audit (engine/lifecycle,
-evaluation, observability/delivery) found the complexity is concentrated in a
-handful of god-objects and a thick layer of accidental duplication, with the
-type checker largely disabled by `Any` signatures and `getattr`-over-`Any`
-access. The goal of this program is a **significantly more understandable,
-modular, simpler, less error-prone** implementation that **retains 100% of
-features with zero user-visible difference**.
+It works and ships. Its complexity is concentrated in a handful of modules that
+have accreted unrelated responsibilities (god objects) and in a thick layer of
+accidental duplication, and the type checker is largely disabled by `Any`
+signatures and `getattr`-over-`Any` access. The goal of this program is a
+**significantly more understandable, modular, simpler, less error-prone**
+implementation that **retains 100% of features with zero user-visible
+difference**.
 
-Strategy: **staged in-place refactor**, not a rewrite. Every step is
+Strategy: a **staged in-place refactor** rather than a rewrite. Every step is
 behavior-preserving and merges only when the full test suite + golden-output
 parity checks pass. There is no long "red" period and parity is guaranteed at
 every commit.
 
-Scope: a phased roadmap and target design to pick from later. Nothing here is
+Scope: a staged roadmap and target design to pick from later. Nothing here is
 implemented yet.
 
-### The cross-cutting signal (found independently by all three auditors)
+### The cross-cutting signal
 
-1. **God-objects** dominate complexity: `dashboard/state_reader.py` (5467),
+Three separate audits — of the engine and lifecycle, of evaluation, and of
+observability and delivery — each reached the same seven conclusions.
+
+1. **Oversized modules** dominate complexity: `dashboard/state_reader.py` (5467),
    `orchestrator.py` (4622), `tournament/runner.py` (3292), `core/types.py`
    (2688), `index/ingest.py` (1753), `analyzer/report_figures.py` (1710),
    `analyzer/report.py` (1401), `telemetry/reducer.py` (1333),
@@ -41,59 +46,61 @@ implemented yet.
    LLM-JSON fence-strip (2×), dotted-path import (3×), atomic-write/JSON-read
    helpers (several), `_index_db_path` (2×), `_resolve_harmonograf_url` (2×).
 4. **Type-safety holes**: stringly-typed dispatch + `getattr(x, "f", default)`
-   over `Any` (33 `Any` in orchestrator alone); a renamed field fails at runtime,
-   not at type-check.
+   over `Any` (33 `Any` in orchestrator alone); a renamed field fails at runtime
+   rather than at type-check time.
 5. **~40 blanket `except Exception  # noqa: BLE001`** swallow-everything blocks
    (29 in orchestrator) that hide systematic data-integrity drift.
 6. **Two near-duplicate evolve pipelines** (gauntlet `evolve_once` vs
    `_evolve_multi_challenger`) with verbatim-duplicated mutation-id/forbidden-id
    checks and triplicated validation closures.
 7. **Concrete dead code**: stale root `zicato/` pyc tree (138 files, 0 source),
-   unwired 340-LOC control protocol, duplicate `telemetry/scoring.py`, abandoned
-   dashboard "Variant A", legacy on-disk aliases/shims.
+   unwired 340-LOC control protocol, duplicate `telemetry/scoring.py`, an
+   abandoned dashboard preview page, and shims that tolerate older on-disk key
+   spellings.
 
 ---
 
 ## The parity harness (build first; gates every phase)
 
 This is the safety net that makes a behavior-preserving refactor possible.
-Build it in Phase 0 and run it at the end of every sub-step.
+Build it in the first stage and run it at the end of every sub-step.
 
 - **Unit/integration suite**: `uv run pytest` (xdist-parallel; suite already runs
   ~18s). Must stay green at every commit. (Remember: `uv sync --all-extras`.)
 - **Static gates**: `mypy` + `ruff` via pre-commit (`make install-hooks`). The
-  refactor should *strengthen* mypy (fewer `Any`), so treat new type errors as
-  signal, not noise.
+  refactor should *strengthen* mypy (fewer `Any`), so treat a new type error as
+  a finding to act on rather than as noise to suppress.
 - **Golden-output parity** against the deterministic mock target
   `examples/zicato_examples/target_1_presentation` (per AGENTS.md rule 1 — no
   live LLM runs). For a fixed seed, snapshot and byte/structurally diff before vs
   after each step:
   - `.zicato/**/loss.json`, `gen_score.json`, `experiment.json`, `lineage.json`
   - the SQLite `index.db` rows (export to a stable text dump; the index is a
-    derived projection so it must reproduce exactly after `zicato repair index`)
+    derived projection, so it must reproduce byte for byte after
+    `zicato repair index`)
   - analyzer report markdown + HTML, `report_figures` SVG output
   - dashboard JSON envelopes (`/api/state`, `/api/epoch`, `/api/tournaments`,
     `/api/round/.../gate`, per-judge endpoints) captured from a fixture workspace
   - `zicato <command> --help` text for every command (the CLI is the contract)
-- **Rule of thumb**: a step that changes any golden output is, by definition, not
-  behavior-preserving — investigate before merging.
+- **Rule of thumb**: a step that changes any golden output has changed behavior
+  by definition — investigate before merging.
 
 ---
 
-## Phase 0 — Safety net + zero-risk cruft removal
+## The safety net and zero-risk cruft removal
 
-Mechanical, independently shippable, no behavior change.
+The first stage. Mechanical, independently shippable, no behavior change.
 
 - Stand up the parity harness above; commit the golden baselines.
 - Delete the stale root `zicato/` tree (138 `.pyc`-only files; can shadow the
-  real `src/zicato/` in some tooling). *(All three auditors flagged this.)*
+  real `src/zicato/` in some tooling). All three audits flagged this.
 - Delete dead code with no production consumer:
   - `telemetry/scoring.py::aggregate_generation_score` / `combined_scalar`
     (live path is `tournament/scoring.py`; the duplicate even has a divergent
-    return type — a latent footgun).
-  - dashboard "Variant A": `static/variant_A_preview.html` (loads a non-existent
-    `app_A.js`); collapse the dead `static/js/variants/T/` indirection (only T
-    ever shipped).
+    return type — a latent hazard).
+  - the abandoned dashboard preview page `static/variant_A_preview.html`, which
+    loads a non-existent `app_A.js`; collapse the dead `static/js/variants/T/`
+    indirection, since the console layout behind it is the only one shipped.
   - no-op guard `state_reader.py:1450` (`isinstance(row.keys(), object)`);
     redundant duplicate `version`/`build` field (`endpoints.py:130,135`);
     intentionally-unused `weights` params (`tournament/scoring.py:117`,
@@ -172,7 +179,7 @@ Re-export from `core/__init__` to keep import paths stable.
 - Decompose the ~25-field `ScoringWeights` into nested typed groups
   (`DriftScoring`, `PassScoring`, `RegressionGate`, `NamespaceScoring`,
   `ScoringPlugins`). Make the **contract canonicalizer walk the nested
-  structure** so tournament-structure/overfitting config no longer have to live
+  structure** so tournament-structure and overfitting config need not live
   on `ScoringWeights` purely to fold into the contract hash.
 
 **2b. Enums replace stringly-typed dispatch**: `TournamentDecision`
@@ -236,7 +243,7 @@ inline CSS (`_paper_css:1161`) into a data file.
 
 **3e. `adapters/adk.py` (1068).** Extract the ~240-LOC judge-only steering
 machinery (`:334-496`) into `judge_runtime/judge_only.py` (it is goldfive-steering
-knowledge, not adapter knowledge). Collapse the 3 near-identical per-kind drivers
+knowledge rather than adapter knowledge). Collapse the 3 near-identical per-kind drivers
 + 3× inline `_PerTurnCaller` into one `_goldfive_call` helper + one caller.
 
 **3f. proposer.** `prompts.py` (849) → `templates.py` (constants) + `render.py`
@@ -274,10 +281,11 @@ Lower-frequency, higher-judgment items; do after the structure is clean.
   board-unique judge-name detection in `assemble_judges`.
 - **Relocate `telemetry/harmonograf_supervisor.py`** (process/lifecycle, not
   telemetry) next to the other supervisor concerns in `runtime/`.
-- Schedule removal of legacy on-disk aliases behind a one-time migration:
+- Schedule removal of the older on-disk key spellings behind a one-time
+  migration:
   `brief.md`↔`rubric.md`, `--brief`/`--rubric`, `adk_entrypoint`,
-  `round_index`/`stage_index`, `partial_*_agg`, the empty-string `contract_hash`
-  "legacy, never rolls" sentinel.
+  `round_index`/`stage_index`, `partial_*_agg`, and the empty-string
+  `contract_hash` sentinel that marks a contract which never rolls.
 
 ---
 
@@ -299,8 +307,8 @@ Phase 0 (cruft) is free and shrinks the surface. Phase 1 (foundations) must
 precede Phase 3 — splitting a god-object before the shared utils exist means each
 split re-touches the same duplicated helpers and the canonical-read parsing.
 Phase 2 (types/enums) makes the Phase 3 moves safe (a renamed field fails at
-type-check, not at runtime). Phase 3 god-objects are mutually independent and can
-be parallelized across agents/PRs. Phase 4 is judgment-heavy cleanup that benefits
+type-check rather than at runtime). Phase 3 god-objects are mutually
+independent and can be split across separate pull requests. Phase 4 is judgment-heavy cleanup that benefits
 from the clean structure underneath.
 
 ## Verification (every phase)
@@ -320,8 +328,8 @@ was not behavior-preserving — fix before merge.
 - The Rust supervisor crate (`crates/`, `src/`) is not part of this Python
   refactor program (touch only if a Phase-4 boundary move requires it).
   *(Finding 4 below is the one exception the review calls out: reader
-  unification is a decided design direction that deliberately crosses this
-  boundary.)*
+  unification is a decided design direction that crosses this boundary on
+  purpose.)*
 
 ---
 
@@ -334,16 +342,17 @@ was not behavior-preserving — fix before merge.
 > Phase 3a (the `orchestrator.py` split), finding 4 refines Phase 1c/4, and
 > finding 5 names an observability layer the whole pipeline emits into.
 >
-> **Wave-2 sequencing intent** (the order these should land, each still
-> gated by the parity harness): **concurrency (finding 1) → knob registry
-> (finding 3) → pipeline decomposition (finding 2)**; **reader unification
-> (finding 4) is decided in design** and sequenced with the Phase-4 boundary
-> work; **the log stream (finding 5) is being built by a sibling Wave-1
-> workstream** and this doc only fixes its seat in the layer cake.
+> **Sequencing intent** for the five findings, each still gated by the
+> parity harness: concurrency (finding 1), then the knob registry
+> (finding 3), then pipeline decomposition (finding 2). Reader unification
+> (finding 4) is decided in design and sequenced with the Phase 4 boundary
+> work. The log stream (finding 5) is specified in
+> [`LOGGING.md`](LOGGING.md), and this document only fixes its seat in the
+> layer cake.
 >
-> Note: `orchestrator.py` has grown to **~6,300 lines** since Part I's
-> census recorded 4,622 — treat the god-object figures above as a lower
-> bound, not a current count.
+> Note: `orchestrator.py` measures about 6,300 lines against Part I's
+> census figure of 4,622, so the god-object figures above are a lower bound
+> rather than a current count.
 
 ## Finding 1 — Propose-phase serialization (concurrency with deterministic post-ordering)
 
@@ -369,10 +378,10 @@ concurrent:
 
 **Target.** The two loops are NOT symmetric, and conflating them is the
 trap: the slate loop is embarrassingly parallel; the field loop is
-deliberately *sequential* and gathering it changes behavior.
+*sequential* by design, and gathering it changes behavior.
 
 - **Slate loop (best-of-N) — safe concurrency.** The N samples are
-  genuinely independent: each slot varies only by a deterministic per-slot
+  independent: each slot varies only by a deterministic per-slot
   hint (`hints.hint_for_slot` edit-class + `hints.strategy_for_slot`
   framing, both keyed off `(slot, round)`) and the shared round-start
   context; no slot reads another slot's output. Collect them with
@@ -393,7 +402,7 @@ deliberately *sequential* and gathering it changes behavior.
     Slate-level concurrency inside each challenger still cuts propose
     wall-clock by ~`best_of_n`, so this is not "no speed-up." This is the
     only option under which the byte-stable-goldens promise holds.
-  - **(b) Wave/batched gather** — propose in batches of `w`, re-conditioning
+  - **(b) Batched gather** — propose in batches of `w`, re-conditioning
     the sibling digest between batches. A tunable diversity/latency trade
     (`w=1` = option a, `w=field_n` = option c); goldens move, so it needs
     its own parity story.
@@ -401,11 +410,11 @@ deliberately *sequential* and gathering it changes behavior.
     a DECLARED behavior change (the field's diversity pressure falls back to
     whatever `_mint_challenger_field` soft-rejects catch post-hoc), with its
     own parity/measurement story proving the field does not collapse.
-- **Recommended Wave-2 default: (a) + slate concurrency.** It is the
-  latency win with zero behavior change and a green byte-level golden. Treat
-  (b) as the measured follow-up if slate concurrency alone is insufficient.
-  The byte-stable-goldens promise below holds **only for (a)**; (b) and (c)
-  are measured changes, not parity-preserving ones.
+- **Recommended default: (a) plus slate concurrency.** It is the latency
+  win with zero behavior change and a green byte-level golden. Treat (b) as
+  the measured follow-up if slate concurrency alone is insufficient. The
+  byte-stable-goldens promise below holds **only for (a)**; (b) and (c) are
+  measured changes rather than parity-preserving ones.
 
 **Backpressure (nested fan-out).** Propose concurrency is two-level: a field
 of `field_n` challengers, each running a `best_of_n` slate — so under any
@@ -421,7 +430,8 @@ default and the one an implementer should reach for first.
 in the tree; all must be driven from the post-gather ordered pass, never
 from gather-completion order):
 
-1. **Generation-id + seed minting — deterministic PRE-gather, not a race.**
+1. **Generation-id and seed minting are deterministic and happen before the
+   gather.**
    `next_id = f"v{base_n + offset}"` and `seed = offset + 2` are computed
    from `offset` *before* any propose runs, so the `competitors_meta` seed
    order (champion = 1, challengers 2, 3, … in mint order) is already fixed
@@ -437,7 +447,7 @@ from gather-completion order):
    `experiment.json`/index rows land in a stable sequence.
 3. **RoundLog event sequence.** `epoch/round_log.py` is a single-writer,
    append-only, `seq`-derived-from-tail log (`seq` = 1 for the first event,
-   exactly `+1` per append). The `round_emitter=round_log` appends —
+   `+1` per append). The `round_emitter=round_log` appends —
    including best-of-N's `candidate_sampled` events carrying `{"i": sample,
    "n": n}` — must be appended in slot order, or the gap-free monotonic
    `seq` becomes a function of scheduling.
@@ -461,7 +471,7 @@ from gather-completion order):
 7. **`_mint_challenger_field` accumulator state.** `sibling_signatures` and
    `accepted_mutation_sets` (`:1999`, `:2012`) grow in mint order, and slot
    *k*'s soft-reject decision (exact-duplicate + Jaccard-overlap against
-   `0..k-1`) is a SEMANTIC dependency on the earlier slots, not merely a
+   `0..k-1`) is a semantic dependency on the earlier slots rather than a
    log-ordering one. It belongs to the ordered pass and — like the
    sibling-conditioning above — cannot be reproduced by a blind gather.
 8. **The slate loop's `validate_experiment` hook is a shared-DIRECTORY
@@ -535,11 +545,11 @@ coroutine: today it both proposes AND ingests
 (`:1777`), and feeds the mint accumulators — so "gather, then emit in order"
 is unreachable until it is first SPLIT into a pure-propose half (gatherable,
 no shared-state writes) and an apply/persist/ingest half (ordered, deferred
-to the second pass). That split is exactly Finding 2's stage decomposition
+to the second pass). That split is Finding 2's stage decomposition
 arriving early; concurrency cannot land cleanly before it.
 
 This finding **composes with finding 2**: the deterministic post-ordering
-pass is exactly the "apply / persist / ingest" stages of the pipeline below,
+pass is the "apply / persist / ingest" stages of the pipeline below,
 and "which stages may overlap" (here: propose may fan out, apply/persist may
 not) becomes a declared property of the stage graph.
 
@@ -548,7 +558,8 @@ means writing the gather, the ordered second pass, and the propose/apply
 split above INTO the monolith, then relocating that logic when the pipeline
 is decomposed. This is deliberate: concurrency goes first because it is the
 urgent latency win, and the parity harness makes the later lift safe — the
-gather/ordered-pass logic is *lifted* into the stage graph, not rewritten,
+gather and ordered-pass logic is *lifted* into the stage graph rather than
+rewritten,
 so decomposition inherits a structure that already names its concurrency
 boundary. (The knob registry, Finding 3, sequences second and stays
 orthogonal to both.)
@@ -573,18 +584,20 @@ propose → apply → screen → schedule → gate → persist → ingest
 ```
 
 - Each stage is a small typed unit (a dataclass of inputs → a dataclass of
-  outputs), not a step buried in a 6k-line function. The two evolve
+  outputs) rather than a step buried in a 6k-line function. The two evolve
   pipelines (gauntlet `evolve_once` vs `_evolve_multi_challenger`) share the
   one stage sequence with the scheduler injected (as Phase 3a already
   proposes).
-- **Per-round context builders live beside their consuming stage**, not at
+- **Per-round context builders live beside their consuming stage** rather
+  than at
   the top of the driver: `_build_candidate_screen_runner` moves next to the
   `screen` stage, `_build_recombination_pair` and `_build_genealogy_items`
   next to `propose`. Adding a program adds a builder in one place — its
   stage — instead of another argument on the driver's signature.
 - The **stage graph is where overlap is declared.** Finding 1's answer
   ("propose may fan out; apply/persist/ingest run in slot order") is a
-  property of the graph edges, not an implementation detail hidden in a for-
+  property of the graph edges rather than an implementation detail hidden in
+  a for-
   loop. The graph is the single place a future reviewer reads to learn which
   stages are concurrency-safe.
 
@@ -637,7 +650,7 @@ five stages above: it requires *lifting nested closures out of their enclosing
 frame* — every captured variable becomes an explicit parameter (or a small typed
 "schedule context" dataclass), and the live-publish/standings-overlay callbacks
 have to be threaded back in as injected seams. That is a genuine
-shape-changing refactor, and it was deliberately deferred: its marginal value is
+shape-changing refactor, and it is deferred: its marginal value is
 low now that the per-round builders and the propose/apply/persist/gate/ingest
 stages all have homes, and doing it verbatim is impossible, so it is best done
 together with Finding 1's propose-side gather (which already needs
@@ -683,7 +696,7 @@ the omit-at-default flag, the builder-op arg spec (type, bounds,
 epoch-rolling), and the GUI row descriptor. Generate the omit-list, the
 builder-op/copilot signatures, and the builder-row scaffold from that
 metadata so a new knob is *one* field declaration. **Retain the existing
-guard tables as the enforcement net**, not the source: `contract_serde.py`
+guard tables as the enforcement net** rather than the source: `contract_serde.py`
 is already field-enumerating (it derives from `dataclasses.fields()` and so
 covers new fields automatically), and
 `test_contract_serializer_completeness.py` stays as the red-on-drift check
@@ -738,7 +751,7 @@ that made the failure possible.
   *Observed* — `reader.rs`'s in-flight lineage node, `run_log.rs`'s live
   telemetry tail, `divergence.rs`'s dead-pid audit, `ledger.rs`,
   `diff_containment.rs`, `signal.rs`//proc, and `statusz.rs`/watchdog
-  heartbeat — which reads canonical files directly *by design*, precisely so
+  heartbeat — which reads canonical files directly *by design*, so
   it can still report when the index (and the orchestrator writing it) has
   gone stale. Folding those into an index-only projection would delete the
   crash-survivability the supervisor exists for.
@@ -763,23 +776,20 @@ above.
 
 ## Finding 5 — Logging insertion point (the observability layer)
 
-**Observed.** The tree has **exactly one** `logging.basicConfig`
+**Observed.** The tree has one `logging.basicConfig`
 (`_tournament_worker.py`, at `WARNING`); there is no structured per-run log
 stream. Operators reconstruct a run's story from `events.jsonl` + the
 RoundLog, neither of which is a general diagnostic log.
 
-**Target (reference, do not re-design).** A **sibling Wave-1 workstream is
-already building** a structured per-run log stream as a first-class artifact
-beside `events.jsonl`, against a new `docs/design/LOGGING.md`. This
-reimplementation doc does **not** design that stream; its job is to fix
-*where it sits*: the log stream is the **observability layer that every
-stage of finding 2's pipeline emits into**. In the layer cake, it is a
-cross-cutting sink beneath the stage graph — propose/apply/screen/schedule/
-gate/persist/ingest each emit structured records into it — and it is written
-through the one storage seam / atomic writer (Part II), so it is crash-safe
-like the canonical artifacts. When `docs/design/LOGGING.md` lands, link it
-here; until then treat the stream as in-flight, not as a design owned by this
-doc.
+**Target (reference, do not re-design).** The structured per-run log stream
+is a first-class artifact beside `events.jsonl`, specified in
+[`LOGGING.md`](LOGGING.md). This document does not design that stream; its
+job is to fix *where it sits*. The log stream is the **observability layer
+that every stage of finding 2's pipeline emits into**. In the layer cake it
+is a cross-cutting sink beneath the stage graph — propose, apply, screen,
+schedule, gate, persist and ingest each emit structured records into it —
+and it is written through the one storage seam and atomic writer (Part II),
+so it is crash-safe like the canonical artifacts.
 
 ## Confirmed keep-as-is (the validated structure)
 
@@ -800,7 +810,8 @@ the reimplementation must **preserve** them, not "clean them up":
   stage graph rather than removes.
 - **Contract-hash epoch rolling.** A contract change rolls the epoch via the
   canonicalized hash; the omit-at-default discipline (finding 3) exists to
-  keep that hash stable for default knobs and must be preserved exactly.
+  keep that hash stable for default knobs, and it must be preserved
+  unchanged.
 - **seq-driven SSE.** The monotonic `seq` liveness cursor
   (`dashboard/sse.py`) is the right change-detection primitive; finding 1
   protects its determinism rather than replacing it.
@@ -812,7 +823,8 @@ the reimplementation must **preserve** them, not "clean them up":
 This is the concrete target for Phase 1c/1d and Phase 2a of the roadmap above.
 It is what the data model and storage system *should be*. It preserves every
 on-disk artifact and every behavior; it changes only how the code is shaped
-around them. A one-time `zicato migrate` (below) normalizes legacy on-disk forms
+around them. A one-time `zicato migrate` (below) normalizes the older
+on-disk forms
 so the alias-tolerance code can be deleted.
 
 ## Design principles
@@ -826,7 +838,8 @@ so the alias-tolerance code can be deleted.
    `dataclasses.asdict` in one place and a hand reader in another. Eliminates the
    silent-field-drop class (e.g. journal dropping `expected_metric_movements`).
 3. **One layout authority.** All path math lives in `WorkspaceLayout`. No module
-   joins `"epochs"`/filenames by hand — not the orchestrator, not the dashboard.
+   joins `"epochs"` and filenames by hand: the orchestrator does not, and
+   neither does the dashboard.
 4. **One write seam, one atomic primitive.** Every canonical write goes through
    the `StorageBackend` seam, which uses the single fsync-ing atomic writer.
    The two weaker forks are deleted.
@@ -895,7 +908,7 @@ core/
   runtime.py        RuntimeConfig, Heartbeat, ActiveRun, ActiveTournamentEntry,
                     ActiveTournament — the last now TYPED: its competitors/rounds/
                     standings/field_status/projected fields use the
-                    core/tournament.py records, not dict[str,Any]. This deletes
+                    core/tournament.py records rather than dict[str,Any]. Deletes
                     the 31 Any in runtime/state.py and the getattr-over-Any
                     LossProfile projection (the helper imports core/loss directly;
                     the "avoid importing core" workaround is removed because the
@@ -917,7 +930,7 @@ frozen dataclass:
   their string value. Deterministic key order, float rounding where the contract
   hash needs it.
 - **One alias table** (`_LEGACY_ALIASES`) applied at the single read boundary —
-  the only place legacy on-disk keys are mapped (`tournament_structure`→`tournament`
+  the only place older on-disk keys are mapped (`tournament_structure`→`tournament`
   is the sole alias that *survives* migration because it is the persisted contract
   form; all others are removed by `zicato migrate`).
 - Replaces: the hand-written `Heartbeat/ActiveRun/ActiveTournament*.to_dict`
@@ -926,7 +939,7 @@ frozen dataclass:
   `epoch/lifecycle.py`), and `board/jsonl.py`'s hand serde (board keeps its JSONL
   line framing + `board_meta` header, but each line body serializes via this).
 - **Closes the silent-drop bug**: because serde is field-complete by construction,
-  `expected_metric_movements`/`metric_movements` can no longer be dropped.
+  `expected_metric_movements` and `metric_movements` cannot be dropped.
 
 ### Identity & sentinels
 
@@ -935,8 +948,9 @@ frozen dataclass:
 - Replace the load-bearing empty-string sentinels with `None`/enum:
   `parent_generation_id: GenerationId | None` (seed = None, not `""`);
   `match_id: MatchId | None`; `contract_hash: str | None` (None = pre-hash epoch
-  — the "legacy, never rolls" rule becomes an explicit `None` check, not a magic
-  `""`, removing the "corrupted hash reads as legacy" hazard);
+  — the never-rolls rule for an unhashed contract becomes an explicit `None`
+  check rather than a magic `""`, which removes the hazard of a corrupted
+  hash reading as unhashed);
   `champion_eval_mode: ChampionEvalMode`. The migration writes these forms; the
   serde maps old→new on read during the transition.
 
@@ -1004,7 +1018,8 @@ re-parsing files and stop re-implementing normalization.
   `Experiment`/`OutcomeRecord`; generations/promotion from the typed `Lineage`.
 - **Single source of truth for promotion:** the typed `Lineage` is authoritative.
   `experiment.json`'s outcome is descriptive; the index projects `promoted`/
-  `parent_generation_id` from `Lineage`, not by re-testing `experiment.json`.
+  `parent_generation_id` from `Lineage` rather than by re-testing
+  `experiment.json`.
   Fix the dual-write ordering so `Lineage` is written before/with the experiment
   outcome (today the index trusts `experiment.json` *because* lineage lands later).
 - **Project `gen_score.json` absolute scalars into the index** (new
