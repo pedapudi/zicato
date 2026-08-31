@@ -622,9 +622,8 @@ Usage: zicato inspect environment [OPTIONS]
 
   List the environment variables zicato deliberately touches.
 
-  Since the env-var rationalization, NO environment variable is a configuration
-  knob. What remains — and is printed here — is the small merited set of
-  process-boundary contracts: the per-run harness contract, the internal
+  NO environment variable is a configuration knob. Every variable printed here
+  is a process-boundary contract: the per-run harness contract, the internal
   harmonograf handoff pair, the secrets boundary (operator-named api_key_env
   variables and the worker passthrough allowlist), goldfive's own timeout
   variable, and the CI/test toggles.
@@ -784,8 +783,9 @@ Usage: zicato inspect reflection suggest [OPTIONS]
 
   Mine episodes, synthesise suggestions, (optionally) admission-stamp, persist.
 
-  The eval-synthesis surface (EVAL-SYNTHESIS.md §6): WS-MINE extracts episodes
-  (endpoint-free), WS-SYNTH drafts suggestions, WS-ADMIT measures them. The live
+  The eval-synthesis surface (EVAL-SYNTHESIS.md §6) runs three stages: episode
+  mining extracts episodes without calling an endpoint, suggestion synthesis
+  drafts a suggestion from each, and admission measurement scores them. The live
   admission probes SPEND real champion budget and are endpoint-gated — they run
   ONLY under ``--probe`` (default OFF: plan-mode shows what they would spend,
   spending nothing). Suggestions persist beside ``findings.json`` and render

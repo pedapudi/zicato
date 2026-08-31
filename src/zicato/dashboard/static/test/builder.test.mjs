@@ -1170,7 +1170,7 @@ test('builder view: an inert verdict chips as unmeasured, not as a broken board'
   assert(chips[0].classList.contains('dn-bld-pf-inert'), 'and carries a styled class rather than falling back to the bare chip');
   assert(chips[1].classList.contains('dn-bld-pf-warn'), 'an empty window warns rather than refuses');
   const reasons = firstClass(host, 'dn-bld-pf-reasons');
-  assert(reasons.textContent.includes('UNMEASURED'), 'the reasons say the signal is unmeasured, not zero');
+  assert(reasons.textContent.includes('UNMEASURED'), 'the reasons say the achievable signal is unmeasured');
   assert(reasons.textContent.includes('no promote_margin is defensible'), 'and that no margin is defensible on this board');
 });
 

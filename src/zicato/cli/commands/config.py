@@ -90,13 +90,12 @@ def render_env_report() -> str:
 def config_env_cmd(as_json: bool) -> None:
     """List the environment variables zicato deliberately touches.
 
-    Since the env-var rationalization, NO environment variable is a
-    configuration knob. What remains — and is printed here — is the
-    small merited set of process-boundary contracts: the per-run
-    harness contract, the internal harmonograf handoff pair, the
-    secrets boundary (operator-named api_key_env variables and the
-    worker passthrough allowlist), goldfive's own timeout variable,
-    and the CI/test toggles.
+    NO environment variable is a configuration knob. Every variable
+    printed here is a process-boundary contract: the per-run harness
+    contract, the internal harmonograf handoff pair, the secrets
+    boundary (operator-named api_key_env variables and the worker
+    passthrough allowlist), goldfive's own timeout variable, and the
+    CI/test toggles.
     """
     if as_json:
         payload = [

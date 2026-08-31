@@ -1894,7 +1894,7 @@ function preflightVerdict(pf) {
     reasons.push(`degradation signal ${fmtSig(r.degradation_signal != null ? r.degradation_signal : r.signal)} (best of ${n} probed point${n === 1 ? '' : 's'}: ${r.degraded_mutation_id || '?'})`);
     if (verdict === 'refuse') reasons.push('the signal is at or below the floor — duels under this contract would be decided by noise');
     if (verdict === 'warn') reasons.push('saturated: every probe scored identically — the board cannot discriminate even a deliberate degradation');
-    if (verdict === 'inert') reasons.push('every probed point left the scalar exactly at the champion mean while the A/A draws varied — the signal is UNMEASURED, not zero; pin a point the deliverable depends on');
+    if (verdict === 'inert') reasons.push('every probed point left the scalar exactly at the champion mean while the A/A draws varied — the achievable signal is UNMEASURED because the probe was inert; pin a point the deliverable depends on');
     if (verdict === 'ok') reasons.push('the measured signal clears the measured floor');
     // The promote_margin window is a separate question from signal-vs-noise.
     // Its upper comparison is against DEGRADATION headroom, which does not

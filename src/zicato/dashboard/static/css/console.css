@@ -3830,8 +3830,8 @@
   .dn-bld-pf-ok { background: var(--v2-good-soft); border-color: var(--v2-good); }
   .dn-bld-pf-warn { background: var(--v2-bad-soft); }
   .dn-bld-pf-refuse { background: var(--v2-bad-soft); border-color: var(--v2-bad); }
-  /* An inert probe means the signal is UNMEASURED, not bad — the neutral
-     treatment of `unavailable` rather than the bad-soft of warn/refuse. */
+  /* An inert probe leaves the signal UNMEASURED rather than bad, so it takes
+     the neutral treatment of `unavailable` and not the bad-soft of warn/refuse. */
   .dn-bld-pf-inert { background: var(--v2-rule-soft); border-color: var(--v2-rule); }
   .dn-bld-pf-unavailable { background: var(--v2-rule-soft); color: var(--v2-ink-faint); }
   .dn-bld-pf-reasons { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 3px;

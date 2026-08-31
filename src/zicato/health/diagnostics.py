@@ -627,7 +627,7 @@ def detect_dead_judge(
                 summary=(
                     f"{len(broken)} board-declared judge(s) FAILED to answer across "
                     f"the epoch's {total_runs} runs — their zero drift is an ERROR "
-                    f"artifact, not a verdict: {phrases}"
+                    f"artifact rather than a verdict: {phrases}"
                 ),
                 detail={
                     "erroring_judges": broken,
@@ -655,7 +655,7 @@ def detect_dead_judge(
                 severity="warning",
                 summary=(
                     f"{len(dead)} board-declared judge(s) never fired across all "
-                    f"{total_runs} runs in the epoch — dead weight, not coverage: "
+                    f"{total_runs} runs in the epoch and contribute no coverage: "
                     + ", ".join(repr(name) for name in dead)
                 ),
                 detail={
@@ -665,7 +665,7 @@ def detect_dead_judge(
                     "runs_inspected": total_runs,
                     "recommendation": (
                         "these judges recorded NO call failures, so the silence is a "
-                        "real verdict, not a broken endpoint: confirm each dead judge "
+                        "real verdict rather than a broken endpoint: confirm each judge "
                         "is wired to events that actually fire and its criterion is "
                         "reachable; if it can never fire, remove it or sharpen its "
                         "body (see zicato-design-judges)"
@@ -1032,7 +1032,7 @@ def detect_noisy_judge(
                 summary=(
                     f"judge {name!r} disagreed with itself on {rate:.0%} of verdict "
                     f"pairs over the SAME frozen transcript (fired {fired}/{k}) — "
-                    "its drift signal is noise, not judgement"
+                    "its drift signal is noise rather than judgement"
                 ),
                 detail={
                     "judge_name": name,
@@ -1319,8 +1319,8 @@ def detect_preflight_verdict(
                     f"contract pre-flight: every probed mutation point "
                     f"({n_probed or 'all'}) left the scalar exactly at the champion "
                     f"mean while the A/A draws varied by {floor:.6g} — the achievable "
-                    "signal is UNMEASURED, not zero; the probe was inert, which is "
-                    "not evidence the contract is unmeasurable"
+                    "signal is UNMEASURED because the probe was inert, which leaves "
+                    "open whether the contract can discriminate at all"
                 ),
                 detail={
                     **detail,
@@ -1376,8 +1376,8 @@ def detect_preflight_verdict(
                     f"contract pre-flight: promote_margin {margin:.6g} is at/above the "
                     f"measured degradation signal {signal:.6g} — the only movement the "
                     "probe demonstrated (destroying a mutation point) is smaller than "
-                    "the margin. Improvement headroom is UNMEASURED, so this is a "
-                    "reason to check the margin, not evidence the run is null"
+                    "the margin. Improvement headroom is UNMEASURED: check the margin "
+                    "rather than conclude that the run is null"
                 ),
                 detail={
                     **detail,
@@ -1410,8 +1410,8 @@ def detect_preflight_verdict(
                     "recommendation": (
                         "raise promote_margin above the measured noise (the pre-flight "
                         "record's recommended_margin scales the draw-count-stable "
-                        "delta_std, not the range), and/or keep the evidence gate on so "
-                        "promotions must replicate to CI separation"
+                        "delta_std rather than the range), and/or keep the evidence "
+                        "gate on so promotions must replicate to CI separation"
                     ),
                 },
             )
