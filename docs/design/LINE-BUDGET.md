@@ -21,7 +21,7 @@ negative where it stands below.
 
 | Measurement | Baseline (`f9052dd`) | Enforced limit | Limit minus baseline |
 |---|---:|---:|---:|
-| Total | 408,547 | 441,975 | +33,428 |
+| Total | 408,547 | 442,021 | +33,474 |
 | Production | 197,588 | 203,751 | +6,163 |
 
 The earlier raw count of 425,755 included lockfiles and generated artifacts and
@@ -114,3 +114,4 @@ increase.
 | Scoped round-log events (total) | 437,550 | +3,926 | 441,476 | Issue #307 step 1: 3,161 of the delta is the eight mock-evolve goldens, which gain a `scope` object per round-log record and lose no line; the remaining 765 are the `RoundEventScope` envelope with its coordinate vocabulary and grouping key, the emitter's third scope argument across the propose and duel call sites, the two registry-correspondence tests holding the step table equal to the plan's, and the round-trip, forward-compatibility, slate-scope and duel-wiring regressions. |
 | Scoped round-log events (production) | 203,422 | +380 | 203,802 | Issue #307 step 1: scope serialization, decoding and attribute promotion in `round_log.py`, the scope argument on `_RoundLogEmitter.emit` / `_emit_tournament_units` / `_emit_gate_evaluated`, the shared `_duel_scope` builder, the declared stepless-token set, and the field, persist and best-of-N call sites. |
 | Prose lint for hidden-context constructions (total) | 441,476 | +558 | 442,034 | The dependency-free checker over the documentation, README, CHANGELOG, runtime, example, skill, and tool trees; its per-rule fixture suite; the committed per-rule baseline; and the ratchet job in CI. Production is unchanged: the tool sits outside the runtime package. |
+| Temporal hedges and the changelog exemption (total) | 441,975 | +46 | 442,021 | The seventh prose rule with its per-phrase and severity coverage, the per-file rule-exemption table with its changelog regression, and the seventh entry in the committed baseline. Production is unchanged: the checker sits outside the runtime package. |
