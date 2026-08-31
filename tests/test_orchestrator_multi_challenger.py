@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 import sqlite3
 from pathlib import Path
 from typing import Any
@@ -94,12 +95,18 @@ def _bootstrap_swiss_workspace(
     field_size: int,
     rounds_n: int = 1,
     overfitting: Any | None = None,
+    structure: str = "swiss",
 ) -> tuple[Path, str]:
-    """Create a workspace + a Swiss epoch + a v0 baseline snapshot.
+    """Create a workspace + a multi-challenger epoch + a v0 baseline snapshot.
 
     Mirrors ``test_orchestrator._bootstrap_workspace`` but stamps a
     non-gauntlet ``tournament_structure`` onto the epoch's frozen
     ``ScoringWeights`` so ``evolve_once`` takes the multi-challenger path.
+
+    ``structure`` selects which one. It defaults to ``"swiss"``, so every
+    caller that does not pass it builds the same epoch, with the same frozen
+    contract, as before. ``rounds_n`` is a swiss knob and is stamped only for
+    swiss, keeping the other structures' params to the two they share.
     """
     workspace = tmp_path / ".zicato"
     workspace.mkdir()
@@ -140,7 +147,7 @@ def _bootstrap_swiss_workspace(
 
     cfg = new_epoch(
         workspace,
-        name="swiss-epoch",
+        name=f"{structure}-epoch",
         board_source=board_src,
         brief_source=brief_src,
         # Pinned deterministic knobs (single replicate, evidence gate off,
@@ -151,8 +158,12 @@ def _bootstrap_swiss_workspace(
             ScoringWeights(
                 promote_margin=0.01,
                 tournament_structure=TournamentStructure(
-                    structure="swiss",
-                    params={"field_size": field_size, "rounds_n": rounds_n, "replicates": 1},
+                    structure=structure,
+                    params=(
+                        {"field_size": field_size, "rounds_n": rounds_n, "replicates": 1}
+                        if structure == "swiss"
+                        else {"field_size": field_size, "replicates": 1}
+                    ),
                 ),
                 # ``None`` keeps the dataclass default, so every existing
                 # caller's contract hash is unchanged.
@@ -1113,3 +1124,73 @@ def test_field_override_rejects_every_challenger_champion_stands(
     }
     assert by_id["v1"]["promoted"] is False
     assert by_id["v2"]["promoted"] is False
+
+
+#: The two scalars the scalar gate prints in its rejection sentence, at the
+#: six decimals it formats them to: "champion 58.647571 -> challenger
+#: 71.683143". Both rejection branches (an outright regression and an
+#: improvement below the promotion margin) carry the clause.
+_GATE_SCALARS = re.compile(r"champion (-?[0-9]+\.[0-9]{6}) -> challenger (-?[0-9]+\.[0-9]{6})")
+
+#: Every structure that takes the multi-challenger path. The gauntlet is a
+#: single champion-versus-challenger duel and is excluded by construction.
+_FIELD_STRUCTURES = ("swiss", "single_elim", "double_elim", "racing")
+
+
+@pytest.mark.parametrize("structure", _FIELD_STRUCTURES)
+def test_rejected_round_summary_carries_the_gate_s_own_scalars(
+    structure: str, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A rejected round's summary states the numbers its reason states.
+
+    The summary's scalars come from the gate's crowning matchup — the
+    champion-versus-leader duel the rejection reason is built from — so the
+    two can be compared directly: the reason names the champion and
+    challenger scalars, and the summary must carry those same two values with
+    their difference as the delta.
+
+    Reading them out of the reason is what makes this a pin rather than a
+    restatement. Asserting only that the delta is non-zero and of the right
+    sign would still pass if the scalars came from the per-pairing standings
+    aggregate, which averages across all of the champion's pairings and
+    reports a different pair of numbers that usually differ in the same
+    direction.
+    """
+    workspace, epoch_id = _bootstrap_swiss_workspace(
+        tmp_path, field_size=2, rounds_n=1, structure=structure
+    )
+    _install_stub_adapter_factory(monkeypatch)
+    # Both challengers lose to the champion, so whichever one reaches the
+    # champion gate is rejected there and the round settles as a rejection.
+    _install_telemetry_stubs(
+        monkeypatch,
+        canned_loss_by_gen={"v0": 0.2, "v1": 1.0, "v2": 2.0},
+        canned_pass_by_gen={"v0": True, "v1": True, "v2": True},
+    )
+
+    from zicato.orchestrator import evolve_once
+
+    outcome = asyncio.run(
+        evolve_once(
+            workspace_root=workspace,
+            epoch_id=epoch_id,
+            harness_call_llm=_harness_call_llm,
+            auxiliary_call_llm=_make_aux_responder(_distinct_field_responses(2)),
+        )
+    )
+
+    assert outcome.tournament_decision == "rejected"
+    match = _GATE_SCALARS.search(outcome.rejection_reason)
+    assert match is not None, f"no champion/challenger clause in: {outcome.rejection_reason!r}"
+    champion, challenger = float(match.group(1)), float(match.group(2))
+
+    # The reason prints six decimals, so the summary may differ from the
+    # parsed value by up to half of the last printed digit and no more.
+    half_ulp = 5e-7
+    assert outcome.parent_scalar == pytest.approx(champion, abs=half_ulp)
+    assert outcome.child_scalar == pytest.approx(challenger, abs=half_ulp)
+    assert outcome.delta_scalar == pytest.approx(challenger - champion, abs=2 * half_ulp)
+    # The champion stands, so the head never advanced.
+    from zicato.evolve.generation_phase import current_generation
+
+    assert current_generation(workspace, epoch_id) == "v0"
