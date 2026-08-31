@@ -15,7 +15,7 @@ suggestion stages a builder DRAFT the operator seals (:mod:`zicato.reflection.ap
 
 Seam contract (for the integration merge)
 ------------------------------------------
-The three workstreams build in parallel against the DOC's shapes, not each
+The three build lanes work against the DOC's shapes rather than against each
 other's branches. This module therefore defines the persisted-suggestion JSON
 shape (:class:`Suggestion`) and two callable seams mirroring the doc:
 
@@ -327,7 +327,7 @@ def read_suggestions(workspace_root: Path, epoch_id: str, reflection_id: str) ->
 def format_admission(admission: dict[str, Any] | None) -> str:
     """A one-line, HONEST admission summary — measured numbers with n, or ``unmeasured``.
 
-    Renders the §5 record exactly: a probe that did not run reads ``unmeasured``
+    Renders the §5 record: a probe that did not run reads ``unmeasured``
     (never a fabricated 0.0); a measured probe reads its number WITH its n. The
     recommended bands are appended as quiet advice (``advisory: …``), never a
     verdict that drops the suggestion.
@@ -423,11 +423,12 @@ def _admission_advisory(admission: dict[str, Any]) -> str:
 
 
 def plan_cost(suggestions: list[Suggestion], *, replicates: int = 5) -> dict[str, Any]:
-    """What the LIVE admission probes WOULD spend — shown, not spent (plan mode).
+    """What the LIVE admission probes WOULD spend: reported without spending it.
 
     Plan mode (``--no-probe``, the default) mines + synthesises + validates
     artifacts only; the execution / noise / discrimination probes (§5) spend
-    real champion budget and are endpoint-gated (G3-class). This reports the
+    real champion budget, so they need the operator's explicit go-ahead. This
+    reports the
     spend they would incur so the operator decides before passing ``--probe``.
     """
     n = len(suggestions)

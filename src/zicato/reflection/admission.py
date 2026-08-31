@@ -35,8 +35,9 @@ WS-SURFACE, never a silent auto-reject here:
 explicit ``spend: bool``. In ``spend=False`` (plan) mode it computes every
 stage's board-run cost up front (:func:`estimate_cost`) and runs NOTHING — zero
 board runs — returning the cost with every live stage ``unmeasured``. Only
-``spend=True`` executes the probes (endpoint-gated, G3-class — WS-SURFACE's CLI
-gates it). The whole pipeline is fully testable against the fixture/mock tier:
+``spend=True`` executes the probes, which need the operator's explicit
+go-ahead because they spend live budget; the suggestion surface's CLI gates
+them. The whole pipeline is fully testable against the fixture/mock tier:
 the probes drive the real runner over a seeded ``_run_single`` (the cascade-OC /
 power-harness precedent), so every statistic has a known-answer test with zero
 live spend.
@@ -434,8 +435,8 @@ def _request_from_suggestion(
     Populates the §4 self-preference families (SHOULD-FIX-B): ``judge_family``
     from the configured judge model when a judge will grade, ``expected_answer_family``
     from the synthesising aux model when the suggestion is LLM-drafted — the
-    provenance knows which tier authored it. ``None`` only when genuinely
-    unknowable (a mechanical draft pins recorded data — no model authored it).
+    provenance knows which tier authored it. ``None`` only when unknowable
+    (a mechanical draft pins recorded data, so no model authored it).
     """
     from zicato.core import validate_board_entry  # noqa: PLC0415
 
@@ -952,7 +953,7 @@ async def _run_entry(
 
     Stamps the reserved replicate index onto the entry (the §7.3 same-number
     rule: a seeded harness draws fresh per slot) and keys the per-unit cache with
-    it, exactly as the calibration / screen / corpus draws do. Returns the
+    it, as the calibration / screen / corpus draws do. Returns the
     entry's :class:`LossProfile`, or ``None`` when the runner produced none.
     """
     from zicato.tournament.scheduling import _run_board_units_fast  # noqa: PLC0415
@@ -981,7 +982,7 @@ def _settled_matchups(experiments: list[dict[str, Any]]) -> list[tuple[str, str]
     """The reign's settled ``(champion, challenger)`` matchups, in record order.
 
     Reuses :func:`zicato.query.eval_view._reign_matchups` so the discrimination
-    probe spans exactly the pairs the instrument panel measures discrimination
+    probe spans the same pairs the instrument panel measures discrimination
     over (EVAL-VIEW.md §2.3, the MATCHUP-RECORD binding). Tolerant: a malformed
     experiments list degrades to no matchups.
     """

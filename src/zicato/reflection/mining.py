@@ -1,4 +1,4 @@
-"""WS-MINE — the episode extractor for eval synthesis (generative reflection).
+"""The episode extractor for eval synthesis (generative reflection).
 
 The instrument's second loop (EVAL-SYNTHESIS.md) opens here: mine bounded
 **episodes** from the candidate loop's observed behaviour, each one a demand
@@ -97,7 +97,8 @@ _SEV_GAP_CRIT: int = 3
 _SEV_STALENESS: int = 2
 _SEV_GAP_WARN: int = 2
 #: An infra flake is the SOFTEST signal — it is not a candidate failure at all,
-#: just a telemetry note that a run aborted on infrastructure, not on behaviour.
+#: just a telemetry note that a run aborted on infrastructure rather than on
+#: behaviour.
 _SEV_INFRA_FLAKE: int = 1
 
 # --- imported-trace signal severities (TRAJECTORY-BOOTSTRAP.md §4.1) --------

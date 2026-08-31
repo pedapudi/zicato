@@ -12,7 +12,8 @@ round-trip form. The plan carries a monotone **executed** flag: a
 pre-registered plan is written with ``executed=False`` and STOPS; a later
 invocation loads it, runs the corpus, and re-writes it with
 :meth:`ReflectionPlan.mark_executed` set — the stop/resume seam that keeps a
-pre-registration honest (you review the frozen plan, then execute exactly it).
+pre-registration honest: the operator reviews the frozen plan, then executes
+that plan and no other.
 
 Timestamps are **injected**, never read from the wall clock here, so the
 ``reflection_id`` is deterministic under test: :func:`make_reflection_id`
@@ -35,14 +36,14 @@ from uuid import uuid4
 
 #: ``format_version`` stamped onto every ``plan.json``. A reader rejects any
 #: other version (absent / older / newer / garbage) by raising — a plan is a
-#: pre-registration contract, not a best-effort artifact, so a version it
+#: pre-registration contract rather than a best-effort artifact, so a version it
 #: cannot vouch for must never be silently reinterpreted.
 PLAN_FORMAT_VERSION: int = 1
 
-#: The full check vocabulary a plan may request. R2 implements the
-#: reliability / discrimination / coverage subset (pillars 1-2); the
+#: The full check vocabulary a plan may request. The reliability,
+#: discrimination and coverage checks (pillars 1-2) are implemented here; the
 #: adjudication-dependent checks (judge-audit, coherence, decomposition) are
-#: recorded in the plan but consumed by a later phase's engine.
+#: recorded in the plan and consumed by the adjudication engine.
 CHECK_JUDGE_AUDIT: str = "judge-audit"
 CHECK_RELIABILITY: str = "reliability"
 CHECK_COHERENCE: str = "coherence"
@@ -148,7 +149,7 @@ class ReflectionPlan:
     format_version: int = PLAN_FORMAT_VERSION
 
     def to_json(self) -> dict[str, Any]:
-        """The JSON shape persisted as ``plan.json`` (lists, not tuples)."""
+        """The JSON shape persisted as ``plan.json`` (lists rather than tuples)."""
         return {
             "format_version": self.format_version,
             "reflection_id": self.reflection_id,
@@ -258,7 +259,7 @@ def read_plan(workspace_root: Path, epoch_id: str, reflection_id: str) -> Reflec
 
     A present-but-malformed / wrong-version file raises via
     :meth:`ReflectionPlan.from_json` — an unreadable pre-registration is an
-    error the operator must see, not a silent skip.
+    error the operator must see rather than a silent skip.
     """
     from zicato.core.workspace import reflection_plan_path  # noqa: PLC0415
 

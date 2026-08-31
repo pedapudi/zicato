@@ -5,22 +5,22 @@ per decision; this module folds them into the per-judge
 :class:`JudgeScorecard` the doc's schema pins (BOARD-REFLECTION.md §"judge
 audit"). Every metric is honestly named and honestly scoped:
 
-* The confusion matrix is grounded in the ADJUDICATED transcript, not any
-  pre-authored label: fired × exhibits = TP, fired × clean = FP, silent ×
+* The confusion matrix is grounded in the ADJUDICATED transcript rather than
+  any pre-authored label: fired × exhibits = TP, fired × clean = FP, silent ×
   exhibits = FN, silent × clean = TN.
 * ``AMBIGUOUS`` decisions are EXCLUDED from precision / recall / f1 / fpr and
   counted separately — an ambiguous pile at or above
   :data:`AMBIGUOUS_PILE_THRESHOLD` is itself a finding (the judge's criterion
   is underspecified), surfaced as ``ambiguous_pile``.
 * ``severity_accuracy`` is tracked APART from detection: a judge that fires at
-  the wrong severity is a mis-weighting defect, not a detection defect.
+  the wrong severity is a mis-weighting defect rather than a detection defect.
 * Self-consistency reports BOTH the shipped pairwise ``disagreement_rate``
   (NOT chance-corrected) and a chance-corrected Fleiss ``self_consistency_kappa``
   beside it — neither masquerades as the other (:func:`fleiss_kappa`).
 * Cross-judge firing correlation yields ``redundant_with`` (corr ≈ 1, a prune
   candidate) and ``conflicts_with`` (systematic disagreement).
 * ``exercised`` reports whether the judge fired at all in this corpus; an
-  unexercised judge is UNTESTED, not validated.
+  unexercised judge is UNTESTED rather than validated.
 
 Pure over the in-memory adjudications + corpus. Aggregation optionally groups
 by fidelity tier so a verbatim scorecard is never silently mixed with a preview
@@ -209,7 +209,7 @@ def _cross_judge(
     """``(redundant_with, conflicts_with)`` for one judge vs every other.
 
     Zero-variance firing vectors (all-fire or all-silent judges, over the shared
-    runs) are skipped — they are uncorrelatable, not redundant, so they appear
+    runs) are skipped — they are uncorrelatable rather than redundant, so they appear
     in neither ``redundant_with`` nor ``conflicts_with``. This keeps a bank of
     always-firing judges from reading as a mutually-redundant cluster (which the
     ``x == y ⇒ 1.0`` convention in :func:`pearson`, kept for the entry

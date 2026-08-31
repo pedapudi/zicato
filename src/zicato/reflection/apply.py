@@ -9,10 +9,10 @@ resulting draft diff and seals it through the builder, which is the gated step
 that rolls the epoch. The recommend-only invariant holds end to end: reflection
 diagnoses and stages, the operator (through the builder) decides.
 
-This module lives in :mod:`zicato.reflection` — NOT the CLI — precisely because
+This module lives in :mod:`zicato.reflection` rather than the CLI, because
 the CLI must not import the builder directly (the import-linter ``cli -> dashboard
 -> builder`` declared-edge contract), whereas ``zicato.reflection`` is a library
-already permitted the builder edge (R3's ``findings`` signature validation).
+already permitted the builder edge (the ``findings`` signature validation).
 ``zicato inspect reflection apply`` calls in here; the builder dependency stays on the
 reflection side of the boundary.
 """
@@ -249,7 +249,7 @@ def apply_suggestion_to_draft(
     suggestion (regression / coverage / harder variant) stages through the new
     ``add_board_entry`` op; a judge suggestion through the existing
     ``add_judge`` op. Both reconstruct the TYPED artifact from the persisted
-    JSON before dispatch, so the drafted entry / judge lands exactly as a
+    JSON before dispatch, so the drafted entry / judge lands as a
     hand-authored board edit would. A rubric revision carries no ``proposed_op``
     (no builder judge-edit op exists — the recorded gap) and raises
     :class:`FindingNotActionableError`. NEVER writes the sealed contract.

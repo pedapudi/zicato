@@ -29,7 +29,7 @@ NOT_ABORTED_PATH: str = "zicato.reflection.bootstrap_predicates.not_aborted"
 #: RunResult ``abort_reason`` strings that name a GENUINE wall-clock budget abort
 #: (the candidate's own over-budget failure) — normalised to the LossProfile
 #: :data:`BUDGET_ABORT_CAUSE` vocabulary so :func:`is_infra_abort_cause` classifies
-#: them as non-infra (a real failure), not a harness blip.
+#: them as non-infra: a real failure rather than a harness blip.
 _BUDGET_ABORT_REASONS: frozenset[str] = frozenset(
     {"wall_clock_budget", "wall_clock_budget_exceeded", BUDGET_ABORT_CAUSE}
 )

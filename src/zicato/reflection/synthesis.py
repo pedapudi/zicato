@@ -95,7 +95,7 @@ SYNTH_LLM: str = "llm"
 #: guard). Coverage / judge / harder-variant suggestions all default here.
 TARGET_INCOMING_ROTATION: str = "incoming_rotation"
 #: Regression entries MAY target train — a proposer optimising to keep passing a
-#: pinned past failure is doing exactly what the operator wants (§4 exception).
+#: pinned past failure is doing what the operator wants (§4 exception).
 TARGET_TRAIN: str = "train"
 #: A rubric revision edits an existing judge in place — no new board slice. Each
 #: synthesizer stamps its own slice per this rule (§3 table): regression → train,
@@ -160,7 +160,8 @@ _BOOTSTRAP_MAX_BUDGET_SECONDS: int = 1800
 _BOOTSTRAP_NEUTRAL_OPENER: str = (
     "Continue the task the recorded agent was working on and complete it correctly."
 )
-#: The provenance flag stamped when the opener was synthesised, not reconstructed.
+#: The provenance flag stamped when the opener was synthesised rather than
+#: reconstructed.
 _FLAG_SYNTHESISED_OPENER: str = "synthesised_neutral_opener"
 #: Head-cap (chars) on a single-turn bootstrap entry's reconstructed ``input``
 #: (§5.1) — consistent with the evidence caps: a foreign opening turn may be
@@ -200,7 +201,8 @@ _DEFAULT_BUDGET_SECONDS: int = 120
 _MAX_AUX_RESPONSE_BYTES: int = 64 * 1024
 
 #: The board sentinel a board-wide staleness episode uses as its subject — it is
-#: demand for rotation, not a single entry to perturb, so it seeds no artifact.
+#: demand for rotation rather than a single entry to perturb, so it seeds no
+#: artifact.
 _BOARD_SENTINEL: str = "__board__"
 
 _UNSAFE_ID_RE = re.compile(r"[^a-z0-9_-]+")
@@ -400,7 +402,7 @@ def _regression_suggestion(
 
     The entry that failed already encodes the CORRECT behaviour — its input and
     its expectation ARE the pin — so the regression reproduces that recorded
-    scenario verbatim under a new id, not an invented one. Targets train (a
+    scenario verbatim under a new id rather than an invented one. Targets train (a
     regression working as intended when the proposer sees it, §4).
     """
     orig = board_by_id.get(episode.subject)
@@ -464,8 +466,8 @@ def _harder_variant_suggestion(
 ) -> Suggestion | None:
     """Harden a dead (saturated) entry by one deterministic perturbation (§3).
 
-    A board-wide gap episode (subject ``__board__``) is rotation demand, not a
-    single entry to perturb, so it seeds no artifact here. A dead-entry episode
+    A board-wide gap episode (subject ``__board__``) is rotation demand rather
+    than a single entry to perturb, so it seeds no artifact here. A dead-entry episode
     picks ONE perturbation from the typed vocabulary — no RNG, the choice keyed
     off the episode id — and lands the variant in the incoming rotation set (§4).
     """
@@ -611,7 +613,8 @@ def _rubric_revision_suggestion(
     A structured tightening derived mechanically from the FP evidence: the
     original inline body plus an auto-derived clause instructing the judge NOT
     to fire on the transcripts the meta-judge confirmed clean. Only inline
-    judges are revisable — a python-mode body is a dotted path, not a criterion.
+    judges are revisable — a python-mode body is a dotted path rather than a
+    criterion.
     """
     hosts = judge_index.get(episode.subject)
     if not hosts:
@@ -844,7 +847,8 @@ async def _aux_text(
 
     The aux endpoint is untrusted: a raised error logs and drops (no crash), and
     an oversized response is capped and dropped with a reason (a single drafted
-    entry / judge is small — a megabyte reply is a malfunction, not a draft).
+    entry / judge is small — a megabyte reply is a malfunction rather than a
+    draft).
     """
     try:
         raw = await aux_call_llm(system, user, "")
@@ -986,7 +990,7 @@ def _fence_recorded(turns: Sequence[str], *, per_turn_limit: int) -> str:
 def _bootstrap_persona(user_turns: Sequence[str]) -> UserPersona:
     """Script an emulator persona from the RECORDED user side (§5.1).
 
-    The recorded user side becomes the persona BRIEF, not a verbatim script — the
+    The recorded user side becomes the persona BRIEF rather than a verbatim script — the
     emulated kind carries the *intent* (a scripted entry would over-fit the exact
     wording). Both ``goal`` and ``constraints`` embed the recorded text inside the
     untrusted-data frame (:func:`_fence_recorded`, §8): at eval time the persona is
@@ -1059,7 +1063,7 @@ def _reconstruct_bootstrap_entry(
 def _bootstrap_budget_seconds(episode: MinedEpisode) -> int:
     """A tightened wall-clock budget derived from the observed cost blowout (§5.2).
 
-    A trace carries token/call counts, not seconds, so the budget is derived: the
+    A trace carries token and call counts rather than seconds, so the budget is derived: the
     observed cost is expressed in LLM-call-equivalents, scaled by an assumed
     per-call wall-clock cost, then TIGHTENED below the observed so the re-run must
     be more efficient. Deterministic and floored so the budget is always positive.
@@ -1372,7 +1376,7 @@ def synthesize(
        none to draft, never a crash.
     2. Resolve the auxiliary callable ONLY when ``allow_llm`` (the LLM tier), the
        SAME way reflection's own aux resolution works (``models.auxiliary`` first,
-       then the legacy ``runtime.auxiliary_call_llm`` dotted path). When no aux is
+       then the ``runtime.auxiliary_call_llm`` dotted path). When no aux is
        configured the LLM tier is SKIPPED with a logged reason and the mechanical
        tier still runs — the ``--allow-llm`` help says the LLM tier needs the
        configured aux endpoint.
@@ -1386,8 +1390,8 @@ def synthesize(
        TRAJECTORY-BOOTSTRAP.md §5) over the SAME ranked episodes, threading
        ``imported_traces`` so it can reach the reconstructions. The bootstrap
        hints route only there — the existing tiers return nothing for them, so no
-       double-emission. With no ``imported_traces`` (the default) the tier returns
-       nothing and this path is byte-identical to today.
+       double-emission. With no ``imported_traces`` (the default) the tier
+       returns nothing and contributes no suggestions.
     """
     from zicato.reflection import suggestions as surface  # noqa: PLC0415
 
@@ -1629,7 +1633,7 @@ def _resolve_aux_call_llm(workspace_root: Path | None) -> CallLLM | None:
     """Resolve the auxiliary callable the LLM tier drafts through (or ``None``).
 
     Mirrors reflection's own aux resolution: the unified ``models.auxiliary``
-    role first, then the legacy ``runtime.auxiliary_call_llm`` dotted path. Any
+    role first, then the ``runtime.auxiliary_call_llm`` dotted path. Any
     resolution failure (no config, an unimportable path) degrades to ``None`` so
     the LLM tier is skipped with a logged reason — never a crash, never a live
     call the operator did not ask for.
