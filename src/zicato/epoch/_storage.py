@@ -99,14 +99,14 @@ def journal_key(epoch_id: str) -> str:
 
 
 #: Version stamped into the CANONICAL JSON records (``experiment.json``,
-#: each epoch's ``config.json``, ``lineage.json``) at write time (WS5).
-#: A record with NO ``format_version`` key is treated as version 1 THIS
-#: release — every pre-stamp workspace/fixture keeps reading — so the
-#: refusal targets FUTURE incompatible shapes only: a record stamped
-#: with a HIGHER version was written by a newer zicato whose shape this
-#: build cannot promise to interpret, and the reader refuses with a
-#: clear error instead of silently misreading it. There are NO migration
-#: shims; bumping this constant is a deliberate format break.
+#: each epoch's ``config.json``, ``lineage.json``) at write time.
+#: A record with NO ``format_version`` key is treated as version 1 in this
+#: release, so a workspace or fixture written before the stamp keeps
+#: reading. The refusal therefore targets FUTURE incompatible shapes only.
+#: A record stamped with a HIGHER version was written by a newer zicato
+#: whose shape this build cannot promise to interpret, so the reader
+#: refuses with a clear error instead of silently misreading it. There are
+#: NO migration shims; bumping this constant is a deliberate format break.
 RECORD_FORMAT_VERSION = 1
 
 

@@ -1,16 +1,15 @@
 """The workspace query layer: read-only ``.zicato/`` state assembly.
 
-Library code, not driver code: these readers turn the on-disk workspace
+Library code: these readers turn the on-disk workspace
 (runtime state files, the SQLite analytical index, epoch records) into
 the JSON view shapes any consumer can render. The dashboard server is
 the primary consumer today, but the layer has no dashboard dependency —
 :mod:`zicato.query` must never import :mod:`zicato.dashboard` (enforced
 by the import-linter contracts).
 
-Structurally this is the former monolithic dashboard ``state_reader``
-module, split into per-view submodules; this package re-exports every
-name the split produced so consumers can import from ``zicato.query``
-directly.
+The readers live in one submodule per view. This package re-exports
+every name they define, so a consumer imports from ``zicato.query``
+directly and never needs to know which submodule owns a reader.
 
 Every function here is best-effort: a missing or transiently-truncated
 file degrades to an empty / ``None`` value rather than raising, so no

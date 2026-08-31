@@ -53,7 +53,7 @@ FRONTIER_FILENAME = "pareto_frontier.json"
 
 #: Retire reasons. ``DOMINATED_BY_PREFIX`` is completed with the generation
 #: id that displaced the member (``"dominated_by:v6"``), so the record always
-#: names WHAT retired a member, not just that something did.
+#: names WHAT retired a member rather than only that something did.
 RETIRED_PROMOTED = "promoted"
 RETIRED_DOMINATED_BY_CHAMPION = "dominated_by_champion"
 RETIRED_MONOTONICITY = "monotonicity_regression"
@@ -169,16 +169,17 @@ def dominates(
 
     Axes only one side carries are skipped — they neither create nor block a
     relation. With NO shared axes the answer is ``False`` in both directions:
-    two candidates with nothing in common are incomparable, not dominant.
+    two candidates with nothing in common are incomparable rather than dominant.
 
     BOTH limbs require a strict difference on top of clearing the margin,
     which is what keeps the relation well-formed at ``margin == 0`` — a value
     :class:`ScoringWeights` accepts, since nothing validates the field to a
-    positive number. At a zero margin ``>= margin`` is true for an exact TIE,
-    which would make every candidate dominate itself and any two identical
-    candidates dominate each other (no partial order may do either), while a
-    tie on the worse limb would veto a candidate that is strictly better
-    somewhere and equal everywhere else — the textbook dominant case. With
+    positive number. At a zero margin ``>= margin`` is true for an exact TIE.
+    That would make every candidate dominate itself, and any two identical
+    candidates dominate each other, neither of which a partial order may do.
+    A tie on the worse limb would meanwhile veto a candidate that is strictly
+    better somewhere and equal everywhere else, which is the textbook
+    dominant case. With
     the conjuncts, ``margin == 0`` degrades to exactly strict Pareto
     dominance. For every ``margin > 0`` both conjuncts are implied by the
     inequality beside them and nothing changes.
@@ -341,7 +342,7 @@ def update_frontier(
        the champion, so it would sit on the record as a permanent tie and
        contaminate exactly the set whose job is to hold interesting
        candidates. The multi-challenger path fields the placebo INSIDE the
-       slate, so this is load-bearing, not theoretical;
+       slate, so this is load-bearing rather than theoretical;
     #. it is settled enough to compare — at least one finite axis value;
     #. it does not regress a monotonicity-tracked namespace against the
        champion (the gate's own rule, via
@@ -596,7 +597,7 @@ def record_frontier(
     """Load → :func:`update_frontier` → write, and only when membership moved.
 
     A round that admits and retires nothing leaves the file byte-identical
-    (untouched, not rewritten), so the record's mtime means "something
+    untouched rather than rewritten, so the record's mtime means "something
     happened" rather than "a round ran".
     """
     current = load_frontier(workspace_root, epoch_id)

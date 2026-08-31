@@ -2,7 +2,7 @@
 
 Two producers, one record type. Both emit :class:`ObservationRun` — one per
 ``(candidate, entry, replicate)`` unit — and both stay honest about *fidelity*:
-every record is stamped ``verbatim`` / ``result`` / ``preview`` per the R1
+every record is stamped ``verbatim`` / ``result`` / ``preview`` per the
 capture ladder (BOARD-REFLECTION.md), and the downstream analyzers aggregate
 tiers separately (a verbatim finding outranks a preview one).
 
@@ -12,9 +12,9 @@ Zero LLM budget. Walks the epoch's generations and REFERENCES the run
 artifacts the loop already persisted — reads ``loss.json`` (+ every
 ``loss.r{n}`` replicate, so the A/A calibration slots at base ``1000`` and any
 prior reflection draws at base ``5000`` come along as **free pillar-1
-replicates**), and the R1 sidecars ``result.json`` and ``judge_io.jsonl`` via
-their tolerant readers. It stores PATHS, never copies bytes — the corpus is a
-lens over the lineage, not a duplicate of it.
+replicates**), and the capture sidecars ``result.json`` and ``judge_io.jsonl``
+via their tolerant readers. It stores PATHS and never copies bytes, so the
+corpus is a lens over the lineage rather than a duplicate of it.
 
 Active (:func:`run_corpus`)
 ---------------------------
@@ -32,8 +32,8 @@ infra abort on any unit VOIDS that draw with
 cleanly, mirroring the preflight's ``NoiseFloorInconclusive`` discipline.
 
 The active run persists ``corpus.jsonl`` (one record per line) and re-writes
-the plan with its ``executed`` flag set — the pre-registration stop/resume
-seam closes here.
+the plan with its ``executed`` flag set, which closes the pre-registration
+stop/resume seam.
 """
 
 from __future__ import annotations
@@ -65,7 +65,7 @@ from zicato.core import BoardEntry, Generation, RuntimeConfig, ScoringWeights
 #: §"reserved bases" beside ``epoch/preflight.py``'s ``PREFLIGHT_REPLICATE_BASE``.
 REFLECTION_REPLICATE_BASE: int = 5000
 
-#: The three fidelity tiers, strongest first (the R1 ladder).
+#: The three fidelity tiers, strongest first (the capture ladder).
 FIDELITY_VERBATIM: str = "verbatim"
 FIDELITY_RESULT: str = "result"
 FIDELITY_PREVIEW: str = "preview"
@@ -107,7 +107,7 @@ class ObservationRun:
     fidelity:
         :data:`FIDELITY_VERBATIM` (a ``judge_io.jsonl`` sidecar was present) >
         :data:`FIDELITY_RESULT` (a ``result.json`` was present) >
-        :data:`FIDELITY_PREVIEW` (neither — historical / stubbed run).
+        :data:`FIDELITY_PREVIEW` (neither sidecar was captured).
     has_result, has_judge_io:
         The raw capture flags the fidelity tier derives from.
     loss_ref, transcript_ref:
@@ -304,16 +304,15 @@ def _judge_decisions(
 def judge_answered(decision: dict[str, Any]) -> bool:
     """Whether a judge decision is a VERDICT rather than a failed call.
 
-    Every aggregation over ``ObservationRun.judge_decisions`` must filter
-    on this first. A decision with ``errored`` set is a call that RAISED
-    (issue #121): the judge produced no verdict at all, and its
-    ``fired: False`` is an error artifact, not the judgement "no
-    violation". Folding it in as a silent verdict is the misdiagnosis
-    reflection exists to prevent — against a ``exhibits`` label it scores
-    as a FALSE NEGATIVE, so a broken judge endpoint reads as a judge
-    whose criterion is too narrow, and the recommendation that follows
-    ("sharpen the criterion") sends the operator at the board when the
-    fix is the judge's model config.
+    Every aggregation over ``ObservationRun.judge_decisions`` must filter on
+    this first. A decision with ``errored`` set is a call that RAISED (issue
+    #121): the judge produced no verdict at all, and its ``fired: False`` is an
+    error artifact rather than the judgement "no violation". Folding it in as a
+    silent verdict is the misdiagnosis reflection exists to prevent — against a
+    ``exhibits`` label it scores as a FALSE NEGATIVE, so a broken judge
+    endpoint reads as a judge whose criterion is too narrow, and the
+    recommendation that follows ("sharpen the criterion") sends the operator at
+    the board when the fix is the judge's model config.
 
     Records written before the flag existed carry no ``errored`` key and
     read as answered, which is what they were.
@@ -325,7 +324,7 @@ def _loss_aborted(loss: Any) -> bool:
     """Whether a run aborted — the loss' own ``aborted`` flag, else ``abort_cause``.
 
     Prefers an explicit ``aborted`` boolean on the loss-like object and falls
-    back to ``bool(abort_cause)``. NOTE: today's
+    back to ``bool(abort_cause)``. NOTE:
     :class:`~zicato.core.LossProfile` carries no ``aborted`` field (only
     ``abort_cause: str | None`` + ``wall_clock_budget_exceeded``), so the
     fall-back — ``abort_cause`` truthiness — is what fires in practice (a budget
@@ -411,7 +410,7 @@ def _unit_events_path_for(loss_path: Path) -> Path:
 
 
 def _read_sidecars(loss_path: Path) -> tuple[bool, list[dict[str, Any]]]:
-    """``(result_present, judge_io_records)`` via the tolerant R1 readers."""
+    """``(result_present, judge_io_records)`` via the tolerant capture readers."""
     from zicato.judge_runtime.io_capture import (  # noqa: PLC0415
         judge_io_path_for_loss,
         read_judge_io,
@@ -455,7 +454,7 @@ def ingest_lineage(
     (``loss.json`` + every ``loss.r{n}`` — the calibration and prior-reflection
     draws are free pillar-1 replicates) becomes one :class:`ObservationRun`
     that REFERENCES its ``loss.json`` / ``result.json`` / ``events.jsonl`` by
-    path. The R1 sidecars decide fidelity: a ``judge_io.jsonl`` sidecar ⇒
+    path. The capture sidecars decide fidelity: a ``judge_io.jsonl`` sidecar ⇒
     ``verbatim``, else a ``result.json`` ⇒ ``result``, else ``preview``.
     Missing / unreadable artifacts degrade the record, never crash.
     """
@@ -468,7 +467,7 @@ def ingest_lineage(
             run_directory = _run_dir(workspace_root, epoch_id, candidate_id, entry_id)
             # Passive ingest takes only the slots the reserved-base ledger
             # vouches for as a clean draw of the candidate's REAL code over the
-            # real board — never the pre-flight's degraded probes, which cache
+            # real board, and never the pre-flight's degraded probes, which cache
             # in this same directory under the champion's own generation id.
             for replicate, loss_path in own_code_board_draws(run_directory):
                 loss = _read_loss(loss_path)
@@ -554,9 +553,9 @@ async def run_corpus(
                 replicate_index=replicate_index,
             )
             # Same discipline as the preflight's degraded draw: an infra abort
-            # makes the draw un-measurable, not worst-case — void it rather than
-            # persist an outage-derived observation. Infra aborts are never
-            # cached, so a re-run re-attempts exactly this slot.
+            # makes the draw un-measurable rather than worst-case — void it
+            # rather than persist an outage-derived observation. Infra aborts
+            # are never cached, so a re-run re-attempts this same slot.
             if any(
                 is_infra_abort_cause(getattr(lp, "abort_cause", None)) for lp in losses.values()
             ):

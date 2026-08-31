@@ -245,8 +245,8 @@ def _scorecard_from_experiment(experiment: dict[str, Any]) -> dict[str, Any]:
         "hits": hits,
         "total": total,
         "fraction": fraction,
-        # Brier is null: the schema carries no probabilistic forecast to
-        # score against (predictions are direction+magnitude buckets, not
+        # Brier is null: the schema carries no probabilistic forecast to score
+        # against (predictions are direction and magnitude buckets rather than
         # probabilities). The key is present so callers can light up a Brier
         # column the moment a probabilistic forecast field lands.
         "brier": None,
@@ -321,9 +321,9 @@ def build_hypothesis_accuracy(
 def _round_index_of(experiment: dict[str, Any]) -> int | None:
     """Read a generation's birth round off ``experiment.json`` (int only).
 
-    ``None`` when the stamp is absent / non-integer — pre-feature records
-    that predate the ``round_index`` stamp, matching the lineage reader's
-    tolerant read.
+    ``None`` when the stamp is absent or non-integer: a record written
+    before the ``round_index`` stamp existed carries none, and this read is
+    as tolerant of that as the lineage reader is.
     """
     raw = experiment.get("round_index")
     if isinstance(raw, bool):
@@ -369,8 +369,8 @@ def build_calibration_trend(paths: WorkspacePaths, epoch_id: str | None = None) 
       order (``null`` when nothing scored).
     * ``trend_sign`` compares the mean of the latter half of the scored
       fractions to the former half: ``+1`` improving (later half higher),
-      ``-1`` regressing, ``0`` flat / too few points. Higher fraction =
-      better calibration, so a positive sign reads as "getting better".
+      ``-1`` regressing, ``0`` flat or too few points. A higher fraction is
+      better calibration, so a positive sign means calibration improved.
     """
     resolved = _resolve_epoch_id(paths, epoch_id)
     empty: dict[str, Any] = {
@@ -435,7 +435,7 @@ def _trend_sign(fractions: list[float]) -> int:
     higher mean than the former half (calibration improving), ``-1`` when
     strictly lower, ``0`` when equal or there are fewer than two scored
     points to compare. A higher fraction is better calibration, so a
-    positive sign reads as "getting better".
+    positive sign means calibration improved.
     """
     n = len(fractions)
     if n < 2:

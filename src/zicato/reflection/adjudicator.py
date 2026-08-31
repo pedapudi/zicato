@@ -10,7 +10,7 @@ scorecards aggregate (BOARD-REFLECTION.md §"judge audit").
 Context glue — fidelity is load-bearing
 ----------------------------------------
 :func:`observation_to_judge_context` reconstructs *exactly what the judge saw*,
-at the highest fidelity the R1 capture ladder retained:
+at the highest fidelity the capture ladder retained:
 
 * ``verbatim`` — the judge's exact ``reasoning_text`` + ``transcript_window``
   from the ``judge_io.jsonl`` sidecar. The adjudicator reads the same bytes the
@@ -19,9 +19,9 @@ at the highest fidelity the R1 capture ladder retained:
   judge-I/O sidecar exists.
 * ``preview`` — the truncated ``events.jsonl`` reconstruction
   (:func:`zicato.dashboard.transcript.reconstruct_transcript`) as the last
-  resort for a historical run. It can rank suspects but never ground a verdict,
-  and the tier rides through onto every finding so a preview adjudication never
-  masquerades as a verbatim one.
+  resort for a run that captured neither sidecar. It can rank suspects but
+  never ground a verdict, and the tier rides through onto every finding so a
+  preview adjudication never masquerades as a verbatim one.
 
 Every context is frozen through :func:`zicato.judge_runtime.reliability._freeze_context`
 so it obeys the same ``JudgeContext | str | turn-sequence`` semantics the
@@ -42,7 +42,7 @@ Protocol — strict JSON, one retry, then ``ambiguous`` (never raises)
 --------------------------------------------------------------------
 The adjudicator is pinned to a strict-JSON schema
 (:data:`ADJUDICATOR_SYSTEM_PROMPT`, versioned by
-:data:`ADJUDICATOR_PROMPT_VERSION`). A malformed response is retried exactly
+:data:`ADJUDICATOR_PROMPT_VERSION`). A malformed response is retried
 ONCE; a second malformed response yields ``verdict="ambiguous"`` with the raw
 response retained — the engine NEVER raises out of a bad model response, and an
 ambiguous pile is itself a finding (an underspecified criterion).
@@ -194,9 +194,10 @@ class JudgeAdjudication:
         """Rebuild one verdict from its persisted dict.
 
         ``prompt_version`` and ``k_adj`` default to ``0`` and ``meta_judge_model``
-        to ``""`` — NOT to the current live constants. A pre-fix cache file
-        carries none of these, and defaulting to today's values would MASK the
-        staleness the cache predicate exists to catch (a 0 / ``""`` can never
+        to ``""`` — NOT to the current live constants. A cache file written
+        before these fields existed carries none of them, and defaulting to
+        the live values would MASK the staleness the cache predicate exists
+        to catch (a 0 / ``""`` can never
         equal a live model / version / k, so the record is correctly re-derived).
         """
         return cls(
@@ -249,7 +250,7 @@ def _verbatim_context(loss_path: Path, judge_name: str) -> tuple[Any, str] | Non
         # verbatim, so the adjudicator reads exactly what the judge read). The
         # ``transcript_window`` is only a FALLBACK, used when the sidecar
         # captured no reasoning_text (an empty judge input); it is the wider
-        # context, not the graded text, so it never displaces a present
+        # context rather than the graded text, so it never displaces a present
         # reasoning_text.
         transcript = (reasoning,) if reasoning else (window or (reasoning,))
         ctx = JudgeContext(reasoning_text=reasoning, transcript=transcript)
@@ -352,7 +353,7 @@ def warn_on_adjudicator_collusion(
     Mirrors :meth:`ProposerRunner._warn_on_model_collusion`: two distinct
     callables may legitimately wrap the same endpoint (that is the operator's
     responsibility, caught by the HARD identity guard only when they are the
-    SAME object), so a shared model *string* is a smell, not an error. Logs a
+    SAME object), so a shared model *string* is a smell rather than an error. Logs a
     WARNING and returns ``True`` when a collision is found; returns ``False``
     otherwise. Never raises, never blocks.
     """
@@ -620,8 +621,8 @@ def write_adjudication(path: Path, adjudication: JudgeAdjudication) -> Path:
     """Persist one verdict via the fsync'd atomic JSON writer; return the path.
 
     Routes through :func:`zicato.storage.atomic_write_json` — the SAME durable
-    ``.tmp`` + ``fsync`` (file AND parent dir) + rename discipline R1's
-    ``result.json`` writer uses — so a cached verdict, like a captured run
+    ``.tmp`` + ``fsync`` (file AND parent dir) + rename discipline the
+    ``result.json`` capture writer uses — so a cached verdict, like a captured run
     result, survives power loss rather than resting on a bare rename.
     """
     from zicato.storage import atomic_write_json  # noqa: PLC0415

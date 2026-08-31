@@ -143,7 +143,7 @@ def _heartbeat_file_mtime_iso(paths: WorkspacePaths) -> str:
 
     The fallback ageable timestamp when a heartbeat record carries no
     usable ``last_heartbeat``. The file's mtime is the freshest moment
-    the heartbeat was rewritten — exactly the staleness signal we want.
+    the heartbeat was rewritten, which is the staleness signal this needs.
     Degrades to "now" only when the file cannot be stat'd, which keeps
     the record from spuriously reading stale on a transient stat error.
     """
@@ -276,8 +276,8 @@ def read_active_tournament_dict(paths: WorkspacePaths) -> dict[str, Any] | None:
     An elim (``single_elim`` / ``double_elim``) payload additionally
     carries the served ELIM MODEL (``attach_elim_states``: canonicalized
     rounds + top-level ``gen_states``), exactly as on the settled
-    structure record — the live figures read the model, never re-derive
-    it (DQ1). The Rust supervisor's ``read_active_tournament`` applies
+    structure record — the live figures read the model and never re-derive
+    it. The Rust supervisor's ``read_active_tournament`` applies
     the same fold (``crates/supervisor/src/elim_states.rs``).
     """
     # Lazy import: tournament_view imports THIS module for the settled path.
@@ -460,7 +460,7 @@ STALE_HEARTBEAT_S = 30.0
 
 #: Heartbeat-``phase`` tokens that mean "the loop is at rest". Mirrors the
 #: frontend's ``IDLE_PHASES`` (livestatus.js). The empty string is NOT here:
-#: an absent phase is *unknown*, not at-rest, and a fresh heartbeat carrying
+#: an absent phase is *unknown* rather than at-rest, and a fresh heartbeat carrying
 #: one belongs to a process that is plainly alive (the beater's very first
 #: beat writes ``phase == ""``).
 IDLE_PHASE_TOKENS = frozenset(
@@ -514,11 +514,11 @@ def _reader_shares_worker_host(paths: WorkspacePaths | None) -> bool:
     token. When that exact process is live *here*, this reader is on the
     orchestrator's host and the worker pids denote local processes.
 
-    ``False`` whenever host-locality cannot be proven, which is the only
-    safe default: no lock file (a workspace at rest), an unreadable or
-    legacy lock carrying no start-time token, or a lock whose owner is not
-    a live local process — the case of a workspace synced or copied to
-    another machine, where the recorded pids mean nothing locally.
+    ``False`` whenever host-locality cannot be proven, which is the only safe
+    default. Three cases cannot prove it: no lock file at all (a workspace at
+    rest), a lock that is unreadable or carries no start-time token, and a lock
+    whose owner is not a live local process. The last covers a workspace synced
+    or copied to another machine, where the recorded pids mean nothing locally.
     """
     if paths is None:
         return False
@@ -660,8 +660,8 @@ def derive_liveness(paths: WorkspacePaths, *, now: _dt.datetime | None = None) -
     """THE liveness verdict, including the live epoch when known.
 
     One derivation, read by every live surface, so "is anything running?"
-    has exactly one answer. Liveness is a property of the CLOCK, not of
-    file presence: a workspace whose runtime files froze in June still has
+    has exactly one answer. Liveness is a property of the CLOCK rather than
+    of file presence: a workspace whose runtime files froze in June still has
     a ``phase``, an ``active_tournament.json`` reading ``running`` and
     seven ``active_runs`` records — none of which mean anything is running.
 

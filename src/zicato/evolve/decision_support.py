@@ -106,7 +106,7 @@ def _defer_round_infra_outage(
     beater: HeartbeatBeater | None,
     round_log: _RoundLogEmitter,
 ) -> EvolveRoundOutcome:
-    """Settle one round as DEFERRED on the endpoint-outage circuit (WS-H).
+    """Settle one round as DEFERRED on the endpoint-outage circuit.
 
     Deliberately does NOT: cache either side's ``gen_score.json`` (a
     mostly-aborted aggregate would poison fast mode), route the gate
@@ -243,7 +243,7 @@ def _load_parent_losses(
        (``loss.r1000.json``, ``loss.r1001.json``, …), FOLDED across draws into
        one profile. The contract pre-flight writes them by running the champion
        over the whole board before the epoch's first duel exists, which is
-       exactly when step 1 finds nothing; without this the proposer opens every
+       which is when step 1 finds nothing; without this the proposer opens every
        epoch with an empty baseline channel. Folding rather than picking keeps
        one profile per entry, so the outcome marginals' denominator stays "runs
        on the board" and detector counts do not multiply — and the draws differ
@@ -251,7 +251,7 @@ def _load_parent_losses(
        profile carries the first draw's ``aa-calibration:0`` ``match_id``, so a
        calibration-sourced baseline reads as what it is.
     3. Neither ⇒ the entry is skipped silently. A freshly-initialised epoch
-       whose pre-flight is off genuinely has no champion telemetry.
+       whose pre-flight is off has no champion telemetry at all.
 
     No other replicate band is read. The pre-flight's DELIBERATELY-DEGRADED
     probes cache in this same directory under the champion's own generation id
@@ -264,12 +264,13 @@ def _load_parent_losses(
     is persisted is a high-water mark and not the current run count.
 
     Holdout entries are never opened: the caller passes the TRAIN slice, and
-    the calibration draws covering the full board are read one entry at a time
-    (G8).
+    the calibration draws covering the full board are read one entry at a
+    time, so nothing entry-identifying reaches the proposer.
     """
     from zicato.core.workspace import loss_profile_path  # noqa: PLC0415
 
-    # Nothing under evolve/ imports the unit cache today; the reserved-base
+    # Nothing under evolve/ imports the unit cache at module scope; the
+    # reserved-base
     # filter and the replicate fold both live there because that module owns
     # the (generation, entry, replicate) key this reader is inverting.
     from zicato.tournament.calibration import (  # noqa: PLC0415
@@ -371,7 +372,7 @@ def _render_failure_profile(losses: list[Any], weights: Any) -> str:
 
     Returns the empty string — the proposer-side "omit this section" sentinel
     — when the slice is empty (a baseline round) or carries no outcome
-    signal, so the proposer prompt is byte-identical to today.
+    signal, so the proposer prompt then carries no such section.
     """
     from zicato.analyzer.outcome_marginals import (  # noqa: PLC0415
         aggregate_outcome_marginals,
@@ -406,8 +407,8 @@ def _render_process_exemplars_block(
     outputs), and render them through the proposer's block renderer.
 
     Returns the empty string — the proposer-side "omit this section"
-    sentinel — when the knob is off (the default; no extraction even
-    runs, so the round is byte-identical to today), when no pattern has
+    sentinel — when the knob is off (the default, under which no extraction
+    runs at all), when no pattern has
     an event footprint, or when extraction fails for any reason:
     best-effort by contract, an exemplar failure must never abort a round.
     """
@@ -435,7 +436,7 @@ def _render_process_exemplars_block(
 
 
 #: How many per-channel terms the loss summary reports. The summary is one
-#: orienting line, not a decomposition: past a handful of terms the ones the
+#: orienting line rather than a decomposition: past a handful of terms the ones the
 #: contract weights most stop standing out, which is the defect this cap
 #: exists to avoid re-introducing.
 _LOSS_SUMMARY_TERMS_PER_CHANNEL: int = 4
@@ -447,13 +448,13 @@ def _render_loss_summary(losses: list[Any], priorities: Any = None) -> str:
     ``priorities`` is the round's :class:`~zicato.proposer.prompts
     .MetricPriorities`. When supplied, the summary reports only terms the
     contract actually scores, each channel in weight order: a contract that
-    zeroes ``namespace_weights["drift:"]`` no longer leads with a
+    zeroes ``namespace_weights["drift:"]`` does not lead with a
     ``drift_loss_mean`` that contributes nothing to the scalar, and a
     heavily-weighted judge is named rather than left implicit. ``None`` (the
     default, and every caller that holds no weights) renders the unfiltered
-    form byte-for-byte.
+    form.
 
-    The genuinely-empty sentinels are unchanged: no losses is still a baseline
+    The empty sentinels are unchanged: no losses is still a baseline
     round, and a contract whose scored terms have no measurement yet says so
     rather than reporting an unweighted number to fill the line.
     """
@@ -473,7 +474,7 @@ def _render_loss_summary(losses: list[Any], priorities: Any = None) -> str:
     parts: list[str] = []
     # ``drift_loss_mean`` is the drift channel's own aggregate — judges are a
     # separate channel, reported per judge below — so it is score-bearing
-    # exactly when some drift kind survived the zero filter.
+    # when, and only when, some drift kind survived the zero filter.
     if priorities.drift_kinds:
         parts.append(f"drift_loss_mean={drift_mean:.3f} over {len(losses)} runs")
     if priorities.pass_rate_weight and pass_eligible:
@@ -561,8 +562,8 @@ def build_metric_priorities(board: list[Any], weights: Any, losses: list[Any]) -
 
     This does NOT touch the validator's accept-list
     (``_declared_custom_judge_names``): that set stays permissive, so a
-    zero-weight judge the prompt no longer advertises is still parsed without
-    a burned retry.
+    zero-weight judge that the prompt does not advertise is still parsed
+    without a burned retry.
     """
     from zicato.core.drift_kinds import GOLDFIVE_DRIFT_KINDS  # noqa: PLC0415
     from zicato.proposer.prompts import MetricPriorities, ScoredTarget  # noqa: PLC0415

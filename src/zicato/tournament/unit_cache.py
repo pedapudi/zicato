@@ -76,9 +76,9 @@ def _telemetry_helpers() -> tuple[Any, Any]:
     monkeypatches ``runner._telemetry_helpers`` to swap in a stub reducer,
     still drives this cache layer. The runner re-exports the canonical
     :func:`zicato.tournament.worker_transport._telemetry_helpers`, so an
-    unpatched call returns exactly the same pair as before the extraction.
-    The import is function-local so there is no import-time cycle (the runner
-    imports this module, not the other way round at load time).
+    unpatched call returns that canonical pair. The import is function-local
+    so there is no import-time cycle: the runner imports this module rather
+    than the other way round at load time.
     """
     from zicato.tournament import runner  # noqa: PLC0415
 
@@ -161,12 +161,12 @@ def is_own_code_board_draw(replicate_index: int) -> bool:
     """Whether a slot under ``generations/<gen>/runs/`` is a full-board draw of
     THAT generation's own, unmodified code.
 
-    The replicate-index namespace is partitioned by owner (G7's reserved-base
+    The replicate-index namespace is partitioned by owner (the reserved-base
     ledger, rolled up at
     :data:`zicato.selection.evidence_gate.EVIDENCE_REPLICATE_BASE`). Several
     owners cache under a REAL generation id, and only some of them ran that
     generation's real code over the real board. A reader that wants "what does
-    this generation actually do" must therefore filter by base, not glob.
+    this generation actually do" must therefore filter by base rather than glob.
 
     This is an ALLOW-LIST: an index no owner has claimed answers ``False``, so
     a band added later lands EXCLUDED until someone deliberately admits it
@@ -241,7 +241,7 @@ def own_code_board_draws(run_dir: Path) -> list[tuple[int, Path]]:
 
 
 def persisted_loss_slots(run_dir: Path) -> list[tuple[int, Path]]:
-    """Every persisted loss slot under ONE run dir, ascending — records, not evidence.
+    """Every persisted loss slot under ONE run dir, ascending: records rather than evidence.
 
     The unfiltered twin of :func:`own_code_board_draws`, and the two answer
     different questions of the same directory.
@@ -258,7 +258,7 @@ def persisted_loss_slots(run_dir: Path) -> list[tuple[int, Path]]:
     wrong record no matter which owner wrote it. It carries no claim about
     what the draws measured, so it must never stand in for the evidence
     filter. Attempt siblings stay excluded either way — they record
-    executions that were superseded, not slots.
+    executions that were superseded rather than slots.
     """
     return _loss_slots(run_dir, lambda _index: True)
 
@@ -266,7 +266,8 @@ def persisted_loss_slots(run_dir: Path) -> list[tuple[int, Path]]:
 #: ``format_version`` stamped onto every persisted ``result.json``. Readers
 #: accept exactly this version and return ``None`` for anything else — a
 #: missing / older / newer / garbage file degrades to "no capture", never a
-#: crash (the file is a best-effort reflection artifact, not a scoring input).
+#: crash (the file is a best-effort reflection artifact rather than a scoring
+#: input).
 RUN_RESULT_FORMAT_VERSION: int = 1
 
 #: Per-field clip for the persisted RunResult text (256 KiB). Each transcript
@@ -312,10 +313,9 @@ def any_unit_transcript(canonical_events_path: Path) -> Path:
 
     Readers that answer "what did this generation DO on this entry" — the
     proposer's redacted facts, its process exemplars, the failure-pattern
-    detector — want a transcript, not a specific replicate. Before the
-    replicate dimension existed every draw of a unit wrote the same
-    ``events.jsonl``, so those readers named that one file and got whichever
-    draw ran last. Now each draw keeps its own file, and naming replicate 0
+    detector — want a transcript rather than a specific replicate. Each draw
+    keeps its own ``events.jsonl``, so a reader naming one fixed file would
+    have to pick a draw. Naming replicate 0
     alone would blind them whenever the only draws so far are the contract
     pre-flight's probe and the calibration band — which is exactly the state
     at the FIRST round's proposal, before any duel has run.
@@ -410,12 +410,12 @@ def run_result_to_payload(run_result: Any) -> dict[str, Any]:
 def read_run_result(path: Path) -> dict[str, Any] | None:
     """Read one persisted ``result.json``; ``None`` on ANY defect.
 
-    The tolerant read twin of the worker's best-effort write: a missing
-    file (legacy run, opted-out runtime, failed capture), unreadable
-    bytes, non-JSON / non-object content, or a ``format_version`` other
-    than :data:`RUN_RESULT_FORMAT_VERSION` (absent, older, newer,
-    garbage) all return ``None`` — the caller degrades to the next
-    fidelity tier (BOARD-REFLECTION.md's ladder), never crashes.
+    The tolerant read twin of the worker's best-effort write: a missing file (a
+    run that captured none, an opted-out runtime, a failed capture), unreadable
+    bytes, non-JSON / non-object content, or a ``format_version`` other than
+    :data:`RUN_RESULT_FORMAT_VERSION` (absent, older, newer, garbage) all
+    return ``None`` — the caller degrades to the next fidelity tier
+    (BOARD-REFLECTION.md's ladder), never crashes.
     """
     try:
         raw = path.read_text(encoding="utf-8")
@@ -452,7 +452,7 @@ def _resolve_cached_unit(
 
     Returns the cached :class:`LossProfile` on a HIT (the unit is then
     NOT executed), or ``None`` on a MISS — the file is absent or
-    unreadable. An unreadable file is a miss, not a crash: the caller
+    unreadable. An unreadable file is a miss rather than a crash: the caller
     re-runs the unit and re-persists, so the next need is a hit.
 
     This resolves for ANY generation — the champion AND every challenger
@@ -532,7 +532,7 @@ _ATTEMPT_SLOT_RE = re.compile(r"\.a\d+$")
 
 
 def is_unit_attempt_slot(path: Path) -> bool:
-    """``True`` iff ``path`` names an attempt sibling, not a scoring slot.
+    """``True`` iff ``path`` names an attempt sibling rather than a scoring slot.
 
     The guard for any reader that reaches a run directory by GLOB rather
     than by exact name: an attempt file is provenance about an execution
@@ -590,7 +590,7 @@ def record_unit_attempt(
       own ``abort_cause`` / ``not_completed_reason``, which is the record of
       why the attempt failed; no ``result.json`` twin is copied, because on
       this path any twin on disk belongs to an EARLIER execution of the
-      slot, not to this one.
+      slot rather than to this one.
     * ``loss`` omitted — the canonical slot is about to be overwritten by a
       re-run (the ``force_fresh`` path). Both the persisted profile and its
       ``result.json`` twin are copied aside first; copied rather than moved
@@ -857,13 +857,13 @@ def _mean_outcome(profiles: list[LossProfile]) -> float | None:
 
     * **No expectation** (``pass_fail is None`` too) — genuinely not
       measured. ``entry_score`` returns ``None``, the replicate abstains,
-      and an entry with no expectation folds to ``None`` exactly as before
-      replication.
+      and an entry with no expectation folds to ``None`` however many
+      replicates it has.
     * **An expectation that could not fire** — the run was ABORTED (a spent
       wall-clock/token budget, an infra kill: see
       :func:`~zicato.tournament.worker_transport._aborted_loss_profile`,
       which records ``score=None`` with ``pass_fail=False``). That replicate
-      observed a FAILURE, not nothing. ``entry_score`` maps it to ``0.0``
+      observed a FAILURE rather than nothing. ``entry_score`` maps it to ``0.0``
       and it votes.
 
     Treating the second case as an abstention is how a K-replicate duel
@@ -940,12 +940,13 @@ def _mean_metric_counts(profiles: list[LossProfile]) -> tuple[MetricCount, ...]:
     :meth:`LossProfile.unified_metrics` BRANCH they take — in production
     they do, because the reducer populates ``metric_counts`` on every
     profile it writes. A set MIXING an explicit-``metric_counts`` replicate
-    with a legacy one carrying only the int scalars is aggregate-preserving
-    only approximately: the fold's non-empty ``metric_counts`` makes the
-    folded profile take the explicit branch, so the legacy replicate's
-    synthesised contribution is dropped from the fold's view. Only
-    hand-built or pre-``metric_counts`` profiles can reach that, and the
-    residual is bounded by those replicates' share of the namespace.
+    with one carrying only the int scalars is aggregate-preserving only
+    approximately: the fold's non-empty ``metric_counts`` makes the folded
+    profile take the explicit branch, so the scalar-only replicate's
+    synthesised contribution is dropped from the fold's view. Only a
+    hand-built profile, or one written before ``metric_counts`` existed, can
+    reach that, and the residual is bounded by those replicates' share of
+    the namespace.
     """
     keys: list[tuple[str, MetricSeverity]] = []
     seen: set[tuple[str, MetricSeverity]] = set()
@@ -1029,7 +1030,7 @@ def _sum_judge_errors(profiles: list[LossProfile]) -> tuple[JudgeError, ...]:
     view lead to the same finding.
 
     ``last_error_type`` comes from the LAST replicate reporting the judge —
-    a per-judge scalar, not a count; the most recent failure is the one an
+    a per-judge scalar rather than a count; the most recent failure is the one an
     operator would check first. Judge ORDER is first-seen across replicates.
     Empty when no replicate recorded a failure, which is every healthy duel.
     """
@@ -1095,7 +1096,7 @@ def _average_losses(
         hence the rounding.
     ``score``
         Mean of each replicate's RESOLVED OUTCOME
-        (:func:`_mean_outcome` — ``entry_score``, not the raw field), so a
+        (:func:`_mean_outcome` — ``entry_score`` rather than the raw field), so a
         replicate whose expectation was recorded as failed WITHOUT a score
         (an aborted run) votes its ``0.0`` instead of abstaining. ``None``
         only when no replicate produced an outcome at all, so a board with
@@ -1126,7 +1127,7 @@ def _average_losses(
         disagreement is display-only and sub-unit. Note ``round`` is
         banker's rounding, so a mean of exactly ``0.5`` floors to ``0`` and
         ``unified_metrics``' truthiness check then omits the synthesised
-        bucket entirely — reachable only on the legacy synthesised path.
+        bucket entirely — reachable only on the synthesised path.
     ``per_judge_loss``
         Meaned per judge (:func:`_mean_per_judge_loss`); it is carried onto
         :class:`~zicato.scoring.api.ScalarContext`, so a scalar PLUGIN can
@@ -1148,7 +1149,7 @@ def _average_losses(
         than a mean. It can therefore legitimately disagree in sign with
         the folded ``score`` (2 of 5 replicates passing is ``pass_fail``
         ``False`` and ``score`` ``0.4``); that is the binary and continuous
-        views of the same duel, not an inconsistency.
+        views of the same duel rather than an inconsistency.
 
     Replicate-0 pass-through, and why each may be
     ---------------------------------------------

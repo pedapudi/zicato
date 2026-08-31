@@ -12,10 +12,9 @@ contract:
    under a configured ``proposers/<name>/`` dir (or the built-in default
    proposer when none is configured).
 
-A change to any of these means generations on either side of the change
-are no longer directly comparable, so the epoch must roll. The inner
-harness's *source content* is deliberately NOT part of the contract —
-that is exactly what zicato mutates within an epoch.
+A change to any of these makes generations on either side of the change
+incomparable, so the epoch must roll. The inner harness's *source content* is
+NOT part of the contract, because that is what zicato mutates within an epoch.
 
 This module reduces the contract components to a single
 ``sha256`` hex digest. The hash is *canonicalized* so spurious edits
@@ -98,15 +97,14 @@ class ContractInputs:
     #: naming an external agent — or upgrading the runtime it launches —
     #: rolls the epoch.
     external_proposer: ExternalProposerConfig | None = None
-    #: The tier-2 static-check names the proposer holds its own draft
-    #: patches to (``contract.proposer_static_checks`` in ``config.json``;
-    #: see :func:`zicato.proposer.validate.declared_static_checks`). This
-    #: is contract, not configuration: changing which checks the proposer
-    #: must satisfy changes which patches it accepts from itself, hence
-    #: what it proposes. ``()`` — the default, and every workspace that
-    #: never configures the feature — is OMITTED from the canonical form,
-    #: so the proposer component hashes byte-identically to before this
-    #: field existed.
+    #: The tier-2 static-check names the proposer holds its own draft patches
+    #: to (``contract.proposer_static_checks`` in ``config.json``; see
+    #: :func:`zicato.proposer.validate.declared_static_checks`). This is
+    #: contract rather than configuration: changing which checks the proposer
+    #: must satisfy changes which patches it accepts from itself, hence what it
+    #: proposes. ``()`` — the default, and every workspace that never
+    #: configures the feature — is OMITTED from the canonical form, so the
+    #: proposer component hashes byte-identically to before this field existed.
     proposer_static_checks: tuple[str, ...] = ()
 
 
@@ -170,7 +168,7 @@ def _fold_entry_grading_source(entry: dict[str, object]) -> dict[str, object]:
 
     Non-predicate expectations (text / regex / json_schema / rubric specs are not
     dotted plugins) and inline judges are left untouched, so a board that names
-    no plugin canonicalizes byte-for-byte as before. Operates on a copy of the
+    no plugin canonicalizes to the same bytes either way. Operates on a copy of the
     nested dicts so the round-trip serializer (``entry_to_dict``) is unaffected.
     """
     out = dict(entry)
@@ -318,13 +316,13 @@ def _canon_dotted_spec(spec: str) -> dict[str, object]:
     cross-cutting #1): expands a dotted spec into
     ``{"spec": <dotted>, "source_sha256": <hash-or-null>}`` via
     :func:`zicato.scoring.plugins.spec_with_source_hash`, so editing the
-    resolved plugin's BODY rolls the contract hash, not only swapping the spec
-    string. Applied uniformly to the scoring ``scalar_fn`` / ``drift_reducer`` /
+    resolved plugin's BODY rolls the contract hash, and not only swapping the
+    spec string does. Applied uniformly to the scoring ``scalar_fn`` / ``drift_reducer`` /
     ``outcome_summarizer_spec`` AND the board predicates / judges.
 
     An empty / non-string spec expands to ``{"spec": "", "source_sha256":
-    null}`` — byte-identical to "no plugin" — so a board / contract that names
-    no plugin canonicalizes exactly as before this alignment.
+    null}``, which is byte-identical to "no plugin", so a board or contract
+    that names no plugin is unaffected by the expansion.
     """
     from zicato.scoring.plugins import spec_with_source_hash  # noqa: PLC0415
 
@@ -344,7 +342,7 @@ def _canon_judges(judges: object) -> object:
     operator dotted spec; that body is expanded via :func:`_canon_dotted_spec`
     so editing the judge's SOURCE — not only swapping the dotted string — rolls
     the epoch (issue #19 cross-cutting #1, the ONE source-hashing mechanism). A
-    non-python judge (inline criterion) is hashed verbatim as before.
+    non-python judge (inline criterion) is hashed verbatim.
     """
     if not isinstance(judges, list | tuple):
         return judges
@@ -420,7 +418,7 @@ def _canon_scoring(scoring_path: Path) -> str:
 #: GRADING plugin (resolved by the shared importer). The canonicalizer expands
 #: each into ``{"spec": ..., "source_sha256": ...}`` via
 #: :func:`zicato.scoring.plugins.spec_with_source_hash` so editing the plugin
-#: BODY rolls the epoch, not only swapping the spec string — the ONE
+#: BODY rolls the epoch, and not only swapping the spec string does — the ONE
 #: source-hashing mechanism every grading plugin (scoring + predicates + judges)
 #: shares (issue #19 cross-cutting #1). An empty string expands to a null source
 #: hash, so a contract with no plugin canonicalizes identically to before.
@@ -525,14 +523,13 @@ def _canon_entrypoint(entrypoint: str) -> str:
 def _canon_mutable_trees(mutable_trees: tuple[str, ...]) -> str:
     """Canonical form of the mutable trees: sorted normalized path strings.
 
-    The identity being hashed is *which subtrees of the target are
-    mutable* — a property of the registration, not of where the checkout
-    happens to live. Paths are normalized (``.``/``..`` segments and
-    separators collapsed, POSIX-rendered) but NEVER resolved against the
-    filesystem: resolving folded the process cwd and the absolute
-    checkout path into the hash, so the same workspace hashed
-    differently when run from a different directory — or after being
-    moved — and spuriously rolled its epoch. Registration order does not
+    The identity being hashed is *which subtrees of the target are mutable* — a
+    property of the registration rather than of where the checkout happens to
+    live. Paths are normalized (``.``/``..`` segments and separators collapsed,
+    POSIX-rendered) but NEVER resolved against the filesystem: resolving folded
+    the process cwd and the absolute checkout path into the hash, so the same
+    workspace hashed differently when run from a different directory — or after
+    being moved — and spuriously rolled its epoch. Registration order does not
     move the hash (sorted); adding or removing a tree does.
     """
     normalized = sorted(PurePosixPath(os.path.normpath(p)).as_posix() for p in mutable_trees)
@@ -687,8 +684,8 @@ def resolve_contract_inputs(workspace_root: Path) -> ContractInputs:
     * ``contract.board_path`` / ``contract.brief_path`` /
       ``contract.scoring_path`` — the canonical contract source paths
       recorded by ``zicato epoch register``. The proposer-brief path is also
-      accepted under its legacy ``contract.rubric_path`` key so
-      workspaces registered before the rename keep resolving. When the
+      accepted under the older ``contract.rubric_path`` key, so a workspace
+      registered under that name keeps resolving. When the
       ``contract`` key is absent (a workspace registered before
       auto-epoching landed) the default convention is used:
       ``<workspace_root>/board.jsonl``, ``brief.md``, ``scoring.json``
@@ -718,8 +715,8 @@ def resolve_contract_inputs(workspace_root: Path) -> ContractInputs:
     board_path = Path(
         contract.get("board_path") or _default_contract_path(workspace_root, "board.jsonl")
     )
-    # ``brief_path`` is the current key; ``rubric_path`` is the legacy
-    # name kept readable so pre-rename workspaces still resolve.
+    # ``brief_path`` is the current key; ``rubric_path`` is the older name,
+    # still read so a workspace registered under it resolves.
     brief_path = Path(
         contract.get("brief_path")
         or contract.get("rubric_path")
@@ -777,8 +774,8 @@ def default_contract_paths(workspace_root: Path) -> dict[str, Path | None]:
     do not have to re-derive them.
 
     The proposer-brief default is returned under both ``brief_path``
-    (the current key) and ``rubric_path`` (a legacy alias) so callers
-    that have not yet adopted the rename keep resolving.
+    (the current key) and ``rubric_path`` (the older alias) so a caller
+    reading either key resolves.
 
     The ``proposer_path`` default is ``None`` — no proposer dir, i.e. the
     built-in default proposer. A workspace opts into a proposer dir by
@@ -798,9 +795,9 @@ def _default_brief_path(workspace_root: Path) -> str:
     """The conventional location of the operator's live proposer brief.
 
     Prefers ``brief.md`` next to the ``.zicato/`` directory. When that
-    file is absent but a legacy ``rubric.md`` exists in the same place,
-    the legacy file wins so workspaces created before the rename keep
-    resolving without an operator-side file rename.
+    file is absent but a ``rubric.md`` exists in the same place, the
+    ``rubric.md`` wins, so a workspace holding one keeps resolving without
+    an operator-side file rename.
     """
     brief = workspace_root.parent / "brief.md"
     if not brief.exists():

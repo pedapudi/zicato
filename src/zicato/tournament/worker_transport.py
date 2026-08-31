@@ -1,6 +1,6 @@
 """Tournament subprocess/process-boundary transport.
 
-The "L3" robustness layer: every tournament run executes in its OWN OS
+The subprocess worker boundary: every tournament run executes in its OWN OS
 process — a ``python -m zicato._tournament_worker`` subprocess. This
 module owns everything on the wire between the orchestrator process and
 those workers:
@@ -216,9 +216,9 @@ def _stamp_judge_only(
 
     When ``judge_only`` is ``False`` the board is returned UNCHANGED,
     mirroring :func:`_stamp_disable_drift`'s "empty → untouched"
-    behaviour: a default board (steering on) is byte-identical to today
-    and any per-entry ``context['judge_only']`` an author set directly is
-    left alone. When ``True`` the board-level setting is authoritative
+    behaviour: a default board (steering on) is left untouched, and any
+    per-entry ``context['judge_only']`` an author set directly is left
+    alone. When ``True`` the board-level setting is authoritative
     and overwrites any per-entry value. :class:`BoardEntry` is frozen, so
     each affected entry is rebuilt via :func:`dataclasses.replace`.
     """
@@ -233,7 +233,7 @@ def _stamp_judge_only(
 
 
 #: ``BoardEntry.context`` key carrying the run's REPLICATE INDEX to the
-#: harness under test. Run provenance, not a contract input: a
+#: harness under test. Run provenance rather than a contract input: a
 #: deterministic/seeded harness (e.g. the convergence example's noisy
 #: adapter) derives its per-run noise from stable identifiers, and the
 #: replicate index is the one identifier that distinguishes the N
@@ -317,16 +317,16 @@ def _runtime_state() -> tuple[Any, Any] | None:
 
 
 # ---------------------------------------------------------------------------
-# Subprocess worker spawn — the "L3" robustness layer.
+# Subprocess worker spawn — the worker-process boundary.
 # ---------------------------------------------------------------------------
 #
-# Every tournament run now executes in its OWN OS process: a
-# ``python -m zicato._tournament_worker`` subprocess. The motivation is
-# hard-enforcement of the per-run wall-clock budget. A run wedged inside
-# the orchestrator process used to be un-killable without killing the
-# whole ``evolve``; isolated in a subprocess it can be SIGTERM'd then
-# SIGKILL'd by this parent — and, independently, by the supervisor
-# watchdog keyed on the worker's own pid in ``active_runs/{run_id}.json``.
+# Every tournament run executes in its OWN OS process: a
+# ``python -m zicato._tournament_worker`` subprocess. That is what makes the
+# per-run wall-clock budget hard-enforceable. A run wedged inside the
+# orchestrator process would be un-killable without killing the whole
+# ``evolve``; isolated in a subprocess it can be SIGTERM'd then SIGKILL'd by
+# this parent — and, independently, by the supervisor watchdog keyed on the
+# worker's own pid in ``active_runs/{run_id}.json``.
 #
 # A free side benefit: the Python-module-caching problem (two
 # generations' source loaded into one interpreter, ``sys.modules``
@@ -399,8 +399,7 @@ def _checkout_run_snapshot(
     worktree (measurably cheaper). A store-unmanaged generation (an
     ad-hoc caller pointing ``snapshot_root`` at an arbitrary tree) falls
     back to the same ``copytree`` mechanism the directory backend uses
-    (:func:`zicato.epoch.genstore.copy_checkout_ephemeral`) — the
-    historical behaviour, byte-identical.
+    (:func:`zicato.epoch.genstore.copy_checkout_ephemeral`).
 
     The caller owns cleanup — see :func:`_discard_run_snapshot`, which
     :func:`_run_single` invokes from its ``finally`` block so the whole
@@ -503,9 +502,9 @@ def _role_worker_spec(
     :data:`os.environ`). This lets a model-spec role (whose resolved callable
     is a closure that cannot cross the process boundary) reach the worker.
 
-    Otherwise the legacy form is used: the resolved callable's re-importable
-    dotted path under ``{"dotted": "module:qualname"}`` — exactly today's
-    behavior for an unconfigured role.
+    Otherwise the dotted form is used: the resolved callable's re-importable
+    path under ``{"dotted": "module:qualname"}``, which is what an
+    unconfigured role crosses the boundary as.
     """
     spec = models.role(role)
     if not spec.is_empty:
@@ -637,12 +636,13 @@ def _weights_spec(weights: ScoringWeights) -> dict[str, Any]:
     Thin delegator to :meth:`ScoringWeights.to_json` — the SINGLE,
     field-enumerating serde shared by this writer and the worker's reader
     (:func:`zicato._tournament_worker._weights_from_args`, which delegates to
-    :meth:`ScoringWeights.from_json`). Replacing the former hand-aligned field
-    list with one ``dataclasses.fields()``-driven serde means adding a field
-    can no longer silently desync the worker into scoring under defaults — the
-    documented ``per_judge_weights`` / ``pass_rate_monotonicity_scope`` /
-    ``drift_kind_aggregation`` desync class. Every field (including the
-    nested config dataclasses) crosses the boundary automatically.
+    :meth:`ScoringWeights.from_json`). One ``dataclasses.fields()``-driven
+    serde on both ends is what stops a newly added field from silently
+    desyncing the worker into scoring under defaults, the way a hand-aligned
+    field list did for ``per_judge_weights`` /
+    ``pass_rate_monotonicity_scope`` / ``drift_kind_aggregation``. Every
+    field, including the nested config dataclasses, crosses the boundary
+    automatically.
     """
     return weights.to_json()
 

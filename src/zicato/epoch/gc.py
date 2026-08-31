@@ -1,12 +1,11 @@
 """Snapshot GC / retention — prune generation SOURCE TREES, never records.
 
 A long epoch accumulates one materialised source tree per generation:
-``generations/{id}/snapshot/`` directories under the directory backend,
-tagged commits + materialised ``repo-worktrees/`` checkouts under the
-git backend. The trees of dead branches (rejected challengers) are pure
-disk cost once their tournament settled — every analytical consumer
-(journal, dashboard, reindex) reads the RECORDS, not the trees. This
-module reclaims that cost.
+``generations/{id}/snapshot/`` directories under the directory backend, tagged
+commits + materialised ``repo-worktrees/`` checkouts under the git backend. The
+trees of dead branches (rejected challengers) are pure disk cost once their
+tournament settled — every analytical consumer (journal, dashboard, reindex)
+reads the RECORDS rather than the trees. This module reclaims that cost.
 
 What pruning means, per backend
 -------------------------------
@@ -36,8 +35,9 @@ them (``gen_score.history.jsonl``, ``loss.archive.jsonl``,
 ``events.prev.jsonl``; issue #122) with no special case: pruning
 deletes ONE directory per generation — its ``snapshot/`` — and never
 enumerates or removes files under ``generations/{id}/`` individually,
-so records-not-snapshots is a structural property of the prune, not a
-filename list that has to be kept in sync. The dashboard's tree/diff views degrade to
+so keeping the records while dropping the snapshots is a structural
+property of the prune rather than a filename list that has to be kept in
+sync. The dashboard's tree/diff views degrade to
 an explicit "no source tree" response for a pruned generation (they
 already tolerate a missing tree), and the patch/mutation views keep
 rendering through ``StorageBackend`` from the surviving experiment and

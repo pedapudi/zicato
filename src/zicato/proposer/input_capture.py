@@ -1,13 +1,13 @@
 """Durable capture of every rendered proposer input.
 
-The proposer stack decides what the next generation *is*, and until this
-module existed its input was unrecoverable after the call: the renderers
-are pure, but the channels they render from (``patterns``, the loss
-summary, the prior-experiment digest, the genealogy and calibration
-blocks, the retry feedback) are never persisted, so a past round's prompt
-could only be re-derived approximately. Board runs, by contrast, keep
-their full transcript. This module closes that asymmetry by writing the
-rendered system + user text verbatim to one append-only JSONL per epoch,
+The proposer stack decides what the next generation *is*, so its input is worth
+reading back. Without a durable capture it is unrecoverable after the call: the
+renderers are pure, but the channels they render from (``patterns``, the loss
+summary, the prior-experiment digest, the genealogy and calibration blocks, the
+retry feedback) are never persisted, so a past round's prompt could only be
+re-derived approximately. Board runs, by contrast, keep their full transcript.
+This module closes that asymmetry: it writes the rendered system and user text
+verbatim to one append-only JSONL per epoch,
 ``epochs/{epoch_id}/proposer_inputs.jsonl``, one line per LLM call.
 
 The file is a new at-rest location for board-derived content, beside
@@ -28,11 +28,12 @@ Three invariants hold the writer together:
   slate gathers up to ``propose_parallelism`` slots at once, each writing a
   record of tens of kilobytes. A buffered text-mode write is several
   ``write()`` calls, so a concurrent writer can splice its chunks into the
-  middle of another record — interior corruption, not a torn tail. The lock
+  middle of another record, which is interior corruption rather than a torn
+  tail. The lock
   registry mirrors ``_REPO_WORKTREE_LOCKS`` in
-  :mod:`zicato.epoch.git_genstore`: today's callers serialise on the
-  orchestrator's event-loop thread, but that is a property of the caller,
-  so the writer owns it instead. Cross-process exclusion comes from the
+  :mod:`zicato.epoch.git_genstore`: callers happen to serialise on the
+  orchestrator's event-loop thread, but that is a property of the caller, so
+  the writer owns the exclusion itself. Cross-process exclusion comes from the
   workspace runtime lock (one orchestrator per workspace), which is why no
   ``flock`` is taken; ``O_APPEND`` atomicity assumes a local filesystem.
 * **The write never raises.** A failed capture logs at DEBUG and the round

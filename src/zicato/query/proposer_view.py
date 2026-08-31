@@ -4,9 +4,9 @@ The server-authority half of the proposer panel: it projects the scorecard
 trend and the pending-recommendation queue into the two JSON shapes the panel
 renders. The view computes every rate, band, and count; the client renders them
 and derives nothing — the same division of labour ``reflection_view`` keeps
-with the Instrument lens today.
+with the Instrument lens.
 
-Best-effort throughout (the DQ3 degrade rule): a workspace with no epochs, no
+Best-effort throughout: a workspace with no epochs, no
 round logs, or no reflection records yields a same-shape payload with empty
 lists, never an exception and never a fabricated zero.
 

@@ -14,7 +14,7 @@ What applying does, in order:
 2. Verify the remedy's bytes against the digest recorded when it was drafted,
    so an edited or truncated record cannot be applied under its original id.
 3. Write the skill file into the LIVE proposer dir — the operator's editable
-   copy, not a frozen per-epoch one.
+   copy rather than a frozen per-epoch one.
 4. Stage the id for the next epoch to claim
    (:mod:`zicato.proposer.staging`).
 
@@ -91,7 +91,7 @@ def apply_recommendation(
 
     Raises :class:`ApplyError` — having written nothing — when the id does not
     resolve, when the finding carries no remedy (an INFO finding whose honest
-    answer is an operator decision, not a skill), or when the remedy's bytes no
+    answer is an operator decision rather than a skill), or when the remedy's bytes no
     longer match the digest drafted with them.
 
     Applying is idempotent in effect: re-applying the same recommendation

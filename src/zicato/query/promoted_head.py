@@ -1,7 +1,7 @@
 """promoted_head — WHICH member of a promoted set actually took the title.
 
 ``lineage.json`` is the single authority for topology and for the tri-state
-promotion flag, and it deliberately says nothing beyond that. On a round that
+promotion flag, and by design it says nothing beyond that. On a round that
 promotes a SET rather than a single challenger — an operator multi-promote, a
 tie — ``_apply_field_overrides`` marks EVERY member promoted in lineage while
 only ONE, the primary head, moves the champion pointer and defends the next
@@ -18,7 +18,8 @@ snapshot (``zicato.evolve.dashboard_projection``), in two forms:
 
 The SQLite index is not a source: its field-tournament row leaves the
 per-matchup ``parent_generation_id`` / ``child_generation_id`` columns empty by
-design (a field is a round, not a duel), so the head does not survive ingest.
+design (a field is a round rather than a duel), so the head does not survive
+ingest.
 
 The runtime ``current_generation`` marker stays UNREAD here, by doctrine and by
 shape. Doctrine: the query layer serves recorded history, and the marker is the
@@ -82,11 +83,11 @@ def read_recorded_heads(paths: WorkspacePaths, epoch_id: str) -> list[RecordedHe
 def head_of_round(heads: list[RecordedHead], tournament_id: str | None) -> str | None:
     """The recorded head of ONE round, or ``None`` when no record names one.
 
-    Matched on the field-tournament id EXACTLY — the durable snapshot and the
+    Matched on the field-tournament id EXACTLY: the durable snapshot and the
     served bracket record carry the same ``{epoch}:field:{first challenger}``
-    id, so no heuristic is needed and none is used: matching on a competitor
-    overlap would let round N+1's record (whose champion is one of round N's
-    challengers) claim round N.
+    id, so no heuristic is needed and none is used. Matching on a competitor
+    overlap would let round N+1's record claim round N, because its champion
+    is one of round N's challengers.
 
     The returned id is the record's verbatim claim. Whether it belongs to the
     round's lineage-promoted set is the CALLER's check, so a record that names

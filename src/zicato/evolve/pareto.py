@@ -8,8 +8,8 @@ champion the round actually ended with.
 
 **Best-effort by contract.** Recording an observation must never fail a
 round: the canonical stores stay authoritative and every exception here is
-swallowed, exactly the discipline the live index dual-write and the RoundLog
-emitter established. Swallowed is not the same as silent — see
+swallowed, the same discipline the live index dual-write and the round-log
+emitter follow. Swallowed is not the same as silent — see
 :func:`_log_skip`: a transient defect is ``debug`` like those precedents,
 but an unreadable canonical record is warned once per epoch, because unlike
 a projection it has no rebuild path to quietly fix it.
@@ -72,7 +72,7 @@ def record_round_frontier(
     load-bearing: a no-op re-emission of the champion would otherwise sit on
     the record forever as a permanent tie.
 
-    Surfaces exactly one INFO line and one ``frontier_updated`` round-log
+    Surfaces one INFO line and one ``frontier_updated`` round-log
     event, and only when membership actually moved. A round that changes
     nothing is silent and leaves the record file untouched.
     """
@@ -156,8 +156,7 @@ def _log_skip(epoch_id: str, exc: Exception) -> None:
     """Log a swallowed recorder failure at the level its cause deserves.
 
     A transient defect — a busy index, a failed round-log emit — is noise at
-    ``debug``, exactly like the dual-write and RoundLog precedents this
-    module follows.
+    ``debug``, like the dual-write and round-log emitters this module follows.
 
     A MALFORMED CANONICAL RECORD is not. The precedents swallow silently
     because what they write is a projection that the next rebuild re-derives;

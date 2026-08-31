@@ -10,9 +10,9 @@ Ladder-mediated holdout confirmation (:func:`_ladder_mediated_outcome`
 plus its state I/O :func:`_load_ladder_state` / :func:`_save_ladder_state`),
 and the regression-rejection builder (:func:`_regression_rejection`).
 
-The runner re-exports every name here, so the historical import surface
-(``zicato.tournament.runner._ladder_mediated_outcome`` and the rest) is
-unchanged.
+The runner re-exports every name here, so
+``zicato.tournament.runner._ladder_mediated_outcome`` and its siblings still
+resolve through the runner.
 """
 
 from __future__ import annotations
@@ -61,7 +61,7 @@ def _holdout_aggs(
     :func:`zicato.board.split.split_board`. When the holdout is empty (the
     board is too small to split, or the split is disabled, or no entry is
     tagged), returns ``(None, None)`` so the gate's holdout-confirmation
-    step is skipped and behaviour is byte-identical to today.
+    step is skipped entirely.
 
     Otherwise aggregates the parent and child loss profiles restricted to
     the holdout ids — the confirmation-only slice the proposer never sees.
@@ -72,7 +72,7 @@ def _holdout_aggs(
     the CHALLENGER (child) aggregate so the diff-complexity term measures the
     challenger's diff against a champion baseline that pays no parsimony cost.
     ``None`` (the default, and any contract with ``diff_complexity_weight ==
-    0.0``) leaves both aggregates byte-identical to today.
+    0.0``) leaves the parsimony term out of both aggregates.
     """
     from zicato.board.split import rotation_seed, split_board  # noqa: PLC0415
 
@@ -201,8 +201,8 @@ def _ladder_mediated_outcome(
     ``(final_outcome, holdout_record)``:
 
     * **No holdout** (both holdout aggs ``None``): the holdout step is skipped
-      entirely; the train outcome is returned with ``holdout=None`` — exactly
-      Phase A / pre-split behaviour, byte-identical.
+      entirely; the train outcome is returned with ``holdout=None``, which is
+      the decision the train rules alone reach.
     * **Holdout, train rejected**: a train reject already fires with its
       specific reason; the holdout is not consulted (no budget charged) and
       no Ladder state moves. The block records ``confirmed=None``,
@@ -225,7 +225,7 @@ def _ladder_mediated_outcome(
         query_holdout,
     )
 
-    # No holdout slice to consult → byte-identical to Phase A.
+    # No holdout slice to consult → the train rules decide alone.
     if holdout_parent_agg is None or holdout_child_agg is None:
         return train_outcome, None
 
@@ -299,7 +299,7 @@ def _ladder_mediated_outcome(
 
     # A RELEASED non-confirmation flips the promote to a holdout reject. A
     # released confirmation, or any withheld / budget-exhausted query
-    # ("champion stands" — the holdout no longer gates), leaves the train
+    # ("champion stands" — the holdout stops gating), leaves the train
     # promote intact.
     if release.released and not raw_confirmed:
         final = GateOutcome(

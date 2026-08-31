@@ -1,8 +1,7 @@
-"""transcript_view — the run-transcript payload, served (not endpoint-assembled).
+"""The run-transcript payload, assembled in the query layer.
 
-The L4 conversation surfaces used to assemble their payloads inside the
-dashboard endpoints; this module is that logic moved into the query
-layer per the reader recipe. Two seams matter:
+The run-level conversation surfaces read their payloads from here rather
+than assembling them in the dashboard endpoints. Two seams matter:
 
 * The query layer must stay dashboard-free (the import-linter contract),
   but the transcript reconstructor lives in ``zicato.dashboard.transcript``
@@ -13,11 +12,10 @@ layer per the reader recipe. Two seams matter:
 * The reader STAMPS the resolved coordinates onto the reconstructed
   payload (``epoch_id`` / ``generation_id`` / ``entry_id`` and a
   fallback ``run_id``) — a documented reader step, so the frontend can
-  label the transcript column without a second lookup and the payload
-  spelling stays server-owned (DQ2).
+  label the transcript column without a second lookup, and each field keeps
+  one server-owned spelling on the wire.
 
-Every function degrades to the same-shaped empty payload (DQ3), never
-raises.
+Every function degrades to the same-shaped empty payload and never raises.
 """
 
 from __future__ import annotations
@@ -103,7 +101,7 @@ def empty_run_transcript(
     run_id: str | None = None,
     error: str | None = None,
 ) -> dict[str, Any]:
-    """The same-shaped empty transcript payload (DQ3).
+    """The same-shaped empty transcript payload.
 
     ``error`` is attached only when given — the genuine-absence path
     carries no error key (the frontend renders the "could not be
@@ -135,7 +133,7 @@ def build_run_transcript(
     match_id: str | None = None,
     reconstruct: Any = None,
 ) -> dict[str, Any]:
-    """Build one coordinate-stamped transcript with a same-shaped degrade (DQ3)."""
+    """Build one coordinate-stamped transcript with a same-shaped degrade."""
     if reconstruct is None:
         return empty_run_transcript(
             epoch_id,
@@ -159,7 +157,7 @@ def build_run_transcript(
     resolved_run_id = run_id or entry_id
     try:
         payload: dict[str, Any] = reconstruct(events_path, partial_ok=True).to_dict()
-    except Exception as exc:  # noqa: BLE001 — best-effort, never raises (DQ3)
+    except Exception as exc:  # noqa: BLE001 — best-effort, never raises
         return empty_run_transcript(
             epoch_id,
             generation_id,
@@ -185,7 +183,7 @@ def empty_run_transcript_delta(
     run_id: str | None = None,
     error: str | None = None,
 ) -> dict[str, Any]:
-    """The same-shaped not-found delta (DQ3), ``found`` false.
+    """The same-shaped not-found delta, ``found`` false.
 
     A cursor of ``0`` is the honest "nothing consumed" answer: a follower
     that keeps polling with it receives the whole transcript the moment
@@ -254,7 +252,7 @@ def build_run_transcript_delta(
     resolved_run_id = run_id or entry_id
     try:
         full: dict[str, Any] = reconstruct(events_path, partial_ok=True).to_dict()
-    except Exception as exc:  # noqa: BLE001 — best-effort, never raises (DQ3)
+    except Exception as exc:  # noqa: BLE001 — best-effort, never raises
         return empty_run_transcript_delta(
             epoch_id,
             generation_id,

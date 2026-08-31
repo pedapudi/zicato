@@ -57,7 +57,7 @@ def _finalize_generation(
 
     1. ``update_experiment_outcome`` — the :class:`OutcomeRecord` lands on
        ``experiment.json`` (the canonical record; a field present on the
-       record can no longer be dropped by one tail's hand-rolled copy);
+       record cannot be dropped by one tail's hand-rolled copy);
     2. live SQLite index dual-write (best-effort, never aborts the round);
     3. optional lineage upsert (``lineage_generation`` — ``None`` for a
        validation-rejected round that never entered lineage, and for the
@@ -70,7 +70,7 @@ def _finalize_generation(
        ``experiment.json`` (issue #124);
     4. optional champion-marker advance (``advance_current_generation`` —
        the gauntlet's on-promotion step, sequenced between lineage and
-       journal exactly as the inline tail wrote them);
+       journal in that order);
     5. optional journal append (``journal=False`` lets the multi-challenger
        path keep its all-outcomes-then-all-journals order).
 
@@ -251,7 +251,7 @@ async def _persist_rejected_round(
         generation_id=next_id,
         outcome=rejected_outcome,
     )
-    # WS8: the validator findings, the terminal decision, and the close.
+    # Round log: the validator findings, the terminal decision, and the close.
     if round_log is not None:
         round_log.emit(
             "validation_failed",
@@ -319,7 +319,7 @@ def _rejected_proposer_experiment(
     append-only record. This synthesises a minimal experiment whose
     hypothesis carries the per-attempt failure trail and whose patch
     tuple is empty (nothing was successfully applied). The orchestrator
-    stamps the rejected :class:`OutcomeRecord` onto it exactly as it
+    stamps the rejected :class:`OutcomeRecord` onto it the same way it
     does for a validator rejection.
     """
 
@@ -352,9 +352,10 @@ def _skipped_round_outcome(parent_generation_id: str, reason: str) -> EvolveRoun
     """Build the synthetic outcome for a round cut short by ``skip_round``.
 
     Used when an operator queues the control protocol's ``skip_round`` flag
-    (RUNTIME-V2.md Phase 2). The round never proposed or ran a tournament,
-    so — exactly like :func:`_budget_aborted_outcome` — we fabricate a
-    rejection-style outcome. The ``rejection_reason`` is the symbolic
+    of the control protocol. The round never proposed or ran a tournament,
+    so this fabricates a rejection-style outcome, as
+    :func:`_budget_aborted_outcome` does. The ``rejection_reason`` is the
+    symbolic
     ``"skip_round"`` token (plus the operator's reason when given) so journal
     readers and the CLI recognise an operator skip distinctly from a budget
     cut or a real gate rejection.

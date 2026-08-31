@@ -72,12 +72,11 @@ class ProposerToolContext:
         ``list_mutation_points`` renders it; the read/grep tools derive
         the mutable subtrees from its ``source_root`` set.
     generation_id:
-        The id of the generation ``generation_root`` snapshots — the
-        round's champion (the proposer's PARENT generation). Lets
-        ``read_parent_diff`` resolve the generation-store coordinates of
-        the tree the tools are already reading. Empty (the legacy
-        default) degrades that tool to an explicit "coordinates
-        unavailable" answer.
+        The id of the generation ``generation_root`` snapshots — the round's
+        champion (the proposer's PARENT generation). Lets ``read_parent_diff``
+        resolve the generation-store coordinates of the tree the tools are
+        already reading. Empty (the default when no id is supplied) degrades
+        that tool to an explicit "coordinates unavailable" answer.
     """
 
     workspace_root: Path
@@ -99,19 +98,20 @@ class ProposerToolContext:
         ---------------------------------------
         :func:`list_mutation_points` advertises every mutable file RELATIVE TO
         THE WHOLE SNAPSHOT (``file.relative_to(generation_root)`` — e.g.
-        ``agent/prompts.py``). The old derivation, however, admitted ONLY the
-        narrower declared subtree as a readable root when an adapter declared
-        one (``source_root`` basename ``agent`` → root ``<snapshot>/agent``), so
-        the very path the manifest hands the proposer resolved to
-        ``<snapshot>/agent/agent/prompts.py`` — not a file — and raised; only
-        the bare subtree-relative ``prompts.py`` resolved. The mismatch is
-        UNCONDITIONAL (the surface is identical every round); it tends to
-        surface once the proposer starts issuing the manifest-advertised
-        snapshot-relative form rather than a bare filename. Anchoring the
+        ``agent/prompts.py``). Admitting ONLY the narrower declared subtree as
+        a readable root when an adapter declares one (``source_root`` basename
+        ``agent`` → root ``<snapshot>/agent``) would make the very path the
+        manifest hands the proposer resolve to
+        ``<snapshot>/agent/agent/prompts.py``, which is not a file, and raise.
+        Only the bare subtree-relative ``prompts.py`` would resolve. The
+        mismatch would be UNCONDITIONAL, since the surface is identical every
+        round, and it shows up as soon as the proposer issues the
+        manifest-advertised snapshot-relative form rather than a bare
+        filename. Anchoring the
         snapshot root makes the snapshot-relative path resolve too, so the read
-        no longer depends on which path shape the proposer happened to pick;
-        keeping the subtree roots lets the bare subtree-relative form resolve as
-        before. The escape guard in :func:`_resolve_under_mutable_roots` still
+        does not depend on which path shape the proposer picked; keeping the
+        subtree roots lets the bare subtree-relative form resolve too. The
+        escape guard in :func:`_resolve_under_mutable_roots` still
         rejects any ``..`` traversal out of whichever root matched, so widening
         the accepted roots never widens the readable surface beyond the
         snapshot.

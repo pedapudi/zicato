@@ -1,4 +1,4 @@
-"""Pure, deterministic sampler for the critic-calibration channel (WS-CAL). NO IO.
+"""Pure, deterministic sampler for the critic-calibration channel. NO IO.
 
 Closes the loop on the prediction-accuracy grader
 (:func:`zicato.tournament.detail.hypothesis_ledger` /
@@ -192,11 +192,12 @@ def sample_calibration(
     then generation-id ascending — a TOTAL key) render into ``recent`` with
     their banded whole-candidate outcome.
 
-    Returns ``None`` — the caller's "omit this section entirely" sentinel — at
-    ``k <= 0`` or when there is NO graded history (``hit + miss == 0``): a
-    calibration block with no hit/miss claims re-presents no miss pattern, so a
-    baseline reign (or one whose settled hypotheses all made no falsifiable
-    predictions) renders a byte-identical prompt to today.
+    Returns ``None`` — the caller's "omit this section entirely" sentinel —
+    at ``k <= 0`` or when there is NO graded history (``hit + miss == 0``).
+    A calibration block with no hit or miss claims re-presents no miss
+    pattern. So a baseline reign, or one whose settled hypotheses all made no
+    falsifiable predictions, renders the same prompt bytes as a reign with
+    the channel switched off.
     """
     if k <= 0:
         return None

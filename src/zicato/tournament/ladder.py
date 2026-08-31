@@ -1,15 +1,15 @@
 """The Ladder: a noisy, budgeted governor over the holdout query (OVERFITTING.md §4, §12 #2).
 
-Phase A built the train/holdout split (:mod:`zicato.board.split`) and a
-holdout-*confirmation* step in the gate (:func:`zicato.tournament.gate.evaluate_gate`):
-a train-measured win must also hold on a held-out slice the proposer never
-sees. That makes a *single* holdout query trustworthy. It does nothing about
-the deeper failure this note is written for: the proposer queries the *same*
-holdout every round of an epoch, adaptively, and a reused holdout "gets used
-up" — its confirmations become an optimistically-biased signal the optimizer
-can climb.
+The train/holdout split (:mod:`zicato.board.split`) and the
+holdout-*confirmation* step in the gate
+(:func:`zicato.tournament.gate.evaluate_gate`) together require a
+train-measured win to hold on a held-out slice the proposer never sees. That
+makes a *single* holdout query trustworthy. It does nothing about the deeper
+failure this note is written for: the proposer queries the *same* holdout every
+round of an epoch, adaptively, and a reused holdout "gets used up" — its
+confirmations become an optimistically-biased signal the optimizer can climb.
 
-[Blum & Hardt 2015][ladder] give the mechanism for exactly this "submit, see
+[Blum & Hardt 2015][ladder] give the mechanism for this "submit, see
 score, submit again" loop. The Ladder releases a new holdout-based signal only
 when the submission improves on its previous best *beyond a noise threshold*;
 within the band it re-reports the previous best, so the analyst cannot chase
@@ -33,14 +33,14 @@ The two rules, applied per holdout query:
 2. **Budget.** Every query that *consults the holdout* charges one unit of the
    per-epoch budget. When the budget is exhausted, no further holdout signals
    are released — the loop degrades to "champion stands": a train-win is no
-   longer holdout-gated, so it promotes on the train rules alone (exactly as
-   Phase A behaves with no holdout).
+   longer holdout-gated, so it promotes on the train rules alone, as it does
+   when there is no holdout at all.
 
 When the holdout is empty (a small board, the split disabled, no tagged
-entry) there is nothing to govern and the Ladder is never consulted —
-behaviour is byte-identical to Phase A. When ``LadderConfig.enabled`` is
-``False`` the runner runs the raw Phase-A confirmation (no budget, no release
-rule) directly.
+entry) there is nothing to govern and the Ladder is never consulted, so the
+gate decides on the train rules alone. When ``LadderConfig.enabled`` is
+``False`` the runner runs the unmediated holdout confirmation (no budget, no
+release rule) directly.
 """
 
 from __future__ import annotations
@@ -71,7 +71,7 @@ class LadderState:
     best_holdout_scalar:
         The best (lowest, since the scalar is a loss) holdout scalar
         *released* so far this epoch — the Ladder's "previous best". ``None``
-        until the first release. Within the noise band the Ladder re-reports
+        before the first release. Within the noise band the Ladder re-reports
         this value rather than the round's raw holdout scalar.
     best_confirmed:
         The confirmation bit of the most recent *released* query — what is
@@ -150,7 +150,7 @@ def effective_threshold(cfg: LadderConfig, weights: ScoringWeights) -> float:
     ``holdout_margin ≈ promote_margin × N_train / N_holdout`` is the LARGER
     number, so the substitution raises the release bar and every challenger
     whose train improvement falls in ``[promote_margin, holdout_margin)`` —
-    which is exactly the marginal band Rule 1 admits — would promote without
+    which is the marginal band the scalar-margin rule admits — would promote without
     the holdout ever being consulted. An operator who separates the two
     bounds to unblock a promotable board would silently switch off
     board-memorization confirmation for the promotions they just unblocked.
@@ -175,8 +175,8 @@ def query_holdout(
 
     The caller has already (a) decided the train rules would promote and
     (b) computed the raw holdout confirmation bit (``holdout_confirmed`` —
-    Phase A's :func:`zicato.tournament.gate` confirmation on the holdout
-    slice) and the holdout scalar. This function decides whether that bit is
+    the :func:`zicato.tournament.gate` confirmation run on the holdout slice)
+    and the holdout scalar. This function decides whether that bit is
     *released* this round.
 
     The release rule (OVERFITTING.md §4): the *train-measured* improvement

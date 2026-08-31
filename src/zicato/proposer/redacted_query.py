@@ -6,8 +6,8 @@ exemplars before the proposer ever sees them. This module makes a small,
 provably-clean part of the same corpus **queryable on demand** — same
 privacy envelope, asked rather than pushed.
 
-The envelope, not the feature, is the deliverable
--------------------------------------------------
+The privacy envelope is the deliverable
+---------------------------------------
 A view that leaks board identity into the proposer destroys the
 overfitting guarantee the tournament exists to provide, and it does so
 *silently*: nothing errors, nothing warns, and the champion quietly
@@ -33,19 +33,20 @@ Concretely:
   pre-filtered by someone else still cannot smuggle a holdout row through.
 * **No entry ids, no task text, no model output — ever.** Entry ids are
   used to LOCATE files and are never emitted; the aggregates are counts
-  over the slice, not rows. Only a narrow allowlist of closed-vocabulary
+  over the slice rather than rows. Only a narrow allowlist of closed-vocabulary
   event fields is read at all (:data:`_READ_POLICY`); every other field is
   dropped and its strings join the identity corpus. The handful of
   open-vocabulary labels that do survive (agent names) are passed through
   :func:`~zicato.analyzer.redaction.scrub_identity` and then
-  :func:`~zicato.analyzer.redaction.truncate_free_text` — the same R3/R4
-  primitives the process-exemplar channel uses, in that order.
-* **Banded, not exact.** Every number is a rate coarsened through the
+  :func:`~zicato.analyzer.redaction.truncate_free_text` — the same
+  identity-scrub and free-text-truncation primitives the process-exemplar
+  channel uses, in that order.
+* **Banded rather than exact.** Every number is a rate coarsened through the
   existing :func:`~zicato.proposer.prompts.band_rate` vocabulary
   (``none`` / ``~20%`` / ``~all``), and results are ordered by BAND then
   name — so neither the value nor the ordering hands back a fine-grained,
   climbable response surface (OVERFITTING.md §11.4).
-* **Per-entry incidence, not per-event counts.** Each entry contributes at
+* **Per-entry incidence rather than per-event counts.** Each entry contributes at
   most once to each rate ("in what fraction of train entries did X happen
   at least once"), so one chatty run cannot dominate a figure and no
   per-entry magnitude is recoverable.
@@ -94,7 +95,7 @@ _ENVELOPE_KEYS: frozenset[str] = frozenset(
     {"event_id", "run_id", "sequence", "emitted_at", "session_id"}
 )
 
-#: Payload fields that are identity TOKENS — collected into the R4 token
+#: Payload fields that are identity TOKENS — collected into the identity-token
 #: corpus and scrubbed out of any emitted label at any length.
 _TOKEN_FIELDS: frozenset[str] = frozenset(
     {
@@ -109,8 +110,8 @@ _TOKEN_FIELDS: frozenset[str] = frozenset(
     }
 )
 
-#: The READ allowlist — deliberately NARROWER than the process-exemplar
-#: channel's R1 policy, because this surface is queryable on demand rather
+#: The READ allowlist — NARROWER by design than the process-exemplar
+#: channel's payload allowlist, because this surface is queryable on demand rather
 #: than capped at a couple of windows per round. Every field named here is
 #: either a closed vocabulary (drift kind, severity, steering outcome,
 #: intervention level, judge classification) or a harness-side agent label;
@@ -209,7 +210,7 @@ def _case_and_payload(event: Mapping[str, Any]) -> tuple[str | None, dict[str, A
 
 
 # ---------------------------------------------------------------------------
-# R4 — the per-run identity corpus, against THIS module's allowlist
+# The per-run identity corpus, against THIS module's allowlist
 # ---------------------------------------------------------------------------
 
 
@@ -249,7 +250,7 @@ def _identity_corpus(
 
 
 def _safe_label(raw: Any, texts: frozenset[str], tokens: frozenset[str]) -> str:
-    """Redact one emitted label: scrub identity (R4), THEN truncate (R3).
+    """Redact one emitted label: scrub identity, THEN truncate.
 
     The order is load-bearing — see
     :func:`~zicato.analyzer.redaction.truncate_free_text`. Applied to EVERY
@@ -278,9 +279,8 @@ def _derive_train_slice(ctx: ProposerToolContext) -> tuple[frozenset[str], str]:
 
     FAIL CLOSED: every failure path (no epoch id, no board, no scoring, an
     unparseable either, an empty train slice) returns an EMPTY id set plus
-    a human-readable reason. There is deliberately no whole-board
-    fallback — a silently-widened slice is exactly the failure this module
-    exists to prevent.
+    a human-readable reason. There is no whole-board fallback: a
+    silently-widened slice is the failure this module exists to prevent.
     """
     from zicato.board.jsonl import load_board  # noqa: PLC0415
     from zicato.board.split import rotation_seed, split_board  # noqa: PLC0415
@@ -318,7 +318,7 @@ def drop_out_of_slice(
 ) -> dict[str, _EntryFacts]:
     """GATE 2: drop every row whose entry id is not in the train slice.
 
-    Defence in depth, and deliberately independent of gate 1 (which opens
+    Defence in depth, and independent of gate 1 by design (which opens
     only train-slice event files). A single gate is one refactor away from
     being bypassed — a view that arrives "already filtered" is trusted
     exactly once and then quietly is not. This filter re-checks membership
@@ -337,7 +337,7 @@ def drop_out_of_slice(
 class _EntryFacts:
     """What one train-slice run contributes, as membership sets.
 
-    Sets, not counts: each entry contributes at most once to each rate, so
+    Sets rather than counts: each entry contributes at most once to each rate, so
     every reported figure is "the fraction of train entries in which this
     happened at least once" — a marginal. A per-event count would let one
     chatty run dominate a figure and would make a per-entry magnitude

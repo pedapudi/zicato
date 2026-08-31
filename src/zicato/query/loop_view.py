@@ -114,8 +114,7 @@ def build_optimization_trajectory(paths: WorkspacePaths, epoch_id: str) -> dict[
       ``"stalled"``
         Challengers SETTLED and none promoted, with NO floor measured.
         The loop is going nowhere; how far is unmeasured, so this makes
-        no claim about noise (issue #129 — the case that previously fell
-        through to ``"improving"``). Both this and ``no_signal`` count
+        no claim about noise (issue #129). Both this and ``no_signal`` count
         ``settled_count``, never ``challenger_count``: an in-flight
         challenger has decided nothing, and reading it as a stall would
         alarm on a run that has not finished its first round.
@@ -129,8 +128,8 @@ def build_optimization_trajectory(paths: WorkspacePaths, epoch_id: str) -> dict[
       ``"warming_up"``
         Nothing has been decided yet, so the spine is the seed alone —
         whether the epoch has fielded no challenger at all or its first
-        challengers are still racing. Too early to judge, and said so
-        rather than guessed.
+        challengers are still racing. Too early to judge, and the verdict
+        says so rather than guessing.
 
     Degrades to an empty shape (with the floor still attached) on a
     missing index / any sqlite failure — never raises.
@@ -167,23 +166,23 @@ def build_optimization_trajectory(paths: WorkspacePaths, epoch_id: str) -> dict[
     # Challengers were fielded and NONE promoted: the promoted spine is just
     # the seed, so it has improved nothing. A short spine reads
     # ``not plateaued`` only because it is too short to plateau (< the plateau
-    # window), so the old fallthrough turned "we cannot tell" into the most
-    # reassuring word the UI can print (issue #129).
+    # window), so it must not be reported as improving: that would turn "we
+    # cannot tell" into the most reassuring word the UI can print (issue #129).
     #
-    # The floor decides which honest word applies, not WHETHER one does. With
-    # a MEASURED floor the stall is the noise-floor-honest "no detectable
-    # signal" (every challenger tied within the A/A spread; issue #84).
-    # Without one, "stalled" reports the promotions that did not happen and
-    # claims nothing about noise — fabricating no_signal here would assert a
-    # measurement that was never taken (DQ7).
+    # The floor decides WHICH honest word applies rather than whether one
+    # applies. With a MEASURED floor the stall is the noise-floor-honest "no
+    # detectable signal" (every challenger tied within the A/A spread; issue
+    # #84). Without one, "stalled" reports the promotions that did not happen
+    # and claims nothing about noise — fabricating no_signal here would assert
+    # a measurement that was never taken.
     #
-    # The denominator is SETTLED challengers, not fielded ones. A challenger
+    # The denominator is SETTLED challengers rather than fielded ones. A challenger
     # that has applied its snapshot and is still racing already holds an index
-    # row with ``promoted=0``, so keying the stall on ``challenger_count``
-    # would report a fresh run's very first round — nothing decided, nothing
-    # possibly promoted yet — as a loop going nowhere, in caution ink, at the
-    # moment an operator is most likely watching. That is the same defect as
-    # the "improving" fallthrough, pointed the other way.
+    # row with ``promoted=0``. Keying the stall on ``challenger_count`` would
+    # therefore report a fresh run's very first round — nothing decided,
+    # nothing possibly promoted yet — as a loop going nowhere, in caution ink,
+    # at the moment an operator is most likely watching. Reading an undecided round
+    # as a stall is the same error as reading it as an improvement.
     stuck_no_promotions = traj.settled_count >= 1 and traj.promoted_count == 0
     if stuck_no_promotions:
         verdict = "no_signal" if floor is not None else "stalled"
@@ -259,8 +258,8 @@ def build_tournament_cost(paths: WorkspacePaths, epoch_id: str) -> dict[str, Any
 
 # ---------------------------------------------------------------------------
 # The authoritative live ROUND-PIPELINE projection (propose → apply → run →
-# gate). The server owns the inference the JS used to do by parsing phase
-# strings, so every consumer reads ONE verdict.
+# gate). The server owns the phase-string inference, so every consumer reads
+# ONE verdict.
 # ---------------------------------------------------------------------------
 
 #: A trailing ``done/total`` phase segment — the progress an epoch-open step
@@ -279,7 +278,8 @@ PIPELINE_STEPS: tuple[tuple[str, str], ...] = (
 #: The epoch-open steps that own the heartbeat while they run, keyed by the
 #: phase segment each stamps: ``(label, the unit its progress counts)``. Both
 #: strings are SERVER-owned — the clients render them verbatim
-#: (``docs/design/EVAL-VIEW.md`` DQ1) — so a step added here reaches the
+#: (``docs/design/EVAL-VIEW.md``: the server computes, the client renders) —
+#: so a step added here reaches the
 #: dashboard stepper and the console lifeline without touching either.
 _EPOCH_OPEN_STEPS: dict[str, tuple[str, str]] = {
     CALIBRATION_PHASE_TOKEN: ("calibrating noise floor", "draws"),
@@ -293,7 +293,7 @@ def _epoch_open_step(segments: list[str]) -> dict[str, str] | None:
     An epoch-open step (the A/A noise-floor calibration, the contract
     pre-flight) runs once per epoch, inside the first round but ahead of
     propose → apply → run → gate: it is serial, minutes-long, and while it
-    runs the four pipeline steps have genuinely not started. Reporting it as
+    runs the four pipeline steps have not started. Reporting it as
     its own step is what keeps that stretch from reading as a wedged round
     (issues #175 and #276).
 
@@ -376,7 +376,7 @@ def _project_pipeline(
     if any(seg in _EPOCH_OPEN_STEPS for seg in segments):
         # An epoch-open step runs ahead of the pipeline (its phase still heads
         # with ``evolve_once``, which would otherwise read as proposing): every
-        # step is genuinely pending, and :func:`_epoch_open_step` reports it.
+        # step is pending, and :func:`_epoch_open_step` reports it.
         steps = [
             {"id": sid, "label": label, "state": "pending", "detail": ""}
             for sid, label in PIPELINE_STEPS
@@ -450,12 +450,11 @@ def _project_pipeline(
 def build_round_pipeline(paths: WorkspacePaths) -> dict[str, Any]:
     """The authoritative live pipeline state — ``GET /api/live/pipeline``.
 
-    Projects the propose → apply → run → gate position SERVER-SIDE from,
-    in preference order: the runtime tournament event-log fold (the
-    ``field_status`` slot outcomes + the tournament ``phase``), the
-    heartbeat ``phase`` string, and the in-flight ``active_runs`` count.
-    The reader owns the phase-string inference the JS previously did —
-    the stepper renders this verdict verbatim.
+    Projects the propose → apply → run → gate position SERVER-SIDE from, in
+    preference order: the runtime tournament event-log fold (the
+    ``field_status`` slot outcomes + the tournament ``phase``), the heartbeat
+    ``phase`` string, and the in-flight ``active_runs`` count. The reader owns
+    the phase-string inference; the stepper renders this verdict verbatim.
 
     ``running`` / ``stale`` are folded from the ONE served liveness
     verdict (:func:`zicato.query.runtime_view.derive_liveness`), which
@@ -495,7 +494,7 @@ def build_round_pipeline(paths: WorkspacePaths) -> dict[str, Any]:
 
     # Epoch-scope the tournament exactly like the frontend's
     # liveBelongsToEpoch: a KNOWN-and-different pair is rejected; a side
-    # with no epoch id is tolerated (legacy single-epoch payloads).
+    # with no epoch id is tolerated (a single-epoch payload records none).
     at: dict[str, Any] | None = tournament if isinstance(tournament, dict) else None
     if at is not None:
         at_epoch = str(at.get("epoch_id") or "")

@@ -16,7 +16,7 @@ slot:
   ``forbidden_ids`` mutation. Raises :class:`BadPatchSetError` — a
   ``ValueError`` — on either violation (issue #83).
 
-Concurrency note (WS-CONC): under best-of-N slate parallelism the per-slot
+Concurrency note: under best-of-N slate parallelism the per-slot
 ``validate`` hook from :func:`build_scratch_validator_factory` calls
 ``genstore.derive_scratch`` SYNCHRONOUSLY on the event loop — there is no
 ``await`` between the derive's start and finish — so two slots' derives never
@@ -143,8 +143,8 @@ def build_post_apply_validator(
     4. Runs :func:`zicato.mutation.validator.validate_post_apply` and returns
        its findings (empty list ⇒ the patch set validated).
 
-    The previously-inlined closures in the gauntlet and field paths were
-    byte-identical bar their local name; this is their single source.
+    The gauntlet and field paths share this one builder, so neither carries
+    a closure of its own.
     """
     from zicato.mutation.validator import validate_post_apply  # noqa: PLC0415
 
@@ -198,7 +198,7 @@ def build_scratch_validator_factory(
     beater: HeartbeatBeater | None,
     round_index: int,
 ) -> ScratchValidatorFactory:
-    """Build the per-slot scratch ``validate_experiment`` factory (WS-CONC).
+    """Build the per-slot scratch ``validate_experiment`` factory.
 
     The concurrency-enabling sibling of :func:`build_post_apply_validator`.
     Where that shared hook derives every attempt into the ONE shared
@@ -287,14 +287,14 @@ def build_scratch_validator_factory(
 class BadPatchSetError(ValueError):
     """A patch set the manifest cross-check refuses.
 
-    A ``ValueError`` SUBCLASS, deliberately: issue #83's unification is that
+    A ``ValueError`` SUBCLASS, by design: the unification (issue #83) is that
     "this patch set cannot be applied" reaches every boundary as one type,
     and a subclass satisfies every ``except ValueError`` in the apply path
     unchanged. The distinct class exists only so the ``evolve`` CLI can name
-    this condition among the operator-actionable errors it renders as a
-    clean message instead of a traceback — which is what folding
-    :func:`check_patch_manifest_and_forbidden`'s ``RuntimeError`` into
-    ``ValueError`` otherwise silently took away (``cli/commands/evolve.py``
+    this condition. The CLI renders the operator-actionable errors as a
+    clean message instead of a traceback, and folding
+    :func:`check_patch_manifest_and_forbidden`'s ``RuntimeError`` into a
+    bare ``ValueError`` would take that away (``cli/commands/evolve.py``
     catches ``FileNotFoundError`` and ``RuntimeError`` around the whole
     loop; nothing between it and this raise catches either type).
     """
@@ -311,7 +311,7 @@ def check_patch_manifest_and_forbidden(
 
     * every patch's ``mutation_id`` must resolve against the re-enumerated
       mutation manifest (a stale id is a hard error — the proposer targeted
-      a mutation point that no longer exists);
+      a mutation point the current enumeration does not hold);
     * no patch may touch a ``forbidden_ids`` mutation (the operator's
       explicit no-go list).
 
@@ -324,9 +324,9 @@ def check_patch_manifest_and_forbidden(
     exactly one type across the whole apply path — this cross-check, the
     :func:`~zicato.mutation.applier.apply_patches` pre-check, its
     apply-time missing-anchor sites and its post-apply syntax gate all
-    raise ``ValueError``. This function previously raised ``RuntimeError``,
-    a third type for the same class, which no bad-patch-set boundary could
-    catch without also swallowing unrelated runtime faults. The severity is
+    raise ``ValueError``. A third type for the same class — ``RuntimeError``,
+    say — could not be caught at a bad-patch-set boundary without also
+    swallowing unrelated runtime faults. The severity is
     unchanged: neither call site wraps this in a try, so a stale/forbidden
     id is still a hard error that stops the round — by the time it runs the
     proposer already validated its own patch set, so a violation here means
@@ -335,9 +335,8 @@ def check_patch_manifest_and_forbidden(
     The ``ValueError`` SUBCLASS is what keeps the severity claim honest at
     the process boundary too. ``cli/commands/evolve.py`` renders
     ``FileNotFoundError`` / ``RuntimeError`` out of the loop as a clean
-    ``Error: …`` line, and this condition used to qualify; a bare
-    ``ValueError`` would have started dumping a traceback for an
-    operator-actionable fault instead. See :class:`BadPatchSetError`.
+    ``Error: …`` line. A bare ``ValueError`` would instead dump a traceback
+    for an operator-actionable fault. See :class:`BadPatchSetError`.
     """
     from zicato.mutation.validator import check_forbidden_ids  # noqa: PLC0415
 

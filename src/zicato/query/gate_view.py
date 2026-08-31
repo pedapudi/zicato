@@ -64,7 +64,7 @@ def _mean_drift_loss_per_generation(
     regardless of row order, the aggregate is computed in two stages:
 
     1. Per board entry, average that entry's ``drift_loss`` across every
-       run of it (so an entry run twice contributes its mean, not a
+       run of it (so an entry run twice contributes its mean rather than a
        row-order-dependent pick).
     2. The generation's scalar is the mean of those per-entry means.
 
@@ -136,10 +136,10 @@ def build_score_trajectory(
     # ``generations`` rows can carry empty ``created_at`` strings.
     if lineage is None:
         # Scope the WALK to the epoch this reader is about to filter down to.
-        # It used to walk every epoch and discard all but one, and the walk
-        # costs a JSON read per generation, so a 60-epoch workspace paid 60x
-        # for one epoch's curve. ``epoch_id`` is None only when the workspace
-        # has no current epoch, and then the global walk is what we want.
+        # Walking every epoch and discarding all but one costs a JSON read per
+        # generation, so a 60-epoch workspace would pay 60x for one epoch's
+        # curve. ``epoch_id`` is None only when the workspace has no current
+        # epoch, and the global walk is the right answer there.
         lineage = build_lineage_view(paths, epoch_id, include_ratings=False)
     # The filter STAYS: a caller-supplied feed may be workspace-global.
     ordered = [
@@ -359,7 +359,7 @@ def build_health_report(paths: WorkspacePaths) -> dict[str, Any]:
 
 
 # ---------------------------------------------------------------------------
-# Promote-gate breakdown (L3 decision view).
+# Promote-gate breakdown (the decision view — one round's promote/reject).
 #
 # The gate logic is authoritative in :mod:`zicato.tournament.gate`. This
 # reader reconstructs the SAME decision the runner recorded by feeding the
@@ -372,12 +372,12 @@ def build_health_report(paths: WorkspacePaths) -> dict[str, Any]:
 def _read_epoch_scoring_weights(paths: WorkspacePaths, epoch_id: str) -> Any:
     """Build the epoch's :class:`ScoringWeights` from its ``scoring.json``.
 
-    The shipped ``workspace_loader`` / ``lifecycle`` parsers intentionally
-    drop the gate-only fields (``regression_gate_enabled``,
-    ``namespace_weights``, ``namespace_monotonicity``) — they only need the
-    scalar weights. The gate breakdown DOES need them, so this reader maps
-    every gate-relevant key through, falling back to the dataclass defaults
-    when ``scoring.json`` is a partial / legacy document (or absent).
+    The shipped ``workspace_loader`` / ``lifecycle`` parsers intentionally drop
+    the gate-only fields (``regression_gate_enabled``, ``namespace_weights``,
+    ``namespace_monotonicity``) — they only need the scalar weights. The gate
+    breakdown DOES need them, so this reader maps every gate-relevant key
+    through, falling back to the dataclass defaults when ``scoring.json`` is
+    absent, or is a partial document written before a key existed.
     """
     from zicato.core import ScoringWeights  # noqa: PLC0415
 
@@ -413,7 +413,7 @@ def _read_epoch_scoring_weights(paths: WorkspacePaths, epoch_id: str) -> Any:
     except (TypeError, ValueError):
         # A document this reader cannot turn into a valid contract — a
         # namespace map the loader rejects, an unknown key — degrades to the
-        # defaults. A reader never raises (DQ3); the live loader is where an
+        # defaults. A reader never raises; the live loader is where an
         # invalid contract must fail.
         return defaults
 
@@ -491,8 +491,9 @@ def _parse_scoring_provenance(token: str | None) -> dict[str, Any]:
     * ``raw`` — the original token (for the title / debugging).
 
     ``None`` and ``"builtin"`` both yield ``kind="builtin"`` (and
-    ``None`` additionally sets ``present=False`` so a pre-#19 run renders
-    nothing new). Any unrecognised string degrades to ``kind="unknown"``
+    ``None`` additionally sets ``present=False``, so a run that recorded no
+    scoring provenance renders nothing new; issue #19 added the field). Any
+    unrecognised string degrades to ``kind="unknown"``
     rather than raising — this is a display helper, never fatal.
     """
     out: dict[str, Any] = {
@@ -505,8 +506,8 @@ def _parse_scoring_provenance(token: str | None) -> dict[str, Any]:
         "raw": token,
     }
     if not token:
-        # None (pre-#19) or "" — nothing to decompose. ``present`` already
-        # records whether the field existed at all.
+        # None (no provenance recorded) or "" — nothing to decompose.
+        # ``present`` already records whether the field existed at all.
         return out
 
     body = token
@@ -715,11 +716,12 @@ def _build_override_block(
     carries ``operator_override`` + ``operator_override_reason`` whenever an
     operator force-promoted / force-rejected it through the control protocol —
     and projects it into ``{present, action, reason}``. ``present`` is
-    ``False`` (action/reason ``None``) on every gate-decided round and every
-    pre-feature run, so a gate-decided breakdown is byte-compatible with the
-    pre-override shape. ``action`` is ``"promote"`` / ``"reject"`` derived
-    from the recorded ``tournament_decision`` so the L3 view can label the
-    override without re-deriving it.
+    ``False`` (action and reason ``None``) on every round the gate decided and
+    on every record that stores no override. The block is therefore additive:
+    a gate-decided breakdown keeps the shape it had before the block existed.
+    ``action`` is ``"promote"`` / ``"reject"`` derived from the recorded
+    ``tournament_decision``, so the decision view labels the override without
+    re-deriving it.
     """
     absent: dict[str, Any] = {"present": False, "action": None, "reason": None}
     if not challenger_id:
@@ -744,7 +746,7 @@ def build_gate_breakdown(
     champion_id: str,
     challenger_id: str,
 ) -> dict[str, Any]:
-    """Structured promote-gate decomposition for the L3 decision view.
+    """Structured promote-gate decomposition for the decision view.
 
     ``GET /api/round/{epoch_id}/{champion}/{challenger}/gate``. Reuses the
     authoritative :func:`zicato.tournament.gate.evaluate_gate` and its
@@ -794,7 +796,7 @@ def build_gate_breakdown(
         "delta_scalar": None,
         "delta_pass_rate": None,
         # Absolute scalars for each side (pure projection of the already-read
-        # aggregates), so the L3 view can show "47.58 → 57.70" without
+        # aggregates), so the decision view can show "47.58 → 57.70" without
         # back-deriving the absolutes from the relative ``delta_scalar``. Both
         # ``None`` until the corresponding aggregate is found on disk.
         "champion_scalar": None,
@@ -809,8 +811,8 @@ def build_gate_breakdown(
         # Scoring provenance decomposition (#19 phase 4): which transform /
         # plugin produced each side's pass term + drift component, parsed from
         # the recorded provenance tokens, with a first-class fail-open flag.
-        # ``present=False`` on a pre-#19 run (no provenance recorded) so the UI
-        # renders nothing new — back-compat clean.
+        # ``present=False`` on a run that recorded no provenance, so a UI that
+        # does not know the field renders nothing new.
         "scalar_decomposition": _build_scalar_decomposition(
             parent_agg,
             child_agg,
@@ -818,22 +820,23 @@ def build_gate_breakdown(
             _representative_drift_provenance(paths, epoch_id, challenger_id),
         ),
         "primary_driver": None,
-        # Bradley--Terry uncertainty pre-gate block (#crown-on-evidence). Always
-        # present as a key; ``rating.present`` is ``False`` on a pre-BT / disabled
-        # run (no ``promote_confidence_threshold`` in the structure params), so a
-        # UI that does not know the field renders nothing new — back-compat clean.
+        # Bradley--Terry uncertainty pre-gate block: crowning may be held until
+        # the rating separates the pair. Always present as a key;
+        # ``rating.present`` is ``False`` on a run with no
+        # ``promote_confidence_threshold`` in its structure params, so a UI that
+        # does not know the field renders nothing new.
         "rating": build_rating_view(paths, epoch_id, champion_id, challenger_id),
-        # Operator override block. ``present`` is ``False`` on every
-        # gate-decided round (and on every pre-feature run), so a breakdown for
-        # a gate-decided pair is byte-compatible with the pre-override shape;
-        # ``present=True`` carries ``{action, reason}`` when an operator
-        # force-promoted / force-rejected THIS challenger, so the L3 view never
-        # presents the override as the gate's own verdict.
+        # Operator override block. ``present`` is ``False`` on every round the
+        # gate decided and on every record storing no override, so a
+        # gate-decided pair's breakdown keeps the shape it had before the block
+        # existed; ``present=True`` carries ``{action, reason}`` when an
+        # operator force-promoted or force-rejected THIS challenger, so the
+        # decision view never presents the override as the gate's own verdict.
         "override": _build_override_block(paths, epoch_id, challenger_id),
     }
 
-    # Echo the per-judge primary driver from the same source the L3
-    # per-judge-comparison endpoint uses (best-effort; never fatal).
+    # Echo the per-judge primary driver from the same source the decision
+    # view's per-judge-comparison endpoint uses (best-effort; never fatal).
     try:
         comparison = build_per_judge_comparison(paths, epoch_id, champion_id, challenger_id)
         driver_name = comparison.get("primary_driver")
@@ -1055,8 +1058,8 @@ def build_gate_breakdown(
             "fired": False,
         }
     elif pass_mono_scope == "aggregate":
-        # Aggregate scope: render the overall pass-rate movement, not the
-        # per-entry regressed list — a strictly-better aggregate is allowed
+        # Aggregate scope: render the overall pass-rate movement rather than
+        # the per-entry regressed list — a strictly-better aggregate is allowed
         # to reshuffle which entries pass.
         rate_detail = (
             f"overall {parent_pass_rate:.2f} → {child_pass_rate:.2f} "

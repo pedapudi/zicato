@@ -11,9 +11,9 @@ epoch a loop is running right now, with a LIVE OVERLAY on top:
 
 All three are decided SERVER-side. A client that joined the plan to the
 heartbeat and the active-runs list by itself would have to decode the phase
-vocabulary and age the run records, and a browser cannot run the second of
-the two in-flight gates at all (it is never the worker's host), so the two
-surfaces would disagree about what is running.
+vocabulary and age the run records. It cannot do the second: a browser is
+never the worker's host, so it cannot run the host-locality gate. The two
+surfaces would then disagree about what is running.
 
 Nothing here re-derives liveness or the pipeline position
 --------------------------------------------------------
@@ -21,10 +21,10 @@ The phase string is decoded in exactly one place —
 :func:`zicato.query.loop_view.build_round_pipeline`, which the round-pipeline
 stepper already renders — and this module PROJECTS that verdict onto plan
 nodes. So the stepper cannot say "gate" while the plan marks Run active.
-The overlay gates on the same served liveness verdict the stepper gates on:
-a workspace whose files froze in June still holds a mid-round phase and
-seven ``active_runs`` records, and it must serve its durable plan with an
-EMPTY overlay rather than a tree full of nodes reading "running".
+The overlay gates on the same served liveness verdict the stepper gates on.
+A workspace whose files froze in June still holds a mid-round phase and
+seven ``active_runs`` records. It must serve its durable plan with an EMPTY
+overlay rather than a tree full of nodes reading "running".
 
 One id grammar, two tenses
 --------------------------
@@ -33,7 +33,7 @@ the record has no replicate index; the durable ``r<replicate>`` node replaces
 it when the draw lands. A record is placed only in a sweep the durable plan
 already contains. Everything else lands in the explicit run-scope group.
 
-Best-effort throughout (DQ3): every input may be missing or torn, and each
+Best-effort throughout: every input may be missing or torn, and each
 failure narrows the overlay rather than raising.
 """
 
@@ -67,15 +67,15 @@ from zicato.tournament.calibration import CALIBRATION_PHASE_TOKEN
 #: Which measurement band each epoch-open step's draws land in. An epoch-open
 #: step runs once per epoch, ahead of the round's propose → apply → run → gate
 #: (:func:`zicato.query.loop_view._epoch_open_step`), so its live position is
-#: the band step holding the draws it is taking, not a round step. A step with
-#: no entry here marks nothing: the plan will not point at a node whose
-#: correspondence to the phase is a guess.
+#: the band step holding the draws it is taking rather than a round step. A
+#: step with no entry here marks nothing: the plan will not point at a node
+#: whose correspondence to the phase is a guess.
 #:
 #: The two sides are written out rather than fused. A phase token names a
 #: stretch of the loop (``zicato.epoch.preflight`` /
 #: ``zicato.tournament.calibration``) and a band key names a replicate range
 #: (:func:`zicato.query.replicate_scores.measurement_bands`); they are owned by
-#: different modules and equal only by coincidence today. Deriving one from the
+#: different modules and equal only by coincidence. Deriving one from the
 #: other would turn a future rename into a step silently marking the wrong
 #: band, where an explicit table turns it into a step marking nothing.
 EPOCH_OPEN_STEP_BANDS: dict[str, str] = {
@@ -96,11 +96,10 @@ def _plan_lookups(
 ]:
     """Index round, measurement-band, and generation coordinates once.
 
-    A band's entry is its full ANCESTRY — every node from the owning stage
-    down to the band itself — because that chain is what
-    :func:`_active_path` emits, and a chain that named only the stage and
-    the band would skip whatever real parents sit between them for a band
-    nested deeper than one level.
+    A band's entry is its full ANCESTRY: every node from the owning stage
+    down to the band itself. That chain is what :func:`_active_path` emits.
+    A chain naming only the stage and the band would skip whatever real
+    parents sit between them, for any band nested deeper than one level.
 
     Both maps are first-wins: a coordinate the plan holds twice keeps the
     node the plan reached first, so the overlay's answer does not depend
@@ -188,7 +187,7 @@ def build_live_execution_plan(paths: WorkspacePaths) -> dict[str, Any]:
     ``active`` is true on a node the loop is inside: one on the active path,
     an in-flight unit, or an ancestor of either. ``active_path`` names the
     phase-derived chain in order (outermost first); the in-flight units are
-    a set, not a chain, so they are marked in the tree and counted in the
+    a set rather than a chain, so they are marked in the tree and counted in the
     overlay instead.
 
     ``overlay.in_flight`` is the same tally ``/api/live/pipeline`` reports,
@@ -200,11 +199,11 @@ def build_live_execution_plan(paths: WorkspacePaths) -> dict[str, Any]:
 
     A workspace that is not LIVE serves its durable plan with an empty
     overlay and no node marked active. Degrades to the empty plan shape
-    with the same keys on any failure (DQ3) — no reader here raises.
+    with the same keys on any failure; no reader here raises.
     """
     try:
         return _build_live(paths)
-    except Exception:  # noqa: BLE001 — DQ3: the endpoint never returns a 500
+    except Exception:  # noqa: BLE001 — the endpoint never returns a 500
         return _degraded(paths, "live plan could not be read")
 
 
@@ -268,7 +267,7 @@ def _live_epoch_id(paths: WorkspacePaths, pipeline: dict[str, Any]) -> str | Non
     The same resolution the round pipeline reports (``epoch_id`` off the
     heartbeat). ``None`` — the workspace's current epoch — covers both the
     workspace with no heartbeat at all and the heartbeat naming an epoch
-    that is no longer on disk; serving the current epoch's plan there is
+    that is not on disk; serving the current epoch's plan there is
     strictly more than the empty plan an unresolvable id would produce, and
     the overlay is gated on liveness either way.
     """
@@ -467,7 +466,7 @@ def _overlay(
 
 
 def _degraded(paths: WorkspacePaths, note: str) -> dict[str, Any]:
-    """The response shape with nothing in it — the ONE degrade shape (DQ3).
+    """The response shape with nothing in it — the ONE degrade shape.
 
     The empty plan comes from the durable builder's own
     :func:`~zicato.query.execution_plan._empty_plan_model`, so the live

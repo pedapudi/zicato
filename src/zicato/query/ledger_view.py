@@ -2,14 +2,13 @@
 
 An epoch is a sequence of experiments: each one a proposed IDEA, applied at
 some SITES, run against the board, and settled by the gate. Every part of
-that sentence is already recorded — the index's ``experiments`` rows carry
-``hypothesis_core_idea`` / ``tournament_decision`` / ``rejection_reason`` /
-the three deltas, ``patches`` names the sites each experiment touched, and
-``generations.round_index`` says which evolve round minted it — but nothing
-served them TOGETHER, so reading an epoch's story meant opening candidates
-one at a time.
+that sentence is already recorded, across three index tables: the
+``experiments`` rows carry ``hypothesis_core_idea`` /
+``tournament_decision`` / ``rejection_reason`` / the three deltas,
+``patches`` names the sites each experiment touched, and
+``generations.round_index`` says which evolve round minted it.
 
-This reader is that join, done server-side and once:
+This reader joins those three server-side and once:
 ``GET /api/epoch/{id}/experiments-ledger`` returns one row per experiment,
 in ROUND ORDER, carrying exactly the columns the ledger table renders.
 
@@ -20,8 +19,8 @@ Discipline, matching every other reader here:
   the lineage / epoch feeds about a verdict.
 * ``rejection_reason`` is the RECORDED field, verbatim — the frontend
   renders it, never parses it.
-* Absence degrades FIELD-BY-FIELD (a never-settled experiment reads with
-  null deltas and a null decision, not a missing row); a workspace with no
+* Absence degrades FIELD-BY-FIELD: a never-settled experiment reads with
+  null deltas and a null decision rather than as a missing row. A workspace with no
   index degrades to an empty ledger plus an honest ``note``, because the
   ledger is a projection of the index and inventing one from the trees
   would be a second, divergent source.
@@ -107,10 +106,11 @@ def build_experiments_ledger(paths: WorkspacePaths, epoch_id: str | None = None)
 
 def _ledger_rows(conn: sqlite3.Connection, epoch_id: str) -> list[dict[str, Any]]:
     """The joined, round-ordered experiment rows for one epoch."""
-    # ``SELECT *`` (not a named column list) is deliberate on ``generations``:
-    # ``round_index`` is a v7 column a legacy index may not have, and naming a
-    # missing column fails the WHOLE query — blanking the ledger — where the
-    # tolerant ``_rget`` accessor reads the absence as a null round instead.
+    # ``SELECT *`` rather than a named column list is required on
+    # ``generations``: ``round_index`` arrived in schema v7 and an older index
+    # may not carry it, and naming a missing column fails the WHOLE query and
+    # blanks the ledger. The tolerant ``_rget`` accessor instead reads the
+    # absence as a null round.
     gen_rows = _query(
         conn,
         "SELECT * FROM generations WHERE epoch_id = ? ORDER BY created_at, generation_id",
@@ -157,7 +157,7 @@ def _ledger_rows(conn: sqlite3.Connection, epoch_id: str) -> list[dict[str, Any]
                 "generation_id": gid,
                 # The seed's parent, carried so the renderer can reach the ONE
                 # shared decision classifier: a parentless generation is the
-                # BASELINE, not a candidate still racing. Without it a settled
+                # BASELINE rather than a candidate still racing. Without it a settled
                 # epoch's seed row — which records no tournament decision,
                 # because it never faced one — reads as in-flight forever.
                 "parent_generation_id": parents.get(gid),

@@ -1,11 +1,11 @@
-"""WS-ADMIT — the admission pipeline for eval synthesis (generative reflection).
+"""The admission pipeline for eval synthesis (generative reflection).
 
 The instrument's second loop (EVAL-SYNTHESIS.md) turns observed behaviour into
 drafted instrument changes; admission is the step that attaches **measured
 operating characteristics** to a drafted suggestion *before the operator ever
 sees it* — the "evals are hypotheses too" move made mechanical (§1, §5). Four
-recommend-only probes ride the suggestion; thresholds are the operator's read in
-WS-SURFACE, never a silent auto-reject here:
+recommend-only probes ride the suggestion; thresholds are the operator's read
+on the suggestion surface, never a silent auto-reject here:
 
 * **(a) EXECUTION** — the champion runs the drafted entry through the REAL
   board-unit runner (:func:`zicato.tournament.scheduling._run_board_units_fast`,
@@ -35,8 +35,9 @@ WS-SURFACE, never a silent auto-reject here:
 explicit ``spend: bool``. In ``spend=False`` (plan) mode it computes every
 stage's board-run cost up front (:func:`estimate_cost`) and runs NOTHING — zero
 board runs — returning the cost with every live stage ``unmeasured``. Only
-``spend=True`` executes the probes (endpoint-gated, G3-class — WS-SURFACE's CLI
-gates it). The whole pipeline is fully testable against the fixture/mock tier:
+``spend=True`` executes the probes, which need the operator's explicit
+go-ahead because they spend live budget; the suggestion surface's CLI gates
+them. The whole pipeline is fully testable against the fixture/mock tier:
 the probes drive the real runner over a seeded ``_run_single`` (the cascade-OC /
 power-harness precedent), so every statistic has a known-answer test with zero
 live spend.
@@ -106,8 +107,8 @@ _UNMEASURED = "unmeasured"
 class AdmissionRequest:
     """A drafted suggestion presented to admission (EVAL-SYNTHESIS.md §3 / §5).
 
-    WS-SYNTH builds this from a synthesised suggestion; WS-ADMIT never authors a
-    draft. The pipeline stays decoupled from the (not-yet-built) ``Suggestion``
+    Synthesis builds this from a synthesised suggestion; admission never authors
+    a draft. The pipeline stays decoupled from the ``Suggestion``
     dataclass by binding only to the drafted artifact + the §4 provenance a
     suggestion always carries.
 
@@ -318,7 +319,8 @@ async def admit_suggestion(
 
 
 # ---------------------------------------------------------------------------
-# The surface bridge — the sync seam WS-SURFACE / the CLI call into (§5 / §6)
+# The surface bridge — the sync seam the suggestion surface and the CLI call
+# into (§5 / §6)
 # ---------------------------------------------------------------------------
 
 
@@ -345,7 +347,7 @@ def admit(
     workspace_root: Path,
     epoch_id: str,
 ) -> list[Any]:
-    """The sync WS-ADMIT seam: stamp admission records onto surface suggestions (§5).
+    """The sync admission seam: stamp admission records onto surface suggestions (§5).
 
     The callable :func:`zicato.reflection.suggestions.resolve_admit` late-binds
     and the CLI drives under ``--probe``. It resolves the same corpus context
@@ -434,8 +436,8 @@ def _request_from_suggestion(
     Populates the §4 self-preference families (SHOULD-FIX-B): ``judge_family``
     from the configured judge model when a judge will grade, ``expected_answer_family``
     from the synthesising aux model when the suggestion is LLM-drafted — the
-    provenance knows which tier authored it. ``None`` only when genuinely
-    unknowable (a mechanical draft pins recorded data — no model authored it).
+    provenance knows which tier authored it. ``None`` only when unknowable
+    (a mechanical draft pins recorded data, so no model authored it).
     """
     from zicato.core import validate_board_entry  # noqa: PLC0415
 
@@ -952,7 +954,7 @@ async def _run_entry(
 
     Stamps the reserved replicate index onto the entry (the §7.3 same-number
     rule: a seeded harness draws fresh per slot) and keys the per-unit cache with
-    it, exactly as the calibration / screen / corpus draws do. Returns the
+    it, as the calibration / screen / corpus draws do. Returns the
     entry's :class:`LossProfile`, or ``None`` when the runner produced none.
     """
     from zicato.tournament.scheduling import _run_board_units_fast  # noqa: PLC0415
@@ -981,7 +983,7 @@ def _settled_matchups(experiments: list[dict[str, Any]]) -> list[tuple[str, str]
     """The reign's settled ``(champion, challenger)`` matchups, in record order.
 
     Reuses :func:`zicato.query.eval_view._reign_matchups` so the discrimination
-    probe spans exactly the pairs the instrument panel measures discrimination
+    probe spans the same pairs the instrument panel measures discrimination
     over (EVAL-VIEW.md §2.3, the MATCHUP-RECORD binding). Tolerant: a malformed
     experiments list degrades to no matchups.
     """

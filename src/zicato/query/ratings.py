@@ -3,11 +3,11 @@
 One shared helper for every reader that decorates a payload with the
 index-derived Bradley--Terry rating (``generations.elo`` / ``elo_se`` /
 ``elo_games``; schema v10 + v12): the lineage/gens feed and the tournament
-standings. The rating is **visibility-only** — it never gates promotion —
-and this read is **best-effort by contract (DQ3)**: an absent index, a
-cold/stale schema (missing columns), or any SQLite error yields an empty
-map, so every consumer attaches the null triple and no payload ever fails
-because analytics have not been derived yet.
+standings. The rating is **visibility-only**: it never gates promotion.
+This read is **best-effort by contract**: an absent index, a cold or stale
+schema with missing columns, or any SQLite error yields an empty map. Every
+consumer then attaches the null triple, so no payload fails because
+analytics have not been derived yet.
 """
 
 from __future__ import annotations
@@ -18,7 +18,7 @@ from typing import Any
 from zicato.query._sqlite import _IndexAbsent, open_index_ro
 from zicato.query.paths import WorkspacePaths
 
-#: The three wire fields (DQ2 snake_case), in payload order.
+#: The three wire fields, in payload order, each in one snake_case spelling.
 RATING_FIELDS: tuple[str, str, str] = ("elo", "elo_se", "elo_games")
 
 
@@ -33,7 +33,7 @@ def rating_by_generation(
     ``elo_se``, or a generation that never played a settled duel). An
     absent / unreadable index — or a pre-v10 schema with no rating columns
     at all — returns ``{}`` so the caller attaches the null triple to every
-    row (DQ3: degrade, never raise).
+    row. The read degrades and never raises.
     """
     try:
         with open_index_ro(paths.index_db) as conn:
@@ -64,7 +64,7 @@ def rating_by_generation(
 
 
 def null_rating() -> dict[str, Any]:
-    """The null triple a consumer attaches when no rating resolved (DQ3)."""
+    """The null triple a consumer attaches when no rating resolved."""
     return dict.fromkeys(RATING_FIELDS)
 
 

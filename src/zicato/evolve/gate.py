@@ -237,9 +237,9 @@ def _apply_field_overrides(
 
     * ``promoted_ids`` — the (possibly multi-element) promoted SET. With no
       override it is exactly ``{promoted_id}`` (or empty), so the
-      single-promotion path is byte-identical.
+      single-promotion path is unaffected.
     * ``promoted_id`` — the PRIMARY head that advances
-      ``current_generation``. The originally-crowned leader if it survived;
+      ``current_generation``. The crowned leader when it survived;
       otherwise the lowest-scalar operator-promoted candidate (mirroring the
       gate's lower-scalar-wins convention); ``None`` when every leader was
       force-rejected (the champion stands).
@@ -328,7 +328,7 @@ def _registered_mutable_trees(workspace_config: Any) -> list[str]:
     """The workspace's registered mutable-tree paths (empty when unset).
 
     The same config surface :func:`_ensure_baseline_snapshot` seeds from
-    (``mutable_trees`` with the legacy ``source_roots`` fallback) and the
+    (``mutable_trees``, with ``source_roots`` as the older fallback key) and the
     same one the Rust supervisor reads for its out-of-band containment
     attestation — the two ends of the check share the rule surface.
     """
@@ -346,12 +346,11 @@ def _integrity_block_reason(
 ) -> str | None:
     """The refusal reason when an opt-in integrity block fires, else ``None``.
 
-    Consulted immediately before a GATE-DECIDED promotion is finalized —
-    the in-band, opt-in twins of the supervisor's alarm-only integrity
-    notary. Both checks default OFF (``ScoringWeights``); an explicit
-    operator force-promote is never routed here (the override is recorded
-    provenance, not a silent flip, and blocking it would neuter the
-    control protocol).
+    Consulted immediately before a GATE-DECIDED promotion is finalized — the
+    in-band, opt-in twins of the supervisor's alarm-only integrity notary. Both
+    checks default OFF (``ScoringWeights``); an explicit operator force-promote
+    is never routed here (the override is recorded provenance rather than a
+    silent flip, and blocking it would disable the control protocol).
 
     (a) **Diff containment** (``block_on_containment_violation``): every
         file outside the registered mutable trees must be byte-identical

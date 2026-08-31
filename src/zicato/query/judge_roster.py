@@ -11,7 +11,7 @@ pointer to each judge's reflection scorecard where one exists.
 The suppression derivation goes through :mod:`zicato.judge_runtime.disable`
 — the one module that knows which built-in judge emits which drift kind —
 rather than restating the mapping here. That matters because the mapping is
-deliberately PARTIAL: a ``disable_drift`` kind no built-in judge emits
+PARTIAL by design: a ``disable_drift`` kind no built-in judge emits
 suppresses nothing at all, and a panel that assumed a named kind always
 disarms something would draw a suppression that never happened. Those kinds
 come back as ``unmapped_drift_kinds`` so the surface can say so out loud.
@@ -137,8 +137,9 @@ def build_judge_roster(paths: WorkspacePaths, epoch_id: str | None = None) -> di
         epoch_id = _resolve_epoch_id(paths, epoch_id)
     except ValueError:
         # An unknown or path-unsafe id resolves to no epoch. A reader never
-        # raises (DQ3), and ``None`` is the honest epoch_id for a roster that
-        # describes nothing — echoing the rejected string back would not be.
+        # raises, and ``None`` is the honest epoch_id for a roster that
+        # describes nothing; echoing the rejected string back would imply
+        # that the epoch exists.
         epoch_id = None
     roster = _empty_judge_roster(epoch_id)
     if epoch_id is None:
@@ -162,7 +163,7 @@ def build_judge_roster(paths: WorkspacePaths, epoch_id: str | None = None) -> di
     except ImportError:
         roster["builtins_note"] = NO_GOLDFIVE_NOTE
         names = []
-    except Exception:  # noqa: BLE001 — best-effort; an honest note, not a 500
+    except Exception:  # noqa: BLE001 — best-effort; an honest note over a 500
         roster["builtins_note"] = NO_ROSTER_NOTE
         names = []
     builtins: list[dict[str, Any]] = []

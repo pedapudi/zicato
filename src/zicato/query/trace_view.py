@@ -1,4 +1,4 @@
-"""trace_view — the trajectory-bootstrap UI read surface (WS-DATA).
+"""trace_view — the trajectory-bootstrap UI read surface.
 
 The read side of the trajectory-bootstrap visualisation (TRAJECTORY-UI.md): the
 imported foreign traces (TRAJECTORY-BOOTSTRAP.md §3) and the drafted suggestions
@@ -7,7 +7,7 @@ Traces viewer, the suggestion provenance chain, and the Evals ghost rows. Three
 server-derived readers:
 
 * :func:`build_trace_list` — the trace list: per-trace summary + the
-  PRE-COMPUTED strip-model (the render model the JS draws straight from, DQ1).
+  PRE-COMPUTED strip-model (the render model the JS draws straight from).
 * :func:`build_trace_detail` — one trace: its strip-model + the reconstructed
   conversation (the transcript turn vocabulary) + episode spans with anchors +
   the linked suggestion ids.
@@ -15,7 +15,7 @@ server-derived readers:
   episodes → per-episode trace-segment strip-models + the admission-stat
   visuals (the BT-whisker / pip vocabulary).
 
-Every reader is best-effort and honest (EVAL-VIEW.md §3 DQ1/DQ2/DQ3): an
+Every reader is best-effort and honest (EVAL-VIEW.md §3): an
 unknown / cold reflection, an unknown trace / suggestion, or a malformed record
 degrades to a SAME-SHAPE payload (``found: False`` / empties, never a raise,
 never a fabricated number).
@@ -96,7 +96,7 @@ _FLIP_CEILING: float = 0.25
 
 #: The PER-MARK extent cap on the turn lane (TRAJECTORY-UI.md §3.4): no single
 #: turn mark may occupy more than a quarter of the lane's width, whatever the
-#: turn count. Exported (not private) because it is part of the strip-model
+#: turn count. Exported rather than private because it is part of the strip-model
 #: contract the figure + its geometry tests assert against. See
 #: :func:`lane_marks` for the compressive scale this caps.
 LANE_EXTENT_CAP: float = 0.25
@@ -176,16 +176,16 @@ def lane_marks(user_turns: list[str], agent_turns: list[str]) -> list[dict[str, 
     Zips the two ordered sides into ``[u0, a0, u1, a1, …]`` (a trailing
     unmatched turn is appended) and lays them end-to-end from ``x0 = 0``.
 
-    THE EXTENT SCALE (load-bearing — the blob fix). A raw ``chars / total`` share
-    forces the marks to TILE the lane no matter how few turns there are, so a
-    2-turn trace renders as two half-lane slabs that fuse into one solid block
-    (the "black blob" the operator hit: two full-height ink rectangles spanning
-    the whole strip). The extent is instead **exactly proportional to
+    THE EXTENT SCALE (load-bearing). A raw ``chars / total`` share forces the
+    marks to TILE the lane no matter how few turns there are, so a 2-turn trace
+    renders as two half-lane slabs that fuse into one solid block: two
+    full-height ink rectangles spanning the whole strip. The extent is instead
+    **exactly proportional to
     ``sqrt(chars + 1)``** under ONE global scale:
 
     * ``sqrt`` COMPRESSES honestly and monotonically — a 4096-char answer is 8×
-      a 64-char prompt's width, not 64×, so a long agent turn no longer swamps
-      the terse turns around it while the ordering stays truthful;
+      a 64-char prompt's width rather than 64×, so a long agent turn does not
+      swamp the terse turns around it while the ordering stays truthful;
     * the global scale is ``min(EXTENT_CAP / max(w), 1 / sum(w))`` — the first
       term is the **per-mark cap** (the widest mark is at most
       ``LANE_EXTENT_CAP`` of the lane), the second the **saturation fit** (the
@@ -194,8 +194,9 @@ def lane_marks(user_turns: list[str], agent_turns: list[str]) -> list[dict[str, 
       or redistributed.
 
     Consequence, by design: a short 2-turn trace reads as two proportioned bars
-    over a mostly-empty lane (the lane is a CAPACITY, not a pie — the empty room
-    is itself the honest signal "this trace has two turns"), while a many-turn
+    over a mostly-empty lane. The lane measures CAPACITY rather than dividing a
+    fixed total, so the empty room is itself the honest signal that the trace
+    has two turns. A many-turn
     trace saturates and tiles the lane exactly. The vertical extent is left to
     the figure: ``size`` = ``chars / max_chars`` and ``svg.js`` maps it onto a
     BOUNDED bar (≤ 40 % of the lane height), never a full-lane slab.
@@ -244,7 +245,7 @@ def lane_marks(user_turns: list[str], agent_turns: list[str]) -> list[dict[str, 
                 "chars": c,
             }
         )
-    # Pin the final right edge to 1.0 ONLY when the lane genuinely saturates
+    # Pin the final right edge to 1.0 ONLY when the lane does saturate
     # (float drift over many turns); an under-filled lane must stay under-filled.
     if saturated:
         marks[-1]["x1"] = 1.0
@@ -256,8 +257,8 @@ def signal_ticks(present: list[tuple[str, int, str]]) -> list[dict[str, Any]]:
 
     ``present`` is ``[(signal_kind, count, label), …]`` already in the fixed
     kind order. Each tick rides its tone + glyph (§3.5); ``x`` is the even
-    ``(k+1)/(n+1)`` slot and ``positioned`` is ``False`` (the reduced signals
-    carry counts, not per-event positions — the honesty flag).
+    ``(k+1)/(n+1)`` slot and ``positioned`` is ``False`` — the honesty flag,
+    because the reduced signals carry counts rather than per-event positions.
     """
     n = len(present)
     ticks: list[dict[str, Any]] = []
@@ -322,8 +323,8 @@ def build_strip_model(
 ) -> dict[str, Any]:
     """The PRE-COMPUTED strip render model for one trace (TRAJECTORY-UI.md §3.4).
 
-    Pure — the ONE place the render math lives (DQ1: the JS draws from this,
-    never derives). ``episodes`` are this trace's drafted episodes (derived from
+    Pure — the ONE place the render math lives; the JS draws from this and
+    derives nothing. ``episodes`` are this trace's drafted episodes (derived from
     the persisted suggestions, each an :func:`_episode_dict`); ``focus_episode_id``
     is set only for a provenance mini-strip.
     """
@@ -551,7 +552,8 @@ def _reconstructed_turns(trace: ImportedTrace) -> list[dict[str, Any]]:
     """The reconstructed conversation as alternating speaker rows (§3.2).
 
     The same ``[u0, a0, u1, a1, …]`` alternation the lane marks draw, but
-    carrying the turn TEXT — the transcript turn vocabulary the L4 diff speaks.
+    carrying the turn TEXT — the transcript turn vocabulary the run-level
+    diff speaks.
     """
     user = list(trace.user_turns)
     agent = list(trace.agent_turns)

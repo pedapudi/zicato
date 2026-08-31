@@ -1,22 +1,22 @@
-"""Tolerant raw scan of a frozen ``board.jsonl`` (DQ3).
+"""Tolerant raw scan of a frozen ``board.jsonl``.
 
 The query layer reads the board for two different reasons — to union the
 judge names an epoch declares (``judge_view``) and to slice per-entry
 outcomes by tag (``tournament_view``). Neither reader wants
 :func:`zicato.board.jsonl.load_board`: that function VALIDATES, so one
 stale entry anywhere on the board raises and blanks the whole payload.
-A read model must degrade per-row, not per-file (09-dashboard-and-query.md
-§9.3.1).
+A read model must degrade one row at a time rather than one file at a
+time (09-dashboard-and-query.md §9.3.1).
 
 So both readers walk the raw JSONL and skip what they cannot parse. This
 module owns that walk once. It never raises: an absent, unreadable, or
 non-UTF-8 board yields an empty list, and a malformed or non-object line
 is dropped while its siblings survive.
 
-The scan drops the ``board_meta`` header row (it is board-level metadata,
-not an entry) and returns every other object verbatim. Callers pick the
-fields they need with their own type guards — this module deliberately
-knows nothing about the entry schema.
+The scan drops the ``board_meta`` header row, which carries board-level
+metadata rather than an entry, and returns every other object verbatim.
+Callers pick the fields they need with their own type guards; this module
+knows nothing about the entry schema by design.
 """
 
 from __future__ import annotations
@@ -26,8 +26,9 @@ from pathlib import Path
 from typing import Any
 
 #: The board-level metadata header key (mirrors
-#: ``zicato.board.jsonl._BOARD_META_KEY``). A row carrying it is not an
-#: entry. The raw scan does not enforce the "must be first line" rule the
+#: ``zicato.board.jsonl._BOARD_META_KEY``). A row carrying it holds
+#: board-level metadata rather than an entry. The raw scan does not
+#: enforce the "must be first line" rule the
 #: validating loader does — a read model reports what is on disk.
 BOARD_META_KEY = "board_meta"
 

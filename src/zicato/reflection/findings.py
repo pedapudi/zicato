@@ -17,7 +17,7 @@ Concrete emitters
 * **Redundant judge** (``redundant_with`` at corr ≈ 1) → ``set_weights
   {per_judge_weights: {judge: 0.0}}`` — the judge carries no independent
   signal; zero its weight. (``remove_judge`` is reserved for pure-cost
-  duplicates and surfaced as recommendation TEXT, not an op — zeroing the
+  duplicates and surfaced as recommendation TEXT rather than an op — zeroing the
   weight is the reversible, slot-coherent edit.)
 * **False-fire-heavy judge** (precision < ½) → ``set_weights
   {per_judge_weights: {judge: 0.5}}`` — a down-weight suggestion, evidence-
@@ -44,7 +44,7 @@ from zicato.reflection.adjudicator import VERDICT_FN, VERDICT_FP, JudgeAdjudicat
 from zicato.reflection.scorecards import JudgeScorecard
 
 #: Down-weight a false-fire-heavy judge is nudged toward (a starting point the
-#: operator tunes, not a fitted value).
+#: operator tunes rather than a fitted value).
 FP_DOWNWEIGHT: float = 0.5
 
 #: Multiplier applied to the noise floor to recommend a promote margin clear of
@@ -254,7 +254,7 @@ def derive_findings(
         # ``set_gate`` that LOWERS promote_margin under a headline promising to
         # raise it. Report the disagreement instead and propose nothing: the
         # range fired, the stable statistic does not corroborate it, and the
-        # answer is a re-measurement, not a weaker gate.
+        # answer is a re-measurement rather than a weaker gate.
         raises_margin = recommended > promote_margin
         if raises_margin:
             detail = (

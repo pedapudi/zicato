@@ -12,12 +12,11 @@ measured). Two index-first, file-fallback readers back the three eval views
   flip rate, discrimination, runtime cost, per-candidate trajectory, and the
   first-passed-by / regressed-by attribution along the champion spine.
 
-Every reader is best-effort and honest (EVAL-VIEW.md §3 DQ1/DQ2/DQ3): a
-never-indexed workspace, an unknown epoch/entry, or absent calibration
-degrades to a same-shape payload (``found: False`` / ``null`` fields, a
-``"flip rate unmeasured"`` signal — NEVER a fabricated ``0.0``) rather than
-raising. This module stays dashboard-free (the ``zicato.query`` import
-contract).
+Every reader is best-effort and honest (EVAL-VIEW.md §3): a never-indexed
+workspace, an unknown epoch/entry, or absent calibration degrades to a
+same-shape payload (``found: False`` / ``null`` fields, a ``"flip rate
+unmeasured"`` signal — NEVER a fabricated ``0.0``) rather than raising. This
+module stays dashboard-free (the ``zicato.query`` import contract).
 
 The pure analytics helpers (:func:`flip_rate`, :func:`discrimination`,
 :func:`runtime_aggregates`, :func:`pass_ratio`, :func:`evidence_of`) do no
@@ -50,7 +49,7 @@ _MDE_POWER = 0.80
 _MDE_FORMULA = "MDE = (t_{α/2,df} + t_{β,df})·sd·√(2/n),  sd ≈ floor,  df = 2·(n−1)"
 
 # The minimum-comparisons honesty threshold for the DEAD-eval finding
-# (EVAL-VIEW.md §5 WS-HEALTH): an entry needs at least this many both-sides
+# (EVAL-VIEW.md §5): an entry needs at least this many both-sides
 # matchups before a zero discrimination is read as "dead" rather than thin
 # evidence. Below it the entry reports "insufficient comparisons", never dead —
 # §4's no-fabricated-numbers rule extended to the discrimination claim.
@@ -89,7 +88,7 @@ def pass_ratio(bits: list[bool | None]) -> float | None:
 def majority_verdict(bits: list[bool | None]) -> bool | None:
     """The majority pass/fail verdict; ``None`` on no bits OR an exact tie.
 
-    A tie is genuinely ambiguous, so it degrades to ``None`` rather than
+    A tie is ambiguous, so it degrades to ``None`` rather than
     silently rounding toward pass.
     """
     ratio = pass_ratio(bits)
@@ -457,13 +456,12 @@ def _per_entry_flip_rates(
 
 
 def _lineage_nodes(paths: WorkspacePaths, epoch_id: str) -> dict[str, dict[str, Any]]:
-    """The epoch's lineage nodes keyed by generation id (EVAL-VIEW.md §3.1 / F1).
+    """The epoch's lineage nodes keyed by generation id (EVAL-VIEW.md §3.1).
 
     The lineage view is THE promotion authority. ``lineage.json`` owns parent
     and promoted state; experiment outcomes are journal detail, never a second
-    topology source.
-    Best-effort (DQ3): an unreadable workspace yields ``{}`` and the caller
-    falls back to the index bool.
+    topology source. Best-effort: an unreadable workspace yields ``{}`` and the
+    caller falls back to the index bool.
     """
     from zicato.query.lineage_view import build_lineage_view  # noqa: PLC0415
 
@@ -496,9 +494,9 @@ def _spine_ids(nodes: dict[str, dict[str, Any]]) -> list[str]:
     The seed is the epoch's baseline champion: it reigns from round 0 and keeps
     reigning until a challenger beats it. So an epoch whose challengers were all
     rejected still HAS a spine — ``[v0]`` — and a one-generation spine is a real
-    trajectory (the seed's own outcome on each entry), not an absent one.
-    Dropping it is what made the dossier claim "no champion-spine trajectory"
-    for an epoch whose spine was plainly recorded.
+    trajectory (the seed's own outcome on each entry) rather than an absent
+    one. Dropping it would make the dossier claim "no champion-spine
+    trajectory" for an epoch whose spine is plainly recorded.
 
     The promoted chain itself comes from the shared
     :func:`~zicato.query.tournament_view._champion_lineage` walk; the seed is
@@ -532,7 +530,7 @@ def _candidate_axis(paths: WorkspacePaths, epoch_id: str) -> list[dict[str, Any]
     # The generation graph the seed + spine are derived from: the index rows,
     # OVERLAID by the lineage nodes. Lineage is authoritative wherever it has a
     # node; the
-    # index row carries a generation lineage never walked (DQ3 fallback).
+    # index row carries a generation lineage never walked (the degrade path).
     nodes: dict[str, dict[str, Any]] = {}
     for r in rows:
         gid = _row_get(r, "generation_id")
@@ -551,11 +549,11 @@ def _candidate_axis(paths: WorkspacePaths, epoch_id: str) -> list[dict[str, Any]
         gid = _row_get(r, "generation_id")
         if not isinstance(gid, str) or not gid:
             continue
-        # TRISTATE promoted (EVAL-VIEW.md §3.1 / F1), from the ONE classifier the
+        # TRISTATE promoted (EVAL-VIEW.md §3.1), from the ONE classifier the
         # lineage payload serves — so the matrix and /api/lineage cannot disagree
         # about the same generation. An in-flight / never-raced candidate serves
-        # ``null``, NEVER a collapsed ``false`` (the Class-B bug decisions.py
-        # names).
+        # ``null``, NEVER a collapsed ``false``, which would report an
+        # undecided promotion as a rejection (:mod:`zicato.query.decisions`).
         promoted = nodes[gid].get("promoted")
         axis.append(
             {
@@ -563,7 +561,8 @@ def _candidate_axis(paths: WorkspacePaths, epoch_id: str) -> list[dict[str, Any]
                 "round_index": _opt_int(_row_get(r, "round_index")),
                 "promoted": promoted if isinstance(promoted, bool) else None,
                 # The epoch's baseline. It faced no gate, so it is on the spine
-                # WITHOUT a promotion — the UI reads it as the seed, not as a win.
+                # WITHOUT a promotion — the UI reads it as the seed rather
+                # than as a win.
                 "seed": gid == seed,
                 # The reign: the promoted chain anchored at the seed (§3.1).
                 "champion_spine": gid in spine,
@@ -594,7 +593,7 @@ def _aggregate_cell(rows: list[Any], draws: list[Any] | None = None) -> dict[str
 
     EVIDENCE + replicate count come from the DURABLE replicate FILES
     (:func:`zicato.query.replicate_scores.cell_replicate_draws`, EVAL-VIEW.md
-    §4.1 / F3) — the ``loss.json`` +
+    §4.1) — the ``loss.json`` +
     ``loss.r<N>.json`` that actually exist — NOT the ``loss_profiles`` row count,
     which is always 1 (the table's PK is ``run_id`` = one row per (gen, entry)).
     ``pass_ratio`` / ``pass_fail`` / ``drift_loss`` / ``score`` are averaged over
@@ -688,10 +687,10 @@ def _reign_matchups(experiments: list[dict[str, Any]]) -> list[tuple[str, str]]:
 def _discrimination_by_entry(
     paths: WorkspacePaths, epoch_id: str, experiments: list[dict[str, Any]]
 ) -> dict[str, tuple[float | None, int]]:
-    """Per-entry ``(rate, comparisons)`` over the reign's settled matchups (§2.3 / F2).
+    """Per-entry ``(rate, comparisons)`` over the reign's settled matchups (§2.3).
 
-    THE CORRECTED BINDING. Discrimination is read from the DURABLE matchup
-    records — not ``loss_profiles`` row pairs. The ``loss_profiles`` PK is
+    Discrimination is read from the DURABLE matchup records rather than from
+    ``loss_profiles`` row pairs. The ``loss_profiles`` PK is
     ``run_id`` (one row per ``(gen, entry)``, ``match_id`` last-wins at ingest),
     so "same-match row pairs" are impossible. Instead, for each settled matchup
     :func:`build_matchup_grid` reads BOTH sides' per-entry ``loss.json`` (the
@@ -785,14 +784,14 @@ def build_eval_matrix(paths: WorkspacePaths, epoch_id: str | None = None) -> dic
     board_set = set(board_order)
     ordered_entries = board_order + [e for e in seen_entries if e not in board_set]
 
-    # The calibration generation the flip rates ride on (N4) — served on every
+    # The calibration generation the flip rates ride on — served on every
     # row so the badge can show WHICH champion was calibrated, making a stale
     # (older-champion) flip rate visible; None when no calibration was measured.
     calibration_gen = calibration["generation_id"] if calibration["measured"] else None
     entries_out: list[dict[str, Any]] = []
     cells: list[list[dict[str, Any] | None]] = []
     for eid in ordered_entries:
-        # Honesty (F4): MEASURED iff a real rate was computed — an entry present
+        # Honesty: MEASURED iff a real rate was computed — an entry present
         # in the flip map but with a None rate (<2 usable draws) is NOT measured.
         measured = flips.get(eid) is not None
         entries_out.append(
@@ -944,7 +943,7 @@ def _reflection_findings_for_entry(
 
     Cheap and honest: scans the epoch's reflections (via ``reflection_view``)
     and keeps findings whose serialized text mentions ``entry_id``. Empty when
-    no reflection exists or none reference the entry — the WS-DOSSIER view links
+    no reflection exists or none reference the entry — the per-entry dossier links
     into ``reflection_view`` for the full detail; this is only the pointer.
     """
     from zicato.query.reflection_view import (  # noqa: PLC0415
@@ -978,7 +977,7 @@ def build_eval_dossier(
 
     Assembles the entry's A/A flip rate, its discrimination (the fraction of the
     reign's settled matchups on which this entry's verdict split the two sides —
-    read from the durable matchup records, §2.3 / F2), its runtime cost
+    read from the durable matchup records, §2.3), its runtime cost
     aggregates, a per-candidate trajectory in round order, and the
     first-passed-by / regressed-by attribution along the champion spine. An
     unknown epoch/entry degrades to a same-shape payload with ``found: False``.
@@ -1019,7 +1018,7 @@ def build_eval_dossier(
         payload["epoch_id"] = resolved
         return payload
 
-    # Discrimination (F2): rebound to the DURABLE matchup records — the reign's
+    # Discrimination: bound to the DURABLE matchup records — the reign's
     # settled champion-vs-challenger matchups, each entry compared over the pairs
     # where BOTH sides have a verdict (see :func:`_discrimination_by_entry`). NOT
     # ``loss_profiles`` match_id pairs (the PK is one row per (gen, entry), so
@@ -1033,7 +1032,7 @@ def build_eval_dossier(
     rt = runtime_aggregates(runtimes)
     cached_count = sum(1 for r in all_rows if bool(_row_get(r, "cached")))
     cached_share = (cached_count / len(all_rows)) if all_rows else None
-    # Honesty (F4): MEASURED iff a real rate was computed (a None rate is unmeasured).
+    # Honesty: MEASURED iff a real rate was computed (a None rate is unmeasured).
     measured = flips.get(entry_id) is not None
 
     # Trajectory + attribution along the champion spine (round order).
@@ -1057,8 +1056,8 @@ def build_eval_dossier(
                 "drift_loss": cell["drift_loss"] if cell else None,
                 # The continuous per-entry outcome, averaged over the same
                 # replicate draws as ``drift_loss``. ``None`` on a bool-only
-                # board, so the trajectory figure falls back to drift exactly
-                # as before. Carried so a reader plotting this entry's history
+                # board, so the trajectory figure falls back to drift.
+                # Carried so a reader plotting this entry's history
                 # can use the channel the contract actually populates.
                 "score": cell["score"] if cell else None,
                 "pass_ratio": cell["pass_ratio"] if cell else None,
@@ -1113,7 +1112,7 @@ def build_eval_dossier(
 
 
 # ---------------------------------------------------------------------------
-# build_eval_health — the WS-HEALTH instrument panel (epoch-wide)
+# build_eval_health — the instrument-quality panel (epoch-wide)
 # ---------------------------------------------------------------------------
 
 
@@ -1144,7 +1143,7 @@ def _instrument_by_entry(
 
     Returns ``{entry_id: {discrimination, discrimination_pairs, runtime_ms_mean,
     replicate_total}}``. Discrimination is the DURABLE matchup-record binding
-    (:func:`_discrimination_by_entry`, §2.3 / F2) — the same source the dossier
+    (:func:`_discrimination_by_entry`, §2.3) — the same source the dossier
     reads, so the two surfaces agree — NOT ``loss_profiles`` match_id pairs (the
     PK forbids them). Runtime + ``replicate_total`` fold the index loss rows in
     one pass. The matchup grid reads are pooled inside
@@ -1176,7 +1175,7 @@ def _instrument_by_entry(
 def _rotation_status(
     paths: WorkspacePaths, epoch_id: str, experiments: list[dict[str, Any]]
 ) -> dict[str, Any]:
-    """Rotation-cadence status — BOUND to the shipped surfaces, not re-derived (§5).
+    """Rotation-cadence status — BOUND to the shipped surfaces rather than re-derived (§5).
 
     ``rotate_holdout`` / ``max_generations_per_contract`` come off the frozen
     ``scoring.json`` overfitting block; the refresh recommendation is the shipped
@@ -1296,14 +1295,14 @@ def _empty_health(epoch_id: str | None) -> dict[str, Any]:
 
 
 def build_eval_health(paths: WorkspacePaths, epoch_id: str | None = None) -> dict[str, Any]:
-    """The WS-HEALTH instrument panel for one epoch (EVAL-VIEW.md §5 WS-HEALTH).
+    """The instrument-quality panel for one epoch (EVAL-VIEW.md §5).
 
     The board read as a measuring device: the measured noise floor + the live MDE
     ladder (§4.3), the ranked noisy / dead / costly evals (§2.2/§2.3), the
     holdout-budget accounting and rotation cadence (bound to the shipped ladder /
     cadence surfaces), and — only when a reflection already exists — its
     redundancy clusters (else a deferred note). Recommend-only; every finding is a
-    pointer into ``reflect`` / the builder, not an action. A never-indexed
+    pointer into ``reflect`` / the builder rather than an action. A never-indexed
     workspace or an unknown epoch degrades to a same-shape ``found: False`` payload
     (§4: no fabricated numbers — an unmeasured floor / flip rate reads honest-empty,
     never ``0.0``).
@@ -1352,7 +1351,7 @@ def build_eval_health(paths: WorkspacePaths, epoch_id: str | None = None) -> dic
 
     # Dead vs insufficient — a zero-discrimination channel is DEAD only above the
     # minimum-comparisons honesty threshold; below it we say "insufficient
-    # comparisons", never "dead" (§5 WS-HEALTH honesty rule).
+    # comparisons", never "dead" (the §5 honesty rule).
     dead: list[dict[str, Any]] = []
     insufficient: list[dict[str, Any]] = []
     for eid in ordered:
@@ -1528,7 +1527,7 @@ def facet_scores_for_generation(
     comparability is the point — a facet scalar can be read directly against
     the ``overall`` row, which is the same aggregate over every entry.
 
-    THE TRAIN SLICE, not the whole board. The number the gate compares and
+    THE TRAIN SLICE rather than the whole board. The number the gate compares and
     the number ``gen_score.json`` caches are BOTH the train-slice aggregate
     (:func:`zicato.tournament.governance._train_aggs`), because the holdout
     is confirm-only and default-on: a board of six or more entries hands
@@ -1556,7 +1555,7 @@ def facet_scores_for_generation(
     ``mean_score`` is the outcome axis (higher is better, ``[0, 1]``), the
     same field the generation's own aggregate carries. ``None`` when nothing
     in the slice produced an outcome — an absent measurement, never a
-    fabricated ``0.0`` (EVAL-VIEW.md §3 DQ2).
+    fabricated ``0.0`` (EVAL-VIEW.md §3).
 
     ``scored_count`` is ``mean_score``'s denominator, ``ran_count`` the
     scalar's, and ``entry_count`` the slice's size on the board. All three
@@ -1583,9 +1582,8 @@ def facet_scores_for_generation(
     ``{entry_id: (facet, ...)}`` — pass it when the caller already read the
     board, so one request does not walk ``board.jsonl`` twice.
 
-    Best-effort (DQ3): an unreadable board or absent run files yield
-    ``{"facets": {}, "overall": None}`` and the dossier's facet table simply
-    does not paint.
+    Best-effort: an unreadable board or absent run files yield ``{"facets": {},
+    "overall": None}`` and the dossier's facet table simply does not paint.
     """
     from zicato.tournament.scoring import aggregate_generation_score  # noqa: PLC0415
 
@@ -1667,9 +1665,9 @@ def facet_scores_for_generation(
             by_facet.setdefault(name, []).append(loss)
 
     # The slice sizes come from the BOARD, minus the holdout — the same
-    # entries the aggregate above is allowed to see. So a facet whose entries
-    # all ran is indistinguishable from one whose entries mostly did not only
-    # when it genuinely is.
+    # entries the aggregate above is allowed to see. So two facets look alike
+    # only when they are alike: one whose entries all ran cannot be confused
+    # with one whose entries mostly did not.
     tagged_count: dict[str, int] = {}
     for entry_id, names in facets_by_entry_map.items():
         if not _is_train(entry_id):

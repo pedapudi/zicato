@@ -64,9 +64,9 @@ def _publish_active_tournament(
     (:class:`~zicato.runtime.state.ActiveTournamentEntry`). The gauntlet
     A/B path seeds it directly; the multi-challenger / racing path builds
     it via :func:`_field_entries` so the dashboard's per-entry funnel rung
-    is non-empty live, not just after the run settles. When omitted (e.g.
-    the all-rejected publish) it falls back to an empty list, matching the
-    pre-existing behaviour.
+    is non-empty while the run is live rather than only after it settles.
+    When omitted (for example the all-rejected publish) it falls back to an
+    empty list.
 
     Never raises — a live-state write failure must not abort the round.
     """
@@ -172,7 +172,7 @@ def _field_entries(
             # An IN-FLIGHT competitor carries a live PROJECTED scalar (the
             # runner's running aggregate over boards-so-far). Surface it +
             # the boards progress on the funnel entry so the rung can render
-            # the "projected" treatment (dashed, ~prefix, scored sub-bar)
+            # the "projected" treatment (dashed, ~ prefix, a scored sub-bar)
             # before a settled scalar lands.
             if standing.get("in_flight"):
                 proj = standing.get("projected_scalar")
@@ -257,7 +257,8 @@ def _overlay_projected_live_progress(
     :class:`_IncrementalScorer` writes the live per-board ``projected`` map
     (``{generation_id: {scalar, boards_done, boards_total, pass_rate}}``)
     onto :attr:`ActiveTournament.projected` as each board unit settles. This
-    overlays the latter onto the former IN PLACE so each rung lane carries
+    overlays the projected map onto the funnel field IN PLACE so each rung
+    lane carries
     one authoritative progress row the dashboard consumes directly:
 
     * ``boards_done`` — from the runner's projected row (the strategy can't
@@ -356,7 +357,7 @@ def _overlay_projected_standings(
       key, so an in-flight leader bubbles up live; settled rows keep their
       real scalar.
     * ``swiss`` — Copeland points are NEVER projected (a half-finished duel
-      has no win). The points-based rank is preserved exactly; the projected
+      has no win). The points-based rank is preserved; the projected
       scalar only nudges the MEAN-SCALAR TIEBREAK among rows on equal points,
       and the pairing is marked in-flight visually. Never re-ranks on points.
     * ``gauntlet`` — not routed here (no multi-competitor standings).
@@ -587,8 +588,8 @@ def _settle_active_tournament(
                 # Seed the per-competitor funnel field from the SETTLED
                 # standings so the retained completed envelope (the
                 # dashboard's only live source for a non-gauntlet field
-                # until the next round) carries the per-entry rung, not an
-                # empty list. Mirrors the live-publish path.
+                # until the next round) carries the per-entry rung rather than
+                # an empty list. Mirrors the live-publish path.
                 entries=_field_entries(competitors, standings),
             ),
         )

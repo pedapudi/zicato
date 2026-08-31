@@ -76,11 +76,11 @@ class ExternalProposerConfig:
     the identity that was hashed and the agent that runs are resolved from
     the same inputs by construction.
 
-    ``options`` is NOT hashed wholesale. It carries unrelated runtime
-    keys (the harness/auxiliary dotted paths among them), and a change to
-    those is infra, not contract. An implementation folds in only what
-    causally steers it — for the pi agent, the knob's *effect* (the
-    resolved version of the binary it selects), not the knob's spelling.
+    ``options`` is NOT hashed wholesale. It carries unrelated runtime keys (the
+    harness/auxiliary dotted paths among them), and a change to those is
+    infrastructure rather than contract. An implementation folds in only what
+    causally steers it — for the pi agent, the knob's *effect* (the resolved
+    version of the binary it selects) rather than the knob's spelling.
     """
 
     dotted_path: str
@@ -120,10 +120,9 @@ def external_proposer_config(
 ) -> ExternalProposerConfig | None:
     """Read ``runtime.proposer_agent`` off a workspace config.
 
-    Returns ``None`` when no external proposer is configured — the
-    overwhelmingly common case, and the one in which every downstream
-    surface (the spec, the contract canon, the agent builder) is
-    byte-identical to before this seam existed.
+    Returns ``None`` when no external proposer is configured, which is the
+    overwhelmingly common case. The spec, the contract canon, and the agent
+    builder then carry no external-proposer fields at all.
     """
     runtime = workspace_config.get("runtime")
     if not isinstance(runtime, Mapping):

@@ -3,14 +3,15 @@
 Index-first, file-fallback readers that project a completed reflection's
 canonical artifacts (``plan.json`` / ``corpus.jsonl`` / ``adjudication/`` /
 ``scorecards.json`` / ``findings.json`` / the derived ``summary.json``) into
-the JSON view shapes the console's Instrument lens (R5) and the dashboard
-endpoints consume. Every reader is best-effort: a missing / truncated file, a
-never-built index, or an unknown id degrades to a same-shape empty payload
-(the DQ3 degrade rule) rather than raising.
+the JSON view shapes the console's Instrument lens and the dashboard
+endpoints consume. Every reader is best-effort: a missing or truncated file,
+a never-built index, or an unknown id degrades to a same-shape empty payload
+rather than raising.
 
 The index is a projection; **a reflection is readable with no index at all** —
 each reader falls back to the canonical files when the index row is absent
-(the ``AGENTS.md`` rule 4 invariant). This module must stay **dashboard-free**
+(the filesystem is canonical and the index is derived; ``AGENTS.md``). This
+module must stay **dashboard-free**
 (the ``zicato.query`` import contract) and so it imports only the
 dashboard-free reflection submodules (:mod:`~zicato.reflection.plan`,
 :mod:`~zicato.reflection.corpus`, :mod:`~zicato.reflection.analysis`) plus the
@@ -27,7 +28,8 @@ Readers
 * :func:`build_reflection_summary` — the four-pillar bill of health.
 * :func:`build_judge_scorecards` — the per-judge confusion-matrix cards.
 * :func:`build_adjudication_xray` — the transcript + judge verdict + the
-  meta-judge adjudication record for one decision (the emotional centrepiece).
+  meta-judge adjudication record for one decision — what an operator opens to
+  see why one judgement went the way it did.
 * :func:`entry_candidate_matrix` — the reflection-INDEPENDENT entry×candidate
   matrix straight off the index loss tables (the continuous passive tier).
 """
@@ -40,9 +42,9 @@ from typing import Any
 
 from zicato.query.paths import WorkspacePaths, list_epoch_ids
 
-#: Fidelity tiers, strongest first (mirrors the R1 capture ladder). Kept local
-#: so this module needs no import edge onto :mod:`zicato.reflection.corpus`'s
-#: constants for the reader-only degrade paths.
+#: Fidelity tiers, strongest first, mirroring the capture ladder in
+#: :mod:`zicato.reflection.corpus`. Kept local so this module needs no import
+#: edge onto those constants for the reader-only degrade paths.
 _FIDELITY_VERBATIM = "verbatim"
 _FIDELITY_RESULT = "result"
 _FIDELITY_UNAVAILABLE = "unavailable"
@@ -349,12 +351,12 @@ def _empty_practice_review(reflection_id: str) -> dict[str, Any]:
 
 
 def build_practice_review(paths: WorkspacePaths, reflection_id: str) -> dict[str, Any]:
-    """The practice review for one reflection — FILE-first, DQ3 same-shape degrade.
+    """The practice review for one reflection — FILE-first, same-shape degrade.
 
     Projects the canonical ``practices.json`` (the ``PracticeReview.to_json``
     shape: ``{checks, verdict_counts}``) written by ``zicato inspect reflection run``. An
-    unknown reflection, or one that predates the practice review (no
-    ``practices.json``), degrades to a same-shape empty payload with
+    unknown reflection, or one whose directory holds no ``practices.json``,
+    degrades to a same-shape empty payload with
     ``found: False`` rather than raising — the file is canonical and this reader
     needs no index row.
     """
@@ -513,8 +515,8 @@ def entry_candidate_matrix(paths: WorkspacePaths, epoch_id: str) -> dict[str, An
     spread without running a reflection. For every generation under ``epoch_id``
     and every board-entry run, the cell is the mean ``drift_loss`` across that
     unit's persisted loss rows. Axes are sorted; a missing cell is ``None``. A
-    never-indexed workspace yields empty axes + an empty matrix (DQ3 same-shape
-    degrade).
+    never-indexed workspace yields empty axes and an empty matrix, on the same
+    same-shape degrade.
     """
     from zicato.index import query as iq  # noqa: PLC0415
 

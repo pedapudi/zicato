@@ -1,4 +1,8 @@
-"""paths — extracted from the former dashboard state_reader monolith (pure move)."""
+"""The ``.zicato/`` path layout every reader shares, and its small primitives.
+
+:class:`WorkspacePaths` names each file the readers open; the rest are the
+coercions and epoch-id helpers that keep one spelling of a value on the wire.
+"""
 
 from __future__ import annotations
 
@@ -10,11 +14,11 @@ from zicato.storage import read_json
 from zicato.workspace import WorkspaceLayout
 from zicato.workspace import epochs as _ws_epochs
 
-# The ONE definition of the epoch ordering + enumeration now lives in
-# :mod:`zicato.workspace.epochs`; re-export the primitives here so existing
+# The ONE definition of epoch ordering and enumeration lives in
+# :mod:`zicato.workspace.epochs`. The four names below re-export it, so a
 # ``from zicato.query.paths import _natural_key`` / ``_NUM_RUN`` /
-# ``_epoch_sort_key`` imports (and the readers' ``__init__`` exports) keep
-# resolving to the single source of truth — there is no second definition.
+# ``_epoch_sort_key`` import (and the readers' ``__init__`` exports) resolves
+# to that one definition. There is no second definition.
 _NUM_RUN = _ws_epochs._NUM_RUN
 _natural_key = _ws_epochs.natural_key
 _epoch_created_at = _ws_epochs.epoch_created_at
@@ -81,8 +85,8 @@ class WorkspacePaths:
 
     @property
     def active_tournament(self) -> Path:
-        # The LEGACY snapshot — kept for the compat reader. The live state
-        # is the event log below (RUNTIME-V2 Phase 3).
+        # The superseded single-file snapshot, still read by the
+        # compatibility reader. Live state comes from the event log below.
         return self.runtime / "active_tournament.json"
 
     @property
@@ -94,9 +98,9 @@ class WorkspacePaths:
 
     @property
     def progress_log(self) -> Path:
-        # The ORCHESTRATOR progress EVENT LOG (RUNTIME-V2 Phase 4): the
-        # single-writer append-only JSONL whose monotonic ``seq`` is the
-        # true liveness signal (advances only on a genuine transition).
+        # The ORCHESTRATOR progress EVENT LOG: the single-writer
+        # append-only JSONL whose monotonic ``seq`` is the true liveness
+        # signal, advancing only on a genuine transition.
         return self.runtime / "progress.events.jsonl"
 
     @property
@@ -136,8 +140,8 @@ def to_snake(name: str) -> str:
     """Convert a ``camelCase`` / ``PascalCase`` identifier to ``snake_case``.
 
     Idempotent on input already in snake_case. Mirrors the Rust
-    ``run_log::to_snake`` so event kinds key on one stable vocabulary
-    (the zicato#1 normalization).
+    ``run_log::to_snake``, so an event kind has one spelling whichever
+    reader produced it.
     """
     out: list[str] = []
     prev_lower_or_digit = False
@@ -199,8 +203,8 @@ def list_epoch_ids(paths: WorkspacePaths) -> list[str]:
 def _resolve_epoch_id(paths: WorkspacePaths, epoch_id: str | None) -> str | None:
     """Validate + resolve the epoch a scoped build should read.
 
-    ``None`` resolves to the current epoch (the unchanged default — every
-    existing caller). A given id is validated against the on-disk epoch set
+    ``None`` resolves to the current epoch, which is what a caller that
+    passes no id gets. A given id is validated against the on-disk epoch set
     and rejected (``ValueError``) when unknown or path-unsafe, so a
     ``?epoch=../foo`` cannot escape the workspace. The validated id is
     returned verbatim.
@@ -208,7 +212,7 @@ def _resolve_epoch_id(paths: WorkspacePaths, epoch_id: str | None) -> str | None
     if epoch_id is None:
         return read_current_epoch(paths)
     # reject path-traversal / separators outright — an epoch id is a single
-    # directory name, never a path.
+    # directory name rather than a path.
     if (
         not isinstance(epoch_id, str)
         or not epoch_id
@@ -239,9 +243,9 @@ def _parse_iso(value: Any) -> _dt.datetime | None:
 def coerce_float(value: Any) -> float | None:
     """``float(value)`` for a real number, else ``None``.
 
-    THE one numeric payload coercer (bools excluded — a stray ``True`` is
-    not a scalar). Replaces the dozens of inline
-    ``float(x) if isinstance(x, int | float) else None`` copies.
+    THE one numeric payload coercer, with bools excluded because a stray
+    ``True`` is not a scalar. Every reader coerces through this function rather
+    than an inline ``float(x) if isinstance(x, int | float) else None``.
     """
     if isinstance(value, bool) or not isinstance(value, int | float):
         return None

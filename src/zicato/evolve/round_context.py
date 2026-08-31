@@ -11,9 +11,9 @@ IO-free:
 * :func:`_build_candidate_screen_runner` — the best-of-N candidate-screen
   closure (``proposer_quality.screen_entries`` / ``best_of_n``);
 * :func:`_build_recombination_pair` (+ the pure slot rule
-  :func:`_recombine_pair_for_slot`) — the WS-REC recombination pair;
-* :func:`_build_genealogy_items` — the WS-GENE genealogy channel;
-* :func:`_build_calibration_summary` — the WS-CAL critic-calibration channel.
+  :func:`_recombine_pair_for_slot`) — the mechanical recombination pair;
+* :func:`_build_genealogy_items` — the genealogy channel;
+* :func:`_build_calibration_summary` — the critic-calibration channel.
 
 Each builder is OFF by default (a contract opt-in flips it on) and every read
 is best-effort, so an unbuilt index / unreadable record simply yields the OFF
@@ -25,9 +25,9 @@ two in ``__all__`` for mypy's no-implicit-reexport; the three purely internal
 builders are re-imported but not listed. Stable collaborators
 (``ingest._index_db_path``, ``lifecycle_services._beat``, the heartbeat helper)
 are direct top-level imports; the heavier ``epoch`` / ``proposer`` / ``query`` /
-``index`` siblings stay lazy call-time imports exactly as they were inline. The
-module logger keeps the ``zicato.orchestrator`` name so records stay
-byte-identical.
+``index`` siblings stay lazy call-time imports. The module logger keeps the
+``zicato.orchestrator`` name, so a log record names the orchestrator
+wherever the builder lives.
 """
 
 from __future__ import annotations
@@ -133,7 +133,7 @@ def _build_recombination_pair(
     train_entry_ids: frozenset[str],
     mutations: list[Any],
 ) -> Any:
-    """Select this round's recombination pair (WS-REC), or ``None`` when OFF.
+    """Select this round's recombination pair, or ``None`` when OFF.
 
     ``None`` — the DEFAULT — unless the contract opts in with
     ``proposer_quality.recombine`` AND ``best_of_n > 1`` (a single-sample
@@ -256,21 +256,20 @@ def _build_recombination_pair(
                 entry_id = str(row.get("entry_id", ""))
                 if entry_id not in train_entry_ids:
                     continue  # the envelope point: holdout never counts
-                # PASS-FLIP sets, not the grid's drift-only ``won_by``:
-                # per-run drift folds every remaining defect into EVERY
-                # entry's loss, so a strictly-better challenger "wins" all
-                # entries on drift and two single-fix parents could never
-                # read as complementary. The pass bit is the per-entry
-                # signal a fix actually owns: improved = a champion-failing
-                # entry this challenger passes; regressed = the inverse.
-                # KNOWN NARROWING: a pair whose improvements are PURELY
-                # drift-side (no pass flip — e.g. two independent verbosity
-                # fixes on an all-passing board) is invisible to this
-                # selector and never recombines mechanically. Deliberate:
-                # per-entry drift deltas are noisy single-sample verdicts
-                # (the same reason cross-regression is a ranking penalty,
-                # not a filter). Such pairs remain reachable through the
-                # in-context genealogy channel; a drift-delta-with-
+                # PASS-FLIP sets rather than the grid's drift-only ``won_by``:
+                # per-run drift folds every remaining defect into EVERY entry's
+                # loss, so a strictly-better challenger "wins" all entries on
+                # drift and two single-fix parents could never read as
+                # complementary. The pass bit is the per-entry signal a fix
+                # actually owns: improved = a champion-failing entry this
+                # challenger passes; regressed = the inverse. KNOWN NARROWING:
+                # a pair whose improvements are PURELY drift-side (no pass flip
+                # — e.g. two independent verbosity fixes on an all-passing
+                # board) is invisible to this selector and never recombines
+                # mechanically. That is by design: per-entry drift deltas are
+                # noisy single-sample verdicts, the same reason cross-regression
+                # ranks rather than filters. Such pairs remain reachable
+                # through the in-context genealogy channel; a drift-delta-with-
                 # confirmation variant is a documented future seam.
                 parent_pass = row.get("parent_pass")
                 child_pass = row.get("child_pass")
@@ -299,10 +298,10 @@ def _build_recombination_pair(
 
         manifest_ids = frozenset(str(m.id) for m in mutations)
         eligible = eligible_parents(candidates, champion_id=parent_id, manifest_ids=manifest_ids)
-        # WS-MERGE: the merge mode gates the disjointness predicate — "llm"
-        # relaxes #7 for pair selection so an OVERLAPPING pair (which only an
-        # LLM merge can compose) is eligible; "mechanical" (default) keeps #7
-        # hard and selects byte-identically to before this knob.
+        # The merge mode gates the disjointness predicate: "llm" relaxes #7
+        # for pair selection so an OVERLAPPING pair (which only an LLM merge
+        # can compose) is eligible, while "mechanical" (the default) keeps #7
+        # hard and selects only disjoint pairs.
         merge_mode = getattr(quality, "recombine_merge", "mechanical")
         pair = rank_pairs(eligible, tried_pairs=frozenset(tried), merge_mode=merge_mode)
         if pair is None:
@@ -315,7 +314,7 @@ def _build_recombination_pair(
             len(a.improved_entry_ids | b.improved_entry_ids),
             len(a.regressed_entry_ids | b.regressed_entry_ids),
         )
-        # WS-MERGE: the LLM merge prompt carries each parent's whole-candidate
+        # The LLM merge prompt carries each parent's whole-candidate
         # BANDED outcome (envelope-clean — the exact Δscalar is bucketed HERE
         # and discarded, only the coarse label reaches the pair). Reuses the
         # experiment-memory band vocabulary; "" for an unsettled delta.
@@ -358,7 +357,7 @@ def _build_genealogy_items(
     epoch_id: str,
     parent_id: str,
 ) -> tuple[Any, ...]:
-    """Sample this round's genealogy items (WS-GENE), or ``()`` when OFF.
+    """Sample this round's genealogy items, or ``()`` when OFF.
 
     ``()`` — the DEFAULT — unless the contract opts in with
     ``proposer_quality.genealogy > 0``: the propose path then carries no items
@@ -475,7 +474,7 @@ def _build_calibration_summary(
     workspace_root: Path,
     epoch_id: str,
 ) -> Any:
-    """Summarize the reign's prediction calibration (WS-CAL), or ``None`` when OFF.
+    """Summarize the reign's prediction calibration, or ``None`` when OFF.
 
     ``None`` — the DEFAULT — unless the contract opts in with
     ``proposer_quality.calibration_feedback > 0``: the propose path then carries

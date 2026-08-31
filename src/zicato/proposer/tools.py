@@ -26,12 +26,12 @@ Never write to the snapshot
 ---------------------------
 Every tool here but :func:`~zicato.proposer.validate.validate_patches`
 READS the parent generation's snapshot and the epoch's narrative — none
-of them write. A proposer tool that mutated the snapshot would corrupt
-the very tree the round is about to patch (and break the content-hash
-guard the applier relies on), so that prohibition is absolute and
+of them write. A proposer tool that mutated the snapshot would corrupt the
+very tree the round is about to patch, and would break the content-hash
+guard the applier relies on, so that prohibition is absolute.
 ``validate_patches`` does not relax it: it writes only into a disposable
-scratch copy in the OS temp root, never into the snapshot, and it
-consumes no board data and produces no score (see
+scratch copy in the OS temp root, never into the snapshot, and it consumes
+no board data and produces no score (see
 :mod:`zicato.proposer.validate`). ``read_mutable_file`` and
 ``grep_mutable`` additionally refuse any path that escapes the mutable
 roots, so a tool call cannot read outside the generation snapshot.
@@ -108,13 +108,13 @@ def _resolve_under_mutable_roots(relative_path: str, ctx: ProposerToolContext) -
 def _walk_roots(ctx: ProposerToolContext) -> tuple[Path, ...]:
     """Return the mutable roots to WALK — the outermost ones only.
 
-    :meth:`ProposerToolContext.mutable_roots` deliberately returns the
+    :meth:`ProposerToolContext.mutable_roots` returns, by design, the
     snapshot root *and* each declared subtree, so path *resolution* accepts
     both the manifest-advertised shape (``agent/prompts.py``) and the bare
     subtree-relative one (``prompts.py``). A recursive walk must not iterate
-    that list directly: the declared subtrees are descendants of the
-    snapshot root, so every file under one would be visited once per
-    containing root and emitted under a different relative path each time —
+    that list directly. The declared subtrees are descendants of the snapshot
+    root, so every file under one would be visited once per containing root
+    and emitted under a different relative path each time. That yields
     duplicate hits in inconsistent shapes, and a match budget consumed
     several times over by the same lines.
 
@@ -337,8 +337,8 @@ def _tail_entries(text: str, limit: int) -> str:
 
     A prose line that reproduces the full heading shape (``## v9 — ...``,
     not just ``## Something``) is still indistinguishable from a real
-    boundary by construction — ``journal.md`` is markdown, not a framed
-    format. The narrowed pattern removes the case that actually occurs;
+    boundary by construction, because ``journal.md`` is markdown rather than a
+    framed format. The narrowed pattern removes the case that actually occurs;
     nothing short of escaping the body at write time removes the rest, and
     that would cost the verbatim preservation issue #123 exists to give.
     """

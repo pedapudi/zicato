@@ -1,4 +1,4 @@
-"""Pure minter for the mechanical recombination slot (WS-REC). NO IO.
+"""Pure minter for the mechanical recombination slot. NO IO.
 
 The counterpart to the pure selector (:mod:`zicato.epoch.recombine`): the
 orchestrator's IO builder selects a pair of rejected complementary
@@ -80,7 +80,7 @@ class RecombinationPair:
     #: ._bucket_scalar_delta`), or ``""`` when unsettled. The exact Δscalar
     #: never rides this value: the builder bands it before construction, so
     #: only the coarse label reaches the (envelope-clean) LLM merge prompt
-    #: (WS-MERGE; PROPOSER.md §2.6.1). Unused by the mechanical mint.
+    #: (PROPOSER.md §2.6.1). Unused by the mechanical mint.
     a_banded_outcome: str = ""
     b_banded_outcome: str = ""
     a_expected_drift_movements: tuple[ExpectedDriftMovement, ...] = ()
@@ -134,7 +134,7 @@ def mint_recombined_experiment(
       tests and re-runs.
     * **Fresh patch ids** — every merged patch gets a NEW ``uuid4`` hex id
       (no aliasing with the parents' persisted patch files; provenance
-      lives in :attr:`Experiment.recombined_from`, not in shared ids).
+      lives in :attr:`Experiment.recombined_from` rather than in shared ids).
     * **Hypothesis** — ``core_idea`` composes both parents' ideas under
       the :data:`RECOMBINED_HYPOTHESIS_MARKER` prefix (≤ ~180 chars);
       ``modulating`` is the union of the PATCH mutation-ids (manifest-valid

@@ -1,4 +1,4 @@
-"""WS-INGEST — import foreign agent trajectories into ``ImportedTrace`` records.
+"""Import foreign agent trajectories into ``ImportedTrace`` records.
 
 The trajectory-bootstrap on-ramp (TRAJECTORY-BOOTSTRAP.md §2/§3): point zicato
 at a directory of foreign trace files — production logs from ANY agent,

@@ -19,7 +19,7 @@ The four invariants (issue #169), and where each one lives
   apply module. Nothing here imports it; the test suite pins that.
 * **Redacted evidence only** — :func:`assert_redacted` runs over every record
   before it is written and RAISES on an identity-bearing key or a board-content
-  key at any depth. It is an active guard, not a convention: a future emitter
+  key at any depth. It is an active guard rather than a convention: a future emitter
   that reaches for an entry id fails at persist time rather than leaking.
 * **Every accepted edit is hashed** — the remedy carries the SHA-256 of the
   exact bytes it would write, and the apply command records that digest, so an
@@ -81,8 +81,8 @@ SEVERITY_INFO: str = "info"
 _SEVERITY_RANK = {SEVERITY_CRITICAL: 3, SEVERITY_WARNING: 2, SEVERITY_INFO: 1}
 
 #: A rate must reach this before an emitter will draft an edit against it. Set
-#: at a quarter of proposals: below that the mechanism is a nuisance, not a
-#: weakness worth changing the proposer's contract over.
+#: at a quarter of proposals: below that the mechanism is a nuisance rather
+#: than a weakness worth changing the proposer's contract over.
 FIRE_THRESHOLD: float = 0.25
 
 #: A rate at or above this is CRITICAL rather than a warning — the mechanism is
@@ -91,7 +91,7 @@ CRITICAL_THRESHOLD: float = 0.5
 
 
 # ---------------------------------------------------------------------------
-# Redaction — the active guard, not a convention
+# Redaction — an active guard rather than a convention
 # ---------------------------------------------------------------------------
 
 #: Keys that must never appear in a persisted proposer-reflection record, at
@@ -191,7 +191,7 @@ class InvestigationSource(Protocol):
     facility. Both return :class:`Investigation`, so the findings records —
     and every surface over them — are unchanged by the swap.
 
-    One method, deliberately: a substrate NAMES itself through the
+    One method, by design: a substrate NAMES itself through the
     ``source`` it stamps on the :class:`Investigation` it returns, which is the
     same string the record persists. Requiring a separate ``name`` attribute
     would let the two disagree, and the record would then claim a provenance
@@ -256,7 +256,7 @@ class ProposerRemedy:
     ``relative_path`` is resolved against the proposer dir; ``new_text`` is the
     exact bytes the apply command writes; ``sha256`` digests them so an applied
     recommendation is verifiable afterwards. ``diff`` is the unified diff
-    against what is on disk today, for the operator to read before deciding.
+    against what is on disk, for the operator to read before deciding.
     """
 
     kind: str
@@ -313,7 +313,8 @@ class ProposerFinding:
 #: What the edit an accepted recommendation makes CANNOT affect. Stated once
 #: because it is the same statement for every finding this module emits: a
 #: proposer skill is markdown the proposer reads, so the blast radius is the
-#: proposer's own context — not the board, not the gate, not the scoring.
+#: proposer's own context, and it reaches neither the board, the gate, nor
+#: the scoring.
 REMEDY_SAFETY: str = (
     "The edit writes markdown under the proposer dir's skills/. It cannot change the "
     "board, the scoring weights, the promote gate, or any generation already scored — "
@@ -354,7 +355,7 @@ def _fires(rate: Rate) -> float | None:
 
 # The per-check remedy table. Each row is one post-apply check code, the skill
 # file an accepted recommendation would write, and the guidance body. The
-# bodies are deliberately MECHANISM-level ("preserve the import block"), never
+# bodies are MECHANISM-level by design ("preserve the import block"), never
 # board-level — that is what makes them safe to draft from aggregate evidence.
 _CHECK_REMEDIES: dict[str, dict[str, str]] = {
     "A1": {
@@ -431,11 +432,11 @@ def _skill_text(*, name: str, description: str, guidance: str, evidence: str) ->
 def _diff_against(proposer_path: Path | None, relative_path: str, new_text: str) -> tuple[str, str]:
     """Return ``(kind, unified diff)`` for writing ``new_text`` at ``relative_path``.
 
-    ``kind`` is ``skill_add`` when nothing is there today and ``skill_replace``
-    when there is — the operator reading the queue can tell at a glance whether
-    a recommendation grows the proposer or rewrites part of it. With no
-    proposer dir configured (the built-in default) every remedy is an add, and
-    the diff is against an empty file.
+    ``kind`` is ``skill_add`` when nothing is at that path and
+    ``skill_replace`` when something is, so the operator reading the queue can
+    tell at a glance whether a recommendation grows the proposer or rewrites
+    part of it. With no proposer dir configured (the built-in default) every
+    remedy is an add, and the diff is against an empty file.
     """
     current = ""
     if proposer_path is not None:
@@ -821,7 +822,7 @@ def write_reflection(workspace_root: Path, reflection: ProposerReflection) -> Pa
 
     Runs :func:`assert_redacted` over the FULL payload first. A record that
     would leak never reaches the disk, and the failure is loud — an emitter bug
-    is a bug, not a degrade.
+    is a bug rather than a degrade.
     """
     payload = reflection.to_json()
     assert_redacted(payload, where=f"proposer reflection {reflection.reflection_id}")
@@ -973,8 +974,7 @@ def render_recommendation_lines(pending: list[dict[str, Any]]) -> list[str]:
     Lives here rather than in the CLI because THREE surfaces print it — the
     ``recommendations`` command, ``zicato epoch new``, and evolve's auto-roll —
     and the operator should meet the same wording at each. Empty means print
-    nothing at all: a boundary with no pending recommendation must stay as
-    quiet as it was before this feature existed.
+    nothing at all: a boundary with no pending recommendation stays silent.
     """
     if not pending:
         return []

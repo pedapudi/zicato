@@ -7,12 +7,12 @@ the contract, the operating history, and (when a ``reflect run`` produced them)
 the reflection artifacts. **Zero LLM calls**: every input is a pure read (the
 free passive tier). Recommend-only: a mechanically-fixable check carries a
 ``proposed_op`` naming a REAL builder op, validated against that op's signature
-at emit time exactly as :mod:`zicato.reflection.findings` validates its own.
+at emit time, as :mod:`zicato.reflection.findings` validates its own.
 
 The design of record is ``docs/design/BOARD-REFLECTION.md`` §"Practice review".
 
-Composition, not re-derivation
-------------------------------
+Composition rather than re-derivation
+-------------------------------------
 Where a loop-health detector or an analysis function already owns a signal, the
 check **calls it and translates its finding** — it never re-implements the
 arithmetic, so a threshold change in the detector moves the practice verdict
@@ -72,7 +72,7 @@ POWER_CONFIDENCE: float = 0.95
 #: within this factor of it — a margin that barely clears the MDD is fragile.
 POWER_ATTEND_FACTOR: float = 2.0
 #: Never recommend more than this many replicates — beyond it the cost is a
-#: contract redesign, not a knob bump (ch.04 §3: power is bought with
+#: contract redesign rather than a knob bump (ch.04 §3: power is bought with
 #: replication, but the honest budget is finite).
 MAX_REPLICATE_BUMP: int = 8
 
@@ -94,7 +94,8 @@ STALE_CALIBRATION_ROUNDS: int = 10
 PLACEBO_PROMOTIONS_THRESHOLD: int = 10
 
 #: Down-weight a divergent-but-default-weighted judge is nudged toward — an
-#: advisory starting point, not a fitted value (mirrors findings.FP_DOWNWEIGHT).
+#: advisory starting point rather than a fitted value (mirrors
+#: findings.FP_DOWNWEIGHT).
 ADVISORY_DOWNWEIGHT: float = 0.5
 #: Spread of measured judge disagreement rates above which leaving a worse-end
 #: judge at the default weight is worth attending to (ch.04 §10).
@@ -349,7 +350,8 @@ def check_oracle_mix(*, board_entries: list[Any]) -> PracticeCheck:
             ),
             evidence=evidence,
             rationale=rationale,
-            # Authoring decision — naming the board editor, not a mechanical op.
+            # Authoring decision — it names the board editor rather than a
+            # mechanical op.
         )
     return PracticeCheck(
         check_id=CHECK_ORACLE_MIX,
@@ -436,9 +438,9 @@ def check_statistical_power(
     """A loop whose min detectable Δ exceeds the margin is theater at this power (ch.04 §3).
 
     ``k`` comes from the CONTRACT (``params["replicates"]``, falling back to
-    the structure's default), and every path now honours it — including the
-    gauntlet under ``--mode fast``, which used to ignore it outright (issue
-    #109). One caveat the contract cannot express: fast mode replicates the
+    the structure's default), and every path honours it, including the
+    gauntlet under ``--mode fast`` (issue #109). One caveat the contract
+    cannot express: fast mode replicates the
     CHALLENGER against a frozen cached champion aggregate, so the contrast
     keeps one unreplicated side and ``power_analysis``'s two-sample
     ``sqrt(2/(k·n))`` is optimistic there by roughly ``sqrt((k+1)/2)``. The
@@ -730,7 +732,7 @@ def check_calibration_freshness(
     experiments: list[Any],
     epoch_cfg: Any,
 ) -> PracticeCheck:
-    """A stale floor calibrates today's gate against yesterday's noise (ch.04 §4)."""
+    """A stale floor calibrates the current gate against an older board's noise (ch.04 §4)."""
     rationale = "a stale noise floor calibrates today's gate against yesterday's noise (ch.04 §4)."
     if not isinstance(noise_floor, dict):
         return PracticeCheck(
@@ -767,7 +769,8 @@ def check_calibration_freshness(
             ),
             evidence=evidence,
             rationale=rationale,
-            # Re-measuring is a CLI action (`zicato board audit`), not a builder op.
+            # Re-measuring is a CLI action (`zicato board audit`) rather than a
+            # builder op.
         )
     age = f"{rounds_since} round(s) ago" if rounds_since is not None else "recently"
     if ratio is not None:

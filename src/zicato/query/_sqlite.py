@@ -1,4 +1,8 @@
-"""_sqlite — extracted from the former dashboard state_reader monolith (pure move)."""
+"""The SQLite analytical index: read-only connections and tolerant row reads.
+
+One connection lifecycle for every reader, plus the accessors that read a
+column a stale index may not carry.
+"""
 
 from __future__ import annotations
 
@@ -32,11 +36,12 @@ def open_index_ro(path: Path) -> Iterator[sqlite3.Connection]:
 
     Opens ``index.db`` read-only (URI ``mode=ro``) with the ``sqlite3.Row``
     factory and guarantees the close. Raises :class:`_IndexAbsent` when the
-    file does not exist so each caller degrades to its own empty shape (DQ3).
+    file does not exist, so each caller degrades to its own empty shape.
 
     Never ``sqlite3.connect()`` an index path directly in a reader — a bare
     connect defaults to WRITE mode and contends for the write lock with the
-    ingest writer (the ``judge_view`` search-scan bug this helper retired).
+    ingest writer. The ``judge_view`` search scan is the heaviest such
+    reader and goes through this helper for that reason.
     """
     conn = _open_index(path)
     try:
@@ -49,11 +54,11 @@ def open_index_ro(path: Path) -> Iterator[sqlite3.Connection]:
 def open_index_ro_or_none(path: Path) -> Iterator[sqlite3.Connection | None]:
     """Best-effort variant of :func:`open_index_ro` — yields ``None``.
 
-    For the readers that degrade FIELD-BY-FIELD rather than whole-payload
-    (the workspace/ledger scans keep rendering rows with ``None`` scalars
-    when the index is absent): an absent or unopenable index yields
-    ``None`` so the body keeps its ``if conn is not None`` structure
-    without a hand-rolled open/guard/close block.
+    For the readers that degrade FIELD-BY-FIELD rather than whole-payload:
+    the workspace and ledger scans keep rendering rows with ``None`` scalars
+    when the index is absent. An absent or unopenable index yields ``None``,
+    so the body keeps its ``if conn is not None`` structure without a
+    hand-rolled open, guard, and close block.
     """
     try:
         conn = _open_index(path)

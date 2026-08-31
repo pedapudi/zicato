@@ -16,7 +16,7 @@ Pillar 1 — reliability (repetition, no adjudication)
   resamples per-unit replicate scalars and pushes each resample through the
   pure gate-margin decision ``child > parent - promote_margin``, reporting
   ``P(flip)``. The run-the-tournament-twice form is endpoint-gated validation
-  of exactly this.
+  of the same quantity.
 * :func:`judge_self_consistency` — folds the corpus' verbatim judge firings
   into the :class:`~zicato.judge_runtime.reliability.JudgeReliability` shape and
   feeds the EXISTING :func:`zicato.health.diagnostics.detect_noisy_judge`
@@ -121,7 +121,7 @@ def noise_floor_summary(
     :meth:`zicato.tournament.calibration.NoiseFloor.to_json` dict, never
     re-measured here — reflection reuses the calibration budget the loop
     already spent. ``fresh`` is a documented pass-through flag: the CLI phase
-    wires ``--fresh`` to re-measure deliberately; this pure function only
+    wires ``--fresh`` to re-measure; this pure function only
     RECORDS the operator's intent (``fresh=True`` means "the caller re-measured
     and passed a fresh floor in"), it never performs the measurement.
 
@@ -137,9 +137,9 @@ def noise_floor_summary(
             floor_max_abs = float(epoch_noise_floor.get("max_abs_delta", 0.0))
         except (TypeError, ValueError):
             floor_max_abs = None
-        # Additive: pre-#112 floor records carry no ``delta_std`` field, so
-        # this stays ``None`` for them (the draw-count-stable statistic is
-        # simply unavailable, not zero).
+        # Additive: a floor record written before ``delta_std`` existed carries
+        # no such field, so this stays ``None`` for it — the draw-count-stable
+        # statistic is unavailable rather than zero (issue #112).
         try:
             floor_delta_std = float(epoch_noise_floor["delta_std"])
         except (KeyError, TypeError, ValueError):
@@ -177,11 +177,10 @@ def noise_floor_summary(
 def _bootstrap_seed(reflection_id: str, parent_id: str, child_id: str) -> int:
     """A stable 32-bit RNG seed folding the reflection + the specific pair.
 
-    Folding ``parent_id`` / ``child_id`` in (N1) makes every pair draw an
-    INDEPENDENT resample stream — two pairs adjudicated under the same
-    reflection no longer share a bootstrap trajectory, so their ``p_flip``
-    estimates are statistically independent rather than coupled through a
-    common seed.
+    Folding ``parent_id`` / ``child_id`` in makes every pair draw an
+    INDEPENDENT resample stream, so two pairs adjudicated under the same
+    reflection share no bootstrap trajectory and their ``p_flip`` estimates
+    are statistically independent rather than coupled through a common seed.
     """
     digest = hashlib.sha256(f"{reflection_id}|{parent_id}|{child_id}".encode()).hexdigest()
     return int(digest[:8], 16)
@@ -230,20 +229,20 @@ def decision_flip_probability(
     ``resample`` estimator and re-decides; ``P(flip)`` is the fraction of
     resamples whose decision differs from the point estimate.
 
-    ``resample`` (S1):
+    ``resample`` selects the estimator:
 
     * ``"k_mean"`` (default) — draw ``K`` replicate scalars WITH REPLACEMENT and
-      AVERAGE them, exactly matching the base mean-of-K estimator. This is the
+      AVERAGE them, matching the base mean-of-K estimator. This is the
       statistically honest bootstrap: it reproduces the sampling distribution of
       the quantity the gate actually compares (a mean of K), so its variance —
-      and therefore ``p_flip`` — is calibrated, not inflated.
-    * ``"single"`` — draw ONE replicate scalar per unit (the old behavior). It
+      and therefore ``p_flip`` — is calibrated rather than inflated.
+    * ``"single"`` — draw ONE replicate scalar per unit. It
       resamples the distribution of a SINGLE draw, whose variance is ``√K``×
       larger than the mean-of-K the gate uses, so it systematically OVERSTATES
       ``p_flip``. Retained only as the higher-variance reference the tests pin
       the default against.
 
-    Returns ``p_flip=None`` with a ``reason`` (S2) when the bootstrap is
+    Returns ``p_flip=None`` with a ``reason`` when the bootstrap is
     undefined: either candidate has NO observations, or ANY contributing
     ``(candidate, entry)`` unit has fewer than two replicates (a single draw
     carries no resample spread — a fabricated ``0.0`` would falsely read as
@@ -270,7 +269,7 @@ def decision_flip_probability(
             "fidelity_tiers": _fidelity_tiers(obs),
         }
 
-    # S2 degeneracy guards — before any bootstrap.
+    # Degeneracy guards — before any bootstrap.
     contributing: list[list[float]] = []
     for candidate in (parent_id, child_id):
         present = [
@@ -323,10 +322,10 @@ def judge_self_consistency(*, corpus: list[ObservationRun]) -> dict[str, Any]:
 
     For each judge, the replicate re-judgements of each ``(candidate, entry)``
     unit are a test-retest over near-identical input. The disagreement rate fed
-    to the detector is POOLED (S3): total disagreeing verdict pairs summed over
-    all units, divided by the total unordered pairs summed over all units — the
+    to the detector is POOLED: total disagreeing verdict pairs summed over all
+    units, divided by the total unordered pairs summed over all units — the
     natural per-judge dispersion, with the record's ``k`` / ``fired`` totals as
-    the SAME pooled totals. (The old worst-unit maximum let a single 2-draw flip
+    the SAME pooled totals. (A worst-unit maximum would let a single 2-draw flip
     read as a 100%-noisy judge; it is retained as a secondary
     ``worst_unit_disagreement`` diagnostic per judge, NOT fed to the detector.)
     The pooled rate is packed into
@@ -403,7 +402,7 @@ def judge_self_consistency(*, corpus: list[ObservationRun]) -> dict[str, Any]:
 
 
 def placebo_outcomes(*, corpus: list[ObservationRun], experiments: list[Any]) -> dict[str, Any]:
-    """Surface the existing placebo gate-discrimination signal (cite, not reinvent).
+    """Surface the existing placebo gate-discrimination signal by citing it.
 
     Delegates to :func:`zicato.health.diagnostics.detect_placebo_promoted` — a
     promoted random-baseline is the loudest possible evidence the gate is
@@ -568,8 +567,8 @@ def sigma_from_noise_floor(floor: dict[str, Any] | None) -> float | None:
     * ``delta_std`` is ALREADY the ``√2``-scaled SD of the child−parent
       DIFFERENCE (``sqrt(2) * pstdev(scalars)``) — feeding it in as ``sigma``
       double-counts the ``√2`` the formula itself applies.
-    * ``max_abs_delta`` is a RANGE (``max(scalars) - min(scalars)``), not a
-      standard deviation at all — feeding it in wildly overstates σ.
+    * ``max_abs_delta`` is a RANGE (``max(scalars) - min(scalars)``) rather
+      than a standard deviation — feeding it in wildly overstates σ.
 
     This helper computes the honest per-unit σ = ``pstdev(floor["scalars"])``
     from the floor's raw A/A draw scalars, returning ``None`` when the floor is
@@ -604,7 +603,7 @@ def power_analysis(
 
     ⚠ ``sigma`` MUST be the PER-UNIT scalar SD. Do NOT pass a noise floor's
     ``delta_std`` (already ``√2``-scaled — the formula re-applies the ``√2``) or
-    its ``max_abs_delta`` (a range, not an SD); both overstate σ and inflate the
+    its ``max_abs_delta`` (a range rather than an SD); both overstate σ and inflate the
     MDE. Derive the correct σ with :func:`sigma_from_noise_floor`.
     """
     z = _z_for_confidence(confidence)

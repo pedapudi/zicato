@@ -1,10 +1,9 @@
-"""journal_view — the per-epoch journal document reads, served.
+"""The per-epoch journal document reads.
 
-The journal endpoints used to read ``journal.md`` inline; these are those
-file reads moved into the query layer. Both degrade best-effort (DQ3):
-the JSON shape reads a missing journal as the empty string; the raw-text
-read distinguishes absence (``None``) so its endpoint can answer an
-unambiguous 404 for the "View raw journal" link.
+The journal endpoints reach ``journal.md`` through the two readers here.
+Both are best-effort: the JSON shape reads a missing journal as the empty
+string, while the raw-text read reports absence as ``None`` so its
+endpoint can answer an unambiguous 404 for the "View raw journal" link.
 """
 
 from __future__ import annotations
@@ -17,8 +16,8 @@ from zicato.query.paths import WorkspacePaths
 def read_epoch_journal(paths: WorkspacePaths, epoch_id: str) -> dict[str, Any]:
     """``GET /api/epoch/{id}/journal`` — ``{epoch_id, journal}``.
 
-    A missing / unreadable ``journal.md`` degrades to the empty string —
-    same shape, never raises (DQ3).
+    A missing or unreadable ``journal.md`` degrades to the empty string:
+    the same shape, and never an exception.
     """
     path = paths.epochs / epoch_id / "journal.md"
     try:
@@ -31,7 +30,7 @@ def read_epoch_journal(paths: WorkspacePaths, epoch_id: str) -> dict[str, Any]:
 def read_epoch_journal_md(paths: WorkspacePaths, epoch_id: str) -> str | None:
     """The raw ``journal.md`` markdown for one epoch, or ``None`` when absent.
 
-    ``None`` (not ``""``) on absence so the raw-markdown endpoint can
+    ``None`` rather than ``""`` on absence, so the raw-markdown endpoint can
     answer an unambiguous 404 — the one caller that wants to distinguish
     "no journal yet" from "empty journal".
     """

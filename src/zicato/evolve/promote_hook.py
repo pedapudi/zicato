@@ -19,8 +19,8 @@ which owns the champion-marker advance under
   means making the whole funnel — and its callers — ``async`` to serve a
   path that fires on a minority of rounds;
 * the funnel is the *storage* stage of the round pipeline. It knows
-  about experiments, lineage, and the journal, and deliberately not
-  about adapters. Threading a :class:`~zicato.adapters.base.HarnessAdapter`
+  about experiments, lineage, and the journal, and by design not about
+  adapters. Threading a :class:`~zicato.adapters.base.HarnessAdapter`
   through it would give a persistence module a dependency on the
   inner-harness Protocol purely to carry it one frame deeper.
 
@@ -33,7 +33,7 @@ Exactly-once
 ------------
 Both call sites fire on the transition — the branch that advances
 ``current_generation`` — not on observing a promoted state, so a
-promotion produces exactly one call per settled round. A crash-restart
+promotion produces one call per settled round. A crash-restart
 cannot double-fire either: :func:`zicato.runtime.resume.prepare_resume`
 classifies a generation whose ``experiment.json`` carries a committed
 outcome as ``"clean"`` and resumes nothing, and a promoted generation
@@ -63,7 +63,7 @@ log = logging.getLogger("zicato.orchestrator")
 #: may be slow — but finite: an adapter that hangs (a lost connection
 #: with no socket timeout of its own) would otherwise stall the evolve
 #: loop forever with the round already settled. A hook that exceeds this
-#: is cancelled and counts as a failure, exactly like one that raised.
+#: is cancelled and counts as a failure, like one that raised.
 ON_PROMOTE_TIMEOUT_SECONDS: float = 120.0
 
 #: The runtime-event payload :func:`fire_on_promote` returns on failure:
@@ -120,7 +120,7 @@ async def fire_on_promote(
     except Exception as exc:  # noqa: BLE001 — the hook is best-effort by contract
         # Deliberately `Exception`, not `BaseException`: a CancelledError
         # from the evolve loop's own shutdown is the operator stopping the
-        # run, not the hook failing, and must keep propagating.
+        # run rather than the hook failing, and must keep propagating.
         log.error(
             "on_promote hook of adapter %r failed for %s/%s (%s); the generation "
             "REMAINS promoted and the round is unaffected — the adapter's "
