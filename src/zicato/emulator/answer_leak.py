@@ -28,7 +28,7 @@ import re
 #: Patterns indicating the emulator output looks like an answer key.
 #:
 #: Compiled with ``re.IGNORECASE | re.MULTILINE`` in :func:`check_answer_leak`
-#: — patterns that anchor with ``^`` apply per-line, not per-string.
+#: — patterns that anchor with ``^`` apply per-line rather than per-string.
 #:
 #: Pattern notes:
 #:   ``^\\s*\\{`` — bare JSON object at line start; ``{`` rarely appears at

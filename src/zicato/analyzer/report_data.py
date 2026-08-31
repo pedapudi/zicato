@@ -187,7 +187,7 @@ class EpochReportData:
         (``0.0``) when nothing has promoted. This is the number the
         harness actually stands behind.
 
-        It is deliberately not ``generations[-1]``. ``_cumulate_scalar``
+        It is not ``generations[-1]``. ``_cumulate_scalar``
         fills a cumulative for every generation regardless of decision,
         so the newest row is a *rejected* challenger whenever the last
         round did not promote — and its cumulative is a counterfactual,
@@ -617,13 +617,11 @@ def _distill_brief_goal(brief: str) -> str:
     masthead must name the same goal the rest of the UI shows, so this
     DELEGATES to the dashboard's distillation rather than restating it.
 
-    It used to carry its own copy of that logic, and the copy is what made
-    issue #107 outlive its fix: the dashboard learned to reassemble a
-    hard-wrapped goal paragraph while this function still returned the
-    first PHYSICAL line, so the publication masthead kept rendering the
-    shipped ``target_1`` goal truncated mid-word at a dangling hyphen
-    ("… the vendored multi-"). One distiller, one behaviour — do not
-    re-inline it.
+    A second copy of that logic here would drift from the dashboard's: when
+    only one of the two learns to reassemble a hard-wrapped goal paragraph,
+    the other still returns the first PHYSICAL line and a masthead renders
+    the goal truncated mid-word at a dangling hyphen (issue #107). One
+    distiller, one behaviour — do not re-inline it.
     """
     from zicato.query.epoch_view import _distill_brief_goal as _distill  # noqa: PLC0415
 

@@ -298,7 +298,7 @@ def _cell_is_numeric(text: str) -> bool:
     """Heuristic — does a table cell look like a numeric value?
 
     Numeric cells get right-aligned in paper style. The check is
-    deliberately liberal — backtick-wrapped numbers (e.g. ``1.5``), and
+    liberal — backtick-wrapped numbers (e.g. ``1.5``), and
     signed deltas (``+0.080`` / ``-0.250``) both count. Empty / "—" /
     "(seed)" do not, so missing values are left default-aligned.
     """
@@ -1362,7 +1362,7 @@ def parse_prose_from_markdown(report_md: str) -> dict[str, str]:
     never-written block is not resurrected as prose. Absent blocks are
     simply not present in the result, which the assembler then fills with a
     placeholder — so a document with no prose yet round-trips to
-    placeholders, not to broken sections.
+    placeholders rather than to broken sections.
 
     Two parse paths:
 
@@ -1370,14 +1370,14 @@ def parse_prose_from_markdown(report_md: str) -> dict[str, str]:
       ``<!-- PROSE:LABEL -->`` … ``<!-- /PROSE:LABEL -->`` fences, each block
       is lifted ANCHOR-EXACT — the whole text between its open and close
       fence, INCLUDING any ``---`` rule or embedded ``## heading`` the LLM
-      wrote. This is the fix for the silent truncation the old heuristic
-      caused; the fences round-trip a block byte-identically.
-    * **Legacy (unfenced) fallback.** A pre-fix document written before the
-      fences existed has none, so we fall back to the old heuristic (body
-      from a ``## <Heading>`` to the next ``## ``/``---``). Whatever it
-      captures is spliced back verbatim and the assembler re-emits it WITH
-      fences, so the document self-heals to the exact format on the first
-      deterministic refresh.
+      wrote. The fences round-trip a block byte-identically, so nothing is
+      silently truncated.
+    * **Unfenced fallback.** A document that carries no fences is parsed by
+      heuristic instead: the body from a ``## <Heading>`` to the next
+      ``## `` or ``---``, which truncates at an embedded rule or heading.
+      Whatever it captures is spliced back verbatim and the assembler
+      re-emits it WITH fences, so the document gains the exact format on
+      its first deterministic refresh.
     """
     text = report_md.replace("\r\n", "\n")
     # An open fence anywhere ⇒ the document is in the fenced format; parse
@@ -1419,11 +1419,10 @@ def _parse_prose_fenced(text: str) -> dict[str, str]:
 def _parse_prose_heuristic(text: str) -> dict[str, str]:
     """Legacy unfenced parse: body from a ``## <Heading>`` to the next ``## ``/``---``.
 
-    Retained ONLY for pre-fix documents that predate the prose fences; it
-    truncates a block at the first ``## ``/``---`` it contains (the very bug
-    the fenced format fixes), but a legacy document is no worse off than
-    under the old code, and the assembler re-emits the captured prose WITH
-    fences so the document upgrades on its first refresh.
+    Retained ONLY for a document whose prose carries no fences. It truncates
+    a block at the first ``## `` / ``---`` inside it, which is exactly what
+    the fenced format prevents; the assembler re-emits captured prose WITH
+    fences, so such a document gains them on its first refresh.
     """
     lines = text.split("\n")
     out: dict[str, str] = {}

@@ -63,9 +63,9 @@ from zicato.analyzer.svg.mutation import (
     render_svg_mutation_surface,
 )
 
-# Palette — the canonical decision hex constants, re-exported so the
-# legacy ``from zicato.analyzer.report_figures import PROMOTED_COLOR``
-# import paths keep resolving.
+# Palette — the canonical decision hex constants, re-exported so that
+# ``from zicato.analyzer.report_figures import PROMOTED_COLOR`` resolves
+# alongside the import from the palette module itself.
 from zicato.analyzer.svg.palette import (
     BASELINE_COLOR,
     DEFERRED_COLOR,
