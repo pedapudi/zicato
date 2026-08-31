@@ -6,12 +6,15 @@ annotated ``agent/`` tree + the example's ``mocks.aux_llm`` proposer), with
 the inner harness + loss reducer mocked exactly as the orchestrator test
 suite mocks them. It is the same drive
 ``tests/test_example_target_1_racing.py`` performs, generalised over the
-two axes that select which production branches execute.
+three axes that select which production branches execute: the tournament
+structure the frozen contract declares, the runtime mode, and how many
+rounds the invocation runs.
 
 Lanes
 -----
-:data:`LANES` names one capture per (structure, mode) pair, each with its
-own golden. The pairs are not interchangeable — they run different code:
+:data:`LANES` names one capture per (structure, mode, round count) triple,
+each with its own golden. The lanes are not interchangeable — they run
+different code:
 
 * ``racing_full`` — a four-challenger racing field under ``--mode full``.
   The multi-challenger rungs, cuts, and crowning duel.
@@ -24,6 +27,27 @@ own golden. The pairs are not interchangeable — they run different code:
   skipped (``field_n == 1 and fast_mode``).
 * ``racing_fast`` — a four-challenger field under ``--mode fast``, where
   every rung resolves both competitors through the unit cache.
+* ``two_round_racing`` — the racing field under ``--mode full`` for TWO
+  rounds. The only lane where a round runs against a parent that a
+  previous round crowned, so it is the only one that pins the between-round
+  carry-over: the promoted-head pointer advancing off the seeded ``v0``,
+  the crowned generation defending as champion in the next round, that
+  generation's patched snapshot supplying the next round's mutable
+  surface, the epoch's round directories numbering on from ``0``, and the
+  second round's settled snapshot recording the first round's winner as
+  its champion.
+* ``swiss_full`` — a four-challenger Swiss field under ``--mode full``:
+  fixed-round pairings over champion + challengers, Copeland standings,
+  and a final champion-gate confirmation of the leader.
+* ``single_elim_full`` — a four-challenger single-elimination bracket under
+  ``--mode full``: challenger-vs-challenger nodes with no incumbent, then
+  the champion-vs-survivor final.
+* ``double_elim_full`` — a four-challenger double-elimination field under
+  ``--mode full``: winners' bracket, losers' bracket, grand final, then the
+  champion gate.
+
+The last three structures reach the unified round pipeline through
+registries that no other lane exercises end to end.
 
 It then collects the produced ``.zicato`` artifacts — every generation's
 ``gen_score.json`` (the per-generation SCORE: scalar + components + the
@@ -83,17 +107,23 @@ GOLDEN_PATH = _GOLDEN_DIR / "mock_evolve_racing.json"
 class Lane(NamedTuple):
     """One capture configuration and the golden it is compared against.
 
-    ``scoring`` names the example contract file that decides the structure;
-    ``fast_mode`` is the runtime ``--mode`` setting. ``challenger_ids`` is
-    the field the lane's contract mints, needed to can a loss per generation
-    before the run starts.
+    ``scoring_filename`` names the example contract file that decides the
+    tournament structure; ``fast_mode`` is the runtime ``--mode`` setting;
+    ``rounds`` is how many evolve rounds the invocation runs.
+    ``minted_generation_ids`` lists every generation the lane produces
+    across all its rounds, needed to can a loss and a pass verdict per
+    generation before the run starts.
+    ``crowned_generation_ids`` is the generation crowned in each round, in
+    round order, so the capture can assert the champion pointer advanced
+    the way the lane exists to pin.
     """
 
     name: str
     scoring_filename: str
     fast_mode: bool
-    challenger_ids: tuple[str, ...]
-    crowned_generation_id: str
+    rounds: int
+    minted_generation_ids: tuple[str, ...]
+    crowned_generation_ids: tuple[str, ...]
     golden_filename: str
     epoch_name: str
 
@@ -113,8 +143,9 @@ LANES: dict[str, Lane] = {
             name="racing_full",
             scoring_filename="scoring.racing.json",
             fast_mode=False,
-            challenger_ids=("v1", "v2", "v3", "v4"),
-            crowned_generation_id="v1",
+            rounds=1,
+            minted_generation_ids=("v1", "v2", "v3", "v4"),
+            crowned_generation_ids=("v1",),
             # The original golden's filename, kept so the gate that has
             # always guarded this capture keeps guarding the same file.
             golden_filename="mock_evolve_racing.json",
@@ -128,8 +159,9 @@ LANES: dict[str, Lane] = {
             name="gauntlet_full",
             scoring_filename="scoring.json",
             fast_mode=False,
-            challenger_ids=("v1",),
-            crowned_generation_id="v1",
+            rounds=1,
+            minted_generation_ids=("v1",),
+            crowned_generation_ids=("v1",),
             golden_filename="mock_evolve_gauntlet_full.json",
             epoch_name="t1-gauntlet",
         ),
@@ -137,8 +169,9 @@ LANES: dict[str, Lane] = {
             name="gauntlet_fast",
             scoring_filename="scoring.json",
             fast_mode=True,
-            challenger_ids=("v1",),
-            crowned_generation_id="v1",
+            rounds=1,
+            minted_generation_ids=("v1",),
+            crowned_generation_ids=("v1",),
             golden_filename="mock_evolve_gauntlet_fast.json",
             epoch_name="t1-gauntlet-fast",
         ),
@@ -146,10 +179,53 @@ LANES: dict[str, Lane] = {
             name="racing_fast",
             scoring_filename="scoring.racing.json",
             fast_mode=True,
-            challenger_ids=("v1", "v2", "v3", "v4"),
-            crowned_generation_id="v1",
+            rounds=1,
+            minted_generation_ids=("v1", "v2", "v3", "v4"),
+            crowned_generation_ids=("v1",),
             golden_filename="mock_evolve_racing_fast.json",
             epoch_name="t1-racing-fast",
+        ),
+        Lane(
+            name="two_round_racing",
+            scoring_filename="scoring.racing.json",
+            fast_mode=False,
+            rounds=2,
+            # Round 0 mints v1..v4 off the seeded v0; round 1 mints v5..v8
+            # off the generation round 0 crowned.
+            minted_generation_ids=("v1", "v2", "v3", "v4", "v5", "v6", "v7", "v8"),
+            crowned_generation_ids=("v1", "v5"),
+            golden_filename="mock_evolve_two_round_racing.json",
+            epoch_name="t1-racing-two-round",
+        ),
+        Lane(
+            name="swiss_full",
+            scoring_filename="scoring.swiss.json",
+            fast_mode=False,
+            rounds=1,
+            minted_generation_ids=("v1", "v2", "v3", "v4"),
+            crowned_generation_ids=("v1",),
+            golden_filename="mock_evolve_swiss_full.json",
+            epoch_name="t1-swiss",
+        ),
+        Lane(
+            name="single_elim_full",
+            scoring_filename="scoring.single_elim.json",
+            fast_mode=False,
+            rounds=1,
+            minted_generation_ids=("v1", "v2", "v3", "v4"),
+            crowned_generation_ids=("v1",),
+            golden_filename="mock_evolve_single_elim_full.json",
+            epoch_name="t1-single-elim",
+        ),
+        Lane(
+            name="double_elim_full",
+            scoring_filename="scoring.double_elim.json",
+            fast_mode=False,
+            rounds=1,
+            minted_generation_ids=("v1", "v2", "v3", "v4"),
+            crowned_generation_ids=("v1",),
+            golden_filename="mock_evolve_double_elim_full.json",
+            epoch_name="t1-double-elim",
         ),
     )
 }
@@ -272,11 +348,13 @@ def drive_mock_evolve(
 ) -> tuple[Path, str]:
     """Run one lane's deterministic mock evolve; return (workspace, epoch_id).
 
+    Drives ``lane.rounds`` rounds through :func:`zicato.orchestrator.evolve_n_rounds`.
+
     The shared engine behind the MOCK-GOLDEN gates (which read the persisted
     artifacts) and the REINDEX-DUMP gate (which rebuilds the SQLite index
     from this same on-disk workspace and dumps it). REINDEX-DUMP takes the
-    default lane, so its golden is a projection of the racing full-mode
-    workspace exactly as before.
+    default lane, so its golden is a projection of the single-round racing
+    full-mode workspace exactly as before.
 
     Reuses the harness mocks + bootstrap from the example test so the
     captured behavior is identical to what the unit suite asserts.
@@ -348,20 +426,40 @@ def drive_mock_evolve(
         epoch_name=lane.epoch_name,
     )
     # 4) Run through the REAL pre-spend workspace gate rather than patching
-    #    it out. This capture drives ``evolve_once``, which gates itself, so
-    #    a byte-identical result across a change to the gate is only
-    #    meaningful if the gate actually ran. Satisfying it costs one thing:
-    #    the gate rebuilds the adapter in a subprocess the way a tournament
-    #    worker does, so that subprocess must be able to import the stub
-    #    adapter's module wherever this capture was started from.
+    #    it out. This capture drives ``evolve_n_rounds``, which gates itself
+    #    once per invocation, so a byte-identical result across a change to
+    #    the gate is only meaningful if the gate actually ran. Satisfying it
+    #    costs one thing: the gate rebuilds the adapter in a subprocess the
+    #    way a tournament worker does, so that subprocess must be able to
+    #    import the stub adapter's module wherever this capture was started
+    #    from.
     monkeypatch.setenv("PYTHONPATH", stub_adapter_pythonpath())
     _install_stub_adapter_factory(monkeypatch, bypass_workspace_gate=False)
     # Strictly-descending challenger losses: v1 is the best arm, so it
     # survives every racing rung and clears the champion gate — and it is
     # also the single challenger a gauntlet lane mints. A lane whose field
     # is smaller simply leaves the later canned losses unused.
-    canned_loss_by_gen = {"v0": 2.0, "v1": 0.4, "v2": 0.8, "v3": 1.2, "v4": 1.6}
-    canned_pass_by_gen = {gid: True for gid in ("v0", *lane.challenger_ids)}
+    #
+    # v5..v8 are the field a SECOND round mints off the crowned v1. Their
+    # losses are strictly below v1's, and descending among themselves, so
+    # the second round reaches the same decisive shape as the first: v5 is
+    # the best arm, it survives the rungs, and it unseats the reigning
+    # champion. Without a loss below the incumbent's, a second round could
+    # only ever reject, and the lane would pin nothing about the promoted
+    # head advancing twice. Single-round lanes never mint these ids, so the
+    # extra entries are never read on those lanes.
+    canned_loss_by_gen = {
+        "v0": 2.0,
+        "v1": 0.4,
+        "v2": 0.8,
+        "v3": 1.2,
+        "v4": 1.6,
+        "v5": 0.10,
+        "v6": 0.20,
+        "v7": 0.25,
+        "v8": 0.30,
+    }
+    canned_pass_by_gen = {gid: True for gid in ("v0", *lane.minted_generation_ids)}
 
     if lane.fast_mode:
         # A fast round's whole point is reusing the champion's already-scored
@@ -393,10 +491,16 @@ def drive_mock_evolve(
             canned_pass_by_gen=canned_pass_by_gen,
         )
 
-    from zicato.orchestrator import evolve_once
+    from zicato.orchestrator import evolve_n_rounds
 
-    outcome = asyncio.run(
-        evolve_once(
+    # Every lane runs through the multi-round loop, single-round lanes
+    # included: for ``rounds=1`` the loop's artifacts are byte-identical to
+    # a bare ``evolve_once`` (the four original goldens are unchanged by the
+    # switch), so one drive covers both and ``rounds`` stays an ordinary
+    # lane parameter rather than a second code path.
+    outcomes = asyncio.run(
+        evolve_n_rounds(
+            rounds=lane.rounds,
             workspace_root=workspace,
             epoch_id=epoch_id,
             harness_call_llm=_harness_call_llm,
@@ -404,16 +508,64 @@ def drive_mock_evolve(
             fast_mode=lane.fast_mode,
         )
     )
-    # Sanity: the crowning this lane exists to capture. If it ever drifts,
-    # the artifact diff will already have failed, but assert here too so a
-    # broken capture is obvious.
-    assert outcome.tournament_decision == "promoted"
-    assert outcome.proposed_generation_id == lane.crowned_generation_id
+    # Sanity: the crownings this lane exists to capture. If any of them ever
+    # drifts, the artifact diff will already have failed, but assert here
+    # too so a broken capture is obvious.
+    assert len(outcomes) == lane.rounds
+    assert [o.tournament_decision for o in outcomes] == ["promoted"] * lane.rounds
+    assert tuple(o.proposed_generation_id for o in outcomes) == lane.crowned_generation_ids
+    # The champion pointer advanced: round 0 defends the seeded ``v0``, and
+    # every later round defends the generation the previous round crowned.
+    # This is the between-round carry-over the multi-round lane exists for;
+    # on a single-round lane it degenerates to "the parent was v0".
+    assert tuple(o.parent_generation_id for o in outcomes) == (
+        "v0",
+        *lane.crowned_generation_ids[:-1],
+    )
 
     return workspace, epoch_id
+
+
+def _assert_round_carryover(artifacts: dict[str, object], lane: Lane) -> None:
+    """Assert the persisted per-round record matches the lane's round count.
+
+    The in-memory outcomes are already checked in :func:`drive_mock_evolve`;
+    this checks the same carry-over as it was WRITTEN DOWN, which is what
+    the golden freezes and what every downstream reader (dashboard, index,
+    execution plan) actually consumes:
+
+    * the epoch holds one ``round_log.jsonl`` per round, numbered from 0
+      with no gaps — the round-numbering continuity only a second round
+      can break;
+    * the promoted head named by the last round's settled field snapshot is
+      the workspace's current generation;
+    * each round's settled field snapshot records the PREVIOUS round's
+      crowned generation as its champion.
+
+    A gauntlet lane writes no ``field-*.json`` snapshot (that path settles
+    elsewhere), so the snapshot checks apply only where snapshots exist.
+    """
+    round_logs = artifacts["round_logs"]
+    assert isinstance(round_logs, dict)
+    assert sorted(round_logs) == [f"{n}/round_log.jsonl" for n in range(lane.rounds)]
+    assert artifacts["current_generation"] == lane.crowned_generation_ids[-1]
+
+    snapshots = artifacts["field_tournaments"]
+    assert isinstance(snapshots, dict)
+    if not snapshots:
+        return
+
+    expected_champions = ("v0", *lane.crowned_generation_ids[:-1])
+    for crowned, champion in zip(lane.crowned_generation_ids, expected_champions, strict=True):
+        snapshot = snapshots[f"field-{crowned}.json"]
+        assert isinstance(snapshot, dict)
+        assert snapshot["promoted_generation_id"] == crowned
+        assert snapshot["champion_generation_id"] == champion
 
 
 def run_mock_evolve(monkeypatch, tmp_path: Path, lane: Lane) -> dict[str, object]:
     """Drive one lane's deterministic mock evolve and return its artifacts."""
     workspace, epoch_id = drive_mock_evolve(monkeypatch, tmp_path, lane)
-    return _collect_artifacts(workspace, epoch_id)
+    artifacts = _collect_artifacts(workspace, epoch_id)
+    _assert_round_carryover(artifacts, lane)
+    return artifacts

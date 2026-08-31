@@ -50,7 +50,7 @@
 | `tests/test_decision_procedure_power.py` | **oracle 2** — the operating characteristics of the decision procedure under seeded noise |
 | `tests/test_genstore_conformance.py` | the cross-backend `GenerationStore` conformance suite + the session-template fixtures |
 | `tests/test_conftest_dashboard_reaper.py` | the bug #5 regression pins for the reaper (provenance scoping + no self-group-kill) |
-| `tools/parity.sh` | the behavior-preserving refactor gates (PYTEST / CONTRACT-HASH / CLI-HELP / REINDEX-DUMP / four MOCK-GOLDEN lanes / MYPY) |
+| `tools/parity.sh` | the behavior-preserving refactor gates (PYTEST / CONTRACT-HASH / CLI-HELP / REINDEX-DUMP / eight MOCK-GOLDEN lanes / MYPY) |
 | `tools/parity/lib/*.py` | the gate helpers: `contract_hash.py`, `cli_help.py`, `normalize.py`, `mock_evolve_capture.py`, `test_mock_golden.py`, `test_reindex_golden.py` |
 | `tools/parity/golden/` | the committed golden baselines |
 | `pyproject.toml` | `[tool.pytest.ini_options]` (markers, `addopts`), `[tool.importlinter]` (the five contracts), `[tool.ruff.lint...banned-api]` (the TID251 bans) |
@@ -988,7 +988,7 @@ refactor that changes which rows the projection produces, or any column
 value, moves these bytes. **Reds legitimately** when the projection changes
 (a new ingest column, a changed row). **Update:** `ZICATO_PARITY_UPDATE=1`.
 
-### 11.7.5 MOCK-GOLDEN (four lanes)
+### 11.7.5 MOCK-GOLDEN (eight lanes)
 
 The strongest end-to-end gates. Each runs a deterministic, no-live-LLM mock
 evolve of the real `target_1_presentation` contract and freezes the EXACT
@@ -1001,17 +1001,33 @@ full orchestrated path: propose N challengers, apply real patches against
 real markers, run the rungs + cuts, crown through the champion gate,
 confirm on the holdout, persist the audit.
 
-**Why four.** One capture pins one configuration, and the evolve round
-branches on two axes that select genuinely different code. The lanes are
-the cross-product that covers those branches; each has its own golden and
-its own gate, so a red names the configuration that moved:
+**Why eight.** One capture pins one configuration, and the evolve round
+branches on three axes that select genuinely different code: the tournament
+structure the frozen contract declares, the runtime mode, and how many
+rounds the invocation runs. Each lane has its own golden and its own gate,
+so a red names the configuration that moved:
 
-| Gate | Structure · mode | What only this lane executes |
+| Gate | Structure · mode · rounds | What only this lane executes |
 | --- | --- | --- |
-| `MOCK-GOLDEN` | racing field 4 · full | the multi-challenger rungs, cuts, and crowning duel |
-| `MOCK-GOLDEN-GAUNTLET` | gauntlet · full | the `field_n == 1` full-board selector, and the crowning holdout a single-challenger full round still runs |
-| `MOCK-GOLDEN-GAUNTLET-FAST` | gauntlet · fast | the one configuration that deliberately SKIPS the crowning holdout (`field_n == 1 and fast_mode`) |
-| `MOCK-GOLDEN-RACING-FAST` | racing field 4 · fast | every rung resolving both competitors through the unit cache |
+| `MOCK-GOLDEN` | racing field 4 · full · 1 | the multi-challenger rungs, cuts, and crowning duel |
+| `MOCK-GOLDEN-GAUNTLET` | gauntlet · full · 1 | the `field_n == 1` full-board selector, and the crowning holdout a single-challenger full round still runs |
+| `MOCK-GOLDEN-GAUNTLET-FAST` | gauntlet · fast · 1 | the one configuration that deliberately SKIPS the crowning holdout (`field_n == 1 and fast_mode`) |
+| `MOCK-GOLDEN-RACING-FAST` | racing field 4 · fast · 1 | every rung resolving both competitors through the unit cache |
+| `MOCK-GOLDEN-TWO-ROUND-RACING` | racing field 4 · full · 2 | the between-round carry-over: the promoted head advancing off the seeded `v0`, the crowned generation defending the next round, that generation's patched snapshot supplying the next round's mutable surface, round directories numbering on from `0`, and round 1's settled snapshot naming round 0's winner as its champion |
+| `MOCK-GOLDEN-SWISS` | swiss field 4 · full · 1 | fixed-round pairings over champion + challengers, Copeland standings, and the leader's final champion-gate confirmation |
+| `MOCK-GOLDEN-SINGLE-ELIM` | single_elim field 4 · full · 1 | challenger-vs-challenger bracket nodes (no incumbent, so the gate's preferred side wins), then the champion-vs-survivor final |
+| `MOCK-GOLDEN-DOUBLE-ELIM` | double_elim field 4 · full · 1 | the losers' bracket second life and the grand final feeding the champion gate |
+
+The last three structures are the ones the unified round pipeline reaches
+through registries that no other lane touches end to end; their contracts
+live beside the racing one as `scoring.swiss.json`,
+`scoring.single_elim.json`, and `scoring.double_elim.json` in
+`examples/zicato_examples/target_1_presentation/`.
+
+Every lane drives `evolve_n_rounds`, single-round lanes included: at
+`rounds=1` the loop's persisted artifacts are byte-identical to a bare
+`evolve_once`, so the round count is an ordinary lane parameter rather than
+a second code path.
 
 The two fast lanes pre-seed the champion's per-board `loss.json` for every
 replicate slot the contract requests and install the PERSISTING reducer
@@ -1023,10 +1039,12 @@ did not.
 `tools/parity.sh` selects a lane with `pytest -k <lane name>`, so no lane
 name may be a substring of another. The lane table lives in
 `tools/parity/lib/mock_evolve_capture.py`; adding a lane there and a
-`_mock_golden_lane` line in `tools/parity.sh` is the whole wiring.
+`_mock_golden_lane` line in `tools/parity.sh` is the whole wiring — plus,
+for a structure the example does not yet declare, a `scoring.<structure>.json`
+beside the others in the example directory.
 
-The capture below is written for the racing lane, and generalises over both
-axes:
+The capture below is written for the racing lane, and generalises over all
+three axes:
 
 ```python
 """Deterministic mock-evolve capture for the parity oracle (MOCK-GOLDEN gate).

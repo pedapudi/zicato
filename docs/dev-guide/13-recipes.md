@@ -1021,7 +1021,7 @@ a different class of break.
 7. **The parity gates + the node suite (Golden Rule G5):**
 
    ```bash
-   bash tools/parity.sh        # six gates: PYTEST, CONTRACT-HASH, CLI-HELP, REINDEX-DUMP, MOCK-GOLDEN, MYPY
+   bash tools/parity.sh        # PYTEST, CONTRACT-HASH, CLI-HELP, REINDEX-DUMP, eight MOCK-GOLDEN lanes, MYPY
    make node-test              # the dashboard JS behaviour suite
    ```
 
@@ -1084,7 +1084,7 @@ golden under `tools/parity/golden/` (only after you have justified the update).
    | `CONTRACT-HASH` | the epoch contract hash (+ per-component hashes) | a contract component (board / brief / scoring / proposer / entrypoint) — the hash SHOULD move |
    | `CLI-HELP` | `zicato --help` + every subcommand `--help` | a command, flag, default, or help string |
    | `REINDEX-DUMP` | the SQLite index rebuilt from a fixture workspace | the index schema or an ingest projection |
-   | `MOCK-GOLDEN` | a deterministic no-live-LLM racing mock evolve | the loop's decision path, event ordering, or scoring |
+   | `MOCK-GOLDEN…` | a deterministic no-live-LLM mock evolve, one gate per (structure, mode, round count) lane | the loop's decision path, event ordering, or scoring — the gate name says which configuration moved |
    | `MYPY` | the mypy error count vs. the committed baseline | types (the count must not get WORSE) |
    | `PYTEST` | the full suite | anything |
 
