@@ -24,7 +24,7 @@ from typing import Any
 import pytest
 
 import zicato.orchestrator as orch
-from tests.test_orchestrator import (
+from tests._orchestrator_harness import (
     _bootstrap_workspace,
     _harness_call_llm,
     _install_stub_adapter_factory,

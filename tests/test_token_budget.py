@@ -32,7 +32,7 @@ from typing import Any
 import pytest
 
 from tests._contract_pins import deterministic_weights
-from tests.test_orchestrator import (
+from tests._orchestrator_harness import (
     _harness_call_llm,
     _install_stub_adapter_factory,
     _install_telemetry_stubs,

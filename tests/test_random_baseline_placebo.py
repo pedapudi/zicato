@@ -18,7 +18,7 @@ import pytest
 
 import zicato_examples.target_0_convergence as _t0_pkg
 from tests._contract_pins import pin_deterministic
-from tests.test_orchestrator import (
+from tests._orchestrator_harness import (
     _harness_call_llm,
     _install_stub_adapter_factory,
     _install_telemetry_stubs,

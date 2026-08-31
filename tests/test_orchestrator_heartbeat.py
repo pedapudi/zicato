@@ -12,6 +12,11 @@ from typing import Any
 
 import pytest
 
+from tests._orchestrator_harness import (
+    _harness_call_llm,
+    _make_aux_responder,
+    _valid_proposer_response,
+)
 from zicato.core.types import (
     BoardEntry,
     DriftCount,
@@ -24,25 +29,6 @@ from zicato.epoch.lifecycle import new_epoch
 from zicato.runtime.lock import WorkspaceLockHeld, acquire_workspace_lock
 from zicato.runtime.paths import heartbeat_path, lock_path
 from zicato.runtime.state import read_heartbeat
-
-
-async def _harness_call_llm(system: str, user: str, model: str) -> str:
-    del system, user, model
-    return ""
-
-
-def _make_aux_responder(responses: list[str]) -> Any:
-    state = {"i": 0}
-
-    async def _aux(system: str, user: str, model: str) -> str:
-        del system, user, model
-        i = state["i"]
-        if i >= len(responses):
-            raise AssertionError("stub aux LLM ran out of responses")
-        state["i"] = i + 1
-        return responses[i]
-
-    return _aux
 
 
 def _bootstrap_workspace(tmp_path: Path) -> tuple[Path, str]:
@@ -196,35 +182,6 @@ def _install_telemetry_stubs(
     monkeypatch.setitem(sys.modules, "zicato.telemetry.sink", sink_mod)
     monkeypatch.setitem(sys.modules, "zicato.telemetry.reducer", reducer_mod)
     monkeypatch.setitem(sys.modules, "zicato.telemetry.meta_loop", meta_loop_mod)
-
-
-def _valid_proposer_response() -> str:
-    return json.dumps(
-        {
-            "hypothesis": {
-                "core_idea": "swap the greeting string",
-                "modulating": ["greeting"],
-                "why": "Baseline drift baseline run.",
-                "expected_drift_movements": [
-                    {
-                        "kind": "off_topic",
-                        "direction": "decrease",
-                        "magnitude": "small",
-                    }
-                ],
-                "expected_pass_rate_delta": "+0.0 to +0.1",
-                "risks": "harmless",
-            },
-            "patches": [
-                {
-                    "mutation_id": "greeting",
-                    "op": "replace",
-                    "new_content": '"world"',
-                    "rationale": "different greeting word",
-                }
-            ],
-        }
-    )
 
 
 def test_evolve_n_rounds_writes_heartbeat_and_releases_lock(

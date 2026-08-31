@@ -33,7 +33,7 @@ from pathlib import Path
 
 import pytest
 
-from tests.test_orchestrator import _bootstrap_workspace
+from tests._orchestrator_harness import _bootstrap_workspace
 from zicato.runtime.resume import prepare_resume
 
 _DRIVER = """

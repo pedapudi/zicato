@@ -51,7 +51,7 @@ import pytest
 # ``zicato_examples`` is resolved through the installed examples package so
 # the test is independent of where the examples distribution lives on disk.
 import zicato_examples.target_1_presentation as _t1_pkg
-from tests.test_orchestrator import (
+from tests._orchestrator_harness import (
     _harness_call_llm,
     _install_stub_adapter_factory,
     _install_telemetry_stubs,

@@ -41,8 +41,7 @@ from typing import Any
 
 import pytest
 
-from tests.test_evolve_preflight_gate import _prepare, _set_preflight_gate
-from tests.test_orchestrator import (
+from tests._orchestrator_harness import (
     _bootstrap_workspace,
     _harness_call_llm,
     _install_stub_adapter_factory,
@@ -50,6 +49,7 @@ from tests.test_orchestrator import (
     _make_aux_responder,
     _valid_proposer_response,
 )
+from tests.test_evolve_preflight_gate import _prepare, _set_preflight_gate
 from zicato.epoch.preflight import (
     VERDICT_INERT,
     VERDICT_REFUSE,
