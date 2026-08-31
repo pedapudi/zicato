@@ -7,16 +7,14 @@ appends what arrived instead of re-reading the file.
 
 from __future__ import annotations
 
-import datetime as _dt
-import json
 from pathlib import Path
 from typing import Any
 
 from zicato.query.paths import (
     WorkspacePaths,
     _read_json_value,
-    to_snake,
 )
+from zicato.telemetry.event_log import EventRecord, read_event_log
 from zicato.workspace import is_events_file
 
 # ---------------------------------------------------------------------------
@@ -38,113 +36,41 @@ RUN_LOG_DEFAULT_LIMIT = 40
 RUN_LOG_MAX_LIMIT = 500
 
 
-# Envelope keys that are *not* the payload kind in a goldfive event.
-_ENVELOPE_KEYS = frozenset(
-    {
-        "emittedAt",
-        "emitted_at",
-        "eventId",
-        "event_id",
-        "runId",
-        "run_id",
-        "sessionId",
-        "session_id",
-        "sequence",
-        "seq",
-        "kind",
-        "payload",
-    }
-)
+#: What a record's kind reads as when its line carries no payload — an
+#: envelope with nothing under it. The panel still shows the line.
+_UNKNOWN_KIND = "unknown"
 
 
-def _str_either(obj: dict[str, Any], camel: str, snake: str) -> str | None:
-    val = obj.get(camel)
-    if val is None:
-        val = obj.get(snake)
-    return val if isinstance(val, str) else None
-
-
-def _extract_seq(obj: dict[str, Any]) -> int | None:
-    val = obj.get("sequence")
-    if val is None:
-        val = obj.get("seq")
-    if isinstance(val, int):
-        return val
-    if isinstance(val, str):
-        try:
-            return int(val.strip())
-        except ValueError:
-            return None
-    return None
-
-
-def _extract_ts(obj: dict[str, Any]) -> str | None:
-    raw = obj.get("emittedAt")
-    if raw is None:
-        raw = obj.get("emitted_at")
-    if isinstance(raw, str):
-        return raw
-    if isinstance(raw, dict):
-        secs = raw.get("seconds")
-        nanos = raw.get("nanos", 0)
-        if not isinstance(secs, int | float | str):
-            return None
-        if not isinstance(nanos, int | float | str):
-            nanos = 0
-        try:
-            secs_i = int(secs)
-            nanos_i = int(nanos)
-        except (TypeError, ValueError):
-            return None
-        try:
-            dt = _dt.datetime.fromtimestamp(secs_i + nanos_i / 1_000_000_000, _dt.UTC)
-        except (OverflowError, OSError, ValueError):
-            return None
-        return dt.isoformat().replace("+00:00", "Z")
-    return None
-
-
-def _kind_and_payload(obj: dict[str, Any]) -> tuple[str, dict[str, Any] | None]:
-    kind = obj.get("kind")
-    if isinstance(kind, str):
-        payload = obj.get("payload")
-        return to_snake(kind), payload if isinstance(payload, dict) else None
-    for key, val in obj.items():
-        if key in _ENVELOPE_KEYS:
-            continue
-        return to_snake(key), val if isinstance(val, dict) else None
-    return "unknown", None
-
-
-def _summarize(kind: str, payload: dict[str, Any] | None) -> str:
-    if not isinstance(payload, dict):
+def _summarize(kind: str, payload: dict[str, Any]) -> str:
+    if not payload:
         return kind
 
-    def get(camel: str, snake: str) -> str | None:
-        return _str_either(payload, camel, snake)
+    def get(name: str) -> str | None:
+        value = payload.get(name)
+        return value if isinstance(value, str) else None
 
     detail: str | None = None
     if kind == "run_started":
-        detail = get("goalSummary", "goal_summary")
+        detail = get("goal_summary")
     elif kind == "conversation_started":
-        detail = get("conversationId", "conversation_id")
+        detail = get("conversation_id")
     elif kind == "goal_derived":
         goals = payload.get("goals")
         if isinstance(goals, list) and goals and isinstance(goals[0], dict):
             s = goals[0].get("summary")
             detail = s if isinstance(s, str) else None
     elif kind == "drift_detected":
-        agent = get("currentAgentId", "current_agent_id")
-        what = get("detail", "detail")
+        agent = get("current_agent_id")
+        what = get("detail")
         detail = f"{agent}: {what}" if agent and what else (agent or what)
     elif kind == "steering_decision_made":
-        agent = get("agentName", "agent_name")
-        outcome = get("outcome", "outcome")
+        agent = get("agent_name")
+        outcome = get("outcome")
         detail = f"{agent}: {outcome}" if agent and outcome else (agent or outcome)
     elif kind == "reasoning_judge_invoked":
-        detail = get("classification", "classification") or get("reason", "reason")
+        detail = get("classification") or get("reason")
     elif kind == "task_progress":
-        task = get("taskId", "task_id")
+        task = get("task_id")
         frac = payload.get("fraction")
         if task and isinstance(frac, int | float):
             detail = f"{task} ({frac * 100:.0f}%)"
@@ -153,14 +79,14 @@ def _summarize(kind: str, payload: dict[str, Any] | None) -> str:
         elif isinstance(frac, int | float):
             detail = f"{frac * 100:.0f}%"
     elif kind in ("task_started", "task_completed"):
-        detail = get("detail", "detail") or get("summary", "summary") or get("taskId", "task_id")
+        detail = get("detail") or get("summary") or get("task_id")
     elif kind == "task_transitioned":
-        task = get("taskId", "task_id")
-        to = get("toStatus", "to_status")
+        task = get("task_id")
+        to = get("to_status")
         detail = f"{task} -> {to}" if task and to else (task or to)
     elif kind == "delegation_observed":
-        frm = get("fromAgent", "from_agent")
-        to = get("toAgent", "to_agent")
+        frm = get("from_agent")
+        to = get("to_agent")
         detail = f"{frm} -> {to}" if frm and to else None
     elif kind in (
         "agent_invocation_started",
@@ -168,19 +94,15 @@ def _summarize(kind: str, payload: dict[str, Any] | None) -> str:
         "invocation_boundary_entered",
         "invocation_boundary_exited",
     ):
-        detail = get("agentName", "agent_name")
+        detail = get("agent_name")
     elif kind in ("goldfive_llm_call_start", "goldfive_llm_call_end"):
-        detail = get("name", "name")
+        detail = get("name")
     elif kind == "pin_resolved":
-        detail = get("agentName", "agent_name") or get("taskId", "task_id")
+        detail = get("agent_name") or get("task_id")
 
     if not detail:
         detail = (
-            get("agentName", "agent_name")
-            or get("detail", "detail")
-            or get("summary", "summary")
-            or get("reason", "reason")
-            or get("taskId", "task_id")
+            get("agent_name") or get("detail") or get("summary") or get("reason") or get("task_id")
         )
 
     if detail and detail.strip():
@@ -191,33 +113,18 @@ def _summarize(kind: str, payload: dict[str, Any] | None) -> str:
     return kind
 
 
-def _parse_log_line(line: str) -> dict[str, Any] | None:
-    line = line.strip()
-    if not line:
-        return None
-    try:
-        obj = json.loads(line)
-    except json.JSONDecodeError:
-        return None
-    if not isinstance(obj, dict):
-        return None
-    kind, payload = _kind_and_payload(obj)
+def _log_record(record: EventRecord) -> dict[str, Any]:
+    kind = record.case or _UNKNOWN_KIND
     return {
-        "seq": _extract_seq(obj),
+        "seq": record.sequence,
         "kind": kind,
-        "ts": _extract_ts(obj),
-        "summary": _summarize(kind, payload),
+        "ts": record.emitted_at,
+        "summary": _summarize(kind, record.payload),
     }
 
 
 def _tail_events(path: Path, limit: int) -> list[dict[str, Any]]:
-    try:
-        text = path.read_text(encoding="utf-8")
-    except FileNotFoundError:
-        return []
-    except OSError:
-        return []
-    records = [r for r in (_parse_log_line(ln) for ln in text.splitlines()) if r]
+    records = [_log_record(r) for r in read_event_log(path).records]
     if len(records) > limit:
         records = records[len(records) - limit :]
     return records
@@ -273,12 +180,12 @@ def locate_events_file(paths: WorkspacePaths) -> Path | None:
 def _event_cursor(event: dict[str, Any], fallback_index: int) -> int:
     """A monotone cursor for one run-log event.
 
-    Prefers the event's own ``sequence`` / ``seq``; an event with no
-    sequence falls back to its line index so the run-log tail can still
-    advance append-only against a producer that omits sequence numbers.
+    Prefers the event's own sequence number; an event with none falls back
+    to its line index so the run-log tail can still advance append-only
+    against a producer that omits sequence numbers.
     """
-    seq = _extract_seq(event)
-    return seq if seq is not None else fallback_index
+    seq = event.get("seq")
+    return seq if isinstance(seq, int) else fallback_index
 
 
 def build_run_log(paths: WorkspacePaths, limit: int, after: int | None = None) -> dict[str, Any]:

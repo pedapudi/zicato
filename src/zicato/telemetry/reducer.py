@@ -12,13 +12,14 @@ Two reading modes are supported:
    :func:`goldfive.sinks.persistence.replay_from_jsonl` which returns
    typed proto messages. Reading these uses the proto reflection API,
    so new fields on existing events are tolerated without code change.
-2. **Fallback JSON mode** — when goldfive is not importable (e.g.
-   running the reducer over a fixture in a stripped-down test
-   environment), the reducer reads the JSONL lines as plain JSON dicts
-   produced by ``MessageToJson(sort_keys=True)``. The shape of those
-   dicts is the proto's wire form: ``{"payload_key": {...}, "runId":
-   "...", "sequence": N}`` etc. We walk the same payload keys either
-   way.
+2. **Direct mode** — when goldfive is not importable, or its strict
+   parser refuses the file, the reducer reads the JSONL itself.
+
+Either way the lines become records through
+:mod:`zicato.telemetry.event_log`, so the payload case and its field
+names are spelled the one way the dispatch below keys on, and a file in
+the camelCase wire form reduces to the same numbers as the same run in
+the snake_case one.
 
 The reducer is a pure function: same JSONL + same inputs → same
 :class:`LossProfile`. It does no I/O beyond reading the JSONL and (via
@@ -82,6 +83,7 @@ from zicato.telemetry.dialects import (
     reduce_adk_events,
     reduce_transcript,
 )
+from zicato.telemetry.event_log import EventRecord, parse_event, read_event_log
 
 log = logging.getLogger(__name__)
 
@@ -157,138 +159,42 @@ _normalize_drift_kind_str = normalize_wire_drift_kind
 _normalize_severity_str = normalize_wire_severity
 
 
-def _load_events_as_dicts(events_jsonl_path: Path) -> list[dict[str, Any]]:
-    """Read an events JSONL into a list of dicts.
+def _load_events(events_jsonl_path: Path) -> tuple[EventRecord, ...]:
+    """Read an events JSONL into event records.
 
     We prefer goldfive's :func:`replay_from_jsonl` for strict
     proto-message parsing (it gives us typed enum ints and tolerates
-    unknown fields), but fall back to plain JSON line parsing when
-    goldfive is not importable. Either way the rest of this module
-    operates over a uniform ``list[dict]``.
+    unknown fields), and fall back to reading the file directly when
+    goldfive is not importable or its parser refuses the file. Either
+    way the records come out of :mod:`zicato.telemetry.event_log`, so
+    the payload case and its field names are spelled the one way the
+    dispatch below keys on.
 
-    The conversion from proto message → dict uses ``MessageToDict`` so
-    field naming matches the JSON-fallback path. We pass
-    ``preserving_proto_field_name=True`` so snake_case payload keys
-    (``drift_detected`` not ``driftDetected``) survive, and
-    ``use_integers_for_enums=False`` so we get the uppercase enum names
-    that ``_normalize_*`` already handle.
+    The conversion from proto message → dict uses ``MessageToDict`` with
+    ``use_integers_for_enums=False``, so the uppercase enum names that
+    ``_normalize_*`` already handle survive.
     """
-
-    def _plain_json_fallback() -> list[dict[str, Any]]:
-        """Read the JSONL with vanilla :mod:`json`, skipping malformed lines.
-
-        Each readable line is treated as a ``MessageToJson`` dict already
-        (the JSON form goldfive's persistence sink writes). Lines whose
-        payload mixes the two serialisation conventions goldfive emits
-        (camelCase ``"emittedAt": "ISO string"`` for some events,
-        snake_case ``"emitted_at": {seconds, nanos}`` for others) still
-        survive — the reducer's downstream consumers only inspect
-        payload keys rather than the envelope timestamps, so we tolerate either
-        shape rather than aborting the whole replay on a strict-parse
-        failure.
-        """
-
-        out: list[dict[str, Any]] = []
-        with open(events_jsonl_path, encoding="utf-8") as f:
-            for line in f:
-                line = line.strip()
-                if not line:
-                    continue
-                try:
-                    out.append(json.loads(line))
-                except json.JSONDecodeError:
-                    continue
-        return out
-
     try:
         from goldfive.sinks.persistence import replay_from_jsonl
         from google.protobuf.json_format import MessageToDict
     except ModuleNotFoundError:
-        return _plain_json_fallback()
+        return read_event_log(events_jsonl_path).records
 
     try:
         events = replay_from_jsonl(events_jsonl_path)
     except Exception:  # noqa: BLE001 — goldfive's strict parser is brittle
-        # Strict proto-parse failed (typically because goldfive's sink
+        # Strict proto-parse failed, typically because goldfive's sink
         # emitted a mix of camelCase and snake_case event shapes within
-        # one JSONL file). Fall back to plain JSON so the reducer still
+        # one JSONL file. Read the file directly so the reducer still
         # produces a loss profile.
-        return _plain_json_fallback()
+        return read_event_log(events_jsonl_path).records
 
-    out: list[dict[str, Any]] = []
-    for evt in events:
-        # MessageToDict renamed ``including_default_value_fields`` to
-        # ``always_print_fields_with_no_presence`` in newer protobuf
-        # releases. We default the value to False either way, which is
-        # the historical behaviour, so just leaving the kwarg out is
-        # the version-portable choice.
-        d = MessageToDict(
-            evt,
-            preserving_proto_field_name=True,
-            use_integers_for_enums=False,
-        )
-        out.append(d)
-    return out
-
-
-def _camel_to_snake(name: str) -> str:
-    """Convert a camelCase / PascalCase identifier to ``snake_case``.
-
-    Goldfive serialises its event payloads two different ways depending
-    on which reader path the reducer took (see :func:`_load_events_as_dicts`):
-
-    * The strict proto-replay path runs ``MessageToDict`` with
-      ``preserving_proto_field_name=True``, yielding snake_case keys
-      (``drift_detected``).
-    * The plain-JSON fallback path reads the JSONL exactly as goldfive's
-      persistence sink wrote it via ``MessageToJson``, which renders
-      proto field names in **camelCase** (``driftDetected``).
-
-    The reducer's event dispatch (:func:`reduce_loss`) keys on
-    snake_case literals, so the fallback path must be normalised or
-    every drift / judgement / plan-revision event is silently dropped.
-    This helper inserts an underscore before each interior uppercase
-    letter and lowercases the result; an already-snake_case string
-    passes through unchanged.
-    """
-    return re.sub(r"(?<!^)(?<!_)([A-Z])", r"_\1", name).lower()
-
-
-def _payload(event: dict[str, Any]) -> tuple[str | None, dict[str, Any]]:
-    """Return ``(payload_key, payload_dict)`` for one event dict.
-
-    Goldfive's ``Event`` proto wraps its payload in a oneof. ``MessageToJson``
-    serialises that as exactly one of the payload keys at the top level
-    of the event dict. We scan the known payload keys, ignoring envelope
-    keys (``event_id``, ``run_id``, ``sequence``, ``emitted_at``,
-    ``session_id``).
-
-    The returned payload key is always normalised to ``snake_case`` via
-    :func:`_camel_to_snake`. Goldfive's persistence sink writes payload
-    keys in camelCase (``driftDetected``) when the reducer falls back to
-    plain-JSON reading; the strict proto-replay path already yields
-    snake_case. Normalising here means :func:`reduce_loss` can dispatch
-    on a single canonical (snake_case) key set regardless of which
-    reader path produced the event dict.
-    """
-    envelope = {
-        "event_id",
-        "run_id",
-        "sequence",
-        "emitted_at",
-        "session_id",
-        # camelCase envelope keys — goldfive's MessageToJson wire form.
-        "eventId",
-        "runId",
-        "sessionId",
-        "emittedAt",
-    }
-    for k, v in event.items():
-        if k in envelope:
-            continue
-        if isinstance(v, dict):
-            return _camel_to_snake(k), v
-    return None, {}
+    # MessageToDict renamed ``including_default_value_fields`` to
+    # ``always_print_fields_with_no_presence`` in newer protobuf releases.
+    # We default the value to False either way, which is the historical
+    # behaviour, so just leaving the kwarg out is the version-portable
+    # choice.
+    return tuple(parse_event(MessageToDict(evt, use_integers_for_enums=False)) for evt in events)
 
 
 # ---------------------------------------------------------------------------
@@ -677,21 +583,17 @@ def _judgement_judge_name(payload: dict[str, Any]) -> str | None:
     whose ``judge_name`` happens to be empty" (the latter still pairs,
     just at the default weight).
 
-    Both snake_case (``verdict_kind``, ``judge_name``) and camelCase
-    (``verdictKind``, ``judgeName``) keys are accepted. The proto-replay
-    path normalises to snake_case via ``MessageToDict``; the plain-JSON
-    fallback retains the camelCase wire form that goldfive's persistence
-    sink wrote. Checking both forms here mirrors the dual-key reads
-    already present in the :func:`reduce_loss` envelope loop.
+    Field names arrive in one spelling whichever wire shape the line used,
+    because the reader normalises them before the reducer sees them.
     """
-    verdict_kind = str(payload.get("verdict_kind", "") or payload.get("verdictKind", "") or "")
+    verdict_kind = str(payload.get("verdict_kind", "") or "")
     if verdict_kind != "drift":
         return None
-    return str(payload.get("judge_name", "") or payload.get("judgeName", "") or "")
+    return str(payload.get("judge_name", "") or "")
 
 
 def _agent_and_user_turns_from_events(
-    events: list[dict[str, Any]],
+    events: tuple[EventRecord, ...],
 ) -> tuple[list[str], list[str]]:
     """Best-effort transcript reconstruction from goldfive events.
 
@@ -722,9 +624,7 @@ def _agent_and_user_turns_from_events(
     agent_turns: list[str] = []
     user_turns: list[str] = []
     for evt in events:
-        key, payload = _payload(evt)
-        if key is None:
-            continue
+        key, payload = evt.case, evt.payload
         if key == "agent_invocation_completed":
             s = payload.get("summary", "")
             if s:
@@ -758,9 +658,9 @@ def _goldfive_signals(events_jsonl_path: Path, entry: BoardEntry) -> DialectSign
     The transcript reconstruction is computed unconditionally here, and the
     result is used only for non-``single_turn`` entries.
     """
-    events: list[dict[str, Any]] = []
+    events: tuple[EventRecord, ...] = ()
     if events_jsonl_path.exists():
-        events = _load_events_as_dicts(events_jsonl_path)
+        events = _load_events(events_jsonl_path)
 
     drift_bucket: dict[tuple[str, str], int] = {}
     plan_revisions = 0
@@ -780,12 +680,10 @@ def _goldfive_signals(events_jsonl_path: Path, entry: BoardEntry) -> DialectSign
     pending_judge_name: str | None = None
     for evt in events:
         if not run_id:
-            run_id = str(evt.get("run_id", "") or evt.get("runId", "") or "")
+            run_id = evt.run_id
         if not adk_session_id:
-            adk_session_id = str(evt.get("session_id", "") or evt.get("sessionId", "") or "")
-        key, payload = _payload(evt)
-        if key is None:
-            continue
+            adk_session_id = evt.session_id
+        key, payload = evt.case, evt.payload
         if key == "judgement_emitted":
             jn = _judgement_judge_name(payload)
             if jn is not None:

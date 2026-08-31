@@ -14,13 +14,11 @@ Five event types matter for decision-telemetry analysis:
 * ``SteeringDecisionMade`` (tag 39) — per-detector verdict
   (``detector_name`` / ``outcome``).
 
-The aggregator is JSONL-only — it reads the files goldfive's persistence
-sink wrote and does not require the goldfive proto stubs to be
-importable. The reducer's
-:func:`zicato.telemetry.reducer._load_events_as_dicts` already proves
-this shape works; the analyzer follows the same plain-JSON-fallback
-discipline so it keeps working in environments where the proto stubs
-are absent or behind upstream's schema.
+Reading goes through :mod:`zicato.telemetry.event_log`, which needs no
+goldfive proto stubs, so the aggregator keeps working in environments
+where they are absent or behind upstream's schema. It also means an
+event's payload case and field names are spelled here exactly as they
+are in the reducer and the dashboard.
 
 Tolerant on every axis:
 
@@ -28,32 +26,20 @@ Tolerant on every axis:
 * File with no decision-telemetry events (older goldfive) → contributes
   zero counts.
 * Malformed JSON lines → skipped silently.
-* Unknown payload keys → ignored.
+* Unknown payload cases → ignored.
 """
 
 from __future__ import annotations
 
-import json
-import re
-from collections.abc import Iterable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-# goldfive's ``JSONLPersistenceSink.emit`` serializes each event with
-# ``MessageToJson(event, sort_keys=True, indent=None)`` — WITHOUT
-# ``preserving_proto_field_name=True`` — so the on-disk JSONL is
-# *camelCase* (``steeringDecisionMade``, ``detectorName``, ``fromLevel``,
-# ``dispatchOrder``, ``budgetRemaining``). The analyzer keys on
-# snake_case below and normalizes every event/payload dict's keys to
-# snake_case on read (see :func:`_snake_keys`), so the matching works on
-# the real on-disk shape AND on a snake_case producer (the reducer's
-# proto-reparse path, which uses ``preserving_proto_field_name=True``).
-# Normalizing keeps the analyzer proto-stub-free — it never imports the
-# goldfive proto module.
-#
-# The five ``Event.payload`` oneof field names the analyzer cares about,
-# in snake_case (the post-normalization form):
+from zicato.telemetry.event_log import read_event_log
+
+# The five ``Event.payload`` oneof cases the analyzer counts. Spelled
+# snake_case, which is what the reader hands back whichever spelling the
+# file on disk used.
 _LADDER_KEY = "ladder_transition_decided"
 _DISPATCH_KEY = "detector_dispatch_ordered"
 _POLICY_KEY = "policy_applied"
@@ -116,77 +102,6 @@ class DecisionEventSummary:
     retry_attempts: dict[str, list[int]] = field(default_factory=dict)
     steering_decisions: dict[str, dict[str, int]] = field(default_factory=dict)
     total_events_seen: int = 0
-
-
-_CAMEL_BOUNDARY = re.compile(r"(?<!^)(?=[A-Z])")
-
-
-def _to_snake(name: str) -> str:
-    """Normalize a JSON key to snake_case.
-
-    ``camelCase`` / ``PascalCase`` -> ``snake_case``; an already
-    snake_case key passes through unchanged. ``steeringDecisionMade`` ->
-    ``steering_decision_made``; ``detectorName`` -> ``detector_name``;
-    ``outcome`` -> ``outcome``.
-    """
-
-    return _CAMEL_BOUNDARY.sub("_", name).lower()
-
-
-def _snake_keys(d: dict[str, Any]) -> dict[str, Any]:
-    """Return a shallow copy of ``d`` with top-level keys snake-cased.
-
-    Applied to both the Event envelope (so the payload oneof key matches)
-    and the payload sub-dict (so its field names match). Shallow is
-    sufficient: payload fields are scalars / lists, never nested dicts
-    the analyzer reaches into.
-    """
-
-    return {_to_snake(k): v for k, v in d.items()}
-
-
-def _iter_json_lines(path: Path) -> Iterable[dict[str, Any]]:
-    """Yield parsed JSON objects from ``path``, one per line, skipping junk.
-
-    Mirrors the reducer's plain-JSON fallback: malformed lines are
-    silently skipped so a single bad line cannot wipe out an entire
-    file's signal. Non-dict top-level values (a stray bare number, a
-    list) are also skipped — the analyzer only cares about goldfive
-    Event-dict shapes. Top-level keys are normalized to snake_case so
-    the camelCase shape goldfive's persistence sink writes is matched.
-    """
-
-    try:
-        with open(path, encoding="utf-8") as f:
-            for line in f:
-                line = line.strip()
-                if not line:
-                    continue
-                try:
-                    obj = json.loads(line)
-                except json.JSONDecodeError:
-                    continue
-                if isinstance(obj, dict):
-                    yield _snake_keys(obj)
-    except OSError:
-        # Missing / unreadable files contribute zero counts. The caller
-        # is the analyzer entry point, which already accepts the
-        # "no telemetry yet" path; we mirror that here.
-        return
-
-
-def _payload_for(event: dict[str, Any], key: str) -> dict[str, Any] | None:
-    """Return the payload sub-dict under ``key`` if present and a dict.
-
-    The payload's own field names are snake-cased too (goldfive writes
-    them camelCase: ``fromLevel``, ``detectorName``, ``dispatchOrder``,
-    ``budgetRemaining``), so the absorbers' snake_case lookups match.
-    """
-
-    raw = event.get(key)
-    if isinstance(raw, dict):
-        return _snake_keys(raw)
-    return None
 
 
 def _absorb_ladder(payload: dict[str, Any], summary_acc: _Accumulator) -> None:
@@ -296,19 +211,12 @@ def aggregate_decision_events(events_jsonl_paths: list[Path]) -> DecisionEventSu
 
     acc = _Accumulator()
     for path in events_jsonl_paths:
-        for event in _iter_json_lines(path):
-            for key, absorber in _ABSORBERS.items():
-                payload = _payload_for(event, key)
-                if payload is None:
-                    continue
-                absorber(payload, acc)
-                acc.total_events_seen += 1
-                # An Event proto's payload is a oneof — at most one of
-                # the five keys can be set per envelope. We can break
-                # as soon as one absorber fired so two absorbers do not
-                # double-count a malformed event that happens to carry
-                # two payload keys at once.
-                break
+        for event in read_event_log(path).records:
+            absorber = _ABSORBERS.get(event.case)
+            if absorber is None:
+                continue
+            absorber(event.payload, acc)
+            acc.total_events_seen += 1
 
     return DecisionEventSummary(
         ladder_transitions=dict(acc.ladder_transitions),

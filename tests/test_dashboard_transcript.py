@@ -703,12 +703,11 @@ def test_proto_and_rfc3339_timestamps_both_parsed(tmp_path: Path) -> None:
     ]
     t = reconstruct_transcript(_write(tmp_path, lines))
 
+    # A string on the line passes through as written; a proto timestamp
+    # renders through the one reader, in the fixed-width fractional form the
+    # run-log tail already served.
     assert t.turns[0].ts == "2026-05-16T04:38:56.123456Z"
-    proto_turn = t.turns[1]
-    assert proto_turn.ts is not None
-    assert proto_turn.ts.startswith("2026-05-16T04:38:56")
-    assert proto_turn.ts.endswith("Z")
-    assert ".5" in proto_turn.ts  # 500_000_000 nanos -> .5
+    assert t.turns[1].ts == "2026-05-16T04:38:56.500000Z"
 
 
 def test_truncated_final_line_tolerated(tmp_path: Path) -> None:

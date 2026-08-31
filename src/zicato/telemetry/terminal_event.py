@@ -40,6 +40,8 @@ import logging
 from pathlib import Path
 from typing import Any
 
+from zicato.telemetry.event_log import read_event_log
+
 log = logging.getLogger("zicato.telemetry.terminal_event")
 
 #: Reason string stamped onto the synthesised terminal frame when the
@@ -49,11 +51,11 @@ log = logging.getLogger("zicato.telemetry.terminal_event")
 WALL_CLOCK_REASON = "wall_clock_budget_exceeded"
 
 
-#: Terminal payload keys (camelCase as goldfive's proto-to-JSON renders
-#: them; the dashboard reconstructor accepts both styles, but we always
-#: write the proto-canonical spelling so the JSONL stays uniform).
-_TERMINAL_PAYLOAD_KEYS = ("runCompleted", "runAborted", "conversationEnded")
-_TERMINAL_PAYLOAD_KEYS_SNAKE = ("run_completed", "run_aborted", "conversation_ended")
+#: The payload cases that end a run. Spelled snake_case, which is what the
+#: reader hands back whichever spelling the file on disk used; the frame
+#: this module appends is written in the proto-canonical camelCase so the
+#: JSONL stays uniform.
+_TERMINAL_CASES = frozenset({"run_completed", "run_aborted", "conversation_ended"})
 
 
 class SequenceTrackingSink:
@@ -115,28 +117,8 @@ class SequenceTrackingSink:
         await self._inner.close()
 
 
-def _looks_terminal(line: str) -> bool:
-    """Return True iff ``line`` is a JSON object with a terminal payload key."""
-    line = line.strip()
-    if not line:
-        return False
-    try:
-        obj = json.loads(line)
-    except json.JSONDecodeError:
-        return False
-    if not isinstance(obj, dict):
-        return False
-    for key in _TERMINAL_PAYLOAD_KEYS:
-        if key in obj:
-            return True
-    for key in _TERMINAL_PAYLOAD_KEYS_SNAKE:
-        if key in obj:
-            return True
-    return False
-
-
 def _file_already_has_terminal(events_path: Path) -> bool:
-    """Cheap check: walk the file tail for an existing terminal frame.
+    """Cheap check: walk the file for an existing terminal frame.
 
     The file is small (one run, JSONL), so a full-file scan is fine. We
     do not assume the terminal is on the *last* line — a wedged emitter
@@ -144,51 +126,22 @@ def _file_already_has_terminal(events_path: Path) -> bool:
     """
     if not events_path.exists():
         return False
-    try:
-        with open(events_path, encoding="utf-8") as f:
-            for line in f:
-                if _looks_terminal(line):
-                    return True
-    except OSError as exc:
-        log.debug("ensure_run_aborted_event: could not read %s: %s", events_path, exc)
-    return False
+    return any(r.case in _TERMINAL_CASES for r in read_event_log(events_path).records)
 
 
 def _highest_seen(events_path: Path) -> tuple[str, int]:
-    """Walk ``events.jsonl`` for the last ``run_id`` and the max ``sequence``.
+    """Walk ``events.jsonl`` for the last run id and the highest sequence.
 
-    Returns ``("", -1)`` when the file is missing or unreadable. The
+    Returns ``("", -1)`` when the file is missing or carries neither. The
     caller folds these into the synthesised terminal frame.
     """
     last_run_id = ""
     max_seq = -1
-    if not events_path.exists():
-        return last_run_id, max_seq
-    try:
-        with open(events_path, encoding="utf-8") as f:
-            for line in f:
-                line = line.strip()
-                if not line:
-                    continue
-                try:
-                    obj = json.loads(line)
-                except json.JSONDecodeError:
-                    continue
-                if not isinstance(obj, dict):
-                    continue
-                rid = obj.get("runId") or obj.get("run_id")
-                if isinstance(rid, str) and rid:
-                    last_run_id = rid
-                raw_seq = obj.get("sequence")
-                if raw_seq is not None:
-                    try:
-                        seq = int(raw_seq)
-                    except (TypeError, ValueError):
-                        continue
-                    if seq > max_seq:
-                        max_seq = seq
-    except OSError as exc:
-        log.debug("ensure_run_aborted_event: could not read %s: %s", events_path, exc)
+    for record in read_event_log(events_path).records:
+        if record.run_id:
+            last_run_id = record.run_id
+        if record.sequence is not None and record.sequence > max_seq:
+            max_seq = record.sequence
     return last_run_id, max_seq
 
 

@@ -14,63 +14,25 @@ JSONL event stream and return an
   Pass iff zero drift events with severity in {warning, critical}
   appear. INFO drift is tolerated.
 
-JSONL parsing is intentionally schema-light. Goldfive writes its
-events through ``google.protobuf.json_format.MessageToJson`` which
-produces camelCase keys like ``driftDetected`` with nested ``kind``
-and ``severity`` enum-string fields (e.g. ``"DRIFT_OFF_TOPIC"`` /
-``"DRIFT_SEVERITY_WARNING"``). We accept both that canonical form and
-a snake_case fallback (``drift_detected``, lower-case kind strings) so
-zicato-internal tests can hand-write fixtures without invoking
-protobuf machinery.
+Both matchers read the file through
+:mod:`zicato.telemetry.event_log`, so either wire shape of a drift event
+resolves to the same payload case. Field VALUES are still normalised
+here, because a drift kind and a severity reach disk as proto enum names
+(``"DRIFT_OFF_TOPIC"`` / ``"DRIFT_SEVERITY_WARNING"``) or as the bare
+lowercase strings a hand-written fixture uses.
 """
 
 from __future__ import annotations
 
-import json
-from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
 
 from zicato.core.types import ExpectationKind, ExpectationResult, RuntimeConfig
+from zicato.telemetry.event_log import read_event_log
 
 # Severities the matchers treat as "this counts" — warning and critical.
 # INFO is filtered out everywhere because it is observational by design.
 _SCORING_SEVERITIES: frozenset[str] = frozenset({"warning", "critical"})
-
-
-def _iter_jsonl_records(path: Path) -> Iterable[dict[str, Any]]:
-    """Yield dict records from a JSONL file, skipping blanks and bad lines.
-
-    The replay path is forgiving: a malformed line is
-    skipped rather than aborting the replay because an aborted replay
-    biases the expectation result (a critical drift on the last line
-    could be silently dropped if the line before it was malformed).
-    """
-    if not path.exists():
-        return
-    with open(path, encoding="utf-8") as handle:
-        for line in handle:
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                record = json.loads(line)
-            except json.JSONDecodeError:
-                continue
-            if isinstance(record, dict):
-                yield record
-
-
-def _extract_drift_payload(record: dict[str, Any]) -> dict[str, Any] | None:
-    """Return the drift-detected payload dict, or ``None`` if this is not a drift event.
-
-    Handles both the protobuf-JSON form (``"driftDetected": {...}``)
-    and the zicato-internal snake_case form (``"drift_detected": {...}``).
-    """
-    payload = record.get("driftDetected") or record.get("drift_detected")
-    if isinstance(payload, dict):
-        return payload
-    return None
 
 
 def _canonical_kind(value: Any) -> str:
@@ -130,12 +92,11 @@ def _drift_observations(
     caller's filtering logic owns the policy of what counts.
     """
     observations: list[tuple[str, str]] = []
-    for record in _iter_jsonl_records(events_jsonl_path):
-        payload = _extract_drift_payload(record)
-        if payload is None:
+    for record in read_event_log(events_jsonl_path).records:
+        if record.case != "drift_detected":
             continue
-        kind = _canonical_kind(payload.get("kind"))
-        severity = _canonical_severity(payload.get("severity"))
+        kind = _canonical_kind(record.payload.get("kind"))
+        severity = _canonical_severity(record.payload.get("severity"))
         observations.append((kind, severity))
     return observations
 

@@ -21,6 +21,20 @@ LEDGER_PATH = "docs/design/LINE-BUDGET.md"
 LEDGER = ROOT / LEDGER_PATH
 LEDGER_HEADING = "## Deliberate increases"
 MEASUREMENTS = ("total", "production", "production_logic")
+# The summary table's row labels, in the order the table lists them, against the
+# measurement each names in the config.
+SUMMARY_LABELS = (
+    ("Total", "total"),
+    ("Production", "production"),
+    ("Production logic", "production_logic"),
+)
+# A summary row: the label, the baseline, the enforced limit, and their signed
+# difference.
+SUMMARY_ROW = re.compile(
+    r"^\| (?P<label>Total|Production|Production logic) \| (?P<baseline>[\d,]+) \| "
+    r"(?P<limit>[\d,]+) \| (?P<difference>[+-][\d,]+) \|$",
+    re.MULTILINE,
+)
 # A ledger row's first cell: the change's name, then the measurement it moves.
 LEDGER_LABEL = re.compile(r"(?P<label>.+) \((?P<measurement>total|production|production logic)\)")
 LOCKFILES = {"Cargo.lock", "uv.lock", "package-lock.json", "npm-shrinkwrap.json"}
@@ -409,6 +423,46 @@ def _dropped_rows(rows: list[LedgerRow], base_text: str) -> list[str]:
     ]
 
 
+def check_summary(text: str, config_path: Path = CONFIG) -> list[str]:
+    """Check that the summary table states the limits the config holds.
+
+    The table above the ledger reports each measurement's baseline, its
+    enforced limit, and the difference between them, and the prose beside it
+    says those limits are the ones ``.line-budget.json`` holds. Nothing made
+    that true: a change that moved the config could leave the table behind,
+    and twice did. Two rules close it, both read against the config:
+
+    1. Each row's enforced limit equals the configured limit.
+    2. Each row's last column equals its limit minus its baseline.
+
+    A missing or unreadable row is an error in itself, so deleting the table
+    is not a way to pass.
+    """
+    errors: list[str] = []
+    config = json.loads(config_path.read_text())
+    found = {match["label"]: match for match in SUMMARY_ROW.finditer(text)}
+    for label, measurement in SUMMARY_LABELS:
+        row = found.get(label)
+        if row is None:
+            errors.append(f"summary table: no readable '{label}' row")
+            continue
+        baseline = _ledger_number(row["baseline"])
+        limit = _ledger_number(row["limit"])
+        difference = int(row["difference"].replace(",", ""))
+        configured = int(config["limits"][measurement])
+        if limit != configured:
+            errors.append(
+                f"summary table, {label}: states the limit {limit:,}, "
+                f"but .line-budget.json holds {configured:,}"
+            )
+        if difference != limit - baseline:
+            errors.append(
+                f"summary table, {label}: the last column states {difference:+,}, "
+                f"but the limit minus the baseline is {limit - baseline:+,}"
+            )
+    return errors
+
+
 def check_ledger(text: str, base_text: str | None = None, config_path: Path = CONFIG) -> list[str]:
     """Check the deliberate-increases ledger's arithmetic, chaining, and completeness.
 
@@ -430,8 +484,12 @@ def check_ledger(text: str, base_text: str | None = None, config_path: Path = CO
        a ``production_logic`` value in the table is measured over a definition
        reaching only Python and JavaScript.
 
-    With ``base_text``, a fifth rule makes the table append-only: every row the
-    base revision records must still be present with the same label,
+    :func:`check_summary` adds two more over the summary table above the
+    ledger, so a change that moves a limit in ``.line-budget.json`` cannot
+    leave that table stating the old one.
+
+    With ``base_text``, a further rule makes the ledger append-only: every row
+    the base revision records must still be present with the same label,
     measurement, and numbers. The reason cell is free to be reworded.
     """
     rows, errors = parse_ledger(text)
@@ -453,6 +511,7 @@ def check_ledger(text: str, base_text: str | None = None, config_path: Path = CO
                 f"{measurement}: the last row reaches {reached[measurement]:,}, "
                 f"below the enforced {ceiling:,}"
             )
+    errors += check_summary(text, config_path)
     return errors + (_dropped_rows(rows, base_text) if base_text is not None else [])
 
 
