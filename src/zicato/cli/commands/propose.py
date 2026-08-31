@@ -48,7 +48,7 @@ from zicato.core.workspace import (
 from zicato.epoch.journal import write_experiment
 from zicato.proposer.brief import load_brief
 from zicato.proposer.proposer import ProposerError, propose_experiment
-from zicato.workspace import generation_round_number, natural_key
+from zicato.workspace import natural_key, next_generation_id
 
 
 def _epoch_brief_path(workspace_root: Path, epoch_id: str) -> Path:
@@ -115,13 +115,6 @@ def _list_generations(workspace_dir: Path, epoch_id: str) -> list[str]:
     if not gen_dir.exists():
         return []
     return sorted((p.name for p in gen_dir.iterdir() if p.is_dir()), key=natural_key)
-
-
-def _next_generation_id(existing: list[str]) -> str:
-    """Choose the id for the new child generation."""
-
-    numbers = [n for n in map(generation_round_number, existing) if n is not None]
-    return f"v{max(numbers, default=-1) + 1}"
 
 
 def _load_mutations(workspace_dir: Path, epoch_id: str, parent_gen: str) -> list[MutationPoint]:
@@ -382,7 +375,7 @@ def propose_cmd(
             f"Epoch {epoch_id!r} has no generations yet; cannot propose a child."
         )
     parent_gen = existing[-1]
-    new_gen = _next_generation_id(existing)
+    new_gen = next_generation_id(existing)
 
     mutations = _load_mutations(workspace_dir, epoch_id, parent_gen)
     if not mutations:

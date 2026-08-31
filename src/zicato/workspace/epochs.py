@@ -16,14 +16,16 @@ The ordering primitives live here as the single definition. Epochs order by
 :func:`epoch_sort_key` over :func:`epoch_created_at` and :func:`natural_key`;
 generations order by :func:`natural_key` alone, which puts ``v2`` before
 ``v10``. :func:`generation_round_number` is the single parser of the round
-number a ``vN`` id encodes, for the callers that need the number rather than
-the order. :mod:`zicato.query.paths` re-exports the epoch primitives, so an
-import from either module resolves to the same function.
+number a ``vN`` id encodes, and :func:`next_generation_id` the single minter
+of the next one, so one rule defines what a generation id is.
+:mod:`zicato.query.paths` re-exports the epoch primitives, so an import from
+either module resolves to the same function.
 """
 
 from __future__ import annotations
 
 import re
+from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -64,6 +66,17 @@ def generation_round_number(generation_id: str) -> int | None:
     """
     suffix = generation_id[1:]
     return int(suffix) if generation_id.startswith("v") and suffix.isdigit() else None
+
+
+def next_generation_id(existing: Iterable[str]) -> str:
+    """The id to mint for the generation that follows ``existing``.
+
+    ``v`` and one past the highest round number present, or ``v0`` when none
+    is. Ids outside the ``vN`` scheme take no part in the count, so a stray
+    directory can never make the minter skip or reuse a round number.
+    """
+    numbers = [n for n in map(generation_round_number, existing) if n is not None]
+    return f"v{max(numbers, default=-1) + 1}"
 
 
 def _read_json_value(path: Path) -> Any | None:

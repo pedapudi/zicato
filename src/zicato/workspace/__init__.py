@@ -40,6 +40,7 @@ from zicato.workspace.epochs import (
     iter_epochs,
     list_epoch_ids,
     natural_key,
+    next_generation_id,
     read_epoch_config,
 )
 from zicato.workspace.layout import WorkspaceLayout, events_replicate_index, is_events_file
@@ -64,6 +65,7 @@ __all__ = [
     "iter_epochs",
     "list_epoch_ids",
     "natural_key",
+    "next_generation_id",
     "read_board",
     "read_epoch_config",
     "read_events_history",

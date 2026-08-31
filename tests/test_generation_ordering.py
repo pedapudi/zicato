@@ -13,7 +13,12 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from zicato.workspace import WorkspaceLayout, generation_round_number, natural_key
+from zicato.workspace import (
+    WorkspaceLayout,
+    generation_round_number,
+    natural_key,
+    next_generation_id,
+)
 
 #: v0 through v10: the smallest epoch whose lexical order is wrong.
 ELEVEN = [f"v{n}" for n in range(11)]
@@ -123,12 +128,29 @@ def test_epoch_health_inputs_read_generations_in_round_number_order(tmp_path: Pa
 
 def test_current_and_latest_generation_are_the_highest_round(tmp_path: Path) -> None:
     """Both resolvers of "where is this epoch now" answer v10, not v9."""
-    from zicato.evolve.generation_phase import current_generation, next_generation_id
+    from zicato.evolve import generation_phase
     from zicato.runtime.resume import _latest_generation_id
 
     workspace = tmp_path / ".zicato"
     _make_generations(workspace, "e0")
 
-    assert current_generation(workspace, "e0") == "v10"
+    assert generation_phase.current_generation(workspace, "e0") == "v10"
     assert _latest_generation_id(workspace, "e0") == "v10"
-    assert next_generation_id(workspace, "e0") == "v11"
+    assert generation_phase.next_generation_id(workspace, "e0") == "v11"
+
+
+def test_both_minters_agree_on_the_next_id(tmp_path: Path) -> None:
+    """The evolve loop mints from the directory, ``zicato propose`` from a
+    listing it already read; one rule answers for both, and a directory
+    outside the ``vN`` scheme changes neither answer."""
+    from zicato.cli.commands.propose import _list_generations
+    from zicato.evolve import generation_phase
+
+    workspace = tmp_path / ".zicato"
+    _make_generations(workspace, "e0", [*ELEVEN, "named"])
+
+    listing = _list_generations(workspace, "e0")
+    assert listing == ["named", *ELEVEN]
+    assert next_generation_id(listing) == generation_phase.next_generation_id(workspace, "e0")
+    assert next_generation_id(listing) == "v11"
+    assert next_generation_id([]) == "v0"
