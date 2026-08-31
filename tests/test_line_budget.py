@@ -182,6 +182,14 @@ def test_check_rejects_one_line_production_logic_overage(tmp_path: Path) -> None
 
 LEDGER_FIXTURE = """# Line budgets
 
+## Measurement contract
+
+| Measurement | Baseline (`f9052dd`) | Enforced limit | Limit minus baseline |
+|---|---:|---:|---:|
+| Total | 100 | 114 | +14 |
+| Production | 50 | 55 | +5 |
+| Production logic | 30 | 34 | +4 |
+
 ## Ratchet policy
 
 Prose the parser walks past.
@@ -250,8 +258,48 @@ def test_a_reworded_reason_keeps_the_row(tmp_path: Path) -> None:
 
 
 def test_a_measurement_whose_last_row_sits_below_its_limit_fails(tmp_path: Path) -> None:
+    """Raising the limit without a row is caught twice over.
+
+    The ledger rule names the unrecorded increase; the summary rule names the
+    table left behind, because raising a limit means the table above the ledger
+    now states a value the config does not hold.
+    """
     config = _config(tmp_path / "raised.json", total=200, production=55, logic=34)
 
     errors = check_ledger(LEDGER_FIXTURE, config_path=config)
 
-    assert errors == ["total: the last row reaches 114, below the enforced 200"]
+    assert errors == [
+        "total: the last row reaches 114, below the enforced 200",
+        "summary table, Total: states the limit 114, but .line-budget.json holds 200",
+    ]
+
+
+def test_a_summary_row_stating_a_limit_the_config_does_not_hold_fails(tmp_path: Path) -> None:
+    """The defect this rule exists for: the config moved, the table did not."""
+    stale = LEDGER_FIXTURE.replace("| Production | 50 | 55 | +5 |", "| Production | 50 | 51 | +1 |")
+
+    errors = check_ledger(stale, config_path=_ledger_config(tmp_path))
+
+    assert errors == [
+        "summary table, Production: states the limit 51, but .line-budget.json holds 55"
+    ]
+
+
+def test_a_summary_row_whose_last_column_misses_the_difference_fails(tmp_path: Path) -> None:
+    broken = LEDGER_FIXTURE.replace("| Total | 100 | 114 | +14 |", "| Total | 100 | 114 | +15 |")
+
+    errors = check_ledger(broken, config_path=_ledger_config(tmp_path))
+
+    assert errors == [
+        "summary table, Total: the last column states +15, "
+        "but the limit minus the baseline is +14"
+    ]
+
+
+def test_deleting_a_summary_row_is_not_a_way_to_pass(tmp_path: Path) -> None:
+    rows = LEDGER_FIXTURE.splitlines(keepends=True)
+    trimmed = "".join(row for row in rows if not row.startswith("| Production logic |"))
+
+    errors = check_ledger(trimmed, config_path=_ledger_config(tmp_path))
+
+    assert errors == ["summary table: no readable 'Production logic' row"]
