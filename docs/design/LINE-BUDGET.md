@@ -41,9 +41,9 @@ above the baseline and negative where it stands below.
 
 | Measurement | Baseline (`f9052dd`) | Enforced limit | Limit minus baseline |
 |---|---:|---:|---:|
-| Total | 408,661 | 454,085 | +45,424 |
-| Production | 197,702 | 204,002 | +6,300 |
-| Production logic | 117,024 | 121,593 | +4,569 |
+| Total | 408,661 | 454,514 | +45,853 |
+| Production | 197,702 | 204,234 | +6,532 |
+| Production logic | 117,024 | 121,717 | +4,693 |
 
 The baseline row is the reference `f9052dd` measured by the classification the
 checker holds, which counts the console's hand-written entry point
@@ -150,3 +150,6 @@ correction exposes and the entry records that reason.
 | Contract knob bounds declared once (production) | 203,864 | +167 | 204,031 | Issue #324: `core/constraints.py`, the declarations on the field definitions, and the params check in `TournamentStructure`, against which the builder's twelve private copies of the same rules are removed. |
 | Contract knob bounds declared once (production logic) | 121,581 | +46 | 121,627 | Issue #324: the net across four files. `core/constraints.py` adds 51 executable lines — the constraint dataclass, its check, the finiteness helpers moved out of `core/scoring_config.py`, and the two lookups the builder calls. `builder/operations.py` loses 18, the twelve inline range and vocabulary checks replaced by one call each. `core/scoring_config.py` nets +6: about twenty range and finiteness statements leave its four `__post_init__` bodies, and the field declarations that now carry a bound wrap onto more lines than they did. `core/tournament.py` adds 7 for the structure-params bound table and the loop that applies it. |
 | Generation ordering by round number (total) | 453,957 | +128 | 454,085 | Issue #324: the eleven-generation regression suite over every generation enumeration — the analysis pass, the two dashboard views, the health command, the per-round health inputs, the two resolvers of an epoch's current generation, and the agreement of the two id minters. Eleven is the smallest count at which lexical and round-number order differ, so no shorter fixture can catch the defect. Executable production lines fall by 34: one round-number parser replaces the ten hand-rolled ones, one ordering key replaces six, and one minter replaces two, ratcheting production logic to 121,593 and production to 204,002. |
+| Recorded effective settings (total) | 454,085 | +429 | 454,514 | Issue #309: the settings record — the source vocabulary, the map of every effective setting to its value and the tier that set it, the additive `settings` field on the heartbeat, and the per-tier, attribution and record-completeness coverage. Before it, a run's effective configuration was reconstructible only by re-deriving the composition by hand, and a concurrency ceiling nobody wrote down was indistinguishable from one an operator chose. |
+| Recorded effective settings (production) | 204,002 | +232 | 204,234 | Issue #309: `runtime/effective_settings.py`, the `settings` field with its serialization and tolerant read, the beater argument that carries it forward, the stamp where the round resolves its runtime configuration, and `resolve_host_worker_permits` in the factory. |
+| Recorded effective settings (production logic) | 121,593 | +124 | 121,717 | Issue #309: the net across six files. `runtime/effective_settings.py` adds 91, of which 33 are the two declared tables — the seventeen runtime knobs the record reports and the sixteen fields it excuses with a reason. `runtime_factory.py` adds 11 for `resolve_host_worker_permits`, which replaces the bool-intent mapping that `make_runtime_config` and the run-start log line each held a copy of; `evolve/loop.py` loses 1 as its copy goes. `runtime/state.py` adds 8, `runtime/heartbeat.py` 5, and `evolve/gauntlet.py` 10 for the best-effort stamp. |

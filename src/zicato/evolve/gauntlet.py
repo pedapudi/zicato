@@ -29,8 +29,10 @@ from zicato.evolve.round_context import (
 from zicato.runtime.control_consumer import (
     claim_skip_round,
 )
+from zicato.runtime.effective_settings import effective_settings
 from zicato.runtime.heartbeat import HeartbeatBeater
 from zicato.runtime.resume import ResumePlan
+from zicato.util.best_effort import best_effort
 
 log = logging.getLogger("zicato.orchestrator")
 
@@ -244,6 +246,21 @@ async def evolve_once(
     # We do nothing more here.
     if config.instance_id != instance_id:
         config = replace(config, instance_id=instance_id)
+    # Record what this round is operating under, and where each setting came
+    # from, onto the heartbeat (issue #309). Stamped here because this is
+    # where the runtime configuration is resolved, so the recorded values are
+    # the ones in force rather than a second reading of the same files; the
+    # beater carries the map forward on every later bump. Best-effort, like
+    # every other observability write on this path: composing a report must
+    # never fail a round.
+    if beater is not None:
+        with best_effort(
+            "effective-settings record",
+            on_error=lambda exc: log.debug("effective-settings record skipped: %s", exc),
+        ):
+            beater.update(
+                settings=effective_settings(config, workspace_config.get("runtime", {}) or {})
+            )
     # Per-round token budget: mint a FRESH ledger for this round and
     # rebind it onto the config, so every runner seam that already receives
     # the config — the full/fast board-unit schedulers, the candidate

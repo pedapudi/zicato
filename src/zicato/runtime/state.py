@@ -25,6 +25,7 @@ implementation — a caller cannot tell the difference.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass, field, replace
 from enum import StrEnum
 from pathlib import Path
@@ -171,6 +172,19 @@ class Heartbeat:
         when no meta-loop session is in scope (JSONL-only / degraded
         install). Optional — old readers ignore the field. See
         ``docs/design/HARMONOGRAF.md`` §2b.
+    settings:
+        Every setting the run is operating under, as ``{name: {"value":
+        ..., "source": ...}}`` keyed by the knob's dotted configuration
+        name, where ``source`` names the tier that set it — the dataclass
+        default, the workspace ``config.json``, a pinned CLI flag, or the
+        host's CPU count. Composed by
+        :func:`zicato.runtime.effective_settings.effective_settings` and
+        stamped when the run resolves its runtime configuration, so a
+        ceiling nobody wrote down is distinguishable from one an operator
+        chose. Empty for a heartbeat written before the map existed, and
+        for any process that never resolves a runtime config. An OPEN map:
+        it grows as knobs are added, and a reader takes the entries it
+        recognises and ignores the rest.
     """
 
     pid: int
@@ -185,6 +199,7 @@ class Heartbeat:
     seq: int = 0
     harmonograf_url: str = ""
     harmonograf_meta_session: str = ""
+    settings: Mapping[str, Mapping[str, Any]] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize to a plain dict for JSON encoding."""
@@ -201,6 +216,7 @@ class Heartbeat:
             "seq": self.seq,
             "harmonograf_url": self.harmonograf_url,
             "harmonograf_meta_session": self.harmonograf_meta_session,
+            "settings": {name: dict(entry) for name, entry in self.settings.items()},
         }
 
     @classmethod
@@ -221,6 +237,13 @@ class Heartbeat:
             seq=int(d.get("seq", 0)),
             harmonograf_url=str(d.get("harmonograf_url", "")),
             harmonograf_meta_session=str(d.get("harmonograf_meta_session", "")),
+            # Absent settings read back as the empty map — the shape a
+            # heartbeat written before the field existed has.
+            settings={
+                str(name): dict(entry)
+                for name, entry in (d.get("settings") or {}).items()
+                if isinstance(entry, Mapping)
+            },
         )
 
 

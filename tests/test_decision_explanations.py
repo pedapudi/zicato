@@ -25,6 +25,7 @@ from zicato.core import ScoringWeights
 from zicato.evolve.decision_support import _field_failure_summary
 from zicato.evolve.loop import log_effective_concurrency
 from zicato.health.diagnostics import detect_placebo_promoted, detect_stalled_loop
+from zicato.runtime.effective_settings import SOURCE_DEFAULT, SOURCE_WORKSPACE
 from zicato.runtime_factory import resolve_parallelism
 from zicato.selection.standings_ext import uncertainty_blocks_promotion
 from zicato.tournament.gate import _namespace_regression_reason, evaluate_gate
@@ -60,7 +61,7 @@ def test_concurrency_report_attributes_a_workspace_value(tmp_path: Path) -> None
         _workspace(tmp_path, {"parallelism": 12, "propose_parallelism": 2})
     )
 
-    assert "parallelism=12 (from workspace runtime.parallelism)" in line
+    assert "parallelism=12 (from workspace config.json)" in line
     assert "propose_parallelism=2" in line
 
 
@@ -71,9 +72,10 @@ def test_concurrency_report_is_emitted_at_info(tmp_path: Path, caplog: Any) -> N
 
 
 def test_resolve_parallelism_reports_the_workspace_tier() -> None:
-    assert resolve_parallelism({"parallelism": 7}) == (7, "workspace runtime.parallelism")
+    """The tier labels come from the shared vocabulary the settings record uses."""
+    assert resolve_parallelism({"parallelism": 7}) == (7, SOURCE_WORKSPACE)
     value, source = resolve_parallelism({})
-    assert (value, source) == (4, "default")
+    assert (value, source) == (4, SOURCE_DEFAULT)
 
 
 # ---------------------------------------------------------------------------

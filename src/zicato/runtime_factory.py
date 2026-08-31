@@ -10,6 +10,12 @@ from zicato.core.types import CallLLM, RuntimeConfig
 from zicato.core.workspace import assert_distinct_callables
 from zicato.import_path import import_dotted_path
 from zicato.models_config import load_models_config, resolve_text_call_llm
+from zicato.runtime.effective_settings import (
+    SOURCE_DEFAULT,
+    SOURCE_HOST_CPU_COUNT,
+    SOURCE_PINNED_FLAG,
+    SOURCE_WORKSPACE,
+)
 
 
 def resolve_parallelism(runtime_dict: Mapping[str, Any]) -> tuple[int, str]:
@@ -30,10 +36,11 @@ def resolve_parallelism(runtime_dict: Mapping[str, Any]) -> tuple[int, str]:
 
     ``RuntimeConfig.__post_init__`` re-validates ``parallelism >= 1``.
 
-    The second element of the pair names the winning tier (``"--parallelism
-    flag"`` / ``"workspace runtime.parallelism"`` / ``"default"``) so the
-    run-start configuration line can tell an operator whether the number
-    they are looking at is one they chose (issue #126): a concurrency
+    The second element of the pair names the winning tier, drawn from the
+    shared vocabulary in :mod:`zicato.runtime.effective_settings`, so the
+    run-start configuration line and the recorded settings map agree on what
+    to call each tier. Naming it is what lets an operator tell whether the
+    number they are looking at is one they chose (issue #126): a concurrency
     ceiling nobody ever wrote down is indistinguishable, from the outside,
     from a machine that is simply slow.
     """
@@ -41,11 +48,37 @@ def resolve_parallelism(runtime_dict: Mapping[str, Any]) -> tuple[int, str]:
 
     pinned = pinned_override("runtime", "parallelism")
     if pinned is not None:
-        return int(pinned), "--parallelism flag"
+        return int(pinned), SOURCE_PINNED_FLAG
     raw = runtime_dict.get("parallelism")
     if raw is not None:
-        return int(raw), "workspace runtime.parallelism"
-    return load_config().runtime.parallelism, "default"
+        return int(raw), SOURCE_WORKSPACE
+    return load_config().runtime.parallelism, SOURCE_DEFAULT
+
+
+def resolve_host_worker_permits(runtime_dict: Mapping[str, Any]) -> tuple[int | None, str]:
+    """Resolve the host-wide worker ceiling and say where it came from.
+
+    Returns the raw ceiling — ``None`` for AUTO (resolved against the host's
+    usable CPU count by
+    :func:`zicato.runtime.spawn_permit.effective_permit_count`), ``0`` for
+    the cap disabled, a positive integer for an explicit ceiling — paired
+    with the tier that set it. AUTO always names the host as its source,
+    whether it was reached by omitting the key or by writing ``true``.
+
+    A JSON ``true`` would otherwise ``int()`` to 1, pinning the whole host to
+    one worker at a time — a silent throughput collapse — and ``false`` to 0.
+    The name reads boolean-ish enough that an operator writing "on" is
+    plausible, and neither number is what they meant, so the intent is
+    mapped: ``true`` is AUTO, ``false`` is off.
+    """
+    raw = runtime_dict.get("host_worker_permits")
+    if isinstance(raw, bool):
+        limit = None if raw else 0
+    else:
+        limit = int(raw) if raw is not None else None
+    if limit is None:
+        return None, SOURCE_HOST_CPU_COUNT
+    return limit, SOURCE_WORKSPACE
 
 
 def make_runtime_config(
@@ -203,16 +236,7 @@ def make_runtime_config(
     # disables it entirely. Unlike ``parallelism`` this bound spans
     # orchestrators, so two concurrent evolve runs cannot over-subscribe the
     # box. A runtime tuning knob only — never contract-hashed.
-    # A JSON ``true`` here would otherwise ``int()`` to 1 — pinning the whole
-    # host to ONE worker at a time, a silent throughput collapse — and ``false``
-    # to 0. The name reads boolean-ish enough that an operator writing "on" is
-    # plausible, and neither number is what they meant, so map the intent:
-    # true ⇒ AUTO, false ⇒ off.
-    host_permits_raw = runtime_dict.get("host_worker_permits")
-    if isinstance(host_permits_raw, bool):
-        host_worker_permits = None if host_permits_raw else 0
-    else:
-        host_worker_permits = int(host_permits_raw) if host_permits_raw is not None else None
+    host_worker_permits, _permits_source = resolve_host_worker_permits(runtime_dict)
 
     # Worker env-scrub: opt-in containment read from the same ``runtime``
     # block. Absent ⇒ off (full env inheritance — the default behavior, byte-for-
@@ -366,4 +390,4 @@ def _import_callable(dotted: str, *, kind: str) -> CallLLM:
     return result  # type: ignore[no-any-return]
 
 
-__all__ = ["make_runtime_config", "resolve_parallelism"]
+__all__ = ["make_runtime_config", "resolve_host_worker_permits", "resolve_parallelism"]
