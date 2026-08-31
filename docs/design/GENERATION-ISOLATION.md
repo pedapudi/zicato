@@ -6,14 +6,15 @@
 > strategy (overlayfs · reflink-CoW · copytree fallback, optionally git-backed).
 > The problem it names is **real and has since been solved** — but by the
 > option this note relegated to an *optional, storage-only* layer (option D,
-> git), not by the kernel/filesystem strategies it recommended. The superseding
-> design is [`STORAGE.md`](STORAGE.md) §7 (the git-backed generation store,
-> now the **default** backend) plus the per-run `checkout_ephemeral` seam it
-> carries. **No overlayfs, reflink, or hardlink layer is planned or will be
-> built.** §0 records what shipped and why; the comparative analysis (from
-> "The materialization strategies" onward) is kept because it is the record of
-> *which alternatives were considered and rejected*, and because two of its
-> own hazards were the ones the shipped design had to design around.
+> git) rather than by the kernel and filesystem strategies it recommended.
+> The superseding design is [`STORAGE.md`](STORAGE.md) §7 — the git-backed
+> generation store, which is the **default** backend — plus the per-run
+> `checkout_ephemeral` seam it carries. **No overlayfs, reflink, or hardlink
+> layer is planned or will be built.** §0 records what shipped and why; the
+> comparative analysis (from "The materialization strategies" onward) is kept
+> because it records which alternatives were considered and rejected, and
+> because the shipped design had to answer two of the hazards this note
+> itself named.
 >
 > Superseding / companion reading: [`STORAGE.md`](STORAGE.md) §7,
 > [`ROBUSTNESS.md`](ROBUSTNESS.md) (subprocess-isolated runs),
@@ -62,23 +63,23 @@ materialised. Both are fixed.
    now *routes* to the store when the store owns the generation, and falls
    back to `copy_checkout_ephemeral` only for a store-unmanaged generation
    (an ad-hoc caller pointing `snapshot_root` at an arbitrary tree). A git
-   run no longer pays a worktree checkout *and* a full copy.
+   run therefore pays a worktree checkout and no copy on top of it.
 
 3. **A third materialization path this note did not anticipate:
    off-namespace scratch derivation.** `GenerationStore.derive_scratch`
    applies a patch set to a parent tree all-or-nothing into a caller-owned
-   temp root, creating **no** commit, tag, branch, or `generations/` entry —
-   so a scratch tree is provably invisible to `list_generations`, the GC, the
-   reindex, the lineage reader, and every dashboard reader. That is what
-   makes the best-of-N slate gatherable: each candidate slot validates into
-   its own disjoint scratch root, and the one `derive_generation` into the
-   canonical `next_id` tree — the shared step that used to block the gather —
-   happens exactly once, for the winner, in
-   `BestOfNProposerAgent._mount_chosen` (`zicato.proposer.best_of_n`, through
-   the round's shared `validate_experiment` hook,
-   `zicato.evolve.round.build_post_apply_validator`). This is "cheap delta per
-   candidate" achieved by *not entering the namespace* rather than by a
-   filesystem trick.
+   temp root. It creates **no** commit, tag, branch, or `generations/` entry,
+   so a scratch tree is invisible to `list_generations`, the garbage
+   collector, the reindex, the lineage reader, and every dashboard reader.
+   That invisibility is what makes the best-of-N slate gatherable. Each
+   candidate slot validates into its own disjoint scratch root.
+   The one `derive_generation` into the canonical `next_id` tree — the shared step
+   that would otherwise serialize the gather — happens once, for the winner,
+   in `BestOfNProposerAgent._mount_chosen` (`zicato.proposer.best_of_n`,
+   through the round's shared `validate_experiment` hook,
+   `zicato.evolve.round.build_post_apply_validator`). Cheap materialization
+   per candidate comes from staying outside the generation namespace rather
+   than from a filesystem mechanism.
 
 **Why the recommended strategies were not built.** Once (1) removed the
 storage cost and (2) removed the redundant per-run copy, an overlayfs or
@@ -115,32 +116,33 @@ Two of the cautions below turned out to be load-bearing:
   benchmarked and **rejected** (serial cost ~1.5–2.5× a worktree add, and the
   Python-side `tarfile` extraction serialises catastrophically under threads —
   16 concurrent: ~163 ms / ~1.36 s versus 14–41 ms for adds). The shipped
-  answer keeps the worktree but **detaches it immediately**: the `.git`
-  pointer file is unlinked and the registration pruned right after the add,
-  leaving a plain throwaway tree with no path back into the private repo and
-  no cleanup path that depends on git state. The `prune → add → detach →
+  answer keeps the worktree but **detaches it immediately**. The `.git`
+  pointer file is unlinked and the registration pruned right after the add.
+  What is left is a plain throwaway tree with no path back into the private
+  repo and no cleanup path that depends on git state. The `prune → add → detach →
   prune` window is serialised per repo by `_worktree_admin_lock`, because
   git's own repo lock covers each *command* and a concurrent prune can
   otherwise collect a half-registered entry (raced in
   `tests/test_git_genstore.py`).
-- The Risks section flagged teardown discipline. That is owned two ways: the
-  `ztw-snap-*` mkdtemp parent placement in the OS temp dir
-  (`EPHEMERAL_SNAPSHOT_PREFIX`) is a *contract on every backend*, matched by
-  the Rust supervisor's crash reaper (`crates/supervisor/src/reap.rs`,
-  `SNAPSHOT_PREFIX` / `reapable_snapshot_root`) — so a crashed run's tree is
-  reaped even if `cleanup()` never runs; and long-lineage disk growth is
-  reclaimed by the snapshot GC this note did not propose at all
+- The Risks section flagged teardown discipline. Two mechanisms own it. The
+  first is placement: every backend must create its ephemeral parent as a
+  `ztw-snap-*` mkdtemp directory in the OS temp dir
+  (`EPHEMERAL_SNAPSHOT_PREFIX`). That is the shape the Rust supervisor's
+  crash reaper matches (`crates/supervisor/src/reap.rs`, `SNAPSHOT_PREFIX` /
+  `reapable_snapshot_root`), so a crashed run's tree is reaped even when
+  `cleanup()` never runs. The second is retention: long-lineage disk growth is
+  reclaimed by the snapshot garbage collector this note did not propose at all
   (`zicato.epoch.gc`, operator surface `zicato epoch gc`,
-  `tests/test_epoch_gc.py`), which prunes settled *rejected* generations'
-  source trees — tags plus worktrees under git, `snapshot/` directories under
-  the directory backend — and never touches a record.
+  `tests/test_epoch_gc.py`). That collector prunes the source trees of settled
+  *rejected* generations — tags plus worktrees under git, `snapshot/`
+  directories under the directory backend — and never touches a record.
 
 **Corollary — one non-goal became a shipped mechanism.** The Non-goals
 section excluded enforcement of *"did the mutation escape its sandbox"* as an
-OS-sandbox concern. It shipped anyway, as auditing rather than confinement:
-the supervisor re-hashes every child snapshot out-of-band
+OS-sandbox concern. It shipped anyway, as auditing rather than confinement.
+The supervisor re-hashes every child snapshot out-of-band
 (`crates/supervisor/src/diff_containment.rs`) and alarms on a write outside
-the registered `mutable_trees`; an opt-in, default-off in-band twin
+the registered `mutable_trees`. An opt-in, default-off in-band twin
 (`ScoringWeights.block_on_containment_violation`, enforced pre-persist in
 `orchestrator._integrity_block_reason`, mirrored in `evolve/gate.py`) flips a
 violating promotion to REJECTED. The note's claim that an overlay `upper`
@@ -149,8 +151,11 @@ exists, works on a plain tree walk, and needs no overlay to be cheap enough.
 
 **Consequence for the backlog.** The tracking issue — #50, "Generation
 isolation + delta materialization (replace per-generation copytree)" — is
-answered by the above and should be **closed as superseded**, not implemented.
-Nothing in the P1–P4 phasing below is scheduled.
+answered by the above and should be **closed as superseded** rather than
+implemented. None of the four phases of unscheduled work at the end of this
+note is scheduled: the materialization seam plus its fallback, the
+copy-on-write fast path, the overlay-filesystem fast path, and git
+object-store backing.
 
 ---
 
@@ -161,12 +166,13 @@ is why the record is kept.*
 
 ## Why this exists
 
-> **Historical premise — no longer the shipped behaviour.** Under the default
+> **Historical premise — the shipped behaviour differs.** Under the default
 > git backend a generation is a commit (blob-deduped, no copy) and a run
 > mounts a `git worktree`, so neither copy described in the next paragraph is
-> paid. It is accurate only for `generation_source_backend: "directory"`, the explicit
-> no-git fallback — and even there the *second* copy is now the backend's own
-> `checkout_ephemeral`, not a transport-layer duplicate of it.
+> paid. The paragraph is accurate only for
+> `generation_source_backend: "directory"`, the explicit no-git fallback, and
+> even there the *second* copy is the backend's own `checkout_ephemeral`
+> rather than a transport-layer duplicate of it.
 
 Every generation in zicato is materialized as a **full directory copy** of the
 target tree — once when the generation snapshot is written by the generation
@@ -177,11 +183,11 @@ the target's harness inside it; results are written next to it.
 That works, but it is the wrong shape for two reasons the operator named
 directly:
 
-1. **It does not cheaply isolate.** We pay a full `copytree` *in order to* keep a
-   generation's writes from touching its parent or siblings. The isolation is a
-   side effect of the copy, not an enforced property — a write to an absolute
-   path still escapes (the scratch-dir scope is advisory), and we pay O(whole
-   tree) for the privilege.
+1. **It does not cheaply isolate.** A full `copytree` is paid in order to keep
+   a generation's writes from touching its parent or siblings. The isolation
+   is a side effect of the copy rather than an enforced property: a write to
+   an absolute path still escapes, because the scratch-dir scope is advisory,
+   and the cost is O(whole tree).
 2. **It does not scale.** Per-generation cost is O(size of the whole target),
    multiplied across challengers × board units × replicates × rounds. For a
    non-trivial target this dominates disk and wall-clock and grows with every
@@ -200,17 +206,18 @@ env-scrub remains the baseline there).
 
 *(As-built status noted per goal; §0 has the detail.)*
 
-1. **Containment (structural, not advisory).** A generation's mutation and its
-   execution writes are confined to *that generation's own layer*. It cannot
-   modify its parent snapshot, a sibling generation, or canonical `.zicato/`
-   state. The parent base is read-only by construction. — **MET, differently:**
-   the read-only base is the immutable *commit*, not a read-only mount; a child
-   derives from the commit and never from a worktree.
+1. **Containment enforced structurally rather than by convention.** A
+   generation's mutation and its execution writes are confined to *that
+   generation's own layer*. It cannot modify its parent snapshot, a sibling
+   generation, or canonical `.zicato/` state. The parent base is read-only by
+   construction. — **MET, by a different mechanism:** the read-only base is
+   the immutable *commit* rather than a read-only mount, and a child derives
+   from the commit and never from a worktree.
 2. **Cheap delta.** Per-generation materialization cost ≈ O(changed files/blocks),
    not O(whole tree) — in both disk and wall-clock. The persisted generation
    artifact is the delta. — **MET for storage** (git blob dedup; the persisted
-   artifact *is* a delta against the parent commit's tree). **Not met, and
-   deliberately not pursued, for the per-run on-disk tree**, which stays a full
+   artifact *is* a delta against the parent commit's tree). **Not met for the
+   per-run on-disk tree, and not pursued there**, which stays a full
    checkout — measured 3–18× cheaper than the copy it replaced, which settled
    the question.
 3. **Graceful fallback.** Degrade to a correct (if slower) path where the host
@@ -222,12 +229,12 @@ env-scrub remains the baseline there).
    *persists* are byte-identical to today's copytree result. Delta is an
    implementation detail of **how** the tree is built, never **what** it contains
    — the contract hash, lineage, promotion semantics, and the parity goldens are
-   untouched. — **MET, and enforced:** the git checkout is detached precisely to
-   give byte parity with the directory backend's view (whose `copytree_ignore`
-   filter skips `.git`); the artifact-exclusion set is shared across backends by
-   `zicato.epoch.snapshot_scope` (`copytree_ignore` for copies, `gitignore_lines`
-   for commits); and both backends are held to one observable contract by
-   `tests/test_genstore_conformance.py`.
+   untouched. — **MET, and enforced.** The git checkout is detached in order to
+   give byte parity with the directory backend's view, whose `copytree_ignore`
+   filter skips `.git`. The artifact-exclusion set is shared across backends by
+   `zicato.epoch.snapshot_scope` — `copytree_ignore` for copies,
+   `gitignore_lines` for commits. Both backends are held to one observable
+   contract by `tests/test_genstore_conformance.py`.
 
 ## Non-goals
 
@@ -314,7 +321,7 @@ Copy the tree replacing file copies with hardlinks; unchanged files share inodes
   target's code runs and writes in. *(2026-07: rejected outright — and there is
   no read-mostly layer that would want it.)*
 
-### D. git content-addressed store + worktree — *storage dedup, not on-disk delta* → BUILT (this is the shipped design)
+### D. git content-addressed store + worktree — *dedup in storage only, with a full on-disk tree* → BUILT (this is the shipped design)
 
 One commit per generation in a content-addressed object store; materialize a run
 via `git worktree add` or, preferably, `git archive <tree> | tar -x` into a clean
@@ -335,12 +342,12 @@ dir.
   execution** layer.
 - **Verdict (2026-07): chosen for BOTH layers, with two corrections to the
   analysis above.** (i) The "cheaper than copytree only on a CoW filesystem"
-  caveat was **wrong** — measured on tmpfs-free local disk (no CoW), `git
-  worktree add --detach` is 3–18× faster than the equivalent `copytree`, and
-  git's repo lock serialises only the ref/administrative step, so 16-way
-  contention costs under 1.5× a serial add. That measurement is what made
-  overlay and reflink unnecessary. (ii) The `git archive` preference was
-  **benchmarked and
+  caveat was **wrong**. Measured on tmpfs-free local disk with no
+  copy-on-write, `git worktree add --detach` is 3–18× faster than the
+  equivalent `copytree`. Git's repo lock serialises only the administrative
+  ref step, so 16-way contention costs under 1.5× a serial add. That
+  measurement is what made overlay and reflink unnecessary. (ii) The `git
+  archive` preference was **benchmarked and
   rejected**; the shipped design gets the same "no `.git`" property by unlinking
   the worktree's `.git` pointer and pruning the registration immediately after
   the add. Both are recorded in `GitGenerationStore.checkout_ephemeral`, which
@@ -351,7 +358,7 @@ dir.
 ### E. full copytree — *the floor (status quo)* → RETAINED as the fallback
 
 Universal, simple, strong isolation, O(whole-tree) cost. Keep as the guaranteed
-fallback when nothing faster is available. *(2026-07: exactly what happened —
+fallback when nothing faster is available. *(2026-07: this is what shipped —
 `copy_checkout_ephemeral` plus `DirectoryGenerationStore`, selected by
 `generation_source_backend: "directory"` or by a store-unmanaged generation.)*
 
@@ -407,7 +414,7 @@ the mandatory one, and the mandatory ones were dropped.*
   `GenerationStore.checkout_ephemeral`.** The stable seam is the store protocol
   itself; `worker_transport._checkout_run_snapshot` delegates to it when the
   store owns the generation and otherwise falls back to
-  `copy_checkout_ephemeral`. The `EphemeralCheckout` triple deliberately carries
+  `copy_checkout_ephemeral`. The `EphemeralCheckout` triple carries
   `scratch_dir` alongside `working_dir` because scratch placement is
   backend-owned: both live under one crash-reapable `ztw-snap-*` parent, so a
   single `cleanup()` (or the supervisor's reaper) removes both.
@@ -454,10 +461,11 @@ never applied; the fourth and fifth were addressed.)*
 - **hardlink in-place-write corruption** — never use C for the execution layer.
   → *C was never built.*
 - **teardown discipline** — leaked mounts/subvols accumulate; the supervisor GC
-  must own this (above). → *Addressed for the shipped shape: prefix-guarded crash
-  reaping (`reap.rs`) plus a `worktree prune` before every add, serialised by
-  `_worktree_admin_lock` so a prune cannot collect a concurrent sibling's
-  half-registered admin entry.*
+  must own this (above). → *Addressed for the shipped shape by two mechanisms:
+  prefix-guarded crash reaping (`reap.rs`), and a `worktree prune` before
+  every add. The prune and the add are serialised by `_worktree_admin_lock`,
+  so a prune cannot collect a concurrent sibling's half-registered admin
+  entry.*
 - **behaviour-preservation** — the materialized tree and the persisted artifact
   must be byte-identical to the copytree result. Gate every step on `parity.sh`
   (the deterministic mock target must produce identical goldens regardless of which
@@ -468,26 +476,30 @@ never applied; the fourth and fifth were addressed.)*
 
 ## Phasing
 
-> **Not scheduled — recorded for completeness.** None of P1–P4 will be built;
-> the corresponding as-built work is noted per phase.
+> **Not scheduled — recorded for completeness.** None of the four steps below
+> will be built; the corresponding as-built work is noted per step. The step
+> labels `P1`–`P4` used here belong to this note alone. The identically
+> spelled `P1`–`P4` in [`MUTATION-SURFACE.md`](MUTATION-SURFACE.md) §6 are the
+> pre-apply validator checks, an unrelated set.
 
-- **P1 — seam + fallback.** Introduce the pluggable materialization seam + host
+- **The materialization seam plus its fallback.** Introduce the pluggable
+  materialization seam + host
   capability detection, with full `copytree` as the only implementation. Pure
-  refactor, behaviour-identical, parity-gated. → *Landed in a different shape:
-  the seam is `GenerationStore.checkout_ephemeral`, the "capability detection" is
-  the explicit `generation_source_backend` knob — no probing of host
-  capabilities or workspace evidence — and the fallback is
+  refactor, behaviour-identical, parity-gated. → *Landed in a different shape.
+  The seam is `GenerationStore.checkout_ephemeral`. What stands in for
+  capability detection is the explicit `generation_source_backend` knob, which
+  probes neither host capabilities nor workspace evidence. The fallback is
   `copy_checkout_ephemeral`.*
-- **P2 — reflink/CoW fast path.** Cheapest to add (no privilege, no mount); detect
-  the FS and use it, else fall back. → *Dropped (strategy B).*
-- **P3 — overlayfs fast path.** Best containment; the privileged mount ties to
+- **The copy-on-write fast path.** Cheapest to add (no privilege, no mount); detect
+  the FS and use it, else fall back. → *Dropped with strategy B.*
+- **The overlay-filesystem fast path.** Best containment; the privileged mount ties to
   supervisor spawn-side ownership (or `fuse-overlayfs` unprivileged). Wire the
   `upper` delta into the persisted artifact and the supervisor diff-containment
-  check. → *Dropped (strategy A).*
-- **P4 — git object-store backing (optional).** Content-addressed dedup +
+  check. → *Dropped with strategy A.*
+- **Git object-store backing, marked optional here.** Content-addressed dedup +
   portability + per-generation commits, under whichever on-disk strategy is active.
-  → *Built, and promoted from "optional P4" to **the whole answer** and the
-  default backend. [`STORAGE.md`](STORAGE.md) §7.*
+  → *Built, and promoted from an optional last step to **the whole answer** and
+  the default backend. [`STORAGE.md`](STORAGE.md) §7.*
 
 ## Cross-references
 

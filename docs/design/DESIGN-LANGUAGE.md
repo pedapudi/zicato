@@ -4,11 +4,11 @@ This is the **canonical, reproducible design-language reference** for zicato.
 Everything here is grounded in the live implementation — concrete token names,
 hex values, font stacks, class names and SVG snippets, each traceable to a
 source file. The goal is that someone could build **any** new zicato surface — a
-new dashboard view, an execution-timeline figure, a CLI TUI skin — purely from
-this document and reproduce the look exactly.
+new dashboard view, an execution-timeline figure, a skin for the terminal user
+interface — purely from this document and reproduce the same look.
 
-The system as shipped lives in **Variant T** (the converged default dashboard,
-"Console IV: dense observatory"). The token sheet is
+The system ships in the Console dashboard, the sole front end. The token sheet
+is
 [`console4.css`](../../src/zicato/dashboard/static/css/variants/T/console4.css);
 the figure language is
 [`svg.js`](../../src/zicato/dashboard/static/js/variants/T/svg.js); the chrome
@@ -17,20 +17,21 @@ document and any source disagree, **the code is authoritative** — re-grep and
 verify before treating a value here as current.
 
 This document is the *language*. [CONSOLE-DESIGN-LANGUAGE.md](CONSOLE-DESIGN-LANGUAGE.md)
-is the dashboard's *specific application* of it (the Console view IA, the
-figure-to-purpose mapping, the live-vs-completed conventions); it links back
-here for the shared tokens, typography and figure grammar.
+is the dashboard's *specific application* of it (the Console's information
+architecture, the figure-to-purpose mapping, the live-vs-completed
+conventions); it links back here for the shared tokens, typography and figure
+grammar.
 
 > **Design-inspiration note.** Citations to public design authorities (Tufte,
-> the Gogh terminal palettes, the chess/tournament metaphor) belong **in the
-> docs** and appear here. They are deliberately **not** cited in source code.
+> the Gogh terminal palettes, the chess/tournament metaphor) appear in the
+> documentation and never in source code.
 
 ---
 
 ## 1. Ethos
 
-zicato's surface is a **dense observatory for a power user** — an instrument,
-not a consumer report. Five sentences:
+zicato's surface is a **dense observatory for a power user** — an instrument
+rather than a consumer report. Five principles:
 
 1. **Tufte data-ink / line-art.** Every data figure carries maximum data per
    stroke and drops decoration — no gridlines for their own sake, no 3-D, no
@@ -38,7 +39,7 @@ not a consumer report. Five sentences:
    (Edward Tufte, *The Visual Display of Quantitative Information*.)
 2. **Monospace-forward.** The default voice is all-monospace — a terminal/console
    aesthetic where data, labels and code read on a fixed advance grid.
-3. **A single green accent on a calm ground.** The brand carries exactly **one**
+3. **A single green accent on a calm ground.** The brand carries **one**
    non-foreground colour, the green plucked-note (`--zicato-accent`); everything
    else is ink on a quiet paper. The good/bad signal colours are earned by data
    direction, never spent as decoration.
@@ -82,8 +83,9 @@ set of semantic roles whose meaning is **fixed across all sixteen themes**:
 **The cardinal rule:** `good` and `bad` are earned by **direction, never by
 identity**. A challenger is not red because it is a challenger; it is red only
 when it regressed or was cut. An unscored / in-flight candidate is *neutral*
-(pending → `--v2-accent`), never `bad` — this is the "Class B" mistake the code
-guards against (`.dn-pill.dn-pending`, `.ezn-edge-neutral` in `console4.css`).
+(pending → `--v2-accent`), never `bad` — an undecided outcome must never
+collapse into a rejection, which is what the code guards against
+(`.dn-pill.dn-pending`, `.ezn-edge-neutral` in `console4.css`).
 
 The single brand accent is a **separate** token from the structural `--v2-accent`:
 
@@ -148,12 +150,14 @@ near-indistinguishable from its pale ink in a 6-swatch strip. The **live**
 `--v2-accent` token is unchanged.
 
 The thirteen Gogh palettes are adapted from the terminal colour schemes at
-gogh-co.github.io/Gogh, mapped onto the role contract by one principled rule:
+gogh-co.github.io/Gogh. One principled rule maps each onto the role contract:
 `paper ← background`, `panel ← background nudged toward the foreground`,
 `ink ← bright-white/host`, `ink-soft ← foreground`, `good ← green`, `bad ← red`,
-`caution ← yellow`, `accent ← cyan` (or the palette's blue where its cyan is a
-low-contrast neutral — Belafonte, Paper). A few accents/cautions were nudged for
-contrast; see the comments in `console4.css` §"Gogh palettes".
+`caution ← yellow`, and `accent ← cyan`. Where a palette's cyan is a
+low-contrast neutral, `accent` takes its blue instead, as in Belafonte and
+Paper. A few accents and cautions sit off
+the source palette for contrast; see the comments in `console4.css`
+§"Gogh palettes".
 
 ### 2.3 Derived colours
 
@@ -168,8 +172,8 @@ component — derive it from a token.
 ### 2.4 Contrast guidance
 
 - Body ink on ground targets WCAG AA (4.5:1); secondary/faint inks step down for
-  hierarchy but stay legible. The Gogh nudges (e.g. Paper keys `ink` off
-  near-black, not its low-contrast palette white) exist precisely to hold this.
+  hierarchy but stay legible. The Gogh adjustments (Paper keys `ink` off
+  near-black rather than its low-contrast palette white) exist to hold this.
 - The good/bad/accent signal must read on *every* ground — verify a new figure in
   both a light theme (`paper`) and a dark one (`monokai`) before shipping.
 - Focus rings are a solid `2px` `--v2-accent` outline with a small offset (§9).
@@ -260,17 +264,17 @@ sizing tuned by the page-scale pill (§4). Representative sizes from `console4.c
 | SVG axis / labels | (mark classes) | 9–11px `var(--v2-mono)` |
 
 Numerics use `font-variant-numeric: tabular-nums` everywhere they appear in a
-column or animate, so digits don't jitter.
+column or animate, so digits do not jitter.
 
 ### 3.5 The dotless-ı wordmark rule
 
 The wordmark is **`zıcato`** — set in `--v2-brand-mono` (a *fixed* mono,
 independent of the user's typeface choice so the mark never reflows) with a
-**dotless ı** (U+0131); the green accent circle **is** the i's dot, tying the
-wordmark back to the plucked note. In the dashboard it is an inline SVG (so the
-dot can be pinned geometrically over the stem and the letters can inherit
-`currentColor` while the dot takes `--zicato-accent`) — see `shell.js`
-`brandWordmark()` and [docs/brand/README.md](../brand/README.md).
+**dotless ı** (U+0131). The green accent circle **is** the i's dot, which ties
+the wordmark back to the plucked note. In the dashboard the wordmark is an
+inline SVG, so the dot can be pinned geometrically over the stem and the
+letters can inherit `currentColor` while the dot takes `--zicato-accent`. See
+`shell.js` `brandWordmark()` and [docs/brand/README.md](../brand/README.md).
 
 ---
 
@@ -278,9 +282,8 @@ dot can be pinned geometrically over the stem and the letters can inherit
 
 ### 4.1 The spacing baseline (cozy — the one permanent rhythm)
 
-The density picker was removed; **cozy** is the single permanent spacing rhythm,
-baked unconditionally onto the root (`console4.css` L489–L502). The page-scale
-pill is the sizing control now.
+**Cozy** is the single permanent spacing rhythm, baked unconditionally onto the
+root (`console4.css` L489–L502). The page-scale pill is the sizing control.
 
 | token | value | role |
 | --- | --- | --- |
@@ -307,8 +310,8 @@ hairline stays a hairline under the page-zoom.
   — fills the available width; only a generous cap guards prose line-length on
   ultra-wide monitors. Bigger diagrams on bigger screens.
 - **Containment guarantee.** No panel ever scrolls horizontally or lets a child
-  escape. Figures are fit-to-width (`width:100%` + a `viewBox`); genuinely-wide
-  tables carry their *own* contained overflow via `.dn-table-scroll`, never the
+  escape. Figures are fit-to-width (`width:100%` + a `viewBox`); a table wider
+  than its pane carries its *own* contained overflow via `.dn-table-scroll`, never the
   panel. (`console4.css` L630–L638, L937–L941.)
 - **Body split.** `.dt-body` is a 3-track grid: `var(--dt-rail) · 0 · minmax(0,1fr)`
   — a sticky tree sidebar, a zero-width draggable resize handle (`.dt-rail-handle`,
@@ -320,7 +323,7 @@ Sticky, blurred, hairline-bottomed (`console4.css` L1274; assembled in
 `shell.js` L509). Left → right:
 
 1. **`.dt-back`** — the `↑ up` control. Navigates *up the selection hierarchy*
-   (candidate → generations → epoch → environment), not browser-back. Disabled
+   (candidate → generations → epoch → environment) rather than browser-back. Disabled
    state `.dt-back-off`.
 2. **`.dt-brand`** — the inline-SVG mark (`.dt-brand-mark`) + the inline-SVG
    wordmark (`.dt-brand-name`, `zıcato`) + a `.dt-brand-variant` tag reading
@@ -335,9 +338,8 @@ Sticky, blurred, hairline-bottomed (`console4.css` L1274; assembled in
 7. **`.dt-scale-pill`** — the page-scale slider (§4.4).
 8. **`.dt-status`** — the status pill (§4.5).
 
-> **Note — there is no cmd-K command palette in the shipped code.** Despite a
-> historical "cmd-K palette" note, no palette is implemented in
-> `js/variants/T/**` as of this writing. Navigation is via the tree sidebar
+> **Note — there is no command palette.** Nothing under `js/variants/T/**`
+> implements one. Navigation is via the tree sidebar
 > (`tree.js`), the breadcrumbs, and the `↑ up` control. If you add a palette,
 > dock it from the top bar and theme it with the dropdown tokens (`.dt-cd-list`
 > bg `--v2-panel`, border `--v2-rule`, options on `--v2-rule-soft` hover).
@@ -372,7 +374,7 @@ The pulse dot (`.dt-run-pulse`) is the **only** keyframe animation in the chrome
 — a 1.6s expanding box-shadow ring (`@keyframes dt-run-pulse`), disabled under
 `prefers-reduced-motion`. The `LIVE` pill (`.dt-live-pill`) and the structure
 pill (`.dt-structure-pill`, `structure: Racing · 3 rungs`) ride in the view
-header, not the top bar.
+header rather than the top bar.
 
 ---
 
@@ -395,7 +397,7 @@ These hold for **every** mark (drawn from the `.dn-*` / `.ezn-*` rules in
 | reference / baseline rule | `stroke: var(--v2-ink-faint); stroke-width:1; stroke-dasharray: 3 3` | `.dn-ref-rule` |
 | a pending / racing edge | `stroke: var(--v2-accent); stroke-dasharray: 4 3` (never red) | `.ezn-edge-neutral` |
 | good / bad mark | `fill`/`stroke: var(--v2-good)` / `var(--v2-bad)` | `.dn-dot.dn-good`, `.dn-glyph-fail` |
-| node dot radius | `r: 2.2–4.5` (champion bigger than challenger) | `bumps` 4.5/3.5, sparkline endDot 2.2 |
+| node dot radius | `r: 2.2–4.5` (champion bigger than challenger) | `bumps` 4.5 and 3.5, sparkline endDot 2.2 |
 | band fill | soft token mix, ~18–20% | `color-mix(in srgb, var(--v2-accent) 18%, transparent)` (`.dn-funnel-band`) |
 | ribbon fill-opacity | `0.32` idle → `0.55` hover | `.dn-sankey-ribbon` |
 | line caps/joins (chrome glyphs) | `stroke-linecap:"round"`, `stroke-linejoin:"round"` | brand mark, `structureGlyphSvg` |
@@ -570,7 +572,7 @@ All scoped under `#variant-root[data-variant="T"]`; all token-only.
 ```
 
 Do: keep buttons mono and outline-first, filling the accent only on hover/active.
-Don't: leave a link unstyled (the historical "unstyled open-transcript" bug).
+Do not: leave a link unstyled.
 
 ### 6.2 Pills & badges
 
@@ -624,7 +626,8 @@ rather than crowding the figure.
 The Settings surface (`.dn-settings`) is a section **rail + host**:
 `a.dn-set-railitem` (active → `.dn-set-railitem-active`, accent glyph
 `.dn-set-railglyph`). Disclosure sections use `.dn-brief` (a `<details>` with a
-rotating `.chev`). The epoch publication "tabs" are panels, not a tab strip.
+rotating `.chev`). The epoch publication renders as panels rather than a tab
+strip.
 
 ### 6.7 The resizable chat-copilot pane (`.dn-bld-chat`)
 
@@ -683,7 +686,8 @@ section uses — one source of truth, synced across every live picker.
 
 ### 7.1 Digest-gating — the no-flash rule
 
-**Never rebuild the DOM on a no-op SSE heartbeat.** This is a hard rule. The bug
+**Never rebuild the DOM on a no-op server-sent-events (SSE) heartbeat.** This
+is a hard rule. The bug
 class it prevents — the **flashing / refresh bug** — is a steady heartbeat
 re-dispatch wiping and rebuilding a panel every tick, flashing the screen, losing
 scroll position, and destroying hovercard/focus state.
@@ -791,8 +795,8 @@ See [docs/brand/README.md](../brand/README.md) for the asset table and usage.
 ## 10. Worked example — building a new surface in the language
 
 **A harmonograf execution timeline** — a per-run, step-by-step Gantt showing a
-run's lifecycle phases over wall-clock. (Conceptual illustration only — *do not*
-implement it here; this section proves the doc is reproducible.)
+run's lifecycle phases over wall-clock. It is a conceptual illustration; do not
+implement it here.
 
 **1 — Frame & colour roles.** The view is a `.dn-section` panel
 (`background:var(--v2-panel)`, `1px solid var(--v2-rule)`, radius 4px) on the
@@ -871,7 +875,7 @@ zicato surface is built the same way.
 
 ---
 
-## 11. Do / Don't
+## 11. Do and do not
 
 **Do**
 - Read colour from `--v2-*` tokens and type from `--v2-sans` / `--v2-mono` /
@@ -890,15 +894,15 @@ zicato surface is built the same way.
 - Set the brand wordmark in `--v2-brand-mono` with the dotless ı and the green
   accent as its dot.
 
-**Don't**
-- Don't rebuild the DOM on a no-op heartbeat (the flashing bug).
-- Don't add chartjunk — no gridframes, 3-D, decorative rails, or a line through a
-  label (the cut-name strikethrough bug).
-- Don't introduce a second accent colour or recolour the brand dot away from
-  green; don't recolour the mark stroke (it is `currentColor`).
-- Don't force horizontal scroll on a panel; wrap a genuinely-wide table in
+**Do not**
+- Do not rebuild the DOM on a no-op heartbeat (the flashing bug, §7.1).
+- Do not add chartjunk — no gridframes, 3-D, decorative rails, or a line drawn
+  through a label.
+- Do not introduce a second accent colour or recolour the brand dot away from
+  green; do not recolour the mark stroke (it is `currentColor`).
+- Do not force horizontal scroll on a panel; wrap a table wider than its pane in
   `.dn-table-scroll` instead.
-- Don't pin a figure to a fixed pixel width that overflows its pane; don't add
+- Do not pin a figure to a fixed pixel width that overflows its pane; do not add
   pan/zoom.
-- Don't run a structure (a card, a bracket) on `animation: …infinite` — animate
-  values, not structure.
+- Do not run a structure (a card, a bracket) on `animation: …infinite` — animate
+  values rather than structure.

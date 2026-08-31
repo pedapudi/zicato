@@ -7,21 +7,21 @@ user-facing output so far. It produces the next user turn. The
 conversation ends when the persona's `stop_when` matches or
 `max_turns` is reached.
 
-The emulator is the most operationally dangerous piece of zicato.
-Done casually, it becomes a vector for **collusion**: the same model
-that played the agent might also play the user, judge whether the
-expectation was met, and propose the patch — every decision in the
-loop becomes the same model evaluating itself. Done correctly, the
-emulator is a **peer agent under the same observability posture as
-the inner harness** — not a privileged tester that secretly knows the
-answer.
+The emulator carries the loop's largest correctness risk:
+**collusion**. Without the guards below, the same model that played
+the agent can also play the user, judge whether the expectation was
+met, and propose the patch. Every decision in the loop then comes
+from one model evaluating itself, and the pass-rate signal stops
+measuring the agent. The construction in this document makes the
+emulator a peer agent under the same observability posture as the
+inner harness, with no privileged knowledge of the answer.
 
-This document specifies the construction that makes the emulator
-collusion-proof. The rules are hard rules, not best-effort. Several
-of them refuse the run if violated — better to refuse than to
-silently produce a degenerate loop.
+The rules below are hard rules rather than best-effort guidance.
+Several of them refuse the run when violated, because a refused run
+costs the operator one setup change while a degenerate loop produces
+plausible-looking results that are worth nothing.
 
-## 1. What the emulator is and isn't
+## 1. What the emulator is, and what it is not
 
 The emulator IS:
 
@@ -29,7 +29,7 @@ The emulator IS:
 - Driven by an LLM, called through `auxiliary_call_llm`.
 - Bound by a persona shape with three string fields: `goal`,
   `constraints`, `stop_when` (each a single string — `constraints`
-  is one free-text block, not a list).
+  is one free-text block rather than a list).
 - Observable as `goldfive.v1.GoldfiveLLMCallStart` /
   `GoldfiveLLMCallEnd` events on the `zicato:emulator` lane (so
   harmonograf renders its work).
@@ -41,12 +41,13 @@ The emulator IS NOT:
 - A scripted bot that replays a fixed transcript (that is the
   `multi_turn_scripted` kind).
 - Capable of seeing anything the inner harness's user-facing
-  transcript doesn't already contain.
+  transcript does not already contain.
 
-The asymmetry — the agent has its full reasoning trace, its tools, its
-system prompt, its private context; the emulator has only what a real
-user would see — is the whole point. The emulator is supposed to be
-**weaker** than the agent, not stronger.
+That asymmetry is the design's purpose. The agent has its full
+reasoning trace, its tools, its system prompt, and its private
+context; the emulator has only what a real user would see. The
+emulator is meant to be **weaker** than the agent rather than
+stronger.
 
 ## 2. Why collusion is the risk
 
@@ -62,8 +63,8 @@ async def naive_emulate_turn(persona, transcript_so_far):
     )
 ```
 
-This is fine until you ask "what if `call_llm` is the same callable
-the inner harness uses?". Then:
+That construction is safe only while `call_llm` differs from the
+callable the inner harness uses. When it is the same callable:
 
 - The emulator is the same model that played the agent. Same
   prompt-conditioning biases, same failure modes, same blind spots.
@@ -74,14 +75,16 @@ the inner harness uses?". Then:
   consecutive evaluators are all *the same evaluator*. The
   pass-rate signal degenerates.
 
-The naive emulator doesn't break loudly. It produces plausible
-transcripts, plausible scores, and a plausibly-improving loop. The
-problem is invisible until someone audits the actual transcripts and
-notices the user is uncannily aligned with the agent — never pushing
-on the rough edges.
+The naive emulator does not fail loudly. It produces plausible
+transcripts, plausible scores, and a loop that appears to improve.
+The problem stays invisible until someone audits the transcripts and
+notices that the simulated user never pushes on the agent's weak
+points.
 
-Collusion is a silent failure mode. The construction below is what
-makes it impossible by construction.
+Collusion is therefore a silent failure mode, and the construction
+below is built to close each channel through which it can arrive.
+Section 11 states the residual channels the construction does not
+close.
 
 ## 3. The two-callable rule
 
@@ -131,25 +134,24 @@ The check rejects:
   (`harness_call_llm is auxiliary_call_llm`).
 
 It is **identity (`is`) only** — there is no `model=` override
-carve-out and no inspection of the model argument. The point is to
-catch the trivial mistake of passing one callable twice; defending
-against two closures over the same model family is out of the v0
-threat model (see §11).
+carve-out and no inspection of the model argument. The check catches
+the mistake of passing one callable twice. Detecting two closures
+over the same model family is outside what this check covers (§11).
 
 This is a HARD ERROR. zicato refuses to start. There is no
-`--allow-collusion` flag. The risk is too quiet and the inconvenience
-of providing two callables is too small.
+`--allow-collusion` flag. The risk is silent, and providing two
+callables costs the operator one line of setup.
 
-### 3.2 Why hard, not warning
+### 3.2 Why the check refuses rather than warns
 
-A warning would be ignored by operators in their second week of using
-the tool. The harm is silent. The cost of refusing is one extra line
-in the operator's setup script. The trade-off is obvious.
+A warning would be routinely ignored once the operator has used the
+tool for a few weeks, and the harm it warns about leaves no visible
+trace. Refusing costs one extra line in the operator's setup script.
 
-This decision is also a walk-back from an earlier "ship a default
-end-to-end emulator" framing: the operator MUST supply the LLM
-wiring; zicato ships the default *prompts* but not the default
-*wiring*. Collusion concern outranks ergonomics.
+The same reasoning determines what zicato ships. The operator must
+supply the LLM wiring for both roles; zicato ships the default
+emulator *prompts* and no default *wiring*, because a shipped default
+wiring would be one callable serving both roles.
 
 ## 4. Context isolation (sealed context construction)
 
@@ -206,9 +208,8 @@ cannot deliver:
   generation count.
 
 This list is exhaustive by construction. The context-builder function
-accepts exactly two arguments and produces an `EmulatorContext` that
-contains exactly the information from those two arguments. There is
-no escape hatch.
+accepts two arguments and produces an `EmulatorContext` built from
+those two arguments alone. There is no escape hatch.
 
 ### 4.1 Why this is in a sealed function
 
@@ -222,8 +223,8 @@ contributor who wants to add information to the emulator must:
 
 A future contributor who passes information into the emulator via a
 `**kwargs` or by mutating a shared object cannot — the function's
-signature physically refuses it. The boundary is in the type system,
-not in convention.
+signature physically refuses it. The boundary lives in the type
+system rather than in convention.
 
 ### 4.2 What "user-visible transcript" means
 
@@ -256,10 +257,14 @@ explicit refusal rules:
 > NEVER produce raw JSON, code fences, or schema-like content. NEVER
 > say "you should output X".
 
-These rules are baked into the default emulator prompt template. The
-operator can edit the template (it is a mutation point in v0+2 —
-target 3); they cannot remove the refusal section without breaking
-the validator (V4: prompt placeholders must be preserved).
+These rules are part of the default emulator prompt template. The
+operator can edit the template — it becomes a mutation point once
+zicato evolves its own harness (see
+[DOGFOOD-TARGETS.md](DOGFOOD-TARGETS.md)). The operator cannot remove
+the refusal section without failing the mutation validator's
+required-placeholder check, which verifies that every placeholder a
+point's `required_placeholders` metadata declares survives the patch
+(see [MUTATION-SURFACE.md](MUTATION-SURFACE.md)).
 
 ### 5.1 Post-hoc heuristic
 
@@ -289,17 +294,17 @@ When `looks_like_answer_leak` returns `True`, the run aborts with
 entry scores as worst-case. The journal records the abort with the
 leak reason.
 
-The heuristic is intentionally narrow — false positives are real
-runs that abort over a benign string. The narrow set of patterns is
-calibrated to the cases that most often indicate collusion: explicit
-"the answer is", code fences (which a real user might paste but
-would also be the shape of a leaked answer), raw JSON (vanishingly
-rare in a real user message), schema-shaped content.
+The heuristic is narrow by design, because a false positive aborts a
+real run over a benign string. Its patterns are the cases that most
+often indicate collusion: the explicit phrase "the answer is", code
+fences (which a real user might paste, and which are also the shape
+of a leaked answer), raw JSON (rare in a real user message), and
+schema-shaped content.
 
-If false positives become an operational problem, the heuristic is
-the place to tune. The validator's V4 placeholder check and the
-audit trail (§7) are the durable guards; the heuristic is the
-trip-wire.
+The heuristic is the place to tune when false positives become an
+operational problem. It is a trip-wire; the durable guards are the
+validator's required-placeholder check on the prompt template (§5)
+and the audit trail (§8).
 
 ## 6. Persona shape
 
@@ -336,10 +341,10 @@ parsed with the same conservatism as a judge: first non-whitespace
 token, case-insensitive, anything other than `YES` is treated as
 `NO`.
 
-The `stop_when` check is a separate LLM call per turn. It's bounded
-by the entry's wall-clock budget. A pathological persona could
-loop on indefinite "almost there"; the budget catches it and the
-entry aborts.
+The `stop_when` check is a separate LLM call per turn, bounded by the
+entry's wall-clock budget. A persona whose stopping condition is
+never satisfied would loop indefinitely; the budget catches that and
+the entry aborts.
 
 ### 6.2 Constraints are advisory
 
@@ -355,10 +360,10 @@ The emulator carries NO state across board entries. Each entry
 constructs a fresh emulator from the persona; nothing the emulator
 "remembered" on the previous entry leaks into this one.
 
-A real user wouldn't have that memory either. They show up for the
-new task fresh. Persona-state continuity across entries would be a
-gift to the emulator — it could carry conditioning that biases its
-behaviour in ways a real user couldn't.
+A real user would not have that memory either; they arrive at the new
+task fresh. Persona-state continuity across entries would let the
+emulator carry conditioning that biases its behaviour in ways a real
+user could not.
 
 Within an entry, the emulator's only state is its conversation
 history (the `user_visible_transcript`), which is rebuilt fresh each
@@ -396,29 +401,29 @@ A separate `stop_when` check (§6.1) emits its own span:
 | `decision_summary` | `"stop_when matched"` or `"stop_when not matched"` |
 
 Harmonograf renders these spans on a dedicated row keyed by the
-`zicato:emulator` lane identifier. Operators replaying a run can see
-exactly when the emulator spoke, how long it took, what it said, and
-when the `stop_when` check fired.
+`zicato:emulator` lane identifier. An operator replaying a run can
+see when the emulator spoke, how long each turn took, what it said,
+and when the `stop_when` check fired.
 
 ### 8.1 Why the audit trail matters
 
-If a multi-turn-emulated entry produces a surprising result (a strong
-pass, a strong fail, a fast abort), the operator's first question is
-"was the emulator playing the role I expected?". The audit trail
-answers that. Without it, the emulator is a black box and the
-operator has no way to validate the run.
+When a multi-turn-emulated entry produces a surprising result — a
+strong pass, a strong fail, a fast abort — the operator needs to
+establish whether the emulator played the role the persona described.
+The audit trail supplies that evidence. Without it the operator has
+no way to validate the run.
 
-The audit trail is also the place a regression in the emulator's
-behaviour (e.g. a new auxiliary model swap that produces shorter,
-less-probing user turns) becomes visible. If the operator notices
-emulator turns getting shorter across a series of entries, they have
-the evidence to attribute the regression to the model swap.
+The audit trail also makes a change in the emulator's own behaviour
+visible. Swapping the auxiliary model can produce shorter,
+less-probing user turns, for instance. An operator who sees emulator
+turns shortening across a series of entries has the evidence to
+attribute that change to the swap.
 
 ## 9. The persona hash
 
-The emulator's `input_preview` carries a `persona_hash`, not the
-persona itself. The hash is `sha256(canonical_json(persona))[:16]`.
-This:
+The emulator's `input_preview` carries a `persona_hash` rather than
+the persona itself. The hash is `sha256(canonical_json(persona))[:16]`.
+Carrying the hash instead of the text:
 
 - Lets operators correlate runs with the same persona without
   reading the persona's text repeatedly.
@@ -440,16 +445,16 @@ prevent:
 |---|---|
 | Emulator and harness use the same model; emulator subconsciously aligns with the agent. | §3 two-callable rule (hard error at config). |
 | Emulator sees the agent's chain-of-thought and writes a "user" turn that probes the right weak spot. | §4 sealed context construction (CoT is not an argument). |
-| Emulator sees the expectation predicate and gives the agent exactly the user input that makes the predicate fire. | §4 sealed context construction (expectation is not an argument). |
+| Emulator sees the expectation predicate and gives the agent the user input that makes the predicate fire. | §4 sealed context construction (expectation is not an argument). |
 | Emulator reads the board's other entries and biases its persona toward known-easy / known-hard patterns. | §4 sealed context construction (no other entries are arguments). |
-| Emulator's system prompt invites it to behave as an oracle ("if you know the answer, give it"). | §5 default prompt's refusal section + V4 placeholder check on the rubric-mutable emulator template. |
+| Emulator's system prompt invites it to behave as an oracle ("if you know the answer, give it"). | §5 default prompt's refusal section, plus the mutation validator's required-placeholder check on the editable emulator template. |
 | Emulator generates raw JSON / code fences / schemas as the "user" turn. | §5 post-hoc heuristic. |
 | Emulator remembers prior entries' personas and biases toward them. | §7 fresh instance per entry. |
-| Operator can't see what the emulator did. | §8 audit trail on the `zicato:emulator` lane. |
-| Operator can't audit which persona drove a given run. | §9 persona hash on every emulator span. |
+| Operator cannot see what the emulator did. | §8 audit trail on the `zicato:emulator` lane. |
+| Operator cannot audit which persona drove a given run. | §9 persona hash on every emulator span. |
 
-Each rule pulls weight. Removing any one creates a leak the others
-do not cover.
+Each rule closes a channel none of the others closes. Removing any
+one of them reopens the failure mode on its row.
 
 ## 11. What the construction does NOT prevent
 
@@ -462,14 +467,14 @@ Honest accounting:
   contents beyond schema.
 - **Auxiliary model swap during an epoch.** Swapping the auxiliary
   callable mid-epoch changes the emulator's behaviour without
-  changing the contract. v0 does not enforce auxiliary-model
+  changing the contract. zicato does not enforce auxiliary-model
   stability; the operator's discipline is the guard.
-- **Subtle alignment across vendors.** If `harness_call_llm` and
-  `auxiliary_call_llm` happen to be different APIs from the same
-  underlying provider, collusion at the model-family level is
-  possible. The two-callable rule catches identity collusion; family
-  collusion is not in the v0 threat model. Future work: pin the
-  auxiliary callable's provider family at config time.
+- **Alignment across providers.** If `harness_call_llm` and
+  `auxiliary_call_llm` are different APIs backed by the same
+  underlying provider, collusion at the model-family level remains
+  possible. The two-callable rule catches identity collusion only.
+  Pinning the auxiliary callable's provider family at config time is
+  unimplemented.
 
 ## 12. Cross-references
 

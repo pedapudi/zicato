@@ -5,14 +5,19 @@ class of failure: the dozens of side effects in the evolve loop that
 must not abort the optimization, but whose silent failure can leave the
 loop running **inert** with no signal that anything is wrong.
 
-The robustness layers in [ROBUSTNESS.md](ROBUSTNESS.md) keep the loop
-alive through hangs and crashes. [LOOP-HEALTH.md](LOOP-HEALTH.md) detects
-when the loop runs cleanly but produces *no optimization signal*. This
-document covers a third, adjacent failure mode: the loop runs, it even
-optimizes, but a side effect — a dashboard publish, an index dual-write,
+Six nested defenses in [ROBUSTNESS.md](ROBUSTNESS.md) keep the loop alive
+through hangs and crashes: the per-call and per-budget timeouts,
+structured cancellation, the subprocess worker boundary, the orchestrator
+watchdog that the Rust supervisor runs, the consecutive-bad circuit
+breaker, and atomic writes plus resume markers.
+[LOOP-HEALTH.md](LOOP-HEALTH.md) detects when the loop runs cleanly but
+produces *no optimization signal*. This
+document covers a third, adjacent failure mode. The loop runs and even
+optimizes, while a side effect — a dashboard publish, an index dual-write,
 a report re-stamp, a target invocation — has been **systematically
-failing**, swallowed by a blanket `except Exception`, and nobody can
-tell. That failure mode is silent. This document makes it loud.
+failing**, swallowed by a blanket `except Exception`, with no surface
+that reports it. The sections below specify how to make that failure
+visible.
 
 This document covers:
 
@@ -26,17 +31,17 @@ This document covers:
 - Completing the migration of the remaining blanket blocks (§6).
 
 > **Status.** The `best_effort` mechanism described in §3 is **shipped**
-> (commit `638fbc3`, on `main`). The clean swallow blocks in
-> `orchestrator.py` (14) and `_tournament_worker.py` (8) are already
-> migrated. What remains — and is the actionable part of this document —
-> is §4–§6: the counter is collected but **read by nothing**, so the
-> degradation it would expose is still invisible; and ~120 blanket
-> blocks in the rest of the tree have not been migrated.
+> and wraps 49 call sites, across the evolve loop modules, the tournament
+> worker, epoch lifecycle, and the proposer's input capture. What remains
+> — and is the actionable part of this document — is §4–§6: the counter
+> is collected but **read by nothing**, so the degradation it would
+> expose is still invisible; and 244 blanket blocks elsewhere in the tree
+> have not been migrated.
 
 ## 1. The incident that motivated this
 
-During a dogfood session the ADK target ran **inert** — every generation
-produced:
+During a dogfood session a target driven through the agent development
+kit adapter ran **inert** — every generation produced:
 
 ```
 output_chars: 0
@@ -63,11 +68,11 @@ stepped over. Twenty-six generations of the same swallowed failure look
 identical to zero failures: there is no counter, no rate, no surface
 that says "this side effect has failed every round since v0."
 
-The lesson mirrors loop-health's: **a loop that runs cleanly is not the
-same as a loop that is working.** A swallowed failure that recurs every
-round is a degradation, and a degradation that recurs silently is the
-worst kind — it costs wall-clock and LLM budget while producing nothing,
-and the only way it surfaces today is an operator eyeballing the journal.
+The conclusion is the same one loop-health draws: **a loop that runs
+cleanly is not thereby a loop that is working.** A swallowed failure that
+recurs every round is a degradation. A silent degradation spends
+wall-clock and model budget while producing nothing, and the only way it
+surfaces today is an operator reading the journal.
 
 ## 2. The blanket-except idiom
 
@@ -89,21 +94,21 @@ The swallow is broad on purpose — the side effect can fail in many ways
 and none of them should reach the round. The `# noqa: BLE001` silences
 ruff's blind-except lint, which is otherwise correct to flag this.
 
-There are **~127** such sites across `src/`. The worst offenders by file
-(after the loop-core migration in §3 already landed) are:
+There are **244** such sites across `src/`, counted as lines carrying the
+`# noqa: BLE001` marker. The files holding the most are:
 
 | count | file |
 |------:|------|
-| 11 | `tournament/runner.py` |
+| 12 | `tournament/runner.py` |
+| 12 | `query/eval_view.py` |
+| 11 | `telemetry/meta_loop.py` |
+| 11 | `reflection/mining.py` |
 | 10 | `telemetry/harmonograf_supervisor.py` |
-| 10 | `dashboard/readers/judge_view.py` |
-|  8 | `telemetry/meta_loop.py` |
+|  9 | `query/judge_view.py` |
+|  9 | `evolve/round_context.py` |
+|  8 | `reflection/admission.py` |
 |  8 | `evolve/dashboard_projection.py` |
-|  6 | `tournament/worker_transport.py` |
-|  5 | `proposer/proposer.py` |
-|  5 | `analyzer/insights.py` |
-|  4 | `orchestrator.py` (residual — value-returning / control-flow blocks) |
-|  4 | `dashboard/server.py` |
+|  7 | `proposer/best_of_n.py` |
 
 The cost is uniform across all of them: **a failure here is invisible.**
 A systematically broken write or a dead target leaves no signal that
@@ -151,9 +156,9 @@ def reset_best_effort_failures() -> None:
     _FAILURES.clear()
 ```
 
-A call site that is migrating a legacy block passes an `on_error`
-callback that reproduces the original `log` call **byte-for-byte**, so
-the emitted output is unchanged:
+A call site converting a hand-rolled block passes an `on_error`
+callback that reproduces that block's own `log` call **byte-for-byte**,
+so the emitted output is unchanged:
 
 ```python
 with best_effort("post-close report re-stamp", on_error=_skip):
@@ -177,12 +182,13 @@ from `zicato.health` so the loop-health-facing tooling can read the tally
 alongside the pure detectors. The clean log-and-continue blocks in
 `orchestrator.py` (14) and `_tournament_worker.py` (8) are already
 converted. Value-returning, sibling-`ImportError`, and control-flow
-blocks were intentionally left untouched — they are not 1:1 swappable
-without restructuring.
+blocks are left untouched, because swapping one of those for the context
+manager requires restructuring the surrounding code.
 
 ## 4. The gap: collected, but surfaced nowhere
 
-Here is the part the §1 incident would *still* not have caught.
+The mechanism described so far would still not have caught the §1
+incident, for the following reason.
 
 `best_effort_failures()` is tallied on every swallow and re-exported from
 `zicato.health` — but **nothing reads it.** Neither the `zicato health`
@@ -234,10 +240,11 @@ if failures:
         click.echo(f"  {label}: {count}")
 ```
 
-This is a non-finding, additive section — it does not change the
-detector severities or the command's exit code. A non-empty tally is an
-*advisory*: "these never-abort side effects failed; the optimization
-still ran, but you are probably not getting what you think you are."
+This is an additive section that reports no finding: it changes neither
+the detector severities nor the command's exit code. A non-empty tally is
+an *advisory*. It says that these never-abort side effects failed, that
+the optimization still ran, and that the result is therefore likely to
+differ from what the loop appears to have produced.
 
 ### 5.2 In the per-round health report (for `/api/health-report`)
 
@@ -257,7 +264,7 @@ already persists**. Where the orchestrator writes the round's
 ```
 
 `build_health_report` then passes the field through alongside `findings`
-and `healthy`, exactly as it already passes `checked_at`:
+and `healthy`, in the same way it already passes `checked_at`:
 
 ```python
 report["best_effort_failures"] = (
@@ -268,27 +275,26 @@ report["best_effort_failures"] = (
 ```
 
 The dashboard's loop-health surface renders a non-empty
-`best_effort_failures` map as a distinct advisory row — visually
-separate from the optimization-signal findings, because it is a
-different kind of problem (a degraded *mechanism*, not a degraded
-*signal*).
+`best_effort_failures` map as a distinct advisory row, visually separate
+from the optimization-signal findings, because it reports a degraded
+*mechanism* where those findings report a degraded *signal*.
 
-### 5.3 What "loud" looks like for the §1 incident
+### 5.3 What the §1 incident would have looked like
 
-With §5.1/§5.2 in place, the inert ADK target would have surfaced after
-the *first* round: the target-invocation swallow (once migrated, §6)
-increments a `"target invocation"` label every generation, and both the
-CLI advisory and the dashboard row would show
-`target invocation: 1`, then `2`, then `26`. A monotonically climbing
-per-label count against a single side effect is exactly the signal that
-distinguishes "failed every round" from "never failed" — the
+With the two surfaces above in place, the inert target would have shown
+up after the first round. Once the target-invocation swallow is converted
+(§6) it increments a `"target invocation"` label every generation, and
+both the command-line advisory and the dashboard row would show
+`target invocation: 1`, then `2`, then `26`. A per-label count that
+climbs monotonically against a single side effect is the signal that
+distinguishes "failed every round" from "never failed", which is the
 distinction §1 lacked.
 
 ## 6. Migration plan for the remaining blocks
 
 The mechanism (§3) and its surfacing (§5) cover *visibility*. The
-remaining work is *coverage*: ~120 blanket blocks outside the two
-loop-core files are not yet wrapped, so their failures are still
+remaining work is *coverage*: the 244 blanket blocks that still carry a
+bare `# noqa: BLE001` are not yet wrapped, so their failures are still
 uncounted. The migration is mechanical and can proceed file-by-file
 without coordination, because each conversion is behavior-preserving in
 isolation.
@@ -328,28 +334,28 @@ path and are the most likely to fail systematically and silently):
 
 **Guardrails.**
 
-- A site that is *load-bearing* — where swallowing genuinely masks a bug
-  the loop should fail on — should not be wrapped; it should be fixed to
-  catch the specific exception it expects. The migration is an
-  opportunity to find these: a blanket except that turns out to guard a
-  programming error is a latent bug, not a best-effort side effect.
+- A site that is *load-bearing*, where the swallow masks a bug the loop
+  should fail on, should not be wrapped. Fix it instead to catch the
+  specific exception it expects. The conversion pass is an opportunity to
+  find such sites: a blanket except that turns out to guard a programming
+  error is a latent bug rather than a best-effort side effect.
 - Keep `on_error` byte-identical to the original log line during the
   mechanical pass. Cleanups to the log text are a separate, reviewable
   change.
 - The `# noqa: BLE001` inside `best_effort` itself stays — that one
   swallow is the whole point of the abstraction.
 
-## 7. Why this is the right shape
+## 7. Why the mechanism keeps the never-abort invariant
 
-The never-abort invariant is not negotiable; the loop's job is to
+The never-abort invariant is not negotiable: the loop's job is to
 optimize, and a failed re-stamp must never cost a round. `best_effort`
-keeps that invariant exactly — it does not narrow a single except clause
-or re-raise anything. It changes only what is *observable*: a class of
-failure that was indistinguishable from success now has a per-label
-count that climbs when a side effect degrades. Surfaced in loop-health
-(§5), that count turns the §1 incident from "an operator eyeballed the
-journal after 26 wasted generations" into "the first round showed
-`target invocation: 1` and a human stopped the burn."
+preserves that invariant, because it narrows no except clause and
+re-raises nothing. It changes only what is *observable*. A class of
+failure that was indistinguishable from success now has a per-label count
+that climbs when a side effect degrades. Surfaced in loop-health (§5),
+that count replaces the §1 outcome — an operator reading the journal
+after 26 wasted generations — with a first-round advisory reading
+`target invocation: 1` that lets an operator stop the run.
 
 See also: [LOOP-HEALTH.md](LOOP-HEALTH.md) (the adjacent "running but
 meaningless" subsystem), [ROBUSTNESS.md](ROBUSTNESS.md) (the layers that

@@ -21,7 +21,7 @@ Multi-agent systems are the founding and primary use case — a coordinator
 with specialists, a deep `sub_agents` tree, a single planning agent, an
 arbitrary callable that fronts a model — and the only concrete adapter
 shipped so far targets Google ADK. But the definition is not agent-shaped.
-What the loop actually requires is:
+The loop requires:
 
 * an **entrypoint** the runner can drive to produce an output;
 * one or more **mutable trees** — source roots the proposer may edit,
@@ -30,9 +30,9 @@ What the loop actually requires is:
   score.
 
 Any system that fits that shape can be evolved. The mutation surface is
-declared with in-source comment markers, not derived from agent
+declared with in-source comment markers rather than derived from agent
 structure, so nothing in the patch path inspects agent classes or role
-graphs — the enforced adapter contract is literally
+graphs: the enforced adapter contract is
 `("mutable_subpaths", "load", "mutation_points")`, and a `RunResult`
 carries strings. The markers are not Python-only either: a marker may sit
 in any allowlisted text file, so a markdown prompt or a YAML policy is
@@ -44,9 +44,10 @@ The in-tree proof is `examples/zicato_examples/target_0_convergence`: a
 `DeterministicPolicyAdapter`, registered through `adapter.kind = "import"`,
 whose mutable surface is a module-level string constant and whose
 docstring notes there is **no LLM anywhere**. The full loop — propose,
-apply, worker, reduce, gate — runs against it under CI. Target 2 is the
-other end of the range: goldfive itself, a library, mutated with the
-entrypoint outside every mutable tree.
+apply, worker, reduce, gate — runs against it under continuous
+integration. The other end of the range is goldfive itself: a library,
+mutated with the entrypoint outside every mutable tree (see
+[DOGFOOD-TARGETS.md](DOGFOOD-TARGETS.md)).
 
 Across many runs of that inner harness, zicato:
 
@@ -67,19 +68,21 @@ Across many runs of that inner harness, zicato:
    not regress on pre-existing pass-rate.
 
 The loop is self-improving in the sense that every promoted generation
-becomes the parent of the next round. Generations form a DAG.
-**Epochs** group generations under a stable evaluation contract — the
-board, the proposer brief, the scoring weights all hold steady — so
+becomes the parent of the next round. Generations form a directed
+acyclic graph. **Epochs** group generations under a stable evaluation
+contract — the board, the proposer brief, and the scoring weights all
+hold steady — so
 generations within an epoch are directly comparable. Cross-epoch
-comparison is fuzzy by design (the contract changed; the goalposts
-moved).
+comparison is approximate by design, because the two epochs score
+generations under different contracts.
 
 ### How much of this requires goldfive
 
-goldfive is an **optional extra** (`zicato[goldfive]`), not a hard install
-dependency. The core import surface — `import zicato`, `import zicato.core`,
-the board reader/writer and builder, the epoch contract, the storage and
-query layers, and every `zicato --help` — resolves without it. What makes
+goldfive is an **optional extra** (`zicato[goldfive]`) rather than a
+hard install dependency. The core import surface — `import zicato`,
+`import zicato.core`, the board reader/writer and builder, the epoch
+contract, the storage and query layers, and every `zicato --help` —
+resolves without it. What makes
 that true is `src/zicato/core/drift_kinds.py`: it mirrors goldfive's
 `DriftKind` / `DriftSeverity` as `enum.StrEnum` classes with the same member
 names, values, and declaration order, so the board types keep the full
@@ -91,12 +94,16 @@ identically. A goldfive-gated test pins the two enums member-for-member, and
 interpreter whose `sys.meta_path` refuses `goldfive`, so neither half of the
 property rots.
 
-What the extra actually buys is three things: the ADK adapter path
-(`zicato.adapters.adk` wraps the inner harness in `goldfive.wrap`), the
-in-run process judges (a board's `judges` are handed to goldfive as
-additional judges; without it they are inert), and the default `goldfive`
-telemetry dialect — the only dialect that yields drift kinds and plan
-revisions. The live telemetry client and server are part of the
+The extra buys three things:
+
+* the ADK adapter path, where `zicato.adapters.adk` wraps the inner
+  harness in `goldfive.wrap`;
+* the in-run process judges — a board's `judges` are handed to goldfive
+  as additional judges, and without the extra they are inert;
+* the default `goldfive` telemetry dialect, the only dialect that yields
+  drift kinds and plan revisions.
+
+The live telemetry client and server are part of the
 `observability` profile, so a base install does not resolve their transitive
 graph. The import surface and package metadata both make the dependency
 boundary real.
@@ -105,17 +112,17 @@ Installation profiles and their capability guarantees are specified in
 [`INSTALL-PROFILES.md`](INSTALL-PROFILES.md).
 
 What that does *not* imply is that your target must be a goldfive
-application. The adapter protocol is deliberately framework-neutral — it
+application. The adapter protocol is framework-neutral — it
 asks for `load`, `mutable_subpaths`, and `mutation_points`, plus
 `run(entry, sinks, config) -> RunResult` on the loaded harness — and a
 workspace declares a non-ADK harness through `adapter.kind = "import"`.
 A target that emits no drift events is scored on its predicates, rubrics,
-and any other metric namespaces it reports; the loss surface accepts
-arbitrary namespaced metrics (`drift:*`, `cost:*`, `latency:*`), so drift
-is one input to the scalar rather than a precondition for having one.
+and any other metric namespaces it reports. The loss surface accepts
+arbitrary namespaced metrics (`drift:*`, `cost:*`, `latency:*`). Drift is
+one input to the scalar rather than a precondition for having one.
 
-The lever that actually decouples a target from goldfive is
-`scoring.json`'s `telemetry_dialect`. The default, `goldfive`, is the only
+One setting decouples a target from goldfive: `scoring.json`'s
+`telemetry_dialect`. The default, `goldfive`, is the only
 dialect that produces drift kinds and plan revisions; `adk_events` and
 `transcript` are tolerant readers for a harness that does not run under the
 drift-instrumented ecosystem harness at all. Under `transcript` the drift
@@ -123,16 +130,18 @@ term is structurally zero, the drift knobs go inert (zicato warns rather
 than failing), and scoring degrades to predicates plus optional in-run
 judges. See [TELEMETRY-DIALECTS.md](TELEMETRY-DIALECTS.md).
 
-Two board-level headers are often mistaken for that lever and are not it.
+Two board-level headers are often mistaken for that setting, and neither
+has that effect.
 `disable_drift` names drift kinds whose **mapped built-in judges** are
-suppressed on the ADK path — kinds with no mapped judge are silently
-inert, and every other channel (plan revisions in `drift:`, custom judges
-in `judge:`, task failures and aborts in `failure:`, wall-clock in
-`runtime:`) survives untouched. There is no "all drift off" board mode;
-setting `namespace_weights["drift:"]` to `0.0` is what removes the drift
-channel from the scalar, and it removes only that channel. `judge_only` is orthogonal
-again: it keeps judges armed while disabling steering entirely (no
-goal-derivation call, no replanning, no drift-triggered refine). See
+suppressed on the ADK path; naming a kind with no mapped judge does
+nothing. Every other channel survives untouched: plan revisions in
+`drift:`, custom judges in `judge:`, task failures and aborts in
+`failure:`, and wall-clock in `runtime:`. There is no "all drift off"
+board mode; setting `namespace_weights["drift:"]` to `0.0` is what
+removes the drift channel from the scalar, and it removes only that
+channel. `judge_only` is orthogonal again: it keeps judges armed while
+disabling steering entirely (no goal-derivation call, no replanning, no
+drift-triggered refine). See
 [BOARD-FORMAT.md](BOARD-FORMAT.md).
 
 ### Why this is a separate library
@@ -140,9 +149,10 @@ goal-derivation call, no replanning, no drift-triggered refine). See
 The orchestration scaffolding that makes drift legible — goals, plans,
 per-turn drift analysis, the intervention ladder — already exists. It
 is goldfive. The observability + steering console that makes drift
-*visible to operators* already exists. It is harmonograf. What did not
-exist before zicato was the layer that consumes the same telemetry
-**across runs** and acts on it by rewriting the harness itself.
+*visible to operators* already exists. It is harmonograf. zicato is
+the third layer: it consumes that same telemetry **across runs** and
+acts on it by rewriting the harness itself. Neither sibling reaches
+across runs.
 
 The three libraries have non-overlapping cadences:
 
@@ -165,8 +175,10 @@ inner harness's source. zicato is the only thing that does either.
   `call_llm(system: str, user: str, model: str) -> str` callable. The
   core never imports a vendor SDK.
 - Not framework-coupled. The inner harness can be anything that exposes
-  a `HarnessAdapter`. Google ADK is the first concrete adapter;
-  plain-callable and LangChain follow.
+  a `HarnessAdapter`. Google ADK is the only adapter implemented in the
+  tree (`zicato/adapters/adk.py`); any other harness is registered
+  through the generic `adapter.kind = "import"` shape, which resolves a
+  dotted path the operator supplies (`zicato/adapter_factory.py`).
 - Not a runtime steerer. Live runs go through goldfive (and
   harmonograf, if the operator wants the console). zicato only acts
   between runs.
@@ -272,7 +284,7 @@ inner harness's source. zicato is the only thing that does either.
    └─────────────────────────────────────────────────────────────────┘
 ```
 
-The shaded box is a single **round**. A round advances one generation
+The inner box is a single **round**. A round advances one generation
 within an epoch — `v3 → v4` — or rejects the proposal and stays at the
 parent. Many rounds happen within an epoch; an epoch is closed by the
 operator (or auto-closed on the next `epoch new`) and an analysis pass
@@ -289,7 +301,7 @@ zicato runs while a single run is in flight.
 | Acts on | live plan / live agent invocation | live UI + control channel | inner-harness source code |
 | Unit of work | one turn | one operator action | one **round** (parent vs candidate over a board) |
 | Per-run? | yes, every turn | yes, every annotation | no — between runs only |
-| Cross-run? | no | no (per-session views aside) | yes — the whole point |
+| Cross-run? | no | no (per-session views aside) | yes; aggregating across runs is its purpose |
 | Loss model | drift detected this turn | n/a | reduced from events; aggregated across runs in an epoch |
 | Owns | `Plan` / `Task` / `Drift*` state machines | UI + control channel | `MutationPoint` / `Experiment` / `Generation` / `Epoch` |
 | Mutates source? | no | no | **yes** — annotated spans only |
@@ -302,11 +314,9 @@ two systems race on the same surface with incompatible models of what
 
 ## 4. Component-by-component
 
-The rest of this document walks each component in the meta-loop in
-order. Each section names the component, gives its responsibility in
-one paragraph, then lists what it consumes, what it produces, and the
-key contracts. The full schemas live in the topic-specific docs linked
-below.
+Each component below carries its responsibility, what it consumes, what
+it produces, and its contracts. The full schemas live in the
+topic-specific documents that each section links.
 
 ### 4.1 HarnessAdapter
 
@@ -334,14 +344,15 @@ list of source roots that contain mutation-point annotations.
   source root and returns every annotated mutation point (span, region,
   and file markers, in `.py` and in any allowlisted text file; see
   [MUTATION-SURFACE.md](MUTATION-SURFACE.md)).
-  The return value is a list because v0+1 needs to walk multiple roots
-  for cross-repo dogfood (target 2 — see
-  [DOGFOOD-TARGETS.md](DOGFOOD-TARGETS.md)) even though v0 typically
-  uses one.
+  The return value is a list because a target whose sources span several
+  repositories needs multiple roots walked — evolving goldfive's own
+  steering layer is the worked example (see
+  [DOGFOOD-TARGETS.md](DOGFOOD-TARGETS.md)) — even though a
+  single-repository target uses one root.
 
 **Contracts.**
 
-- The adapter MUST emit a `goldfive.v1.RunStarted` and exactly one
+- The adapter MUST emit a `goldfive.v1.RunStarted` and a single
   terminal event (`RunCompleted` or `RunAborted`) per entry. The
   zicato runner relies on this to bound the JSONL file per entry.
 - The adapter MUST exhaust the entry's `wall_clock_budget_seconds` on
@@ -370,10 +381,9 @@ async def on_promote(
 snapshot: the promoted tree plus the `current_generation` marker is the
 whole story, and there is nothing further to do. A target whose real
 state lives somewhere the mutable tree cannot reach — a database row, a
-served artifact, a cache, a remote config — has no such closure. Before
-this hook the promotion tail was completely private, so that target's
-only recourse was to poll `lineage.json` from outside the loop and
-reconcile the promoted head itself.
+served artifact, a cache, a remote config — has no such closure. Without
+the hook, such a target has to poll `lineage.json` from outside the loop
+and reconcile the promoted head itself.
 
 **When it fires.** Exactly once per settled promotion, immediately after
 the champion marker advances — the first moment the promotion is
@@ -390,43 +400,42 @@ cannot repeat: a crash-restart re-enters only an **un-outcomed**
 generation (`prepare_resume`, RUNTIME.md §4.2) and a promoted generation
 always carries a committed outcome. The converse window — a crash
 between the marker advance and the hook — loses the call rather than
-repeating it, which is the deliberate direction given the failure
+repeating it, which is the chosen direction given the failure
 semantics below.
 
 **Failure semantics: best-effort.** A hook that raises, or that exceeds
 `ON_PROMOTE_TIMEOUT_SECONDS` (120s), NEVER un-promotes the generation
-and never fails the round — the promotion is already durable on every
-store by the time the hook runs, so the only honest thing a failure can
-do is be reported. It is reported twice: an `ERROR` log carrying the
-traceback, and an `on_promote_hook_failed` WARNING in the round's
+and never fails the round. The promotion is already durable on every
+store by the time the hook runs, so reporting the failure is all that a
+failure can honestly do. It is reported twice: an `ERROR` log carrying
+the traceback, and an `on_promote_hook_failed` WARNING in the round's
 loop-health report naming the adapter, the generation, and the exception
 type. Reconciling the external side effect is then the operator's job.
 An adapter that needs promotion to be all-or-nothing must make its own
 side effect idempotent and reconcile from `lineage.json`.
 
-**Optionality.** Every adapter predating this hook — shipped and
-operator-authored — remains a `HarnessAdapter`: `on_promote` is in
-`OPTIONAL_ADAPTER_MEMBERS`, and the Protocol's `__subclasshook__` keeps
-the runtime `isinstance` gate keyed on the three required methods. An
-adapter that does not declare it is simply never called.
+**Optionality.** An adapter that declares no `on_promote` is still a
+`HarnessAdapter`: the member is listed in `OPTIONAL_ADAPTER_MEMBERS`, and
+the Protocol's `__subclasshook__` keeps the runtime `isinstance` gate
+keyed on the three required methods. Such an adapter is never called.
 
 **Trust model.** The hook runs operator-authored adapter code in the
 evolve process — code the operator already registered and which zicato
 already imports and executes to run every board entry. It grants no new
 authority. Contract-declared shell commands were considered as an
-alternative carrier and deliberately NOT adopted: a promotion hook
-spelled as a command string in a contract file makes the epoch contract
-(a data file the loop reads, writes, and hands to a proposer) into an
-executable surface, which is a different trust boundary and would need
-its own security review to justify. Non-Python targets use the polling
-fallback below rather than a command hook.
+alternative carrier and rejected. A promotion hook spelled as a command
+string in a contract file turns the epoch contract into an executable
+surface, and the epoch contract is a data file that the loop reads,
+writes, and hands to a proposer. That is a different trust boundary,
+and it would need its own security review to justify. Non-Python
+targets use the polling fallback below rather than a command hook.
 
 **Fallback for targets that cannot host a Python hook.** Poll
 `lineage.json` for the promoted head — the last entry with
 `promoted: true` — and reconcile against your own record of the last
-head you applied. This is the pre-hook workaround and it stays supported
-and correct; the hook only removes the latency and the second bookkeeping
-store. See [DOGFOOD-TARGETS.md](DOGFOOD-TARGETS.md) §6.
+head you applied. Polling stays supported and correct; the hook removes
+the polling latency and the second bookkeeping store. See
+[DOGFOOD-TARGETS.md](DOGFOOD-TARGETS.md) §6.
 
 ### 4.2 Board
 
@@ -441,8 +450,9 @@ lineage and is refused by the CLI.
 
 **Produces.** A typed `list[BoardEntry]` for the runner. Three entry
 kinds today (`single_turn`, `multi_turn_scripted`, `multi_turn_emulated`)
-with an open-ended `kind` discriminator so future kinds (e.g.
-`synthetic_adversarial` for target 2) drop in without schema breakage.
+with an open-ended `kind` discriminator, so a further kind (for example
+`synthetic_adversarial`, wanted for evolving goldfive's steering layer)
+drops in without schema breakage.
 
 The full schema — the `expectations` (outcome) and `judges` (process)
 facets, wall-clock budget semantics, and the emulator contract — is
@@ -462,14 +472,14 @@ event, and closes the sink.
 (`harness_call_llm` and `auxiliary_call_llm` — see §4.10).
 
 **Produces.** A path to the just-written `events.jsonl`. Nothing more —
-the runner is deliberately minimal; loss computation happens in a
+the runner stays minimal, and loss computation happens in a
 separate reducer step.
 
 **Contracts.**
 
-- `mode="write"` not `"append"`. The runner allocates a fresh file per
-  entry. Appending would silently corrupt run boundaries and the
-  reducer relies on each file being exactly one run.
+- `mode="write"` rather than `"append"`. The runner allocates a fresh
+  file per entry. Appending would silently corrupt run boundaries, and
+  the reducer relies on each file holding a single run.
 - One JSONL per `(epoch, generation, entry_id)`. Path:
   `.zicato/epochs/{epoch}/generations/v{N}/runs/{entry_id}/events.jsonl`.
 - The runner does NOT process events incrementally. It hands the file
@@ -523,11 +533,11 @@ drift — see §4.6.1.)
 | `drift_loss` | `float` | weighted scalar (see [SCORING.md](SCORING.md)) |
 | `pass_fail` | `bool \| None` | AND of the entry's `expectations`, or `None` when the list is empty |
 
-The reducer runs **once per run** with full visibility. Sinks must
-make incremental decisions; reducers don't — they read the whole file,
-which is the right shape for derivation work and keeps the loss
-computation testable in isolation (feed it a fixture JSONL, assert on
-the `LossProfile` out).
+The reducer runs **once per run** with full visibility. A sink has to
+decide what to record as each event arrives; a reducer reads the whole
+file at once. That shape suits derivation work and keeps the loss
+computation testable in isolation: feed the reducer a fixture JSONL file
+and assert on the `LossProfile` it returns.
 
 See [TELEMETRY.md](TELEMETRY.md) for the full event-to-feature map and
 [SCORING.md](SCORING.md) for the loss-scalar formula.
@@ -593,11 +603,12 @@ alongside its built-ins.
 goldfive dispatches custom judges at *reasoning* observation points,
 with the live `Session` reachable as `ctx.session_state`. A
 `Judge.python` body that needs to grade what the agent actually *did*
-reads the structured tool-call ledger at `session_state.recent_events`
-(`tool_observed` entries carrying `tool_name` / `args_preview` /
-`result_preview` / `is_error`) — **not** the agent's narration, which
-can name a tool failure it never hit or omit one it did. goldfive does
-not set `ctx.extras["tool_event"]`; the ledger is the ground truth.
+reads the structured tool-call ledger at `session_state.recent_events`,
+whose `tool_observed` entries carry `tool_name`, `args_preview`,
+`result_preview`, and `is_error`. It reads that ledger rather than the
+agent's narration, which can name a tool failure it never hit or omit
+one it did. goldfive does not set `ctx.extras["tool_event"]`; the
+ledger is the ground truth.
 
 **The drift-emit path.** When a judge's criterion is violated,
 goldfive emits a judgement on the same wire it uses for any drift —
@@ -639,12 +650,12 @@ contract — editing the list to disable a different kind rolls the
 epoch, reordering it does not (see
 [EPOCHS-AND-JOURNALING.md](EPOCHS-AND-JOURNALING.md) §10).
 
-**No new typology.** This integration is consistent with the decision
-in [RATIONALE.md](RATIONALE.md) §5 to lift goldfive's drift taxonomy
-rather than invent a zicato one: a custom judge does not add a new
-`DriftKind`, it rides the existing extensible `CUSTOM` kind, and the
-`judge_name` field carries the operator's discriminator. zicato adds
-*judges*, not *drift kinds*.
+**No new typology.** This integration follows the decision in
+[RATIONALE.md](RATIONALE.md) §5 to lift goldfive's drift taxonomy rather
+than invent a zicato one. A custom judge adds no new `DriftKind`: it
+rides the existing extensible `CUSTOM` kind, and the `judge_name` field
+carries the operator's discriminator. zicato adds *judges* and leaves
+the *drift kinds* alone.
 
 ### 4.7 Patch proposer
 
@@ -658,11 +669,10 @@ hypothesis plus the patches that test it.
 - `.zicato/epochs/{epoch}/brief.md` — the operator's
   steering document for the proposer. Read fresh every round; no
   caching. Contains preferred targets, a mechanically-enforced
-  `## Forbidden` list of mutation-point ids, and style guidance. (The
-  proposer brief was formerly called the epoch "rubric"; it is
-  renamed to disambiguate it from the per-entry `Rubric` outcome
-  check — see [EPOCHS-AND-JOURNALING.md](EPOCHS-AND-JOURNALING.md)
-  §7.)
+  `## Forbidden` list of mutation-point ids, and style guidance. The name
+  "brief" keeps this per-epoch steering document distinct from the
+  per-entry `Rubric` outcome check (see
+  [EPOCHS-AND-JOURNALING.md](EPOCHS-AND-JOURNALING.md) §7).
 - `adapter.mutation_points()` — the full mutation surface. The
   proposer addresses patches by mutation-point id.
 - A capped digest of **prior experiments** for the current epoch —
@@ -702,7 +712,7 @@ The hypothesis fields are **mandatory and structured**. Schema-invalid
 proposer responses are rejected and the proposer is re-prompted.
 Writing the hypothesis BEFORE the run is the load-bearing decision
 that makes the journal interpretable later — without it, every entry
-in the journal reduces to "something changed; here's the score
+in the journal reduces to "something changed, and here is the score
 delta".
 
 See [EPOCHS-AND-JOURNALING.md](EPOCHS-AND-JOURNALING.md) for the full
@@ -721,15 +731,15 @@ patches, the adapter's `mutation_points()` for ID resolution.
 
 **Produces.** A new snapshot under
 `.zicato/epochs/{epoch}/generations/v{N+1}/snapshot/` plus
-`patches_applied.json` recording exactly what changed.
+`patches_applied.json` recording what changed.
 
 **Validator constraints (every patch must pass all):**
 
 - The patched file still parses as valid Python (`ast.parse`).
 - Every imported name in the patched file resolves (no new
   `NameError` on import).
-- The targeted mutation-point id resolves to exactly one location
-  after the patch (so future generations can re-find it).
+- The targeted mutation-point id resolves to a single location
+  after the patch, so a later generation can find it again.
 - For prompt templates, all required `{...}` placeholders that the
   pre-patch text contained are preserved in the post-patch text.
 - The patch does NOT touch any mutation-point id that appears in the
@@ -772,17 +782,17 @@ zicato is configured with **two** distinct `call_llm` callables:
   and the LLM grader behind any `rubric`-kind outcome check.
 
 **Hard rule at config time.** The two callables MUST differ by
-*callable identity* OR by an explicit `model=` override. If they don't
-differ, zicato refuses to start the run. This is a HARD ERROR, not a
-warning.
+*callable identity* OR by an explicit `model=` override. If they do not
+differ, zicato refuses to start the run. The check is a hard error;
+there is no warn-and-continue path.
 
-The rule is enforced not because vendor diversity is the goal — it is
-because *collusion is the risk*. If the same model is judging itself
+The rule exists because *collusion is the risk*, rather than because
+vendor diversity is a goal in itself. If the same model is judging itself
 and emulating users for itself and proposing patches for itself, every
 loop in zicato becomes degenerate at a different level. See
 [EMULATOR.md](EMULATOR.md) §"Collusion-proof by construction" for the
-full argument and [RATIONALE.md](RATIONALE.md) for why this is
-*configured*, not *defaulted*.
+full argument and [RATIONALE.md](RATIONALE.md) for why zicato makes the
+operator configure the pair rather than supplying a default.
 
 The `CallLLM` return remains answer text. A backend that emits separate private
 reasoning and answer channels can opt into `zicato.reasoning` before registering
@@ -795,7 +805,7 @@ cannot recover the channel boundary and is not eligible for this adaptation.
 ### 4.11 Analytical index
 
 **Responsibility.** Make cross-run questions fast. The
-filesystem layout (§5) is canonical and human-legible but poor
+filesystem layout (§6) is canonical and human-legible but poor
 for `GROUP BY` / `JOIN` queries that range across many
 generations. The analytical index is a derived, fully-rebuildable
 SQLite sidecar — `.zicato/index.db` — that projects the canonical
@@ -816,7 +826,7 @@ instead of walking files.
 
 - **Files are canonical; the index is derived.** The index holds
   no fact not also on disk. `zicato repair index` reconstructs it
-  exactly from the filesystem; it is disposable.
+  in full from the filesystem; it is disposable.
 - **Canonical-file-first dual-write.** The orchestrator writes
   the canonical file, then the index row. The index can only
   ever lag the filesystem, never lead it — so a crash leaves a
@@ -834,11 +844,10 @@ SQLite-here-not-there boundary are in
 
 **Responsibility.** Detect when the meta-loop is *running but not
 optimising anything*. The robustness layers (§5) keep the loop
-from *breaking*; loop-health keeps it from being *toothless* — a
-degenerate evaluation that cannot distinguish any candidate. The
-motivating incident: a real run had `v0` and `v1` both score
-exactly `1.000000`, and the degeneracy was found only by an
-operator eyeballing the journal.
+from *breaking*; loop-health catches an evaluation that cannot
+distinguish any candidate. In one real run the seed generation
+`v0` and its child `v1` both scored `1.000000`, and only an
+operator reading the journal noticed.
 
 **Consumes.** Each round's runs, scores, and the epoch-so-far
 history.
@@ -852,14 +861,14 @@ drift signal, no-expectations, stalled loop) emit findings with
 **Contracts.**
 
 - A `critical` finding triggers a bannered orchestrator warning
-  and an SSE event to the dashboard's loop-health panel — the §1
-  silent-degeneracy failure mode never again depends on an
-  operator noticing.
+  and a server-sent-events (SSE) update to the dashboard's loop-health
+  panel, so the silent degeneracy described above does not
+  depend on an operator noticing.
 - The orchestrator **stops early on sustained degeneracy by
   default** (two consecutive rounds with a CRITICAL loop-health
-  finding stop the loop with a `degenerate_health` reason). This is a
-  default-on orchestrator behaviour, not a CLI flag — there is no
-  `--stop-on-degenerate` option on `zicato evolve`.
+  finding stop the loop with a `degenerate_health` reason). The
+  behaviour is built into the orchestrator rather than exposed as a
+  flag; there is no `--stop-on-degenerate` option on `zicato evolve`.
 
 The detectors, severities, and the `zicato health` CLI are in
 [LOOP-HEALTH.md](LOOP-HEALTH.md).
@@ -938,7 +947,8 @@ The full reference for every subcommand is in [CLI.md](CLI.md).
 
 The components above describe the meta-loop's logical structure.
 The runtime layer is the surrounding scaffold that makes the loop
-**survivable** (hangs, crashes, OOMs, the long tail of pathology)
+**survivable** (hangs, crashes, out-of-memory kills, and the long
+tail of rarer failures)
 and **observable** (a live operator view of in-flight rounds, a
 durable audit trail of override decisions).
 
@@ -958,11 +968,11 @@ files.
    │    lock.json (pid-based)       │         │  watches heartbeat.json +  │
    │  • writes heartbeat.json (2s)  │         │  active_runs/*.            │
    │  • runs each tournament run    │         │  Heartbeat-stale → flag    │
-   │    IN-PROCESS today            │         │  orchestrator stalled.     │
-   │    (L3 subprocess workers      │         │  Run stale/past deadline → │
-   │     are planned)               │         │  SIGTERM → grace → SIGKILL.│
+   │    in a subprocess worker,     │         │  orchestrator stalled.     │
+   │    so a hung run cannot        │         │  Run stale/past deadline → │
+   │    wedge the orchestrator      │         │  SIGTERM → grace → SIGKILL.│
    │  • writes active_runs/{id}.json│         │  Serves /statusz.          │
-   │  • PLANNED: read control/ at   │         └────────────────────────────┘
+   │  • reads control/ at           │         └────────────────────────────┘
    │    safe points                 │  spawn  ┌────────────────────────────┐
    └────────────────────────────────┼────────►│  dashboard service (Python)│
                                      │         │  ────────────────────────  │
@@ -972,27 +982,26 @@ files.
                                      │         │  runtime/ + index.db +     │
                                      │         │  epochs/. POST /api/       │
                                      │         │  control/* writes control/ │
-                                     │         │  files (consume side       │
-                                     │         │  planned).                 │
+                                     │         │  files; the orchestrator   │
+                                     │         │  consumes them.            │
                                      │         └────────────────────────────┘
 ```
 
 Three properties hold across the runtime layer:
 
 1. **File-based state is the only source of truth.** Memory
-   state in any process is a cache of what's on disk.
+   state in any process is a cache of what is on disk.
 2. **No LLM in the watchdog path.** Watchdog decisions are
    deterministic functions of file timestamps.
-3. **Single-writer per file.** Each state file has exactly one
-   process that writes to it (orchestrator, dashboard service, or —
-   once L3 lands — one specific worker). No locking beyond the
-   pid-based `lock.json`.
+3. **Single-writer per file.** Each state file has a single writing
+   process — the orchestrator, the dashboard service, or one
+   tournament worker. No locking beyond the pid-based `lock.json`.
 
-**Supervisor-binary ownership.** The Rust watchdog binary splits
-cleanly along the library/driver boundary: *packaging* belongs to the
-root wheel — the hatchling build hook (`hatch_build.py`) compiles the
-crate and bundles the artifact at `zicato/_bin/zicato-supervisor`, so
-every wheel install carries it — while *resolution* is CLI policy.
+**Supervisor-binary ownership.** The Rust watchdog binary splits along
+the library/driver boundary. *Packaging* belongs to the root wheel: the
+hatchling build hook (`hatch_build.py`) compiles the crate and bundles
+the artifact at `zicato/_bin/zicato-supervisor`, so every wheel install
+carries it. *Resolution* is CLI policy.
 `zicato.cli.commands.evolve._resolve_supervisor_binary` decides which
 binary actually runs (the `--supervisor-binary` flag / config pin, the
 freshest of the bundled `_bin/` copy vs. a dev checkout's
@@ -1005,46 +1014,68 @@ The full design lives in seven documents:
 | Concern | Document |
 |---|---|
 | State file layout, supervisor lifecycle, resume semantics, concurrency model | [RUNTIME.md](RUNTIME.md) |
-| Live dashboard panels, HTTP + SSE API, predicted gate verdict, control-file protocol for v1.3 interactivity | [DASHBOARD.md](DASHBOARD.md) |
+| Live dashboard panels, HTTP + SSE API, predicted gate verdict, the control-file protocol for operator interactivity | [DASHBOARD.md](DASHBOARD.md) |
 | The tournament competition model — the king-of-the-hill gauntlet, the bracket view, the per-matchup detail, the tournament analytics | [TOURNAMENT.md](TOURNAMENT.md) |
 | The six-layer defense model (`asyncio.wait_for` → cancellation → subprocess workers → watchdog → circuit breaker → atomic writes) and what each catches | [ROBUSTNESS.md](ROBUSTNESS.md) |
-| Loop-health diagnostics — detectors for a degenerate / toothless evaluation, the `LoopHealth` report, `zicato health` | [LOOP-HEALTH.md](LOOP-HEALTH.md) |
-| v0 directory-backed storage today, plus the v0+1 git-backed roadmap (G0-G10) for blob dedup + `git log` / `git diff` / `git bisect` over generations | [STORAGE.md](STORAGE.md) |
+| Loop-health diagnostics — detectors for an evaluation that cannot distinguish candidates, the `LoopHealth` report, `zicato health` | [LOOP-HEALTH.md](LOOP-HEALTH.md) |
+| Directory-backed generation storage, and the git-backed generation store (§7 there) that gives blob deduplication plus `git log` / `git diff` / `git bisect` over generations | [STORAGE.md](STORAGE.md) |
 | The `.zicato/index.db` SQLite analytical index — schema, the files-canonical / index-derived discipline, `zicato repair index` | [ANALYTICAL-INDEX.md](ANALYTICAL-INDEX.md) |
 
-The runtime layer ships in phases (see [ROBUSTNESS.md](ROBUSTNESS.md)
-§4 and [RUNTIME.md](RUNTIME.md) §8 for the exact what-ships boundary).
-**Shipped today:** L1+L2 (`asyncio.wait_for` budgets + structured
-cancellation), L3 subprocess workers (each board-entry run executes in
-its own `python -m zicato._tournament_worker` subprocess so a hung run
-can be SIGTERM'd without taking down the whole `evolve`), atomic writes
-everywhere, the Rust watchdog supervisor's watchdog role auto-spawned
-by `evolve`, the consecutive-reject circuit breaker, the
-`.zicato/runtime/` state files, and the dashboard — served as a
-**separate Python service**, not a role of the Rust binary — with its
-GET API + SSE and the write side of the control endpoints.
-**Planned:** the crash-resume protocol, the orchestrator's consumption
-of `control/` commands, and the git storage backend (v0+1, sequenced in
-[STORAGE.md](STORAGE.md) §4).
+The runtime layer ships in stages (see [ROBUSTNESS.md](ROBUSTNESS.md)
+§4 and [RUNTIME.md](RUNTIME.md) §8 for the what-ships boundary).
+**Shipped today:**
+
+* the per-call and per-budget timeouts (`asyncio.wait_for`), together
+  with structured cancellation;
+* the subprocess worker boundary — each board-entry run executes in its
+  own `python -m zicato._tournament_worker` subprocess, so a hung run
+  can be sent SIGTERM without taking down the whole `evolve`;
+* atomic writes everywhere;
+* the orchestrator watchdog, which is the Rust supervisor binary that
+  `evolve` auto-spawns;
+* the consecutive-reject circuit breaker;
+* the `.zicato/runtime/` state files;
+* the dashboard, served as a **separate Python service** rather than as
+  a role of the Rust binary, with its GET API, its server-sent-events
+  stream, and both sides of the control endpoints. The orchestrator
+  consumes `control/` commands at safe points
+  (`zicato.runtime.control_consumer`, called from `evolve/loop.py`,
+  `epoching.py`, `field.py`, `gauntlet.py` and `gate.py`) and archives
+  each consumed command into `control_log/`;
+* the conservative crash-resume protocol
+  (`zicato.runtime.resume.prepare_resume`, called from `evolve/loop.py`),
+  which resumes an interrupted epoch where the durable markers allow it
+  and discards partial work where they do not.
+
+Generation source trees are stored in a private git repository per
+workspace, which is the default backend that `zicato init` records
+(`DEFAULT_GENERATION_SOURCE_BACKEND` in `epoch/genstore.py`; the
+implementation is `epoch/git_genstore.py`). The directory-snapshot
+backend remains fully supported and is selected with
+`generation_source_backend: "directory"` for an environment where a
+private git repository is unwanted. [STORAGE.md](STORAGE.md) §7
+specifies the git backend.
 
 Because each run crosses a process boundary, the run's inputs are
 serialised to a temp args file and rebuilt inside the worker. The
 `ScoringWeights` carried across that seam is written by
 `runner._weights_spec` and read back by
-`_tournament_worker._weights_from_args`, which must stay field-for-field
-in lock-step: a field present in the parent but missing from the reader
-is silently reset to its default in the subprocess, desyncing the
-worker's gate decision from the parent's. `per_judge_weights` (and
-`pass_rate_monotonicity_scope`) are carried across this boundary for
-exactly that reason — so the worker's per-judge loss attribution and
+`_tournament_worker._weights_from_args`. Those two must stay
+field-for-field in lock-step. A field present in the parent but missing
+from the reader is silently reset to its default in the subprocess,
+which desynchronises the worker's gate decision from the parent's.
+`per_judge_weights` (and `pass_rate_monotonicity_scope`) are carried
+across this boundary for
+that reason — so the worker's per-judge loss attribution and
 its gate-view match what the parent would have computed in-process.
 
 ## 6. Storage layout
 
 zicato keeps everything under a per-project workspace, by default
-`.zicato/` next to the inner harness's source root. Multi-instance
-deployments (target 3 — nested zicato instances) key the workspace by
-`instance_id` configured at runtime so workspaces never cross-talk.
+`.zicato/` next to the inner harness's source root. A deployment
+that runs several zicato instances at once — one zicato evolving a
+nested zicato, for instance — keys each workspace by an `instance_id`
+configured at runtime, so workspaces never cross-talk.
 
 ```
 .zicato/
@@ -1092,27 +1123,27 @@ older inline `patches: [...]` form for backward compatibility. See
 write-order rationale.
 
 Every **canonical** artifact is a human-readable file — JSON, JSONL,
-or markdown. The cost of `ls`-and-`cat` debugging is the budget for
-the storage design; the operator's first-class interface is the
-filesystem.
+or markdown. The storage design spends its budget on keeping a
+workspace debuggable with `ls` and `cat`, because the filesystem is the
+operator's first-class interface.
 
 The one non-text file is `.zicato/index.db` — the **analytical
 index**. It is *not* canonical: it is a derived, fully-rebuildable
 SQLite projection of the files above, a cache that makes cross-run
 `GROUP BY` / `JOIN` queries fast without a file-walk. It holds no
-fact not also on disk; `zicato repair index` reconstructs it exactly. The
+fact not also on disk; `zicato repair index` reconstructs it in full. The
 filesystem stays the source of truth; the index is a sidecar. See
 [ANALYTICAL-INDEX.md](ANALYTICAL-INDEX.md).
 
 ## 7. The harmonograf split: execution view vs competition view
 
 zicato and harmonograf both render a "view of a run", and the
-boundary between them is load-bearing — they are deliberately
-two tools, linked, not one merged UI.
+boundary between them is load-bearing: they are two linked
+tools rather than one merged interface.
 
 > **harmonograf is the execution view; the zicato dashboard is
-> the competition view. They are linked by a per-run drill-down,
-> not merged.**
+> the competition view. A per-run drill-down links them, and they
+> stay separate tools.**
 
 - **harmonograf — the execution view.** It renders *one
   goldfive run*: the temporal trace of a single execution — the
@@ -1148,9 +1179,9 @@ surfaces respectively. The full treatment is in
 
 ## 8. The data flow, in narrow contracts
 
-The diagram in §2 names the components; this section names the
-contracts between them so two components can be reimplemented without
-breaking the third.
+The diagram in §2 names the components. The table below names the
+contract between each producer and its consumer, so either side can be
+reimplemented without breaking the other.
 
 | Producer | Consumer | Contract |
 |---|---|---|
@@ -1164,15 +1195,15 @@ breaking the third.
 | `Tournament` | `Journal + outcome` | A `tournament_decision` with score deltas. |
 
 A reader can replace any single component with their own implementation
-as long as the contracts hold. This is what "framework-agnostic" means
-in zicato — not "any framework works on day one" but "every contract is
-between named, typed shapes, so a new framework adapter is the only
-thing that needs to change to adopt zicato for it".
+as long as the contracts hold. That is what "framework-agnostic" means
+in zicato: every contract is between named, typed shapes, so writing one
+new adapter is all that adopting zicato for another framework requires.
+It does not mean that every framework works on day one.
 
-## 9. What's deliberately out of scope for v0
+## 9. What is out of scope
 
-- Cross-machine distribution. v0 runs locally; nothing in the design
-  prevents distributed runners but the v0 storage layout is a single
+- Cross-machine distribution. zicato runs locally; nothing in the design
+  prevents distributed runners, but the storage layout assumes a single
   filesystem.
 - Caching of LLM calls. Caching is a wrapper concern on the
   `call_llm` callable; zicato makes no assumptions either way.
@@ -1180,10 +1211,11 @@ thing that needs to change to adopt zicato for it".
   goldfive's domain.
 - A web UI. The CLI is the surface; harmonograf exists for the live
   run view.
-- Multi-tenant workspaces. v0 has one workspace per project,
-  optionally keyed by `instance_id` for nested zicato (target 3).
+- Multi-tenant workspaces. There is one workspace per project,
+  optionally keyed by `instance_id` when one zicato evolves a nested
+  zicato instance.
 - Anonymisation or PII scrubbing on the event stream. The board is
-  whatever the operator put on it; the JSONL captures exactly what
+  whatever the operator put on it; the JSONL captures what
   flowed.
 
 ## 10. Further reading
@@ -1199,12 +1231,12 @@ thing that needs to change to adopt zicato for it".
 | Drift loss scalar, pass-rate, tournament promotion gate | [SCORING.md](SCORING.md) |
 | The tournament competition model — gauntlet, bracket, per-matchup detail, analytics | [TOURNAMENT.md](TOURNAMENT.md) |
 | User emulator design + collusion-proof construction | [EMULATOR.md](EMULATOR.md) |
-| Three dogfood targets and the v0 design they force | [DOGFOOD-TARGETS.md](DOGFOOD-TARGETS.md) |
+| The three dogfood targets and the design they force | [DOGFOOD-TARGETS.md](DOGFOOD-TARGETS.md) |
 | `.zicato/runtime/` state files, the Rust supervisor binary, resume protocol | [RUNTIME.md](RUNTIME.md) |
 | Live dashboard panels, HTTP + SSE, predicted gate verdict, control-file protocol | [DASHBOARD.md](DASHBOARD.md) |
 | The six-layer defense model against hangs and crashes | [ROBUSTNESS.md](ROBUSTNESS.md) |
 | Loop-health diagnostics — detectors for a degenerate evaluation, `zicato health` | [LOOP-HEALTH.md](LOOP-HEALTH.md) |
-| Git-backed storage roadmap (G0-G10) + migration tooling | [STORAGE.md](STORAGE.md) |
+| The git-backed generation store and its migration tooling | [STORAGE.md](STORAGE.md) |
 | The `.zicato/index.db` SQLite analytical index — schema, discipline, `zicato repair index` | [ANALYTICAL-INDEX.md](ANALYTICAL-INDEX.md) |
 | CLI reference, every subcommand | [CLI.md](CLI.md) |
 | Why each major decision was made the way it was | [RATIONALE.md](RATIONALE.md) |
