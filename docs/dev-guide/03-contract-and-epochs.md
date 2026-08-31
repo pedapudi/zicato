@@ -14,11 +14,11 @@
 > the auto-roll (`ensure_epoch_for_contract`), lineage semantics (the `promoted`
 > tri-state), and record-format versioning + refuse-on-newer.
 >
-> **Prerequisites:** 01-orientation.md §"Workspace layout" (what an epoch /
-> generation / round is on disk), 02-architecture.md §"The evolve round" (where
-> the auto-roll sits), 04-evaluation-statistics.md §"The A/A noise floor" (what
+> **Prerequisites:** 01-orientation.md §2.6 (the workspace on disk) (what an epoch /
+> generation / round is on disk), 02-architecture.md §3 (where
+> the auto-roll sits), 04-evaluation-statistics.md §4 (what
 > `noise_floor` measures and why it is not a contract input). The proposer half
-> of the contract is 05-proposer.md §"`_canon_proposer` and skills"; the runtime
+> of the contract is 05-proposer.md §5.3.8 (skills and `ProposerSpec` resolution); the runtime
 > half of the storage seam is 07-runtime-and-durability.md.
 >
 > **The eight invariants you must not break** (each expanded below):
@@ -335,7 +335,7 @@ editing the actual prose does." A missing brief hashes as empty with a warning.
 The brief is an **epoch-level** concept — one brief governs every proposer call
 within an epoch — and its normalized body is a contract input, so a semantic
 edit rolls the epoch. That is why the proposer's per-round guidance lives in
-the brief rather than in code (see 05-proposer.md §"Where `brief_text` comes from").
+the brief rather than in code (see 05-proposer.md §5.3.7).
 `tests/test_epoch_contract.py::test_hash_stable_across_whitespace_only_brief_edits`
 plants a CRLF + trailing-space + blank-line re-spelling and asserts the hash
 holds.
@@ -1668,25 +1668,25 @@ Points where the trace changes under non-default inputs:
 
 ## 3.14 Cross-references
 
-- 01-orientation.md §"Workspace layout" — where `epochs/{id}/`, `current_epoch`,
+- 01-orientation.md §2.6 (the workspace on disk) — where `epochs/{id}/`, `current_epoch`,
   `lineage.json`, and the operator's live contract files sit.
-- 02-architecture.md §"The evolve round" — where `ensure_epoch_for_contract`
+- 02-architecture.md §3 — where `ensure_epoch_for_contract`
   runs in the round pipeline.
-- 04-evaluation-statistics.md §"The A/A noise floor" — what `noise_floor`
+- 04-evaluation-statistics.md §4 — what `noise_floor`
   measures; §"Contract pre-flight" — what `preflight` records. Both are the
   never-hashed measurements of §3.6.
-- 05-proposer.md §"`_canon_proposer` and skills" — the proposer component in
+- 05-proposer.md §5.3.8 (skills and `ProposerSpec` resolution) — the proposer component in
   full, and §"Why tools do NOT fold into the contract hash" (the registry
   argument behind §3.2.6); §"The restricted-visibility envelope" — the
   overfitting boundary the scaffold rule (§3.11 step 5) protects.
-- 06-tournament-and-selection.md §"The tournament structure" — how
+- 06-tournament-and-selection.md §6.9 (the structure-independent walk) — how
   `tournament_structure` (a nested `ScoringWeights` field) folds into the
   contract via the same recursion as `overfitting` (§3.2.3).
 - 07-runtime-and-durability.md — the refuse-a-newer-record-format rule
   (invariant `D12`), which is the storage-wide view of §3.10, and §"The
   generation store", which says what the snapshot a lineage node points at
   actually is.
-- 10-builder-cli-library.md §"Builder operations" — the `set_screening` /
+- 10-builder-cli-library.md §10.2 — the `set_screening` /
   `set_proposer_quality` surface step 6 of §3.11 wires into.
 - 12-bug-casebook.md §"Case 10" — the case where the contract hash embedded the
   checkout path, behind invariant #1 and §3.2.5; §"The meta-lessons" — the

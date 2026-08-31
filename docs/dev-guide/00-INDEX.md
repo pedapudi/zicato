@@ -60,7 +60,7 @@ chapter 01.
 | **G4** | The two oracles are green before ANY commit | `test_convergence_known_answer` (the loop converges) + `test_decision_procedure_power` (the decision procedure's measured operating characteristics). | `uv run pytest tests/test_convergence_known_answer.py tests/test_decision_procedure_power.py -q` |
 | **G5** | Parity + import contracts + node | `bash tools/parity.sh` (13 gates), `uv run lint-imports` (7 contracts), `make node-test`. | all green |
 | **G6** | Omit-at-default contract discipline | A new default-off contract field MUST be registered in `_SCORING_OMIT_AT_DEFAULT_FIELDS`, or every existing workspace spuriously rolls its epoch. | `03-contract-and-epochs.md`; contract-hash parity gate |
-| **G7** | The reserved replicate-base ledger | Duels `0..`, calibration `1000`, preflight `2000`, screening `3000/3001`, evidence `4000`, board reflection `5000`, eval-synthesis admission `6000`. Squatting a base corrupts the unit cache (bugs #1, #8); a reader that globs `loss*.json` instead of filtering by base reads the preflight's degraded probes as real behaviour (`unit_cache.is_own_code_board_draw`). | `04-evaluation-statistics.md §"reserved bases"` |
+| **G7** | The reserved replicate-base ledger | Duels `0..`, calibration `1000`, preflight `2000`, screening `3000/3001`, evidence `4000`, board reflection `5000`, eval-synthesis admission `6000`. Squatting a base corrupts the unit cache (bugs #1, #8); a reader that globs `loss*.json` instead of filtering by base reads the preflight's degraded probes as real behaviour (`unit_cache.is_own_code_board_draw`). | `04-evaluation-statistics.md §8` |
 | **G8** | The restricted-visibility envelope | Nothing entry-identifying (entry ids, task text, holdout data, raw per-entry outcomes) may reach the proposer. Every channel is banded/aggregated/anonymized/redacted. | `05-proposer.md §"envelope"`; adversarial-identity fixtures |
 | **G9** | Module-level callables only across the worker boundary | `_callable_dotted_path` rejects closures; scripted proposers/harnesses are module-level functions + module state + `reset()`. | `06-tournament-and-selection.md §"worker boundary"` |
 | **G10** | Digest-gated rendering | A no-op SSE heartbeat must cause ZERO DOM rebuild; views fold content digests and swap only on change. | `09-dashboard-and-query.md §9.7`; node DOM-node-identity tests |
@@ -141,7 +141,7 @@ its case; each ends with "you are about to reintroduce this if…".
 | 9 | Git `derive_generation` stale shared worktree | git store | you move a tag but leave a shared worktree at the old commit |
 | 10 | Contract hash embedding cwd/checkout | contract | you `resolve()` a path into an identity that must be location-independent |
 | 11 | `judge_view` opened the index READ-WRITE on a read path | index | a read-only query path constructs the connection without the read flag |
-| 12 | The `elimFlow` defensive-guard family died with the served model | dashboard | you keep client guards for a shape the server no longer emits |
+| 12 | The `elimFlow` defensive-guard family, kept for a payload the server now serves whole | dashboard | you keep client guards for a shape the server does not emit |
 
 ---
 

@@ -154,8 +154,7 @@ session, or one slow model call destroys hours of in-flight tournament work.
 The `heartbeat_stale_kill` threshold survives only as the *deep-stale*
 boundary that raises `Warn` → `Stale`.
 
-Liveness itself is seq-first (see 07-runtime-and-durability.md §"heartbeat
-— liveness, seq-vs-timestamp, and the paused flag"). The `SeqLiveness` tracker
+Liveness itself is seq-first (see 07-runtime-and-durability.md §7.6.1). The `SeqLiveness` tracker
 is shared between `heartbeat_loop`, which advances it, and `/statusz`, which
 reads it without advancing. It classifies on the age of the last **seq change**
 when the heartbeat carries a `seq`, and falls back to timestamp age for a
@@ -685,7 +684,7 @@ work is required when:
 | Additive field the supervisor should ignore | none (serde ignores unknown keys; defaults cover absence) |
 | Additive field the supervisor must surface | mirror field in `state.rs` + wire into the route/statusz view + a deserialization test |
 | Semantic/shape change to a served payload | change the Python service AND the Rust route in the same commit — the heartbeat-ts lesson: when the dashboard schema clean-break made `ts` THE one typed liveness timestamp (integer ms, stamped server-side from `last_heartbeat`), both the Python reader and the Rust supervisor's heartbeat route had to move atomically, or the two dashboards would disagree about liveness (see 12-bug-casebook.md) |
-| Index schema change | bump Python `SCHEMA_VERSION` AND Rust `EXPECTED_SCHEMA_VERSION` together, update the row readers, re-capture the REINDEX-DUMP golden (11-testing.md §"Parity gates one by one") |
+| Index schema change | bump Python `SCHEMA_VERSION` AND Rust `EXPECTED_SCHEMA_VERSION` together, update the row readers, re-capture the REINDEX-DUMP golden (11-testing.md §11.7) |
 | Control-file shape change | update the Rust marker writers in `routes.rs` AND the Python consumer in the same commit (§8.13's checklist) |
 
 > ✅ ALWAYS grep BOTH languages when you touch a shared name. The shared
@@ -770,7 +769,7 @@ command survive an epoch roll (pause does) or must it be drained
   `control_log/` audit record (name, arg, source, reason).
 
 **Step 6 — frontend + docs.** If the dashboard UI grows a button, the node
-suite needs the behaviour test (11-testing.md §"Node suite conventions");
+suite needs the behaviour test (11-testing.md §11.9);
 `--help` text changes ripple into the CLI-HELP parity golden only if you
 added a CLI verb.
 

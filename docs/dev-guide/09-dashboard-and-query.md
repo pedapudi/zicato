@@ -16,7 +16,7 @@
 > canonical / index derived), §7.6 (the runtime state files this layer
 > reads), §7.10 (the RoundLog whose fold the round timeline renders),
 > 08-supervisor.md §"The read-only SQLite discipline" (the Rust twin of
-> every reader here). 04-evaluation-statistics.md §"Train/holdout split"
+> every reader here). 04-evaluation-statistics.md §5
 > and §"The noise floor" ground the uncertainty-honest verdicts of §9.8.
 >
 > **Invariants introduced in this chapter.** Each is load-bearing: a violation
@@ -29,7 +29,7 @@
 > | DQ2 | one spelling per wire field | **One spelling per field on the wire.** `entry_id`, `generation_id`, `ts` (int ms epoch), `pass_fail` (`true`/`false`/`null`), `promoted` (tri-state `true`/`false`/`null`). No aliases, no bare ints the client re-interprets, no default-`false` for an undecided promotion. |
 > | DQ3 | every reader is best-effort | **Every reader is best-effort.** A missing / never-built / transiently-torn input degrades to an empty-or-`None` shape (often with a `note`), never raises. No endpoint built on `zicato.query` returns a 500. |
 > | DQ4 | the query layer is library code | **The query layer is library code and never imports the dashboard.** The import-linter contract "the query layer stays dashboard-free" pins it; the dashboard is a driver on top. |
-> | DQ5 | change-signals carry no content | **SSE frames carry change-kinds + `seq` + `terminal` ONLY — never content.** A `state_change` is a signal to fetch, not a payload. |
+> | DQ5 | change-signals carry no content | **SSE frames carry change-kinds + `seq` + `terminal` ONLY — never content.** A `state_change` is a signal to fetch rather than a payload. |
 > | DQ6 | a no-op heartbeat rebuilds zero DOM | **A no-op heartbeat rebuilds ZERO DOM.** The client drops a repeat-`seq` frame with no fetch; a view folds a content digest (timestamps excluded) and swaps only on a real change. Node tests assert DOM-node identity across a re-serve. |
 > | DQ7 | verdicts are honest about the noise floor | **Verdicts are honest about the noise floor.** Movement inside the measured A/A floor reads `no_signal` ("no detectable signal"), never "plateaued" or "improving". |
 > | DQ8 | null-degrade under the Rust supervisor | **Every new GET null-degrades on the Rust supervisor.** A payload the Rust reader does not serve returns `null`/empty; the client paints the honest empty state, never a spinner or a crash. |
@@ -110,8 +110,7 @@ by the import-linter contracts).
 ```
 — `src/zicato/query/__init__.py` (module docstring)
 
-The enforcement is a forbidden-import contract (see 11-testing.md §"The
-import contracts"):
+The enforcement is a forbidden-import contract (see 11-testing.md §11.8):
 
 ```
 [[tool.importlinter.contracts]]
@@ -148,7 +147,7 @@ invisible at the call site, the boundary is not.
 The dashboard driver itself has exactly two declared driver→driver edges
 (`cli → dashboard` for launch/static-resolution, `dashboard → builder` for
 the mounted builder routes); every other cross-driver import is forbidden
-(§9.4, 11-testing.md §"The import contracts"). The endpoints module's own
+(§9.4, 11-testing.md §11.8). The endpoints module's own
 docstring restates the split from the top:
 
 ```python
@@ -935,7 +934,7 @@ nested-rung coordinate and takes precedence over the top-level replicate loss's
 `match_id`; runtime `run` selectors prefer the numbered sibling. The global
 Goldfive-run-id lookup caches each event file independently: pure appends reuse
 an already discovered id without a workspace scan or stream reopen, while new,
-replaced, truncated, and previously empty files are reparsed.
+replaced, truncated, and formerly-empty files are reparsed.
 `_make_live_endpoints` is the model — `api_live_pipeline` is one line over
 `build_round_pipeline`:
 
@@ -2023,9 +2022,8 @@ the head unchanged").
 > `/api/epoch/{id}/newthing`, assume the Rust supervisor does not serve it:
 > the accessor returns `null` on a 404, the panel omits or shows "unavailable"
 > — never a spinner, never a crash. The reciprocal duty is on the Rust
-> side (08-supervisor.md §"When a Python payload change requires Rust
-> parity"): a payload SHAPE change that the client depends on must land in
-> both servers in lock-step, or the two dashboards skew.
+> side (08-supervisor.md §8.12): a payload SHAPE change the client depends on
+> must land in both servers in lock-step, or the two dashboards skew.
 
 > ⚠️ TRAP — the failure mode of skipping the null-degrade is invisible on the Python
 > service (where you develop) and only shows against the Rust supervisor
@@ -2229,7 +2227,7 @@ reader (§9.16).
 correctly when the endpoint 404s. Either the accessor's `null` path (tested
 in step 7) covers it, or — if the datum should ALSO surface under the
 supervisor — mirror the payload in the Rust route and its `state.rs` serde
-(08-supervisor.md §"When a Python payload change requires Rust parity"),
+(08-supervisor.md §8.12),
 keeping `EXPECTED_SCHEMA_VERSION` and the field spellings in lock-step.
 
 **Step 9 — The reader unit test.** In `tests/` add a Python test that
@@ -2338,17 +2336,17 @@ cargo test -p zicato-supervisor                # Rust parity, if applicable
   every reader here; §"When a Python payload change requires Rust parity" —
   the reciprocal of the null-degrade and clean-break rules; §"Warn-only heartbeat" — the seq-vs-timestamp
   liveness the four run-states mirror.
-- 04-evaluation-statistics.md §"The noise floor" — where the measured A/A
+- 04-evaluation-statistics.md §4 — where the measured A/A
   floor §9.8 reads comes from; §"Train/holdout split" — the board-status
   surface (`compute_board_split` / `boardStatusDigest`).
 - 05-proposer.md §5.7 — the round-log vocabulary the proposing tracker
   renders; §5.8.6 — the banding the dashboard must not un-band.
 - 06-tournament-and-selection.md — where gate verdicts, the racing rungs,
   and `deciding_rule` come from before the readers join them.
-- 11-testing.md §"Node conventions" — the digest / no-op / DOM-node-identity
+- 11-testing.md §11.9 — the digest / no-op / DOM-node-identity
   discipline as a test contract; §"The parity gates" — MOCK-GOLDEN /
   REINDEX-DUMP; §"The import contracts" — the query-stays-dashboard-free pin.
-- 12-bug-casebook.md §"Bug #4" — the client champion-scan (first vs
+- 12-bug-casebook.md case 4 (the client champion scan) — the client champion-scan (first vs
   reigning) behind server authority.
 
 ---

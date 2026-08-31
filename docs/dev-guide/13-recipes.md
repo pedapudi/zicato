@@ -392,7 +392,7 @@ colon) whose weighted mean folds into the generation scalar.
 4. **Monotonicity, if wanted.** To make the gate refuse a promotion that
    regresses your namespace, add your key to `ScoringWeights.namespace_monotonicity`
    (a `{namespace: bool}` map). `tournament/gate.py::_regressed_namespaces`
-   consumes it. See 04-evaluation-statistics.md §"The promote gate" for the
+   consumes it. See 04-evaluation-statistics.md §2 for the
    monotonicity scope semantics.
 5. **Builder + omit-at-default.** The builder already edits `namespace_weights`
    via `set_namespace_weights` (10-builder-cli-library.md §"The op inventory"),
@@ -412,14 +412,14 @@ colon) whose weighted mean folds into the generation scalar.
   existing terms.
 - ⚠️ **A namespace that changes the scalar at default rolls every epoch.** Follow
   the omit-at-default rule (01-orientation.md §4; 03-contract-and-epochs.md
-  §"Omit-at-default fields"): default weight `0` (or the key absent from the
+  §3.4): default weight `0` (or the key absent from the
   canonical form) means existing epochs hash identically. A real weight rolls the
   epoch, which is correct: a new objective is a new contract.
 - ⚠️ **Do NOT reshape a term into a seam edit when a weight will do.** A reshape
   (a transform, a reducer) belongs in the declarative `pass_transform` /
   `drift_kind_aggregation` registry or in a `scalar_fn` plugin, rather than in a
-  hand-edit to `builtin_scalar`. See 04-evaluation-statistics.md §"The scoring
-  seams".
+  hand-edit to `builtin_scalar`. See 04-evaluation-statistics.md §1.1 and §1.3
+  (the two scoring seams).
 
 **Verify.**
 
@@ -494,8 +494,7 @@ built-in kinds (`expected_text`, `regex`, `json_schema`, `predicate`, `rubric`).
   (`assert_distinct_callables`) exists so the thing being judged cannot also be
   the judge. If your matcher calls a model, it takes `aux_call_llm` (never the
   harness `call_llm`), in the same way `_eval_rubric` forwards to
-  `zicato.board.rubric.evaluate_rubric_judge`. See 03-contract-and-epochs.md
-  §"The board" for the judge-collusion contract.
+  `zicato.board.rubric.evaluate_rubric_judge`. See 03-contract-and-epochs.md §3.2.1 for the judge-collusion contract.
 - ⚠️ **An unknown kind must RAISE rather than fall through.**
   `evaluate_expectation` raising `ValueError` on an unrecognized token is the
   safety property — a
@@ -503,7 +502,7 @@ built-in kinds (`expected_text`, `regex`, `json_schema`, `predicate`, `rubric`).
   vacuously. Do not add a fallthrough `else: return passed`.
 - ⚠️ **The kind folds into the contract hash.** A board with your new expectation
   hashes differently — that is correct (the board is a contract input;
-  03-contract-and-epochs.md §"The contract hash"). Confirm the JSONL round-trip
+  03-contract-and-epochs.md §3.7). Confirm the JSONL round-trip
   (write → load) preserves the token so the hash is stable across a reload.
 
 **Verify.**
@@ -670,8 +669,7 @@ convergence oracle runs.
   v3=1.2`.
 - ⚠️ **`mocks.py` callables must stay module-level.** The proposer/aux callables
   are serialized as dotted paths and re-imported in the subprocess worker
-  (the module-level-callable rule, 01-orientation.md §4; 12-bug-casebook.md
-  §"module-level callables across the worker boundary"). A closure or a lambda
+  (the module-level-callable rule, 01-orientation.md §4; 06-tournament-and-selection.md §6.3.1). A closure or a lambda
   cannot cross the boundary — keep them
   top-level functions and rewind counters via `reset`.
 - ⚠️ **The floor must remain a strict, hand-computable number.** The value of
@@ -864,8 +862,7 @@ is the contract pre-flight and the noise-floor calibration.
   your field is NOT among them. Add it as an *additive* config field written by
   `set_epoch_<field>`, and pin the hash-unchanged assertion. If your datum ever
   DOES belong in the hash, it is not an epoch-open measurement — it is a contract
-  component, and it rolls the epoch (03-contract-and-epochs.md §"The contract
-  hash").
+  component, and it rolls the epoch (03-contract-and-epochs.md §3.7).
 - ⚠️ **Fire exactly once per epoch, and best-effort.** The gate checks the field
   is unset before measuring, so a resumed or re-entered epoch does not re-measure
   (and re-spend the budget). Wrap it in `best_effort`: a measurement failure must
@@ -1200,8 +1197,7 @@ leaves its `tmp_path` workspace; a live run leaves `.zicato/`.)
    that did not return.
 5. **Inspect the worker args file for the spawn.** The runner spawns `python -m
    zicato._tournament_worker <args-file>`; the args file carries the worker spec
-   and the `config_pins` (10-builder-cli-library.md §"Flags cross the worker
-   boundary via config_pins"). It is a TEMP file cleaned up in a `finally`, so
+   and the `config_pins` (10-builder-cli-library.md §10.10). It is a TEMP file cleaned up in a `finally`, so
    capture it during a hang (or from a crash that skipped cleanup) — it records
    what the worker was told to run.
 6. **Cross-check the journal + lineage.** `journal` and `lineage.json` record only
@@ -1408,12 +1404,13 @@ and nothing references a model vendor.
 
 Each recipe's owning chapter carries the theory the recipe applies:
 
-- 02-architecture.md §"The evolve round" — the pipeline the orchestrator seams
+- 02-architecture.md §3 — the pipeline the orchestrator seams
   (Recipe 9) sit in; the four processes Recipe 12's forensics span.
-- 03-contract-and-epochs.md §"The contract hash" / §"Omit-at-default fields" —
+- 03-contract-and-epochs.md §3.7 (computing the hash) and §3.4 (the
+  omit-at-default discipline) —
   what rolls the epoch (Recipes 3, 4, 8); §"The board" — the judge-collusion
   contract (Recipe 4).
-- 04-evaluation-statistics.md §"The scoring seams" (Recipe 3, 5), §"The promote
+- 04-evaluation-statistics.md §1.1 and §1.3 (the two scoring seams) (Recipe 3, 5), §"The promote
   gate" (Recipe 3 monotonicity), §"Operating characteristics as pinned tests" +
   §"Recipe: proving a change to the decision procedure" (Recipe 13).
 - 05-proposer.md §"The restricted-visibility envelope" + §"The channel-author's
@@ -1425,7 +1422,8 @@ Each recipe's owning chapter carries the theory the recipe applies:
   and §7.11 the refuse-a-newer-record-format rule (invariant `D12`) — Recipe 7;
   §7.10.4 the best-effort-round-log rule (invariant `D11`) — Recipes 9 and 12;
   §7.10 the durable round log — Recipe 12.
-- 08-supervisor.md §"The health surface" — the consumer of Recipe 1's detector.
+- 04-evaluation-statistics.md §1.9 (the loop-health detectors over the
+  measurement chain) — the layer Recipe 1's detector joins.
 - 10-builder-cli-library.md §"The op inventory" (Recipe 3's builder surface),
   §"CLI.md is a GENERATED artifact" (Recipe 11), §"Flags cross the worker
   boundary via config_pins" (Recipe 12).

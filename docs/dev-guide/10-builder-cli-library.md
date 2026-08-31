@@ -8,7 +8,7 @@
 > and its fork/compare slots; (2) the **CLI** — the auto-discovered `click`
 > command tree, the flag → pin → config-knob → worker-propagation layer, `zicato
 > config env`, and `CLI.md`; (3) the **library facade** — the small lazy
-> `zicato` surface, the five import-linter contracts, the TID251 bans, and how a
+> `zicato` surface, the seven import-linter contracts, the TID251 bans, and how a
 > name (or a driver edge) is added; and (4) **packaging** — the wheel, the
 > extras, the uv workspace member, and the supervisor-binary build hook.
 >
@@ -81,7 +81,7 @@ forbidden** — §10.11 is the enforcement.
 | `src/zicato/cli/commands/*.py` | one command (or sub-group) per file — the inventory in §10.9 | — |
 | `src/zicato/config.py` | `pin_overrides` / `pinned_override` / `load_config` + `describe_env_vars` | ~690 lines |
 | `src/zicato/__init__.py` | the lazy `_EXPORTS` facade + `__getattr__` + `TYPE_CHECKING` mirror | 153 lines |
-| `pyproject.toml` | the five import-linter contracts, TID251 bans, extras, uv workspace, wheel packaging | 422 lines |
+| `pyproject.toml` | the seven import-linter contracts, TID251 bans, extras, uv workspace, wheel packaging | 422 lines |
 | `hatch_build.py` | the custom build hook that bundles `zicato-supervisor` into the wheel | ~98 lines |
 
 ---
@@ -1016,7 +1016,7 @@ rule. The worked example: exposing a hypothetical
    (`epoch/contract.py`'s omit-at-default set) so existing epochs do not roll
    retroactively, and that a non-default value DOES roll the epoch — the builder
    diff and `apply(rolled=…)` derive from that canonical form. See
-   03-contract-and-epochs.md §"Omit-at-default fields".
+   03-contract-and-epochs.md §3.4 (the omit-at-default discipline).
 8. **Tests — five kinds:**
    - *op semantics* in `tests/test_builder_operations.py` (the `changed` map,
      the no-op-when-unchanged behaviour, the raise-on-bad-input);
@@ -1569,7 +1569,7 @@ build can still run the hook.
   builder envelope obeys.
 - 11-testing.md §11.7 "The six parity gates, one by one" (including the CLI-HELP
   gate), §11.9 "Node behaviour-suite conventions" (the py↔js cost-twin parity),
-  and §11.8 "The five import contracts + the TID251 bans".
+  and §11.8 "The seven import contracts + the TID251 bans".
 - 13-recipes.md — the short-form cookbook; §10.8 and §10.10.3 here are the
   long-form builder-op and CLI-flag procedures.
 - `docs/design/TOURNAMENT-BUILDER.md` — the full builder design record (the
