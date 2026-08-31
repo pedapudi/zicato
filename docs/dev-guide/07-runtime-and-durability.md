@@ -1084,23 +1084,42 @@ event `type` and its payload say *what happened*; `RoundEventScope` says
 *where that fact belongs*, so a reader groups events by coordinate rather
 than by guessing from their position in the file.
 
-Its named coordinates are `generation_id` (the challenger), `step` (the
-lifecycle step: open, propose, apply, run, gate, decide, close), `entry_id`
-and `replicate` (the board entry and the draw within it), `side` (`parent` or
-`child` of a duel), and `band` (the measurement band). Anything else travels
-in an open `attributes` map — the extension point that lets a newer emitter
-add a coordinate without a schema change, and that an older reader preserves
-rather than drops. `attributes` holds COORDINATES ONLY, never content: a
-scope is subject to the same redaction denylist as every other durable record
-(`proposer/reflection.py`'s `assert_redacted`).
+It names exactly two coordinates: `generation_id`, the challenger the event
+belongs to, and `step`, the lifecycle step. Every other coordinate travels in
+an open `attributes` map — today the duel's `matchup_id` and
+`opponent_generation_id` — which is the extension point that lets a newer
+emitter add a coordinate without a schema change, and which an older reader
+preserves rather than drops. When a later reader names one of those
+coordinates, `from_payload` promotes it out of `attributes` into the named
+field, so nothing written through the extension point becomes unreachable
+through the name it later acquires. `attributes` holds COORDINATES ONLY,
+never content: a scope is subject to the same redaction denylist as every
+other durable record (`proposer/reflection.py`'s `assert_redacted`).
 
-Two rules keep the envelope honest:
+`step` is the plan's own vocabulary — `propose`, `apply`, `run`, `gate`,
+`decide`, exactly the keys of `ROUND_STEPS` in `query/execution_plan.py`. A
+step the emitter invented would name a position the plan has no node for.
+`evolve` keeps its `_ROUND_LOG_STEP` table as a literal rather than importing
+`query` (the layering forbids that dependency), so a correspondence test in
+`tests/test_round_log_emission.py` holds the two sides equal.
 
-> ✅ ALWAYS give the scope only what the payload does not already state.
-> `unit_completed` carries its own `entry_id` and `side`, and
-> `patches_applied` its own `generation_id` — the reader reads those from the
-> payload. A second copy in the scope is a fact with a twin that can drift
-> from it, and one of the two will eventually be wrong.
+Three rules keep the envelope honest:
+
+> ✅ ALWAYS name the challenger on every event a single challenger owns —
+> including `patches_applied` and `harness_loaded`, whose payloads already
+> state it. The repetition is deliberate: a reader that groups by challenger
+> reads ONE place on every record, instead of carrying a per-event-type table
+> of where to look. The two values cannot disagree, because each call site
+> writes both from one variable. An event no single challenger owns — the
+> round's boundaries, its terminal decision, its frontier record — leaves the
+> coordinate empty rather than inventing one.
+
+> ✅ ALWAYS declare steplessness. A token absent from `_ROUND_LOG_STEP` must
+> appear in `_STEPLESS_EVENTS`; the correspondence test requires every known
+> token in exactly one of the two. `round_opened` and `round_closed` are the
+> stepless pair: the round's own boundaries are not steps *within* it.
+> Without the declaration, a token someone forgot to map looks identical to
+> one whose steplessness was intended.
 
 > ⚠️ TRAP: there is deliberately no slate *ordinal* coordinate, because the
 > two candidate numberings diverge. `candidate_sampled.i` is the slate SLOT
@@ -1109,8 +1128,12 @@ Two rules keep the envelope honest:
 > so a slate whose slot 0 fails emits `candidate_sampled{i: 1}` and
 > `candidate_screened{index: 0}` for the same candidate. One coordinate
 > cannot carry both meanings, and a wrong coordinate is worse than an absent
-> one. The round is likewise not a coordinate: a record's round is the
-> `rounds/{round}/` path it was read from, which no writer can contradict.
+> one. `entry_id`, `replicate`, `side` and `band` are likewise NOT named
+> coordinates: none has a writer yet, and a named field nobody fills claims a
+> shape that is still open across board sweeps, measurement bands and screen
+> units. A coordinate gets a named field when it gets a writer. The round is
+> not a coordinate either: a record's round is the `rounds/{round}/` path it
+> was read from, which no writer can contradict.
 
 Legacy records predating the envelope decode to the empty scope, so their
 events simply cannot be attributed more precisely than the record permits.
@@ -1472,11 +1495,11 @@ round_log.emit(
 ```
 
 Scope is a separate argument and never a payload key, so it can never reach
-the event constructor. Give it only the coordinates the payload does not
-already state (§7.10.2) — a challenger id the payload cannot name, not a
-second copy of an `entry_id` the payload already carries. Add the token to
-`round_reporting._ROUND_LOG_STEP` so the emitter can fill its lifecycle
-`step`; a token missing from that map simply gets no step.
+the event constructor. Name the challenger there whenever your event has one,
+even if your payload also carries it (§7.10.2). Then add the token to
+`round_reporting._ROUND_LOG_STEP` with one of the plan's five steps — or to
+`_STEPLESS_EVENTS` if it genuinely has none. The correspondence test fails if
+you add it to neither or to both, so steplessness cannot happen by omission.
 
 Never construct/append a `RoundLog` directly from loop code, and never let a
 STORAGE failure fail a round (D11): `_RoundLogEmitter.emit` swallows the

@@ -425,17 +425,25 @@ class RoundEventScope:
     round plan. Keeping those concerns separate lets a reader group events
     without guessing from their position in the JSONL file.
 
-    A scope carries ONLY the coordinates its payload does not. Where the
-    payload already IS the coordinate — ``unit_completed``'s ``entry_id`` and
-    ``side``, ``patches_applied``'s ``generation_id`` — the reader reads the
-    payload and the scope leaves that field empty, rather than storing a
-    second copy that can drift from the first.
+    The scope names the challenger on EVERY event a single challenger owns,
+    including the events whose payload already states it (``patches_applied``,
+    ``harness_loaded``). The repetition is deliberate. A reader that groups by
+    challenger must be able to read one place on every record; if the scope
+    were left empty wherever the payload happened to carry the id, every such
+    reader would need a per-event-type table saying where to look — the
+    guessing this envelope exists to remove. The two values cannot disagree:
+    each call site writes both from one variable.
+
+    An event no single challenger owns leaves the coordinate empty rather than
+    inventing one: the round's own boundaries, its terminal decision, and its
+    frontier record belong to the round.
 
     Two coordinates are named fields, because two have writers today:
 
     * ``generation_id`` — the challenger the event belongs to.
-    * ``step`` — the round's lifecycle step: open, propose, apply, run,
-      gate, decide, close.
+    * ``step`` — the execution plan's lifecycle step: propose, apply, run,
+      gate or decide. The round's own boundaries are not steps within it, so
+      ``round_opened`` and ``round_closed`` carry none.
 
     A coordinate gets a named field when it gets a WRITER, and not before. A
     named field nobody fills is not a neutral placeholder: it is a claim that

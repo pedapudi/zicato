@@ -253,7 +253,11 @@ async def _persist_rejected_round(
     )
     # WS8: the validator findings, the terminal decision, and the close.
     if round_log is not None:
-        round_log.emit("validation_failed", {"findings": tuple(validation_errors)})
+        round_log.emit(
+            "validation_failed",
+            {"findings": tuple(validation_errors)},
+            {"generation_id": next_id},
+        )
         round_log.emit(
             "decision_recorded",
             {

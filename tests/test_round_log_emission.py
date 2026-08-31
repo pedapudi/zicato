@@ -74,11 +74,13 @@ class TestRoundLogEmitter:
         events = RoundLog(tmp_path, "e1", 3).read()
         assert [e.type for e in events] == ["round_opened", "experiment_minted", "round_closed"]
         # The emitter derives exactly one coordinate: the lifecycle step of
-        # the wire token. The round is the log's own path, not a field.
+        # the wire token. The round is the log's own path, not a field, and
+        # the round's own boundaries are not steps WITHIN it — the plan has
+        # five steps and open/close are neither, so both are stepless.
         assert [event.scope for event in events] == [
-            RoundEventScope(step="open"),
+            RoundEventScope(),
             RoundEventScope(step="propose"),
-            RoundEventScope(step="close"),
+            RoundEventScope(),
         ]
         record = fold_round_record(events)
         assert record.complete
@@ -175,10 +177,11 @@ class TestRoundLogEmitter:
             "experiment_minted",
             "patches_applied",
         ]
-        # The two events whose payload cannot name a generation take it from
-        # the scope; ``patches_applied`` already states it in its payload, so
-        # the scope leaves the coordinate empty rather than restating it.
-        assert [event.scope.generation_id for event in events] == ["v1", "v1", ""]
+        # EVERY event of the propose names its challenger in the SCOPE, so a
+        # reader groups by one field on every record. ``patches_applied``
+        # states the id in its payload too; the repetition is deliberate, and
+        # the two cannot disagree because one variable writes both.
+        assert [event.scope.generation_id for event in events] == ["v1", "v1", "v1"]
         assert events[-1].payload["generation_id"] == "v1"
 
     def test_unwritable_log_never_raises(self, tmp_path: Path) -> None:
@@ -732,6 +735,37 @@ class TestDuelScopeWiring:
         assert {s.generation_id for s in units} == {""}
         assert [s.attributes for s in units] == [{}] * len(units)
         assert (gate.generation_id, gate.attributes) == ("", {})
+
+
+def test_the_step_vocabulary_is_the_execution_plan_s() -> None:
+    """The emitter's steps are exactly the steps the plan can place.
+
+    ``evolve`` keeps its own literal table rather than importing ``query``
+    (the layering forbids the dependency), so the two can drift apart in
+    silence. A step this table invents is a coordinate naming a position no
+    plan node has, which is worse than an absent one. The test imports both
+    sides — the #272 registry-correspondence idiom.
+    """
+    from zicato.evolve.round_reporting import _ROUND_LOG_STEP
+    from zicato.query.execution_plan import ROUND_STEPS
+
+    assert set(_ROUND_LOG_STEP.values()) == {key for key, _, _ in ROUND_STEPS}
+
+
+def test_every_event_token_is_stepped_or_declared_stepless() -> None:
+    """No event token is stepless by omission — only by declaration.
+
+    A token missing from the step table would silently emit a scope with no
+    step, which reads exactly like a token whose step is genuinely undefined.
+    Requiring every known token in exactly one of the two tables makes a new
+    event type state which it is.
+    """
+    from zicato.epoch.round_log import EVENT_TYPES
+    from zicato.evolve.round_reporting import _ROUND_LOG_STEP, _STEPLESS_EVENTS
+
+    stepped = set(_ROUND_LOG_STEP)
+    assert not (stepped & _STEPLESS_EVENTS), "a token cannot be both stepped and stepless"
+    assert stepped | _STEPLESS_EVENTS == set(EVENT_TYPES)
 
 
 def test_the_duel_call_site_names_the_generations_it_gates() -> None:

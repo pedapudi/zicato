@@ -1635,9 +1635,7 @@
         "payload": {
           "contract_hash": "8444d35d0451f128580257a81e9916a858f88763bb337ab57880f5befdf41dbb"
         },
-        "scope": {
-          "step": "open"
-        },
+        "scope": {},
         "seq": 1,
         "ts": "<TS>",
         "type": "round_opened"
@@ -1672,6 +1670,7 @@
           "generation_id": "v1"
         },
         "scope": {
+          "generation_id": "v1",
           "step": "apply"
         },
         "seq": 4,
@@ -1708,6 +1707,7 @@
           "generation_id": "v2"
         },
         "scope": {
+          "generation_id": "v2",
           "step": "apply"
         },
         "seq": 7,
@@ -1744,6 +1744,7 @@
           "generation_id": "v3"
         },
         "scope": {
+          "generation_id": "v3",
           "step": "apply"
         },
         "seq": 10,
@@ -1780,6 +1781,7 @@
           "generation_id": "v4"
         },
         "scope": {
+          "generation_id": "v4",
           "step": "apply"
         },
         "seq": 13,
@@ -2324,9 +2326,7 @@
       },
       {
         "payload": {},
-        "scope": {
-          "step": "close"
-        },
+        "scope": {},
         "seq": 43,
         "ts": "<TS>",
         "type": "round_closed"

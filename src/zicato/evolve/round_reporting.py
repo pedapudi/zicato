@@ -63,8 +63,14 @@ async def _regenerate_epoch_report(
 # ---------------------------------------------------------------------------
 
 
+#: Wire token -> the execution plan's lifecycle step. The values are exactly
+#: the step keys :data:`zicato.query.execution_plan.ROUND_STEPS` defines: a
+#: step this table invents is one the plan cannot place a node under, so the
+#: coordinate would name a position no reader can resolve. Kept as a literal
+#: table here rather than imported, so ``evolve`` does not depend on
+#: ``query``; a correspondence test holds the two sides equal
+#: (``test_round_log_emission.py``).
 _ROUND_LOG_STEP: dict[str, str] = {
-    "round_opened": "open",
     "proposal_attempted": "propose",
     "candidate_sampled": "propose",
     "candidate_screened": "propose",
@@ -79,8 +85,46 @@ _ROUND_LOG_STEP: dict[str, str] = {
     "evidence_replicated": "gate",
     "decision_recorded": "decide",
     "frontier_updated": "decide",
-    "round_closed": "close",
 }
+
+#: Tokens that DELIBERATELY carry no step. The round's own boundaries are not
+#: steps within it — the plan has five steps, and open/close are neither. This
+#: set exists so steplessness is a stated decision rather than an omission: the
+#: correspondence test requires every known event token to appear in exactly
+#: one of these two tables, so a new token cannot become silently stepless.
+_STEPLESS_EVENTS: frozenset[str] = frozenset({"round_opened", "round_closed"})
+
+
+def _duel_scope(
+    *,
+    generation_id: str = "",
+    opponent_generation_id: str = "",
+    matchup_id: str = "",
+) -> dict[str, Any]:
+    """The plan scope shared by both events a settled duel emits.
+
+    The unit and gate emitters describe the same duel from two angles, so
+    they must describe it with the same shape: one challenger coordinate and
+    the pair's identity beside it. Built here once so the two cannot drift
+    into different keys or a different key order — they did exactly that
+    before this helper existed. The opponent and the matchup ride
+    ``attributes`` because neither is a named coordinate in the envelope's
+    vocabulary yet; that is a schema decision for the reader that needs them.
+    """
+    scope: dict[str, Any] = {}
+    if generation_id:
+        scope["generation_id"] = str(generation_id)
+    attributes = {
+        **({"matchup_id": matchup_id} if matchup_id else {}),
+        **(
+            {"opponent_generation_id": str(opponent_generation_id)}
+            if opponent_generation_id
+            else {}
+        ),
+    }
+    if attributes:
+        scope["attributes"] = attributes
+    return scope
 
 
 class _RoundLogEmitter:
@@ -128,7 +172,8 @@ class _RoundLogEmitter:
         """Append one typed event under its plan ``scope``.
 
         The emitter fills exactly one coordinate itself: the lifecycle
-        ``step`` the event's wire token belongs to, which no payload carries.
+        ``step`` its wire token maps to in :data:`_ROUND_LOG_STEP`, which no
+        payload carries. A token in :data:`_STEPLESS_EVENTS` gets none.
         Everything else comes from the caller, because only the caller knows
         it. In particular ``replicate`` is never derived from the payload: the
         one event that carries a replicate is ``unit_completed``, whose value
@@ -192,23 +237,14 @@ def _emit_tournament_units(
     side_opponents = {"parent": child_generation_id, "child": parent_generation_id}
     for entry_id in entry_ids:
         for side in ("parent", "child"):
-            attributes = {
-                **({"matchup_id": matchup_id} if matchup_id else {}),
-                **(
-                    {"opponent_generation_id": str(side_opponents[side])}
-                    if side_opponents[side]
-                    else {}
-                ),
-            }
-            scope: dict[str, Any] = {}
-            if side_generations[side]:
-                scope["generation_id"] = str(side_generations[side])
-            if attributes:
-                scope["attributes"] = attributes
             round_log.emit(
                 "unit_completed",
                 {"entry_id": str(entry_id), "replicate": 0, "side": side},
-                scope,
+                _duel_scope(
+                    generation_id=side_generations[side],
+                    opponent_generation_id=side_opponents[side],
+                    matchup_id=matchup_id,
+                ),
             )
 
 
@@ -260,6 +296,10 @@ def _emit_harness_loaded(
                 "trees_verified": verified,
                 "trees_never_imported": never_imported,
             },
+            # ALSO in the scope, though the payload states it: a reader that
+            # groups by challenger must not have to know which event types
+            # happen to repeat the id in their own payload.
+            {"generation_id": gen_id},
         )
 
 
@@ -324,20 +364,15 @@ def _emit_gate_evaluated(
         fields["margin_required"] = float(margin)
     # A field round gates each matchup into ONE round log; without the
     # challenger's id every verdict reads as the round's own.
-    scope: dict[str, Any] = {}
-    if generation_id:
-        scope["generation_id"] = str(generation_id)
-    attributes = {
-        **(
-            {"opponent_generation_id": str(opponent_generation_id)}
-            if opponent_generation_id
-            else {}
+    round_log.emit(
+        "gate_evaluated",
+        fields,
+        _duel_scope(
+            generation_id=generation_id,
+            opponent_generation_id=opponent_generation_id,
+            matchup_id=matchup_id,
         ),
-        **({"matchup_id": matchup_id} if matchup_id else {}),
-    }
-    if attributes:
-        scope["attributes"] = attributes
-    round_log.emit("gate_evaluated", fields, scope)
+    )
 
 
 def _promoted_entry_regressions(tournament_result: Any) -> dict[str, dict[str, Any]] | None:

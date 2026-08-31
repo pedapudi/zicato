@@ -202,9 +202,7 @@
         "payload": {
           "contract_hash": "292fa8d36d30644be17cf0e11ce1fba0ea7c4fb757d2574bf92b48e29c071e47"
         },
-        "scope": {
-          "step": "open"
-        },
+        "scope": {},
         "seq": 1,
         "ts": "<TS>",
         "type": "round_opened"
@@ -321,6 +319,7 @@
           "generation_id": "v1"
         },
         "scope": {
+          "generation_id": "v1",
           "step": "apply"
         },
         "seq": 8,
@@ -457,9 +456,7 @@
       },
       {
         "payload": {},
-        "scope": {
-          "step": "close"
-        },
+        "scope": {},
         "seq": 16,
         "ts": "<TS>",
         "type": "round_closed"

@@ -212,7 +212,9 @@ async def _propose_child(
         round_emitter.emit("experiment_minted", {"experiment_id": experiment.id}, scope)
         # The proposer's validate hook derived + validated the child tree
         # before a successful return, so the patches are applied by here.
-        round_emitter.emit("patches_applied", {"generation_id": next_id})
+        # The scope repeats the payload's id on purpose — see the envelope's
+        # uniformity rule in ``epoch/round_log.py``.
+        round_emitter.emit("patches_applied", {"generation_id": next_id}, scope)
     return replace(experiment, round_index=round_index)
 
 
