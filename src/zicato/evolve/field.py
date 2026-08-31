@@ -517,9 +517,10 @@ async def evolve_field_round(
             )
             field_aggregates[m.left.generation_id] = result.parent_agg
             field_aggregates[m.right.generation_id] = result.child_agg
-        # WS8: this matchup's board units + gate verdict onto the round log,
-        # each NAMING its generation — a field round settles several matchups
-        # into one log, so unscoped units and gates would be indistinguishable.
+        # Onto the round's durable event log: this matchup's board units and
+        # gate verdict, each NAMING its generation — a field round settles
+        # several matchups into one log, so unscoped units and gates would be
+        # indistinguishable.
         _emit_tournament_units(
             round_log,
             result,

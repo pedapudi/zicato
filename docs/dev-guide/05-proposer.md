@@ -1650,14 +1650,14 @@ the dashboard and loop health read.
 Every one of those events travels with a `RoundEventScope` — the log-wide
 coordinate envelope (07-runtime-and-durability.md §7.10.2) — on the emitter's
 third argument, and for the propose step it carries exactly one coordinate:
-`generation_id`. That is the SLATE's scope, not a candidate-payload field:
-every challenger in a field round writes through the same round-log emitter
+`generation_id`. That coordinate scopes the whole slate rather than any one
+candidate: every challenger in a field round writes through the same emitter
 while its candidate indexes restart at zero. A reader groups the three slate
 event types by `envelope.scope.generation_id`, never by their positions in the
 append-only file. Older records decode as the empty scope, so their slate
 cannot be split with certainty.
 
-There is deliberately no ordinal coordinate to group by, because the payload's
+There is no ordinal coordinate to group by, because the payload's
 own two numberings disagree: `candidate_sampled.i` is the slate SLOT, while
 `candidate_screened.index` and `critique_selected.index` count the survivors
 that reached the screen. They coincide only when no slot failed.

@@ -106,8 +106,8 @@ def _duel_scope(
     The unit and gate emitters describe the same duel from two angles, so
     they must describe it with the same shape: one challenger coordinate and
     the pair's identity beside it. Built here once so the two cannot drift
-    into different keys or a different key order — they did exactly that
-    before this helper existed. The opponent and the matchup ride
+    into different keys or a different key order. The opponent and the
+    matchup ride
     ``attributes`` because neither is a named coordinate in the envelope's
     vocabulary yet; that is a schema decision for the reader that needs them.
     """

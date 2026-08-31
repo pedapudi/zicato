@@ -327,7 +327,7 @@ def test_an_attributes_coordinate_is_promoted_once_a_field_names_it(tmp_path):
 
 
 def test_a_scope_has_a_canonical_hashable_grouping_key():
-    """Open extension data groups through a snapshot, not a mutable hash key."""
+    """Open extension data groups through a snapshot rather than a mutable key."""
     left = RoundEventScope(generation_id="v7", step="run", attributes={"x": [1, 2]})
     right = RoundEventScope(generation_id="v7", step="run", attributes={"x": [1, 2]})
     assert left.grouping_key() == right.grouping_key()

@@ -1121,7 +1121,7 @@ Three rules keep the envelope honest:
 > Without the declaration, a token someone forgot to map looks identical to
 > one whose steplessness was intended.
 
-> ⚠️ TRAP: there is deliberately no slate *ordinal* coordinate, because the
+> ⚠️ TRAP: there is no slate *ordinal* coordinate, because the
 > two candidate numberings diverge. `candidate_sampled.i` is the slate SLOT
 > (`_SlotOutcome.sample`), while `candidate_screened.index` and
 > `critique_selected.index` enumerate the SURVIVORS that reached the screen —
@@ -1196,11 +1196,12 @@ never crash a producer). The same three-argument string-token seam serves the
 proposer-side callback (`ProposerContext.round_event_emitter`) so both sides
 share one signature.
 
-Best-effort covers the DISK, not the schema. Building the typed event happens
+Best-effort covers the disk rather than the schema. Building the typed event
+happens
 outside the guard, so a payload field no event declares raises rather than
 dropping the event: `seq` is derived from the file's tail, so a silently
-dropped event leaves a gap-free log that reads exactly like a round which
-never emitted it. That is why `scope` is a separate argument and never a
+dropped event leaves a gap-free log that reads as a round which never
+emitted it. That is why `scope` is a separate argument and never a
 reserved payload key — no emitter on the seam can forward it into a
 constructor that would reject it.
 
@@ -1498,7 +1499,7 @@ Scope is a separate argument and never a payload key, so it can never reach
 the event constructor. Name the challenger there whenever your event has one,
 even if your payload also carries it (§7.10.2). Then add the token to
 `round_reporting._ROUND_LOG_STEP` with one of the plan's five steps — or to
-`_STEPLESS_EVENTS` if it genuinely has none. The correspondence test fails if
+`_STEPLESS_EVENTS` if it has none. The correspondence test fails if
 you add it to neither or to both, so steplessness cannot happen by omission.
 
 Never construct/append a `RoundLog` directly from loop code, and never let a

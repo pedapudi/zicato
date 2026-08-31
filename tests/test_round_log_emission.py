@@ -74,9 +74,10 @@ class TestRoundLogEmitter:
         events = RoundLog(tmp_path, "e1", 3).read()
         assert [e.type for e in events] == ["round_opened", "experiment_minted", "round_closed"]
         # The emitter derives exactly one coordinate: the lifecycle step of
-        # the wire token. The round is the log's own path, not a field, and
-        # the round's own boundaries are not steps WITHIN it — the plan has
-        # five steps and open/close are neither, so both are stepless.
+        # the wire token. The round comes from the log's own path rather
+        # than a field, and the round's own boundaries are not steps WITHIN
+        # it — the plan has five steps and open/close are neither, so both
+        # are stepless.
         assert [event.scope for event in events] == [
             RoundEventScope(),
             RoundEventScope(step="propose"),
@@ -134,7 +135,7 @@ class TestRoundLogEmitter:
     def test_proposal_lifecycle_events_share_the_next_generation_scope(
         self, tmp_path: Path
     ) -> None:
-        """The outer proposer events join the slate, not merely the round."""
+        """The outer proposer events carry the challenger their slate builds."""
         from types import SimpleNamespace
 
         from zicato.evolve.propose_apply import _propose_child
@@ -654,7 +655,7 @@ class TestDuelScopeWiring:
     These records are write-once: a dropped keyword or a reversed side map
     corrupts the durable log for every round emitted before anyone notices,
     and no re-run repairs it. So the assertions are on the scope that
-    reaches the log, not on the arguments the call site passes.
+    reaches the log rather than on the arguments the call site passes.
     """
 
     class _Result:
@@ -723,7 +724,7 @@ class TestDuelScopeWiring:
         assert scope.attributes == {"opponent_generation_id": "v-champ", "matchup_id": "m-7"}
 
     def test_an_unnamed_duel_still_emits_an_unscoped_record(self, tmp_path: Path) -> None:
-        """No ids to give (the default call): coordinates are absent, not faked."""
+        """No ids to give (the default call): coordinates are absent, never invented."""
         from zicato.evolve.round_reporting import _emit_gate_evaluated, _emit_tournament_units
 
         emitter = _RoundLogEmitter(tmp_path, "e1", 4)
@@ -756,7 +757,7 @@ def test_every_event_token_is_stepped_or_declared_stepless() -> None:
     """No event token is stepless by omission — only by declaration.
 
     A token missing from the step table would silently emit a scope with no
-    step, which reads exactly like a token whose step is genuinely undefined.
+    step, which reads as a token whose steplessness was intended.
     Requiring every known token in exactly one of the two tables makes a new
     event type state which it is.
     """
@@ -769,7 +770,7 @@ def test_every_event_token_is_stepped_or_declared_stepless() -> None:
 
 
 def test_the_duel_call_site_names_the_generations_it_gates() -> None:
-    """The one duel driver PASSES the ids, not merely accepts them.
+    """The one duel driver passes the ids rather than only accepting them.
 
     Every round now settles its matchups through ``field.py``'s
     ``_run_matchup`` — the gauntlet reaches it as a one-challenger field — so
@@ -804,4 +805,4 @@ def test_the_duel_call_site_names_the_generations_it_gates() -> None:
     assert set(seen) == set(required)
     for name, keywords in sorted(seen.items()):
         missing = required[name] - keywords
-        assert not missing, f"field.py: {name} no longer names {sorted(missing)}"
+        assert not missing, f"field.py: {name} does not name {sorted(missing)}"

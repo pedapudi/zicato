@@ -134,7 +134,7 @@ class CandidateSampled:
     default so every pre-recombine log decodes identically.
 
     Its challenger and other plan coordinates live in the enclosing
-    :class:`RoundEventScope`, not this event-specific payload.
+    :class:`RoundEventScope` rather than in this event-specific payload.
     """
 
     TYPE: ClassVar[str] = "candidate_sampled"
@@ -161,7 +161,7 @@ class CandidateScreened:
     default so every pre-revise log decodes identically.
 
     Its challenger and other plan coordinates live in the enclosing
-    :class:`RoundEventScope`, not this event-specific payload.
+    :class:`RoundEventScope` rather than in this event-specific payload.
     """
 
     TYPE: ClassVar[str] = "candidate_screened"
@@ -177,7 +177,7 @@ class CritiqueSelected:
     """The self-critique pass picked candidate ``index`` for ``reason``.
 
     Its challenger and other plan coordinates live in the enclosing
-    :class:`RoundEventScope`, not this event-specific payload.
+    :class:`RoundEventScope` rather than in this event-specific payload.
     """
 
     TYPE: ClassVar[str] = "critique_selected"
@@ -448,7 +448,7 @@ class RoundEventScope:
     A coordinate gets a named field when it gets a WRITER, and not before. A
     named field nobody fills is not a neutral placeholder: it is a claim that
     the coordinate's meaning is settled, and the shape of the plan's
-    coordinates is exactly what is still open across the remaining node kinds
+    coordinates is what is still open across the remaining node kinds
     (board sweeps, measurement bands, screen units). Naming a field early
     locks that shape the same way a slate ordinal would, so anything an
     interim writer needs rides ``attributes`` — where the duel's
@@ -459,14 +459,15 @@ class RoundEventScope:
     ``i`` numbers slate SLOTS while ``candidate_screened`` /
     ``critique_selected`` number the SURVIVORS that reached the screen, so
     those numbers diverge as soon as one slot fails and no single coordinate
-    can carry both; settling one is a payload decision, not an envelope one.
+    can carry both; settling one is a payload decision rather than an
+    envelope one.
     The round is not a coordinate either: a record's round is the
     ``rounds/{round}/round_log.jsonl`` path it was read from, and a copy the
     writer restated could only disagree with it.
 
     The ``attributes`` map is an explicit extension point for a newer
-    emitter's additional coordinates. It is deliberately separate from the
-    named fields so an extension cannot silently redefine ``generation_id`` or
+    emitter's additional coordinates. It is separate from the named fields
+    so an extension cannot silently redefine ``generation_id`` or
     another shared coordinate. A reader that predates an extension preserves
     those values in ``attributes`` instead of dropping them, and promotes one
     into its named field once a later reader knows that name. It holds
@@ -505,8 +506,8 @@ class RoundEventScope:
             """Read one named coordinate, PROMOTING an attributes copy of it.
 
             A writer that predates a named coordinate puts it in
-            ``attributes``, which is exactly where the extension point sends
-            an unrecognised name. Reading the named field alone would leave
+            ``attributes``, where the extension point sends an unrecognised
+            name. Reading the named field alone would leave
             that value unreachable through the field that now names it, so it
             is promoted out — and out of ``extras`` either way, so the decoded
             scope never carries the same coordinate twice.
@@ -528,7 +529,7 @@ class RoundEventScope:
     def grouping_key(self) -> str:
         """Return this scope's canonical, hashable grouping key.
 
-        ``attributes`` is deliberately open JSON data and can contain nested
+        ``attributes`` is open JSON data and can contain nested
         lists or maps, so a scope itself must not become a hash key: its
         mutable mapping would make a set or dict corrupt after mutation. A
         plan reader that needs grouping uses this snapshot instead; canonical

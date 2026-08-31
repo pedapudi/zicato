@@ -587,8 +587,8 @@ def _emit_round_event(
 ) -> None:
     """Best-effort round-log emission through the context's optional emitter.
 
-    The emitter seam keeps the proposer decoupled from the round-log module
-    (WS8): the orchestrator threads an ``emitter(type_token, fields, scope)``
+    The emitter seam keeps the proposer decoupled from the round-log module:
+    the orchestrator threads an ``emitter(type_token, fields, scope)``
     callable on :attr:`ProposerContext.round_event_emitter`; ``None`` (every
     caller that does not opt in) emits nothing. Guarded here so a raising
     emitter can never fail a propose step.
