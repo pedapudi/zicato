@@ -1,32 +1,32 @@
 # Process exemplars — drift-anchored event windows for the proposer
 
-> **Status.** Designed first, then shipped in this increment: the extractor
+> **Status.** Implemented. The channel comprises the extractor
 > (`zicato/analyzer/process_exemplars.py`), the opt-in contract knob
 > (`ProposerQualityConfig.process_exemplars`, default **0 = off**,
 > omit-at-default), and the prompt block in both proposer engines. This
 > channel touches the overfitting boundary (OVERFITTING.md §11), so the
 > redaction rules below are the normative contract: **every rule maps to a
-> mechanical function with its own test — there is no LLM redactor.** The
-> operator runbook for detecting harm is §5 and ships in this doc.
+> mechanical function with its own test — there is no LLM redactor.**
+> Section 5 is the operator runbook for detecting harm.
 
-## 1. The gap: the proposer sees the wrong ANSWER, never the wrong PROCESS
+## 1. What the existing failure channels omit
 
-The proposer's restricted prompt already carries three failure channels,
-each deliberately narrowed (OVERFITTING.md §11):
+The proposer's restricted prompt carries three failure channels, each
+narrowed (OVERFITTING.md §11):
 
 | channel | tells the proposer | granularity |
 |---|---|---|
 | detector patterns (`patterns/detectors.py`) | *that* a failure shape recurs ("`looping_tool_call` fires in ~40% of runs across 4 entries") | aggregate counts/rates, entry ids stripped at render |
-| outcome marginals (§11.5, `analyzer/outcome_marginals.py`) | *what* the wrong answers look like in aggregate (over-retrieval vs misses vs empty), sanitized + banded | board-wide rates only |
+| outcome marginals (OVERFITTING.md §11.5, `analyzer/outcome_marginals.py`) | *what* the wrong answers look like in aggregate (over-retrieval vs misses vs empty), sanitized + banded | board-wide rates only |
 | experiment memory | *what was already tried*, Δscalar bucketed | per-experiment, banded |
 
 None of these shows **how a failure unfolds**: the plan step that wandered,
 the tool call that looped, the steering decision that fired too late. That
-sequence lives in each run's goldfive `events.jsonl` — exactly the stream
-the reducer digests into a `LossProfile` and then throws away. A proposer
-told only "looping fires in 40% of runs" edits blind; one shown a single
-**redacted window of events around one representative drift** can see the
-mechanism it is editing against.
+sequence lives in each run's goldfive `events.jsonl`, the same stream the
+reducer digests into a `LossProfile` and then discards. A proposer told
+only "looping fires in 40% of runs" has no view of the mechanism it is
+editing against; a proposer shown a single **redacted window of events
+around one representative drift** does.
 
 A **process exemplar** is that window: one anchor event chosen for one
 detected pattern, plus the few events on either side, passed through a
@@ -64,16 +64,16 @@ registry's deterministic pattern order, deduplicated by anchor position.
 **Refresh semantics.** Because extraction is a pure function of
 (pattern-id set, champion's train-slice event files), the block is
 **byte-identical round over round** while the pattern set and champion are
-unchanged — re-presenting it leaks nothing new. It changes only when the
-pattern set changes or a promotion replaces the champion (new run set).
-The leakage budget is therefore ≤ 2 windows **per (champion, pattern-set)
-state**, not per round.
+unchanged, so re-presenting it leaks nothing new. It changes only when the
+pattern set changes or a promotion replaces the champion, which supplies a
+different run set. The leakage budget is therefore at most 2 windows **per
+(champion, pattern-set) state** rather than per round.
 
 ## 3. Redaction rules (normative)
 
-The design invariant, inherited from §11: the proposer may learn **how
-failures unfold** but never **which entries fail** or what their task text
-/ outputs were. Redaction is default-deny and entirely mechanical.
+The design invariant, inherited from OVERFITTING.md §11: the proposer may
+learn **how failures unfold** but never **which entries fail** or what their
+task text or outputs were. Redaction is default-deny and entirely mechanical.
 
 **Rule R1 — payload allowlist, default-deny.** Each event renders as its
 window offset (`-3…+3` — never the absolute sequence number, which could
@@ -83,9 +83,9 @@ its **bare case name with no fields** — the window's shape survives, its
 content does not. Envelope fields (`event_id`, `run_id`, `session_id`,
 timestamps) are always dropped.
 
-Dispositions: **K** = kept verbatim (closed vocabulary / structural),
-**T** = truncated free text (R3), **A** = anonymized identity (R2),
-**D** = dropped. Unlisted fields of listed cases are dropped.
+Dispositions: **K** = kept verbatim (closed vocabulary or structural),
+**T** = truncated free text, **A** = anonymized identity, **D** = dropped.
+Unlisted fields of listed cases are dropped.
 
 | payload case | kept (K) | truncated (T) | anonymized (A) | dropped (D) — the load-bearing ones |
 |---|---|---|---|---|
@@ -106,10 +106,10 @@ Dispositions: **K** = kept verbatim (closed vocabulary / structural),
 Why the K column is safe: every kept field is either a **closed
 vocabulary** (drift kinds, severities, verdict kinds, outcomes,
 intervention levels), a **structural count** (task/edge/revision counts),
-or **harness-side identity** (agent names, judge names, detector names —
-the components the proposer is *supposed* to edit, already fully exposed
-through the mutation manifest; they are contract identity, not board
-identity).
+or **harness-side identity** (agent names, judge names, detector names).
+Those components are the ones the proposer is meant to edit and are already
+fully exposed through the mutation manifest; they are contract identity
+rather than board identity.
 
 **Rule R2 — identity anonymization.** `entry_id` (the events-path key)
 never appears in any output field. Task ids and invocation ids are
@@ -121,8 +121,8 @@ to the board.
 **Rule R3 — free-text truncation.** Every T-class field is capped at
 `_FREE_TEXT_LIMIT_CHARS = 160` with head/tail elision: the first 120 and
 last 24 characters joined by ` … `. T-class fields are process narration
-authored by goldfive's own detectors/judges/steerer — not task or model
-text — which is why they are admitted at all.
+authored by goldfive's own detectors, judges, and steerer rather than task
+or model text, which is why they are admitted at all.
 
 **Rule R4 — identity-corpus scrub (defense in depth).** Before truncation,
 every T-class value is scanned against an **identity corpus** built from
@@ -131,49 +131,54 @@ and **every D-class text value** (goal summaries, task descriptions,
 completion/output summaries, trigger inputs, judge details, raw model
 text). Any corpus string of ≥ `_MIN_SCRUB_LEN = 12` chars found verbatim
 inside a kept text — and any identity token of any length — is replaced by
-`[withheld]`. So a drift detail that *quotes* the task prompt loses the
-quote mechanically. The allowlist (R1) is the primary guarantee; R4 exists
-because free text is free.
+`[withheld]`. A drift detail that *quotes* the task prompt therefore loses
+the quote mechanically. The payload allowlist is the primary guarantee; the
+identity-corpus scrub exists because a free-text field can contain
+anything.
 
-**Residual risk, stated honestly:** R4 catches verbatim quotation, not
-paraphrase. A goldfive detector that *paraphrases* task content into a
+**Residual risk.** The identity-corpus scrub catches verbatim quotation but
+not paraphrase. A goldfive detector that *paraphrases* task content into a
 drift detail can leak a fragment of meaning below the corpus threshold.
-This is bounded by R3's 160-char cap, ≤ 2 windows per state, and the §5
-runbook; an operator who cannot accept it leaves the knob at 0.
+That residue is bounded by the free-text truncation's 160-character cap, by
+the limit of 2 windows per state, and by the §5 runbook. An operator who
+cannot accept it leaves the knob at 0.
 
 ## 4. Why this stays inside OVERFITTING §11
 
-§11's engine is *narrow the channel*: aggregate, band, and above all
-**withhold the exact failing inputs** so the optimizer must produce a
-general fix. Exemplars extend the channel from *that/how-often* (patterns)
-and *what-the-wrong-answer-looks-like-in-aggregate* (outcome marginals) to
-*how-the-failure-unfolds* — while keeping the joint withheld:
+The mechanism of OVERFITTING.md §11 is to narrow the channel: aggregate,
+band, and
+**withhold the failing inputs themselves** so the optimizer must produce a
+general fix. Exemplars extend the channel from *that a failure recurs and
+how often* (patterns) and *what the wrong answers look like in aggregate*
+(outcome marginals) to *how the failure unfolds*, while keeping the joint
+withheld:
 
-- **No entry identity** (R1/R2): the proposer cannot special-case a board
-  entry it cannot name; task text and outputs never render (R1), even when
-  quoted inside process text (R4).
+- **No entry identity** (the payload allowlist and identity
+  anonymization): the proposer cannot special-case a board entry it cannot
+  name. Task text and outputs never render, even when quoted inside
+  process text, because the identity-corpus scrub removes the quote.
 - **Anchored on already-released information:** an exemplar exists only
-  for a pattern the detectors already surfaced; the anchor adds *mechanism*
-  to a failure shape the proposer was already told about, not a new signal
-  about new entries.
-- **No response surface:** no per-event scores, no fine numerics, no
-  absolute sequence positions; the block is byte-stable across rounds
-  under an unchanged (champion, pattern-set) state, so it cannot be used
-  to read round-over-round board movement.
+  for a pattern the detectors already surfaced. The anchor adds mechanism
+  to a failure shape the proposer was already told about, and carries no
+  signal about entries it has not been told about.
+- **No response surface:** the block contains no per-event scores, no fine
+  numerics, and no absolute sequence positions. It is byte-stable across
+  rounds under an unchanged (champion, pattern-set) state, so it cannot be
+  used to read round-over-round board movement.
 - **Promotion is still guarded downstream:** whatever the proposer learns,
   the train/holdout split, the Ladder-mediated holdout confirmation, and
-  the `generalization_gap` detector gate the outcome exactly as before —
-  this channel changes what the prompt renders, never how zicato evaluates.
+  the `generalization_gap` detector gate the outcome under unchanged
+  rules. This channel changes what the prompt renders, and never how
+  zicato evaluates.
 
-**The deliberate asymmetry with screening:** `screen_entries` ships
-scaffold-on because tryouts are evaluation-side (they consume board runs
-but reveal only a veto). `process_exemplars` is **not in the scaffold**
-and defaults to 0 because it *widens the proposer-visibility channel* —
-the one boundary this codebase treats as sacred. The operator opts in
-deliberately, with the §5 runbook in hand. Being omit-at-default, the
-knob never rolls a pre-existing epoch; opting in (any non-zero cap) rolls
-the epoch, which is correct — a proposer shown process windows proposes
-under a different rule.
+**The asymmetry with screening.** `screen_entries` ships scaffold-on
+because tryouts are evaluation-side: they consume board runs but reveal
+only a veto. `process_exemplars` is **not in the scaffold** and defaults to
+0 because it widens the proposer-visibility channel, the boundary this
+codebase guards most strictly. The operator opts in with the §5 runbook in
+hand. Being omit-at-default, the knob never rolls an epoch that leaves it
+unset; setting any non-zero cap rolls the epoch, which is correct, because
+a proposer shown process windows proposes under a different rule.
 
 ## 5. The empirical harm-detection protocol (operator runbook)
 
@@ -197,18 +202,18 @@ the knob only under this protocol:
      stopped discriminating; any recent wins — exemplar-informed or not —
      are suspect.
 4. **Alarm condition** = the gap detector fires warning-or-worse **and**
-   train-side loss kept improving over the same generations. That
-   conjunction — better on train, worse generalization — is the harm this
-   doc is accountable for.
+   train-side loss kept improving over the same generations. Improving on
+   train while generalization worsens is the harm this channel could
+   cause.
 5. **Response.** Set `process_exemplars` back to `0`. The knob is a
    contract field, so the epoch rolls, the holdout rotates
    (`rotate_holdout`), and the suspect lineage stops being mined. Keep the
    generations minted under the enabled knob out of any cross-epoch memory
    opt-in until the gap re-narrows.
 
-A smoke test pins step 3's alarm mechanically (a rigged widening gap must
-fire `detect_generalization_gap`), so the runbook's alarm can never
-silently rot.
+A smoke test pins step 3's alarm mechanically: a rigged widening gap must
+fire `detect_generalization_gap`, so the runbook's alarm cannot fail
+silently.
 
 ## 6. Surfaces
 
@@ -223,15 +228,16 @@ silently rot.
   `ProposerContext.process_exemplars: str` (pre-rendered block body, empty
   = omit) → both engines splice a `## Process exemplars` section
   **directly after the failure-mode profile block**, headed by a banner
-  restating the redaction contract. Empty renders byte-identically to
-  today — the knob-off prompt and contract hash are pinned by test.
+  restating the redaction contract. An empty block is omitted, so the
+  knob-off prompt and contract hash are unaffected; both are pinned by
+  test.
 - **Builder:** `set_proposer_quality` gains the knob (op + API dispatch +
   copilot tool); the cost meter is untouched — extraction is a read of
   events already on disk, zero board runs, zero LLM calls. The
   builder-copilot skill carries one honest paragraph, including the §5
   runbook pointer.
-- **RoundLog:** nothing — this is prompt-side input, not a round event
-  (same footing as the failure-mode profile).
+- **RoundLog:** no entry. A process exemplar is prompt-side input rather
+  than a round event, on the same footing as the failure-mode profile.
 
 Sample of the rendered block (redacted, anonymized, offsets relative):
 

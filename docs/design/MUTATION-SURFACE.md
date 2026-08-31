@@ -1,13 +1,13 @@
 # Mutation surface
 
 The mutation surface is the set of source locations in the inner
-harness that zicato is allowed to rewrite. It is **annotated** — every
-mutable location is marked in the source with a comment-form marker —
-not free-form. The patch proposer addresses mutations by stable id;
+harness that zicato is allowed to rewrite. It is **annotated** rather than
+free-form: every mutable location is marked in the source with a
+comment-form marker. The patch proposer addresses mutations by stable id;
 the applier resolves each id to one location and rewrites only what
 the id covers.
 
-This document specifies:
+The contract covers:
 
 - The three marker forms (span-level, file-level, region-level) and
   their syntax, in Python and in any other text file (§2).
@@ -18,8 +18,8 @@ This document specifies:
 - The applier's validator constraints.
 - The interaction with the proposer brief's `## Forbidden` list.
 
-The "why annotated, not free-form" argument lives in
-[RATIONALE.md](RATIONALE.md); this document is the contract.
+The argument for requiring annotation rather than allowing free-form edits
+lives in [RATIONALE.md](RATIONALE.md); this document is the contract.
 
 ## 1. Why annotated
 
@@ -31,9 +31,10 @@ A meta-harness has a safety-vs-reach trade-off:
   tree, a library, anything with real behaviour — is extremely hard.
 - **Pure span-level annotated mutations** maximise safety (only marked
   strings move) at the cost of reach (related strings in the same
-  file may need to move together but can't be addressed as a group).
+  file may need to move together but cannot be addressed as a group).
 
-zicato takes the middle path. Span markers are the default. A region
+zicato admits three marker forms between those extremes. Span markers are
+the default. A region
 marker covers a bounded run of lines — a block of control flow, a prompt
 body, a config stanza. A file marker covers the cases where a whole
 module — e.g. a `prompts.py` with several closely-related templates —
@@ -43,7 +44,7 @@ none of them lets the proposer rewrite an unmarked file.
 
 Widening the surface beyond `.py` (§2.4) does not relax this. It changes
 *where a marker may live*, never whether one is required. An unmarked
-`config.yaml` is exactly as immutable as an unmarked `agent.py`.
+`config.yaml` is as immutable as an unmarked `agent.py`.
 
 ## 2. Marker syntax
 
@@ -97,8 +98,8 @@ the applier can rewrite.
 ### 2.2 File marker
 
 A file marker is a comment in the header region of a file (module
-docstring above, marker below, no statements before it). It has the
-form — note the `:file` suffix on the marker prefix, not a separate
+docstring above, marker below, no statements before it). The `:file`
+suffix attaches to the marker prefix rather than standing as a separate
 `file` word:
 
 ```
@@ -186,10 +187,10 @@ either: a target whose surface is TypeScript declares `.ts` with leaders
 `//` and `/*` in its own contract, and its markers parse from that epoch
 on.
 
-`.py` files are parsed under the historical `#`-only grammar and nothing
-else. That is not an oversight — it is what makes "widening the surface
-moves zero Python points" a property of the grammar rather than a claim a
-test has to keep re-establishing.
+`.py` files are parsed under a `#`-only grammar and nothing else. That
+restriction makes "widening the surface moves zero Python points" a
+property of the grammar rather than a claim a test has to keep
+re-establishing.
 
 **Which forms carry over.** Two of three:
 
@@ -200,10 +201,11 @@ test has to keep re-establishing.
 | bare span | binds to the nearest string literal beneath | **not supported**; warns and contributes nothing |
 
 A bare span marker has no meaning without a parser: "the nearest string
-literal beneath" is an AST fact. The tempting approximation — bind to the
-next non-blank line — is worse than nothing, because a `replace` against
-`temperature: 0.7` would swallow the `temperature:` key the operator
-meant to keep. So the enumerator refuses it, and says so by name:
+literal beneath" is an AST fact. Binding instead to the next non-blank line
+would be unsafe, because a `replace` against `temperature: 0.7` would
+swallow the `temperature:` key the operator meant to keep. The enumerator
+therefore refuses a bare span marker outside Python, and names it in the
+refusal:
 
 ```
 enumerator: config/runtime.yaml:12 declares span marker id='temperature',
@@ -213,9 +215,9 @@ zicato:mutable:end) or zicato:mutable:file instead. This marker
 contributes no mutation point.
 ```
 
-**The region form is the workhorse**, and carries the safety argument.
-Both anchors are explicit, both are written by the operator, and both sit
-*outside* the mutable range:
+**The region form covers most non-Python surface** and carries the safety
+argument. Both anchors are explicit, both are written by the operator, and
+both sit *outside* the mutable range:
 
 ```yaml
 runtime:
@@ -226,8 +228,8 @@ runtime:
   owner: operator          # <- not mutable, and cannot become mutable
 ```
 
-The point's `content` is exactly the lines strictly between the markers.
-Three properties follow, and each is pinned by a test:
+The point's `content` is the lines strictly between the markers. Three
+properties follow, and each is pinned by a test:
 
 1. **A patch cannot escape.** The applier rebuilds the file as
    `everything before the region` + `replacement` + `everything after`.
@@ -242,9 +244,9 @@ Three properties follow, and each is pinned by a test:
    proposer that emits at column 0 still lands correctly inside a nested
    YAML block, and nested structure is not flattened.
 
-A `:file` marker gives up property 2 by definition — a whole-file replace
-*can* delete the marker. That is caught after the fact by post-apply check
-A2 (every patched id must still resolve), which rejects the snapshot.
+A `:file` marker gives up property 2 by definition, because a whole-file
+replace *can* delete the marker. The post-apply id-resolution check (`A2`)
+catches that after the fact and rejects the snapshot.
 
 **JSON.** Strict JSON has no comment syntax, so there is no way to write a
 marker in a `.json` file without invalidating it. JSON is therefore not
@@ -252,7 +254,7 @@ walked at all.
 
 ### 2.5 Which files are walked
 
-Discovery is a **declared suffix table**, not a content sniff. The
+Discovery is a **declared suffix table** rather than a content sniff. The
 built-ins (`zicato.mutation.markers.BUILTIN_SYNTAXES`) are `.md` ·
 `.markdown` · `.txt` · `.yaml` · `.yml` · `.toml` — prompts and config,
 the two shapes the surface exists for — plus the reserved `.py`. Every
@@ -273,26 +275,26 @@ optionally, the block closers tolerated at end of line. The table folds
 over the built-ins: an entry for a built-in suffix overrides it, and an
 absent table means the built-ins alone.
 
-**The leaders are not decoration — they are the containment mechanism.**
-`zicato:mutable id="..."` is nearly collision-proof for *discovery*, so
-one could enumerate any text file carrying the token and drop the table
-entirely. But when the applier rebuilds a `:code` region it strips
-echoed marker lines out of the replacement body (§6), and it can only do
-that under a comment syntax it knows. A file type with no declared
-leaders is one where the proposer could smuggle a live `:end` marker into
-a region body. Declared syntax is *enforceable* containment, which is why
-a leaderless entry is rejected outright.
+**The leaders are the containment mechanism.** `zicato:mutable id="..."`
+is nearly collision-proof for *discovery*, so an implementation could
+enumerate any text file carrying the token and drop the table entirely.
+But when the applier rebuilds a `:code` region it strips echoed marker
+lines out of the replacement body (§6), and it can only do that under a
+comment syntax it knows. In a file type with no declared leaders, the
+proposer could insert a live `:end` marker into a region body. Declared
+syntax is *enforceable* containment, which is why a leaderless entry is
+rejected outright.
 
 Two consequences follow from the table being contract:
 
 - **Editing it rolls the epoch.** The table decides what is enumerable,
   hence what the proposer may rewrite, hence comparability across
-  generations. It is folded into the contract hash (omitted at its empty
-  default, so every workspace that declares nothing keeps the hash it
-  has). Widening the surface is a material contract change and shows up
-  as one.
+  generations. It is folded into the contract hash, omitted at its empty
+  default so that a workspace declaring nothing keeps the hash it has.
+  Widening the surface is a material contract change and is recorded as
+  one.
 - **`.py` is reserved.** The table governs the text pass only; an entry
-  for `.py` is an error. That is what keeps "widening the surface moves
+  for `.py` is an error. That reservation keeps "widening the surface moves
   zero Python points" a property of the grammar rather than a claim a
   test has to keep re-establishing.
 
@@ -300,38 +302,36 @@ Widening the envelope never gives the *proposer* new reach on its own:
 patches carry no paths, only enumerated mutation ids. It lets the
 *operator* declare more.
 
-The alternative — open every file and guess from its bytes whether it is
-text — was rejected on two grounds. It reads *every* file in the tree
-including binaries, and the enumerator re-runs after **every applied
-patch**, so the walk sits on the hot path. And a surface that decides by
-guessing is a surface whose contents can change because a file's first
-8KB changed. A suffix decides without opening the file and cannot wander
-into a binary at all.
+Two properties rule out the alternative of opening every file and guessing
+from its bytes whether it is text. Such a walk reads *every* file in the
+tree including binaries, and the enumerator re-runs after **every applied
+patch**, so the walk sits on the hot path. A surface that decides by
+guessing also has contents that can change because a file's first 8KB
+changed. A suffix decides without opening the file and cannot reach a
+binary at all.
 
 Strict `.json` stays out: no comment can host a marker without
 invalidating the document. A `.jsonc`-style type is one table entry.
 
-Three guards ride along:
+Three further guards apply:
 
 - Vendored / generated directories (`.git`, `node_modules`, `.venv`,
   `__pycache__`, `dist`, `build`, …) are pruned from the **text pass
   only**. Pruning the Python pass would change which `.py` files
-  enumerate, and that is exactly what must not move.
+  enumerate, and that set must not move.
 - Text files over 2 MB are skipped. A multi-megabyte file in a mutable
-  tree is data, not surface.
+  tree is data rather than surface.
 - A file that is not valid UTF-8, or that contains a NUL byte, yields
-  nothing — belt and braces behind the declared suffix.
+  nothing — a second check behind the declared suffix.
 
-A **single-file root** now resolves by suffix: `.py` through the Python
-pass, a declared suffix through the text pass, and anything else
-warns. Previously a non-`.py` single-file root fell through to the
-directory branch, whose `rglob` on a file matches nothing, and enumerated
-to zero points in complete silence.
+A **single-file root** resolves by suffix: `.py` through the Python pass,
+a declared suffix through the text pass, and anything else warns rather
+than enumerating silently to zero points.
 
 ### 2.6 What markers do NOT do
 
 - Markers do not declare any *constraints* on the new text. They mark
-  a target; validation happens at apply time, not at mark time.
+  a target; validation happens at apply time rather than at mark time.
 - Markers do not carry the current value. The walker reads the value
   from the AST and stamps it onto the `MutationPoint` at enumeration
   time.
@@ -351,8 +351,8 @@ its `:file` / `:code` forms resolve by line position alone.
 
 **Span marker resolution:**
 
-1. Marker lines are found by **line regex**, not by `tokenize` — one
-   pass over the file's lines, matching the leader + token + `id="..."`
+1. Marker lines are found by **line regex** rather than by `tokenize`:
+   one pass over the file's lines, matching the leader + token + `id="..."`
    shape. The AST is used for exactly two things a regex cannot supply:
    the set of lines covered by a string literal, and the literal spans a
    marker can bind to.
@@ -361,9 +361,10 @@ its `:file` / `:code` forms resolve by line position alone.
    the first use of the literal-line set.
 3. A span marker binds to the **nearest string literal beneath it** —
    the literal whose start line is the smallest line strictly greater
-   than the marker's. Not a fixed list of node types: assignment value,
-   keyword argument, positional argument, or any other expression
-   context all resolve, because the rule is about position, not shape.
+   than the marker's. The binding is not restricted to a fixed list of
+   node types: assignment value, keyword argument, positional argument,
+   and any other expression context all resolve, because the rule is
+   about position rather than node shape.
 4. The enumerator records **whole lines** (file, `line_start`,
    `line_end`) and the sliced text. Column precision lives in the
    applier, which re-resolves the exact literal node at apply time so a
@@ -374,15 +375,15 @@ its `:file` / `:code` forms resolve by line position alone.
 **Duplicate ids** are not rejected at enumeration — the enumerator emits
 one point per marker and does not dedupe. They are rejected at
 *validation*, and only for ids a patch actually targets: a patch can only
-mean one location, so an ambiguous target fails the batch loudly rather
-than editing an arbitrary one of the colliding spans. A duplicate
-elsewhere in the tree does not block an otherwise-clean batch.
+mean one location, so an ambiguous target fails the batch rather than
+editing an arbitrary one of the colliding spans. A duplicate elsewhere in
+the tree does not block an otherwise-clean batch.
 
 **File marker resolution:** a `# zicato:mutable:file id="..."` line
 anywhere in the file (not only a header region) makes the whole file one
 point, with the file's full text as `content`. Nothing limits a file to
-one file marker; two would simply be two points, which the duplicate-id
-rule then catches if they share an id.
+one file marker; two markers make two points, which the duplicate-id rule
+then catches if they share an id.
 
 **Unrecognized lines** are not markers and are skipped in silence — a
 comment that merely resembles the syntax is not a typo to report. The
@@ -423,8 +424,8 @@ marker line (e.g. `required_placeholders`, `min` / `max`, `enum`,
 patches above it add or remove lines.
 
 The dataclass is column-free: a span is recorded by its inclusive
-`line_start` / `line_end` range, not by character columns. There is no
-separate `label` field — the marker's optional attributes all live in
+`line_start` / `line_end` range rather than by character columns. There is
+no separate `label` field — the marker's optional attributes all live in
 `metadata`.
 
 ### Stability across generations
@@ -460,9 +461,10 @@ class HarnessAdapter(Protocol):
 ### Walking multiple source roots
 
 `mutation_points()` returns a list over the **registered list of source
-roots**, not a single tree. v0 typically uses one root — the inner
-harness's package. v0+1 uses two — the inner harness *and* the
-adapter-instrumented goldfive checkout it wraps (target 2 — see
+roots** rather than over a single tree. One root is the common case: the
+inner harness's package. Two roots are needed when the target is a library
+the harness wraps, such as the inner harness together with the
+adapter-instrumented goldfive checkout (the goldfive steering target — see
 [DOGFOOD-TARGETS.md](DOGFOOD-TARGETS.md)).
 
 The CLI exposes this with the `--mutable-tree` flag on `register`:
@@ -474,13 +476,14 @@ zicato epoch register --adk agent_package.agent:root_agent \
 ```
 
 `--adk` is a dotted module path. Each registered root's basename must be the
-importable package name (`agent_package` above): the snapshot copies each root
-under its basename and is prepended to `sys.path`, which resolves top-level
-names only, so a root Python cannot name as a module could never be shown to
-have run from the snapshot — `register` refuses that (issue #110). The
-entrypoint itself may sit inside a root or outside all of them (the dependency
-shape: mutate a package the harness imports); every root is verified per run
-either way — see [DOGFOOD-TARGETS.md](DOGFOOD-TARGETS.md) §2.4.
+importable package name (`agent_package` above). The snapshot copies each root
+under its basename and prepends the snapshot to `sys.path`, which resolves
+top-level names only. A root whose basename Python cannot use as a module name
+could therefore never be shown to have run from the snapshot, so `register`
+refuses it (issue #110). The entrypoint itself may sit inside a root or
+outside all of them; the second shape is the dependency case, where zicato
+mutates a package the harness imports. Every root is verified per run in
+either shape — see [DOGFOOD-TARGETS.md](DOGFOOD-TARGETS.md) §2.4.
 
 The first registered root is conventionally the package containing the
 agent factory; additional roots are added with repeated
@@ -495,28 +498,30 @@ file *means*: it does not look for agent classes, role graphs, or prompt
 attributes, and the applier dispatches on the point's kind and the file's
 suffix alone.
 
-Two in-tree targets bracket the range. Target 0
-(`examples/zicato_examples/target_0_convergence`) is a deterministic policy
-with no LLM at all, whose entire surface is one marked module-level string
-constant. Target 2 is goldfive — a library, registered with
+Two in-tree targets bracket the range. The deterministic convergence
+recipe (`examples/zicato_examples/target_0_convergence`) is a policy with no
+LLM at all, whose entire surface is one marked module-level string constant.
+The goldfive steering target is a library, registered with
 `zicato epoch register --mutable-tree <checkout>/goldfive` while the entrypoint
 stays outside every tree.
 
 Nor is the surface Python-only. The native marker pass walks `*.py` **and**
 every declared text file (§2.4, §2.5), so a markdown prompt or a YAML
-config sitting in a mutable tree is real, addressable surface — the marker
-requirement is unchanged, only the set of places a marker may live has
-widened. What stays out of reach is a file with no marker in it, and a
-file type the contract's syntax table does not declare.
+config sitting in a mutable tree is addressable surface. The marker
+requirement applies to those files as it does to Python; a marker may
+simply live in more kinds of file. What stays out of reach is a file with
+no marker in it, and a file type the contract's syntax table does not
+declare.
 
 A second, additive pass covers one shape that declares its surface
 elsewhere: the **manifest bridge**
 (`zicato.synthetic.manifest_bridge`). When a root carries a goldfive-shaped
 `optimization/manifest.toml`, each manifest entry becomes a
 `MutationPoint` — prompt entries pointing at markdown bodies, numeric
-entries at `.py` attributes. It is how target 2 exposes goldfive's prompt
-surface without sprinkling zicato markers through an upstream tree, and it
-no-ops silently for every root that has no such manifest.
+entries at `.py` attributes. The bridge is how the goldfive steering target
+exposes goldfive's prompt surface without adding zicato markers throughout
+an upstream tree, and it no-ops silently for every root that has no such
+manifest.
 
 The two passes are independent, which means a manifest id and a marker id
 *can* collide if an operator marks a file the manifest already declares.
@@ -524,9 +529,9 @@ Nothing prevents it at enumeration time; `validate_patches` rejects the
 ambiguous id (see §6) rather than letting the applier edit whichever point
 was enumerated last.
 
-The list shape is part of the v0 contract even though v0 typically
-uses one root. Forcing the shape now means target 2 plugs in without
-schema breakage later.
+The list shape is part of the contract even though a single root is the
+common case, so a multi-root target such as the goldfive steering target
+needs no schema change.
 
 ### Idempotency
 
@@ -545,12 +550,12 @@ per experiment. It runs in two phases.
 **Pre-apply** (`validate_patches`, before the patch set is written —
 so a malformed batch is refused as a whole rather than half-applied):
 
-| # | Constraint | Why |
-|---|---|---|
-| P1 | Each patch's `mutation_id` resolves to an enumerated `MutationPoint`. | A patch that targets nothing cannot be applied. |
-| P2 | The `op` matches its payload: `replace` carries `new_content`, `set_numeric` carries `new_numeric`, `set_enum` carries `new_enum`, and no foreign payload field is set. | Catches a malformed proposer response before it touches disk. |
-| P3 | The `op` is compatible with the target point's `kind`: `replace` works on `span`, `file`, or `code`; `set_numeric` / `set_enum` require a `span` point (they locate a constant after the marker). | A file-level or region rewrite has no single constant to retarget. Since the text pass emits only `file` / `code` points, this is also what stops a `set_numeric` landing in a YAML file. |
-| P4 | Every `mutation_id` a patch targets resolves to exactly ONE point across the whole surface. | The Python pass, the text pass, and the manifest bridge are independent; an id declared twice would otherwise resolve last-write-wins. |
+| Code | Check | Constraint | Why |
+|---|---|---|---|
+| `P1` | the target id resolves | Each patch's `mutation_id` resolves to an enumerated `MutationPoint`. | A patch that targets nothing cannot be applied. |
+| `P2` | the operation matches its payload | The `op` matches its payload: `replace` carries `new_content`, `set_numeric` carries `new_numeric`, `set_enum` carries `new_enum`, and no foreign payload field is set. | Catches a malformed proposer response before it touches disk. |
+| `P3` | the operation suits the point kind | The `op` is compatible with the target point's `kind`: `replace` works on `span`, `file`, or `code`; `set_numeric` / `set_enum` require a `span` point (they locate a constant after the marker). | A file-level or region rewrite has no single constant to retarget. Since the text pass emits only `file` / `code` points, this is also what stops a `set_numeric` landing in a YAML file. |
+| `P4` | the target id is unique across the surface | Every `mutation_id` a patch targets resolves to exactly ONE point across the whole surface. | The Python pass, the text pass, and the manifest bridge are independent; an id declared twice would otherwise resolve last-write-wins. |
 
 A standalone helper, `check_forbidden_ids`, rejects any patch whose
 `mutation_id` is in an operator-supplied forbidden set — the
@@ -560,47 +565,49 @@ mechanical enforcement behind the proposer brief's `## Forbidden` list.
 written — the tournament refuses to promote a snapshot with any
 non-empty error list):
 
-| # | Constraint | Why |
-|---|---|---|
-| A1 | Every touched `.py` file still parses (`ast.parse`). Non-Python touched files are checked for existence and readability only. | A non-parsing file can't be imported; the whole snapshot is unusable. |
-| A2 | Every patch's `mutation_id` still resolves in a fresh enumeration of the snapshot. | The next round must be able to re-find this id. |
-| A3 | For any point whose pre-apply `metadata` declared `required_placeholders`, each named placeholder (exact substring, braces included) survives in the patched content. | Prevents the proposer from silently dropping a `{user_message}` formatter the surrounding code injects. |
-| A4 | Top-level imports in every patched `.py` file are preserved — the post-apply import set must be a superset of the pre-apply set. The proposer may add imports but not silently remove them. | A dropped import breaks the snapshot at runtime, not at parse time. |
+| Code | Check | Constraint | Why |
+|---|---|---|---|
+| `A1` | patched Python still parses | Every touched `.py` file still parses (`ast.parse`). Non-Python touched files are checked for existence and readability only. | A non-parsing file cannot be imported; the whole snapshot is unusable. |
+| `A2` | every patched id still resolves | Every patch's `mutation_id` still resolves in a fresh enumeration of the snapshot. | The next round must be able to re-find this id. |
+| `A3` | required placeholders survive | For any point whose pre-apply `metadata` declared `required_placeholders`, each named placeholder (exact substring, braces included) survives in the patched content. | Prevents the proposer from silently dropping a `{user_message}` formatter the surrounding code injects. |
+| `A4` | top-level imports are preserved | Top-level imports in every patched `.py` file are preserved — the post-apply import set must be a superset of the pre-apply set. The proposer may add imports but not silently remove them. | A dropped import breaks the snapshot at runtime rather than at parse time. |
 
 Each post-apply error string is **prefixed with its check code** — `A1: `,
 `A2: `, `A3: `, `A4: ` — so a consumer counting per-check failure rates reads
 the code rather than parsing the prose. `classify_post_apply_error`
 (`zicato/mutation/validator.py`) is the one reader of that prefix, and the
-prose after it stays free to reword. The division is the same one
-`GateEvaluated` draws between its numeric fields and its presentational
-`rule_fired`: the code is the contract, the sentence is for humans. An error
-carrying no recognised code classifies as `None` (the honest unknown) rather
-than being attributed to a check that may not have run — see the proposer
-scorecard, [PROPOSER.md §6.1](PROPOSER.md).
+prose after it stays free to reword. `GateEvaluated` draws the same division
+between its numeric fields and its presentational `rule_fired`: the code is
+the contract, and the sentence is for a human reader. An error carrying no
+recognised code classifies as `None`, an honest unknown, rather than being
+attributed to a check that may not have run — see the proposer scorecard,
+[PROPOSER.md §6.1](PROPOSER.md).
 
-A3 is opt-in per mutation point via the `required_placeholders`
-metadata key on the marker; the validator never guesses placeholders
-for an unannotated span. It is format-agnostic — a placeholder is an
-exact substring, so it fires on a markdown region body exactly as it does
-on a Python literal.
+The required-placeholder check (`A3`) is opt-in per mutation point via the
+`required_placeholders` metadata key on the marker; the validator never
+guesses placeholders for an unannotated span. The check is format-agnostic,
+because a placeholder is an exact substring, so it fires on a markdown
+region body in the same way as on a Python literal.
 
-There is deliberately **no** non-Python counterpart to A1. "Still parses"
-has no cheap, dependency-free meaning for markdown or YAML, and a gate
-that covered only the one format the standard library can check would buy
-inconsistent protection at the cost of a second validation path. The
-safety property is not the gate — it is that a patch can only ever land
-inside an operator-marked region.
+There is **no** non-Python counterpart to the parse check (`A1`). "Still
+parses" has no cheap, dependency-free meaning for markdown or YAML, and a
+gate that covered only the one format the standard library can check would
+buy inconsistent protection at the cost of a second validation path. The
+safety property comes from elsewhere: a patch can only ever land inside an
+operator-marked region.
 
 The mutation surface stays **operator-owned**: the proposer addresses
 patches by id and rewrites within an enumerated point, but only the
-operator's markers define what the surface is. A2 enforces that every
-patched id still resolves after the rewrite.
+operator's markers define what the surface is. The post-apply id-resolution
+check (`A2`) enforces that every patched id still resolves after the
+rewrite.
 
 ## 7. The `zicato inspect mutations` CLI
 
-The audit command — `Advanced: audit the mutable surface the proposer
-may change`. It resolves the registered adapter from the workspace,
-enumerates `mutation_points()`, and renders the result. `zicato evolve`
+The audit command carries the help text `Advanced: audit the mutable
+surface the proposer may change`. It resolves the registered adapter from
+the workspace, enumerates `mutation_points()`, and renders the result.
+`zicato evolve`
 enumerates this surface itself every round; this command exists to let
 an operator audit what the proposer is allowed to change.
 
@@ -632,8 +639,8 @@ Flags:
 | `--show preview\|full` | Truncate content previews (`preview`, the default) or dump full content (`full`). |
 | `--format table\|json` | Output format: human-readable `table` (default) or `json` (the full `MutationPoint` shape). |
 
-There is no `--root` flag — the listing always covers every registered
-source root. Filter by id glob (`--id`) when you want a subset.
+There is no `--root` flag; the listing always covers every registered
+source root. Use the id glob (`--id`) to narrow it to a subset.
 
 The intended workflow is:
 
@@ -653,12 +660,12 @@ listing.
 
 The recommended workflow for marking up an inner harness:
 
-1. Identify the smallest unit you want the proposer to be able to
-   rewrite. Usually one string literal — a specialist instruction, a
-   coordinator routing template, a tool description.
-2. Hoist the literal to a named binding if it isn't already (`INSTR =
+1. Identify the smallest unit the proposer should be able to rewrite.
+   Usually one string literal — a specialist instruction, a coordinator
+   routing template, a tool description.
+2. Hoist the literal to a named binding if it is not already one (`INSTR =
    "..."` near the top of the module, used by reference in the agent
-   definition). Span markers don't decorate inline string literals
+   definition). Span markers do not decorate inline string literals
    buried in expression contexts cleanly; the named-binding form is
    the canonical shape.
 3. Add a span marker on the line above with a meaningful id. The id
@@ -669,27 +676,21 @@ The recommended workflow for marking up an inner harness:
 For a whole module of related strings (a `prompts.py`), add one file
 marker at the top of the file. Span markers within it become optional.
 
-## 9. Future shapes deliberately out of scope for v0
+## 9. Deferred extensions
 
-The marker syntax above is the v0 contract. Several extensions are
-plausible but deliberately deferred:
+The marker syntax above is the whole contract. Two extensions are plausible
+and are deferred:
 
 - **Multi-string span markers.** A marker that covers a sequence of
-  consecutive string literals. The use case is "rewrite this tuple of
-  related prompts as a group." Today the operator hoists them to a
-  single module-level string or uses a file marker.
-- ~~**JSON / YAML inner harnesses.** Markers in non-Python sources.~~
-  **Shipped** — see §2.4 / §2.5. An inner harness whose prompts live in
-  markdown or YAML no longer has to hoist them through a Python module.
-  The two caveats that remain: there is no span form outside Python (use
-  a region), and strict JSON cannot host a marker at all because it has no
-  comment syntax.
+  consecutive string literals, so that a tuple of related prompts can be
+  rewritten as a group. Without it, the operator hoists them to a single
+  module-level string or uses a file marker.
 - **Type-narrowed mutation points.** A marker that asserts "the new
-  value must satisfy this Pydantic shape." Today the
-  `required_placeholders` check (A3) plus the `min` / `max` / `enum`
-  metadata bounds are the only structural validators on patched text.
+  value must satisfy this Pydantic shape." The `required_placeholders`
+  check (`A3`) and the `min` / `max` / `enum` metadata bounds are the only
+  structural validators on patched text.
 
-Each of these is straightforward to add later because the
-`MutationPoint.metadata` mapping is an open `str`-keyed bag — a new
-marker attribute is a new metadata key, not a schema change.
-v0 starts narrow.
+Either is straightforward to add later, because the
+`MutationPoint.metadata` mapping is an open `str`-keyed bag: a new marker
+attribute is a new metadata key rather than a schema change. The contract
+starts narrow.
