@@ -227,8 +227,7 @@ def start_harmonograf(
 
     Failure isolation: any exception during port selection, import, or
     startup is caught and a no-op handle is returned with ``url=""``.
-    Evolve continues with JSONL-only telemetry — exactly as it did
-    before #202.
+    Evolve then continues with JSONL-only telemetry.
 
     Parameters
     ----------
@@ -319,7 +318,7 @@ def start_harmonograf(
                 await app.stop()
 
             loop.run_until_complete(_bootstrap())
-        except Exception as exc:  # noqa: BLE001 — propagate via state, not the thread
+        except Exception as exc:  # noqa: BLE001 — propagate via state rather than the thread
             state["error"] = exc
             ready.set()
         finally:
@@ -705,12 +704,12 @@ def ensure_workspace_harmonograf(workspace_root: Path) -> WorkspaceHarmonografHa
         #      recycled pid lies),
         #   2. the recorded web port answers harmonograf's ``/healthz``
         #      with 200 — positive proof the live process IS a serving
-        #      harmonograf, not merely *some* process that grabbed the
+        #      harmonograf rather than merely *some* process that grabbed the
         #      freed port. A bare TCP connect is too weak here: the port
         #      can accept a connection from an unrelated listener (or a
-        #      lingering socket) after the real server died, which is
-        #      exactly how a stale record used to get reused and a dead
-        #      ``harmonograf_url`` advertised.
+        #      lingering socket) after the real server died, and a stale
+        #      record would then be reused and a dead ``harmonograf_url``
+        #      advertised.
         if web_url and _pid_alive(pid) and _harmonograf_healthz_ok(host or "127.0.0.1", port):
             log.debug("reusing live per-workspace harmonograf at %s (pid %d)", web_url, pid)
             return WorkspaceHarmonografHandle(
@@ -811,9 +810,9 @@ def build_meta_loop_sink(harmonograf_url: str, session_id: str) -> Awaitable[Any
 
     The orchestrator is expected to attach the returned sink to the
     goldfive ``RuntimeConfig`` it constructs for its own (non-worker)
-    runtime, alongside the canonical JSONL sink for the meta-loop. As
-    of #202 the orchestrator does not yet build that runtime; this
-    helper is the seam — once a Runtime exists, attach the sink with
+    runtime, alongside the canonical JSONL sink for the meta-loop. The
+    orchestrator does not build that runtime, so nothing calls this yet;
+    the helper is the seam. Once a Runtime exists, attach the sink with
     ``session_id`` passed through to harmonograf.
 
     Parameters

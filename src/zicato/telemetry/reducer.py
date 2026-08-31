@@ -183,7 +183,7 @@ def _load_events_as_dicts(events_jsonl_path: Path) -> list[dict[str, Any]]:
         (camelCase ``"emittedAt": "ISO string"`` for some events,
         snake_case ``"emitted_at": {seconds, nanos}`` for others) still
         survive — the reducer's downstream consumers only inspect
-        payload keys, not the envelope timestamps, so we tolerate either
+        payload keys rather than the envelope timestamps, so we tolerate either
         shape rather than aborting the whole replay on a strict-parse
         failure.
         """
@@ -329,7 +329,7 @@ def _continuous_score(expectation_result: ExpectationResult) -> float:
 
 # The bare wire-canonical drift-kind string a custom judge emits. All
 # custom judges share this single ``DriftKind`` value — the per-judge
-# identity lives on the paired ``JudgementEmitted.judge_name``, not on
+# identity lives on the paired ``JudgementEmitted.judge_name`` rather than on
 # the drift kind. The reducer re-attributes a ``custom``-kind drift to
 # its authoring judge and stores the result under a namespaced kind of
 # the form ``custom:<judge_name>`` (see ``_judge_attributed_kind``).
@@ -533,7 +533,7 @@ def _has_shared_substring(a: str, b: str, min_len: int) -> bool:
     Implemented with a rolling set of length-``min_len`` windows over
     ``a`` and a sliding compare over ``b``. O(len(a) + len(b)) memory,
     O((len(a) - min_len) + (len(b) - min_len)) time — cheap enough for
-    transcripts and easy to reason about. We deliberately avoid the
+    transcripts and easy to reason about. We avoid the
     ``difflib.SequenceMatcher.find_longest_match`` path because for our
     boolean question ("any shared chunk >= N?") it does more work than
     we need.
@@ -697,7 +697,7 @@ def _agent_and_user_turns_from_events(
 
     Goldfive's event stream does not carry user-facing assistant /
     user messages as first-class payloads (those live in the harness
-    transcript, not in the event wire). However, several payloads do
+    transcript rather than in the event wire). However, several payloads do
     carry short text fragments — agent invocation summaries,
     completion summaries, conversation-end reasons — that the
     multi-turn heuristics can operate on without depending on a richer
@@ -755,11 +755,8 @@ def _goldfive_signals(events_jsonl_path: Path, entry: BoardEntry) -> DialectSign
     (``custom:<judge_name>``), and the collusion-guarded emulator lane
     (TELEMETRY-DIALECTS.md §2).
 
-    Extracted VERBATIM from the inline walk :func:`reduce_loss` used to
-    run, so the default path is byte-identical — the transcript
-    reconstruction is computed unconditionally here (it was gated on the
-    entry kind before), but the result is used only for non-``single_turn``
-    entries, so the emitted profile is unchanged.
+    The transcript reconstruction is computed unconditionally here, and the
+    result is used only for non-``single_turn`` entries.
     """
     events: list[dict[str, Any]] = []
     if events_jsonl_path.exists():
@@ -971,8 +968,8 @@ def reduce_loss(
         answer-leak abort, an unavailable driver, or a killed worker.
         Triggers the same not-completed penalty as
         ``wall_clock_budget_exceeded`` (see "Not-completed penalty"
-        above). Back-compat: optional, defaults to ``False`` so a run
-        that completed cleanly is scored exactly as before.
+        above). Optional, defaulting to ``False``, which is also what a
+        profile omitting the key reads back as.
     """
     # --- 1. Produce raw signals via the pinned telemetry dialect (Seam 0) ---
     #
@@ -992,7 +989,7 @@ def reduce_loss(
     # NOTE: the dialect CAPABILITY warnings (drift knobs inert under a
     # drift-incapable dialect — the "warn" half of TELEMETRY-DIALECTS.md
     # §4.2) are NOT emitted here. They are a pure function of the contract's
-    # weights, not of this run, so emitting them per board-unit — inside the
+    # weights rather than of this run, so emitting them per board-unit — inside the
     # killable worker, once per entry × replicate × generation — was pure
     # duplication and invisible. They are now surfaced ONCE per invocation at
     # the contract-load preflight (LOGGING.md §6,

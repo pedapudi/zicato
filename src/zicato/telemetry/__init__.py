@@ -20,7 +20,7 @@ path:
 The split keeps the *contract surface* (LossProfile, ScoringWeights)
 exposed via :mod:`zicato.core` and the *behavior* (how to write events,
 how to read them back, how to weight them) here. Detectors, the
-tournament runner, and the CLI consume the contract, not the behavior.
+tournament runner, and the CLI consume the contract rather than the behavior.
 
 Nothing in this package depends on a particular vendor SDK or
 foundational model — the only third-party surface it touches is the

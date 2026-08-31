@@ -5,7 +5,7 @@ terminal, no widget and no clock, which is what makes the whole surface
 testable as text: a golden snapshot, an ASCII snapshot and a narrow-terminal
 snapshot are three calls to :func:`render_text` on the same value.
 
-The model is deliberately small:
+The model is small:
 
 * :class:`Span` — a run of text plus a SEMANTIC style token. Style tokens name
   meaning (``accent``, ``good``, ``bad``, ``warn``, ``faint``), never a colour;
@@ -176,7 +176,7 @@ GAP = "  "
 
 
 def columns(rows_of_cells: Iterable[Sequence[str]]) -> list[int]:
-    """CONTENT widths that align a table by its data, not by guess.
+    """CONTENT widths that align a table by its data rather than by guess.
 
     The inter-column gutter is NOT included: :func:`pad` and :func:`rpad` add
     it. Folding it into the width instead would put the gutter on the wrong
@@ -228,7 +228,7 @@ def render_text(view: View, *, width: int = 100, ascii_only: bool = False) -> st
     null glyph); glyph primitives are asked for their ASCII form by the lens.
     """
     out = [view.title, *(row.text for _, row in view.lines())]
-    # Clip EVERY line, not just table rows: a terminal clips prose too, and a
+    # Clip EVERY line rather than just table rows: a terminal clips prose too, and a
     # snapshot that let notes run past the edge would hide exactly the overflow
     # the narrow-mode test exists to catch.
     # Clip FIRST, then strip: clipping a padded cell can leave the trailing
@@ -242,7 +242,7 @@ def render_text(view: View, *, width: int = 100, ascii_only: bool = False) -> st
 #: The transliteration table for an ASCII-only terminal. Every entry is
 #: SAME-WIDTH — one display column in, one out — so an ASCII render reflows
 #: nothing and every aligned column stays aligned. The combining circumflex
-#: maps to the empty string precisely because it occupies no column of its own.
+#: maps to the empty string because it occupies no column of its own.
 _ASCII_MAP = {
     NULL: "-",
     "·": "*",

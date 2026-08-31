@@ -181,7 +181,7 @@ def _loop_block(traj: dict[str, Any], cost: dict[str, Any], ctx: LensContext) ->
     # not collapse into one em-dash.
     #
     # `recent_movement` is null with fewer than two settled scalars: the window
-    # is defined, the sample is too small — measured-impossible, not missing.
+    # is defined, the sample is too small — measured-impossible rather than missing.
     settled = len([p for p in points if present.is_num(p)])
     rows.append(
         kv_row(

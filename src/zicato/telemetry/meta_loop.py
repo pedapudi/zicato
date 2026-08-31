@@ -155,8 +155,8 @@ class MetaLoopEmitter:
     """Fan goldfive events for the meta-loop out to a sink list.
 
     Constructed once per ``evolve_n_rounds`` invocation and threaded into
-    the proposer + judge / analyzer call sites that previously called
-    ``aux_call_llm`` directly without observability.
+    the proposer, judge and analyzer call sites, which would otherwise call
+    ``aux_call_llm`` with no observability at all.
 
     A no-op emitter — one whose ``sinks`` list is empty — is a perfectly
     legal value; the call sites use ``emitter is not None`` only to
@@ -191,7 +191,7 @@ class MetaLoopEmitter:
         # A proposer / judge STARTED payload, stashed by invocation_id, so it
         # can ride the paired COMPLETED envelope's ``summary`` (the
         # structural-span convention). ``parent_invocation_id`` on the started
-        # half now carries the true ambient span, not this payload — see
+        # half now carries the true ambient span rather than this payload — see
         # :meth:`_emit_paired_started` / :meth:`_emit_paired_completed`.
         # Bounded: one entry per open pair, popped when the pair completes.
         self._pending_payloads: dict[str, dict[str, Any]] = {}
@@ -508,7 +508,7 @@ class MetaLoopEmitter:
         # span), NOT the payload. The payload is stashed so it rides the
         # COMPLETED envelope's ``summary`` (the structural-span convention).
         # Absent an ambient span (a bare ``propose_experiment`` in a test) the
-        # parent is empty — today's detached-root behaviour, preserved.
+        # parent is empty — the detached-root behaviour, preserved.
         parent = _current_span_id.get()
         self._pending_payloads[invocation_id] = dict(payload)
         event = self._build_started_event(

@@ -15,7 +15,7 @@ Honesty rules shared by all four:
 * A null (``None`` / non-finite) sample is a HOLE, never a zero. Sparkline
   holes render as blank cells; an all-null series renders as the null glyph.
 * Nothing is drawn at a precision the data does not carry: a single sample has
-  no trend, so it renders as one cell, not a flat line across the field.
+  no trend, so it renders as one cell rather than a flat line across the field.
 * Every primitive returns a plain ``str`` of exactly the requested width (or
   shorter when the data is shorter) — the caller owns colour.
 """
@@ -54,7 +54,7 @@ def _levels(values: Sequence[object], steps: int) -> tuple[list[int | None], boo
     """Quantise ``values`` onto ``0..steps`` levels; None for holes.
 
     Returns ``(levels, any_data)``. A constant series sits at the midpoint —
-    a flat line is the honest render of "no variation", not a full bar.
+    a flat line is the honest render of "no variation" rather than a full bar.
     """
     nums = [_finite(v) for v in values]
     present = [v for v in nums if v is not None]
