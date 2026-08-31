@@ -261,6 +261,32 @@ class GitGenerationStore:
         # A private, single-writer repo: GPG signing would only ever fail.
         self._git("config", "commit.gpgsign", "false")
 
+    def _stage_working_tree(self) -> None:
+        """Stage the whole working tree, ignoring git's cached stat data.
+
+        ``git add`` skips re-hashing a file whose stat data still matches
+        the index entry recorded for it. Every generation here is written
+        by laying a fresh copy of a source tree over the previous
+        generation's files, and the copy carries each file's modification
+        time over from the source, so a file whose size did not change can
+        present ``git add`` with stat data indistinguishable from the
+        generation already in the index: same inode (freed and reused
+        moments earlier), same size, and a modification and change time
+        that fall in the same second git records them in. The staged blob
+        then stays the previous generation's and the new bytes never reach
+        the object store — a change silently missing from the generation's
+        commit, from every diff read out of it, and so from the proposer's
+        prompt.
+
+        Emptying the index first makes the commit a function of the bytes
+        on disk: every file there is hashed, and the commit holds exactly
+        the files the working tree holds. Hashing costs a fraction of the
+        copy that just wrote those bytes, and the cache it gives up was
+        never valid here — the files are rewritten every time.
+        """
+        self._git("read-tree", "--empty")
+        self._git("add", "-A")
+
     def _commit(self, message: str) -> str:
         """Commit the staged index and return the new commit's full hash.
 
@@ -562,7 +588,7 @@ class GitGenerationStore:
             else:
                 shutil.copytree(source, target, ignore=_artifact_ignore)
 
-        self._git("add", "-A")
+        self._stage_working_tree()
         message = self._format_commit_message(
             epoch_id, generation_id, parent_generation_id=None, patches=()
         )
@@ -628,7 +654,7 @@ class GitGenerationStore:
             if scratch.exists():
                 shutil.rmtree(scratch, ignore_errors=True)
 
-        self._git("add", "-A")
+        self._stage_working_tree()
         message = self._format_commit_message(
             epoch_id,
             child_generation_id,

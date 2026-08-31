@@ -9,6 +9,7 @@ materialisation, blob dedup, and config-knob selection.
 
 from __future__ import annotations
 
+import os
 import shutil
 import subprocess
 from concurrent.futures import ThreadPoolExecutor
@@ -188,6 +189,69 @@ def test_unchanged_files_share_one_blob_across_generations(tmp_path: Path) -> No
     v0_p = _git(store.repo_path, "rev-parse", "epoch/e1/v0:agent/prompts.py").strip()
     v1_p = _git(store.repo_path, "rev-parse", "epoch/e1/v1:agent/prompts.py").strip()
     assert v0_p != v1_p
+
+
+# ---------------------------------------------------------------------------
+# staging: the commit is derived from the working tree's bytes
+# ---------------------------------------------------------------------------
+
+
+#: A fixed modification time, long before any repository this test builds.
+#: Both source trees carry it, so the copy hands the second ``git add`` a
+#: file whose recorded and observed modification times agree.
+_PINNED_MTIME = 1_600_000_000.0
+
+
+def _same_size_source(root: Path, *, instr: str, payload: bytes) -> Path:
+    """A two-file source tree pinned to :data:`_PINNED_MTIME`.
+
+    ``instr`` is written into a fixed-width slot and ``payload`` is stored
+    verbatim, so two trees differing only in those arguments hold files of
+    identical size at identical paths.
+    """
+    tree = root / "agent"
+    write_dedented(tree / "prompts.py", f'INSTR = """{instr}"""\n')
+    (tree / "bin").mkdir(parents=True, exist_ok=True)
+    (tree / "bin" / "weights.dat").write_bytes(payload)
+    for path in tree.rglob("*"):
+        if path.is_file():
+            os.utime(path, (_PINNED_MTIME, _PINNED_MTIME))
+    return tree
+
+
+def test_seeding_over_a_generation_records_a_change_a_stale_stat_would_hide(
+    tmp_path: Path,
+) -> None:
+    """A second seed commits the bytes on disk whatever the index cached.
+
+    ``git add`` re-hashes a file only when its stat data differs from the
+    index entry standing for it. Seeding lays a source tree over the
+    previous generation's files and preserves each file's modification
+    time, so an edit that leaves a file's size alone can reach ``git add``
+    looking untouched, and the previous generation's blob stays staged.
+    Whether that happens in a given run turns on fields the operating
+    system chooses: whether the copy reused the inode freed a moment
+    earlier, and whether both writes landed in the second git records.
+    This test removes both from the outcome: it pins one modification time
+    across both trees and sets ``core.checkStat=minimal``, which drops
+    inode, ownership and change time from the comparison. What remains —
+    equal path, equal size, equal modification time — is what a store
+    that trusts the stat cache would call unchanged.
+    """
+    forward = bytes(range(256))
+    backward = bytes(reversed(range(256)))
+    first = _same_size_source(tmp_path / "first", instr="alpha", payload=forward)
+    second = _same_size_source(tmp_path / "second", instr="omega", payload=backward)
+
+    store = GitGenerationStore(tmp_path / "ws")
+    store.seed_generation("e1", "v0", [first])
+    _git(store.repo_path, "config", "core.checkStat", "minimal")
+    store.seed_generation("e1", "v1", [second])
+
+    assert store.read_file("e1", "v1", "agent/bin/weights.dat") == backward
+    assert b'INSTR = """omega"""' in store.read_file("e1", "v1", "agent/prompts.py")
+    diff = store.diff_generations("e1", "v0", "v1")
+    assert "Binary files a/agent/bin/weights.dat and b/agent/bin/weights.dat differ\n" in diff
 
 
 # ---------------------------------------------------------------------------
