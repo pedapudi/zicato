@@ -2,7 +2,7 @@
   "current_generation": "v1",
   "experiments": {
     "v1": {
-      "epoch_id": "<DATE>_t1_gauntlet_fast",
+      "epoch_id": "<DATE>_t1_gauntlet_cached",
       "format_version": 1,
       "generation_id": "v1",
       "hypothesis": {
@@ -27,7 +27,7 @@
         "risks": "Compact bullets may drop nuance the writer relied on; the writer's slide quality may regress if so.",
         "why": "The current researcher prompt encourages a verbose, step-by-step synthesis; compact bullets give the writer a cleaner input and should reduce off-topic drift."
       },
-      "id": "exp_<DATE>_t1_gauntlet_fast_v1",
+      "id": "exp_<DATE>_t1_gauntlet_cached_v1",
       "outcome": {
         "champion_eval_mode": "fast",
         "drift_loss_delta": -1.6,
@@ -35,9 +35,17 @@
         "eliminated_in_round": null,
         "evidence": null,
         "final_rank": 1,
-        "generalization_gap": null,
-        "holdout": null,
-        "holdout_loss": null,
+        "generalization_gap": 0.0,
+        "holdout": {
+          "confirmed": true,
+          "holdout_scalar": 0.4,
+          "ladder_budget_remaining": 15,
+          "ladder_budget_total": 16,
+          "ladder_released": true,
+          "threshold": 0.01,
+          "train_scalar": 0.4
+        },
+        "holdout_loss": 0.4,
         "match_record": [
           {
             "delta_scalar": -1.6,
@@ -69,8 +77,8 @@
   "gen_scores": {
     "v0": {
       "drift_loss_mean": 2.0,
-      "entry_count": 7,
-      "expectation_count": 7,
+      "entry_count": 5,
+      "expectation_count": 5,
       "generation_id": "v0",
       "mean_score": 1.0,
       "namespace_aggregates": {
@@ -99,18 +107,6 @@
           "score": 1.0
         },
         "q3_metrics_outline": {
-          "drift_loss": 2.0,
-          "failure": 0.0,
-          "pass_fail": true,
-          "score": 1.0
-        },
-        "transformers_lay_audience": {
-          "drift_loss": 2.0,
-          "failure": 0.0,
-          "pass_fail": true,
-          "score": 1.0
-        },
-        "transformers_progressive_scripted": {
           "drift_loss": 2.0,
           "failure": 0.0,
           "pass_fail": true,
@@ -146,8 +142,8 @@
     },
     "v1": {
       "drift_loss_mean": 0.4,
-      "entry_count": 7,
-      "expectation_count": 7,
+      "entry_count": 5,
+      "expectation_count": 5,
       "generation_id": "v1",
       "mean_score": 1.0,
       "namespace_aggregates": {
@@ -176,18 +172,6 @@
           "score": 1.0
         },
         "q3_metrics_outline": {
-          "drift_loss": 0.4,
-          "failure": 0.0,
-          "pass_fail": true,
-          "score": 1.0
-        },
-        "transformers_lay_audience": {
-          "drift_loss": 0.4,
-          "failure": 0.0,
-          "pass_fail": true,
-          "score": 1.0
-        },
-        "transformers_progressive_scripted": {
           "drift_loss": 0.4,
           "failure": 0.0,
           "pass_fail": true,
@@ -239,8 +223,8 @@
             "round_index": 0
           }
         ],
-        "id": "<DATE>_t1_gauntlet_fast",
-        "name": "t1-gauntlet-fast",
+        "id": "<DATE>_t1_gauntlet_cached",
+        "name": "t1-gauntlet-cached",
         "started_at": "<TS>",
         "v0_parent": null
       }
@@ -257,7 +241,7 @@
       "drift_loss": 2.0,
       "ended_at": null,
       "entry_id": "every_expectation_kind_demo",
-      "epoch_id": "<DATE>_t1_gauntlet_fast",
+      "epoch_id": "<DATE>_t1_gauntlet_cached",
       "expectation_result": null,
       "generation_id": "v0",
       "judge_errors": [],
@@ -293,7 +277,7 @@
       "drift_loss": 2.0,
       "ended_at": null,
       "entry_id": "picky_stakeholder_emulated",
-      "epoch_id": "<DATE>_t1_gauntlet_fast",
+      "epoch_id": "<DATE>_t1_gauntlet_cached",
       "expectation_result": null,
       "generation_id": "v0",
       "judge_errors": [],
@@ -329,7 +313,7 @@
       "drift_loss": 2.0,
       "ended_at": null,
       "entry_id": "q3_metrics_outline",
-      "epoch_id": "<DATE>_t1_gauntlet_fast",
+      "epoch_id": "<DATE>_t1_gauntlet_cached",
       "expectation_result": null,
       "generation_id": "v0",
       "judge_errors": [],
@@ -365,7 +349,7 @@
       "drift_loss": 2.0,
       "ended_at": null,
       "entry_id": "transformers_lay_audience",
-      "epoch_id": "<DATE>_t1_gauntlet_fast",
+      "epoch_id": "<DATE>_t1_gauntlet_cached",
       "expectation_result": null,
       "generation_id": "v0",
       "judge_errors": [],
@@ -401,7 +385,7 @@
       "drift_loss": 2.0,
       "ended_at": null,
       "entry_id": "transformers_progressive_scripted",
-      "epoch_id": "<DATE>_t1_gauntlet_fast",
+      "epoch_id": "<DATE>_t1_gauntlet_cached",
       "expectation_result": null,
       "generation_id": "v0",
       "judge_errors": [],
@@ -437,7 +421,7 @@
       "drift_loss": 2.0,
       "ended_at": null,
       "entry_id": "waffles_revision_scripted",
-      "epoch_id": "<DATE>_t1_gauntlet_fast",
+      "epoch_id": "<DATE>_t1_gauntlet_cached",
       "expectation_result": null,
       "generation_id": "v0",
       "judge_errors": [],
@@ -473,7 +457,7 @@
       "drift_loss": 2.0,
       "ended_at": null,
       "entry_id": "waffles_single",
-      "epoch_id": "<DATE>_t1_gauntlet_fast",
+      "epoch_id": "<DATE>_t1_gauntlet_cached",
       "expectation_result": null,
       "generation_id": "v0",
       "judge_errors": [],
@@ -515,7 +499,7 @@
       "drift_loss": 0.4,
       "ended_at": null,
       "entry_id": "every_expectation_kind_demo",
-      "epoch_id": "<DATE>_t1_gauntlet_fast",
+      "epoch_id": "<DATE>_t1_gauntlet_cached",
       "expectation_result": {
         "detail": "",
         "kind": "predicate",
@@ -563,7 +547,7 @@
       "drift_loss": 0.4,
       "ended_at": null,
       "entry_id": "picky_stakeholder_emulated",
-      "epoch_id": "<DATE>_t1_gauntlet_fast",
+      "epoch_id": "<DATE>_t1_gauntlet_cached",
       "expectation_result": {
         "detail": "",
         "kind": "predicate",
@@ -611,7 +595,7 @@
       "drift_loss": 0.4,
       "ended_at": null,
       "entry_id": "q3_metrics_outline",
-      "epoch_id": "<DATE>_t1_gauntlet_fast",
+      "epoch_id": "<DATE>_t1_gauntlet_cached",
       "expectation_result": {
         "detail": "",
         "kind": "predicate",
@@ -659,7 +643,7 @@
       "drift_loss": 0.4,
       "ended_at": null,
       "entry_id": "transformers_lay_audience",
-      "epoch_id": "<DATE>_t1_gauntlet_fast",
+      "epoch_id": "<DATE>_t1_gauntlet_cached",
       "expectation_result": {
         "detail": "",
         "kind": "predicate",
@@ -707,7 +691,7 @@
       "drift_loss": 0.4,
       "ended_at": null,
       "entry_id": "transformers_progressive_scripted",
-      "epoch_id": "<DATE>_t1_gauntlet_fast",
+      "epoch_id": "<DATE>_t1_gauntlet_cached",
       "expectation_result": {
         "detail": "",
         "kind": "predicate",
@@ -755,7 +739,7 @@
       "drift_loss": 0.4,
       "ended_at": null,
       "entry_id": "waffles_revision_scripted",
-      "epoch_id": "<DATE>_t1_gauntlet_fast",
+      "epoch_id": "<DATE>_t1_gauntlet_cached",
       "expectation_result": null,
       "generation_id": "v1",
       "judge_errors": [],
@@ -797,7 +781,7 @@
       "drift_loss": 0.4,
       "ended_at": null,
       "entry_id": "waffles_single",
-      "epoch_id": "<DATE>_t1_gauntlet_fast",
+      "epoch_id": "<DATE>_t1_gauntlet_cached",
       "expectation_result": {
         "detail": "",
         "kind": "predicate",
@@ -939,7 +923,7 @@
       },
       {
         "payload": {
-          "experiment_id": "exp_<DATE>_t1_gauntlet_fast_v1"
+          "experiment_id": "exp_<DATE>_t1_gauntlet_cached_v1"
         },
         "scope": {
           "generation_id": "v1",
@@ -1071,7 +1055,7 @@
       },
       {
         "payload": {
-          "entry_id": "transformers_lay_audience",
+          "entry_id": "waffles_revision_scripted",
           "replicate": 0,
           "side": "parent"
         },
@@ -1089,7 +1073,7 @@
       },
       {
         "payload": {
-          "entry_id": "transformers_lay_audience",
+          "entry_id": "waffles_revision_scripted",
           "replicate": 0,
           "side": "child"
         },
@@ -1107,7 +1091,7 @@
       },
       {
         "payload": {
-          "entry_id": "transformers_progressive_scripted",
+          "entry_id": "waffles_single",
           "replicate": 0,
           "side": "parent"
         },
@@ -1125,7 +1109,7 @@
       },
       {
         "payload": {
-          "entry_id": "transformers_progressive_scripted",
+          "entry_id": "waffles_single",
           "replicate": 0,
           "side": "child"
         },
@@ -1138,78 +1122,6 @@
           "step": "run"
         },
         "seq": 18,
-        "ts": "<TS>",
-        "type": "unit_completed"
-      },
-      {
-        "payload": {
-          "entry_id": "waffles_revision_scripted",
-          "replicate": 0,
-          "side": "parent"
-        },
-        "scope": {
-          "attributes": {
-            "matchup_id": "gauntlet",
-            "opponent_generation_id": "v1"
-          },
-          "generation_id": "v0",
-          "step": "run"
-        },
-        "seq": 19,
-        "ts": "<TS>",
-        "type": "unit_completed"
-      },
-      {
-        "payload": {
-          "entry_id": "waffles_revision_scripted",
-          "replicate": 0,
-          "side": "child"
-        },
-        "scope": {
-          "attributes": {
-            "matchup_id": "gauntlet",
-            "opponent_generation_id": "v0"
-          },
-          "generation_id": "v1",
-          "step": "run"
-        },
-        "seq": 20,
-        "ts": "<TS>",
-        "type": "unit_completed"
-      },
-      {
-        "payload": {
-          "entry_id": "waffles_single",
-          "replicate": 0,
-          "side": "parent"
-        },
-        "scope": {
-          "attributes": {
-            "matchup_id": "gauntlet",
-            "opponent_generation_id": "v1"
-          },
-          "generation_id": "v0",
-          "step": "run"
-        },
-        "seq": 21,
-        "ts": "<TS>",
-        "type": "unit_completed"
-      },
-      {
-        "payload": {
-          "entry_id": "waffles_single",
-          "replicate": 0,
-          "side": "child"
-        },
-        "scope": {
-          "attributes": {
-            "matchup_id": "gauntlet",
-            "opponent_generation_id": "v0"
-          },
-          "generation_id": "v1",
-          "step": "run"
-        },
-        "seq": 22,
         "ts": "<TS>",
         "type": "unit_completed"
       },
@@ -1230,9 +1142,21 @@
           "generation_id": "v1",
           "step": "gate"
         },
-        "seq": 23,
+        "seq": 19,
         "ts": "<TS>",
         "type": "gate_evaluated"
+      },
+      {
+        "payload": {
+          "confirmed": true
+        },
+        "scope": {
+          "generation_id": "v1",
+          "step": "gate"
+        },
+        "seq": 20,
+        "ts": "<TS>",
+        "type": "holdout_released"
       },
       {
         "payload": {
@@ -1253,14 +1177,14 @@
         "scope": {
           "step": "decide"
         },
-        "seq": 24,
+        "seq": 21,
         "ts": "<TS>",
         "type": "decision_recorded"
       },
       {
         "payload": {},
         "scope": {},
-        "seq": 25,
+        "seq": 22,
         "ts": "<TS>",
         "type": "round_closed"
       }

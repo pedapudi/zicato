@@ -47,6 +47,13 @@ different code:
 The last three structures reach the unified round pipeline through
 registries that no other lane exercises end to end.
 
+Every lane holds part of its board back. The holdout is hash-derived and
+salted by the epoch id, so the lane's ``epoch_name`` decides which entries
+land there — and a name under which no entry lands leaves the lane
+exercising no holdout rule at all while still capturing and still passing.
+``test_mock_golden.py`` asserts the property per lane rather than leaving it
+to the salt.
+
 It then collects the produced ``.zicato`` artifacts:
 
 * every generation's ``gen_score.json`` — scalar, components, and the
@@ -100,6 +107,12 @@ if str(_REPO_ROOT / "tools" / "parity" / "lib") not in sys.path:
 from normalize import normalize_obj  # noqa: E402
 
 _GOLDEN_DIR = _REPO_ROOT / "tools" / "parity" / "golden"
+
+#: The calendar date every capture pins ``epoch.lifecycle._today`` to. The
+#: epoch id embeds it, and the holdout split is salted by the epoch id, so an
+#: unpinned date would move each lane's board slice — and with it every
+#: captured artifact — from one calendar day to the next.
+PINNED_CAPTURE_DATE = "2026-01-01"
 
 #: The racing full-mode golden, kept under its original name so the gate
 #: that has always guarded it keeps guarding the same file.
@@ -175,7 +188,7 @@ LANES: dict[str, Lane] = {
             minted_generation_ids=("v1",),
             crowned_generation_ids=("v1",),
             golden_filename="mock_evolve_gauntlet_fast.json",
-            epoch_name="t1-gauntlet-fast",
+            epoch_name="t1-gauntlet-cached",
         ),
         Lane(
             name="racing_fast",
@@ -217,7 +230,7 @@ LANES: dict[str, Lane] = {
             minted_generation_ids=("v1", "v2", "v3", "v4"),
             crowned_generation_ids=("v1",),
             golden_filename="mock_evolve_single_elim_full.json",
-            epoch_name="t1-single-elim",
+            epoch_name="t1-single-elim-bracket",
         ),
         Lane(
             name="double_elim_full",
@@ -231,6 +244,46 @@ LANES: dict[str, Lane] = {
         ),
     )
 }
+
+
+def example_dir() -> Path:
+    """The vendored example target the captures bootstrap every lane from."""
+    import zicato_examples.target_1_presentation as target_1
+
+    return Path(target_1.__file__).resolve().parent
+
+
+def lane_epoch_id(lane: Lane) -> str:
+    """The epoch id ``lane`` runs under.
+
+    The id is what salts the lane's holdout split, so it decides which board
+    entries the lane holds back. Composed here the way
+    ``epoch.lifecycle._make_epoch_id`` composes it, against the pinned date.
+    """
+    from zicato.epoch.lifecycle import _slugify
+
+    return f"{PINNED_CAPTURE_DATE}_{_slugify(lane.epoch_name)}"
+
+
+def lane_board_split(lane: Lane) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    """The ``(train_ids, holdout_ids)`` ``lane``'s board splits into.
+
+    Reads the lane's own contract and the example board through the same
+    loader and the same pure split rule the round uses, so the answer is the
+    partition the capture will actually run under.
+    """
+    from zicato.board.jsonl import load_board
+    from zicato.board.split import rotation_seed, split_board
+    from zicato.epoch.lifecycle import _scoring_from_dict
+
+    directory = example_dir()
+    scoring_path = directory / lane.scoring_filename
+    weights = _scoring_from_dict(json.loads(scoring_path.read_text(encoding="utf-8")))
+    board = load_board(directory / "board.jsonl")
+    epoch_id = lane_epoch_id(lane)
+    return split_board(
+        board, weights.overfitting, seed=rotation_seed(weights.overfitting, epoch_id)
+    )
 
 
 def _contract_replicates(scoring_path: Path) -> int:
@@ -414,13 +467,13 @@ def drive_mock_evolve(
 
     # 3) Pin the epoch-id date. ``_make_epoch_id`` stamps ``datetime.now(UTC)``
     #    into the epoch id, and that id is returned by ``rotation_seed`` to seed
-    #    the holdout split — so the racing rung's board slice (and therefore
-    #    every captured artifact) shifts from one calendar day to the next.
-    #    Freezing the date makes both goldens date-stable; ``normalize.py`` still
+    #    the holdout split — so a lane's board slice (and therefore every
+    #    captured artifact) shifts from one calendar day to the next.
+    #    Freezing the date makes every golden date-stable; ``normalize.py`` still
     #    collapses the (now-constant) date prefix to ``<DATE>``.
     import zicato.epoch.lifecycle as _lifecycle_mod
 
-    monkeypatch.setattr(_lifecycle_mod, "_today", lambda: "2026-01-01")
+    monkeypatch.setattr(_lifecycle_mod, "_today", lambda: PINNED_CAPTURE_DATE)
 
     workspace, epoch_id = bootstrap_example_workspace(
         tmp_path,
