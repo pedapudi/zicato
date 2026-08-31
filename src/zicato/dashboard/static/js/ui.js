@@ -90,6 +90,47 @@ export function gatedSwap(host, digest, build) {
   return true;
 }
 
+// ---- persisted appearance preferences -------------------------------
+//
+// Five operator preferences — colour theme, typeface, page scale, text size,
+// rail width — are each a single value in localStorage under its own key,
+// read on boot and written on change. These two helpers are the whole storage
+// seam. Every access is wrapped: a browser in private mode (or with site data
+// blocked) THROWS on getItem/setItem, and an appearance preference is never
+// worth aborting a boot over, so a throw degrades to the normalised default.
+//
+// `normalise` is the preference's own total function — it maps anything,
+// including the null a never-written key returns, onto a legal value. `absent`
+// is what to normalise INSTEAD of null when the key is unset; the numeric
+// preferences need it because their normalisers clamp a null to the range
+// floor rather than to the intended default.
+function readPref(key, normalise, absent = null) {
+  let stored = null;
+  try { stored = window.localStorage.getItem(key); } catch (e) { /* private mode */ }
+  return normalise(stored == null ? absent : stored);
+}
+
+// Normalise, store, and hand back the stored value — so a caller can apply
+// exactly what was persisted rather than what it passed in.
+function persistPref(key, normalise, value) {
+  const next = normalise(value);
+  try { window.localStorage.setItem(key, String(next)); } catch (e) { /* ignore */ }
+  return next;
+}
+
+// Clamp a number onto a legal stop: coerce, fall back to `def` when the value
+// is not finite, snap to the `step` grid, then bound to [min, max]. Backs the
+// two numeric preferences (page scale, rail width); a `step` of 1 rounds to a
+// whole number.
+function clampToStop(v, { def, min, max, step }) {
+  let n = Number(v);
+  if (!isFinite(n)) n = def;
+  n = Math.round(n / step) * step;
+  if (n < min) n = min;
+  if (n > max) n = max;
+  return n;
+}
+
 // ---- colour themes (monokai is the default) -------------------------
 //
 // SIXTEEN themes now: the three originals plus thirteen Gogh palettes
@@ -129,15 +170,8 @@ export const DEFAULT_COLOR = 'monokai';
 const COLOR_KEY = 'zicato.T.theme';
 
 export function normaliseColor(t) { return COLOR_IDS.includes(t) ? t : DEFAULT_COLOR; }
-export function readColor() {
-  let stored = null;
-  try { stored = window.localStorage.getItem(COLOR_KEY); } catch (e) { /* private mode */ }
-  return normaliseColor(stored);
-}
-export function persistColor(t) {
-  try { window.localStorage.setItem(COLOR_KEY, normaliseColor(t)); } catch (e) { /* ignore */ }
-  return normaliseColor(t);
-}
+export function readColor() { return readPref(COLOR_KEY, normaliseColor); }
+export function persistColor(t) { return persistPref(COLOR_KEY, normaliseColor, t); }
 
 // ---- typeface OPTIONS (the operator's finalized 12 faces) -----------
 //
@@ -230,15 +264,8 @@ export function normaliseType(t) {
 // Resolve a value to its full option object (real font stacks). Useful for the
 // picker's micro-previews and for any caller that wants the resolved faces.
 export function typeOption(t) { return TYPE_BY_ID.get(normaliseType(t)) || TYPE_BY_ID.get(DEFAULT_TYPE); }
-export function readType() {
-  let stored = null;
-  try { stored = window.localStorage.getItem(TYPE_KEY); } catch (e) { /* private mode */ }
-  return normaliseType(stored);
-}
-export function persistType(t) {
-  try { window.localStorage.setItem(TYPE_KEY, normaliseType(t)); } catch (e) { /* ignore */ }
-  return normaliseType(t);
-}
+export function readType() { return readPref(TYPE_KEY, normaliseType); }
+export function persistType(t) { return persistPref(TYPE_KEY, normaliseType, t); }
 
 // ---- density: REMOVED — COZY is the permanent baseline --------------
 //
@@ -270,23 +297,10 @@ const SCALE_KEY = 'zicato.T.scale';
 // Clamp to the range AND snap to the step grid, so a restored / typed value is
 // always a legal stop. Total — a non-numeric value falls back to the default.
 export function normaliseScale(v) {
-  let n = Number(v);
-  if (!isFinite(n)) n = DEFAULT_SCALE;
-  n = Math.round(n / SCALE_STEP) * SCALE_STEP;
-  if (n < SCALE_MIN) n = SCALE_MIN;
-  if (n > SCALE_MAX) n = SCALE_MAX;
-  return n;
+  return clampToStop(v, { def: DEFAULT_SCALE, min: SCALE_MIN, max: SCALE_MAX, step: SCALE_STEP });
 }
-export function readScale() {
-  let stored = null;
-  try { stored = window.localStorage.getItem(SCALE_KEY); } catch (e) { /* private mode */ }
-  return normaliseScale(stored == null ? DEFAULT_SCALE : stored);
-}
-export function persistScale(v) {
-  const n = normaliseScale(v);
-  try { window.localStorage.setItem(SCALE_KEY, String(n)); } catch (e) { /* ignore */ }
-  return n;
-}
+export function readScale() { return readPref(SCALE_KEY, normaliseScale, DEFAULT_SCALE); }
+export function persistScale(v) { return persistPref(SCALE_KEY, normaliseScale, v); }
 
 // ---- GLOBAL TEXT FONT-SIZE (the S/M/L control in the typeface picker) ----
 //
@@ -324,16 +338,8 @@ export function fontSizeScale(v) {
   const o = FONTSIZE_BY_ID.get(normaliseFontSize(v));
   return o ? o.scale : 1;
 }
-export function readFontSize() {
-  let stored = null;
-  try { stored = window.localStorage.getItem(FONTSIZE_KEY); } catch (e) { /* private mode */ }
-  return normaliseFontSize(stored);
-}
-export function persistFontSize(v) {
-  const n = normaliseFontSize(v);
-  try { window.localStorage.setItem(FONTSIZE_KEY, n); } catch (e) { /* ignore */ }
-  return n;
-}
+export function readFontSize() { return readPref(FONTSIZE_KEY, normaliseFontSize); }
+export function persistFontSize(v) { return persistPref(FONTSIZE_KEY, normaliseFontSize, v); }
 
 // ---- LEFT SIDE-PANEL (rail) WIDTH (the draggable rail handle) -------
 //
@@ -350,23 +356,10 @@ export const DEFAULT_RAIL = 288;
 const RAIL_KEY = 'zicato.T.rail';
 
 export function normaliseRail(v) {
-  let n = Number(v);
-  if (!isFinite(n)) n = DEFAULT_RAIL;
-  n = Math.round(n);
-  if (n < RAIL_MIN) n = RAIL_MIN;
-  if (n > RAIL_MAX) n = RAIL_MAX;
-  return n;
+  return clampToStop(v, { def: DEFAULT_RAIL, min: RAIL_MIN, max: RAIL_MAX, step: 1 });
 }
-export function readRail() {
-  let stored = null;
-  try { stored = window.localStorage.getItem(RAIL_KEY); } catch (e) { /* private mode */ }
-  return normaliseRail(stored == null ? DEFAULT_RAIL : stored);
-}
-export function persistRail(v) {
-  const n = normaliseRail(v);
-  try { window.localStorage.setItem(RAIL_KEY, String(n)); } catch (e) { /* ignore */ }
-  return n;
-}
+export function readRail() { return readPref(RAIL_KEY, normaliseRail, DEFAULT_RAIL); }
+export function persistRail(v) { return persistPref(RAIL_KEY, normaliseRail, v); }
 
 // THE PAGE-SCALE FACTOR a coordinate must be divided by to convert a viewport
 // (CSS-px) pointer position into the LAYOUT space that `--dt-rail` lives in.
