@@ -121,6 +121,19 @@ test('router: evals is a registered epoch-scoped VIEW; parse/href round-trip; up
 // ====================================================================
 // RENDER — rows / columns / cells / spine / decision pills.
 // ====================================================================
+test('render: the page head uses the styled wrapper class every other view uses', async () => {
+  // Issue #366. `.dn-pagehead` carries the 18px margin under the heading
+  // block; `dt-pagehead` matches no rule in either stylesheet, so this view
+  // sat tighter against its content than the sixteen views that use the
+  // styled class. `dt-` is the controls/token prefix and owns no layout rule.
+  fresh();
+  installFixtureMap({ [EVALS_PATH]: matrixFixture() });
+  const host = document.createElement('div');
+  await evals.render(host, CTX, { epochId: EPOCH });
+  assert(hasClass(host, 'dn-pagehead'), 'the page head carries the styled wrapper class');
+  assert(!hasClass(host, 'dt-pagehead'), 'the unstyled wrapper class is gone');
+});
+
 test('render: paints the entries × candidates matrix with the spine crown + decision pills', async () => {
   fresh();
   installFixtureMap({ [EVALS_PATH]: matrixFixture() });

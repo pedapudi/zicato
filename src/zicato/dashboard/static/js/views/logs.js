@@ -107,7 +107,7 @@ export async function render(host, ctx, _params, _route) {
 
 function build(host, ctx, view, records, invocations, resolvedInv) {
   const nodes = [];
-  nodes.push(el('div', { class: 'dt-pagehead' }, [
+  nodes.push(el('div', { class: 'dn-pagehead' }, [
     el('h1', { class: 'dn-h1', text: 'Operator log' }),
     el('p', { class: 'dn-lede', text: 'The structured log stream for one evolve / reflect invocation — captured under .zicato/logs/, read back files-canonical. Observability only: nothing here feeds a score, a gate, or the journal.' }),
   ]));

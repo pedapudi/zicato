@@ -52,6 +52,19 @@ test('router: logs is a registered VIEW; parseRoute + href round-trip; up() → 
 // ====================================================================
 // RENDER — rows + toolbar + level tones.
 // ====================================================================
+test('render: the page head uses the styled wrapper class every other view uses', async () => {
+  // Issue #366. `.dn-pagehead` carries the 18px margin under the heading
+  // block; `dt-pagehead` matches no rule in either stylesheet, so this view
+  // sat tighter against its content than the sixteen views that use the
+  // styled class. `dt-` is the controls/token prefix and owns no layout rule.
+  fresh();
+  installFixtureMap({ '/api/logs': LOGS_PAYLOAD });
+  const host = document.createElement('div');
+  await logs.render(host, CTX);
+  assert(hasClass(host, 'dn-pagehead'), 'the page head carries the styled wrapper class');
+  assert(!hasClass(host, 'dt-pagehead'), 'the unstyled wrapper class is gone');
+});
+
 test('render: paints one mono row per record, level-toned, with the toolbar', async () => {
   fresh();
   installFixtureMap({ '/api/logs': LOGS_PAYLOAD });
