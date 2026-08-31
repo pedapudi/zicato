@@ -4,12 +4,12 @@
     "raw_non_markdown": 425755,
     "total": 408661,
     "production": 197702,
-    "production_logic": 117024
+    "production_logic": 110276
   },
   "limits": {
-    "total": 455909,
+    "total": 456033,
     "production": 202792,
-    "production_logic": 120435,
+    "production_logic": 113803,
     "note": "Final measured limits; see docs/design/LINE-BUDGET.md."
   }
 }

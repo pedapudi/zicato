@@ -6,11 +6,12 @@ import argparse
 import ast
 import io
 import json
+import re
 import subprocess
 import sys
 import tokenize
 from collections import Counter
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Iterator
 from dataclasses import asdict, dataclass
 from pathlib import Path, PurePosixPath
 
@@ -40,6 +41,9 @@ EXCLUDED_FROM_BUDGET = (
 )
 ASSET_SUFFIXES = {".ico", ".pdf", ".png", ".svg", ".woff2"}
 DOCSTRING_HOLDERS = (ast.Module, ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)
+# Opens a Rust raw string: an optional byte marker, the raw marker, and the
+# hashes whose count the matching close repeats.
+RUST_RAW_STRING = re.compile(r'b?r(#*)"')
 
 
 @dataclass(frozen=True)
@@ -160,10 +164,95 @@ def _javascript_logic(source: str) -> int:
     return count
 
 
+def _rust_string_start(line: str, index: int) -> tuple[int, str, bool] | None:
+    """Return a string literal's opener width, closing delimiter, and escape rule."""
+    if line[index] == '"':
+        return 1, '"', True
+    previous = line[index - 1] if index else ""
+    if line[index] in "br" and not (previous.isalnum() or previous == "_"):
+        match = RUST_RAW_STRING.match(line, index)
+        if match:
+            return len(match.group()), '"' + match.group(1), False
+    return None
+
+
+def _rust_code_lines(source: str) -> Iterator[str]:
+    """Yield each Rust line with its comments removed and its string bodies blanked.
+
+    Line comments (``//``, ``///``, ``//!``) and block comments are dropped;
+    block comments nest and may end before code on the same line. A string
+    literal keeps one quote and loses its body, so a brace inside one cannot be
+    read as structure: regular and byte strings honour backslash escapes, raw
+    strings their hash-delimited form. Character literals pass through as
+    written, which is faithful unless one holds a quote or a comment opener.
+    """
+    comments = 0
+    closing = ""
+    escapes = False
+    for line in source.splitlines():
+        kept: list[str] = []
+        index = 0
+        while index < len(line):
+            rest = line[index:]
+            if comments:
+                comments += rest.startswith("/*") - rest.startswith("*/")
+                index += 2 if rest.startswith(("/*", "*/")) else 1
+            elif closing:
+                if escapes and rest.startswith("\\"):
+                    index += 2
+                elif rest.startswith(closing):
+                    index += len(closing)
+                    closing = ""
+                else:
+                    index += 1
+            elif rest.startswith("//"):
+                break
+            elif rest.startswith("/*"):
+                comments = 1
+                index += 2
+            elif (start := _rust_string_start(line, index)) is not None:
+                width, closing, escapes = start
+                kept.append('"')
+                index += width
+            else:
+                kept.append(line[index])
+                index += 1
+        yield "".join(kept)
+
+
+def _rust_logic(source: str) -> int:
+    """Count Rust lines that are neither blank, comment-only, nor part of a test item.
+
+    Comments are stripped first, so a comment sharing a line with code leaves
+    that line executable. An item carrying ``#[cfg(test)]`` — every one in this
+    repository is ``mod tests { … }`` — drops entirely, attribute line and
+    closing brace included: brace depth follows the item to its close, over
+    text whose string bodies are blanked so a brace inside a literal cannot
+    move that depth. Nothing else is stripped, so attributes, ``use``
+    declarations, and a lone ``}`` all count as executable.
+    """
+    count = depth = 0
+    test_depth: int | None = None
+    braced = False
+    for code in _rust_code_lines(source):
+        text = code.strip()
+        if test_depth is None and "#[cfg(test)]" in text:
+            test_depth = depth
+        elif test_depth is None:
+            count += bool(text)
+        depth += code.count("{") - code.count("}")
+        if test_depth is not None:
+            braced = braced or "{" in code
+            if depth <= test_depth and (braced or text.endswith(";")):
+                test_depth, braced = None, False
+    return count
+
+
 LOGIC_COUNTERS: dict[str, Callable[[str], int]] = {
     ".js": _javascript_logic,
     ".mjs": _javascript_logic,
     ".py": _python_logic,
+    ".rs": _rust_logic,
 }
 
 
