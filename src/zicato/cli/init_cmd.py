@@ -17,7 +17,9 @@ from typing import Any
 
 from zicato.workspace.config_io import (
     CONFIG_FILENAME,
+    GENERATION_SOURCE_BACKEND_KEY,
     LINEAGE_FILENAME,
+    read_workspace_config,
     workspace_is_initialized,
     write_workspace_config,
 )
@@ -113,23 +115,18 @@ def initialize_workspace(
 
     from zicato.epoch.genstore import (  # noqa: PLC0415
         DEFAULT_GENERATION_SOURCE_BACKEND,
-        GENERATION_SOURCE_BACKEND_KEY,
         KNOWN_GENERATION_SOURCE_BACKENDS,
     )
 
     source_backend = DEFAULT_GENERATION_SOURCE_BACKEND
-    existing_config_path = workspace_root / CONFIG_FILENAME
-    if force and existing_config_path.is_file():
+    if force:
         try:
-            existing_config = json.loads(existing_config_path.read_text(encoding="utf-8"))
-        except (OSError, UnicodeError, json.JSONDecodeError):
-            existing_config = None
-        if isinstance(existing_config, dict):
-            configured_backend = existing_config.get(GENERATION_SOURCE_BACKEND_KEY)
-            if isinstance(configured_backend, str):
-                normalized_backend = configured_backend.strip().lower()
-                if normalized_backend in KNOWN_GENERATION_SOURCE_BACKENDS:
-                    source_backend = normalized_backend
+            configured_backend = read_workspace_config(workspace_root).generation_source_backend
+        except (OSError, ValueError):
+            configured_backend = ""
+        normalized_backend = configured_backend.strip().lower()
+        if normalized_backend in KNOWN_GENERATION_SOURCE_BACKENDS:
+            source_backend = normalized_backend
 
     workspace_root.mkdir(parents=True, exist_ok=True)
 

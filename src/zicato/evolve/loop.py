@@ -89,7 +89,6 @@ def log_effective_concurrency(workspace_root: Path) -> str:
     ``make_runtime_config`` call so the operator gets one line per run, not
     one per round. Returns the rendered line so a test can assert it.
     """
-    from zicato import workspace_loader  # noqa: PLC0415
     from zicato.runtime.spawn_permit import (  # noqa: PLC0415
         _usable_cpus,
         effective_permit_count,
@@ -98,8 +97,9 @@ def log_effective_concurrency(workspace_root: Path) -> str:
         resolve_host_worker_permits,
         resolve_parallelism,
     )
+    from zicato.workspace.config_io import read_workspace_config  # noqa: PLC0415
 
-    runtime_dict = workspace_loader.load_workspace_config(workspace_root).get("runtime", {}) or {}
+    runtime_dict = read_workspace_config(workspace_root).runtime
     parallelism, source = resolve_parallelism(runtime_dict)
     propose_raw = runtime_dict.get("propose_parallelism")
     propose_parallelism = int(propose_raw) if propose_raw is not None else 4
@@ -144,11 +144,9 @@ def _infra_backoff_knobs(workspace_root: Path) -> tuple[float, float]:
 
     base, cap = INFRA_BACKOFF_BASE_S_DEFAULT, INFRA_BACKOFF_CAP_S_DEFAULT
     try:
-        from zicato import workspace_loader  # noqa: PLC0415
+        from zicato.workspace.config_io import read_workspace_config  # noqa: PLC0415
 
-        runtime = (workspace_loader.load_workspace_config(workspace_root) or {}).get(
-            "runtime"
-        ) or {}
+        runtime = read_workspace_config(workspace_root).runtime
         raw_base = runtime.get("infra_backoff_base_s")
         raw_cap = runtime.get("infra_backoff_cap_s")
         if raw_base is not None:

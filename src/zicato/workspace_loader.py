@@ -1,11 +1,13 @@
 """Read workspace-level configuration and per-epoch artifacts.
 
-This module is the single readers' surface for everything that lives
-under ``.zicato/`` — the workspace ``config.json``, the current-epoch
-marker, the per-epoch ``board.jsonl`` / ``brief.md`` / ``scoring.json``
-artifacts. Callers compose these helpers rather than walking the
-directory layout themselves; the layout is owned by
-:mod:`zicato.core.workspace`.
+This module is the readers' surface for the per-epoch artifacts under
+``.zicato/`` — the current-epoch marker and that epoch's
+``board.jsonl`` / ``brief.md`` / ``scoring.json`` — plus the
+raw-mapping view of the workspace ``config.json``. Callers compose
+these helpers rather than walking the directory layout themselves; the
+layout is owned by :mod:`zicato.core.workspace`, and the workspace
+config file itself — where it is, how it parses, what shape it has — by
+:mod:`zicato.workspace.config_io`.
 
 The functions do NOT write — every helper raises a clean
 :class:`FileNotFoundError` when an expected artifact is missing. The
@@ -33,6 +35,7 @@ from zicato.core.types import (
 from zicato.core.workspace import board_path, epoch_dir, scoring_path
 from zicato.epoch.lifecycle import current_epoch_id, load_epoch
 from zicato.proposer.brief import ProposerBrief, load_brief
+from zicato.workspace.config_io import read_workspace_config
 
 
 def _epoch_brief_path(workspace_root: Path, epoch_id: str) -> Path:
@@ -50,13 +53,19 @@ def _epoch_brief_path(workspace_root: Path, epoch_id: str) -> Path:
 
 
 def load_workspace_config(workspace_root: Path) -> dict[str, Any]:
-    """Read ``{workspace_root}/config.json``.
+    """Read ``{workspace_root}/config.json`` as a plain dict.
 
-    The workspace config is shared across every epoch under one
-    workspace and carries cross-cutting bookkeeping (adapter
-    entrypoint, runtime dotted paths, etc.). The factory modules
-    above this loader build the typed views (adapter, runtime config)
-    from this raw dict.
+    The raw-mapping view of the workspace config, for the callers that
+    genuinely want the whole mapping: the factory modules above this
+    loader (adapter, runtime config, model roles) each read several keys
+    and validate them their own way, so they take the parsed object
+    rather than a projection of it.
+
+    Parsing, the file's location, and the one malformed-file error belong
+    to :func:`zicato.workspace.config_io.read_workspace_config`; this
+    adds the policy that an absent file is an error naming ``zicato
+    init``. Callers wanting a typed field, or wanting an absent file to
+    read as defaults, call that loader directly.
 
     Raises
     ------
@@ -66,21 +75,7 @@ def load_workspace_config(workspace_root: Path) -> dict[str, Any]:
     ValueError
         When ``config.json`` is present but unreadable / malformed.
     """
-    config_path = workspace_root / "config.json"
-    if not config_path.exists():
-        raise FileNotFoundError(
-            f"workspace config not found at {config_path}; "
-            f"run `zicato init --workspace {workspace_root}` to bootstrap"
-        )
-    try:
-        loaded = json.loads(config_path.read_text(encoding="utf-8"))
-    except json.JSONDecodeError as exc:
-        raise ValueError(f"could not parse {config_path}: {exc.msg}") from exc
-    if not isinstance(loaded, Mapping):
-        raise ValueError(
-            f"{config_path}: expected a JSON object at top level, got {type(loaded).__name__}"
-        )
-    return dict(loaded)
+    return dict(read_workspace_config(workspace_root).require().raw)
 
 
 def _resolve_current_epoch(workspace_root: Path) -> str:

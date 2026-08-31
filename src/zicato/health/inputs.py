@@ -144,9 +144,9 @@ def workspace_preflight_gate(workspace_root: Path) -> str:
     from zicato.core.runtime import PREFLIGHT_GATE_DEFAULT  # noqa: PLC0415
 
     try:
-        from zicato.workspace_loader import load_workspace_config  # noqa: PLC0415
+        from zicato.workspace.config_io import read_workspace_config  # noqa: PLC0415
 
-        runtime_block = load_workspace_config(workspace_root).get("runtime") or {}
+        runtime_block = read_workspace_config(workspace_root).runtime
         return str(runtime_block.get("preflight_gate", PREFLIGHT_GATE_DEFAULT))
     except Exception as exc:  # noqa: BLE001 — health inputs are best-effort
         log.debug("preflight gate mode unavailable (%s); assuming the default", exc)

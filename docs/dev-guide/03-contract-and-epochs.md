@@ -170,14 +170,16 @@ plus the proposer's three optional fields:
 The last three all canonicalize into the single `proposer` component: which
 agent proposes, and under what self-imposed checks.
 
-`resolve_contract_inputs(workspace_root)` builds it by reading the workspace's
-`config.json`: `contract.board_path` / `brief_path` (also accepted as
-`rubric_path`) / `scoring_path`, `adk_entrypoint`, `mutable_trees` (also
+`resolve_contract_inputs(workspace_root)` builds it from the workspace's
+`config.json`, loaded through the one owner of that file
+(`read_workspace_config`): `contract.board_path` / `brief_path` (also accepted
+as `rubric_path`) / `scoring_path`, `adk_entrypoint`, `mutable_trees` (also
 accepted as `source_roots`), the optional `contract.proposer_path`,
 `runtime.proposer_agent`, and `contract.proposer_static_checks`. A relative
 `proposer_path` is absolutized against the workspace's *parent* (the operator's
 project root). A missing `config.json` raises `FileNotFoundError` telling the
-operator to run `zicato epoch register`.
+operator to run `zicato epoch register` — the remedy this call passes to
+`WorkspaceConfig.require`.
 
 > ⚠️ TRAP — the live contract files sit NEXT TO the `.zicato/` directory (the
 > operator's project root) rather than inside it. `_default_contract_path` resolves

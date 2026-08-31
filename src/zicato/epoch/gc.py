@@ -70,6 +70,7 @@ workspace-config block, default off) that prunes an epoch as it closes.
 from __future__ import annotations
 
 import logging
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -219,7 +220,7 @@ def prune_generations(
     return report
 
 
-def _read_storage_gc_config(config: dict[str, Any] | None) -> dict[str, Any] | None:
+def _read_storage_gc_config(config: Mapping[str, Any] | None) -> dict[str, Any] | None:
     """Extract a well-formed ``storage_gc`` block, or ``None`` when off.
 
     Returns the block only when it is a dict with ``on_epoch_close``
@@ -251,13 +252,13 @@ def maybe_prune_on_epoch_close(workspace_root: Path, epoch_id: str) -> PruneRepo
     every error is logged and swallowed.
     """
     try:
-        from zicato.workspace_loader import load_workspace_config  # noqa: PLC0415
+        from zicato.workspace.config_io import read_workspace_config  # noqa: PLC0415
 
         try:
-            config = load_workspace_config(workspace_root)
-        except (FileNotFoundError, ValueError):
+            config = read_workspace_config(workspace_root)
+        except (OSError, ValueError):
             return None
-        policy = _read_storage_gc_config(config)
+        policy = _read_storage_gc_config(config.raw)
         if policy is None:
             return None
         return prune_generations(workspace_root, epoch_id, dry_run=False, **policy)

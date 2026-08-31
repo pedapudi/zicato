@@ -72,7 +72,7 @@ def test_builder_config_endpoint(client: TestClient) -> None:
 
 
 def test_builder_config_enables_chat_from_named_role(workspace: Path, tmp_path: Path) -> None:
-    config = read_workspace_config(workspace)
+    config = dict(read_workspace_config(workspace).raw)
     config["models"] = {
         "engines": {"build": {"model": "builder-model"}},
         "roles": {"builder": "build"},

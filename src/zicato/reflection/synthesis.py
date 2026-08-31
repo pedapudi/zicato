@@ -1642,23 +1642,22 @@ def _resolve_aux_call_llm(workspace_root: Path | None) -> CallLLM | None:
     if workspace_root is None:
         return None
     try:
-        from zicato import workspace_loader  # noqa: PLC0415
+        from zicato.workspace.config_io import read_workspace_config  # noqa: PLC0415
 
-        cfg = workspace_loader.load_workspace_config(workspace_root)
-    except (OSError, ValueError, FileNotFoundError):
+        loaded = read_workspace_config(workspace_root).require()
+    except (OSError, ValueError):
         return None
 
     try:
         from zicato.models_config import load_models_config, resolve_text_call_llm  # noqa: PLC0415
 
-        models = load_models_config(cfg)
+        models = load_models_config(loaded.raw)
         if not models.auxiliary.is_empty:
             return resolve_text_call_llm(models.auxiliary, role="auxiliary")
     except Exception as exc:  # noqa: BLE001 — an unresolvable aux spec degrades, never crashes
         _LOG.info("synthesize: models.auxiliary did not resolve (%s); trying the legacy path", exc)
 
-    runtime = cfg.get("runtime", {}) if isinstance(cfg, dict) else {}
-    dotted = runtime.get("auxiliary_call_llm") if isinstance(runtime, dict) else None
+    dotted = loaded.runtime.get("auxiliary_call_llm")
     if dotted:
         try:
             from zicato.import_path import import_dotted_path  # noqa: PLC0415

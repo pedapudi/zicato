@@ -38,6 +38,7 @@ from zicato.proposer.scorecard import (
     read_epoch_scorecard,
     read_scorecard_trend,
 )
+from zicato.workspace.config_io import read_workspace_config
 
 
 def _resolve_workspace_epoch(workspace: str, epoch_id: str | None) -> tuple[Path, str]:
@@ -222,12 +223,11 @@ def _resolve_proposer_path(workspace_root: Path, epoch_id: str) -> Path | None:
     next epoch will freeze. They are usually the same directory, and when they
     are not, the live one is the correct target.
     """
-    config_path = workspace_root / "config.json"
     try:
-        data = json.loads(config_path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        data = {}
-    raw = (data.get("contract") or {}).get("proposer_path")
+        contract = read_workspace_config(workspace_root).contract
+    except (OSError, ValueError):
+        contract = {}
+    raw = contract.get("proposer_path")
     if raw:
         return Path(str(raw))
     from zicato.epoch.lifecycle import load_epoch  # noqa: PLC0415

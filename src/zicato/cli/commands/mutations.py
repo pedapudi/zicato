@@ -23,6 +23,7 @@ import click
 
 from zicato.core.types import MutationPoint
 from zicato.mutation.enumerator import enumerate_mutations
+from zicato.workspace.config_io import read_workspace_config
 from zicato.workspace_loader import activate_mutation_surface
 
 _PREVIEW_LEN = 60
@@ -36,23 +37,21 @@ def _load_source_roots(workspace_dir: Path) -> list[Path]:
     which is the documented onramp for populating the workspace.
     """
 
-    config_path = workspace_dir / "config.json"
-    if not config_path.exists():
+    try:
+        config = read_workspace_config(workspace_dir)
+    except ValueError as exc:
+        raise click.ClickException(str(exc)) from exc
+    if not config.exists:
         raise click.ClickException(
-            f"No workspace config at {config_path}. "
+            f"No workspace config at {config.path}. "
             "Run `zicato epoch register` to point this workspace at an inner harness."
         )
-    try:
-        data = json.loads(config_path.read_text(encoding="utf-8"))
-    except json.JSONDecodeError as exc:
-        raise click.ClickException(f"Could not parse {config_path}: {exc}") from exc
-    raw_roots = data.get("source_roots")
-    if not raw_roots:
+    if not config.source_roots:
         raise click.ClickException(
-            f"{config_path} has no 'source_roots' field. "
+            f"{config.path} has no 'source_roots' field. "
             "Run `zicato epoch register` to populate it."
         )
-    return [Path(r) for r in raw_roots]
+    return [Path(r) for r in config.source_roots]
 
 
 def _glob_match(text: str, pattern: str) -> bool:

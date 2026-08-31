@@ -48,6 +48,7 @@ from zicato.epoch.journal import write_experiment
 from zicato.proposer.brief import load_brief
 from zicato.proposer.proposer import ProposerError, propose_experiment
 from zicato.workspace import WorkspaceLayout, generation_ids, next_generation_id
+from zicato.workspace.config_io import WorkspaceConfig, read_workspace_config
 
 
 def _epoch_brief_path(workspace_root: Path, epoch_id: str) -> Path:
@@ -68,17 +69,17 @@ def _epoch_brief_path(workspace_root: Path, epoch_id: str) -> Path:
 # ---------------------------------------------------------------------------
 
 
-def _load_workspace_config(workspace_dir: Path) -> dict[str, Any]:
-    config_path = workspace_dir / "config.json"
-    if not config_path.exists():
-        raise click.ClickException(
-            f"No workspace config at {config_path}. Run `zicato epoch register` first."
-        )
+def _load_workspace_config(workspace_dir: Path) -> WorkspaceConfig:
+    """The workspace config, or a clean CLI error naming the onramp."""
     try:
-        loaded: dict[str, Any] = json.loads(config_path.read_text(encoding="utf-8"))
-        return loaded
-    except json.JSONDecodeError as exc:
-        raise click.ClickException(f"Could not parse {config_path}: {exc}") from exc
+        config = read_workspace_config(workspace_dir)
+    except ValueError as exc:
+        raise click.ClickException(str(exc)) from exc
+    if not config.exists:
+        raise click.ClickException(
+            f"No workspace config at {config.path}. Run `zicato epoch register` first."
+        )
+    return config
 
 
 def _resolve_epoch(workspace_dir: Path, override: str | None) -> str:
@@ -153,7 +154,7 @@ def _load_mutations(workspace_dir: Path, epoch_id: str, parent_gen: str) -> list
             f"{cache_path}` first."
         ) from exc
     config = _load_workspace_config(workspace_dir)
-    source_roots = [Path(r) for r in config.get("source_roots", [])]
+    source_roots = [Path(r) for r in config.source_roots]
     if not source_roots:
         raise click.ClickException(
             "Workspace config has no 'source_roots'; cannot enumerate mutations."
@@ -278,7 +279,7 @@ async def _missing_aux_llm(_system: str, _user: str, _model: str) -> str:
     )
 
 
-def _resolve_aux_llm(config: dict[str, Any]) -> Any:
+def _resolve_aux_llm(config: WorkspaceConfig) -> Any:
     """Look up the auxiliary LLM callable from the workspace config.
 
     The config field ``"auxiliary_call_llm"`` is a dotted import path
@@ -286,7 +287,7 @@ def _resolve_aux_llm(config: dict[str, Any]) -> Any:
     is returned so the command can still parse args and report state.
     """
 
-    dotted = config.get("auxiliary_call_llm")
+    dotted = config.raw.get("auxiliary_call_llm")
     if not dotted:
         return _missing_aux_llm
     mod_name, _, attr = dotted.rpartition(".")
@@ -382,7 +383,7 @@ def propose_cmd(
     patterns = _load_patterns(workspace_dir, epoch_id, parent_gen, patterns_from)
     loss_summary = _load_loss_summary(workspace_dir, epoch_id, parent_gen)
     aux_call_llm = _resolve_aux_llm(config)
-    model = config.get("auxiliary_model", "")
+    model = config.auxiliary_model
 
     # Custom judges declared on the board / per_judge_weights are valid
     # ``drift:<judge_name>`` metric targets in a hypothesis. Best-effort:

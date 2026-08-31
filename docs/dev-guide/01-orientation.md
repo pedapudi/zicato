@@ -817,8 +817,18 @@ over possibly-torn files.
 **`workspace/`** (package) and **`workspace_loader.py`** — the typed
 canonical-read layer (`WorkspaceLayout`, `iter_epochs`/`list_epoch_ids` —
 the single epoch-ordering authority, `read_experiments`) and the
-config/board/scoring/brief loaders (`load_workspace_config`,
-`load_current_board_with_meta`, `scoring_weights_from_dict`).
+board/scoring/brief loaders (`load_current_board_with_meta`,
+`scoring_weights_from_dict`). The workspace root's `config.json` has one
+owner: `workspace/config_io.py`, whose `read_workspace_config` decides where
+the file is, parses it once, and returns a typed `WorkspaceConfig` —
+`.raw` for the factories that consume the whole mapping, typed fields
+(`runtime`, `contract`, `source_roots`, `auxiliary_model`,
+`generation_source_backend`) for the callers that read one key. An absent
+file reads as defaults with `exists` false; a malformed one raises
+`ValueError`; a command that needs an initialized workspace adds
+`.require(remedy)`. `workspace_loader.load_workspace_config` is the
+raw-mapping projection over it, and `tests/test_workspace_config_single_owner.py`
+parses every module under `src/zicato` and fails on a second reader.
 
 **`adapters/`, `adapter_factory.py`, `runtime_factory.py`,
 `models_config.py`, `config.py`, `import_path.py`, `aux_timeout.py`** —
