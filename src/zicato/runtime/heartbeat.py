@@ -27,8 +27,10 @@ from __future__ import annotations
 
 import asyncio
 import os
+from collections.abc import Mapping
 from dataclasses import replace
 from pathlib import Path
+from typing import Any
 
 from zicato.runtime.state import Heartbeat, write_heartbeat
 from zicato.util.iso_time import now_iso as _utc_now_iso
@@ -131,6 +133,7 @@ class HeartbeatBeater:
         seq: int | None = None,
         harmonograf_url: str | None = None,
         harmonograf_meta_session: str | None = None,
+        settings: Mapping[str, Mapping[str, Any]] | None = None,
     ) -> None:
         """Update the in-memory heartbeat snapshot.
 
@@ -146,6 +149,11 @@ class HeartbeatBeater:
         forward), so ``seq`` only ever moves when a transition calls
         :meth:`update` with a fresh value — it never advances on the
         timer alone. That is what makes it the true liveness signal.
+
+        ``settings`` is the run's effective-settings map
+        (:func:`zicato.runtime.effective_settings.effective_settings`). It is
+        stamped whole, once the round has resolved its runtime configuration,
+        and the snapshot carries it forward like every other field.
         """
         # Build the replace() call as a single typed pipe of overrides
         # so mypy can verify each kwarg against Heartbeat's field types.
@@ -166,6 +174,8 @@ class HeartbeatBeater:
             snapshot = replace(snapshot, harmonograf_url=harmonograf_url)
         if harmonograf_meta_session is not None:
             snapshot = replace(snapshot, harmonograf_meta_session=harmonograf_meta_session)
+        if settings is not None:
+            snapshot = replace(snapshot, settings=settings)
         self._snapshot = snapshot
 
     def bump_now(self) -> None:

@@ -94,19 +94,16 @@ def log_effective_concurrency(workspace_root: Path) -> str:
         _usable_cpus,
         effective_permit_count,
     )
-    from zicato.runtime_factory import resolve_parallelism  # noqa: PLC0415
+    from zicato.runtime_factory import (  # noqa: PLC0415
+        resolve_host_worker_permits,
+        resolve_parallelism,
+    )
 
     runtime_dict = workspace_loader.load_workspace_config(workspace_root).get("runtime", {}) or {}
     parallelism, source = resolve_parallelism(runtime_dict)
     propose_raw = runtime_dict.get("propose_parallelism")
     propose_parallelism = int(propose_raw) if propose_raw is not None else 4
-    # Mirrors the factory's bool-intent mapping: ``true`` reads as AUTO,
-    # ``false`` as off, so neither ``int()``s to a silent 1-worker host.
-    permits_raw = runtime_dict.get("host_worker_permits")
-    if isinstance(permits_raw, bool):
-        permits_limit = None if permits_raw else 0
-    else:
-        permits_limit = int(permits_raw) if permits_raw is not None else None
+    permits_limit, _permits_source = resolve_host_worker_permits(runtime_dict)
     permits = effective_permit_count(permits_limit)
     if permits_limit is None:
         permits_text = f"AUTO -> {permits}"
