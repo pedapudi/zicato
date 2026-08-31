@@ -14,12 +14,15 @@ the subset under the runtime package, crate source directories, integrations,
 and the build hook; tests and assets remain outside that subtotal. The checker
 owns the exact classifications.
 
-The baseline and final ratchet use the same metric:
+The baseline and the enforced limit use that same metric. Both limits below are
+the ones `.line-budget.json` holds, and the last column subtracts the baseline
+from the limit: it is positive where the limit stands above the baseline and
+negative where it stands below.
 
-| Measurement | Baseline (`f9052dd`) | Current limit | Net reduction |
+| Measurement | Baseline (`f9052dd`) | Enforced limit | Limit minus baseline |
 |---|---:|---:|---:|
-| Total | 408,547 | 441,975 | -33,428 |
-| Production | 197,588 | 203,751 | -6,163 |
+| Total | 408,547 | 441,975 | +33,428 |
+| Production | 197,588 | 203,751 | +6,163 |
 
 The earlier raw count of 425,755 included lockfiles and generated artifacts and
 is retained in `.line-budget.json` for provenance; it is not the enforced
