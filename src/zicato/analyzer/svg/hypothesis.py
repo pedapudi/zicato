@@ -17,10 +17,10 @@ from zicato.analyzer.svg.primitives import _empty_svg, _esc, _fmt_delta, _trunca
 
 # Magnitude tokens the proposer uses when writing an `expected_drift_movements`
 # direction/magnitude pair. Used to project a categorical prediction onto a
-# unit-scale rate axis [-1, +1]. The bucket values are deliberately coarse
-# since they're a categorical estimate, not a measurement; the renderer
+# unit-scale rate axis [-1, +1]. The bucket values are coarse
+# since they're a categorical estimate rather than a measurement; the renderer
 # normalises them per-lane so the visual reading is direction + relative
-# magnitude, not an absolute number.
+# magnitude rather than an absolute number.
 _MAGNITUDE_MAP: dict[str, float] = {
     "tiny": 0.02,
     "small": 0.05,

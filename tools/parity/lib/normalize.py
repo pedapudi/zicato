@@ -8,7 +8,7 @@ parity oracle masks them to fixed sentinels before diffing. Everything else
 — every scalar, every loss, every decision, every structural id, every
 field — is compared verbatim.
 
-The masking is deliberately narrow: only fields that are known to be
+The masking is narrow: only fields that are known to be
 non-deterministic by construction are touched. A refactor that silently
 changes a real field will still surface as a diff.
 """

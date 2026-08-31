@@ -55,12 +55,11 @@ def _knob(
     builder_op: str | None = None,
     builder_arg: str | None = None,
 ) -> dict[str, Any]:
-    """Per-field knob metadata — the declarative source of truth (Finding 3).
+    """Per-field knob metadata — the declarative source of truth.
 
-    A scoring/proposer knob historically fanned out across seven hand-kept
-    registries; this metadata makes the field declaration the source and
-    lets the mechanical registries DERIVE from it (with the existing guard
-    tables retained as the enforcement net).
+    Without it a scoring or proposer knob fans out across seven hand-kept
+    registries. This makes the field declaration the source those registries
+    DERIVE from, with the guard tables as the enforcement net.
 
     ``omit_at_default`` — the field is dropped from the contract canonical
     form while it holds its default (an additive, default-off knob that must
@@ -76,21 +75,23 @@ def _knob(
     / GUI row use for this field WHEN it differs from the field name (e.g.
     ``screen_entries`` is the ``entries`` arg of ``set_screening``); ``None``
     means "same as the field name". A DOTTED value (``"ladder.threshold"``)
-    names a field the op takes as a SUBKEY of a partial-mapping argument:
-    the op / dispatch / copilot touchpoints are checked against the mapping
-    arg (``ladder``), while the GUI row and node test must additionally
-    name the subkey — otherwise one row for one subkey would vacuously
-    cover every sibling (which is exactly how ``ladder.threshold`` shipped
-    with no GUI row at all). A registry-driven completeness guard test
-    asserts every ``builder_op`` knob is wired through all its touchpoints
-    (op signature, API dispatch, copilot tool, GUI row, node test), naming
-    exactly which touchpoint is missing for which knob — and a companion
-    guard asserts every contract knob field either CARRIES a ``builder_op``
-    or sits in an explicitly justified exemption set, so a knob can no
-    longer skip the builder entirely by simply omitting this metadata.
+    names a field the op takes as a SUBKEY of a partial-mapping argument.
+    The op, dispatch and copilot touchpoints are then checked against the
+    mapping argument (``ladder``), while the GUI row and node test must
+    additionally name the subkey. Without that, one row for one subkey
+    would vacuously cover every sibling — which is how ``ladder.threshold``
+    came to ship with no GUI row at all.
 
-    Defaults and validation are unaffected — they stay on the field
-    declaration / ``__post_init__`` exactly as before; this is metadata only.
+    Two guard tests keep the registry honest. A completeness guard asserts
+    every ``builder_op`` knob is wired through all five touchpoints (op
+    signature, API dispatch, copilot tool, GUI row, node test), naming which
+    one is missing for which knob. A companion guard asserts every contract
+    knob field either CARRIES a ``builder_op`` or sits in an explicitly
+    justified exemption set, so a knob cannot skip the builder by omitting
+    this metadata.
+
+    Defaults and validation are unaffected: they stay on the field
+    declaration and ``__post_init__``. This is metadata only.
     """
     return {
         "omit_at_default": omit_at_default,
@@ -134,8 +135,8 @@ def _require_finite_mapping(name: str, values: Mapping[str, object]) -> None:
 class LadderConfig:
     """The Ladder/Thresholdout governor over the holdout query (OVERFITTING.md §4, §12 #2).
 
-    Phase A built the train/holdout split and a holdout-*confirmation* step
-    (:class:`OverfittingConfig`). This sub-config governs *how* that holdout
+    The train/holdout split and the holdout-*confirmation* step live in
+    :class:`OverfittingConfig`. This sub-config governs *how* that holdout
     is queried across an epoch's rounds, after Blum & Hardt's Ladder: a
     reused holdout stays valid under an adaptively-querying proposer only if
     every interaction with it is mediated by a mechanism that limits the
@@ -155,15 +156,15 @@ class LadderConfig:
     rolls the epoch, exactly as retuning ``promote_margin`` does.
 
     Default-on with a safe auto-degrade: an empty holdout (small board, split
-    disabled) means there is nothing to govern, and the Ladder is a no-op —
-    behaviour stays byte-identical to Phase A.
+    disabled) leaves nothing to govern, so the Ladder is a no-op and every
+    holdout query is answered directly.
 
     Fields
     ------
     enabled:
         Master switch for the Ladder governor. ``True`` by default. When
-        ``False`` the holdout confirmation runs in its raw Phase-A form
-        (every holdout query counts, no budget, no release rule).
+        ``False`` the holdout confirmation runs unmediated: every query is
+        answered, with no budget and no release rule.
     threshold:
         The train-improvement bar the release rule applies. ``None``
         (default) derives it from :attr:`ScoringWeights.promote_margin` so
@@ -225,7 +226,7 @@ class OverfittingConfig:
     any knob — or the one-time default-on rollout — rolls the epoch,
     exactly as retuning ``promote_margin`` does. A run that splits a holdout
     out of the board, and confirms promotions against it, selects champions
-    under a different rule than one that does not, which is precisely the
+    under a different rule than one that does not, which is the
     contract-roll rationale.
 
     Every field is default-on with a safe auto-degrade: a board too small
@@ -246,7 +247,7 @@ class OverfittingConfig:
         threshold selects approximately this fraction. Range ``(0, 1)``.
     min_board_size_for_split:
         Smallest board size at which a hash-derived split is attempted.
-        Below this the holdout is empty (degrade to today's behaviour) so a
+        Below this the holdout is empty (degrade to the default behaviour) so a
         small board is never starved of train entries. An explicit
         ``holdout`` tag overrides this floor.
     restrict_proposer_visibility:
@@ -417,8 +418,8 @@ class ProposerQualityConfig:
         selects differently. Must be ``>= 0``. See
         :mod:`zicato.epoch.screen`.
 
-        The screen-informed revise pass RIDES this knob (no separate
-        lever, deliberately): when a screened slate ends all-vetoed, the
+        The screen-informed revise pass RIDES this knob; there is no
+        separate lever. When a screened slate ends all-vetoed, the
         wrapper takes exactly one feedback-informed re-sample before
         degrading to critic-over-all. An all-vetoed slate with no revise
         wastes the whole propose step on a known-vetoed candidate, so
@@ -442,31 +443,33 @@ class ProposerQualityConfig:
         mechanically-REDACTED event windows from the champion's
         TRAIN-slice ``events.jsonl`` files — one per detected pattern,
         ±3 events around an anchor drift — and splices them into the
-        proposer prompt after the failure-mode profile, so the proposer
-        can see HOW a detected failure unfolds (the wandering plan step,
-        the looping tool call) without ever learning WHICH board entry
-        it unfolded on (no entry ids, no task text, no model outputs —
-        the doc's §3 redaction rules are enforced in code, never by an
-        LLM). ``0`` (default) is OFF — no extraction runs and the
+        proposer prompt after the failure-mode profile. The proposer can
+        then see HOW a detected failure unfolds — the wandering plan step,
+        the looping tool call — without learning WHICH board entry it
+        unfolded on: a window carries no entry ids, no task text and no
+        model outputs, and the doc's §3 redaction rules are enforced in code
+        rather than by an LLM.
+
+        ``0`` (default) is OFF — no extraction runs and the
         proposer prompt is byte-identical. Unlike ``screen_entries``
         this knob is NOT set by the scaffold: the screen is
         evaluation-side, while exemplars widen the proposer-visibility
-        channel (OVERFITTING.md §11), so the operator opts in
-        deliberately under the doc's §5 harm-detection runbook. Omitted
+        channel (OVERFITTING.md §11), so the operator opts in explicitly,
+        under the doc's §5 harm-detection runbook. Omitted
         from the contract canonical form at its 0 default so existing
         epochs never roll retroactively; a non-zero cap rolls the epoch,
         which is correct — a proposer shown process windows proposes
         under a different rule. Must be ``>= 0``.
     recombine:
-        Opt-in mechanical recombination slot (WS-REC). When ``True`` AND
+        Opt-in mechanical recombination slot. When ``True`` AND
         ``best_of_n > 1``, the orchestrator builds one recombination pair
-        per round (from the current reign's REJECTED, complementary,
-        disjoint-patch challengers) and, when a pair is found, the last
-        best-of-N slot MINTS the union of the two patch sets instead of
-        sampling the LLM — a non-vetoed mint is CHOSEN with
-        ``selection_mode="recombined"`` (a single winner can capture two
-        complementary fixes a parsimony-biased selector would each
-        discount). INERT unless ``best_of_n > 1`` (a single-sample proposer
+        per round, drawn from the current reign's REJECTED, complementary,
+        disjoint-patch challengers. When a pair is found, the last best-of-N
+        slot MINTS the union of the two patch sets instead of sampling the
+        LLM, and a non-vetoed mint is CHOSEN with
+        ``selection_mode="recombined"``. One winner can then capture two
+        complementary fixes a parsimony-biased selector would each discount.
+        INERT unless ``best_of_n > 1`` (a single-sample proposer
         has no slate slot to mint into) — and cost-neutral: the mint
         REPLACES the slot's auxiliary propose call, never adds one.
         ``False`` (default) is OFF — no pair is ever built and the propose
@@ -476,17 +479,17 @@ class ProposerQualityConfig:
         can recombine rejected fixes proposes under a different rule. See
         :mod:`zicato.epoch.recombine` / :mod:`zicato.proposer.recombine`.
     genealogy:
-        Opt-in genealogy channel (WS-GENE; ``docs/design/PROPOSER.md`` §2.7).
+        Opt-in genealogy channel (``docs/design/PROPOSER.md`` §2.7).
         When ``> 0``, each round the orchestrator samples up to this many
-        candidate-LINEAGE items from the current reign's durable records —
-        PARENTS (the champion's own promoted patch history) + INSPIRATIONS
+        candidate-LINEAGE items from the current reign's durable records:
+        PARENTS (the champion's own promoted patch history) and INSPIRATIONS
         (diverse rejected reign candidates chosen by mutation-id-set
-        dissimilarity) — each carrying the proposer-authored core idea + a
-        capped diff excerpt + a BANDED whole-candidate outcome, and splices
-        them into the proposer prompt so the LLM can evolve IN CONTEXT
-        (extend a winning line or re-frame a rejected one — the in-context
-        analogue of the mechanical recombination slot, reaching even the
-        pure-drift-side pairs that slot cannot see). Envelope-safe by
+        dissimilarity). Each carries the proposer-authored core idea, a
+        capped diff excerpt, and a BANDED whole-candidate outcome. Splicing
+        those into the prompt lets the LLM evolve IN CONTEXT — extend a
+        winning line, or re-frame a rejected one. It is the in-context
+        analogue of the mechanical recombination slot, and it reaches even
+        the pure-drift-side pairs that slot cannot see. Envelope-safe by
         construction: it carries candidate genealogy, never board data — no
         entry ids, no per-entry results, no exact deltas (banded through the
         same ``_bucket_scalar_delta`` vocabulary as the experiment memory),
@@ -494,23 +497,24 @@ class ProposerQualityConfig:
         function (no RNG). ``0`` (default) is OFF — no sampling runs and the
         proposer prompt is byte-identical. Like ``process_exemplars`` this
         widens the proposer-visibility channel, so it is NOT set by the
-        scaffold; the operator opts in deliberately. Omitted from the
+        scaffold; the operator opts in explicitly. Omitted from the
         contract canonical form at its 0 default so existing epochs never
         roll retroactively; a non-zero count rolls the epoch, which is
         correct — a proposer shown candidate genealogy proposes under a
         different rule. Read-side only (the cost meter is untouched). Must be
         ``>= 0``. See :mod:`zicato.proposer.genealogy`.
     calibration_feedback:
-        Opt-in critic-calibration channel (WS-CAL; ``docs/design/PROPOSER.md``
-        §2.8). When ``> 0``, each round the orchestrator summarizes the current
-        reign's PREDICTION CALIBRATION — how the proposer's own falsifiable
-        movement predictions landed against realized outcomes, joining the
-        durable records with the prediction-accuracy grader
+        Opt-in critic-calibration channel (``docs/design/PROPOSER.md``
+        §2.8). When ``> 0``, each round the orchestrator summarizes the
+        current reign's PREDICTION CALIBRATION: how the proposer's own
+        falsifiable movement predictions landed against realized outcomes,
+        joining the durable records with the prediction-accuracy grader
         (:func:`zicato.tournament.detail.hypothesis_ledger`, the
-        ``/api/hypothesis-accuracy`` feed) — and splices it into the proposer
-        prompt: per-claim-type hit / miss / unresolved COUNTS, the overall
-        calibration fraction, and up to this many RECENT graded claims (claim
-        text + banded realized outcome + hit/miss). A proposer shown its own
+        ``/api/hypothesis-accuracy`` feed). The summary spliced into the
+        prompt carries per-claim-type hit / miss / unresolved COUNTS, the
+        overall calibration fraction, and up to this many RECENT graded
+        claims (claim text, banded realized outcome, hit or miss). A
+        proposer shown its own
         miss pattern hypothesizes more honestly. Envelope-safe by construction:
         claim text is proposer-authored, realized outcomes render BANDED
         through the same ``_bucket_scalar_delta`` vocabulary as the experiment
@@ -521,7 +525,7 @@ class ProposerQualityConfig:
         ``0`` (default) is OFF — no sampling runs and the proposer prompt is
         byte-identical. Like ``genealogy`` this widens the
         proposer-visibility channel, so it is NOT set by the scaffold; the
-        operator opts in deliberately. Omitted from the contract canonical form
+        operator opts in explicitly. Omitted from the contract canonical form
         at its 0 default so existing epochs never roll retroactively; a
         non-zero count rolls the epoch, which is correct — a proposer shown its
         own calibration proposes under a different rule. Read-side only (the
@@ -762,7 +766,7 @@ class ScoringWeights:
     pass_weight:
         Coefficient on the ``(1 - pass_rate)`` term. The pass/miss term is
         the scalar's ONE non-namespace term: it has its own denominator
-        (expectation-bearing entries, not every entry), its own
+        (expectation-bearing entries rather than every entry), its own
         monotonicity mechanism (:attr:`pass_rate_monotonicity_scope`), and
         its own transform seam (:attr:`pass_transform`). Every MEASURED
         channel — drift, judges, failures, runtime, cost, latency, rubric,
@@ -828,19 +832,20 @@ class ScoringWeights:
         size biases the optimiser toward the smaller, more general edit.
         Defaults to ``0.0`` — when ``0.0`` (or when no diff size is available,
         e.g. the champion side has no challenger experiment) the term is
-        EXACTLY absent: it is not added to the scalar, not surfaced as a
+        EXACTLY absent: it is not added to the scalar rather than surfaced as a
         component, and the scalar / contract hash / every golden are
         byte-identical to a contract without this field. The contract
         canonicalizer omits the field from the scoring hash at the default so
         an unset contract does not roll its epoch; setting it ``> 0`` adds the
         key and rolls the epoch like any other weight change.
 
-        CALIBRATION (issue #120): the diff size now measures the real line
-        delta against the parent's content rather than the size of the whole
-        replacement, so the same edit against a ``kind="file"`` mutation point
-        scores roughly an order of magnitude lower than it did — a re-emit that
-        changes nothing scores ``0`` instead of one unit per line of the file.
-        A weight tuned against the old numbers is now far too weak; re-tune it
+        CALIBRATION (issue #120): the diff size measures the real line delta
+        against the parent's content rather than the size of the whole
+        replacement, so an edit against a ``kind="file"`` mutation point
+        scores roughly an order of magnitude lower than a whole-file charge
+        would give it — a re-emit that changes nothing scores ``0`` rather
+        than one unit per line of the file. A weight tuned against
+        whole-file charging is therefore far too weak here; re-tune it
         against a measured round.
     diff_complexity_ceiling:
         The parsimony CEILING that pairs with :attr:`diff_complexity_weight`
@@ -860,9 +865,10 @@ class ScoringWeights:
         full A/B promotion path only — the same path the challenger diff size
         is threaded on — so like the loss term it does not touch fast-mode or
         multi-challenger matchup scoring. Any value ``<= 0`` is treated as OFF.
-        Reads the SAME measure as the weight, so the issue #120 calibration
-        note above applies here too: a ceiling tuned against whole-file
-        re-emits now admits far larger edits than it used to.
+        Reads the SAME measure as the weight, so the calibration note above
+        applies here too: the measure counts changed lines rather than
+        whole-file re-emits, so a ceiling tuned against whole-file re-emits
+        admits far larger edits than intended (issue #120).
     promote_margin:
         Minimum scalar-score improvement the child generation must show
         over the parent to be promoted. Acts as a regression-noise
@@ -872,9 +878,9 @@ class ScoringWeights:
         The scalar tolerance the HOLDOUT confirmation applies, or ``None``
         (the default) to fall back to :attr:`promote_margin`.
 
-        ``promote_margin`` used to do double duty here, and the two uses
-        pull it in opposite directions. Rule 1 wants it SMALL enough that a
-        real train-measured win clears it; the holdout confirmation wants it
+        A single margin serving both uses is pulled in opposite directions.
+        The scalar-margin rule wants it SMALL enough that a real
+        train-measured win clears it; the holdout confirmation wants it
         LARGE enough to absorb the holdout slice's own quantization. A slice
         of N entries moves its scalar in ``1/N`` steps, and the holdout is
         the smaller slice by construction (``holdout_fraction`` defaults to
@@ -891,16 +897,16 @@ class ScoringWeights:
         historical single-knob behaviour exactly, so the contract canonical
         form — and every existing epoch's hash — is unmoved.
 
-        Scoped to the holdout CONFIRMATION and nothing else. It deliberately
-        does NOT move the Ladder's release threshold
+        Scoped to the holdout CONFIRMATION and nothing else. It does NOT
+        move the Ladder's release threshold
         (:func:`zicato.tournament.ladder.effective_threshold`), which gates a
         TRAIN-measured improvement and where a raised bar would withhold the
         query — leaving the train promote to stand unconfirmed. Widen that
         band with :attr:`LadderConfig.threshold` if you mean to.
     holdout_entry_regression_budget:
         How many holdout entries may regress before the holdout
-        confirmation rejects. ``0`` (the default) is exactly today's
-        zero-tolerance rule.
+        confirmation rejects. ``0`` (the default) is a zero-tolerance
+        rule: any regressing holdout entry blocks confirmation.
 
         The gate's own doctrine is that the holdout CONFIRMS rather than
         re-decides — a train-measured win "must merely not regress" there.
@@ -987,15 +993,16 @@ class ScoringWeights:
         ``{"op": ..., ...params}``) reshaping the scalar's pass/miss
         term ``(1 - mean_score)`` at Seam 2 — the declarative replacement
         for the retired ``pass_exponent`` field (a stray ``pass_exponent``
-        config key is now rejected at load, not silently dropped). ``None``
-        (default) is NEUTRAL = ``linear`` = today's plain linear miss term.
+        config key is now rejected at load rather than silently dropped). ``None``
+        (default) is NEUTRAL = ``linear`` = the plain linear miss term.
         Validated fail-fast in :meth:`__post_init__`.
     drift_kind_aggregation:
         Optional per-drift-kind declarative transforms
         (``{kind: TransformSpec}``) reshaping how each kind's count
-        aggregates into the per-run drift loss at Seam 1 — the opt-in
-        replacement for the old unconditional harmonic
-        ``looping_reasoning`` special-case. An absent kind entry is
+        aggregates into the per-run drift loss at Seam 1. This is how a
+        diminishing-returns rule for ``looping_reasoning`` is opted into,
+        per contract, rather than applied unconditionally. An absent kind
+        entry is
         NEUTRAL = ``linear`` = ``severity × kind_weight × count``.
         Validated fail-fast in :meth:`__post_init__`.
     """
@@ -1046,9 +1053,9 @@ class ScoringWeights:
     # was calibrated against the train slice and reused verbatim on the
     # holdout, whose 1/N quantization is coarser; the two uses then pull one
     # knob in opposite directions and the feasible window can be empty. Both
-    # fields are additive and default to "exactly today": ``holdout_margin=None``
-    # falls back to ``promote_margin``, and a budget of 0 is the current
-    # zero-tolerance per-entry rule. The canonicalizer omits both at their
+    # fields are additive, and their defaults change nothing:
+    # ``holdout_margin=None`` falls back to ``promote_margin``, and a budget
+    # of 0 is the zero-tolerance per-entry rule. The canonicalizer omits both at their
     # default so no existing epoch's contract hash moves.
     holdout_margin: float | None = field(
         default=None,
@@ -1128,16 +1135,16 @@ class ScoringWeights:
     # returned values before they reach the proposer; see
     # :func:`zicato.analyzer.outcome_marginals.run_operator_summarizer`). The
     # empty string (the default) configures NO summarizer, so the proposer
-    # prompt is byte-identical to today. Because it is a plain
+    # prompt is byte-identical to the default path. Because it is a plain
     # ``ScoringWeights`` field, it folds into the field-enumerating contract
     # serde + canonicalizer automatically: configuring (or changing) the spec
     # rolls the epoch, exactly like every other contract field.
     outcome_summarizer_spec: str = ""
-    # Declarative scoring transforms (issue #19 phase 2). Each is a single
+    # Declarative scoring transforms (issue #19). Each is a single
     # ``{"op": "<name>", ...params}`` spec from the
     # :mod:`zicato.scoring.transforms` registry (``linear`` / ``pow`` /
     # ``harmonic`` / ``cap`` / ``clip`` / ``log1p``). Single op per slot — NO
-    # pipelines (arbitrary multi-step logic is Phase 3's ``scalar_fn`` /
+    # pipelines (arbitrary multi-step logic belongs to a ``scalar_fn`` /
     # ``drift_reducer`` plugin). Specs are validated fail-fast in
     # ``__post_init__`` so a malformed transform is rejected at contract load,
     # never producing a NaN mid-scoring. Both fold into the field-enumerating
@@ -1149,17 +1156,17 @@ class ScoringWeights:
     # ``(1 - mean_score)`` recall miss) at Seam 2 — the declarative replacement
     # for the retired ``pass_exponent`` field (express ``pass_exponent=2`` as
     # ``{"op":"pow","exponent":2.0}``; a stray ``pass_exponent`` key is now
-    # rejected at load, not lowered). ``None`` (the default) is NEUTRAL =
-    # ``linear`` = today's plain linear miss term.
+    # rejected at load rather than lowered). ``None`` (the default) is NEUTRAL =
+    # ``linear`` = the plain linear miss term.
     pass_transform: Mapping[str, Any] | None = None
     # ``drift_kind_aggregation`` reshapes, per drift KIND, how that kind's
-    # count aggregates into the drift loss at Seam 1 — the opt-in replacement
-    # for the old unconditional harmonic ``looping_reasoning`` special-case
-    # (``{"looping_reasoning": {"op": "harmonic"}}`` reproduces it for THIS
-    # contract only). An absent kind entry is NEUTRAL = ``linear`` =
-    # ``severity × kind_weight × count`` (today's built-in).
+    # count aggregates into the drift loss at Seam 1. A diminishing-returns
+    # rule for ``looping_reasoning`` is opted into here
+    # (``{"looping_reasoning": {"op": "harmonic"}}``) for THIS contract only,
+    # rather than applied unconditionally. An absent kind entry is NEUTRAL =
+    # ``linear`` = ``severity × kind_weight × count``, the built-in rule.
     drift_kind_aggregation: Mapping[str, Mapping[str, Any]] = field(default_factory=dict)
-    # Dotted-spec scoring PLUGINS (issue #19 phase 3) — the escape hatch for
+    # Dotted-spec scoring PLUGINS (issue #19) — the escape hatch for
     # arbitrary operator scoring logic the declarative registry cannot express
     # (F-beta, cost-aware penalties, the retired harmonic-looping curve as a
     # ~10-line operator plugin). Each is a dotted spec (``pkg.mod:fn`` /
@@ -1167,7 +1174,7 @@ class ScoringWeights:
     # invoked as a PURE, deterministic, NO-LLM function over the matching frozen
     # context (which carries the post-transform value as ``builtin_*`` so the
     # plugin WRAPS the declarative shape rather than reimplementing it). The
-    # empty string (the default) configures NO plugin = the Phase-2/builtin path
+    # empty string (the default) configures NO plugin = the transform-or-builtin path
     # exactly. Both fold into the contract hash via the field-enumerating
     # canonicalizer — and the canonicalizer additionally hashes the resolved
     # plugin MODULE's SOURCE (``spec_with_source_hash``), so editing a plugin
@@ -1232,7 +1239,7 @@ class ScoringWeights:
     # (``delta_scalar <= -promote_margin`` — the supervisor's
     # ``promotion_gate.rs check_row`` semantics, applied pre-persist) and
     # REFUSE the promotion on contradiction. When OFF (default) a
-    # contradiction persists exactly as today and the supervisor's
+    # contradiction persists unchanged and the supervisor's
     # out-of-band scan raises the alarm. An explicit operator
     # force-promote is NOT re-checked (same rationale as above); a
     # promotion with no usable scalar evidence is skipped (fail-open,
@@ -1269,7 +1276,7 @@ class ScoringWeights:
         instance is already known-good.
 
         The dotted-spec scoring PLUGINS (``drift_reducer`` / ``scalar_fn``,
-        issue #19 phase 3) are validated HERE only as strings — resolution +
+        issue #19) are validated HERE only as strings — resolution +
         invocation happen at scoring time (the worker resolves ``drift_reducer``
         itself), and a not-yet-written plugin must still construct so the
         contract can be hashed with the spec string + a degraded source hash.
@@ -1479,7 +1486,7 @@ def recommended_scaffold_weights() -> ScoringWeights:
     leaning on invisible defaults: the racing structure (field 4, eta 2,
     board_fraction 0.4), two averaged replicates per duel, and the
     Bradley--Terry evidence gate ENABLED EXPLICITLY (threshold 0.8 with a
-    32-replicate budget). The gate is deliberately NOT a silent in-code
+    32-replicate budget). The gate is NOT a silent in-code
     default — its CIs separate only after a long unbroken win streak (~37
     duels on a two-contestant pair), so it needs an honest budget the
     operator can see and price: under racing the crowning-pair replicates

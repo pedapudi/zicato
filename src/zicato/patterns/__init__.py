@@ -5,7 +5,7 @@ instances (one per ``(entry, generation)`` over some history) and emits
 :class:`zicato.core.Pattern` records that the proposer consumes to decide
 which mutation points to address next.
 
-Detectors are deliberately small, statistical, and explainable: each one
+Detectors are small, statistical, and explainable: each one
 answers a single question ("which drift kind dominates?", "which task is
 disproportionately failing?", "which entries show plan-revision
 flapping?") and emits one Pattern per finding with a stable id derived

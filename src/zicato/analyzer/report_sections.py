@@ -237,7 +237,7 @@ def _render_proposer_config_block(pq: dict[str, object]) -> str:
     channel, and recombination (+ its merge mode). Each lever renders its
     value or an explicit "off"; an epoch that never configured proposer
     quality renders the built-in defaults notice. The breadth/depth
-    ensemble ROLES are runtime infrastructure (model bindings), not part
+    ensemble ROLES are runtime infrastructure (model bindings) rather than part
     of the per-epoch scoring artifact, so they are noted as not recorded
     here rather than fabricated.
     """

@@ -15,7 +15,7 @@ contract:
   one per generation and discards it once the generation's board has
   been executed.
 
-The two Protocols are deliberately small. The runner doesn't care
+The two Protocols are small. The runner doesn't care
 *how* the adapter wires its inner harness, only that it can drive
 ``run(entry, sinks, config)`` and recover a :class:`RunResult`. This
 gives non-ADK frameworks a clean integration surface without forcing
@@ -49,7 +49,7 @@ OPTIONAL_ADAPTER_MEMBERS = frozenset({"on_promote"})
 #: The members :class:`HarnessAdapter`'s ``isinstance`` gate actually
 #: enforces: the three behavioural methods, which Python guarantees are
 #: class-level and therefore visible to ``__subclasshook__``. The data
-#: attributes (``name``, ``run_output_names``) are deliberately NOT in
+#: attributes (``name``, ``run_output_names``) are NOT in
 #: this set — an adapter may legitimately assign them in ``__init__``,
 #: where a class-level hook cannot see them.
 REQUIRED_ADAPTER_METHODS = ("mutable_subpaths", "load", "mutation_points")
@@ -67,7 +67,7 @@ class RunnableHarness(Protocol):
     runner expects to invoke ``run`` once per board entry under one
     generation and never to share state between entries. Adapters that
     need per-generation caches (e.g. a tokenizer warm-up) keep those
-    on the runnable instance, not on the adapter itself.
+    on the runnable instance rather than on the adapter itself.
     """
 
     async def run(
@@ -141,7 +141,7 @@ class HarnessAdapter(Protocol):
 
         The **mutable surface** is the set of paths the proposer may
         rewrite — the source files carrying ``# zicato:mutable``
-        markers. It is deliberately *narrower* than the whole generation
+        markers. It is *narrower* than the whole generation
         snapshot: a snapshot also contains support code the worker needs
         to execute the harness but that the proposer never edits.
 
@@ -153,7 +153,7 @@ class HarnessAdapter(Protocol):
         method resolves the adapter's construction-time mutable-tree
         declaration against this concrete snapshot root). An adapter
         with no narrower declaration MAY return ``[generation_root]`` —
-        the whole tree — but that is the fallback, not the contract.
+        the whole tree — but that is the fallback rather than the contract.
 
         Note this concerns *which source the proposer edits*; it is
         unrelated to *where the harness writes run output*. Run output
@@ -289,11 +289,11 @@ class HarnessAdapter(Protocol):
         The one shape that falls between the two: an adapter that binds
         the three required methods as INSTANCE attributes in ``__init__``
         rather than declaring them on the class. This hook cannot see
-        those, so such an adapter takes the stock path — which now also
-        demands the optional ``on_promote``, and rejects it. That is a
-        narrowing versus the pre-#125 check. No adapter in this repo, and
-        no ``isinstance`` gate outside the adapter tests, has that shape;
-        an adapter meant to pass must declare its methods on the class.
+        those, so such an adapter takes the stock path — which also demands
+        the optional ``on_promote``, and rejects it. No adapter in this
+        repository, and no ``isinstance`` gate outside the adapter tests, has
+        that shape; an adapter meant to pass must declare its methods on the
+        class (issue #125).
         """
         if cls is not HarnessAdapter:
             return NotImplemented

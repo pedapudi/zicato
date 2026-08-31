@@ -8,7 +8,7 @@ no filesystem, which is why every lens is testable as text.
 **v1 ships three.** Home, Standings and Instrument answer the three questions
 that motivated a terminal surface at all: is the loop learning anything, who is
 ahead, and what should change about the contract. Candidate, Board and Health
-are designed in ``docs/design/TUI.md`` and deliberately deferred — the
+are designed in ``docs/design/TUI.md`` and deferred — the
 render-conformance list there names every evidence field that defers with them,
 so nothing is silently absent.
 

@@ -1,23 +1,20 @@
-"""The tournament live-state EVENT LOG (RUNTIME-V2 Phase 3).
+"""The tournament live-state EVENT LOG.
 
-The in-progress tournament's live state was historically a single mutable
-``active_tournament.json`` SNAPSHOT that several writers
-read-modify-wrote: the orchestrator's full-envelope republish (once per
-scheduled batch) AND the runner's per-board-unit updates (entry
-transitions, partial aggregates, projected standings) all overwrote the
-same file. With several writers racing the same mutable file, a slower
-read-modify-write would lose a concurrent update (the
-``_publish_active_tournament`` lost-update race ``RUNTIME-V2.md`` calls
-out).
+Several writers publish the in-progress tournament's live state: the
+orchestrator's full-envelope republish (once per scheduled batch) and the
+runner's per-board-unit updates (entry transitions, partial aggregates,
+projected standings). Were that state one mutable ``active_tournament.json``
+file, each writer would read-modify-write it and the slower of two racing
+writers would silently drop the other's update.
 
-This module replaces that snapshot with a **single-writer, append-only
-EVENT LOG** built on :class:`zicato.runtime.channel.EventLog`. Every
+So the state is instead a **single-writer, append-only EVENT LOG** built on
+:class:`zicato.runtime.channel.EventLog`. Every
 state transition is **one atomic append** — never a read-modify-write of
 a shared mutable file — so concurrent writers cannot lose each other's
-updates. A reader **folds the log into the live view**: the same
-:class:`~zicato.runtime.state.ActiveTournament` the snapshot produced,
-reconstructed by replaying the events. "Settled" is just the terminal
-``Snapshot`` event with ``phase == "completed"``.
+updates. A reader **folds the log into the live view**: an
+:class:`~zicato.runtime.state.ActiveTournament` reconstructed by replaying
+the events. "Settled" is just the terminal ``Snapshot`` event with
+``phase == "completed"``.
 
 Event vocabulary
 ----------------
@@ -39,22 +36,18 @@ Each event's ``payload`` carries only the delta its writer produces:
 ``ProjectedUpdate`` (``{projected}``)
     The live projected-standing rows per in-flight competitor — the
     runner's per-board projection. The fold merges them onto
-    ``projected`` AND folds them into the live rung ``live_progress``
-    exactly as the old snapshot writer did (sharing the merge code in
-    :mod:`zicato.runtime.state`), so the folded view is byte-identical.
+    ``projected`` AND folds them into the live rung ``live_progress``,
+    using the merge code in :mod:`zicato.runtime.state`.
 
-The fold reuses the same merge helpers the snapshot writer used, so the
-folded :class:`ActiveTournament` is byte-identical to what the
-read-modify-write snapshot produced — the producer-consumer parity is
-preserved by *sharing the merge logic*, not by reimplementing it.
+Writer and fold share those merge helpers rather than each implementing
+the semantics, so the two cannot drift apart.
 
-Compatibility
--------------
-:func:`fold_active_tournament` falls back to the legacy
-``active_tournament.json`` snapshot when no event log exists, so a
-pre-RUNTIME-V2 producer (or a hand-edited snapshot) still surfaces during
-the transition. :func:`clear_log` removes the log (and the legacy
-snapshot), so a cleared tournament reads ``None`` either way.
+When no event log exists
+------------------------
+:func:`fold_active_tournament` falls back to a plain
+``active_tournament.json`` snapshot, so a hand-written or hand-edited
+snapshot still surfaces. :func:`clear_log` removes the log and that
+snapshot together, so a cleared tournament reads ``None`` either way.
 """
 
 from __future__ import annotations
@@ -145,10 +138,10 @@ def has_log(workspace_root: Path) -> bool:
 
 
 def clear_log(workspace_root: Path) -> None:
-    """Remove the event log AND the legacy snapshot. Idempotent.
+    """Remove the event log AND any snapshot beside it. Idempotent.
 
     A cleared tournament must read ``None`` from BOTH the log and the
-    compat snapshot, so clearing removes both keys.
+    fallback snapshot, so clearing removes both keys.
     """
     backend = backend_for(workspace_root)
     backend.delete(active_tournament_log_key())
@@ -163,13 +156,12 @@ def clear_log(workspace_root: Path) -> None:
 def fold_active_tournament(workspace_root: Path) -> Any | None:
     """Fold the event log into an :class:`ActiveTournament`, or ``None``.
 
-    Replays from the LAST ``Snapshot`` event (the authoritative reset)
-    and applies every later delta in append order, reproducing the exact
-    state the old read-modify-write snapshot would have held. Returns
-    ``None`` when the tournament has been cleared or never started.
+    Replays from the LAST ``Snapshot`` event (the authoritative reset) and
+    applies every later delta in append order. Returns ``None`` when the
+    tournament has been cleared or never started.
 
-    Compat: when no event log exists, falls back to the legacy
-    ``active_tournament.json`` snapshot (a pre-RUNTIME-V2 producer).
+    When no event log exists, falls back to reading a plain
+    ``active_tournament.json`` snapshot.
     """
     # Lazy import to avoid an import cycle (state imports this module).
     from zicato.runtime.state import (  # noqa: PLC0415
@@ -182,7 +174,7 @@ def fold_active_tournament(workspace_root: Path) -> Any | None:
 
     events = _log(workspace_root).read()
     if not events:
-        # No log — fall back to the legacy snapshot for the transition.
+        # No log — fall back to the plain snapshot.
         return read_active_tournament_snapshot(workspace_root)
 
     # Start from the last Snapshot (a Snapshot resets the fold) + the

@@ -6,7 +6,7 @@ lives upstream in goldfive's proto schema (``proto/goldfive/v1/types.proto``,
 (``goldfive/types.py``); the wire-canonical form is the bare lowercase
 string (e.g. ``"off_topic"``, ``"looping_reasoning"``, ``"warning"``).
 
-We deliberately do NOT import the upstream enums here. Zicato's core types
+We do NOT import the upstream enums here. Zicato's core types
 are model-agnostic data; binding the in-process vocabulary to goldfive's
 importable symbols would force a hard runtime dependency on goldfive at
 type-check time and would couple zicato's parse-time behavior to whatever

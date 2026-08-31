@@ -478,7 +478,7 @@ def dialect_capability_warnings(weights: ScoringWeights) -> tuple[str, ...]:
     * ``goldfive`` can produce everything ⇒ never warns.
 
     The ``failure:`` and ``runtime:`` channels are dialect-independent — a
-    run's outcome and its wall-clock are facts of the harness, not of the
+    run's outcome and its wall-clock are facts of the harness rather than of the
     telemetry stream — so no dialect makes them inert.
     """
     dialect = weights.telemetry_dialect

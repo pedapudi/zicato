@@ -9,7 +9,7 @@ inline in ``telemetry/reducer.py`` (Seam 1) and ``tournament/scoring.py``
 * a plugin can compute the default and adjust it (``ctx.builtin_loss`` /
   ``ctx.builtin_scalar``) rather than reimplement it.
 
-``tests/test_scoring_seams.py`` holds a deliberately independent second
+``tests/test_scoring_seams.py`` holds an independent second
 implementation of both formulas and pins the two against each other across a
 representative corpus; a change here that is not mirrored there is a test
 failure by design. Transforms and plugins ride ON TOP via the dispatcher
@@ -73,7 +73,7 @@ def builtin_drift_loss(
     plan-revision events contributes exactly zero.
 
     The ``task_failure_ratio`` floor for a not-completed run is applied by the
-    reducer (it is reducer policy, not part of this formula), and the
+    reducer (it is reducer policy rather than part of this formula), and the
     not-completed magnitude is charged in the failure channel.
     """
     sev_w = weights.severity_weights
@@ -110,8 +110,8 @@ def builtin_scalar(
                + Σ over SORTED namespaces of namespace_aggregates[ns]
                + diff_complexity term (when configured)
 
-    ``pass`` is deliberately NOT a namespace: it runs on a different
-    denominator (expectation-bearing entries, not every entry), it has its own
+    ``pass`` is NOT a namespace: it runs on a different
+    denominator (expectation-bearing entries rather than every entry), it has its own
     monotonicity mechanism (``pass_rate_monotonicity_scope``), and the
     transform seam reads it as a bounded coefficient. Every MEASURED channel —
     drift, judges, failures, runtime, cost, latency, rubric, output, schema —

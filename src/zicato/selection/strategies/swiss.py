@@ -69,7 +69,7 @@ class SwissStrategy(SelectionStrategy):
         self._final_match_id = "swiss-final"
         self._leader: Contestant | None = None
         # Opt-in rating / resolver / uncertainty-guard knobs (absent ⇒
-        # today's Copeland/scalar behaviour, byte-identical). These only
+        # the Copeland/scalar behaviour, byte-identical). These only
         # ever re-order the INTERNAL standings / leader pick and add a
         # promotion-blocking defer — never the gate.
         self._rating = read_rating(self.params)

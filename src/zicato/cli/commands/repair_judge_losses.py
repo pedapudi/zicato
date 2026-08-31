@@ -67,7 +67,7 @@ def _drift_counts_from_events(events_path: Path) -> Counter[tuple[str, str]]:
 
     A best-effort plain-JSON walk: every line is parsed as a dict and any
     ``DriftDetected`` payload contributes one to its ``(kind, severity)``
-    bucket. We deliberately do NOT route through goldfive's strict proto
+    bucket. We do NOT route through goldfive's strict proto
     replay here — the repair must work in a stripped-down environment, and
     the reducer already owns the proto-strict path for scoring. The kind /
     severity normalisation mirrors :mod:`zicato.telemetry.reducer` so this
@@ -81,9 +81,9 @@ def _drift_counts_from_events(events_path: Path) -> Counter[tuple[str, str]]:
 
     Returns an empty counter when the file is absent or unreadable. This
     helper backs the per-judge repair's fallback for loss profiles whose
-    own ``drift_counts`` predate the metric surface; the analytical index
-    itself no longer re-tallies events (it is a pure projection of
-    ``loss.json`` — see :mod:`zicato.index.ingest`).
+    own ``drift_counts`` are absent. The analytical index does not re-tally
+    events: it is a pure projection of ``loss.json`` (see
+    :mod:`zicato.index.ingest`).
     """
     tally: Counter[tuple[str, str]] = Counter()
     if not events_path.exists():
@@ -202,7 +202,7 @@ def _repair_slot(loss_path: Path, weights: ScoringWeights) -> _SlotOutcome:
     the transcript feeds the attribution and is not itself persisted, so the
     repair never invents counts the reducer did not record.
 
-    A slot with neither source is reported as such, not skipped: a workspace
+    A slot with neither source is reported as such rather than skipped: a workspace
     written before the transcript was replicate-keyed has no
     ``events.r{n}.jsonl`` for its r>0 slots, and those stay unrepairable
     however often the pass runs.

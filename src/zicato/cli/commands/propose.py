@@ -53,8 +53,7 @@ from zicato.proposer.proposer import ProposerError, propose_experiment
 def _epoch_brief_path(workspace_root: Path, epoch_id: str) -> Path:
     """Path to the frozen proposer brief (``brief.md``) for one epoch.
 
-    Epochs created before the proposer-brief rename stored the file as
-    ``rubric.md``; the legacy name is accepted as a fallback.
+    ``rubric.md`` is accepted as a fallback spelling of the same file.
     """
     brief = epoch_dir(workspace_root, epoch_id) / "brief.md"
     if not brief.exists():
@@ -275,11 +274,11 @@ def _load_custom_judge_names(workspace_dir: Path) -> frozenset[str]:
     return frozenset(names)
 
 
-# The historic in-line serializer used to live here; the per-patch
-# storage layout makes that obsolete. Writes now go through
-# :func:`zicato.epoch.journal.write_experiment`. We keep the import
-# pattern (asdict / Path coercion) localised in journal.py so every
-# writer of an experiment routes through one helper.
+# This module writes no experiment itself: every write goes through
+# :func:`zicato.epoch.journal.write_experiment`, which owns the per-patch
+# storage layout. Keeping the serialization pattern (asdict / Path
+# coercion) localised in journal.py is what routes every writer of an
+# experiment through one helper.
 
 
 # ---------------------------------------------------------------------------

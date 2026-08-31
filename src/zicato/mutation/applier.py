@@ -27,8 +27,8 @@ earlier patch in the batch can erase a later patch's anchor — the
 re-enumeration then drops it) and the post-apply syntax gate. Signalling
 it through two types across the generation-level transaction boundary in
 :mod:`zicato.evolve.round` is what turned a rejectable candidate into an
-aborted run in issue #83. :func:`apply_patches_unchecked` keeps the legacy
-``KeyError`` for that case as the INTERNAL unchecked contract.
+aborted run in issue #83. :func:`apply_patches_unchecked` raises
+``KeyError`` for that case instead, as its INTERNAL unchecked contract.
 """
 
 from __future__ import annotations
@@ -387,7 +387,7 @@ def _reindent_python_literal(literal: str, indent: str) -> str:
         return literal
     # Strip the existing leading whitespace from the first line; the
     # common indent of the *continuation* lines is preserved verbatim so
-    # the literal's own internal structure (a deliberately indented
+    # the literal's own internal structure (an indented
     # docstring body, say) is not flattened.
     first = raw_lines[0]
     first_stripped = first.lstrip(" \t")
@@ -403,7 +403,7 @@ def _strip_literal_first_line_indent(literal: str) -> str:
     after the assignment target / kwarg name (``NAME = `` already sits in
     the ``before`` slice), so the literal's first line MUST NOT carry its
     own indent — the surrounding source already positions it. Continuation
-    lines keep their relative indentation verbatim (a deliberately indented
+    lines keep their relative indentation verbatim (an indented
     docstring body is preserved). Idempotent on a literal whose first line
     already has no leading whitespace.
     """
@@ -724,9 +724,9 @@ def apply_patches(
     degrade it to a rejected challenger instead of aborting the run
     (issue #83).
 
-    Callers that genuinely need the legacy best-effort-sequential
-    behaviour (no atomic pre-check, missing anchors as ``KeyError``) can
-    call :func:`apply_patches_unchecked` directly.
+    A caller that needs the best-effort-sequential behaviour instead — no
+    atomic pre-check, a missing anchor raised as ``KeyError`` — can call
+    :func:`apply_patches_unchecked` directly.
 
     Raises
     ------
@@ -783,7 +783,7 @@ def apply_patches(
 
     # Post-apply syntax gate: attribute corruption to the round that
     # PRODUCED it. A malformed proposer patch must degrade into a rejected
-    # challenger here, not silently write an unparseable snapshot that
+    # challenger here rather than silently write an unparseable snapshot that
     # crashes the *next* generation's enumeration one round later. We
     # re-parse every ``.py`` file and report the ones that parsed before the
     # batch and do not parse now; if any, remove the copied tree (keeping
@@ -845,7 +845,7 @@ def _post_apply_syntax_problems(target_root: Path, baseline_broken: set[Path]) -
     ``baseline_broken`` is the same scan taken BEFORE the first edit landed.
     Subtracting it is what makes the gate attribute corruption to the round
     that produced it. A source tree may legitimately hold a ``.py`` file that
-    never parsed — a deliberately broken test fixture, a template, a file
+    never parsed — a broken test fixture, a template, a file
     written for a newer interpreter. That file is copied into every child
     snapshot, so without the baseline every batch fails on it, every
     candidate is rejected, no generation is ever promoted, and the run stalls
@@ -873,9 +873,8 @@ def apply_patches_unchecked(
 ) -> None:
     """Materialise a child snapshot and apply ``patches`` best-effort.
 
-    This is the **legacy, non-atomic, INTERNAL unchecked** apply path,
-    preserved for callers that have already pre-validated the patch set
-    themselves (e.g. via
+    This is the **non-atomic, INTERNAL unchecked** apply path, for a caller
+    that has already pre-validated the patch set itself (for example via
     :func:`~zicato.mutation.validator.validate_patches`). Prefer
     :func:`apply_patches`, which validates the batch and is all-or-nothing.
 
@@ -895,7 +894,7 @@ def apply_patches_unchecked(
        must not already exist; the applier refuses to overwrite an
        existing tree to keep generation lineage append-only.
     2. Re-enumerate mutations from ``target_root`` (line numbers in the
-       enumerated points reference the freshly-copied tree, not the
+       enumerated points reference the freshly-copied tree rather than the
        original).
     3. For each patch, look up its target mutation point by id. Raise
        :class:`KeyError` when the id is unknown. The whole-batch apply
@@ -947,10 +946,10 @@ def _apply_patches_into_tree(
     ``missing_anchor_error`` is the exception type raised when a patch's
     ``mutation_id`` no longer resolves in the (re-)enumerated tree, or when
     its marker line has vanished. It exists because the two callers have
-    deliberately different contracts for that ONE condition:
+    different contracts for that ONE condition:
     :func:`apply_patches` passes ``ValueError`` (a rejectable patch set on
     the checked, production path — issue #83) while
-    :func:`apply_patches_unchecked` keeps the legacy ``KeyError``.
+    :func:`apply_patches_unchecked` raises ``KeyError``.
     Payload/op mismatches are ``ValueError`` on both paths.
     """
 

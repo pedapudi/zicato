@@ -195,14 +195,14 @@ def _opt_int(args: dict[str, Any], key: str) -> int | None:
 def _opt_float(args: dict[str, Any], key: str) -> float | None:
     """Coerce an optional float arg (absent / null ⇒ ``None``).
 
-    The float twin of :func:`_opt_int`, and it closes the same hole on the
-    other half of the knobs: the float args used to reach the ops as the
-    RAW JSON value, where the outcome split by which validator the field
-    happens to have. A string ``"0.5"`` landed in the contract intact for
-    ``promote_margin`` / the weight scalars (whose validators never compare
-    them) and raised an uncaught ``TypeError`` — a 500, not a 400 — for
-    ``holdout_fraction`` (whose validator does). Both are the mis-typed
-    contract knob this coercion exists to refuse.
+    The float twin of :func:`_opt_int`, closing the same hole on the other
+    half of the knobs. Were a float arg to reach an op as the RAW JSON
+    value, the outcome would split by which validator the field happens to
+    have. A string ``"0.5"`` lands in the contract intact for
+    ``promote_margin`` and the weight scalars, whose validators never compare
+    them. The same string raises an uncaught ``TypeError`` — a 500 rather
+    than a 400 — for ``holdout_fraction``, whose validator does compare.
+    Both are the mis-typed contract knob this coercion exists to refuse.
 
     A bool is rejected outright: Python floats it to 0.0/1.0 happily, so
     ``true`` would otherwise read as a silent 1.0 weight.

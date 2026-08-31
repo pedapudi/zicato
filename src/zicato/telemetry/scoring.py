@@ -66,7 +66,7 @@ def aggregate_generation_score(
     ``aggregate_generation_score`` and :func:`combined_scalar` even
     when the implementation has nothing to do with them.
     """
-    _ = weights  # see docstring — symmetry, not computation
+    _ = weights  # see docstring — symmetry rather than computation
     if not losses:
         return 0.0, 1.0
 

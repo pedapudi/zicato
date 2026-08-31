@@ -22,7 +22,7 @@ class EpochConfig:
 
     Pinned for the lifetime of the epoch: board, proposer brief, scoring
     weights. Changing any of these starts a new epoch — see
-    :doc:`project_zicato_journaling_and_epochs`.
+    ``docs/design/EPOCHS-AND-JOURNALING.md``.
 
     Fields
     ------
@@ -54,14 +54,12 @@ class EpochConfig:
         :mod:`zicato.epoch.contract`. The orchestrator recomputes this
         on every ``evolve`` and auto-rolls the epoch when the live
         contract drifts from the stored value.
-        The default is ``None``. A ``None`` ``contract_hash`` means
-        "epoch created before contract-hash auto-epoching landed" — such
-        legacy epochs are treated as *always matching* so the
-        orchestrator never spuriously rolls a workspace that predates the
-        feature (the "legacy never rolls" rule is an explicit ``is None``
-        check, NOT ``== ""``: a corrupted/empty stored hash must not read
-        as legacy). A legacy on-disk ``""`` is normalised to ``None`` on
-        read.
+        The default is ``None``, meaning the epoch records no hash. Such an
+        epoch is treated as *always matching*, so the orchestrator never
+        spuriously rolls a workspace that stores no hash. That rule is an
+        explicit ``is None`` check and NOT ``== ""``: a corrupted or empty
+        stored hash must not read as "no hash recorded". An on-disk ``""``
+        is normalised to ``None`` on read.
     goal:
         Free-form operator-supplied statement of *why* this epoch
         exists — the intent the operator is testing (e.g. "shift the
@@ -179,8 +177,8 @@ class Generation:
         carried into later rounds keeps its birth round; it is NOT
         re-stamped each round it defends. Consumers group an epoch's
         generations as ``Epoch -> Round -> {challengers minted that
-        round}``. Defaults to ``0`` so legacy callers (and the seed)
-        need not specify it.
+        round}``. Defaults to ``0``, so a caller with no round to report —
+        the seed among them — need not specify it.
     """
 
     id: str

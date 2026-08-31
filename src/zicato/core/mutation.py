@@ -28,7 +28,7 @@ from typing import Literal
 #: * ``"code"`` — a pointed code region delimited by a
 #:   ``# zicato:mutable:code`` opening marker and a
 #:   ``# zicato:mutable:end`` closing sentinel. The content is the
-#:   verbatim source lines BETWEEN the two markers (control flow, not a
+#:   verbatim source lines BETWEEN the two markers (control flow rather than a
 #:   string literal). Unlike ``"file"`` it exposes only the annotated
 #:   block — the surface needed to rewrite a tool's slugify / path
 #:   logic without handing the proposer the whole module. The applier
@@ -52,7 +52,7 @@ class MutationPoint:
     id:
         Globally unique mutation-point identifier within a generation.
         Stable across generations — adapters compute ids from a hash of
-        the marker's structural position, not from the line range, so
+        the marker's structural position rather than from the line range, so
         unrelated edits to other parts of the file do not invalidate it.
     kind:
         Granularity of the region (see :data:`MutationKind`).
@@ -75,19 +75,15 @@ class MutationPoint:
     content_hash:
         Hex-encoded SHA-256 of :attr:`content`, stamped by the enumerator.
 
-        The applier does NOT read it. This docstring used to claim it did
-        ("the patch applier checks this before applying a patch so a stale
-        proposer round cannot clobber an already-rewritten region"), and
-        that was never true — the field was written here, rendered by the
-        CLI and the dashboard, and checked by nothing. The check it
-        described now exists one layer earlier, as the pre-image guard in
+        The applier does NOT read it. The staleness check this hash serves
+        lives one layer earlier, as the pre-image guard in
         :func:`zicato.proposer.validate.validate_patches`: it compares this
         hash between the manifest a proposal was drafted against and a
         fresh enumeration of the parent snapshot, so a point rewritten
         under the proposer is caught before the patch is applied rather
         than after.
 
-        The applier is deliberately still not the site. It applies a patch
+        The applier is still not the site. It applies a patch
         set that has already been validated, all-or-nothing, and a
         staleness rejection there would surface as a failed derive with no
         route back to the proposer that could fix it.

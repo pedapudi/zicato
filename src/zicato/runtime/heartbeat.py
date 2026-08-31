@@ -139,9 +139,9 @@ class HeartbeatBeater:
         fields. The change does NOT immediately flush — callers who
         need an immediate write should call :meth:`bump_now`.
 
-        ``seq`` is the orchestrator's progress cursor (RUNTIME-V2
-        Phase 4): the loop stamps the tail ``seq`` of the progress event
-        log here at each genuine transition. Crucially, the periodic
+        ``seq`` is the orchestrator's progress cursor: the loop stamps the
+        tail ``seq`` of the progress event log here at each genuine
+        transition. Crucially, the periodic
         timer bump RE-WRITES the same ``seq`` (it carries the snapshot
         forward), so ``seq`` only ever moves when a transition calls
         :meth:`update` with a fresh value — it never advances on the
@@ -222,8 +222,8 @@ class RunHeartbeatBeater:
     the run's ``active_runs/<run_id>.json`` record.  Because blocking
     network I/O (an LLM call) releases the GIL, this thread keeps beating
     even when the asyncio event loop is parked waiting for a slow model
-    response — exactly the scenario that previously caused the supervisor
-    staleness watchdog to issue false-positive kill escalations.
+    response. That is the case a timestamp-only staleness watchdog reads as
+    a wedged loop, and escalates to a false-positive kill.
 
     Design rules mirror :class:`HeartbeatBeater`:
 

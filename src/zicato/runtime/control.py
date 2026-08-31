@@ -147,8 +147,8 @@ def list_pending_commands(workspace_root: Path) -> list[ControlCommand]:
     The control protocol is a *directory tree* — flag files at the top
     level, one file per target under a per-command-kind subdirectory —
     so enumerating it is a two-level filesystem walk rather than a flat
-    keyed-record lookup. The storage backend's interface is deliberately
-    keyed records (read/write/delete by key), not a tree walker; pushing
+    keyed-record lookup. The storage backend's interface is keyed records
+    (read/write/delete by key) rather than a tree walker; pushing
     a recursive-list method onto it to serve this one consumer would
     bloat the seam. The leaf I/O — :func:`write_command`'s writes and
     :func:`consume_command`'s audit-log write — does go through the
@@ -247,7 +247,7 @@ def write_command(workspace_root: Path, cmd: ControlCommand) -> Path:
     # is the whole command). A promote/reject MAY carry a JSON ``payload`` body
     # with the override's provenance ({reason, epoch, tournament_id,
     # structure}); the consumer reads only ``reason`` from it, so an empty
-    # payload reproduces today's empty-file behaviour byte-for-byte.
+    # payload reproduces the empty-file behaviour byte-for-byte.
     backend.write_text(control_command_key(f"{cmd.name}/{cmd.arg}"), cmd.payload)
     return cdir / cmd.name / cmd.arg
 
@@ -284,7 +284,7 @@ def consume_command(
     If the source file is already gone (e.g. operator deleted it
     manually between :func:`list_pending_commands` and this call), the
     audit log is still written so the orchestrator's intent is recorded
-    — the journal cares that the action was *taken*, not whether the
+    — the journal cares that the action was *taken* rather than whether the
     file was on disk at the instant of action.
     """
     ensure_runtime_dirs(workspace_root)

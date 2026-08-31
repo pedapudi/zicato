@@ -30,17 +30,17 @@ Convention drift — outer vs inner workspace root
 -------------------------------------------------
 
 ``workspace_root`` is, by convention, the inner ``.zicato`` directory
-itself: ``epochs/``, ``runtime/``, etc. hang directly off it. Some
-callers historically pass the *outer* project directory (the parent that
-holds ``.zicato/``) — when that happens the helpers below
-transparently descend into ``.zicato/`` when the inner layout exists.
+itself: ``epochs/``, ``runtime/``, etc. hang directly off it. Some callers
+pass the *outer* project directory instead (the parent that holds
+``.zicato/``), and the helpers below then descend into ``.zicato/``
+whenever the inner layout exists.
 This is the single I/O exception in this module: a best-effort
 ``Path.is_dir()`` probe that lets the report regenerator + dashboard
 read the right tree even when the caller hands us the outer dir.
 
 The descent only fires when the outer form does NOT carry an
-``epochs/`` directory but the inner ``.zicato/`` does; legacy callers
-that already pass the inner dir, and tests that build a synthetic
+``epochs/`` directory but the inner ``.zicato/`` does. A caller that
+already passes the inner dir, and a test that builds a synthetic
 ``{ws}/epochs/`` tree, are untouched.
 """
 
@@ -67,9 +67,9 @@ def _normalise_workspace_root(workspace_root: Path) -> Path:
     * the inner form DOES carry one.
 
     Otherwise the path is returned unchanged. The behaviour is
-    deliberately conservative: legacy layouts where ``{ws}/epochs/``
-    already exists are never overridden, and tests that build a
-    synthetic ``{tmp}/epochs/`` tree don't accidentally redirect.
+    conservative: a layout where ``{ws}/epochs/`` already exists is never
+    overridden, and a test that builds a synthetic ``{tmp}/epochs/`` tree
+    does not accidentally redirect.
     """
     root = Path(workspace_root)
     if (root / "epochs").is_dir():
@@ -298,8 +298,8 @@ def run_result_path(
     (the default). The canonical replicate-0 slot; replicate ``r>0``
     lives at the sibling ``result.r{n}.json``
     (:func:`zicato.tournament.unit_cache.unit_result_path`). Readers
-    must tolerate absence — legacy runs, an opted-out runtime, or a
-    best-effort write that failed all leave no file
+    must tolerate absence — a run from before capture was enabled, an
+    opted-out runtime, or a best-effort write that failed all leave no file
     (:func:`zicato.tournament.unit_cache.read_run_result` returns
     ``None`` in every such case).
     """
@@ -326,9 +326,9 @@ def harness_load_path(workspace_root: Path, epoch_id: str, generation_id: str) -
 def patches_dir(workspace_root: Path, epoch_id: str, generation_id: str) -> Path:
     """Path to the per-patch JSON directory under a generation.
 
-    See :doc:`project_zicato_storage_design` for the per-patch file
-    layout. The directory is created lazily by writers; readers tolerate
-    its absence (an experiment with zero patches has no directory).
+    See ``docs/design/STORAGE.md`` for the per-patch file layout. The
+    directory is created lazily by writers; readers tolerate its absence
+    (an experiment with zero patches has no directory).
     """
     return _layout(workspace_root).patches_dir(epoch_id, generation_id)
 
@@ -364,7 +364,7 @@ def proposer_inputs_path(workspace_root: Path, epoch_id: str) -> Path:
     system + user text verbatim plus the lineage coordinates that identify
     the call (:mod:`zicato.proposer.input_capture`). It lives under the
     epoch directory rather than ``runtime/`` because it is durable history
-    that must survive a resume, not live process state.
+    that must survive a resume rather than live process state.
     """
     return _layout(workspace_root).proposer_inputs(epoch_id)
 
@@ -468,11 +468,11 @@ def assert_distinct_callables(
     shared state, etc.). The collusion risk is high enough that we refuse to
     start the run when the two callables are identity-equal.
 
-    The WS-ENS proposer ROLE callables (breadth / depth) are guard-exempt:
+    The ensemble proposer ROLE callables (breadth / depth) are guard-exempt:
     they are proposer-side, one trust domain, and may freely be the same
     callable as each other or as the auxiliary. The emulator↔harness collusion
-    risk this guard defends rides the still-guarded auxiliary surface, not the
-    proposer roles.
+    risk this guard defends rides the auxiliary surface, which stays guarded;
+    the proposer roles cannot carry it.
 
     Raises
     ------

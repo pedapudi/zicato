@@ -179,7 +179,7 @@ class LoopHealth:
     healthy:
         ``True`` iff no finding has ``"warning"`` or ``"critical"``
         severity. Purely-``"info"`` findings do not flip this to
-        ``False`` — they are observations, not problems.
+        ``False`` — they are observations rather than problems.
     checked_at:
         ISO-8601 UTC timestamp of when the assessment ran.
     """
@@ -264,7 +264,7 @@ def _reject_cause(reason: str) -> str:
     exactly what a breakdown must NOT be keyed on.
 
     So the key is the text ahead of the earliest separator that opens a
-    detail clause (:data:`_REJECT_CAUSE_SEPARATORS`), not the first colon
+    detail clause (:data:`_REJECT_CAUSE_SEPARATORS`) rather than the first colon
     alone. Some rules carry no colon at all and open straight into the
     parenthetical — ``"monotonicity_regression on namespace=rubric
     (champion 0.412345 -> …)"`` — and keying those on a length clip put
@@ -524,7 +524,7 @@ def detect_dead_judge(
         so before per-judge error provenance existed this case was
         INDISTINGUISHABLE from the one below — and, being zero drift, it
         made the generation's scalar better than the truth. The fix is at
-        the endpoint/model config, not on the board.
+        the endpoint/model config rather than on the board.
 
     ``dead_judge`` (the judge ANSWERED, and always answered "no violation")
         Zero fires with zero errors: the judge is mis-wired (the events it
@@ -539,10 +539,10 @@ def detect_dead_judge(
     Both are ``warning``: a 0-fire judge is dead weight and a broken judge
     is a hole in coverage, but a board can still optimize on its other
     signals. Note the inverse is NOT a finding — a judge firing on EVERY
-    run is loud, not dead, and may be perfectly correct.
+    run is loud rather than dead, and may be perfectly correct.
 
-    Registered, deliberately NOT done here
-    --------------------------------------
+    Registered, NOT done here
+    -------------------------
     * **No abort / tolerance knob.** A round in which one judge errored on
       100% of invocations is, from the artifacts alone, indistinguishable
       from a transient endpoint outage, and an outage never disqualifies a
@@ -603,8 +603,8 @@ def detect_dead_judge(
 
     findings: list[HealthFinding] = []
 
-    # A judge that raised is BROKEN, not dead weight — a distinct finding
-    # with a distinct remedy (the endpoint/model config, not the board).
+    # A judge that raised is BROKEN rather than dead weight — a distinct finding
+    # with a distinct remedy (the endpoint/model config rather than the board).
     broken = sorted(name for name in errored if name in declared)
     if broken:
         counts = {
@@ -1090,10 +1090,10 @@ def detect_placebo_promoted(
     ``promote_margin`` and ``noise_floor`` are the epoch's decision
     parameters, threaded from :func:`assess_loop_health` so the alarm can
     show the comparison that failed rather than only its verdict (issue
-    #129): a no-op whose measured delta cleared a margin that sits inside
-    the measured noise is a mis-set margin, while the same delta clearing
-    a margin well above the floor is a broken reducer or a rigged gate,
-    and the operator's next move differs. Both default to ``None`` (never
+    #129). The two readings call for different operator moves. A no-op
+    whose measured delta cleared a margin that sits inside the measured
+    noise is a mis-set margin. The same delta clearing a margin well above
+    the floor is a broken reducer or a rigged gate. Both default to ``None`` (never
     measured / not supplied), which simply leaves that clause off the
     line. Absolute parent and child scalars are NOT available here — an
     :class:`~zicato.core.experiment.Outcome` records deltas only.
@@ -1159,7 +1159,7 @@ def detect_preflight_verdict(
 
     The contract pre-flight (:mod:`zicato.epoch.preflight`) measures the
     epoch's A/A noise floor AND its degradation signal (champion vs a
-    deliberately-degraded copy of itself) before rounds burn budget. Its
+    degraded copy of itself) before rounds burn budget. Its
     verdict persists onto the epoch record; this detector folds it into
     every round's health report so the operator keeps seeing it for as
     long as the contract stays un-fixed. Recommend-only — like every
@@ -1176,13 +1176,13 @@ def detect_preflight_verdict(
       ``preflight_gate="refuse"``; ``warning`` under ``"warn"`` (the default)
       and ``"off"``.
     * verdict ``"warn"`` → ``warning`` ``preflight_saturated_contract``:
-      every probe — K A/A draws plus a deliberately-degraded tree —
+      every probe — K A/A draws plus a degraded tree —
       scored identically (the historical ``1.000000`` signature); the
       contract cannot discriminate candidates.
     * verdict ``"inert"`` → ``warning`` ``preflight_inert_probe`` (issue
       #106): every point the pre-flight degraded moved the scalar by
       exactly nothing while the champion's own draws did vary. The
-      signal is UNMEASURED, not zero, so the finding must not
+      signal is UNMEASURED rather than zero, so the finding must not
       read like the noise-limited one — the fix is to pin a representative
       point, and the protection simply is not in force meanwhile.
 
@@ -1196,7 +1196,7 @@ def detect_preflight_verdict(
       evidence: what the probe measures is how far the scalar fell when a
       mutation point was destroyed, which does not bound how far a challenger
       can improve (and, degrading one point per probe, under-reports even
-      that). The finding names a number worth checking, not a null run.
+      that). The finding names a number worth checking rather than a null run.
     * ``"margin_below_floor"`` → ``warning`` ``preflight_margin_below_floor``.
     * ``"empty_window"`` is NOT a finding of its own — it is the same fact the
       refuse/inert finding already carries — but it rewrites that finding's
@@ -1227,7 +1227,7 @@ def detect_preflight_verdict(
 
     Silent when no pre-flight was ever run (``None``), when the record is
     malformed, or when the verdict is ``"ok"`` with the window intact.
-    Tolerant of pre-#106/#112 records, which carry neither new key.
+    Tolerant of a record that carries neither key.
     """
     if not isinstance(preflight, dict):
         return []
@@ -1425,7 +1425,7 @@ def detect_preflight_verdict(
 
 
 def detect_infra_outage(infra_outage: tuple[int, int] | None) -> list[HealthFinding]:
-    """Surface a round deferred by the endpoint-outage circuit (WS-H).
+    """Surface a round deferred by the endpoint-outage circuit.
 
     ``infra_outage`` is the ``(infra_aborted_runs, threshold)`` pair the
     orchestrator observed when THIS round's infra-abort count crossed
@@ -1465,7 +1465,7 @@ def detect_infra_outage(infra_outage: tuple[int, int] | None) -> list[HealthFind
 
 
 def detect_token_budget_clip(token_clip: tuple[int, int] | None) -> list[HealthFinding]:
-    """Surface a round the per-round token budget clipped (WS-H).
+    """Surface a round the per-round token budget clipped.
 
     ``token_clip`` is the ``(tokens_spent, max_tokens_per_round)`` pair
     the orchestrator observed when the round's ledger latched its clip
@@ -1506,21 +1506,21 @@ def detect_token_budget_clip(token_clip: tuple[int, int] | None) -> list[HealthF
 def detect_tree_never_imported(
     tree_import_gaps: dict[str, tuple[str, ...]] | None,
 ) -> list[HealthFinding]:
-    """Surface a generation whose units NEVER imported a mutable tree (#110).
+    """Surface a generation whose units NEVER imported a mutable tree.
 
     ``tree_import_gaps`` is ``{generation_id: (tree_basename, ...)}`` — the
     trees no unit of that generation ever imported, accumulated by the
     tournament workers into each generation's ``harness_load.json`` and read
     back by :func:`zicato.health.inputs.epoch_tree_import_gaps`.
 
-    This is the ONLY detector of the original #110 shape: an entrypoint that
+    This is the ONLY detector of a fully shadowed snapshot: an entrypoint that
     resolves to an INSTALLED copy under a different top-level name and never
-    imports the mutated tree at all. Nothing else notices — the run completes,
+    imports the mutated tree at all (issue #110). Nothing else notices — the run completes,
     the board scores, the gate fires, the round promotes or rejects on a
     comparison between two identical unmutated trees. A ``warning`` rather than
     ``critical`` because a single generation can have a benign cause (a board
     whose entries genuinely exercise only part of the surface), and the
-    operator, not the detector, owns that judgement.
+    operator rather than the detector, owns that judgement.
 
     ``None`` / empty (every healthy round) is silent.
     """
@@ -1558,7 +1558,8 @@ def detect_tree_never_imported(
 def detect_attributable_entry_regression(
     entry_regressions: dict[str, dict[str, Any]] | None,
 ) -> list[HealthFinding]:
-    """Surface entries a PROMOTED duel regressed on their own evidence (#130).
+    """Surface entries a PROMOTED duel regressed on their own evidence
+    (issue #130).
 
     ``entry_regressions`` is ``{entry_id: {parent_score, child_score,
     parent_drift_loss, child_drift_loss}}`` — the gate's
@@ -1649,7 +1650,7 @@ def _format_measure(value: Any) -> str:
 def detect_on_promote_hook_failed(
     on_promote_failure: tuple[str, str, str] | None,
 ) -> list[HealthFinding]:
-    """Surface an adapter post-promotion hook that failed (#125).
+    """Surface an adapter post-promotion hook that failed (issue #125).
 
     ``on_promote_failure`` is the ``(adapter_name, generation_id,
     exception_type)`` triple
@@ -1818,7 +1819,7 @@ def assess_loop_health(
         ``"critical"`` severity.
     """
     health = _resolve_health_config(config)
-    # The random-baseline placebo arm is a CALIBRATION probe, not part of
+    # The random-baseline placebo arm is a CALIBRATION probe rather than part of
     # the optimization stream: an always-rejected control fielded every
     # Nth round must not read as a stall, a flat-scoring window, or a
     # mined-out contract. Split it out — the stream detectors see only the

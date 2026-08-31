@@ -56,11 +56,11 @@ def _collect_events_jsonl_paths(workspace_root: Path, epoch_id: str) -> list[Pat
     the epoch directory does not exist or carries no events files yet
     (e.g. a freshly-created epoch with no completed rounds).
 
-    EVERY replicate of a unit is collected, not just replicate 0, and the
+    EVERY replicate of a unit is collected rather than just replicate 0, and the
     insight prompt therefore aggregates across replicate bands: a unit run
     at ``replicates=3`` contributes three transcripts of the same board
     entry. That is deliberate for a whole-epoch drift summary — but it
-    means a per-entry count read off this list counts draws, not units.
+    means a per-entry count read off this list counts draws rather than units.
     Archived predecessors (``*.prev.jsonl``) are excluded.
     """
 

@@ -1,10 +1,10 @@
 """Outcome-marginal aggregation for the proposer failure-signal channel.
 
-Capability 2 of issue #18. The proposer historically saw only a coarsened
-``Δscalar`` plus an LLM digest of goldfive *decision* telemetry — it never
-saw a summary of *outcome* failure modes (over-retrieval vs misses vs empty
-answers), so it could not target *why* answers were wrong, only that a
-scalar moved.
+Without this channel the proposer sees only a coarsened ``Δscalar`` plus an
+LLM digest of goldfive *decision* telemetry, and no summary of *outcome*
+failure modes (over-retrieval versus misses versus empty answers). It could
+then tell that a scalar moved but not target *why* answers were wrong
+(issue #18).
 
 This module computes, over a list of per-entry :class:`LossProfile`-shaped
 results, a set of **outcome MARGINALS**: board-wide rates (% of runs) for
@@ -101,7 +101,7 @@ class OutcomeMarginalSummary:
         How many train-slice runs contributed. ``0`` means the slice was
         empty (a baseline round with no parent telemetry) — the renderer
         emits no profile section, so the proposer prompt stays
-        byte-identical to today.
+        byte-identical to the default path.
     empty_rate / terse_rate:
         Fraction of runs whose output was empty / terse (short). Generic,
         board-agnostic failure modes derived from ``output_chars`` alone.
@@ -149,7 +149,7 @@ class OutcomeMarginalSummary:
 
         An empty slice (no runs) carries no signal; the renderer treats
         this as the sentinel for "omit the failure-mode profile section
-        entirely", so the proposer prompt is byte-identical to today.
+        entirely", so the proposer prompt is byte-identical to the default path.
         """
         return self.n_runs == 0
 
@@ -289,7 +289,7 @@ _MAX_MARGINAL_NAME_CHARS = 48
 #: digits, and the separators an aggregate label needs. Anything else (a
 #: space, a quote, a path separator, punctuation that could carry a question
 #: fragment or an output token) disqualifies the name — the operator must
-#: name its marginals like identifiers, not like prose.
+#: name its marginals like identifiers rather than like prose.
 _MARGINAL_NAME_ALLOWED = frozenset("abcdefghijklmnopqrstuvwxyz0123456789_-:.")
 
 
@@ -319,7 +319,7 @@ def sanitize_operator_marginals(raw: object) -> dict[str, float]:
     """Strip an operator summarizer's output down to safe numeric marginals.
 
     The operator summarizer hook is REQUIRED to return a STRUCTURED
-    aggregate — a ``{marginal_name: numeric_rate}`` mapping — precisely so
+    aggregate — a ``{marginal_name: numeric_rate}`` mapping — so
     zicato can enforce bucketing + anonymity on its output. This function is
     that enforcement boundary. It keeps ONLY entries where:
 

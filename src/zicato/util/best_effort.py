@@ -16,7 +16,7 @@ codebase expressed that with a hand-rolled idiom repeated dozens of times::
 flow (fall through, never re-raise) results — so wrapping a block in it is
 behavior-preserving. What it adds is **observability**: every swallowed
 failure increments a per-``label`` counter (:func:`best_effort_failures`),
-turning a previously-invisible class of degradation into a queryable signal
+which makes an otherwise invisible class of degradation a queryable signal
 the loop-health surface can report on.
 
 Preserving the *exact* log line
@@ -31,8 +31,8 @@ format args, sometimes ``log.warning``/``log.exception`` rather than
         restamp_persisted_report(workspace_root, cur)
 
 When no ``on_error`` is given, a uniform ``"%s skipped: %s"`` debug line is
-emitted on the package logger instead — convenient for new call sites that
-have no legacy message to preserve.
+emitted on the package logger instead, which suits a call site with no
+particular message to preserve.
 
 The counter is process-local and additive: nothing here is persisted, so it
 cannot move any frozen artifact. Tools that want a clean window call
@@ -81,9 +81,9 @@ def best_effort(
         the same logical side effect so counts aggregate.
     on_error:
         Optional callback invoked with the swallowed exception *before*
-        control returns. Call sites migrating a legacy block pass a callback
-        that reproduces the original ``log`` call verbatim, so the emitted
-        message stays byte-identical. When omitted, a uniform
+        control returns. A call site that must keep an existing log line
+        passes a callback reproducing that ``log`` call verbatim, so the
+        emitted message is unchanged. When omitted, a uniform
         ``"%s skipped: %s"`` debug line is logged on this module's logger.
 
     Notes

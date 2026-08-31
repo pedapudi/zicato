@@ -1,13 +1,13 @@
 """The typed, discoverable configuration tree for zicato.
 
-Zicato has historically read a dozen-plus ``ZICATO_*`` environment
-variables through scattered ``os.environ.get(...)`` calls at point of
-use. That surface is undiscoverable (you have to grep the tree to learn
-it exists), untyped (every site re-implements its own string→number
-coercion), and not programmatically settable (a caller embedding zicato
-cannot override a knob without mutating ``os.environ``).
+Zicato's tunable knobs live in a single frozen dataclass tree rather than
+in ``ZICATO_*`` environment variables read through scattered
+``os.environ.get(...)`` calls. An environment-variable surface is
+undiscoverable (a reader has to grep the tree to learn a knob exists),
+untyped (every site re-implements its own string→number coercion), and not
+programmatically settable (a caller embedding zicato cannot override a knob
+without mutating ``os.environ``).
 
-This module replaces that surface with a single frozen dataclass tree.
 :class:`ZicatoConfig` composes nested domain sub-configs — every tunable
 knob is a typed field with a default and a docstring, so the
 configuration surface is the dataclass definition itself.
@@ -18,10 +18,9 @@ Loading
 :func:`load_config` builds the tree from the dataclass defaults, layers
 the process-pinned CLI-flag values (:func:`pin_overrides`) on top, and
 applies any explicit ``overrides`` last. It does NOT read the
-environment — every operator knob that used to be a ``ZICATO_*``
-variable is now a CLI flag or a workspace ``config.json`` block, and
-downstream code takes the config object (or the relevant sub-config) as
-a parameter rather than touching ``os.environ``.
+environment: every operator knob is a CLI flag or a workspace
+``config.json`` block, and downstream code takes the config object (or the
+relevant sub-config) as a parameter rather than touching ``os.environ``.
 
 Precedence, lowest to highest:
 
@@ -75,7 +74,7 @@ operator-env surface was deleted outright:
   of the workspace ``config.json``.
 
 What remains is a small MERITED set of environment variables zicato
-deliberately touches — each one an actual process-boundary contract,
+touches — each one an actual process-boundary contract,
 not a configuration knob: the per-run harness contract
 (``ZICATO_RUN_SCRATCH_DIR``), the internal harmonograf handoff pair,
 the secrets boundary (operator-NAMED ``api_key_env`` variables and the
@@ -240,10 +239,10 @@ class DashboardConfig:
 class RuntimeTuningConfig:
     """Operator-settable runtime tuning knobs.
 
-    This sub-config exists so ``parallelism`` — historically hardcoded
-    at :class:`zicato.core.types.RuntimeConfig`'s default and not
-    settable through *any* mechanism — becomes a discoverable, typed,
-    documented field. :func:`zicato.runtime_factory.make_runtime_config`
+    This sub-config is what makes ``parallelism`` a discoverable, typed,
+    documented field rather than a value pinned at
+    :class:`zicato.core.types.RuntimeConfig`'s default with no way to set
+    it. :func:`zicato.runtime_factory.make_runtime_config`
     threads it into the :class:`zicato.core.types.RuntimeConfig` it
     builds.
 
@@ -402,7 +401,7 @@ def health_config_from_workspace(workspace_config: Mapping[str, Any] | None) -> 
 
 @dataclass(frozen=True, slots=True)
 class EnvVarInfo:
-    """One deliberately-kept environment variable, with its role.
+    """One retained environment variable, with its role.
 
     Fields
     ------
@@ -518,7 +517,7 @@ def describe_env_vars() -> tuple[EnvVarInfo, ...]:
     The introspection helper behind ``zicato inspect environment``. Since the
     env-var rationalization, NO environment variable is a configuration
     knob — operator knobs live on CLI flags and in the workspace
-    ``config.json`` — so this describes only the deliberately-kept
+    ``config.json`` — so this describes only the retained
     process-boundary contracts, each labelled with the role that makes
     an environment variable the right mechanism for it.
     """

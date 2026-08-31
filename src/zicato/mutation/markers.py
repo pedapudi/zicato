@@ -36,7 +36,7 @@ The syntax table
 
 The marker *token* (``zicato:mutable...``) is the same everywhere; only
 the host language's comment lead-in differs. That lead-in — and the file
-suffixes it applies to — is DATA, not code: :class:`MarkerSyntax` pairs a
+suffixes it applies to — is DATA rather than code: :class:`MarkerSyntax` pairs a
 suffix with the comment leaders that open a marker on it and the block
 closers tolerated at end of line, and the table of those entries decides
 what is enumerable at all. Every parsing function takes the entry to
@@ -50,14 +50,14 @@ the contract's ``mutation_surface`` table (MUTATION-SURFACE.md §2.5);
 :func:`syntax_table_from_config` folds them over the built-ins and
 :func:`install_syntax_table` makes the result this process's active
 table. Widening the surface is then a contract edit that rolls the
-epoch, not a zicato release.
+epoch rather than a zicato release.
 
-``.py`` is RESERVED: the table governs the text pass only, so the
-load-bearing legacy surface keeps a grammar no config can reach and its
-byte-identical behaviour stays a property of the built-in entry rather
-than something a test has to keep rediscovering.
+``.py`` is RESERVED: the table governs the text pass only, so the Python
+surface keeps a grammar no config can reach, and its behaviour stays a
+property of the built-in entry rather than something a test has to keep
+rediscovering.
 
-The declared syntax is load-bearing for CONTAINMENT, not just for
+The declared syntax is load-bearing for CONTAINMENT rather than just for
 discovery: the applier strips echoed marker lines out of a region body
 under the file's own leaders (see
 :func:`zicato.mutation.applier._reindent_code_region`), so a file type
@@ -90,7 +90,7 @@ MARKER_END_PREFIX = "# zicato:mutable:end"
 
 #: Operator-grading sentinel. A module carrying ``# zicato:grading`` anywhere
 #: declares itself OPERATOR-OWNED grading code — predicates, judges, or the
-#: scoring ``scalar_fn`` / ``drift_reducer`` plugins (issue #19 phase 3). The
+#: scoring ``scalar_fn`` / ``drift_reducer`` plugins (issue #19). The
 #: enumerator skips the WHOLE file: "the proposer does not get to rewrite the
 #: operator's grading." Scoring plugins / predicates / judges are never
 #: enumerated as mutation points, exactly like the documented contract.
@@ -179,7 +179,7 @@ def _patterns(syntax: MarkerSyntax) -> _Patterns:
 
     With ``leaders=("#",)`` and no trailers this reproduces the historical
     Python patterns exactly — the ``.py`` byte-identity pin holds because
-    the built-in entry is that grammar, not because a branch preserves it.
+    the built-in entry is that grammar rather than because a branch preserves it.
     """
 
     leader = _alternation(syntax.leaders)
@@ -203,7 +203,7 @@ def syntax_table_from_config(raw: Mapping[str, Any] | None) -> dict[str, MarkerS
     format's leaders), except for ``.py``, which is reserved.
 
     Raises ``ValueError`` on a malformed entry — a surface declaration that
-    does not parse must fail at contract load, not silently enumerate less
+    does not parse must fail at contract load rather than silently enumerate less
     than the operator declared.
     """
 

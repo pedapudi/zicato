@@ -40,7 +40,7 @@ class InMemoryStorageBackend(StorageBackend):
     They are distinct stores because a JSONL stream and a JSON record are
     different shapes — the file backend distinguishes them by access
     pattern on the same path, and this backend makes that explicit. A
-    given key should be used as one or the other, not both.
+    given key should be used as one or the other rather than both.
     """
 
     def __init__(self) -> None:

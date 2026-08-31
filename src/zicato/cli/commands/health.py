@@ -184,7 +184,7 @@ def _workspace_health_config(workspace_dir: Path) -> Any:
     missing / unreadable ``config.json`` yields ``None`` — the defaults
     apply, matching the other best-effort loaders here — but a PRESENT,
     malformed ``health`` block fails loudly (as a clean CLI error): the
-    operator explicitly wrote it and deserves the typo report, not a
+    operator explicitly wrote it and deserves the typo report rather than a
     silently defaulted detector.
     """
     from zicato.config import health_config_from_workspace  # noqa: PLC0415

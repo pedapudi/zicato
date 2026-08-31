@@ -27,16 +27,17 @@ supplies the strings.
 
 Calibration note (issue #120)
 ----------------------------
-Before real delta accounting, a ``kind="file"`` patch was charged for EVERY
-line of the file it re-emitted — a byte-identical re-emit of a 37-line
-template scored complexity 38. With parent content threaded, the same edit
-scores 0, and a genuine three-line change scores ~4 instead of ~38. Both
-halves of the diff-complexity regularizer read this measure — the loss-term
+The charge is the real line delta against the parent's content. A
+byte-identical re-emit of a 37-line template therefore scores 0, and a
+genuine three-line change scores about 4; charging a ``kind="file"`` patch
+for EVERY line it re-emits would score that same re-emit 38 instead.
+Both halves of the diff-complexity regularizer read this measure — the
+loss term
 :attr:`~zicato.core.types.ScoringWeights.diff_complexity_weight` and the
-gate's Rule 0 :attr:`~zicato.core.types.ScoringWeights.diff_complexity_ceiling`
-— so any weight or ceiling calibrated against the old file-charging numbers is
-now roughly an order of magnitude too loose on a whole-file mutation surface
-and should be re-tuned against a measured round.
+gate's :attr:`~zicato.core.types.ScoringWeights.diff_complexity_ceiling` —
+so a weight or ceiling calibrated against whole-file charging is roughly an
+order of magnitude too loose on a whole-file mutation surface, and should
+be re-tuned against a measured round.
 
 The differencing is exact up to :data:`EXACT_DIFF_MAX_LINES` and bounded above
 it; see that constant for the measured reason a size cap exists at all.
@@ -116,21 +117,21 @@ def _line_delta(parent: str, child: str) -> tuple[int, int]:
 
     A line-level :class:`difflib.SequenceMatcher` diff: every non-``equal``
     opcode contributes the lines it introduced to ``added`` and the lines it
-    destroyed to ``removed`` (a ``replace`` opcode contributes to both, which
-    is the honest MDL reading — the edit must describe both the deletion and
-    the insertion). Identical texts yield ``(0, 0)``.
+    destroyed to ``removed``. A ``replace`` opcode contributes to both,
+    because the edit has to describe the deletion and the insertion alike.
+    Identical texts yield ``(0, 0)``.
 
     ``autojunk`` is disabled up to :data:`EXACT_DIFF_MAX_LINES`: its heuristic
     drops lines appearing in more than 1% of a long sequence, which on a large
     generated file silently changes the measured size of an edit that touches
     those lines (measured: a 1000-line whole-file rewrite scores 800 exactly
-    and 998 with the heuristic on). Beyond the cap the heuristic comes back —
-    see the constant for why, and read the overcount honestly: it is exact for
-    a TARGETED edit at any file size (a one-line change in a 3000-line file
-    measures ``(1, 1)`` either way, because the popular lines fall in the
-    matched run), and it overstates only a near-total rewrite, where the
-    parsimony toll is large under any accounting. Deterministic either way:
-    the cap is a size threshold, not a timeout.
+    and 998 with the heuristic on). Beyond the cap the heuristic comes back;
+    see the constant for why. Its overcount is exact for a TARGETED edit at
+    any file size — a one-line change in a 3000-line file measures
+    ``(1, 1)`` either way, because the popular lines fall in the matched run
+    — and it overstates only a near-total rewrite, where the parsimony toll
+    is large under any accounting. Both paths are deterministic, because the
+    cap is a size threshold rather than a timeout.
     """
     parent_lines = _lines(parent)
     child_lines = _lines(child)
@@ -176,9 +177,9 @@ def diff_size(
     missing from it — the historical count applies unchanged: ``added`` is the
     line count of the whole replacement (a non-empty single-line replacement
     counts ``1``, an empty one ``0``), ``removed`` contributes nothing, and the
-    patch always counts toward ``patches``. This keeps every legacy caller
-    byte-identical; it is a fallback, not a second policy, and it overstates
-    a whole-file edit exactly as described in the module's calibration note.
+    patch always counts toward ``patches``. This is a fallback rather than a
+    second policy, and it overstates a whole-file edit exactly as the
+    module's calibration note describes.
 
     A content-less ``set_numeric`` / ``set_enum`` patch contributes no lines on
     either path and always counts toward ``patches``: the parent text of a
@@ -196,7 +197,7 @@ def diff_size(
         parent = None if parent_contents is None else parent_contents.get(patch.mutation_id)
         if parent is None:
             # Fallback: no parent text for this point — the whole replacement
-            # counts as added, exactly as before parent content was threaded.
+            # counts as added.
             patches += 1
             if content:
                 added += content.count("\n") + 1

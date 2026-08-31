@@ -223,7 +223,7 @@ class _CasePolicy:
 #: The normative field policy — a 1:1 transcription of the table in
 #: PROCESS-EXEMPLARS.md §3. Payload cases not listed here render as a bare
 #: case marker (offset + case name, no fields): the window's SHAPE survives,
-#: its content does not. That default-deny covers, deliberately:
+#: its content does not. That default-deny covers:
 #: ``run_started`` (``goal_summary`` IS the task prompt), ``run_completed``
 #: / ``task_completed`` / ``task_progress`` (summaries/details ARE model
 #: output or task content), and every LLM-call bookend.
@@ -360,7 +360,7 @@ def _identity_corpus(
     run/session/event ids, and every raw
     task / invocation id — scrubbed at any length on word boundaries.
     Kept / truncated field values are NOT in the corpus (they are the text
-    being protected, not the identity being removed).
+    being protected rather than the identity being removed).
     """
     texts: set[str] = set()
     tokens: set[str] = {entry_id} if entry_id else set()

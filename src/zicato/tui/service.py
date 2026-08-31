@@ -9,7 +9,7 @@ back from ``runtime/dashboard.json`` rather than assumed — the service walks
 
 The bind is loopback, always. There is no ``--dashboard-bind``: the operator
 views the workspace from the host that holds it, and a TUI over SSH is a
-terminal on that host, not a reason to open a port.
+terminal on that host rather than a reason to open a port.
 """
 
 from __future__ import annotations

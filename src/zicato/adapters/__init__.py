@@ -17,7 +17,7 @@ runnable. The pair is the only contract the runner depends on.
 The :class:`ADKHarnessAdapter` import is lazy in two ways:
 
 * :mod:`goldfive` and :mod:`google.adk` are only required at
-  :meth:`ADKHarnessAdapter.load` time, not at ``import zicato.adapters``
+  :meth:`ADKHarnessAdapter.load` time rather than at ``import zicato.adapters``
   time. Pure-Protocol consumers (e.g. tests that stub their own
   :class:`HarnessAdapter`) pay nothing for the optional extras.
 * :mod:`zicato.mutation.enumerator` (owned by another module) is only

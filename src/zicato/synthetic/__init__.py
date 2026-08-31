@@ -12,7 +12,7 @@ the steerer against **synthetic** board entries:
   the drift the adversarial agent is designed to provoke. Pass = drift
   fires; fail = drift missed.
 
-* ``synthetic_clean`` — wraps a deliberately-cooperative reference
+* ``synthetic_clean`` — wraps a cooperative reference
   agent. The expectation is the inverse: NO drift fires (modulo INFO-
   severity observational drift, which the steerer emits even on healthy
   runs as a side effect of its own observation passes).

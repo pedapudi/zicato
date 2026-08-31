@@ -312,7 +312,7 @@ def ranked_pairs(matrix: MarginMatrix) -> RankedPairsResult:
 def copeland_order(matrix: MarginMatrix) -> tuple[str, ...]:
     """Rank the field best-first by Copeland score (wins minus losses).
 
-    The margin-blind baseline resolver — the relation today's swiss already
+    The margin-blind baseline resolver — the relation the swiss already
     uses. Provided so ``resolver="copeland"`` routes through this module's
     one matrix substrate rather than re-deriving the count inline. Ties on
     Copeland score break by id for determinism.

@@ -35,13 +35,14 @@ def compute_field_diversity(
     """Summarize the field's idea diversity from per-challenger mutation sets.
 
     ``mutation_sets`` is an ordered list of ``(generation_id, mutation_ids)``
-    pairs — one per challenger whose targeted-mutation-id set is known — and
-    the returned block reports the pairwise Jaccard overlap structure of the
-    field (FUNCTIONALITY-RECOMMENDATIONS.md §4.3): two challengers proposing
-    the same mutation-id set collapse a field of N into fewer than N real
-    experiments, so the block surfaces ``distinct_ideas`` (distinct mutation-
-    id sets) and the mean / max pairwise overlap that a soft-reject policy
-    keys off.
+    pairs, one per challenger whose targeted-mutation-id set is known. The
+    returned block reports the pairwise Jaccard overlap structure of the
+    field (FUNCTIONALITY-RECOMMENDATIONS.md §4.3).
+
+    Two challengers proposing the same mutation-id set collapse a field of N
+    into fewer than N real experiments, so the block surfaces
+    ``distinct_ideas`` — the count of distinct mutation-id sets — and the mean
+    and max pairwise overlap a soft-reject policy keys off.
 
     Keys
     ----

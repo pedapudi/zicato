@@ -59,10 +59,10 @@ class WorkspaceLock:
         Workspace the lock applies to.
     start_time:
         The owning process's start time (see :func:`pid_start_time`),
-        paired with ``pid`` to defeat pid reuse — a recycled pid no longer
-        looks like the original owner. ``None`` for legacy locks written
-        before start-times existed, or when the host could not read one;
-        callers degrade gracefully via :func:`is_same_process`.
+        paired with ``pid`` to defeat pid reuse: a recycled pid cannot pass
+        as the original owner. ``None`` for a lock that carries no start
+        time, or when the host could not read one; callers degrade
+        gracefully via :func:`is_same_process`.
     """
 
     pid: int
@@ -204,20 +204,20 @@ def is_same_process(pid: int, expected_start_time: float | None) -> bool:
     """Return ``True`` iff ``pid`` is alive **and** is the same process.
 
     "Same process" means the live process now holding ``pid`` is the one
-    that recorded ``expected_start_time`` — defeating pid reuse, where a
-    dead worker's pid is reissued to an unrelated process (which would
-    make the dead worker look alive and decline a steal) or a stale lock's
-    pid number now belongs to an innocent bystander (which would make us
-    refuse to start, or mis-target it).
+    that recorded ``expected_start_time``. That defeats pid reuse, which
+    otherwise misleads in two directions: a dead worker's pid reissued to
+    an unrelated process makes the dead worker look alive and declines a
+    steal, and a stale lock's pid number now belonging to an innocent
+    bystander makes this process refuse to start, or mis-target it.
 
     Decision matrix:
 
     * Pid not alive → ``False`` (a dead process is never "the same").
     * Pid alive, ``expected_start_time`` is ``None`` → fall back to bare
       liveness (``True``). We have no recorded identity to check against
-      (a legacy lock written before start-times, or a release where the
-      writer couldn't read its own start time), so we keep the prior
-      conservative behavior rather than invent a mismatch.
+      (a lock carrying no start-time token, or a release where the writer
+      could not read its own start time), so the conservative answer stands
+      rather than inventing a mismatch.
     * Pid alive, current start time unreadable (``None``) → ``True``. We
       cannot *disprove* identity on this host/platform, so we stay
       conservative (do not declare a mismatch that would let us steal).
@@ -287,7 +287,7 @@ def acquire_workspace_lock(
         Stamped on the lock for audit purposes.
     steal_stale:
         Whether to steal a lock whose owner is dead. Default ``True``;
-        operators running a deliberately conservative deployment can set
+        operators running a conservative deployment can set
         it to ``False`` to require manual cleanup of stale locks.
     """
     ensure_runtime_dirs(workspace_root)

@@ -46,10 +46,9 @@ Every enum-valued field — entry ``kind``, expectation ``kind`` / ``reads``,
 judge ``mode`` / ``severity``, and board-level ``disable_drift`` — is
 schema-validated on load: an unknown token raises a clear error listing
 the valid values rather than silently constructing an out-of-domain
-object. The board-authoring vocabulary renamed the old expectation
-``fires_on`` field to ``reads``; an old-format board still carrying
-``fires_on`` is rejected with an explicit migration error rather than
-being silently accepted.
+object. The expectation field is spelled ``reads``; a board carrying the
+retired ``fires_on`` spelling is rejected with an explicit migration error
+rather than being silently accepted.
 
 Serialization is also strict: only the discriminant-relevant fields are
 written so the file does not accumulate noise from optional fields that
@@ -111,7 +110,7 @@ def _coerce_judge_only(raw: Any, where: str) -> bool:
 
 
 def _reject_legacy_expectation(payload: Mapping[str, Any], where: str) -> None:
-    """Raise a clear migration error if an entry carries the legacy schema.
+    """Raise a clear migration error if an entry carries the retired schema.
 
     The board-authoring vocabulary renamed the expectation ``fires_on``
     field to ``reads``. An on-disk board still using ``fires_on`` is
@@ -260,7 +259,7 @@ def entry_to_dict(entry: BoardEntry) -> dict[str, Any]:
     The wall-clock budget is written as ``budget_s`` (the short form)
     rather than the dataclass-canonical ``wall_clock_budget_seconds``.
     The reader in :func:`load_board_with_meta` accepts both names — long
-    form for legacy boards and operator-written JSONL, short form for
+    form for hand-written and operator-authored JSONL, short form for
     boards produced by :class:`zicato.board.builder.Board.save` — so this
     asymmetry is invisible to round-trip callers.
 

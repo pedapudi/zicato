@@ -41,7 +41,7 @@ _SCORING_SEVERITIES: frozenset[str] = frozenset({"warning", "critical"})
 def _iter_jsonl_records(path: Path) -> Iterable[dict[str, Any]]:
     """Yield dict records from a JSONL file, skipping blanks and bad lines.
 
-    The replay path is deliberately forgiving: a malformed line is
+    The replay path is forgiving: a malformed line is
     skipped rather than aborting the replay because an aborted replay
     biases the expectation result (a critical drift on the last line
     could be silently dropped if the line before it was malformed).

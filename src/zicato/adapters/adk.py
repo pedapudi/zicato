@@ -26,23 +26,24 @@ Generation-snapshot loading
 
 :meth:`ADKHarnessAdapter.load` puts ``generation_root`` at the front
 of ``sys.path`` and re-imports the entrypoint module from that root.
-We deliberately do NOT restore ``sys.modules`` after the load — the
-tournament-runner contract in v0+1 is "fresh process per generation",
-so a single-process pass-through here is enough. Multi-generation
-processes can wrap calls themselves if they need stricter isolation.
+``sys.modules`` is NOT restored after the load: the tournament runner
+gives each generation a fresh process, so a single-process pass-through
+here is enough. A caller that runs several generations in one process can
+wrap the calls itself if it needs stricter isolation.
 
 The mutated-tree invariant (fail CLOSED)
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 The invariant a scored round depends on is **"the MUTATED TREE is what
 runs"** — not the narrower "the entrypoint came from the snapshot". The
-two coincide only when the entrypoint lives INSIDE a mutable tree; for
-the equally legitimate *dependency* shape (mutate a package the
-entrypoint merely imports — target 2 mutates goldfive and drives it from
-a harness module outside every tree) the entrypoint's own origin says
-nothing about whether the mutations were under test, and a registration
-with two trees can satisfy the entrypoint rule while every mutation to
-the second tree is a silent scored no-op.
+two coincide only when the entrypoint lives INSIDE a mutable tree. The
+*dependency* shape is equally legitimate: mutate a package the entrypoint
+merely imports, as the sibling project's steering target does when it
+mutates goldfive and drives it from a harness module outside every tree.
+There the entrypoint's own origin says nothing about whether the mutations
+were under test. A registration with two trees can likewise satisfy the
+entrypoint rule while every mutation to the second tree is a silent scored
+no-op.
 
 Putting the snapshot on ``sys.path`` is NOT sufficient to guarantee the
 snapshot's code is what runs. ``sys.path`` governs only TOP-LEVEL name
@@ -77,7 +78,7 @@ Three layers close the hole, each verifying where its truth exists:
 * **Load time** — :meth:`ADKHarnessAdapter.load` asserts, for EVERY
   registered tree, that the tree's top-level name resolves inside
   ``generation_root``: an already-imported module must have its file
-  under the root (a pre-imported installed copy is the #110 condition),
+  under the root (a pre-imported installed copy is the shadowing case),
   and an unimported one must ``find_spec`` to a location under the root
   (pure resolution — no target code executes). When the entrypoint's own
   top level is one of those tree names, its imported ``__file__`` is
@@ -88,7 +89,7 @@ Three layers close the hole, each verifying where its truth exists:
   depth — load time should already have caught it), and NEVER IMPORTED is
   recorded as ``tree_never_imported`` in ``harness_load.json``. The last
   is not a run failure (a board entry may legitimately not touch a tree)
-  but it is the ONLY detector of the original #110 shape — an installed
+  but it is the ONLY detector of a fully shadowed snapshot — an installed
   entrypoint under a different top-level name that never imports the
   tree at all — so a generation whose units never imported a tree raises
   a WARNING loop-health finding.
@@ -237,7 +238,7 @@ def _tree_basename(tree: str | Path) -> str:
     Without the resolve a relative registration whose last component is ``.``
     or ``..`` (``--mutable-tree .`` from inside the target) yields an EMPTY
     basename and every rule built on it misfires. This resolve feeds
-    operator-facing checks only; it is deliberately NOT the canonical form of
+    operator-facing checks only; it is NOT the canonical form of
     anything hashed (folding the checkout path into a contract hash is its own
     bug — see ``_canon_mutable_trees``).
     """
@@ -369,7 +370,7 @@ TREE_IMPORT_OUTSIDE_ROOT = "outside_root"
 #: One tree's post-run verdict: its top-level module was never imported at
 #: all. Not a run failure (a board entry may legitimately not touch a tree),
 #: but a generation whose every unit reports it means the tree's mutations
-#: cannot have been under test — the original #110 shape.
+#: cannot have been under test: the snapshot was shadowed (issue #110).
 TREE_IMPORT_NEVER_IMPORTED = "never_imported"
 
 
@@ -652,7 +653,7 @@ def _build_call_llm_adk_model_class() -> type:
         ) -> AsyncGenerator[Any, None]:
             del stream  # the harness call_llm is non-streaming text-in/out
             # TEXT-ONLY by construction: we read only the system + user TEXT and
-            # deliberately ignore ``llm_request.config.tools`` (the agent's
+            # ignore ``llm_request.config.tools`` (the agent's
             # ``function_declarations``). The reply is a single text part with no
             # ``function_call`` — so an agent on this shim CANNOT call its tools.
             # That is the no-tools limitation that makes this a last resort; the
@@ -744,15 +745,15 @@ def _resolves_to_native_function_calling(model_str: str) -> bool:
     instantiating it — so this classifier never constructs (and therefore never
     floods on the garbage-collection of) a ``google.genai`` client.
 
-    Historical note (issue #98): this predicate used to return
-    ``issubclass(cls, LiteLlm)``, conflating "is function-calling capable" with
-    "is not a ``google.genai``-backed class". A native ``gemini-*`` / ``gemma-*``
-    id resolves to :class:`Gemini` / :class:`Gemma`, NOT a ``LiteLlm``
+    This predicate must NOT be written as ``issubclass(cls, LiteLlm)``, which
+    conflates "is function-calling capable" with "is not a
+    ``google.genai``-backed class" (issue #98). A native ``gemini-*`` /
+    ``gemma-*`` id resolves to :class:`Gemini` / :class:`Gemma`, NOT a ``LiteLlm``
     subclass — so every native Gemini/Gemma target was judged tool-INCAPABLE
     and its tool agents were rebound to the text-only shim, silently stripping
-    every tool. The genai-client-flood concern that motivated the old answer is
-    a property of CONSTRUCTING such a model, not of its capability, and now
-    lives on the construction path where it belongs
+    every tool. The genai-client-flood concern that tempts one to write it
+    that way is a property of CONSTRUCTING such a model rather than of its
+    capability, and it is handled on the construction path
     (:func:`_resolves_to_genai_client` in
     :func:`rebind_tree_models_to_call_llm`).
 
@@ -788,13 +789,13 @@ def _resolves_to_genai_client(model_str: str) -> bool:
     Identifies the genai-backed classes POSITIVELY — ``issubclass(cls,
     Gemini)``, which covers :class:`Gemma` (it subclasses :class:`Gemini`) and
     nothing else in the registry. The tempting shorthand ``not
-    issubclass(cls, LiteLlm)`` is wrong in two directions: it is unanswerable
-    when ``litellm`` is not importable (``google-adk``'s ``extensions`` extra
+    issubclass(cls, LiteLlm)`` is wrong in two directions. It is unanswerable
+    when ``litellm`` is not importable — ``google-adk``'s ``extensions`` extra
     owns it, so ADK can resolve ``gemini-*`` in an install that cannot import
-    :class:`LiteLlm`), where returning ``False`` would fail OPEN and let the
-    flood back in; and it misreads every OTHER native provider class the
+    :class:`LiteLlm` — and returning ``False`` there would fail OPEN and let
+    the flood back in. It also misreads every OTHER native provider class the
     registry grows as genai-backed, displacing a real function-calling model
-    for a flood it could never cause.
+    for a flood that class could never cause.
 
     ``False`` for a :class:`LiteLlm`-resolvable string (its construction builds
     no genai client), for any other non-genai provider class, for an
@@ -869,7 +870,7 @@ def rebind_tree_models_to_call_llm(root: Any, call_llm: Any) -> int:
     ``model`` of its own, and that model either resolves to a
     ``google.genai``-backed class (the flood source — see
     :func:`_resolves_to_genai_client`) or does not resolve at all. Four kinds of
-    agent are deliberately LEFT UNTOUCHED:
+    agent are LEFT UNTOUCHED:
 
     * an agent whose ``model`` is already a :class:`BaseLlm` — an author who
       wired a real model object owns it;
@@ -927,7 +928,7 @@ def rebind_tree_models_to_call_llm(root: Any, call_llm: Any) -> int:
             if not _resolves_to_genai_client(model_str):
                 continue  # real LiteLlm endpoint model — keep native tool-calling.
             if declares_tools:
-                # #98: a native Gemini/Gemma tool agent keeps its model. The
+                # A native Gemini/Gemma tool agent keeps its model (issue #98). The
                 # shim would strip its tools silently; the genai client's own
                 # "No API key" failure is loud and diagnosable.
                 kept_native.append(name)
@@ -1043,7 +1044,7 @@ def entry_disable_drift(entry: BoardEntry) -> tuple[Any, ...]:
 
     ``disable_drift`` is a board-LEVEL setting (``Board.disable_drift``),
     but the :class:`~zicato.adapters.base.RunnableHarness` Protocol hands
-    the adapter a :class:`BoardEntry`, not the owning ``Board``. The
+    the adapter a :class:`BoardEntry` rather than the owning ``Board``. The
     tournament runner therefore stamps the board-level suppression set
     onto every entry's :attr:`~zicato.core.BoardEntry.context` mapping
     under :data:`_DISABLE_DRIFT_CONTEXT_KEY` (see
@@ -1076,7 +1077,7 @@ def entry_judge_only(entry: BoardEntry) -> bool:
 
     ``judge_only`` is a board-LEVEL setting (``Board.judge_only``), but
     the :class:`~zicato.adapters.base.RunnableHarness` Protocol hands the
-    adapter a :class:`BoardEntry`, not the owning ``Board``. The
+    adapter a :class:`BoardEntry` rather than the owning ``Board``. The
     tournament runner therefore stamps the flag onto every entry's
     :attr:`~zicato.core.BoardEntry.context` mapping under
     :data:`_JUDGE_ONLY_CONTEXT_KEY` (see
@@ -1127,8 +1128,8 @@ def _build_judge_only_steerer(call_llm: Any, runtime: Any) -> Any:
     passes ``call_llm=`` explicitly, as the adapter does) and the
     resolved ``runtime`` into the same constructor kwargs. The ONLY
     behavioural delta from goldfive's default steerer is the neutered
-    ``handle_drift`` — detectors fire and emit ``DriftDetected`` exactly
-    as before; only the refine ladder is skipped.
+    ``handle_drift``: detectors fire and emit ``DriftDetected`` as they do
+    under goldfive's steerer, and only the refine ladder is skipped.
 
     Imported lazily so the optional goldfive dependency stays out of this
     module's import time. The subclass is defined inside the factory so
@@ -1206,7 +1207,7 @@ def _judge_only_overrides(agent: Any, call_llm: Any, runtime: Any) -> dict[str, 
       fixed plan; its ``refine`` / ``handle_turn`` return ``None``, so no
       replanning LLM call ever fires. (Goldfive's default
       :class:`LLMPlanner` would replan/refine via the LLM.)
-      ``PassthroughPlanner`` is deliberately NOT used: its ``generate``
+      ``PassthroughPlanner`` is NOT used: its ``generate``
       returns ``None`` and aborts the run with an empty transcript,
       leaving nothing to judge.
     * ``steerer=_build_judge_only_steerer()`` — a :class:`DefaultSteerer`
@@ -1382,7 +1383,7 @@ class ADKRunnableHarness:
         ONE deliberate exception to that invariant: the model-binding step
         below runs BEFORE the guarded block and RAISES when a tool-declaring
         agent has no function-calling model left (issue #98). That is a
-        target misconfiguration, not a run outcome — a tool-using tree
+        target misconfiguration rather than a run outcome — a tool-using tree
         driven by the text-only shim would produce a plausible one-turn
         transcript and SCORE it. Failing the run (the worker surfaces it as
         an infra abort) is the fail-closed answer.
@@ -1408,7 +1409,8 @@ class ADKRunnableHarness:
         #    survives, and a TOOL-DECLARING agent is never shimmed — routing it
         #    through the text-only shim would reduce a tool-calling tree to a
         #    single text turn (the presentation target writes no files then);
-        #    with no function-calling model left it raises instead (#98).
+        #    with no function-calling model left it raises instead
+        #    (issue #98).
         #
         # See rebind_tree_models_to_adk_model / rebind_tree_models_to_call_llm /
         # _resolves_to_native_function_calling. Both are idempotent.
@@ -1512,8 +1514,8 @@ class ADKRunnableHarness:
         # Judge-only mode: spread in the no-steering overrides
         # (StaticPlanner + LiteralGoalDeriver) so goldfive judges without
         # deriving goals, replanning, or refining. Judges stay armed in
-        # both paths. When off (the default), the call is byte-identical
-        # to the legacy steering path.
+        # both paths. When off (the default), the call takes goldfive's
+        # ordinary steering path unchanged.
         gf_runtime = _goldfive_runtime()
         overrides = (
             _judge_only_overrides(self._agent, config.harness_call_llm, gf_runtime)
@@ -1656,10 +1658,9 @@ class ADKRunnableHarness:
         ``agent.run(user_message)`` with a bare string. Passing the raw
         ADK agent would raise :class:`TypeError` because the ADK
         agent's ``.run()`` does not accept a bare string positional —
-        it expects ADK-specific invocation arguments. This is the same
-        bug class #105 fixed for the scripted path; the emulated path
-        was explicitly scoped out there and is fixed here by the
-        analogous wrapper. We therefore wrap the agent in a thin
+        it expects ADK-specific invocation arguments. The scripted path
+        wraps the agent for the same reason (issue #105). So the emulated
+        path wraps it too: a thin
         per-turn caller that calls :func:`goldfive.run` with the
         correct signature on each emulated turn — mirroring
         :class:`_PerTurnCaller` in :meth:`_run_multi_turn_scripted`.
@@ -1856,7 +1857,7 @@ class ADKHarnessAdapter:
 
         * EVERY registered mutable tree's top-level name must resolve
           under ``generation_root`` — already-imported (a pre-imported
-          installed copy is the #110 condition) or resolvable by
+          installed copy is the shadowing case) or resolvable by
           :func:`importlib.util.find_spec`, which finds without executing
           the target's code. This is the assert that covers a tree the
           entrypoint merely depends on, and every tree of a multi-tree
@@ -1869,7 +1870,7 @@ class ADKHarnessAdapter:
           assert above plus the post-run :func:`tree_import_status` record
           are what verify the mutations were under test.
 
-        DETECT, not repair: a second ``load`` in the SAME process against
+        DETECT rather than repair: a second ``load`` in the SAME process against
         a different ``generation_root`` still resolves a dotted entrypoint
         to the first generation's files (``reload`` re-runs the finder
         against the parent package's unchanged ``__path__``) and therefore
@@ -1973,7 +1974,7 @@ class ADKHarnessAdapter:
 
         * ALREADY IMPORTED (``sys.modules``) — its locations must be under
           ``generation_root``. A pre-imported installed copy short-circuits the
-          path search entirely, which is exactly the #110 condition; the
+          path search entirely, which is exactly the shadowing case; the
           message names the shadowing file.
         * NOT YET IMPORTED — :func:`importlib.util.find_spec` must resolve it
           under ``generation_root``. Pure RESOLUTION: the finder runs, the
@@ -2104,7 +2105,7 @@ class ADKHarnessAdapter:
         snapshot_root: Path,
         workspace_root: Path,
     ) -> None:
-        """No-op: an ADK tree's evolved state IS the snapshot (#125).
+        """No-op: an ADK tree's evolved state IS the snapshot (issue #125).
 
         The post-promotion hook exists for targets whose real state
         lives somewhere the mutable tree cannot reach. An ADK tree has

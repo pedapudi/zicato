@@ -121,7 +121,7 @@ OnInconclusive = Callable[["EvidenceResolution"], None]
 #: whenever the strategy's live (in-flight) view may have changed. The
 #: orchestrator uses it to publish the live ``active_tournament`` envelope
 #: with the in-flight bracket/ladder (``strategy.live_rounds()`` /
-#: ``live_standings()``) DURING the run, not just at settle. Best-effort
+#: ``live_standings()``) DURING the run rather than just at settle. Best-effort
 #: by contract — a publish failure must never abort the resolution — so
 #: the driver swallows nothing itself; the callback owns its own safety.
 ProgressHook = Callable[[SelectionStrategy], None]
@@ -361,7 +361,7 @@ async def confirm_promotion_with_evidence(
                 # override the gate; the strategy's promotion stands verbatim.
                 return decision, None
             # Credible but unresolved with no way to spend more budget ⇒ the
-            # hold is terminal: a dead-letter inconclusive, not a dangling defer.
+            # hold is terminal: a dead-letter inconclusive rather than a dangling defer.
             terminal = replace(verdict, decision="inconclusive")
             return _finalize(decision, terminal, audit, ci_history, promoted_id, on_inconclusive)
 

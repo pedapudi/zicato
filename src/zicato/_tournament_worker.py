@@ -1,9 +1,10 @@
 """Subprocess worker that executes ONE tournament run in its own OS process.
 
-This module is the "L3" robustness layer. Historically every board-entry
-run executed *inside* the orchestrator process, which meant a wedged run
-could only be stopped by killing the whole ``evolve``. Isolating each run
-as its own subprocess lets a per-run wall-clock budget be hard-enforced:
+This module is the subprocess-worker robustness layer. A wedged board-entry
+run holds the interpreter, so running it inside the orchestrator process
+would make killing the whole ``evolve`` invocation the only way to stop it.
+Isolating each run as its own subprocess is what lets a per-run wall-clock
+budget be hard-enforced:
 
 * the parent (:func:`zicato.tournament.runner._run_single`) wraps the
   worker in :func:`asyncio.wait_for` and escalates SIGTERM -> SIGKILL,
@@ -19,14 +20,13 @@ The args file describes exactly one run (see :func:`_load_args` for the
 shape). The worker:
 
 1. writes ``active_runs/{run_id}.json`` with ``pid = os.getpid()`` — its
-   OWN pid, the key difference from the old in-process model where the
-   orchestrator stamped its own pid;
+   OWN pid, which is what lets the supervisor kill this one run rather
+   than the orchestrator;
 2. loads the harness from the ``snapshot_root`` it was handed — a per-run
    ephemeral working copy of the generation's code snapshot, NOT the
    canonical ``generations/vN/snapshot/`` (the parent makes the copy so
    any runtime write the agent does near its own code cannot pollute the
-   canonical snapshot) — and drives the one entry under goldfive
-   (mirroring the runner's old ``_drive_session``);
+   canonical snapshot) — and drives the one entry under goldfive;
 3. captures every regular file produced under the run scratch directory,
    writes a deterministic artifact manifest, and exposes that inventory to
    expectation evaluators;
@@ -38,17 +38,17 @@ shape). The worker:
 
 Module-caching note
 -------------------
-Because every run is a fresh subprocess, the Python-module-caching
-problem the old single-process runner had — loading two generations'
-source into one interpreter and getting the wrong one back from
-``sys.modules`` — simply does not arise here. Each worker imports the
+Because every run is a fresh subprocess, the Python-module-caching problem
+a single-process runner has — loading two generations' source into one
+interpreter and getting the wrong one back from ``sys.modules`` — does not
+arise here. Each worker imports the
 one generation snapshot it was handed and then exits; there is never a
 second generation's source in the same interpreter to collide with.
 
-The worker is deliberately killable: if SIGTERM/SIGKILL'd mid-run it
+The worker is killable: if SIGTERM/SIGKILL'd mid-run it
 just dies, leaving (at worst) a stale ``active_runs`` file and no result
 file. The parent treats "process gone + no result file" as a normal
-aborted-run outcome — that is precisely the supervisor-kill path.
+aborted-run outcome — that is the supervisor-kill path.
 """
 
 from __future__ import annotations
@@ -119,8 +119,8 @@ def _resolve_role_call_llm(spec: Any, *, role: str) -> Any:
     The spec is the dict the runner emitted (see
     :func:`zicato.tournament.runner._role_worker_spec`):
 
-    * ``{"dotted": "module:qualname"}`` — re-import the callable (legacy /
-      unconfigured role); or
+    * ``{"dotted": "module:qualname"}`` — re-import the callable (a role
+      configured by dotted path, or one left unconfigured); or
     * ``{"models_role": {...}}`` — a workspace ``models.<role>`` spec, which
       this worker re-resolves with the same machinery the runtime factory
       uses (reading any ``api_key_env`` from the worker's OWN os.environ).
@@ -156,7 +156,7 @@ def _resolve_inner_model_from_role(spec: Any) -> Any:
     ``LiteLlm``) so the adapter rebinds the target's agents to it with native
     tool/function calling. Returns ``None`` for a dotted call_llm role or an
     endpoint-less spec that yields a bare string — the adapter then falls back
-    to its guarded shim rebind, exactly as before. ``api_key_env`` is read from
+    to its guarded shim rebind. ``api_key_env`` is read from
     the worker's OWN ``os.environ`` (secrets never crossed the boundary).
     """
     if not isinstance(spec, dict):
@@ -208,8 +208,8 @@ def _load_args(args_path: Path) -> dict[str, Any]:
 
     ``persist_run_results`` / ``persist_judge_io`` are the board-reflection
     capture knobs (runtime-only, never contract-hashed): result.json beside
-    loss.json and the judge_io.jsonl sidecar. Absent keys (legacy args
-    files) default to True — always-on with an opt-out.
+    loss.json and the judge_io.jsonl sidecar. An args file that omits either
+    key defaults it to True — always-on with an opt-out.
     """
     with open(args_path, encoding="utf-8") as f:
         args: dict[str, Any] = json.load(f)
@@ -257,7 +257,7 @@ def _record_harness_load(
     snapshot_root: Path,
     tree_status: dict[str, str] | None = None,
 ) -> None:
-    """Record WHAT this generation actually loaded from its snapshot (#110).
+    """Record WHAT this generation actually loaded from its snapshot.
 
     The worker is the only process that ever imports the entrypoint or the
     mutable trees, so it is the only one that knows where they resolved. It
@@ -268,10 +268,10 @@ def _record_harness_load(
 
     Two facts land here, both keyed to the mutated-tree invariant. First,
     ``entrypoint_file`` — the resolved entrypoint module, and the recorded
-    value is SNAPSHOT-RELATIVE (``agent/agent.py``), not the
+    value is SNAPSHOT-RELATIVE (``agent/agent.py``) rather than the
     absolute ``__file__``. ``snapshot_root`` here is the per-run EPHEMERAL
     checkout (``ztw-snap-*`` under system temp, deleted in ``_run_single``'s
-    ``finally``), so the absolute path names a directory that no longer exists
+    ``finally``), so the absolute path names a directory that is already gone
     by the time anyone reads the round log, differs for every unit of the same
     generation, and folds the operator's machine layout into a durable record.
     The relative path is the part that carries the provenance — which module
@@ -288,8 +288,9 @@ def _record_harness_load(
     ACCUMULATE across the generation's units rather than overwriting: a tree ANY
     unit imported from the snapshot is verified for the generation, and
     ``trees_never_imported`` is what is left over — the trees no unit ever
-    touched, which is the only observable form of the original #110 shape (an
-    installed entrypoint that never imports the mutated tree at all). One unit's
+    touched. That is the only observable form of a shadowed snapshot — an
+    installed entrypoint that never imports the mutated tree (issue #110). One
+    unit's
     read-modify-write can lose a concurrent unit's verification, which can only
     ever ADD a warning-severity never-imported entry, never suppress a failure:
     a tree imported from outside the snapshot fails its own unit at load time
@@ -368,13 +369,13 @@ def _verify_trees_after_run(
     code — so it is safe on every exit path, including an aborted run (which
     simply reports whatever it had imported by then).
 
-    Two outcomes, deliberately asymmetric:
+    Two outcomes, asymmetric:
 
     * a tree imported from OUTSIDE the snapshot FAILS the run (raise →
       non-zero worker exit → the parent synthesises an infra abort). Load time
       should already have refused it; reaching here means something defeated
       that check, and a scored unit is exactly what must not happen.
-    * a tree that was NEVER imported is recorded, not raised — a single board
+    * a tree that was NEVER imported is recorded rather than raised — a single board
       entry may legitimately not exercise every tree. It becomes a
       warning-severity loop-health finding only when NO unit of the generation
       ever imported that tree.
@@ -536,7 +537,7 @@ async def _emit_worker_abort(
 
 
 # ---------------------------------------------------------------------------
-# Drive one entry — mirrors the old runner._drive_session
+# Drive one entry
 # ---------------------------------------------------------------------------
 
 
@@ -552,10 +553,10 @@ async def _drive_session(
 
     Identical dispatch logic to the in-process runner's old
     ``_drive_session``: synthetic kinds bypass the adapter session,
-    legacy ``run(entry, sink_path)`` stubs are detected by parameter
+    a bare ``run(entry, sink_path)`` stub is detected by parameter
     name, and the rich ``run(entry, sinks, config)`` shape is the
-    default. Kept here verbatim so a worker run is byte-equivalent to
-    what the runner used to do inline.
+    default. This is the one implementation of that dispatch, so a worker
+    run and an in-process run cannot diverge in how they call a target.
     """
     started = time.monotonic()
 
@@ -648,8 +649,8 @@ def _write_result(
           "abort_reason": "<symbolic reason or empty string>"
         }
 
-    ``run_result`` is ``null`` on the legacy stub path (no RunResult is
-    produced). ``aborted`` is the worker's view of whether the run hit
+    ``run_result`` is ``null`` on the bare-stub path, which produces no
+    RunResult. ``aborted`` is the worker's view of whether the run hit
     its own cooperative budget; the parent additionally treats a missing
     or non-zero-exit result file as aborted (supervisor / parent kill).
     """
@@ -696,8 +697,8 @@ async def _run(args: dict[str, Any]) -> None:
     # THIS fresh interpreter, before anything calls load_config(). The
     # pins travelled in the args file — the flag-to-config bridge across
     # the worker subprocess boundary; no environment variable involved.
-    # An absent / empty key (a legacy args file, or no flags pinned)
-    # leaves the worker on its own defaults.
+    # An absent or empty key — an args file that pinned no flags — leaves
+    # the worker on its own defaults.
     config_pins = args.get("config_pins")
     if config_pins:
         from zicato.config import pin_overrides  # noqa: PLC0415
@@ -722,7 +723,7 @@ async def _run(args: dict[str, Any]) -> None:
     # target writing next to its own code (e.g. the presentation agent's
     # ``output/``) would pollute the snapshot, and the pollution would
     # compound generation over generation. The runner supplies a fresh
-    # scratch dir per run; an absent key (a legacy args file) leaves the
+    # scratch dir per run; an args file that omits the key leaves the
     # env var unset and the target falls back to its own default.
     from zicato.epoch.snapshot_scope import SCRATCH_DIR_ENV  # noqa: PLC0415
 
@@ -744,9 +745,9 @@ async def _run(args: dict[str, Any]) -> None:
     budget_s = float(entry.wall_clock_budget_seconds)
 
     # --- Write the active-runs state file with the WORKER's own pid. ---
-    # This is the central change of the L3 layer: the run's worker pid
-    # (not the orchestrator's) lands here, so the supervisor watchdog can
-    # SIGKILL exactly this run by this pid.
+    # This is what the subprocess-worker layer buys: the pid recorded here
+    # is the run's own worker, rather than the orchestrator's, so the
+    # supervisor watchdog can SIGKILL this one run by this pid.
     now = datetime.now(UTC)
     deadline = now + timedelta(seconds=int(budget_s))
     with best_effort(
@@ -759,7 +760,7 @@ async def _run(args: dict[str, Any]) -> None:
 
         # Record the worker's OWN process-group id so the supervisor can
         # group-kill the worker plus any grandchildren the inner harness
-        # spawned (shells, helper tools), not just the worker pid. The
+        # spawned (shells, helper tools) rather than just the worker pid. The
         # runner spawns us with ``start_new_session=True`` so we lead our
         # own group; ``os.getpgid`` is unavailable on a few platforms, so
         # this is best-effort and leaves ``pgid=None`` (single-pid kill) on
@@ -808,15 +809,15 @@ async def _run(args: dict[str, Any]) -> None:
         run_hb.start()
 
     # Resolve each LLM role in THIS fresh interpreter — either a dotted
-    # path re-import (legacy / unconfigured role) or a model spec from the
+    # path re-import (a dotted or unconfigured role) or a model spec from the
     # workspace ``models`` block, re-resolved here (reading any api_key_env
     # from the worker's OWN os.environ — secrets never crossed the boundary).
     #
     # Deliberately placed AFTER the active-runs write + heartbeat start
-    # above, not before. An endpoint-shaped harness role (spec.model +
+    # above rather than before. An endpoint-shaped harness role (spec.model +
     # endpoint/api_key_env — the live-validation shape) forces
     # ``_resolve_inner_model_from_role`` to import the whole ``google.adk``
-    # graph right here (~1 s / 80 MB / ~1500 modules, measured — RUNTIME.md
+    # graph right here, a measured ~1 s / 80 MB / ~1500 modules (RUNTIME.md
     # §5.5.8), and ``ADKHarnessAdapter.load()`` a few lines below imports
     # the SAME graph unconditionally for every ADK-adapter run regardless of
     # ``inner_model`` — so the import cost is unavoidable for this shape and
@@ -856,10 +857,10 @@ async def _run(args: dict[str, Any]) -> None:
         user_emulator_call_llm = _resolve_role_call_llm(emulator_role, role="user_emulator")
 
     # Capture knobs (board reflection's capture fix). Runtime-only,
-    # additive, NEVER contract-hashed. An ABSENT key — a legacy args file
-    # — defaults to True: the capture is always-on with an opt-out, so
-    # historical callers gain the artifacts without a flag. Both writes
-    # are best-effort: a capture failure never re-scores or aborts a run.
+    # additive, NEVER contract-hashed. An ABSENT key defaults to True: the
+    # capture is always-on with an opt-out, so a caller that passes no flag
+    # still gets the artifacts. Both writes are best-effort: a capture
+    # failure never re-scores or aborts a run.
     # With both knobs OFF the worker's behavior (files written, loss
     # bytes, exit code) is byte-identical to before the knobs existed.
     persist_run_results = bool(args.get("persist_run_results", True))
@@ -900,7 +901,7 @@ async def _run(args: dict[str, Any]) -> None:
     runtime_ms = 0
     budget_exceeded = False
     # Wall-clock position of this board unit (LossProfile.started_at /
-    # ended_at). Wall clock, not the monotonic clock ``runtime_ms`` measures:
+    # ended_at). Wall clock rather than the monotonic clock ``runtime_ms`` measures:
     # a duration is comparable within one process, a position has to be
     # comparable across the round's workers. The span opens before the
     # adapter loads — loading the harness is part of the unit's occupancy of
@@ -927,9 +928,9 @@ async def _run(args: dict[str, Any]) -> None:
                 config=config,
             )
 
-        # Cooperative first line of defence: the worker keeps the same
-        # in-process per-entry budget the old in-process runner relied
-        # on. The parent's wait_for (budget + GRACE) is the second line;
+        # Cooperative first line of defence: the worker enforces the
+        # per-entry budget in-process. The parent's wait_for (budget plus
+        # GRACE) is the second line;
         # the supervisor's deadline kill is the third.
         try:
             run_result, runtime_ms, budget_exceeded = await asyncio.wait_for(
@@ -962,7 +963,7 @@ async def _run(args: dict[str, Any]) -> None:
     finally:
         # Closes the wall-clock span opened before the adapter load. First
         # statement of the block: everything below is bookkeeping (sink
-        # close, terminal-event fallback), not the unit running.
+        # close, terminal-event fallback) rather than the unit running.
         ended_at = now_iso()
         # Stop the heartbeat thread before closing sinks so the thread
         # does not try to bump a run record that is about to be removed.
@@ -1023,7 +1024,7 @@ async def _run(args: dict[str, Any]) -> None:
     # an emulator answer-leak abort, an unavailable scripted / emulated
     # driver, or an unsupported entry kind. ``budget_exceeded`` already
     # covers the wall-clock case and is passed separately. A ``None``
-    # ``run_result`` is the legacy stub path — a genuinely completed run
+    # ``run_result`` is the bare-stub path — a genuinely completed run
     # with no RunResult — so it is NOT treated as not-completed.
     run_not_completed = bool(run_result is not None and run_result.aborted)
 
@@ -1095,7 +1096,7 @@ async def _run(args: dict[str, Any]) -> None:
     # is already on disk; the result file below and the exit code are
     # untouched). The budget-abort path's synthesized RunResult flows
     # through here too, so an aborted run's (empty) capture is honest.
-    # ``run_result is None`` is the legacy-stub path — no RunResult was
+    # ``run_result is None`` is the bare-stub path — no RunResult was
     # ever produced, so there is nothing to persist.
     if persist_run_results and run_result is not None:
         with best_effort(
@@ -1143,14 +1144,15 @@ def _weights_from_args(args: dict[str, Any]) -> ScoringWeights:
     Thin delegator to :meth:`ScoringWeights.from_json` — the inverse of the
     SINGLE field-enumerating serde the runner serialises with
     (:func:`zicato.tournament.runner._weights_spec` → :meth:`ScoringWeights.to_json`).
-    Because both sides now share ONE ``dataclasses.fields()``-driven serde, a
-    field can no longer be carried by the writer but dropped here (or vice
-    versa) — the silent worker-scores-under-defaults desync class
-    (``per_judge_weights`` / ``pass_rate_monotonicity_scope`` /
-    ``drift_kind_aggregation``) that two hand-aligned field lists kept
-    re-introducing. ``from_json`` coerces every field to its declared type and
+    Because both sides share ONE ``dataclasses.fields()``-driven serde, a
+    field cannot be carried by the writer and dropped here (or the reverse).
+    Two hand-aligned field lists would let it, and the worker would then
+    score under defaults for the dropped field and say nothing — which is how
+    ``per_judge_weights``, ``pass_rate_monotonicity_scope`` and
+    ``drift_kind_aggregation`` each desynced.
+    ``from_json`` coerces every field to its declared type and
     re-runs ``ScoringWeights.__post_init__``, so a malformed transform / scope
-    token in the args file fails fast or coerces, exactly as before.
+    token in the args file fails fast or coerces, as it does at contract load.
     """
     return ScoringWeights.from_json(args.get("weights"))
 

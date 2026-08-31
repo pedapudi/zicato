@@ -511,7 +511,7 @@ def preflight_cmd(
     click.echo(f"Contract pre-flight for {resolved_epoch} ({champion_id}, {runs} A/A draws):")
     click.echo(f"  A/A scalars:       {', '.join(f'{s:.6g}' for s in report.champion_scalars)}")
     click.echo(f"  noise floor:       {report.noise_floor_max_abs_delta:.6g} (max |delta|)")
-    # Every probe, not just the winner: an operator judging whether a REFUSE is
+    # Every probe rather than just the winner: an operator judging whether a REFUSE is
     # about the board or about the sample needs to see an inert point next to a
     # live one (issue #106).
     for probe in report.probed_points:

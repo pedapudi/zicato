@@ -8,7 +8,7 @@ annotated spans that are zicato's editable region — and, for each, a
 diff of the ``v0`` baseline content against the content in any
 generation whose patch touched that mutation id.
 
-Why re-enumerate, not re-apply — WHEN THE TREE IS THERE
+Why re-enumerate rather than re-apply — WHEN THE TREE IS THERE
 -------------------------------------------------------
 A generation's snapshot tree IS the post-apply state — the applier
 already materialised it. So the "patched content" of a mutation id in
@@ -32,8 +32,8 @@ enrichment path below.
 Trees are not permanent. :mod:`zicato.epoch.gc` prunes generation source
 trees and keeps every record, and an archived or relocated workspace can
 arrive with no trees at all. Re-enumerating a tree that is gone yields
-an empty surface, so a closed epoch's whole mutation browser used to go
-blank while the records that describe it sat unread (issue #194 §6).
+an empty surface. Enumerating alone would therefore blank a closed epoch's
+mutation browser while the records describing it sat unread (issue #194 §6).
 
 Two records reconstruct the surface, and neither is ever pruned:
 
@@ -148,11 +148,11 @@ def _resolve_store(paths: WorkspacePaths) -> tuple[GenerationStore | None, str]:
     store can fail on the CONFIGURATION rather than on any generation: a
     workspace whose ``config.json`` predates ``generation_source_backend``,
     or whose value contradicts the source data on disk, has no store at
-    all. That is a reader-visible condition, not a crash: every view here
-    already answers from records when a tree cannot be read, so a store
-    that cannot be built degrades onto the same records path and reports
-    the reason. The dashboard is read-only and must never 500 on a
-    workspace it was merely pointed at (DQ3).
+    all. That is a condition the reader must report rather than raise on:
+    every view here already answers from records when a tree cannot be read,
+    so a store that cannot be built degrades onto the same records path and
+    reports the reason. The dashboard is read-only and must never answer 500
+    for a workspace it was merely pointed at.
     """
     try:
         return default_generation_store(paths.root), ""
@@ -212,7 +212,7 @@ def recorded_generation_ids(paths: WorkspacePaths, epoch_id: str) -> list[str]:
 
     ``epochs/{id}/generations/{gen}/`` is written by the journal and
     survives snapshot GC by construction; it exists under BOTH storage
-    backends, because the git backend relocates the trees, not the
+    backends, because the git backend relocates the trees rather than the
     records. So this is the post-hoc answer to "which generations did
     this epoch mint", and the way to tell a PRUNED generation (recorded,
     no tree) from one that never existed.
@@ -272,7 +272,7 @@ def _records_caption(
     A tree goes missing two ways, and they are not the same news: snapshot
     GC pruned it (records-by-design, :mod:`zicato.epoch.gc`), or the configured
     store cannot reach source directories that remain on disk. The second is a
-    workspace-level condition, not a retention decision. This diagnostic scan
+    workspace-level condition rather than a retention decision. This diagnostic scan
     never selects a backend; ``config.json`` remains the only selection source.
     """
     if generation_ids and not store_saw_trees:
@@ -293,7 +293,7 @@ def _split_record_path(raw: str) -> tuple[Path, str]:
 
     ``mutations.json`` stores the ABSOLUTE path the enumerating round
     walked — a path inside that round's generation tree, which by
-    definition no longer exists when the record is all that is left (and
+    definition is gone when the record is all that is left (and
     which points somewhere else entirely once a workspace is moved or
     copied). The source root is whatever precedes the backend's
     per-generation tree directory: ``…/generations/{gen}/snapshot/`` for
@@ -324,11 +324,11 @@ def _record_surface(paths: WorkspacePaths, epoch_id: str) -> dict[str, MutationP
     """Rebuild an epoch's mutation surface from ``mutations.json``.
 
     The round wrote that file from the very enumeration it fed the
-    proposer, so every site's content and line span is the real thing —
-    with two honest gaps the caller captions rather than papers over:
-    the snapshot carries no ``metadata`` (a site's ``role`` reads empty),
-    and it is the enumeration of the round's *champion*, which is ``v0``
-    for an epoch that never promoted and the promoted parent otherwise.
+    proposer, so every site's content and line span is the real thing.
+    Two gaps remain, and the caller captions them rather than papering over
+    them. The snapshot carries no ``metadata``, so a site's ``role`` reads
+    empty. And it is the enumeration of the round's *champion*: ``v0`` for
+    an epoch that never promoted, the promoted parent otherwise.
     """
     points: dict[str, MutationPoint] = {}
     for record in load_mutation_surface(layout_of(paths), epoch_id):
@@ -391,7 +391,7 @@ def _reconstruct_content(baseline_content: str, patch: Any) -> tuple[str | None,
       constant of the matching type the applier's target sat outside the
       enumerated span, and there is no faithful span to show.
     """
-    # The applier's renderer, not a second spelling of it: a copy here
+    # The applier's renderer rather than a second spelling of it: a copy here
     # would drift from what the round actually wrote into the tree.
     from zicato.mutation.applier import _format_numeric  # noqa: PLC0415
 
@@ -659,7 +659,7 @@ def build_mutation_detail(paths: WorkspacePaths, epoch_id: str, mutation_id: str
             )
             entry.update({"content": content, "provenance": FROM_RECORDS, "note": note})
             if from_baseline:
-                # The value ops record a VALUE, not text, so this content is
+                # The value ops record a VALUE rather than text, so this content is
                 # that value substituted into the BASELINE span — v0's text
                 # with this generation's constant in it. Whatever a generation
                 # in between wrote at the site is NOT represented, so the
@@ -675,9 +675,9 @@ def build_mutation_detail(paths: WorkspacePaths, epoch_id: str, mutation_id: str
         point = enum_cache[generation_id].get(mutation_id)
         if point is None:
             # The tree IS here and its patch set named this id, but the
-            # tree no longer enumerates it (the patch moved/removed the
-            # marker). The tree is authoritative about its own contents,
-            # so this is a finding, not a case for reconstruction:
+            # tree does not enumerate it (the patch moved or removed the
+            # marker). The tree is authoritative about its own contents, so
+            # report this as a finding rather than reconstructing it:
             # surface the patch metadata without a content diff.
             entry.update(
                 {

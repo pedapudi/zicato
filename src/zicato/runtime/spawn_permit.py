@@ -21,7 +21,7 @@ exclusive ``flock`` on one slot:
 * **Workspace-external on purpose.** The cap must span workspaces and
   orchestrators, so the directory is resolved from the user's runtime dir
   (see :func:`permit_dir`), never from ``.zicato/``.
-* **``flock``, not a counter file.** The kernel releases an ``flock`` when
+* **``flock`` rather than a counter file.** The kernel releases an ``flock`` when
   the holding process dies, however it dies. A crashed orchestrator
   therefore cannot leak a permit, so there is no stale-permit reaper to
   write and no liveness protocol to get wrong. A counter file would need
@@ -42,7 +42,7 @@ exclusive ``flock`` on one slot:
   proceed uncapped), the first degrade in a process is a WARNING and the
   rest are debug.
 
-This is a **throttle, not a speed-up**: it makes an over-subscribed host
+This is a **throttle rather than a speed-up**: it makes an over-subscribed host
 degrade into queueing instead of into swapping. It does not reduce the
 per-unit import tax; only the warm pool of RUNTIME.md §5.5.4 does that.
 
@@ -110,7 +110,7 @@ def default_host_worker_permits() -> int:
 
     Deliberately generous. The default must be high enough that a single
     normal run never waits on a permit — the cap exists to stop several
-    concurrent runs from over-subscribing a host, not to slow down the
+    concurrent runs from over-subscribing a host rather than to slow down the
     ordinary case. Operators who want a real ceiling set the knob.
     """
     return max(MIN_AUTO_PERMITS, 2 * _usable_cpus())
@@ -288,7 +288,7 @@ async def acquire_worker_permit(limit: int | None) -> WorkerPermit:
     infra problem — an unwritable runtime dir, a filesystem without
     ``flock`` — would otherwise disable the cap for the whole run in total
     silence at the default log level, which is the one failure of a throttle
-    an operator cannot deduce from anything else. Once per process, not per
+    an operator cannot deduce from anything else. Once per process rather than per
     unit: on a machine that simply has no usable runtime dir this must not
     become a line per board unit.
     """
@@ -315,7 +315,7 @@ async def acquire_worker_permit(limit: int | None) -> WorkerPermit:
             return OPEN_PERMIT
         if permit is not None:
             if waited_from is not None:
-                # The wait is deliberately NOT part of the unit's reported
+                # The wait is NOT part of the unit's reported
                 # ``runtime_ms``, but it IS charged against an evolve run's
                 # ``max_wall_clock_seconds``. Logging the duration is what
                 # lets an operator reconcile the two; without it a round cut

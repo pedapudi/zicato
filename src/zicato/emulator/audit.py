@@ -108,7 +108,7 @@ def emit_audit_span(
     emulator stays decoupled from goldfive internals.
 
     Failures are logged and swallowed. The emulator MUST NOT fail the
-    run on audit problems — audit is observability, not policy.
+    run on audit problems — audit is observability rather than policy.
 
     Parameters
     ----------

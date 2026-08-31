@@ -226,7 +226,7 @@ def fit_plackett_luce(
       *exactly* the Bradley--Terry model. Feed a pairwise-only ledger and this
       fit agrees with :func:`fit_bradley_terry` to numerical tolerance (the
       per-observation gradient and Fisher information are term-for-term
-      identical), so it is a strict generalisation, not a replacement.
+      identical), so it is a strict generalisation rather than a replacement.
     * **Grouped partial orders** — a survivor set ``S`` finished strictly above
       a cut set ``C`` (a racing rung: the survivors carried, the cut arms were
       eliminated), with the order WITHIN each block unobserved. The likelihood

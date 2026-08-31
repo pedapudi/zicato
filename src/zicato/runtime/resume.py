@@ -97,7 +97,7 @@ class ResumePlan:
         every board unit that already has a ``loss.json``. ``None`` means
         there is nothing to resume in place: either the workspace was
         clean, or the partial work was discarded and the next round runs
-        fresh and byte-identical to today.
+        fresh and byte-identical to the default path.
     resume_experiment:
         The persisted :class:`~zicato.core.types.Experiment` to reuse
         when ``resume_generation_id`` is set; ``None`` otherwise. Carried
@@ -155,8 +155,8 @@ def _latest_generation_id(workspace_root: Path, epoch_id: str) -> str | None:
 def clear_runtime_state(workspace_root: Path) -> None:
     """Discard the live ``runtime/`` state of a prior, dead evolve.
 
-    Removes ``heartbeat.json``, the active-tournament event log AND its
-    legacy ``active_tournament.json`` snapshot, and every
+    Removes ``heartbeat.json``, the active-tournament event log AND any
+    ``active_tournament.json`` snapshot beside it, and every
     ``active_runs/{run_id}.json`` — the files RUNTIME.md §4.1 lists as
     "discarded on restart". The workspace lock is NOT touched here; the
     orchestrator's lock acquisition already stole any stale lock before
@@ -232,7 +232,7 @@ def prepare_resume(workspace_root: Path, epoch_id: str) -> ResumePlan:
     2. **Classify the latest generation.** If the highest ``vN`` has a
        committed ``outcome`` (or there is no generation at all, or the
        seed ``v0``), the workspace is clean and the next round runs
-       byte-identically to today. Otherwise ``vN`` is an interrupted
+       byte-identically to the default path. Otherwise ``vN`` is an interrupted
        generation and the conservative inference table (RUNTIME.md §4.2)
        decides resume-in-place vs discard-and-rerun.
 
@@ -297,7 +297,7 @@ def prepare_resume(workspace_root: Path, epoch_id: str) -> ResumePlan:
 
     if experiment.outcome is not None:
         # The latest generation already has a committed outcome — it is a
-        # finished round, not an interruption. (This can happen if the
+        # finished round rather than an interruption. (This can happen if the
         # crash landed AFTER the outcome was written but the loop was
         # going to start a new round.) Nothing to resume; the next round
         # advances past it exactly as a fresh start would.

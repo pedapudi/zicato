@@ -99,12 +99,10 @@ class OutputScope(StrEnum):
     TRANSCRIPT = "conversation_end"
 
 
-#: Backwards-compatible alias. The board-authoring vocabulary renamed
-#: ``fires_on`` to ``reads`` and the value type from a ``Literal`` to the
-#: :class:`OutputScope` enum; this alias keeps the old name importable so
-#: downstream modules that referenced :data:`ExpectationFiresOn` by name
-#: continue to resolve while integration catches up. New code should use
-#: :class:`OutputScope` directly.
+#: Compatibility alias. The expectation field is spelled ``reads`` and its
+#: value type is the :class:`OutputScope` enum; this alias keeps
+#: :data:`ExpectationFiresOn` importable for a downstream module that
+#: refers to it by that name. Write :class:`OutputScope` in new code.
 ExpectationFiresOn = OutputScope
 
 
@@ -238,7 +236,7 @@ class ScriptedTurn:
     user:
         The exact user message to send on this turn. Sent regardless of
         what the agent said on the previous turn — scripted entries are
-        deliberately rigid for cheap regression testing.
+        rigid for cheap regression testing.
     """
 
     user: str

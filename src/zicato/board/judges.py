@@ -33,7 +33,7 @@ from zicato.core.types import JudgeMode, JudgeSpec
 
 # A judge name becomes goldfive's ``judge_name``; it must be a stable,
 # filesystem- and wire-safe slug. Lowercase alphanumerics, underscores,
-# and hyphens; must start with an alphanumeric. Kept deliberately strict
+# and hyphens; must start with an alphanumeric. Kept strict
 # so a typo (a stray space, an uppercase letter) fails loudly at
 # authoring time rather than producing an unstable judge identity.
 _NAME_RE = re.compile(r"^[a-z0-9][a-z0-9_-]*$")
@@ -45,7 +45,7 @@ def _validate_name(name: str) -> str:
     Returns the name unchanged on success. Raises :class:`ValueError`
     with a precise message otherwise — the name is the judge's stable
     identity (goldfive's ``judge_name``) so a malformed one is a hard
-    authoring error, not something to silently coerce.
+    authoring error rather than something to silently coerce.
     """
     if not isinstance(name, str) or not name:
         raise ValueError("Judge: 'name' is mandatory and must be a non-empty string")

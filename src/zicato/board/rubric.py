@@ -17,7 +17,7 @@ call itself raising — are surfaced as ``passed=False``
 :class:`~zicato.core.ExpectationResult` instances with a descriptive
 :attr:`~zicato.core.ExpectationResult.detail`. The matcher never raises
 upward: a buggy judge response should manifest as a failing expectation
-on the offending board entry, not as a crash that wedges the whole run.
+on the offending board entry rather than as a crash that wedges the whole run.
 """
 
 from __future__ import annotations
@@ -66,7 +66,7 @@ def _strip_code_fences(raw: str) -> str:
     * no fences at all (returned unchanged)
 
     Anything else is passed through and will surface as a JSON decode
-    error downstream — the goal here is convenience, not bulletproofing.
+    error downstream — the goal here is convenience rather than bulletproofing.
     """
     text = raw.strip()
     if text.startswith("```"):

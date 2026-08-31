@@ -333,11 +333,11 @@ def _coerce_ladder_value(key: str, value: Any) -> Any:
     """Coerce one ladder mapping value to its field type, or raise.
 
     ``threshold`` is the ONLY nullable ladder key — its ``None`` means
-    "auto-derive from ``promote_margin``". A null anywhere else used to
-    reach the dataclass, where ``budget``/``noise_scale`` raised an
-    uncaught ``TypeError`` from their comparison validators (a 500) and
-    ``enabled``, which has no validator to trip, silently stored ``None``
-    in a bool field.
+    "auto-derive from ``promote_margin``". A null anywhere else must be
+    rejected here: reaching the dataclass, it would raise an uncaught
+    ``TypeError`` from ``budget``/``noise_scale``'s comparison validators
+    (surfacing as a 500), and ``enabled``, which has no validator to trip,
+    would silently store ``None`` in a bool field.
     """
     if value is None:
         if key == "threshold":
@@ -706,45 +706,50 @@ def set_proposer_quality(
 ) -> DraftPatch:
     """Set the proposer-quality levers: best-of-N slate + self-critique.
 
-    ``best_of_n`` is how many candidate experiments each propose-step
-    samples before selection (``1`` = the historical single sample, no
-    critique; must be >= 1); ``critique_enabled`` toggles the auxiliary
-    self-critique selection pass (inert at ``best_of_n == 1``);
-    ``process_exemplars`` opts the proposer into up to that many REDACTED
-    drift-anchored event windows per round (``0`` = off, the default —
-    see ``docs/design/PROCESS-EXEMPLARS.md`` incl. its §5 harm-detection
-    runbook before opting in; must be >= 0; read-side only, so the cost
-    meter is untouched). ``recombine`` opts in the mechanical
-    recombination slot (WS-REC): when ``True`` the last best-of-N slot
-    mints the patch union of two rejected complementary challengers
-    instead of sampling the LLM — REQUIRES ``best_of_n > 1`` to have any
-    effect (a single-sample proposer has no slate slot to mint into) and
-    is cost-neutral (the mint REPLACES the slot's auxiliary propose call,
-    never adds one — see :mod:`zicato.epoch.recombine`). Flipping it
-    rolls the epoch. ``recombine_merge`` (``"mechanical"`` default |
-    ``"llm"``) chooses HOW the slot composes the union: ``"mechanical"``
-    mints the disjoint patch concatenation with no LLM call; ``"llm"``
-    issues one merge call whose response flows through the normal parse
-    path and RELAXES disjointness so an OVERLAPPING pair the mechanical
-    mint cannot touch can be merged (PROPOSER.md §2.6.1). Meaningful only
-    with ``recombine`` on; ``"llm"`` rolls the epoch. ``genealogy`` opts in
-    the genealogy channel
-    (WS-GENE): up to that many candidate-LINEAGE items — the champion's
-    promoted patch history + diverse rejected reign candidates, each with
-    a banded outcome — are spliced into the prompt so the proposer can
-    evolve in context (``0`` = off, the default; must be >= 0; read-side
-    only, so the cost meter is untouched — see
-    :mod:`zicato.proposer.genealogy`). ``calibration_feedback`` opts in the
-    critic-calibration channel (WS-CAL): up to that many RECENT graded
-    hypotheses — the proposer's own falsifiable predictions graded against
-    realized outcomes (hit / miss / unresolved counts + the overall
-    calibration fraction + banded per-claim outcomes) — are spliced into
-    the prompt so the proposer sees its OWN miss pattern and predicts more
-    honestly (``0`` = off, the default; must be >= 0; read-side only, so the
-    cost meter is untouched — see :mod:`zicato.proposer.calibration`).
-    COMPOSES with :func:`set_screening` — both edit the same nested
-    ``proposer_quality`` block; the screen knobs stay that op's. Changing
-    any rolls the epoch.
+    ``best_of_n``
+        How many candidate experiments each propose-step samples before
+        selection. ``1`` is a single sample with no critique. Must be >= 1.
+    ``critique_enabled``
+        Toggles the auxiliary self-critique selection pass. Inert at
+        ``best_of_n == 1``.
+    ``process_exemplars``
+        Opts the proposer into up to that many REDACTED drift-anchored event
+        windows per round. ``0`` = off, the default; must be >= 0; read-side
+        only. Read the §5 harm-detection runbook in
+        ``docs/design/PROCESS-EXEMPLARS.md`` before opting in.
+    ``recombine``
+        Opts in the mechanical recombination slot: when ``True`` the last
+        best-of-N slot mints the patch union of two rejected complementary
+        challengers instead of sampling the LLM. REQUIRES ``best_of_n > 1``
+        to have any effect, since a single-sample proposer has no slate slot
+        to mint into. Cost-neutral: the mint REPLACES that slot's auxiliary
+        propose call (:mod:`zicato.epoch.recombine`); flipping it rolls the
+        epoch.
+    ``recombine_merge``
+        Chooses HOW that slot composes the union. ``"mechanical"`` (the
+        default) mints the disjoint patch concatenation with no LLM call.
+        ``"llm"`` issues one merge call whose response flows through the
+        normal parse path, and RELAXES disjointness so an OVERLAPPING pair
+        the mechanical mint cannot touch can be merged (PROPOSER.md §2.6.1).
+        Meaningful only with ``recombine`` on; ``"llm"`` rolls the epoch.
+    ``genealogy``
+        Opts in the genealogy channel: up to that many candidate-LINEAGE
+        items — the champion's promoted patch history plus diverse rejected
+        reign candidates, each with a banded outcome — are spliced into the
+        prompt so the proposer can evolve in context. ``0`` = off, the
+        default; must be >= 0; read-side only (:mod:`zicato.proposer.genealogy`).
+    ``calibration_feedback``
+        Opts in the critic-calibration channel: up to that many RECENT
+        graded hypotheses — the proposer's own falsifiable predictions
+        graded against realized outcomes, as hit / miss / unresolved counts
+        plus the overall calibration fraction plus banded per-claim outcomes
+        — are spliced into the prompt, so the proposer sees its OWN miss
+        pattern and predicts more honestly. ``0`` = off, the default; must
+        be >= 0; read-side only (:mod:`zicato.proposer.calibration`).
+
+    COMPOSES with :func:`set_screening`: both edit the same nested
+    ``proposer_quality`` block, and the screen knobs stay that op's. Changing
+    any of these rolls the epoch.
     """
     changed: dict[str, Any] = {}
     quality = draft.scoring.proposer_quality
@@ -872,7 +877,8 @@ def set_mutation_surface(
     reserved ``.py``), so an empty table is "the built-ins alone". The
     leaders are what lets the applier strip an echoed marker line out of a
     region body, which is why declaring one is required and why ``.py`` —
-    whose grammar is load-bearing legacy — cannot be redeclared.
+    whose grammar the built-in Python pass depends on — cannot be
+    redeclared.
 
     The table decides what the proposer may rewrite, so it is contract:
     declaring a file type rolls the epoch (and clearing it back to empty
@@ -1127,9 +1133,9 @@ def set_board_meta(
     by ``apply`` only when non-default, byte-compatible with
     :func:`zicato.board.jsonl.save_board`.
 
-    GUI note (invariant L2's documented exception): the board_meta form
-    control lands with the board-editor phase; until then this op is
-    reachable from the copilot and the REST dispatch only.
+    GUI note: the knob-coverage rule permits a documented exception, and
+    this is one. The builder GUI exposes no ``board_meta`` form control, so
+    this operation is reachable from the copilot and the REST dispatch only.
     """
     from zicato.core.drift_kinds import DriftKind, validate_drift_kind  # noqa: PLC0415
 
@@ -1209,11 +1215,12 @@ def estimate_cost(draft: TournamentDraft) -> CostEstimate:
     * ``candidate-screen runs`` — the pre-tournament tryout panel
       (``proposes × best_of_n × panel``).
     * ``best-of-N propose calls`` — ``proposes × best_of_n`` AUXILIARY
-      LLM calls per round (the slate SAMPLING — the WS-ENS
-      proposer-breadth role; the critique / revise DEPTH calls run on
-      proposer-depth and are not separately metered). NOT board runs, so
-      the line is labelled auxiliary and EXCLUDED from the board-runs
-      headline — but it is real money and belongs on the meter.
+      LLM calls per round (the slate SAMPLING, which runs on the
+      ensemble proposer's breadth role; the critique / revise DEPTH calls
+      run on the depth role and are not separately metered). These are
+      auxiliary calls rather than board runs, so the line is labelled
+      auxiliary and EXCLUDED from the board-runs headline. It is still
+      real money and belongs on the meter.
     * ``crowning-confirm runs`` — the evidence gate's defer→replicate
       budget: each replicate is a FRESH board sweep for BOTH crowning
       contestants, so ``budget × 2 × board``. Spent per CONFIRMED
@@ -1223,7 +1230,7 @@ def estimate_cost(draft: TournamentDraft) -> CostEstimate:
       control arm: one extra no-op challenger every N rounds, amortized
       to ``ceil(replicates × board / N)`` per round.
 
-    The estimate is deliberately a coarse upper-ish bound for the
+    The estimate is a coarse upper-ish bound for the
     cost-meter — the exact schedule is the selection strategy's; this
     surfaces the order of magnitude before the operator commits.
     """
@@ -1234,7 +1241,7 @@ def estimate_cost(draft: TournamentDraft) -> CostEstimate:
     board_size = len(train_ids)
     holdout_size = len(holdout_ids)
     # ``replicates`` defaults to the STRUCTURE's own default (swiss / elim
-    # default to 2 — replication, not bracket shape, is their noise lever),
+    # default to 2 — replication rather than bracket shape is their noise lever),
     # NOT a flat 1. The default is read from the selection layer's
     # single source of truth (each strategy's ``_default_replicates``), so the
     # meter cannot under-report the schedule a structure actually runs. An
@@ -1322,7 +1329,7 @@ def estimate_cost(draft: TournamentDraft) -> CostEstimate:
             per_round += screen_runs
 
     # Best-of-N propose multiplier: each propose-step samples best_of_n
-    # candidate experiments — auxiliary LLM CALLS, not board runs, so the
+    # candidate experiments — auxiliary LLM CALLS rather than board runs, so the
     # line is labelled and EXCLUDED from the board-runs headline. Real
     # spend the operator should still see priced. An UPPER BOUND under the
     # recombination slot (proposer_quality.recombine): a round that mints

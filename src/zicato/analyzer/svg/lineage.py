@@ -76,7 +76,7 @@ def render_svg_lineage_compact(
     roughly nine generations the step falls below a node's width and the
     boxes pile up illegibly. At that point the layout wraps into a grid
     (see :func:`_wrapped_positions`) and the canvas grows taller to hold
-    it; the caller's ``height`` is a minimum, not a cap.
+    it; the caller's ``height`` is a minimum rather than a cap.
     """
     gens = list(data.generations)
     if not gens:
@@ -101,7 +101,7 @@ def render_svg_lineage_compact(
             node_w=node_w,
             node_h=node_h,
         )
-        # A minimum, not a cap: the first wrap (two rows) needs LESS canvas
+        # A minimum rather than a cap: the first wrap (two rows) needs LESS canvas
         # than the caller asked for, and letting it shrink would make the
         # figure jump shorter at the very generation count where it grows
         # an extra row — the opposite of what the reader expects.

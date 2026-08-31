@@ -15,7 +15,7 @@ deliberate property of zicato's design; the file backend preserves it.
 
 The atomic-write logic lives in :mod:`zicato.storage._atomic` and is
 reused verbatim here — there is one definition of "atomic JSON write" in
-the codebase and this backend is one of its callers, not a fork of it.
+the codebase and this backend is one of its callers rather than a fork of it.
 """
 
 from __future__ import annotations

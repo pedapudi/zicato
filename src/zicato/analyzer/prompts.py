@@ -166,10 +166,10 @@ def _render_mutation_targets(mutation_ids: Sequence[str] | None) -> str:
     """Render the enumerated mutation-target ids as a markdown bullet list.
 
     This block GROUNDS the insight: the system prompt instructs the LLM
-    to reference only ids that appear here, so it can no longer
-    hallucinate a mutation target that is not on the agent's real
-    mutation surface. When the caller passes no ids (the analyzer was
-    not handed the enumerated surface), a "none provided" marker is
+    to reference only ids that appear here, so it cannot hallucinate a
+    mutation target that is absent from the agent's real mutation surface.
+    When the caller passes no ids (the analyzer was not handed the
+    enumerated surface), a "none provided" marker is
     rendered and the system prompt's fallback rule applies — the LLM
     must describe the change in prose rather than invent an id.
     """

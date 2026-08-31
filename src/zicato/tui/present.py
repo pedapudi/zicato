@@ -121,14 +121,14 @@ def truncate(value: Any, n: int, *, fallback: str = "") -> str:
 #
 # Rendering (2) as "—" tells an operator to go look for missing data that does
 # not exist; rendering (4) as "—" hides a to-do; rendering (3) at all invents
-# a feature. A lens that cannot tell which case it is in must say so, not pick.
+# a feature. A lens that cannot tell which case it is in must say so rather than pick.
 
 #: Case 2 — the quantity is defined but not computable from this many runs.
 INSUFFICIENT = "n/a — insufficient replication"
 
 
 def unmeasured(reason: Any = None) -> str:
-    """Case 4 — the third verdict: measurable, not measured, and why.
+    """Case 4 — the third verdict: measurable rather than measured, and why.
 
     The reason IS the payload. ``unmeasured`` on its own is a shrug; the whole
     value of the third verdict is that it names what to do about it.
@@ -317,9 +317,9 @@ class Progress:
     def should_refresh(self) -> bool:
         """True when this frame is worth doing ANY work for.
 
-        An absent ``seq`` degrades to the legacy always-refresh path, because
-        a pre-RUNTIME-V2 server gives us no cursor to skip on and a stale
-        screen is worse than a wasted fetch.
+        An absent ``seq`` degrades to always refreshing: a server that
+        serves no progress cursor gives the client nothing to skip on, and a
+        stale screen costs more than a wasted fetch.
         """
         return self.advanced or self.rollover or not self.present
 
@@ -339,8 +339,8 @@ def note_progress(seq: Any, terminal: Any, last_seq: int) -> Progress:
     * **neither** (``seq`` repeated) — a no-op beat. Zero fetches, zero
       patches. This is the case the whole gate exists for.
 
-    ``present=False`` (a non-numeric / absent ``seq``) degrades to the legacy
-    always-refresh path.
+    ``present=False`` (a non-numeric or absent ``seq``) degrades to refreshing
+    on every beat.
     """
     value = num(seq)
     if value is None:

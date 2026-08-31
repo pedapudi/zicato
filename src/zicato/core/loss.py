@@ -170,15 +170,16 @@ class JudgeError:
     """Per-judge CALL-FAILURE provenance for one run.
 
     :class:`JudgeLoss` covers judges that FIRED. This covers the third
-    outcome a judge can have, which until now was persisted as the second
-    one: the judge's callable RAISED. An inline judge whose auxiliary
-    endpoint 404s (a misconfigured judge model, a revoked key, a
-    transient outage) returns an empty verdict by hard contract — a judge
-    must never crash a run — and goldfive emits no ``JudgementEmitted``
-    for an empty verdict, so a judge that raised on every invocation is
-    byte-identical, in ``loss.json`` and in ``events.jsonl``, to one that
-    ran and found nothing. The only trace was a WARNING in a log that
-    rotates.
+    outcome a judge can have: the judge's callable RAISED.
+
+    Without this record that outcome is indistinguishable from "fired and
+    found nothing". An inline judge whose auxiliary endpoint 404s — a
+    misconfigured judge model, a revoked key, a transient outage — returns
+    an empty verdict by hard contract, because a judge must never crash a
+    run. goldfive emits no ``JudgementEmitted`` for an empty verdict. So a
+    judge that raised on every invocation reads byte-identically, in both
+    ``loss.json`` and ``events.jsonl``, to one that ran and found nothing,
+    and the only other trace is a WARNING in a log that rotates.
 
     This tuple is that trace made durable: zicato's judge boundary
     (:mod:`zicato.judge_runtime.error_register`) counts invocations and
@@ -331,7 +332,7 @@ class LossProfile:
     memory_failure_count:
         Zicato-derived signal: number of times across the conversation
         the inner agent re-asked something the simulated user had
-        already answered. Computed by the reducer, not by goldfive.
+        already answered. Computed by the reducer rather than by goldfive.
     context_loss_count:
         Zicato-derived signal: number of times the inner agent appeared
         to forget a fact established earlier in the conversation.
@@ -566,7 +567,7 @@ class LossProfile:
           that judge's already-per-judge-weighted loss. This is the only
           route custom judges take into the scalar; their ``drift:custom``
           mirrors are excluded from the generic namespace aggregation
-          precisely so the two cannot double-count.
+          so the two cannot double-count.
         * ``failure:tasks`` / ``failure:not_completed`` — the run-outcome
           facts (:attr:`task_failure_ratio`, :attr:`not_completed`). Emitted
           even at zero so the key set does not depend on whether a run went

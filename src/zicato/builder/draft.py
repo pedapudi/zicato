@@ -11,7 +11,7 @@ surface, and nothing it does touches the live workspace until
 :func:`zicato.builder.operations.apply` is called with ``confirm=True``.
 
 Unlike the frozen contract dataclasses in :mod:`zicato.core.types`, a
-:class:`TournamentDraft` is deliberately MUTABLE — operations mutate it in
+:class:`TournamentDraft` is MUTABLE — operations mutate it in
 place and return a structured patch describing what changed. A
 :class:`DraftStore` keys independent drafts by ``session_id`` so two
 concurrent builder sessions never tread on each other.
@@ -414,13 +414,13 @@ class DraftStore:
     :meth:`TournamentDraft.from_workspace`, so the builder always opens
     pre-filled with what is running.
 
-    NAMED SLOTS are the fork/compare lifecycle: :meth:`fork` snapshots a
+    NAMED SLOTS are the fork/compare lifecycle. :meth:`fork` snapshots a
     session's working draft into a named slot and binds the session TO
-    that slot (subsequent edits accumulate on it); :meth:`switch` rebinds
-    the session to another slot with its state intact; named drafts are
-    how an operator iterates on contract variants WITHOUT rolling the
-    epoch — the write path is untouched (``apply`` still writes whichever
-    draft the session is on).
+    that slot, so subsequent edits accumulate on it; :meth:`switch`
+    rebinds the session to another slot with its state intact. Named
+    drafts are how an operator iterates on contract variants WITHOUT
+    rolling the epoch: the write path is untouched, and ``apply`` still
+    writes whichever draft the session is on.
 
     Slots persist exactly the way session drafts do — in this
     process-local store (drafts have never outlived the dashboard

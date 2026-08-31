@@ -23,8 +23,8 @@ different code:
   the crowning holdout confirmation a single-challenger full round still
   runs.
 * ``gauntlet_fast`` — one challenger under ``--mode fast``. The cache-first
-  slot resolution, and the one place holdout confirmation is deliberately
-  skipped (``field_n == 1 and fast_mode``).
+  slot resolution, and the one place holdout confirmation is skipped
+  (``field_n == 1 and fast_mode``).
 * ``racing_fast`` — a four-challenger field under ``--mode fast``, where
   every rung resolves both competitors through the unit cache.
 * ``two_round_racing`` — the racing field under ``--mode full`` for TWO
@@ -49,18 +49,22 @@ different code:
 The last three structures reach the unified round pipeline through
 registries that no other lane exercises end to end.
 
-It then collects the produced ``.zicato`` artifacts — every generation's
-``gen_score.json`` (the per-generation SCORE: scalar + components + the
-per-board-entry drift_loss / score / pass_fail), every ``experiment.json``
-(the hypothesis + the tournament ``outcome`` / per-match audit), any
-per-run ``loss.json``, each round's ``round_log.jsonl``, each settled
-field-tournament snapshot (which carries the round's recorded
-``promoted_generation_id`` / ``champion_generation_id`` — the head the
-dashboard serves), and the workspace ``lineage.json`` — normalizes the
-handful of wall-clock / tmp-path / date / uuid fields (see ``normalize.py``)
-and emits ONE canonical JSON document. With ``ZICATO_PARITY_UPDATE=1`` it
-writes that document to the golden; otherwise it asserts byte-identity
-against the committed golden.
+It then collects the produced ``.zicato`` artifacts:
+
+* every generation's ``gen_score.json`` — scalar, components, and the
+  per-board-entry drift_loss / score / pass_fail;
+* every ``experiment.json`` — the hypothesis, the tournament ``outcome``,
+  and the per-match audit;
+* any per-run ``loss.json``, and each round's ``round_log.jsonl``;
+* each settled field-tournament snapshot, carrying the round's recorded
+  ``promoted_generation_id`` / ``champion_generation_id``, the head the
+  dashboard serves;
+* the workspace ``lineage.json``.
+
+It normalizes the wall-clock / tmp-path / date / uuid fields (see
+``normalize.py``) and emits ONE canonical JSON document. With
+``ZICATO_PARITY_UPDATE=1`` it writes that document to the golden; otherwise
+it asserts byte-identity against the committed golden.
 
 Why this is the strongest single end-to-end gate
 -------------------------------------------------
@@ -354,7 +358,7 @@ def drive_mock_evolve(
     artifacts) and the REINDEX-DUMP gate (which rebuilds the SQLite index
     from this same on-disk workspace and dumps it). REINDEX-DUMP takes the
     default lane, so its golden is a projection of the single-round racing
-    full-mode workspace exactly as before.
+    full-mode workspace.
 
     Reuses the harness mocks + bootstrap from the example test so the
     captured behavior is identical to what the unit suite asserts.

@@ -72,7 +72,7 @@ class RunResult:
     artifacts:
         Files discovered under the worker-provided run scratch directory,
         captured before that temporary directory is removed. ``None`` only
-        for legacy callers that did not run through artifact capture.
+        for a caller that did not run through artifact capture.
     """
 
     run_id: str

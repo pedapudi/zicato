@@ -97,7 +97,7 @@ class WorkspaceLayout:
         return self.epoch_dir(epoch_id) / "brief.md"
 
     def legacy_rubric(self, epoch_id: str) -> Path:
-        """The legacy proposer-brief filename (``rubric.md``), read as fallback."""
+        """The fallback proposer-brief filename, ``rubric.md``."""
         return self.epoch_dir(epoch_id) / "rubric.md"
 
     def journal(self, epoch_id: str) -> Path:

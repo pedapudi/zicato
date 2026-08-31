@@ -1,7 +1,7 @@
 """Typed, frozen contexts for zicato's two scoring seams.
 
-zicato's scoring pipeline has two stages that have historically absorbed
-core edits whenever a new scoring *shape* was needed:
+zicato's scoring pipeline has two stages that would otherwise absorb a core
+edit whenever a new scoring *shape* is needed:
 
 * **Seam 1 — per-run drift reduction** (``telemetry/reducer.py``): turns a
   run's drift counts + plan revisions into a single ``drift_loss`` scalar.
@@ -16,11 +16,11 @@ seam. Each context carries the BUILT-IN result (``builtin_loss`` /
 ``builtin_scalar``) so a future plugin can *wrap/adjust* the default rather
 than reimplement it from scratch.
 
-PHASE 1 (this change) is a **pure refactor**: the live paths compute the
+With no transform and no plugin configured, the live paths compute the
 built-in result and return it unchanged, threaded through small dispatchers
-in :mod:`zicato.scoring.dispatch`. The contexts are the stable surface the
-later phases (declarative transforms, dotted-spec plugins) build on without
-rewriting the seams.
+in :mod:`zicato.scoring.dispatch`. The contexts are the stable surface that
+declarative transforms and dotted-spec plugins build on without rewriting
+the seams.
 
 The contexts are frozen so a plugin cannot mutate the inputs another part of
 the pipeline already read, and so they hash cleanly. They carry only plain
@@ -35,17 +35,18 @@ from dataclasses import dataclass
 
 from zicato.core import DriftCount, ScoringWeights
 
-# Provenance marker threaded out of each dispatcher. PHASE 1 only ever emits
-# ``"builtin"`` (the extracted default formula produced the value). Phase 2
-# (declarative transforms) and Phase 3 (dotted-spec plugins) enrich this —
-# e.g. ``"transform:pow"`` or ``"plugin:mypkg.contract.scoring:my_scalar"``,
-# and ``"builtin (fallback: plugin raised)"`` for the fail-open path. Kept a
+# Provenance marker threaded out of each dispatcher. An unconfigured seam
+# emits ``"builtin"`` (the default formula produced the value). A declarative
+# transform or a dotted-spec plugin enriches it — for example
+# ``"transform:pow"`` or ``"plugin:mypkg.contract.scoring:my_scalar"``, and
+# ``"builtin (fallback: plugin raised)"`` for the fail-open path. Kept a
 # bare string so it serialises into ``loss.json`` without a custom codec.
 ScoringProvenance = str
 
-#: The PHASE 1 provenance value — the extracted built-in formula produced the
-#: result, no transform/plugin involved. A single greppable constant so the
-#: dispatchers, the tests, and the later phases all agree on the token.
+#: The unconfigured-seam provenance value: the built-in formula produced the
+#: result, with no transform and no plugin involved. A single greppable
+#: constant so the dispatchers, the transforms, the plugins, and the tests
+#: all agree on the token.
 PROVENANCE_BUILTIN: ScoringProvenance = "builtin"
 
 

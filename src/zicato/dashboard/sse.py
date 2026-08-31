@@ -10,9 +10,9 @@ turns.
 (the orchestrator can touch the runtime tree many times a second) is
 debounced into a single ``state_change`` frame carrying the set of
 changed ``kind`` regions. The dashboard reacts with ONE coalesced
-``/api/environment`` fetch — this is what stops the old flashing /
-self-DoS where every file write fanned out into a fresh wave of
-per-endpoint polls.
+``/api/environment`` fetch. Without the coalescing, every file write fans
+out into a fresh wave of per-endpoint polls, which both floods the server
+and makes the view flash.
 
 The watch layer prefers the :mod:`watchdog` library when it is
 importable and falls back to a periodic poll loop otherwise. Either way
@@ -63,7 +63,7 @@ _COALESCE_WINDOW_S = 0.25
 def _progress_signal(paths: WorkspacePaths) -> tuple[int, bool]:
     """Read the orchestrator progress cursor: ``(seq, terminal)``.
 
-    RUNTIME-V2 Phase 4. ``seq`` is the TRUE liveness signal — the tail of
+    ``seq`` is the TRUE liveness signal — the tail of
     the progress event log (:mod:`zicato.runtime.progress_log`), which
     advances only on a genuine orchestrator transition, never on the
     heartbeat timer. ``terminal`` is ``True`` iff the tail event marks a
@@ -98,8 +98,8 @@ def _classify(path: Path, paths: WorkspacePaths) -> str:
         if path == paths.active_tournament or path == paths.active_tournament_log:
             return "active_tournament"
         if path == paths.progress_log:
-            # The orchestrator progress event log (RUNTIME-V2 Phase 4): a
-            # write is a genuine transition, so surface it as a distinct
+            # The orchestrator progress event log: a write to it is a
+            # genuine transition, so surface it as a distinct
             # change region carrying the advanced liveness ``seq``.
             return "progress"
         if path == paths.lineage:
@@ -245,10 +245,10 @@ class ChangeBroker:
             return
         # `kind` carries a single region for back-compat with a client
         # that reads only one; `kinds` carries the whole coalesced set.
-        # `seq` / `terminal` carry the orchestrator's TRUE liveness cursor
-        # (RUNTIME-V2 Phase 4) so a consumer can digest-gate on genuine
-        # progress and tell a SETTLED run from a STALLED one — additive,
-        # an old client that reads only `kind`/`kinds` is unaffected.
+        # `seq` / `terminal` carry the orchestrator's TRUE liveness cursor,
+        # so a consumer can digest-gate on genuine progress and tell a
+        # SETTLED run from a STALLED one. Both are additive fields: a client
+        # that reads only `kind` / `kinds` still works.
         seq, terminal = _progress_signal(self.paths)
         self._emit(
             {
@@ -373,7 +373,7 @@ async def sse_event_stream(broker: ChangeBroker, paths: WorkspacePaths) -> Async
     try:
         snapshot = build_snapshot(paths)
         # Stamp the orchestrator progress cursor on the opening snapshot
-        # frame too (RUNTIME-V2 Phase 4), so a freshly-connected client
+        # frame too, so a freshly-connected client
         # has the true liveness ``seq`` + terminal marker before any
         # ``state_change`` arrives. The heartbeat inside ``snapshot`` also
         # carries ``seq``; this top-level pair mirrors the ``state_change``

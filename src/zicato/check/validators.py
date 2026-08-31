@@ -56,7 +56,7 @@ ADVISORY_CODES: frozenset[str] = frozenset(
 )
 
 #: Seconds the adapter-import subprocess may take. Generous: the point
-#: is to catch an import that FAILS, not one that is slow.
+#: is to catch an import that FAILS rather than one that is slow.
 _IMPORT_TIMEOUT_S = 60
 
 #: Rebuilds and loads the adapter the way every tournament worker does.
@@ -367,7 +367,7 @@ def contract_integrity(ctx: CheckContext) -> Iterator[Defect]:
     worse: the round completes, the scored namespace is silently absent,
     and the loss looks like a measurement rather than a defect.
 
-    Note what is deliberately NOT checked: a ``per_judge_weights`` key
+    Note what is NOT checked: a ``per_judge_weights`` key
     naming no board judge. Those weights are not scoped to board judges.
     :mod:`zicato.scoring.builtins` resolves telemetry ``custom:<name>``
     kinds through the same mapping, so a key legitimately names an

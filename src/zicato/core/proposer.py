@@ -24,8 +24,8 @@ class ProposerSkill:
 
     The skill is part of the *evaluation contract*: a semantic edit to a
     skill body — like an edit to the proposer brief — means generations on
-    either side of the change are steered differently and are no longer
-    directly comparable, so the epoch must roll. The contract hash folds
+    either side of the change are steered differently and are not directly
+    comparable, so the epoch must roll. The contract hash folds
     the skill bodies in (see :func:`zicato.epoch.contract._canon_proposer`);
     cosmetic whitespace edits are normalized away so only semantic changes
     roll the epoch.

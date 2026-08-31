@@ -175,8 +175,8 @@ def rating_scale(rows: list[dict[str, Any]]) -> tuple[float, float] | None:
 def missing(title: str, message: str, *, hint: str | None = None) -> View:
     """The degraded view a lens returns when its payload is absent.
 
-    The DQ3 null-degrade shape: say what is missing and what makes it appear.
-    Never an empty screen, and never a fabricated zero.
+    The null-degrade shape every reader shares: say what is missing and what
+    would make it appear. Never an empty screen, and never a fabricated zero.
     """
     return View(
         title=title,

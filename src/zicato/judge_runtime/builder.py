@@ -66,7 +66,7 @@ log = logging.getLogger("zicato.judge_runtime.builder")
 # ---------------------------------------------------------------------------
 #
 # ``JudgeSpec`` is owned by ``zicato/core/types.py`` (a parallel agent
-# defines it; this module must not redefine it). We deliberately depend
+# defines it; this module must not redefine it). We depend
 # on it *structurally* rather than importing the concrete dataclass:
 #
 #   * it keeps ``zicato.judge_runtime`` importable even before the core
@@ -138,7 +138,7 @@ def _errored_verdict(exc: BaseException) -> JudgeVerdict:
     goldfive's :class:`~goldfive.judges.JudgeVerdict` has four flavours —
     drift / rubric / boolean / numeric — and an empty-default verdict means
     "the judge had nothing to say". A judge whose callable RAISED had
-    nothing to say either, which is precisely the ambiguity issue #121 is
+    nothing to say either, which is the ambiguity issue #121 is
     about: the empty verdict a failed call returns is byte-identical to the
     one a healthy judge returns when the criterion was not violated.
 
@@ -490,7 +490,7 @@ class _PythonJudgeWrapper:
     In every case the wrapper guarantees ``name == spec.name`` (so the
     :class:`JudgementEmitted` envelope keys on the operator-chosen name,
     matching the inline case) and normalises the verdict so its
-    drift-flavoured fields carry *strings*, not enums — operator code is
+    drift-flavoured fields carry *strings* rather than enums — operator code is
     free to return either, and the enum->string boundary stays inside
     :mod:`zicato.judge_runtime`.
 
@@ -541,11 +541,11 @@ class _PythonJudgeWrapper:
 
         Operator code that RAISES is caught here rather than left to
         goldfive's ``evaluate_judges``, which logs it and ``continue``s.
-        The catch is behaviourally neutral on the wire — the errored
-        verdict it returns populates no flavour, so goldfive derives no
-        ``verdict_kind`` and emits no ``JudgementEmitted``, exactly as
-        the swallowed exception did — but the failure now lands in the
-        process register, so a python judge that raised on every
+        The catch is behaviourally neutral on the wire: the errored verdict
+        it returns populates no flavour, so goldfive derives no
+        ``verdict_kind`` and emits no ``JudgementEmitted``. What it adds is
+        that the failure lands in the process register, so a python judge
+        that raised on every
         invocation is distinguishable in ``loss.json`` from one whose
         criterion was never met.
         """

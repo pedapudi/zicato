@@ -1,18 +1,19 @@
 """The Channel abstraction — one cross-process exchange shape, two flavours.
 
 zicato's separated processes (orchestrator, dashboard, Rust supervisor,
-subprocess workers) coordinate *only through the filesystem*. Today every
-exchange is a hand-rolled producer-consumer channel with its own file
-format, write discipline, and atomicity story — and every recurring
-liveness bug traces back to the same root: mutable snapshot files with
-multiple writers and ad-hoc consumers (lost-update races, torn writes,
-live-vs-settled disagreement, watchdog false-positives).
+subprocess workers) coordinate *only through the filesystem*. A mutable
+snapshot file with several writers and ad-hoc consumers is the wrong shape
+for that: it invites lost-update races, torn writes, live-versus-settled
+disagreement, and watchdog false-positives.
 
-This module is Phase 1 of ``RUNTIME-V2.md``: the *channel abstraction*
-itself, in two shapes, both built over the storage ``_atomic`` seam. It is
-**additive** — nothing is migrated onto it yet, so no existing channel or
-test is affected. The migrations (tournament log, control protocol,
-heartbeat) land in later phases on top of what is built here.
+This module supplies the *channel abstraction* those exchanges are built
+on, in two shapes, both over the storage ``_atomic`` seam. The
+tournament live state (:mod:`zicato.runtime.tournament_log`) and the
+orchestrator progress signal (:mod:`zicato.runtime.progress_log`) are
+event logs on top of it; the operator control protocol
+(:mod:`zicato.runtime.control`) is a command queue.
+
+Design notes for both shapes live in ``docs/design/RUNTIME-V2.md``.
 
 The two shapes
 --------------
@@ -264,7 +265,7 @@ class CommandQueue:
 
     FIFO is best-effort: pending records sort by their ordinal prefix, so a
     single consumer drains them oldest-first, but the queue's contract is
-    *each command claimed exactly once*, not strict global ordering across
+    *each command claimed exactly once* rather than strict global ordering across
     racing enqueuers.
     """
 

@@ -107,8 +107,8 @@ def make_runtime_config(
     # The unified ``models`` block (runtime infra, NOT part of the contract)
     # is the first source for harness / auxiliary / judge — but an explicit
     # callable kwarg still wins, and an unconfigured role falls through to
-    # the legacy ``runtime.*`` dotted paths so existing workspaces are
-    # untouched.
+    # the ``runtime.*`` dotted paths, which a workspace may configure
+    # instead.
     models = load_models_config(workspace_config)
 
     harness = harness_call_llm
@@ -139,7 +139,7 @@ def make_runtime_config(
 
     # Judges use ``models.judge`` when present; absent, ``judge_call_llm``
     # stays ``None`` and judges fall back to the auxiliary callable via
-    # ``RuntimeConfig.effective_judge_call_llm`` (today's behavior).
+    # ``RuntimeConfig.effective_judge_call_llm`` (the default behavior).
     judge: CallLLM | None = None
     if not models.judge.is_empty:
         judge = resolve_text_call_llm(models.judge, role="judge")
@@ -156,11 +156,11 @@ def make_runtime_config(
         if not models.proposer.uses_call_llm:
             proposer_model = models.proposer.model
 
-    # WS-ENS ensemble proposer roles: ``models.proposer_breadth`` steers the
+    # Ensemble proposer roles: ``models.proposer_breadth`` steers the
     # best-of-N SLATE SAMPLING and ``models.proposer_depth`` the CRITIQUE +
     # REVISE passes. Both absent (the common case) ⇒ ``None``, and the
-    # best-of-N wrapper falls back to the auxiliary callable it always used —
-    # byte-identical. No distinctness guard binds them to each other or to any
+    # best-of-N wrapper then runs every pass on the auxiliary callable.
+    # No distinctness guard binds them to each other or to any
     # other role: both are proposer-side, one trust domain (the guard is for
     # evaluator-vs-evaluated separation). Like every ``models`` role, a change
     # here is runtime infra and NEVER rolls the epoch.
@@ -188,18 +188,18 @@ def make_runtime_config(
 
     parallelism, _parallelism_source = resolve_parallelism(runtime_dict)
 
-    # Propose-phase concurrency cap (WS-CONC): the best-of-N slate gather's
-    # semaphore size — the propose-side analogue of ``parallelism``. Read from
-    # the same ``runtime`` block; absent ⇒ the dataclass default (4). A value
-    # of 1 runs the slate serially (byte-identical to the pre-concurrency
-    # behaviour). ``RuntimeConfig.__post_init__`` re-validates ``>= 1``. NOT
+    # Propose-phase concurrency cap: the best-of-N slate gather's semaphore
+    # size, the propose-side analogue of ``parallelism``. Read from the same
+    # ``runtime`` block; absent ⇒ the dataclass default (4). A value of 1
+    # runs the slate serially.
+    # ``RuntimeConfig.__post_init__`` re-validates ``>= 1``. NOT
     # part of the frozen contract — a runtime tuning knob only.
     propose_parallelism_raw = runtime_dict.get("propose_parallelism")
     propose_parallelism = int(propose_parallelism_raw) if propose_parallelism_raw is not None else 4
 
     # Host-wide worker ceiling (RUNTIME.md §5.5.7): read from the same
     # ``runtime`` block. ABSENT / null ⇒ None = AUTO (max(4, 2 x cores)), a
-    # deliberately generous cap a single ordinary run never reaches; ``0``
+    # generous cap a single ordinary run never reaches; ``0``
     # disables it entirely. Unlike ``parallelism`` this bound spans
     # orchestrators, so two concurrent evolve runs cannot over-subscribe the
     # box. A runtime tuning knob only — never contract-hashed.
@@ -215,7 +215,7 @@ def make_runtime_config(
         host_worker_permits = int(host_permits_raw) if host_permits_raw is not None else None
 
     # Worker env-scrub: opt-in containment read from the same ``runtime``
-    # block. Absent ⇒ off (full env inheritance — today's behavior, byte-for-
+    # block. Absent ⇒ off (full env inheritance — the default behavior, byte-for-
     # byte unchanged). ``worker_env_passthrough`` is an optional list of extra
     # env-var names a scrubbed worker should still receive.
     scrub_worker_env = bool(runtime_dict.get("scrub_worker_env", False))
@@ -224,15 +224,15 @@ def make_runtime_config(
 
     # Field-diversity overlap ceiling for the multi-challenger path: an
     # opt-in runtime knob read from the same ``runtime`` block. Absent /
-    # null ⇒ ``None`` (enforcement off — today's behavior, byte-for-byte
+    # null ⇒ ``None`` (enforcement off — the default behavior, byte-for-byte
     # unchanged). ``RuntimeConfig.__post_init__`` re-validates the (0, 1]
     # bound.
     tolerance_raw = runtime_dict.get("diversity_tolerance")
     diversity_tolerance = float(tolerance_raw) if tolerance_raw is not None else None
 
-    # Endpoint-outage circuit (WS-H): opt-in runtime knobs read from the same
-    # ``runtime`` block. Absent ⇒ the dataclass defaults (threshold 0 = the
-    # circuit is OFF — today's behavior, byte-for-byte unchanged).
+    # Endpoint-outage circuit: opt-in runtime knobs read from the same
+    # ``runtime`` block. Absent ⇒ the dataclass defaults (threshold 0 leaves
+    # the circuit OFF, so no round is ever deferred on infra aborts).
     # ``RuntimeConfig.__post_init__`` re-validates the >= 0 bounds.
     from zicato.core.runtime import (  # noqa: PLC0415
         INFRA_BACKOFF_BASE_S_DEFAULT,
@@ -252,8 +252,8 @@ def make_runtime_config(
         float(infra_cap_raw) if infra_cap_raw is not None else INFRA_BACKOFF_CAP_S_DEFAULT
     )
 
-    # Per-round token budget (WS-H): opt-in runtime knob from the same
-    # ``runtime`` block. Absent ⇒ 0 (OFF — byte-identical scheduling). The
+    # Per-round token budget: opt-in runtime knob from the same
+    # ``runtime`` block. Absent ⇒ 0, which leaves scheduling untouched. The
     # per-round ledger itself is NEVER read from config; the orchestrator
     # mints one per round when the knob is on.
     max_tokens_raw = runtime_dict.get("max_tokens_per_round")
@@ -299,8 +299,8 @@ def make_runtime_config(
     # object so the adapter can rebind the target's agents to it with native
     # tool/function calling intact (the config-driven alternative to a bare
     # string + the text-only shim). A dotted ``call_llm`` harness role, or an
-    # endpoint-less spec that yields a bare string, leaves ``inner_model`` None
-    # — the adapter then uses its guarded shim rebind, exactly as before.
+    # endpoint-less spec that yields a bare string, leaves ``inner_model``
+    # None, and the adapter then uses its guarded shim rebind.
     inner_model: Any = None
     if not models.harness.is_empty and models.harness.model:
         from zicato.models_config import build_adk_model  # noqa: PLC0415

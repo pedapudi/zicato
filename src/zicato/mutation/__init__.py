@@ -1,11 +1,11 @@
 """zicato.mutation — annotation-driven mutation surface for inner harnesses.
 
 The mutation package implements the operator-facing contract described in
-``project_zicato_mutation_surface``: a source tree is annotated with
-``# zicato:mutable id="..."`` marker comments; the enumerator walks those
-markers and produces a stable list of :class:`MutationPoint` instances; the
+``docs/design/MUTATION-SURFACE.md``. A source tree is annotated with
+``# zicato:mutable id="..."`` marker comments. The enumerator walks those
+markers and produces a stable list of :class:`MutationPoint` instances. The
 applier consumes :class:`Patch` instances against a fresh enumeration of a
-target snapshot; the validator confirms that a post-apply snapshot still
+target snapshot. The validator confirms that a post-apply snapshot still
 parses, still resolves every id, and still preserves required placeholders.
 
 Public API

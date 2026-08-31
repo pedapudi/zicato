@@ -25,9 +25,9 @@ The rating is the maximum-likelihood Plackett--Luce fit
   earlier BT fold;
 * a **racing rung group** — a survivor set ``S`` finished above a cut set ``C``,
   with the order within each block unobserved. This is the exact marginal
-  Plackett--Luce likelihood over the within-``S`` orderings, so a rung that
-  used to contribute nothing (its ``winner`` is ``None``; see below) now
-  contributes a real ranked observation and its cut generations become rated.
+  Plackett--Luce likelihood over the within-``S`` orderings, so a rung with
+  no single winner (its ``winner`` is ``None``; see below) still contributes
+  a real ranked observation and its cut generations are rated.
 
 The fitted strengths are mapped onto the Elo scale so a 400-point gap is the
 classic 10:1 odds::
@@ -50,7 +50,7 @@ Three properties this engine buys over the sequential margin-K Elo it replaced:
   record, or in a disconnected component of the duel graph (two clusters that
   never played each other are each anchored to the field mean by the ridge
   prior rather than diverging).
-* **Margins are deliberately ignored.** The fit uses win/loss and rank-group
+* **Margins are ignored.** The fit uses win/loss and rank-group
   outcomes only. The margin of victory (``|delta_scalar|``) is still *extracted*
   from the ledger (:class:`EloGame` carries it) but is **not** an input to the
   rating: margins ride the *gate*, which is where the scalar magnitude belongs.
@@ -96,11 +96,11 @@ a strength you can report.)
 ``elo_games`` counts the **observations a generation appeared in** — a
 two-competitor game counts for its two sides, and a rung group counts once per
 participant (every survivor and every cut arm). It is the evidence count behind
-the rating, not a literal duel tally. A racing rung's cut generation, which the
+the rating rather than a literal duel tally. A racing rung's cut generation, which the
 earlier BT fold left NULL (a set cut is not a pairwise winner), is now rated
 from the rung group it appeared in.
 
-Slice-size weighting is deliberately **unweighted** in v1: a rung run on a small
+Slice-size weighting is **unweighted** in v1: a rung run on a small
 board slice is noisier evidence than one on the full board, but every
 observation enters the likelihood with equal weight. The rating is
 visibility-only (it never gates), so under-counting a small-slice rung's noise
@@ -218,7 +218,7 @@ class RungEvent:
     ``cut`` set that was eliminated, with no single named ``winner`` — the
     order within each block is unobserved. It is one grouped Plackett--Luce
     observation (the survivors all finished above the cut arms). It carries no
-    margin (a rung ranks by scalar; the ordering, not any single delta, is the
+    margin (a rung ranks by scalar; the ordering rather than any single delta is the
     evidence).
 
     Fields
@@ -297,7 +297,7 @@ class LineageNode:
     parent_generation_id:
         The generation this one was derived from, or ``None`` for a genesis
         seed. Retained for lineage provenance; the batch fit does not seed a
-        child from its parent (a strength is measured, not inherited).
+        child from its parent (a strength is measured rather than inherited).
     created_at:
         Best-effort creation timestamp. Retained for provenance.
     """
@@ -732,7 +732,8 @@ def _read_tournament_rows(conn: sqlite3.Connection) -> list[dict[str, Any]]:
     """Read the Elo-relevant columns off every ``tournaments`` row.
 
     Tolerant of a partially-built schema: a missing column reads as
-    ``NULL`` so a legacy index still folds (it just yields fewer games).
+    ``NULL`` so an index at an earlier schema version still folds, yielding
+    fewer games.
     """
     present = {r[1] for r in conn.execute("PRAGMA table_info(tournaments)")}
     if not present:

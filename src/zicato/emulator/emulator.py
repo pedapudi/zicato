@@ -48,7 +48,7 @@ class EmulationCollusionError(RuntimeError):
 
     Raised by :meth:`EmulatedMultiTurnDriver.drive` when
     ``harness_call_llm`` and ``auxiliary_call_llm`` share identity.
-    The driver refuses to start the run; this is a hard error, not a
+    The driver refuses to start the run; this is a hard error rather than a
     warning, because shared callables risk collusion between the
     emulator and the inner harness.
     """

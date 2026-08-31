@@ -45,8 +45,8 @@ from zicato.core.workspace import events_jsonl_path
 
 log = logging.getLogger("zicato.telemetry.sink")
 
-#: INTERNAL HANDOFF CHANNEL — deliberately kept as an environment
-#: variable, and deliberately NOT an operator surface. Operators point
+#: INTERNAL HANDOFF CHANNEL — kept as an environment
+#: variable, and NOT an operator surface. Operators point
 #: zicato at an external harmonograf with ``zicato evolve
 #: --harmonograf-url`` (or the workspace ``config.json``'s
 #: ``harmonograf_url`` key); this variable exists so the evolve loop's
@@ -64,9 +64,9 @@ HARMONOGRAF_URL_ENV = "ZICATO_HARMONOGRAF_URL"
 #: server binds two distinct ports — a browser-facing gRPC-Web port (the
 #: one in ``ZICATO_HARMONOGRAF_URL``, used for dashboard deep-links) and a
 #: native gRPC port the per-run sink must dial. Deriving the gRPC target
-#: from the web URL (the old behaviour) would dial the *web* port over
-#: native gRPC, fail the handshake, and — because all sink errors are
-#: swallowed — silently drop telemetry. The orchestrator's auto-launch
+#: from the web URL would dial the *web* port over native gRPC, fail the
+#: handshake, and — because all sink errors are swallowed — silently drop
+#: telemetry. The orchestrator's auto-launch
 #: wiring sets this to ``host:grpc_port`` so the sink dials the right
 #: port. Unset for an EXTERNAL harmonograf, where the web URL *is* the
 #: dial target (a single port) and the scheme-stripping fallback applies.
@@ -101,9 +101,9 @@ def archive_prior_events(path: Path) -> None:
     """Retain the events file a ``mode="write"`` sink is about to truncate.
 
     A replicate's events file is keyed by ``(epoch, generation, entry,
-    replicate)`` with no round dimension, so a re-measured unit — the
-    champion under ``--mode full``, which is re-run every round — used to
-    have its raw telemetry truncated by the next round's sink.
+    replicate)`` with no round dimension, so the next round's sink would
+    otherwise truncate the raw telemetry of a re-measured unit — the
+    champion under ``--mode full``, which is re-run every round.
     ``loss.json`` can in principle be re-derived from the events; once they
     are gone the measurement is unreconstructable by any means (issue #122).
 
@@ -195,16 +195,13 @@ def resolve_harmonograf_url(
 
     Returns the empty string when no source supplies a URL.
 
-    Empty-string semantics changed in #202: before, the orchestrator
-    treated an empty URL as "JSONL-only telemetry" and shipped no live
-    console; now the evolve loop's
-    :func:`zicato.evolve.lifecycle_services._resolve_or_launch_harmonograf` auto-
-    launches an in-process server in that case and writes the resulting
-    URL back into ``ZICATO_HARMONOGRAF_URL`` so subsequent callers of
-    this function (the tournament runner, the per-board worker) re-
-    resolve to the auto-launched URL via the handoff path above. This
-    function itself does NOT trigger a launch — it remains a pure
-    resolver.
+    An empty result does not mean "JSONL-only telemetry". The evolve loop's
+    :func:`zicato.evolve.lifecycle_services._resolve_or_launch_harmonograf`
+    auto-launches an in-process server in that case and writes the resulting
+    URL back into ``ZICATO_HARMONOGRAF_URL``, so a later caller of this
+    function (the tournament runner, the per-board worker) re-resolves to the
+    auto-launched URL through the handoff path above. This function itself
+    does NOT trigger a launch; it is a pure resolver.
 
     Parameters
     ----------
@@ -221,9 +218,9 @@ def resolve_harmonograf_url(
     if configured:
         return configured
     # The INTERNAL auto-launch handoff (see HARMONOGRAF_URL_ENV): read
-    # deliberately from the process environment, not from load_config()
+    # from the process environment rather than from load_config()
     # — this is a broadcast channel between the evolve loop and its
-    # downstream consumers (including worker subprocesses), not part of
+    # downstream consumers (including worker subprocesses) rather than part of
     # the operator-facing configuration surface.
     handoff = os.environ.get(HARMONOGRAF_URL_ENV, "").strip()
     if handoff:
@@ -290,7 +287,7 @@ def _make_harmonograf_sink(
     """Build a goldfive-compatible harmonograf sink for ``url``.
 
     The concrete sink ships in harmonograf's client library
-    (``harmonograf_client.HarmonografSink``), not in goldfive itself, so
+    (``harmonograf_client.HarmonografSink``) rather than in goldfive itself, so
     the import is deferred and tolerant: if ``harmonograf_client`` is not
     installed (or its API has shifted) we log a warning and return
     ``None`` so the caller can proceed with JSONL-only telemetry. The
