@@ -203,9 +203,9 @@ class Entry:
     """
 
     # ``__new__`` returns a ``BoardEntry`` (not an ``Entry``) on purpose —
-    # ``Entry`` is a pure factory facade. mypy 1.20+ rejects the prose
-    # that previously followed the ignore code, so the explanation is a
-    # plain comment now and the suppression code stands alone.
+    # ``Entry`` is a pure factory facade. mypy rejects prose appended to an
+    # ignore code, so the explanation stays in this comment and the
+    # suppression code below stands alone.
     def __new__(  # type: ignore[misc]
         cls,
         *,
@@ -293,7 +293,7 @@ class Board:
     """A mutable container for a list of :class:`~zicato.core.BoardEntry` rows.
 
     The dataclass is intentionally bare — ``Board`` is convenience over
-    the existing JSONL machinery, not a new abstraction. Operators
+    the existing JSONL machinery rather than a new abstraction. Operators
     build entries with :class:`Entry`, append them with :meth:`add`,
     and persist with :meth:`save`; :classmethod:`load` reads a JSONL
     file back into a fresh container.
@@ -314,7 +314,7 @@ class Board:
         still JUDGES the wrapped agent (drift / process judges stay
         armed) but does ZERO steering — no goal-derivation LLM call, no
         planner replanning, no drift-triggered refine. ``False`` by
-        default (steering on, byte-identical to today). Persisted in the
+        default (steering on, byte-identical to the default path). Persisted in the
         same ``board_meta`` header as :attr:`disable_drift`; a board that
         is fully default (no ``disable_drift`` and ``judge_only`` False)
         writes no header line at all.

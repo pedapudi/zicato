@@ -147,7 +147,7 @@ def _make_state_endpoints(
         return JSONResponse(query.build_environment(paths, run_log_limit=limit))
 
     async def api_workspace(_request: Request) -> JSONResponse:
-        """L0 (workspace-level) cross-epoch summary for the new shell."""
+        """Workspace-level cross-epoch summary."""
         return JSONResponse(query.build_workspace_view(paths))
 
     async def api_health_report(_request: Request) -> JSONResponse:
@@ -223,7 +223,7 @@ def _make_epoch_endpoints(paths: WorkspacePaths) -> dict[str, Any]:
             return JSONResponse({"error": "unknown epoch"}, status_code=404)
 
     async def api_per_judge_trend(request: Request) -> JSONResponse:
-        """Per-judge × generation matrix for an epoch (L1 heatmap)."""
+        """Per-judge × generation matrix for one epoch (the epoch-level heatmap)."""
         epoch_id = request.path_params["epoch_id"]
         if not _is_safe_id(epoch_id):
             return JSONResponse(
@@ -297,10 +297,10 @@ def _make_epoch_endpoints(paths: WorkspacePaths) -> dict[str, Any]:
     async def api_epoch_round_timeline(request: Request) -> JSONResponse:
         """The epoch's settled round timeline + loss-floor waterfall.
 
-        ``GET /api/epoch/{epoch_id}/round-timeline``. The four-endpoint join
-        the frontend used to perform (epoch + lineage + trajectory +
-        tournaments -> rounds along the champion spine) is served here; the
-        client only overlays its LIVE in-flight round. A malformed id degrades
+        ``GET /api/epoch/{epoch_id}/round-timeline``. The server owns the
+        four-way join (epoch + lineage + trajectory + tournaments → rounds
+        along the champion spine); the client only overlays its LIVE
+        in-flight round. A malformed id degrades
         to the empty timeline shape (HTTP 200).
         """
         epoch_id = request.path_params["epoch_id"]
@@ -356,7 +356,7 @@ def _make_epoch_endpoints(paths: WorkspacePaths) -> dict[str, Any]:
         return JSONResponse(query.build_experiments_ledger(paths, epoch_id))
 
     async def api_contract_diff(request: Request) -> JSONResponse:
-        """L1 (epoch-level) contract diff vs predecessor epoch."""
+        """Epoch-level contract diff against the predecessor epoch."""
         epoch_id = request.path_params["epoch_id"]
         if not _is_safe_id(epoch_id):
             return JSONResponse(
@@ -461,11 +461,11 @@ def _make_epoch_endpoints(paths: WorkspacePaths) -> dict[str, Any]:
         """
         epoch_id = request.path_params["epoch_id"]
         if not _is_safe_id(epoch_id):
-            # Single-source the degrade shape from the reader (N1) so the endpoint
+            # Take the degrade shape from the reader itself, so the endpoint
             # and the reader can never drift apart.
             return JSONResponse(query._empty_matrix(epoch_id), status_code=200)
         # The reader does blocking file I/O (the matchup grids + replicate files),
-        # so it runs OFF the event loop (the build_log_view precedent, F5).
+        # so it runs OFF the event loop, as ``build_log_view`` does.
         view = await run_in_threadpool(query.build_eval_matrix, paths, epoch_id)
         return JSONResponse(view)
 
@@ -495,7 +495,7 @@ def _make_epoch_endpoints(paths: WorkspacePaths) -> dict[str, Any]:
         return JSONResponse(view)
 
     async def api_epoch_judge_roster(request: Request) -> JSONResponse:
-        """What is armed to judge a run on one epoch's board (#194 §5).
+        """What is armed to judge a run on one epoch's board (issue #194 §5).
 
         ``GET /api/epoch/{epoch_id}/judge-roster``. A malformed id degrades to
         the empty roster shape (HTTP 200), matching every other coordinate
@@ -538,7 +538,7 @@ def _make_judge_run_endpoints(paths: WorkspacePaths) -> dict[str, Any]:
     """Per-judge / per-entry / per-run drill-down surface."""
 
     async def api_per_judge_for_generation(request: Request) -> JSONResponse:
-        """Per-judge breakdown for one generation (L2)."""
+        """Per-judge breakdown for one generation."""
         epoch_id = request.path_params["epoch_id"]
         generation_id = request.path_params["generation_id"]
         if not _is_safe_id(epoch_id) or not _is_safe_id(generation_id):
@@ -549,7 +549,7 @@ def _make_judge_run_endpoints(paths: WorkspacePaths) -> dict[str, Any]:
         return JSONResponse(query.build_per_judge_for_generation(paths, epoch_id, generation_id))
 
     async def api_per_entry_for_generation(request: Request) -> JSONResponse:
-        """Per-entry breakdown for one generation, via tournament_id FK (L2)."""
+        """Per-entry breakdown for one generation, via the tournament_id key."""
         epoch_id = request.path_params["epoch_id"]
         generation_id = request.path_params["generation_id"]
         if not _is_safe_id(epoch_id) or not _is_safe_id(generation_id):
@@ -565,7 +565,7 @@ def _make_judge_run_endpoints(paths: WorkspacePaths) -> dict[str, Any]:
         return JSONResponse(query.build_per_entry_for_generation(paths, epoch_id, generation_id))
 
     async def api_per_judge_comparison(request: Request) -> JSONResponse:
-        """Per-judge Δ between champion and challenger (L3)."""
+        """Per-judge Δ between champion and challenger, for one decision."""
         epoch_id = request.path_params["epoch_id"]
         champion_id = request.path_params["champion_id"]
         challenger_id = request.path_params["challenger_id"]
@@ -589,7 +589,7 @@ def _make_judge_run_endpoints(paths: WorkspacePaths) -> dict[str, Any]:
         )
 
     async def api_per_judge_for_run(request: Request) -> JSONResponse:
-        """Per-judge breakdown for one run (L4)."""
+        """Per-judge breakdown for one run."""
         run_id = request.path_params["run_id"]
         if not _is_safe_id(run_id):
             return JSONResponse({"run_id": run_id, "judges": []}, status_code=200)
@@ -598,11 +598,11 @@ def _make_judge_run_endpoints(paths: WorkspacePaths) -> dict[str, Any]:
     async def api_per_judge_for_run_by_entry(request: Request) -> JSONResponse:
         """Per-judge breakdown for one run, addressed by (epoch, gen, entry).
 
-        The L4 dashboard view routes by board-entry id; the index keys
-        every per-judge row by run id. Resolution and same-shaped
+        The run-level dashboard view routes by board-entry id; the index
+        keys every per-judge row by run id. Resolution and same-shaped
         degradation live in :func:`build_per_judge_for_entry`, which
         answers for the entry's canonical replicate-0 slot. Selecting a
-        sibling replicate is a query-layer keyword with no UI caller yet.
+        sibling replicate is a query-layer keyword that no view calls.
         """
         epoch_id = request.path_params["epoch_id"]
         generation_id = request.path_params["generation_id"]
@@ -614,7 +614,7 @@ def _make_judge_run_endpoints(paths: WorkspacePaths) -> dict[str, Any]:
         )
 
     async def api_run_expectations(request: Request) -> JSONResponse:
-        """Expectation outcomes for one run (L4)."""
+        """Expectation outcomes for one run."""
         epoch_id = request.path_params["epoch_id"]
         generation_id = request.path_params["generation_id"]
         entry_id = request.path_params["entry_id"]
@@ -633,7 +633,7 @@ def _make_judge_run_endpoints(paths: WorkspacePaths) -> dict[str, Any]:
         )
 
     async def api_run_header(request: Request) -> JSONResponse:
-        """Header metrics (runtime/tokens/turns/...) for one run (L4)."""
+        """Header metrics (runtime/tokens/turns/...) for one run."""
         epoch_id = request.path_params["epoch_id"]
         generation_id = request.path_params["generation_id"]
         entry_id = request.path_params["entry_id"]
@@ -762,10 +762,11 @@ def _is_safe_run_ref(value: str) -> bool:
 def _make_reflection_endpoints(paths: WorkspacePaths) -> dict[str, Any]:
     """Instrument-lens surface — reflection bill-of-health / scorecards / x-ray.
 
-    Self-contained thin delegates over :mod:`zicato.query.reflection_view`
-    (index-first, file-fallback, DQ3 same-shape degrade). Kept in one factory
-    + its own routes block so the concurrent endpoints.py thinning (track U2)
-    merges additively.
+    Self-contained thin delegates over :mod:`zicato.query.reflection_view`:
+    index first, files as the fallback, and a missing input degrading to the
+    same-shaped empty payload rather than raising. Kept in one factory with
+    its own routes block, so this surface can be extended without touching
+    the rest of the module.
     """
 
     async def api_reflections(request: Request) -> JSONResponse:
@@ -931,9 +932,9 @@ def _make_tournament_endpoints(paths: WorkspacePaths) -> dict[str, Any]:
         """Full bracket / standings / racing state for one tournament.
 
         ``GET /api/tournament-structure/{epoch_id}/{tournament_id}``. The
-        single read Variant T uses to render the actual configured
-        structure. A malformed coordinate degrades to an empty gauntlet
-        structure (HTTP 200), matching every other coordinate handler.
+        single read the console uses to render the configured structure. A
+        malformed coordinate degrades to an empty gauntlet structure
+        (HTTP 200), matching every other coordinate handler.
         """
         epoch_id = request.path_params["epoch_id"]
         tournament_id = request.path_params["tournament_id"]
@@ -994,7 +995,7 @@ def _make_tournament_endpoints(paths: WorkspacePaths) -> dict[str, Any]:
         return JSONResponse(query.build_matchup_grid(paths, epoch_id, champion_id, challenger_id))
 
     async def api_gate(request: Request) -> JSONResponse:
-        """Structured promote-gate breakdown for one round (L3 decision view).
+        """Structured promote-gate breakdown for one round, for the decision view.
 
         ``GET /api/round/{epoch_id}/{champion}/{challenger}/gate``. Decomposes
         the authoritative ``evaluate_gate`` verdict into its ordered rules with
@@ -1211,7 +1212,8 @@ def _make_conversation_endpoints(paths: WorkspacePaths) -> dict[str, Any]:
     async def api_run_transcript(request: Request) -> Response:
         """Reconstruct the transcript for one ``(epoch, gen, entry)`` run.
 
-        Powers the L4 conversation diff; resolution + coordinate-stamping
+        Powers the run-level conversation diff; resolution and
+        coordinate-stamping
         semantics live on the reader
         (:func:`zicato.query.build_run_transcript`). Always answers 200 —
         an invalid coordinate, an absent run, or a failed reconstruction
@@ -1331,7 +1333,7 @@ def _make_control_endpoints(paths: WorkspacePaths, *, read_only: bool) -> dict[s
         records exactly the keys the operator supplied so the readback can
         reconstruct WHICH field round, structure, and tournament the override
         targeted. A non-JSON / non-object body yields an empty dict, so a
-        legacy reason-only POST still works.
+        POST carrying only a reason still works.
         """
         try:
             body = await request.body()
@@ -1456,7 +1458,7 @@ def _make_control_endpoints(paths: WorkspacePaths, *, read_only: bool) -> dict[s
         body = await request.body()
         # The on-disk control file keeps its protocol name
         # (``rubric_replacement.txt``); it is part of the runtime
-        # control contract the orchestrator consumes, not a UI label.
+        # control contract the orchestrator consumes rather than a UI label.
         path = _control_path("rubric_replacement.txt")
         _atomic_write(path, body)
         return JSONResponse(

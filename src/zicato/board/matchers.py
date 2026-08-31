@@ -80,7 +80,7 @@ def _predicate_outcome_to_result(spec: str, outcome: object) -> ExpectationResul
       ``[0.0, 1.0]`` and recorded as :attr:`ExpectationResult.score`;
       ``passed`` is a display-only derivation (``score > 0.0`` — i.e. the
       entry earned any credit), since the scalar and gate now run on the
-      continuous score, not on this bit.
+      continuous score rather than on this bit.
     * ``(score, metrics)`` — a 2-tuple of ``(float, Mapping[str, float])``.
       The float is the score (clamped as above); the mapping is recorded
       verbatim as :attr:`ExpectationResult.metrics` (e.g.

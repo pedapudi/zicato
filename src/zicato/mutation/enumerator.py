@@ -57,7 +57,7 @@ Two of the three marker forms carry over; one does not:
   names the file, the line, the id, and the ``:code`` form to use
   instead.
 
-Discovery is the **declared suffix table**, not a content sniff. The
+Discovery is the **declared suffix table** rather than a content sniff. The
 enumerator re-runs on every applied patch, so the walk has to stay cheap;
 a suffix decides without opening the file, and it cannot wander into a
 binary at all. The cost is that an operator with an unusual extension
@@ -120,7 +120,7 @@ TEXT_SCAN_SKIP_DIRS: frozenset[str] = frozenset(
 )
 
 #: Text files larger than this are skipped by the text pass. A multi-
-#: megabyte ``.jsonl`` dataset in a mutable tree is data, not surface, and
+#: megabyte ``.jsonl`` dataset in a mutable tree is data rather than surface, and
 #: reading it on every re-enumeration would dominate the apply loop.
 MAX_TEXT_FILE_BYTES = 2_000_000
 
@@ -215,7 +215,7 @@ def _python_context(
     The Python *specialization* of the walk, and the only part of
     enumeration that needs a parser. ``literal_lines`` are the lines
     covered by a string literal — a marker written there is a docstring
-    example, not a declaration. ``span_resolver`` binds a span marker to
+    example rather than a declaration. ``span_resolver`` binds a span marker to
     the nearest literal beneath it.
 
     Returns ``None`` when the file does not parse, which drops it from
@@ -257,7 +257,7 @@ def _enumerate_file(
 
     try:
         if not syntax.is_python and file_path.stat().st_size > MAX_TEXT_FILE_BYTES:
-            # A multi-megabyte file in a mutable tree is data, not surface,
+            # A multi-megabyte file in a mutable tree is data rather than surface,
             # and enumeration re-runs after every applied patch.
             _log.debug("enumerator: skipping %s (over %d bytes)", file_path, MAX_TEXT_FILE_BYTES)
             return []
@@ -280,7 +280,7 @@ def _enumerate_file(
 
     lines = text.splitlines(keepends=True)
 
-    # Operator-grading guard (issue #19 phase 3): a file declaring itself
+    # Operator-grading guard (issue #19): a file declaring itself
     # operator-owned grading — predicates, judges, or the scoring
     # ``scalar_fn`` / ``drift_reducer`` plugins — via a ``zicato:grading``
     # sentinel is skipped WHOLESALE, contributing ZERO points even if it

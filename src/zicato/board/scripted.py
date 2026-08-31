@@ -14,7 +14,7 @@ the emulated ones. The user side is rigidly fixed — turn ``i`` is sent
 verbatim regardless of what the agent said — so the same agent
 generation produces the same transcript every run, modulo agent
 nondeterminism. That is the whole point: scripted entries are
-regression tests for multi-turn behaviour, not exploration of the
+regression tests for multi-turn behaviour rather than exploration of the
 agent's response space.
 
 Termination
@@ -26,7 +26,7 @@ The driver stops when any of the following is true:
 * :attr:`BoardEntry.max_turns` has been reached.
 * The conversation's accumulated wall-clock time exceeds
   :attr:`BoardEntry.wall_clock_budget_seconds`. The budget covers the
-  **whole** conversation, not each turn, so a slow first turn directly
+  **whole** conversation rather than each turn, so a slow first turn directly
   shrinks the budget the rest of the conversation has to fit in.
 
 When the budget is exceeded mid-conversation, the driver returns a
@@ -66,10 +66,9 @@ class ScriptedMultiTurnDriver:
     """Drive a scripted multi-turn entry against an inner harness.
 
     The driver is intentionally tiny — it owns turn iteration, budget
-    accounting, and transcript accumulation. Concerns it deliberately
-    does NOT own: applying patches, persisting events, computing
-    drift loss. Those happen one layer up (the runner) and one layer
-    down (the harness adapter).
+    accounting, and transcript accumulation. Concerns it does NOT own:
+    applying patches, persisting events, computing drift loss. Those happen
+    one layer up (the runner) and one layer down (the harness adapter).
 
     The driver carries no state between :meth:`drive` calls; an
     instance can be reused across entries within one runner pass.

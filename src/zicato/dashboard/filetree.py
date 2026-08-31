@@ -9,12 +9,12 @@ workspace it browses the ``generations/vN/snapshot/`` trees; for a
 git-backed workspace it browses git commits / trees. The dashboard
 endpoint layer never sees that difference.
 
-Why through the store, not raw paths
+Why through the store rather than raw paths
 -------------------------------------
 ``docs/design/STORAGE.md`` §4-§5 makes the generation source tree a
 pluggable store. Hard-coding ``epochs/{id}/generations/`` here would
 silently break the moment a workspace flips to the git backend, where
-generations live as commits, not directories. Routing every read
+generations live as commits rather than directories. Routing every read
 through :func:`zicato.epoch.genstore.default_generation_store` keeps the
 dashboard backend-agnostic by construction.
 
@@ -67,7 +67,7 @@ from zicato.storage import default_backend
 
 #: Files larger than this are not inlined into the content response —
 #: the browser gets a truncation marker instead. The dashboard is a
-#: source viewer, not a binary inspector; generation source files are
+#: source viewer rather than a binary inspector; generation source files are
 #: KB-sized, so this only ever trips on an accidental large artifact.
 _MAX_INLINE_BYTES = 512 * 1024
 
@@ -89,8 +89,9 @@ def _resolve_store(paths: WorkspacePaths) -> tuple[GenerationStore | None, str]:
     contradicts, leaves the workspace with no store at all. Every view
     below already answers for a generation whose tree it cannot walk, so
     that failure degrades onto the same path and reports the reason
-    instead of raising — the dashboard is read-only and must not 500 on a
-    workspace it was merely pointed at (DQ3).
+    instead of raising. The dashboard is read-only and must not answer 500
+    for a workspace it was merely pointed at; every reader here degrades to
+    an empty-or-``None`` shape.
     """
     try:
         return default_generation_store(paths.root), ""

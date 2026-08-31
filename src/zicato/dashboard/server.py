@@ -85,8 +85,8 @@ def _resolve_workspace(workspace_root: Path, *, harmonograf_url: str = "") -> Wo
 def _ensure_index_at_startup(paths: WorkspacePaths) -> None:
     """Build an absent / wrong-schema index once, at server start.
 
-    The read-path half of the self-healing index (M3(b);
-    ``docs/design/ANALYTICAL-INDEX.md`` §5.3). Deliberately narrow:
+    The read-path half of the self-healing index
+    (``docs/design/ANALYTICAL-INDEX.md`` §5.3). Narrow by design:
 
     * **``ensure_index`` only, never ``heal_index``.** Healing writes. A
       reader healing while an orchestrator dual-writes is exactly the
@@ -111,7 +111,7 @@ def _ensure_index_at_startup(paths: WorkspacePaths) -> None:
       valid-but-empty ``index.db`` that flips every reader's degrade
       branch.
 
-    There is deliberately NO schema-version pre-check in front of
+    There is NO schema-version pre-check in front of
     ``ensure_index``. An earlier shape asked ``index_schema_version(...) ==
     SCHEMA_VERSION`` first and returned when it matched — cheap, but it
     decided the question ``ensure_index`` exists to decide, and it decided it
@@ -119,7 +119,7 @@ def _ensure_index_at_startup(paths: WorkspacePaths) -> None:
     RAISES, the blanket guard below swallows it at ``debug``, and the
     dashboard never repairs it. ``_rebuild_reason`` classifies that same file
     as ``unreadable`` and rebuilds. So the ``built:unreadable`` outcome §5.1
-    documents was unreachable from this path precisely because the pre-check
+    documents was unreachable from this path because the pre-check
     ran first. ``ensure_index`` returns without writing when the index is
     current, which is all the pre-check bought.
 
@@ -560,7 +560,7 @@ def _pick_port(host: str, preferred_port: int, max_retries: int = 10) -> int:
     """Return the first free port in ``preferred..preferred+max_retries``.
 
     A port already in use is skipped and the next is tried. The probe
-    socket deliberately does NOT set ``SO_REUSEADDR`` so a
+    socket does NOT set ``SO_REUSEADDR`` so a
     genuinely-bound port is detected as occupied rather than silently
     re-bound.
     """
@@ -714,7 +714,7 @@ def run(
     # Print the DEFINITIVE dashboard URL now that the real bound port is
     # known — ``_pick_port`` may have walked +1 off the requested port (a
     # TIME_WAIT bounce), so the requested port can be wrong. The command
-    # modules deliberately do NOT pre-print this URL.
+    # modules do NOT pre-print this URL.
     import click  # noqa: PLC0415
 
     click.echo(f"Dashboard: http://{host}:{bound_port}")

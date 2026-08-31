@@ -92,7 +92,7 @@ _CODE_SEP = ": "
 def classify_post_apply_error(message: str) -> str | None:
     """Return the post-apply check code ``message`` came from, or ``None``.
 
-    ``None`` is the HONEST unknown, not a bucket: a string that carries no
+    ``None`` is the HONEST unknown rather than a bucket: a string that carries no
     recognised prefix is either an error from some other producer (a
     proposer parse failure, a credential lapse a best-of-N slot recorded)
     or a validator error from a log written before the codes existed. A
@@ -114,7 +114,7 @@ def duplicate_mutation_ids(points: Sequence[MutationPoint]) -> dict[str, list[st
     silently resolves to whichever point came last, and the applier edits
     an arbitrary one of the colliding spans.
 
-    Shared by two callers with deliberately different scopes.
+    Shared by two callers with different scopes.
     :func:`validate_patches` intersects this with the ids a batch
     actually targets — its job is to reject one batch, and an unrelated
     duplicate elsewhere in the tree must not block a clean one. The
