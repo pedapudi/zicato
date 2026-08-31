@@ -46,15 +46,6 @@ def workspace(tmp_path: Path) -> Path:
 
 
 @pytest.fixture()
-def board_file(tmp_path: Path) -> Path:
-    p = tmp_path / "board.jsonl"
-    p.write_text(
-        '{"id": "e1", "kind": "single_turn", "wall_clock_budget_seconds": 60, "input": "hi"}\n'
-    )
-    return p
-
-
-@pytest.fixture()
 def rubric_file(tmp_path: Path) -> Path:
     p = tmp_path / "rubric.md"
     p.write_text("# Rubric\n")

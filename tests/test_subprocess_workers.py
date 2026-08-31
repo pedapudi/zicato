@@ -39,6 +39,7 @@ from pathlib import Path
 import pytest
 
 import zicato.tournament.runner as runner_mod
+from tests._runtime_builders import make_generation
 from tests._subprocess_worker_support import (
     EmittingThenSleepingAdapter,
     SleepingAdapter,
@@ -104,18 +105,6 @@ def _entry(entry_id: str = "entry_a", budget_s: int = 60) -> BoardEntry:
     )
 
 
-def _generation(workspace: Path, gen_id: str = "v0") -> Generation:
-    snap = workspace / "snap" / gen_id
-    snap.mkdir(parents=True, exist_ok=True)
-    return Generation(
-        id=gen_id,
-        epoch_id="e0",
-        parent_id=None,
-        snapshot_root=snap,
-        created_at="2026-05-15T00:00:00Z",
-    )
-
-
 def _config(workspace: Path, *, supervisor_kill_wait_s: float = 20.0) -> RuntimeConfig:
     # The two callables are real, importable, module-level objects so the
     # worker subprocess can re-resolve them from a dotted path.
@@ -150,7 +139,7 @@ def _worker_env() -> dict[str, str]:
 def test_two_replicates_of_one_unit_hold_distinct_active_runs(tmp_path: Path) -> None:
     workspace = tmp_path / ".zicato"
     workspace.mkdir()
-    generation = _generation(workspace)
+    generation = make_generation(workspace)
     entry = _entry(budget_s=5)
     entries = [_stamp_replicate_index([entry], replicate)[0] for replicate in (0, 1)]
     active_dir = workspace / "runtime" / "active_runs"
@@ -240,7 +229,7 @@ def test_worker_runs_entry_end_to_end(tmp_path: Path) -> None:
     entry, writes loss.json + result file, exits 0, and cleans up active_runs."""
     workspace = tmp_path / ".zicato"
     workspace.mkdir()
-    generation = _generation(workspace)
+    generation = make_generation(workspace)
     entry = _entry()
 
     args_path = tmp_path / "args.json"
@@ -278,7 +267,7 @@ def test_worker_runs_entry_end_to_end(tmp_path: Path) -> None:
 def test_worker_captures_unknown_files_before_grading(tmp_path: Path) -> None:
     workspace = tmp_path / ".zicato"
     workspace.mkdir()
-    generation = _generation(workspace)
+    generation = make_generation(workspace)
     entry = _entry()
     args_path = tmp_path / "args.json"
     result_path = tmp_path / "result.json"
@@ -331,7 +320,7 @@ def test_worker_penalises_aborted_run_in_loss_json(tmp_path: Path) -> None:
 
     workspace = tmp_path / ".zicato"
     workspace.mkdir()
-    generation = _generation(workspace)
+    generation = make_generation(workspace)
     entry = _entry()
 
     args_path = tmp_path / "args.json"
@@ -623,7 +612,7 @@ def test_worker_stamps_its_own_pid_into_active_runs(tmp_path: Path) -> None:
     """
     workspace = tmp_path / ".zicato"
     workspace.mkdir()
-    generation = _generation(workspace)
+    generation = make_generation(workspace)
     entry = _entry(budget_s=3600)
 
     args_path = tmp_path / "args.json"
@@ -685,7 +674,7 @@ def test_run_single_spawns_worker_in_new_session(
     """
     workspace = tmp_path / ".zicato"
     workspace.mkdir()
-    generation = _generation(workspace)
+    generation = make_generation(workspace)
     entry = _entry()
 
     captured: dict[str, object] = {}
@@ -730,7 +719,7 @@ def test_run_single_scrubs_worker_env_when_opted_in(
     """
     workspace = tmp_path / ".zicato"
     workspace.mkdir()
-    generation = _generation(workspace)
+    generation = make_generation(workspace)
     entry = _entry()
 
     # A stray secret in the orchestrator's env that no model role references.
@@ -798,7 +787,7 @@ def test_parent_kills_worker_that_blocks_past_budget_plus_grace(
     """
     workspace = tmp_path / ".zicato"
     workspace.mkdir()
-    generation = _generation(workspace)
+    generation = make_generation(workspace)
     # Tiny budget; the SleepingAdapter wedges the worker's event loop with
     # a blocking sleep so its OWN cooperative budget cannot fire.
     entry = _entry(budget_s=1)
@@ -867,7 +856,7 @@ def test_tournament_continues_after_a_budget_killed_run(
     """
     workspace = tmp_path / ".zicato"
     workspace.mkdir()
-    generation = _generation(workspace)
+    generation = make_generation(workspace)
 
     monkeypatch.setattr(runner_mod, "_PARENT_BUDGET_GRACE_S", 0.3)
     monkeypatch.setattr(runner_mod, "_SIGTERM_TO_SIGKILL_GRACE_S", 0.3)
@@ -910,7 +899,7 @@ def test_parent_delegates_kill_to_supervisor_via_request_marker(
     """
     workspace = tmp_path / ".zicato"
     workspace.mkdir()
-    generation = _generation(workspace)
+    generation = make_generation(workspace)
     entry = _entry(budget_s=1)
     run_id = f"{generation.id}--{entry.id}"
 
@@ -1007,7 +996,7 @@ def test_run_single_handles_externally_killed_worker(
     file; _run_single records an aborted run with no exception."""
     workspace = tmp_path / ".zicato"
     workspace.mkdir()
-    generation = _generation(workspace)
+    generation = make_generation(workspace)
     entry = _entry(budget_s=3600)  # long budget so neither side's timeout fires
 
     run_id = f"{generation.id}--{entry.id}"
@@ -1074,7 +1063,7 @@ def test_parent_escalates_to_sigkill_when_worker_ignores_sigterm(
     still returns an aborted LossProfile."""
     workspace = tmp_path / ".zicato"
     workspace.mkdir()
-    generation = _generation(workspace)
+    generation = make_generation(workspace)
     entry = _entry(budget_s=1)
 
     monkeypatch.setattr(runner_mod, "_PARENT_BUDGET_GRACE_S", 0.3)
@@ -1123,7 +1112,7 @@ def test_worker_cooperative_budget_produces_clean_aborted_result(
     budget-exceeded LossProfile rather than treating it as a kill."""
     workspace = tmp_path / ".zicato"
     workspace.mkdir()
-    generation = _generation(workspace)
+    generation = make_generation(workspace)
     # 1s budget; the cooperative-budget adapter sleeps via asyncio.sleep
     # (cancellable), so the worker's own wait_for cancels it cleanly.
     entry = _entry(budget_s=1)

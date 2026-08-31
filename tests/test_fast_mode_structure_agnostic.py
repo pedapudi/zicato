@@ -28,11 +28,11 @@ from pathlib import Path
 import pytest
 
 import zicato.tournament.runner as runner_mod
+from tests._runtime_builders import runtime_config
 from zicato.core import (
     BoardEntry,
     Generation,
     LossProfile,
-    RuntimeConfig,
     ScoringWeights,
 )
 from zicato.core.types import DriftCount, ExpectationResult
@@ -71,21 +71,6 @@ def _board() -> list[BoardEntry]:
         BoardEntry(id="entry_b", kind="single_turn", wall_clock_budget_seconds=60, input="y"),
         BoardEntry(id="entry_c", kind="single_turn", wall_clock_budget_seconds=60, input="z"),
     ]
-
-
-def _config(tmp_path: Path) -> RuntimeConfig:
-    async def harness_call(system: str, user: str, model: str) -> str:
-        return ""
-
-    async def aux_call(system: str, user: str, model: str) -> str:
-        return ""
-
-    return RuntimeConfig(
-        instance_id="test",
-        workspace_root=tmp_path,
-        harness_call_llm=harness_call,
-        auxiliary_call_llm=aux_call,
-    )
 
 
 def _gen(tmp_path: Path, gen_id: str) -> Generation:
@@ -145,7 +130,7 @@ def test_fast_matchup_reuses_cached_champion_and_skips_its_run(monkeypatch, tmp_
             right_gen=_gen(tmp_path, "v1"),
             board=board,
             weights=ScoringWeights(promote_margin=0.01),
-            config=_config(tmp_path),
+            config=runtime_config(tmp_path),
             workspace_root=tmp_path,
             epoch_id=EPOCH,
             fast=True,
@@ -185,7 +170,7 @@ def test_fast_racing_subset_reuses_cached_champion(monkeypatch, tmp_path):
             right_gen=_gen(tmp_path, "v1"),
             board=board,
             weights=ScoringWeights(),
-            config=_config(tmp_path),
+            config=runtime_config(tmp_path),
             workspace_root=tmp_path,
             epoch_id=EPOCH,
             board_subset=subset,
@@ -224,7 +209,7 @@ def test_fast_matchup_degrades_to_full_without_cache(monkeypatch, tmp_path):
             right_gen=_gen(tmp_path, "v1"),
             board=board,
             weights=ScoringWeights(promote_margin=0.01),
-            config=_config(tmp_path),
+            config=runtime_config(tmp_path),
             workspace_root=tmp_path,
             epoch_id=EPOCH,
             fast=True,
@@ -259,7 +244,7 @@ def test_full_matchup_runs_champion_and_reports_full_mode(monkeypatch, tmp_path)
             right_gen=_gen(tmp_path, "v1"),
             board=board,
             weights=ScoringWeights(promote_margin=0.01),
-            config=_config(tmp_path),
+            config=runtime_config(tmp_path),
             workspace_root=tmp_path,
             epoch_id=EPOCH,
             fast=False,
@@ -350,7 +335,7 @@ def test_swiss_runs_each_gen_entry_at_most_once(monkeypatch, tmp_path):
                 right_gen=_gen(tmp_path, right),
                 board=board,
                 weights=ScoringWeights(),
-                config=_config(tmp_path),
+                config=runtime_config(tmp_path),
                 workspace_root=tmp_path,
                 epoch_id=EPOCH,
                 fast=True,
@@ -383,7 +368,7 @@ def test_cross_round_reuse_is_near_zero_new_runs(monkeypatch, tmp_path):
         right_gen=_gen(tmp_path, "v1"),
         board=board,
         weights=ScoringWeights(),
-        config=_config(tmp_path),
+        config=runtime_config(tmp_path),
         workspace_root=tmp_path,
         epoch_id=EPOCH,
         fast=True,
@@ -434,7 +419,7 @@ def test_replicates_incremental_runs_only_missing(monkeypatch, tmp_path):
         right_gen=_gen(tmp_path, "v1"),
         board=board,
         weights=ScoringWeights(),
-        config=_config(tmp_path),
+        config=runtime_config(tmp_path),
         workspace_root=tmp_path,
         epoch_id=EPOCH,
         fast=True,
@@ -472,7 +457,7 @@ def test_full_mode_bypasses_the_cache(monkeypatch, tmp_path):
             right_gen=_gen(tmp_path, "v1"),
             board=board,
             weights=ScoringWeights(),
-            config=_config(tmp_path),
+            config=runtime_config(tmp_path),
             workspace_root=tmp_path,
             epoch_id=EPOCH,
             fast=False,
@@ -517,7 +502,7 @@ def test_contract_scoping_is_a_clean_miss_across_epochs(monkeypatch, tmp_path):
             ),
             board=board,
             weights=ScoringWeights(),
-            config=_config(tmp_path),
+            config=runtime_config(tmp_path),
             workspace_root=tmp_path,
             epoch_id="e1",
             fast=True,
@@ -545,7 +530,7 @@ def test_unit_provenance_records_cached_vs_fresh(monkeypatch, tmp_path):
             right_gen=_gen(tmp_path, "v1"),
             board=board,
             weights=ScoringWeights(promote_margin=0.01),
-            config=_config(tmp_path),
+            config=runtime_config(tmp_path),
             workspace_root=tmp_path,
             epoch_id=EPOCH,
             fast=True,

@@ -21,11 +21,9 @@ from pathlib import Path
 import pytest
 from click.testing import CliRunner
 
-from zicato.board.jsonl import save_board
+from tests._cli_support import registered_workspace
 from zicato.cli.discovery import build_cli_root
-from zicato.core.types import BoardEntry, ScoringWeights
 from zicato.core.workspace import board_path, reflection_suggestions_path
-from zicato.epoch.lifecycle import new_epoch
 from zicato.reflection import suggestions as sug_mod
 from zicato.reflection.suggestions import Suggestion
 
@@ -139,14 +137,7 @@ class _AdmitSpy:
 
 @pytest.fixture
 def workspace(tmp_path: Path) -> tuple[Path, str]:
-    ws = tmp_path / ".zicato"
-    ws.mkdir(parents=True)
-    (ws / "config.json").write_text(json.dumps({"runtime": {}, "adapter": {}}), encoding="utf-8")
-    entry = BoardEntry(id="entryA", kind="single_turn", wall_clock_budget_seconds=30, input="hi")
-    board_file = tmp_path / "board.jsonl"
-    save_board([entry], board_file)
-    cfg = new_epoch(ws, "sugtest", board_file, "steer", ScoringWeights())
-    return ws, cfg.id
+    return registered_workspace(tmp_path, "sugtest")
 
 
 def _run(args: list[str]) -> object:

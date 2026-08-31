@@ -11,9 +11,9 @@ behavior lives in ``tests/test_git_genstore.py``.
 
 from __future__ import annotations
 
-import textwrap
 from pathlib import Path
 
+from tests._source_tree_builders import mutable_tree, write_dedented
 from zicato.core.types import Patch
 from zicato.epoch.genstore import (
     DEFAULT_GENERATION_SOURCE_BACKEND,
@@ -26,11 +26,6 @@ from zicato.epoch.genstore import (
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
-
-
-def _write(path: Path, body: str) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(textwrap.dedent(body), encoding="utf-8")
 
 
 def _patch(
@@ -49,19 +44,6 @@ def _patch(
         new_enum=None,
         rationale="test",
     )
-
-
-def _mutable_tree(root: Path, *, instr: str = "original") -> Path:
-    """Build a tiny inner-harness source tree with one mutation point."""
-    tree = root / "agent"
-    _write(
-        tree / "prompts.py",
-        f'''
-        # zicato:mutable id="instr"
-        INSTR = """{instr}"""
-        ''',
-    )
-    return tree
 
 
 # ---------------------------------------------------------------------------
@@ -184,7 +166,7 @@ def test_snapshot_path_is_pure_path_math(tmp_path: Path) -> None:
 
 def test_seed_generation_copies_tree_under_basename(tmp_path: Path) -> None:
     store = DirectoryGenerationStore(tmp_path / "ws")
-    tree = _mutable_tree(tmp_path / "registered", instr="seeded")
+    tree = mutable_tree(tmp_path / "registered", instr="seeded")
 
     root = store.seed_generation("e1", "v0", [tree])
 
@@ -198,8 +180,8 @@ def test_seed_generation_copies_tree_under_basename(tmp_path: Path) -> None:
 
 def test_seed_generation_copies_multiple_trees(tmp_path: Path) -> None:
     store = DirectoryGenerationStore(tmp_path / "ws")
-    tree_a = _mutable_tree(tmp_path / "a")
-    _write(tmp_path / "b" / "lib" / "util.py", "X = 1\n")
+    tree_a = mutable_tree(tmp_path / "a")
+    write_dedented(tmp_path / "b" / "lib" / "util.py", "X = 1\n")
 
     root = store.seed_generation("e1", "v0", [tree_a, tmp_path / "b" / "lib"])
 
@@ -219,7 +201,7 @@ def test_seed_generation_copies_a_single_file(tmp_path: Path) -> None:
 
 def test_list_generations_reports_seeded(tmp_path: Path) -> None:
     store = DirectoryGenerationStore(tmp_path / "ws")
-    tree = _mutable_tree(tmp_path / "src")
+    tree = mutable_tree(tmp_path / "src")
     store.seed_generation("e1", "v0", [tree])
     assert store.list_generations("e1") == ["v0"]
 
@@ -231,7 +213,7 @@ def test_list_generations_reports_seeded(tmp_path: Path) -> None:
 
 def test_derive_generation_applies_patch_to_child(tmp_path: Path) -> None:
     store = DirectoryGenerationStore(tmp_path / "ws")
-    tree = _mutable_tree(tmp_path / "src", instr="original")
+    tree = mutable_tree(tmp_path / "src", instr="original")
     store.seed_generation("e1", "v0", [tree])
 
     child_root = store.derive_generation(
@@ -251,7 +233,7 @@ def test_derive_generation_applies_patch_to_child(tmp_path: Path) -> None:
 
 def test_derive_generation_leaves_parent_untouched(tmp_path: Path) -> None:
     store = DirectoryGenerationStore(tmp_path / "ws")
-    tree = _mutable_tree(tmp_path / "src", instr="original")
+    tree = mutable_tree(tmp_path / "src", instr="original")
     store.seed_generation("e1", "v0", [tree])
 
     store.derive_generation(
@@ -271,7 +253,7 @@ def test_derive_generation_leaves_parent_untouched(tmp_path: Path) -> None:
 def test_derive_generation_clears_stale_child_from_failed_round(tmp_path: Path) -> None:
     """A leftover child snapshot from a crashed round does not block a retry."""
     store = DirectoryGenerationStore(tmp_path / "ws")
-    tree = _mutable_tree(tmp_path / "src")
+    tree = mutable_tree(tmp_path / "src")
     store.seed_generation("e1", "v0", [tree])
 
     # Simulate a crashed round that left a partial child snapshot.
@@ -293,7 +275,7 @@ def test_derive_generation_clears_stale_child_from_failed_round(tmp_path: Path) 
 def test_derive_generation_chain(tmp_path: Path) -> None:
     """v0 -> v1 -> v2 each derive from the prior generation's tree."""
     store = DirectoryGenerationStore(tmp_path / "ws")
-    tree = _mutable_tree(tmp_path / "src", instr="gen0")
+    tree = mutable_tree(tmp_path / "src", instr="gen0")
     store.seed_generation("e1", "v0", [tree])
     store.derive_generation(
         "e1",

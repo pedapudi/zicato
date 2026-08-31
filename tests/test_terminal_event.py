@@ -29,6 +29,7 @@ import subprocess
 import sys
 from pathlib import Path
 
+from tests._runtime_builders import make_generation
 from tests._subprocess_worker_support import (  # noqa: F401 — used by spawned worker
     EmittingThenSleepingAdapter,
     auxiliary_call_llm,
@@ -36,7 +37,6 @@ from tests._subprocess_worker_support import (  # noqa: F401 — used by spawned
 )
 from tests.test_subprocess_workers import (
     _entry,
-    _generation,
     _spawn_worker_blocking,
     _worker_env,
     _write_args_file,
@@ -218,7 +218,7 @@ def test_worker_emits_run_aborted_when_cooperative_budget_cancels_mid_emit(
     """
     workspace = tmp_path / ".zicato"
     workspace.mkdir()
-    generation = _generation(workspace)
+    generation = make_generation(workspace)
     # 1s budget; the adapter emits one frame then sleeps via asyncio.sleep
     # so the worker's own cooperative budget fires.
     entry = _entry(budget_s=1)

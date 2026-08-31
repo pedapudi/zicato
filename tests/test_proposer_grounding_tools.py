@@ -15,11 +15,11 @@ diff tool rides on (``parent_generation_id`` / ``diff_generations``).
 from __future__ import annotations
 
 import json
-import textwrap
 from pathlib import Path
 
 import pytest
 
+from tests._source_tree_builders import mutable_tree
 from zicato.core.types import Patch
 from zicato.epoch.git_genstore import GitGenerationStore
 from zicato.epoch.journal import write_experiment
@@ -34,23 +34,6 @@ from zicato.testing import make_experiment, make_mutation_point, make_patch
 # The git-backed halves drive real ``git`` subprocesses, matching the
 # genstore suites' marking so the opt-in fast lane can skip them.
 pytestmark = [pytest.mark.integration]
-
-
-def _write(path: Path, body: str) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(textwrap.dedent(body), encoding="utf-8")
-
-
-def _mutable_tree(root: Path, *, instr: str = "original") -> Path:
-    tree = root / "agent"
-    _write(
-        tree / "prompts.py",
-        f'''
-        # zicato:mutable id="instr"
-        INSTR = """{instr}"""
-        ''',
-    )
-    return tree
 
 
 def _patch(pid: str, new_content: str) -> Patch:
@@ -95,7 +78,7 @@ def git_ws(tmp_path: Path) -> tuple[Path, GitGenerationStore]:
         json.dumps({"generation_source_backend": "git"}), encoding="utf-8"
     )
     store = GitGenerationStore(ws)
-    store.seed_generation("e1", "v0", [_mutable_tree(tmp_path / "src")])
+    store.seed_generation("e1", "v0", [mutable_tree(tmp_path / "src")])
     patch = _patch("p1", "improved instruction")
     store.derive_generation("e1", "v0", "v1", [patch])
     write_experiment(

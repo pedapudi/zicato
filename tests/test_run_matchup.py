@@ -15,6 +15,7 @@ from pathlib import Path
 import pytest
 
 import zicato.tournament.runner as runner_mod
+from tests._runtime_builders import runtime_config
 from zicato.core import (
     BoardEntry,
     Generation,
@@ -53,21 +54,6 @@ def _board() -> list[BoardEntry]:
         BoardEntry(id="entry_a", kind="single_turn", wall_clock_budget_seconds=60, input="x"),
         BoardEntry(id="entry_b", kind="single_turn", wall_clock_budget_seconds=60, input="y"),
     ]
-
-
-def _config(tmp_path: Path) -> RuntimeConfig:
-    async def harness_call(system: str, user: str, model: str) -> str:
-        return ""
-
-    async def aux_call(system: str, user: str, model: str) -> str:
-        return ""
-
-    return RuntimeConfig(
-        instance_id="test",
-        workspace_root=tmp_path,
-        harness_call_llm=harness_call,
-        auxiliary_call_llm=aux_call,
-    )
 
 
 def _gen(tmp_path: Path, gen_id: str) -> Generation:
@@ -118,7 +104,7 @@ def test_run_matchup_matches_run_tournament_gauntlet(monkeypatch, tmp_path):
             child_gen=_gen(tmp_path, "v1"),
             board=_board(),
             weights=weights,
-            config=_config(tmp_path),
+            config=runtime_config(tmp_path),
             workspace_root=tmp_path,
             epoch_id="e0",
         )
@@ -132,7 +118,7 @@ def test_run_matchup_matches_run_tournament_gauntlet(monkeypatch, tmp_path):
             right_gen=_gen(tmp_path, "v1"),
             board=_board(),
             weights=weights,
-            config=_config(tmp_path),
+            config=runtime_config(tmp_path),
             workspace_root=tmp_path,
             epoch_id="e0",
         )
@@ -163,7 +149,7 @@ def test_run_matchup_honours_board_subset(monkeypatch, tmp_path):
             right_gen=_gen(tmp_path, "v1"),
             board=_board(),
             weights=ScoringWeights(),
-            config=_config(tmp_path),
+            config=runtime_config(tmp_path),
             workspace_root=tmp_path,
             epoch_id="e0",
             board_subset=("entry_a",),
@@ -203,7 +189,7 @@ def test_run_matchup_replicates_average_losses(monkeypatch, tmp_path):
             right_gen=_gen(tmp_path, "v1"),
             board=board,
             weights=ScoringWeights(),
-            config=_config(tmp_path),
+            config=runtime_config(tmp_path),
             workspace_root=tmp_path,
             epoch_id="e0",
             replicates=2,
@@ -238,7 +224,7 @@ def test_run_matchup_applies_diff_complexity_to_the_correct_competitor(
             right_gen=_gen(tmp_path, "v1"),
             board=_board(),
             weights=ScoringWeights(diff_complexity_weight=0.1),
-            config=_config(tmp_path),
+            config=runtime_config(tmp_path),
             workspace_root=tmp_path,
             epoch_id="e0",
             right_diff_size=right_diff,

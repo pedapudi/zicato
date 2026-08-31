@@ -96,14 +96,6 @@ def _experiment(outcome: OutcomeRecord | None) -> Experiment:
     )
 
 
-@pytest.fixture()
-def epoch_root(tmp_path: Path) -> tuple[Path, str]:
-    ws = tmp_path / ".zicato"
-    epoch_id = "2026-04-08_test"
-    (ws / "epochs" / epoch_id).mkdir(parents=True)
-    return ws, epoch_id
-
-
 # ---------------------------------------------------------------------------
 # analysis._hydrate_outcome
 # ---------------------------------------------------------------------------
