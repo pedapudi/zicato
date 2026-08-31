@@ -1,44 +1,45 @@
 # Tournament
 
-This document describes the **tournament** — zicato's competition
-model. A tournament is how a candidate generation earns its place
-in the lineage: it must beat the reigning champion over the frozen
-board, judged by the scoring gate.
+The **tournament** is zicato's competition model. It is how a
+candidate generation earns its place in the lineage: the candidate
+must beat the reigning champion over the frozen board, judged by
+the scoring gate.
 
 [SCORING.md](SCORING.md) specifies the *scalar* — the weighted
-drift-loss-plus-pass-rate number and the promotion gate that
+drift-loss-plus-pass-rate number — and the promotion gate that
 consumes it. This document specifies the *structure around* that
 scalar: the king-of-the-hill gauntlet shape, the dashboard's
 Tournament view, the tournament-detail analytics, and the
 relationship between zicato's competition view and harmonograf's
 execution view.
 
-This document covers:
+Contents:
 
 - The gauntlet / king-of-the-hill structure (§1).
 - The dashboard's Tournament view: the bracket and the
   per-matchup detail (§2-3).
 - The tournament-detail analytics (§4).
-- The harmonograf split: execution view vs competition view (§5).
+- The harmonograf split: execution view and competition view (§5).
 - Cross-epoch: the bracket is per-epoch; the tree links epochs
   (§6).
 
 ## 1. The gauntlet structure
 
-zicato's tournament is **not** a single-elimination bracket where
-sixteen entrants pair off and a winner emerges. It is a
-**king-of-the-hill gauntlet**: there is one reigning champion at
-any moment, and challengers arrive one at a time to face it.
+zicato's tournament is a **king-of-the-hill gauntlet**: there is
+one reigning champion at any moment, and challengers arrive one at
+a time to face it. It is not a single-elimination bracket in which
+sixteen entrants pair off and a winner emerges.
 
-> **Orthogonal: how challengers are generated.** This document is about
-> the *competition* — how a challenger earns promotion. What the
-> proposer *sees* when it synthesizes a challenger is a separate concern:
-> **experiment memory** feeds it a digest of prior experiment outcomes
-> (verdicts + Δscalars + touched mutation ids) so it stops re-proposing
-> known failures and builds on known wins. That digest is assembled and
-> threaded the same way regardless of structure — gauntlet here, or
-> Swiss / racing / elimination ([TOURNAMENT-STRUCTURES.md](TOURNAMENT-STRUCTURES.md)) —
-> and never touches the gate. See [EXPERIMENT-MEMORY.md](EXPERIMENT-MEMORY.md).
+> **How challengers are generated is a separate concern.** This
+> document covers the *competition* — how a challenger earns
+> promotion. What the proposer *sees* when it synthesizes a challenger
+> is decided elsewhere: **experiment memory** feeds it a digest of prior
+> experiment outcomes (verdicts + Δscalars + touched mutation ids) so it
+> stops re-proposing known failures and builds on known wins. That digest
+> is assembled and threaded the same way regardless of structure —
+> gauntlet here, or Swiss / racing / elimination
+> ([TOURNAMENT-STRUCTURES.md](TOURNAMENT-STRUCTURES.md)) — and never
+> touches the gate. See [EXPERIMENT-MEMORY.md](EXPERIMENT-MEMORY.md).
 
 ### 1.1 King of the hill
 
@@ -74,13 +75,14 @@ The sequence of champions forms a single line — the **winners'
 spine**. Every promoted generation is on the spine; the spine is
 the lineage's backbone.
 
-Challengers that lost are **discarded** — but not deleted. A
-discarded challenger keeps its generation directory (v0
-directory storage) or its `v{N}-rejected` tag (v0+1 git storage,
-see [STORAGE.md §3](STORAGE.md#3-the-git-backed-roadmap-v01)); its
-`experiment.json` carries the full hypothesis and the `outcome`
-block explaining *why* it lost. A discarded challenger is
-recoverable and inspectable; it is just not on the spine.
+Challengers that lost are **discarded** — but not deleted. Under
+directory-backed storage a discarded challenger keeps its
+generation directory; under the git-backed generation store it
+keeps its `v{N}-rejected` tag
+(see [STORAGE.md §7](STORAGE.md#7-the-git-backed-generation-store-gitgenerationstore)).
+Its `experiment.json` carries the full hypothesis and the
+`outcome` block explaining *why* it lost. A discarded challenger
+is recoverable and inspectable; it is simply off the spine.
 
 ```
                           THE GAUNTLET (one epoch)
@@ -114,10 +116,10 @@ joined the spine. Round numbers are global and independent of
 promotion: round 5 is round 5 even though only three of the five
 rounds promoted (see [EPOCHS-AND-JOURNALING.md §8](EPOCHS-AND-JOURNALING.md#8-round-mechanics)).
 
-### 1.3 Why king-of-the-hill, not a fan-out bracket
+### 1.3 Why the gauntlet shape rather than a fan-out bracket
 
-A fan-out bracket — generate eight candidates, pair them off,
-let a winner emerge — was considered and rejected:
+A fan-out bracket — generate eight candidates, pair them off, let
+a winner emerge — is excluded by design, for three reasons:
 
 - **The champion is the only baseline that matters.** zicato's
   job is to make the *current best* harness better. A candidate
@@ -130,18 +132,19 @@ let a winner emerge — was considered and rejected:
   A fan-out bracket of eight candidates is eight board runs per
   round; the gauntlet is two (champion + one challenger, and the
   champion's runs are often cached from the previous round).
-- **Each round carries a hypothesis.** A challenger is not a
-  random mutation — it is a *designed experiment* with a
-  predicted outcome ([EPOCHS-AND-JOURNALING.md §3.1](EPOCHS-AND-JOURNALING.md#31-hypothesis-schema-mandatory)).
-  Running one well-reasoned challenger at a time and journaling
-  whether its hypothesis held is worth more than running eight
-  un-reasoned mutations and picking the luckiest.
+- **Each round carries a hypothesis.** A challenger is a
+  *designed experiment* with a predicted outcome
+  ([EPOCHS-AND-JOURNALING.md §3.1](EPOCHS-AND-JOURNALING.md#31-hypothesis-schema-mandatory))
+  rather than a random mutation. Running one well-reasoned
+  challenger at a time and journaling whether its hypothesis held
+  is worth more than running eight un-reasoned mutations and
+  picking the luckiest.
 
-The gauntlet trades breadth of search for depth of reasoning.
-That is the right trade for a system whose unit of progress is a
-*tested hypothesis*, not a *sampled mutation*.
+The gauntlet trades breadth of search for depth of reasoning. That
+trade suits a system whose unit of progress is a *tested
+hypothesis* rather than a *sampled mutation*.
 
-### 1.4 The gauntlet is the *default*, not the only, structure
+### 1.4 The gauntlet is the default among five structures
 
 > **Status.** SHIPPED. The `SelectionStrategy` seam, all five concrete
 > structures, the `tournament` contract block, and the
@@ -155,20 +158,21 @@ The king-of-the-hill gauntlet of §1.1–§1.3 is the **default** tournament
 structure. The structure is a **per-epoch configurable choice**: an epoch's
 frozen contract carries a `tournament` block selecting one of `gauntlet`
 (default), `single_elim`, `double_elim`, `swiss`, or `racing`. The
-arguments in §1.3 *for* the gauntlet remain the reason it is the default;
-the other structures exist for regimes with a *large* proposer fan-out
-(§9 lever 0 in `SELECTION.md`), and `racing` is the one whose noise
-handling the selection theory endorses for zicato's few-expensive-noisy
-regime (`SELECTION.md §7–§9`).
+arguments in §1.3 *for* the gauntlet are the reason it is the default.
+The other structures serve regimes with a *large* proposer fan-out — a
+multi-candidate field, in the selection-lever vocabulary of
+`SELECTION.md §9` — and `racing` is the structure whose noise handling
+the selection theory endorses for zicato's few-expensive-noisy regime
+(`SELECTION.md §7–§9`).
 
-The runner stops being hard-wired to "one champion, one challenger, one
-duel". Instead a **`SelectionStrategy`** — chosen from the epoch's
+The runner is not hard-wired to "one champion, one challenger, one
+duel". A **`SelectionStrategy`** — chosen from the epoch's
 `tournament.structure` — owns the *scheduling* (which duel(s) to run
 next), the *bracket bookkeeping*, the *champion-advance* rule, and the
 *intra-tournament stopping* (when the bracket is settled). The promote
 gate (§3.5, [`SCORING.md §5`](SCORING.md#5-the-tournament-promotion-gate))
-is **unchanged**: it remains the per-duel accept/reject test every
-structure consumes, so the per-task feasibility guarantee holds for all
+is the per-duel accept/reject test every structure consumes, and no
+structure alters it, so the per-task feasibility guarantee holds for all
 of them.
 
 ```mermaid
@@ -177,19 +181,21 @@ flowchart TB
     FS --> ST{"SelectionStrategy<br/>(epoch.tournament.structure)"}
     ST -->|"next_matchups()"| M["one or more duels<br/>champion-vs-challenger / challenger-vs-challenger"]
     M --> RUN["run_matchup() — the SAME paired board run<br/>(full/fast mode, §3.1 of SELECTION.md)"]
-    RUN --> GATE["promote gate → GateOutcome<br/>(UNCHANGED, §3.5)"]
+    RUN --> GATE["promote gate → GateOutcome<br/>(§3.5, identical for every structure)"]
     GATE -->|"record_result(verdict)"| ST
     ST -->|"resolved()? no"| M
     ST -->|"resolved()? yes"| CR["champion() — the crowned survivor"]
-    CR --> ADV["orchestrator advances current_generation<br/>+ lineage, exactly as today"]
+    CR --> ADV["orchestrator advances current_generation<br/>+ lineage"]
     ADV -.->|"§5 optimal-stopping decides<br/>whether to spawn the NEXT round"| O
 ```
 
-The dashboard bracket (§2) generalises accordingly: today it renders the
-gauntlet's single spine; under a configurable structure it renders the
-structure's own shape (a single-elimination tree, a Swiss standings
-table, a racing rung-ladder) from the same per-matchup records, with the
-gauntlet remaining the default rendering. The persisted-record shape that
+The dashboard bracket (§2) generalises accordingly. It renders the
+gauntlet's single spine by default, and for any other structure it
+renders that structure's own shape — a single-elimination tree, a Swiss
+standings table, a racing rung-ladder — from the same per-matchup
+records (`isNonGauntlet` and the per-structure models in
+`src/zicato/dashboard/static/js/views/structure.js`, consumed by
+`views/epoch.js`). The persisted-record shape that
 backs the bracket is owned by the data-model design (see
 `TOURNAMENT-STRUCTURES.md §"interface from the data-model agent"`).
 
@@ -317,8 +323,8 @@ Per-entry A/B — champion v2  vs  challenger c-r4
 ```
 
 The grid is what makes a verdict legible: the operator sees
-exactly *which* entries the challenger won, lost, or tied, and
-whether any pass flipped.
+which entries the challenger won, lost, or tied, and whether any
+pass flipped.
 
 ### 3.4 Scalar breakdown
 
@@ -351,8 +357,8 @@ This is the bridge between "the grid of per-entry numbers" and
 > per-epoch `per_judge_weights` (the per-judge loss weighting, scoring-side
 > in [SCORING.md](SCORING.md)) now survives the worker transport intact
 > (`src/zicato/_tournament_worker.py`), and the in-run process judges grade
-> against the **real tool-call ledger** the run produced, not a narrated
-> approximation of it — so a board judge like `file_findability` sees what
+> against the **real tool-call ledger** the run produced rather than a
+> narrated approximation of it — so a board judge like `file_findability` sees what
 > the agent actually did. These keep the two sides of a duel scored on the
 > identical, faithful basis the gate assumes.
 
@@ -434,9 +440,9 @@ WHERE p.side = 'parent' AND c.side = 'candidate' AND ...;
 (See [ANALYTICAL-INDEX.md §3.6](ANALYTICAL-INDEX.md#36-loss_profiles).)
 Aggregated across the epoch, the grid surfaces *which entries
 consistently differentiate generations and which never do* —
-the latter being exactly the non-differentiating-entry signal
+the latter being the non-differentiating-entry signal
 that loop-health diagnostics
-([LOOP-HEALTH.md §3.2](LOOP-HEALTH.md#32-non-differentiating-board-entries))
+([LOOP-HEALTH.md §3.2](LOOP-HEALTH.md#32-non-differentiating-board-entry--non_differentiating_entry))
 escalates. The Tournament view and the loop-health panel read
 the same underlying table from two angles.
 
@@ -445,8 +451,10 @@ the same underlying table from two angles.
 The proposer's **calibration** — across the epoch, how often did
 the proposer's predicted drift movements actually happen?
 
-The ledger is built from the `hypothesis_movements` table
-([ANALYTICAL-INDEX.md §3.9](ANALYTICAL-INDEX.md#39-a-derived-view-hypothesis_movements)).
+The ledger is built from the per-round hypothesis and outcome blocks
+the index stores on the `experiments` table, `hypothesis_json` and
+`outcome_json`
+([ANALYTICAL-INDEX.md §3.3](ANALYTICAL-INDEX.md#33-experiments)).
 For every round, for every drift kind the hypothesis predicted,
 it has: the predicted direction and magnitude, the actual
 direction and magnitude, and the `matched` boolean.
@@ -457,18 +465,18 @@ predicted movement counts as *matched* only when both agree:
 - **Sign (direction).** The predicted direction (`up` / `down` /
   `flat`) must equal the observed direction. "Predicted down,
   observed up" is a miss. "Predicted down, observed flat" is a
-  miss — `flat` is its own direction, not a near-match of
-  `down`.
+  miss, because `flat` is its own direction rather than a
+  near-match of `down`.
 - **Magnitude.** The predicted magnitude bucket (`minor` /
   `moderate` / `major`) must equal the observed magnitude
   bucket. "Predicted down moderate, observed down minor" is a
   **miss** — the sign is right but the magnitude bucket is
   wrong. There is no partial credit and no adjacent-bucket
-  tolerance; the buckets are coarse precisely so that an exact
-  match is a meaningful claim.
+  tolerance. The buckets are coarse so that an exact match is a
+  meaningful claim.
 
-A prediction matches **iff sign matches AND magnitude matches.**
-This is deliberately strict. The hypothesis ledger's whole value
+A prediction matches only when the sign and the magnitude both
+match. The rule is strict by design. The hypothesis ledger's value
 is distinguishing a proposer that *reasons* (predicts the right
 movement at the right scale) from one that *guesses* (gets the
 sign right by coin-flip). A lenient "sign is close enough" rule
@@ -491,9 +499,9 @@ Hypothesis ledger — epoch 2026-05-15_e1
   epoch hypothesis match-rate: 0.45  (6 of 12 predicted movements)
 ```
 
-A falling match-rate is a loop-quality signal: it feeds the L5
-circuit breaker's richer signals
-([ROBUSTNESS.md §2.5](ROBUSTNESS.md#25-l5-consecutive-bad-circuit-breaker)
+A falling match-rate is a loop-quality signal: it feeds the
+consecutive-bad circuit breaker's richer signals
+([ROBUSTNESS.md §2.5](ROBUSTNESS.md#25-the-consecutive-bad-circuit-breaker)
 names "hypothesis match-rate below 25%" as a stop condition) and
 is one input the operator weighs when deciding whether the
 rubric needs re-steering.
@@ -528,7 +536,7 @@ scalar
 The champion line is the headline "is the loop working?" gauge.
 A flat champion line across many rounds, paired with a
 loop-health finding, is the *stalled loop* signal of
-[LOOP-HEALTH.md §3.5](LOOP-HEALTH.md#35-stalled-loop).
+[LOOP-HEALTH.md §3.6](LOOP-HEALTH.md#36-stalled-loop--stalled_loop).
 
 ### 4.5 Mutation heat map
 
@@ -558,10 +566,9 @@ win-correlation intensity per cell:
   writer.tools.summarize.descr   2          0        ░░░░░░░░░  0.00
 ```
 
-The heat map is a **correlation, not a causation** — `researcher.
-description` appearing in three promotes does not prove it caused
-them (it was bundled with other patches). But it is a strong
-steering hint: the operator reading "`coordinator.routing` has
+The heat map shows **correlation only**. `researcher.description`
+appearing in three promotes does not prove it caused them, since it
+was bundled with other patches. It remains a strong steering hint: the operator reading "`coordinator.routing` has
 been touched five times and promoted once" knows that surface is
 resisting improvement, and can put it in the proposer brief's
 `## Forbidden` list or focus the brief elsewhere.
@@ -610,11 +617,11 @@ two, and the cost column shows the saving.
 ## 5. The harmonograf split
 
 zicato and harmonograf both render a "view of a run", and the
-boundary between them is load-bearing. Stating it precisely:
+boundary between them is load-bearing:
 
 > **harmonograf is the execution view; the zicato dashboard is
-> the competition view. They are linked by a per-run drill-down,
-> not merged.**
+> the competition view. A per-run drill-down links them, and
+> neither absorbs the other.**
 
 ### 5.1 Two different objects
 
@@ -638,22 +645,21 @@ The zicato dashboard is the **competition view**: it shows the
 hypothesis ledger. It is the right tool for "this generation
 beat that one; show me on which entries and by how much".
 
-These are genuinely different objects. A run is a *trace*; the
+These are different objects. A run is a *trace*; the
 tournament is a *comparison of aggregates over many traces*. One
 is not a zoomed-in version of the other.
 
-### 5.2 Linked by a per-run drill-down, not merged
+### 5.2 Linked by a per-run drill-down
 
-The split is deliberate — the two views are **not** merged into
-one super-UI. Merging would force a single tool to be good at
-both a millisecond-resolution execution timeline and an
-epoch-resolution competition bracket; it would be mediocre at
-both. Instead they are *linked*.
+The two views stay separate. Merging them would force a single
+tool to be good at both a millisecond-resolution execution
+timeline and an epoch-resolution competition bracket, and it would
+be mediocre at both. They are *linked* instead.
 
 The link is the **per-run drill-down**. Anywhere the zicato
 dashboard shows a run — a cell in the per-entry A/B grid, a row
-in the active runs list ([DASHBOARD.md §4.3](DASHBOARD.md#43-active-runs-list),
-§4.8) — there is an "open in harmonograf" affordance. It hands
+in the run view ([DASHBOARD.md §4.8](DASHBOARD.md#48-the-run-level))
+— there is an "open in harmonograf" affordance. It hands
 off to harmonograf pointed at that run's `events.jsonl` (the
 `runs.events_path` column in the analytical index,
 [ANALYTICAL-INDEX.md §3.5](ANALYTICAL-INDEX.md#35-runs), is the
@@ -704,12 +710,13 @@ A challenger in epoch `e1` and a champion in epoch `e0` were
 judged against different contracts; a "matchup" between them
 would be comparing two numbers that do not mean the same thing.
 So each epoch has its own bracket, its own winners' spine, its
-own analytics — all reset at the epoch boundary, exactly as
-pattern aggregates reset.
+own analytics — all reset at the epoch boundary, as pattern
+aggregates do.
 
-What spans epochs is the **lineage tree**, not the bracket. The
-tree view ([DASHBOARD.md §4.4](DASHBOARD.md#44-lineage-svg)
-renders it as the lineage SVG) shows every epoch's spine, with a
+The **lineage tree** is what spans epochs; the bracket does not.
+The tree view
+([DASHBOARD.md §4.1](DASHBOARD.md#41-the-lineage-ribbon--one-figure-at-three-zoom-levels)
+renders it as the lineage ribbon) shows every epoch's spine, with a
 *dashed cross-epoch edge* from each epoch's final champion to the
 next epoch's `v0`. That cross-epoch edge is the baselining link:
 a rolled epoch's `v0` is the promoted head of its predecessor
@@ -749,8 +756,6 @@ The bracket answers "who won, this epoch?"; the tree answers
 | The live dashboard, the active tournament panel, the lineage SVG | [DASHBOARD.md](DASHBOARD.md) |
 | The analytical index that backs every cross-round analytic | [ANALYTICAL-INDEX.md](ANALYTICAL-INDEX.md) |
 | Loop-health detectors that read the same A/B and trajectory data | [LOOP-HEALTH.md](LOOP-HEALTH.md) |
-| The L5 circuit breaker the hypothesis ledger feeds | [ROBUSTNESS.md §2.5](ROBUSTNESS.md#25-l5-consecutive-bad-circuit-breaker) |
-| Discarded challengers as `v{N}-rejected` tags (git storage) | [STORAGE.md §3](STORAGE.md#3-the-git-backed-roadmap-v01) |
+| The consecutive-bad circuit breaker the hypothesis ledger feeds | [ROBUSTNESS.md §2.5](ROBUSTNESS.md#25-the-consecutive-bad-circuit-breaker) |
+| Discarded challengers as `v{N}-rejected` tags (git storage) | [STORAGE.md §7](STORAGE.md#7-the-git-backed-generation-store-gitgenerationstore) |
 | The ecosystem cadence split zicato / goldfive / harmonograf | [ARCHITECTURE.md §3](ARCHITECTURE.md#3-cadence-comparison) |
-</content>
-</invoke>

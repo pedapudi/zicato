@@ -9,7 +9,8 @@ target LLM (`target_llm`). Most model-backed workspaces need two engines:
 - `target` supplies the optional target LLM to the adapter.
 - `evaluation` is the default for Zicato's internal model work.
 
-`config.json` stores credentials by environment-variable name, never value:
+`config.json` stores credentials by environment-variable name rather than by
+value:
 
 ```json
 {
@@ -89,7 +90,7 @@ engine while assigning a smaller engine to the user emulator:
 }
 ```
 
-The proposer precedence is deliberately narrow:
+A proposer role resolves through this precedence:
 
 1. `proposer_generate` or `proposer_review`, when present;
 2. `proposer`;
@@ -127,15 +128,15 @@ or user emulator does not turn that role into a native proposer session.
 
 ## Logical identity and transport
 
-An engine name plus optional `revision` identifies an operator-chosen logical deployment. `endpoint`
-is only its transport address: moving the same deployment does not necessarily
-change what is evaluated, while changing model weights behind a stable URL
-does. Change `revision` when a named deployment changes; use distinct engine
-names for the target and evaluator trust domains even when their transport
-fields happen to match. Isolation checks names, not duplicated connection
-fields. Credential values are read
-only when an engine is resolved and are not written to workspace files, worker
-argument files, logs, or dashboard responses.
+An engine name plus optional `revision` identifies an operator-chosen logical
+deployment. `endpoint` is only its transport address. Moving the same
+deployment does not necessarily change what is evaluated, while changing model
+weights behind a stable URL does. Change `revision` when a named deployment
+changes. Use distinct engine names for the target and evaluator trust domains
+even when their transport fields happen to match, because isolation is checked
+by engine name rather than by comparing connection fields. Credential values
+are read only when an engine is resolved and are not written to workspace
+files, worker argument files, logs, or dashboard responses.
 
 The settings response includes effective role-to-engine resolution and whether
 each mapping was explicit or inherited. A scrubbed tournament worker receives
@@ -145,7 +146,7 @@ only the credential variables named by configured engines.
 
 A harness session belongs to exactly one run: one generation × board entry ×
 replicate. A session never spans a board or leaks state into another entry or
-replicate. When a workflow intentionally needs several stateful turns, model it
+replicate. When a workflow needs several stateful turns, model it
 as one compound board entry (for example, a multi-turn emulated entry); its
 turns share that run's session while separate entries remain isolated.
 
@@ -156,7 +157,8 @@ engine forms, endpoint-only engines, unset named credentials at resolution,
 and target/evaluator engine reuse. These are configuration errors rather than
 silent fallbacks.
 
-The earlier direct `models.<role>` shape is rejected with a migration message;
-there is no compatibility alias. The separate `runtime.harness_call_llm` and
-`runtime.auxiliary_call_llm` fields remain only as the low-level CLI/library
-callable seam for deterministic harnesses that do not configure `models`.
+A flat `models.<role>` shape, mapping a role name straight to a model, is
+rejected with a migration message; no compatibility alias accepts it. The
+separate `runtime.harness_call_llm` and `runtime.auxiliary_call_llm` fields are
+the low-level CLI and library callable seam for deterministic harnesses that do
+not configure `models`.

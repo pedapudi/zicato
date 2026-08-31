@@ -49,14 +49,13 @@ needs to build a `LossProfile`:
 dialect-agnostic tail it always did: the not-completed penalty, the
 drift-loss dispatch (Seam 1), the pass/continuous-score derivation, the
 generalised metric surface, and `LossProfile` assembly. The dialect
-changes only *how the raw counts are produced*, never how they are
+changes only *how the raw counts are produced*, and not how they are
 scored.
 
 ## 2. Dialect 1 — `goldfive` (default)
 
-The current path, unchanged and byte-identical. The most powerful
-dialect: it consumes the full drift-instrument stream, so it is the only
-dialect that can carry
+The default dialect, and the most powerful one: it consumes the full
+drift-instrument stream, so it is the only dialect that can carry
 
 - **in-process drift instruments** — the live reasoning-stream detectors
   (`looping_reasoning`, `plan_divergence`, `intent_divergence`,
@@ -108,9 +107,9 @@ Tolerance rules (honest, never-crash):
   or a **typeless** bare-transcript line (`{"role": …, "content": …}`)
   route to the transcript;
 - a **malformed line** (not JSON, or not a JSON object) is counted into
-  `malformed_line_count` and surfaced as a reduction warning — never an
-  exception, exactly as the goldfive fallback path skips unparseable
-  lines (TELEMETRY.md §2.3);
+  `malformed_line_count` and surfaced as a reduction warning rather than
+  raised as an exception, the way the goldfive fallback path skips
+  unparseable lines (TELEMETRY.md §2.3);
 - a recognised event **missing a field** contributes nothing for that
   field (a `model_usage` with no token keys adds `1` to `llm_call_count`
   and `0` tokens).
@@ -120,8 +119,8 @@ Tolerance rules (honest, never-crash):
 How each event-log signal derives, and the drift-vocabulary signal it
 maps to. Every drift-style row is a `DriftCount(kind, severity, count)`
 that folds through the SAME `severity_weights × per_kind_weights × count`
-machinery a goldfive drift instrument folds through today — so an
-operator tunes an `adk_events` contract with the exact same knobs.
+machinery a goldfive drift instrument folds through, so an operator tunes
+an `adk_events` contract with the same knobs.
 
 | Event-log signal | Derivation | Maps to | Severity | Rationale |
 |---|---|---|---|---|
@@ -135,9 +134,10 @@ operator tunes an `adk_events` contract with the exact same knobs.
 | turn / latency envelope | `agent_message` / `user_message` order | `agent_turns` / `user_turns` → `turns_completed`, memory/context heuristics | — | multi-turn shape signals |
 | identity | first non-empty `run_id` / `session_id` | `run_id` / `adk_session_id` | — | the harmonograf deep-link (best-effort; empty when absent) |
 
-The retry-loop rule is deliberately whole-log (a `(tool, args)` pair seen
-in ANY earlier `tool_call`, not just the immediately preceding one), so a
-retry that brackets a failed response still counts. `args` are compared
+The retry-loop rule spans the whole log: a `(tool, args)` pair counts when
+it repeats any earlier `tool_call` rather than only the immediately
+preceding one,
+so a retry that brackets a failed response still counts. `args` are compared
 by their canonical JSON (`sort_keys=True`) so key ordering does not
 change the verdict.
 
@@ -176,8 +176,9 @@ No telemetry at all. The input is a bare transcript JSONL (lines of
 
 - **no drift** (`drift_counts == ()`), **no task counts**, **no tokens**;
 - `agent_turns` / `user_turns` reconstructed from the transcript (so the
-  zicato-derived multi-turn *feature* signals — memory-failure /
-  context-loss — still work; they are features, not loss) and
+  zicato-derived multi-turn *feature* signals, memory-failure and
+  context-loss, still work, because they are features rather than loss)
+  and
   `output:chars` from the assistant text.
 
 Scoring degrades to **predicates + optional in-run judges only**.
@@ -204,12 +205,12 @@ weights. Justification:
   drift budget) would silently move the magnitude the `promote_margin`
   noise threshold is calibrated against, turning an honest structural
   absence into a hidden re-tuning of the gate. Zero-drift keeps the pass
-  term meaning exactly what it means under any other dialect.
+  term meaning what it means under any other dialect.
 
 So a `transcript` contract is a pass/predicate-only tournament. That is a
 real, useful mode (invariant/regression boards with no telemetry), and it
-degrades *honestly* — the operator sees a scalar with no drift component,
-not a scalar that pretends drift was measured.
+degrades *honestly*: the operator sees a scalar with no drift component
+rather than a scalar that pretends drift was measured.
 
 ### 4.2 Config-validation story (warn-or-refuse, preflight house style)
 
@@ -222,14 +223,15 @@ house style ([PREFLIGHT / board-reflection](OVERFITTING.md) — default
 
 - **Refuse (fail-fast) only for a genuine config error:** an *unknown*
   dialect name is rejected at contract load in
-  `ScoringWeights.__post_init__`, exactly like an unknown transform op.
+  `ScoringWeights.__post_init__`, the way an unknown transform op is.
 - **Warn (recommend-only) for a capability mismatch:**
   `dialect_capability_warnings(weights)` is a pure function returning the
   human-readable list of "this knob is inert under this dialect" findings
   (the drift-shaping knobs under `transcript`; the judge-channel knobs
   under either, since neither carries judgements). The `failure:` and
-  `runtime:` channels are never reported inert: run outcome and
-  wall-clock are facts of the harness, not of the telemetry stream. The reducer logs them at
+  `runtime:` channels are never reported inert, because run outcome and
+  wall-clock are facts of the harness rather than of the telemetry
+  stream. The reducer logs them at
   `warning` when it resolves a non-`goldfive` dialect. It does not refuse
   the run — a drift-weighted transcript contract still scores correctly
   (the drift term is just zero); the warning tells the operator their
@@ -256,19 +258,19 @@ and it is already threaded into `reduce_loss` as `weights` — so the
 dialect selection reaches both the orchestrator and the killable worker
 through the SAME field-enumerating serde (`to_json` / `from_json`) that
 carries `drift_reducer` across the worker boundary, with zero new
-plumbing. The worker reduces under the contract's dialect, never a
-default it guessed.
+plumbing. The worker reduces under the contract's dialect and never under
+a guessed default.
 
 **Omit-at-default.** `telemetry_dialect` is listed in
 `epoch/contract.py::_SCORING_OMIT_AT_DEFAULT_FIELDS`, so while it holds
 its `"goldfive"` default the scoring canonical form omits the key
-entirely — an existing contract hashes byte-identically to one that
-predates the field (no retroactive epoch roll, the CONTRACT-HASH parity
-gate stays green). A non-default dialect (`adk_events` / `transcript`)
-reintroduces the key and rolls the epoch, exactly like any other weight
-change. The contract pins the dialect **both directions**: setting it
-rolls, and reverting it back to `goldfive` rolls back to the original
-hash.
+entirely, so a contract that leaves the dialect at its default hashes
+byte-identically to one that does not carry the key at all, and no epoch
+rolls (the contract-hash parity gate stays green). A non-default dialect
+(`adk_events` or `transcript`) reintroduces the key and rolls the epoch,
+as any other weight change does. The contract pins the dialect in both
+directions: setting it rolls, and reverting it to `goldfive` rolls back
+to the original hash.
 
 ## 6. Determinism
 

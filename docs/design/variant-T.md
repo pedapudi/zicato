@@ -1,29 +1,33 @@
-# Variant T — "Console IV" (ships as **Console**): the convergence-IV anchor
+# The console — round-by-round changelog
 
-> For the consolidated, current visual design language (the colour-role system,
-> typography, the mark grammar, render discipline, and the design lineage), see
-> [CONSOLE-DESIGN-LANGUAGE.md](CONSOLE-DESIGN-LANGUAGE.md) — the source of
-> truth. This file is the round-by-round changelog.
+> **Status.** This file is the round-by-round changelog of the shipped
+> console. For the visual design language it settled on — the colour-role
+> system, typography, the mark grammar, and render discipline — read
+> [CONSOLE-DESIGN-LANGUAGE.md](CONSOLE-DESIGN-LANGUAGE.md), which is the
+> source of truth for the present state.
+>
+> The single-letter names below are entries in the dashboard bake-off that
+> produced this console; each is catalogued in
+> [DASHBOARD-VARIANTS.md](DASHBOARD-VARIANTS.md). The winning entry, T, is
+> the console the dashboard serves, and this file records how it got there.
 
-Console (bake-off codename "Console IV") is the round-6 **convergence-IV
-anchor**: the direct synthesis the
-operator asked for — **Variant P (Console III, judged the best-looking console)**
-with three folds:
+The console started in round 6 as a synthesis of entry P — the best-looking
+console of the round — with three additions:
 
-1. **S's first-class side-by-side COMPARE detail** — a "compare with…" affordance
+1. **Entry S's first-class side-by-side compare detail** — a "compare with…" affordance
    that splits the candidate detail into TWO candidates read side by side
    (lifecycle · promote gate · match-ups · per-board scoring, A | B), with
    champion-vs-challenger transcripts side by side on a board.
-2. **Q's generous, proportional spacing** — a roomier rail, calmer detail column,
+2. **Entry Q's generous, proportional spacing** — a roomier rail, calmer detail column,
    more air between sections and inside panels.
-3. **A working back/up button** (top-left) — the explicit fix over Q's buggy one.
+3. **A working back/up button** (top-left), replacing entry Q's broken one.
 
 Round 7 evolves the anchor by adopting two well-liked elements **elegantly**, plus
 a new chrome control:
 
-4. **The SLIM REEL on the epoch view** (adopted from Variant V) — a compact,
-   fit-to-width "rounds" spine that REPLACES the old lineage-bumps chart.
-5. **Compact MATCH CARDS on the generations page** (adopted from Variant W) — a
+4. **The slim reel on the epoch view** (adopted from entry V) — a compact,
+   fit-to-width "rounds" spine that replaces the lineage-bumps chart.
+5. **Compact match cards on the generations page** (adopted from entry W) — a
    champion-defends banner + a responsive wrapping grid of one card per
    challenger round.
 6. ~~A density / "roominess" picker~~ — *removed in round 10; **cozy** is now the
@@ -43,17 +47,16 @@ Default colour theme: **monokai**. Default typeface theme: **Technical**
 (Open Sans body + JetBrains Mono for data / labels / code). Default page scale:
 **100 %**. Miller columns (R) are back-burnered and not pursued here.
 
-Self-contained under `js/variants/T/**` + `css/variants/T/console4.css` + the
-entry `app_T.js`; reuses only the shared `js/core/*` data spine and imports from
-no other variant directory (everything needed from P/S/Q is ported in). T is now
-the **converged default UI** (index.html boots `app_T.js`; `?ui=v1`/`?ui=v2` are
-the only fallbacks — exactly one UI loads at a time).
+The console is self-contained under `js/`, `css/console.css`, and the entry
+point `app_T.js`; it reuses the shared `js/core/*` data spine and imports from
+no other entry's directory, so everything it took from P, S and Q is ported
+in. It is the interface the dashboard serves: `index.html` boots `app_T.js`,
+and exactly one interface loads at a time.
 
 ## Decision-loop wave (current default — meta-loop ledger · settings drawer · racing hero · builder view)
 
-The most recent batch of Console changes, all scoped to Variant T and all
-preserving render discipline (digest-gated swaps, transient overlays never in
-the gated render):
+This batch of console changes preserves render discipline throughout:
+digest-gated swaps, and transient overlays never inside the gated render.
 
 1. **Cross-epoch META-LOOP LEDGER on the home view** (`svg.metaLoopLedger`,
    digest-gated by `svg.metaLoopLedgerDigest`; `views/home.js`). Below the
@@ -70,8 +73,8 @@ the gated render):
    that cell. Degrades honestly on 0–1 epochs.
 
 2. **SETTINGS is a routed right-side DRAWER overlay** (`shell.js` —
-   `dt-drawer` scrim + `dt-drawer-panel`, `role="dialog"` `aria-modal`), not a
-   full page. It paints OVER the current view; Esc / scrim-click / the `×`
+   `dt-drawer` scrim + `dt-drawer-panel`, `role="dialog"` `aria-modal`) rather
+   than a full page. It paints over the current view; Esc / scrim-click / the `×`
    close it. Its rail is **Tournament builder (launcher) · Contract · Models ·
    Appearance**. The **Contract** section reuses the **builder's own live
    preview** (`builder/preview.js` `previewNodes`) fed the current epoch as a
@@ -137,12 +140,13 @@ the gated render):
 
 ## Round-10 polish (the converged default)
 
-Six operator-requested changes, all scoped to Variant T:
+Six operator-requested changes:
 
-1. **Bare `#/` route prefix.** The vestigial `#/` bake-off namespacing prefix
-   is dropped — T is the only variant UI, so routes are bare: `#/`,
+1. **Bare `#/` route prefix.** The bake-off namespacing prefix is dropped,
+   because this is the only interface, so routes are bare: `#/`,
    `#/e/<epoch>`, `#/e/<epoch>/gen/<gen>`, `#/e/<epoch>/board/<entry>`, … A
-   legacy `#/…` link falls back to Environment (never blank).
+   link carrying the old prefix falls back to Environment and never lands
+   blank.
 2. **Density picker removed → COZY is the permanent baseline.** The
    compact/cozy/roomy picker is gone; the **cozy** `--dt-*` spacing tokens are
    baked unconditionally onto the variant root, and the JS SIZE tokens are fixed
@@ -171,7 +175,7 @@ Six operator-requested changes, all scoped to Variant T:
 Two scoped changes, CSS/JS-only:
 
 1. **Styled, theme-aware HOVERCARD replaces the native SVG `<title>` tooltip**
-   (`js/variants/T/hovercard.js`, new). The browser-default `<title>` tooltip is
+   (`js/hovercard.js`, new). The browser-default `<title>` tooltip is
    unstyled OS chrome — off-brand, unthemed, and unable to carry formatted
    detail. The hovercard is a small dependency-light helper: given a target +
    content it shows a positioned, **token-styled** card (`--v2-panel` bg,
@@ -181,18 +185,18 @@ Two scoped changes, CSS/JS-only:
    across all 16 themes, light + dark), is positioned with viewport flip/clamp so
    it never clips, honours `prefers-reduced-motion`, and is keyboard-accessible
    (focusable target + `role="tooltip"` linked via `aria-describedby`). Crucially
-   it is a **transient OVERLAY, not part of the digest-gated render** — showing/
-   hiding only toggles a class on the singleton card, so it can never trigger a
-   repaint loop or the SSE-heartbeat flashing bug. Every `<title>` site across
+   it is a **transient overlay that sits outside the digest-gated render**:
+   showing and hiding it only toggles a class on the singleton card, so it can
+   never trigger a repaint loop or the heartbeat flashing bug. Every `<title>` site across
    `dag.js` (per-board `champ N · Δ` detail, the Σ explanation, the GATE 3-rule
    explanation, per-run rows, the patch node, the rung-progression strip) and
    `svg.js` (heatmap cell, dot-plot dot + reference rule, bumps, sparkbar, value
    bars, slopegraph, racing ladder, survival funnel, round-robin matrix, race
    strip, sankey) was converted.
 
-2. **De-crowded the lifecycle DAG.** The figure previously carried two long,
-   largely-redundant always-on prose blocks (the `ezn-dag-key` legend line + a
-   verbose view caption). These collapse into **ONE concise key line** — *"Δ vs
+2. **De-crowded the lifecycle DAG.** Two long, largely-redundant always-on
+   prose blocks — the `ezn-dag-key` legend line and a verbose view caption —
+   collapse into **one concise key line** — *"Δ vs
    champion · + = worse · lower loss better · hover nodes for detail"* — plus a
    small focusable **"?" info affordance** (top-right) whose hovercard carries the
    full parent→patch→…→terminal walkthrough, the 3-rule gate detail and the
@@ -201,14 +205,14 @@ Two scoped changes, CSS/JS-only:
 
 ## Round-11 changes (lifecycle ↔ rungs · resizable rail · "up")
 
-Three operator-requested changes, all CSS/JS-only and scoped to Variant T:
+Three operator-requested changes, all in CSS and JavaScript only:
 
 1. **The lifecycle DAG relates board runs to rungs/matchups** (replaces the
    lossy `×N`). A RACING candidate re-runs the SAME board entry across rungs
    (rung0 slice → rung1 larger slice → racing-final full board), so the
    per-entry stream repeats an `entry_id` N times. The BOARD column still
-   dedupes to **one node per distinct entry**, but it is **no longer lossy on the
-   values**:
+   dedupes to **one node per distinct entry**, and it now keeps every run's
+   value:
    - **Per-run losses (always).** Each deduped node is **expandable** (hover /
      focus / click) into a small inline panel that reveals its N per-run losses —
      a sparkline + one row per run (loss value + pass/fail/timeout dot). Clicking
@@ -216,9 +220,9 @@ Three operator-requested changes, all CSS/JS-only and scoped to Variant T:
    - **Per-run rung tag (when present).** When the per-entry records carry
      `match_id` / `rung` (a parallel backend change; e.g. `rung:"rung 0"`,
      `match_id:"rung0_m2"`), each run row is **labelled by its rung/matchup**
-     (rung 0 / rung 1 / final). When the fields are **absent** (legacy data such
-     as the current e0), the per-run losses still render but **no rung labels are
-     fabricated** (`data-tagged="0"`).
+     (rung 0 / rung 1 / final). When the fields are **absent**, as in records
+     written before they existed, the per-run losses still render and **no rung
+     labels are fabricated** (`data-tagged="0"`).
    - **Candidate rung-progression strip (always).** A small fit-to-width strip
      near PATCH/BOARD shows the candidate's **path through the tournament** —
      rung 0 → rung 1 → racing-final, each with its Δ-vs-champion and a
@@ -228,9 +232,9 @@ Three operator-requested changes, all CSS/JS-only and scoped to Variant T:
      tags the candidate still relates to the rounds/rungs. The builder is
      `dag.rungProgression()`; theme-aware across the 16 themes; suppressed for a
      gauntlet candidate (no rungs).
-   - **Gauntlet unchanged.** A gauntlet candidate runs each entry exactly once →
-     every group has size 1 → no expansion, no progression strip; identical to
-     the prior single-node rendering.
+   - **Gauntlet unchanged.** A gauntlet candidate runs each entry once, so
+     every group has size 1, and there is no expansion and no progression
+     strip: the rendering is a single node per entry.
 2. **A resizable LEFT side-panel.** A draggable handle on the rail's right edge
    (`.dt-rail-handle`, `role="separator"`) resizes the tree side-panel: a pointer
    drag sets the width live, arrow keys nudge ±16 (Home/End jump to the bounds).
@@ -257,9 +261,10 @@ Three operator-requested changes, all CSS/JS-only and scoped to Variant T:
    re-render) a no-op mid-drag, so the rail never snaps back. Keyboard nudges are
    unchanged.
 3. **"back" → "up".** The upper-left control navigates UP the selection
-   hierarchy (the parent route), not browser-back. Its label is now **"↑ up"**
-   (glyph `↑`, text `up`); aria-label "Navigate up", title "Navigate up one
-   level". Behaviour is unchanged — it still calls `goBack` / `router.up`.
+   hierarchy — the parent route — rather than going back in browser history.
+   Its label is **"↑ up"** (glyph `↑`, text `up`), its aria-label is "Navigate
+   up", and its title is "Navigate up one level". It calls `goBack` /
+   `router.up`.
 
 ## The headline (carried from P) — a data-model TREE sidebar
 
@@ -279,7 +284,7 @@ Environment (workspace)
 
 Expandable / collapsible; multi-epoch AND multi-generation; selection explicit +
 URL-encoded so a cold deep-link hydrates BOTH the open branches and the detail.
-Implemented in `js/variants/T/tree.js`; the shell (`shell.js`) assembles the
+Implemented in `js/tree.js`; the shell (`shell.js`) assembles the
 structural model from `/api/workspace` + `/api/lineage` + `/api/epoch.board` +
 `/api/tournaments` (for `champion_lineage`).
 
@@ -297,16 +302,16 @@ generations. The focused epoch's generation bundle now also resolves from
 `/api/lineage` (falling back to `/api/epoch.experiments`), keyed by the contract's
 epoch OR the routed epoch, so a deep-link / the publication route fills its
 generations even when `/api/epoch` is sparse. The empty state appears **only**
-when every source is genuinely empty.
+when every source is empty.
 
 **Current vs former champion.** Several generations may carry `promoted` over an
 epoch's life, but only ONE is the **current** champion — the last id in
 `champion_lineage`. The shell stamps `currentChampion` / `formerChampion` on each
 gen; the tree badges the current crown with a solid **♚ "champion"** marker
 (`gen-champ`) and every former champion with a distinct, dimmer **hollow-crown
-♔ "former champion"** marker (`gen-former`). A legacy model with no
-current/former split keeps the champion badge for any promoted gen (back-compat).
-Rejected / seed branches are unchanged.
+♔ "former champion"** marker (`gen-former`). A served model that carries no
+current-versus-former split keeps the champion badge for any promoted
+generation. Rejected and seed branches are unchanged.
 
 ## Detail views (router prefix `#/`, path = tree path)
 
@@ -327,7 +332,7 @@ Rejected / seed branches are unchanged.
 ## The compare model (NEW — fold 1, from S)
 
 The candidate detail is **comparison-first**. By default it reads ONE candidate.
-A **"compare with…"** picker (`js/variants/T/compare.js`, `comparePicker`) sets a
+A **"compare with…"** picker (`js/compare.js`, `comparePicker`) sets a
 `~cmp=<gen>` suffix on the hash (so the comparison **deep-links**); `splitFrame`
 then renders TWO candidate panels side by side, each in its **own digest-gated
 host** so one side changing never rebuilds the other. Each side carries the full
@@ -388,7 +393,7 @@ detail host holds the destination view.
    OWN digest. The upper digest folds in the live in-flight set INCLUDING each
    run's advancing `progressRatio` — it SHOULD repaint every beat. The transcript
    digest folds in ONLY `[selGen, the resolved candidates, their transcript
-   content]` — it deliberately EXCLUDES the in-flight set, so a beat that merely
+   content]` and excludes the in-flight set, so a beat that merely
    advances in-flight progress is a true no-op for the transcript host: its scroll
    containers are not recreated and scroll position is preserved. The transcript
    pane re-renders only when the selection or transcript content actually changes.
@@ -401,7 +406,7 @@ detail host holds the destination view.
 
 ## The slim reel on the epoch view (fold 4, adopted from V)
 
-`js/variants/T/reel.js` (ported IN — no cross-variant import) renders a compact,
+`js/views/epoch.js` (ported IN — no cross-variant import) renders a compact,
 **fit-to-width** champion spine: station 0 is the seed/champion (♛), and each
 round is a small **tick** on the spine carrying its ordinal (`r1…rN`), a
 verdict-coloured dot, and the challenger id. The rounds come from
@@ -409,8 +414,8 @@ verdict-coloured dot, and the challenger id. The rounds come from
 **replaces the old lineage-bumps** chart on the epoch view — the same
 champion-vs-challenger-over-rounds story, so only ONE appears; the heatmap stays.
 
-The big per-challenger cards are deliberately NOT hung off the reel (that does
-not scale); the per-challenger detail lives in the generations match cards.
+The big per-challenger cards are not hung off the reel, because that does not
+scale; the per-challenger detail lives in the generations match cards.
 
 **Scaling to many generations.** The SVG has a FIXED viewBox (`0 0 1000 92`) laid
 out left→right and is set to `width:100%` (NO pan/zoom, no horizontal scroll).
@@ -423,7 +428,7 @@ infinite keyframe). The reel's vertical scale is the fixed cozy
 **Structure-aware (the reel is gauntlet-only).** The champion-spine reel is the
 right picture for a **gauntlet** epoch — N sequential champion-vs-challenger
 title defences — but it is the WRONG story for a non-gauntlet structure (racing
-is successive halving, not a sequence of defences). So `views/epoch.js` reads
+is successive halving rather than a sequence of defences). So `views/epoch.js` reads
 `ep.tournament.structure` (via `isNonGauntlet`) and, for a non-gauntlet epoch,
 **replaces the reel** with a compact **structure strip** (`.dt-struct-strip`):
 the structure label, the field size (`field of N`), the rung / round count, and
@@ -526,7 +531,7 @@ and branches:
     read `k/N boards` + a partial Δ and grow an in-flight progress bar. The lone
     final survivor flows into the
     **champion-gate** seat; when the gate is settled and won it crowns the **new
-    champion ♚** (a `dn-good` box, confirmed against `champion_lineage`), else it
+    champion ♚** (a `dn-good` box, checked against `champion_lineage`), else it
     reads **"champion stands"**. A **live** race leaves a pending rung neutral
     (nobody cut until that rung's results land) and the gate reads "deciding…"
     rather than crowning a not-yet-committed winner.
@@ -561,9 +566,10 @@ and branches:
 Before any matchup runs, the orchestrator **mints a field** of challengers —
 each is a real lineage child of the champion that either **applies** cleanly or
 is **rejected** (empty response / invalid JSON / post-apply validation /
-`mutation_id` no longer resolves). Those per-challenger outcomes used to hit
-only the evolve log, so a run whose whole field failed looked *idle* on the
-dashboard. They are now captured as a **`field_status`** record per challenger —
+`mutation_id` does not resolve). Those per-challenger outcomes reach only the
+evolve log unless they are captured, which made a run whose whole field failed
+look *idle* on the dashboard. Each is now captured as a **`field_status`**
+record per challenger —
 `{generation_id, status: "applied"|"rejected", reason, seed}` — persisted onto
 the live `ActiveTournament` envelope (`/api/active-tournament`) AND surfaced on
 the per-epoch `/api/tournament-structure` (lifted from the retained
@@ -609,17 +615,16 @@ stamps `live` when the active record carries a non-idle `phase`. In `live` mode
 the renderers suppress committed verdicts — standings read **racing** instead of
 champion/eliminated, a rung with no recorded cut/survivors is shown **pending**
 (neutral, nobody struck), and a **LIVE** badge (`.dt-live-pill`) rides beside the
-structure pill. When idle, the view falls back to the completed record exactly as
-before. The lineage tree's crown likewise reflects the in-flight state through
+structure pill. When idle, the view falls back to the completed record. The lineage tree's crown likewise reflects the in-flight state through
 the heartbeat-driven model rebuild.
 
 ## The live-status indicator — structure-agnostic (running for ANY structure)
 
 The chrome status pill (`.dt-status`) reports whether a run is **ACTIVE for any
-tournament structure**, not just the gauntlet. The earlier pill was
-gauntlet-shaped: it lit only off `state.activeTournament`, so a live **racing**
-(or swiss / single_elim / double_elim) run read as "nothing is running" even
-though the run was plainly in flight.
+tournament structure** rather than only for the gauntlet. A gauntlet-shaped
+pill lights only off `state.activeTournament`, which makes a live **racing**
+run — or a swiss, single-elimination or double-elimination run — read as
+"nothing is running" while it is in flight.
 
 `livestatus.deriveLiveStatus({heartbeat, activeRuns, activeTournament})` folds
 the three live read signals — all already in `AppState` (the consolidated
@@ -700,7 +705,7 @@ digest so it stays live-updating + flash-free on the same SSE/poll cadence.
   Zenburn's canonical cyan `#8cd0d3` (the yml cyan `#93bea3` is a near-neutral
   grey-green), keeping improve/caution/accent separable.
 - **Typeface — inline buttons** (only three, so no dropdown needed) — three
-  genuinely distinct voices, body included (serif · technical-mono · display):
+  distinct voices, body included (serif · technical-mono · display):
   **Editorial** (Source Serif 4 throughout — body, headings & publication: a
   typeset literary voice) · **Technical** (default; Open Sans body + JetBrains
   Mono for data / labels / code) · **Display** (Space Grotesk geometric body +
@@ -740,8 +745,8 @@ inside a `.dt-scale-pill`, beside the colour + typeface pickers) with a small
   `aria-label`) beside the pill calls `shell.resetScale()` → `applyScale(100)`,
   snapping the page back to 100 % and persisting it. It is inherently
   keyboard-accessible (focusable; Enter/Space activate).
-- **Page-wide, NOT per-pane.** The scale is applied at the app root only — there
-  is deliberately **no** per-pane zoom control. In the side-by-side compare view
+- **Page-wide rather than per-pane.** The scale is applied at the app root
+  only, and there is **no** per-pane zoom control. In the side-by-side compare view
   the two panes scale together with the rest of the page.
 - **Persistence.** `readScale` / `persistScale` use their own key
   (`zicato.T.scale`); the value is restored and re-applied on every mount, and is
@@ -751,8 +756,9 @@ inside a `.dt-scale-pill`, beside the colour + typeface pickers) with a small
 
 The content now **fills the available viewport width** instead of sitting in a
 narrow centred column that wasted space on wide monitors. The detail pane
-(`.dt-viewhost`) and the legacy `.dn-viewhost` were clamped to **1160 px / 1320 px
-centred**; both are now **`width:100%`** with only a very generous, *non-centred*
+(`.dt-viewhost`) and the older `.dn-viewhost` were clamped to
+**1160 px / 1320 px centred**; both are now **`width:100%`** with only a
+generous, *non-centred*
 cap (`max-width: min(100%, 2400px)` / `min(100%, 2200px)`) that merely guards
 prose line-length on ultra-wide displays. Because the detail pane fills its
 column, the side-by-side compare grid (`.dt-split`, a `1fr 1fr` grid that only
@@ -800,7 +806,7 @@ The column now **dedupes to one node per distinct entry** (grouped by
 run) — and, when the entry was raced more than once, a **rung-multiplicity
 badge** (`×N`, class `ezn-board-mult`) to the right of the disc plus a dashed
 `ezn-board-raced` disc marker, so the repetition reads as "the same board
-re-raced across rungs", not random duplicates. The Σ-loss aggregate sums the
+re-raced across rungs" rather than as random duplicates. The Σ-loss aggregate sums the
 representative (deduped) losses. Clicking a node still drills into that entry's
 per-board detail (which shows ALL its runs). The per-rung detail lives in the
 racing ladder (Match-ups) + the per-board scoring dot-plot — NOT in this
@@ -821,10 +827,11 @@ NOT a fixed proportion of an arbitrary height. The internal viewBox height is
 **derived** from the deduped board-node count (`HEAD_PAD + ½·pitch + (N−1)·pitch
 + KEY_PAD`), and the structural spine (parent/patch/Σ/gate/terminal) is pinned to
 the board fan's **true vertical centre** `(fanTop + fanBot)/2`. A passed
-`o.height` is intentionally ignored — the figure is exactly as tall as its fan
-needs. This fixes the side-by-side compare where the **seed/baseline** (full
-board, more entries) used to stretch its fan over a taller range while the spine
-floated at the page centre, leaving a large empty top band — it diverged from a
+`o.height` is ignored, so the figure is as tall as its fan needs and no
+taller. This keeps the side-by-side compare aligned: a **seed or baseline**
+candidate with a fuller board would otherwise stretch its fan over a taller
+range while the spine floated at the page centre, leaving a large empty top
+band — it diverged from a
 racing **challenger** (deduped slice, fewer entries). Both sides now render with
 **identical row spacing** and a spine aligned to the fan; only the labels/
 decoration differ (SEED vs TERMINAL, no gate Δ for the seed). The compare-split
@@ -871,12 +878,13 @@ compare split).
 
 The round-10 polish adds: **(a)** routes use the bare **`#/`** prefix
 (`router.PREFIX === '#'`, no `/T`), a deep route parses, and an href round-trips
-(a legacy `#/T/…` link falls back to home); **(b)** the **density picker is gone**
+(a link carrying the old `#/T/…` prefix falls back to home); **(b)** the
+**density picker is gone**
 (no `DENSITY_THEMES` / `readDensity` / `applyDensity`), `ui.DENSITY === 'cozy'`,
 the SIZE tokens are fixed at the cozy values, the mounted root carries
 `data-t-density="cozy"`, and the CSS has no density-conditional selectors;
-**(c)** the typeface options are **exactly** `editorial/technical/display` (no
-`sans`, default Technical); **(d)** the **scale RESET** button returns the page to
+**(c)** the typeface options are `editorial`, `technical` and `display`, with
+no `sans` and Technical as the default; **(d)** the **scale RESET** button returns the page to
 100 % and persists (and `resetScale()` does the same); **(e)** **all thirteen** colour
 themes are registered, each defines the full `--v2-*` token contract in the CSS,
 and selecting each (incl. the ten Gogh palettes) applies + persists it — and a
@@ -904,22 +912,22 @@ renders the per-candidate breakdown (no in-flight panel when nothing is live).
 
 The **walkthrough** fixes add: **BUG 1** — the mutation-surface route carries an
 optional per-cell generation (`#/e/<epoch>/mutations/<mutId>/<gen>`); clicking a
-▪ **CELL** (carrying `data-gen` + `data-site`) renders **exactly ONE**
-generation's side-by-side diff for that site, while clicking the **SITE row
+▪ **CELL** (carrying `data-gen` + `data-site`) renders one generation's
+side-by-side diff for that site, while clicking the **SITE row
 label** (a bare `<mutId>` link, made visually distinct from the cells) renders
 **ALL** generations that patched the site, stacked — both with real-string
 content (never `[object Object]`), and a scope chip names whether the pane shows
 *one generation* or *all*. **BUG 2** — given `/api/lineage` generations across an
 epoch (with a sparse workspace + a 404 `/api/epoch`, the publication-route case),
 the tree **lists** that epoch and does **not** show *"No epochs in this workspace
-yet."*; the empty state appears only when every authoritative source is genuinely
+yet."*; the empty state appears only when every authoritative source is
 empty.
 
 The **lifecycle BOARD-column** fix adds: a **RACING** candidate whose per-entry
 stream repeats an `entry_id` across rungs renders **one node per distinct entry**
-(count == distinct entries, not total runs), each raced entry carries a `×N`
-multiplicity badge + an `ezn-board-raced` marker, and the node shows the
-representative (final full-board) loss, not the rung0 loss; the entry **label is
+(the count is of distinct entries rather than of total runs), each raced entry
+carries a `×N` multiplicity badge and an `ezn-board-raced` marker, and the node
+shows the representative final full-board loss rather than the rung-0 loss; the entry **label is
 end-anchored left of the disc** (`x ≤ cx − r`) and adjacent rows keep a ≥24 px
 gap, so a label never overlaps the disc; a **GAUNTLET** candidate (one run per
 entry) renders unchanged (one node per entry, multiplicity 1, no badge, no raced
@@ -934,7 +942,7 @@ the poll tick. Round 8 makes a live run feel **alive** without re-introducing
 flashing — the rule is **animate actual state *changes* (transitions / deltas),
 never repaint-loop**, and **prefer push (SSE) over poll**. JS/CSS only.
 
-A new module `js/variants/T/live.js` is the structure-agnostic live engine; the
+A new module `js/live.js` is the structure-agnostic live engine; the
 shell owns ONE persistent `LiveController` (the live hero + activity ticker) that
 the SSE-driven `refreshLive()` patches **in place** on every tick.
 
@@ -1028,7 +1036,7 @@ hero — mirroring the racing ladder/funnel pattern.
      it (prefers the payload's standings, else accumulates from the pairings).
    - **Elim → `elimBracket(model)`** (a real bracket tree): matches as nodes,
      winners advancing right (✦), a terminal **champion-gate** node; **double-elim**
-     stacks a **losers' band** beneath the winners' tree (one SVG, not two).
+     stacks a **losers' band** beneath the winners' tree, in one SVG.
      `elimModel(st)` splits the winners'/losers' bands by `bracket_slot` and
      resolves the gate.
    - Both are fit-to-width (`width:100%` + `viewBox`, no pan/zoom), token-themed
@@ -1054,9 +1062,9 @@ hero — mirroring the racing ladder/funnel pattern.
 
 ## Non-gauntlet EPOCH OVERVIEW (replaces the negative placeholder)
 
-The epoch view's "Tournament structure" section previously showed a negative
-placeholder for non-gauntlet epochs (*"this epoch is not a gauntlet…"*). It now
-embeds a **compact, at-a-glance OVERVIEW** of the tournament (the full per-round
+The epoch view's "Tournament structure" section embeds a **compact,
+at-a-glance overview** of the tournament for a non-gauntlet epoch, in place of
+a placeholder saying only that the epoch is not a gauntlet (the full per-round
 detail still lives on Match-ups via the retained "See Match-ups →" link). Each
 overview resolves the SAME normalized `st` the Match-ups ladder uses —
 LIVE-first (`buildLiveSwissModel`/`buildLiveElimModel`/`reconstructRacing` for
@@ -1123,7 +1131,7 @@ fit-to-width.
    (and no pairing has scored yet, and there is at least one challenger). This
    makes `swissModel.hasRounds` true, so the hero **blooms** from the proposing
    tracker into the live standings ladder the moment the field is applied — the
-   tracker is the seed of the ladder, not a dead-end. Guarded against the
+   tracker seeds the ladder rather than dead-ending. Guarded against the
    proposing phase so the tracker still leads while the field is being minted;
    once any pairing scores, the real accumulating Copeland points take over.
 

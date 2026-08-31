@@ -12,8 +12,10 @@ The terms are listed alphabetically.
 
 The `HarnessAdapter` protocol implementation that decouples zicato
 from any specific multi-agent framework. The adapter is what zicato
-talks to; the inner harness is what the adapter wraps. v0 ships a
-concrete ADK adapter; LangChain and plain-callable adapters follow.
+talks to; the inner harness is what the adapter wraps. The one
+adapter in the tree (`src/zicato/adapters/adk.py`) targets the agent
+development kit (ADK) the harness runs on; any other framework needs its
+own implementation of the protocol.
 An adapter has exactly two methods of interest to zicato:
 `run_entry(entry, sinks=[...])` and `mutation_points()`. See
 [ARCHITECTURE.md §4.1](ARCHITECTURE.md#41-harnessadapter).
@@ -23,8 +25,9 @@ An adapter has exactly two methods of interest to zicato:
 The component that takes an `Experiment`, resolves every patch's
 `mutation_point_id` to its source location, rewrites the span or
 file, and validates the result before publishing a new candidate
-generation snapshot. The applier enforces the validator constraints
-V1-V7 (see [MUTATION-SURFACE.md §6](MUTATION-SURFACE.md#6-validator-constraints)).
+generation snapshot. The applier enforces the pre-apply and post-apply
+validator checks (see
+[MUTATION-SURFACE.md §6](MUTATION-SURFACE.md#6-validator-constraints)).
 A patch that fails any validator is rejected; the applier does not
 silently fix anything. See [ARCHITECTURE.md §4.8](ARCHITECTURE.md#48-applier).
 
@@ -52,9 +55,9 @@ the two are identical. See
 The frozen-per-epoch list of tasks the inner harness is evaluated
 against. One JSONL file per epoch at
 `.zicato/epochs/{epoch}/board.jsonl`, one entry per line. Three entry
-kinds today (`single_turn`, `multi_turn_scripted`,
-`multi_turn_emulated`) with an open-ended discriminator so future
-kinds drop in without schema breakage. Mid-epoch edits change the
+kinds (`single_turn`, `multi_turn_scripted`, `multi_turn_emulated`)
+sit behind an open-ended discriminator, so a further kind drops in
+without a schema break. Mid-epoch edits change the
 evaluation contract and require explicit acknowledgment. See
 [BOARD-FORMAT.md](BOARD-FORMAT.md).
 
@@ -89,6 +92,19 @@ boundaries. An epoch is closed by the operator (`zicato epoch close`)
 or auto-closed on `zicato epoch new` with a warning. See
 [EPOCHS-AND-JOURNALING.md](EPOCHS-AND-JOURNALING.md).
 
+## Expectation
+
+An **outcome** check on a board entry — a matcher run post-hoc on the
+run's output or transcript. An entry's `expectations` list holds
+zero or more. Five kinds: `predicate` (Python callable),
+`expected_text` (exact string), `regex` (Python regex), `json_schema`
+(JSON-schema), and `rubric` (LLM-graded via `auxiliary_call_llm`).
+Authored with the `Predicate` and `Rubric` namespaces. The loss
+reducer ANDs the list into `pass_fail: bool`; an empty list →
+drift-loss-only scoring for the entry. Distinct from a *judge* (a
+process check). See
+[BOARD-FORMAT.md §3](BOARD-FORMAT.md#3-outcome-check-the-expectation-field).
+
 ## Experiment
 
 The proposer's output. A typed shape carrying a mandatory structured
@@ -103,7 +119,8 @@ See [EPOCHS-AND-JOURNALING.md §3](EPOCHS-AND-JOURNALING.md#3-the-experiment).
 
 The capped, curated digest of **prior experiments** surfaced to the
 proposer so it stops re-proposing known failures and builds on known
-wins — the fix for the proposer's memoryless greedy hill-climb. Each
+wins, which is what keeps the proposer from hill-climbing without
+memory of what it already tried. Each
 entry carries the experiment's `core_idea`, the mutation-point ids it
 touched, its verdict (`promoted` / `rejected` / `deferred` / in-flight),
 its rejection reason, and its signed Δscalar. Two scopes: settled
@@ -111,59 +128,10 @@ cross-round history (read from the analytical index's `experiments`
 table) and intra-round sibling awareness (the hypotheses of the other
 challengers minted this round in a multi-challenger field, no outcomes
 yet). Rendered in the proposer's `## What's already been tried` user-
-prompt section. Advisory, not a constraint, and scoped to the current
+prompt section. Advisory rather than binding, and scoped to the current
 evaluation contract. Distinct from a *pattern* (a present-tense loss
 aggregate) and from the *proposer brief* (the operator's static
 steering). See [EXPERIMENT-MEMORY.md](EXPERIMENT-MEMORY.md).
-
-## Expectation
-
-An **outcome** check on a board entry — a matcher run post-hoc on the
-run's output or transcript. An entry's `expectations` list holds
-zero or more. Five kinds: `predicate` (Python callable),
-`expected_text` (exact string), `regex` (Python regex), `json_schema`
-(JSON-schema), and `rubric` (LLM-graded via `auxiliary_call_llm`).
-Authored with the `Predicate` and `Rubric` namespaces. The loss
-reducer ANDs the list into `pass_fail: bool`; an empty list →
-drift-loss-only scoring for the entry. Distinct from a *judge* (a
-process check). See
-[BOARD-FORMAT.md §3](BOARD-FORMAT.md#3-outcome-checks-the-expectations-list).
-
-## Judge
-
-A **process** check on a board entry — a goldfive judge that watches
-the agent's reasoning stream in-run, as distinct from an *expectation*
-(which inspects the finished output post-hoc). An entry's `judges`
-list holds zero or more. Authored with the `Judge` namespace:
-`Judge.custom(name, criterion, ...)` for an inline natural-language
-judge, `Judge.python(name, dotted_path, ...)` for a programmatic one.
-A violation emits a `DriftKind.CUSTOM` drift identified by the judge's
-`name` (carried as `judge_name`). goldfive's own built-in judges are
-ambient and default-on; a board's `disable_drift` suppresses built-ins
-by `DriftKind`. See
-[BOARD-FORMAT.md §4](BOARD-FORMAT.md#4-process-checks-the-judges-list)
-and [BOARD-AUTHORING.md §3](BOARD-AUTHORING.md).
-
-## Predicate
-
-The namespace of static factory helpers for the deterministic
-(non-LLM) outcome-check kinds: `Predicate.contains`, `Predicate.regex`,
-`Predicate.schema`, `Predicate.python`. Each returns an `Expectation`
-ready to attach to a board entry's `expectations` list. Paired with
-`Rubric` (the LLM-graded outcome check). See
-[BOARD-AUTHORING.md §2](BOARD-AUTHORING.md).
-
-## Proposer brief
-
-The operator-edited markdown file per epoch that steers the proposer
-— focus areas, style guidance, and a mechanically-enforced
-`## Forbidden` list of mutation-point ids. Read fresh into the
-proposer's prompt every round; no caching. Formerly called the epoch
-"rubric"; renamed so "rubric" refers only to the per-entry
-`Rubric.score()` outcome check. Distinct from that per-entry rubric:
-the proposer brief steers the proposer epoch-wide, a `Rubric` grades
-one entry's output. See
-[EPOCHS-AND-JOURNALING.md §7](EPOCHS-AND-JOURNALING.md#7-the-proposer-brief).
 
 ## Generation
 
@@ -174,7 +142,7 @@ previous epoch). Each subsequent generation is the result of an
 applier writing a candidate snapshot from an `Experiment`. A
 generation's directory holds its `snapshot/`, its `experiment.json`,
 its per-entry `runs/`, and its `gen_score.json`. See
-[ARCHITECTURE.md §5](ARCHITECTURE.md#5-storage-layout).
+[ARCHITECTURE.md §6](ARCHITECTURE.md#6-storage-layout).
 
 ## Harness `call_llm`
 
@@ -205,8 +173,8 @@ zicato treats it as a black box behind a `HarnessAdapter`.
 
 Under the default `goldfive` telemetry dialect the inner harness emits a
 `goldfive.v1.Event` stream, wrapped with `goldfive.wrap` by the adapter.
-That is the dialect that yields drift kinds, not a requirement on the
-harness: the `adk_events` and `transcript` dialects read a harness that
+That dialect is what yields drift kinds; it is not a requirement on the
+harness. The `adk_events` and `transcript` dialects read a harness that
 never runs under goldfive at all. See
 [ARCHITECTURE.md §1](ARCHITECTURE.md#1-what-zicato-is-and-why) and
 [TELEMETRY-DIALECTS.md](TELEMETRY-DIALECTS.md).
@@ -214,10 +182,10 @@ never runs under goldfive at all. See
 ## Instance
 
 A zicato workspace keyed by `instance_id`. The default instance is
-`default`; nested zicato setups (target 3 — see
+`default`; nested zicato setups (zicato optimizing itself — see
 [DOGFOOD-TARGETS.md §3](DOGFOOD-TARGETS.md#3-target-3--zicato-itself))
-key by distinct ids so outer and inner zicato workspaces don't
-cross-talk. `instance_id` is carried in `.zicato/config.json` today
+key by distinct ids so outer and inner zicato workspaces do not
+cross-talk. `instance_id` is carried in `.zicato/config.json`
 (written by `zicato init --instance-id`). The planned per-instance path
 materialization under `.zicato/instances/{instance_id}/` is **not yet
 shipped** — there is no per-command `--instance` selector. See
@@ -231,6 +199,21 @@ The running narrative of an epoch. Markdown file at
 `tournament_decision`. Human-readable; read the file directly (there
 is no `zicato journal` command — open `journal.md` or view it in the
 dashboard). See [EPOCHS-AND-JOURNALING.md §4](EPOCHS-AND-JOURNALING.md#4-the-journal-running).
+
+## Judge
+
+A **process** check on a board entry — a goldfive judge that watches
+the agent's reasoning stream in-run, as distinct from an *expectation*
+(which inspects the finished output post-hoc). An entry's `judges`
+list holds zero or more. Authored with the `Judge` namespace:
+`Judge.custom(name, criterion, ...)` for an inline natural-language
+judge, `Judge.python(name, dotted_path, ...)` for a programmatic one.
+A violation emits a `DriftKind.CUSTOM` drift identified by the judge's
+`name` (carried as `judge_name`). goldfive's own built-in judges are
+ambient and default-on; a board's `disable_drift` suppresses built-ins
+by `DriftKind`. See
+[BOARD-FORMAT.md §4](BOARD-FORMAT.md#4-process-checks-the-judges-list)
+and [BOARD-AUTHORING.md §3](BOARD-AUTHORING.md).
 
 ## Lineage
 
@@ -277,9 +260,9 @@ or was not promoted. See
 
 A typed rewrite addressed by mutation-point id. Carries
 `mutation_point_id` (must resolve to a current mutation point) and
-`new_text` (the post-patch text). One or more patches make up an
+`new_text` (the patched text). One or more patches make up an
 `Experiment`'s patches list. Patches are applied by the applier and
-validated against constraints V1-V7. See
+validated against the pre-apply and post-apply validator checks. See
 [MUTATION-SURFACE.md §6](MUTATION-SURFACE.md#6-validator-constraints).
 
 ## Pattern
@@ -300,6 +283,15 @@ ends the conversation). The emulator's system prompt is built from
 the persona; the emulator sees only the persona and the user-facing
 transcript. See [BOARD-FORMAT.md §2.3](BOARD-FORMAT.md#23-multi_turn_emulated).
 
+## Predicate
+
+The namespace of static factory helpers for the deterministic
+(non-LLM) outcome-check kinds: `Predicate.contains`, `Predicate.regex`,
+`Predicate.schema`, `Predicate.python`. Each returns an `Expectation`
+ready to attach to a board entry's `expectations` list. Paired with
+`Rubric` (the LLM-graded outcome check). See
+[BOARD-AUTHORING.md §2](BOARD-AUTHORING.md).
+
 ## Proposer
 
 The component that reads patterns and the operator-edited proposer
@@ -307,11 +299,24 @@ brief and emits an `Experiment` (hypothesis + patches). Driven by
 `auxiliary_call_llm`. Schema-enforced output. See
 [ARCHITECTURE.md §4.7](ARCHITECTURE.md#47-patch-proposer).
 
+## Proposer brief
+
+The operator-edited markdown file per epoch that steers the proposer
+— focus areas, style guidance, and a mechanically-enforced
+`## Forbidden` list of mutation-point ids. Read fresh into the
+proposer's prompt every round; no caching. The word "rubric" refers
+only to the per-entry `Rubric.score()` outcome check, so this
+document never uses it for the brief. Distinct from that per-entry rubric:
+the proposer brief steers the proposer epoch-wide, a `Rubric` grades
+one entry's output. See
+[EPOCHS-AND-JOURNALING.md §7](EPOCHS-AND-JOURNALING.md#7-the-proposer-brief).
+
 ## Reducer
 
 The post-run function that walks one `events.jsonl` and produces one
-`LossProfile`. Function, not sink — the right shape for derivation
-work because it has full visibility over the run's events. Testable
+`LossProfile`. A function rather than an event sink, which is the right
+shape for derivation work because it sees all of a run's events at once.
+Testable
 in isolation via fixture JSONLs. See [TELEMETRY.md §2](TELEMETRY.md#2-the-post-run-reducer).
 
 ## Round
@@ -331,10 +336,10 @@ run's output (or transcript) against an operator-supplied criterion on
 a numeric scale, and the resulting `Expectation` passes iff the score
 meets a threshold. `reads=OutputScope.FINAL|TRANSCRIPT` selects the
 slice graded. Paired with `Predicate` (the deterministic outcome
-checks). Formerly `Rubric.judge()` — renamed so "judge" refers only
-to the in-run process check. Not to be confused with the *proposer
-brief* (the epoch-level steering document, once also called a
-"rubric"). See [BOARD-AUTHORING.md §2](BOARD-AUTHORING.md).
+checks). The word "judge" refers only to the in-run process check, so
+no rubric helper carries that name. Not to be confused with the
+*proposer brief* (the epoch-level steering document). See
+[BOARD-AUTHORING.md §2](BOARD-AUTHORING.md).
 
 ## Run
 
@@ -350,10 +355,10 @@ runs — one per entry per generation). See
 ## Snapshot
 
 The directory under `generations/v{N}/snapshot/` holding the full
-source of the inner harness at this generation. A full copy, not a
-git ref. Self-contained: copying or deleting a snapshot does not
+source of the inner harness at this generation. A full copy rather than
+a git reference. Self-contained: copying or deleting a snapshot does not
 affect any other generation. See
-[ARCHITECTURE.md §5](ARCHITECTURE.md#5-storage-layout).
+[ARCHITECTURE.md §6](ARCHITECTURE.md#6-storage-layout).
 
 ## Tournament
 

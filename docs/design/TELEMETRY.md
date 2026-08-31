@@ -99,13 +99,12 @@ ticking up inside zicato as a run progresses). The live view is
 harmonograf: `make_run_sinks` (§1.1) attaches a `HarmonografSink`
 alongside the canonical JSONL sink whenever a harmonograf URL is in
 scope, so every run streams to the harmonograf console as it unfolds.
-`zicato evolve` resolves that URL — auto-launching an in-process
-harmonograf server when none is configured (see §1.4) — so the live
-view is on by default, not an opt-in. If a future zicato-side
-accumulator is ever wanted, the right shape is an additive in-process
-sink alongside the JSONL one (the JSONL sink stays the canonical
-record); that is not built today because harmonograf already serves
-the need.
+`zicato evolve` resolves that URL, auto-launching an in-process
+harmonograf server when none is configured (see §1.4), so the live view
+is on by default. A zicato-side accumulator would take the shape of an
+additive in-process sink alongside the JSONL one, with the JSONL sink
+staying the canonical record. It is unbuilt, because harmonograf already
+serves the need.
 
 ### 1.4 One harmonograf server, many sessions
 
@@ -151,10 +150,10 @@ the auto-launched-or-configured one resolved by
 
 ## 2. The post-run reducer
 
-The reducer is a **function**, not a sink. Sinks make incremental
-decisions about each event as it arrives; the reducer runs once per
-run with full visibility over the whole stream. That shape is
-strictly better for derivation work:
+The reducer is a **function** rather than a sink. A sink makes
+incremental decisions about each event as it arrives; the reducer runs
+once per run with full visibility over the whole stream. That shape suits
+derivation work:
 
 - The reducer can compute features that depend on the relationship
   between events (e.g. `task_failure_ratio`).
@@ -226,10 +225,10 @@ JSONL without a terminal event. The reducer handles this gracefully:
   The runner catches and logs them; the per-run loss profile records
   the failure.
 
-In practice both cases are rare — goldfive's sink flushes per-line
-and the adapter is responsible for emitting a terminal event. But the
-reducer's job is to be safe against operational reality, not just
-the happy path.
+Both cases are rare, because goldfive's sink flushes per-line and the
+adapter is responsible for emitting a terminal event. The reducer is
+nonetheless written to be safe against operational reality rather than
+only against the expected path.
 
 ## 3. `LossProfile`
 
@@ -243,7 +242,7 @@ The structure is **flat by design** — every field is a scalar, a
 tuple of scalars, or a tuple of small frozen dataclasses
 (`DriftCount`, `MetricCount`, `JudgeLoss`) — so the profile
 round-trips through JSON and is diffable in the journal. Counts are
-carried as *tuples of typed measurement rows*, not as `dict`s.
+carried as *tuples of typed measurement rows* rather than as `dict`s.
 
 ```python
 from dataclasses import dataclass
@@ -372,7 +371,7 @@ These fields are `None` on single-turn entries.
 | Field | Computation |
 |---|---|
 | `turns_completed` | Number of conversational turns the run executed before terminating (by `stop_when`, `max_turns`, or abort). |
-| `memory_failure_count` | Zicato-derived: how many times the inner agent re-asked something the simulated user had already answered. Computed by the reducer, not goldfive. |
+| `memory_failure_count` | Zicato-derived: how many times the inner agent re-asked something the simulated user had already answered. The reducer computes it; goldfive does not emit it. |
 | `context_loss_count` | Zicato-derived: how many times the agent appeared to forget a fact established earlier in the conversation. Same multi-turn-pattern detector as `memory_failure_count`. |
 
 These shapes are not new drift kinds; they are zicato-level
@@ -452,7 +451,7 @@ something already answered", "did it forget a fact established
 earlier") are instead surfaced as the derived multi-turn signals
 `memory_failure_count` and `context_loss_count` (§3.3), computed by
 the reducer from goldfive's events plus the transcript. These are
-zicato-level computations, not new goldfive drift kinds.
+zicato-level computations rather than new goldfive drift kinds.
 
 ### 4.1 Turn boundaries
 
@@ -486,7 +485,7 @@ work shows up as its own row on the Gantt.
 
 ### 4.3 What the emulator lane is for
 
-Operators replaying a run in harmonograf can see exactly what the
+Operators replaying a run in harmonograf see what the
 emulator produced and what it cost. The emulator's LLM time
 contributes to the entry's `wall_clock_budget_seconds`, so visibility
 on that lane explains "why did this multi-turn entry take 8 minutes
@@ -524,7 +523,7 @@ for scoring. Some are both. The split:
 
 The proposer sees aggregated patterns (§4.6 of the architecture doc),
 not raw loss profiles. The tournament sees `drift_loss` and `pass_fail`
-from the loss profiles, not the raw counts. This keeps the two views
+from the loss profiles rather than the raw counts. This keeps the two views
 clean: the proposer reasons in patterns; the tournament reasons in
 scalars.
 

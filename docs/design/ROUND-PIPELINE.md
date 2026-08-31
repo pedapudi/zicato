@@ -1,6 +1,7 @@
 # Round pipeline decomposition
 
-One evolve round is a phase pipeline, not a bag of orchestrator callbacks:
+One evolve round runs as a pipeline of five phases, each with a named owner
+module rather than a set of orchestrator callbacks:
 
 1. **Prepare** resolves the frozen epoch inputs, runtime dependencies, parent
    generation, and mutable surface.
@@ -38,14 +39,14 @@ gauntlet module, so the two structures cannot accidentally share mutable
 strategy state. Shared behavior is imported from a narrow owner instead of
 copied between the strategies.
 
-The two strategy modules are deliberately not generic phase containers. Each
-has one asynchronous entry point and owns one complete tournament structure.
-Their long control flows preserve the visible order of heartbeat transitions,
-RoundLog events, cache writes, gate evaluation, and settlement. Moving arbitrary
-line ranges into generic helpers would reduce file size without reducing state
-or coupling. A further extraction is justified only when it introduces a typed
-phase result that removes locals from the strategy, not when it merely forwards
-the same argument set.
+The two strategy modules are not generic phase containers. Each has one
+asynchronous entry point and owns one complete tournament structure. Their long
+control flows preserve the visible order of heartbeat transitions, `RoundLog`
+events, cache writes, gate evaluation, and settlement. Moving arbitrary line
+ranges into generic helpers would reduce file size without reducing state or
+coupling. A further extraction is justified only when it introduces a typed
+phase result that removes locals from the strategy. Forwarding the same argument
+set through a new helper does not qualify.
 
 ## Generation phase boundary
 
@@ -54,20 +55,20 @@ resolution, safe abort-time parent lookup, next-id allocation, snapshot-store
 resolution, and mutable-tree rebasing. Callers import that owner directly.
 There are no orchestrator aliases or monkeypatch forwarding seams.
 
-The fallback champion rule is unchanged: a non-empty marker wins; without one,
-the greatest generation directory under the established ordering wins. Next-id
-allocation considers only `vN` identifiers. Snapshot paths always resolve via
-the configured generation store, and mutable subpaths fall back to the whole
-snapshot only when an adapter declares none.
+The fallback champion rule is that a non-empty champion marker wins; without
+one, the greatest generation directory under the established ordering wins.
+Next-id allocation considers only `vN` identifiers. Snapshot paths always
+resolve through the configured generation store, and mutable subpaths fall back
+to the whole snapshot only when an adapter declares none.
 
 ## Structural constraint
 
 The dispatcher stays below 1,000 lines and owns no business decisions. Large
 tournament strategies may remain separate because combining their different
 tails would hide the crowning and persistence invariants. Supporting phase
-owners stay below 1,000 lines and expose named values rather than mutable bags
-of callbacks. Every structural change must preserve the exact convergence and
-decision-procedure oracles.
+owners stay below 1,000 lines and expose named values rather than mutable
+collections of callbacks. Every structural change must keep the convergence
+known-answer test and the decision-procedure power test passing unchanged.
 
 `RoundSession` is the typed prepare result shared with generation-coordinate
 helpers. Terminal strategy output is `EvolveRoundOutcome`; intermediate

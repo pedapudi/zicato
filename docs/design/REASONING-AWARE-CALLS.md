@@ -2,8 +2,8 @@
 
 ## Purpose
 
-`CallLLM` deliberately stays small: `(system, user, model) -> answer text`.
-Some backends, however, produce private reasoning separately from the answer.
+`CallLLM` has one small signature: `(system, user, model) -> answer text`.
+Some backends produce private reasoning separately from the answer.
 If reasoning consumes the output budget, the answer channel can be empty. A
 plain text adapter cannot distinguish that condition from a legitimate empty
 answer and must not substitute the private reasoning.
@@ -16,14 +16,14 @@ channels from flattened text and does not change existing `CallLLM` call sites.
 
 The backend accepts a `ModelRequest` and returns a `ModelResponse`:
 
-- `reasoning_enabled` is a backend-level control, not an instruction added to
-  the prompt.
+- `reasoning_enabled` is a backend-level control rather than an instruction
+  added to the prompt.
 - `max_output_tokens` is the attempt's output ceiling.
 - `content` is the user-visible answer.
 - `reasoning` is private scratch space. The adapter never returns, logs,
   persists, interpolates, or includes it in an exception.
-- `answer_status="exhausted"` explicitly says the answer was not reached
-  before the budget ended. Empty `content` alone does not authorize a retry.
+- `answer_status="exhausted"` reports that the answer was not reached before
+  the budget ended. Empty `content` alone does not authorize a retry.
 - token counts and finish reason may be reported for scratchpad-free accounting.
 
 The adapter requires explicit `ReasoningCapabilities`. It refuses a backend
@@ -86,18 +86,18 @@ async def call_llm(request: ModelRequest) -> ModelResponse:
     )
 ```
 
-The example's `backend_request` is intentionally application-owned: transport
-field names differ, while zicato's structured boundary stays stable and
-model-agnostic.
+The example's `backend_request` is owned by the application, because transport
+field names differ between backends. zicato's structured boundary stays stable
+and model-agnostic.
 
 ## Accounting hook
 
 Pass `observe_attempt=` to receive one `CallAttempt` after every completed
 backend request. It contains mode, terminal status, finish reason, and token
 counts but no prompts, answer, or reasoning. A fallback therefore produces two
-accounting records. The observer is synchronous and should remain cheap; an
-observer exception is intentionally visible rather than silently losing cost
-data.
+accounting records. The observer is synchronous and should remain cheap. An
+observer exception propagates rather than being swallowed, so that cost data is
+never lost silently.
 
 ## Scope
 

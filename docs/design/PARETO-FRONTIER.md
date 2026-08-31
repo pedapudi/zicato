@@ -15,8 +15,8 @@ scoring axis and that nothing else on the record dominates.
 > selection, never enters the proposer's prompt, never moves the champion
 > pointer. It is an observation written beside the champion lineage, in the
 > same class as the Elo fold ("visibility, never the gate") and the RoundLog.
-> §8 lists the things it deliberately does NOT do and why they are separate,
-> gated work.
+> §8 lists what it does NOT do and why each of those is separate, gated
+> work.
 
 ## 1. Why this needs no knob
 
@@ -38,18 +38,18 @@ for it. There is none.
 `aggregate_namespaced_metrics()` multiplies each namespace's per-run mean by
 its signed weight *before* returning it, which is the single fact that makes
 this cheap: the sign is already folded in, so **every axis is uniformly
-lower-is-better** and the comparison never has to branch on direction. This
-is the same property `tournament/gate.py`'s Rule 3 already relies on.
+lower-is-better** and the comparison never has to branch on direction. The
+per-namespace monotonicity rule in `tournament/gate.py` relies on the same
+property.
 
 ### 1.1 Why it ships default-on
 
-The issue that proposed this suggested shipping step 1 disabled. That caution
-was aimed at the steps that would let a frontier member *influence* the loop
-(§8) — a frontier is genuinely easier to abuse than a scalar once something
-reads it. Nothing reads it here. A record with no consumer has no abuse
-surface, and a default-off record produces no evidence about whether the
-frontier is worth having, which is exactly the question the next steps need
-answered. Both precedents in this repo for "derived, read-only, never gates"
+The case for shipping a frontier disabled applies to the steps that would
+let a frontier member *influence* the loop (§8): a frontier is easier to
+abuse than a scalar once something reads it. Nothing reads this record. A
+record with no consumer has no abuse surface, and a default-off record
+produces no evidence about whether the frontier is worth having, which is
+the question the next steps need answered. Both precedents in this repo for "derived, read-only, never gates"
 — the Bradley–Terry Elo fold and the RoundLog — ship on.
 
 ## 2. Axes and dominance
@@ -66,7 +66,7 @@ zero. Under the defaults that is `("cost:", "drift:", "latency:", "rubric:",
 
 `output:` is **not** an axis. Its default weight is `0.0`, and a zero weight
 has neither a sign nor a scale — there is no direction in which "more output
-characters" is better or worse, which is precisely why the operator set it to
+characters" is better or worse, which is why the operator set it to
 zero. Making it an axis would need a per-axis noise floor, which is separate
 work (§8).
 
@@ -76,7 +76,7 @@ telemetry reducer never fills the `latency:` namespace, even though
 already holds a usable number. `aggregate_namespaced_metrics()` promotes
 known-but-absent namespaces to `0.0`, so the axis is present and constant —
 it can never separate two candidates, and it can never wrongly separate them
-either. Filling it is deliberately **not** done here: the `0.0001` weight
+either. Filling it is **not** done here: the `0.0001` weight
 would start contributing to the scalar and move every score in the workspace.
 That is a scoring change, and it rolls the epoch. Registered in §8.
 
@@ -131,14 +131,15 @@ strict Pareto dominance.
 `shared` is the axes both sides carry a finite value for; an axis only one
 side has is skipped, so it neither creates nor blocks a dominance relation.
 With no shared axes the result is `False` in both directions — two candidates
-with nothing in common are *incomparable*, not dominant.
+with nothing in common are *incomparable* rather than dominant.
 
-The margin band is what makes this a **weak** dominance test rather than a
-knife-edge one. Inside `±margin` the two candidates are tied on that axis,
-because `promote_margin` is exactly the width at which the loop has agreed a
-difference is not noise. A candidate that is a hair better on every axis
-therefore dominates nothing, and a candidate that is a hair worse on one axis
-is not thereby saved from being dominated.
+The margin band is what makes this a **weak** dominance test rather than one
+that turns on an arbitrarily small difference. Inside `±margin` the two
+candidates are tied on that axis, because `promote_margin` is the width at
+which the loop treats a difference as more than noise. A candidate that is
+better on every axis by less than the margin therefore dominates nothing, and
+a candidate that is worse on one axis by less than the margin is not thereby
+saved from being dominated.
 
 ```python
 def beats_on(
@@ -227,15 +228,15 @@ record. A candidate is admitted only when **all** of the following hold:
    candidate with no finite axis value is refused.
 2. **Not a placebo.** A random-baseline arm (`PLACEBO_HYPOTHESIS_MARKER`,
    detected by `zicato.evolve.placebo.is_placebo_experiment`) is a
-   calibration probe, not a candidate. It is a no-op re-emission of the
+   calibration probe rather than a candidate. It is a no-op re-emission of the
    champion, so it would sit on the frontier as a permanent tie and
-   contaminate exactly the record whose job is to hold interesting
+   contaminate the record whose job is to hold interesting
    candidates. The multi-challenger path fields the placebo *inside* the
-   slate, so this check is load-bearing, not theoretical.
+   slate, so this check is load-bearing rather than theoretical.
 
    The rule has a second half on the REFERENCE side: a placebo may not be
-   the *champion* either. The gate can crown the arm — that is exactly what
-   the CRITICAL `placebo_promoted` health finding exists to catch — and when
+   the *champion* either. The gate can crown the arm, which is what
+   the CRITICAL `placebo_promoted` health finding exists to catch, and when
    it does, `update_frontier` refuses the whole round rather than measuring
    against a no-op copy of the champion. Otherwise every admission that
    round would attribute its `champion_generation_id` to a generation that
@@ -254,18 +255,17 @@ record. A candidate is admitted only when **all** of the following hold:
 
 On admission, any current member the newcomer dominates is retired.
 
-The champion is the **reference**, not a member. The record's whole claim is
+The champion is the **reference** rather than a member. The record's whole claim is
 "here is what was better than the champion somewhere", which needs the
 champion to sit outside the set being compared.
 
-### 4.1 Reuse of the gate's logic, not a copy
+### 4.1 The gate's own namespace check, reused
 
-Rule 3's namespace check is promoted from `tournament/gate.py`'s private
-`_regressed_namespaces()` to a public `regressed_namespaces()` in the same
-module, with the private name retained as an alias so no call site changes
-behavior. The gate keeps calling the same function it always did; the
-frontier calls it too. There is no second implementation of "did this
-namespace regress", so the two can never drift apart.
+The per-namespace monotonicity check is the public `regressed_namespaces()`
+in `tournament/gate.py`, with the private `_regressed_namespaces()` kept as
+an alias. The gate and the frontier call that one function. There is no
+second implementation of "did this namespace regress", so the two cannot
+drift apart.
 
 ## 5. The update, as a pure function
 
@@ -299,10 +299,10 @@ a monotonicity namespace, and only one reason is recorded:
 §4. Each admission may retire members with reason `dominated_by:{gid}`.
 
 `dominated_by:{gid}` names a MEMBER, and a member can itself retire later, so
-a reason can end up pointing at a generation that is no longer on the
-frontier. That is intended: `retired` is an append-only evidence trail, not
-an index, and the referent is always still findable in the same file (nothing
-is ever deleted) or in the epoch's lineage.
+a reason can end up pointing at a generation that has itself left the
+frontier. That is intended: `retired` is an append-only evidence trail
+rather than an index, and the referent is always still findable in the same
+file (nothing is ever deleted) or in the epoch's lineage.
 
 Nothing is ever deleted. A member that leaves the frontier moves to `retired`
 with the round and the reason, because the interesting question later is not
@@ -312,9 +312,9 @@ This is the same evidence discipline the archive-on-overwrite rule applies to
 
 A **promotion keeps the frontier.** The epoch's contract has not changed, so
 the earlier measurements are still comparable; only the reference point moved,
-which is what the retire pass handles. An **epoch roll starts empty** — a new
-contract means new axes, a new margin, and scores that are not comparable to
-the old ones.
+which is what the retire pass handles. An **epoch roll starts empty** — a
+fresh contract means fresh axes, a fresh margin, and scores that are not
+comparable to the preceding epoch's.
 
 ### 5.1 Types
 
@@ -466,7 +466,7 @@ frontier is fully readable with no index at all. A best-effort incremental
 upsert runs at the settle seam so a live index does not go stale, mirroring
 `ingest_reflection`.
 
-**No UI and no new CLI command in this pass.** `zicato epoch list` is
+**No UI and no new CLI command.** `zicato epoch list` is
 untouched, the epoch view API payload is unchanged, and no dashboard code is
 touched. A payload field with no renderer is a render-conformance violation
 waiting to happen, and a `zicato frontier` subcommand moves the `CLI-HELP`
@@ -474,11 +474,11 @@ parity golden for a surface nothing has asked for yet. The reader functions
 in §5.2 are the supported way to inspect the record today. Both surfaces are
 registered in §8.
 
-## 8. Deliberately not built
+## 8. Not built
 
 Everything below would make something *read* the frontier. That is where the
 abuse surface in §4 stops being hypothetical, so each is generator-arsenal
-work: it ships default-off with an operator-characteristic proof that it
+work: it ships default-off with an operating-characteristic proof that it
 helps, per the campaign philosophy (`docs/design/CAMPAIGN.md`).
 
 - **Show the frontier to the proposer, in bands, beside the genealogy pool.**
@@ -499,9 +499,10 @@ helps, per the campaign philosophy (`docs/design/CAMPAIGN.md`).
   change at the `0.0001` default weight: it moves every scalar in the
   workspace and rolls the epoch. Worth doing — it is the axis most likely to
   actually separate candidates, since `drift:` and `cost:` tend to move
-  together — but on its own terms, not smuggled in behind a record.
+  together — but on its own terms rather than as a side effect of this
+  record.
 - **A `zicato frontier <epoch>` command and an epoch-view surface.** Cheap,
-  but they are the operator-facing half of the issue's second motivation
+  but they are the operator-facing half of this record's second motivation
   (letting a human pick "80% of the accuracy at 10% of the cost"), which
   deserves its own design pass rather than a bare JSON dump.
 
@@ -510,7 +511,7 @@ helps, per the campaign philosophy (`docs/design/CAMPAIGN.md`).
 **Cross-round comparability.** `rotate_holdout` defaults to `True`, so two
 rounds may score their candidates against different board entries. A frontier
 that spans rounds assumes those raw values are comparable. The assumption is
-probably safe — `promote_margin` is fitted to absorb exactly that noise, and
+probably safe — `promote_margin` is fitted to absorb that noise, and
 the scalar comparison the gate already performs carries the identical
 exposure — but nobody has confirmed it, and the record is the artifact that
 would let someone confirm it. It is written down here rather than resolved.

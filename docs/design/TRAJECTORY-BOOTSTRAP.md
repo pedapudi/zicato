@@ -1,18 +1,18 @@
 # Trajectory bootstrap — eval synthesis from foreign agent traces
 
-> **Status: DESIGNED. WS-INGEST (the trace importer + the imported-trace
-> miner source) SHIPPING with this doc; WS-BOOT / WS-WIRE build FROM this
-> doc.** This is the program's execution contract. The importer and the new
-> miner source (§4, §9, Commit 2) land with it; the two sibling workstreams
-> (§8) are specified so they build in parallel against nothing but this file,
-> the record shapes it pins (§3), the episode taxonomy it fixes (§4), and the
-> **literal seam signatures** it declares once (§7). Recommend-only end to end
-> — nothing here ever auto-edits a sealed contract; every path terminates at a
-> builder draft the operator seals.
+> **Status.** Built and in the tree. This document specifies how zicato turns
+> a directory of foreign agent traces into drafted board entries: the trace
+> importer and the imported-trace miner source (§2 to §4 and §9), the
+> bootstrap synthesis tier that drafts an entry from an episode (§5), and the
+> `reflect suggest --from-trajectories` wiring that runs the chain and
+> persists its output (§6). The seam signatures the three call across are
+> stated once, in §7. Everything is recommend-only: nothing here auto-edits a
+> sealed contract, and every path terminates at a builder draft the operator
+> seals.
 
 Companion to [`EVAL-SYNTHESIS.md`](EVAL-SYNTHESIS.md) (this feeds the same
-suggestion / admission / inbox path — it is a **new source** for that engine,
-not a second engine), [`TELEMETRY-DIALECTS.md`](TELEMETRY-DIALECTS.md) (the
+suggestion, admission and inbox path as an additional source for that engine
+rather than as a second engine), [`TELEMETRY-DIALECTS.md`](TELEMETRY-DIALECTS.md) (the
 `LossProfile`-convergence dialects this program reduces foreign traces
 through), and [`BOARD-FORMAT.md`](BOARD-FORMAT.md) (the entry / predicate /
 judge schema the drafted artifacts obey).
@@ -32,8 +32,8 @@ board from traces before any loop exists*:
 > **any** agent, captured with zero zicato involvement — and it mines
 > signal-episodes, drafts board entries with drafted expectations, and feeds
 > them into the same admission → suggestion → inbox surface eval synthesis
-> already ships. The operator starts from a measured draft board, not a blank
-> one.
+> already ships. The operator starts from a measured draft board rather than
+> a blank one.
 
 This is the cold-start answer eval synthesis structurally cannot give: eval
 synthesis needs a reign to mine; bootstrap needs only a folder of traces.
@@ -44,9 +44,9 @@ The operator's standing principle, verbatim:
 
 > **In general, goldfive should be optional for zicato.**
 
-Foreign **ADK-style** event logs and **bare transcripts** are **first-class
-equals** of goldfive traces here — not a degraded fallback. The importer MUST
-work with **zero goldfive artifacts in sight**: no `events.jsonl` in the
+Foreign **ADK-style** event logs and **bare transcripts** are first-class
+equals of goldfive traces here rather than a degraded fallback. The importer
+works with **zero goldfive artifacts in sight**: no `events.jsonl` in the
 goldfive proto shape, no goldfive install, no drift instrument. This is
 already structurally true one layer down — TELEMETRY-DIALECTS.md made
 `LossProfile` the convergence point and shipped two non-goldfive producers
@@ -54,14 +54,14 @@ already structurally true one layer down — TELEMETRY-DIALECTS.md made
 **same** `DialectSignals` bundle a goldfive run folds to. Bootstrap stands on
 that seam: it reduces each foreign trace through the **existing** dialect
 reducer for its sniffed format and mines the resulting signals. The
-zero-goldfive path is a **named test deliverable** (§9): the whole
+zero-goldfive path is pinned by a test (§9): the whole
 import → mine → synthesise → persist → apply chain runs with no goldfive
 artifact anywhere.
 
-### 1.2 Relationship to eval synthesis (a source, not a fork)
+### 1.2 Relationship to eval synthesis
 
-Bootstrap adds **one new miner source** and **one new synthesis tier**; it
-reuses everything else eval synthesis built:
+Bootstrap adds one miner source and one synthesis tier, and reuses
+everything else eval synthesis built:
 
 - the ranked `MinedEpisode` shape and the total-order ranking (`mining.py`);
 - the internal `Suggestion` → surface `Suggestion` bridge (`synthesis.py`);
@@ -100,8 +100,8 @@ trace has no board entry, so the importer satisfies the parameter with a
 **synthetic placeholder** — `BoardEntry(id="__imported__", kind="single_turn",
 wall_clock_budget_seconds=1, input="")` — which the producer never inspects.
 This is documented here so a future reducer that *does* start reading `entry`
-(e.g. an entry-kind branch) is a deliberate, reviewed change, not a silent
-break of the importer.
+(an entry-kind branch, say) is an explicit, reviewed change rather than a
+silent break of the importer.
 
 **Record-size cap (persisted turns).** A foreign trace may carry an unbounded
 turn. The *persisted* `ImportedTrace` (§3.1) head-caps each reconstructed turn
@@ -236,7 +236,7 @@ present. Bound to the §3.2 ADK drift vocabulary + the cost/failure counts:
 | **behavioral** | no adverse signal **and** a substantive conversation (`len(user_turns) ≥ 1` and `agent_text_chars > 0`) | low | LLM-drafted rubric/predicate entry (aux seam) |
 
 The drift kinds (`tool_error` / `looping_tool_call` / `agent_transfer`) are
-exactly the kinds `reduce_adk_events` emits (TELEMETRY-DIALECTS.md §3.2), so
+the kinds `reduce_adk_events` emits (TELEMETRY-DIALECTS.md §3.2), so
 the binding is to the shape the real reducer produces. Thresholds are
 module-level constants (documented, tunable).
 
@@ -273,9 +273,9 @@ mines imported episodes **first and unconditionally** (so a cold / absent
 epoch never suppresses them), then folds in the workspace episodes when an
 epoch resolves, then ranks the union.
 
-## 5. The bootstrap synthesis tier (spec for WS-BOOT)
+## 5. The bootstrap synthesis tier
 
-WS-BOOT adds a synthesis tier that turns a bootstrap episode into a drafted
+The bootstrap synthesis tier turns a bootstrap episode into a drafted
 board entry, plugged into the **existing** `synthesis.py` routing by the new
 hints (§4.2). The internal `Suggestion` → surface `Suggestion` bridge
 (`synthesis.py:864` `synthesize`) is reused verbatim; only the drafting is new.
@@ -296,9 +296,9 @@ hints (§4.2). The internal `Suggestion` → surface `Suggestion` bridge
   constraints=<"replay the recorded user's turns and intent" + a compact
   digest of the recorded `user_turns`>, stop_when=<"the agent has addressed
   the user's goal">)`, `max_turns = len(user_turns) + 1`. The recorded user
-  side becomes the persona brief, not a verbatim script — a
-  `multi_turn_scripted` entry would over-fit the exact wording; the emulated
-  kind carries the *intent*. (Verified entry/persona shape: `UserPersona`
+  side becomes the persona brief rather than a verbatim script, because a
+  `multi_turn_scripted` entry would over-fit the exact wording while the
+  emulated kind carries the *intent*. (Verified entry/persona shape: `UserPersona`
   `board.py:190`, `multi_turn_emulated` requires `user_persona` + `max_turns`,
   BOARD-FORMAT.md §2.3.)
 
@@ -307,8 +307,8 @@ hints (§4.2). The internal `Suggestion` → surface `Suggestion` bridge
 **The honesty constraint (verified).** A board `expectation` is a post-hoc
 matcher over a `RunResult` — `final_output` + `transcript` + `runtime_ms` +
 `aborted` (BOARD-FORMAT.md §2.1). It **cannot** see drift counts, tool-error
-cascades, or retry loops — those are *drift / process* properties, not output
-properties. So an "absence predicate" that claims to check "no tool-error
+cascades, or retry loops, because those are *drift and process* properties
+rather than output properties. So an "absence predicate" that claims to check "no tool-error
 cascade" as an `expectation` would be **dishonest** (it would inspect output
 text that carries no such signal). The verified predicate vocabulary is
 `predicate` (dotted path over `RunResult`), `expected_text`, `regex`,
@@ -319,11 +319,11 @@ episode honestly:
 |---|---|
 | **abort pattern / error cascade / retry loop / transfer churn** | These are **drift-signal** properties, invisible to a `RunResult` matcher. The bootstrap entry pins the reconstructed **INPUT** and carries the property as a **process signal**, two honest ways: (a) leave the `expectation` **absent** — BOARD-FORMAT.md §3 explicitly supports drift-loss-only scoring — so the re-run's own drift term measures the recurrence; and/or (b) draft an **inline `Judge`** (`Judge.custom`, BOARD-FORMAT.md §4) whose criterion names the observed failure ("the agent must not enter a tool-retry loop"). The entry is tagged `bootstrap:<signal_kind>`. **No fabricated output-predicate.** |
 | **budget blowout** | Bind to the entry's own **`wall_clock_budget_seconds`** ceiling — a real, structural budget check (BOARD-FORMAT.md §1.2: over-budget ⇒ worst-case). The bootstrap entry sets a tightened budget derived from the observed cost; no expectation needed. |
-| **completes-under-budget** | A genuine `predicate`-kind expectation is honest here: a dotted-path callable over `RunResult` in a small `zicato.reflection.bootstrap_predicates` library (the entry references it by path — bodies never serialised, BOARD-FORMAT.md §3.1). It is **not** a bare `not run_result.aborted`: an abort is only the candidate's failure when it is *not* an infra/harness abort, so `not_aborted` gates on `is_infra_abort_cause` (the same distinction screening/preflight draw) — a parent-kill / worker-crash / unreadable-result abort returns `True` (not the candidate's fault); a genuine wall-clock-budget abort returns `False`. **Note the redundancy:** an over-budget re-run is *already* scored worst-case by the entry's own `wall_clock_budget_seconds` ceiling (BOARD-FORMAT.md §1.2), so this predicate is a belt-and-suspenders surface signal on top of that structural scoring, not the sole guard — and by deferring to `is_infra_abort_cause` it does not double-penalise a transient harness blip that the worst-case budget path would (correctly) not cache. |
+| **completes-under-budget** | A `predicate`-kind expectation is honest here: a dotted-path callable over `RunResult` in a small `zicato.reflection.bootstrap_predicates` library, which the entry references by path (bodies are never serialised, BOARD-FORMAT.md §3.1). The callable is more than a bare `not run_result.aborted`, because an abort is the candidate's failure only when it is not an infrastructure or harness abort. So `not_aborted` gates on `is_infra_abort_cause`, the same distinction screening and preflight draw: a parent-kill, worker-crash or unreadable-result abort returns `True`, since none of those is the candidate's fault, while a wall-clock-budget abort returns `False`. This predicate is a second surface signal rather than the sole guard, because an over-budget re-run is already scored worst-case by the entry's own `wall_clock_budget_seconds` ceiling (BOARD-FORMAT.md §1.2). Deferring to `is_infra_abort_cause` also stops it double-penalising a transient harness blip that the worst-case budget path correctly does not cache. |
 
 - **Behavioral episodes** → an **LLM-drafted** `rubric` or `predicate` behind
   the **aux seam** (`CallLLM`, never the harness callable — EVAL-SYNTHESIS.md
-  §7), tolerant-parsed and loader-validated exactly as
+  §7), tolerant-parsed and loader-validated the way
   `synthesis._coverage_entry_suggestion` already does (`synthesis.py:620`). A
   parse/validation failure drops that one suggestion with a logged reason.
 
@@ -373,7 +373,7 @@ a bootstrap entry into rotation from the inbox; the *default* is train because
 the collusion hazard the default guards against does not exist for a foreign
 trace.
 
-**The self-trace caveat (operator, not always safe).** The rotation-routing
+**The self-trace caveat.** The rotation-routing
 freedom above assumes the trace is *foreign* — from an agent zicato does not
 evolve. In the **dogfood** case, where the trace comes from the *same* agent
 zicato evolves, that assumption breaks: the champion has effectively already
@@ -390,19 +390,13 @@ rationale of every bootstrap entry** (one sentence, `_SELF_TRACE_CAVEAT`), so an
 operator reading a draft in the inbox sees the warning before promoting it out
 of train.
 
-## 6. WS-WIRE spec (sibling)
+## 6. The `reflect suggest --from-trajectories` wiring
 
-> **Status: WS-WIRE SHIPPED** (`reflect suggest --from-trajectories`, the
-> imported-record persistence wiring, the foreign-source inbox + report render,
-> CLI.md regen with a deliberately re-captured CLI-HELP golden, and the §9
-> un-mocked composition test). Two contract-aligned adjustments §6 forced, both
-> additive and §7-faithful: (a) the CLI passes `imported_traces=` to the
-> `synthesize` seam **only when the flag is set**, so the existing (non-bootstrap)
-> callers keep hitting the base signature and the branch stays green before
-> WS-BOOT integrates; (b) `suggestions.SynthesizeSeam` (the WS-SURFACE Protocol
-> the CLI type-checks against) gained the `imported_traces` keyword with an
-> empty default — the seam's typed mirror of §7's extended `synthesize`. Neither
-> changes a §7 signature; both make the parallel build type-clean.
+> Two details of the seam: the CLI passes `imported_traces=` to the
+> `synthesize` seam only when the flag is set, so a non-bootstrap caller hits
+> the base signature; and `suggestions.SynthesizeSeam`, the Protocol the CLI
+> type-checks against, carries the `imported_traces` keyword with an empty
+> default as the typed mirror of §7's extended `synthesize`.
 
 - **`reflect suggest --from-trajectories <dir>`** — a new flag on the existing
   `reflect suggest` mode (`cli/commands/reflect.py`), composing with the
@@ -425,24 +419,24 @@ of train.
 - **The inbox renders foreign-source provenance** — the suggestion row shows
   `dialect` + `source_file` as a quiet caption beside the admission banner (the
   findings-panel treatment, EVAL-SYNTHESIS.md §6), so the operator sees a
-  suggestion came from `prod-run-01.jsonl` (adk_events), not a reign.
-- **CLI.md regen** — `docs/design/CLI.md` is generated from `zicato --help`;
-  the new flag regenerates it. **DONE** (the `--from-trajectories` row + the
-  deliberately re-captured `tools/parity/golden/cli_help.txt`).
-- **THE UN-MOCKED COMPOSITION TEST (§9, named deliverable). DONE** —
-  `tests/test_trajectory_bootstrap_composition.py`, capability-guarded on
-  WS-BOOT's real §7 symbol (`synthesize_bootstrap_suggestions` +
-  `synthesize(imported_traces=)`) so it is red-proof on the WS-WIRE branch and
-  activates live at the integration merge; zero resolver monkeypatching. It also
-  carries the goldfive-optional whole-chain assertion (§9).
+  suggestion came from `prod-run-01.jsonl` in the `adk_events` dialect rather
+  than from a champion's own reign.
+- **The command reference** — [`CLI.md`](CLI.md) is generated from
+  `zicato --help`, so it carries the `--from-trajectories` row, and
+  `tools/parity/golden/cli_help.txt` is captured to match.
+- **The un-mocked composition test** (§9) is
+  `tests/test_trajectory_bootstrap_composition.py`. It is capability-guarded
+  on the §7 bootstrap symbols (`synthesize_bootstrap_suggestions` and
+  `synthesize(imported_traces=)`), uses no resolver monkeypatching, and
+  carries the goldfive-optional whole-chain assertion of §9.
 
 ## 7. Literal seam signatures — copy verbatim, do not reinterpret
 
-> These are the cross-workstream seams. WS-BOOT and WS-WIRE **import and call
-> exactly these signatures and dataclass fields**. They are stated once here;
-> do not re-derive them from prose elsewhere in this doc.
+> These are the seams the importer, the synthesis tier and the CLI wiring
+> call across. The signatures and dataclass fields below are authoritative;
+> do not re-derive them from prose elsewhere in this document.
 
-**WS-INGEST (this branch) — `src/zicato/reflection/trace_import.py`:**
+**The importer — `src/zicato/reflection/trace_import.py`:**
 
 ```python
 @dataclass(frozen=True, slots=True)
@@ -482,14 +476,14 @@ def read_imported_traces(
 ) -> list[ImportedTrace]: ...        # tolerant: absence/defect -> []
 ```
 
-**WS-INGEST (this branch) — `src/zicato/telemetry/reducer.py` (public accessor):**
+**The dialect accessor — `src/zicato/telemetry/reducer.py`:**
 
 ```python
 def dialect_producer(dialect: str) -> DialectReducer: ...
     # public alias for _resolve_dialect_producer (fail-open to goldfive)
 ```
 
-**WS-INGEST (this branch) — `src/zicato/reflection/mining.py`:**
+**The miner source — `src/zicato/reflection/mining.py`:**
 
 ```python
 # new episode-type + hint constants
@@ -511,7 +505,7 @@ def mine_episodes(
     # folded in when an epoch resolves; ranked union returned
 ```
 
-**WS-BOOT (sibling) — `src/zicato/reflection/synthesis.py`:**
+**The synthesis tier — `src/zicato/reflection/synthesis.py`:**
 
 ```python
 def synthesize_bootstrap_suggestions(
@@ -554,28 +548,17 @@ Suggestion(
 )
 ```
 
-## 8. Execution plan
+## 8. Where the parts live, the injection surface, and what is deferred
 
-1. **This wave.** This doc + **WS-INGEST** (`reflection/trace_import.py` + the
-   `mining.py` imported source, §9, Commit 2) with tests. Adds the public
-   `reducer.dialect_producer` accessor.
-2. **Two parallel workstreams on this branch** (build from §5 / §6 + the §7
-   seams):
-   - **WS-BOOT** — the bootstrap synthesis tier: entry reconstruction (§5.1),
-     honest expectation drafting (§5.2), the `bootstrap_predicates` library,
-     the `foreign_source` provenance (§5.3), loader-round-trip validity.
-   - **WS-WIRE** — `reflect suggest --from-trajectories`, `imported/`
-     persistence wiring, the inbox foreign-source render, CLI.md regen, **the
-     un-mocked composition test** (§9).
-3. **Adversarial review** — pointed at (a) **expectation-drafting honesty**
-   (§5.2: no fabricated output-predicate for a drift-signal property), (b)
-   **format sniffing** (§2.2: deterministic precedence; the ambiguous + malformed
-   fixtures decide correctly), and (c) **the composition test** (§9: real
-   fixtures, real import, real mine, real synth, real persist, real apply — no
-   resolver monkeypatching).
-4. **Fixes → integration ladder → PR.**
+The importer is `src/zicato/reflection/trace_import.py`; the imported-trace
+miner source is the `imported_trace_episodes` addition to
+`reflection/mining.py`, folded into `mine_episodes`; the public
+`reducer.dialect_producer` accessor exposes the dialect producers to both. The
+bootstrap synthesis tier lives in `reflection/synthesis.py` alongside the
+`bootstrap_predicates` library, and the CLI wiring is the
+`--from-trajectories` flag on `reflect suggest`.
 
-### 8.1 The prompt-injection surface (disclosed)
+### 8.1 The prompt-injection surface
 
 Bootstrap reconstructs board artifacts from **untrusted foreign text** — a trace
 directory the operator curates but does not author. That recorded text flows
@@ -583,19 +566,20 @@ into several places that are **LLM-instruction space at eval time**, so it is a
 prompt-injection surface and is disclosed here explicitly:
 
 - **entry `input`** — the reconstructed opening user turn *is* the prompt the
-  agent-under-test receives (that is the point of an eval entry); it is untrusted
-  by construction, exactly as any adversarial board entry is.
-- **judge bodies** — a drift-signal entry's inline `Judge` criterion is static
-  (`_BOOTSTRAP_JUDGE_CRITERION`), not trace-derived, so it carries no foreign
-  text. A behavioral entry's rubric is LLM-*drafted*, then loader-validated.
+  agent-under-test receives, which is the point of an eval entry; it is
+  untrusted by construction, as any adversarial board entry is.
+- **judge bodies** — a drift-signal entry's inline `Judge` criterion is a
+  static string (`_BOOTSTRAP_JUDGE_CRITERION`) rather than trace-derived, so it
+  carries no foreign text. A behavioral entry's rubric is LLM-*drafted*, then loader-validated.
 - **emulator persona** (`goal` / `constraints`) and the **aux rubric prompt** —
   these place recorded text into the *emulator*/*aux* LLM's instruction space at
   eval time. A recorded turn like "SYSTEM OVERRIDE: ignore your persona…" would
   otherwise land as a live instruction. These are now wrapped in an explicit
   **untrusted-data frame** (`_fence_recorded`, `_TRACE_DATA_FRAME`): the recorded
-  turns sit inside a clearly-fenced block prefixed by a never-follow instruction,
-  and drift-signal emulated entries — which carry no answer-leak-guard expectation
-  — no longer expose raw undelimited foreign text to the emulator.
+  turns sit inside a clearly-fenced block prefixed by a never-follow
+  instruction. Drift-signal emulated entries carry no answer-leak-guard
+  expectation, and the fence is what keeps raw undelimited foreign text out of
+  the emulator's instruction space.
 
 **Delimiting reduces, it does not eliminate, the risk.** A determined injection
 can still attempt to break the fence. The standing mitigations remain: the
@@ -604,29 +588,31 @@ trust as a source) **and reviews every drafted suggestion** in the inbox before
 sealing it (recommend-only, nothing auto-edits a sealed contract, §1). Full
 trace anonymisation / injection-scrubbing stays deferred (below).
 
-**Deferred + recorded** (do NOT build this wave):
+**Deferred and recorded:**
 
-- **Judge-folding (one emulated entry per trace)** — when a single trace fires N
-  drift-signal episodes, v1 emits N near-duplicate bootstrap entries (one per
-  `(trace, signal_kind)`), each re-running the same reconstructed scenario with a
-  different inline judge. Folding the N judges into ONE emulated entry (same
-  input, judge tuple unioned) would cut re-run cost. Deferred from this pass as
-  not-clean-in-scope; it composes cleanly on top of the per-signal drafting and
-  wants a per-trace grouping pass ahead of `synthesize_bootstrap_suggestions`.
+- **Judge-folding, one emulated entry per trace** — when a single trace fires
+  several drift-signal episodes, the tier emits one near-duplicate bootstrap
+  entry per `(trace, signal_kind)` pair, each re-running the same reconstructed
+  scenario with a different inline judge. Folding those judges into one
+  emulated entry, with the same input and the judge tuple unioned, would cut
+  re-run cost. It composes on top of the per-signal drafting and needs a
+  per-trace grouping pass ahead of `synthesize_bootstrap_suggestions`.
 
 - **Live LLM expectation drafting** — real aux-endpoint rubric/predicate
   drafting for behavioral episodes (endpoint-gated, EVAL-SYNTHESIS.md §7); the
   fixture/scripted-callable tier is built.
-- **Streaming / incremental import** — re-importing only new/changed trace
-  files (the content-hash ids already make a full re-import idempotent, so
-  incremental is an optimisation, not a correctness need).
-- **Trace anonymisation** — scrubbing PII from a reconstructed conversation
-  before it becomes a board entry; today the operator curates the trace dir.
+- **Streaming or incremental import** — re-importing only new or changed
+  trace files. The content-hash ids already make a full re-import idempotent,
+  so this is an optimisation rather than a correctness need.
+- **Trace anonymisation** — scrubbing personal data from a reconstructed
+  conversation before it becomes a board entry. The operator curating the
+  trace directory is the current control.
 - **Cross-trace episode folding** — one episode spanning a signal seen across
-  many traces (v1 emits one episode per `(trace, signal_kind)`); wants the same
-  cross-source lifetime record EVAL-SYNTHESIS.md §8 defers.
+  many traces. The tier emits one episode per `(trace, signal_kind)` pair, and
+  folding them needs the same cross-source lifetime record EVAL-SYNTHESIS.md
+  §8 defers.
 
-## 9. WS-INGEST — the importer + the miner source (this wave, Commit 2)
+## 9. The importer and the miner source
 
 `src/zicato/reflection/trace_import.py` — the importer per §2/§3 (deterministic
 sniffing, dialect-reducer reuse via the synthetic placeholder, the `imported/`
@@ -652,15 +638,13 @@ the imported episodes with ranking pins; degrades (empty dir, unreadable
 file); determinism (re-import ⇒ identical ids + records); and **the
 goldfive-optional proof** — the whole `import → imported_trace_episodes` path
 runs and produces episodes with **no goldfive artifact anywhere** (a
-transcript / adk_events dir, no goldfive install assumed). **The un-mocked
-composition test** (WS-WIRE's named deliverable — **SHIPPED**,
-`tests/test_trajectory_bootstrap_composition.py`, capability-guarded on the real
-§7 bootstrap symbol so it activates at the integration merge) closes the chain:
-a real
-foreign-trace fixture directory → real `import_trajectories` → real
-`mine_episodes` → real `synthesize` → persisted `suggestions.json` with a
-non-empty `draft_artifact` + `proposed_op` → real `reflect apply` into a
-builder draft. No resolver monkeypatching.
+transcript / adk_events dir, no goldfive install assumed). **The un-mocked composition test**
+(`tests/test_trajectory_bootstrap_composition.py`, capability-guarded on the
+§7 bootstrap symbols) closes the chain: a real foreign-trace fixture directory
+runs through the real `import_trajectories`, the real `mine_episodes`, the
+real `synthesize`, a persisted `suggestions.json` carrying a non-empty
+`draft_artifact` and `proposed_op`, and a real `reflect apply` into a builder
+draft. No resolver monkeypatching.
 
 ## 10. Cross-references
 

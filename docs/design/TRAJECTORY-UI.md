@@ -1,32 +1,28 @@
 # Trajectory-bootstrap UI — visualising foreign traces + the board being created
 
-> **Status: DESIGNED. WS-DATA (the readers + endpoints + the fixture
-> generator) SHIPPING with this doc; WS-TRACES / WS-SUGVIZ build FROM this
-> doc.** This is the UI program's execution contract. The engine already
-> shipped (`docs/design/TRAJECTORY-BOOTSTRAP.md`, PR #104: the importer, the
-> imported-trace miner source, the bootstrap synthesis tier, the
-> foreign-source inbox). This program builds the *visualisation* the operator
-> asked for — "beautiful ways of visualizing the trajectories to improve
-> understanding as well as the boards being created." Three surfaces:
-> **(1)** a TRACES viewer (imported trajectories as information-dense timeline
-> strips with mined-episode overlays + the reconstructed conversation);
-> **(2)** the SUGGESTION / board-creation visuals (the provenance chain made
-> visible, inbox rows upgraded with admission-stat visuals, suggested entries
-> as GHOST ROWS in the Evals matrix — the "board being created"); **(3)** the
-> readers serving it all (WS-DATA, this wave).
+> **Status.** Built and in the tree. This document specifies how an operator
+> sees an imported foreign trace and the board being drafted from it. It
+> covers three surfaces: the Traces view, which renders imported trajectories
+> as information-dense timeline strips with mined-episode overlays and the
+> reconstructed conversation; the suggestion visuals, which make the
+> provenance chain visible through upgraded inbox cards and ghost rows for
+> pending suggested entries in the Evals matrix; and the readers and
+> endpoints that serve both. The engine behind them — the importer, the
+> imported-trace miner source, the bootstrap synthesis tier, and the
+> foreign-source inbox — is specified in
+> [`TRAJECTORY-BOOTSTRAP.md`](TRAJECTORY-BOOTSTRAP.md).
 >
-> Two sibling view-agents build in parallel against **nothing but this file
-> and the literal reader payloads it pins** (§3). Read-side only — no contract
-> surface, no parity artifact moves, recommend-only (nothing here seals a
-> contract; every affordance terminates at a builder draft the operator seals,
-> inherited from TRAJECTORY-BOOTSTRAP.md §1).
+> Everything here is read-side: no contract surface, no parity artifact, and
+> recommend-only. Nothing on these surfaces seals a contract; every
+> affordance terminates at a builder draft the operator seals
+> (TRAJECTORY-BOOTSTRAP.md §1).
 
 Companion to [`TRAJECTORY-BOOTSTRAP.md`](TRAJECTORY-BOOTSTRAP.md) (the engine
 contract — the persisted `ImportedTrace`/suggestion/episode shapes this UI
 reads), [`CONSOLE-DESIGN-LANGUAGE.md`](CONSOLE-DESIGN-LANGUAGE.md) +
-[`DESIGN-LANGUAGE.md`](DESIGN-LANGUAGE.md) (the house visual language this
-program must read as native to — not bolted-on), and
-[`EVAL-VIEW.md`](EVAL-VIEW.md) (the Evals matrix WS-SUGVIZ ghost-rows into).
+[`DESIGN-LANGUAGE.md`](DESIGN-LANGUAGE.md) (the house visual language these
+surfaces are built from), and [`EVAL-VIEW.md`](EVAL-VIEW.md) (the Evals
+matrix the ghost rows are appended to).
 
 ## 1. The design thesis — the trajectory strip as the atomic visual
 
@@ -58,7 +54,7 @@ on a wide pane, scaling every glyph and label ~3× with it. Never a `max-height`
   prompt a narrower one, but no single turn may take more than a quarter of the
   lane). This is the `sparkbar` / staircase convention (word-sized marks on a
   shared baseline, `svg.js:792`) applied to turns instead of losses.
-  **BOUNDED, not filled (load-bearing).** A mark is a bar of at most **40 % of
+  **Bounded rather than filled, and this is load-bearing.** A mark is a bar of at most **40 % of
   the lane height**, straddling a **mid-lane baseline** — a user turn rises
   above it, an agent turn drops below it (that side is the alternation you read
   at a glance) — with a **≥1 px gap** to its neighbour wherever the extent
@@ -66,28 +62,32 @@ on a wide pane, scaling every glyph and label ~3× with it. Never a `max-height`
   Both sides ride the
   neutral `--v2-ink-soft` token at a **reduced `fill-opacity`** (the house
   large-area treatment, as `.dn-spark-band` / `.dn-strip-budget` tint their
-  regions), the two distinguished by a density step, never `good`/`bad` (a turn
-  is not a verdict; the cardinal rule, design-language §2.1). A raw `--v2-ink`
-  fill over a mark-sized area is FORBIDDEN: full-lane slabs of foreground ink
-  are what once fused a 2-turn trace into one solid near-black block in a light
-  theme (the regression the geometry pins in `traces.test.mjs` exist for).
+  regions), the two distinguished by a density step and never by `good`/`bad`,
+  because a turn is not a verdict (the cardinal rule, design-language §2.1). A
+  raw `--v2-ink` fill over a mark-sized area is forbidden: a full-lane slab of
+  foreground ink fuses a two-turn trace into one solid near-black block in a
+  light theme, which is the failure the geometry assertions in
+  `traces.test.mjs` pin against.
 - **The signal row** (~24 px) — the trace's adverse signals as **house
   caution/bad tone ticks**: an error cascade / abort pattern is a `--v2-bad`
   `✕` tick, a retry loop is a `--v2-caution` `↻` tick, a budget blowout is a
   `--v2-caution` `⏱` tick (the budget-exceeded glyph, design-language §2.2), a
   transfer churn is a neutral `--v2-ink-soft` `⇄` tick. **Honesty (load-bearing):
-  the reduced `DialectSignals` carries aggregate COUNTS, not per-event
-  positions** (TELEMETRY-DIALECTS.md — the reducer folds a trace to counts).
+  the reduced `DialectSignals` carries aggregate counts rather than
+  per-event positions** (TELEMETRY-DIALECTS.md — the reducer folds a trace to
+  counts).
   So signal ticks are a **labelled cluster in a dedicated signal lane, evenly
   distributed by index — they do NOT claim a real timeline position.** The
   count rides the tick's label (`3 tool errors`). This is stated in the
-  strip-model (`signals[].positioned: false`) so a future positioned-event
-  reducer is a deliberate change, not a silent lie.
+  strip-model (`signals[].positioned: false`), so introducing a
+  positioned-event reducer is an explicit change on both sides rather than a
+  silent claim of precision the data does not carry.
 - **The budget ground** — a shaded region behind the lanes whose fill ∝ the
   fraction of the cost ceiling the trace reached
   (`max(tokens/MAX_TOKENS, llm_calls/MAX_LLM_CALLS)`, clamped to 1.0), tinted
   `--v2-caution-soft`; a trace that crossed a ceiling shades the whole ground
-  and flags `over: true`. A cost budget you can *see*, not read.
+  and flags `over: true`, so the cost budget is read as an area rather than
+  a number.
 - **The episode overlay** (~24 px) — each mined episode is a **bracketed span**
   drawn over the strip with its kind glyph: a **signal** episode anchors to its
   matching signal tick (`anchor: "signal"`); the **behavioral** episode (a
@@ -120,23 +120,24 @@ Colour is **only** the six ROLE tokens + the secondary set (design-language
 (retry/budget), `--v2-accent` (the focused episode/suggestion highlight — the
 *one* structural highlight, used sparingly). No hardcoded hex, no new token.
 
-### 1.3 The server pre-computes the strip; the JS only draws (DQ1)
+### 1.3 The server pre-computes the strip and the browser only draws it
 
 The **strip-model is server-derived** — the reader emits a fully pre-computed
-render model (normalized mark positions/sizes, signal ticks with tone+glyph,
-the budget fill fraction, episode spans with anchors) so **the JS draws
-straight from it and never derives domain math** (DQ1, the EVAL-VIEW.md house
-invariant). Every position/size is a normalized `[0,1]` float rounded to 4
+render model (normalized mark positions and sizes, signal ticks with tone
+and glyph, the budget fill fraction, episode spans with anchors) so **the
+browser draws straight from it and never derives domain math**. This is the
+server-computes-client-renders rule the query layer holds everywhere
+(EVAL-VIEW.md). Every position/size is a normalized `[0,1]` float rounded to 4
 decimals (byte-stable); the JS multiplies by its pane width. This is the same
 discipline the racing/gauntlet figures already follow (a pre-computed model,
 `digestOpts`-gated) — the strip joins it.
 
 ## 2. The three surfaces (each specified for a sibling)
 
-### 2.1 WS-TRACES — the Traces view (new top-level surface)
+### 2.1 The Traces view
 
-A new shell view (a new hash route + a tree node under the epoch, beside
-Evals), rendering `build_trace_list` + `build_trace_detail`. It is
+A top-level shell view — a hash route plus a tree node under the epoch,
+beside Evals — rendering `build_trace_list` and `build_trace_detail`. It is
 **digest-gated** (a no-op SSE heartbeat produces zero DOM — the recurring
 flashing-render bug class, design-language §6) and **own-container scroll** (a
 long trace list / long conversation scrolls inside its own `dn-table-scroll`
@@ -151,20 +152,20 @@ host; the page body never scrolls horizontally, §5).
   state) — it is caption text.
 - **The trace detail** — the **full strip** (hero size) over the
   **reconstructed conversation**, rendered with the **transcript turn
-  vocabulary** the L4 conversation diff already speaks (the `{role, text}` turn
-  rows the transcript view emits, `transcript_view.py`) — user turns and agent
+  vocabulary** the run-level conversation diff already speaks (the
+  `{role, text}` turn rows the transcript view emits, `transcript_view.py`) — user turns and agent
   turns as alternating speaker rows. The strip's **episode anchors** cross-link
   into the conversation: focusing an episode scrolls/highlights nothing it
   cannot honestly point at (aggregate signals have no turn span — the bracket
   sits in the signal lane), while the behavioral episode highlights the whole
   conversation. A `dn-faint` line states the honest reconstruction note (turns
   are the reducer's reconstruction; user/agent sides are zipped by index — the
-  reduced signals carry the two sides as separate ordered tuples, not an
-  interleaved log).
+  reduced signals carry the two sides as separate ordered tuples rather than
+  an interleaved log).
 - **Navigation lives in the shell** (design-language §4.4) — the Traces route
   + the tree node, never an internal nav rail.
 
-### 2.2 WS-SUGVIZ — the suggestion / board-creation visuals
+### 2.2 The suggestion and board-creation visuals
 
 Three coordinated upgrades, all recommend-only, all reusing the shipped
 admission vocabulary.
@@ -192,40 +193,44 @@ to a card carrying:
 - the **roll-honesty note** — a bootstrap entry defaults to `train` (a
   regression suite, TRAJECTORY-BOOTSTRAP.md §5.3); the card carries the
   one-line self-trace caveat already embedded in the suggestion rationale, so
-  the operator sees "keep this in train unless the trace is genuinely foreign"
-  before promoting out of train.
+  the operator sees the advice to keep the entry in the training slice unless
+  the trace is foreign to this harness, before promoting it out.
 
 **(b) The Evals matrix gains GHOST ROWS for suggested entries — the "board
 being created".** The Evals matrix (EVAL-VIEW.md §3.1 `build_eval_matrix`, the
 `views/evals.js` `dn-mtx` grid) renders the *existing* board. A bootstrap
 suggestion drafts a **new** board entry that does not exist yet — the board
-*being created*. WS-SUGVIZ renders each pending suggested entry as a **ghost
-row** appended below the real rows:
+*being created*. Each pending suggested entry renders as a **ghost row**
+appended below the real rows:
 - **pending-styled** — the row rides the shipped `pending` vocabulary
-  (neutral, never `bad`; a suggested entry is not a regression — the Class-B
-  guard, design-language §2.1), visually distinct (a `dn-faint` / dashed
-  treatment) so it never reads as a scored channel.
+  (neutral and never `bad`, because a suggested entry is not a regression;
+  design-language §2.1), and is visually distinct through a `dn-faint` dashed
+  treatment so it never reads as a scored channel.
 - **admission stats where cells would be** — a ghost row has no candidate
   scores (nothing ran it); its cells show the **admission visuals** from (a)
-  (the flip whisker + discrimination pips) so the operator reads *what the
-  instrument would measure*, not a fabricated verdict. Where a real row shows
+  (the flip whisker and the discrimination pips) so the operator reads *what
+  the instrument would measure* rather than a fabricated verdict. Where a real row shows
   evidence-shaded outcomes, the ghost row shows admission evidence.
 - **the apply affordance** — a "stage to draft" control on the row (the same
   `add_board_entry` op the inbox card stages, TRAJECTORY-BOOTSTRAP.md §5),
   making the matrix itself the place you grow the board. Recommend-only:
   staging forks a builder draft the operator seals.
-- **the roll-honesty note** — a caption states these rows are *drafts, not
-  scored entries*, and default to `train`.
+- **the roll-honesty note** — a caption states that these rows are drafts
+  rather than scored entries, and that they default to `train`.
 
-The ghost rows are fed by `build_eval_matrix` **plus** the suggestion feed the
-inbox already loads — WS-SUGVIZ joins the two client-side (the suggested
-entries whose `draft_artifact.id` is not already a matrix row). No new reader
-is required for the ghost rows beyond §3's provenance reader for the mini-strip.
+The ghost rows are fed by `build_eval_matrix` together with the suggestion
+feed the inbox already loads; the view joins the two in the browser, keeping
+the suggested entries whose `draft_artifact.id` is not already a matrix row.
+The ghost rows need no reader beyond §3's provenance reader for the
+mini-strip.
 
 ## 3. The reader contracts (LITERAL shapes — copy verbatim, do not reinterpret)
 
-Three readers land in **`src/zicato/query/trace_view.py`**, server-derived,
-snake_case, cold-degrading (DQ1/DQ2/DQ3 — the EVAL-VIEW.md house invariants).
+Three readers live in **`src/zicato/query/trace_view.py`**. They are
+server-derived, snake_case on the wire, and degrade cold — the three house
+invariants of the query layer: the server computes and the client renders,
+each field has one spelling and one encoding on the wire, and every reader is
+best-effort (EVAL-VIEW.md).
 They are **reflection-scoped** (the persisted `imported/*.json` +
 `suggestions.json` live under a mint-mode reflection dir,
 TRAJECTORY-BOOTSTRAP.md §3.2). Each resolves the owning epoch from the
@@ -244,9 +249,9 @@ and the `foreign_source` block (TRAJECTORY-BOOTSTRAP.md §5.3), so the trace →
 episode → suggestion chain reconstructs from the persisted output alone; the
 trace figure (lane / signals / budget) reads the reduced `DialectSignals` off
 the persisted `ImportedTrace`. This reads the REAL pipeline output and adds no
-engine coupling. (Consequence: the overlays show the **drafted** episodes — the
-ones that became suggestions — which is exactly the provenance-chain the surface
-is about; the raw per-signal counts still ride `signal_counts` for the full
+engine coupling. (Consequence: the overlays show the **drafted** episodes, the
+ones that became suggestions, which is the provenance chain this surface is
+about; the raw per-signal counts still ride `signal_counts` for the full
 telemetry.) Every read is best-effort: an unknown/cold reflection, an unknown
 trace/suggestion, or a malformed record degrades to a same-shape payload with
 `found: false` — never a raise, never a fabricated number.
@@ -377,13 +382,13 @@ Exported from `zicato.query.__init__`.
 
 A **pure** function `build_strip_model(trace, episodes, suggestions_by_episode)
 -> dict` in `trace_view.py`, independently unit-tested (no I/O, deterministic,
-byte-stable). It is the ONE place the render math lives (DQ1). The shape is the
+byte-stable). It is the one place the render math lives. The shape is the
 `strip_model` object in §3.1. The computation:
 
 - **Lane marks — the COMPRESSIVE, CAPPED extent scale.** Zip `user_turns` /
   `agent_turns` by index into the alternating sequence `[u0, a0, u1, a1, …]` (a
   trailing unmatched turn is appended) and lay them end-to-end from `x0 = 0`.
-  Each mark's extent is **exactly proportional to `sqrt(chars + 1)`** under ONE
+  Each mark's extent is **proportional to `sqrt(chars + 1)`** under one
   global scale:
 
   ```
@@ -393,18 +398,19 @@ byte-stable). It is the ONE place the render math lives (DQ1). The shape is the
   ```
 
   with `LANE_EXTENT_CAP = 0.25` (exported from `trace_view`). `sqrt` compresses
-  honestly and monotonically — a 4096-char answer is 8× a 64-char prompt's
-  width, not 64× — and because the scale is a single scalar the extent RATIOS
-  are preserved exactly (nothing is flattened or redistributed). The first term
-  caps the WIDEST mark at a quarter of the lane; the second stops the run from
-  overflowing it. **Consequence, by design: the lane is a CAPACITY, not a pie.**
+  honestly and monotonically: a 4096-char answer is 8 times the width of a
+  64-char prompt rather than 64 times. Because the scale is a single scalar,
+  the extent ratios are preserved and nothing is flattened or redistributed.
+  The first term caps the widest mark at a quarter of the lane; the second
+  stops the run from overflowing it. **The lane is therefore a capacity that
+  a trace fills partially, rather than a share of a fixed whole.**
   A 2-turn trace reads as two proportioned bars over a mostly-empty lane (the
   empty room is itself the honest signal "this trace has two turns"), a
-  many-turn trace saturates and tiles the lane exactly (only then is the final
+  many-turn trace saturates and tiles the lane (only then is the final
   `x1` pinned to `1.0`), and a 500-turn trace still resolves as a comb (the
   figure floors a mark at 0.75 px and degrades the gap rather than the mark).
-  Replacing this with a raw `chars / Σchars` share forces every lane to tile
-  regardless of turn count — the black-blob regression. `size` =
+  A raw `chars / Σchars` share would force every lane to tile regardless of
+  turn count, which is the near-black-block failure above. `size` =
   `chars / max_chars` (the tallest mark = 1.0) and is a HEIGHT hint only: the
   figure maps it onto a bar of at most 40 % of the lane height (§1.1), never a
   full-lane slab. A zero-char trace ⇒ even spacing AND `size` 0.0 — a text-free
@@ -469,11 +475,11 @@ design-language §2 contract.
   (a read-only surface that pays for itself in operator time) covers the
   envelope bump; record it, don't fight it.
 
-### 4.1 The real-payload composition check (rule 2 — a named deliverable)
+### 4.1 The real-payload composition check
 
-**The node tests for WS-TRACES and WS-SUGVIZ must render from payloads produced
-by the REAL readers over a seeded workspace — never hand-authored mock shapes.**
-WS-DATA ships the fixture generator that makes this possible:
+**The node tests for the Traces view and the suggestion visuals render from
+payloads produced by the real readers over a seeded workspace, never from
+hand-authored mock shapes.** A fixture generator makes this possible:
 
 - **`tools/gen_trace_view_fixtures.py`** (a small, dependency-light script)
   seeds a temp workspace with a foreign-trace directory (the three dialects +
@@ -483,52 +489,40 @@ WS-DATA ships the fixture generator that makes this possible:
   `synthesize` (mechanical tiers, no LLM) → `write_suggestions` — then calls the
   **REAL** `build_trace_list` / `build_trace_detail` /
   `build_suggestion_provenance` and writes their payloads verbatim as JSON
-  fixtures under `tests/dashboard/fixtures/trace_view/` (list.json,
-  detail.json, provenance.json).
-- The **node suite** for the two view-agents loads exactly those files and
-  renders the strip / trace detail / inbox card / ghost rows from them, so a
-  drift between a reader field and what the JS reads is a red test — the shapes
-  can never silently diverge. The generator is re-runnable (a `--check` mode
-  the CI can assert byte-stability against, since the readers are deterministic).
+  fixtures under `src/zicato/dashboard/static/test/fixtures/trace_view/`
+  (`list.json`, `detail.json`, `provenance.json`).
+- The **node suite** loads those files and renders the strip, the trace
+  detail, the inbox card and the ghost rows from them, so a drift between a
+  reader field and what the browser reads turns a test red and the shapes
+  cannot silently diverge. The generator is re-runnable, and its `--check`
+  mode asserts byte-stability, because the readers are deterministic.
 
-## 5. Execution plan
+## 5. Where the parts live, and what is deferred
 
-1. **This wave (WS-DATA).** This doc + `src/zicato/query/trace_view.py` (the
-   three readers + the pure `build_strip_model` + pure helpers) + the three
-   endpoints (reflection-endpoints block, `run_in_threadpool`, `_is_safe_id`
-   degrade) routed in `server.py` + `zicato.query.__init__` exports + the
-   fixture generator + the captured fixtures + tests (§4.1, known-answers over
-   the seeded workspace via the REAL engine pipeline, degrades,
-   determinism/byte-stability).
-2. **Two parallel view-agents** build from §1/§2/§3 — nothing else needed:
-   - **WS-TRACES** — the Traces view (list + detail), the strip figure in
-     `svg.js` (or a `views/traces.js`-local builder reusing the primitives),
-     the reconstructed conversation, digest-gating, the node render tests
-     (§4.1).
-   - **WS-SUGVIZ** — the inbox card upgrade (provenance mini-strip + admission
-     visuals), the Evals ghost rows, the node render tests (§4.1).
-3. **Adversarial review** — pointed at (a) **strip-model honesty** (§1.1:
-   aggregate signals never claim a real position; `positioned:false` holds),
-   (b) **no fabricated numbers** (a ghost row / unmeasured admission never
-   shows a `0.0` as truth), and (c) **the composition check** (§4.1: the node
-   tests render from the REAL reader payloads, no hand-authored mocks).
-4. **Fixes → integration ladder → PR.**
+The readers, the pure `build_strip_model`, and the pure helpers are in
+`src/zicato/query/trace_view.py`, exported from `zicato.query.__init__`. The
+three endpoints sit in the reflection-endpoints block, each wrapping its
+reader in `run_in_threadpool` behind an `_is_safe_id` degrade, and are routed
+in `server.py`. The Traces view is `views/traces.js`, drawing the strip from
+the `svg.js` primitives; the suggestion visuals are the inbox card upgrade and
+the Evals ghost rows. The fixture generator and the captured fixtures back the
+node render tests of §4.1.
 
-**Deferred + recorded (do NOT build this wave):**
+**Deferred and recorded:**
 
 - **Live-updating strips during import** — re-rendering a strip as a trace
-  streams in. The import is a batch operation today (a folder → records); a
-  live strip wants an incremental import event stream (itself deferred,
-  TRAJECTORY-BOOTSTRAP.md §8.1). Deferred.
+  streams in. Import is a batch operation, turning a folder into records; a
+  live strip needs an incremental import event stream, which is itself
+  deferred (TRAJECTORY-BOOTSTRAP.md §8.1).
 - **Harmonograf cross-links for imported traces** — deep-linking a trace's
   strip into a harmonograf span. A foreign trace has no zicato run id / session
   id in the general case (`DialectSignals.run_id` / `adk_session_id` are empty
   for a bare transcript), so the cross-link is conditional and partial;
   deferred until the harmonograf-for-foreign-traces seam is designed.
-- **Positioned signal events** — a reducer that emits per-event positions (not
-  aggregate counts) would let signal ticks sit at their real timeline moment.
-  The strip-model already flags `positioned:false`; a positioned reducer is a
-  deliberate future change on both sides.
+- **Positioned signal events** — a reducer that emits per-event positions
+  rather than aggregate counts would let signal ticks sit at their real
+  timeline moment. The strip-model already flags `positioned:false`, and a
+  positioned reducer would be an explicit change on both sides.
 
 ## 6. Cross-references
 
@@ -536,6 +530,6 @@ WS-DATA ships the fixture generator that makes this possible:
 | --- | --- |
 | The engine contract (ImportedTrace / suggestion / episode shapes) | [`TRAJECTORY-BOOTSTRAP.md`](TRAJECTORY-BOOTSTRAP.md) |
 | The house visual language (tokens, figures, render discipline) | [`CONSOLE-DESIGN-LANGUAGE.md`](CONSOLE-DESIGN-LANGUAGE.md) · [`DESIGN-LANGUAGE.md`](DESIGN-LANGUAGE.md) |
-| The Evals matrix WS-SUGVIZ ghost-rows into | [`EVAL-VIEW.md`](EVAL-VIEW.md) |
+| The Evals matrix the ghost rows are appended to | [`EVAL-VIEW.md`](EVAL-VIEW.md) |
 | The suggestion / admission / inbox engine | [`EVAL-SYNTHESIS.md`](EVAL-SYNTHESIS.md) |
 | The reduced `DialectSignals` the strip reads | [`TELEMETRY-DIALECTS.md`](TELEMETRY-DIALECTS.md) |

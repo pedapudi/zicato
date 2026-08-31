@@ -4,29 +4,25 @@
 > (`zicato/epoch/contract.py`), the resolution
 > (`zicato/proposer/{skills,agent,adk_agent,tools}.py`) is in the tree and
 > exercised by the test suite, and the operator surface
-> (`register --proposer-path`) is wired. The **DEFAULT proposer is the
+> (`register --proposer-path`) is wired. The **default proposer is the
 > tool-using ADK agent** (`build_default_adk_agent`, run by
 > `ADKProposerAgent`), used whenever a contract configures no proposer dir;
-> the skill-composed text-shim engine remains available as an explicit
-> opt-in (§2b). §§1–2 describe the shipped design; §3 is the Design-A
-> rationale; §§4–5 are the contract/config mechanics. Operator-facing how-to
-> lives in the `zicato-design-proposer` skill.
+> the skill-composed text-shim engine is available as an explicit opt-in
+> (§2b). Operator-facing how-to lives in the `zicato-design-proposer`
+> skill.
 
 The **proposer** is the agent that, each round, reads the epoch's brief, the
 mutation manifest, the loss patterns, and the prior experiments, and emits the
-next `Experiment` (`{hypothesis, patches}`) for the tournament to judge. For
-most of zicato's life the proposer was an implicit, fixed component. It is now
+next `Experiment` (`{hypothesis, patches}`) for the tournament to judge. It is
 a **first-class evaluation-contract input**, alongside the board, the proposer
 brief, the scoring, and the inner-harness identity
 ([EPOCHS-AND-JOURNALING.md §10.1](EPOCHS-AND-JOURNALING.md#101-whats-in-the-contract)).
 
-This document is the design + reference companion. The defining decision,
-repeated because it is load-bearing: **the proposer is contract, not
-configuration.** A different proposing agent — or a different skill in its
-prompt — proposes different mutations and reasons differently, so generations
-proposed under different proposers are not directly comparable. Changing the
-proposer therefore **rolls the epoch**, exactly like changing the board or the
-scoring (§4).
+**The proposer is a contract input rather than configuration.** A different
+proposing agent — or a different skill in its prompt — proposes different
+mutations and reasons differently, so generations proposed under different
+proposers are not directly comparable. Changing the proposer therefore **rolls
+the epoch**, in the same way as changing the board or the scoring (§4).
 
 ---
 
@@ -96,14 +92,15 @@ The DEFAULT. With no proposer dir configured, zicato runs
 full read-only proposer tool registry
 (`zicato.proposer.tools.DEFAULT_PROPOSER_TOOLS`) and is bound, per round, to
 the workspace's auxiliary model string (threaded as `ProposerContext.model`
-by the orchestrator). It runs on ADK's own `Runner` (NOT the auxiliary text
-shim, which cannot express the function-calls a tool-using agent needs —
-§3), so the default proposer can grep the mutable surface, read the parent
-snapshot, and consult the journal / analyzer insights *while it reasons*,
-out of the box. Because the default deliberately uses the operator's
-already-configured auxiliary model, the model-collusion smell test (§3) is
-skipped for it — that is the documented, expected posture, not an author
-error.
+by the orchestrator). It runs on ADK's own `Runner` rather than the auxiliary
+text shim, which cannot express the function-calls a tool-using agent needs
+(§3). The default
+proposer can therefore grep the mutable surface, read the parent snapshot,
+and consult the journal and analyzer insights *while it reasons*, with no
+operator configuration. Because the default uses the operator's
+already-configured auxiliary model, the model-distinctness warning (§3) is
+skipped for it; that reuse is the documented, expected posture rather than
+an author error.
 
 ### (b) Skill-composed default — drop `skills/*.md`, no code (opt-in)
 
@@ -112,20 +109,20 @@ The cheapest *customization*. Drop one or more `skills/*.md` into
 `agent.py`. zicato runs the built-in `DefaultProposerAgent`, a single-shot text
 exchange driven on `--auxiliary-call-llm`: the auxiliary callable is handed a
 `(system, user, model) -> str` prompt and the returned string is parsed into
-the `Experiment`. Your skill bodies are injected into the **system prompt**, so
+the `Experiment`. The skill bodies are injected into the **system prompt**, so
 they steer *how* this proposer reasons (grounding instructions, house
 style, a checklist) without any code. Configuring a proposer dir (without an
 `agent.py`) is the explicit opt-in into this single-shot text-shim engine;
 the bare, unconfigured default (a) is the tool-using agent.
 
-This is the right tier when you want to shape the proposer's reasoning over
-the text shim, not give it new capabilities. The model is the auxiliary
-model — you do not own it here.
+This tier shapes the proposer's reasoning over the text shim without giving
+it new capabilities. The model is the auxiliary model, which this tier does
+not own.
 
 ### (c) Custom ADK agent with tools — `agent.py`
 
-When you want to *own the model* the proposer runs on, give it a curated
-tool subset, or write a bespoke instruction, ship a
+To own the model the proposer runs on, give it a curated tool subset, or
+write a bespoke instruction, ship a
 `proposers/<name>/agent.py` that exposes a module-level `agent` — a **native
 ADK `LlmAgent`** with its **own `model=`** and a `tools=` list drawn from
 zicato's read-only proposer tool registry. zicato loads that agent and runs
@@ -170,18 +167,17 @@ The copy-me example is
 Independent of *which* resolution backs the proposer, every proposer reads the
 same per-round task input the orchestrator assembles: the brief, the mutation
 manifest, the loss summary, the prior-experiment digest, the analyzer
-insights. That input now also carries a **failure-mode profile** — a compact,
-board-anonymized read of *why* the parent's answers were wrong, not just
-*that* a scalar moved.
+insights. That input also carries a **failure-mode profile**: a compact,
+board-anonymized read of *why* the parent's answers were wrong, rather than
+only that a scalar moved.
 
-Historically the proposer saw only a coarsened `Δscalar` plus an LLM digest of
-*decision* telemetry; it could not target over-retrieval vs misses vs
-empty/looping answers. The channel
-(`src/zicato/analyzer/outcome_marginals.py`, rendered by
-`render_failure_mode_profile` in `src/zicato/proposer/prompts.py`, wired by
-`_render_failure_profile` in `src/zicato/orchestrator.py`) closes that gap by
-feeding the proposer **outcome MARGINALS** — board-wide rates — under three
-non-negotiable safeguards, each reusing existing machinery:
+A coarsened `Δscalar` plus an LLM digest of *decision* telemetry cannot tell
+the proposer whether the harness over-retrieves, misses, or answers emptily.
+The failure-mode channel (`src/zicato/analyzer/outcome_marginals.py`, rendered
+by `render_failure_mode_profile` in `src/zicato/proposer/prompts.py`, wired by
+`_render_failure_profile` in `src/zicato/orchestrator.py`) supplies that
+distinction by feeding the proposer **outcome marginals** — board-wide rates —
+under three safeguards, each reusing existing machinery:
 
 - **Train-slice only.** The orchestrator passes the *train-slice* losses it
   already loaded — the same `split_board` / rotation partition it uses for the
@@ -202,18 +198,18 @@ non-negotiable safeguards, each reusing existing machinery:
   ~40% of runs") but can never reconstruct any board entry.
 
 When the slice is empty (a baseline round with no parent telemetry) the
-renderer returns the empty string — the proposer prompt stays byte-identical
-to before, exactly as the insights / prior-experiments blocks behave.
+renderer returns the empty string, so the block is omitted from the prompt,
+in the same way as the insights and prior-experiments blocks.
 
 ### Operator hook — `outcome_summarizer_spec`
 
 An OPTIONAL operator summarizer can contribute **board-specific** marginals.
 It is a dotted spec — `outcome_summarizer_spec` on the scoring contract
-(`ScoringWeights`, `src/zicato/core/types.py`) — resolved exactly like
-predicates / judges (`zicato.import_path.import_dotted_path`). The resolved
+(`ScoringWeights`, `src/zicato/core/types.py`) — resolved in the same way as
+predicates and judges (`zicato.import_path.import_dotted_path`). The resolved
 callable receives the train-slice per-entry results and must return a
-**STRUCTURED aggregate** — a `{marginal_name: numeric_rate}` mapping, NOT
-prose — precisely so zicato can ENFORCE bucketing + anonymity on its output:
+**structured aggregate**, a `{marginal_name: numeric_rate}` mapping rather
+than prose, so that zicato can enforce bucketing and anonymity on its output.
 `sanitize_operator_marginals` drops anything non-numeric or identity-bearing
 (a free string, an entry id as a key, a list/dict value) before the operator's
 marginals are merged and banded. A free-text summary would be an un-auditable
@@ -222,38 +218,41 @@ summarizer contributes nothing rather than aborting the round.
 
 Because it lives on `ScoringWeights`, the spec folds into the scoring
 component of the contract hash automatically: configuring or changing the
-summarizer rolls the epoch, exactly like every other contract field
+summarizer rolls the epoch, like every other contract field
 (the empty-string default configures no summarizer, leaving the prompt
 unchanged). The shaped numbers that band these marginals are part of the
-scoring surface and are owned by SCORING.md — this doc describes only the
-*channel*, not the scalar arithmetic.
+scoring surface and are owned by SCORING.md; this document describes the
+*channel* alone.
 
 ---
 
-## 2.6 The mechanical recombination slot (WS-REC)
+## 2.6 The mechanical recombination slot
 
 `proposer_quality.recombine` (default OFF) opts in a MECHANICAL merge of two
-already-evaluated challengers — no LLM call. The premise: a single champion can
-only ever discount ONE challenger's fix, so when two REJECTED challengers of the
-current reign each fixed a DISTINCT slice of the board with NON-OVERLAPPING
-edits, the last best-of-N slate slot mints the UNION of their patches, and a
-non-vetoed mint is chosen with `selection_mode = "recombined"`. A
-parsimony-biased selector rejects each single fix; the union clears the gate
-that neither half could — so the slot deliberately bypasses the minimal-diff
-selection heuristic (whose diff key would otherwise starve the larger union).
+already-evaluated challengers — no LLM call. The premise is that a single
+champion can only ever discount ONE challenger's fix. So when two REJECTED
+challengers of the current reign each fixed a DISTINCT slice of the board with
+NON-OVERLAPPING edits, the last best-of-N slate slot mints the UNION of their
+patches. A non-vetoed mint is then chosen with
+`selection_mode = "recombined"`. A parsimony-biased selector rejects each
+single fix; the union clears the gate
+that neither half could, so the slot bypasses the minimal-diff selection
+heuristic, whose diff key would otherwise starve the larger union.
 
-It is cost-neutral (the mint REPLACES the slot's auxiliary propose call, never
-adds one — a recombining round spends `best_of_n − 1` calls) and
-envelope-clean: selection runs on per-entry PASS-FLIP evidence computed
-orchestrator-side and intersected with the TRAIN board there — entry ids never
-reach the proposer, and the holdout is never eligible. Requires `best_of_n > 1`
-to have any effect; flipping it rolls the epoch (a slate that can recombine
-proposes under a different rule). The full mechanism — the 8 eligibility
-predicates, the 4-key deterministic ranking, the minter, the `recombined`
-selection mode, and the KNOWN NARROWING (pure drift-side complementary pairs are
-invisible by design; they remain reachable through the in-context genealogy
-channel, with a drift-delta-with-confirmation variant as a documented future
-seam) — is specified in **[dev-guide 05 §5.6.11](../dev-guide/05-proposer.md)**
+The slot is cost-neutral: the mint REPLACES the slot's auxiliary propose call
+rather than adding one, so a recombining round spends `best_of_n − 1` calls.
+It is also envelope-clean. Selection runs on per-entry PASS-FLIP evidence
+computed orchestrator-side and intersected with the TRAIN board there, so
+entry ids never reach the proposer and the holdout is never eligible. The knob
+requires `best_of_n > 1` to have any effect; flipping it rolls the epoch,
+because a slate that can recombine proposes under a different rule.
+
+The full mechanism — the 8 eligibility predicates, the 4-key deterministic
+ranking, the minter, the `recombined` selection mode, and the KNOWN NARROWING
+(pure drift-side complementary pairs are invisible by design; they remain
+reachable through the in-context genealogy channel, with a
+drift-delta-with-confirmation variant as a documented future seam) — is
+specified in **[dev-guide 05 §5.6.11](../dev-guide/05-proposer.md)**
 (`src/zicato/epoch/recombine.py`, `src/zicato/proposer/recombine.py`).
 
 ### 2.6.1 Merge modes — `mechanical` (default) vs `llm`
@@ -261,15 +260,16 @@ seam) — is specified in **[dev-guide 05 §5.6.11](../dev-guide/05-proposer.md)
 `proposer_quality.recombine_merge` (a string, default `"mechanical"`; values
 `"mechanical" | "llm"`) chooses HOW the slot composes the union once the
 selector has picked a pair. It is meaningful only when `recombine` is on and
-`best_of_n > 1`; at its `"mechanical"` default it is omitted from the contract
-canonical form (byte-identical hash, no retroactive roll), and `"llm"` rolls
-the epoch — a slate that can compose an LLM merge proposes under a different
-rule. A `"llm"` value set with `recombine` off is accepted-and-inert (the
+`best_of_n > 1`. At its `"mechanical"` default it is omitted from the contract
+canonical form, so the hash is byte-identical and nothing rolls
+retroactively. The value `"llm"` rolls the epoch, because a slate that can
+compose an LLM merge proposes under a different rule. A `"llm"` value set with
+`recombine` off is accepted-and-inert (the
 dependent-knob house style, as `screen_veto_only` is inert without
-`screen_entries`); it still rolls the hash, exactly like an inert
+`screen_entries`); it still rolls the hash, like an inert
 `screen_veto_only`.
 
-- **`mechanical`** — the shipped WS-REC behaviour of §2.6: the last slot MINTS
+- **`mechanical`** — the behaviour of §2.6: the last slot MINTS
   the concatenation of the two patch sets with NO LLM call. It REQUIRES a
   DISJOINT pair (predicate #7): the applier is last-wins on a duplicate
   target, so overlapping edits would silently drop one side. Cost: a
@@ -277,31 +277,32 @@ dependent-knob house style, as `screen_veto_only` is inert without
   replaces the slot's own sample call).
 
 - **`llm`** — the last slot issues ONE auxiliary call (the depth
-  refinement-class role, exactly as the self-critique call) rendering a MERGE
-  prompt from the selected pair; the response flows through the NORMAL
-  proposal parse + `enforce_forbidden` + validate path — it is a proposal like
-  any other — is stamped with the same `recombined_from` provenance, and a
-  non-vetoed merge is chosen with the same `selection_mode = "recombined"`. On
+  refinement-class role, as the self-critique call does) rendering a MERGE
+  prompt from the selected pair. The response flows through the NORMAL
+  proposal parse, `enforce_forbidden`, and validate path, so it is a proposal
+  like any other. It is stamped with the same `recombined_from` provenance,
+  and a non-vetoed merge is chosen with the same
+  `selection_mode = "recombined"`. On
   any parse/validate failure the slot DEGRADES to a fresh LLM sample (the
   mechanical mint's exact degrade). This mode exists to reach the pairs
   mechanical mint cannot: when two rejected fixes OVERLAP on a mutation target,
   a model can compose a genuine merge (resolving the shared edit) that a
   last-wins concatenation cannot.
 
-**What relaxes, and what never does.** Only predicate #7 (disjointness)
-relaxes, and only for PAIR SELECTION in `llm` mode — the model resolves the
+**What relaxes, and what never does.** Only the disjointness predicate
+relaxes, and only for pair selection in `llm` mode — the model resolves the
 overlap, which is the whole point. Overlap does not vanish: it becomes a
 RANKING consideration (prefer LESS overlap at equal coverage), slotted into the
 existing deterministic key immediately after coverage so that mechanical-mode
 selections — where every surviving pair has zero overlap — are byte-identical
-to before. Every OTHER predicate holds unchanged in both modes: #1 rejected,
-#2 current reign, #3 non-placebo, #4 non-recombined parent, #5 pair-not-tried,
-#6 manifest-valid patches, and #8 complementarity ESPECIALLY (each parent must
-still carry a distinct win the other lacks — an LLM merge of two identical
-fixes is nothing).
+to before. Every other predicate holds unchanged in both modes: rejected,
+current reign, non-placebo, non-recombined parent, pair-not-tried,
+manifest-valid patches, and complementarity above all — each parent must
+still carry a distinct win the other lacks, since an LLM merge of two
+identical fixes yields nothing.
 
 **The envelope (LOAD-BEARING).** The merge prompt carries ONLY
-proposer-authored artifacts, exactly the genealogy-channel redaction
+proposer-authored artifacts, in the genealogy-channel redaction
 vocabulary (§2.7): both parents' PATCHES (the `new_content` the proposer
 itself wrote), their hypothesis CORE IDEAS, their whole-candidate BANDED
 outcomes (through the same `improved`/`flat`/`regressed` `_bucket_scalar_delta`
@@ -313,8 +314,8 @@ and discarded inside `_build_recombination_pair`, and the holdout is never
 eligible (the `train_entry_ids` filter). The merge call widens the proposer's
 visibility by NOTHING the genealogy channel does not already permit.
 
-One semantic note: an `llm` merge is **a full proposal, not strictly a
-union** — the response validates against the whole mutation manifest, so it
+One semantic note: an `llm` merge is **a full proposal rather than strictly
+a union** — the response validates against the whole mutation manifest, so it
 may touch points neither parent did. `recombined_from` records the pair that
 *seeded* the merge; only the mechanical mint guarantees the patch set is
 exactly the parents' union. The gate adjudicates either way.
@@ -325,22 +326,23 @@ slot's own sample call, so a successful `llm`-merge round costs what a
 recombine-OFF round costs. The one exception is the degrade: a merge response
 that fails parse/validation has already spent its call, and the fallback
 fresh sample adds one more (`best_of_n + 1` for that round — rare, and the
-reason the `estimate_cost` figure is documented as an estimate, not a cap).
+reason the `estimate_cost` figure is documented as an estimate rather than a
+cap).
 
 ---
 
-## 2.7 The genealogy channel (WS-GENE) — in-context evolution, envelope-safe
+## 2.7 The genealogy channel — in-context evolution, envelope-safe
 
 `proposer_quality.genealogy` (an `int`, default `0` = OFF) opts the proposer
 into an IN-CONTEXT view of the current reign's candidate lineage — the
 zicato analogue of AlphaEvolve's *prompt sampler*, which feeds parent
 programs and their scores back into generation so the LLM evolves in
-context. Where the mechanical recombination slot (§2.6) merges two rejected
-fixes WITHOUT an LLM call, the genealogy channel gives the LLM the raw
-material to merge, extend, or diverge from what has already been tried —
-the same in-context recombination, but authored by the model, and reachable
-even for the pure-drift-side pairs the mechanical slot cannot see (the §2.6
-KNOWN NARROWING). It is a RENDER-SIDE channel only: it splices a prompt
+context. The mechanical recombination slot (§2.6) merges two rejected fixes
+WITHOUT an LLM call. The genealogy channel instead gives the LLM the raw
+material to merge, extend, or diverge from what has already been tried. It is
+the same in-context recombination authored by the model, and it reaches even
+the pure-drift-side pairs the mechanical slot cannot see (the §2.6 KNOWN
+NARROWING). It is a RENDER-SIDE channel only: it splices a prompt
 block and touches no evaluation, so the cost meter is untouched (the
 process-exemplars precedent, §2.5).
 
@@ -375,9 +377,9 @@ Two kinds of item, each a proposer-authored artifact plus a BANDED outcome:
   gate's verdict — rejected is not regressed. A candidate the gate rejected can
   still band `improved` (a real but insufficient gain, or a win the
   cross-regression / diversity guard vetoed): the band says how the delta
-  landed, the rejection says the gate declined to promote it. That is exactly
-  the signal the proposer wants — "this framing moved the needle but did not
-  clear the bar" — carried coarsely, without a number.
+  landed, the rejection says the gate declined to promote it. That is the
+  signal the proposer needs — this framing moved the measurement but did not
+  clear the threshold — carried coarsely, without a number.
 
 ### What the channel NEVER carries
 
@@ -405,12 +407,13 @@ The only numbers that ride the channel are the banded outcome
 count, an op-kind list, a size band). Everything else is proposer-authored
 text (the `core_idea`, the patch diff excerpt) — content the proposer wrote
 in the first place, echoed back to it. **This widens NOTHING about
-evaluation data**: it is candidate genealogy, not board data.
+evaluation data**: the channel carries candidate genealogy rather than board
+data.
 
 ### The banding vocabulary
 
-Reuse, do not reinvent. The whole-candidate outcome is banded through
-`_bucket_scalar_delta` (`src/zicato/proposer/prompts.py`) — the exact
+The whole-candidate outcome is banded through
+`_bucket_scalar_delta` (`src/zicato/proposer/prompts.py`) — the same
 `improved` / `flat` / `regressed` three-band vocabulary the prior-experiments
 block already renders under `restrict_visibility`. A candidate with no
 settled Δscalar (an in-flight sibling — never sampled here, but defensively)
@@ -419,7 +422,7 @@ the experiment-memory bands reads genealogy with no new vocabulary.
 
 ### The cap discipline
 
-Budget-capped rendering, exactly the process-exemplar cap style (§2.5):
+Budget-capped rendering, following the process-exemplar cap style (§2.5):
 `genealogy = k` bounds the TOTAL items rendered to `k`. Parents take the
 first `k // 2` slots (most-recent-first along the champion spine),
 inspirations take the remainder (the greedy dissimilarity walk, capped at
@@ -430,7 +433,7 @@ Per-item, the two proposer-authored free-text fields are BOTH head-capped
 with an elision marker — the patch diff excerpt (`_DIFF_EXCERPT_MAX`) and the
 `core_idea` (`_CORE_IDEA_MAX`) — so no single item can balloon the block.
 An empty result renders the EMPTY STRING — the "omit this section entirely"
-sentinel — so a `genealogy = 0` round is byte-identical to today.
+sentinel — so a `genealogy = 0` round adds nothing to the prompt.
 
 ### The determinism requirement
 
@@ -440,8 +443,8 @@ inspirations are the greedy max–min-Jaccard walk with a TOTAL tie-break
 (Elo DOWN, then generation-id ascending) so the same pool always yields the
 same inspirations in the same order, in ANY input order. Determinism is the
 leakage budget: a byte-identical block round-over-round (while the reign's
-candidate set is unchanged) re-presents nothing new, exactly as the
-process-exemplar channel argues.
+candidate set is unchanged) re-presents nothing new, which is the argument
+the process-exemplar channel makes.
 
 The full mechanism — `GenealogyItem`, `sample_genealogy`, the greedy
 dissimilarity walk, the render block, and the `genealogy` knob — is
@@ -450,7 +453,7 @@ specified in **[dev-guide 05 §5.6.13](../dev-guide/05-proposer.md)**
 
 ---
 
-## 2.8 The critic-calibration channel (WS-CAL) — feeding prediction accuracy back
+## 2.8 The critic-calibration channel — feeding prediction accuracy back
 
 `proposer_quality.calibration_feedback` (an `int`, default `0` = OFF) opts the
 proposer into an IN-CONTEXT view of ITS OWN PREDICTION CALIBRATION — how the
@@ -458,11 +461,11 @@ falsifiable movement predictions it wrote in past hypotheses actually landed
 against realized outcomes. The prediction-accuracy grader
 (`hypothesis_ledger` / `grade_hypothesis_predictions` in
 `src/zicato/tournament/detail.py`, surfaced by the `/api/hypothesis-accuracy`
-dashboard feed) already scores every settled hypothesis's predicted-vs-realized
-movements, but that score has been CONSUMPTION-ONLY — a dashboard diagnostic
-the proposer never saw. This channel closes the loop: a proposer shown its own
-MISS PATTERN hypothesizes more honestly — it stops writing confident,
-un-earned predictions once it can see that its confident predictions have been
+dashboard feed) scores every settled hypothesis's predicted-vs-realized
+movements. Without this channel that score reaches only the dashboard. The
+channel routes it back to the proposer, so that a proposer shown its own miss
+pattern hypothesizes more honestly: it stops writing confident, un-earned
+predictions once it can see that its confident predictions have been
 missing.
 
 Like the genealogy channel (§2.7) this is a RENDER-SIDE channel only: it
@@ -485,8 +488,8 @@ many it made. From that pair each claim is graded into exactly ONE bucket:
   (`matches == predictions`, `predictions > 0`). The proposer called it.
 - **miss** — the proposer made predictions but at least one did NOT verify
   (`matches < predictions`, `predictions > 0`). The prediction was (partly)
-  wrong. Strict-all-match for a hit is deliberate: it rewards conservative,
-  well-earned prediction over confident over-claiming.
+  wrong. A hit requires every prediction to verify, which rewards
+  conservative, well-earned prediction over confident over-claiming.
 - **unresolved** — the hypothesis made NO gradeable predictions
   (`predictions == 0`), so calibration is silent on it. (Matches the
   experiment-memory reader's "None accuracy = made no graded predictions.")
@@ -494,8 +497,9 @@ many it made. From that pair each claim is graded into exactly ONE bucket:
 One rendered-block corollary worth knowing when reading it: the grade and
 the banded outcome are INDEPENDENT axes, so a claim can render
 `HIT · Δscalar regressed` — every specific prediction verified while the
-candidate's overall scalar still worsened. That is honest, not a bug: the
-grade measures forecasting skill, the band measures the outcome.
+candidate's overall scalar still worsened. That combination is correct rather
+than a defect: the grade measures forecasting skill and the band measures the
+outcome.
 
 ### What the channel carries
 
@@ -506,8 +510,8 @@ A per-reign calibration summary, rendered into the proposer context:
 - **The overall calibration fraction** — `hit / (hit + miss)`, the fraction of
   the proposer's GRADED claims it called correctly. This is the proposer's OWN
   self-accuracy meta-signal, pooled over its own predictions — never a board
-  number. Climbing it means predicting more honestly, which is precisely the
-  behaviour the channel exists to encourage; it is a calibration target, not a
+  number. Climbing it means predicting more honestly, which is the behaviour
+  the channel exists to encourage. It is a calibration target rather than a
   board-response surface to game.
 - **Up to K recent graded claims** — the K most-recent hit/miss claims
   (most-recent-first), each rendered as `(claim text, banded realized outcome,
@@ -522,13 +526,13 @@ A per-reign calibration summary, rendered into the proposer context:
 are aggregate and always computed when the channel is on. When there is no
 GRADED history yet (`hit + miss == 0` — a baseline reign, or one whose settled
 hypotheses all made no falsifiable predictions) the sampler returns nothing and
-the renderer emits the EMPTY STRING — the "omit this section entirely"
-sentinel — so a `calibration_feedback = 0` round, and any round with no graded
-claims, renders a byte-identical prompt to today.
+the renderer emits the EMPTY STRING, the "omit this section entirely"
+sentinel. A `calibration_feedback = 0` round, and any round with no graded
+claims, therefore renders the prompt without the block.
 
 ### The envelope (LOAD-BEARING)
 
-Stated as hard exclusions, exactly the genealogy vocabulary (§2.7):
+Stated as hard exclusions, in the genealogy channel's vocabulary (§2.7):
 
 1. **Claim text is PROPOSER-AUTHORED.** The only free text on the channel is
    the proposer's own `core_idea`, echoed back to it (capped). Never a board
@@ -583,18 +587,18 @@ proposer_agent = "zicato.proposer.pi_agent:PiProposerAgent"
 The class answers `contract_identity(config)` with its **causal surface**,
 and that mapping's digest is folded into the `proposer` contract component
 beside `agent_source_sha256` (§4). A workspace that names no external
-proposer canonicalizes byte-identically to before this seam existed — its
-contract hash does not move, which is pinned in
-`tests/test_proposer_external_seam.py`.
+proposer omits the key, so its canonical form and contract hash are
+unaffected, which is pinned in `tests/test_proposer_external_seam.py`.
 
-What belongs in that identity: the version of the runtime we did not write
-(coarse — a patch release that changes no prompt and no tool schema should
-not roll an epoch, and the standing rule *do not upgrade mid-tournament*
-carries the rest), the bytes of the files we did write (they are edited in
-place, so they have no version to record), the tool set, and the launch
-envelope. What does **not** belong: the model. A `models.*` role is
-runtime infra that has never rolled an epoch, and nothing in the contract
-hash has ever named a model. The collusion hazard an external tier
+Four things belong in that identity: the version of the third-party runtime,
+the bytes of the files zicato owns, the tool set, and the launch envelope. The
+runtime version is recorded coarsely, because a patch release that changes no
+prompt and no tool schema should not roll an epoch, and the standing rule *do
+not upgrade mid-tournament* carries the rest. The files zicato owns are edited
+in place, so they have no version to record and their bytes stand in. What
+does **not** belong: the model. A `models.*` role is
+runtime infrastructure that does not roll an epoch, and the contract hash
+names no model. The collusion hazard an external tier
 introduces — an agent quietly falling back to its own configured default —
 is closed where it happens, at launch: the resolved `ctx.model` is threaded
 into the process and an empty one is a hard failure, asserted in
@@ -602,12 +606,12 @@ into the process and an empty one is a hard failure, asserted in
 
 **The first implementation is pi** (`zicato/proposer/pi_agent.py`,
 `integrations/pi/`): one `pi --mode rpc` subprocess per challenger, driven
-through the *same* `propose_experiment` engine the text shim uses — the
-live RPC session is handed to it as the `aux_call_llm` callable, so a
+through the *same* `propose_experiment` engine the text shim uses. The live
+RPC session is handed to that engine as the `aux_call_llm` callable, so a
 bounded retry becomes a follow-up message on a warm conversation instead
-of a cold restart that re-sends the whole manifest. The tier differs in
-its transport, not its semantics, which is what makes it an honest A/B
-baseline against the shim.
+of a cold restart that re-sends the whole manifest. The tier differs from
+the shim in transport rather than in semantics, which is what makes it an
+honest paired baseline against the shim.
 
 When `best_of_n > 1`, pi advertises the optional native-slate capability.
 Zicato still owns the visibility envelope, screening, deterministic fallback,
@@ -628,58 +632,60 @@ restricted aggregates and mutation surface—never board entries. This
 capability belongs only to the proposer seam; emulator, judge, adjudicator,
 and target adapters retain their own structured/text execution contracts.
 
-Stage-specific proposer model overrides are intentionally rejected for this
-path: a separate generation or review model would require another process and
+Stage-specific proposer model overrides are rejected on this path: a
+separate generation or review model would require another process and
 would contradict the native-session contract. They remain supported by the
 generic best-of-N wrapper for proposers without this capability.
 
 The envelope is the other half, and it is enforced by what the proposer is
 shown. A default coding-agent session has `bash`, `read` and `grep`
 pointed at the working directory; a proposer with those can read the board
-and the holdout slice, and nothing errors and nothing warns. So: built-in
-tools off, extension/skill/prompt-template discovery off, context files
-off, project-local files untrusted, a fresh isolated agent directory with
-credentials copied in deliberately (no packages, no cross-round memory),
-no session file (cross-round persistence would be an unhashed side channel
-around the overfitting envelope), and a working directory outside every
-snapshot — the snapshot is the system under test, and reading it ambiently
+and the holdout slice, and nothing errors and nothing warns. The sanctioned
+launch therefore turns off built-in tools, extension, skill and
+prompt-template discovery, and context files. Project-local files are
+untrusted. The agent gets a fresh isolated directory with credentials copied
+in explicitly, no packages, and no cross-round memory. It writes no session
+file, because cross-round persistence would be an unhashed side channel
+around the overfitting envelope. Its working directory sits outside every
+snapshot: the snapshot is the system under test, and reading it ambiently
 would be both an unhashed contract input and an injection path from the
-thing being rewritten into the thing rewriting it. CI asserts the running
-agent's active tool list equals the sanctioned set.
+thing being rewritten into the thing rewriting it. Continuous integration
+asserts the running agent's active tool list equals the sanctioned set.
 
 ---
 
-## 2.10 `validate_patches` — the proposer's closed loop (issue #147 phase 3)
+## 2.10 `validate_patches` — the proposer's closed loop
 
-Every channel above feeds the proposer *inputs*. This one closes the loop on
-its *output*.
+Every channel above feeds the proposer *inputs*. This tool checks its
+*output*.
 
-Both historical proposer tiers **emit** a patch set and are done; neither has
-ever seen its own work checked. For a span replace of a short instruction that
-is fine — the applier re-quotes span content as a Python string literal, so a
-span edit is structurally incapable of breaking syntax or dropping an import.
-For a **file-marker `replace`**, though, `new_content` is an entire post-edit
-module that must satisfy every constraint in
-[MUTATION-SURFACE.md](MUTATION-SURFACE.md) §6 — A1 parses, A2 the id still
-resolves, A3 `required_placeholders` survive, A4 the import set is a superset.
-Emitting a whole module in one shot and hoping it satisfies A1–A4 is exactly
-the workload a tool-using agent exists to avoid, and a violation costs a full
-retry round-trip through the propose loop, re-sending the entire manifest.
+Without it a proposer emits a patch set and is done, with no check on its own
+work. For a span replace of a short instruction that is adequate: the applier
+re-quotes span content as a Python string literal, so a span edit is
+structurally incapable of breaking syntax or dropping an import. For a
+**file-marker `replace`**, though, `new_content` is an entire post-edit module
+that must satisfy every constraint in
+[MUTATION-SURFACE.md](MUTATION-SURFACE.md) §6 — the parse check (`A1`), id
+resolution (`A2`), placeholder survival (`A3`), and import preservation
+(`A4`). Emitting a whole module in one shot and hoping it satisfies all four
+is the workload a tool-using agent exists to avoid, and a violation costs a
+full retry round-trip through the propose loop, re-sending the entire
+manifest.
 
 `validate_patches` (`src/zicato/proposer/validate.py`) is a **linter for
 patches**. The proposer drafts, validates, sees `A4: dropped 'import re'`,
-fixes it, validates again, and only then answers. Zicato's bounded retry stops
-being the main loop and becomes the rare fallback it was designed as. It is in
-`DEFAULT_PROPOSER_TOOLS`, so the ADK default proposer gets the closed loop too,
-not only an external agent — and the default proposer's instruction now tells
-it to validate before answering.
+fixes it, validates again, and only then answers. Zicato's bounded retry is
+then the rare fallback rather than the main loop. It is in
+`DEFAULT_PROPOSER_TOOLS`, so the closed loop is available to the ADK default
+proposer as well as to an external agent, and the default proposer's
+instruction tells it to validate before answering.
 
 ### The governing principle
 
 > **The proposer may check its patch by any means that consumes no board data
 > and produces no scores; it may never execute board entries.**
 
-This is the line that separates a legitimate self-check from grading your own
+That line separates a legitimate self-check from a proposer grading its own
 work. If the proposer could run against a slice it chose, it would be doing the
 tournament's job with none of the tournament's guards — the overfitting failure
 the whole meta-loop exists to prevent (see the non-goal in issue #147: *the
@@ -688,8 +694,8 @@ static: the tree it writes to is a disposable scratch copy, the checks read
 source, and the load probe resolves the harness entry point **without invoking
 it**.
 
-The principle is enforced **structurally, not by inspection**. An import-linter
-contract in `pyproject.toml` ("the proposer's patch validator has no path to
+The principle is enforced **structurally rather than by inspection**. An
+import-linter contract in `pyproject.toml` ("the proposer's patch validator has no path to
 the board") forbids `zicato.proposer.validate` from reaching the entire
 capability surface: `zicato.board` (where entry text is loaded),
 `zicato.adapters` / `zicato.adapter_factory` / `zicato._tournament_worker` (how
@@ -698,24 +704,24 @@ a harness is loaded and run), and `zicato.emulator` / `zicato.judge_runtime`
 property over the runtime import closure, so a regression is caught by
 whichever gate a change hits first.
 
-Two structural consequences worth knowing before you edit this code:
+Two structural consequences follow:
 
 - **The tier-3 probe lives in its own module** (`_load_probe.py`) and is
-  reached by *spawning a subprocess*, not by importing the adapter factory.
-  That is what keeps the adapter packages on the forbidden list instead of
-  forcing an exemption — and it contains `adapter.load`'s arbitrary operator
-  code (which can hang, or leave import side effects) in a child process with
-  a timeout.
-- **The context plumbing was split into `tool_context.py`.** Importing
-  `zicato.proposer.tools` merely to reach `_active_context` would have dragged
-  the analyzer — and through it the board loader — into the validator's import
+  reached by *spawning a subprocess* rather than by importing the adapter
+  factory. That is what keeps the adapter packages on the forbidden list
+  instead of forcing an exemption, and it contains `adapter.load`'s arbitrary
+  operator code (which can hang, or leave import side effects) in a child
+  process with a timeout.
+- **The context plumbing lives in `tool_context.py`.** Importing
+  `zicato.proposer.tools` merely to reach `_active_context` would drag the
+  analyzer — and through it the board loader — into the validator's import
   closure, making the contract unsatisfiable for a reason that says nothing
   about what the validator does.
 
-`zicato.scoring` and `zicato.tournament` are deliberately **not** on the
-forbidden list: every module in the repo reaches them through
+`zicato.scoring` and `zicato.tournament` are **not** on the forbidden list:
+every module in the repo reaches them through
 `core.types → core.scoring_config`, which imports them for *type definitions*.
-That edge is a type-model artifact, not a capability.
+That edge is a type-model artifact rather than a capability.
 
 ### The three tiers
 
@@ -734,15 +740,15 @@ Tier 1 reimplements nothing: every check it runs is machinery the round
 pipeline already applies after the proposer answers. The tool's contribution is
 running it *before*.
 
-**Tier 2 reports a DELTA, not findings.** Each declared check runs over the
-parent tree *and* the scratch tree; only findings present in the second and
+**Tier 2 reports a delta rather than raw findings.** Each declared check runs
+over the parent tree *and* the scratch tree; only findings present in the second and
 absent from the first are errors. Real trees carry lint debt, and a validator
 that blamed a patch for the tree it landed in would fail every draft and teach
 the proposer to ignore it. The comparison normalizes away the file path and the
 `line:col` prefix, so an edit that shifts line numbers does not manufacture
-findings; that normalization is deliberately approximate in one direction — a
-genuinely new finding textually identical to a pre-existing one elsewhere in the
-same file is suppressed, which is the right error for an advisory linter.
+findings. That normalization is approximate in one direction: a new finding
+textually identical to a pre-existing one elsewhere in the same file is
+suppressed, which is the right error for an advisory linter.
 
 **Errors and notes are different things.** A checker that is not installed, a
 misspelled check name, a workspace with no adapter to probe — these are *notes*.
@@ -755,71 +761,67 @@ missing is a validator the proposer learns to distrust.
 Tier 2's set is declared at `contract.proposer_static_checks` in the
 workspace's `config.json` — the same `contract` block that carries
 `proposer_path` — and folded into the proposer component of the contract hash
-by `_canon_proposer`. It is contract, not configuration: changing which checks
-the proposer must satisfy before it will emit a patch changes which patches it
-accepts from itself, hence what it proposes. The empty default is **omitted
-from the canonical form**, so every workspace that never configures the feature
-hashes byte-identically to before it existed (§4's omit-at-default discipline).
+by `_canon_proposer`. It is contract rather than configuration: changing which
+checks the proposer must satisfy before it will emit a patch changes which
+patches it accepts from itself, hence what it proposes. The empty default is
+**omitted from the canonical form**, so a workspace that configures no static
+checks keeps the hash it has (§4's omit-at-default discipline).
 
-The declarable names are a **closed registry** (`STATIC_CHECKS` — currently
-`ruff`, `ruff-format`, `mypy`, `compileall`), not operator-supplied command
+The declarable names are a **closed registry** (`STATIC_CHECKS`: `ruff`,
+`ruff-format`, `mypy`, `compileall`) rather than operator-supplied command
 lines. A hashed *name* is a stable, reviewable identity; a hashed command line
 would be an arbitrary-execution surface that a contract edit could widen
 silently. A workspace needing a checker that is not there should propose adding
 it to the registry rather than gaining a way to name any command.
 
-### The pre-image guard — a docstring that was finally made true
+### The pre-image guard
 
-`MutationPoint.content_hash` has existed since the enumerator was written, and
-its docstring claimed *"the patch applier checks this before applying a patch so
-a stale proposer round cannot clobber an already-rewritten region."* **The
-applier never read it.** The field was written by the enumerator, rendered by
-the CLI and the dashboard, and checked by nothing — a guarantee documented for
-long enough to be believed and never once enforced.
+`MutationPoint.content_hash` records the text a mutation point held at
+enumeration. The applier does not compare it; tier 1 does.
 
-Tier 1 is that check. It compares `content_hash` for each patched point between
+Tier 1 compares `content_hash` for each patched point between
 **the manifest the proposal was drafted against** (`ProposerToolContext.mutations`,
 which is an `enumerate_mutations` result) and **a fresh enumeration of the parent
 snapshot** at validate time. A point whose hash moved between the two was
 rewritten under the proposer — by a concurrent promotion, or an operator editing
-the tree — so the draft is reasoning about text that no longer exists, and
+the tree — so the draft is reasoning about text that has been replaced, and
 applying it would clobber whatever changed it.
 
-**Nothing is asked of the proposer, deliberately.** An earlier revision of this
-feature made the pre-image a digest the model declared on each patch. That was
-worse twice over: it made the guard *opt-in* (a model that omitted the field was
-simply not checked, and the guard's whole value is in the case where the model
-does not realise anything is wrong), and it asked the model for arithmetic it
-has no reason to get right. Comparing two enumerations zicato already computes
-needs no cooperation and no wire change — **`Patch` carries no pre-image field
-and must not grow one**; issue #147 is explicit that the `Experiment` schema
-does not change.
+**The guard asks nothing of the proposer.** Making the pre-image a digest the
+model declares on each patch would be worse in two ways. It would make the
+guard *opt-in*, because a model that omitted the field would not be checked,
+and the guard's whole value is in the case where the model does not realise
+anything is wrong. It would also ask the model for arithmetic it has no reason
+to get right. Comparing two enumerations zicato already computes needs no
+cooperation and no wire change — **`Patch` carries no pre-image field and must
+not grow one**; issue #147 is explicit that the `Experiment` schema does not
+change.
 
-The applier is still deliberately not the site. It applies a patch set that has
+The applier is not the site for this check. It applies a patch set that has
 already been validated, all-or-nothing; a staleness rejection there would
 surface as a failed derive with no route back to the proposer that could fix it.
 Catching it in `validate_patches` puts the finding where a fix is still cheap.
-A point that has *vanished* rather than moved is left to A2, which reports it
-against the post-apply tree with a better message — one fault should cost one
-fix, not two.
+A point that has *vanished* rather than moved is left to the post-apply
+id-resolution check (`A2`), which reports it against the post-apply tree with a
+clearer message, so that one fault costs one fix rather than two.
 
 > ⛔ The standing prohibition is unchanged: **no proposer tool may write to the
 > generation snapshot.** `validate_patches` does not relax it — it writes only
 > into a `ztw-pvalidate-*` scratch tree in the OS temp root, removed in a
 > `finally`, and never touches the tree the round is about to patch. That
-> prefix is deliberately distinct from `ztw-slate-*` so the round pipeline's
+> prefix is distinct from `ztw-slate-*` so the round pipeline's
 > stale-slate sweep can never reap a live validation.
 
 ---
 
-## 2.11 The redacted query surface — asking the corpus, not reading a report
+## 2.11 The redacted query surface
 
 Every channel in §2.5–§2.8 is **pushed**: the orchestrator samples, bands, and
-renders it before the proposer sees a byte. A proposer whose entire job is
-diagnosing *why* the harness fails could not ask a follow-up question. This
-surface (`src/zicato/proposer/redacted_query.py`) makes a small, provably-clean
-part of the same corpus **pulled** — same privacy envelope, asked rather than
-pushed.
+renders it before the proposer sees a byte. A pushed channel gives the proposer
+no way to ask a follow-up question, though diagnosing *why* the harness fails
+is its job. This surface (`src/zicato/proposer/redacted_query.py`) makes a
+small, provably-clean part of the same corpus **pulled**, under the same
+privacy envelope.
 
 Three tools, all banded per-entry incidence over the champion's train slice:
 
@@ -830,9 +832,8 @@ Three tools, all banded per-entry incidence over the champion's train slice:
 | `train_slice_process_profile()` | how runs unfold — task failures, blocks, cancellations, plan revisions |
 
 `restrict_proposer_visibility` exists to stop the proposer memorising "entry 47
-wants X". It was never meant to stop it from understanding mechanism. That is
-the gap this closes, and the whole design question is how to close it without
-widening the envelope by a byte.
+wants X", and not to stop it from understanding mechanism. This surface supplies
+the mechanism without widening the envelope by a byte.
 
 ### The redaction contract
 
@@ -849,25 +850,26 @@ independently testable:
 2. **Fail closed.** No board, no `scoring.json`, an unparseable either, no
    epoch id, an empty train slice — every failure path returns
    `status: "train slice unavailable"` with a reason and **no data**. There is
-   deliberately no whole-board fallback; a silently-widened slice is precisely
-   the failure this module exists to prevent.
+   no whole-board fallback; a silently-widened slice is the failure this
+   module exists to prevent.
 3. **Two independent gates.** Gate 1 opens only train-slice entries' event
    files. Gate 2 (`drop_out_of_slice`) re-filters the collected results by
-   entry id afterwards. A single gate is one refactor away from being bypassed
-   — a view that arrives "already filtered" is trusted exactly once and then
-   quietly is not.
+   entry id afterwards. A single gate is one refactor away from being
+   bypassed, because a view that arrives "already filtered" is trusted once
+   and then silently is not.
 4. **Default-deny reads, with no free-text field admitted at all.** Only a
    narrow allowlist of closed-vocabulary event fields (drift kind, severity,
    steering outcome, intervention level, judge classification) plus harness-side
    agent labels is read; every other payload case, and every unlisted field of
-   a listed case, is dropped and its strings join the identity corpus. This is
-   *narrower* than the process-exemplar channel's R1 policy, deliberately —
-   that channel is capped at a couple of windows per round, this one is
-   queryable on demand. It is what makes `run_started.goal_summary` (the task
-   prompt) and every completion summary (model output) **structurally
-   unreachable** rather than merely scrubbed. The open-vocabulary labels that
-   do survive pass through `scrub_identity` then `truncate_free_text` — the
-   R3/R4 primitives now shared with the exemplar channel via
+   a listed case, is dropped and its strings join the identity corpus. This
+   allowlist is *narrower* than the process-exemplar channel's payload
+   allowlist, because that channel is capped at a couple of windows per round
+   while this one is queryable on demand. It is what makes
+   `run_started.goal_summary` (the task prompt) and every completion summary
+   (model output) **structurally unreachable** rather than merely scrubbed.
+   The open-vocabulary labels that do survive pass through `scrub_identity`
+   then `truncate_free_text`, the free-text truncation and identity-corpus
+   scrub primitives shared with the exemplar channel through
    `src/zicato/analyzer/redaction.py`.
 5. **Banded, and per-entry incidence rather than per-event counts.** Every
    figure is a rate coarsened through the existing band vocabulary, and each
@@ -884,58 +886,56 @@ Entry ids are used to LOCATE files and are never emitted. The tools are
 best-effort by contract: a missing file, a malformed line, an unknown payload
 are all tolerated, never raised — a diagnostic read must never abort a round.
 
-### The design deviation, and why it was ratified
+### Why no query-layer view is exposed
 
 Issue #147 §6 framed this as "expose `zicato/query/` views … through the same
-mechanical redaction". **No `zicato/query/` view is exposed. Every one was
-excluded**, and the shipped surface is three purpose-built aggregators over the
+mechanical redaction". No `zicato/query/` view is exposed; every one is
+excluded, and the surface is three purpose-built aggregators over the
 champion's train-slice `events.jsonl` — the same source `extract_process_exemplars`
 reads, differing only in folding events into counts instead of windowing them.
 
-The audit that produced that conclusion is worth stating in full, because it is
-the reason and not an excuse:
+The audit behind that exclusion runs as follows:
 
-> The query layer splits cleanly into two halves, and neither half can be
-> redacted into this envelope. Its *aggregate* views (`gate_view`, the
-> per-judge tables) are keyed by generation with no entry id in the row, so
-> there is nothing to filter on — you cannot narrow them to the train slice,
-> and a champion's generation-wide numbers include the holdout runs the
-> promote gate played. Its *entry-scoped* views do carry the key, but an
-> entry-keyed row is precisely the joint distribution the envelope exists to
-> withhold; filtering one to the train slice leaves you holding per-entry
-> data, which is the thing you were trying not to have. So the only shape
-> that satisfies both constraints — narrowable to the slice AND aggregable to
-> a marginal — is the raw per-run event file, which is entry-scoped at the
-> *file path* level and content-free at the *field* level once a default-deny
-> allowlist is applied.
+> The query layer splits into two halves, and neither half can be redacted
+> into this envelope. Its *aggregate* views (`gate_view`, the per-judge
+> tables) are keyed by generation with no entry id in the row, so there is
+> nothing to filter on: they cannot be narrowed to the train slice, and a
+> champion's generation-wide numbers include the holdout runs the promote
+> gate played. Its *entry-scoped* views do carry the key, but an entry-keyed
+> row is the joint distribution the envelope exists to withhold, and
+> filtering one to the train slice still leaves per-entry data in hand. The
+> only shape that satisfies both constraints — narrowable to the slice AND
+> aggregable to a marginal — is the raw per-run event file, which is
+> entry-scoped at the *file path* level and content-free at the *field* level
+> once a default-deny allowlist is applied.
 
-Provably clean beat plausibly clean. A redacted *view* would have been a filter
-argued to be sufficient; a purpose-built *aggregator* over a default-deny field
-allowlist is a surface where the leak has no path to begin with.
+A redacted *view* would be a filter argued to be sufficient. A purpose-built
+*aggregator* over a default-deny field allowlist is a surface where a leak has
+no path to take.
 
-### What is deliberately NOT exposed
+### What is not exposed
 
-The per-view exclusion list, so the next person does not helpfully add one:
+The per-view exclusion list:
 
 - **`transcript_view`** (`build_run_transcript`, `resolve_conversation`,
   `empty_run_transcript`) — reconstructs the model's turn-by-turn
   conversation; it *is* task text and model output.
 - **`conversations_view`** (`build_matchup_conversations`) — same payload,
-  paired per matchup; scrubbing free-form model output into safety is not a
-  thing we do, we drop the field.
+  paired per matchup; free-form model output is dropped rather than
+  scrubbed.
 - **`trace_view`** (`build_trace_detail`, `build_trace_list`,
   `build_suggestion_provenance`) — carries reflection/suggestion prose, which
   quotes board inputs and candidate outputs verbatim.
 - **`judge_view` per-judge family** (`build_per_judge_for_generation`,
   `build_per_judge_for_run`, `build_per_judge_trend`,
   `build_per_judge_comparison`) — a judge may be attached to a single board
-  entry, so a per-judge figure is a per-entry measurement wearing an
-  aggregate's clothes; also generation-wide (train+holdout) with no entry key
+  entry, so a per-judge figure can be a per-entry measurement presented as an
+  aggregate; it is also generation-wide (train plus holdout) with no entry key
   to filter on.
 - **`judge_view` per-entry family** (`build_per_entry_for_generation`,
   `build_expectation_outcomes_for_run`, `resolve_run_id_for_entry`,
-  `build_run_header`) — entry-keyed rows are the JOINT, not the marginal; the
-  entry id is the payload.
+  `build_run_header`) — an entry-keyed row is the joint distribution rather
+  than a marginal; the entry id is the payload.
 - **`judge_view` search** (`build_search_results`) — free-text search over
   board/run content; an arbitrary-query read of the corpus is the exact leak
   vector.
@@ -965,13 +965,13 @@ The per-view exclusion list, so the next person does not helpfully add one:
   either already reachable through an existing proposer channel (journal,
   prior experiments) or carrying no mechanism signal worth a new surface.
 
-If a future channel needs one of these, the move is to build a redacted
-aggregate over it — a new marginal — not to expose the view and filter its
-rows.
+If a future channel needs one of these, the remedy is to build a redacted
+aggregate over it, a new marginal, rather than to expose the view and filter
+its rows.
 
 ### Known limits of the banding
 
-Two caveats a reviewer should hold, both recorded rather than hidden:
+Two caveats apply:
 
 - **On a small train slice the bands are nearly lossless.** `band_rate` rounds
   to 10% steps, so with four train entries `1/4` reads `~30%` and the band
@@ -990,67 +990,70 @@ Two caveats a reviewer should hold, both recorded rather than hidden:
 
 ### Enforcement
 
-`tests/test_proposer_redacted_query.py` is an **identity-leak probe**, not a
-smoke test. The fixture plants unmistakable sentinel strings as every board
-entry id, task prompt, model output, and holdout value — including a drift
-`detail` that quotes the task prompt verbatim, which is the case R4 exists for
-— then loops over the module's own exported `REDACTED_QUERY_TOOLS` tuple and
-asserts no sentinel appears in any output. Looping over the tuple rather than a
-transcribed list is deliberate: a newly-added tool is covered automatically and
-cannot skip the probe. Because a leak probe passes vacuously when the tools
+`tests/test_proposer_redacted_query.py` is an **identity-leak probe** rather
+than a smoke test. The fixture plants unmistakable sentinel strings as every
+board entry id, task prompt, model output, and holdout value — including a
+drift `detail` that quotes the task prompt verbatim, which is the case the
+identity-corpus scrub exists for — then loops over the module's own exported
+`REDACTED_QUERY_TOOLS` tuple. It asserts that no sentinel appears in any
+output.
+Looping over the tuple rather than a transcribed list covers a newly-added tool
+automatically, so no tool can skip the probe. Because a leak probe passes
+vacuously when the tools
 return nothing, the same file pins the positive content too — the aggregates
 must actually be present, and banded, while the sentinels are not.
 
-**`src/zicato/analyzer/redaction.py` is the single source of truth for the R3
-and R4 primitives** (`truncate_free_text`, `scrub_identity`,
-`iter_string_leaves`, and their constants). It has two consumers — the
-process-exemplar channel and this surface — and the point of the extraction is
-that both apply byte-identical redaction. `PROCESS-EXEMPLARS.md` §3 stays
-NORMATIVE for what R1–R4 mean; R1 (the payload allowlist) and R2 (the
-window-local anonymizer) remain in `process_exemplars.py` because both are
-bound to the exemplar window's own structure. Order is load-bearing wherever
-they are used: **scrub first, truncate second** — truncation only removes
+**`src/zicato/analyzer/redaction.py` is the single source of truth for the
+free-text truncation and identity-corpus scrub primitives**
+(`truncate_free_text`, `scrub_identity`, `iter_string_leaves`, and their
+constants). It has two consumers — the process-exemplar channel and this
+surface — and sharing them is what makes both apply byte-identical redaction.
+`PROCESS-EXEMPLARS.md` §3 is normative for what the four redaction rules mean.
+The payload allowlist and the window-local identity anonymizer stay in
+`process_exemplars.py`, because both are bound to the exemplar window's own
+structure. Order is load-bearing wherever they are used: **scrub first,
+truncate second** — truncation only removes
 characters and puts the elision marker between head and tail, so a scrubbed
 string can never re-form an identity across the split.
 
-Two notes for whoever edits this next:
+Two notes for a future editor:
 
-- **Gate 2 (`drop_out_of_slice`) catches nothing today, and that is the
-  point.** Gate 1 — opening only train-slice event files — is currently
+- **Gate 2 (`drop_out_of_slice`) catches nothing on any current path, and that
+  is the point.** Gate 1 — opening only train-slice event files — is
   sufficient on every path. Gate 2 exists for the refactor where someone
-  routes in a result set that arrives "already filtered" and is trusted
-  exactly once. Its test feeds it a row gate 1 could never produce, precisely
-  so it stays alive independently. **Do not delete it as dead code.**
-- **`_load_events` / `_payload` are duplicated** (~30 lines) between
-  `process_exemplars.py` and `redacted_query.py`. Deliberate for now: the two
-  allowlists differ, and a self-contained parser inside the security-critical
-  module was preferred over a shared one. A consolidation is a reasonable
-  follow-up, but it must move the *whole* reader, not half of it — a shared
-  parser paired with a per-consumer allowlist is the shape that invites the
-  wrong allowlist being applied.
+  routes in a result set that arrives "already filtered" and is trusted once.
+  Its test feeds it a row gate 1 could never produce, so that it stays alive
+  independently. **Do not delete it as dead code.**
+- **`_load_events` / `_payload` are duplicated** (about 30 lines) between
+  `process_exemplars.py` and `redacted_query.py`. The duplication is
+  intentional: the two allowlists differ, and a self-contained parser inside
+  the security-critical module is preferred to a shared one. A consolidation
+  is a reasonable follow-up, but it must move the *whole* reader rather than
+  half of it, because a shared parser paired with a per-consumer allowlist
+  invites the wrong allowlist being applied.
 
-The obvious next increment is a **parameterized drill-down** (a per-drift-kind
-× agent cross-tab). It was left out on purpose: a zero-arg tool has no input to
-validate and therefore no oracle surface, and shipping a provably clean surface
-first is worth more than the extra resolution. Revisit it only with the widened
-envelope documented before the code.
+A **parameterized drill-down** (a per-drift-kind × agent cross-tab) is a
+plausible extension and is not built. A zero-arg tool has no input to validate
+and therefore no oracle surface, and a provably clean surface is worth more
+than the extra resolution. Revisit it only with the widened envelope documented
+before the code.
 
 ---
 
-## 3. Design A — why a tool-using proposer owns its own model
+## 3. Why a tool-using proposer owns its own model
 
 The text shim is a single-shot text exchange: zicato hands the auxiliary
 callable a `(system, user, model) -> str` prompt and parses the returned
 string. **That shim cannot express the function-calls a tool-using agent
 needs** — it is text-in / text-out by contract. A proposer that wants to grep
 the mutable surface or consult the journal *while it reasons* cannot run on it.
-That is precisely why the DEFAULT proposer (§2a) and any custom `agent.py`
-(§2c) are ADK agents, not text-shim calls.
+That is why the default proposer (§2a) and any custom `agent.py` (§2c) are ADK
+agents rather than text-shim calls.
 
-**Design A** resolves this by running a tool-using proposer as a **native ADK
+zicato resolves this by running a tool-using proposer as a **native ADK
 agent that declares its own `model=`**, driven on ADK's own `Runner` — NOT
-through the auxiliary text shim, and NOT through `goldfive.run`. The
-consequences, all deliberate:
+through the auxiliary text shim, and NOT through `goldfive.run`. Three
+consequences follow:
 
 - **The agent owns the model.** The agent's `model=` is its own; the
   `--auxiliary-call-llm` callable does not govern it. The per-round task (brief
@@ -1066,9 +1069,9 @@ consequences, all deliberate:
   instead a **documented author responsibility**: a proposer scored on the same
   model it is mutating-and-judging risks collusion. When both model strings are
   trivially discoverable zicato emits a soft WARNING on a match; it does not
-  build a hard gate. The **built-in default deliberately reuses the auxiliary
-  model**, so this smell test is skipped for it — that reuse is the expected
-  zero-config posture, not an author error.
+  build a hard gate. The **built-in default reuses the auxiliary model**, so
+  the warning is skipped for it; that reuse is the expected zero-configuration
+  posture rather than an author error.
 - **The post-response loop is shared.** The agent's final message goes through
   the same parse → forbidden-id enforcement → post-apply validation loop, with
   the JSON salvage/repair and judge-reference normalization in
@@ -1097,7 +1100,7 @@ builtin default) to a `ProposerSpec` via `resolve_proposer_spec`
 - `agent_id` — `"builtin:default"`, `"dir:<name>"`, or `"external:<label>"`;
 - `tools` — the tool names, sorted;
 - `skills` — `[{name, sha256-of-normalized-body}]`, sorted by name. Skill
-  bodies are normalized exactly like the proposer brief (line endings folded,
+  bodies are normalized in the same way as the proposer brief (line endings folded,
   trailing whitespace stripped, leading/trailing blank lines dropped), so a
   whitespace-only skill edit does **not** roll the epoch; a semantic edit — or
   adding / removing / renaming a skill — does;
@@ -1111,16 +1114,15 @@ builtin default) to a `ProposerSpec` via `resolve_proposer_spec`
 
 The builtin default produces a stable canonical string, so a workspace that
 never registers a proposer keeps a stable hash. The per-component roll message
-(`compute_component_hashes`) names the changed component **`proposer`**, so when
-a roll is triggered by a proposer edit the operator sees exactly that.
+(`compute_component_hashes`) names the changed component **`proposer`**, so a
+roll triggered by a proposer edit names that component to the operator.
 
-> **Note.** The builtin-default *spec* (`ProposerSpec.default()`) is
-> unchanged by the default-agent flip — the contract canonicalization still
-> serializes `agent_id = "builtin:default"`, empty tools/skills, and a `null`
-> `agent_source_sha256`. The choice of *which agent backs* that spec
+> **Note.** The builtin-default *spec* (`ProposerSpec.default()`)
+> canonicalizes as `agent_id = "builtin:default"`, empty tools and skills, and
+> a `null` `agent_source_sha256`. Which agent backs that spec
 > (`build_proposer_agent` → the tool-using `ADKProposerAgent`) is a runtime
-> resolution, not a contract input, so flipping the default does **not** roll
-> any existing epoch.
+> resolution rather than a contract input, so it never enters an epoch's
+> hash.
 
 This composes with the brief: the **proposer brief** is per-epoch *operator
 guidance* (steering text the proposer reads fresh each round), while the
@@ -1135,8 +1137,9 @@ contract inputs; either rolling the epoch is independent of the other.
 `.zicato/config.json` (absolutised, like the other contract source paths).
 `resolve_contract_inputs` reads it back on every `evolve`, resolves a relative
 spelling against the project root (the workspace's parent), and feeds it into
-the contract hash *before* the hash is computed — so registering a proposer dir
-rolls the epoch on the next `evolve`, exactly like editing the brief. Omitting
+the contract hash *before* the hash is computed. Registering a proposer dir
+therefore rolls the epoch on the next `evolve`, in the same way as editing the
+brief. Omitting
 the flag leaves the key unset, which resolves to the builtin default proposer
 (`None`).
 
@@ -1155,18 +1158,20 @@ A `config.json` sketch (other keys elided):
 }
 ```
 
-Derive the exact flag surface from `zicato epoch register --help` (the design CLI
-docs are known to drift); as of writing the flag is `--proposer-path PATH`.
+Derive the flag surface from `zicato epoch register --help`, which is
+canonical; the design CLI documentation drifts. The flag is
+`--proposer-path PATH`.
 
 ---
 
 ## 6. The proposer scorecard + recommend-only self-reflection
 
-The loop measures the proposer constantly, for free. Every round log records
-the proposal attempts it made, the validator errors they hit, the screen's
-verdict on each slate candidate, the gate's numbers on the child that reached
-it, and the terminal decision. This section is the instrument that READS those
-signals as a picture of proposer quality, and the gated path for acting on it.
+The loop measures the proposer on every round at no extra cost. Every round
+log records the proposal attempts it made, the validator errors they hit, the
+screen's verdict on each slate candidate, the gate's numbers on the child that
+reached it, and the terminal decision. The scorecard (§6.1) reads those signals
+as a picture of proposer quality; reflection (§6.2) is the gated path for
+acting on it.
 
 ### 6.1 The scorecard (`zicato proposer scorecard`)
 
@@ -1185,7 +1190,7 @@ epochs' proposals came from two different proposers and are not comparable.
 | `cost` | proposal attempts + `unit_completed` count, per promoted round |
 | `mutation_sites` | each round's child `experiment.json` patch `mutation_id`s |
 
-Three honesty rules are structural, not stylistic:
+Three honesty rules are structural:
 
 - **Null is not zero.** `Rate.value` is `None` when nothing was observed. A
   proposer that never had a candidate screened has *no* screen-veto rate;
@@ -1196,7 +1201,7 @@ Three honesty rules are structural, not stylistic:
   (a `?` in the CLI and the panel) — reported, because suppressing it loses
   information, but flagged.
 
-**A1–A4 classification is structural.** `validate_post_apply` now prefixes each
+**Post-apply classification is structural.** `validate_post_apply` prefixes each
 error string with its check code (`A4: Post-apply file … dropped top-level
 imports: …`) and `classify_post_apply_error` is the one reader of that prefix.
 The prose after the code stays free to reword; nothing regexes the sentence.
@@ -1213,9 +1218,9 @@ compared-against, remedy, remedy-safety) where the **remedy is a ready-to-apply
 `epochs/<id>/proposer_reflections/<id>/findings.json`.
 
 The **investigation substrate is pluggable**: `InvestigationSource` returns an
-`Investigation`, and v1's `ScorecardInvestigation` reads the scorecard plus a
+`Investigation`, and `ScorecardInvestigation` reads the scorecard plus a
 BANDED history of prior epochs. A richer substrate — the redacted query
-facility of #147 phase 5 — implements the same protocol and returns the same
+surface (§2.11) — implements the same protocol and returns the same
 `Investigation`, so it drops in without reshaping a persisted record. Historical
 rates are banded through `band_rate` for the same reason the failure-mode
 channel bands its marginals (§2.5): the comparison slot is the one number a
@@ -1243,9 +1248,9 @@ appends. The two families of aggregate therefore take *opposite* slices:
   a dead attempt's gate is not the round's outcome and counting it could credit a
   second promotion to a round the epoch settled once;
 - **proposal-failure and cost facts** come from EVERY attempt, because a failed
-  attempt is not noise to be sliced away — it is precisely the signal. Slicing it
-  would make the failure rate improve exactly when the proposer did worst, and a
-  call spent on an attempt that later died was still spent.
+  attempt is not noise to be sliced away — it is the signal. Slicing it would
+  make the failure rate improve when the proposer did worst, and a call spent
+  on an attempt that later died was still spent.
 
 **Revision success.** `ProposalSession` carries no revise counter and folds the
 revise's veto in with the slate's, so the rate is read from raw envelopes. A
@@ -1253,8 +1258,8 @@ re-sample that survives the screen is the one the selector then picks
 (`critique_selected.reason == "screen_revise_survivor"`), so the screened verdict
 and the definitive token agree. The denominator counts re-samples that *produced*
 a candidate: a revise whose propose call raised emits no `candidate_screened` at
-all, so the rate answers "when the revise produced something, did it survive",
-not "did the revise mechanism work at all".
+all, so the rate answers "when the revise produced something, did it survive"
+rather than "did the revise mechanism work at all".
 
 ### 6.3 The four invariants, and where each one lives
 
@@ -1265,10 +1270,10 @@ not "did the revise mechanism work at all".
 | **Redacted evidence only** | `assert_redacted` walks every record at the persist boundary and RAISES on an identity/content key at any depth. The scorecard never carries an `entry_id` by construction (it counts units and ignores `attributable_regressions`); the guard is what keeps a future emitter honest. |
 | **Every accepted edit is hashed** | The remedy carries the SHA-256 of the exact bytes; `apply-recommendation` re-verifies before writing, so an edited record cannot be applied under its original id. |
 
-One sharp edge under that last row: `_canon_proposer` folds a skill as
-`{name, sha256(normalized body)}` and deliberately does **not** hash the
-frontmatter `description`, so rewording a description is cosmetic and correctly
-does not roll. A drafted remedy is safe from that because its heading and its
+One consequence of that last row: `_canon_proposer` folds a skill as
+`{name, sha256(normalized body)}` and does **not** hash the frontmatter
+`description`, so rewording a description is cosmetic and correctly does not
+roll. A drafted remedy is safe from that because its heading and its
 evidence line live in the *body* — but only by layout, so both halves are pinned:
 a description-only edit must not roll (the canon's semantics, which this feature
 must not drift), and a drafted remedy's replacement must.
@@ -1306,7 +1311,7 @@ already rolled the hash on its own.
 | Selection / tournament the proposer feeds | [SELECTION.md](SELECTION.md), [TOURNAMENT-STRUCTURES.md](TOURNAMENT-STRUCTURES.md) |
 | The copy-me tool-using proposer agent | [`examples/zicato_examples/proposer_with_tools/agent.py`](../../examples/zicato_examples/proposer_with_tools/agent.py) |
 | The failure-mode feedback channel — anti-leakage (train-slice, banded, identity-free) | [OVERFITTING.md §11](OVERFITTING.md), `src/zicato/analyzer/outcome_marginals.py` |
-| `register` CLI reference | [CLI.md](CLI.md#zicato-register) |
+| The `zicato epoch register` command reference | [CLI.md](CLI.md) |
 | The post-apply check codes the scorecard classifies on (§6.1) | [MUTATION-SURFACE.md](MUTATION-SURFACE.md), `src/zicato/mutation/validator.py` |
 | The recommend-only reflection pattern this mirrors (findings, five-slot evidence, apply-to-a-draft) | [BOARD-REFLECTION.md](BOARD-REFLECTION.md), `src/zicato/reflection/findings.py` |
 | The redaction envelope the reflection substrate reuses | [OVERFITTING.md §11](OVERFITTING.md), §2.5 above |

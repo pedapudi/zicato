@@ -1,29 +1,32 @@
 # The tournament builder — one component, three entry points
 
-> **Status.** SHIPPED. The deterministic backend lives at
-> `zicato/builder/{config,draft,operations,api,copilot,copilot_tools}.py`; the
-> frontend is a self-contained Console view
-> (`dashboard/static/js/variants/T/views/builder.js` + `…/builder/*`); the
-> launch surfaces are the dashboard's first-class `#/builder` view, a launcher
-> rail entry in the Settings drawer (`…/views/settings.js`), and the standalone
-> `zicato dashboard --view builder` CLI (`zicato/cli/commands/builder.py`). The whole stack is exercised by the
-> test suite (`tests/test_builder_*.py`, the JS `builder.test.mjs` /
-> `settings.test.mjs`, `tests/test_cli_builder.py`). Operator-facing how-to
-> lives in the two builder skills.
+> **Status.** Built and in the tree. The deterministic backend lives at
+> `zicato/builder/{config,draft,operations,api,copilot,copilot_tools}.py`;
+> the frontend is a self-contained console view
+> (`dashboard/static/js/views/builder.js` plus `dashboard/static/js/builder/`);
+> the launch surfaces are the dashboard's first-class `#/builder` view, a
+> launcher rail entry in the Settings drawer
+> (`dashboard/static/js/views/settings.js`), and the standalone
+> `zicato dashboard --view builder` command
+> (`zicato/cli/commands/builder.py`). The whole stack is exercised by the
+> test suite (`tests/test_builder_*.py`, the JavaScript `builder.test.mjs`
+> and `settings.test.mjs`, and `tests/test_cli_builder.py`).
+> Operator-facing instructions live in the two builder skills.
 
 The **tournament builder** is the GUI for composing an epoch's evaluation
 contract — as a **draft** that is edited live and applied only on explicit
 confirmation. It is the dashboard's flagship authoring surface: the place an
 operator turns a vague objective into a concrete, hashable contract without
-hand-editing JSON. The GUI now authors **every** part of the contract:
+hand-editing JSON. The GUI authors **every** part of the contract:
 
 - **Structure & field/noise** — the five tournament structures, their per-
-  structure params (field size, replicates, the evidence gate, the racing
-  rungs incl. the `rung0_board_size` override), and candidate screening.
+  structure params (field size, replicates, the evidence gate, and the
+  racing rungs including the `rung0_board_size` override), and candidate
+  screening.
 - **The board itself** — a full inline board editor (add / edit / delete
   entries per-kind, judges, expectations, the `board_meta` header, paste-JSONL
-  import) plus the train/holdout split and the anti-overfitting knobs incl. the
-  `max_generations_per_contract` board-refresh ceiling.
+  import) plus the train/holdout split and the anti-overfitting knobs,
+  including the `max_generations_per_contract` board-refresh ceiling.
 - **The weighted loss** — the scalar coefficients (drift / pass / default-judge
   / plan-revision / runtime), the severity / per-kind / per-judge weight maps
   (per-judge seeded from the board's judges, with add-key rows), and the signed
@@ -37,30 +40,28 @@ hand-editing JSON. The GUI now authors **every** part of the contract:
 Every write/lifecycle op has a GUI control (or a documented exception),
 machine-pinned by `tests/test_builder_gui_coverage.py` (§10.7 of the dev-guide).
 
-The defining decision, repeated because it is load-bearing: **the builder edits
-a draft, and applying that draft rolls the epoch.** A different structure, a
-different board, a re-weighted loss, a held-out slice, or a swapped proposer all
-change the evaluation contract, and a changed contract is — by definition — a
-new epoch ([EPOCHS-AND-JOURNALING.md §10.1](EPOCHS-AND-JOURNALING.md#101-whats-in-the-contract)).
-So the builder is **consequence-forward**: every choice surfaces its **cost**
-(board-runs per round) and its **contract impact** (whether applying rolls the
-epoch) *before* the operator commits, and apply is gated behind a deliberate
-confirm.
+The defining decision is that **the builder edits a draft, and applying that
+draft rolls the epoch.** A different structure, a different board, a
+re-weighted loss, a held-out slice, or a swapped proposer each change the
+evaluation contract, and a changed contract is a new epoch
+([EPOCHS-AND-JOURNALING.md §10.1](EPOCHS-AND-JOURNALING.md#101-whats-in-the-contract)).
+The builder is therefore **consequence-forward**: every choice surfaces its
+**cost** (board-runs per round) and its **contract impact** (whether applying
+rolls the epoch) *before* the operator commits, and apply is gated behind an
+explicit confirmation.
 
 ---
 
 ## 1. The launch / integration model — one view, three doors
 
-There is exactly **one** builder view component
-(`views/builder.js`). It is deliberately self-contained — `render(host)` takes
-nothing but a host element, owns its own shared session draft, and never reads
-the tree, the route params, or the breadcrumb. That self-containment is what
-lets the same component be reached from three doors without a rewrite. The
-builder is now its **own first-class view** rendered FULL-WIDTH in the main view
-host (`#/builder` is a top-level route returning `{view: "builder"}`, not a
-Settings section — `js/variants/T/router.js`); the prior nesting inside Settings
-gave it a cramped double-railed centre, so it was promoted out and Settings
-keeps only a **launcher** to it:
+There is exactly **one** builder view component (`views/builder.js`). It is
+self-contained: `render(host)` takes nothing but a host element, owns its own
+shared session draft, and never reads the tree, the route params, or the
+breadcrumb. That self-containment is what lets the same component be reached
+from three doors without a rewrite. The builder is its **own first-class
+view**, rendered full-width in the main view host, and `#/builder` is a
+top-level route returning `{view: "builder"}` (`js/router.js`). Settings
+carries a **launcher** to it rather than hosting it:
 
 | Door | Route / entry | What it does |
 |---|---|---|
@@ -68,14 +69,13 @@ keeps only a **launcher** to it:
 | **Settings launcher** | top-bar **⚙ settings** → *Tournament builder* rail entry | The Settings drawer (`views/settings.js`) is a section rail (Tournament builder · Contract · Models · Appearance) over one body host. The *Tournament builder* entry is a **launcher** — it does not swap a section; it navigates OUT to `#/builder` so the builder always renders full-width. |
 | **Standalone CLI** | `zicato dashboard --view builder` | Boots the same dashboard service as `zicato dashboard` and prints the builder deep-link (`http://127.0.0.1:<port>/#/builder`) so the browser opens on the builder. Loopback-only, same bind rule as `zicato dashboard` / `zicato evolve`. |
 
-Settings does **not** reimplement the builder; it launches it. Its **Contract**
-section is a **read-only at-a-glance** of the current epoch's contract that
-*reuses the builder's own live preview* (`builder/preview.js` `previewNodes`
-fed the current epoch as a draft-shaped contract), rendered read-only — so the
-panel reads as "here is the contract as the builder would show it; click out to
-the builder to change it." The Settings surface itself is now a routed
-right-side **drawer overlay** that paints over the current view (DASHBOARD /
-variant-T), not a full page.
+Settings launches the builder rather than reimplementing it. Its
+**Contract** section is a read-only at-a-glance of the current epoch's
+contract that reuses the builder's own live preview (`builder/preview.js`
+`previewNodes`, fed the current epoch as a draft-shaped contract). The panel
+shows the contract as the builder would show it, and the operator clicks out
+to the builder to change it. The Settings surface itself is a routed
+right-side **drawer overlay** that paints over the current console view.
 
 ---
 
@@ -95,13 +95,13 @@ session id (the dashboard tab uses `session = "dashboard"`):
   therefore accumulate on one contract — and a subsequent `GET /builder/draft`
   reflects either path's edits.
 
-The copilot is deliberately a **drafting** copilot, never an applying one: no
-copilot tool calls apply, so the model can never roll the epoch on its own. The
-operator always confirms apply in the form's Review section.
+The copilot **drafts** and does not apply: no copilot tool calls apply, so
+the model can never roll the epoch on its own. The operator confirms apply in
+the form's Review section.
 
 ### 2.1 The tools
 
-The copilot tools wrap the same B1a operations the form uses (`set_structure`,
+The copilot tools wrap the same draft operations the form uses (`set_structure`,
 `set_param`, `set_holdout`, `set_gate`, board edits, `set_board_meta` for the
 board-level `disable_drift`/`judge_only` header, …), so the form and the
 chat speak one operation vocabulary. The draft round-trips the board's
@@ -147,7 +147,7 @@ The copilot uses the workspace's named `models.builder` role. This is the sole
 model source, including endpoint, credential-variable name, and custom callable;
 the Settings model editor documents and validates it with the other roles.
 
-The separate read-only `builder.json` now contains only presentation concerns:
+The separate read-only `builder.json` carries presentation concerns only:
 
 ```jsonc
 {
@@ -174,19 +174,19 @@ Every authoring choice is annotated with its downstream cost before commit:
   default** (`default_replicates_for` / `STRUCTURE_DEFAULT_REPLICATES`, the
   single source of truth — swiss / single-elim / double-elim = 2, gauntlet /
   racing = 1) when the draft leaves `replicates` unset, rather than assuming a
-  flat 1, so the meter matches the schedule a structure actually runs (the
-  under-reporting bug class). See
+  flat 1, so the meter matches the schedule a structure actually runs and does
+  not under-report its cost. See
   [`TOURNAMENT-STRUCTURES.md §3`](TOURNAMENT-STRUCTURES.md#3-the-five-concrete-strategies).
 * **Contract impact.** The impact pill states whether applying the current
   draft **rolls the epoch** and which components changed; a draft that touches
   nothing contract-relevant reads "no contract change."
 * **Gated apply.** The Review section offers a dry-run preview first; the real
-  apply requires an explicit second (confirm) click before it writes the
+  apply requires an explicit second click to confirm before it writes the
   contract. Applying writes the draft and lets the auto-epoch machinery roll
-  the epoch on the next resolve — it is never a silent side effect.
+  the epoch on the next resolve, which is never a silent side effect.
 
-This is the same discipline the two builder skills teach: surface cost + the
-epoch-roll before apply, every time.
+The two builder skills teach the same discipline: surface the cost and the
+epoch roll before every apply.
 
 ---
 
@@ -209,9 +209,9 @@ top-bar selection.
 |---|---|
 | Operator-facing: assembling a whole tournament contract through the GUI | `skills/zicato-build-tournament/SKILL.md` |
 | Operator-facing: deep board craft — entries, judges, the weighted loss | `skills/zicato-build-board/SKILL.md` |
-| The `SelectionStrategy` seam + the five shipped structures the builder picks from | [`TOURNAMENT-STRUCTURES.md`](TOURNAMENT-STRUCTURES.md) |
+| The `SelectionStrategy` seam and the five structures the builder picks from | [`TOURNAMENT-STRUCTURES.md`](TOURNAMENT-STRUCTURES.md) |
 | The proposer as a first-class contract input the builder edits | [`PROPOSER.md`](PROPOSER.md) |
-| The train/holdout split + anti-overfitting the board section configures | [`OVERFITTING.md`](OVERFITTING.md) |
-| How the gate weights + margin become the scalar loss the tournament consumes | [`SCORING.md`](SCORING.md) |
-| The dashboard shell the builder + Settings panel live inside | [`DASHBOARD.md`](DASHBOARD.md) |
+| The train/holdout split and the anti-overfitting knobs the board section configures | [`OVERFITTING.md`](OVERFITTING.md) |
+| How the gate weights and margin become the scalar loss the tournament consumes | [`SCORING.md`](SCORING.md) |
+| The dashboard shell the builder and the Settings panel live inside | [`DASHBOARD.md`](DASHBOARD.md) |
 | The `zicato dashboard --view builder` / `zicato dashboard` commands | [`CLI.md`](CLI.md) |

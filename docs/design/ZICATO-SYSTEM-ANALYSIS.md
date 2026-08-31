@@ -1,28 +1,40 @@
 # zicato: intent, architecture, determinism, and the proposer
 
-_Produced by a multi-agent read of the zicato codebase — six independently verified sections, assembled and de-duplicated by an editor pass. Every code snippet below is copied verbatim from the file named in its caption._
+> **Status.** A dated analysis of the codebase rather than a specification. It
+> records what the tree contained on the analysis date, with the reasoning
+> behind each finding. For the system as it stands, read the design documents
+> it cites and the development guide under `docs/dev-guide/`.
+>
+> Two of its recommendations have since been adopted, so the sections that
+> call them unbuilt are stale: sampling diversity within a best-of-N slate
+> ships as the per-slot edit-class hint
+> (`EDIT_CLASS_HINTS` in `src/zicato/proposer/hints.py`, applied in
+> `src/zicato/proposer/best_of_n.py`), and the noise-aware defaults raised
+> `replicates` to 2 for every structure except racing
+> (`src/zicato/selection/strategies/`).
 
-_Analysis date: 2026-07-01_
+_Analysis date: 2026-07-01. Every code snippet below is copied verbatim from
+the file named in its caption._
 
 ## Executive abstract
 
-zicato is a self-improving **meta-harness** for any system whose behaviour can be measured — multi-agent systems are its founding and primary use case, not its definition. It wraps a system you already built, runs it against a frozen board of tasks, reduces each run's structured runtime telemetry (a `goldfive.v1.Event` stream) into a typed per-run loss profile, aggregates those into recurring failure **patterns**, asks an LLM **proposer** to emit typed **patches** against an annotated mutation surface, and then runs a **tournament** that promotes the candidate generation only when it wins by a configured margin without regressing. The architecture is a Python orchestration loop (`src/zicato/`, ~85k LOC across 235 files) whose safety is enforced out-of-band by an independent Rust supervisor (`crates/supervisor/`, ~14.5k LOC) that never shares memory with the loop and only reads atomic state files. The codebase is large less because it does many things than because it is written to be *legible and self-auditing*: an AST/token census puts only ~47% of `src/zicato/` lines at executable code, with ~40% docstrings and comments (31% + 9%) carrying the design rationale inline, and nearly every capability ships as a byte-identical-by-default opt-in wrapped in defense-in-depth checks. That prose is mostly merited — but a [code-quality audit](#code-quality-is-the-verbosity-merited) found the *reducible* debt is structural, not textual: three god-functions (~3,000 lines between them), duplicated evolve/dashboard logic, and a handful of dead symbols.
+zicato is a self-improving **meta-harness** for any system whose behaviour can be measured; multi-agent systems are its founding and primary use case rather than a limit on what it accepts. It wraps a system you already built, runs it against a frozen board of tasks, reduces each run's structured runtime telemetry (a `goldfive.v1.Event` stream) into a typed per-run loss profile, aggregates those into recurring failure **patterns**, asks an LLM **proposer** to emit typed **patches** against an annotated mutation surface, and then runs a **tournament** that promotes the candidate generation only when it wins by a configured margin without regressing. The architecture is a Python orchestration loop (`src/zicato/`, ~85k LOC across 235 files) whose safety is enforced out-of-band by an independent Rust supervisor (`crates/supervisor/`, ~14.5k LOC) that never shares memory with the loop and only reads atomic state files. The codebase is large less because it does many things than because it is written to be *legible and self-auditing*: an AST/token census puts only ~47% of `src/zicato/` lines at executable code, with ~40% docstrings and comments (31% + 9%) carrying the design rationale inline, and nearly every capability ships as a byte-identical-by-default opt-in wrapped in defense-in-depth checks. That prose is mostly merited, and the [code-quality audit](#code-quality-how-much-of-the-verbosity-is-load-bearing) found the *reducible* debt to be structural rather than textual: three god-functions (~3,000 lines between them), duplicated evolve/dashboard logic, and a handful of dead symbols.
 
-The deterministic guarantees are concentrated in the supervisor and the Python single-writer state contract: warn-only heartbeats (the watchdog can never kill the orchestrator), pid-reuse-proof signalling, an untrusted-and-clamped run deadline, a tamper-evident hash-chained audit ledger, diff-containment re-hashing of every child snapshot, an independent re-derivation of the promotion gate, atomic tmp→fsync→rename writes, a pid-start-time-checked workspace lock, and a conservative crash-resume protocol that discards on any ambiguity. The single highest-leverage improvement is to the proposer: its per-slot generation step is still one i.i.d. sample. A [branch audit](#branch-audit-main-is-the-union-of-the-merged-feature-work) (added after the first draft) found that **all three of the `FUNCTIONALITY-RECOMMENDATIONS.md §4` proposer levers are already implemented and merged into `main`** (from `feat/proposer-quality`): best-of-N + self-critique, hypothesis prediction-accuracy grading, and the field-diversity constraint. The genuine headline recommendations are therefore narrower than "build them": (a) **enable** the already-shipped-but-default-off best-of-N + self-critique wrapper (`best_of_n = 1` today — a scoring-contract flip that rolls the epoch), and (b) make the already-computed hypothesis prediction-accuracy signal **actionable** — today it is graded post-tournament and shown to the proposer as an advisory low/medium/high band but is never used to bias best-of-N selection or any gate. Both stay inside the existing overfitting-restricted context channels.
+The deterministic guarantees are concentrated in the supervisor and the Python single-writer state contract: warn-only heartbeats (the watchdog can never kill the orchestrator), pid-reuse-proof signalling, an untrusted-and-clamped run deadline, a tamper-evident hash-chained audit ledger, diff-containment re-hashing of every child snapshot, an independent re-derivation of the promotion gate, atomic tmp→fsync→rename writes, a pid-start-time-checked workspace lock, and a conservative crash-resume protocol that discards on any ambiguity. The single highest-leverage improvement is to the proposer: its per-slot generation step is still one i.i.d. sample. A [branch audit](#branch-audit-main-is-the-union-of-the-merged-feature-work) found that **all three of the `FUNCTIONALITY-RECOMMENDATIONS.md §4` proposer levers are already implemented and merged into `main`** (from `feat/proposer-quality`): best-of-N + self-critique, hypothesis prediction-accuracy grading, and the field-diversity constraint. The genuine headline recommendations are therefore narrower than "build them": (a) **enable** the shipped but default-off best-of-N and self-critique wrapper, which sits at `best_of_n = 1` and whose flip is a scoring-contract change that rolls the epoch, and (b) make the already-computed hypothesis prediction-accuracy signal **actionable**: it is graded after the tournament and shown to the proposer as an advisory low, medium or high band, and is never used to bias best-of-N selection or any gate. Both stay inside the existing overfitting-restricted context channels.
 
 ## Table of contents
 
 1. [What zicato is for](#1-what-zicato-is-for)
 2. [Architecture (as implemented)](#2-architecture-as-implemented)
 3. [How a candidate is judged](#3-how-a-candidate-is-judged)
-4. [Why it is so verbose](#4-why-it-is-so-verbose)
+4. [Where the line count goes](#4-where-the-line-count-goes)
 5. [Deterministic guarantees (the supervisor)](#5-deterministic-guarantees-the-supervisor)
 6. [The proposer: structure and how to improve it](#6-the-proposer-structure-and-how-to-improve-it)
 - [Branch audit (main is the union of the merged feature work)](#branch-audit-main-is-the-union-of-the-merged-feature-work)
-- [Code quality: is the verbosity merited?](#code-quality-is-the-verbosity-merited)
-- [Persistence: is the approach sensible? (and how to simplify it)](#persistence-is-the-approach-sensible-and-how-to-simplify-it)
+- [Code quality: how much of the verbosity is load-bearing](#code-quality-how-much-of-the-verbosity-is-load-bearing)
+- [Persistence: the store topology and where it can be simplified](#persistence-the-store-topology-and-where-it-can-be-simplified)
 - [The frontend/data-model boundary (and how to simplify it)](#the-frontenddata-model-boundary-and-how-to-simplify-it)
-- [Empirical effectiveness: before and after](#empirical-effectiveness-before-and-after)
+- [Empirical effectiveness of the decision procedure](#empirical-effectiveness-of-the-decision-procedure)
 - [Summary of recommendations](#summary-of-recommendations)
 
 ---
@@ -53,7 +65,7 @@ driver holds still.
 
 ### Place in the goldfive / harmonograf ecosystem
 
-zicato is the third member of a three-library stack, and the split is a **cadence** split, not a feature split. goldfive is the *inner* orchestration harness that makes drift legible within a single run (goals, plans, per-turn drift analysis, an intervention ladder) and emits a typed `goldfive.v1.Event` stream. harmonograf is the live observability + steering console over that same stream. zicato is the **meta-loop**: it consumes the identical telemetry stream but *across many runs*, and it is the only one of the three allowed to reach across runs and to reach into the agent's own source. The clean division of ownership is explicit — goldfive owns the plan a run produces; zicato owns the prompts and structure that *produce* plans.
+zicato is the third member of a three-library stack, and the split between the three is by **cadence** rather than by feature. goldfive is the *inner* orchestration harness that makes drift legible within a single run (goals, plans, per-turn drift analysis, an intervention ladder) and emits a typed `goldfive.v1.Event` stream. harmonograf is the live observability + steering console over that same stream. zicato is the **meta-loop**: it consumes the identical telemetry stream but *across many runs*, and it is the only one of the three allowed to reach across runs and to reach into the agent's own source. The clean division of ownership is explicit — goldfive owns the plan a run produces; zicato owns the prompts and structure that *produce* plans.
 
 README.md:42-45
 ```
@@ -90,9 +102,9 @@ Across many runs of that inner harness, zicato:
    not regress on pre-existing pass-rate.
 ```
 
-Two design commitments make this loop legible rather than a black-box optimizer. First, edits are confined to an **annotated mutation surface** — only spans/files the operator marked `# zicato:mutable` are editable, so the search is "improve these strings," never "rewrite the agent" (`docs/design/RATIONALE.md:13-38`). Second, every proposal is a structured **Experiment = hypothesis + patches**, with the hypothesis (`core_idea`, `why`, `expected_drift_movements`, `risks`, …) recorded *before* the run and matched against actuals *after*, so the journal captures the proposer's reasoning, not just what scored (`docs/design/RATIONALE.md:82-107`). **Epochs** group generations under a frozen evaluation contract (board + proposer brief's `## Forbidden` list + scoring weights) so within-epoch comparison is precise while operator contract changes become explicit epoch boundaries (`docs/design/VOCABULARY.md:83-90`).
+Two design commitments make this loop legible rather than a black-box optimizer. First, edits are confined to an **annotated mutation surface** — only spans/files the operator marked `# zicato:mutable` are editable, so the search is "improve these strings" and never "rewrite the agent" (`docs/design/RATIONALE.md:13-38`). Second, every proposal is a structured **Experiment = hypothesis + patches**, with the hypothesis (`core_idea`, `why`, `expected_drift_movements`, `risks`, …) recorded *before* the run and matched against actuals *after*, so the journal captures the proposer's reasoning as well as what scored (`docs/design/RATIONALE.md:82-107`). **Epochs** group generations under a frozen evaluation contract (board + proposer brief's `## Forbidden` list + scoring weights) so within-epoch comparison is precise while operator contract changes become explicit epoch boundaries (`docs/design/VOCABULARY.md:83-90`).
 
-### What is deliberately pluggable
+### The three pluggable seams
 
 zicato is intentionally agnostic at three seams so it never couples to a vendor, a framework, or a storage mechanism:
 
@@ -120,7 +132,7 @@ The `src/zicato/__init__.py` header restates the one-liner and notes the public 
 
 ## 2. Architecture (as implemented)
 
-Zicato is a meta-loop: it proposes edits to an inner multi-agent harness, runs a tournament to decide whether the edit is an improvement, and journals the result. The integration point is `src/zicato/orchestrator.py` — `evolve_once` runs exactly one generation (one champion-vs-challenger round), and `evolve_n_rounds` (moved into `src/zicato/evolve/loop.py`) drives it up to N times with circuit-breakers. `src/zicato/__init__.py` deliberately exports nothing (`__version__ = "0.3.0"`); the public surface is the submodule tree, and the frozen dataclasses in `src/zicato/core/` are the contract every subsystem imports.
+Zicato is a meta-loop: it proposes edits to an inner multi-agent harness, runs a tournament to decide whether the edit is an improvement, and journals the result. The integration point is `src/zicato/orchestrator.py` — `evolve_once` runs one generation, which is one champion-vs-challenger round, and `evolve_n_rounds` (moved into `src/zicato/evolve/loop.py`) drives it up to N times with circuit-breakers. `src/zicato/__init__.py` exports nothing but `__version__ = "0.3.0"`; the public surface is the submodule tree, and the frozen dataclasses in `src/zicato/core/` are the contract every subsystem imports.
 
 ### Subsystem decomposition and data flow
 
@@ -161,7 +173,20 @@ Zicato is a meta-loop: it proposes edits to an inner multi-agent harness, runs a
         crates/supervisor  (Rust) — watchdog + /statusz + dashboard; SIGTERM→SIGKILL
 ```
 
-The modules map onto that flow: **core** (frozen dataclasses / contract types), **workspace** + **epoch** (contract loading, lineage, journal, generation store), **mutation** (enumerate points, apply patches, validate), **patterns** (cross-run loss detectors), **proposer** (skill-composed / ADK-native agents), **selection** (tournament-structure strategies), **tournament** (runner, gate, scoring, ladder/holdout, subprocess worker transport), **scoring** (aggregate + diff-complexity), **telemetry** (goldfive JSONL sink + reducer), **runtime** (lock, heartbeat, state files, control protocol, resume, progress log), **health**/**analyzer**/**index**/**dashboard** (observability), and **storage** (pluggable file/memory backend under runtime state).
+The modules map onto that flow:
+
+- **core** — frozen dataclasses and contract types.
+- **workspace** and **epoch** — contract loading, lineage, journal, generation store.
+- **mutation** — enumerate points, apply patches, validate.
+- **patterns** — cross-run loss detectors.
+- **proposer** — skill-composed and ADK-native agents.
+- **selection** — the tournament-structure strategies.
+- **tournament** — runner, gate, scoring, ladder and holdout, subprocess worker transport.
+- **scoring** — the aggregate and the diff-complexity term.
+- **telemetry** — the goldfive JSONL sink and the reducer.
+- **runtime** — lock, heartbeat, state files, control protocol, resume, progress log.
+- **health**, **analyzer**, **index** and **dashboard** — observability.
+- **storage** — the pluggable file and memory backends under runtime state.
 
 ### The proposer boundary
 
@@ -196,7 +221,7 @@ The proposer is invoked through a resolved `ProposerAgent` and a `ProposerContex
 
 ### Applying a patch into a fresh snapshot
 
-The applier never mutates the parent tree. `apply_patches` copies the parent snapshot into a fresh target tree, runs a deterministic all-or-nothing validation pre-check, applies the batch, then re-parses every touched `.py` file so a syntax-corrupting patch is attributed to the round that produced it rather than crashing the next generation's enumeration. (This `copytree` is the applier *primitive*, shared by both generation backends — not the storage mechanism itself. Under the **default git backend** the target is an ephemeral scratch tree that is then committed and tagged; only under the directory *fallback* is it the persisted `generations/{child}/snapshot/`. See [Persistence](#persistence-is-the-approach-sensible-and-how-to-simplify-it).)
+The applier never mutates the parent tree. `apply_patches` copies the parent snapshot into a fresh target tree, runs a deterministic all-or-nothing validation pre-check, applies the batch, then re-parses every touched `.py` file so a syntax-corrupting patch is attributed to the round that produced it rather than crashing the next generation's enumeration. (This `copytree` is the applier *primitive*, shared by both generation backends — not the storage mechanism itself. Under the **default git backend** the target is an ephemeral scratch tree that is then committed and tagged; only under the directory *fallback* is it the persisted `generations/{child}/snapshot/`. See [Persistence](#persistence-the-store-topology-and-where-it-can-be-simplified).)
 
 ```python
 # src/zicato/mutation/applier.py:653-675
@@ -344,7 +369,7 @@ def builtin_drift_loss(
 
     clamped to ``max(0.0, loss)``. The not-completed heavy term and the
     ``task_failure_ratio`` floor are applied by the reducer AROUND this call
-    (they are reducer policy, not part of the per-run drift formula), so they
+    (they are reducer policy rather than part of the per-run drift formula), so they
     stay where they are — this function is the inner formula only.
     """
     sev_w = weights.severity_weights
@@ -424,7 +449,7 @@ src/zicato/tournament/gate.py:449-473
 
 Rule 2 is **pass-rate monotonicity** (on by default), scoped either `per_entry` (any champion-passed entry that flips to fail rejects) or `aggregate` (only the overall `mean_score` may not drop). Rule 3 is **per-namespace monotonicity**: any namespace flagged in `namespace_monotonicity` (default `rubric:`, `schema:`) that regresses in its "worse" direction rejects, even when the combined scalar improved (`gate.py:479-501`). Before any of this, when `regression_gate_enabled` is set, `_gate_with_regression` (`src/zicato/tournament/runner.py:838-882`) shells out to the child snapshot's own test suite as a **hard gate** — a failing suite rejects regardless of drift/pass movement.
 
-If the three train rules would promote and a held-out board slice exists, the win must **also confirm on the holdout**: `_holdout_confirms` (`gate.py:342-391`) rejects only if the challenger's holdout loss *rose* past `promote_margin` or the holdout shows a pass-rate regression. It is deliberately asymmetric — the holdout is never asked to clear the margin in the improving direction, so it guards against board-memorization rather than acting as a second, stricter bar.
+If the three train rules would promote and a held-out board slice exists, the win must **also confirm on the holdout**: `_holdout_confirms` (`gate.py:342-391`) rejects only if the challenger's holdout loss *rose* past `promote_margin` or the holdout shows a pass-rate regression. The check is asymmetric by design: the holdout is never asked to clear the margin in the improving direction, so it guards against board-memorization rather than acting as a second, stricter bar.
 
 ### 4. The tournament and how a winner resolves to promote/reject
 
@@ -475,11 +500,11 @@ The resulting `GateOutcome.decision` (`promoted` / `rejected` / `deferred`) plus
 
 ---
 
-## 4. Why it is so verbose
+## 4. Where the line count goes
 
-zicato is large — roughly 85k lines of Python across 235 files under `src/zicato/`, plus ~14.5k lines of Rust in `crates/supervisor/`. But raw size understates the texture. An AST/token census of `src/zicato/` finds that only **~47% of lines are executable code**; **~31% are docstrings and ~9% are comments** (40% prose-in-source), with the remaining ~13% blank. The verbosity is not accidental — it is four deliberate disciplines, each trading lines for the legibility a *self-modifying* system needs. (Whether that trade is *merited*, and where it tips into reducible debt, is audited in a [dedicated section below](#code-quality-is-the-verbosity-merited).)
+zicato is large — roughly 85k lines of Python across 235 files under `src/zicato/`, plus ~14.5k lines of Rust in `crates/supervisor/`. But raw size understates the texture. An AST/token census of `src/zicato/` finds that only **~47% of lines are executable code**; **~31% are docstrings and ~9% are comments** (40% prose-in-source), with the remaining ~13% blank. The verbosity is not accidental — it is four deliberate disciplines, each trading lines for the legibility a *self-modifying* system needs. (Whether that trade is *merited*, and where it tips into reducible debt, is audited in a [dedicated section below](#code-quality-how-much-of-the-verbosity-is-load-bearing).)
 
-**1. Docstrings carry the design rationale, not just the API.** A field can be a one-token declaration and still carry a paragraph explaining why it exists, what turns it on, and which design memo governs it. `ProposerContext.restrict_visibility` is a plain `bool` with six lines of comment tying it to the overfitting program:
+**1. Docstrings carry the design rationale as well as the API.** A field can be a one-token declaration and still carry a paragraph explaining why it exists, what turns it on, and which design memo governs it. `ProposerContext.restrict_visibility` is a plain `bool` with six lines of comment tying it to the overfitting program:
 
 src/zicato/proposer/agent.py:101-107
 ```python
@@ -494,7 +519,7 @@ src/zicato/proposer/agent.py:101-107
 
 The same pattern scales up: `propose_experiment` (`src/zicato/proposer/proposer.py:85-247`) is ~160 lines of function signature and per-parameter docstring wrapping a ~180-line body, because each of its many keyword inputs (`restrict_visibility`, `failure_profile`, `prior_experiments`, `skills`, `meta_loop_emitter`, …) documents its default-is-a-no-op contract inline. Reading a single function tells you the whole contract without cross-referencing the design docs.
 
-**2. Additive, byte-identical-by-default contract discipline.** Almost every capability lands as an opt-in that is provably a no-op at its default, and the code both *says so* in a comment and enforces it structurally — often by not even interposing an object. The best-of-N proposer wrapper is the archetype: at the default `best_of_n <= 1` it returns the inner agent unchanged, so a contract that never opts in behaves byte-for-byte as before the feature existed:
+**2. Additive, byte-identical-by-default contract discipline.** Almost every capability lands as an opt-in that is provably a no-op at its default, and the code both *says so* in a comment and enforces it structurally — often by not even interposing an object. The best-of-N proposer wrapper is the archetype: at the default `best_of_n <= 1` it returns the inner agent unchanged, so a contract that never opts in behaves byte-for-byte the way it does with the feature absent:
 
 src/zicato/proposer/best_of_n.py:286-300
 ```python
@@ -519,7 +544,7 @@ The same idiom recurs across the scorer (the `diff_complexity` term is appended 
 
 **3. Defense in depth means layered, redundant checks — each spelled out.** A self-editing loop cannot trust any single validator, so the same fact is verified at multiple layers, and each layer is written out explicitly. Parsing the proposer's output is itself a *two-pass* validation (a JSON-Schema shape pass plus a local cross-check pass the schema cannot express — `src/zicato/proposer/structured.py:1-27`); the applier pre-validates the whole batch and then re-parses every touched file (Section 2); and the Rust supervisor independently re-derives the promotion gate and re-hashes each child snapshot against its parent (Section 5). None of these layers is individually large, but they are all present, all commented with what could go wrong without them, and they compound.
 
-**4. Two parallel proposer paths, pluggable seams, and frozen contract types.** The proposer ships *two* full implementations (a single-shot text-shim engine and a native tool-using ADK agent) behind one `ProposerAgent` protocol, with every `google.adk` import kept lazy so the default path never forces the optional extra (`src/zicato/proposer/adk_agent.py:1-51`). The three deliberately pluggable seams (`CallLLM`, `HarnessAdapter`, `StorageBackend` — Section 1) each add a protocol/ABC plus at least one concrete implementation. And the `src/zicato/core/` frozen dataclasses that every subsystem imports as its contract are exhaustively field-documented because they are the API surface between subsystems. In short: zicato is verbose the way a spec-with-executable-tests is verbose — the prose *is* the spec, co-located with the code it governs, which is exactly what a system that rewrites code needs to stay auditable.
+**4. Two parallel proposer paths, pluggable seams, and frozen contract types.** The proposer ships *two* full implementations (a single-shot text-shim engine and a native tool-using ADK agent) behind one `ProposerAgent` protocol, with every `google.adk` import kept lazy so the default path never forces the optional extra (`src/zicato/proposer/adk_agent.py:1-51`). The three pluggable seams (`CallLLM`, `HarnessAdapter`, `StorageBackend` — Section 1) each add a protocol or abstract base class plus at least one concrete implementation. The `src/zicato/core/` frozen dataclasses that every subsystem imports as its contract are exhaustively field-documented, because they are the API surface between subsystems. Zicato is verbose the way a specification with executable tests is verbose: the prose *is* the specification, co-located with the code it governs, which is what a system that rewrites code needs in order to stay auditable.
 
 ---
 
@@ -613,9 +638,9 @@ pub fn is_same_process(pid: i32, expected_start_time: Option<f64>) -> bool {
     }
 }
 ```
-The fallbacks are deliberately conservative: an absent recorded token or an unreadable current token degrades to bare liveness rather than manufacturing a false mismatch. *What could go wrong without it:* after a worker exits and the kernel reissues its pid, the watchdog could SIGKILL an innocent unrelated process.
+The fallbacks are conservative: an absent recorded token or an unreadable current token degrades to bare liveness rather than manufacturing a false mismatch. *What could go wrong without it:* after a worker exits and the kernel reissues its pid, the watchdog could SIGKILL an innocent unrelated process.
 
-**5. Confirmed-dead (not merely slow) orchestrator reaping.** Only when the orchestrator's own reaper can never run does the supervisor step in to group-kill orphaned workers, GC their ephemeral snapshots, and finalize state files (`reap_dead_orchestrator_runs`, `watchdog.rs:898-946`). The gate is an *identity* check, not a stale timestamp.
+**5. Orchestrator reaping requires confirmed death rather than mere slowness.** Only when the orchestrator's own reaper can never run does the supervisor step in to group-kill orphaned workers, collect their ephemeral snapshots, and finalize state files (`reap_dead_orchestrator_runs`, `watchdog.rs:898-946`). The gate is an *identity* check rather than a stale timestamp.
 
 `crates/supervisor/src/reap.rs:49-58`
 ```rust
@@ -727,9 +752,9 @@ def atomic_write_text(path: Path, content: str) -> None:
         os.close(fd)
     os.replace(tmp, path)
 ```
-This is the shared contract the Rust reader depends on: `list_active_runs` skips leftover `.tmp` artifacts (`state.py:364-366`), and `read_json` deliberately does *not* swallow decode errors — a partial file would signal something bypassed the helpers. *What could go wrong without it:* a crash mid-write, or a reader racing a writer, would see a truncated JSON file and either crash or act on corrupt state.
+This is the shared contract the Rust reader depends on: `list_active_runs` skips leftover `.tmp` artifacts (`state.py:364-366`), and `read_json` does *not* swallow decode errors, because a partial file signals that something bypassed the helpers. *What could go wrong without it:* a crash mid-write, or a reader racing a writer, would see a truncated JSON file and either crash or act on corrupt state.
 
-**10. Single-writer workspace lock with pid-reuse-proof stealing.** Only one orchestrator may write `runtime/`. The lock records `(pid, start_time, instance_id)`; a stale lock is stolen only after `is_same_process` proves the prior owner is genuinely gone.
+**10. Single-writer workspace lock with pid-reuse-proof stealing.** Only one orchestrator may write `runtime/`. The lock records `(pid, start_time, instance_id)`; a stale lock is stolen only after `is_same_process` proves the prior owner is gone.
 
 `src/zicato/runtime/lock.py:282-298`
 ```python
@@ -792,7 +817,7 @@ This is corruption-free by construction: a generation is appended to `lineage.js
 
 **Single-escalator kill handshake.** The Python parent never signals a worker directly. To kill an over-budget worker it writes a `control/kill_requests/{run_id}` marker (`request_worker_kill`, `state.py:389-406`); the supervisor's trigger-0 branch (`watchdog.rs:1092-1135`) is the *sole* SIGTERM→grace→SIGKILL escalator and clears the marker after. *What could go wrong without it:* a parent↔supervisor race over the same pid could double-signal or hit a recycled pid.
 
-**True-liveness `seq` cursor.** The heartbeat timer bumps `last_heartbeat` on a schedule even when the loop is wedged; the `seq` field (`Heartbeat.seq`, `state.py:141-155`) advances *only* on a genuine loop transition (the timer re-writes the same `seq`, `heartbeat.py:141-148`). `SeqLiveness` (`watchdog.rs:429-559`) measures staleness from the last seq *change*, catching a wedged loop whose fresh timestamp would otherwise read as alive — still warn-only. The claim-once control primitive (`atomic_claim` via `os.rename`, `storage/_atomic.py:76-101`) similarly guarantees a pending command fires for exactly one racing consumer. *What could go wrong without the seq cursor:* a hung orchestrator whose beater thread keeps stamping `now()` would never be flagged.
+**True-liveness `seq` cursor.** The heartbeat timer bumps `last_heartbeat` on a schedule even when the loop is wedged; the `seq` field (`Heartbeat.seq`, `state.py:141-155`) advances *only* on a real loop transition (the timer re-writes the same `seq`, `heartbeat.py:141-148`). `SeqLiveness` (`watchdog.rs:429-559`) measures staleness from the last seq *change*, catching a wedged loop whose fresh timestamp would otherwise read as alive — still warn-only. The claim-once control primitive (`atomic_claim` via `os.rename`, `storage/_atomic.py:76-101`) similarly guarantees a pending command fires for exactly one of the racing consumers. *What could go wrong without the seq cursor:* a hung orchestrator whose beater thread keeps stamping `now()` would never be flagged.
 
 ---
 
@@ -861,7 +886,7 @@ src/zicato/proposer/proposer.py:406-431
     raise ProposerError(attempt_errors)
 ```
 
-The retry loop is deliberately *repair-aware*: a shape failure echoes the prior raw output back so the model can see the stray fence/prose it emitted, whereas a content failure (forbidden id, or a patch that broke the snapshot) feeds the concrete finding without the echo. The post-apply hook is what makes a destructive patch cost one retry instead of a wasted tournament round — the orchestrator supplies a hook that applies the patch set to a fresh child snapshot and runs `validate_post_apply`.
+The retry loop is *repair-aware*: a shape failure echoes the prior raw output back so the model can see the stray fence/prose it emitted, whereas a content failure (forbidden id, or a patch that broke the snapshot) feeds the concrete finding without the echo. The post-apply hook is what makes a destructive patch cost one retry instead of a wasted tournament round — the orchestrator supplies a hook that applies the patch set to a fresh child snapshot and runs `validate_post_apply`.
 
 ### The patch contract and its two-pass validation
 
@@ -889,7 +914,7 @@ src/zicato/proposer/structured.py:164-181
 }
 ```
 
-The `HypothesisSpec` half additionally requires falsifiable predictions — `expected_drift_movements` / `expected_metric_movements` (direction + magnitude enums) and `expected_pass_rate_delta`. These *are* graded against actuals after a tournament settles: `grade_hypothesis_predictions` (`src/zicato/tournament/detail.py:1184`) joins the expected movements against the realised outcome by sign and range-normalised magnitude bucket, and the fraction is folded back into experiment memory as `PriorExperiment.prediction_accuracy` (`src/zicato/index/query.py:485,601`) and surfaced to the proposer as a banded `prediction:low|medium|high` annotation (`src/zicato/proposer/prompts.py:530,588`). What it is *not* is **actionable**: the band is displayed but never used to bias best-of-N selection, weight proposals, or gate anything (a repo-wide grep finds zero non-display readers of `prediction_accuracy`). That advisory-only status — not a missing implementation — is the real gap the recommendations below address. *(This paragraph was corrected after a [branch audit](#branch-audit-main-is-the-union-of-the-merged-feature-work); the first draft, scoped to the `proposer/` module, wrongly stated the predictions were "never compared to actuals" and missed the grader living under `tournament/` + `index/`.)*
+The `HypothesisSpec` half additionally requires falsifiable predictions — `expected_drift_movements` / `expected_metric_movements` (direction + magnitude enums) and `expected_pass_rate_delta`. These *are* graded against actuals after a tournament settles: `grade_hypothesis_predictions` (`src/zicato/tournament/detail.py:1184`) joins the expected movements against the realised outcome by sign and range-normalised magnitude bucket, and the fraction is folded back into experiment memory as `PriorExperiment.prediction_accuracy` (`src/zicato/index/query.py:485,601`) and surfaced to the proposer as a banded `prediction:low|medium|high` annotation (`src/zicato/proposer/prompts.py:530,588`). What the band is not is **actionable**: it is displayed and never used to bias best-of-N selection, weight proposals, or gate anything, and a repository-wide search finds no reader of `prediction_accuracy` outside the display path. That advisory-only status, rather than a missing implementation, is the gap the recommendations below address.
 
 ### Read-only grounding tools
 
@@ -954,7 +979,7 @@ Grounded in `docs/design/FUNCTIONALITY-RECOMMENDATIONS.md §4`, and reconciled a
 
 1. **Enable best-of-N + self-critique (top lever — built, default-off).** The wrapper is merged but defaults to a single sample (`best_of_n = 1`). Sampling N and critiquing against the quality bar (grounded in a tool call? targets a real failure mode? minimal diff?) is the biggest generation-quality win and needs no new code — only a non-default `best_of_n` in the scoring contract (which correctly rolls the epoch, since a self-critiquing proposer proposes *differently*).
 2. **Make hypothesis prediction-accuracy actionable (built, but advisory-only).** The grading already exists — `grade_hypothesis_predictions` scores each settled hypothesis against actuals and folds a banded `prediction_accuracy` into experiment memory, shown to the proposer as a `prediction:low|medium|high` annotation. The remaining work is to *use* the signal: e.g. bias best-of-N selection toward candidates whose hypothesis shape has historically been well-calibrated, or down-weight experiment-memory entries from chronically over-confident lineages. Keep it out of the promotion gate (diagnostic discipline), but let it shape *generation*.
-3. **Add deliberate sampling diversity within a best-of-N slate (genuinely unbuilt).** The field-diversity constraint that already exists (`_duplicates_inflight_sibling`, `orchestrator.py`) only de-duplicates *across* in-flight multi-challenger siblings by `(modulating set, core_idea)`; the N samples *inside* one best-of-N slot are still i.i.d. draws from the same prompt. Vary them deliberately — distinct temperatures, distinct edit-class hints, or a "propose a structurally different fix" instruction per sample — so the critique pass chooses among genuinely different strategies rather than N paraphrases.
+3. **Add sampling diversity within a best-of-N slate (unbuilt).** The field-diversity constraint that already exists (`_duplicates_inflight_sibling`, `orchestrator.py`) only de-duplicates *across* in-flight multi-challenger siblings by `(modulating set, core_idea)`; the N samples *inside* one best-of-N slot are still independent identically-distributed draws from the same prompt. Varying them — distinct temperatures, distinct edit-class hints, or a "propose a structurally different fix" instruction per sample — would let the critique pass choose among different strategies rather than among N paraphrases.
 4. **Targeted failure-mode → edit-class prompting.** The failure profile already classifies modes (over-retrieves / misses / empty / looping); inject a mode-specific instruction instead of leaving the proposer to infer the remedy.
 5. **Richer mutation tooling.** The default registry is read-only and lean (`list_mutation_points, read_mutable_file, grep_mutable, read_journal, read_insights`); add a `read_parent_diff` (what the last promotion changed) and a `mutation_usage` (where an id's value is referenced) tool, plus a soft "ground before proposing" nudge.
 
@@ -962,7 +987,7 @@ Grounded in `docs/design/FUNCTIONALITY-RECOMMENDATIONS.md §4`, and reconciled a
 
 ## Branch audit (main is the union of the merged feature work)
 
-This section was added after the first draft, in response to "check the branches for potential improvements." The finding is that **`main` already contains the substantive feature work** — the ~82 branches are overwhelmingly *merged* history, not a reservoir of unlanded improvements.
+The finding of this section is that **`main` already contains the substantive feature work**: the roughly 82 branches are overwhelmingly *merged* history rather than a reservoir of unlanded improvements.
 
 **Method.** For every local and remote branch, `git rev-list --count main..<branch>` (commits on the branch not yet in `main`) and its inverse. Every `feat/*` and hardening `fix/*` branch that maps to this document's themes reports **ahead 0** — i.e. fully merged, with `main` 130–260 commits *past* it:
 
@@ -980,13 +1005,15 @@ This section was added after the first draft, in response to "check the branches
 
 The only branches *ahead* of `main` are 1-commit pre-merge snapshots of already-merged design docs (`docs/reimplementation-design`, `docs/generation-isolation`, `docs/board-reflection`, `docs/functionality-recommendations`) and two tiny refactor/fix branches (`refactor/split-report-figures` +2, `fix/issue-16-inflight-round` +1) whose content is superseded. **There is no unmerged branch carrying a substantive improvement.** *(Correction, 2026-07: `docs/generation-isolation` was **not** a snapshot of an already-merged doc — it carried a design note `main` had never had. It has since landed, reheadered as a superseded decision record: [GENERATION-ISOLATION.md](GENERATION-ISOLATION.md). The audit's conclusion is unaffected — the note's recommendation was rejected, so the branch carried no unbuilt improvement — but the "already-merged" characterisation was wrong.)*
 
-**Consequence for this document.** The "improvements" worth acting on are therefore *not* on branches waiting to be pulled — they are (a) the merged-but-**default-off** opt-ins already in the tree, and (b) the genuinely-unbuilt items in the design backlog. In particular, this reconciliation **corrected the proposer section**: all three `FUNCTIONALITY-RECOMMENDATIONS.md §4` levers (best-of-N + self-critique, hypothesis prediction-accuracy grading, field-diversity constraint) are implemented and merged — the first draft, scoped to `src/zicato/proposer/`, missed the grader under `tournament/detail.py` + `index/query.py` and the diversity hook in `orchestrator.py`. The live opt-in surface an operator can turn on today (each rolls the epoch by folding into the contract hash) includes: `proposer_quality.best_of_n > 1`, the Bradley–Terry **rating** layer (`params["rating"]` θ-rank standings), the *winner-resolution* **resolver** (`params["resolver"]` — Ranked Pairs behind a Smith-set prune, `selection/resolve.py`; only the maximal-lottery resolver remains unbuilt), and the read-only Elo analytics fold (`src/zicato/index/elo.py`, also PR #90 — a BT MLE mapped onto the Elo scale). PR #90 additionally merged the recombination slot, the genealogy channel, and the ensemble proposer roles.
+**Consequence for this document.** The improvements worth acting on are therefore not on branches waiting to be pulled. They are (a) the merged but **default-off** opt-ins already in the tree, and (b) the unbuilt items in the design backlog. All three `FUNCTIONALITY-RECOMMENDATIONS.md §4` levers — best-of-N with self-critique, hypothesis prediction-accuracy grading, and the field-diversity constraint — are implemented and merged; the grader lives under `tournament/detail.py` and `index/query.py`, and the diversity hook in `orchestrator.py`, rather than under `src/zicato/proposer/`. The live opt-in surface an operator can turn on today (each rolls the epoch by folding into the contract hash) includes: `proposer_quality.best_of_n > 1`, the Bradley–Terry **rating** layer (`params["rating"]` θ-rank standings), the *winner-resolution* **resolver** (`params["resolver"]` — Ranked Pairs behind a Smith-set prune, `selection/resolve.py`; only the maximal-lottery resolver remains unbuilt), and the read-only Elo analytics fold (`src/zicato/index/elo.py`, also PR #90 — a BT MLE mapped onto the Elo scale). PR #90 additionally merged the recombination slot, the genealogy channel, and the ensemble proposer roles.
 
-Genuinely-**unbuilt** items remaining in the backlog (per `OVERFITTING.md` / `FUNCTIONALITY-RECOMMENDATIONS.md`): deliberate intra-slate sampling diversity. (Turning the alarm-only diff-containment / promotion-gate-contradiction checks into hard blocks has since SHIPPED as opt-in, default-off in-band blocking twins — `ScoringWeights.block_on_containment_violation` and `block_on_gate_contradiction`, enforced pre-persist in `orchestrator._integrity_block_reason` (mirror in `evolve/gate.py`): when on, a violating promotion is flipped to REJECTED with a `containment_violation` / `gate_contradiction` reason instead of promoted-with-alarm, tested in `tests/test_integrity_blocking.py`; the supervisor's out-of-band scan stays alarm-only.) (Diff-complexity regularization — OVERFITTING #4 — and the random-baseline challenger — OVERFITTING #7 — have since SHIPPED: diff-complexity #4 in FULL — both the **loss term** (`diff_complexity_weight`) and the complexity-*ceiling* half (`diff_complexity_ceiling`, a Rule-0 reject in `tournament/gate.py`), both default-off — and the random-baseline as the opt-in placebo arm.)
+One backlog item is unbuilt (per `OVERFITTING.md` and `FUNCTIONALITY-RECOMMENDATIONS.md`): sampling diversity within a best-of-N slate.
 
-## Code quality: is the verbosity merited?
+Three items the backlog once listed are built. The diff-containment and promotion-gate-contradiction checks have opt-in, default-off in-band blocking twins, `ScoringWeights.block_on_containment_violation` and `block_on_gate_contradiction`, enforced before persist in `orchestrator._integrity_block_reason` with a mirror in `evolve/gate.py`. When either is on, a violating promotion is flipped to rejected with a `containment_violation` or `gate_contradiction` reason rather than promoted with an alarm; `tests/test_integrity_blocking.py` pins it, and the supervisor's out-of-band scan stays alarm-only. Diff-complexity regularization ships in full: both the loss term (`diff_complexity_weight`) and the complexity ceiling (`diff_complexity_ceiling`, a reject that runs ahead of the three gate rules in `tournament/gate.py`), both default-off. The random-baseline challenger ships as the opt-in placebo arm.
 
-This section (added after the first draft, in response to "what about the code-quality opportunities — is the verbosity merited?") is grounded in a metrics census plus three parallel deep-read audits of the biggest offenders.
+## Code quality: how much of the verbosity is load-bearing
+
+This section is grounded in a metrics census plus three parallel deep-read audits of the largest modules.
 
 ### The measured shape
 
@@ -1004,11 +1031,11 @@ This section (added after the first draft, in response to "what about the code-q
 
 ### Verdict: **the verbosity is ~80% merited**
 
-The **prose is mostly load-bearing, not padding.** In a system that *rewrites its own code*, the docstrings *are* the spec, co-located with the code they govern: overfitting boundaries ("the proposer/critic never sees the holdout"), the idempotent crash-resume protocol, and genuinely bit-level invariants a future editor would silently break — e.g. the deliberately non-associative summation order in `src/zicato/scoring/builtins.py:115` ("float addition is not associative … the dict-then-`sum` shape is load-bearing for the byte-identical guarantee"). The **tests (~0.9:1)** and the **~14.5k-line Rust safety layer** legitimately account for much of the bulk, and the **~40k-line dashboard frontend is live, tested code** — the A–W bake-off losers were archived at git tags (`dashboard-bakeoff-2026-06-01`), not shipped; only ~341 JS lines are actually dead.
+The **prose is mostly load-bearing rather than padding.** In a system that *rewrites its own code*, the docstrings *are* the specification, co-located with the code they govern. They carry the overfitting boundaries ("the proposer/critic never sees the holdout"), the idempotent crash-resume protocol, and bit-level invariants a future editor would silently break. One example is the non-associative summation order in `src/zicato/scoring/builtins.py:115`: "float addition is not associative … the dict-then-`sum` shape is load-bearing for the byte-identical guarantee". The **tests (~0.9:1)** and the **~14.5k-line Rust safety layer** legitimately account for much of the bulk. The **~40k-line dashboard frontend is live, tested code**: the bake-off entries that lost were archived at the git tag `dashboard-bakeoff-2026-06-01` and never shipped, and only about 341 JavaScript lines are dead.
 
-The **~20% that is *not* merited is structural debt, not prose**, and it is concentrated and namable:
+The roughly 20% that is not merited is structural debt rather than prose, and it is concentrated and namable:
 
-1. **Three god-functions carry disproportionate complexity.** `_evolve_multi_challenger` (1,181L, cx~113) and `evolve_once` (881L) in `orchestrator.py`, and `make_endpoints` (966L, 54 handlers) in `dashboard/endpoints.py`, are only *end-to-end* testable — their interesting branches (diversity soft-reject, holdout demotion, the crowning-invariant `raise`) can't be reached by a unit test today. This is a correctness risk, not just an aesthetic one.
+1. **Three god-functions carry disproportionate complexity.** `_evolve_multi_challenger` (1,181L, cx~113) and `evolve_once` (881L) in `orchestrator.py`, and `make_endpoints` (966L, 54 handlers) in `dashboard/endpoints.py`, are only *end-to-end* testable: their interesting branches (diversity soft-reject, holdout demotion, the crowning-invariant `raise`) cannot be reached by a unit test. This is a correctness risk as well as an aesthetic one.
 2. **The single- vs multi-challenger evolve paths duplicate the entire back half of the pipeline.** `orchestrator.py` runs `propose → apply → validate → score → finalize → lineage → journal → epilogue` twice with ~250 near-identical lines, plus a *third* divergent persist tail for the rejection branch — so a new `OutcomeRecord` field added in one tail can silently be dropped in another.
 3. **The dashboard readers never hoisted their shared helpers.** The same `float(x) if isinstance(x, int|float) else None` coercion appears **51 times** across five ~1,000-line readers with no shared helper (`readers/paths.py` is the natural home).
 4. **Small, safe deletions.** ~6 dead private functions, 341 lines of dead JS, and a 2.2 MB local `./zicato/` `.pyc` graveyard (orphaned by the May src/-layout migration — untracked/gitignored, so `rm -rf ./zicato` is zero-risk).
@@ -1033,16 +1060,16 @@ None of this needs rearchitecting. The whole list is a bounded, behavior-preserv
 **Prose hygiene (low priority):**
 - Thin the ~77 repetitive "byte-identical to today" per-branch tags by hoisting the "defaults leave the path unchanged" invariant to one line in each function's docstring; keep every `LOAD-BEARING` marker and bit-level rationale. Back the "byte-identical when off" claims with tests (many already are) so the prose can't drift from behavior.
 
-## Persistence: is the approach sensible? (and how to simplify it)
+## Persistence: the store topology and where it can be simplified
 
 **Verdict: sensible, with caveats.** The claims here are verified against the
 implementation and its cross-backend conformance tests rather than the design
 docs. New workspaces explicitly select Git; directory snapshots remain a
 supported fallback.
 
-### The spine: CQRS, verified in code
+### The spine: the command/query split the code implements
 
-The organizing principle is a disciplined **command/query split — files are the store of record; everything queryable is a derived, disposable projection.** This holds in the code, not just the prose:
+The organizing principle is a disciplined **command/query split — files are the store of record; everything queryable is a derived, disposable projection.** This holds in the code as well as in the prose:
 
 - **New workspaces explicitly select the content-addressed git backend** — a generation is a commit on an epoch branch, tagged, materialised for a run as a `git worktree`; the object store deduplicates unchanged blobs across a lineage.
 
@@ -1065,7 +1092,7 @@ The organizing principle is a disciplined **command/query split — files are th
         log.debug("live index ingest_experiment skipped for %s/%s: %s", epoch_id, generation_id, exc)
 ```
 
-The store topology is coherent — six stores with disjoint roles: generation trees (canonical, git) · lineage/experiments/journal JSON (canonical decisions) · runtime state files (derived/ephemeral, discarded and rebuilt on resume) · JSONL telemetry (canonical drift facts, its own root) · SQLite index (derived, rebuildable via `reindex`) · the opt-in hash-chained ledger (advisory, never a gate). Two canonical roots feed the index — the telemetry chain (`events.jsonl → reducer → loss.json`) and the decision chain (`experiment.json`) — and they own disjoint facts, so this is separation, not divergence. The atomic-write primitive (tmp → `fsync(fd)` → `os.replace`) is defined once and reused everywhere; the Rust supervisor opens the *same* SQLite file `READ_ONLY` with a pinned schema-version tripwire; migrations are additive/idempotent/versioned. None of this needs redesign.
+The store topology is coherent — six stores with disjoint roles: generation trees (canonical, git) · lineage/experiments/journal JSON (canonical decisions) · runtime state files (derived/ephemeral, discarded and rebuilt on resume) · JSONL telemetry (canonical drift facts, its own root) · SQLite index (derived, rebuildable via `reindex`) · the opt-in hash-chained ledger (advisory, never a gate). Two canonical roots feed the index — the telemetry chain (`events.jsonl → reducer → loss.json`) and the decision chain (`experiment.json`) — and they own disjoint facts, so this is separation rather than divergence. The atomic-write primitive (tmp → `fsync(fd)` → `os.replace`) is defined once and reused everywhere; the Rust supervisor opens the *same* SQLite file `READ_ONLY` with a pinned schema-version tripwire; migrations are additive/idempotent/versioned. None of this needs redesign.
 
 ### Durability and retention
 
@@ -1094,7 +1121,7 @@ boundary between them carries no duplicated mechanism:
   never a second canonical record.
 - The overlay/reflink materialization design in
   [`GENERATION-ISOLATION.md`](GENERATION-ISOLATION.md) is a rejected-decision
-  record, not a roadmap item: Git blob dedup and worktree isolation already
+  record rather than a roadmap item: git blob dedup and worktree isolation already
   provide the required storage and execution properties.
 
 The two generation backends remain justified: both conform to one protocol, and
@@ -1141,25 +1168,27 @@ Underneath, **loose data-model typing forces client coercion** — `promoted` in
 
 ### How to simplify it
 
-One architectural move — **push authority and shape to the server; let the client render, not compute** — collapses all three classes:
+One architectural move collapses all three classes: **push authority and shape to the server, and let the client render rather than compute.**
 
 1. **Stamp the canonical decision surface onto the payloads.** Add `decision` + `promoted` per generation, a `current_champion` pointer, and `deciding_rule` on the gate; add an epoch-scoped generations feed. → deletes `normaliseDecision`, the champion re-scan across ~5 views, the deciding-rule re-inference, and the free-text margin/predicate scraping.
 2. **Serve the structural shapes the client currently fabricates** — a settled racing-ladder record (like the other structures) and a round-timeline/waterfall endpoint. → deletes `reconstructRacing` (~200L) and most of `rounds.js` (479L), the two largest client joins.
 3. **Canonicalize the loose schema** — one spelling per field, a single typed heartbeat timestamp, `promoted` in one shape. → deletes the client coercion family.
 4. **Then drop the client "mirror" gate/standings models.** They exist partly to keep the *in-flight* view honest before a round settles; once the readers project authoritative **live** state (the runtime already has the tournament event log to do it), the `gauntlet/elim/swiss/racing` model re-derivations can read rather than recompute.
 
-Rough magnitude: **~800–1500 lines of client re-derivation removable**, plus the elimination of the entire *client-can-disagree-with-server* bug class. The unifying insight across this section and [Persistence](#persistence-is-the-approach-sensible-and-how-to-simplify-it): storage already applies the right discipline (derive read-models server-side from canonical files — CQRS); the dashboard *violates* it by re-deriving authoritative decisions in the view. Making the dashboard payloads as authoritative-and-derived as the SQLite index is the same principle applied one layer out.
+Rough magnitude: **~800–1500 lines of client re-derivation removable**, plus the elimination of the entire *client-can-disagree-with-server* bug class. The unifying insight across this section and [Persistence](#persistence-the-store-topology-and-where-it-can-be-simplified): storage already applies the right discipline (derive read models on the server from canonical files, the command-query responsibility segregation pattern); the dashboard *violates* it by re-deriving authoritative decisions in the view. Making the dashboard payloads as authoritative-and-derived as the SQLite index is the same principle applied one layer out.
 
-## Empirical effectiveness: before and after
+## Empirical effectiveness of the decision procedure
 
-*(Added at the close of the improvement program's Phase 1; the sections above describe the pre-Phase-1 state.)*
+The sections above describe the tree before the convergence-proof and
+noise-aware-defaults work landed. This section records the measured change
+that work made.
 
 **Before.** zicato had no in-repo evidence its loop could improve anything: the one documented live run was a null result ("v0 and v1 scored identically (1.000000); zero optimization signal" — and structurally so: the target's mock discarded the `system` prompt, so no mutation could ever change behavior). No known-answer convergence test existed, and the default decision procedure was noise-blind (point-estimate gate, fixed uncalibrated margin, replicates=1, the Bradley–Terry evidence gate structurally unreachable under the default gauntlet).
 
-**After (Phase 1, PRs #63–#66).**
+**After (pull requests #63 to #66).**
 
 - **The loop provably converges** (#64): a planted-defect target driven through the *full real pipeline* (propose → apply → validate → subprocess workers → gate → persist, git-backend default, zero tournament monkeypatches) goes v0 scalar 3.6 → **promoted 2.4** → negative-control **rejected** → **promoted to the exact 1.2 floor, bit-for-bit**, with health detectors quiet — in CI, ~14s.
-- **The decision procedure's operating characteristics are measured, in CI** (#65): A/A noise floor 0.598 (σ=0.22 harness); the naive default (margin < floor, no gate) promotes **pure noise 20/60** while the evidence gate blocks **60/60**; power at a small true effect (0.56× floor): **0.92 effective vs 0.25 naive** on identical seeds. Measured limit: the BT gate separates CIs only after **~37 unbroken wins** — it is a *soundness* device; *power* must be bought with per-duel replication. This finding redirected the defaults (gate opt-in + scaffolded, not silently on — which would have frozen the loop).
+- **The decision procedure's operating characteristics are measured, in CI** (#65): A/A noise floor 0.598 (σ=0.22 harness); the naive default (margin < floor, no gate) promotes **pure noise 20/60** while the evidence gate blocks **60/60**; power at a small true effect (0.56× floor): **0.92 effective vs 0.25 naive** on identical seeds. Measured limit: the BT gate separates CIs only after **~37 unbroken wins** — it is a *soundness* device; *power* must be bought with per-duel replication. This finding redirected the defaults: the gate is opt-in and scaffolded rather than silently on, which would have frozen the loop.
 - **The defaults are now noise-aware** (#66): evidence gate reachable under every structure including the gauntlet crowning duel; A/A noise-floor calibration (`zicato board audit`, epoch record, evolve-start warning when margin < floor); replicates 1→2, best_of_n 1→3 (self-critique on), holdout split floor 8→6; `zicato init`/builder scaffold the full recommended contract.
 - **Two real bugs surfaced by the harness work**: the worker's canonical `loss.json` doubled as replicate 0's cache slot, silently clobbered by later replicates (fixed in #65); and a 20s hard-coded no-supervisor abort wait (now a `RuntimeConfig` knob, #63).
 - **Suite economics** (#63): 56s → ~21s full, 14.4s fast lane — the standing oracle is cheap enough to run always.
@@ -1172,9 +1201,9 @@ Still unproven (endpoint-gated backlog): behavior with a *real* proposer/judges 
 
 1. **Enable best-of-N + self-critique.** Already implemented (`src/zicato/proposer/best_of_n.py`) and overfitting-safe, but default-off (`best_of_n = 1`). Setting `best_of_n > 1` in the scoring contract is the single biggest, lowest-cost proposal-quality win; the retry loop today only reconsiders *invalid* output, never a valid-but-mediocre one.
 2. **Make hypothesis prediction-accuracy actionable.** The grading exists (`grade_hypothesis_predictions` → banded `PriorExperiment.prediction_accuracy`) but is advisory-only — displayed to the proposer, never used to bias selection. Wire it into best-of-N selection / experiment-memory weighting; keep it out of the promotion gate.
-3. **Add deliberate diversity *within* a best-of-N slate** (distinct temperatures / edit-class hints per sample — the existing `_duplicates_inflight_sibling` constraint only de-dupes *across* multi-challenger siblings, not the i.i.d. samples inside one slot) and **inject failure-mode-specific edit-class prompts** from the already-computed failure profile; optionally add `read_parent_diff` / `mutation_usage` grounding tools.
+3. **Add diversity *within* a best-of-N slate** (distinct temperatures or edit-class hints per sample; the existing `_duplicates_inflight_sibling` constraint de-duplicates only *across* multi-challenger siblings and not the independent samples inside one slot) and **inject failure-mode-specific edit-class prompts** from the already-computed failure profile; optionally add `read_parent_diff` / `mutation_usage` grounding tools.
 
-**Determinism / safety (already strong — observations, not gaps):**
+**Determinism and safety — observations rather than gaps:**
 
 - The safety model is sound by construction: the watchdog is warn-only toward the orchestrator (no `Kill` variant), every signal is pid-start-time-checked against reuse, the orchestrator-written deadline is clamped, and reaping is gated on a *confirmed-dead* identity check rather than a stale timestamp. The independent hash-chained ledger, diff-containment re-hash, and re-derived promotion gate make the loop self-auditing.
 - Two integrity checks began **alarm-only in v1** — diff-containment violations and the promotion-gate contradiction check, whose out-of-band supervisor scan *records* findings but does not *block* a promotion. Each has since gained an opt-in, default-off IN-BAND blocking twin (`ScoringWeights.block_on_containment_violation` / `block_on_gate_contradiction`): when enabled, the orchestrator re-checks the same rule surface pre-persist (`_integrity_block_reason`) and flips a violating promotion to REJECTED with an honest reason, instead of promoting-with-alarm. Default-off keeps the shipped alarm-only posture (the supervisor's scan stays the out-of-band notary); turning the block on is the policy decision, no new mechanism. See `tests/test_integrity_blocking.py`.
@@ -1182,9 +1211,9 @@ Still unproven (endpoint-gated backlog): behavior with a *real* proposer/judges 
 
 **Verbosity (a feature, with a caveat):**
 
-- The ~85k-line Python core is only ~47% executable code; ~40% is docstrings and comments carrying the design rationale inline. For a system that rewrites code, this co-location of spec-with-code is the right trade — it is what keeps a self-modifying loop auditable. The caveat is maintenance drift: because the same invariant (e.g. "byte-identical when off") is asserted in prose across dozens of opt-in wrappers, those assertions should be backed by tests (several already are) rather than trusted as comments, so the prose cannot silently diverge from behavior. See the [code-quality audit](#code-quality-is-the-verbosity-merited) for the concrete, reducible debt (god-functions, duplication, dead symbols) — the prose is *not* where the fat is.
+- The ~85k-line Python core is only ~47% executable code; ~40% is docstrings and comments carrying the design rationale inline. For a system that rewrites code, this co-location of spec-with-code is the right trade — it is what keeps a self-modifying loop auditable. The caveat is maintenance drift: because the same invariant (e.g. "byte-identical when off") is asserted in prose across dozens of opt-in wrappers, those assertions should be backed by tests (several already are) rather than trusted as comments, so the prose cannot silently diverge from behavior. See the [code-quality audit](#code-quality-how-much-of-the-verbosity-is-load-bearing) for the concrete, reducible debt (god-functions, duplication, dead symbols) — the prose is *not* where the fat is.
 
-**Code quality (verbosity is ~80% merited; the reducible ~20% is structural, not prose):**
+**Code quality: about 80% of the verbosity is merited, and the reducible remainder is structural rather than prose:**
 
 1. **Decompose the three god-functions.** `_evolve_multi_challenger` (1,181L/cx~113) + `evolve_once` (881L) in `orchestrator.py` and `make_endpoints` (966L) in `dashboard/endpoints.py` are only end-to-end testable. Extract the duplicated evolve tails (`_finalize_generation`, `_round_epilogue`, `_propose_child`, `_persist_rejected_round` — ~250 lines removed and the three divergent persist tails unified) and split `make_endpoints` into per-surface factories. Highest value: this converts end-to-end-only branches into unit-testable helpers.
 2. **Hoist the duplicated helpers.** Add `coerce_float`/`coerce_numeric_dict` to `dashboard/readers/paths.py` (kills 51 inline copies) and factor `tournament_view.py`'s 3× structure-dict / 2× scalar-pair builders. (~15.9% of logic lines sit in a repeated 6-line window.)
@@ -1205,4 +1234,4 @@ Still unproven (endpoint-gated backlog): behavior with a *real* proposer/judges 
 2. **Serve the shapes the client fabricates** — a settled racing-ladder record and a round-timeline endpoint — deleting `reconstructRacing` and most of `rounds.js` (the two largest client joins, both of which currently invent authoritative outcomes in the view).
 3. **Canonicalize the loose schema** (one field spelling, a typed heartbeat) to delete the client coercion family. Net: ~800–1500 lines of client re-derivation removed and the *client-can-disagree-with-server* bug class eliminated — the same CQRS discipline storage already uses, applied one layer out.
 
-_Note to the reader of this assembly: sections 1-3 and 5 are reproduced verbatim from independently verified drafts; sections 4 and 6 were reconstructed by the editor directly from the cited source files (`src/zicato/proposer/*`, `src/zicato/core/scoring_config.py`, `docs/design/FUNCTIONALITY-RECOMMENDATIONS.md`) because their verified drafts were not supplied — every code snippet in them is copied verbatim from the captioned file and line range._
+_Every code snippet in this document is copied verbatim from the file and line range named in its caption._

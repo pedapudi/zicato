@@ -15,24 +15,19 @@ with exactly two kinds of term:
   them. Channels work without ground-truth expectations.
 
 They combine into a single tournament scalar. The combination is
-**operator-tunable** at three levels of escalating power: a fixed
-vocabulary of linear weights (the 90%), a declarative **transform
-registry** for non-linear shapes (`pow` / `harmonic` / `cap` / `clip`
-/ `log1p`) with no operator code, and a dotted-spec **plugin** escape
-hatch for arbitrary pure logic — the same operator-owned, contract-
-referenced mechanism `predicates.py` and `judges.py` already use. This
-document specifies both halves, their combination (weights → transforms
-→ plugins), the seam architecture, scoring provenance, and the
-promotion gate.
+**operator-tunable** at three levels of escalating power. A fixed
+vocabulary of linear weights covers most contracts. A declarative
+**transform registry** supplies non-linear shapes (`pow` / `harmonic` /
+`cap` / `clip` / `log1p`) with no operator code. A dotted-spec **plugin**
+escape hatch takes arbitrary pure logic through the same operator-owned,
+contract-referenced mechanism `predicates.py` and `judges.py` already
+use.
 
-> **Not "fixed linear weights only".** Earlier zicato could shape the
-> score *only* through linear weights, so every new scoring *shape* (a
-> non-linear recall curve, a diminishing-returns aggregation, a cap)
-> leaked into core as a bespoke field or an unconditional special-case.
-> Issue #19 closed that gap. The linear weights below are the neutral
-> default; §11 documents the transform registry + plugin seams that
-> reshape them without a core edit, and §2.5 covers the source-hashing
-> that rolls the epoch when a plugin body changes.
+> **Shaping the score without a core edit.** The linear weights below
+> are the neutral default. §11 specifies the transform registry and the
+> plugin seams that reshape the score without a core edit, and §2.5
+> covers the source-hashing that rolls the epoch when a plugin body
+> changes (issue #19).
 
 ## 1. Why both signals
 
@@ -58,8 +53,8 @@ The operator gets a knob (the weights) to emphasize one over the
 other when the project's priorities shift.
 
 Correctness stays out of the channel map for three concrete reasons: it
-runs on a different denominator (expectation-bearing entries, not every
-entry), it has its own monotonicity mechanism
+runs on a different denominator (expectation-bearing entries rather than
+every entry), it has its own monotonicity mechanism
 (`pass_rate_monotonicity_scope`, §5), and the transform seam reads it as
 a bounded coefficient (§11.1). Every *measured* signal is a channel.
 
@@ -102,7 +97,7 @@ clamped at zero. Judge-attributed kinds (`custom` / `custom:<name>`) are
 excluded here and scored in the `judge:` channel (§2.2) — charging them
 in both would double-count. Plan revisions stay in this channel because
 they are the same telemetry stream; an adapter that emits none
-contributes exactly zero. `per_kind_weights["custom"]` is rejected at
+contributes zero. `per_kind_weights["custom"]` is rejected at
 contract load: it would be structurally inert, and an operator who set
 it would believe they had retuned their judges.
 
@@ -161,7 +156,7 @@ The weights are stored in `scoring.json` per epoch. Keys are the
 
 `pass_rate_monotonicity_scope` is optional and defaults to `"per_entry"`;
 set it to `"aggregate"` to gate on the overall pass-rate instead of every
-individual entry (see Rule 2 in §5).
+individual entry (see the pass-rate monotonicity rule in §5).
 
 Per-kind weight lookup uses `per_kind_weights[k]` if present and a
 uniform `1.0` otherwise — there is no `_default` sentinel key. An empty
@@ -174,7 +169,7 @@ One key is exempt from that freedom: `"failure:"` must be present and
 strictly positive, and the loader rejects a contract that zeroes or
 omits it (§2.3).
 
-### 2.1.1 Why drift counts are weighted, not pass/fail-only
+### 2.1.1 Why drift counts are weighted rather than reduced to pass/fail
 
 A drift event is **information**. It says "the runtime saw this shape
 of trouble during this run". Counting drift events as a loss term
@@ -237,8 +232,9 @@ A third custom judge not listed here is weighted by
 A run that crashed, was killed, or exhausted its wall-clock budget did
 not produce a result. The expectation cannot fire and the drift counts
 are incomplete; the reducer cannot tell whether the agent was about to
-succeed or still flailing. Run outcome is a fact of every harness, not
-of any telemetry dialect, so it is its own channel with two members:
+succeed or still flailing. Run outcome is a fact of every harness rather
+than of any telemetry dialect, so it is its own channel with two
+members:
 
 ```
 failure[entry] =
@@ -256,11 +252,11 @@ emulator abort, budget exhausted). It is not derived from
 supplied no reason; reading that absence as "completed" would hand a
 crashed run the best possible score.
 
-`not_completed_weight` is an ABSOLUTE magnitude, not a multiple of
-`max(severity_weights)`. Keying it off the severity scale meant that
-retuning severities silently rescaled what every abort cost; a contract
-that scales severities must now scale `failure:` deliberately to keep
-the same proportion.
+`not_completed_weight` is an ABSOLUTE magnitude rather than a multiple
+of `max(severity_weights)`. Keying it to the severity scale would let a
+retune of severities silently rescale what every abort costs, so a
+contract that scales severities scales `failure:` explicitly to keep the
+same proportion.
 
 **The channel coefficient must be positive.** The loader rejects
 `namespace_weights["failure:"] <= 0`, and rejects omitting the key from
@@ -278,7 +274,7 @@ usually rely on the per-entry wall-clock budget as a hard ceiling rather
 than scoring duration continuously, but the channel is there when
 duration matters intrinsically.
 
-It is deliberately separate from `latency:`, whose default coefficient
+It is separate from `latency:`, whose default coefficient
 is calibrated for adapter-supplied millisecond percentiles. Members of
 one channel are SUMMED before the coefficient applies, and a sum of
 whole-run seconds and per-turn millisecond percentiles is not a
@@ -302,9 +298,9 @@ and opens a fresh one, so a scoring change is never silently applied to
 an in-flight epoch's already-scored generations.
 
 For the dotted-spec plugins this goes one step further than a plain
-field: the canonicalizer hashes the **plugin spec string AND the
-resolved module's source** (`spec_with_source_hash`), so editing a
-plugin's *body* — not just its dotted reference — is detected as a
+field. The canonicalizer hashes the **plugin spec string AND the
+resolved module's source** (`spec_with_source_hash`). Editing a plugin's
+*body*, and not only its dotted reference, is therefore detected as a
 contract change and rolls the epoch. This is the **single
 source-hashing mechanism shared across every grading plugin**
 (predicates, judges, the outcome summarizer, and the scoring `scalar_fn`
@@ -336,13 +332,13 @@ where every process signal lands.
 ## 4. Per-generation aggregate score
 
 Given a generation's loss profiles for all N board entries, the live
-path is `aggregate_generation_score` in `tournament/scoring.py`, which
+path is `aggregate_generation_score` in `tournament/scoring.py`. It
 mechanically aggregates the per-run profiles (means, namespace rollups)
-and then synthesises the scalar through **Seam 2** — the scoring
-dispatcher `zicato.scoring.dispatch.resolve_scalar`, which composes the
-built-in formula (`zicato.scoring.builtins.builtin_scalar`) with any
-declarative `pass_transform` and dotted-spec `scalar_fn` plugin (§11).
-The built-in formula is:
+and then synthesises the scalar through **Seam 2**, the scoring
+dispatcher `zicato.scoring.dispatch.resolve_scalar`. That dispatcher
+composes the built-in formula (`zicato.scoring.builtins.builtin_scalar`)
+with any declarative `pass_transform` and dotted-spec `scalar_fn` plugin
+(§11). The built-in formula is:
 
 ```
 observed  = count of entries i whose pass_fail is not None
@@ -354,7 +350,7 @@ channel[ns] = namespace_weights[ns] * mean over entries of that
 
 scalar = pass_weight * (1.0 - mean_score)
        + sum over SORTED namespaces ns of channel[ns]
-       + diff_complexity term (when configured, §12)
+       + diff_complexity term (when configured; see OVERFITTING.md §12)
 ```
 
 The namespace sum is **sorted**. Float addition is not associative, and
@@ -362,19 +358,19 @@ the namespace key set is assembled from a `set`, so an unsorted sum
 would make the scalar's last bit depend on hash seeding — reproducible
 within one process and different in the next.
 
-(The pass term runs on the uniform continuous `mean_score` axis, issue
-#18; on an all-bool board `mean_score == pass_rate`, so this is
-byte-identical to the historical `(1 - pass_rate)` term. There is a
-`telemetry/scoring.py::combined_scalar` helper, but it is a two-axis
-PROJECTION — drift and pass only, for callers that hold nothing else —
-not the scalar; the live scalar is the dispatcher path above.)
+The pass term runs on the uniform continuous `mean_score` axis (issue
+#18). On an all-bool board `mean_score == pass_rate`, so the term is
+byte-identical to `1 - pass_rate`. A separate
+`telemetry/scoring.py::combined_scalar` helper computes a two-axis
+PROJECTION over drift and pass alone, for callers that hold nothing
+else; the live scalar is the dispatcher path above.
 
 Notes:
 
 - Each channel is the **arithmetic mean** across the generation's runs
   (one run per board entry). The shipped aggregator does not re-weight
   by `BoardEntry.weight` — the per-entry `weight` field exists on the
-  board but the v0 aggregator means uniformly; an empty generation
+  board but the shipped aggregator means uniformly; an empty generation
   means `0.0`.
 - `pass_rate` counts only runs whose `pass_fail` is not `None`
   (entries with an expectation). If no run has an expectation,
@@ -387,10 +383,10 @@ Notes:
   configures a negative coefficient large enough to dominate (the
   `rubric:` default is negative by design).
 
-The terms are **additive**, not multiplicative, so an epoch can zero out
+The terms are **additive** rather than multiplicative, so an epoch can zero out
 one axis — `pass_weight = 0` to ignore expectations entirely, or
 `namespace_weights: {"drift:": 0.0}` to stop scoring drift — without
-obliterating the others. Zeroing `drift:` no longer silences judges,
+obliterating the others. Zeroing `drift:` does not silence judges,
 task failures, or the crash charge: each is its own channel.
 
 `scalar_components` decomposes the result for display and the gate:
@@ -403,8 +399,8 @@ generations' aggregates and the gate verdict — as a JSON object.
 
 ### 4.1 Default weights and the calibration problem
 
-The default weights in `scoring.json` are a *starting point*, not a
-final answer. The right weights depend on:
+The default weights in `scoring.json` are a *starting point* rather than
+a final answer. The right weights depend on:
 
 - Which drift kinds the operator cares about most for *this* inner
   harness.
@@ -464,11 +460,11 @@ the threshold.
 selected by `pass_rate_monotonicity_scope` (`"per_entry"` | `"aggregate"`,
 default `"per_entry"`):
 
-- **`per_entry`** (default, back-compatible) — for every entry where the
-  parent recorded `pass_fail == True`, the child MUST also record
+- **`per_entry`** (the default) — for every entry where the parent
+  recorded `pass_fail == True`, the child MUST also record
   `pass_fail == True`. A child whose `pass_fail` comes back `False` *or*
-  `None` (the expectation no longer evaluated, or the entry did not run)
-  on a previously-passing entry is a regression. If any such entry
+  `None` (the expectation did not evaluate, or the entry did not run) on
+  an entry the parent passed is a regression. If any such entry
   regressed the gate rejects with `"pass-rate regression on entries:
   <id>, <id>, ..."` (every regressing entry id, sorted). Entries the
   parent failed or had no expectation for are not gated on this rule.
@@ -487,11 +483,11 @@ consistent policy.
 **Choosing a scope.** `per_entry` is the right policy when *every* board
 entry is a must-not-regress invariant — a regression suite where any flip
 is a real breakage. `aggregate` is the right policy for *sampled
-evaluation boards*, where each entry is one noisy sample of a capability:
-individual pass/fail is subject to run-to-run nondeterminism (sampling,
-retrieval ties, timeouts), and a strictly-better challenger should not be
-permanently vetoed by a single entry flip when the aggregate — the thing
-the operator actually optimizes — improved or held. Under `per_entry`,
+evaluation boards*, where each entry is one noisy sample of a capability.
+There, individual pass/fail is subject to run-to-run nondeterminism
+(sampling, retrieval ties, timeouts). A strictly-better challenger should
+not be permanently vetoed by a single entry flip when the aggregate, the
+quantity the operator optimizes, improved or held. Under `per_entry`,
 the champion's exact passing *set* becomes a frozen invariant and any
 nondeterministic entry turns into a ratchet that no amount of aggregate
 improvement can overcome; `aggregate` trades that ratchet for a net-rate
@@ -511,7 +507,7 @@ generations all tie at `failure: = 0.0`.
 
 If no rule rejects, the gate returns `decision="promoted"`.
 
-Rule 3's "did this namespace move the wrong way" test is
+The per-namespace "did this namespace move the wrong way" test is
 `tournament.gate.regressed_namespaces`, and it is public because it is
 asked outside the gate too: the gate-rule view renders it, and the Pareto
 frontier record ([`PARETO-FRONTIER.md`](PARETO-FRONTIER.md)) uses it as
@@ -529,7 +525,7 @@ no knob of its own.
 
 Pass-rate regressions are *categorical* failures: an entry that
 passed before now fails. There is no "small" regression on a passing
-entry — either the right answer is still produced or it isn't. Drift
+entry — either the right answer is still produced or it is not. Drift
 loss is *graded*: messier vs cleaner, on a continuum.
 
 Treating the two differently captures the asymmetry. A candidate
@@ -542,16 +538,16 @@ drift patterns at the expense of correctness — a tightened prompt
 might reduce CONFABULATION_RISK by also refusing to attempt the
 question, which would tank pass-rate. The gate catches this.
 
-The per-entry-vs-aggregate granularity is operator-selectable via
-`pass_rate_monotonicity_scope` (see Rule 2). The *namespace* monotonicity
-rule (Rule 3) is already aggregate-scoped — it compares per-namespace
-*means*, not per-entry pass/fail — so the same scope field does not apply
-there. The analogous knob for namespaces would be "all tracked namespaces
-combined vs each individually", a different axis the operator already
-controls by choosing which namespaces to flag in `namespace_monotonicity`.
-A combined-axis namespace scope is a **documented follow-up**, deliberately
-not built alongside the pass-rate scope to avoid conflating two distinct
-concepts under one field.
+The per-entry-versus-aggregate granularity is operator-selectable via
+`pass_rate_monotonicity_scope` (the pass-rate monotonicity rule above).
+The per-namespace monotonicity rule is aggregate-scoped already: it
+compares per-namespace *means* rather than per-entry pass/fail, so the
+same scope field does not apply there. The analogous knob for namespaces
+would be "all tracked namespaces combined versus each individually", a
+different axis the operator already controls by choosing which
+namespaces to flag in `namespace_monotonicity`. A combined-axis
+namespace scope is a **documented follow-up**, kept out of the pass-rate
+scope field so that two distinct concepts do not share one field.
 
 ### 5.2 Why a tolerance band on drift
 
@@ -620,8 +616,8 @@ scalar = 1.0 * 1.000 + 1.0 * 0.0 = 1.000
   `1.000 > 1.690` is false, the rule does NOT reject. `delta_scalar =
   1.000 - 1.700 = -0.700` (an improvement). ✓
 - Rule 2 (pass-rate monotonicity): parent passes were `{short_solar,
-  long_solar}`; candidate passes those plus `contradictory`. No
-  previously-passing entry regressed. ✓
+  long_solar}`; candidate passes those plus `contradictory`. No entry
+  the parent passed regressed. ✓
 - Rule 3 (per-namespace monotonicity): with default weights `drift:` is
   unguarded, `judge:` / `failure:` are both `0.0` on each side, and
   `rubric:` / `schema:` aggregates are absent here. ✓
@@ -630,7 +626,8 @@ scalar = 1.0 * 1.000 + 1.0 * 0.0 = 1.000
 
 If instead v4's `contradictory` came back `pass_fail = True` but
 `long_solar` flipped to `False` — even with substantially lower drift —
-Rule 2 fires and the gate returns `decision="rejected"` with reason
+the pass-rate monotonicity rule fires and the gate returns
+`decision="rejected"` with reason
 `"pass-rate regression on entries: long_solar"`.
 
 ## 7. Fast mode and the tournament
@@ -655,17 +652,16 @@ parent scores carry their own staleness noise)
 Fast mode is less rigorous: the world may have drifted (LLM provider
 updated; rate-limit shape changed; a tool dependency upgraded
 silently) between when the parent was scored and when the candidate
-is being scored. The parent's historical score is no longer a fair
+is being scored. The parent's historical score is then not a fair
 comparison.
 
 In exchange, fast mode is **much faster**: one board run instead of
-two. The `--mode` flag selects between the two; note the two CLI
-entry points ship with *different* defaults — `zicato evolve --mode`
-defaults to **fast** (the loop favours iteration speed and re-scores
-the champion only when no cache exists), while the standalone `zicato
-tournament --mode` defaults to **full** (an explicit one-off re-score
-of a specific pair). See [TOURNAMENT.md](TOURNAMENT.md) for the CLI
-detail.
+two. The `--mode` flag selects between them, and the two CLI entry
+points ship with *different* defaults. `zicato evolve --mode` defaults
+to **fast**, because the loop favours iteration speed and re-scores the
+champion only when no cache exists. The standalone `zicato tournament
+--mode` defaults to **full**, an explicit one-off re-score of a specific
+pair. See [TOURNAMENT.md](TOURNAMENT.md) for the CLI detail.
 
 ## 8. Stamping outcomes onto the experiment
 
@@ -679,49 +675,46 @@ populated from the gate's computation. The `rejection_reason` field
 (empty string when promoted) carries the gate's `reason`, one of:
 
 - `""` (promoted)
-- `"insufficient improvement: ..."` (Rule 1, child improved but under `promote_margin`)
-- `"challenger regressed: ..."` (Rule 1, child's loss rose)
-- `"pass-rate regression on entries: <id>, ..."` (Rule 2)
-- `"monotonicity_regression on namespace=<ns>, ..."` (Rule 3)
+- `"insufficient improvement: ..."` (scalar margin; the child improved but by less than `promote_margin`)
+- `"challenger regressed: ..."` (scalar margin; the child's loss rose)
+- `"pass-rate regression on entries: <id>, ..."` (pass-rate monotonicity)
+- `"monotonicity_regression on namespace=<ns>, ..."` (per-namespace monotonicity)
 
 This is the single audit trail for why a candidate was or was not
 promoted.
 
 ## 9. Limits and caveats
 
-A few things scoring does NOT do in v0:
+Three things scoring does not do:
 
-- **Multi-trial scoring per entry.** v0 runs each entry once per
-  generation. LLM noise means small score deltas are sometimes
-  spurious; the right answer is N trials per entry with confidence
-  intervals. v0 leaves this to the conservative `promote_margin`.
-- **Cost-aware scoring.** Token counts and per-call cost are now
-  carried (`LossProfile.tokens_spent` surfaces under the `cost:`
-  namespace), and a cost-aware penalty no longer needs a core edit — a
-  `scalar_fn` plugin reading `ctx.namespace_aggregates["cost:"]`
-  expresses it (§11.5). What remains roadmap is folding cost into the
-  *default* scalar shape; this is forced by **target 2** (see
+- **Confidence intervals over the replicates.** An entry runs
+  `tournament.params["replicates"]` times per generation, which defaults
+  to 2 for every structure except racing, and the per-entry losses are
+  averaged before aggregation. Scoring does not carry an interval around
+  that average; the conservative `promote_margin` stands in for one.
+- **Cost-aware scoring.** Token counts and per-call cost are carried
+  (`LossProfile.tokens_spent` surfaces under the `cost:` namespace),
+  and a cost-aware penalty needs no core edit: a `scalar_fn` plugin
+  reading `ctx.namespace_aggregates["cost:"]` expresses it (§11.5).
+  Folding cost into the *default* scalar shape remains a roadmap item,
+  required by the goldfive steering target (see
   [DOGFOOD-TARGETS.md](DOGFOOD-TARGETS.md)).
-- **Operator pinning.** "This entry must pass" or "the score must
-  improve on this tag slice" as hard gates are not in v0. The
-  proposer brief's `## Forbidden` list covers the mutation-side of
+- **Operator pinning.** "This entry must pass" and "the score must
+  improve on this tag slice" are not available as hard gates. The
+  proposer brief's `## Forbidden` list covers the mutation side of
   pinning; the scoring side is implicit through pass-rate
   monotonicity.
 
-These are roadmap items, not contract failures. The v0 score is
-intentionally narrow.
+These are roadmap items rather than contract failures. The shipped score
+is intentionally narrow.
 
-## 11. Pluggable scoring — transforms and plugins (issue #19)
+## 11. Pluggable scoring — transforms and plugins
 
 The linear weights above are the neutral default; they cannot express a
 non-linear *shape* (a quadratic recall curve, a diminishing-returns
-aggregation, a cap, a cost-aware blend). Historically every such shape
-leaked into core as a bespoke `ScoringWeights` field plus a formula edit
-(`pass_exponent`), or — worse — an *unconditional* core special-case
-that changed scoring for every operator (the harmonic `looping_reasoning`
-edit). Issue #19 gives scoring the **operator-owned, contract-referenced
-plugin** treatment `predicates.py` / `judges.py` already have, at two
-**seams**:
+aggregation, a cap, a cost-aware blend). Scoring therefore carries the
+**operator-owned, contract-referenced plugin** treatment `predicates.py`
+and `judges.py` already have, at two **seams** (issue #19):
 
 ```
 per-run events ──(Seam 1: drift_reducer)──▶ per-run drift_loss   # reducer.py
@@ -733,10 +726,10 @@ per-gen aggregates ──(Seam 2: scalar_fn)──▶ per-gen scalar       # tou
 ```
 
 Both seams are reshaped by a **hybrid**: a declarative transform
-registry for the common 90% (no operator code, serializable) plus a
+registry for the common cases (no operator code, serializable) plus a
 dotted-spec plugin escape hatch for arbitrary logic. Every layer is
-**neutral by default** — absent any new config, scoring is byte-identical
-to §4.
+**neutral by default** — absent any transform or plugin config, scoring
+is byte-identical to §4.
 
 ### 11.1 Declarative transform registry
 
@@ -746,7 +739,7 @@ shapes, each a single `{"op": "<name>", ...params}` spec:
 | `op` | params | shape |
 |---|---|---|
 | `linear` | — | identity (the neutral default) |
-| `pow` | `exponent` | `x ** exponent` (the replacement for the retired `pass_exponent`) |
+| `pow` | `exponent` | `x ** exponent` |
 | `harmonic` | — | `1 + 1/2 + … + 1/n` (diminishing returns; the opt-in `looping_reasoning` curve) |
 | `cap` | `max` | `min(x, max)` |
 | `clip` | `lo`, `hi` | clamp to `[lo, hi]` (requires `lo <= hi`) |
@@ -763,13 +756,13 @@ Two `ScoringWeights` slots take a transform:
 ```
 
 - **`pass_transform`** (Seam 2) reshapes the scalar's pass/miss term
-  `(1 - mean_score)`. `{"op":"pow","exponent":2.0}` reproduces the
-  retired `pass_exponent=2` quadratic-recall behaviour. Absent /
-  `linear` is today's plain linear miss term.
+  `(1 - mean_score)`. `{"op":"pow","exponent":2.0}` gives quadratic
+  recall. An absent spec, or `linear`, gives the plain linear miss
+  term.
 - **`drift_kind_aggregation`** (Seam 1) reshapes, per drift KIND, how
   that kind's *count* aggregates into the drift loss
   (`severity × kind_weight × transform(count)` in place of
-  `… × count`). An absent kind entry is `linear`, i.e. today's built-in.
+  `… × count`). An absent kind entry is `linear`, the built-in shape.
   `{"looping_reasoning":{"op":"harmonic"}}` opts THIS contract — and no
   other — into the harmonic curve.
 
@@ -777,13 +770,13 @@ A single `op` per slot — no pipelines (arbitrary multi-step logic is a
 plugin). Specs are **validated fail-fast at contract load**
 (`ScoringWeights.__post_init__` → `validate_transform_spec`): an unknown
 op, a missing / non-finite / non-numeric param, a typo'd param name, or a
-`clip` with `lo > hi` is rejected loudly, so `apply_transform` is total
-at scoring time and never produces a `NaN` mid-run. Both slots serialize
+`clip` with `lo > hi` is rejected loudly. `apply_transform` is therefore
+total at scoring time and never produces a `NaN` mid-run. Both slots serialize
 natively and fold into the contract hash (§2.5).
 
 ### 11.2 Dotted-spec plugins (the escape hatch)
 
-For anything the registry can't express (an F-beta recall/precision
+For anything the registry cannot express (an F-beta recall/precision
 blend, a cost-aware penalty reading `ctx.namespace_aggregates["cost:"]`),
 two optional dotted specs on the contract, resolved by the **same
 importer** predicates / judges use:
@@ -816,13 +809,13 @@ there is no auxiliary callable to pass.
 fails to resolve must NOT crash the run. Mirroring `evaluate_judges`, the
 dispatcher wraps the call in try/except, logs at WARNING, and **falls
 back to the pre-plugin (transformed-or-builtin) value** — and records the
-fallback in the provenance (§11.4) so a silently-degraded plugin is
-visible, not buried in a log.
+fallback in the provenance (§11.4) so a silently degraded plugin is
+visible rather than buried in a log.
 
 **Proposer immutability.** Scoring plugins live in the operator package
-(`mypkg/contract/scoring.py`), exactly like predicates / judges, and are
-**never** enumerated as mutation points — the proposer does not get to
-rewrite the operator's grading. A guard/test keeps the mutation walker
+(`mypkg/contract/scoring.py`), in the same way as predicates and judges, and are
+**never** enumerated as mutation points — the proposer cannot rewrite
+the operator's grading. A guard/test keeps the mutation walker
 off them.
 
 **Worker ↔ orchestrator parity.** Seam 1 (`drift_reducer`) runs INSIDE
@@ -841,13 +834,13 @@ the worker and orchestrator never disagree on which plugin is active.
 | `plugins.py` | dotted-spec resolution, source-hashing (`spec_with_source_hash`), and the fail-open `apply_drift_reducer` / `apply_scalar_fn` |
 | `dispatch.py` | the single seam the live paths call (`resolve_drift_loss` / `resolve_scalar`) — composes built-in → transform → plugin and emits the provenance |
 
-`reducer.py` (Seam 1) and `tournament/scoring.py` (Seam 2) no longer
+`reducer.py` (Seam 1) and `tournament/scoring.py` (Seam 2) do not
 inline their formulas: each builds the typed context and hands it to the
 matching dispatcher.
 
 ### 11.4 Scoring provenance
 
-So a scalar is **explainable without reading code**, each dispatcher
+To make a scalar **explainable without reading code**, each dispatcher
 returns a parseable provenance token alongside the value. It is recorded
 on the per-run `loss.json` (`LossProfile.scoring_provenance`, Seam 1) and
 the per-generation aggregate (`scalar_provenance` in `gen_score.json`,
@@ -857,7 +850,7 @@ pass term + each channel). Token shapes:
 
 | token | meaning |
 |---|---|
-| `builtin` | the default formula produced it (also: `None` on a pre-#19 run) |
+| `builtin` | the default formula produced it; a record written before scoring provenance existed carries `None` |
 | `transform:pass=pow(2.0)` | Seam-2 pass transform |
 | `transform:drift{looping_reasoning=harmonic, off_topic=cap(5)}` | Seam-1 per-kind drift transforms |
 | `plugin:scalar_fn=<spec>` / `plugin:drift_reducer=<spec>` | a dotted plugin produced it |
@@ -866,22 +859,22 @@ pass term + each channel). Token shapes:
 The fail-open form is surfaced **prominently** (caution-colored) in the
 dashboard so a degraded plugin is obvious, never silent.
 
-### 11.5 Worked migration
+### 11.5 Common shapes and how a contract expresses them
 
-| change | before #19 | under #19 |
-|---|---|---|
-| quadratic recall | `pass_exponent` field + `scoring.py` edit | `"pass_transform": {"op":"pow","exponent":2.0}` (no core edit) |
-| harmonic looping | unconditional core special-case (all operators) | `"drift_kind_aggregation": {"looping_reasoning":{"op":"harmonic"}}` (opt-in, this contract) |
-| F-beta blend | new field + formula | `scalar_fn` plugin, zero core change |
-| cost-aware penalty | new field + formula | `scalar_fn` plugin reading `ctx.namespace_aggregates["cost:"]` |
+| shape | contract expression |
+|---|---|
+| quadratic recall | `"pass_transform": {"op":"pow","exponent":2.0}` |
+| harmonic looping | `"drift_kind_aggregation": {"looping_reasoning":{"op":"harmonic"}}` — opt-in, and scoped to this contract |
+| F-beta blend | a `scalar_fn` plugin |
+| cost-aware penalty | a `scalar_fn` plugin reading `ctx.namespace_aggregates["cost:"]` |
 
 ## 10. Cross-references
 
 | Topic | Document |
 |---|---|
-| `LossProfile` fields and how they're computed | [TELEMETRY.md](TELEMETRY.md) |
+| `LossProfile` fields and how they are computed | [TELEMETRY.md](TELEMETRY.md) |
 | `BoardEntry.weight`, `expectations`, and `judges` | [BOARD-FORMAT.md](BOARD-FORMAT.md) |
 | Authoring outcome/process checks and `per_judge_weights` | [BOARD-AUTHORING.md](BOARD-AUTHORING.md) |
 | `tournament_decision` field on `experiment.json` | [EPOCHS-AND-JOURNALING.md](EPOCHS-AND-JOURNALING.md) |
-| Target 2's non-drift loss model | [DOGFOOD-TARGETS.md](DOGFOOD-TARGETS.md) |
-| Why drift loss + pass-rate and not free-text scoring | [RATIONALE.md](RATIONALE.md) |
+| The non-drift loss model of the goldfive steering target | [DOGFOOD-TARGETS.md](DOGFOOD-TARGETS.md) |
+| Why the score uses drift loss and pass-rate rather than free-text scoring | [RATIONALE.md](RATIONALE.md) |
