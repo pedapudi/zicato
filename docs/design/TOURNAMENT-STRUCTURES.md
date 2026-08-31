@@ -1,30 +1,31 @@
 # Tournament structures — the `SelectionStrategy` abstraction
 
-> **Status.** SHIPPED. The `SelectionStrategy` interface, all five concrete
+> **Status.** The `SelectionStrategy` interface, all five concrete
 > strategies, the registry, the `tournament` config block, and the
-> `--tournament-structure` / `--tournament-param` CLI surface are in the tree
-> and exercised by the test suite. §§1–3 describe the shipped design; §§4–4.1
-> are the shipped config contract; §§5, 7 are retained as the original
-> implementation plan / cross-team interface and are annotated where the
-> shipped names differ from the plan (the two load-bearing renames:
-> the persisted type is **`TournamentStructure`** on **`ScoringWeights`**, not
-> `TournamentSpec` on `EpochConfig`; the registry validates against
-> **`VALID_TOURNAMENT_STRUCTURES`**). Operator-facing config lives in §4.0 and
-> in the `zicato-design-tournament-structure` skill.
+> `--tournament-structure` / `--tournament-param` CLI surface are in the
+> tree and exercised by the test suite. Sections 1 to 4.1 specify the
+> built design. Sections 5 and 7 are the implementation plan and the
+> interface agreement the work followed; they are kept for provenance and
+> are annotated where the built names differ. Two of those differences are
+> load-bearing: the persisted type is `TournamentStructure` on
+> `ScoringWeights` rather than `TournamentSpec` on `EpochConfig`, and the
+> registry validates against `VALID_TOURNAMENT_STRUCTURES`.
+> Operator-facing configuration is in §4.0 and in the
+> `zicato-design-tournament-structure` skill.
 
-This document is the design + reference companion to two existing docs:
+This document is the reference companion to two others:
 
 - [`SELECTION.md §10`](SELECTION.md#10-configurable-per-epoch-tournament-structures)
   — the **decision theory**: why the gauntlet is the default, which
   structure approximates which best-arm / dueling-bandit mechanism, and
-  the honest verdict (§8 there) that brackets are noise-fragile for
-  zicato's few-expensive-noisy regime.
-- [`TOURNAMENT.md §1.4`](TOURNAMENT.md#14-the-gauntlet-is-the-default-not-the-only-structure)
+  and the verdict in its §8 that brackets are noise-fragile for zicato's
+  regime of few, expensive, noisy measurements.
+- [`TOURNAMENT.md §1.4`](TOURNAMENT.md#14-the-gauntlet-is-the-default-among-five-structures)
   — the **operational view**: the strategy-driven runner flow and the
   generalised dashboard bracket.
 
-The defining constraint, repeated because it is load-bearing: **the
-promote gate is unchanged.** `zicato.tournament.gate.evaluate_gate`
+The defining constraint is that **the promote gate is unchanged.**
+`zicato.tournament.gate.evaluate_gate`
 (`src/zicato/tournament/gate.py:168`) remains the per-duel accept/reject
 test. The `SelectionStrategy` owns *scheduling + bracket bookkeeping +
 champion-advance + intra-tournament stopping*; it never re-decides a
@@ -33,10 +34,10 @@ single duel. This keeps the per-task feasibility guarantee
 
 ---
 
-## 1. Where the strategy plugs into today's loop
+## 1. Where the strategy plugs into the round
 
 The orchestrator round (`evolve_once`,
-`src/zicato/orchestrator.py:386`) today hard-wires the gauntlet:
+`src/zicato/orchestrator.py:386`) runs a gauntlet as follows:
 
 1. Resolve the single champion (`parent_id`) from the
    `current_generation` marker (`orchestrator.py:512`,
@@ -60,20 +61,19 @@ once per round and owns the **inter-round** stopping: `rounds`,
 loop-health breaker (`:1278`), and the wall-clock budget
 (`:1169-1182`).
 
-**The seam.** Steps 2–5 of `evolve_once` become *strategy-driven*. The
-strategy decides how many challengers to request (step 2), which
-duel(s) to run (step 4), and how each `GateOutcome` advances the bracket
-(step 5). Steps 1 (resolve champion) and the inter-round stopping in
-`evolve_n_rounds` stay **outside** the strategy — the §5 optimal-stopping
-rule (`SELECTION.md §10.4`) must apply uniformly across structures, so it
-stays at the `evolve_n_rounds` level.
+**The seam.** Steps 2 to 5 of `evolve_once` are strategy-driven. The
+strategy decides how many challengers to request (step 2), which duels
+to run (step 4), and how each `GateOutcome` advances the bracket
+(step 5). Resolving the champion (step 1) and the inter-round stopping in
+`evolve_n_rounds` stay **outside** the strategy, because the
+optimal-stopping rule of §6 (`SELECTION.md §10.4`) applies uniformly
+across structures.
 
 ---
 
 ## 2. The `SelectionStrategy` interface
 
-A new module `src/zicato/selection/strategy.py` (new package
-`src/zicato/selection/`) defines the ABC. The orchestrator constructs a
+`src/zicato/selection/strategy.py` defines the abstract base class. The orchestrator constructs a
 strategy per *tournament resolution* (one per evolve round for
 `gauntlet`; one spanning the whole bracket for the others) from the
 epoch's `tournament` config block (§4).
@@ -240,12 +240,12 @@ one-line scheduling / advance / stopping summary, then the notes.
 > | `swiss` | `2` | `2` | `rounds_n=4` |
 > | `racing` | `2` | `1` | `eta=2`, `board_fraction=0.25`, `rung0_board_size=0`, `matchup_budget_seconds`/`final_rung_budget_seconds` (opt-in) |
 >
-> `replicates` defaults are exactly that — DEFAULTS, not floors: an operator
-> may set any `>= 1`. The base default is `2` (the noise-aware posture: a
-> duel decided by one paired run is decided by one noise draw); `racing`
-> pins `1` because it replicates intrinsically via escalating board slices.
-> Deterministic contracts pin `"replicates": 1` for the historical
-> single-run duel.
+> These `replicates` values are defaults rather than floors: an operator
+> may set any value at or above `1`. The base default is `2`, because a
+> duel decided by one paired run is decided by one noise draw. `racing`
+> pins `1` because it replicates intrinsically through escalating board
+> slices. A deterministic contract pins `"replicates": 1` so a duel is a
+> single run.
 >
 > Each strategy declares its own `_default_replicates` ClassVar, and the
 > registry derives `STRUCTURE_DEFAULT_REPLICATES` (and
@@ -259,7 +259,7 @@ one-line scheduling / advance / stopping summary, then the notes.
 > (gauntlet / swiss / single-elim / double-elim default to `2`, racing to
 > `1`) — see §4.0 and [`TOURNAMENT-BUILDER.md §4`](TOURNAMENT-BUILDER.md#4-the-consequence-forward-principle).
 
-### 3.1 `gauntlet` (default — current behaviour, exactly)
+### 3.1 `gauntlet` (the default)
 
 - **field_size**: `1`.
 - **schedule**: a single `Matchup(champion, the one challenger, full board, replicates)`.
@@ -268,23 +268,22 @@ one-line scheduling / advance / stopping summary, then the notes.
   `outcome.decision == "promoted"`, else `None` (champion stands).
 - **stopping**: `resolved()` is true after the single result lands.
 
-This is a faithful re-expression of today's `evolve_once` steps 2–5 —
-the migration target is *byte-for-byte equivalent behaviour* with
-`replicates = 1`. Maps to the degenerate single-replicate dueling bandit
-(`SELECTION.md §6.3`).
+With `replicates = 1` this reproduces the propose-apply-run-advance
+sequence of `evolve_once` byte for byte. It maps to the degenerate
+single-replicate dueling bandit (`SELECTION.md §6.3`).
 
 - **noise under `--mode fast`** (the CLI default): the gauntlet fast path
   (`run_fast_mode`) runs the challenger board `replicates` times and folds
-  the per-entry losses, exactly as `run_matchup` does — but it compares the
-  fold against the champion's **frozen cached aggregate** rather than
-  drawing the champion again. So `replicates` reduces challenger-side noise
+  the per-entry losses the way `run_matchup` does, then compares the fold
+  against the champion's **frozen cached aggregate** rather than drawing
+  the champion again. So `replicates` reduces challenger-side noise
   only, and the contrast keeps one unreplicated side. Two consequences an
   operator has to price in: repeated *rounds* are not repeated *draws* of
   the contrast (the champion side is the same numbers every round, so
   round-to-round variation understates the true variance), and the
   contract-level power check's two-sample `sqrt(2/(k·n))` is therefore
   optimistic under this mode. `--mode full` re-samples both sides;
-  independent draws of the whole contrast means separate runs/seeds.
+  independent draws of the whole contrast need separate runs and seeds.
   The branch logs the asymmetry whenever `replicates > 1` meets the fast
   path, so it is never silent.
 
@@ -305,7 +304,8 @@ the migration target is *byte-for-byte equivalent behaviour* with
 - **stopping**: `resolved()` when one finalist remains and the final
   champion-gate node has a result.
 - **noise**: `replicates ≥ 2` is the **config default** for this structure
-  (an operator may override to `1`), per `SELECTION.md §2③/§8` — a strong
+  (an operator may override to `1`), per the single-elimination bracket
+  family of `SELECTION.md` §2 and its §8 verdict — a strong
   candidate dies to one unlucky run otherwise.
 
 ### 3.3 `double_elim`
@@ -319,16 +319,17 @@ the migration target is *byte-for-byte equivalent behaviour* with
   champion-gate decides promotion.
 - **stopping**: `resolved()` when the losers' bracket is exhausted and
   the grand final has a result.
-- **noise**: `SELECTION.md §8` is explicit that the "second life" is
-  delivered more cheaply by replication; this structure is offered for
-  completeness, and its config default *also* sets `replicates ≥ 2` rather
-  than rely on the losers' bracket for robustness.
-- **shipped simplification**: the losers' bracket is run as a plain
+- **noise**: `SELECTION.md §8` states that the "second life" is delivered
+  more cheaply by replication. This structure is offered for completeness,
+  and its config default also sets `replicates ≥ 2` rather than relying on
+  the losers' bracket for robustness.
+- **simplification**: the losers' bracket runs as a plain
   single-elimination over the accumulated winners'-bracket losers once the
-  WB has a survivor (rather than a fully seeded WB/LB feed schedule). Every
-  generation still gets exactly one second life (eliminated on its second
-  node loss), the grand final still pits the two survivors, and the crowning
-  champion-gate is unchanged. See the module docstring in
+  winners' bracket has a survivor, rather than as a fully seeded feed
+  schedule between the two brackets. Every generation still gets exactly one
+  second life, being eliminated on its second node loss; the grand final
+  still pits the two survivors; and the crowning champion-gate is
+  unchanged. See the module docstring in
   `src/zicato/selection/strategies/double_elim.py`.
 
 ### 3.4 `swiss`
@@ -364,21 +365,24 @@ the migration target is *byte-for-byte equivalent behaviour* with
   from the sorted entry ids alone (SHA-256, never a process-global seed) and
   takes nested prefixes of it, so authored order cannot decide an early cut
   while resume and audit stay reproducible: the same board always yields the
-  same permutation. The permutation is uniform over entries — it does not
+  same permutation. The permutation is uniform over entries. It does not
   balance slices by tag or by `weight`, so a small slice can still
-  under-represent a heavily weighted entry class (#212 records the decision
-  to keep it that simple).
-- **advance**: `record_result` accumulates per-rung scalars; elimination
-  is by rank within the rung (not the gate) — this is best-arm ID, not a
-  feasibility test. The gate is applied only at the **final** rung, on
-  the full board, to the last survivor.
+  under-represent a heavily weighted entry class; keeping it that simple was
+  a deliberate choice (issue #212).
+- **advance**: `record_result` accumulates per-rung scalars, and
+  elimination is by rank within the rung rather than by the gate, because a
+  rung identifies the best arm rather than testing feasibility. The gate is
+  applied only at the **final** rung, on the full board, to the last
+  survivor.
 - **stopping**: `resolved()` when one survivor remains or the board is
-  fully consumed; `champion()` promotes the survivor iff it clears the
-  full-board champion-gate (and, recommended, a §9-lever-3 fresh-draw
-  confirmation — out of scope for v1 of this feature).
-- **mapping**: successive halving / best-arm identification
-  (`SELECTION.md §2③`); the adaptive form of Swiss the synthesis
-  (`SELECTION.md §9 lever 5`) converges on. Replication is **intrinsic**
+  fully consumed; `champion()` promotes the survivor only if it clears the
+  full-board champion-gate. Winner's-curse confirmation on a fresh draw
+  (`SELECTION.md §9`) is recommended alongside it and is outside this
+  design.
+- **mapping**: successive halving and best-arm identification (the
+  single-elimination bracket family of `SELECTION.md` §2); the adaptive
+  form of Swiss that elitist iterated racing (`SELECTION.md §9`) converges
+  on. Replication is **intrinsic**
   (escalating board slices = escalating sample), which is why this is the
   one bracket-shaped structure `SELECTION.md` endorses for zicato's
   regime.
@@ -389,8 +393,8 @@ the migration target is *byte-for-byte equivalent behaviour* with
   `replicates` × both sides and is the pathological grinder (each board may
   be under its own per-board budget while their sum is unbounded). When
   `final_rung_budget_seconds` is unset the matchup budget applies to the final
-  duel too; when **both** are unset behaviour is byte-identical to before (no
-  cap). The strategy threads these onto each scheduled `Matchup`
+  duel too; when **both** are unset no cap applies. The strategy threads
+  these onto each scheduled `Matchup`
   (`Matchup.matchup_budget_seconds`); enforcement is the worker's per-run
   wall-clock cancellation (`RUNTIME.md`, `src/zicato/_tournament_worker.py`).
   See `src/zicato/selection/strategies/racing.py`.
@@ -409,10 +413,10 @@ load, listing the registry keys.
 
 ## 4. The shared `tournament` config contract
 
-> **Shipped.** The contract below is what the loader, the strategies, and the
-> contract hash actually implement.
+> The contract below is what the loader, the strategies, and the contract
+> hash implement.
 
-**As shipped**, the `tournament` block lives inside `scoring.json` (it
+The `tournament` block lives inside `scoring.json` (it
 deserializes into `ScoringWeights.tournament_structure`, a frozen
 `TournamentStructure` dataclass — `src/zicato/core/types.py`), and so folds
 into the scoring component of the contract hash automatically. The block:
@@ -432,8 +436,8 @@ into the scoring component of the contract hash automatically. The block:
 ```
 
 - **Default**: absent block ⇒ `{structure: "gauntlet", params: {}}`
-  (`TournamentStructure.gauntlet()`), so every existing epoch keeps today's
-  behaviour with no migration. `params` is stored and round-tripped verbatim
+  (`TournamentStructure.gauntlet()`), so an epoch that omits the block runs
+  a gauntlet and needs no migration. `params` is stored and round-tripped verbatim
   as an opaque mapping; the data layer enforces only that `structure` is one
   of `VALID_TOURNAMENT_STRUCTURES` and `params` is a mapping — per-key
   semantics (`field_size`, `replicates`, `rounds_n`, `eta`, …) are owned by
@@ -442,13 +446,13 @@ into the scoring component of the contract hash automatically. The block:
   `swiss` adds `rounds_n`; `racing` adds `eta` + a board-subset schedule
   (`board_fraction` or explicit `rung0_board_size`). The loader validates the
   `structure` token; per-key `params` semantics are validated by the strategy.
-- **Where it threads (shipped)**: the structure is the
+- **Where it threads**: the structure is the
   `tournament_structure: TournamentStructure` field of `ScoringWeights`
   (`src/zicato/core/types.py`), so it serializes through `scoring.json` and
-  is part of the scoring contract — NOT a separate `EpochConfig` field. (The
-  original plan proposed a `TournamentSpec` on `EpochConfig`; the shipped
-  design folds it into `ScoringWeights` instead, which is why a structure
-  change rolls the epoch for free via the scoring hash.)
+  is part of the scoring contract rather than being a separate
+  `EpochConfig` field. Folding it into `ScoringWeights` is what makes a
+  structure change roll the epoch through the scoring hash without extra
+  plumbing.
 
 ### 4.0 Quickstart: configure a structure (operator-facing)
 
@@ -512,45 +516,47 @@ zicato evolve \
 
 `--tournament-structure` writes `{structure, params}` into the live
 `scoring.json` *before* the contract hash is computed, so it participates
-in the hash exactly like a hand edit. Each `--tournament-param KEY=VALUE`
+in the hash the way a hand edit does. Each `--tournament-param KEY=VALUE`
 is repeatable; `VALUE` is parsed as JSON when possible (so `field_size=4`
 is the integer `4`), else taken as a string. Params are only applied when
-`--tournament-structure` is also passed. (See `docs/design/CLI.md` for
-the flag reference — advisory; trust `zicato evolve --help`.)
+`--tournament-structure` is also passed. `zicato evolve --help` is the
+authoritative flag reference, and [`CLI.md`](CLI.md) is generated from
+it.
 
 **Either way, changing the structure rolls the epoch.** Because the
 `tournament` block is part of the frozen evaluation contract (§4.1), a
 structure or param change is a contract-hash change: the next `evolve`
-closes the current epoch and opens a fresh one, exactly as retuning
+closes the current epoch and opens a fresh one, as retuning
 `promote_margin` does. A gauntlet champion and a racing champion are
 selected under different rules and are not directly comparable, which is
-precisely why the structure rolls the contract.
+why the structure rolls the contract.
 
-### 4.1 Is `tournament` part of the contract hash? — yes (shipped)
+### 4.1 The `tournament` block is part of the contract hash
 
-**Yes.** The structure changes *what a promotion means*, so generations
-selected under different structures are not directly comparable — the same
-rationale as the other contract components. As shipped this needed NO new
-canonical component: because `tournament_structure` is a nested frozen
+The structure changes *what a promotion means*, so generations
+selected under different structures are not directly comparable, which is the same
+rationale as for the other contract components. No new canonical component
+was needed: because `tournament_structure` is a nested frozen
 dataclass field of `ScoringWeights`, the scoring canonicaliser recurses into
-it structurally (`_scoring_to_canon` / `_canon_value` in
+it (`_scoring_to_canon` / `_canon_value` in
 `src/zicato/epoch/contract.py`), dict-ifying its `params` mapping into the
 hash input. Switching structures or bumping any param changes the canonical
 scoring form and rolls the epoch automatically.
 
 ---
 
-## 5. Backend implementation plan (exact files)
+## 5. The backend implementation plan the work followed
 
-> **Historical.** Retained as the original wave plan. The feature is SHIPPED:
-> the package is `src/zicato/selection/` (`strategy.py`, `registry.py`,
+> **Historical.** This is the plan as written before the work, kept for
+> provenance. The built result is the package `src/zicato/selection/`
+> (`strategy.py`, `registry.py`,
 > `strategies/{gauntlet,single_elim,double_elim,swiss,racing}.py`), the
-> structure is `ScoringWeights.tournament_structure: TournamentStructure`
-> (`src/zicato/core/types.py`), the hash folds it in via the scoring
-> canonicaliser (`src/zicato/epoch/contract.py`, §4.1), and the CLI surface
-> is `--tournament-structure` / `--tournament-param` on `evolve`
-> (§4.0). `file:line` references below are against the tree at planning time
-> and may have drifted.
+> structure field `ScoringWeights.tournament_structure:
+> TournamentStructure` (`src/zicato/core/types.py`), the hash folding via
+> the scoring canonicaliser (`src/zicato/epoch/contract.py`, §4.1), and the
+> `--tournament-structure` / `--tournament-param` flags on `evolve`
+> (§4.0). The `file:line` references below are against the tree as it stood
+> when the plan was written and may have drifted.
 
 Ordered so each step is independently testable. **No gate/scoring
 changes** except the optional replication averaging, which is additive.
@@ -569,8 +575,9 @@ changes** except the optional replication averaging, which is additive.
    with a defaulting helper `TournamentSpec.gauntlet()`), and add the
    `tournament: TournamentSpec` field to `EpochConfig`
    (`types.py:1605`, default-factory to the gauntlet spec so existing
-   call sites and on-disk epochs stay valid). **Coordinate the exact
-   dataclass shape with the data-model agent.**
+   call sites and on-disk epochs stay valid). **The dataclass shape is
+   shared with the data-model design
+   ([`TOURNAMENT-DATA-MODEL.md`](TOURNAMENT-DATA-MODEL.md)).**
 
 3. **`src/zicato/tournament/runner.py`** — add two thin entry points
    beside `run_tournament` (`runner.py:1482`):
@@ -587,7 +594,8 @@ changes** except the optional replication averaging, which is additive.
 
 4. **`src/zicato/orchestrator.py`** — refactor `evolve_once`
    (`orchestrator.py:386`):
-   - Resolve champion as today (`:512`), then build the strategy via
+   - Resolve the champion as the gauntlet does (`:512`), then build the
+     strategy via
      `make_strategy(epoch.tournament)`.
    - Replace steps 2–5 (propose one → apply one → `run_tournament` →
      advance, currently `:757-858`) with the §2.3 `resolve_tournament`
@@ -602,8 +610,8 @@ changes** except the optional replication averaging, which is additive.
      rest as rejected/eliminated, mirroring `:847-858`).
    - `EvolveRoundOutcome` (`orchestrator.py:69`) gains the bracket audit
      (`SelectionDecision.matchups`) so the journal/dashboard can render
-     the non-gauntlet shapes. **Record shape owned by the data-model
-     agent.**
+     the non-gauntlet shapes. **The record shape is owned by
+     [`TOURNAMENT-DATA-MODEL.md`](TOURNAMENT-DATA-MODEL.md).**
    - `evolve_n_rounds` (`orchestrator.py:1014`) is **unchanged** — the
      §5 inter-round stopping (`:1263-1294`) stays outside the strategy.
 
@@ -612,8 +620,8 @@ changes** except the optional replication averaging, which is additive.
    the epoch's frozen `TournamentSpec` (defaulting to gauntlet for epochs
    that predate the field).
 
-6. **`src/zicato/epoch/contract.py`** — *if* the data-model agent agrees
-   `tournament` is contract (§4.1): add `_canon_tournament`, extend
+6. **`src/zicato/epoch/contract.py`** — if the `tournament` block is part
+   of the contract (§4.1): add `_canon_tournament`, extend
    `compute_contract_hash` (`contract.py:319`) and
    `compute_component_hashes` (`contract.py:351`), and add the path to
    `ContractInputs` (`contract.py:45`) + `resolve_contract_inputs`
@@ -621,13 +629,14 @@ changes** except the optional replication averaging, which is additive.
 
 7. **`src/zicato/epoch/lifecycle.py`** — thread `TournamentSpec` through
    epoch creation/serialization (it persists the frozen contract;
-   `EpochConfig` write/read paths gain the new field). **Persisted-file
-   shape owned by the data-model agent.**
+   `EpochConfig` write/read paths gain the new field). **The persisted-file
+   shape is owned by
+   [`TOURNAMENT-DATA-MODEL.md`](TOURNAMENT-DATA-MODEL.md).**
 
 8. **CLI** — `src/zicato/cli/commands/epoch.py` (epoch new) and
    `evolve.py` gain a `--tournament-structure` / `--field-size` surface
-   (optional; the config block is authoritative). Out of scope for the
-   first wave if the config block alone is wired.
+   (optional; the config block is authoritative), which may be deferred as
+   long as the config block is wired.
 
 ### 5.1 What must persist
 
@@ -641,11 +650,11 @@ journal can render it:
   to);
 - the `SelectionDecision` (crowned generation, decision, reason).
 
-For `gauntlet` this collapses to exactly today's single-`TournamentResult`
-record, so the existing journal/index shape is the `field_size == 1`
-special case. **The concrete persisted-record schema, the analytical-index
-table changes, and the dashboard rendering are the data-model agent's
-deliverable** (§7).
+For `gauntlet` this collapses to a single `TournamentResult` record, so the
+journal and index shape is the `field_size == 1` special case. **The
+concrete persisted-record schema, the analytical-index table changes, and
+the dashboard rendering are specified in
+[`TOURNAMENT-DATA-MODEL.md`](TOURNAMENT-DATA-MODEL.md)** (§7).
 
 ---
 
@@ -654,19 +663,19 @@ deliverable** (§7).
 - **Gate**: untouched. Every `Matchup` ends in `evaluate_gate`
   (`gate.py:168`). A challenger-vs-challenger duel feeds the two
   challenger aggregates in as `(parent, child)`; the strategy reads the
-  sign of `delta_scalar` and never the feasibility rules for *ranking*
-  (Rules 2/3 still fire, and a structure may choose to treat a
-  feasibility-failing node-winner as eliminated — that is a strategy
-  policy, not a gate change). The *final* champion-gate is the real,
-  full three-rule test.
-- **Replication (§9 lever 1)**: surfaced as `Matchup.replicates` and applied
+  sign of `delta_scalar` and never the feasibility rules for *ranking*.
+  The pass-rate and per-namespace monotonicity rules still fire, and a
+  structure may choose to treat a feasibility-failing node-winner as
+  eliminated, which is a strategy policy rather than a gate change. The
+  *final* champion-gate is the full three-rule test.
+- **Replication** (`SELECTION.md §9`): surfaced as `Matchup.replicates` and applied
   by `_run_replicated` for every production strategy. Each requested slot is
   keyed by generation, board entry, and replicate for both competitors, and
   every path folds through `_average_losses`. The standalone `run_tournament`
   and `run_fast_mode` APIs retain their own replication parameters. The
   gauntlet default is `2`, as it is for the bracket structures; only `racing`
   pins `1` because escalating board slices supply repeated evidence.
-- **§5 optimal-stopping**: stays in `evolve_n_rounds`
+- **Optimal stopping** (`SELECTION.md §10.4`): stays in `evolve_n_rounds`
   (`orchestrator.py:1263-1294`), outside the strategy. The strategy
   resolves the *intra-tournament* bracket; `evolve_n_rounds` decides
   whether the *next* round's field is worth the cost `c`
@@ -675,41 +684,41 @@ deliverable** (§7).
 
 ---
 
-## 7. Interface required FROM the data-model agent
+## 7. The interface agreed with the data-model design
 
-> **Historical.** The cross-team interface below was resolved during the
-> implementation waves; the resolutions are reflected in §§3–4.1 above
-> (`tournament` lives on `ScoringWeights`, is in the contract hash, and the
-> strategy emits `SelectionDecision` + a flat `MatchupResult` audit plus
-> `Standing` / `RoundRecord` dashboard records). Kept for provenance.
+> **Historical.** The four questions below were open while the work was
+> planned and are answered in §§3 to 4.1 above: the `tournament` block
+> lives on `ScoringWeights`, it is in the contract hash, and a strategy
+> emits a `SelectionDecision` plus a flat `MatchupResult` audit and the
+> `Standing` / `RoundRecord` dashboard records. Kept for provenance.
 
-This design depends on the data-model agent for the following shared
-contract; everything else above is owned here.
+The shared contract below is owned by
+[`TOURNAMENT-DATA-MODEL.md`](TOURNAMENT-DATA-MODEL.md); everything else
+above is owned here.
 
 1. **The `tournament` config block schema** — the on-disk shape of
    `{ structure, params }`, the per-structure `params` validation, and
    the `TournamentSpec` dataclass on `EpochConfig`
    (`src/zicato/core/types.py:1605`). This design assumes the §4 shape;
-   the data-model agent owns the authoritative schema and its
+   the data-model design owns the authoritative schema and its
    serialization in `epoch/lifecycle.py`.
 2. **Whether `tournament` is part of the contract hash** (§4.1). This
    design recommends *yes* (a structure change rolls the epoch) and
-   names the exact `contract.py` insertion points; the data-model agent
-   makes the call and owns the canonicalization.
+   names the `contract.py` insertion points; the data-model design makes
+   the call and owns the canonicalization.
 3. **The persisted bracket-record shape** (§5.1) — the journal entry and
    the analytical-index table(s) that store every `MatchupResult` + the
-   `SelectionDecision`, generalising today's single-`TournamentResult`
+   `SelectionDecision`, generalising the single-`TournamentResult`
    record. The dashboard bracket (`TOURNAMENT.md §2`) reads from this.
 4. **The dashboard rendering** of non-gauntlet shapes (single-elim tree,
    Swiss standings, racing rung-ladder) — owned by the data-model /
    dashboard work; this design only guarantees the audit data (§5.1) is
    available.
 
-In return, this design guarantees the data-model agent a stable
-producer-side contract: every structure emits a `SelectionDecision` plus
-a flat list of `MatchupResult`s, and `gauntlet` emits exactly one
-`MatchupResult` so the existing single-matchup record is the
-backwards-compatible special case.
+In return, this design guarantees a stable producer-side contract: every
+structure emits a `SelectionDecision` plus a flat list of
+`MatchupResult`s, and `gauntlet` emits exactly one `MatchupResult`, so the
+single-matchup record is the backwards-compatible special case.
 
 ---
 
@@ -718,9 +727,9 @@ backwards-compatible special case.
 | Topic | Document |
 |---|---|
 | Why the gauntlet is the default; per-structure decision theory; §8 anti-bracket verdict | [`SELECTION.md §10`](SELECTION.md#10-configurable-per-epoch-tournament-structures), [`SELECTION.md §8`](SELECTION.md#8-why-not-double-elimination-or-swiss-the-explicit-verdict) |
-| The strategy-driven runner flow; generalised dashboard bracket | [`TOURNAMENT.md §1.4`](TOURNAMENT.md#14-the-gauntlet-is-the-default-not-the-only-structure) |
+| The strategy-driven runner flow; generalised dashboard bracket | [`TOURNAMENT.md §1.4`](TOURNAMENT.md#14-the-gauntlet-is-the-default-among-five-structures) |
 | The promote gate every structure consumes unchanged | [`SCORING.md §5`](SCORING.md#5-the-tournament-promotion-gate), `src/zicato/tournament/gate.py` |
-| Replication (lever 1), multi-candidate field (lever 0), confirmation (lever 3) | [`SELECTION.md §9`](SELECTION.md#9-the-recommended-design) |
+| Replication, a multi-candidate field, and winner's-curse confirmation | [`SELECTION.md §9`](SELECTION.md#9-the-recommended-design) |
 | The epoch as the frozen contract; auto-roll on contract change | [`EPOCHS-AND-JOURNALING.md`](EPOCHS-AND-JOURNALING.md), `src/zicato/epoch/contract.py` |
 | Operator-facing: choosing + configuring a structure | `skills/zicato-design-tournament-structure/SKILL.md` |
-| Rating (Bradley–Terry) layer *under* these structures — SHIPPED as the opt-in `params["rating"]` θ-rank standings + the visibility Elo fold; winner-resolution SHIPPED as the opt-in `params["resolver"]` (Ranked Pairs behind a Smith-set prune, `selection/resolve.py`); only the maximal-lottery resolver remains FUTURE | [`SELECTION-THEORY.md`](SELECTION-THEORY.md) |
+| The Bradley-Terry rating layer under these structures: the opt-in `params["rating"]` theta-rank standings and the visibility Elo fold, and the opt-in `params["resolver"]` winner resolution (Ranked Pairs behind a Smith-set prune, `selection/resolve.py`). The maximal-lottery resolver is unbuilt. | [`SELECTION-THEORY.md`](SELECTION-THEORY.md) |
