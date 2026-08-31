@@ -341,7 +341,7 @@ def test_ceiling_rejects_oversized_challenger_diff_e2e(
     """The one-patch challenger diff (complexity 2) exceeds a ceiling of 1.0,
     so an otherwise-promotable child is REJECTED with the ceiling reason and
     the champion pointer does not advance."""
-    from tests.test_orchestrator import (
+    from tests._orchestrator_harness import (
         _bootstrap_workspace,
         _harness_call_llm,
         _install_stub_adapter_factory,
@@ -381,7 +381,7 @@ def test_ceiling_high_enough_promotes_the_same_diff_e2e(
 ) -> None:
     """The identical improving child promotes when the ceiling is generous
     (complexity 2 <= 100) — the ceiling only vetoes over-budget diffs."""
-    from tests.test_orchestrator import (
+    from tests._orchestrator_harness import (
         _bootstrap_workspace,
         _harness_call_llm,
         _install_stub_adapter_factory,

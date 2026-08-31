@@ -36,7 +36,7 @@ import zicato.tournament.runner as _runner_mod
 # Capture the GENUINE loss serde at import time, before any test installs the
 # orchestrator telemetry stubs (which shadow zicato.telemetry.reducer in
 # sys.modules with a stub that has no working read/write).
-from tests.test_orchestrator import (
+from tests._orchestrator_harness import (
     _bootstrap_workspace,
     _harness_call_llm,
     _install_stub_adapter_factory,

@@ -17,6 +17,7 @@ from typing import Any
 
 import pytest
 
+from tests._orchestrator_harness import _harness_call_llm
 from zicato.core.types import (
     BoardEntry,
     DriftCount,
@@ -29,11 +30,6 @@ from zicato.epoch.lifecycle import current_epoch_id, list_epochs
 # ---------------------------------------------------------------------------
 # LLM stubs
 # ---------------------------------------------------------------------------
-
-
-async def _harness_call_llm(system: str, user: str, model: str) -> str:
-    del system, user, model
-    return ""
 
 
 def _proposer_response() -> str:

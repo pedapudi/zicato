@@ -35,7 +35,7 @@ from pathlib import Path
 import pytest
 
 from tests._contract_pins import pin_deterministic
-from tests.test_orchestrator import (
+from tests._orchestrator_harness import (
     _harness_call_llm,
     _install_stub_adapter_factory,
     _make_aux_responder,

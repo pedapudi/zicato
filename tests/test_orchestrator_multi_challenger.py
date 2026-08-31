@@ -31,7 +31,7 @@ import pytest
 
 # Reuse the fully-mocked harness from the gauntlet orchestrator tests.
 from tests._contract_pins import pin_deterministic
-from tests.test_orchestrator import (
+from tests._orchestrator_harness import (
     _harness_call_llm,
     _install_stub_adapter_factory,
     _install_telemetry_stubs,
@@ -517,7 +517,7 @@ def test_swiss_runs_each_gen_entry_at_most_once_over_multiple_rounds(
 def test_gauntlet_does_not_take_multi_path(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     """A gauntlet epoch (field_size == 1) keeps the single-challenger path
     — proving the dispatch only diverts when the field is wider."""
-    from tests.test_orchestrator import _bootstrap_workspace
+    from tests._orchestrator_harness import _bootstrap_workspace
 
     workspace, epoch_id = _bootstrap_workspace(tmp_path)
     _install_stub_adapter_factory(monkeypatch)

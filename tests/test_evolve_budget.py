@@ -30,7 +30,7 @@ from click.testing import CliRunner
 
 import zicato.orchestrator as orch
 from tests._cli_support import install_evolve_capture
-from tests.test_orchestrator import _bootstrap_workspace
+from tests._orchestrator_harness import _bootstrap_workspace
 from zicato.orchestrator import EvolveRoundOutcome
 
 # ---------------------------------------------------------------------------
