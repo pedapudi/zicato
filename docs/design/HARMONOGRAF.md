@@ -144,7 +144,7 @@ on `harmonografIsLive()`. They render:
 ### 3b. The execution surface for zicato's own loop
 
 A single, clearly-labelled **"execution ▸"** entry in the top bar
-(`variants/T/shell.js`) links to the meta-loop session:
+(`js/shell.js`) links to the meta-loop session:
 
 ```
 <web_url>/#/session/<meta_loop_session_id>

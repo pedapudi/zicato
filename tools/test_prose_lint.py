@@ -36,6 +36,10 @@ FIXTURES = {
         "#241 adds the plan builder.",
         "Issue #241 adds the plan builder.",
     ),
+    "temporal-hedge": (
+        "The reader currently drops the header, and one backend ships today.",
+        "The reader drops the header until the schema carries one.",
+    ),
 }
 
 
@@ -52,6 +56,13 @@ def test_each_rule_fires_on_its_construction_only(rule: str, pair: tuple[str, st
 
 def test_every_rule_has_a_fixture() -> None:
     assert set(FIXTURES) == {rule.name for rule in prose_lint.RULES}
+
+
+def test_every_temporal_hedge_is_matched_and_only_reported() -> None:
+    for hedge in ("today", "Currently", "at present", "as of now", "for now"):
+        assert rules_hit(f"The gate holds {hedge}.") == {"temporal-hedge"}, hedge
+    severities = {rule.name: rule.severity for rule in prose_lint.RULES}
+    assert severities["temporal-hedge"] == prose_lint.REVIEW
 
 
 def test_standard_collocations_are_allowed() -> None:
@@ -89,6 +100,13 @@ def test_generated_help_and_captured_evidence_are_skipped(
     monkeypatch.setattr(prose_lint, "EXCLUDED", ())
     reinstated = prose_lint.collect(("docs",), prose_lint.ROOT)
     assert prose_lint.ROOT / "docs" / "design" / "CLI.md" in reinstated
+
+
+def test_the_changelog_is_exempt_from_the_history_rule_and_no_other() -> None:
+    text = "The writer no longer emits a header. The gate reads the record, not the tree."
+    assert rules_hit(text, "docs/guide.md") == {"narrated-history", "antithesis-apposition"}
+    assert rules_hit(text, "CHANGELOG.md") == {"antithesis-apposition"}
+    assert prose_lint.RULE_EXEMPT["CHANGELOG.md"] == frozenset({"narrated-history"})
 
 
 def test_an_excluded_directory_drops_its_whole_subtree(

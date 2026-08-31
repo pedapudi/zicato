@@ -98,9 +98,11 @@ The first stage. Mechanical, independently shippable, no behavior change.
   - `telemetry/scoring.py::aggregate_generation_score` / `combined_scalar`
     (live path is `tournament/scoring.py`; the duplicate even has a divergent
     return type — a latent hazard).
-  - the abandoned dashboard preview page `static/variant_A_preview.html`, which
-    loads a non-existent `app_A.js`; collapse the dead `static/js/variants/T/`
-    indirection, since the console layout behind it is the only one shipped.
+  - **As landed:** the abandoned dashboard preview page and the per-variant
+    directory indirection are both gone. The console layout is the only one
+    shipped, so its modules sit directly under
+    `src/zicato/dashboard/static/js/` and its stylesheet is
+    `src/zicato/dashboard/static/css/console.css`.
   - no-op guard `state_reader.py:1450` (`isinstance(row.keys(), object)`);
     redundant duplicate `version`/`build` field (`endpoints.py:130,135`);
     intentionally-unused `weights` params (`tournament/scoring.py:117`,

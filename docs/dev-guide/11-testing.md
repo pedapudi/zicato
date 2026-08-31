@@ -1492,12 +1492,13 @@ The stable measurement contract, final arithmetic, and ratchet policy live in
 ### Prose gate
 
 Repository prose is read by people who have the tree and none of its
-development history. `tools/prose_lint.py` reports six constructions that need
+development history. `tools/prose_lint.py` reports seven constructions that need
 that history to decode: invented short labels used as vocabulary, wording about
 what the tree stopped doing, a subject defined by contrast with an absent
 alternative, adverbs asserting conviction in place of information, a trailing
-verb with no subject or result, and an issue number standing where a statement
-belongs. The tool's docstring states each rule and its reason in full;
+verb with no subject or result, an issue number standing where a statement
+belongs, and a word pinning a claim to the unnamed moment it was written. The
+tool's docstring states each rule and its reason in full;
 `tools/test_prose_lint.py` pins one hitting and one clean sentence per rule, so
 a widened pattern that starts swallowing ordinary sentences turns red.
 
@@ -1511,12 +1512,25 @@ literals owned by the command definitions, and the captured bytes under
 `tools/parity/golden/` are a record of what a run produced. JavaScript comments
 are out of scope, so the dashboard client is unread.
 
+One file is exempt from one rule, through a per-file table beside that skipped
+list: `CHANGELOG.md` is an explicitly historical document whose chronology is
+the content it carries, so the rule against wording about what the tree stopped
+doing does not read it. The other six rules read it like any other file.
+
 Fenced blocks and backtick spans are quoted material and are masked before
 matching, so a document may cite an identifier freely. Python strings other
 than docstrings are out of scope. Layer numbers inside standard collocations (a
 squared norm, a load balancer or a processor cache at a numbered level) pass
-through an allowlist. The adverb rule reports at severity `review` and never
-fails a run on its own.
+through an allowlist. Two rules report at severity `review` and never fail a
+run on their own: the adverb rule, because a few uses are load-bearing, and the
+temporal-hedge rule, because a named date or a stated condition beside the
+hedge makes it exact.
+
+`tools/prose_lint_baseline.json` holds one count per rule over the whole
+tree. The ratchet form fails only where a rule's count rises above its
+entry, so a rule with a standing backlog still catches every new hit. Lowering
+the floor after a cleanup means rewriting the file from the tree and committing
+it with the cleanup.
 
 ```bash
 python tools/prose_lint.py                        # report; fails on any hit

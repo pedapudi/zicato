@@ -1,7 +1,7 @@
 """Report prose that a reader outside the development history cannot decode.
 
 Documentation, the README, docstrings, and comments are read by people who
-have the tree and nothing else. Six constructions reliably break that: each
+have the tree and nothing else. Seven constructions reliably break that: each
 one carries a meaning that was obvious while the change was being made and
 is unrecoverable afterwards. This tool finds them and reports them; it
 rewrites nothing.
@@ -40,6 +40,16 @@ bare-issue-reference
     description, and a reader without the tracker learns nothing from it.
     An issue number beside a plain statement passes.
 
+temporal-hedge
+    A word pinning a claim to the unnamed moment it was written — `today`,
+    `currently`, `at present`. Once that moment passes the claim cannot be
+    checked against anything, and a status that has since changed goes on
+    reading as the present one, which is where stale status claims sit.
+    An audit that searched for the explicit status words (`planned` and
+    `not yet`) left eleven false claims standing behind these hedges.
+    Reported for review rather than as a failure, because a named date or
+    a stated condition beside the hedge makes it exact.
+
 What is read: Markdown files, and Python docstrings and comments, under the
 scanned roots — the documentation tree, the README and CHANGELOG, the runtime
 package, and the example, skill, and tool trees. Fenced blocks and backtick
@@ -52,6 +62,10 @@ where the hit appears. `docs/design/CLI.md` is generated from `zicato --help`,
 so its text is help literals owned by the command definitions. The captured
 bytes under `tools/parity/golden` are a record of what a run produced, and
 editing one to satisfy a lint would destroy the evidence it exists to hold.
+
+One file is exempt from one rule. `CHANGELOG.md` is an explicitly historical
+document, so its chronology is the content it exists to carry and the rule
+against narrating history does not apply to it; every other rule still does.
 
 Waiver: put `prose-lint: allow <rule-id>` (several ids may be listed, or
 `all`) on the offending line or the line above it.
@@ -95,6 +109,10 @@ DEFAULT_PATHS = (
 # Generated help text and captured run evidence: a hit in either is owned
 # somewhere else, so neither can be fixed where it appears.
 EXCLUDED = ("docs/design/CLI.md", "tools/parity/golden")
+# Rules that do not apply to one scanned file, keyed by repository-relative
+# path. A changelog is an explicitly historical document: its chronology is
+# the content, so narrating history is what it is for.
+RULE_EXEMPT: dict[str, frozenset[str]] = {"CHANGELOG.md": frozenset({"narrated-history"})}
 REVIEW = "review"
 FAILURE = "failure"
 SAMPLE = 20  # hits printed per risen rule in ratchet mode
@@ -157,6 +175,12 @@ RULES: tuple[Rule, ...] = tuple(
             re.IGNORECASE,
         ),
         ("bare-issue-reference", r"^\s*#[0-9]+ |^\s*\(#[0-9]+\)\s*$", FAILURE, re.NOFLAG),
+        (
+            "temporal-hedge",
+            r"\b(today|currently|at present|as of now|for now)\b",
+            REVIEW,
+            re.IGNORECASE,
+        ),
     )
 )
 
@@ -241,12 +265,15 @@ def _waived(lines: Sequence[str], number: int, rule: str) -> bool:
 
 
 def scan(source: str, path: str, rules: Sequence[Rule]) -> list[Hit]:
-    """Report every hit in one file's prose, honouring allowlist and waivers."""
+    """Report one file's hits, honouring allowlist, waivers, and exemptions."""
     lines = source.splitlines()
     prose = python_prose(source) if path.endswith(".py") else markdown_prose(source)
+    exempt = RULE_EXEMPT.get(path, frozenset())
     hits: list[Hit] = []
     for number, text in prose:
         for rule in rules:
+            if rule.name in exempt:
+                continue
             for found in rule.pattern.finditer(text):
                 if rule.name == "codename-label" and _allowed(text, found.span()):
                     continue
