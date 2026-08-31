@@ -85,7 +85,7 @@ def _harmonic(value: float) -> float:
     n = int(value)
     if n <= 0:
         return 0.0
-    return float(sum(1.0 / k for k in range(1, n + 1)))
+    return math.fsum(1.0 / k for k in range(1, n + 1))
 
 
 def _cap(value: float, *, max: float) -> float:  # noqa: A002 — "max" is the spec param name

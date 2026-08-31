@@ -145,7 +145,7 @@
       "scalar_provenance": "builtin"
     },
     "v1": {
-      "drift_loss_mean": 0.39999999999999997,
+      "drift_loss_mean": 0.4,
       "entry_count": 7,
       "expectation_count": 7,
       "generation_id": "v1",

@@ -173,8 +173,10 @@ def delta_spread(scalars: list[float] | tuple[float, ...]) -> tuple[float, float
         return 0.0, 0.0
     values = [float(s) for s in scalars]
     max_abs = max(values) - min(values)
-    mean = sum(values) / len(values)
-    variance = sum((v - mean) ** 2 for v in values) / len(values)
+    # ``math.fsum``: the noise floor this returns is compared against a
+    # contract margin, so it must not shift with the interpreter version.
+    mean = math.fsum(values) / len(values)
+    variance = math.fsum((v - mean) ** 2 for v in values) / len(values)
     return max_abs, math.sqrt(2.0 * variance)
 
 

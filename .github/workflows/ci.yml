@@ -70,15 +70,30 @@ jobs:
         run: uv run pytest tests/
 
   parity:
-    name: parity gates
+    name: parity gates (${{ matrix.python-version }})
     # PYTEST is skipped: that gate runs the same suite as lint-and-test's
     # Pytest step (pyproject testpaths = ["tests"]). Every other gate runs.
+    #
+    # Every supported interpreter, not one: a golden is a claim that the
+    # bytes are a function of the code and the inputs, and running it on a
+    # single version cannot distinguish that from a function of the
+    # interpreter. CPython 3.12 changed the builtin `sum` over floats to
+    # compensated summation, which moved a served scalar by one ulp and made
+    # a mock-evolve golden green on 3.12 and red on 3.11. The aggregation
+    # seam now uses math.fsum so the values are exact either way
+    # (tests/test_scalar_aggregation_is_exact.py); this matrix is what would
+    # catch the next such difference instead of an operator running the
+    # ladder on the other version.
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12"]
     env:
       # tools/parity.sh shells out to `uv run`; --frozen keeps those from
       # re-resolving the lock mid-gate.
       UV_FROZEN: "1"
-      UV_PYTHON: "3.12"
+      UV_PYTHON: ${{ matrix.python-version }}
     steps:
       - uses: actions/checkout@v4
 
@@ -88,8 +103,8 @@ jobs:
           enable-cache: true
           cache-dependency-glob: "uv.lock"
 
-      - name: Set up Python 3.12
-        run: uv python install 3.12
+      - name: Set up Python ${{ matrix.python-version }}
+        run: uv python install ${{ matrix.python-version }}
 
       - name: Sync dependencies
         # The gates import the tests/ helpers and the examples package.
@@ -101,9 +116,9 @@ jobs:
         uses: actions/cache@v4
         with:
           path: .mypy_cache
-          key: mypy-3.12-${{ hashFiles('pyproject.toml', 'uv.lock') }}
+          key: mypy-${{ matrix.python-version }}-${{ hashFiles('pyproject.toml', 'uv.lock') }}
           restore-keys: |
-            mypy-3.12-
+            mypy-${{ matrix.python-version }}-
 
       - name: Parity gates
         run: bash tools/parity.sh --skip PYTEST
