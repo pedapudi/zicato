@@ -20,8 +20,8 @@ The command wires together:
 
 The auxiliary callable resolution mirrors the ``zicato proposer propose``
 command's discipline: we read the workspace config's
-``runtime.auxiliary_call_llm`` (or its legacy ``auxiliary_call_llm``
-sibling) and import the dotted path. A failure to resolve the callable
+``runtime.auxiliary_call_llm`` (or the top-level ``auxiliary_call_llm``
+key, also accepted) and import the dotted path. A failure to resolve the callable
 surfaces as a ``ClickException`` rather than a stack trace.
 """
 

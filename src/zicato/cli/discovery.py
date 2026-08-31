@@ -1,4 +1,4 @@
-"""Build the deliberately small, static command hierarchy."""
+"""Build the small, static command hierarchy."""
 
 from __future__ import annotations
 

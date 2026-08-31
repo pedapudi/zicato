@@ -103,12 +103,12 @@ def _load_weights(scoring_path: str | None) -> ScoringWeights:
     — the SAME loader the contract canonicalizer and ``evolve`` use when
     they re-derive the live scoring — so the ``ScoringWeights`` ``epoch
     new`` freezes is byte-for-byte what a later ``evolve`` reconstructs
-    from the live ``scoring.json``. A field-by-field reimplementation
-    here historically dropped the ``tournament`` block, which made an
-    epoch created with a tournament structure auto-roll on the very next
-    ``evolve`` (the frozen hash was computed over a gauntlet default while
-    ``evolve`` recomputed over the real structure). Sharing one loader
-    keeps the two paths from drifting again.
+    from the live ``scoring.json``. A field-by-field reimplementation here
+    would drop a block — the ``tournament`` block is the one that has — and
+    an epoch created with a tournament structure would then auto-roll on the
+    very next ``evolve``, because the frozen hash was computed over a
+    gauntlet default while ``evolve`` recomputes over the real structure.
+    Sharing one loader is what keeps the two paths aligned.
     """
     if scoring_path is None:
         return ScoringWeights()
@@ -297,7 +297,7 @@ def new_cmd(
     # would make the two hashes disagree and roll the epoch on the very
     # first evolve — and would run the epoch under a proposer the operator
     # never registered. An uninitialized workspace has nothing registered
-    # to carry; the epoch then hashes every component empty, as before.
+    # to carry; the epoch then hashes every component empty.
     contract = resolve_contract_inputs(ws) if workspace_is_initialized(ws) else None
 
     cfg = lifecycle.new_epoch(

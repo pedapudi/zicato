@@ -1,6 +1,6 @@
 """``zicato repair index`` — full rebuild of the SQLite analytical index.
 
-ADVANCED / FORENSIC — off the happy path, and no longer part of routine
+ADVANCED / FORENSIC — off the happy path, and no part of routine
 operation. Reindexing is automatic: ``zicato evolve`` builds an absent or
 wrong-schema index and re-projects any diverged epoch at its own start, and
 the dashboard builds an absent one when it boots
@@ -16,7 +16,7 @@ What still calls for running it by hand (§5.4):
 
 * **Downgrade recovery** — an index written by a NEWER zicato raises
   ``IndexSchemaNewerError`` and is never auto-deleted; the operator deletes
-  it and rebuilds deliberately.
+  it and rebuilds explicitly.
 * **Post-surgery rebuilds** — after hand-editing a value INSIDE a canonical
   file without changing any file count, which the cheap per-epoch cursors
   cannot see.

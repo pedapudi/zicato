@@ -124,7 +124,7 @@ def _resolve_supervisor_binary(config: IntegrationConfig | None = None) -> Path 
        exists we prefer it whenever the bundled copy is absent OR the
        release build is at least as new (by mtime); otherwise we use the
        bundled copy. An installed wheel has no ``target/release`` and so
-       always gets the bundled binary, exactly as before.
+       always gets the bundled binary.
     3. The system ``PATH`` (``zicato-supervisor`` installed globally).
     4. The dev-checkout release build, as a last resort even when it is
        *older* than nothing else resolved — a bare checkout that has
@@ -411,7 +411,7 @@ def _announce_dashboard_still_serving(
 
     The live dashboard is most interesting *at* the end of an evolve loop
     — the final champion, the closed-out tournament funnel, the trend the
-    run produced. So at NORMAL conclusion we deliberately leave the
+    run produced. So at NORMAL conclusion we leave the
     dashboard service running rather than tearing it down, and print where
     it is still served plus how to stop it. (Error paths and explicit
     interrupts still tear it down — only the clean-finish teardown is
@@ -582,7 +582,7 @@ def _dry_run_and_exit(workspace_root: Path, epoch: str | None) -> None:
     the LAST round ran and miss anything edited since.
 
     A dry run also probes reachability, which the gate on the spend
-    paths deliberately does not: one short request per configured model
+    paths does not: one short request per configured model
     role, sent only once the offline validators have passed. This is
     where a round trip belongs. ``--dry-run`` is the "will this work?"
     gesture — interactive, network-tolerant, costing no board entry —
@@ -923,9 +923,9 @@ def evolve_cmd(
     # ended.
     stop_reason_out: list[str] = []
 
-    # SIGTERM teardown state (task #12). The children live in their OWN
-    # sessions (post-#72 blast-radius isolation), so an unhandled SIGTERM
-    # of evolve would orphan BOTH of them: the default disposition kills
+    # SIGTERM teardown state. The children live in their OWN process
+    # sessions, so that a signal to one cannot reach the others; an
+    # unhandled SIGTERM of evolve would therefore orphan BOTH of them: the default disposition kills
     # this process without unwinding ``_run``'s teardown. The handler
     # below converts SIGTERM into a cooperative cancellation of the main
     # task, which unwinds through the SAME ``_terminate_child`` teardown
@@ -1010,7 +1010,7 @@ def evolve_cmd(
             await _terminate_child(sup)
             raise
         # Normal conclusion. The watchdog supervisor has no purpose once
-        # the loop is done, so tear it down — but deliberately leave the
+        # the loop is done, so tear it down — but leave the
         # dashboard service running so the operator can inspect the final
         # state of the run (per repo convention every evolve launch serves
         # the dashboard and reports its URL). Announce that it is still up.
@@ -1021,7 +1021,7 @@ def evolve_cmd(
         _announce_dashboard_still_serving(workspace_root, dashboard_port, dash)
         return result
 
-    # Imported here, not at module scope: CLI discovery imports every command
+    # Imported here rather than at module scope: CLI discovery imports every command
     # module to build the root group, so ``zicato --help`` must not pull in
     # the evolve pipeline.
     from zicato.check import WorkspaceCheckError, render_report  # noqa: PLC0415

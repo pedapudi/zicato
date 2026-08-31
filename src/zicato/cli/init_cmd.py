@@ -29,7 +29,7 @@ def _utcnow_iso() -> str:
 
 
 #: The only pre-existing ``config.json`` key ``--force`` carries across.
-#: Named in the refusal message so the loss is stated, not implied.
+#: Named in the refusal message so the loss is stated rather than implied.
 _PRESERVED_ON_FORCE = "generation_source_backend"
 
 
@@ -79,15 +79,14 @@ def initialize_workspace(
     * ``{workspace_root}/config.json`` — ``{instance_id, created_at,
       generation_source_backend}``
     * ``{workspace_root}/lineage.json`` — empty DAG: ``{"epochs": []}``
-      (the shape :func:`zicato.epoch.lineage.load_lineage` reads; the
-      seed used to be ``{"nodes": [], "edges": []}``, which the loader
-      rejected as malformed and silently replaced with the empty DAG on
-      the first mutation)
+      (the shape :func:`zicato.epoch.lineage.load_lineage` reads; any other
+      shape is rejected as malformed and silently replaced with the empty
+      DAG on the first mutation)
     * ``{workspace_root_parent}/scoring.json`` — the FULL recommended
       effective contract (racing field 4, replicates 2, evidence gate on;
       see :func:`zicato.core.scoring_config.recommended_scaffold_weights`),
       written only when no ``scoring.json`` exists there yet (never
-      clobbered, not even with ``force`` — it is the operator's live
+      clobbered rather than even with ``force`` — it is the operator's live
       contract source, resolved by ``resolve_contract_inputs``).
     """
     if workspace_root.exists():
@@ -138,7 +137,7 @@ def initialize_workspace(
     if force or not lineage_path.exists():
         lineage_path.write_text(json.dumps({"epochs": []}, indent=2, sort_keys=True) + "\n")
 
-    # The generation-store backend is recorded, not left to the default.
+    # The generation-store backend is recorded rather than left to the default.
     # Which store a workspace's generations live in is a durable property
     # of the workspace: writing it here means a later change to
     # DEFAULT_GENERATION_SOURCE_BACKEND cannot re-interpret a workspace that already

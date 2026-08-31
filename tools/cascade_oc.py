@@ -11,8 +11,9 @@ known-answer harness that measures the operating characteristics of a
 cascade; it drives the ALREADY-SHIPPED decision code paths (the real
 ``RacingStrategy`` rung cut, the real ``evaluate_gate`` / ``holdout_confirms``,
 the real ``measure_noise_floor`` calibration, the real evidence-gated
-``resolve_tournament`` terminal, the real ``run_candidate_screen`` veto) under
-the seeded target_0 noise model, and records what a cascade WOULD do.
+``resolve_tournament`` terminal, the real ``run_candidate_screen`` veto)
+under the seeded noise model of the deterministic convergence example
+(``target_0_convergence``), and records what a cascade WOULD do.
 
 Design (why this is not a reimplementation)
 --------------------------------------------
@@ -67,7 +68,8 @@ import pytest
 
 # The seeded-noise substrate — reused verbatim from the shipped power harness
 # so the cascade drives the SAME noise model, output synthesis, and real board
-# predicates (CASCADE.md §4.1: "inherits the target_0 example world verbatim").
+# predicates: the same example world the convergence recipe uses
+# (CASCADE.md §4.1).
 from tests.test_decision_procedure_power import (  # noqa: E402  (path set up by conftest)
     BASE_TOKENS,
     DELTA_CASES,
@@ -125,7 +127,7 @@ class HarnessParams:
     #: Rung successive-halving ratio (racing's default).
     eta: int = 2
     #: Slice sizes the rung sweep measures, in board-entry counts. The board
-    #: has 5 entries; m=5 is the full board (the terminal gate, not a rung),
+    #: has 5 entries; m=5 is the full board (the terminal gate rather than a rung),
     #: so rungs sweep {1,2,3,4}.
     rung_slice_sizes: tuple[int, ...] = (1, 2, 3, 4)
     #: Experiment C: the planted effects the budget curve is drawn at (§4.4 is
@@ -197,7 +199,7 @@ def _wilson_ci(successes: int, n: int, z: float = _WILSON_Z95) -> tuple[float, f
     finite trial count; this reports the sampling uncertainty around each so the
     doc can carry an interval instead of an unqualified point rate. The
     board-unit BUDGET numbers are exact counts (a deterministic function of the
-    seeds), not sampled proportions, so they carry no interval.
+    seeds) rather than sampled proportions, so they carry no interval.
     """
     if n == 0:
         return (0.0, 0.0)
@@ -786,7 +788,7 @@ def _experiment_c_at_delta(
                 "power": promotes / params.c_trials,
                 "power_count": promotes,
                 "power_ci95": _wilson_ci(promotes, params.c_trials),
-                # exact count, not a sampled proportion → no interval
+                # exact count rather than a sampled proportion → no interval
                 "mean_board_units": spend / params.c_trials,
             }
         )

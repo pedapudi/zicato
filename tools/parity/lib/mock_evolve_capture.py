@@ -23,8 +23,8 @@ different code:
   the crowning holdout confirmation a single-challenger full round still
   runs.
 * ``gauntlet_fast`` — one challenger under ``--mode fast``. The cache-first
-  slot resolution, and the one place holdout confirmation is deliberately
-  skipped (``field_n == 1 and fast_mode``).
+  slot resolution, and the one place holdout confirmation is skipped
+  (``field_n == 1 and fast_mode``).
 * ``racing_fast`` — a four-challenger field under ``--mode fast``, where
   every rung resolves both competitors through the unit cache.
 * ``two_round_racing`` — the racing field under ``--mode full`` for TWO
@@ -354,7 +354,7 @@ def drive_mock_evolve(
     artifacts) and the REINDEX-DUMP gate (which rebuilds the SQLite index
     from this same on-disk workspace and dumps it). REINDEX-DUMP takes the
     default lane, so its golden is a projection of the single-round racing
-    full-mode workspace exactly as before.
+    full-mode workspace.
 
     Reuses the harness mocks + bootstrap from the example test so the
     captured behavior is identical to what the unit suite asserts.

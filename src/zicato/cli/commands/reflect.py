@@ -22,7 +22,7 @@ group with zero wiring elsewhere):
   (never the sealed contract); the operator seals it through the builder, which
   is the gated step that rolls the epoch.
 
-Running reflection never rolls the epoch — it is measurement, not evolution.
+Running reflection never rolls the epoch — it is measurement rather than evolution.
 """
 
 from __future__ import annotations
@@ -42,7 +42,7 @@ from zicato.core.workspace import (
     reflection_scorecards_path,
 )
 
-# The live-run gate message (G3): an ACTIVE reflection — one that would spend
+# The live-run gate message: an ACTIVE reflection — one that would spend
 # meta-judge (adjudicator) budget — is refused unless the operator supplies an
 # explicit adjudicator callable. Reflection never silently spends budget.
 _LIVE_RUN_GATE_MSG = (
@@ -429,7 +429,7 @@ def run_cmd(
         click.echo("review it, then re-run without --pre-register to execute.")
         return
 
-    # G3 live-run gate: adjudication requested but no callable ⇒ REFUSE.
+    # Live-run gate: adjudication requested but no callable ⇒ REFUSE.
     if adjudication_requested and not adjudicator_dotted:
         raise click.ClickException(_LIVE_RUN_GATE_MSG)
 
@@ -841,13 +841,13 @@ def _render_report_md(
     if flip is not None:
         lines.append(f"- P(gate decision flips): {flip}")
     else:
-        # S2: the bootstrap was undefined (too few replicates / no observations);
-        # surface the reason rather than a fabricated 0.0.
+        # The bootstrap was undefined (too few replicates, or no
+        # observations); surface the reason rather than a fabricated 0.0.
         reason = ((pillars.get("reliability") or {}).get("decision_flip") or {}).get("reason")
         detail = f" ({reason})" if reason else ""
         lines.append(f"- P(gate decision flips): n/a{detail}")
 
-    # CALIBRATION. The margin and the floor are one reading, not two: a margin
+    # CALIBRATION. The margin and the floor are a single reading: a margin
     # at or below the floor cannot tell a promotion from a re-roll of the same
     # generation, and that verdict is already computed in the pillar.
     calibration = pillars.get("calibration", {}) or {}
@@ -915,7 +915,7 @@ def _render_report_md(
         # judge can score a clean f1 and still fire at the wrong severity, or
         # disagree with itself across replicates of the same decision. Dropping
         # those columns hid the two failure modes the module separates them to
-        # expose. ``n_decisions`` is deliberately NOT a column: the invariant
+        # expose. ``n_decisions`` is NOT a column: the invariant
         # ``tp + fp + fn + tn + ambiguous == n_decisions`` holds per row, so it
         # would be arithmetic the reader can already do.
         lines.append(

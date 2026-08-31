@@ -6,7 +6,7 @@ mutations`` by hand only to audit *what* the proposer is allowed to
 change.
 
 Standalone command file auto-discovered under
-``zicato/cli/commands/``; this file deliberately does NOT import from
+``zicato/cli/commands/``; this file does NOT import from
 ``zicato.cli`` so the discovery layer can stay one-way.
 
 The command reads ``<workspace>/config.json`` to learn the source roots

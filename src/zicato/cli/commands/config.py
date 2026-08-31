@@ -7,7 +7,7 @@ ADVANCED — off the happy path. Operator knobs live on CLI flags (each
 configuration knob.
 
 ``zicato inspect environment`` prints the small MERITED set of environment
-variables zicato still deliberately touches — each one a
+variables zicato still touches — each one a
 process-boundary contract (harness contract, internal handoff, secrets
 boundary, external integration, CI/test toggle), sourced from
 :func:`zicato.config.describe_env_vars` so this command can never drift

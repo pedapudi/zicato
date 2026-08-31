@@ -256,7 +256,7 @@ def _load_historical_aggregate(
 ) -> dict[str, Any]:
     """Read the parent generation's cached ``gen_score.json`` aggregate.
 
-    Fast mode needs the parent's previously-computed scalar / per-entry
+    Fast mode needs the parent's already-computed scalar and per-entry
     drift counts to gate against. The convention is that the runner
     writes the aggregate to ``gen_score.json`` under the generation's
     directory after a full-mode tournament.

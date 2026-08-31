@@ -37,7 +37,7 @@ from normalize import _EPOCH_DATE_PREFIX, _ISO_TS  # noqa: PLC2701
 GOLDEN_PATH = Path(__file__).resolve().parents[1] / "golden" / "reindex_dump.sql"
 
 # A 32-hex token embedded ANYWHERE in a dump line (patch ids surface inside
-# INSERT value lists, not as standalone JSON strings, so the whole-token
+# INSERT value lists rather than as standalone JSON strings, so the whole-token
 # rule in normalize.py does not reach them).
 _EMBEDDED_UUID = re.compile(r"\b[0-9a-f]{32}\b")
 
