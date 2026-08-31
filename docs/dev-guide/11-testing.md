@@ -50,7 +50,7 @@
 | `tests/test_decision_procedure_power.py` | **oracle 2** — the operating characteristics of the decision procedure under seeded noise |
 | `tests/test_genstore_conformance.py` | the cross-backend `GenerationStore` conformance suite + the session-template fixtures |
 | `tests/test_conftest_dashboard_reaper.py` | the bug #5 regression pins for the reaper (provenance scoping + no self-group-kill) |
-| `tools/parity.sh` | the six behavior-preserving refactor gates (PYTEST / CONTRACT-HASH / CLI-HELP / REINDEX-DUMP / MOCK-GOLDEN / MYPY) |
+| `tools/parity.sh` | the behavior-preserving refactor gates (PYTEST / CONTRACT-HASH / CLI-HELP / REINDEX-DUMP / four MOCK-GOLDEN lanes / MYPY) |
 | `tools/parity/lib/*.py` | the gate helpers: `contract_hash.py`, `cli_help.py`, `normalize.py`, `mock_evolve_capture.py`, `test_mock_golden.py`, `test_reindex_golden.py` |
 | `tools/parity/golden/` | the committed golden baselines |
 | `pyproject.toml` | `[tool.pytest.ini_options]` (markers, `addopts`), `[tool.importlinter]` (the five contracts), `[tool.ruff.lint...banned-api]` (the TID251 bans) |
@@ -846,7 +846,7 @@ There is one git-specific subtlety the template must handle: a materialised
 git worktree registers its ABSOLUTE path inside the repo, which cannot
 survive relocation-by-`copytree`. The template drops the worktrees and
 prunes the registrations so each copy re-materialises its own on first
-`snapshot_root()`:
+`materialize_snapshot()`:
 
 ```python
         worktrees = ws / GitGenerationStore.WORKTREES_DIRNAME
@@ -988,15 +988,45 @@ refactor that changes which rows the projection produces, or any column
 value, moves these bytes. **Reds legitimately** when the projection changes
 (a new ingest column, a changed row). **Update:** `ZICATO_PARITY_UPDATE=1`.
 
-### 11.7.5 MOCK-GOLDEN
+### 11.7.5 MOCK-GOLDEN (four lanes)
 
-The strongest single end-to-end gate. It runs the deterministic, no-live-LLM
-racing mock evolve (the real `target_1_presentation` contract) and freezes
-the EXACT serialized bytes of every decision artifact — `gen_score.json`,
-`experiment.json`, any `loss.json`, `lineage.json` — after masking
-wall-clock noise. It exercises the full orchestrated path (propose N
-challengers, apply real patches against real markers, run the rungs + cuts,
-crown through the champion gate, persist the audit):
+The strongest end-to-end gates. Each runs a deterministic, no-live-LLM mock
+evolve of the real `target_1_presentation` contract and freezes the EXACT
+serialized bytes of every decision artifact — `gen_score.json`,
+`experiment.json`, any `loss.json`, each round's `round_log.jsonl`, each
+settled `tournaments/field-*.json` snapshot (which carries the round's
+recorded `promoted_generation_id` / `champion_generation_id`), and
+`lineage.json` — after masking wall-clock noise. Together they exercise the
+full orchestrated path: propose N challengers, apply real patches against
+real markers, run the rungs + cuts, crown through the champion gate,
+confirm on the holdout, persist the audit.
+
+**Why four.** One capture pins one configuration, and the evolve round
+branches on two axes that select genuinely different code. The lanes are
+the cross-product that covers those branches; each has its own golden and
+its own gate, so a red names the configuration that moved:
+
+| Gate | Structure · mode | What only this lane executes |
+| --- | --- | --- |
+| `MOCK-GOLDEN` | racing field 4 · full | the multi-challenger rungs, cuts, and crowning duel |
+| `MOCK-GOLDEN-GAUNTLET` | gauntlet · full | the `field_n == 1` full-board selector, and the crowning holdout a single-challenger full round still runs |
+| `MOCK-GOLDEN-GAUNTLET-FAST` | gauntlet · fast | the one configuration that deliberately SKIPS the crowning holdout (`field_n == 1 and fast_mode`) |
+| `MOCK-GOLDEN-RACING-FAST` | racing field 4 · fast | every rung resolving both competitors through the unit cache |
+
+The two fast lanes pre-seed the champion's per-board `loss.json` for every
+replicate slot the contract requests and install the PERSISTING reducer
+stub. Without both, every cache read raises, fast mode degrades to full, and
+the lane would capture the full-mode path under a fast-mode name — the
+goldens record `champion_eval_mode: "fast"`, which is the assertion that it
+did not.
+
+`tools/parity.sh` selects a lane with `pytest -k <lane name>`, so no lane
+name may be a substring of another. The lane table lives in
+`tools/parity/lib/mock_evolve_capture.py`; adding a lane there and a
+`_mock_golden_lane` line in `tools/parity.sh` is the whole wiring.
+
+The capture below is written for the racing lane, and generalises over both
+axes:
 
 ```python
 """Deterministic mock-evolve capture for the parity oracle (MOCK-GOLDEN gate).
@@ -1013,7 +1043,8 @@ field, or any serialization detail moves these bytes and fails the gate.
 — `tools/parity/lib/mock_evolve_capture.py` (module docstring)
 
 **Reds legitimately** when any loss / scalar / decision / id / structural
-field / serialization detail changes. **Update:** `ZICATO_PARITY_UPDATE=1`.
+field / round-log event / serialization detail changes. **Update:**
+`ZICATO_PARITY_UPDATE=1` (all lanes), or `-k <lane>` for one.
 The capture replicates the two conftest autouse fixtures itself (it lives
 OUTSIDE `tests/`, so that conftest's autouse fixtures do not fire) — pinning
 the default proposer to the text shim and neutering the harmonograf launch —

@@ -2,7 +2,7 @@
   "current_generation": "v1",
   "experiments": {
     "v1": {
-      "epoch_id": "<DATE>_t1_racing",
+      "epoch_id": "<DATE>_t1_racing_fast",
       "format_version": 1,
       "generation_id": "v1",
       "hypothesis": {
@@ -27,15 +27,15 @@
         "risks": "Compact bullets may drop nuance the writer relied on; the writer's slide quality may regress if so.",
         "why": "The current researcher prompt encourages a verbose, step-by-step synthesis; compact bullets give the writer a cleaner input and should reduce off-topic drift."
       },
-      "id": "exp_<DATE>_t1_racing_v1",
+      "id": "exp_<DATE>_t1_racing_fast_v1",
       "outcome": {
-        "champion_eval_mode": "full",
-        "drift_loss_delta": -1.6,
+        "champion_eval_mode": "fast",
+        "drift_loss_delta": -1.5999999999999999,
         "drift_movements": [],
         "eliminated_in_round": null,
         "evidence": null,
         "final_rank": 2,
-        "generalization_gap": 0.0,
+        "generalization_gap": -5.551115123125783e-17,
         "holdout": {
           "confirmed": true,
           "holdout_scalar": 0.4,
@@ -43,7 +43,7 @@
           "ladder_budget_total": 16,
           "ladder_released": true,
           "threshold": 0.01,
-          "train_scalar": 0.4
+          "train_scalar": 0.4000000000000001
         },
         "holdout_loss": 0.4,
         "match_record": [
@@ -54,13 +54,7 @@
             "won": true
           },
           {
-            "delta_scalar": -1.6,
-            "match_id": "rung1_m0",
-            "opponent": "v0",
-            "won": true
-          },
-          {
-            "delta_scalar": -1.6,
+            "delta_scalar": -1.5999999999999999,
             "match_id": "racing-final",
             "opponent": "v0",
             "won": true
@@ -75,7 +69,7 @@
         "scalar_score_delta": -1.6,
         "structure": "racing",
         "tournament_decision": "promoted",
-        "train_loss": 0.4
+        "train_loss": 0.4000000000000001
       },
       "parent_generation_id": "v0",
       "patch_ids": [
@@ -85,7 +79,7 @@
       "round_index": 0
     },
     "v2": {
-      "epoch_id": "<DATE>_t1_racing",
+      "epoch_id": "<DATE>_t1_racing_fast",
       "format_version": 1,
       "generation_id": "v2",
       "hypothesis": {
@@ -110,9 +104,9 @@
         "risks": "An overly terse routing flow may skip the debugger when it was actually needed; watch the multi-turn entries.",
         "why": "The current coordinator prompt is long and conflates two failure modes; a sharper routing flow reduces agent_transfer churn on the picky-stakeholder entry."
       },
-      "id": "exp_<DATE>_t1_racing_v2",
+      "id": "exp_<DATE>_t1_racing_fast_v2",
       "outcome": {
-        "champion_eval_mode": "full",
+        "champion_eval_mode": "fast",
         "drift_loss_delta": 0.0,
         "drift_movements": [],
         "eliminated_in_round": null,
@@ -125,12 +119,6 @@
           {
             "delta_scalar": -1.2,
             "match_id": "rung0_m1",
-            "opponent": "v0",
-            "won": true
-          },
-          {
-            "delta_scalar": -1.2,
-            "match_id": "rung1_m1",
             "opponent": "v0",
             "won": true
           }
@@ -154,7 +142,7 @@
       "round_index": 0
     },
     "v3": {
-      "epoch_id": "<DATE>_t1_racing",
+      "epoch_id": "<DATE>_t1_racing_fast",
       "format_version": 1,
       "generation_id": "v3",
       "hypothesis": {
@@ -174,9 +162,9 @@
         "risks": "Strict citation demands may slow the researcher down.",
         "why": "Uncited claims drive the writer to fabricate numbers; demanding a citation per bullet tightens factual grounding."
       },
-      "id": "exp_<DATE>_t1_racing_v3",
+      "id": "exp_<DATE>_t1_racing_fast_v3",
       "outcome": {
-        "champion_eval_mode": "full",
+        "champion_eval_mode": "fast",
         "drift_loss_delta": 0.0,
         "drift_movements": [],
         "eliminated_in_round": null,
@@ -212,7 +200,7 @@
       "round_index": 0
     },
     "v4": {
-      "epoch_id": "<DATE>_t1_racing",
+      "epoch_id": "<DATE>_t1_racing_fast",
       "format_version": 1,
       "generation_id": "v4",
       "hypothesis": {
@@ -232,9 +220,9 @@
         "risks": "Too tight a budget may cut a revision the user wanted.",
         "why": "Without a budget the coordinator re-dispatches the reviewer indefinitely; a hard turn cap halts the loop."
       },
-      "id": "exp_<DATE>_t1_racing_v4",
+      "id": "exp_<DATE>_t1_racing_fast_v4",
       "outcome": {
-        "champion_eval_mode": "full",
+        "champion_eval_mode": "fast",
         "drift_loss_delta": 0.0,
         "drift_movements": [],
         "eliminated_in_round": null,
@@ -301,8 +289,8 @@
         }
       ],
       "decision": "promoted",
-      "delta_scalar": -1.6,
-      "epoch_id": "<DATE>_t1_racing",
+      "delta_scalar": -1.5999999999999999,
+      "epoch_id": "<DATE>_t1_racing_fast",
       "field_status": [
         {
           "attempt_reasons": [],
@@ -349,7 +337,7 @@
           "label": "Rung 0",
           "matches": [
             {
-              "board_fraction": 0.4,
+              "board_fraction": 0.6666666666666666,
               "bracket_slot": "",
               "bye": false,
               "competitors": [
@@ -377,33 +365,6 @@
           "stage_index": 0
         },
         {
-          "label": "Rung 1",
-          "matches": [
-            {
-              "board_fraction": 0.8,
-              "bracket_slot": "",
-              "bye": false,
-              "competitors": [
-                "v1",
-                "v2"
-              ],
-              "cut": [
-                "v2"
-              ],
-              "decision": "",
-              "delta_scalar": null,
-              "live_progress": {},
-              "match_id": "rung1",
-              "pending": false,
-              "survivors": [
-                "v1"
-              ],
-              "winner": null
-            }
-          ],
-          "stage_index": 1
-        },
-        {
           "label": "Champion gate",
           "matches": [
             {
@@ -416,7 +377,7 @@
               ],
               "cut": [],
               "decision": "promoted",
-              "delta_scalar": -1.6,
+              "delta_scalar": -1.5999999999999999,
               "live_progress": {},
               "match_id": "racing-final",
               "pending": false,
@@ -424,7 +385,7 @@
               "winner": "v1"
             }
           ],
-          "stage_index": 3
+          "stage_index": 2
         }
       ],
       "standings": [
@@ -442,7 +403,7 @@
           "losses": 0,
           "rank": 2,
           "role": "challenger",
-          "scalar": 0.4,
+          "scalar": 0.4000000000000001,
           "status": "champion",
           "wins": 0
         },
@@ -452,7 +413,7 @@
           "rank": 3,
           "role": "challenger",
           "scalar": 0.8,
-          "status": "eliminated",
+          "status": "alive",
           "wins": 0
         },
         {
@@ -486,14 +447,14 @@
         "replicates": 2,
         "rung0_board_size": 0
       },
-      "tournament_id": "<DATE>_t1_racing:field:v1"
+      "tournament_id": "<DATE>_t1_racing_fast:field:v1"
     }
   },
   "gen_scores": {
     "v0": {
       "drift_loss_mean": 2.0,
-      "entry_count": 5,
-      "expectation_count": 5,
+      "entry_count": 3,
+      "expectation_count": 3,
       "generation_id": "v0",
       "mean_score": 1.0,
       "namespace_aggregates": {
@@ -509,12 +470,6 @@
       },
       "pass_rate": 1.0,
       "per_entry": {
-        "every_expectation_kind_demo": {
-          "drift_loss": 2.0,
-          "failure": 0.0,
-          "pass_fail": true,
-          "score": 1.0
-        },
         "q3_metrics_outline": {
           "drift_loss": 2.0,
           "failure": 0.0,
@@ -522,12 +477,6 @@
           "score": 1.0
         },
         "transformers_lay_audience": {
-          "drift_loss": 2.0,
-          "failure": 0.0,
-          "pass_fail": true,
-          "score": 1.0
-        },
-        "transformers_progressive_scripted": {
           "drift_loss": 2.0,
           "failure": 0.0,
           "pass_fail": true,
@@ -556,14 +505,14 @@
       "scalar_provenance": "builtin"
     },
     "v1": {
-      "drift_loss_mean": 0.4,
-      "entry_count": 5,
-      "expectation_count": 5,
+      "drift_loss_mean": 0.4000000000000001,
+      "entry_count": 3,
+      "expectation_count": 3,
       "generation_id": "v1",
       "mean_score": 1.0,
       "namespace_aggregates": {
         "cost:": 0.0,
-        "drift:": 0.4,
+        "drift:": 0.4000000000000001,
         "failure:": 0.0,
         "judge:": 0.0,
         "latency:": 0.0,
@@ -574,12 +523,6 @@
       },
       "pass_rate": 1.0,
       "per_entry": {
-        "every_expectation_kind_demo": {
-          "drift_loss": 0.4,
-          "failure": 0.0,
-          "pass_fail": true,
-          "score": 1.0
-        },
         "q3_metrics_outline": {
           "drift_loss": 0.4,
           "failure": 0.0,
@@ -592,12 +535,6 @@
           "pass_fail": true,
           "score": 1.0
         },
-        "transformers_progressive_scripted": {
-          "drift_loss": 0.4,
-          "failure": 0.0,
-          "pass_fail": true,
-          "score": 1.0
-        },
         "waffles_revision_scripted": {
           "drift_loss": 0.4,
           "failure": 0.0,
@@ -605,10 +542,10 @@
           "score": 1.0
         }
       },
-      "scalar": 0.4,
+      "scalar": 0.4000000000000001,
       "scalar_components": {
         "cost": 0.0,
-        "drift": 0.4,
+        "drift": 0.4000000000000001,
         "failure": 0.0,
         "judge": 0.0,
         "latency": 0.0,
@@ -622,8 +559,8 @@
     },
     "v2": {
       "drift_loss_mean": 0.8,
-      "entry_count": 4,
-      "expectation_count": 4,
+      "entry_count": 2,
+      "expectation_count": 2,
       "generation_id": "v2",
       "mean_score": 1.0,
       "namespace_aggregates": {
@@ -646,18 +583,6 @@
           "score": 1.0
         },
         "transformers_lay_audience": {
-          "drift_loss": 0.8,
-          "failure": 0.0,
-          "pass_fail": true,
-          "score": 1.0
-        },
-        "transformers_progressive_scripted": {
-          "drift_loss": 0.8,
-          "failure": 0.0,
-          "pass_fail": true,
-          "score": 1.0
-        },
-        "waffles_revision_scripted": {
           "drift_loss": 0.8,
           "failure": 0.0,
           "pass_fail": true,
@@ -824,15 +749,886 @@
             "round_index": 0
           }
         ],
-        "id": "<DATE>_t1_racing",
-        "name": "t1-racing",
+        "id": "<DATE>_t1_racing_fast",
+        "name": "t1-racing-fast",
         "started_at": "<TS>",
         "v0_parent": null
       }
     ],
     "format_version": 1
   },
-  "losses": {},
+  "losses": {
+    "v0/runs/every_expectation_kind_demo/loss.json": {
+      "abort_cause": null,
+      "adk_session_id": "",
+      "cached": false,
+      "context_loss_count": null,
+      "drift_counts": [],
+      "drift_loss": 2.0,
+      "ended_at": null,
+      "entry_id": "every_expectation_kind_demo",
+      "epoch_id": "<DATE>_t1_racing_fast",
+      "expectation_result": null,
+      "generation_id": "v0",
+      "judge_errors": [],
+      "match_id": "",
+      "memory_failure_count": null,
+      "metric_counts": [],
+      "metrics": null,
+      "not_completed": false,
+      "not_completed_reason": null,
+      "output_chars": 0,
+      "pass_fail": true,
+      "per_judge_loss": [],
+      "plan_revisions": 0,
+      "run_id": "r-v0-every_expectation_kind_demo-r0",
+      "runtime_ms": "<RUNTIME>",
+      "schema_failures": 0,
+      "score": null,
+      "scoring_provenance": null,
+      "source_epoch": "",
+      "source_run": "",
+      "started_at": null,
+      "task_failure_ratio": 0.0,
+      "tokens_spent": 0,
+      "turns_completed": null,
+      "wall_clock_budget_exceeded": false
+    },
+    "v0/runs/picky_stakeholder_emulated/loss.json": {
+      "abort_cause": null,
+      "adk_session_id": "",
+      "cached": false,
+      "context_loss_count": null,
+      "drift_counts": [],
+      "drift_loss": 2.0,
+      "ended_at": null,
+      "entry_id": "picky_stakeholder_emulated",
+      "epoch_id": "<DATE>_t1_racing_fast",
+      "expectation_result": null,
+      "generation_id": "v0",
+      "judge_errors": [],
+      "match_id": "",
+      "memory_failure_count": null,
+      "metric_counts": [],
+      "metrics": null,
+      "not_completed": false,
+      "not_completed_reason": null,
+      "output_chars": 0,
+      "pass_fail": true,
+      "per_judge_loss": [],
+      "plan_revisions": 0,
+      "run_id": "r-v0-picky_stakeholder_emulated-r0",
+      "runtime_ms": "<RUNTIME>",
+      "schema_failures": 0,
+      "score": null,
+      "scoring_provenance": null,
+      "source_epoch": "",
+      "source_run": "",
+      "started_at": null,
+      "task_failure_ratio": 0.0,
+      "tokens_spent": 0,
+      "turns_completed": null,
+      "wall_clock_budget_exceeded": false
+    },
+    "v0/runs/q3_metrics_outline/loss.json": {
+      "abort_cause": null,
+      "adk_session_id": "",
+      "cached": false,
+      "context_loss_count": null,
+      "drift_counts": [],
+      "drift_loss": 2.0,
+      "ended_at": null,
+      "entry_id": "q3_metrics_outline",
+      "epoch_id": "<DATE>_t1_racing_fast",
+      "expectation_result": null,
+      "generation_id": "v0",
+      "judge_errors": [],
+      "match_id": "",
+      "memory_failure_count": null,
+      "metric_counts": [],
+      "metrics": null,
+      "not_completed": false,
+      "not_completed_reason": null,
+      "output_chars": 0,
+      "pass_fail": true,
+      "per_judge_loss": [],
+      "plan_revisions": 0,
+      "run_id": "r-v0-q3_metrics_outline-r0",
+      "runtime_ms": "<RUNTIME>",
+      "schema_failures": 0,
+      "score": null,
+      "scoring_provenance": null,
+      "source_epoch": "",
+      "source_run": "",
+      "started_at": null,
+      "task_failure_ratio": 0.0,
+      "tokens_spent": 0,
+      "turns_completed": null,
+      "wall_clock_budget_exceeded": false
+    },
+    "v0/runs/transformers_lay_audience/loss.json": {
+      "abort_cause": null,
+      "adk_session_id": "",
+      "cached": false,
+      "context_loss_count": null,
+      "drift_counts": [],
+      "drift_loss": 2.0,
+      "ended_at": null,
+      "entry_id": "transformers_lay_audience",
+      "epoch_id": "<DATE>_t1_racing_fast",
+      "expectation_result": null,
+      "generation_id": "v0",
+      "judge_errors": [],
+      "match_id": "",
+      "memory_failure_count": null,
+      "metric_counts": [],
+      "metrics": null,
+      "not_completed": false,
+      "not_completed_reason": null,
+      "output_chars": 0,
+      "pass_fail": true,
+      "per_judge_loss": [],
+      "plan_revisions": 0,
+      "run_id": "r-v0-transformers_lay_audience-r0",
+      "runtime_ms": "<RUNTIME>",
+      "schema_failures": 0,
+      "score": null,
+      "scoring_provenance": null,
+      "source_epoch": "",
+      "source_run": "",
+      "started_at": null,
+      "task_failure_ratio": 0.0,
+      "tokens_spent": 0,
+      "turns_completed": null,
+      "wall_clock_budget_exceeded": false
+    },
+    "v0/runs/transformers_progressive_scripted/loss.json": {
+      "abort_cause": null,
+      "adk_session_id": "",
+      "cached": false,
+      "context_loss_count": null,
+      "drift_counts": [],
+      "drift_loss": 2.0,
+      "ended_at": null,
+      "entry_id": "transformers_progressive_scripted",
+      "epoch_id": "<DATE>_t1_racing_fast",
+      "expectation_result": null,
+      "generation_id": "v0",
+      "judge_errors": [],
+      "match_id": "",
+      "memory_failure_count": null,
+      "metric_counts": [],
+      "metrics": null,
+      "not_completed": false,
+      "not_completed_reason": null,
+      "output_chars": 0,
+      "pass_fail": true,
+      "per_judge_loss": [],
+      "plan_revisions": 0,
+      "run_id": "r-v0-transformers_progressive_scripted-r0",
+      "runtime_ms": "<RUNTIME>",
+      "schema_failures": 0,
+      "score": null,
+      "scoring_provenance": null,
+      "source_epoch": "",
+      "source_run": "",
+      "started_at": null,
+      "task_failure_ratio": 0.0,
+      "tokens_spent": 0,
+      "turns_completed": null,
+      "wall_clock_budget_exceeded": false
+    },
+    "v0/runs/waffles_revision_scripted/loss.json": {
+      "abort_cause": null,
+      "adk_session_id": "",
+      "cached": false,
+      "context_loss_count": null,
+      "drift_counts": [],
+      "drift_loss": 2.0,
+      "ended_at": null,
+      "entry_id": "waffles_revision_scripted",
+      "epoch_id": "<DATE>_t1_racing_fast",
+      "expectation_result": null,
+      "generation_id": "v0",
+      "judge_errors": [],
+      "match_id": "",
+      "memory_failure_count": null,
+      "metric_counts": [],
+      "metrics": null,
+      "not_completed": false,
+      "not_completed_reason": null,
+      "output_chars": 0,
+      "pass_fail": true,
+      "per_judge_loss": [],
+      "plan_revisions": 0,
+      "run_id": "r-v0-waffles_revision_scripted-r0",
+      "runtime_ms": "<RUNTIME>",
+      "schema_failures": 0,
+      "score": null,
+      "scoring_provenance": null,
+      "source_epoch": "",
+      "source_run": "",
+      "started_at": null,
+      "task_failure_ratio": 0.0,
+      "tokens_spent": 0,
+      "turns_completed": null,
+      "wall_clock_budget_exceeded": false
+    },
+    "v0/runs/waffles_single/loss.json": {
+      "abort_cause": null,
+      "adk_session_id": "",
+      "cached": false,
+      "context_loss_count": null,
+      "drift_counts": [],
+      "drift_loss": 2.0,
+      "ended_at": null,
+      "entry_id": "waffles_single",
+      "epoch_id": "<DATE>_t1_racing_fast",
+      "expectation_result": null,
+      "generation_id": "v0",
+      "judge_errors": [],
+      "match_id": "",
+      "memory_failure_count": null,
+      "metric_counts": [],
+      "metrics": null,
+      "not_completed": false,
+      "not_completed_reason": null,
+      "output_chars": 0,
+      "pass_fail": true,
+      "per_judge_loss": [],
+      "plan_revisions": 0,
+      "run_id": "r-v0-waffles_single-r0",
+      "runtime_ms": "<RUNTIME>",
+      "schema_failures": 0,
+      "score": null,
+      "scoring_provenance": null,
+      "source_epoch": "",
+      "source_run": "",
+      "started_at": null,
+      "task_failure_ratio": 0.0,
+      "tokens_spent": 0,
+      "turns_completed": null,
+      "wall_clock_budget_exceeded": false
+    },
+    "v1/runs/every_expectation_kind_demo/loss.json": {
+      "abort_cause": null,
+      "adk_session_id": "",
+      "cached": false,
+      "context_loss_count": null,
+      "drift_counts": [
+        {
+          "count": 0,
+          "kind": "off_topic",
+          "severity": "info"
+        }
+      ],
+      "drift_loss": 0.4,
+      "ended_at": null,
+      "entry_id": "every_expectation_kind_demo",
+      "epoch_id": "<DATE>_t1_racing_fast",
+      "expectation_result": {
+        "detail": "",
+        "kind": "predicate",
+        "metrics": null,
+        "passed": true,
+        "score": null
+      },
+      "generation_id": "v1",
+      "judge_errors": [],
+      "match_id": "",
+      "memory_failure_count": null,
+      "metric_counts": [],
+      "metrics": null,
+      "not_completed": false,
+      "not_completed_reason": null,
+      "output_chars": 0,
+      "pass_fail": true,
+      "per_judge_loss": [],
+      "plan_revisions": 0,
+      "run_id": "r-v1-every_expectation_kind_demo",
+      "runtime_ms": "<RUNTIME>",
+      "schema_failures": 0,
+      "score": null,
+      "scoring_provenance": null,
+      "source_epoch": "",
+      "source_run": "",
+      "started_at": null,
+      "task_failure_ratio": 0.0,
+      "tokens_spent": 0,
+      "turns_completed": null,
+      "wall_clock_budget_exceeded": false
+    },
+    "v1/runs/picky_stakeholder_emulated/loss.json": {
+      "abort_cause": null,
+      "adk_session_id": "",
+      "cached": false,
+      "context_loss_count": null,
+      "drift_counts": [
+        {
+          "count": 0,
+          "kind": "off_topic",
+          "severity": "info"
+        }
+      ],
+      "drift_loss": 0.4,
+      "ended_at": null,
+      "entry_id": "picky_stakeholder_emulated",
+      "epoch_id": "<DATE>_t1_racing_fast",
+      "expectation_result": {
+        "detail": "",
+        "kind": "predicate",
+        "metrics": null,
+        "passed": true,
+        "score": null
+      },
+      "generation_id": "v1",
+      "judge_errors": [],
+      "match_id": "",
+      "memory_failure_count": null,
+      "metric_counts": [],
+      "metrics": null,
+      "not_completed": false,
+      "not_completed_reason": null,
+      "output_chars": 0,
+      "pass_fail": true,
+      "per_judge_loss": [],
+      "plan_revisions": 0,
+      "run_id": "r-v1-picky_stakeholder_emulated",
+      "runtime_ms": "<RUNTIME>",
+      "schema_failures": 0,
+      "score": null,
+      "scoring_provenance": null,
+      "source_epoch": "",
+      "source_run": "",
+      "started_at": null,
+      "task_failure_ratio": 0.0,
+      "tokens_spent": 0,
+      "turns_completed": null,
+      "wall_clock_budget_exceeded": false
+    },
+    "v1/runs/q3_metrics_outline/loss.json": {
+      "abort_cause": null,
+      "adk_session_id": "",
+      "cached": false,
+      "context_loss_count": null,
+      "drift_counts": [
+        {
+          "count": 0,
+          "kind": "off_topic",
+          "severity": "info"
+        }
+      ],
+      "drift_loss": 0.4,
+      "ended_at": null,
+      "entry_id": "q3_metrics_outline",
+      "epoch_id": "<DATE>_t1_racing_fast",
+      "expectation_result": {
+        "detail": "",
+        "kind": "predicate",
+        "metrics": null,
+        "passed": true,
+        "score": null
+      },
+      "generation_id": "v1",
+      "judge_errors": [],
+      "match_id": "",
+      "memory_failure_count": null,
+      "metric_counts": [],
+      "metrics": null,
+      "not_completed": false,
+      "not_completed_reason": null,
+      "output_chars": 0,
+      "pass_fail": true,
+      "per_judge_loss": [],
+      "plan_revisions": 0,
+      "run_id": "r-v1-q3_metrics_outline",
+      "runtime_ms": "<RUNTIME>",
+      "schema_failures": 0,
+      "score": null,
+      "scoring_provenance": null,
+      "source_epoch": "",
+      "source_run": "",
+      "started_at": null,
+      "task_failure_ratio": 0.0,
+      "tokens_spent": 0,
+      "turns_completed": null,
+      "wall_clock_budget_exceeded": false
+    },
+    "v1/runs/transformers_lay_audience/loss.json": {
+      "abort_cause": null,
+      "adk_session_id": "",
+      "cached": false,
+      "context_loss_count": null,
+      "drift_counts": [
+        {
+          "count": 0,
+          "kind": "off_topic",
+          "severity": "info"
+        }
+      ],
+      "drift_loss": 0.4,
+      "ended_at": null,
+      "entry_id": "transformers_lay_audience",
+      "epoch_id": "<DATE>_t1_racing_fast",
+      "expectation_result": {
+        "detail": "",
+        "kind": "predicate",
+        "metrics": null,
+        "passed": true,
+        "score": null
+      },
+      "generation_id": "v1",
+      "judge_errors": [],
+      "match_id": "",
+      "memory_failure_count": null,
+      "metric_counts": [],
+      "metrics": null,
+      "not_completed": false,
+      "not_completed_reason": null,
+      "output_chars": 0,
+      "pass_fail": true,
+      "per_judge_loss": [],
+      "plan_revisions": 0,
+      "run_id": "r-v1-transformers_lay_audience",
+      "runtime_ms": "<RUNTIME>",
+      "schema_failures": 0,
+      "score": null,
+      "scoring_provenance": null,
+      "source_epoch": "",
+      "source_run": "",
+      "started_at": null,
+      "task_failure_ratio": 0.0,
+      "tokens_spent": 0,
+      "turns_completed": null,
+      "wall_clock_budget_exceeded": false
+    },
+    "v1/runs/transformers_progressive_scripted/loss.json": {
+      "abort_cause": null,
+      "adk_session_id": "",
+      "cached": false,
+      "context_loss_count": null,
+      "drift_counts": [
+        {
+          "count": 0,
+          "kind": "off_topic",
+          "severity": "info"
+        }
+      ],
+      "drift_loss": 0.4,
+      "ended_at": null,
+      "entry_id": "transformers_progressive_scripted",
+      "epoch_id": "<DATE>_t1_racing_fast",
+      "expectation_result": {
+        "detail": "",
+        "kind": "predicate",
+        "metrics": null,
+        "passed": true,
+        "score": null
+      },
+      "generation_id": "v1",
+      "judge_errors": [],
+      "match_id": "",
+      "memory_failure_count": null,
+      "metric_counts": [],
+      "metrics": null,
+      "not_completed": false,
+      "not_completed_reason": null,
+      "output_chars": 0,
+      "pass_fail": true,
+      "per_judge_loss": [],
+      "plan_revisions": 0,
+      "run_id": "r-v1-transformers_progressive_scripted",
+      "runtime_ms": "<RUNTIME>",
+      "schema_failures": 0,
+      "score": null,
+      "scoring_provenance": null,
+      "source_epoch": "",
+      "source_run": "",
+      "started_at": null,
+      "task_failure_ratio": 0.0,
+      "tokens_spent": 0,
+      "turns_completed": null,
+      "wall_clock_budget_exceeded": false
+    },
+    "v1/runs/waffles_revision_scripted/loss.json": {
+      "abort_cause": null,
+      "adk_session_id": "",
+      "cached": false,
+      "context_loss_count": null,
+      "drift_counts": [
+        {
+          "count": 0,
+          "kind": "off_topic",
+          "severity": "info"
+        }
+      ],
+      "drift_loss": 0.4,
+      "ended_at": null,
+      "entry_id": "waffles_revision_scripted",
+      "epoch_id": "<DATE>_t1_racing_fast",
+      "expectation_result": null,
+      "generation_id": "v1",
+      "judge_errors": [],
+      "match_id": "",
+      "memory_failure_count": null,
+      "metric_counts": [],
+      "metrics": null,
+      "not_completed": false,
+      "not_completed_reason": null,
+      "output_chars": 0,
+      "pass_fail": true,
+      "per_judge_loss": [],
+      "plan_revisions": 0,
+      "run_id": "r-v1-waffles_revision_scripted",
+      "runtime_ms": "<RUNTIME>",
+      "schema_failures": 0,
+      "score": null,
+      "scoring_provenance": null,
+      "source_epoch": "",
+      "source_run": "",
+      "started_at": null,
+      "task_failure_ratio": 0.0,
+      "tokens_spent": 0,
+      "turns_completed": null,
+      "wall_clock_budget_exceeded": false
+    },
+    "v1/runs/waffles_single/loss.json": {
+      "abort_cause": null,
+      "adk_session_id": "",
+      "cached": false,
+      "context_loss_count": null,
+      "drift_counts": [
+        {
+          "count": 0,
+          "kind": "off_topic",
+          "severity": "info"
+        }
+      ],
+      "drift_loss": 0.4,
+      "ended_at": null,
+      "entry_id": "waffles_single",
+      "epoch_id": "<DATE>_t1_racing_fast",
+      "expectation_result": {
+        "detail": "",
+        "kind": "predicate",
+        "metrics": null,
+        "passed": true,
+        "score": null
+      },
+      "generation_id": "v1",
+      "judge_errors": [],
+      "match_id": "",
+      "memory_failure_count": null,
+      "metric_counts": [],
+      "metrics": null,
+      "not_completed": false,
+      "not_completed_reason": null,
+      "output_chars": 0,
+      "pass_fail": true,
+      "per_judge_loss": [],
+      "plan_revisions": 0,
+      "run_id": "r-v1-waffles_single",
+      "runtime_ms": "<RUNTIME>",
+      "schema_failures": 0,
+      "score": null,
+      "scoring_provenance": null,
+      "source_epoch": "",
+      "source_run": "",
+      "started_at": null,
+      "task_failure_ratio": 0.0,
+      "tokens_spent": 0,
+      "turns_completed": null,
+      "wall_clock_budget_exceeded": false
+    },
+    "v2/runs/q3_metrics_outline/loss.json": {
+      "abort_cause": null,
+      "adk_session_id": "",
+      "cached": false,
+      "context_loss_count": null,
+      "drift_counts": [
+        {
+          "count": 0,
+          "kind": "off_topic",
+          "severity": "info"
+        }
+      ],
+      "drift_loss": 0.8,
+      "ended_at": null,
+      "entry_id": "q3_metrics_outline",
+      "epoch_id": "<DATE>_t1_racing_fast",
+      "expectation_result": {
+        "detail": "",
+        "kind": "predicate",
+        "metrics": null,
+        "passed": true,
+        "score": null
+      },
+      "generation_id": "v2",
+      "judge_errors": [],
+      "match_id": "",
+      "memory_failure_count": null,
+      "metric_counts": [],
+      "metrics": null,
+      "not_completed": false,
+      "not_completed_reason": null,
+      "output_chars": 0,
+      "pass_fail": true,
+      "per_judge_loss": [],
+      "plan_revisions": 0,
+      "run_id": "r-v2-q3_metrics_outline",
+      "runtime_ms": "<RUNTIME>",
+      "schema_failures": 0,
+      "score": null,
+      "scoring_provenance": null,
+      "source_epoch": "",
+      "source_run": "",
+      "started_at": null,
+      "task_failure_ratio": 0.0,
+      "tokens_spent": 0,
+      "turns_completed": null,
+      "wall_clock_budget_exceeded": false
+    },
+    "v2/runs/transformers_lay_audience/loss.json": {
+      "abort_cause": null,
+      "adk_session_id": "",
+      "cached": false,
+      "context_loss_count": null,
+      "drift_counts": [
+        {
+          "count": 0,
+          "kind": "off_topic",
+          "severity": "info"
+        }
+      ],
+      "drift_loss": 0.8,
+      "ended_at": null,
+      "entry_id": "transformers_lay_audience",
+      "epoch_id": "<DATE>_t1_racing_fast",
+      "expectation_result": {
+        "detail": "",
+        "kind": "predicate",
+        "metrics": null,
+        "passed": true,
+        "score": null
+      },
+      "generation_id": "v2",
+      "judge_errors": [],
+      "match_id": "",
+      "memory_failure_count": null,
+      "metric_counts": [],
+      "metrics": null,
+      "not_completed": false,
+      "not_completed_reason": null,
+      "output_chars": 0,
+      "pass_fail": true,
+      "per_judge_loss": [],
+      "plan_revisions": 0,
+      "run_id": "r-v2-transformers_lay_audience",
+      "runtime_ms": "<RUNTIME>",
+      "schema_failures": 0,
+      "score": null,
+      "scoring_provenance": null,
+      "source_epoch": "",
+      "source_run": "",
+      "started_at": null,
+      "task_failure_ratio": 0.0,
+      "tokens_spent": 0,
+      "turns_completed": null,
+      "wall_clock_budget_exceeded": false
+    },
+    "v3/runs/q3_metrics_outline/loss.json": {
+      "abort_cause": null,
+      "adk_session_id": "",
+      "cached": false,
+      "context_loss_count": null,
+      "drift_counts": [
+        {
+          "count": 0,
+          "kind": "off_topic",
+          "severity": "info"
+        }
+      ],
+      "drift_loss": 1.2,
+      "ended_at": null,
+      "entry_id": "q3_metrics_outline",
+      "epoch_id": "<DATE>_t1_racing_fast",
+      "expectation_result": {
+        "detail": "",
+        "kind": "predicate",
+        "metrics": null,
+        "passed": true,
+        "score": null
+      },
+      "generation_id": "v3",
+      "judge_errors": [],
+      "match_id": "",
+      "memory_failure_count": null,
+      "metric_counts": [],
+      "metrics": null,
+      "not_completed": false,
+      "not_completed_reason": null,
+      "output_chars": 0,
+      "pass_fail": true,
+      "per_judge_loss": [],
+      "plan_revisions": 0,
+      "run_id": "r-v3-q3_metrics_outline",
+      "runtime_ms": "<RUNTIME>",
+      "schema_failures": 0,
+      "score": null,
+      "scoring_provenance": null,
+      "source_epoch": "",
+      "source_run": "",
+      "started_at": null,
+      "task_failure_ratio": 0.0,
+      "tokens_spent": 0,
+      "turns_completed": null,
+      "wall_clock_budget_exceeded": false
+    },
+    "v3/runs/transformers_lay_audience/loss.json": {
+      "abort_cause": null,
+      "adk_session_id": "",
+      "cached": false,
+      "context_loss_count": null,
+      "drift_counts": [
+        {
+          "count": 0,
+          "kind": "off_topic",
+          "severity": "info"
+        }
+      ],
+      "drift_loss": 1.2,
+      "ended_at": null,
+      "entry_id": "transformers_lay_audience",
+      "epoch_id": "<DATE>_t1_racing_fast",
+      "expectation_result": {
+        "detail": "",
+        "kind": "predicate",
+        "metrics": null,
+        "passed": true,
+        "score": null
+      },
+      "generation_id": "v3",
+      "judge_errors": [],
+      "match_id": "",
+      "memory_failure_count": null,
+      "metric_counts": [],
+      "metrics": null,
+      "not_completed": false,
+      "not_completed_reason": null,
+      "output_chars": 0,
+      "pass_fail": true,
+      "per_judge_loss": [],
+      "plan_revisions": 0,
+      "run_id": "r-v3-transformers_lay_audience",
+      "runtime_ms": "<RUNTIME>",
+      "schema_failures": 0,
+      "score": null,
+      "scoring_provenance": null,
+      "source_epoch": "",
+      "source_run": "",
+      "started_at": null,
+      "task_failure_ratio": 0.0,
+      "tokens_spent": 0,
+      "turns_completed": null,
+      "wall_clock_budget_exceeded": false
+    },
+    "v4/runs/q3_metrics_outline/loss.json": {
+      "abort_cause": null,
+      "adk_session_id": "",
+      "cached": false,
+      "context_loss_count": null,
+      "drift_counts": [
+        {
+          "count": 0,
+          "kind": "off_topic",
+          "severity": "info"
+        }
+      ],
+      "drift_loss": 1.6,
+      "ended_at": null,
+      "entry_id": "q3_metrics_outline",
+      "epoch_id": "<DATE>_t1_racing_fast",
+      "expectation_result": {
+        "detail": "",
+        "kind": "predicate",
+        "metrics": null,
+        "passed": true,
+        "score": null
+      },
+      "generation_id": "v4",
+      "judge_errors": [],
+      "match_id": "",
+      "memory_failure_count": null,
+      "metric_counts": [],
+      "metrics": null,
+      "not_completed": false,
+      "not_completed_reason": null,
+      "output_chars": 0,
+      "pass_fail": true,
+      "per_judge_loss": [],
+      "plan_revisions": 0,
+      "run_id": "r-v4-q3_metrics_outline",
+      "runtime_ms": "<RUNTIME>",
+      "schema_failures": 0,
+      "score": null,
+      "scoring_provenance": null,
+      "source_epoch": "",
+      "source_run": "",
+      "started_at": null,
+      "task_failure_ratio": 0.0,
+      "tokens_spent": 0,
+      "turns_completed": null,
+      "wall_clock_budget_exceeded": false
+    },
+    "v4/runs/transformers_lay_audience/loss.json": {
+      "abort_cause": null,
+      "adk_session_id": "",
+      "cached": false,
+      "context_loss_count": null,
+      "drift_counts": [
+        {
+          "count": 0,
+          "kind": "off_topic",
+          "severity": "info"
+        }
+      ],
+      "drift_loss": 1.6,
+      "ended_at": null,
+      "entry_id": "transformers_lay_audience",
+      "epoch_id": "<DATE>_t1_racing_fast",
+      "expectation_result": {
+        "detail": "",
+        "kind": "predicate",
+        "metrics": null,
+        "passed": true,
+        "score": null
+      },
+      "generation_id": "v4",
+      "judge_errors": [],
+      "match_id": "",
+      "memory_failure_count": null,
+      "metric_counts": [],
+      "metrics": null,
+      "not_completed": false,
+      "not_completed_reason": null,
+      "output_chars": 0,
+      "pass_fail": true,
+      "per_judge_loss": [],
+      "plan_revisions": 0,
+      "run_id": "r-v4-transformers_lay_audience",
+      "runtime_ms": "<RUNTIME>",
+      "schema_failures": 0,
+      "score": null,
+      "scoring_provenance": null,
+      "source_epoch": "",
+      "source_run": "",
+      "started_at": null,
+      "task_failure_ratio": 0.0,
+      "tokens_spent": 0,
+      "turns_completed": null,
+      "wall_clock_budget_exceeded": false
+    }
+  },
   "round_logs": {
     "0/round_log.jsonl": [
       {
@@ -854,7 +1650,7 @@
       },
       {
         "payload": {
-          "experiment_id": "exp_<DATE>_t1_racing_v1"
+          "experiment_id": "exp_<DATE>_t1_racing_fast_v1"
         },
         "seq": 3,
         "ts": "<TS>",
@@ -879,7 +1675,7 @@
       },
       {
         "payload": {
-          "experiment_id": "exp_<DATE>_t1_racing_v2"
+          "experiment_id": "exp_<DATE>_t1_racing_fast_v2"
         },
         "seq": 6,
         "ts": "<TS>",
@@ -904,7 +1700,7 @@
       },
       {
         "payload": {
-          "experiment_id": "exp_<DATE>_t1_racing_v3"
+          "experiment_id": "exp_<DATE>_t1_racing_fast_v3"
         },
         "seq": 9,
         "ts": "<TS>",
@@ -929,7 +1725,7 @@
       },
       {
         "payload": {
-          "experiment_id": "exp_<DATE>_t1_racing_v4"
+          "experiment_id": "exp_<DATE>_t1_racing_fast_v4"
         },
         "seq": 12,
         "ts": "<TS>",
@@ -1197,7 +1993,7 @@
       },
       {
         "payload": {
-          "entry_id": "transformers_progressive_scripted",
+          "entry_id": "waffles_revision_scripted",
           "replicate": 0,
           "side": "parent"
         },
@@ -1207,7 +2003,7 @@
       },
       {
         "payload": {
-          "entry_id": "transformers_progressive_scripted",
+          "entry_id": "waffles_revision_scripted",
           "replicate": 0,
           "side": "child"
         },
@@ -1217,240 +2013,14 @@
       },
       {
         "payload": {
-          "entry_id": "waffles_revision_scripted",
-          "replicate": 0,
-          "side": "parent"
+          "attributable_regressions": [],
+          "challenger_scalar": 0.4000000000000001,
+          "champion_scalar": 2.0,
+          "decision": "promoted",
+          "margin_required": 0.01,
+          "rule_fired": ""
         },
         "seq": 40,
-        "ts": "<TS>",
-        "type": "unit_completed"
-      },
-      {
-        "payload": {
-          "entry_id": "waffles_revision_scripted",
-          "replicate": 0,
-          "side": "child"
-        },
-        "seq": 41,
-        "ts": "<TS>",
-        "type": "unit_completed"
-      },
-      {
-        "payload": {
-          "attributable_regressions": [],
-          "challenger_scalar": 0.4,
-          "champion_scalar": 2.0,
-          "decision": "promoted",
-          "margin_required": 0.01,
-          "rule_fired": ""
-        },
-        "seq": 42,
-        "ts": "<TS>",
-        "type": "gate_evaluated"
-      },
-      {
-        "payload": {
-          "entry_id": "q3_metrics_outline",
-          "replicate": 0,
-          "side": "parent"
-        },
-        "seq": 43,
-        "ts": "<TS>",
-        "type": "unit_completed"
-      },
-      {
-        "payload": {
-          "entry_id": "q3_metrics_outline",
-          "replicate": 0,
-          "side": "child"
-        },
-        "seq": 44,
-        "ts": "<TS>",
-        "type": "unit_completed"
-      },
-      {
-        "payload": {
-          "entry_id": "transformers_lay_audience",
-          "replicate": 0,
-          "side": "parent"
-        },
-        "seq": 45,
-        "ts": "<TS>",
-        "type": "unit_completed"
-      },
-      {
-        "payload": {
-          "entry_id": "transformers_lay_audience",
-          "replicate": 0,
-          "side": "child"
-        },
-        "seq": 46,
-        "ts": "<TS>",
-        "type": "unit_completed"
-      },
-      {
-        "payload": {
-          "entry_id": "transformers_progressive_scripted",
-          "replicate": 0,
-          "side": "parent"
-        },
-        "seq": 47,
-        "ts": "<TS>",
-        "type": "unit_completed"
-      },
-      {
-        "payload": {
-          "entry_id": "transformers_progressive_scripted",
-          "replicate": 0,
-          "side": "child"
-        },
-        "seq": 48,
-        "ts": "<TS>",
-        "type": "unit_completed"
-      },
-      {
-        "payload": {
-          "entry_id": "waffles_revision_scripted",
-          "replicate": 0,
-          "side": "parent"
-        },
-        "seq": 49,
-        "ts": "<TS>",
-        "type": "unit_completed"
-      },
-      {
-        "payload": {
-          "entry_id": "waffles_revision_scripted",
-          "replicate": 0,
-          "side": "child"
-        },
-        "seq": 50,
-        "ts": "<TS>",
-        "type": "unit_completed"
-      },
-      {
-        "payload": {
-          "attributable_regressions": [],
-          "challenger_scalar": 0.8,
-          "champion_scalar": 2.0,
-          "decision": "promoted",
-          "margin_required": 0.01,
-          "rule_fired": ""
-        },
-        "seq": 51,
-        "ts": "<TS>",
-        "type": "gate_evaluated"
-      },
-      {
-        "payload": {
-          "entry_id": "every_expectation_kind_demo",
-          "replicate": 0,
-          "side": "parent"
-        },
-        "seq": 52,
-        "ts": "<TS>",
-        "type": "unit_completed"
-      },
-      {
-        "payload": {
-          "entry_id": "every_expectation_kind_demo",
-          "replicate": 0,
-          "side": "child"
-        },
-        "seq": 53,
-        "ts": "<TS>",
-        "type": "unit_completed"
-      },
-      {
-        "payload": {
-          "entry_id": "q3_metrics_outline",
-          "replicate": 0,
-          "side": "parent"
-        },
-        "seq": 54,
-        "ts": "<TS>",
-        "type": "unit_completed"
-      },
-      {
-        "payload": {
-          "entry_id": "q3_metrics_outline",
-          "replicate": 0,
-          "side": "child"
-        },
-        "seq": 55,
-        "ts": "<TS>",
-        "type": "unit_completed"
-      },
-      {
-        "payload": {
-          "entry_id": "transformers_lay_audience",
-          "replicate": 0,
-          "side": "parent"
-        },
-        "seq": 56,
-        "ts": "<TS>",
-        "type": "unit_completed"
-      },
-      {
-        "payload": {
-          "entry_id": "transformers_lay_audience",
-          "replicate": 0,
-          "side": "child"
-        },
-        "seq": 57,
-        "ts": "<TS>",
-        "type": "unit_completed"
-      },
-      {
-        "payload": {
-          "entry_id": "transformers_progressive_scripted",
-          "replicate": 0,
-          "side": "parent"
-        },
-        "seq": 58,
-        "ts": "<TS>",
-        "type": "unit_completed"
-      },
-      {
-        "payload": {
-          "entry_id": "transformers_progressive_scripted",
-          "replicate": 0,
-          "side": "child"
-        },
-        "seq": 59,
-        "ts": "<TS>",
-        "type": "unit_completed"
-      },
-      {
-        "payload": {
-          "entry_id": "waffles_revision_scripted",
-          "replicate": 0,
-          "side": "parent"
-        },
-        "seq": 60,
-        "ts": "<TS>",
-        "type": "unit_completed"
-      },
-      {
-        "payload": {
-          "entry_id": "waffles_revision_scripted",
-          "replicate": 0,
-          "side": "child"
-        },
-        "seq": 61,
-        "ts": "<TS>",
-        "type": "unit_completed"
-      },
-      {
-        "payload": {
-          "attributable_regressions": [],
-          "challenger_scalar": 0.4,
-          "champion_scalar": 2.0,
-          "decision": "promoted",
-          "margin_required": 0.01,
-          "rule_fired": ""
-        },
-        "seq": 62,
         "ts": "<TS>",
         "type": "gate_evaluated"
       },
@@ -1458,7 +2028,7 @@
         "payload": {
           "confirmed": true
         },
-        "seq": 63,
+        "seq": 41,
         "ts": "<TS>",
         "type": "holdout_released"
       },
@@ -1478,13 +2048,13 @@
             "structure": "racing"
           }
         },
-        "seq": 64,
+        "seq": 42,
         "ts": "<TS>",
         "type": "decision_recorded"
       },
       {
         "payload": {},
-        "seq": 65,
+        "seq": 43,
         "ts": "<TS>",
         "type": "round_closed"
       }

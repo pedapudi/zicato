@@ -3,9 +3,10 @@
 :func:`make_storage_backend` is the one place that maps a backend *name*
 onto a concrete :class:`StorageBackend`. Callers that want the default
 (every production code path) name nothing and get the file backend; tests
-ask for ``"memory"``; a future ``"git"`` backend (the v0+1 roadmap) is a
-one-branch addition here and a one-line addition to the conformance
-suite's backend registry.
+ask for ``"memory"``. A future remote record backend would be a one-branch
+addition here and a one-line addition to the conformance suite's registry.
+Generation source storage is a separate abstraction; adding a record backend
+here must not absorb generation-tree operations.
 
 The default is, and must stay, the file backend: files are zicato's
 canonical store of record. The factory exists to make the *non*-default
@@ -45,8 +46,8 @@ def make_storage_backend(
         (by convention the ``.zicato/`` workspace). Ignored by the
         in-memory backend, which has no root.
     **opts:
-        Reserved for future backends (e.g. a git backend's workspace-repo
-        path). Currently unused.
+        Reserved for future record backends (for example, connection
+        settings for a remote store). Currently unused.
 
     The returned backend is NOT started — the caller decides when to
     :meth:`StorageBackend.start` it (or uses it as a context manager).

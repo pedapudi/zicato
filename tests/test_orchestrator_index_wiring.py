@@ -265,13 +265,10 @@ def test_evolve_n_rounds_builds_and_heals_the_index_at_start(
 
     assert (workspace / "index.db").exists()
     assert any(m.startswith("index: built fresh") for m in caplog.messages)
-    # The epoch reads as diverged at END of run, and that is not a defect in
-    # the cursor — it is the dual-write ordering showing through. The
-    # orchestrator appends to ``lineage.json`` AFTER the last ``ingest_*``
-    # call, so at the moment the loop returns the index genuinely is one step
-    # behind lineage. The next invocation's preflight is what closes it; see
-    # ``test_the_preflight_fills_in_the_lineage_derived_columns``.
-    assert validate_index(workspace) == (epoch_id,)
+    # Candidate creation records pending lineage before settlement refreshes
+    # the index, so the derived index agrees with canonical files when the
+    # round returns.
+    assert validate_index(workspace) == ()
 
 
 def test_evolve_n_rounds_heals_a_diverged_index_before_the_first_round(
@@ -366,18 +363,10 @@ def test_the_index_preflight_never_aborts_a_run(
     assert [o.tournament_decision for o in outcomes] == ["promoted"]
 
 
-def test_the_preflight_fills_in_the_lineage_derived_columns(
+def test_round_settlement_populates_lineage_derived_columns(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """The staleness the self-heal actually retires, end to end.
-
-    ``experiment.json`` is written (and dual-written to the index) BEFORE
-    ``lineage.json`` is appended, so the columns the index takes from lineage
-    — ``generations.created_at`` and ``generations.round_index`` — land empty
-    on the live write and stay that way until something walks the files again.
-    Before this feature that meant "until an operator happened to run
-    ``zicato repair index``". Now the next round's preflight fills them in.
-    """
+    """Settlement indexes the pending lineage coordinates in the same round."""
     import sqlite3
 
     workspace, epoch_id = _bootstrap_workspace(tmp_path)
@@ -412,8 +401,9 @@ def test_the_preflight_fills_in_the_lineage_derived_columns(
             conn.close()
 
     _one_round("round-one")
-    # The live dual-write could not know either value yet.
-    assert _v1_lineage_columns() == ("", None)
+    created_at, round_index = _v1_lineage_columns()
+    assert created_at != ""
+    assert round_index is not None
 
     _one_round("round-two")
     created_at, round_index = _v1_lineage_columns()

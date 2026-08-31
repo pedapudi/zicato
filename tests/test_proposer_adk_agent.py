@@ -103,10 +103,14 @@ def _make_ctx(
     from zicato.epoch.genstore import default_generation_store
 
     ws = tmp_path / "ws"
+    ws.mkdir()
+    (ws / "config.json").write_text(
+        json.dumps({"generation_source_backend": "directory"}), encoding="utf-8"
+    )
     epoch_id = "ep-001"
     parent_gen = "gen-000"
     store = default_generation_store(ws)
-    parent_root = store.snapshot_root(epoch_id, parent_gen)
+    parent_root = store.snapshot_path(epoch_id, parent_gen)
     parent_root.parent.mkdir(parents=True, exist_ok=True)
     # Make the store's resolved snapshot path BE our fixture snapshot by
     # placing the harness subtree under the canonical location.

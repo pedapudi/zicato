@@ -42,6 +42,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import re
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -839,7 +840,10 @@ def _mean_over_present(values: list[float | None]) -> float | None:
     present = [float(v) for v in values if v is not None]
     if not present:
         return None
-    return sum(present) / len(present)
+    # ``math.fsum`` throughout the replicate folds: a folded value is the
+    # score a round is decided on and a golden pins, so it must not depend
+    # on the interpreter version or on replicate order.
+    return math.fsum(present) / len(present)
 
 
 def _mean_outcome(profiles: list[LossProfile]) -> float | None:
@@ -1194,7 +1198,7 @@ def _average_losses(
         if not profiles:
             continue
         n = len(profiles)
-        mean_drift = sum(float(p.drift_loss) for p in profiles) / n
+        mean_drift = math.fsum(float(p.drift_loss) for p in profiles) / n
         pass_votes = [p.pass_fail for p in profiles if p.pass_fail is not None]
         if pass_votes:
             true_count = sum(1 for v in pass_votes if v)
@@ -1204,7 +1208,7 @@ def _average_losses(
         out[entry_id] = _replace(
             profiles[0],
             drift_loss=mean_drift,
-            task_failure_ratio=sum(float(p.task_failure_ratio) for p in profiles) / n,
+            task_failure_ratio=math.fsum(float(p.task_failure_ratio) for p in profiles) / n,
             not_completed=any(p.not_completed for p in profiles),
             runtime_ms=round(sum(p.runtime_ms for p in profiles) / n),
             pass_fail=majority_pass,

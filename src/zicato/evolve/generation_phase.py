@@ -1,4 +1,4 @@
-"""Generation coordinates owned by the prepare and persist phases."""
+"""Generation coordinates and the finalized input to one evolve round."""
 
 from __future__ import annotations
 
@@ -10,17 +10,50 @@ from zicato.workspace import WorkspaceLayout
 
 
 @dataclass(frozen=True, slots=True)
-class RoundSession:
-    """Stable identity and dependencies shared by one round's phases."""
+class PreparedRound:
+    """Finalized contract, runtime, and proposer inputs for one round.
+
+    The value is constructed after runtime-only rebinding, including the
+    per-round token ledger, and after the train/holdout split and proposer
+    context have been derived.  Tournament structures consume this same
+    immutable value instead of reconstructing round state or accepting a
+    long list of independently drifting arguments.
+    """
 
     workspace_root: Path
+    workspace_config: Any
     epoch_id: str
     round_index: int
     total_rounds: int
     instance_id: str
+    parent_generation: Any
     adapter: Any
     config: Any
     weights: Any
+    board: tuple[Any, ...]
+    train_board: tuple[Any, ...]
+    tournament_spec: Any
+    strategy: Any
+    brief: Any
+    mutations: tuple[Any, ...]
+    patterns: tuple[Any, ...]
+    loss_summary: str
+    failure_profile: str
+    metric_priorities: str
+    process_exemplars: str
+    genealogy: tuple[Any, ...]
+    calibration: Any
+    disable_drift: tuple[Any, ...]
+    judge_only: bool
+    fast_mode: bool
+    max_proposer_retries: int
+    beater: Any
+    meta_loop_emitter: Any
+    proposer_agent: Any
+    round_log: Any
+    screen_candidates: Any
+    recombine_pair: Any
+    custom_judge_names: frozenset[str]
 
 
 def round_number(generation_id: str) -> int | None:
@@ -66,15 +99,19 @@ def set_current_generation(workspace_root: Path, epoch_id: str, generation_id: s
 def snapshot_root(workspace_root: Path, epoch_id: str, generation_id: str) -> Path:
     from zicato.epoch.genstore import default_generation_store
 
-    return default_generation_store(workspace_root).snapshot_root(epoch_id, generation_id)
+    return default_generation_store(workspace_root).materialize_snapshot(epoch_id, generation_id)
 
 
 def next_generation_id(workspace_root: Path, epoch_id: str) -> str:
-    from zicato.epoch.genstore import default_generation_store
-
+    generations_root = WorkspaceLayout.from_root(workspace_root).generations_dir(epoch_id)
+    generation_ids = (
+        [path.name for path in generations_root.iterdir() if path.is_dir()]
+        if generations_root.is_dir()
+        else []
+    )
     numbers = [
         number
-        for generation_id in default_generation_store(workspace_root).list_generations(epoch_id)
+        for generation_id in generation_ids
         if (number := round_number(generation_id)) is not None
     ]
     return f"v{max(numbers, default=-1) + 1}"
@@ -87,7 +124,7 @@ def mutable_trees(adapter: Any, snapshot: Path) -> list[Path]:
 
 
 __all__ = [
-    "RoundSession",
+    "PreparedRound",
     "current_generation",
     "mutable_trees",
     "next_generation_id",

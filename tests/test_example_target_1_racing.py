@@ -221,6 +221,31 @@ def _bootstrap_racing_workspace(tmp_path: Path) -> tuple[Path, str]:
     v0 with a copy of the *real* annotated ``agent/`` tree (so the example's
     proposer patches resolve against real mutation markers).
     """
+    workspace, epoch_id = bootstrap_example_workspace(
+        tmp_path, scoring_path=RACING_SCORING_PATH, epoch_name="t1-racing"
+    )
+    weights = _scoring_from_dict(json.loads(RACING_SCORING_PATH.read_text()))
+    assert weights.tournament_structure.structure == "racing"
+    assert weights.tournament_structure.params["field_size"] == 4
+    # The example contract no longer pins board_ids: the orchestrator must
+    # default them to the epoch's full board so the rungs still slice. This
+    # is the regression the no-board_ids end-to-end path guards.
+    assert "board_ids" not in weights.tournament_structure.params
+    return workspace, epoch_id
+
+
+def bootstrap_example_workspace(
+    tmp_path: Path, *, scoring_path: Path, epoch_name: str
+) -> tuple[Path, str]:
+    """Create a workspace + an epoch on ``scoring_path`` + a v0 example snapshot.
+
+    Structure-neutral: the frozen contract decides which tournament
+    structure the round runs, so the same bootstrap seeds a racing epoch
+    (``scoring.racing.json``) and a gauntlet one (``scoring.json``, which
+    declares no ``tournament`` block). The parity capture harness
+    (``tools/parity/lib/mock_evolve_capture.py``) drives both from here so
+    every golden lane starts from one workspace definition.
+    """
     workspace = tmp_path / ".zicato"
     workspace.mkdir()
     (workspace / "config.json").write_text(
@@ -231,7 +256,7 @@ def _bootstrap_racing_workspace(tmp_path: Path) -> tuple[Path, str]:
                 # Hand-built directory-backend snapshot layout below; pin it
                 # so the git default does not look for git tags this fixture
                 # never writes.
-                "storage_backend": "directory",
+                "generation_source_backend": "directory",
                 "adapter": {"kind": "stub"},
                 # This e2e asserts the racing tournament's champion-caching
                 # behaviour; opt out of the default-on achievable-signal
@@ -242,17 +267,11 @@ def _bootstrap_racing_workspace(tmp_path: Path) -> tuple[Path, str]:
         )
     )
 
-    weights = _scoring_from_dict(json.loads(RACING_SCORING_PATH.read_text()))
-    assert weights.tournament_structure.structure == "racing"
-    assert weights.tournament_structure.params["field_size"] == 4
-    # The example contract no longer pins board_ids: the orchestrator must
-    # default them to the epoch's full board so the rungs still slice. This
-    # is the regression the no-board_ids end-to-end path guards.
-    assert "board_ids" not in weights.tournament_structure.params
+    weights = _scoring_from_dict(json.loads(scoring_path.read_text()))
 
     cfg = new_epoch(
         workspace,
-        name="t1-racing",
+        name=epoch_name,
         board_source=BOARD_PATH,
         brief_source=BRIEF_PATH,
         weights=weights,

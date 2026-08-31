@@ -1,8 +1,8 @@
 # zicato — cleaner reimplementation roadmap (behavior-preserving)
 
-> **Status: proposal / design note — not yet implemented.** Captures a
-> behavior-preserving reimplementation roadmap (Part I) and a target data-model
-> & storage design (Part II), informed by a three-domain audit of the codebase.
+> **Status: historical implementation roadmap.** Several steps have shipped;
+> the development guide describes the present system. This document preserves
+> the original behavior-preserving roadmap and target storage design.
 > Companion to [`ARCHITECTURE.md`](ARCHITECTURE.md), [`STORAGE.md`](STORAGE.md),
 > and [`TOURNAMENT-DATA-MODEL.md`](TOURNAMENT-DATA-MODEL.md).
 
@@ -600,10 +600,9 @@ pipeline above:
 - **`persist.py`** — the terminal write funnel + round tail
   (`_finalize_generation`, `_round_epilogue`, `_persist_rejected_round`, and
   the two synthetic reject/skip outcome builders).
-- **`gate.py`** — the promotion decision procedure
-  (`_gauntlet_decision_from_result`, `_confirm_gauntlet_promotion`,
-  `_confirm_crowning_on_holdout`, `_apply_field_overrides`,
-  `_resolve_round_champion_mode`, the integrity block, …).
+- **`gate.py`** — holdout confirmation, operator override re-resolution,
+  champion-evaluation provenance, and integrity checks. Strategy progression
+  and Bradley–Terry evidence confirmation live in `selection/driver.py`.
 - **`round_context.py`** — the pre-propose ("screen") context builders that
   assemble the proposer-context inputs once per round
   (`_build_candidate_screen_runner`, `_build_recombination_pair`,
@@ -623,9 +622,9 @@ Each module keeps the `zicato.orchestrator` logger name, imports its stable
 collaborators directly, and resolves back-edges into the driver as lazy
 call-time imports through the orchestrator module object; the orchestrator
 re-exports the externally-referenced names so callers and tests are unaffected.
-The extraction took the driver from ~6,500 to ~4,350 lines. **The orchestrator
-is now the round *driver*:** it owns `evolve_once` and `_evolve_multi_challenger`
-and *sequences* the stage modules, threading the round's data between them.
+`evolve_once` prepares a typed `PreparedRound` and `evolve_field_round`
+sequences candidate production, strategy evaluation, evidence and holdout
+confirmation, and typed `RoundSettlement` persistence for every structure.
 
 **Remaining: the `schedule` closure-lift.** The one stage from the Target
 sequence still living inside the driver is **`schedule`** — the matchup-dispatch
@@ -1023,29 +1022,26 @@ re-parsing files and stop re-implementing normalization.
   but the Rust supervisor mirrors the DDL and reads the file directly, so confirm
   the DDL change with the supervisor owner before enabling.
 
-### Generation store (keep — already clean)
+### Generation source trees and generation records
 
 The `GenerationStore` protocol with `DirectoryGenerationStore` (copytree per gen)
 and `GitGenerationStore` (content-addressed commits, worktree per run) is a good
-abstraction and stays. Only change: its path math routes through `WorkspaceLayout`
-like everything else. The `storage_backend` config knob (directory|git) is the one
-legitimate backend choice and is retained.
+abstraction and stays. It owns source path calculation, explicit local
+materialization, seed/derive/scratch transactions, isolated checkout, browsing,
+source diffs, and source pruning. Patch and experiment records remain behind the
+generic `StorageBackend` abstraction. `generation_source_backend` is mandatory on
+initialized workspaces; backend resolution never scans workspace contents.
 
-### Versioning & the one-time migration
+### Versioning and clean workspace formats
 
-Today canonical files carry **no** version and the code tolerates every legacy
-alias forever (`brief.md`↔`rubric.md`, `budget_s`↔`wall_clock_budget_seconds`,
-`round_index`↔`stage_index`, `partial_*_agg`, `source_roots`↔`mutable_trees`,
-`rubric_path`, the `lineage.json` `{nodes,edges}` seed shape, empty-string
-sentinels). Target:
+Canonical records carry `format_version`; the SQLite projection carries its own
+schema version. Old workspaces are outside the reimplementation's compatibility
+contract. Each supported format has one spelling and one typed shape.
 
-- Add `schema_version` to the workspace `config.json`.
-- Ship `zicato migrate` (one-shot, idempotent): rewrites every canonical file to
-  the canonical form (normalizes aliases, fills sentinels→None, converts the
-  lineage seed shape to the typed DAG), bumps `schema_version`, then `reindex`.
-- **Then delete all the alias-tolerance code.** The serde keeps exactly one alias
-  (`tournament_structure`→`tournament`, the persisted contract key) and the
-  hard-reject guards (`fires_on`, `pass_exponent`) which are correct as-is.
+- Refuse missing or unsupported canonical format versions.
+- Delete obsolete alias and shape-tolerance code as each owning surface is
+  consolidated.
+- Rebuild `index.db` from canonical files after any derived-schema change.
 
 ## How this maps to the roadmap & how it's verified
 
@@ -1053,8 +1049,8 @@ sentinels). Target:
 - Phase 1d = the storage-seam collapse + single atomic primitive.
 - Phase 2a = the `core/` split + `core/serde` + enums + typed IDs + typed
   `ActiveTournament`.
-- `zicato migrate` + alias-code deletion is a late step (after readers/writers and
-  serde land), gated like everything else.
+- Alias-code deletion follows the owning reader/writer consolidation and is gated
+  like every other behavior change.
 
 **Parity proof specific to this design:** because the serde, enums, and IDs are
 wire-identical, the strongest check is byte-level: for the `target_1_presentation`
@@ -1071,7 +1067,5 @@ report materially fewer `Any`/`getattr` escapes than before) at each step.
    logical-only (Rust supervisor mirrors the DDL; confirm before changing).
 2. **`BoardEntry` shape** — one struct with optional kind-fields (status quo,
    minimal churn) vs a tagged union of per-kind subtypes (cleaner, more invasive).
-3. **`migrate` rollout** — in-place rewrite vs write-new-and-swap; and whether to
-   keep a read-only compatibility shim for one release before deleting alias code.
-4. **Promotion source of truth** — confirm `Lineage` (recommended) over
+3. **Promotion source of truth** — confirm `Lineage` (recommended) over
    `experiment.json` as authoritative, and re-order the dual-write accordingly.

@@ -105,6 +105,7 @@ def _workspace(
             # No adapter block at all: the pre-factory shape, where the
             # trees live at the config top level.
             config["mutable_trees"] = registered
+    config = {"generation_source_backend": "directory", **config}
     (root / "config.json").write_text(json.dumps(config), encoding="utf-8")
     if scoring is not None or board is not None:
         epoch = root / "epochs" / _EPOCH
@@ -296,9 +297,10 @@ def test_mutation_checks_use_the_reigning_generation_snapshot(tmp_path: Path) ->
         scoring={},
         trees={"harness": _MUTABLE.format(point_id="source_only")},
     )
-    from zicato.evolve.generation_phase import set_current_generation, snapshot_root
+    from zicato.epoch.genstore import default_generation_store
+    from zicato.evolve.generation_phase import set_current_generation
 
-    snapshot = snapshot_root(root, _EPOCH, "v0")
+    snapshot = default_generation_store(root).snapshot_path(_EPOCH, "v0")
     snap_tree = snapshot / "harness"
     snap_tree.mkdir(parents=True)
     (snap_tree / "a.py").write_text(_MUTABLE.format(point_id="dup"), encoding="utf-8")

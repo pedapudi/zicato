@@ -415,13 +415,28 @@ def _checkout_run_snapshot(
     )
 
     snapshot_root = Path(generation.snapshot_root)
+    # Building the store is the ONE step allowed to fail into the copy
+    # fallback: an ad-hoc caller may hand this an arbitrary tree with no
+    # initialized workspace behind it, so a workspace whose source backend
+    # cannot be resolved simply has no store to route through. Everything
+    # after this point is a real generation the store claims to own, and a
+    # failure there is a failure of the run.
     try:
         store = default_generation_store(workspace_root)
+    except (FileNotFoundError, ValueError):
+        return copy_checkout_ephemeral(snapshot_root, run_id)
+
+    try:
         if store.has_generation(epoch_id, generation.id):
-            canonical = store.snapshot_root(epoch_id, generation.id)
+            canonical = store.materialize_snapshot(epoch_id, generation.id)
             if Path(canonical).resolve() == snapshot_root.resolve():
                 return store.checkout_ephemeral(epoch_id, generation.id, run_id)
     except (OSError, ValueError):
+        # Including the FileNotFoundError raised for a canonical tree the
+        # store owns but cannot materialise. Copying whatever
+        # ``snapshot_root`` still points at would let a run against a
+        # half-removed generation report as a clean one; ``_run_single``
+        # turns this into an aborted (``prepare_failed``) run instead.
         raise
     except Exception as exc:
         # A backend-specific failure (e.g. a git plumbing error) is

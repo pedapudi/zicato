@@ -7,7 +7,7 @@ from types import SimpleNamespace
 import pytest
 
 from zicato.evolve.generation_phase import (
-    RoundSession,
+    PreparedRound,
     current_generation,
     mutable_trees,
     next_generation_id,
@@ -18,8 +18,43 @@ from zicato.evolve.generation_phase import (
 from zicato.workspace import WorkspaceLayout
 
 
-def test_round_session_is_immutable() -> None:
-    session = RoundSession(Path("."), "e1", 2, 5, "worker", object(), object(), object())
+def test_prepared_round_is_immutable() -> None:
+    session = PreparedRound(
+        workspace_root=Path("."),
+        workspace_config={},
+        epoch_id="e1",
+        round_index=2,
+        total_rounds=5,
+        instance_id="worker",
+        parent_generation=object(),
+        adapter=object(),
+        config=object(),
+        weights=object(),
+        board=(),
+        train_board=(),
+        tournament_spec=object(),
+        strategy=object(),
+        brief=object(),
+        mutations=(),
+        patterns=(),
+        loss_summary="",
+        failure_profile="",
+        metric_priorities="",
+        process_exemplars="",
+        genealogy=(),
+        calibration=None,
+        disable_drift=(),
+        judge_only=False,
+        fast_mode=False,
+        max_proposer_retries=2,
+        beater=None,
+        meta_loop_emitter=None,
+        proposer_agent=object(),
+        round_log=object(),
+        screen_candidates=None,
+        recombine_pair=None,
+        custom_judge_names=frozenset(),
+    )
     with pytest.raises(AttributeError):
         session.epoch_id = "e2"  # type: ignore[misc]
 
@@ -48,6 +83,9 @@ def test_round_pipeline_structure_stays_bounded() -> None:
 
 
 def test_generation_head_prefers_marker_then_falls_back_to_highest_vn(tmp_path: Path) -> None:
+    (tmp_path / "config.json").write_text(
+        '{"generation_source_backend": "directory"}', encoding="utf-8"
+    )
     layout = WorkspaceLayout.from_root(tmp_path)
     root = layout.generations_dir("e1")
     for name in ("v2", "v10", "named"):

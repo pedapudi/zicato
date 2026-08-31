@@ -38,21 +38,33 @@ from zicato.cli.init_cmd import initialize_workspace
     default=False,
     help="Overwrite config.json / lineage.json if the workspace already exists.",
 )
-def init_cmd(workspace: str, instance_id: str, force: bool) -> None:
+@click.option(
+    "--reset-lineage",
+    "reset_lineage",
+    is_flag=True,
+    default=False,
+    help="Allow --force to discard a lineage.json that already records epochs.",
+)
+def init_cmd(workspace: str, instance_id: str, force: bool, reset_lineage: bool) -> None:
     """Scaffold a fresh .zicato/ workspace — step one of the happy path.
 
     This is the first of the two commands you run. It creates the
     workspace directory if it doesn't exist, writes an empty lineage
     DAG (lineage.json: {"epochs": []}), and writes config.json
-    containing {instance_id, created_at, storage_backend}. It also scaffolds
+    containing {instance_id, created_at, generation_source_backend}. It also scaffolds
     the operator's live scoring.json (next to the workspace, only when
     absent) with the full recommended contract — racing field 4,
     replicates 2, the evidence gate enabled explicitly. Run it once per
     project; then point `zicato evolve` at the same workspace.
 
     Refuses to overwrite an existing workspace unless --force is
-    passed (--force only rewrites config.json / lineage.json — it does
-    not delete epoch artifacts living alongside).
+    passed. Force rewrites config.json and lineage.json while preserving a
+    valid configured generation source backend; it does not delete epoch
+    artifacts living alongside. It refuses outright when lineage.json
+    already records epochs, since those decisions are not reconstructible;
+    add --reset-lineage to discard them deliberately. To change only the
+    generation source backend on an existing workspace, use
+    `zicato repair generation-source-backend`, which merges that one key.
 
     \b
     Example:
@@ -64,6 +76,7 @@ def init_cmd(workspace: str, instance_id: str, force: bool) -> None:
             workspace_root,
             instance_id=instance_id,
             force=force,
+            reset_lineage=reset_lineage,
         )
     except FileExistsError as exc:
         # Click renders UsageError nicely and exits non-zero.

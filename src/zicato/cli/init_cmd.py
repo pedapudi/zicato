@@ -28,22 +28,56 @@ def _utcnow_iso() -> str:
     return _dt.datetime.now(_dt.UTC).isoformat().replace("+00:00", "Z")
 
 
+#: The only pre-existing ``config.json`` key ``--force`` carries across.
+#: Named in the refusal message so the loss is stated, not implied.
+_PRESERVED_ON_FORCE = "generation_source_backend"
+
+
+def _recorded_epoch_count(workspace_root: Path) -> int:
+    """Return how many epochs the workspace's lineage records.
+
+    Tolerant on the file: an absent, unreadable, or malformed
+    ``lineage.json`` records nothing that ``--force`` could destroy, so it
+    reads as zero. Only a well-formed DAG with epochs in it blocks a force.
+    """
+    try:
+        loaded = json.loads((workspace_root / LINEAGE_FILENAME).read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError):
+        return 0
+    if not isinstance(loaded, dict):
+        return 0
+    epochs = loaded.get("epochs")
+    return len(epochs) if isinstance(epochs, list) else 0
+
+
 def initialize_workspace(
     workspace_root: Path,
     *,
     instance_id: str,
     force: bool = False,
+    reset_lineage: bool = False,
 ) -> dict[str, Any]:
     """Create ``workspace_root`` with an empty lineage and a config file.
 
     Returns the config that was written. Raises :class:`FileExistsError`
-    if the workspace already exists and ``force`` is False.
+    if the workspace already exists and ``force`` is False, and also when
+    ``force`` would discard a lineage that records at least one epoch —
+    that discard needs ``reset_lineage`` said out loud, because the epochs,
+    generations, and promotion decisions in ``lineage.json`` are not
+    reconstructible from the workspace's other files.
+
+    Force REPLACES ``config.json``: only ``generation_source_backend``
+    carries across, so a registration's ``contract`` / ``mutable_trees`` /
+    ``source_roots`` / ``adk_entrypoint`` are dropped and must be written
+    again. To change only the source backend on a workspace that already
+    exists, use ``zicato repair generation-source-backend`` instead — it
+    merges one key and leaves the rest of the config and the lineage alone.
 
     Layout produced:
 
     * ``{workspace_root}/`` (directory)
     * ``{workspace_root}/config.json`` — ``{instance_id, created_at,
-      storage_backend}``
+      generation_source_backend}``
     * ``{workspace_root}/lineage.json`` — empty DAG: ``{"epochs": []}``
       (the shape :func:`zicato.epoch.lineage.load_lineage` reads; the
       seed used to be ``{"nodes": [], "edges": []}``, which the loader
@@ -63,6 +97,40 @@ def initialize_workspace(
             )
         # `force` only clears the two files we own; we don't recursively
         # delete the directory because epoch artifacts may live alongside.
+        # Those artifacts are exactly why a recorded lineage cannot be
+        # discarded silently: the epochs stay on disk while the DAG naming
+        # them, and every promotion decision in it, is replaced by an empty
+        # list. Nothing else on disk can rebuild that.
+        recorded_epochs = _recorded_epoch_count(workspace_root)
+        if recorded_epochs and not reset_lineage:
+            raise FileExistsError(
+                f"workspace {workspace_root!s}: --force would reset a "
+                f"{LINEAGE_FILENAME} recording {recorded_epochs} epoch(s) to an empty "
+                f"DAG, and would drop every config.json key except "
+                f"{_PRESERVED_ON_FORCE!r}. To set only the generation source backend, "
+                f"run `zicato repair generation-source-backend`. To re-initialize "
+                f"anyway and discard the lineage, pass --reset-lineage."
+            )
+
+    from zicato.epoch.genstore import (  # noqa: PLC0415
+        DEFAULT_GENERATION_SOURCE_BACKEND,
+        GENERATION_SOURCE_BACKEND_KEY,
+        KNOWN_GENERATION_SOURCE_BACKENDS,
+    )
+
+    source_backend = DEFAULT_GENERATION_SOURCE_BACKEND
+    existing_config_path = workspace_root / CONFIG_FILENAME
+    if force and existing_config_path.is_file():
+        try:
+            existing_config = json.loads(existing_config_path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeError, json.JSONDecodeError):
+            existing_config = None
+        if isinstance(existing_config, dict):
+            configured_backend = existing_config.get(GENERATION_SOURCE_BACKEND_KEY)
+            if isinstance(configured_backend, str):
+                normalized_backend = configured_backend.strip().lower()
+                if normalized_backend in KNOWN_GENERATION_SOURCE_BACKENDS:
+                    source_backend = normalized_backend
 
     workspace_root.mkdir(parents=True, exist_ok=True)
 
@@ -73,17 +141,12 @@ def initialize_workspace(
     # The generation-store backend is recorded, not left to the default.
     # Which store a workspace's generations live in is a durable property
     # of the workspace: writing it here means a later change to
-    # DEFAULT_STORAGE_BACKEND cannot re-interpret a workspace that already
+    # DEFAULT_GENERATION_SOURCE_BACKEND cannot re-interpret a workspace that already
     # exists.
-    from zicato.epoch.genstore import (  # noqa: PLC0415
-        DEFAULT_STORAGE_BACKEND,
-        STORAGE_BACKEND_KEY,
-    )
-
     config: dict[str, Any] = {
         "instance_id": instance_id,
         "created_at": _utcnow_iso(),
-        STORAGE_BACKEND_KEY: DEFAULT_STORAGE_BACKEND,
+        GENERATION_SOURCE_BACKEND_KEY: source_backend,
         "models": {
             "engines": {},
             "roles": {},

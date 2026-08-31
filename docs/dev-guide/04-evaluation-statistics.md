@@ -927,9 +927,8 @@ not count would loop forever.
 
 ### 6.4 The two-phase loop and the dead-letter terminal
 
-`confirm_promotion_with_evidence` is shared by BOTH selection shapes (the
-multi-challenger driver via `resolve_tournament`'s `pre_gate`, and the
-gauntlet path calling it directly on its single crowning duel):
+`confirm_promotion_with_evidence` is part of `evaluate_tournament` for every
+selection strategy:
 
 - **Bootstrap** — a gauntlet produces one crowning duel, below the credibility
   floor; the loop replicates the crowning pair up to `MIN_CREDIBLE_DUELS`
@@ -937,7 +936,7 @@ gauntlet path calling it directly on its single crowning duel):
   unchanged (no fit to override it — safe).
 - **Refine** — once credible: `promoted` terminates with the crown;
   `deferred` spends another closest-CI replicate (`closest_ci_duel`, argmin of
-  the CI gap, restricted to the crowning pair on the gauntlet path) and
+  the CI gap, restricted to the crowning pair) and
   refits; budget exhausted with overlapping CIs terminates `inconclusive`.
 
 An `inconclusive` terminal maps onto the closed decision enum's `DEFERRED`
@@ -1060,9 +1059,10 @@ Replication is the loop's power lever (§3, fact #3). Its mechanics:
 
 ### 7.1 Averaging and the strict-majority pass
 
-`run_matchup(..., replicates=N)` runs the paired board N times — as do
-`run_tournament` on the full A/B gauntlet path and `run_fast_mode` on the fast
-gauntlet path (challenger side only; see §7.4). `_average_losses`
+`run_matchup(..., replicates=N)` runs the paired board N times for every
+production tournament structure. The standalone `run_tournament` API also
+runs paired replicates; `run_fast_mode` remains a one-sided debug API.
+`_average_losses`
 (`src/zicato/tournament/unit_cache.py`) folds the N runs into one per-entry
 loss map *before* aggregation.
 
@@ -1178,24 +1178,17 @@ only — it never enters the gate or the contract.
 
 ### 7.4 Where replication does and does not reduce variance
 
-Every replication path folds through the one `_average_losses` primitive, but
-they do not all replicate both SIDES of the contrast:
+Production tournament evaluation resolves every requested replicate for both
+competitors through the cache key `(generation, entry, replicate)`. Fast mode
+may reuse a completed draw, but it cannot substitute replicate zero for a
+missing replicate one. Missing slots run and persist independently. Full mode
+forces both competitors fresh. The power analysis therefore describes the
+paired production contrast.
 
-- `run_tournament` (`--mode full`) and `run_matchup` replicate the paired
-  board — both sides get independent draws;
-- `run_fast_mode` (the gauntlet under `--mode fast`, the CLI default)
-  replicates the CHALLENGER board and compares the fold against the champion's
-  frozen cached aggregate. That is what makes fast mode cheap, and it means the
-  noise reduction is one-sided at any `replicates`.
-
-Two consequences to price in under fast mode. Repeated *rounds* are not
-repeated *draws* of the contrast — the champion side is the same numbers every
-round, so round-to-round variation understates the true variance. And
-`power_analysis`'s two-sample `sqrt(2/(k·n))` is optimistic by roughly
-`sqrt((k+1)/2)`, because it assumes both sides were drawn `k` times;
-`check_statistical_power` reads the CONTRACT and the runtime mode is not a
-contract field, so the check cannot gate on it. `--mode full` is the
-configuration the formula actually describes.
+The standalone `run_fast_mode` library API accepts a historical aggregate and
+evaluates only the challenger. Direct callers of that API have a one-sided
+contrast and must not apply the paired-variance formula. The evolve pipeline
+does not call that API.
 
 Both replicate loops also stop scheduling FURTHER slots once the per-round
 token budget is spent, and settle the fold over the slots that completed. The
@@ -1841,12 +1834,12 @@ no global RNG, no process ids, no tempdir names. Consequences:
 
 ### 13.2 Drive the real machinery; fake only the worker boundary
 
-The statistical trials drive the REAL `run_matchup` (board-unit scheduling,
-replicate averaging, the unchanged gate) and the REAL
-`resolve_tournament`/`_confirm_gauntlet_promotion` (strategy + evidence loop),
-monkeypatching exactly one seam — `runner._run_single`, the suite's documented
-monkeypatch anchor — with `_NoisyWorld`, an in-process evaluator on the same
-noise model, output synthesis, and real board predicates:
+The statistical trials drive the real `run_matchup` (board-unit scheduling,
+replicate averaging, and promotion gate) and the real
+`evaluate_tournament`/`confirm_promotion_with_evidence` strategy and evidence
+loop. They replace one seam, `runner._run_single`, with `_NoisyWorld`. The
+replacement is an in-process evaluator that uses the same noise model, output
+synthesis, and board predicates:
 
 ```python
 # tests/test_decision_procedure_power.py — _NoisyWorld.install

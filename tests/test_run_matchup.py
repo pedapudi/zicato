@@ -1,8 +1,7 @@
-"""Tests for ``run_matchup`` — the selection-layer duel runner.
+"""Tests for ``run_matchup``, the canonical selection-layer duel runner.
 
-Proves the new ``run_matchup`` entry point (1) reproduces the gauntlet's
-gate verdict against the historical ``run_tournament`` for the same
-champion-vs-challenger pair (gauntlet-equivalence), (2) honours
+Proves that the canonical runner (1) agrees with the standalone tournament
+API for the same champion-vs-challenger pair, (2) honours
 ``board_subset`` (racing rungs), and (3) averages per-entry losses under
 ``replicates`` while keeping the gate composition unchanged. The runner's
 subprocess ``_run_single`` is stubbed with canned losses — no live runs.
@@ -212,6 +211,43 @@ def test_run_matchup_replicates_average_losses(monkeypatch, tmp_path):
     )
     # Challenger drift_loss_mean is the average of the two replicate runs.
     assert result.child_agg["drift_loss_mean"] == pytest.approx(0.5)
+
+
+def test_run_matchup_applies_diff_complexity_to_the_correct_competitor(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Each side's source diff reaches only that side's aggregate and gate."""
+
+    canned = {
+        (generation_id, entry.id): _loss(
+            generation_id=generation_id,
+            entry_id=entry.id,
+            drift_loss=1.0,
+            pass_fail=True,
+        )
+        for generation_id in ("v0", "v1")
+        for entry in _board()
+    }
+    _stub_run_single(monkeypatch, canned)
+    right_diff = {"added": 4, "removed": 1, "patches": 2}
+
+    result = asyncio.run(
+        run_matchup(
+            adapter=object(),
+            left_gen=_gen(tmp_path, "v0"),
+            right_gen=_gen(tmp_path, "v1"),
+            board=_board(),
+            weights=ScoringWeights(diff_complexity_weight=0.1),
+            config=_config(tmp_path),
+            workspace_root=tmp_path,
+            epoch_id="e0",
+            right_diff_size=right_diff,
+        )
+    )
+
+    assert "diff_size" not in result.parent_agg
+    assert result.child_agg["diff_size"] == right_diff
+    assert result.child_agg["scalar_components"]["diff_complexity"] == pytest.approx(0.7)
 
 
 def _config_seq(tmp_path: Path) -> RuntimeConfig:

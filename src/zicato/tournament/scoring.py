@@ -1,5 +1,19 @@
 """Scoring helpers: per-run drift loss and per-generation aggregation.
 
+Exact aggregation
+-----------------
+Every float total on this path is computed with :func:`math.fsum`, never
+with the builtin ``sum`` and never with a running ``+=`` accumulator.
+``math.fsum`` returns the correctly-rounded exact sum, which makes an
+aggregate a function of its inputs alone: independent of the order the
+terms arrive in, and — the reason this is an invariant rather than a
+preference — independent of the interpreter. CPython 3.12 changed the
+builtin ``sum`` over floats to compensated summation, so the same board
+scored under 3.11 and 3.12 produced ``0.39999999999999997`` and ``0.4``
+for the same inputs. These values are served, compared against contract
+margins, and frozen byte-for-byte in the parity goldens; none of that may
+depend on which interpreter ran the round.
+
 The aggregator collapses a list of :class:`~zicato.core.LossProfile`
 instances (one per board entry executed under one generation) into a
 single dict that is comparable across generations under the same
@@ -207,7 +221,11 @@ def aggregate_namespaced_metrics(
     namespace_means: dict[str, float] = {}
 
     if losses:
-        drift_total = sum(per_run_drift_loss(loss, weights) for loss in losses)
+        # ``math.fsum``, never the builtin: see the module docstring on
+        # exact aggregation. This mean reaches every served scalar, so a
+        # summation whose result depends on the interpreter version would
+        # make the parity goldens depend on it too.
+        drift_total = math.fsum(per_run_drift_loss(loss, weights) for loss in losses)
         drift_mean = drift_total / len(losses)
     else:
         drift_mean = 0.0
@@ -220,13 +238,16 @@ def aggregate_namespaced_metrics(
     # contributes no entries for a given namespace (its contribution to
     # the sum is zero by convention — same model as
     # drift_loss_mean / entry_count above).
-    sums: dict[str, float] = {}
+    # Terms are collected per namespace and summed ONCE with ``math.fsum``
+    # rather than accumulated in a running float, so the aggregate does not
+    # depend on the order the losses arrive in.
+    terms: dict[str, list[float]] = {}
     n_losses = len(losses)
     for loss in losses:
         # Sum within one loss first so a loss with multiple entries in
         # the same namespace counts each entry, and a loss with none
         # contributes zero.
-        per_loss: dict[str, float] = {}
+        per_loss: dict[str, list[float]] = {}
         for mc in loss.unified_metrics():
             ns = _namespace_of(mc.name)
             if not ns or ns == "drift:":
@@ -235,11 +256,10 @@ def aggregate_namespaced_metrics(
                 # judge-attributed ones the judge: channel scores — are
                 # skipped here so nothing is counted twice.
                 continue
-            per_loss[ns] = per_loss.get(ns, 0.0) + mc.count * _within_channel_weight(
-                mc.name, weights
-            )
-        for ns, val in per_loss.items():
-            sums[ns] = sums.get(ns, 0.0) + val
+            per_loss.setdefault(ns, []).append(mc.count * _within_channel_weight(mc.name, weights))
+        for ns, values in per_loss.items():
+            terms.setdefault(ns, []).append(math.fsum(values))
+    sums: dict[str, float] = {ns: math.fsum(values) for ns, values in terms.items()}
 
     # Promote known-but-absent namespaces to zero aggregates so
     # downstream consumers iterate a stable key set.
@@ -267,16 +287,16 @@ def _per_judge_loss_aggregate(losses: list[LossProfile]) -> dict[str, float]:
     """
     if not losses:
         return {}
-    sums: dict[str, float] = {}
+    terms: dict[str, list[float]] = {}
     for loss in losses:
         # ``getattr`` (not attribute access) so a duck-typed loss stand-in —
         # the projected-standings ``_FakeLoss``, or a profile materialised
         # before the field existed — that carries no ``per_judge_loss`` is
         # tolerated, mirroring :func:`entry_score`'s defensive ``getattr``.
         for jl in getattr(loss, "per_judge_loss", ()) or ():
-            sums[jl.judge_name] = sums.get(jl.judge_name, 0.0) + jl.weighted_loss
+            terms.setdefault(jl.judge_name, []).append(jl.weighted_loss)
     n = len(losses)
-    return {name: total / n for name, total in sums.items()}
+    return {name: math.fsum(values) / n for name, values in terms.items()}
 
 
 def aggregate_generation_score(
@@ -302,11 +322,13 @@ def aggregate_generation_score(
     a champion baseline that pays no parsimony cost.
     """
     per_entry: dict[str, dict[str, Any]] = {}
-    drift_total = 0.0
+    # Collected, then summed once with ``math.fsum`` — see the module
+    # docstring on exact aggregation. Counts stay integer accumulators;
+    # only the float terms need the exact sum.
+    drift_terms: list[float] = []
+    score_terms: list[float] = []
     pass_count = 0
     expectation_count = 0
-    score_total = 0.0
-    score_count = 0
 
     for loss in losses:
         drift = per_run_drift_loss(loss, weights)
@@ -326,29 +348,29 @@ def aggregate_generation_score(
             # entries uniformly.
             "score": entry_outcome,
         }
-        drift_total += drift
+        drift_terms.append(drift)
         if loss.pass_fail is not None:
             expectation_count += 1
             if loss.pass_fail:
                 pass_count += 1
         if entry_outcome is not None:
-            score_total += entry_outcome
-            score_count += 1
+            score_terms.append(entry_outcome)
 
     entry_count = len(losses)
-    drift_loss_mean = drift_total / entry_count if entry_count > 0 else 0.0
+    score_count = len(score_terms)
+    drift_loss_mean = math.fsum(drift_terms) / entry_count if entry_count > 0 else 0.0
     pass_rate = pass_count / expectation_count if expectation_count > 0 else 1.0
     # ``mean_score`` is the UNIFORM outcome axis: the arithmetic mean of each
     # entry's continuous :func:`entry_score` over every entry that produced
     # one (``score_count``). On an all-bool board every entry with a
     # pass/fail also produces a score and every entry without one produces
     # neither, so ``score_count == expectation_count`` AND
-    # ``score_total == pass_count`` — hence ``mean_score == pass_rate``
+    # the score terms sum to ``pass_count`` — hence ``mean_score == pass_rate``
     # byte-for-byte. That is the back-compat proof: substituting mean_score
     # for pass_rate in the pass component below is a no-op on all-bool
     # boards. A board with no scored entries reports 1.0, exactly as
     # pass_rate does, so the (1 - mean_score) term contributes zero.
-    mean_score = score_total / score_count if score_count > 0 else 1.0
+    mean_score = math.fsum(score_terms) / score_count if score_count > 0 else 1.0
 
     # Namespace aggregates are already weight-multiplied per
     # :func:`aggregate_namespaced_metrics` — they slot straight into
@@ -385,7 +407,7 @@ def aggregate_generation_score(
 
     # Seam 2 (issue #19 phase 1): synthesise the scalar through the scoring
     # dispatcher. The built-in formula (drift + pass + non-drift namespaces)
-    # is byte-identical to ``sum(scalar_components.values())`` — the golden
+    # is byte-identical to ``fsum(scalar_components.values())`` — the golden
     # test pins that — and the dispatcher returns it with a ``"builtin"``
     # provenance in this phase. ``scalar_components`` is still computed above
     # for the display / gate breakdown; the dispatcher owns the scalar value

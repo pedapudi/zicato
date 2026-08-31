@@ -217,22 +217,34 @@ def _resolve_generation_root(ctx: ProposerContext) -> Path:
     The read-only tools (``read_mutable_file`` / ``grep_mutable``) read the
     PARENT generation snapshot — the tree this round is about to patch. We
     resolve it the same way the orchestrator does, via the generation
-    store's pure path math
-    (:meth:`zicato.epoch.genstore.FileGenerationStore.snapshot_root`),
+    store's explicit materialization operation
+    (:meth:`zicato.epoch.genstore.GenerationStore.materialize_snapshot`),
     from the lineage coordinates already on the context. When no
     ``workspace_root`` is set (a standalone propose with no on-disk
-    workspace), we fall back to the workspace root itself if present, else
-    the current directory — the read/grep tools then simply find no files,
+    workspace), we use the current directory. The read/grep tools then simply
+    find no files unless the caller deliberately assembled the context there,
     which is the correct degenerate behaviour for a contextless call.
+
+    A hand-built context can name a workspace directory before it has a
+    ``config.json``. That programmatic API case retains the directory-layout
+    path fallback. An initialized workspace with a missing or invalid source
+    backend still fails closed through :func:`default_generation_store`.
     """
     if ctx.generation_root is not None:
         return ctx.generation_root
     if ctx.workspace_root is None:
         return Path.cwd()
-    from zicato.epoch.genstore import default_generation_store
+    from zicato.core.workspace import generation_dir
+    from zicato.epoch.genstore import SNAPSHOT_DIRNAME, default_generation_store
 
-    store = default_generation_store(ctx.workspace_root)
-    return store.snapshot_root(ctx.epoch_id, ctx.parent_generation_id)
+    try:
+        store = default_generation_store(ctx.workspace_root)
+    except FileNotFoundError:
+        return (
+            generation_dir(ctx.workspace_root, ctx.epoch_id, ctx.parent_generation_id)
+            / SNAPSHOT_DIRNAME
+        )
+    return store.materialize_snapshot(ctx.epoch_id, ctx.parent_generation_id)
 
 
 @dataclass

@@ -6,8 +6,9 @@ event stream, and do all of it with a hard atomic-write guarantee. Today each
 domain (``runtime/``, ``epoch/``, ``telemetry/``) reaches for the same handful
 of helpers (atomic-write + ``Path`` math) directly. This module
 formalises that into one honest interface so the mechanism can be swapped
-(an in-memory backend for tests; a git-backed backend on the v0+1 roadmap)
-without any domain caring.
+(an in-memory backend for tests; a remote record store if one is ever needed)
+without any domain caring. Generation source trees are intentionally outside
+this interface and use :class:`zicato.epoch.genstore.GenerationStore`.
 
 Design stance — read these before adding a method here:
 
@@ -72,7 +73,7 @@ class StorageBackend(ABC):
 
     Lifecycle: construct, :meth:`start`, use, :meth:`close`. The file
     backend's ``start``/``close`` are no-ops (the filesystem needs no
-    handle); future backends (git, networked) use them to open and flush.
+    handle); a future remote record backend could use them to open and flush.
     Backends are also usable as context managers via :meth:`__enter__` /
     :meth:`__exit__`.
     """

@@ -217,6 +217,7 @@ def _bootstrap_t0(tmp_path: Path, *, every_n: int) -> tuple[Path, str]:
             {
                 "instance_id": "default",
                 "created_at": "2026-07-01T00:00:00Z",
+                "generation_source_backend": "directory",
                 "adapter": {
                     "kind": "import",
                     "factory": "zicato_examples.target_0_convergence.harness:make_adapter",
@@ -374,7 +375,7 @@ def _bootstrap_swiss_with_placebo(tmp_path: Path, *, field_size: int) -> tuple[P
             {
                 "instance_id": "test",
                 "created_at": "2026-05-31T00:00:00Z",
-                "storage_backend": "directory",
+                "generation_source_backend": "directory",
                 "adapter": {"kind": "stub"},
             }
         )

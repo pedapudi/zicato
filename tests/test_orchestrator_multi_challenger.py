@@ -111,7 +111,7 @@ def _bootstrap_swiss_workspace(
                 # Hand-built directory-backend snapshot layout below; pin the
                 # directory backend so the git default does not look for git
                 # tags this fixture never writes.
-                "storage_backend": "directory",
+                "generation_source_backend": "directory",
                 "adapter": {"kind": "stub"},
                 # These fixtures assert TOURNAMENT-caching properties (the
                 # champion is never re-run in fast mode). The default-on
@@ -189,9 +189,10 @@ def test_swiss_field_runs_end_to_end_and_promotes(
     _install_stub_adapter_factory(monkeypatch)
     # v1 is the strongest (lowest drift loss) and beats both the champion
     # (v0) and the other challenger (v2), so it should be crowned.
+    canned_loss = {"v0": 2.0, "v1": 0.5, "v2": 1.5}
     _install_telemetry_stubs(
         monkeypatch,
-        canned_loss_by_gen={"v0": 2.0, "v1": 0.5, "v2": 1.5},
+        canned_loss_by_gen=canned_loss,
         canned_pass_by_gen={"v0": True, "v1": True, "v2": True},
     )
 
@@ -231,6 +232,9 @@ def test_swiss_field_runs_end_to_end_and_promotes(
     assert crowned_outcome["tournament_decision"] == "promoted"
     assert crowned_outcome["structure"] == "swiss"
     assert crowned_outcome["match_record"], "crowned generation should carry a match audit"
+    assert crowned_outcome["drift_loss_delta"] == pytest.approx(
+        canned_loss[crowned] - canned_loss["v0"]
+    )
     assert dead_outcome["tournament_decision"] == "rejected"
     assert dead_outcome["structure"] == "swiss"
 

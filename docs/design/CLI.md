@@ -45,8 +45,8 @@ tournament
 inspect
   environment | logs | mutations | reflection | telemetry
 repair
-  epoch-goals | generations | index | judge-losses | report |
-  tournament-fk | v0-baseline
+  epoch-goals | generation-source-backend | generations | index |
+  judge-losses | report | tournament-fk | v0-baseline
 ```
 
 `inspect reflection` retains its `run`, `practices`, `suggest`, `report`, and
@@ -68,6 +68,7 @@ repair
 | Reconcile generation rows | `zicato repair generations` |
 | Regenerate an epoch report | `zicato repair report` |
 | Run targeted migrations | `zicato repair epoch-goals`, `judge-losses`, `tournament-fk`, or `v0-baseline` |
+| Set the generation source backend on an existing workspace | `zicato repair generation-source-backend --backend <git\|directory>` |
 
 The standalone builder launcher was removed. The same view is served by:
 

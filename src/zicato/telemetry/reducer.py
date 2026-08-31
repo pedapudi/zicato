@@ -454,7 +454,7 @@ def compute_drift_loss(
 
     The formula is::
 
-        loss = sum(
+        loss = fsum(
             severity_weights[c.severity] * per_kind_weights(c.kind) * c.count
             for c in drift_counts if not judge-attributed
         )
@@ -575,8 +575,8 @@ def _cosine(a: Counter[str], b: Counter[str]) -> float:
         dot += ca * b.get(tri, 0)
     if dot == 0:
         return 0.0
-    norm_a = sum(v * v for v in a.values()) ** 0.5
-    norm_b = sum(v * v for v in b.values()) ** 0.5
+    norm_a = math.fsum(v * v for v in a.values()) ** 0.5
+    norm_b = math.fsum(v * v for v in b.values()) ** 0.5
     if norm_a == 0 or norm_b == 0:
         return 0.0
     return float(dot / (norm_a * norm_b))

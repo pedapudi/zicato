@@ -139,7 +139,7 @@ def _bootstrap_registered(tmp_path: Path) -> tuple[Path, Path]:
                 # (epochs/.../generations/v0/snapshot/) after a contract
                 # roll, so it pins the directory backend; the git default
                 # keeps generations in the private repo, not that path.
-                "storage_backend": "directory",
+                "generation_source_backend": "directory",
                 "mutable_trees": [str(agent)],
                 "source_roots": [str(agent)],
                 "contract": {

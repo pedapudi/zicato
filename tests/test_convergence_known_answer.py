@@ -94,7 +94,7 @@ def _bootstrap_workspace(tmp_path: Path, scoring_path: Path) -> tuple[Path, str]
 
     Unlike the orchestrator tests' hand-built directory layout, this
     bootstrap deliberately uses the DEFAULT storage backend (no
-    ``storage_backend`` knob ⇒ the git generation store): the first
+    ``generation_source_backend`` knob ⇒ the git generation store): the first
     evolve round's ``_ensure_baseline_snapshot`` seeds ``v0`` from the
     registered ``mutable_trees`` through the git backend — the shipped
     default path.
@@ -105,6 +105,7 @@ def _bootstrap_workspace(tmp_path: Path, scoring_path: Path) -> tuple[Path, str]
         json.dumps(
             {
                 "instance_id": "default",
+                "generation_source_backend": "git",
                 "created_at": "2026-07-01T00:00:00Z",
                 "adapter": ADAPTER_BLOCK,
                 "mutable_trees": [str(AGENT_DIR)],

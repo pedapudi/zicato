@@ -13,8 +13,8 @@ This subpackage owns five concerns:
 * :mod:`zicato.epoch.lineage` — cross-cutting DAG persisted to
   ``.zicato/lineage.json``.
 * :mod:`zicato.epoch.genstore` — the :class:`GenerationStore` seam:
-  generation source trees as a pluggable store (directory snapshots
-  today, git on the roadmap). See ``docs/design/STORAGE.md`` §4-§5.
+  generation source trees behind the shipped directory and Git backends.
+  See ``docs/design/STORAGE.md`` §4-§5.
 
 The first four persist *records* and route through
 :class:`zicato.storage.StorageBackend`; the fifth persists source

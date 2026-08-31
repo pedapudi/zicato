@@ -165,6 +165,52 @@ def test_all_infra_aborted_round_defers_un_outcomed(
     assert outage["detail"]["infra_abort_round_threshold"] == 1
 
 
+def test_field_infrastructure_threshold_accumulates_across_matchups(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A round-wide threshold must not reset for each scheduled matchup."""
+    from tests.test_orchestrator_multi_challenger import (
+        _bootstrap_swiss_workspace,
+        _distinct_field_responses,
+    )
+
+    workspace, epoch_id = _bootstrap_swiss_workspace(tmp_path, field_size=2, rounds_n=1)
+    _set_runtime_block(workspace, {"infra_abort_round_threshold": 3})
+    _install_stub_adapter_factory(monkeypatch)
+    _install_telemetry_stubs(
+        monkeypatch,
+        canned_loss_by_gen={"v0": 2.0, "v1": 1.0, "v2": 1.5},
+        canned_pass_by_gen={"v0": True, "v1": True, "v2": True},
+    )
+    _install_infra_abort_run_single(monkeypatch)
+
+    outcome = asyncio.run(
+        evolve_once(
+            workspace_root=workspace,
+            epoch_id=epoch_id,
+            harness_call_llm=_harness_call_llm,
+            auxiliary_call_llm=_make_aux_responder(_distinct_field_responses(2)),
+        )
+    )
+
+    # Each two-sided, single-entry matchup contributes two infrastructure
+    # aborts. No individual matchup reaches three, but the Swiss matchup plus
+    # its crowning matchup do, so the entire round must defer.
+    assert outcome.tournament_decision == DEFERRED_INFRA_DECISION
+    for generation_id in ("v1", "v2"):
+        body = json.loads(
+            (
+                workspace / "epochs" / epoch_id / "generations" / generation_id / "experiment.json"
+            ).read_text()
+        )
+        assert body["outcome"] is None
+
+    report = json.loads((workspace / "epochs" / epoch_id / "health" / "round_1.json").read_text())
+    outage = next(finding for finding in report["findings"] if finding["code"] == "infra_outage")
+    assert outage["detail"]["infra_aborted_runs"] == 4
+    assert outage["detail"]["infra_abort_round_threshold"] == 3
+
+
 def test_deferred_round_reconciles_cleanly_and_recovers(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:

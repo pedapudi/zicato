@@ -86,6 +86,7 @@ def _bootstrap(
         json.dumps(
             {
                 "instance_id": "default",
+                "generation_source_backend": "git",
                 "created_at": "2026-07-01T00:00:00Z",
                 "adapter": ADAPTER_BLOCK,
                 "mutable_trees": [str(AGENT_DIR)],
@@ -153,7 +154,7 @@ def _policy_text(workspace: Path, epoch_id: str, generation_id: str) -> str:
     store = default_generation_store(workspace)
     committed = store.read_file(epoch_id, generation_id, "agent/policy.py").decode()
     mounted = (
-        Path(store.snapshot_root(epoch_id, generation_id)) / "agent" / "policy.py"
+        Path(store.materialize_snapshot(epoch_id, generation_id)) / "agent" / "policy.py"
     ).read_text()
     assert committed == mounted, (
         f"{generation_id}: the committed tree and the materialised snapshot " f"worktree diverged"

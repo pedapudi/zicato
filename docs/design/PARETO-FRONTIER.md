@@ -401,21 +401,12 @@ def record_round_frontier(
 ) -> None
 ```
 
-One best-effort call at the **round-settle seam** on each of the two evolve
-pipelines, placed after the decision is final (post holdout confirmation,
-post integrity block, post operator override) so the champion it evaluates
-against is the champion the round actually ended with:
-
-- **gauntlet** (`orchestrator.evolve_once`), after `_finalize_generation` and
-  beside the `decision_recorded` emission. Champion is the promoted
-  generation on a promote, else the incumbent; aggregates are
-  `tournament_result.parent_agg` / `child_agg`, the same two dicts the gate
-  decided on and `_cache_gen_score` persists.
-- **multi-challenger** (`orchestrator._evolve_multi_challenger`), beside its
-  own `decision_recorded` emission. Per-generation aggregates accumulate in
-  `_run_matchup` exactly where `_cache_gen_score` already writes them, and
-  only when `cache_scores` is set — so an evidence-gate replicate duel cannot
-  overwrite the round-scored aggregate the record reads.
+One best-effort call at the shared **round-settle seam** in
+`evolve_field_round`, after holdout confirmation, integrity checks, and
+operator overrides. The frontier therefore uses the champion that the round
+commits. Per-generation aggregates accumulate in `_run_matchup` where
+`_cache_gen_score` writes them. Evidence-gate replicate duels set
+`cache_scores=False`, so they cannot overwrite the round-scored aggregate.
 
 Failure of the recorder can never fail a round. It follows the emission
 discipline the live index dual-write established: the canonical stores stay

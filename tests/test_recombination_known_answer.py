@@ -128,6 +128,7 @@ def _bootstrap_workspace(
             {
                 "instance_id": "default",
                 "created_at": "2026-07-01T00:00:00Z",
+                "generation_source_backend": "directory",
                 "adapter": ADAPTER_BLOCK,
                 "mutable_trees": [str(agent_dir)],
             }

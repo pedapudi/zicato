@@ -44,7 +44,7 @@ def workspace(request: pytest.FixtureRequest, tmp_path: Path) -> Path:
     ws = tmp_path / ".zicato"
     ws.mkdir()
     (ws / "config.json").write_text(
-        json.dumps({"storage_backend": request.param}), encoding="utf-8"
+        json.dumps({"generation_source_backend": request.param}), encoding="utf-8"
     )
     return ws
 
@@ -233,7 +233,9 @@ def test_directory_backend_keeps_sibling_records_on_disk(tmp_path: Path) -> None
     """Directory backend: ONLY ``snapshot/`` is removed, siblings survive."""
     ws = tmp_path / ".zicato"
     ws.mkdir()
-    (ws / "config.json").write_text(json.dumps({"storage_backend": "directory"}), encoding="utf-8")
+    (ws / "config.json").write_text(
+        json.dumps({"generation_source_backend": "directory"}), encoding="utf-8"
+    )
     _seed_lineage(ws)
     gen_dir = ws / "epochs" / EPOCH / "generations" / "v1"
     assert (gen_dir / "snapshot").is_dir()
@@ -248,10 +250,12 @@ def test_directory_backend_keeps_sibling_records_on_disk(tmp_path: Path) -> None
 def test_git_backend_removes_tag_and_worktree(tmp_path: Path) -> None:
     ws = tmp_path / ".zicato"
     ws.mkdir()
-    (ws / "config.json").write_text(json.dumps({"storage_backend": "git"}), encoding="utf-8")
+    (ws / "config.json").write_text(
+        json.dumps({"generation_source_backend": "git"}), encoding="utf-8"
+    )
     store = _seed_lineage(ws)
     # Materialise v1's worktree (as a tournament round would have).
-    v1_worktree = store.snapshot_root(EPOCH, "v1")
+    v1_worktree = store.materialize_snapshot(EPOCH, "v1")
     assert v1_worktree.is_dir()
 
     report = prune_generations(ws, EPOCH, keep_promoted_only=True, dry_run=False)
@@ -282,7 +286,8 @@ def test_dashboard_views_degrade_gracefully_for_pruned_generation(workspace: Pat
     prune_generations(workspace, EPOCH, keep_promoted_only=True, dry_run=False)
     paths = WorkspacePaths(workspace)
 
-    # The index never raises; kept generations still enumerate.
+    # The index never raises, and every recorded generation remains visible
+    # even when Git pruning removes the rejected generation's source tag.
     index = build_file_index(paths)
     listed = {
         g["generation_id"]
@@ -290,7 +295,7 @@ def test_dashboard_views_degrade_gracefully_for_pruned_generation(workspace: Pat
         if e["epoch_id"] == EPOCH
         for g in e["generations"]
     }
-    assert {"v0", "v3", "v4"} <= listed
+    assert listed == {"v0", "v1", "v2", "v3", "v4"}
 
     # Tree view: explicit error + empty entries, not a raise.
     tree = build_generation_tree(paths, EPOCH, "v1")
@@ -329,7 +334,7 @@ def test_dashboard_mutation_index_survives_pruned_generations(workspace: Path) -
 
     ``build_mutation_index`` enumerates the baseline surface (``v0`` is
     never pruned) and, per site, the generations whose patch set touched
-    it — read through ``list_patches``, whose record survives pruning on
+    it — read through ``read_generation_patches``, whose record survives pruning on
     both backends (per-patch JSON files / journal fallback).
 
     The generation LIST behind that attribution is now record-backed too
@@ -352,7 +357,7 @@ def test_dashboard_mutation_index_survives_pruned_generations(workspace: Path) -
     # per-generation RECORD directories survive GC on either backend — the
     # git backend relocates TREES, not records — so the surface enumerates
     # from those rather than from the store's tag listing, and
-    # ``list_patches`` reads the journal record once the tag is gone.
+    # ``read_generation_patches`` reads the journal record once the tag is gone.
     #
     # The git backend used to drop v1/v2 here: their tags were deleted, so
     # the store no longer named them and their patches vanished from the
@@ -443,7 +448,9 @@ def test_close_epoch_runs_the_hook(tmp_path: Path) -> None:
 
     ws = tmp_path / ".zicato"
     ws.mkdir()
-    (ws / "config.json").write_text("{}", encoding="utf-8")
+    (ws / "config.json").write_text(
+        json.dumps({"generation_source_backend": "git"}), encoding="utf-8"
+    )
     board = tmp_path / "board.jsonl"
     board.write_text(
         '{"id": "e1", "kind": "single_turn", "wall_clock_budget_seconds": 60, "input": "hi"}\n',

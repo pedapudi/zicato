@@ -90,9 +90,25 @@ def _ctx(
 def git_ws(tmp_path: Path) -> tuple[Path, GitGenerationStore]:
     """A git-backed workspace with ``e1/v0`` seeded and ``v1`` derived."""
     ws = tmp_path / "ws"
+    ws.mkdir()
+    (ws / "config.json").write_text(
+        json.dumps({"generation_source_backend": "git"}), encoding="utf-8"
+    )
     store = GitGenerationStore(ws)
     store.seed_generation("e1", "v0", [_mutable_tree(tmp_path / "src")])
-    store.derive_generation("e1", "v0", "v1", [_patch("p1", "improved instruction")])
+    patch = _patch("p1", "improved instruction")
+    store.derive_generation("e1", "v0", "v1", [patch])
+    write_experiment(
+        ws,
+        "e1",
+        "v1",
+        make_experiment(
+            epoch_id="e1",
+            generation_id="v1",
+            parent_generation_id="v0",
+            patches=(patch,),
+        ),
+    )
     return ws, store
 
 
@@ -113,7 +129,7 @@ def test_genstore_parent_and_diff_read_surface(git_ws: tuple[Path, GitGeneration
 @pytest.mark.slow
 def test_read_parent_diff_git_backend(git_ws: tuple[Path, GitGenerationStore]) -> None:
     ws, store = git_ws
-    snapshot = store.snapshot_root("e1", "v1")
+    snapshot = store.materialize_snapshot("e1", "v1")
     with bind_proposer_tool_context(_ctx(ws, snapshot, generation_id="v1")):
         out = read_parent_diff()
     assert out.startswith("# diff v0 -> v1")
@@ -125,7 +141,7 @@ def test_read_parent_diff_git_backend(git_ws: tuple[Path, GitGenerationStore]) -
 @pytest.mark.slow
 def test_read_parent_diff_seed_generation(git_ws: tuple[Path, GitGenerationStore]) -> None:
     ws, store = git_ws
-    snapshot = store.snapshot_root("e1", "v0")
+    snapshot = store.materialize_snapshot("e1", "v0")
     with bind_proposer_tool_context(_ctx(ws, snapshot, generation_id="v0")):
         out = read_parent_diff()
     assert "seed" in out
@@ -136,8 +152,20 @@ def test_read_parent_diff_seed_generation(git_ws: tuple[Path, GitGenerationStore
 def test_read_parent_diff_caps_output(git_ws: tuple[Path, GitGenerationStore]) -> None:
     ws, store = git_ws
     # A pathological promotion: replace the span with a huge body.
-    store.derive_generation("e1", "v1", "v2", [_patch("p2", "x" * 60_000)])
-    snapshot = store.snapshot_root("e1", "v2")
+    patch = _patch("p2", "x" * 60_000)
+    store.derive_generation("e1", "v1", "v2", [patch])
+    write_experiment(
+        ws,
+        "e1",
+        "v2",
+        make_experiment(
+            epoch_id="e1",
+            generation_id="v2",
+            parent_generation_id="v1",
+            patches=(patch,),
+        ),
+    )
+    snapshot = store.materialize_snapshot("e1", "v2")
     with bind_proposer_tool_context(_ctx(ws, snapshot, generation_id="v2")):
         out = read_parent_diff()
     assert len(out) < 30_000
@@ -160,7 +188,9 @@ def dir_ws(tmp_path: Path) -> Path:
     """A directory-backend workspace with ``v1``'s experiment journaled."""
     ws = tmp_path / "ws"
     ws.mkdir()
-    (ws / "config.json").write_text(json.dumps({"storage_backend": "directory"}), encoding="utf-8")
+    (ws / "config.json").write_text(
+        json.dumps({"generation_source_backend": "directory"}), encoding="utf-8"
+    )
     experiment = make_experiment(
         epoch_id="e1",
         generation_id="v1",

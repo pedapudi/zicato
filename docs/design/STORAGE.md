@@ -10,21 +10,17 @@ two things unresolved that this document closes:
    `ANALYTICAL-INDEX.md`.
 2. **The record-level vs generation-level seam fork** — the
    `StorageBackend` ABC is record-level (key→blob); generation
-   snapshots are directory trees and a future git backend is
+   snapshots are directory trees and the git backend is
    commit/worktree-shaped. §4 resolves this fork explicitly and §5
    states what the implementation does about it now.
 
 The `GenerationStore` protocol that resolves that fork is shipped, and
-**both** backends behind it are shipped: the directory-snapshot
-backend (the default and always-available fallback) and the
-git-backed backend (`GitGenerationStore`, selected by config — §7).
-The directory backend remains the default. What is *not* yet
-shipped — and is correctly marked as roadmap below — is the operator
-CLI surface over the git store (`zicato repo` / `log` / `diff` /
-`show` / `bisect` / `blame`) and the `zicato workspace migrate-to-git`
-converter for an existing directory-backed workspace (§7.5). The git
-*backend* is usable today from a fresh `storage_backend: "git"`
-workspace; the git *CLI commands* are the deferred follow-up.
+**both** backends behind it are shipped. `zicato init` explicitly selects
+the git-backed implementation (`GitGenerationStore`); the directory-snapshot
+implementation remains the supported no-git fallback. zicato does not migrate
+old directory-backed workspaces. Operators can inspect the private generation
+repository with ordinary Git commands; a dedicated `zicato repo` command family
+is not part of the shipped CLI.
 
 ## 1. The shape of zicato's persistence
 
@@ -37,7 +33,7 @@ three of the five.
 |---|---|---|
 | 1 | **Runtime state** | The orchestrator's live state the supervisor + dashboard read: `heartbeat.json`, `lock.json`, `active_tournament.json`, per-run `active_runs/*.json`, control-protocol flag files. |
 | 2 | **Telemetry** | The `goldfive.v1.Event` stream of each tournament run — one `events.jsonl` per run. |
-| 3 | **Generation source trees** | The post-apply inner-harness source at each generation (`generations/vN/snapshot/`). |
+| 3 | **Generation source trees** | The post-apply inner-harness source at each generation: a tagged commit under Git or `generations/vN/snapshot/` under the directory backend. |
 | 4 | **Lineage / experiments / journals** | The typed evolutionary record: `experiment.json` + per-patch files, `journal.md`, `lineage.json`, per-epoch `config.json` / `board.jsonl` / `scoring.json` / `brief.md`, cached `gen_score.json`. |
 | 5 | **The analytical index** | The relational projection answering cross-run `GROUP BY` / `JOIN` questions: `.zicato/index.db`. |
 
@@ -55,14 +51,14 @@ three of the five.
 |---|---|---|
 | **1. Runtime state** | **Files** — one JSON record per file, through `StorageBackend` (the file backend). | Each record is independently written by a different process (orchestrator, per-run workers). One-file-per-record is the lock-free, crash-isolated shape. A DB here would serialise independent writers behind one lock for zero query benefit — runtime state is read by key, never joined. |
 | **2. Telemetry** | **JSONL** — `events.jsonl`, one append-only file per run, written by goldfive's `JSONLPersistenceSink`. | The access pattern is append-while-running, tail-for-the-log-panel, stream-to-SSE, replay-once-in-the-reducer. JSONL wins every one. Events are never queried *across* runs — the reduced `LossProfile` is (and that goes in the index). A row-per-event table would add write contention during the run for no query benefit. This is **goldfive's format**; zicato consumes it and does not re-schematize it. |
-| **3. Generation source trees** | **Directory snapshots (default) or git — selected by config.** Behind the `GenerationStore` protocol (§5) either way. | The data is intrinsically file-shaped. The directory backend is a full `copytree` per generation — correct, simple, the default. The git backend (§7) adds blob dedup across generations and `diff`/`log`/`blame`/`bisect` for free; it is a *second* `GenerationStore` implementation behind the same protocol, not a different design. Both keep the source tree code-only via the shared artifact-exclusion policy (`snapshot_scope`, §5.2.1). |
+| **3. Generation source trees** | **Git or directory snapshots, selected explicitly by config.** Behind the `GenerationStore` protocol (§5) either way. | The data is intrinsically file-shaped. `zicato init` selects git, whose object store deduplicates unchanged blobs. The directory backend remains a supported full-`copytree` implementation. Both keep the source tree code-only via the shared artifact-exclusion policy (`snapshot_scope`, §5.2.1). |
 | **4. Lineage / experiments / journals** | **Files** — JSON records + per-patch JSON files + markdown, through `StorageBackend` (the file backend). | These are the typed canonical record. They are small, human-readable in a pager, diffable, and edited at generation granularity by a single writer (the orchestrator) per epoch. Files keep them inspectable and keep the store of record uniform with runtime state. They are *projected* into the index (kind 5) for cross-run queries. |
 | **5. The analytical index** | **A real database — SQLite today, DuckDB an evaluated option (§6).** Derived, disposable, rebuilt from kinds 1-4. | A relational index is exactly the right shape for cross-run aggregates ("loss across runs × generations × epochs"). This is the one place a real DB genuinely fits. It is **never canonical** — `zicato repair index` reconstructs it from the files, so it carries no information not already on disk. |
 
 The principle, unchanged from the earlier memo and now stated as the
 spine of the design: **a real DB only for the derived cross-run index;
 files for every canonical record; JSONL for the append-only event
-capture; git (eventually) for the generation source trees.** Each
+capture; Git or directory snapshots for generation source trees.** Each
 substrate fits one access pattern; none is forced to do another's job.
 
 ## 3. `StorageBackend` — the record-level seam (shipped)
@@ -98,13 +94,13 @@ routes through it too — see §5.1.
 
 The earlier memo named, but did not resolve, a real design tension. The
 `StorageBackend` ABC is record-level. Generation source trees (kind 3)
-are directory trees, and a future git backend's natural unit is a
+are directory trees, and the git backend's natural unit is a
 commit / a ref / a checked-out worktree. `write_json(key, data)` cannot
 express *"commit generation v3 with this experiment metadata"*. There
 were two ways to close this:
 
 - **(a) Extend `StorageBackend`** with generation-level transaction
-  boundaries — add `write_generation(epoch, gen, tree, meta)` and
+  boundaries — add `write_generation(epoch, gen, tree)` and
   friends to the same ABC.
 - **(b) Keep `StorageBackend` record-level**, and put generation/epoch
   operations in a *separate* seam in the `epoch/` layer.
@@ -117,12 +113,12 @@ were two ways to close this:
    …)` method makes the ABC carry zicato's *domain vocabulary* —
    epochs, generations, experiments. Every backend would then have to
    implement domain operations, not storage operations. The file
-   backend would grow a method it implements as "copytree plus write
-   some JSON" — domain logic leaking into the storage seam.
+   backend would grow a method it implements as `copytree` — domain
+   logic leaking into the storage seam.
 
 2. **The two seams have genuinely different units.** A record store's
    unit is a key→blob pair; atomicity is per-record. A generation
-   store's unit is *a whole source tree plus its typed metadata*;
+   store's unit is *a whole source tree*;
    atomicity is "the generation appears, or it does not." A git
    backend delivers the second with a commit; the directory backend
    delivers it with a `copytree` into a fresh directory. Forcing both
@@ -130,8 +126,8 @@ were two ways to close this:
 
 3. **The git backend would still not fit.** Even with (a), the git
    backend's natural read shape is "give me a checked-out worktree on
-   disk," not "give me a `dict[str, bytes]`," and its experiment
-   metadata lives in a commit message, not a JSON blob. (a) does not
+   disk," not "give me a `dict[str, bytes]`." Experiment and patch
+   metadata stay in the separate record store. (a) does not
    actually make the git backend a `StorageBackend`; it just moves the
    impedance mismatch into the ABC.
 
@@ -146,7 +142,7 @@ So: **two seams, at two layers.**
 - **`StorageBackend`** (record-level, `zicato.storage`) — kinds 1 and
   4. Backends: files, memory, (future) anything else record-shaped.
 - **`GenerationStore`** (generation-level, `zicato.epoch.genstore`) —
-  kind 3. Backends: the directory backend today, a git backend later.
+  kind 3. Backends: directory snapshots and Git commits/worktrees.
 
 `GenerationStore` is **not** a subtype of `StorageBackend` and does not
 route through it. It is a peer abstraction at the domain layer, exactly
@@ -156,11 +152,10 @@ where epoch/generation vocabulary belongs.
 
 Four concrete changes ship: the `epoch/` migration onto
 `StorageBackend` (§5.1), the `GenerationStore` protocol with **both**
-backends behind it — directory and git (§5.2), and the continuous
-indexing design (§5.3). The git backend (§7) ships as the second
-`GenerationStore`; what remains a separate, later effort is the
-operator CLI over the git store and the `migrate-to-git` converter
-(§7.5).
+backends behind it — directory and git (§5.2), the continuous indexing
+design (§5.3), and generalized tournament records (§5.4). The git backend
+(§7) is the explicit selection written by `zicato init`; the directory
+backend remains available when Git is unwanted.
 
 ### 5.1 `epoch/` migrated onto `StorageBackend`
 
@@ -191,13 +186,16 @@ orphan patch files rather than a dangling `patch_ids` reference.
 
 `zicato.epoch.genstore` defines the `GenerationStore` protocol — the
 generation-level seam from §4. Two implementations now ship:
-`DirectoryGenerationStore` (the directory-snapshot mechanism, the
-default) and `GitGenerationStore` (the git backend — §7, no longer
-roadmap-only). The protocol:
+`DirectoryGenerationStore` (the directory-snapshot mechanism) and
+`GitGenerationStore` (the backend selected by `zicato init` — §7). The
+protocol:
 
 ```python
 class GenerationStore(Protocol):
-    def snapshot_root(self, epoch_id, generation_id) -> Path: ...
+    @property
+    def backend_name(self) -> str: ...
+    def snapshot_path(self, epoch_id, generation_id) -> Path: ...
+    def materialize_snapshot(self, epoch_id, generation_id) -> Path: ...
     def has_generation(self, epoch_id, generation_id) -> bool: ...
     def list_generations(self, epoch_id) -> list[str]: ...
     def seed_generation(self, epoch_id, generation_id, sources) -> Path: ...
@@ -206,7 +204,10 @@ class GenerationStore(Protocol):
     # read surface — the dashboard file-tree / file-browser API
     def list_tree(self, epoch_id, generation_id) -> list[TreeEntry]: ...
     def read_file(self, epoch_id, generation_id, rel_path) -> bytes: ...
-    def list_patches(self, epoch_id, generation_id) -> PatchRecord: ...
+    def diff_generations(self, epoch_id, from_generation_id,
+                         to_generation_id) -> str: ...
+    def prune_generations(self, epoch_id, generation_ids,
+                          *, dry_run) -> int: ...
 ```
 
 `derive_generation` is the generation-level transaction boundary the
@@ -216,52 +217,28 @@ tree, applies the patch set all-or-nothing (via
 makes it atomic), and returns the child snapshot root — child
 generation appears or it does not.
 
-`snapshot_root` returns a real on-disk path, because the orchestrator
-and the subprocess workers genuinely need a path (the worker `chdir`s
-into a snapshot and loads the adapter from it). The directory backend
-returns the snapshot directory directly; the git backend satisfies the
-same contract by materialising a `git worktree` and returning *its*
-path — which is exactly why §4 rejected forcing this through
-`StorageBackend`'s `read_json`-shaped surface.
+`snapshot_path` performs pure coordinate-to-path calculation.
+`materialize_snapshot` returns a usable local tree and performs any required
+checkout. The split makes I/O explicit for the git backend while preserving
+the real-path contract the subprocess worker needs.
 
-The `list_tree` / `read_file` / `list_patches` read surface is the
-backend-neutral API the dashboard Files view consumes (§7.4). It is
-*read-only* — generation mutation goes only through `seed_generation` /
-`derive_generation`.
+The `list_tree`, `read_file`, and `diff_generations` surface is source-only.
+Patch and experiment reads use `StorageBackend`; source pruning cannot remove
+those records. Source mutation goes through `seed_generation`,
+`derive_generation`, and the retention-controlled `prune_generations` method.
+Pruning accepts the complete selected batch so the Git implementation can
+remove every tag and worktree under one administration lock and run repository
+maintenance once.
 
 The orchestrator's snapshot helpers go through a `GenerationStore`;
 `default_generation_store(workspace_root)` is the single construction
 seam. It selects the backend through
-`resolve_generation_store_backend(workspace_root)`, in this order:
+`resolve_generation_store_backend(workspace_root)`. Every initialized
+workspace must define `generation_source_backend` as `git` or `directory`.
+Missing, blank, malformed, and unknown values raise. The resolver does not
+scan `repo/.git`, generation records, or snapshot directories for evidence.
 
-1. **Explicit config.** `config.json`'s `storage_backend` knob, when
-   present, is the operator's stated intent and wins. A knob naming
-   anything other than `git` or `directory` raises rather than falling
-   through to a backend nobody asked for.
-2. **On-disk evidence.** With no knob, the workspace's own contents
-   decide. A `repo/.git` means the git backend wrote it. Generation
-   records with no repository mean the directory backend wrote it — a
-   git-backed workspace that has produced any generation necessarily has
-   a repository, and snapshot GC prunes `snapshot/` directories but never
-   the repository, so "records, no repo" stays directory evidence even
-   after every snapshot has been pruned.
-3. **Default.** A workspace holding no generations has nothing to go on,
-   so `DEFAULT_STORAGE_BACKEND` decides.
-
-Evidence outranks the default because the default is a *global* constant.
-Reading a knobless workspace through it re-interprets every workspace ever
-created whenever it changes — which is how directory-snapshot workspaces
-predating the git default came to be read as empty git ones, listing zero
-generations with every snapshot intact on disk. A workspace's backend is a
-property of what that workspace already holds, and does not move under it.
-
-A resolution that contradicts the disk — an explicit knob naming a backend
-whose store is absent while the other's is present, or both stores present
-at once — still stands, and carries a `mismatch` sentence that
-`default_generation_store` logs at warning level. The disagreement is never
-silent.
-
-`zicato init` writes `storage_backend` into a new workspace's
+`zicato init` writes `generation_source_backend` into a new workspace's
 `config.json`, so a workspace created today is decided by rule 1 forever
 and a later change of default cannot re-interpret it.
 
@@ -332,19 +309,17 @@ DuckDB evaluation and why SQLite stays for now.
 
 ### 5.4 The generalized tournament record (configurable structures)
 
-> **Status.** DESIGN (not yet implemented). Full spec:
+> **Status.** Shipped. Full spec:
 > [TOURNAMENT-DATA-MODEL.md](TOURNAMENT-DATA-MODEL.md) §2.
 
-Today a tournament's persistence assumes the king-of-the-hill gauntlet:
-exactly one champion vs one challenger. Making the per-epoch structure
-configurable (`gauntlet` / `single_elim` / `double_elim` / `swiss` /
-`racing`) generalizes the persisted record **additively**, so the
-gauntlet shape stays byte-identical and old workspaces keep loading.
+Tournament persistence supports the king-of-the-hill gauntlet and configurable
+field structures (`single_elim` / `double_elim` / `swiss` / `racing`). The
+persisted generalization is additive, so the gauntlet shape remains compact.
 The generalization touches three records and adds **zero new storage
 mechanism** — it rides entirely on the existing seams (§5.1–§5.2).
 
 **(a) The live runtime record** — `runtime/active_tournament.json`
-(`ActiveTournament`), one JSON record via `StorageBackend`. It gains a
+(`ActiveTournament`), one JSON record via `StorageBackend`. It carries a
 **structure envelope** alongside the existing two-side fields:
 
 - `structure` / `structure_params` — copied from the epoch contract at
@@ -360,19 +335,20 @@ mechanism** — it rides entirely on the existing seams (§5.1–§5.2).
   `wins`/`losses`, `status`).
 
 The per-entry rows (`ActiveTournamentEntry`) keep their `(entry_id,
-side)` key; `side` **widens** from `{"parent","child"}` to an opaque
-competitor key (a generation id) for non-gauntlet structures, and gains
-a `match_id` (default `""`). `update_tournament_entry`'s signature is
-unchanged. `base.py` / `files.py` / `memory.py` are **untouched** — the
-new fields are just more JSON in the same `to_dict` / `from_dict`.
+side)` key. `side` accepts an opaque competitor key (a generation id)
+for non-gauntlet structures as well as `"parent"` and `"child"`, and
+each row carries a `match_id` (default `""`).
+`update_tournament_entry`'s signature is unchanged. `base.py` /
+`files.py` / `memory.py` need no structure-specific behavior because
+the fields are ordinary JSON in the same `to_dict` / `from_dict` path.
 
 **(b) The settled per-generation outcome** — `experiment.json`'s
 `outcome` block (`OutcomeRecord`), persisted via `epoch/_storage.py`. It
-gains `structure`, `final_rank`, `eliminated_in_round`, and a
+carries `structure`, `final_rank`, `eliminated_in_round`, and a
 per-generation `match_record`. `write_experiment` /
 `_outcome_from_dict` read/write them; no new key helper, no new file.
 
-**(c) The settled index row** — the SQLite `tournaments` table. It gains
+**(c) The settled index row** — the SQLite `tournaments` table. It carries
 five ADDITIVE `TEXT` columns (`structure`, `structure_params_json`,
 `competitors_json`, `rounds_json`, `standings_json`) as a **v3 column
 add**, exactly the v2 pattern (`_V2_ADDED_COLUMNS`). The existing
@@ -439,12 +415,10 @@ speculation.
 
 The git backend for kind 3 (generation source trees) **ships**, in
 `zicato.epoch.git_genstore`, as a drop-in second `GenerationStore`
-implementation — and is now the **default** (a missing/blank
-`storage_backend` knob selects `"git"`; see
-`zicato.epoch.genstore.default_generation_store`, the one seam where
-the choice is made). `DirectoryGenerationStore` remains the
+implementation — and is the backend written explicitly by `zicato init`.
+`DirectoryGenerationStore` remains the
 always-available no-git fallback, selected by
-`storage_backend: "directory"`.
+`generation_source_backend: "directory"`.
 
 > **Superseded design note.** The earlier "generation isolation & delta
 > materialization" sketch (a pluggable host-capability-selected
@@ -482,8 +456,8 @@ always-available no-git fallback, selected by
 | **Workspace** | One repository, `{workspace_root}/repo/` | One repo, not one-per-epoch: cross-epoch `diff`/`log` and cross-epoch blob dedup both want a single object store. Private to zicato; the user's outer repo is untouched. |
 | **Epoch** | A branch, `epoch/{epoch_id}` | An epoch's generations are a commit chain on its branch. A branch is the natural "sequence of related commits" unit. |
 | **Generation** | A commit, tagged `epoch/{epoch_id}/{generation_id}` | The commit is the immutable tree; the tag is the stable handle. The branch head moves as generations are appended; the tags do not. |
-| **Generation lineage** | The commit DAG | A child generation commit parents its parent generation — `git log` *is* the lineage. |
-| **Patch set** | The deriving commit's message, after a `---zicato-meta---` sentinel, as a JSON block | Patch metadata travels *with* the commit — visible in plain `git log`, transported by any fetch/push, parsed back by `list_patches`. |
+| **Generation source parentage** | The commit DAG | A child generation commit parents its source parent. Promotion decisions remain canonical in lineage and experiment records. |
+| **Commit context** | A redundant JSON block after the commit message's `---zicato-meta---` sentinel | Plain `git log` remains useful to operators. Canonical patch and experiment reads use `StorageBackend` records. |
 | **Parallel tournament run** | A per-run `git worktree` checked out at the generation tag (`checkout_ephemeral`) | Isolated, cheap per-run checkout; a runtime write inside it never touches the commit. Replaces the directory backend's per-run `copytree` (`copy_checkout_ephemeral`). |
 
 A repo-root orphan branch `zicato-root` carries only the
@@ -526,34 +500,26 @@ The roadmap's earlier sketch proposed *epoch ref-namespaces* and an
   manipulation that an in-process library would help. Shelling out adds
   no dependency and every state change is a command an operator can
   reproduce by hand. *Decision: subprocess to the `git` CLI.*
-- **Worktree as `snapshot_root`.** `snapshot_root` materialises a
-  worktree on demand and returns its path. An unmaterialised coordinate
-  returns the would-be path without creating anything, matching the
-  directory backend's "pure coordinate → path" contract for the
-  not-yet-existing case.
+- **Explicit path and materialization operations.** `snapshot_path` returns
+  the would-be worktree location without I/O. `materialize_snapshot` checks
+  out the generation tag and returns a usable tree.
 - **Commit identity.** A fixed `zicato <zicato@localhost>` identity —
   the repo is private and single-writer, so the committer is never a
   person. GPG signing is disabled (it could only ever fail).
 
 ### 7.4 The dashboard read surface
 
-`list_tree` / `read_file` / `list_patches` are backend-neutral. The git
-backend serves them straight from the object store (`git ls-tree`,
-`git show`, the commit metadata block) — *no worktree checkout* — so
-the dashboard Files view browses any generation cheaply. The directory
-backend walks the snapshot directory. The dashboard
-(`zicato/dashboard/filetree.py`) consumes only the protocol, so the
-Files view is identical for both backends.
+`list_tree` and `read_file` are backend-neutral source reads. The git backend
+serves them straight from the object store (`git ls-tree`, `git show`) without
+a worktree checkout; the directory backend walks the snapshot directory.
+Patch views read `experiment.json` and per-patch records through
+`StorageBackend`, independently of the source backend.
 
-### 7.5 Migration (still roadmap)
+### 7.5 Workspace format
 
-Migration from a directory-snapshot workspace to a git-backed one — a
-one-shot `zicato workspace migrate-to-git` that imports each existing
-`generations/vN/snapshot/` as a commit — remains a roadmap item. It is
-not needed to *use* the git backend (a fresh workspace can be
-`storage_backend: "git"` from `zicato init`); it is only needed to
-*convert an existing* directory-backed workspace. That converter is its
-own follow-up.
+Existing workspaces without `generation_source_backend` are outside the
+supported format. Configure a fresh workspace explicitly rather than inferring
+or migrating a source backend from its contents.
 
 ### 7.6 Parity
 
@@ -561,21 +527,21 @@ own follow-up.
 observable contract: `tests/test_genstore_conformance.py` parametrises
 every protocol test over both backends. Git-specific behaviour (the
 domain → git mapping, blob dedup, the commit metadata block, worktree
-materialisation, config-knob selection) is pinned by
+materialisation, and explicit config selection) is pinned by
 `tests/test_git_genstore.py`.
 
-## 8. Migration of existing workspaces
+## 8. Workspace compatibility
 
-This storage pass changes *no on-disk bytes* and therefore needs **no
-data migration**:
+The record-storage routing changes no canonical record paths. The generation
+source-backend key is a deliberate workspace-format break:
 
 - The `epoch/` → `StorageBackend` move (§5.1) is an internal routing
   change; `experiment.json`, `lineage.json`, `config.json`, the
   journal, and per-patch files land at the same paths with the same
   content. The only observable change is that writes are now atomic.
-- The `GenerationStore` extraction (§5.2) wraps the existing
-  directory-snapshot mechanism; `generations/vN/snapshot/` is
-  unchanged.
+- New workspaces carry an explicit `generation_source_backend` value.
+- Workspaces missing the key are refused; source-backend inference and
+  directory-to-git migration are not supported.
 - The index (§5.3) is derived and disposable; nothing to migrate.
 
 The pre-existing migration utility for the legacy inline
@@ -589,8 +555,6 @@ version 1 (every pre-stamp workspace keeps loading) and refuse a
 FUTURE incompatible version with a clear error — no shape-sniffing
 migration shims.
 
-The directory-snapshot → git migration (`migrate-to-git`) ships only
-when the git backend ships (§7).
 
 ## 9. Cross-references
 
@@ -602,7 +566,7 @@ when the git backend ships (§7).
 | The `.zicato/index.db` analytical index — schema, dual-write discipline, `reindex` | [ANALYTICAL-INDEX.md](ANALYTICAL-INDEX.md) |
 | Subprocess-isolated tournament runs (why the store of record is files-canonical) | [ROBUSTNESS.md](ROBUSTNESS.md) |
 | `MutationPoint.id` references that patches carry | [MUTATION-SURFACE.md](MUTATION-SURFACE.md) |
-| CLI surface (`zicato repair index`, and the future `zicato repo` / `log` / `diff`) | [CLI.md](CLI.md) |
+| CLI surface, including `zicato repair index` | [CLI.md](CLI.md) |
 | Why the canonical layer is filesystem-native | [RATIONALE.md](RATIONALE.md) §7 |
 | The generalized tournament record for configurable structures (§5.4) | [TOURNAMENT-DATA-MODEL.md](TOURNAMENT-DATA-MODEL.md) |
 | The rejected overlayfs/reflink/hardlink materialization alternatives §7 supersedes | [GENERATION-ISOLATION.md](GENERATION-ISOLATION.md) |

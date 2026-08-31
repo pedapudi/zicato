@@ -70,17 +70,21 @@ def _ref_drift_loss(
     plan_revisions: int,
     weights: ScoringWeights,
 ) -> float:
-    """Independently: the ``drift:`` channel's per-run term (Seam 1)."""
+    """Independently: the ``drift:`` channel's per-run term (Seam 1).
+
+    Sums with ``math.fsum`` for the same reason production does: a running
+    accumulator or the builtin ``sum`` would make this reference a function
+    of the interpreter, and the reference would then disagree with an
+    unchanged implementation on one Python version and not the other.
+    """
     sev_w = weights.severity_weights
-    loss = 0.0
-    for c in drift_counts:
-        if _ref_is_judge_attributed(c.kind):
-            continue
-        sev_mult = sev_w.get(c.severity, 0.0)
-        kind_mult = _ref_kind_multiplier(c.kind, weights)
-        loss += sev_mult * kind_mult * c.count
-    loss += weights.plan_revision_weight * plan_revisions
-    return max(0.0, float(loss))
+    terms = [
+        sev_w.get(c.severity, 0.0) * _ref_kind_multiplier(c.kind, weights) * c.count
+        for c in drift_counts
+        if not _ref_is_judge_attributed(c.kind)
+    ]
+    terms.append(weights.plan_revision_weight * plan_revisions)
+    return max(0.0, math.fsum(terms))
 
 
 def _ref_judge_channel(
@@ -88,15 +92,15 @@ def _ref_judge_channel(
     weights: ScoringWeights,
 ) -> dict[str, float]:
     """Independently: ``{judge_name: weighted_loss}`` for the judge channel."""
-    raw: dict[str, float] = {}
+    terms: dict[str, list[float]] = {}
     for c in drift_counts:
         if not _ref_is_judge_attributed(c.kind):
             continue
         name = c.kind[len("custom:") :] if c.kind.startswith("custom:") else ""
-        raw[name] = raw.get(name, 0.0) + weights.severity_weights.get(c.severity, 0.0) * c.count
+        terms.setdefault(name, []).append(weights.severity_weights.get(c.severity, 0.0) * c.count)
     return {
-        name: value * weights.per_judge_weights.get(name, weights.default_judge_weight)
-        for name, value in raw.items()
+        name: math.fsum(values) * weights.per_judge_weights.get(name, weights.default_judge_weight)
+        for name, values in terms.items()
     }
 
 
@@ -106,10 +110,10 @@ def _ref_failure_channel(
     weights: ScoringWeights,
 ) -> float:
     """Independently: the ``failure:`` channel's per-run total."""
-    total = weights.task_failure_weight * task_failure_ratio
+    terms = [weights.task_failure_weight * task_failure_ratio]
     if not_completed:
-        total += weights.not_completed_weight
-    return total
+        terms.append(weights.not_completed_weight)
+    return math.fsum(terms)
 
 
 def _ref_scalar(
@@ -126,7 +130,7 @@ def _ref_scalar(
     for ns in sorted(namespace_aggregates):
         name = ns[:-1] if ns.endswith(":") else ns
         components[name] = namespace_aggregates[ns]
-    return sum(components.values())
+    return math.fsum(components.values())
 
 
 # ---------------------------------------------------------------------------
@@ -451,9 +455,14 @@ def test_live_aggregate_scalar_with_judges_and_an_abort_matches_reference() -> N
     ns_agg = aggregate_namespaced_metrics(losses, weights)
 
     # Each channel, rebuilt independently and meaned over the two runs.
-    judge_mean = sum(sum(_ref_judge_channel(p.drift_counts, weights).values()) for p in losses) / 2
+    judge_mean = (
+        math.fsum(math.fsum(_ref_judge_channel(p.drift_counts, weights).values()) for p in losses)
+        / 2
+    )
     failure_mean = (
-        sum(_ref_failure_channel(p.task_failure_ratio, p.not_completed, weights) for p in losses)
+        math.fsum(
+            _ref_failure_channel(p.task_failure_ratio, p.not_completed, weights) for p in losses
+        )
         / 2
     )
     assert ns_agg["judge:"] == weights.namespace_weights["judge:"] * judge_mean

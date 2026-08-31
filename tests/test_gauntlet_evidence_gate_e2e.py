@@ -81,6 +81,7 @@ def _bootstrap(tmp_path: Path, replicate_budget: int) -> tuple[Path, str]:
         json.dumps(
             {
                 "instance_id": "default",
+                "generation_source_backend": "git",
                 "created_at": "2026-07-01T00:00:00Z",
                 "adapter": ADAPTER_BLOCK,
                 "mutable_trees": [str(AGENT_DIR)],
@@ -170,6 +171,16 @@ def _assert_replicates_ran_at_reserved_slots(
                 ), f"{gen_id}/{entry_id}: r{slot} draw is not tagged with its slot"
 
 
+def _assert_evidence_refits_logged(workspace: Path, epoch_id: str, expected: int) -> None:
+    """Every fitted confidence state must survive in the durable round log."""
+    from zicato.epoch.round_log import RoundLog
+
+    events = RoundLog(workspace, epoch_id, 0).read()
+    refits = [event for event in events if event.type == "evidence_replicated"]
+    assert len(refits) == expected
+    assert all("ci_state" in event.payload for event in refits)
+
+
 def test_gauntlet_promote_confirmed_by_evidence_gate(tmp_path: Path) -> None:
     """A true improvement still promotes — after the defer→replicate loop
     actually ran the crowning pair to CI separation."""
@@ -205,6 +216,7 @@ def test_gauntlet_promote_confirmed_by_evidence_gate(tmp_path: Path) -> None:
     # The defer→replicate trace: one entry per refit, converging.
     assert len(evidence["ci_history"]) == evidence["replicates_spent"] + 1
     assert evidence["ci_history"][0]["replicates_spent"] == 0
+    _assert_evidence_refits_logged(workspace, epoch_id, len(evidence["ci_history"]))
 
     # Every evidence replicate really executed at its reserved slot, both
     # sides, canonical slots untouched.
@@ -245,6 +257,7 @@ def test_gauntlet_inconclusive_champion_stands(tmp_path: Path) -> None:
     assert evidence["ci_overlap"] is True
     assert evidence["n_duels"] == 3  # 1 crowning duel + 2 bootstrap replicates
     assert len(evidence["ci_history"]) == 3
+    _assert_evidence_refits_logged(workspace, epoch_id, len(evidence["ci_history"]))
 
     # Both bootstrap replicates executed at the reserved slots (r4000,
     # r4001) on both sides; the canonical slots stayed the crowning duel's.

@@ -35,7 +35,7 @@ half-written per-patch file.
 from __future__ import annotations
 
 import json
-from dataclasses import asdict
+from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
 
@@ -59,6 +59,15 @@ from zicato.epoch._storage import (
     journal_key,
     patch_key,
 )
+from zicato.storage import StorageBackend
+
+
+@dataclass(frozen=True, slots=True)
+class PatchRecord:
+    """The patches recorded for one generation, in application order."""
+
+    generation_id: str
+    patches: tuple[Patch, ...]
 
 
 def _field(name: str, text: str) -> str:
@@ -544,7 +553,20 @@ def read_experiment(
     of which on-disk form produced it. New writes always use the
     per-patch layout.
     """
-    backend = backend_for(workspace_root)
+    return read_experiment_from_backend(backend_for(workspace_root), epoch_id, generation_id)
+
+
+def read_experiment_from_backend(
+    backend: StorageBackend,
+    epoch_id: str,
+    generation_id: str,
+) -> Experiment:
+    """Read an experiment through the caller's generic record backend.
+
+    This is the backend-neutral record query used by source-tree-agnostic
+    readers.  It keeps experiment and patch lookup on the record seam even
+    when generation source trees live in git.
+    """
     exp_key = experiment_key(epoch_id, generation_id)
     body = backend.read_json(exp_key)
     if body is None:
@@ -607,11 +629,32 @@ def read_experiment(
     )
 
 
+def read_generation_patches(
+    backend: StorageBackend,
+    epoch_id: str,
+    generation_id: str,
+) -> PatchRecord:
+    """Return one generation's patch record through ``StorageBackend``.
+
+    A seed or otherwise unrecorded generation has no applied patch set and
+    returns an empty record.  Source-tree availability is irrelevant: snapshot
+    pruning never removes the experiment or its per-patch records.
+    """
+    try:
+        experiment = read_experiment_from_backend(backend, epoch_id, generation_id)
+    except FileNotFoundError:
+        return PatchRecord(generation_id=generation_id, patches=())
+    return PatchRecord(generation_id=generation_id, patches=tuple(experiment.patches))
+
+
 __all__ = [
     "append_journal_entry",
     "read_journal",
     "write_experiment",
     "write_seed_experiment",
     "read_experiment",
+    "read_experiment_from_backend",
+    "read_generation_patches",
+    "PatchRecord",
     "update_experiment_outcome",
 ]

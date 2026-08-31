@@ -1,28 +1,4 @@
-"""Round-pipeline **gate** stage — the promotion decision procedure.
-
-Split out of :mod:`zicato.orchestrator` as part of the Finding-2 typed
-round-pipeline decomposition (``docs/design/REIMPLEMENTATION.md``). This is
-the pipeline's *gate* seam: the helpers that turn a run tournament into a
-terminal promotion verdict — the gauntlet strategy driver
-(:func:`_gauntlet_decision_from_result`), the two Bradley--Terry / holdout
-confirmation gates (:func:`_confirm_gauntlet_promotion`,
-:func:`_confirm_crowning_on_holdout`), the operator-override head
-re-resolution (:func:`_apply_field_overrides`), the in-band integrity notary
-(:func:`_integrity_block_reason` + :func:`_registered_mutable_trees`), and the
-small pure selectors the verdict is assembled from (``_first_aggregate_for``,
-``_resolve_round_champion_mode``, ``_field_override_provenance``).
-
-Seven of these are referenced from outside :mod:`zicato.orchestrator` (the
-decision-procedure and decomposition test modules), so the orchestrator
-re-imports every name and lists the seven in ``__all__`` for mypy's
-no-implicit-reexport; its internal call sites (``evolve_once``,
-``_evolve_multi_challenger``) keep resolving unchanged. Stable collaborators
-(``lifecycle_services._beat`` / ``_now_iso``, ``control_consumer.GateOverride``,
-the heartbeat + util helpers) are imported directly at top level; the heavier
-selection / tournament / containment siblings stay lazy call-time imports
-exactly as they were inline. The module logger keeps the
-``zicato.orchestrator`` name so the emitted records stay byte-identical.
-"""
+"""Promotion confirmation, operator overrides, and integrity checks."""
 
 from __future__ import annotations
 
@@ -33,10 +9,8 @@ from pathlib import Path
 from typing import Any
 
 from zicato.core.types import Generation, TournamentDecision
-from zicato.evolve.lifecycle_services import _beat, _now_iso
+from zicato.evolve.lifecycle_services import _now_iso
 from zicato.runtime.control_consumer import GateOverride
-from zicato.runtime.heartbeat import HeartbeatBeater
-from zicato.util import best_effort
 
 log = logging.getLogger("zicato.orchestrator")
 
@@ -153,6 +127,7 @@ async def _confirm_crowning_on_holdout(
     judge_only: bool,
     fast_mode: bool,
     confirm_fn: Any,
+    confirm_holdout: bool = True,
 ) -> _CrowningHoldout:
     """Confirm a field's crowning train-promote on the holdout slice.
 
@@ -182,7 +157,7 @@ async def _confirm_crowning_on_holdout(
         if decision.crowning_matchup_id
         else None
     )
-    if crowning_result is None or decision.decision != "promoted" or promoted_id is None:
+    if crowning_result is None or decision.decision == "rejected":
         return _CrowningHoldout(promoted_id=promoted_id)
 
     champ_is_left = crowning_result.left_id == parent_id
@@ -194,6 +169,20 @@ async def _confirm_crowning_on_holdout(
     # champion-as-parent orientation for the contradiction re-derivation.
     raw_delta = float(crowning_result.outcome.delta_scalar)
     crowning_delta_scalar = raw_delta if champ_is_left else -raw_delta
+    if decision.decision != "promoted" or promoted_id is None:
+        return _CrowningHoldout(
+            promoted_id=promoted_id,
+            challenger_id=challenger_crown_id,
+            challenger_train_scalar=challenger_train_scalar,
+            crowning_delta_scalar=crowning_delta_scalar,
+        )
+    if not confirm_holdout:
+        return _CrowningHoldout(
+            promoted_id=promoted_id,
+            challenger_id=challenger_crown_id,
+            challenger_train_scalar=challenger_train_scalar,
+            crowning_delta_scalar=crowning_delta_scalar,
+        )
     (
         crowning_outcome,
         holdout_block,
@@ -400,226 +389,3 @@ def _integrity_block_reason(
                 )
             return f"gate_contradiction: recorded PROMOTE but {detail}; refused pre-persist"
     return None
-
-
-def _gauntlet_decision_from_result(
-    tournament_spec: Any,
-    parent_id: str,
-    child_id: str,
-    child_snapshot: Path,
-    tournament_result: Any,
-) -> Any:
-    """Drive a gauntlet strategy from an already-run single duel.
-
-    The gauntlet structure is the back-compat baseline: one champion, one
-    challenger, one full-board duel, promote-on-gate. ``evolve_once``
-    already ran that single duel (full or fast mode) and holds its
-    :class:`~zicato.tournament.runner.TournamentResult`, whose ``outcome``
-    is the unchanged :func:`~zicato.tournament.gate.evaluate_gate` verdict.
-    We feed that verdict into a fresh :class:`GauntletStrategy` so the
-    *decision* (and its audit / standings) flows through the
-    :class:`SelectionStrategy` abstraction without re-running the gate or
-    altering behaviour — the strategy reads ``outcome.decision`` exactly
-    as the historical inline branch did.
-
-    Returns a :class:`~zicato.selection.strategy.SelectionDecision`.
-
-    Non-gauntlet structures are dispatched by the registry; for the v1
-    wave the orchestrator runs the gauntlet's single-duel path (the field
-    size for any structure with ``field_size == 1`` degrades to the
-    gauntlet, per the registry's documented degeneracy). The full
-    multi-challenger field is driven by
-    :func:`zicato.selection.resolve_tournament` + ``run_matchup`` — wired
-    here as the strategy is fed the single duel; widening ``evolve_once``
-    to request and apply an N-challenger field is the follow-on the
-    multi-candidate field (§9 lever 0) enables.
-    """
-    from zicato.selection.registry import make_strategy  # noqa: PLC0415
-    from zicato.selection.strategy import Contestant, MatchupResult  # noqa: PLC0415
-
-    strategy = make_strategy(tournament_spec)
-    champion = Contestant(generation_id=parent_id, role="champion")
-    challenger = Contestant(generation_id=child_id, role="challenger", snapshot_root=child_snapshot)
-    strategy.seed(champion, [challenger])
-    matchups = strategy.next_matchups()
-    if not matchups:
-        return strategy.champion()
-    matchup = matchups[0]
-    result = MatchupResult(
-        matchup_id=matchup.matchup_id,
-        left_id=parent_id,
-        right_id=child_id,
-        left_agg=tournament_result.parent_agg,
-        right_agg=tournament_result.child_agg,
-        outcome=tournament_result.outcome,
-        stage_index=matchup.stage_index,
-        bracket_slot=matchup.bracket_slot,
-    )
-    strategy.record_result(result)
-    return strategy.champion()
-
-
-async def _confirm_gauntlet_promotion(
-    selection_decision: Any,
-    *,
-    tournament_spec: Any,
-    adapter: Any,
-    parent_gen: Generation,
-    child_gen: Generation,
-    train_board: list[Any],
-    weights: Any,
-    config: Any,
-    workspace_root: Path,
-    epoch_id: str,
-    disable_drift: tuple[Any, ...],
-    judge_only: bool,
-    fast_mode: bool,
-    round_index: int,
-    total_rounds: int,
-    beater: HeartbeatBeater | None,
-) -> tuple[Any, dict[str, Any] | None]:
-    """Confirm a gauntlet train-promote through the Bradley--Terry pre-gate.
-
-    The gauntlet analogue of the multi-challenger driver's pre-gate wiring
-    (see ``_evolve_multi_challenger``): after the single crowning duel
-    resolves a ``promoted`` verdict, the SAME defer→replicate→inconclusive
-    adjudication (:func:`zicato.selection.driver.confirm_promotion_with_evidence`)
-    must hold the promotion until the fitted rating clears the confidence
-    threshold AND the CIs separate. While the verdict defers, one extra
-    crowning-pair duel per replicate is spent through the SAME board-unit
-    runner + gate every other duel uses (``run_matchup`` on the train slice,
-    mirroring the multi-challenger ``_replicate_duel``); CIs that never
-    separate within the budget go terminally ``inconclusive`` — the champion
-    stands and the duel is recorded to the dead-letter queue, exactly as the
-    multi-challenger path records it.
-
-    Consulted only when the contract opts into
-    ``promote_confidence_threshold`` (the scaffolded contracts do; absent ⇒
-    off — the gate is a soundness device, see the evidence-gate module
-    docstring for the measured tradeoff) AND the crowning verdict is a
-    promotion — a reject / defer passes through unchanged (the pre-gate can
-    only hold a promotion, never force one).
-
-    Returns ``(decision, evidence_block)``: the (possibly held) decision and
-    the JSON-shaped evidence block (rating CIs + ``ci_history``) to journal
-    on the round's :class:`OutcomeRecord`, or ``None`` when the pre-gate was
-    off / passed through without a credible terminal.
-    """
-    from zicato.selection.dead_letter import (  # noqa: PLC0415
-        InconclusiveRecord,
-        record_inconclusive,
-    )
-    from zicato.selection.driver import (  # noqa: PLC0415
-        EvidencePreGate,
-        EvidenceResolution,
-        confirm_promotion_with_evidence,
-    )
-    from zicato.selection.evidence_gate import (  # noqa: PLC0415
-        EVIDENCE_REPLICATE_BASE,
-        rating_block,
-        read_promote_confidence_threshold,
-        read_replicate_budget,
-    )
-    from zicato.selection.strategy import Contestant, MatchupResult  # noqa: PLC0415
-    from zicato.tournament.runner import run_matchup  # noqa: PLC0415
-
-    threshold = read_promote_confidence_threshold(tournament_spec.params)
-    if threshold is None or selection_decision.decision != "promoted":
-        return selection_decision, None
-
-    pre_gate = EvidencePreGate(
-        threshold=threshold,
-        replicate_budget=read_replicate_budget(tournament_spec.params),
-    )
-    generations = {parent_gen.id: parent_gen, child_gen.id: child_gen}
-    evidence_replicates_run = 0
-
-    async def _replicate_duel(left_id: str, right_id: str) -> MatchupResult:
-        # One extra crowning-pair duel for the pre-gate's evidence loop,
-        # routed through the SAME board-unit runner + gate every other duel
-        # uses — but at a RESERVED replicate index (EVIDENCE_REPLICATE_BASE
-        # + j for evidence replicate j), so each replicate draws BOTH sides
-        # fresh: a fast-mode cache read of the canonical replicate-0 slots
-        # would replay one identical sample into the Bradley--Terry fit
-        # (shrinking its SE by repetition alone), and a full-mode force-fresh
-        # re-run at slot 0 would clobber the canonical ``loss.json`` that
-        # reindex/crash-resume key on. The reserved slot is a natural MISS
-        # the first time (a fresh draw of champion AND challenger) and an
-        # idempotent cache HIT on a resumed confirm — mirroring the A/A
-        # calibration's reserved-index discipline. The matchup id encodes
-        # the index; the driver's audit guard keys on it.
-        nonlocal evidence_replicates_run
-        replicate_slot = EVIDENCE_REPLICATE_BASE + evidence_replicates_run
-        evidence_replicates_run += 1
-        matchup_id = f"bt-replicate:r{replicate_slot}:{left_id}:{right_id}"
-        _beat(
-            beater,
-            workspace_root=workspace_root,
-            epoch_id=epoch_id,
-            generation_id=right_id,
-            round_index=round_index,
-            phase=f"tournament:round_{round_index}:{matchup_id}",
-        )
-        result = await run_matchup(
-            adapter=adapter,
-            left_gen=generations[left_id],
-            right_gen=generations[right_id],
-            # Replicates score on the TRAIN slice only, exactly like the
-            # multi-challenger structures' internal matchups — the holdout is
-            # confirmation-only and was already consulted by the crowning
-            # duel's Ladder-mediated gate.
-            board=train_board,
-            weights=weights,
-            config=config,
-            workspace_root=workspace_root,
-            epoch_id=epoch_id,
-            replicate_base=replicate_slot,
-            disable_drift=disable_drift,
-            judge_only=judge_only,
-            fast=fast_mode,
-            round_index=round_index,
-            total_rounds=total_rounds,
-            match_id=matchup_id,
-        )
-        return MatchupResult(
-            matchup_id=matchup_id,
-            left_id=left_id,
-            right_id=right_id,
-            left_agg=result.parent_agg,
-            right_agg=result.child_agg,
-            outcome=result.outcome,
-        )
-
-    def _on_inconclusive(resolution: EvidenceResolution) -> None:
-        # Record the unresolved crowning duel to the dead-letter queue so
-        # nothing is silently dropped — the same record the multi-challenger
-        # path writes. Best-effort: a write failure must not abort the round.
-        verdict = resolution.verdict
-        with best_effort(
-            "dead-letter inconclusive record",
-            on_error=lambda exc: log.debug("dead-letter record skipped: %s", exc),
-        ):
-            record_inconclusive(
-                workspace_root,
-                InconclusiveRecord(
-                    generation_id=child_gen.id,
-                    champion_id=parent_gen.id,
-                    epoch_id=epoch_id,
-                    rating=rating_block(verdict),
-                    ci_history=resolution.ci_history,
-                    reason=verdict.reason,
-                ),
-            )
-
-    decision, resolution = await confirm_promotion_with_evidence(
-        selection_decision,
-        champion=Contestant(generation_id=parent_gen.id, role="champion"),
-        pre_gate=pre_gate,
-        replicate_duel=_replicate_duel,
-        on_inconclusive=_on_inconclusive,
-    )
-    evidence: dict[str, Any] | None = None
-    if resolution is not None:
-        evidence = dict(rating_block(resolution.verdict))
-        evidence["ci_history"] = [dict(h) for h in resolution.ci_history]
-    return decision, evidence

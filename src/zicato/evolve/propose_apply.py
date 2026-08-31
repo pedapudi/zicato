@@ -1,43 +1,8 @@
-"""Round-pipeline **propose/apply** stage — mint one challenger, admit it.
+"""Propose, validate, derive, and persist one challenger generation.
 
-Split out of :mod:`zicato.orchestrator` as the FINAL leg of the Finding-2 typed
-round-pipeline decomposition (``docs/design/REIMPLEMENTATION.md``). This is the
-pipeline's *propose → apply → admit* seam: the helpers that take a champion and
-a mutation surface and produce ONE applied challenger generation, plus the pure
-accept/soft-reject verdict that decides whether that challenger joins the
-multi-challenger field:
-
-* :func:`_propose_child` — build the :class:`ProposerContext` and propose one
-  child (the single propose shape the gauntlet and field paths share);
-* :func:`_propose_and_apply_challenger` — the field path's propose →
-  post-apply-validate → derive → persist pipeline for one challenger, returning
-  the applied child paired with its dashboard field-status record;
-* :func:`_mint_placebo_challenger` + :func:`_maybe_run_placebo_arm_gauntlet` —
-  the OVERFITTING.md #7 random-baseline placebo arm (derive + the opt-in duel);
-* :class:`_AppliedChallenger` — the applied-child record both mint paths return;
-* :func:`_trim_reason` / :func:`_short_reject_reason` — the tracker-reason
-  string helpers the field-status records render;
-* :func:`_mint_challenger_field` (+ :class:`_FieldMintDecision`) and its pure
-  companions :func:`_diversity_signature`,
-  :func:`_duplicates_inflight_sibling`, :func:`_max_overlap_with_accepted` —
-  the field-diversity accept / soft-reject DECISION separated from its
-  persistence I/O (which stays in the orchestrator's multi-challenger loop).
-
-Four names are referenced from OUTSIDE :mod:`zicato.orchestrator`
-(``_propose_and_apply_challenger`` from the multi-challenger test,
-``_mint_challenger_field`` from the decomposition test, ``_diversity_signature``
-from the best-of-N tree-integrity test, ``_max_overlap_with_accepted`` from the
-prior-experiments test), so the orchestrator re-imports the names its own body
-still calls and lists those four in ``__all__`` for mypy's
-no-implicit-reexport. Stable collaborators (``ingest``'s index/track-record IO,
-``lifecycle_services._beat`` / ``_now_iso``, the shared ``round`` validators,
-``selection.diversity.jaccard``) are direct top-level imports; the heavier
-``epoch`` / ``proposer`` / ``tournament`` / ``runtime`` siblings stay lazy
-call-time imports exactly as they were inline, and the one orchestrator
-generation-number helper is resolved
-through the orchestrator module object at CALL time (the established
-``zicato.evolve.*`` idiom). The module logger keeps the ``zicato.orchestrator``
-name so records stay byte-identical.
+The batch producer calls this module once per requested candidate slot.  The
+helpers also implement field-diversity decisions and the optional placebo arm;
+tournament scheduling and settlement remain outside this module.
 """
 
 from __future__ import annotations
@@ -72,7 +37,7 @@ CallLLM = Callable[[str, str, str], Awaitable[str]]
 
 @dataclass(frozen=True, slots=True)
 class _AppliedChallenger:
-    """One proposed-and-applied challenger generation in the field.
+    """One proposed-and-applied challenger generation.
 
     Pairs the freshly-minted child generation id with the validated child
     snapshot, the proposer's :class:`Experiment`, and the generation
@@ -86,6 +51,16 @@ class _AppliedChallenger:
     snapshot_root: Path
     experiment: Experiment
     generation: Generation
+
+
+@dataclass(frozen=True, slots=True)
+class CandidateAttempt:
+    """Settled result of proposing and applying one candidate slot."""
+
+    challenger: _AppliedChallenger | None
+    status: dict[str, Any]
+    proposer_error: Exception | None = None
+    resumed: bool = False
 
 
 def _trim_reason(reason: str, limit: int = 200) -> str:
@@ -157,12 +132,9 @@ async def _propose_child(
 ) -> Experiment:
     """Build the :class:`ProposerContext` + propose ONE child of the champion.
 
-    The single propose shape both pipelines share — the gauntlet's inline
-    propose block and :func:`_propose_and_apply_challenger` previously built
-    near-identical contexts, so a new ``ProposerContext`` field could land on
-    one path only. Raises :class:`~zicato.proposer.proposer.ProposerError`
-    exactly as the inner agent does (callers own the rejected-outcome /
-    narrower-field handling).
+    The single propose shape used by every candidate slot. Raises
+    :class:`~zicato.proposer.proposer.ProposerError` exactly as the inner
+    agent does; callers own candidate-rejection handling.
 
     The returned experiment carries the EVOLVE ``round_index`` stamped on —
     the authoritative birth round the dashboard's round-grouping and the
@@ -269,21 +241,15 @@ async def _propose_and_apply_challenger(
     round_emitter: _RoundLogEmitter | None = None,
     screen_candidates: ScreenRunner | None = None,
     recombine_pair: Any = None,
-) -> tuple[_AppliedChallenger | None, dict[str, Any]]:
+    resume_experiment: Experiment | None = None,
+) -> CandidateAttempt:
     """Propose + apply ONE challenger child of the champion.
 
-    Reuses the same propose → post-apply-validate → derive pipeline the
-    gauntlet path uses for its single challenger (the proposer's
-    ``validate_experiment`` hook applies the patch set into a fresh child
-    snapshot and runs ``validate_post_apply``), so a challenger in the
-    field is a real lineage child of the current champion. Returns the
-    applied challenger (or ``None`` when the proposer exhausted its retry
-    budget or the patch set failed post-apply validation — in which case
-    the round simply runs a narrower field rather than crashing; the
-    SelectionStrategy still resolves over whatever applied cleanly) PAIRED
-    with a structured **field-status** record for the dashboard's
-    proposing-step tracker: ``{generation_id, status: "applied" |
-    "rejected", reason, attempts, attempt_reasons, hypothesis, seed}``. The
+    The proposer's validation hook applies the patch set into a fresh child
+    snapshot and runs ``validate_post_apply``. The returned
+    :class:`CandidateAttempt` carries the applied challenger, or a rejection
+    when the proposer exhausts its retry budget, together with a structured
+    field-status record for the dashboard's proposing-step tracker. The
     ``reason`` is the same short string the evolve log carries (empty
     response / invalid JSON / post-apply validation / mutation_id no longer
     resolves); ``attempt_reasons`` is the FULL per-attempt failure list off
@@ -383,37 +349,55 @@ async def _propose_and_apply_challenger(
         round_index=round_index,
     )
 
+    experiment: Experiment | None = None
+    resumed = False
+    if resume_experiment is not None:
+        candidate = replace(resume_experiment, round_index=round_index)
+        resume_errors = await _validate(candidate)
+        if resume_errors:
+            log.warning(
+                "resume: persisted patches for %s failed re-validation (%s); "
+                "discarding and re-proposing fresh",
+                next_id,
+                "; ".join(resume_errors),
+            )
+        else:
+            log.info("resume: reusing persisted experiment for %s (no re-propose)", next_id)
+            experiment = candidate
+            resumed = True
+
     try:
-        experiment = await _propose_child(
-            proposer_agent=proposer_agent,
-            epoch_id=epoch_id,
-            parent_id=parent_id,
-            next_id=next_id,
-            generation_root=genstore.snapshot_root(epoch_id, parent_id),
-            patterns=patterns,
-            mutations=mutations,
-            brief=brief,
-            loss_summary=loss_summary,
-            auxiliary_call_llm=auxiliary_call_llm,
-            auxiliary_model=auxiliary_model,
-            max_proposer_retries=max_proposer_retries,
-            workspace_root=workspace_root,
-            validate_experiment=_validate,
-            meta_loop_emitter=meta_loop_emitter,
-            custom_judge_names=custom_judge_names,
-            prior_experiments=prior_experiments,
-            restrict_visibility=restrict_visibility,
-            failure_profile=failure_profile,
-            metric_priorities=metric_priorities,
-            process_exemplars=process_exemplars,
-            genealogy=genealogy,
-            calibration=calibration,
-            round_index=round_index,
-            round_emitter=round_emitter,
-            screen_candidates=screen_candidates,
-            recombine_pair=recombine_pair,
-            scratch_validator_factory=_scratch_validator_factory,
-        )
+        if experiment is None:
+            experiment = await _propose_child(
+                proposer_agent=proposer_agent,
+                epoch_id=epoch_id,
+                parent_id=parent_id,
+                next_id=next_id,
+                generation_root=genstore.materialize_snapshot(epoch_id, parent_id),
+                patterns=patterns,
+                mutations=mutations,
+                brief=brief,
+                loss_summary=loss_summary,
+                auxiliary_call_llm=auxiliary_call_llm,
+                auxiliary_model=auxiliary_model,
+                max_proposer_retries=max_proposer_retries,
+                workspace_root=workspace_root,
+                validate_experiment=_validate,
+                meta_loop_emitter=meta_loop_emitter,
+                custom_judge_names=custom_judge_names,
+                prior_experiments=prior_experiments,
+                restrict_visibility=restrict_visibility,
+                failure_profile=failure_profile,
+                metric_priorities=metric_priorities,
+                process_exemplars=process_exemplars,
+                genealogy=genealogy,
+                calibration=calibration,
+                round_index=round_index,
+                round_emitter=round_emitter,
+                screen_candidates=screen_candidates,
+                recombine_pair=recombine_pair,
+                scratch_validator_factory=_scratch_validator_factory,
+            )
     except ProposerError as exc:
         reason = _short_reject_reason(exc.attempts) or str(exc)
         log.warning(
@@ -438,8 +422,9 @@ async def _propose_and_apply_challenger(
             "seed": seed,
         }
         _emit_status(rejected)
-        return None, rejected
+        return CandidateAttempt(None, rejected, proposer_error=exc)
 
+    assert experiment is not None
     check_patch_manifest_and_forbidden(experiment, mutations, brief.forbidden_ids)
 
     child_snapshot = last_child_snapshot["path"]
@@ -490,7 +475,7 @@ async def _propose_and_apply_challenger(
         "seed": seed,
     }
     _emit_status(applied_status)
-    return (
+    return CandidateAttempt(
         _AppliedChallenger(
             generation_id=next_id,
             snapshot_root=child_snapshot,
@@ -498,6 +483,7 @@ async def _propose_and_apply_challenger(
             generation=child_gen,
         ),
         applied_status,
+        resumed=resumed,
     )
 
 

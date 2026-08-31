@@ -27,9 +27,8 @@ Two findings were verified directly against source before being headlined:
   set** (that set is built only in the run loop, `watchdog.rs:307`). The safety
   docs (RUNTIME.md §3.2, ROBUSTNESS.md §2.4) promise this never happens. It does.
 - **VERIFIED — multi-challenger + holdout-through-structures is shipped**
-  (`orchestrator.py:1461` `_evolve_multi_challenger`, `:1541` holdout split,
-  `:1924` `confirm_crowning_holdout`; CLI flag `evolve.py:574`). Earlier "pending"
-  notes are stale.
+  (`evolve/field.py` `evolve_field_round` and `confirm_crowning_holdout`; CLI
+  flag `evolve.py`). Earlier "pending" notes are stale.
 
 ---
 

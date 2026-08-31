@@ -34,6 +34,8 @@ the call-site surface stays uniform.
 
 from __future__ import annotations
 
+import math
+
 from zicato.core import LossProfile, ScoringWeights
 
 
@@ -68,7 +70,9 @@ def aggregate_generation_score(
     if not losses:
         return 0.0, 1.0
 
-    drift_loss_mean = sum(p.drift_loss for p in losses) / len(losses)
+    # ``math.fsum``: this mean is served and captured in the parity goldens,
+    # so it must not depend on the interpreter's float-summation strategy.
+    drift_loss_mean = math.fsum(p.drift_loss for p in losses) / len(losses)
 
     passes = 0
     observed = 0

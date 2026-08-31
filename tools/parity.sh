@@ -20,10 +20,23 @@
 #                  byte-identical to the golden.
 #   REINDEX-DUMP   the SQLite index, rebuilt from a fixture workspace and
 #                  dumped to stable text, is byte-identical to the golden.
-#   MOCK-GOLDEN    a deterministic, no-live-LLM racing mock evolve produces
-#                  gen_score.json / experiment.json / loss.json / lineage.json
+#   MOCK-GOLDEN    a deterministic, no-live-LLM racing (field 4) mock evolve
+#                  under --mode full produces gen_score.json /
+#                  experiment.json / loss.json / round_log.jsonl / the
+#                  settled field-tournament snapshot / lineage.json
 #                  artifacts byte-identical (after masking wall-clock noise)
 #                  to the golden.
+#   MOCK-GOLDEN-GAUNTLET
+#                  the same capture with a single challenger under --mode
+#                  full: the field-size-1 selector and the crowning holdout
+#                  confirmation a full gauntlet round still runs.
+#   MOCK-GOLDEN-GAUNTLET-FAST
+#                  a single challenger under --mode fast: cache-first slot
+#                  resolution, and the one configuration that deliberately
+#                  skips the crowning holdout.
+#   MOCK-GOLDEN-RACING-FAST
+#                  the racing field under --mode fast: every rung resolves
+#                  both competitors through the unit cache.
 #   MYPY           the mypy error count is not worse than the committed
 #                  baseline (a refactor should reduce it).
 #
@@ -118,15 +131,29 @@ if _selected REINDEX-DUMP; then
   fi
 fi
 
-# --- MOCK-GOLDEN ------------------------------------------------------------
-if _selected MOCK-GOLDEN; then
-  _banner "MOCK-GOLDEN"
-  if [ "$UPDATE" = "1" ]; then
-    if ZICATO_PARITY_UPDATE=1 "${PYTEST_SERIAL[@]}" "$LIB/test_mock_golden.py"; then _record MOCK-GOLDEN PASS; else _record MOCK-GOLDEN FAIL; fi
+# --- MOCK-GOLDEN (one gate per capture lane) --------------------------------
+# Each lane is one (tournament structure, runtime mode) pair with its own
+# golden. They are separate gates because they execute different production
+# branches, so a single combined verdict would not say which configuration
+# moved. The selector is the lane name, matched by pytest -k; no lane name
+# is a substring of another (see the lane table).
+_mock_golden_lane() {
+  local gate="$1" lane="$2"
+  _selected "$gate" || return 0
+  _banner "$gate"
+  local env_prefix=()
+  [ "$UPDATE" = "1" ] && env_prefix=(env ZICATO_PARITY_UPDATE=1)
+  if "${env_prefix[@]}" "${PYTEST_SERIAL[@]}" "$LIB/test_mock_golden.py" -k "$lane"; then
+    _record "$gate" PASS
   else
-    if "${PYTEST_SERIAL[@]}" "$LIB/test_mock_golden.py"; then _record MOCK-GOLDEN PASS; else _record MOCK-GOLDEN FAIL; fi
+    _record "$gate" FAIL
   fi
-fi
+}
+
+_mock_golden_lane MOCK-GOLDEN racing_full
+_mock_golden_lane MOCK-GOLDEN-GAUNTLET gauntlet_full
+_mock_golden_lane MOCK-GOLDEN-GAUNTLET-FAST gauntlet_fast
+_mock_golden_lane MOCK-GOLDEN-RACING-FAST racing_fast
 
 # --- MYPY -------------------------------------------------------------------
 if _selected MYPY; then

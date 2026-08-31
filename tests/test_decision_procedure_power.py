@@ -80,11 +80,16 @@ from zicato.core import (
     ScoringWeights,
     TournamentDecision,
 )
-from zicato.core.types import DriftCount, ExpectationResult, TournamentStructure
+from zicato.core.types import DriftCount, ExpectationResult
 from zicato.core.workspace import loss_profile_path
 from zicato.import_path import import_dotted_path
-from zicato.selection.driver import EvidencePreGate, resolve_tournament
-from zicato.selection.evidence_gate import EVIDENCE_REPLICATE_BASE
+from zicato.selection.driver import (
+    EvidencePreGate,
+    confirm_promotion_with_evidence,
+    make_evidence_replicate_duel,
+    resolve_tournament,
+)
+from zicato.selection.evidence_gate import EVIDENCE_REPLICATE_BASE, rating_block
 from zicato.selection.strategies.gauntlet import GauntletStrategy
 from zicato.selection.strategy import Contestant, Matchup, MatchupResult, SelectionDecision
 from zicato.tournament.runner import run_matchup
@@ -575,13 +580,12 @@ def test_naive_default_misses_small_effects_the_evidence_gate_catches(monkeypatc
 
 
 # ---------------------------------------------------------------------------
-# The PRODUCTION evidence-replicate wiring, under seeded noise
+# Production evidence-replicate wiring under seeded noise
 #
-# The orchestrator's gauntlet confirm (`_confirm_gauntlet_promotion`) is the
-# real seam the evolve loop drives: its replicate duels must be INDEPENDENT
-# samples — each at a reserved replicate index (EVIDENCE_REPLICATE_BASE + j),
-# both sides drawn fresh — never cache replays of, or force-fresh clobbers
-# over, the canonical replicate-0 slots the tournament scored.
+# The canonical evidence confirmation must receive independent replicate
+# duels: each uses a reserved replicate index
+# (EVIDENCE_REPLICATE_BASE + j), draws both sides freshly, and never replays or
+# overwrites the canonical replicate-zero slots scored by the tournament.
 # ---------------------------------------------------------------------------
 
 
@@ -634,35 +638,68 @@ def _confirm(
     fast_mode: bool,
     budget: int,
 ) -> tuple[Any, dict[str, Any] | None]:
-    from zicato.evolve.gate import _confirm_gauntlet_promotion
+    async def _run() -> tuple[Any, dict[str, Any] | None]:
+        generations = {
+            "champion": _gen("champion"),
+            "challenger": _gen("challenger"),
+        }
 
-    spec = TournamentStructure(
-        structure="gauntlet",
-        params={
-            "promote_confidence_threshold": EFFECTIVE_THRESHOLD,
-            "promote_confidence_replicates": budget,
-        },
-    )
-    return asyncio.run(
-        _confirm_gauntlet_promotion(
+        async def _run_reserved_matchup(
+            matchup: Matchup, *, replicate_base: int, cache_scores: bool
+        ) -> MatchupResult:
+            """The round's board-unit runner, as ``evolve_field_round`` calls it.
+
+            The reserved slot, the matchup id encoding it, and
+            ``cache_scores`` all arrive from
+            :func:`make_evidence_replicate_duel` — this closure only routes
+            them to the real runner, so the properties the two tests below
+            assert are the production seam's, not the test's.
+            """
+            # An evidence draw is a single sample and must never land in the
+            # per-generation score a later round reuses. There is no such
+            # cache in this harness, so the flag is asserted rather than
+            # honoured: production turning it back on fails here.
+            assert cache_scores is False, "an evidence replicate must not cache its scores"
+            left_id = matchup.left.generation_id
+            right_id = matchup.right.generation_id
+            result = await run_matchup(
+                adapter=object(),
+                left_gen=generations[left_id],
+                right_gen=generations[right_id],
+                board=list(_board()),
+                weights=NAIVE_WEIGHTS,
+                config=_config(workspace, seed),
+                workspace_root=workspace,
+                epoch_id="e0",
+                replicate_base=replicate_base,
+                fast=fast_mode,
+                match_id=matchup.matchup_id,
+            )
+            return MatchupResult(
+                matchup_id=matchup.matchup_id,
+                left_id=left_id,
+                right_id=right_id,
+                left_agg=result.parent_agg,
+                right_agg=result.child_agg,
+                outcome=result.outcome,
+            )
+
+        confirmed, resolution = await confirm_promotion_with_evidence(
             decision,
-            tournament_spec=spec,
-            adapter=object(),
-            parent_gen=_gen("champion"),
-            child_gen=_gen("challenger"),
-            train_board=list(_board()),
-            weights=NAIVE_WEIGHTS,
-            config=_config(workspace, seed),
-            workspace_root=workspace,
-            epoch_id="e0",
-            disable_drift=(),
-            judge_only=False,
-            fast_mode=fast_mode,
-            round_index=0,
-            total_rounds=1,
-            beater=None,
+            champion=Contestant("champion", role="champion"),
+            pre_gate=EvidencePreGate(
+                threshold=EFFECTIVE_THRESHOLD,
+                replicate_budget=budget,
+            ),
+            replicate_duel=make_evidence_replicate_duel(_run_reserved_matchup),
         )
-    )
+        evidence = None
+        if resolution is not None:
+            evidence = dict(rating_block(resolution.verdict))
+            evidence["ci_history"] = [dict(row) for row in resolution.ci_history]
+        return confirmed, evidence
+
+    return asyncio.run(_run())
 
 
 def test_evidence_replicates_are_independent_draws(monkeypatch, tmp_path):

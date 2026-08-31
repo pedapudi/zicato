@@ -90,8 +90,8 @@ def populated_workspace(tmp_path: Path) -> Path:
     docstring). ``v1`` is derived from ``v0`` by a patch against
     ``researcher_instr``; ``reviewer_instr`` is left untouched so the
     "site with no patch" path is also covered. The ``experiment.json``
-    record is written so :meth:`list_patches` — the seam the mutation
-    browser reads patch sets through — resolves the patch set for ``v1``.
+    record is written so ``read_generation_patches`` resolves the patch set
+    for ``v1`` through the generic record backend.
     The ``config.json`` pin is still required: the dashboard reads through
     ``default_generation_store``, which defaults to git, so the workspace
     must declare the backend it was seeded under.
@@ -100,7 +100,7 @@ def populated_workspace(tmp_path: Path) -> Path:
     ws.mkdir()
     (ws / "epochs" / "e1").mkdir(parents=True)
 
-    (ws / "config.json").write_text('{"storage_backend": "directory"}', encoding="utf-8")
+    (ws / "config.json").write_text('{"generation_source_backend": "directory"}', encoding="utf-8")
     store = DirectoryGenerationStore(ws)
 
     tree = _mutable_tree(tmp_path / "src", instr="original instruction")
@@ -247,7 +247,7 @@ def _prune_trees(ws: Path, epoch_id: str, *generation_ids: str) -> None:
 def pruned_workspace(populated_workspace: Path) -> Path:
     """``populated_workspace`` after snapshot GC took every tree."""
     store = DirectoryGenerationStore(populated_workspace)
-    _record_surface(populated_workspace, "e1", [Path(store.snapshot_root("e1", "v0"))])
+    _record_surface(populated_workspace, "e1", [Path(store.materialize_snapshot("e1", "v0"))])
     _prune_trees(populated_workspace, "e1", "v0", "v1")
     return populated_workspace
 
@@ -329,8 +329,10 @@ def test_mutation_index_names_an_unreachable_tree_as_such(
     would be a guess.
     """
     store = DirectoryGenerationStore(populated_workspace)
-    _record_surface(populated_workspace, "e1", [Path(store.snapshot_root("e1", "v0"))])
-    (populated_workspace / "config.json").write_text('{"storage_backend": "git"}', encoding="utf-8")
+    _record_surface(populated_workspace, "e1", [Path(store.materialize_snapshot("e1", "v0"))])
+    (populated_workspace / "config.json").write_text(
+        '{"generation_source_backend": "git"}', encoding="utf-8"
+    )
     static_dir = tmp_path / "static-unreachable"
     static_dir.mkdir()
     with TestClient(create_app(populated_workspace, static_dir, read_only=True)) as c:
@@ -379,14 +381,14 @@ def _value_workspace(tmp_path: Path, source: str, patch: Patch) -> Path:
     ws = tmp_path / ".zicato"
     ws.mkdir()
     (ws / "epochs" / "e1").mkdir(parents=True)
-    (ws / "config.json").write_text('{"storage_backend": "directory"}', encoding="utf-8")
+    (ws / "config.json").write_text('{"generation_source_backend": "directory"}', encoding="utf-8")
     store = DirectoryGenerationStore(ws)
     tree = tmp_path / "src" / "agent"
     _write(tree / "knobs.py", source)
     store.seed_generation("e1", "v0", [tree])
     store.derive_generation("e1", "v0", "v1", [patch])
     write_experiment(ws, "e1", "v1", _experiment((patch,)))
-    _record_surface(ws, "e1", [Path(store.snapshot_root("e1", "v0"))])
+    _record_surface(ws, "e1", [Path(store.materialize_snapshot("e1", "v0"))])
     return ws
 
 

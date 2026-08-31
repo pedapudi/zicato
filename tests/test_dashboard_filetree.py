@@ -73,7 +73,7 @@ def populated_workspace(tmp_path: Path) -> Path:
     # An epoch directory must exist for the filetree index to list it.
     (ws / "epochs" / "e1").mkdir(parents=True)
 
-    (ws / "config.json").write_text('{"storage_backend": "directory"}', encoding="utf-8")
+    (ws / "config.json").write_text('{"generation_source_backend": "directory"}', encoding="utf-8")
     store = DirectoryGenerationStore(ws)
 
     tree = _mutable_tree(tmp_path / "src", instr="original")
@@ -333,7 +333,7 @@ def test_files_diff_reconstructs_spans_for_a_pruned_generation(
     _dump_mutations_snapshot(
         populated_workspace,
         "e1",
-        list(enumerate_mutations([Path(store.snapshot_root("e1", "v0"))])),
+        list(enumerate_mutations([Path(store.materialize_snapshot("e1", "v0"))])),
     )
     _record_experiment(populated_workspace, "v1", "v0", _patch("p1", '"""rewritten"""'))
     _prune_tree(populated_workspace, "e1", "v1")

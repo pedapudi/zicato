@@ -40,9 +40,8 @@ so records-not-snapshots is a structural property of the prune, not a
 filename list that has to be kept in sync. The dashboard's tree/diff views degrade to
 an explicit "no source tree" response for a pruned generation (they
 already tolerate a missing tree), and the patch/mutation views keep
-rendering from the surviving records (the git backend's
-``list_patches`` falls back to the journal record when the tag is
-gone).
+rendering through ``StorageBackend`` from the surviving experiment and
+per-patch records.
 
 Retention policy
 ----------------
@@ -72,13 +71,11 @@ from __future__ import annotations
 
 import logging
 import re
-import shutil
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from zicato.epoch.genstore import GenerationStore, default_generation_store
-from zicato.epoch.git_genstore import GitCommandError, GitGenerationStore
+from zicato.epoch.genstore import default_generation_store
 
 log = logging.getLogger(__name__)
 
@@ -146,23 +143,6 @@ def _lineage_decisions(workspace_root: Path, epoch_id: str) -> dict[str, bool | 
     return decisions
 
 
-def _tree_bytes(root: Path) -> int:
-    """Best-effort recursive byte count of one tree (0 when absent)."""
-    if not root.is_dir():
-        return 0
-    total = 0
-    try:
-        for path in root.rglob("*"):
-            try:
-                if path.is_file() and not path.is_symlink():
-                    total += path.stat().st_size
-            except OSError:
-                continue
-    except OSError:
-        return total
-    return total
-
-
 def prune_generations(
     workspace_root: Path,
     epoch_id: str,
@@ -174,8 +154,10 @@ def prune_generations(
     """Prune settled-rejected generation source trees under one epoch.
 
     Exactly one policy must be selected — ``keep_last_n`` (keep the N
-    newest generations in addition to the safety floor) or
-    ``keep_promoted_only`` (keep only the floor). The safety floor —
+    newest generations that still have sources, in addition to the safety
+    floor) or ``keep_promoted_only`` (keep only the floor). The store
+    enumerates source-bearing generations only, so an already-pruned
+    generation is not one of the N. The safety floor —
     promoted generations, in-flight generations, generations with no
     lineage record, and the seed ``v0`` — is NEVER pruned under either
     policy; see the module docstring for the reasoning.
@@ -194,7 +176,7 @@ def prune_generations(
         raise ValueError(f"prune_generations: keep_last_n must be >= 1, got {keep_last_n}")
 
     store = default_generation_store(workspace_root)
-    backend = "git" if isinstance(store, GitGenerationStore) else "directory"
+    backend = store.backend_name
     policy = "keep_promoted_only" if keep_promoted_only else f"keep_last_n={keep_last_n}"
 
     generations = sorted(store.list_generations(epoch_id), key=_generation_sort_key)
@@ -212,18 +194,16 @@ def prune_generations(
     if keep_last_n is not None:
         keep.update(generations[-keep_last_n:])
 
-    # A candidate must actually HAVE a source tree: under the directory
-    # backend a previously-pruned generation still enumerates (its record
-    # directory survives by design) but has nothing left to remove, so a
-    # re-run must report it as neither kept nor pruned — idempotency.
+    # A candidate must actually HAVE a source tree. The store enumerates
+    # source-bearing generations, so this normally holds for every listed
+    # id; it is re-asserted because the listing and the removal are two
+    # reads of a directory an operator or a concurrent GC can change
+    # between them, and a report naming a generation it did not remove
+    # would overstate what the run reclaimed.
     pruned = tuple(g for g in generations if g not in keep and store.has_generation(epoch_id, g))
     kept = tuple(g for g in generations if g in keep)
 
-    bytes_reclaimed = 0
-    if isinstance(store, GitGenerationStore):
-        bytes_reclaimed = _prune_git(store, epoch_id, pruned, dry_run=dry_run)
-    else:
-        bytes_reclaimed = _prune_directory(store, epoch_id, pruned, dry_run=dry_run)
+    bytes_reclaimed = store.prune_generations(epoch_id, pruned, dry_run=dry_run)
 
     report = PruneReport(
         epoch_id=epoch_id,
@@ -246,67 +226,6 @@ def prune_generations(
         " [dry run]" if dry_run else "",
     )
     return report
-
-
-def _prune_directory(
-    store: GenerationStore,
-    epoch_id: str,
-    pruned: tuple[str, ...],
-    *,
-    dry_run: bool,
-) -> int:
-    """Remove pruned generations' ``snapshot/`` directories; keep records."""
-    reclaimed = 0
-    for gen_id in pruned:
-        snapshot = store.snapshot_root(epoch_id, gen_id)
-        reclaimed += _tree_bytes(snapshot)
-        if dry_run:
-            continue
-        # Only the snapshot subdirectory is removed — the sibling
-        # records (experiment.json, gen_score.json, runs/) survive.
-        shutil.rmtree(snapshot, ignore_errors=True)
-    return reclaimed
-
-
-def _prune_git(
-    store: GitGenerationStore,
-    epoch_id: str,
-    pruned: tuple[str, ...],
-    *,
-    dry_run: bool,
-) -> int:
-    """Delete pruned generations' tags + worktrees; make commits collectable.
-
-    Tag deletion is what unpins a rejected generation's commit (see the
-    module docstring); the materialised worktree directory is the
-    immediately reclaimable disk. ``git worktree prune`` drops the stale
-    registrations and ``git gc --auto`` lets git run its incremental
-    maintenance — unreachable objects are then collected on git's own
-    schedule as reflog entries expire.
-    """
-    reclaimed = 0
-    for gen_id in pruned:
-        worktree = store.workspace_root / GitGenerationStore.WORKTREES_DIRNAME / epoch_id / gen_id
-        reclaimed += _tree_bytes(worktree)
-        if dry_run:
-            continue
-        if worktree.is_dir():
-            shutil.rmtree(worktree, ignore_errors=True)
-        tag = f"epoch/{epoch_id}/{gen_id}"
-        try:
-            store._git("tag", "-d", tag)  # noqa: SLF001 — gc is a store-package peer
-        except GitCommandError as exc:
-            # A tag already gone (a rerun of a partially-applied prune)
-            # is fine; anything else is logged and the sweep continues —
-            # gc must never wedge on one generation.
-            log.warning("epoch gc: tag delete failed for %s: %s", tag, exc)
-    if not dry_run and pruned:
-        for args in (("worktree", "prune"), ("gc", "--auto")):
-            try:
-                store._git(*args)  # noqa: SLF001 — gc is a store-package peer
-            except GitCommandError as exc:
-                log.warning("epoch gc: git %s failed: %s", " ".join(args), exc)
-    return reclaimed
 
 
 def _read_storage_gc_config(config: dict[str, Any] | None) -> dict[str, Any] | None:

@@ -576,14 +576,19 @@ Usage: zicato init [OPTIONS]
   This is the first of the two commands you run. It creates the workspace
   directory if it doesn't exist, writes an empty lineage DAG (lineage.json:
   {"epochs": []}), and writes config.json containing {instance_id, created_at,
-  storage_backend}. It also scaffolds the operator's live scoring.json (next to
-  the workspace, only when absent) with the full recommended contract — racing
-  field 4, replicates 2, the evidence gate enabled explicitly. Run it once per
-  project; then point `zicato evolve` at the same workspace.
+  generation_source_backend}. It also scaffolds the operator's live scoring.json
+  (next to the workspace, only when absent) with the full recommended contract —
+  racing field 4, replicates 2, the evidence gate enabled explicitly. Run it
+  once per project; then point `zicato evolve` at the same workspace.
 
-  Refuses to overwrite an existing workspace unless --force is passed (--force
-  only rewrites config.json / lineage.json — it does not delete epoch artifacts
-  living alongside).
+  Refuses to overwrite an existing workspace unless --force is passed. Force
+  rewrites config.json and lineage.json while preserving a valid configured
+  generation source backend; it does not delete epoch artifacts living
+  alongside. It refuses outright when lineage.json already records epochs, since
+  those decisions are not reconstructible; add --reset-lineage to discard them
+  deliberately. To change only the generation source backend on an existing
+  workspace, use `zicato repair generation-source-backend`, which merges that
+  one key.
 
   Example:
     zicato init --workspace .zicato --instance-id my-project
@@ -594,6 +599,8 @@ Options:
                          [default: default]
   --force                Overwrite config.json / lineage.json if the workspace
                          already exists.
+  --reset-lineage        Allow --force to discard a lineage.json that already
+                         records epochs.
   --help                 Show this message and exit.
 
 ===== zicato inspect --help =====
@@ -953,20 +960,22 @@ Options:
   --help  Show this message and exit.
 
 Commands:
-  epoch-goals    Advanced: backfill the goal field on epochs that predate the
-                 field.
-  generations    Advanced: reconcile the index `generations` table against disk
-                 (parent + promoted).
-  index          Advanced: rebuild the SQLite analytical index from workspace
-                 files.
-  judge-losses   Advanced: backfill per_judge_loss into every persisted loss
-                 slot.
-  report         Advanced: re-render `epochs/{id}/analysis.md` against the
-                 current on-disk data.
-  tournament-fk  Advanced: backfill tournament_id on runs / loss_profiles +
-                 parent_epoch_id on epochs.
-  v0-baseline    Advanced: backfill the synthetic v0 experiment.json into every
-                 epoch.
+  epoch-goals                Advanced: backfill the goal field on epochs that
+                             predate the field.
+  generation-source-backend  Advanced: set generation_source_backend on an
+                             existing workspace.
+  generations                Advanced: reconcile the index `generations` table
+                             against disk (parent + promoted).
+  index                      Advanced: rebuild the SQLite analytical index from
+                             workspace files.
+  judge-losses               Advanced: backfill per_judge_loss into every
+                             persisted loss slot.
+  report                     Advanced: re-render `epochs/{id}/analysis.md`
+                             against the current on-disk data.
+  tournament-fk              Advanced: backfill tournament_id on runs /
+                             loss_profiles + parent_epoch_id on epochs.
+  v0-baseline                Advanced: backfill the synthetic v0 experiment.json
+                             into every epoch.
 
 ===== zicato repair epoch-goals --help =====
 Usage: zicato repair epoch-goals [OPTIONS]
@@ -988,6 +997,28 @@ Usage: zicato repair epoch-goals [OPTIONS]
 Options:
   --workspace TEXT  Path to the zicato workspace directory.  [default: .zicato]
   --help            Show this message and exit.
+
+===== zicato repair generation-source-backend --help =====
+Usage: zicato repair generation-source-backend [OPTIONS]
+
+  Advanced: set ``generation_source_backend`` on an existing workspace.
+
+  Merges the one key into the existing ``config.json`` — every other key
+  (contract, mutable_trees, source_roots, models, instance_id) and
+  ``lineage.json`` are untouched. Use this rather than ``zicato init --force``,
+  which rewrites the config and resets the lineage.
+
+  Refuses a value the workspace's own source data contradicts unless ``--force``
+  is passed.
+
+Options:
+  --workspace DIRECTORY      Path to the zicato workspace directory.  [default:
+                             .zicato]
+  --backend [git|directory]  The backend that wrote this workspace's generation
+                             source trees.  [required]
+  --force                    Write the value even when the source data on disk
+                             names the other backend.
+  --help                     Show this message and exit.
 
 ===== zicato repair generations --help =====
 Usage: zicato repair generations [OPTIONS]

@@ -364,6 +364,7 @@ def test_reject_override_flips_a_would_promote_round(
     # The gate would have promoted (child scalar < parent), but the override
     # rejected it.
     assert outcome.tournament_decision == "rejected"
+    assert "operator override" in outcome.rejection_reason
     # The current_generation marker was NOT bumped — v1 was overridden out.
     marker = workspace / "epochs" / epoch_id / "current_generation"
     assert not marker.exists()

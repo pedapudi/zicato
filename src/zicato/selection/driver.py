@@ -1,13 +1,8 @@
-"""The orchestrator-side driver that walks a strategy to a decision.
+"""Drive a selection strategy through matchups and evidence confirmation.
 
-:func:`resolve_tournament` is the structure-swappable replacement for
-steps 2-5 of the historical ``evolve_once``: request the field, seed the
-strategy, then run scheduled matchups until the strategy resolves, and
-return the crowned :class:`SelectionDecision`.
-
-The driver is intentionally thin and IO-shaped only through its two
-injected callables, so it is fully unit-testable with synthetic
-``request_field`` / ``run_matchup`` stubs (no real tournament runs).
+The driver receives candidate production and matchup execution as injected
+callables. It owns only strategy progression and the optional evidence gate,
+which keeps it testable without a workspace or live harness.
 """
 
 from __future__ import annotations
@@ -19,6 +14,7 @@ from dataclasses import dataclass, field, replace
 from typing import Any
 
 from zicato.selection.evidence_gate import (
+    EVIDENCE_REPLICATE_BASE,
     EvidenceVerdict,
     closest_ci_duel,
     evidence_verdict,
@@ -62,7 +58,54 @@ RunMatchup = Callable[[Matchup], Awaitable[MatchupResult]]
 #: alone, letting duplicate duels "separate" CIs without new evidence.
 ReplicateDuel = Callable[[str, str], Awaitable[MatchupResult]]
 
+#: ``run_reserved_matchup(matchup, replicate_base=..., cache_scores=...)`` runs
+#: one duel at a caller-chosen replicate slot. The single injection point of
+#: :func:`make_evidence_replicate_duel`: everything ELSE about an evidence
+#: replicate — which slot, what the matchup is called, and that its scores stay
+#: out of the cache — is decided there, so a caller cannot satisfy the
+#: ``ReplicateDuel`` contract by accident.
+RunReservedMatchup = Callable[..., Awaitable[MatchupResult]]
+
 log = logging.getLogger("zicato.selection.driver")
+
+
+def make_evidence_replicate_duel(run_reserved_matchup: RunReservedMatchup) -> ReplicateDuel:
+    """Build the pre-gate's :data:`ReplicateDuel` over a reserved-slot runner.
+
+    This is the one implementation of the ``ReplicateDuel`` contract that
+    ships. It owns the three properties the contract demands and that a
+    hand-written closure would have to restate correctly every time:
+
+    * replicate ``j`` of a crowning pair runs at the reserved slot
+      :data:`~zicato.selection.evidence_gate.EVIDENCE_REPLICATE_BASE` ``+ j``,
+      so both sides draw fresh rather than replaying (fast mode) or
+      clobbering (full mode) the canonical replicate-0 units;
+    * the slot is encoded in the matchup id, which the driver's audit guard
+      keys on to refuse a repeated draw;
+    * ``cache_scores`` is off, keeping single-draw aggregates out of the
+      per-generation score the next round reuses.
+
+    The counter lives in the returned closure, so each pre-gate loop numbers
+    its own replicates from zero.
+    """
+    replicates_run = 0
+
+    async def _replicate_duel(left_id: str, right_id: str) -> MatchupResult:
+        nonlocal replicates_run
+        replicate_slot = EVIDENCE_REPLICATE_BASE + replicates_run
+        replicates_run += 1
+        return await run_reserved_matchup(
+            Matchup(
+                matchup_id=f"bt-replicate:r{replicate_slot}:{left_id}:{right_id}",
+                left=Contestant(generation_id=left_id, role="champion"),
+                right=Contestant(generation_id=right_id, role="challenger"),
+            ),
+            replicate_base=replicate_slot,
+            cache_scores=False,
+        )
+
+    return _replicate_duel
+
 
 #: ``on_inconclusive(resolution)`` is called once, at the moment the pre-gate
 #: reaches the terminal ``inconclusive`` state, with the full
@@ -88,11 +131,11 @@ ProgressHook = Callable[[SelectionStrategy], None]
 class EvidencePreGate:
     """Opt-in Bradley--Terry promotion pre-gate config for the driver.
 
-    Passed to :func:`resolve_tournament` only when the operator set
+    Passed to :func:`evaluate_tournament` only when the operator set
     ``params["promote_confidence_threshold"]`` (resolved by the orchestrator via
     :func:`zicato.selection.evidence_gate.read_promote_confidence_threshold`).
-    When ``None`` (the default), the driver's behaviour is byte-identical to
-    today — no pre-gate, no replication, no dead-letter.
+    When ``None``, no evidence pre-gate, replication, or dead-letter write is
+    requested.
 
     Fields
     ------
@@ -121,6 +164,14 @@ class EvidenceResolution:
     ci_history: tuple[dict[str, Any], ...] = field(default_factory=tuple)
 
 
+@dataclass(frozen=True, slots=True)
+class TournamentEvaluation:
+    """A resolved tournament decision and its optional gate evidence."""
+
+    decision: SelectionDecision
+    evidence: EvidenceResolution | None = None
+
+
 async def resolve_tournament(
     strategy: SelectionStrategy,
     *,
@@ -141,26 +192,49 @@ async def resolve_tournament(
        ``strategy.resolved()`` or the strategy schedules nothing.
     4. Return ``strategy.champion()``.
 
-    ``on_progress`` (optional) is invoked right after the batch is
+    ``on_progress`` is invoked right after the batch is
     scheduled (the strategy's ``_pending`` is populated, so
     ``live_rounds()`` carries the in-flight matchups) so the caller can
-    publish the live structure WHILE the round runs. It is a no-op when
-    omitted, preserving the historical signature for the driver's unit
-    tests.
+    publish the live structure while the round runs. It is a no-op when
+    omitted.
 
-    ``pre_gate`` (optional, opt-in) runs the Bradley--Terry "crown on
+    ``pre_gate`` runs the optional Bradley--Terry "crown on
     evidence" pre-gate AFTER the strategy resolves a ``"promoted"`` decision:
     the crowning win is held unless the fitted rating clears the confidence
     threshold AND the CIs separate. While it defers and ``replicate_duel`` is
     supplied with budget remaining, the driver spends a replicate on the
     closest-CI duel, refits, and rechecks (the defer→replicate loop). With
-    ``pre_gate`` ``None`` the resolution is byte-identical to today — no
-    pre-gate is consulted and the strategy's decision is returned verbatim.
+    ``pre_gate`` set to ``None`` returns the strategy's decision verbatim.
 
     Each batch runs under the caller's concurrency (the same semaphore the
     runner already uses, applied inside ``run_matchup``); the driver only
     fans them out with :func:`asyncio.gather`.
     """
+    return (
+        await evaluate_tournament(
+            strategy,
+            request_field=request_field,
+            run_matchup=run_matchup,
+            on_progress=on_progress,
+            pre_gate=pre_gate,
+            replicate_duel=replicate_duel,
+            on_inconclusive=on_inconclusive,
+        )
+    ).decision
+
+
+async def evaluate_tournament(
+    strategy: SelectionStrategy,
+    *,
+    request_field: RequestField,
+    run_matchup: RunMatchup,
+    on_progress: ProgressHook | None = None,
+    pre_gate: EvidencePreGate | None = None,
+    replicate_duel: ReplicateDuel | None = None,
+    on_inconclusive: OnInconclusive | None = None,
+) -> TournamentEvaluation:
+    """Drive a strategy and retain evidence used to confirm its crown."""
+
     champion, challengers = await request_field(strategy.field_size())
     strategy.seed(champion, list(challengers))
     while not strategy.resolved():
@@ -178,39 +252,15 @@ async def resolve_tournament(
 
     decision = strategy.champion()
     if pre_gate is None:
-        return decision
-    return await _apply_pre_gate(
+        return TournamentEvaluation(decision)
+    confirmed, evidence = await confirm_promotion_with_evidence(
         decision,
         champion=champion,
         pre_gate=pre_gate,
         replicate_duel=replicate_duel,
         on_inconclusive=on_inconclusive,
     )
-
-
-async def _apply_pre_gate(
-    decision: SelectionDecision,
-    *,
-    champion: Contestant,
-    pre_gate: EvidencePreGate,
-    replicate_duel: ReplicateDuel | None,
-    on_inconclusive: OnInconclusive | None,
-) -> SelectionDecision:
-    """Run the pre-gate over a decision, returning only the folded decision.
-
-    Thin wrapper over :func:`confirm_promotion_with_evidence` for
-    :func:`resolve_tournament`, which does not consume the resolution
-    object itself (the orchestrator's ``on_inconclusive`` callback carries
-    it on the one terminal that needs recording).
-    """
-    confirmed, _resolution = await confirm_promotion_with_evidence(
-        decision,
-        champion=champion,
-        pre_gate=pre_gate,
-        replicate_duel=replicate_duel,
-        on_inconclusive=on_inconclusive,
-    )
-    return confirmed
+    return TournamentEvaluation(confirmed, evidence)
 
 
 async def confirm_promotion_with_evidence(
@@ -256,11 +306,9 @@ async def confirm_promotion_with_evidence(
     ``on_inconclusive`` callback additionally receives the same resolution so
     the orchestrator can write the dead-letter record.
 
-    This is the shared crowning-confirmation used by BOTH selection shapes:
-    :func:`resolve_tournament` calls it (via :func:`_apply_pre_gate`) after a
-    multi-challenger structure resolves, and the orchestrator's gauntlet path
-    calls it directly on its single crowning duel — the same
-    defer→replicate→inconclusive adjudication regardless of structure.
+    :func:`evaluate_tournament` uses this confirmation for every strategy,
+    including the gauntlet's single crowning duel. All structures therefore
+    share the same defer, replicate, and inconclusive adjudication.
     """
     promoted_id = decision.promoted_generation_id
     if decision.decision != "promoted" or promoted_id is None:
@@ -387,14 +435,18 @@ def _finalize(
 
 
 __all__ = [
+    "evaluate_tournament",
     "resolve_tournament",
     "confirm_promotion_with_evidence",
     "RequestField",
     "RunMatchup",
     "ReplicateDuel",
+    "RunReservedMatchup",
+    "make_evidence_replicate_duel",
     "OnInconclusive",
     "ProgressHook",
     "EvidencePreGate",
     "EvidenceResolution",
+    "TournamentEvaluation",
     "rating_block",
 ]

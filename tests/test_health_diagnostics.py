@@ -835,7 +835,7 @@ def test_cli_health_surfaces_preflight_and_tree_import_findings(tmp_path: Path) 
             {
                 "instance_id": "test",
                 "created_at": "2026-07-29T00:00:00Z",
-                "storage_backend": "directory",
+                "generation_source_backend": "directory",
                 "adapter": {"kind": "stub"},
                 # The hard gate: a persisted REFUSE record is graded
                 # critical only under runtime.preflight_gate == "refuse".

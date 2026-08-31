@@ -197,7 +197,7 @@ def test_journal_outcome_from_dict_keeps_unrecognised_token(token: str) -> None:
     """Unrecognised tokens are preserved verbatim, exactly as before.
 
     This path has no narrowing guard, so coercing unconditionally would
-    raise on a hand-edited or future-format record that reads fine today.
+    raise on a hand-edited or future-format record accepted by the decoder.
     The token is kept as-is (and still compares unequal to every member),
     rather than inventing a verdict the record does not carry.
     """
@@ -300,25 +300,32 @@ def test_an_operator_override_round_records_the_enum_not_the_wire_token(
     Driven through the real round rather than the helper, because the helper
     is not where the token enters the record.
     """
-    import zicato.evolve.gauntlet as gauntlet
+    import zicato.evolve.field as field_round
     import zicato.runtime.control_consumer as cc
     from tests.test_pareto_frontier import _drive_round
 
     recorded: list[OutcomeRecord] = []
-    real_outcome_record = gauntlet.OutcomeRecord
+    real_finalize_generation = field_round._finalize_generation
 
-    def _spy(*args: Any, **kwargs: Any) -> OutcomeRecord:
-        record = real_outcome_record(*args, **kwargs)
-        recorded.append(record)
-        return record
+    def _spy_finalize_generation(*args: Any, **kwargs: Any) -> Experiment:
+        recorded.append(kwargs["outcome"])
+        return real_finalize_generation(*args, **kwargs)
 
-    def _force_promote(workspace_root: Path, generation_id: str) -> cc.GateOverride:
-        return cc.GateOverride(
-            decision="promoted", generation_id=generation_id, reason="operator says so"
-        )
+    def _force_promote(
+        workspace_root: Path, generation_ids: list[str]
+    ) -> dict[str, cc.GateOverride]:
+        del workspace_root
+        generation_id = generation_ids[0]
+        return {
+            generation_id: cc.GateOverride(
+                decision="promoted",
+                generation_id=generation_id,
+                reason="operator says so",
+            )
+        }
 
-    monkeypatch.setattr(gauntlet, "OutcomeRecord", _spy)
-    monkeypatch.setattr(gauntlet, "claim_gate_override", _force_promote)
+    monkeypatch.setattr(field_round, "_finalize_generation", _spy_finalize_generation)
+    monkeypatch.setattr(field_round, "claim_field_gate_overrides", _force_promote)
 
     _workspace, _epoch_id, outcome = _drive_round(
         monkeypatch,

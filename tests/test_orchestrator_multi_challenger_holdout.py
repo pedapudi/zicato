@@ -226,7 +226,7 @@ def _bootstrap(
                 # Hand-built directory-backend snapshot layout below; pin the
                 # directory backend so the git default does not look for git
                 # tags this fixture never writes.
-                "storage_backend": "directory",
+                "generation_source_backend": "directory",
                 "adapter": {"kind": "stub"},
             }
         )

@@ -112,7 +112,7 @@ CallLLM = Callable[[str, str, str], Awaitable[str]]
 
 - **Framework-agnostic `HarnessAdapter`.** The inner harness is a black box behind a small `runtime_checkable` Protocol pair — `RunnableHarness.run(entry, sinks, config)` plus adapter `load()` / `mutation_points()` / `mutable_subpaths()` (`src/zicato/adapters/base.py:40-146`). Google ADK is the first concrete adapter; plain-callable and LangChain are planned. The runner "doesn't care" what shape the agent is (`src/zicato/adapters/base.py:18`).
 
-- **Pluggable storage.** Persistence goes through a `StorageBackend` ABC — a keyed, atomic JSON/JSONL record store — so the mechanism can be swapped (in-memory for tests; a git-backed backend on the roadmap) without any domain caring, while files stay canonical (`src/zicato/storage/base.py:1-10`). Notably the derived SQLite analytical index is explicitly *not* a backend — it is a rebuildable read side, kept separate so store-of-record and index evolve independently (`src/zicato/storage/base.py:31-35`).
+- **Pluggable record storage.** Record persistence goes through a `StorageBackend` ABC — a keyed, atomic JSON/JSONL store — so tests can substitute an in-memory backend and future record stores can be added without changing domain readers, while files stay canonical in production (`src/zicato/storage/base.py:1-10`). Generation source trees use the separate `GenerationStore` protocol. The derived SQLite analytical index is explicitly *not* a backend — it is a rebuildable read side, kept separate so store-of-record and index evolve independently (`src/zicato/storage/base.py:31-35`).
 
 The `src/zicato/__init__.py` header restates the one-liner and notes the public surface is intentionally still empty in this pre-alpha (`__version__ = "0.3.0"`), consistent with the README's "Alpha … the public API will break" stance.
 
@@ -1035,19 +1035,20 @@ None of this needs rearchitecting. The whole list is a bounded, behavior-preserv
 
 ## Persistence: is the approach sensible? (and how to simplify it)
 
-**Verdict: sensible, with caveats.** *Provenance note (important):* the claims here were verified against the **implementation and its tests**, not the design docs — which turned out to be materially stale. `docs/design/STORAGE.md` described the git backend as *"DESIGN (not yet implemented)"* and the directory backend as *"the default,"* while the code has shipped git as the default and holds it to a cross-backend conformance suite. That drift is corrected in the same pass as this section.
+**Verdict: sensible, with caveats.** The claims here are verified against the
+implementation and its cross-backend conformance tests rather than the design
+docs. New workspaces explicitly select Git; directory snapshots remain a
+supported fallback.
 
 ### The spine: CQRS, verified in code
 
 The organizing principle is a disciplined **command/query split — files are the store of record; everything queryable is a derived, disposable projection.** This holds in the code, not just the prose:
 
-- **The default substrate is the content-addressed git backend** — a generation is a commit on an epoch branch, tagged, materialised for a run as a `git worktree`; the object store dedups unchanged blobs across a lineage.
+- **New workspaces explicitly select the content-addressed git backend** — a generation is a commit on an epoch branch, tagged, materialised for a run as a `git worktree`; the object store deduplicates unchanged blobs across a lineage.
 
 ```python
-# src/zicato/epoch/genstore.py:498, 540-545
-DEFAULT_STORAGE_BACKEND = "git"
-...
-    backend = _read_storage_backend_knob(workspace_root)
+# src/zicato/epoch/genstore.py
+    backend = resolve_generation_store_backend(workspace_root)
     if backend == "git":
         from zicato.epoch.git_genstore import GitGenerationStore  # noqa: PLC0415
         return GitGenerationStore(workspace_root)
@@ -1066,29 +1067,40 @@ DEFAULT_STORAGE_BACKEND = "git"
 
 The store topology is coherent — six stores with disjoint roles: generation trees (canonical, git) · lineage/experiments/journal JSON (canonical decisions) · runtime state files (derived/ephemeral, discarded and rebuilt on resume) · JSONL telemetry (canonical drift facts, its own root) · SQLite index (derived, rebuildable via `reindex`) · the opt-in hash-chained ledger (advisory, never a gate). Two canonical roots feed the index — the telemetry chain (`events.jsonl → reducer → loss.json`) and the decision chain (`experiment.json`) — and they own disjoint facts, so this is separation, not divergence. The atomic-write primitive (tmp → `fsync(fd)` → `os.replace`) is defined once and reused everywhere; the Rust supervisor opens the *same* SQLite file `READ_ONLY` with a pinned schema-version tripwire; migrations are additive/idempotent/versioned. None of this needs redesign.
 
-### The caveats (verified vs. reported)
+### Durability and retention
 
-- **Doc/code drift on the primary path** — *verified, and fixed in this pass.*
-- **Durability is page-cache-only in two spots** — *verified*: `storage/_atomic.py` fsyncs the tmp fd but never the parent directory after `os.replace`, and the JSONL event logs are plain `O_APPEND` with no fsync/tmp-rename. Process-crash-safe; not power-loss-safe. The design *tolerates* torn tails (reducer skips bad lines, supervisor counts `seq_gaps`) rather than preventing them.
-- **No snapshot GC / retention** — *reported (code-cited)*: neither backend prunes; disk grows unbounded. git dedups storage, but the runner still pays a full per-run ephemeral `copytree` even under git (see simplification below).
-- **Smaller edges** — *reported, not personally re-verified line-by-line*: an older binary can re-stamp `user_version` down on a newer DB; the ledger has no verify-on-startup/torn-tail repair; canonical JSON records carry no `format_version` to *detect* an incompatible future format.
+Atomic record writes fsync the temporary file, replace the destination, and
+fsync the parent directory. Append-only JSONL readers tolerate only a torn
+final line. Snapshot GC prunes rejected generation source trees behind
+`GenerationStore.prune_generations` and preserves experiment, patch, score,
+lineage, journal, and run records. Git worktree administration remains under
+the repository lock, including pruning.
 
-### How to simplify it
+### Where the store boundaries fall
 
-The store *count* is not the problem — each store has a distinct consumer. The one genuine **structural** simplification is that the per-run isolation primitive lives at the wrong layer:
+The store *count* is not the problem — each store has a distinct consumer. The
+boundary between them carries no duplicated mechanism:
 
-- **Move ephemeral run-isolation behind the `GenerationStore` protocol.** Today `worker_transport._make_ephemeral_snapshot` is backend-agnostic and always `copytree`s, even though the git backend already materialises a cheap worktree in `snapshot_root` (`git_genstore.py:_materialise_worktree`, self-described as *"the git-native replacement for the directory backend's per-run copytree"*). So a git run pays **both** a worktree checkout **and** a full copytree:
+- Per-run isolation lives behind `GenerationStore.checkout_ephemeral`. The
+  directory backend copies; the Git backend creates a detached per-run worktree;
+  the worker transport only retains a copy fallback for store-unmanaged library
+  callers.
+- Pure `snapshot_path` calculation is separate from I/O-performing
+  `materialize_snapshot`, so callers cannot accidentally create worktrees while
+  computing coordinates.
+- `GenerationStore` owns source derivation, browsing, diffs, checkout, and
+  pruning. Experiments and patches are read through `StorageBackend`, including
+  after source pruning. Commit metadata is an operator-readable redundant copy,
+  never a second canonical record.
+- The overlay/reflink materialization design in
+  [`GENERATION-ISOLATION.md`](GENERATION-ISOLATION.md) is a rejected-decision
+  record, not a roadmap item: Git blob dedup and worktree isolation already
+  provide the required storage and execution properties.
 
-```python
-# src/zicato/tournament/worker_transport.py:346-350  (paid under BOTH backends)
-    working_copy = parent / Path(snapshot_root).name
-    shutil.copytree(snapshot_root, working_copy, ignore=copytree_ignore())
-```
-
-  Give `GenerationStore` a `checkout_ephemeral(epoch, gen, run_id) -> (working_dir, cleanup)` method: the directory backend does the `copytree` (as today); the git backend does `git worktree add --detach`. Because a git worktree write *never touches the commit*, the extra copytree is pure redundancy under git. This deletes the per-run copytree the git backend already *claims* to have removed, and it lifts backend-specific isolation logic out of the transport layer — simpler transport, correct isolation, and the docstring becomes true.
-- **Retire the designed-only delta materialization.** [`GENERATION-ISOLATION.md`](GENERATION-ISOLATION.md) proposes CoW/reflink/overlay deltas to avoid full copies — but the git default already provides storage dedup, and the change above provides run isolation via worktrees. The git backend *obsoletes* that design; dropping it from the roadmap removes a third isolation mechanism nobody needs to build.
-- **The two-backend cost is justified — just keep the default explicit.** Directory + git are both fully maintained behind one conformance suite; the directory backend is the dependency-free fallback for a no-`git` host. That is a defensible cost, not a simplification target. The only fix needed was making the docs agree with the code that git is the default (done).
-- **Note:** lineage.json is *not* redundant with the git commit DAG. The commit meta carries only structure (`parent_generation_id` + `patches`); the tournament **outcome** (`promoted: true/false/null`) lives in `lineage.json`. Structure in git, decisions in JSON — complementary, so neither collapses into the other.
+The two generation backends remain justified: both conform to one protocol, and
+the directory implementation supports hosts where a private Git repository is
+unwanted. `lineage.json` is not redundant with the Git DAG: Git records source
+parentage, while lineage and experiment records own tournament decisions.
 
 ## The frontend/data-model boundary (and how to simplify it)
 
@@ -1178,11 +1190,14 @@ Still unproven (endpoint-gated backlog): behavior with a *real* proposer/judges 
 2. **Hoist the duplicated helpers.** Add `coerce_float`/`coerce_numeric_dict` to `dashboard/readers/paths.py` (kills 51 inline copies) and factor `tournament_view.py`'s 3× structure-dict / 2× scalar-pair builders. (~15.9% of logic lines sit in a repeated 6-line window.)
 3. **Delete the zero-risk residue.** `rm -rf ./zicato` (2.2 MB orphaned `.pyc`), 341 lines of dead JS, and ~6 dead private functions. Thin the ~77 "byte-identical to today" per-branch comment tags (keep every `LOAD-BEARING` marker).
 
-**Persistence (sensible spine; targeted simplifications):**
+**Persistence (sensible spine):**
 
-1. **Move per-run isolation behind `GenerationStore`.** Add `checkout_ephemeral(...)` so the git backend uses `git worktree add` instead of the redundant `worker_transport` `copytree` it pays *on top of* its worktree — deletes the per-run copytree the git backend already claims to remove, and simplifies the transport layer.
-2. **Retire the designed-only delta materialization** ([`GENERATION-ISOLATION.md`](GENERATION-ISOLATION.md), now reheadered as a superseded decision record) — the git default's blob dedup + worktree isolation obsoletes it; don't build a third mechanism.
-3. **Close the cheap durability gaps** — parent-directory `fsync` after `os.replace` in `storage/_atomic.py` (~5 lines), and add snapshot GC/retention (`git gc`/tag-prune; keep-last-N for directory) so a 50+ generation lineage doesn't grow unbounded. *(The stale `STORAGE.md`/`genstore.py` git-default claims are corrected in this pass.)*
+1. Per-run isolation sits behind `GenerationStore.checkout_ephemeral`, so Git
+   pays no additional directory copy in the worker transport.
+2. The overlay/reflink materialization proposal is a rejected-decision record;
+   no third isolation mechanism is planned.
+3. Atomic replacement fsyncs the parent directory, and snapshot retention prunes
+   source trees behind the store protocol while preserving every record.
 
 **Frontend / data-model boundary (push authority server-side):**
 

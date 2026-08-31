@@ -88,7 +88,7 @@ def _seeded_git_ws_template(tmp_path_factory: pytest.TempPathFactory) -> Path:
     # A materialised worktree registers its ABSOLUTE path inside the repo,
     # which cannot survive relocation-by-copytree: drop the worktrees and
     # prune the registrations so each copy re-materialises its own on first
-    # snapshot_root().
+    # materialize_snapshot().
     shutil.rmtree(ws / GitGenerationStore.WORKTREES_DIRNAME)
     _git(ws / GitGenerationStore.REPO_DIRNAME, "worktree", "prune")
     return ws
@@ -147,23 +147,15 @@ def test_patch_metadata_travels_in_the_commit_message(
     assert "---zicato-meta---" in message
     assert "p-meta" in message
 
-    # And it round-trips back through the read API.
-    record = store.list_patches("e1", "v1")
-    assert [p.id for p in record.patches] == ["p-meta"]
-
-
-def test_seed_generation_has_no_patches(seeded_store: GitGenerationStore) -> None:
-    assert seeded_store.list_patches("e1", "v0").patches == ()
-
 
 # ---------------------------------------------------------------------------
 # worktrees
 # ---------------------------------------------------------------------------
 
 
-def test_snapshot_root_materialises_a_worktree(seeded_store: GitGenerationStore) -> None:
+def test_materialize_snapshot_creates_a_worktree(seeded_store: GitGenerationStore) -> None:
     store = seeded_store
-    root = store.snapshot_root("e1", "v0")
+    root = store.materialize_snapshot("e1", "v0")
     assert root.is_dir()
     assert (root / "agent" / "prompts.py").is_file()
     # The worktree is registered with git.
@@ -171,18 +163,18 @@ def test_snapshot_root_materialises_a_worktree(seeded_store: GitGenerationStore)
     assert str(root) in worktrees
 
 
-def test_snapshot_root_reuses_an_existing_worktree(
+def test_materialize_snapshot_reuses_an_existing_worktree(
     seeded_store: GitGenerationStore,
 ) -> None:
-    first = seeded_store.snapshot_root("e1", "v0")
-    second = seeded_store.snapshot_root("e1", "v0")
+    first = seeded_store.materialize_snapshot("e1", "v0")
+    second = seeded_store.materialize_snapshot("e1", "v0")
     assert first == second
 
 
-def test_snapshot_root_for_missing_generation_is_pure_path(tmp_path: Path) -> None:
+def test_snapshot_path_for_missing_generation_is_pure(tmp_path: Path) -> None:
     """An unmaterialised coordinate yields a path without creating anything."""
     store = GitGenerationStore(tmp_path / "ws")
-    root = store.snapshot_root("e1", "v0")
+    root = store.snapshot_path("e1", "v0")
     assert not root.exists()
 
 
@@ -237,35 +229,35 @@ def test_repo_carries_an_artifact_gitignore(seeded_store: GitGenerationStore) ->
 def test_default_generation_store_selects_git_off_config(tmp_path: Path) -> None:
     ws = tmp_path / "ws"
     ws.mkdir()
-    (ws / "config.json").write_text('{"storage_backend": "git"}', encoding="utf-8")
+    (ws / "config.json").write_text('{"generation_source_backend": "git"}', encoding="utf-8")
     store = default_generation_store(ws)
     assert isinstance(store, GitGenerationStore)
 
 
 def test_default_generation_store_selects_directory_off_config(tmp_path: Path) -> None:
-    # ``storage_backend: "directory"`` stays selectable — flipping the
+    # ``generation_source_backend: "directory"`` stays selectable — flipping the
     # default to git did not remove the directory backend.
     from zicato.epoch.genstore import DirectoryGenerationStore
 
     ws = tmp_path / "ws"
     ws.mkdir()
-    (ws / "config.json").write_text('{"storage_backend": "directory"}', encoding="utf-8")
+    (ws / "config.json").write_text('{"generation_source_backend": "directory"}', encoding="utf-8")
     assert isinstance(default_generation_store(ws), DirectoryGenerationStore)
 
 
-def test_default_generation_store_no_config_is_git(tmp_path: Path) -> None:
-    # No config ⇒ the git default (removes the per-run/per-generation copytree).
-    assert isinstance(default_generation_store(tmp_path / "ws"), GitGenerationStore)
+def test_default_generation_store_refuses_missing_config(tmp_path: Path) -> None:
+    with pytest.raises(FileNotFoundError, match="workspace config not found"):
+        default_generation_store(tmp_path / "ws")
 
 
-def test_default_generation_store_malformed_config_is_git(
+def test_default_generation_store_refuses_malformed_config(
     tmp_path: Path,
 ) -> None:
-    # A malformed config falls back to the git default, not a hard error.
     ws = tmp_path / "ws"
     ws.mkdir()
     (ws / "config.json").write_text("{not json", encoding="utf-8")
-    assert isinstance(default_generation_store(ws), GitGenerationStore)
+    with pytest.raises(ValueError, match="could not parse"):
+        default_generation_store(ws)
 
 
 # ---------------------------------------------------------------------------
@@ -317,7 +309,7 @@ def test_seed_from_a_worktrees_children_skips_git_admin(tmp_path: Path) -> None:
     store = GitGenerationStore(tmp_path / "ws")
     store.seed_generation("e0", "v0", [_mutable_tree(tmp_path / "src", instr="rolled")])
 
-    worktree = store.snapshot_root("e0", "v0")
+    worktree = store.materialize_snapshot("e0", "v0")
     children = sorted(worktree.iterdir())
     # The worktree really does expose the git-admin entries we must skip.
     names = {c.name for c in children}

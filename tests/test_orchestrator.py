@@ -82,7 +82,7 @@ def _bootstrap_workspace(tmp_path: Path) -> tuple[Path, str]:
                 # layout (epochs/.../generations/v0/snapshot/), so it pins the
                 # directory backend explicitly — the git default reads its
                 # generations from git tags this fixture never writes.
-                "storage_backend": "directory",
+                "generation_source_backend": "directory",
                 "adapter": {
                     "kind": "stub",
                     # We replace the dispatch in the test below.
@@ -1094,7 +1094,7 @@ def test_evolve_once_threads_configured_proposer_skill_into_system_prompt(
                 "instance_id": "test",
                 "created_at": "2026-05-14T00:00:00Z",
                 # Hand-built directory-backend snapshot layout below; pin it.
-                "storage_backend": "directory",
+                "generation_source_backend": "directory",
                 "adapter": {"kind": "stub"},
             }
         )

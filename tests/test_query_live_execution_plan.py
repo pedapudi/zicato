@@ -41,6 +41,7 @@ from zicato.epoch.round_log import (
 )
 from zicato.query import WorkspacePaths, build_live_execution_plan
 from zicato.query.contracts import ENDPOINT_PAYLOADS
+from zicato.query.execution_plan import build_execution_plan_model
 from zicato.telemetry import reducer
 from zicato.tournament.calibration import CALIBRATION_PHASE
 
@@ -449,6 +450,23 @@ def test_every_node_carries_the_active_flag(mid_round: Path) -> None:
     nodes = _walk(_plan(mid_round))
     assert nodes
     assert all(isinstance(node["active"], bool) for node in nodes)
+
+
+def test_rendering_the_live_overlay_does_not_mutate_the_durable_plan(
+    mid_round: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The two endpoints share one model without sharing mutable wire data."""
+    import zicato.query.live_execution_plan as live_plan
+
+    model = build_execution_plan_model(WorkspacePaths(mid_round), EPOCH)
+    durable_before = model.payload()
+    monkeypatch.setattr(live_plan, "build_execution_plan_model", lambda *_args: model)
+
+    rendered = live_plan.build_live_execution_plan(WorkspacePaths(mid_round))
+
+    assert rendered["overlay"]["placed"] == 1
+    assert model.payload() == durable_before
+    assert all("active" not in node for node in _walk(durable_before))
 
 
 @pytest.mark.parametrize(
