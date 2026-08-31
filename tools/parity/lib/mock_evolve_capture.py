@@ -19,12 +19,10 @@ different code:
 * ``racing_full`` — a four-challenger racing field under ``--mode full``.
   The multi-challenger rungs, cuts, and crowning duel.
 * ``gauntlet_full`` — one challenger under ``--mode full``. The
-  ``field_n == 1`` branches: the full-board (not train-slice) selector and
-  the crowning holdout confirmation a single-challenger full round still
-  runs.
+  ``field_n == 1`` branches: a single crowning duel with no rungs or cuts,
+  and the crowning holdout confirmation on it.
 * ``gauntlet_fast`` — one challenger under ``--mode fast``. The cache-first
-  slot resolution, and the one place holdout confirmation is skipped
-  (``field_n == 1 and fast_mode``).
+  slot resolution under a one-challenger field.
 * ``racing_fast`` — a four-challenger field under ``--mode fast``, where
   every rung resolves both competitors through the unit cache.
 * ``two_round_racing`` — the racing field under ``--mode full`` for TWO

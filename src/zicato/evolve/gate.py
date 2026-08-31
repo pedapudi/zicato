@@ -127,7 +127,6 @@ async def _confirm_crowning_on_holdout(
     judge_only: bool,
     fast_mode: bool,
     confirm_fn: Any,
-    confirm_holdout: bool = True,
 ) -> _CrowningHoldout:
     """Confirm a field's crowning train-promote on the holdout slice.
 
@@ -170,13 +169,6 @@ async def _confirm_crowning_on_holdout(
     raw_delta = float(crowning_result.outcome.delta_scalar)
     crowning_delta_scalar = raw_delta if champ_is_left else -raw_delta
     if decision.decision != "promoted" or promoted_id is None:
-        return _CrowningHoldout(
-            promoted_id=promoted_id,
-            challenger_id=challenger_crown_id,
-            challenger_train_scalar=challenger_train_scalar,
-            crowning_delta_scalar=crowning_delta_scalar,
-        )
-    if not confirm_holdout:
         return _CrowningHoldout(
             promoted_id=promoted_id,
             challenger_id=challenger_crown_id,

@@ -457,7 +457,7 @@ async def evolve_field_round(
             # rung's ``board_subset`` is intersected against the train board
             # inside ``run_matchup``. Empty holdout ⇒ ``train_board`` IS the
             # full board, so no entry is excluded.
-            board=(train_board if replicate_base > 0 or field_n > 1 or not fast_mode else board),
+            board=train_board,
             weights=weights,
             config=config,
             workspace_root=workspace_root,
@@ -789,7 +789,6 @@ async def evolve_field_round(
         judge_only=judge_only,
         fast_mode=fast_mode,
         confirm_fn=confirm_crowning_holdout,
-        confirm_holdout=not (field_n == 1 and fast_mode),
     )
     promoted_id = crowning_confirm.promoted_id
     crowning_reason_override = crowning_confirm.reason_override
