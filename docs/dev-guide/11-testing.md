@@ -1426,7 +1426,8 @@ uv run pytest tests/test_convergence_known_answer.py \
 # 9. Rust supervisor (if you touched a two-language contract).
 cargo test -p zicato-supervisor
 
-# 10. Simplification budgets — reports language and subsystem totals too.
+# 10. Simplification budgets — total, production, and production logic;
+#     reports language and subsystem totals too.
 python tools/line_budget.py --check
 
 # 11. Vendor scan — nothing in git may reference the model vendor (the
@@ -1471,15 +1472,26 @@ python tools/line_budget.py --ref f9052dd
 ```
 
 `measure()` walks `git ls-files` for the worktree or `git ls-tree` for a
-reference and counts newline bytes, matching `wc -l`. `_excluded()` owns the
-narrow Markdown, lockfile, and generated-artifact exclusions; `_production()`
-owns the runtime subtotal. The report groups both by language and subsystem so
-movement is reviewable.
+reference and counts newline bytes, matching `wc -l`, and returns three
+numbers. `_excluded()` owns the narrow Markdown, lockfile, and
+`EXCLUDED_FROM_BUDGET` exclusions that shape the total, and that tuple states
+per entry why the path holds no implementation. `_production()` owns the
+runtime subtotal. `_logic()` reduces each production file to its executable
+lines: `ast` and `tokenize` drop Python docstrings and comment-only lines, a
+left-stripping scan drops JavaScript `//` and `/* … */` lines, and a file type
+with no counter keeps its raw count. Prose and comments therefore reach the
+total and the production subtotal only, so deleting a docstring buys no room
+under the logic ceiling. The report groups the total by language and subsystem
+so movement is reviewable.
 
-`.line-budget.json` contains hard limits without an allowance. Keep the two
-independent one-line-overage assertions in `tests/test_line_budget.py`: one
-proves total `limit + 1` fails while production is unchanged; the other proves
-production `limit + 1` fails while total is unchanged. Run:
+`.line-budget.json` contains hard limits without an allowance. Keep the three
+independent one-line-overage assertions in `tests/test_line_budget.py`: each
+proves that one limit fails at `limit + 1` while the other two are unchanged.
+Two fixture tests beside them pin the split the logic count makes — a Python
+file whose docstring and comment lines count in `production` and not in
+`production_logic`, and a JavaScript file with line and block comments — and
+one more pins that every path in `EXCLUDED_FROM_BUDGET` is tracked in the tree.
+Run:
 
 ```bash
 uv run pytest tests/test_line_budget.py -q
