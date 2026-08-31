@@ -146,8 +146,8 @@ async def evolve_once(
     from zicato.telemetry.reducer import read_loss_profile  # noqa: PLC0415
 
     # The mandatory pre-spend gate, unless the caller already ran it (see
-    # ``workspace_checked``). Imported per call, not at module scope: suites
-    # that drive a round against a deliberately minimal fixture workspace
+    # ``workspace_checked``). Imported per call rather than at module scope:
+    # suites that drive a round against a minimal fixture workspace
     # patch ``zicato.check.require_workspace_valid``, and hoisting this would
     # bind the function once and silently defeat every one of those patches.
     if not workspace_checked:
@@ -171,10 +171,10 @@ async def evolve_once(
     else:
         resolved_epoch_id = epoch_id
 
-    # --- 0. Operator skip_round (control protocol, RUNTIME-V2 Phase 2) ---
+    # --- 0. Operator skip_round (the control protocol's operator override) ---
     # A clean safe point — the epoch is resolved but nothing has been
     # proposed and no tournament write is in flight. A pending skip_round
-    # flag aborts this round cleanly, exactly like a wall-clock budget cut:
+    # flag aborts this round cleanly, the same way a wall-clock budget cut does:
     # the round produces a synthetic aborted outcome (no proposer call, no
     # tournament) and the loop moves on. The flag is consumed (archived to
     # control_log/) so it fires once. The common case (no skip queued)
@@ -216,9 +216,9 @@ async def evolve_once(
         external_config=_external_cfg,
     )
     # NOTE: the best-of-N proposer-quality wrapper is interposed BELOW, right
-    # after the RuntimeConfig is built, because it now threads the config's
-    # WS-ENS ensemble-role callables into the wrapper (see there).
-    # --- 0b. Durable per-round event log (WS8) ---
+    # after the RuntimeConfig is built, because it threads the config's
+    # breadth/depth ensemble-role callables into the wrapper (see there).
+    # --- 0b. Durable per-round event log ---
     # The round's store-of-record trace at
     # ``epochs/{epoch}/rounds/{round_index}/round_log.jsonl``, opened here
     # with the frozen contract hash. Every emission is best-effort: a log
@@ -245,7 +245,7 @@ async def evolve_once(
     # We do nothing more here.
     if config.instance_id != instance_id:
         config = replace(config, instance_id=instance_id)
-    # Per-round token budget (WS-H): mint a FRESH ledger for this round and
+    # Per-round token budget: mint a FRESH ledger for this round and
     # rebind it onto the config, so every runner seam that already receives
     # the config — the full/fast board-unit schedulers, the candidate
     # screen, the evidence-gate replicate duels — shares one tally with no
@@ -264,7 +264,7 @@ async def evolve_once(
     # The critic sees ONLY the same restricted proposer context (never the
     # holdout), so best-of-N stays inside the overfitting-visibility envelope.
     #
-    # WS-ENS ensemble roles: the wrapper routes slate SAMPLING to the breadth
+    # Ensemble roles: the wrapper routes slate SAMPLING to the breadth
     # callable and CRITIQUE + REVISE to the depth callable, both read off the
     # RuntimeConfig (built just above). It ALSO threads the paired model-name
     # strings so the default ADK proposer (which binds ``ctx.model``, not
@@ -341,8 +341,8 @@ async def evolve_once(
 
     # --- 2a'. Contract pre-flight (epoch-open step) ----------------------
     # DEFAULT-ON (issue #84): unless runtime.preflight_gate == "off", measure
-    # the A/A floor AND the degradation signal (champion vs a deliberately-
-    # degraded ephemeral copy of itself) once per epoch and persist the
+    # the A/A floor AND the degradation signal (champion against an ephemeral
+    # copy of itself degraded on purpose) once per epoch and persist the
     # verdict. A below-floor / saturated / inert verdict — or a promote_margin
     # outside the floor/signal window (issue #112) — is LOUDLY warned (inside
     # the helper) and flows into the per-round health report. Under the opt-in
@@ -382,10 +382,9 @@ async def evolve_once(
     ):
         # One cause reaches here, and it is the honestly-measured one: the
         # contract's own measured movement does not clear its own A/A noise.
-        # The margin-window failures used to refuse too, and used to need their
-        # own sentence here; they are warnings now (issue #119) because their
-        # upper comparison is against DEGRADATION headroom, which bounds a
-        # challenger's improvement from neither side.
+        # The margin-window failures warn rather than refuse (issue #119),
+        # because their upper comparison is against DEGRADATION headroom,
+        # which bounds a challenger's improvement from neither side.
         raise PreflightRefusedError(
             f"contract pre-flight REFUSE for epoch {resolved_epoch_id}: the "
             "contract's measured signal is at or below its measured A/A noise "
@@ -466,8 +465,8 @@ async def evolve_once(
     # decomposition. The optional operator summarizer hook contributes extra
     # marginals, sanitized + banded by zicato so its output cannot leak. The
     # rendered block is bucketed + identity-free; an empty slice (or no
-    # outcome data) renders the EMPTY STRING, so the proposer prompt is
-    # byte-identical to today (OVERFITTING.md §11.4).
+    # outcome data) renders the EMPTY STRING, so the proposer prompt then
+    # carries no such section (OVERFITTING.md §11.4).
     failure_profile = _render_failure_profile(losses, weights)
 
     # --- 5a''. Opt-in process-exemplar block (PROCESS-EXEMPLARS.md) ---
@@ -478,7 +477,7 @@ async def evolve_once(
     # can see HOW a detected failure unfolds, never WHICH entry it unfolded
     # on. Best-effort: any failure renders the empty string (the "omit this
     # section" sentinel) and the round proceeds untouched. OFF by default:
-    # no extraction runs and the prompt is byte-identical to today.
+    # no extraction runs and the prompt carries no such section.
     process_exemplars_block = _render_process_exemplars_block(
         workspace_root=workspace_root,
         epoch_id=resolved_epoch_id,
@@ -511,7 +510,7 @@ async def evolve_once(
         beater=beater,
     )
 
-    # --- 5a''. Optional recombination pair (WS-REC) ---
+    # --- 5a''. Optional recombination pair ---
     # ONE selection per round, built only when the contract opts in
     # (proposer_quality.recombine AND best_of_n > 1) — otherwise ``None``
     # and no pair even rides the propose path. Plain DATA (not a callable):
@@ -544,7 +543,7 @@ async def evolve_once(
         parent_id=parent_id,
     )
 
-    # --- 5a''''. Optional critic-calibration channel (WS-CAL) ---
+    # --- 5a''''. Optional critic-calibration channel ---
     # ONE summary per round, built only when the contract opts in
     # (proposer_quality.calibration_feedback > 0) — otherwise ``None`` and no
     # summary rides the propose path. Read-side only (the meter is untouched):

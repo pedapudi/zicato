@@ -14,8 +14,7 @@ invocation and tears down in its ``finally`` block:
 * two tiny shared utilities — the UTC ISO clock (:func:`_now_iso`) and the
   heartbeat phase pusher (:func:`_beat`).
 
-Callers import this owner directly so no
-caller import changes. This is a pure move; the behaviour is identical.
+Callers import this module directly.
 """
 
 from __future__ import annotations
@@ -70,7 +69,7 @@ def _resolve_or_launch_harmonograf(
 ) -> tuple[str, Any]:
     """Return ``(url, handle)`` for the harmonograf console this evolve uses.
 
-    Auto-launch semantics (the post-#202 default):
+    Auto-launch semantics (the default; issue #202):
 
     * If the operator pinned a URL — the ``--harmonograf-url`` flag or
       the workspace-config ``harmonograf_url`` key — use it verbatim
@@ -87,8 +86,7 @@ def _resolve_or_launch_harmonograf(
     On any auto-launch failure (missing dep, port-bind error, startup
     timeout), the supervisor logs a warning and returns a no-op handle
     with ``url=""``. The orchestrator treats that as "JSONL-only
-    telemetry" exactly as it did before #202 — the live console is
-    additive, never load-bearing.
+    telemetry": the live console is additive and never load-bearing.
 
     Side effect: when auto-launch succeeds, the resolved URL is also
     written into ``os.environ["ZICATO_HARMONOGRAF_URL"]`` so the
@@ -129,8 +127,8 @@ def _resolve_or_launch_harmonograf(
 
     # Make the resolved URL discoverable to the tournament runner and the
     # worker subprocesses, both of which re-resolve it via
-    # resolve_harmonograf_url() (whose second lookup step is exactly this
-    # internal env handoff). The restorer is captured on the handle so
+    # resolve_harmonograf_url() (whose second lookup step is this internal
+    # env handoff). The restorer is captured on the handle so
     # shutdown unsets / restores the environment cleanly.
     restorers: list[_EnvVarRestorer] = []
     url_restorer = _EnvVarRestorer("ZICATO_HARMONOGRAF_URL")
@@ -268,7 +266,7 @@ class _EnvVarRestorer:
 def _record_progress(workspace_root: Path | None, transition: str | None) -> int | None:
     """Append one orchestrator progress transition; return the new ``seq``.
 
-    The TRUE liveness step (RUNTIME-V2 Phase 4): on a genuine transition
+    The TRUE liveness step: on a genuine transition
     the loop appends a typed event to the progress event log
     (:mod:`zicato.runtime.progress_log`), whose monotonic ``seq`` advances
     only here — never on the heartbeat timer. Returns the new tail ``seq``

@@ -23,7 +23,7 @@ The placebo's hypothesis ``core_idea`` is prefixed with
 consumer can recognise the arm; loop-health detectors treat placebo
 experiments as calibration probes, never as part of the optimization
 stream. The placebo NEVER moves the champion pointer on the gauntlet path
-(it is an extra scheduled duel after the round, not a contender); on a
+(it is an extra scheduled duel after the round rather than a contender); on a
 multi-challenger field it enters as one extra slate slot and flows
 through the unchanged strategy + gate.
 
@@ -83,10 +83,11 @@ def placebo_noop_content(point: MutationPoint) -> str:
 
     See the module docstring for the per-kind rules. The span path
     re-resolves the literal through the SAME applier helpers a real
-    ``replace`` uses, so the value it re-emits is exactly the value the
-    applier would be replacing. Falls back to ``point.content`` when the
-    literal cannot be re-resolved (an unparseable file) — still a valid
-    patch, though no longer guaranteed semantics-preserving; the caller's
+    ``replace`` uses, so the value it re-emits is the value the applier
+    would be replacing. Falls back to ``point.content`` when the literal
+    cannot be re-resolved (an unparseable file); that is still a valid
+    patch, though it is no longer guaranteed to preserve semantics. The
+    caller's
     best-effort wrapper tolerates the degenerate case.
     """
     if point.kind in ("file", "code") or point.file.suffix != ".py":
@@ -132,7 +133,7 @@ def build_placebo_experiment(
     The hypothesis is clearly marked as the baseline arm — the
     ``core_idea`` opens with :data:`PLACEBO_HYPOTHESIS_MARKER`, the
     stable string the health detector and the loop-health input filter
-    key on — and predicts exactly nothing (a no-op has no expected
+    key on — and predicts nothing at all (a no-op has no expected
     movement; its only falsifiable claim is "the gate rejects me").
     """
     hypothesis = HypothesisSpec(

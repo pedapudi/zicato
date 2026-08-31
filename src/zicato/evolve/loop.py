@@ -75,13 +75,13 @@ def log_effective_concurrency(workspace_root: Path) -> str:
     """Log the run's effective concurrency knobs ONCE, at invocation start.
 
     ``parallelism`` decides how many board units run at a time and defaults
-    to 4 regardless of the host, yet it appeared in no log line anywhere:
-    an operator on a 64-core box saw four units in flight with nothing
-    telling them a ceiling was in force, and nothing distinguishing "the
-    default is holding you at 4" from "the work is simply slow" (issue
-    #126). The same is true of its propose-side analogue and of the
-    host-wide worker permit count, whose AUTO resolution is host-dependent
-    and therefore unguessable from the config file alone.
+    to 4 regardless of the host. Unlogged, it leaves an operator on a
+    64-core box watching four units in flight with nothing to say a ceiling
+    is in force, and nothing to separate "the default is holding you at 4"
+    from "the work is simply slow" (issue #126). The same holds for its
+    propose-side analogue and for the host-wide worker permit count, whose
+    AUTO resolution is host-dependent and so unguessable from the config
+    file alone.
 
     So report all three, plus the cores the process may actually run on and
     the tier ``parallelism`` was resolved from
@@ -175,7 +175,7 @@ def _epoch_round_base(workspace_root: Path, epoch_id: str | None) -> int:
     collides the new field with the prior invocation's rounds in one bucket
     (the "v9 lands in Round 0 next to v1–v4" bug). Returns
     ``max(persisted round_index) + 1``, or ``0`` for a fresh / unreadable epoch
-    (the historical behaviour for a brand-new epoch, where the first round is 0).
+    (the answer for a brand-new epoch, whose first round is 0).
 
     A PARENTLESS generation is skipped: the epoch's seed is CARRIED (copied from
     the registered trees, or from a rolled predecessor's promoted head), never
@@ -195,7 +195,7 @@ def _epoch_round_base(workspace_root: Path, epoch_id: str | None) -> int:
         layout = WorkspaceLayout.from_root(workspace_root)
         for _gid, exp in read_experiments(layout, epoch_id):
             if not exp.get("parent_generation_id"):
-                continue  # the seed is carried, not minted — it is not a round
+                continue  # the seed is carried rather than minted, so it is no round
             ri = exp.get("round_index")
             if isinstance(ri, int) and ri > best:
                 best = ri
@@ -206,16 +206,16 @@ def _epoch_round_base(workspace_root: Path, epoch_id: str | None) -> int:
 
 #: Default threshold for the loop-health circuit breaker: this many
 #: consecutive rounds with a CRITICAL loop-health finding stops the
-#: evolve loop early. Two is deliberately tight — one CRITICAL round
-#: could be a transient (e.g. a single degenerate tournament), but two
-#: in a row means the loop is genuinely producing no signal.
+#: evolve loop early. Two is tight by design: one CRITICAL round could be a
+#: transient (a single degenerate tournament, say), but two in a row means
+#: the loop is producing no signal.
 _DEGENERATE_HEALTH_STOP_THRESHOLD = 2
 
 
 def _append_progress_seq(workspace_root: Path, transition: str) -> int | None:
     """Append a loop-level progress transition; return its ``seq`` or ``None``.
 
-    RUNTIME-V2 Phase 4. The loop appends genuine loop transitions
+    The loop appends genuine loop transitions
     (:data:`progress_log.LOOP_START` / :data:`~progress_log.ROUND_START` /
     the terminal :data:`~progress_log.SETTLED` / :data:`~progress_log.STOPPED`)
     so the heartbeat's ``seq`` advances on real progress, never on the
@@ -278,7 +278,8 @@ async def _apply_rubric_replacement(
 
     The proposer brief is part of the evaluation contract (board + brief +
     scoring + harness identity). Replacing it mid-loop must NOT be a silent
-    in-place patch — pre- and post-edit generations are no longer comparable.
+    in-place patch, because generations on either side of the edit are not
+    comparable.
     So this helper:
 
     1. Writes the operator's payload to the LIVE proposer brief (the same
@@ -441,8 +442,8 @@ async def evolve_n_rounds(
     ``stop_on_degenerate_health`` is true (the default), the loop stops
     early once :data:`_DEGENERATE_HEALTH_STOP_THRESHOLD` consecutive
     rounds report a CRITICAL loop-health finding (e.g. degenerate
-    scoring — the tournament can no longer tell a real improvement from
-    noise). Same spirit as the consecutive-rejection breaker: there is
+    scoring, where the tournament cannot tell a real improvement from
+    noise). Same shape as the consecutive-rejection breaker: there is
     no point spending more LLM calls on a loop that is producing no
     usable signal. A round whose health is not CRITICAL resets the
     counter. Pass ``stop_on_degenerate_health=False`` to opt out and run
@@ -450,13 +451,13 @@ async def evolve_n_rounds(
 
     A third early-exit is the **total wall-clock budget**: when
     ``max_wall_clock_seconds`` is set (``None``, the default, leaves the
-    loop unbounded — the historical behaviour), the orchestrator records
+    loop unbounded), the orchestrator records
     a monotonic start time and enforces the ceiling two ways:
 
     * **Between rounds** — before starting round N+1, if the elapsed
       time has already reached the budget, the loop stops cleanly with
-      a logged message and returns the outcomes gathered so far. This
-      mirrors the consecutive-reject breaker's shape exactly.
+      a logged message and returns the outcomes gathered so far, in the
+      same shape as the consecutive-reject breaker.
     * **Within a round** — each round's work is wrapped in
       :func:`asyncio.wait_for` with a timeout equal to the *remaining*
       budget, so a single long round cannot blow the total. A round
@@ -470,7 +471,7 @@ async def evolve_n_rounds(
     guard (see ``docs/design/ROBUSTNESS.md``): it only pre-empts
     *cooperative* async work. A round wedged in a blocking call or a
     CPU-bound loop is not hard-killed here — that requires the
-    subprocess-worker layer (L3). This is the same contract the
+    subprocess-worker boundary. This is the same contract the
     per-entry budget relies on.
 
     The mandatory workspace gate runs first, before auto-epoching or any
@@ -529,9 +530,9 @@ async def evolve_n_rounds(
     # reaches it without going through the CLI. It must precede
     # auto-epoching, because resolving contract drift may call the auxiliary
     # model. Every round below is then handed ``workspace_checked=True``, so
-    # a multi-round invocation pays for the gate exactly once.
-    # Imported per call, not at module scope. Suites that drive this loop
-    # against a deliberately minimal fixture workspace patch
+    # a multi-round invocation pays for the gate once.
+    # Imported per call rather than at module scope. Suites that drive this
+    # loop against a minimal fixture workspace patch
     # ``zicato.check.require_workspace_valid``; hoisting this import would
     # bind the function once and silently defeat every one of those patches.
     from zicato.check import require_workspace_valid  # noqa: PLC0415
@@ -618,13 +619,13 @@ async def evolve_n_rounds(
     # (reuse the persisted experiment so the unit cache HITs the done
     # units). On ANY ambiguity it discards the partial generation so the
     # round re-runs fresh. A clean workspace yields the default no-op plan,
-    # so a cold start is byte-identical to today. The plan is consumed by
+    # so a cold start resumes nothing. The plan is consumed by
     # the FIRST round only; later rounds pass ``None``.
     _prepared_plan = prepare_resume(workspace_root, epoch_id or "")
     resume_plan: ResumePlan | None = (
         None if _prepared_plan.classification == "clean" else _prepared_plan
     )
-    # RUNTIME-V2 Phase 4: the orchestrator progress event log is the TRUE
+    # The orchestrator progress event log is the TRUE
     # liveness signal (its monotonic ``seq`` advances only on a genuine
     # transition, never on the heartbeat timer). Clear any prior invocation's
     # log so this one's ``seq`` starts from 1 — a stale tail must never read
@@ -697,11 +698,11 @@ async def evolve_n_rounds(
         )
         # Total wall-clock budget — a monotonic clock so a wall-clock
         # adjustment mid-run can't move the deadline. ``None`` leaves
-        # the loop unbounded (the historical behaviour).
+        # the loop unbounded.
         budget = WallClockBudgetPolicy(max_wall_clock_seconds)
         budget_stopped = False
         stop_reason = "completed"
-        # Endpoint-outage backoff state (WS-H): consecutive deferred rounds
+        # Endpoint-outage backoff state: consecutive deferred rounds
         # double the delay from base up to the cap; any settled round
         # resets the streak. Knobs read once — workspace config is static
         # for the life of one evolve invocation.
@@ -732,7 +733,7 @@ async def evolve_n_rounds(
                 break
 
             # --- Operator control protocol, between-rounds safe point ---
-            # (RUNTIME-V2.md Phase 2.) BEFORE scheduling the next round:
+            # BEFORE scheduling the next round:
             #
             #  * pause_epoch — block scheduling while the flag is present;
             #    return only once the operator clears it (resume gesture).
@@ -785,7 +786,8 @@ async def evolve_n_rounds(
                 # Bind the epoch as a default arg so a rubric_replacement that
                 # rolled ``epoch_id`` earlier this iteration is captured by
                 # value (not late-bound). The reassignment above means the
-                # closure must snapshot the current epoch, not the loop var.
+                # closure must snapshot the current epoch rather than the loop
+                # variable.
                 _epoch_id: str | None = epoch_id,
             ) -> EvolveRoundOutcome:
                 from zicato.telemetry.meta_loop import SPAN_ROUND, meta_span  # noqa: PLC0415
@@ -824,8 +826,8 @@ async def evolve_n_rounds(
                         # push past the total budget is cancelled. This only
                         # pre-empts cooperative async work — a round wedged
                         # in a blocking call or CPU-bound loop is not
-                        # hard-killed here; that needs the L3 subprocess
-                        # worker. Same caveat as the per-entry budget. See
+                        # hard-killed here; that needs the subprocess worker
+                        # boundary. Same caveat as the per-entry budget. See
                         # docs/design/ROBUSTNESS.md.
                         outcome = await asyncio.wait_for(_run_round(), timeout=remaining)
                     except TimeoutError:
@@ -882,7 +884,7 @@ async def evolve_n_rounds(
                 if eid:
                     regenerate_in_progress_html(workspace_root, eid)
             if outcome.tournament_decision == DEFERRED_INFRA_DECISION:
-                # Endpoint-outage deferral (WS-H): the round burned NO
+                # Endpoint-outage deferral: the round burned NO
                 # experiment — it persists un-outcomed on disk. Back off
                 # (exponential, capped) instead of re-proposing straight
                 # into a dead endpoint, then hand the next round the SAME
@@ -891,7 +893,7 @@ async def evolve_n_rounds(
                 # unit completed (the unit cache HITs the done work),
                 # discard it cleanly when none did. Deliberately skips
                 # BOTH stop-policies below — a deferral is evidence about
-                # the endpoint, not about the experiment stream, so it
+                # the endpoint rather than about the experiment stream, so it
                 # must neither count toward consecutive rejections nor
                 # reset/advance the degenerate-health streak.
                 infra_deferral_streak += 1
@@ -921,8 +923,8 @@ async def evolve_n_rounds(
                 continue
             infra_deferral_streak = 0
             if reject_policy.observe(promoted=outcome.tournament_decision == "promoted"):
-                # The streak count alone says the loop stopped, not why it
-                # could not promote. The last round's gate reason carries the
+                # The streak count alone says the loop stopped without saying
+                # why it could not promote. The last round's gate reason carries the
                 # deciding numbers, so it rides along (issue #129).
                 log.warning(
                     "evolve_n_rounds: stopping after %d consecutive rejections "

@@ -129,11 +129,11 @@ def _index_db_path(workspace_root: Path) -> Path:
 def index_preflight(workspace_root: Path) -> str:
     """Build an absent/stale index, heal a diverged one; report what happened.
 
-    The ``evolve``-start half of the self-healing index (M3(a);
-    ``docs/design/ANALYTICAL-INDEX.md`` §5.3). Returns ONE operator-facing
+    The ``evolve``-start half of the self-healing index
+    (``docs/design/ANALYTICAL-INDEX.md`` §5.3). Returns ONE operator-facing
     line naming the action taken — never merely that the preflight ran.
 
-    This is a loop-QUALITY fix, not a convenience. Both index reads in this
+    This serves loop QUALITY rather than convenience. Both index reads in this
     module — :func:`_load_prior_experiments` (the proposer's experiment
     memory) and :func:`_load_mutation_track_records` — happen later in the
     same invocation and are best-effort by design: a stale index does not
@@ -232,10 +232,10 @@ def _load_mutation_track_records(
     :class:`~zicato.proposer.agent.ProposerContext` so the prompt renderer
     can annotate each manifest entry with its compact, banded track-record
     line ("experiments touching this point" — advisory, never causal).
-    Mirrors :func:`_load_prior_experiments` exactly: the index read is
-    best-effort — a missing :mod:`zicato.index` sibling, a never-built
-    database, or any read failure is logged at ``debug`` level and yields
-    ``{}``, which renders a byte-identical manifest.
+    Mirrors :func:`_load_prior_experiments`: the index read is best-effort,
+    so a missing :mod:`zicato.index` sibling, a never-built database, or any
+    read failure is logged at ``debug`` level and yields ``{}``, which
+    renders the manifest with no track-record annotations.
     """
     try:
         from zicato.index.query import mutation_point_track_record  # noqa: PLC0415

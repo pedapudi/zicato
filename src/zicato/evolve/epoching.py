@@ -17,9 +17,8 @@ roll-at-evolve-time decision and its supporting helpers:
   :func:`_component_diff_label`) and the v0-seed marker path
   (:func:`_roll_seed_marker`).
 
-Public epoch resolution is exported by :mod:`zicato.orchestrator`; private
-helpers stay here so no
-caller import changes. This is a pure move; the behaviour is identical.
+Public epoch resolution is exported by :mod:`zicato.orchestrator`; the
+private helpers live here.
 """
 
 from __future__ import annotations
@@ -54,8 +53,8 @@ def _component_diff_label(prev_components: dict[str, str], cur_components: dict[
     Compares the per-component sub-hashes; returns a comma-joined list
     of the component names that differ (``board``, ``brief``,
     ``scoring``, ``entrypoint``, ``mutable_trees``). Falls back to a
-    generic ``"contract"`` when no per-component breakdown is available
-    (e.g. a legacy epoch with no stored components).
+    generic ``"contract"`` when no per-component breakdown is available,
+    which is the case for an epoch that stored no components.
     """
     if not prev_components:
         return "contract"
@@ -69,9 +68,9 @@ def _stored_component_hashes(workspace_root: Path, epoch_id: str) -> dict[str, s
     """Return the per-component sub-hashes recorded for an epoch.
 
     The breakdown is written next to ``config.json`` as
-    ``contract_components.json`` at epoch creation / roll time. Absent
-    for legacy epochs (returns an empty dict — the caller falls back to
-    a generic message).
+    ``contract_components.json`` at epoch creation or roll time. An epoch
+    that stored none returns an empty dict, and the caller falls back to a
+    generic message.
     """
     path = WorkspaceLayout.from_root(workspace_root).contract_components(epoch_id)
     if not path.exists():
@@ -126,8 +125,8 @@ async def ensure_epoch_for_contract(
          ``zicato epoch new``).
     4. Load ``cur``'s :class:`EpochConfig`.
 
-       * If ``cur.contract_hash is None`` (legacy epoch) OR ``== `` the
-         current hash: return ``cur`` (continue, no roll).
+       * If ``cur.contract_hash is None`` (the epoch stores no hash) OR it
+         equals the current hash: return ``cur`` (continue, no roll).
        * Else (the contract changed):
 
          * ``auto_epoch`` True  — close ``cur`` (generating
@@ -179,10 +178,10 @@ async def ensure_epoch_for_contract(
 
     cfg = load_epoch(workspace_root, cur)
     if cfg.contract_hash is None or cfg.contract_hash == current_hash:
-        # Legacy epoch (``None`` stored hash → treated as always-matching)
-        # or the contract is unchanged. Either way: no roll. The check is
-        # ``is None``, NOT ``== ""``: a corrupted/empty real hash must roll
-        # rather than silently read as legacy.
+        # The epoch stores no hash (``None`` → treated as always-matching), or
+        # the contract is unchanged. Either way: no roll. The check is
+        # ``is None`` rather than ``== ""``, so a corrupted or empty real hash
+        # rolls instead of reading as "no hash stored".
         return cur
 
     # The contract drifted from the current epoch.
@@ -293,8 +292,8 @@ async def ensure_epoch_for_contract(
     # applying a proposer recommendation is FREE — the epoch is rolling anyway,
     # so the edit costs nothing extra in comparability — and this is the only
     # path that reaches it (the no-roll return above is well upstream). Silent
-    # when nothing is pending, so a boundary without recommendations reads
-    # exactly as it did before this existed.
+    # when nothing is pending, so a boundary without recommendations prints
+    # nothing.
     from zicato.proposer.reflection import echo_pending_recommendations  # noqa: PLC0415
 
     echo_pending_recommendations(workspace_root)

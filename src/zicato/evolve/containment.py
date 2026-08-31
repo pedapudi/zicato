@@ -11,7 +11,7 @@ every file OUTSIDE the registered mutable trees must be byte-identical
 parent↔child; a changed / added / deleted out-of-bounds file is an
 out-of-bounds mutation.
 
-Semantics mirrored from the supervisor (kept in lockstep deliberately):
+Semantics mirrored from the supervisor, and kept in lockstep with it:
 
 * A snapshot copies each registered mutable tree under its BASENAME, so
   the in-bounds surface keyed against snapshot-relative paths is the set
@@ -20,8 +20,8 @@ Semantics mirrored from the supervisor (kept in lockstep deliberately):
 * When ``mutable_trees`` is empty the surface is the WHOLE snapshot —
   everything is in-bounds, the check is trivially contained.
 * v1 granularity is the COARSE file-level check: any out-of-bounds file
-  that differs is a violation (line-range tightening is the documented
-  follow-up there, not here).
+  that differs is a violation. Tightening the check to a line range is
+  registered as follow-up work on the supervisor side.
 * FAIL-OPEN: an unreadable snapshot or parent yields a ``skipped_reason``
   (the attestation cannot be made), never a violation; an unreadable
   individual file is skipped from the hash map. Symlinks are not

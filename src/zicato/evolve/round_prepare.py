@@ -57,7 +57,7 @@ async def _maybe_calibrate_noise_floor(
 
     Fires only when the workspace config carries ``"calibrate_noise_floor":
     K`` (K >= 2 draws) AND the epoch record has no measured floor yet, so the
-    measurement happens exactly once at epoch open (the first evolve round of
+    measurement happens once at epoch open (the first evolve round of
     a fresh epoch) and every later round short-circuits on the persisted
     record. Best-effort by contract — a calibration failure must never abort
     the round.
@@ -139,7 +139,7 @@ async def _maybe_calibrate_noise_floor(
         # The round owns the phase again — the same stamp ``evolve_n_rounds``
         # writes when it schedules the round. Restored on the best-effort skip
         # path too, so a failed calibration never leaves the heartbeat parked
-        # on a measurement that is no longer running.
+        # on a measurement that has stopped.
         _beat(beater, phase=f"evolve_once:round_{round_index}")
 
 
@@ -170,13 +170,13 @@ async def _maybe_contract_preflight(
     without re-measuring. Best-effort by contract — a measurement failure
     never aborts the round.
 
-    The number of A/A draws K is taken from the legacy ``config.json``
+    The number of A/A draws K is taken from the ``config.json``
     ``"contract_preflight": K`` key when present (K >= 2), else defaults to
     :data:`~zicato.tournament.calibration.DEFAULT_CALIBRATION_RUNS`.
 
     Like the calibration above it, the measurement is SERIAL and
-    front-loaded — K passes over the board plus one per degraded probe,
-    before the round's first duel — so it owns the heartbeat for its
+    front-loaded: K passes over the board plus one per degraded probe, all
+    before the round's first duel. It therefore owns the heartbeat for its
     duration: ``beater`` (when the loop supplies one) is stamped
     :data:`~zicato.epoch.preflight.PREFLIGHT_PHASE` plus a live
     ``units-settled/total`` suffix, and restored to the round phase on
@@ -193,8 +193,8 @@ async def _maybe_contract_preflight(
     caller enforces the gate: ``"warn"`` mode only warns (done here);
     ``"refuse"`` mode raises
     :class:`~zicato.epoch.preflight.PreflightRefusedError` on a ``refuse``
-    verdict. ``"inert"`` is never a refusal — it says the probe, not the
-    contract, came up short (issue #106). ``zicato board preflight`` is the
+    verdict. ``"inert"`` is never a refusal — it says the probe rather than
+    the contract came up short (issue #106). ``zicato board preflight`` is the
     manual surface.
 
     One failure escapes the best-effort contract: a
@@ -233,8 +233,9 @@ async def _maybe_contract_preflight(
     else:
         runs = DEFAULT_CALIBRATION_RUNS
 
-    # Opted fully out AND no explicit request ⇒ skip entirely (byte-identical
-    # to the pre-#84 behaviour — the deterministic-oracle escape hatch).
+    # Opted fully out AND no explicit request ⇒ skip entirely. This is the
+    # deterministic-oracle escape hatch: no pre-flight is measured at all
+    # (issue #84 made the measurement default-on).
     if gate_mode == "off" and not raw:
         return None
 
@@ -461,7 +462,8 @@ def _warn_margin_below_noise_floor(workspace_root: Path, epoch_id: str) -> None:
     Consulted once per evolve invocation (round 0). A WARNING only when the
     evidence gate is OFF — with the gate on, the defer→replicate loop still
     holds promotions to CI separation, so the margin being inside the noise
-    is an informational note, not a decision hazard. Never hard-refuses.
+    is an informational note rather than a decision hazard. Never
+    hard-refuses.
 
     Best-effort like the rest of the health path: the :mod:`zicato.health`
     sibling lands in parallel and may be absent, so a missing
@@ -524,8 +526,8 @@ def _workspace_health_config(workspace_root: Path) -> Any:
     """Resolve the detector thresholds from the workspace ``config.json``.
 
     The ``health`` block of the workspace config is the operator surface
-    for the loop-health thresholds (the former ``ZICATO_HEALTH_*`` env
-    vars, deleted); it is parsed by
+    for the loop-health thresholds, and the only one: no environment
+    variable tunes them. It is parsed by
     :func:`zicato.config.health_config_from_workspace`. Best-effort like
     the rest of the health path: a missing / unreadable / malformed
     workspace config yields ``None`` so ``assess_loop_health`` falls
@@ -543,7 +545,7 @@ def _workspace_health_config(workspace_root: Path) -> Any:
         return None
 
 
-# _workspace_preflight_gate now lives in zicato.health.inputs alongside its
+# _workspace_preflight_gate lives in zicato.health.inputs alongside its
 # fellow health-input readers (imported below).
 
 
@@ -662,8 +664,8 @@ def _assess_and_persist_loop_health(
     # health-report entry to a LOUD, operator-visible run-level warning:
     # a judge declared on the board that produced no metric across a whole
     # generation is indistinguishable, to the operator, from one that ran
-    # and passed — so it must be surfaced on the terminal, not only in the
-    # round's health JSON (issue #84).
+    # and passed — so it must be surfaced on the terminal rather than only in
+    # the round's health JSON (issue #84).
     _warn_dead_judges(epoch_id, round_n, health)
 
     # Same discipline for the judge that could not answer at all: its zero
@@ -707,12 +709,12 @@ def _summarise_loop_health(health: Any) -> tuple[str, bool]:
 
     The line names the finding's stable ``code``, its measured summary, and
     — when the detector wrote one — the ``detail["recommendation"]`` saying
-    what to change. That last part used to be structurally unreachable:
-    the text walker below accepts only *string* attributes, and
-    ``detail`` is a dict, so fifteen of the nineteen detectors composed a
-    remediation that reached the round's health JSON and never the line an
-    operator actually reads (issue #129). Still one line — the clip keeps
-    it that way.
+    what to change. The recommendation has to be read out of ``detail``
+    explicitly: the text walker below accepts only *string* attributes, and
+    ``detail`` is a dict, so a walker-only line would carry the remediation
+    that fifteen of the nineteen detectors compose no further than the
+    round's health JSON (issue #129). Still one line — the clip keeps it
+    that way.
     """
     findings = list(getattr(health, "findings", ()) or ())
     healthy = bool(getattr(health, "healthy", not findings))
@@ -860,8 +862,9 @@ def _warn_dead_judges(epoch_id: str, round_n: int, health: Any) -> None:
 def _warn_erroring_judges(epoch_id: str, round_n: int, health: Any) -> None:
     """Emit a prominent stderr WARNING for a board-declared judge that RAISED.
 
-    The sibling of :func:`_warn_dead_judges`, for the failure it used to be
-    confused with (issue #121). A judge whose callable raised produced no
+    The sibling of :func:`_warn_dead_judges`, for the failure that is easily
+    confused with a dead judge (issue #121). A judge whose callable raised
+    produced no
     verdict at all, but every layer below swallows the exception — zicato's
     judge boundary and goldfive's steerer both catch by hard contract — and
     goldfive emits no event for the empty verdict that results. So the round

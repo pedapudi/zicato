@@ -20,8 +20,8 @@ log = logging.getLogger("zicato.orchestrator")
 CallLLM = Callable[[str, str, str], Awaitable[str]]
 
 #: The :attr:`EvolveRoundOutcome.tournament_decision` value for a round the
-#: endpoint-outage circuit DEFERRED (WS-H;
-#: :attr:`~zicato.core.runtime.RuntimeConfig.infra_abort_round_threshold`).
+#: endpoint-outage circuit DEFERRED
+#: (:attr:`~zicato.core.runtime.RuntimeConfig.infra_abort_round_threshold`).
 #: Distinct from ``"rejected"`` on purpose: the evolve loop must not count
 #: it toward the consecutive-rejection breaker (the experiment was never
 #: judged), and it backs off + re-reconciles instead of re-proposing.
@@ -91,7 +91,7 @@ def _declared_custom_judge_names(board: list[Any], weights: Any) -> frozenset[st
 
     Threaded into :func:`zicato.proposer.proposer.propose_experiment` so
     the hypothesis validator accepts ``drift:<judge_name>`` for a declared
-    judge and still rejects a genuinely-unknown drift kind.
+    judge and still rejects an unknown drift kind.
     """
     names: set[str] = set()
     for entry in board:

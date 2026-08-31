@@ -11,9 +11,9 @@ IO-free:
 * :func:`_build_candidate_screen_runner` — the best-of-N candidate-screen
   closure (``proposer_quality.screen_entries`` / ``best_of_n``);
 * :func:`_build_recombination_pair` (+ the pure slot rule
-  :func:`_recombine_pair_for_slot`) — the WS-REC recombination pair;
-* :func:`_build_genealogy_items` — the WS-GENE genealogy channel;
-* :func:`_build_calibration_summary` — the WS-CAL critic-calibration channel.
+  :func:`_recombine_pair_for_slot`) — the mechanical recombination pair;
+* :func:`_build_genealogy_items` — the genealogy channel;
+* :func:`_build_calibration_summary` — the critic-calibration channel.
 
 Each builder is OFF by default (a contract opt-in flips it on) and every read
 is best-effort, so an unbuilt index / unreadable record simply yields the OFF
@@ -25,9 +25,9 @@ two in ``__all__`` for mypy's no-implicit-reexport; the three purely internal
 builders are re-imported but not listed. Stable collaborators
 (``ingest._index_db_path``, ``lifecycle_services._beat``, the heartbeat helper)
 are direct top-level imports; the heavier ``epoch`` / ``proposer`` / ``query`` /
-``index`` siblings stay lazy call-time imports exactly as they were inline. The
-module logger keeps the ``zicato.orchestrator`` name so records stay
-byte-identical.
+``index`` siblings stay lazy call-time imports. The module logger keeps the
+``zicato.orchestrator`` name, so a log record names the orchestrator
+wherever the builder lives.
 """
 
 from __future__ import annotations
@@ -133,7 +133,7 @@ def _build_recombination_pair(
     train_entry_ids: frozenset[str],
     mutations: list[Any],
 ) -> Any:
-    """Select this round's recombination pair (WS-REC), or ``None`` when OFF.
+    """Select this round's recombination pair, or ``None`` when OFF.
 
     ``None`` — the DEFAULT — unless the contract opts in with
     ``proposer_quality.recombine`` AND ``best_of_n > 1`` (a single-sample
@@ -256,7 +256,7 @@ def _build_recombination_pair(
                 entry_id = str(row.get("entry_id", ""))
                 if entry_id not in train_entry_ids:
                     continue  # the envelope point: holdout never counts
-                # PASS-FLIP sets, not the grid's drift-only ``won_by``:
+                # PASS-FLIP sets rather than the grid's drift-only ``won_by``:
                 # per-run drift folds every remaining defect into EVERY
                 # entry's loss, so a strictly-better challenger "wins" all
                 # entries on drift and two single-fix parents could never
@@ -475,7 +475,7 @@ def _build_calibration_summary(
     workspace_root: Path,
     epoch_id: str,
 ) -> Any:
-    """Summarize the reign's prediction calibration (WS-CAL), or ``None`` when OFF.
+    """Summarize the reign's prediction calibration, or ``None`` when OFF.
 
     ``None`` — the DEFAULT — unless the contract opts in with
     ``proposer_quality.calibration_feedback > 0``: the propose path then carries
