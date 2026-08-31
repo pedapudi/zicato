@@ -30,7 +30,8 @@ wiring) are retained as cheap unit coverage; the load-bearing proof is
 Documented remaining gap: a full real-stack ``zicato evolve`` run additionally
 depends on goldfive's ``LLMPlanner`` passthrough (the harness output must reach
 ``final_output`` intact); that path needs the live ADK stack and is out of
-scope for this deterministic check. See RUN.md § "Why it now discriminates".
+scope for this deterministic check. See RUN.md § "How the contract
+separates a challenger from its champion".
 """
 
 from __future__ import annotations

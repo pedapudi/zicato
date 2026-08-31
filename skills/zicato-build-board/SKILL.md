@@ -85,7 +85,7 @@ expectation and a judge. Decide the axis with
 What the copilot sets on each judge:
 
 - **`name`** — a stable, board-unique slug. It becomes goldfive's `judge_name`,
-  and **`per_judge_weights` keys on it** — choose it with care, because the
+  and **`per_judge_weights` keys on it** — choose it deliberately, because the
   loss weighting reaches the judge by this name.
 - **`mode`** — `inline` (a natural-language criterion graded by the `judge` role) or
   `python` (a dotted path to a deterministic process-judge callable).
@@ -93,13 +93,13 @@ What the copilot sets on each judge:
 - **`severity`** — `info` / `warning` / `critical`; scales how hard a violation
   weighs (default `1 / 3 / 10` via `severity_weights`).
 
-**Grade the tool ledger rather than the narration.** A `python` judge that scores
+**Grade the tool ledger, not the narration.** A `python` judge that scores
 *what the agent did* reads goldfive's real tool-call ledger — its
 `ctx.session_state.recent_events` (`kind == "tool_observed"`: `tool_name`,
 `result_preview`, `error_message`) — NOT the model's reasoning text. Custom
 judges fire only at reasoning observation points, so a judge that scans the
 transcript for tool names grades the story the agent told (and fires on chatter
-that merely names a tool) rather than the round-trips it ran. The copilot steers an
+that merely names a tool), not the round-trips it ran. The copilot steers an
 operator authoring a deliverable-grading judge to the ledger source; worked
 example `file_findability` in
 `examples/zicato_examples/target_1_presentation/judges.py`.
@@ -119,10 +119,10 @@ header (set when non-default):
 optional `target` engine. The emulator sees
 only the persona + the user-facing transcript, never the entry's expectation.
 The implication for board craft: write personas to *withhold the answer* (so
-the entry tests whether the target can *reach* the goal rather than read it off the
+the entry tests whether the target can *reach* the goal, not read it off the
 persona), and never author a judge that reaches into target state — judge only
 the observable stream. Give `user_emulator` a smaller named engine when
-appropriate; this changes its connection and leaves its constrained text protocol alone.
+appropriate; this changes its connection, not its constrained text protocol.
 
 Each generation × entry × replicate is a fresh run and session boundary.
 Never share one session across a board. Encode intentional stateful turns as a
@@ -163,7 +163,7 @@ calibration loop (run an epoch, check the journal, retune) is in
 ## Designing a discriminating board
 
 A board only earns its cost if its entries **separate champion from
-challenger**. The copilot designs for discrimination as well as coverage:
+challenger**. The copilot designs for discrimination, not just coverage:
 
 - **Avoid the toothless eval.** An entry that returns the same drift loss and
   the same pass/fail for *every* generation is dead weight — it can never break
@@ -176,7 +176,7 @@ challenger**. The copilot designs for discrimination as well as coverage:
   [`zicato-diagnose-health`](../zicato-diagnose-health/SKILL.md) and steer the
   operator to design a board that passes `zicato health` *before* trusting a
   verdict.
-- **Span behaviors rather than inputs.** Fifty near-identical prompts carry one
+- **Span behaviors, not inputs.** Fifty near-identical prompts carry one
   behavior's signal at fifty times the cost; enumerate the distinct behaviors
   to defend and put one or two discriminating entries on each.
 
@@ -193,7 +193,7 @@ defenses the copilot builds in:
   has a **generalization gap** — it over-fit. Set the split with `set_holdout`.
 - **Don't over-specify.** An entry pinned to an exact string or a brittle regex
   is easy to satisfy in a way that doesn't generalise; prefer a `predicate` or
-  a `rubric` that captures the *behavior* rather than the surface form.
+  a `rubric` that captures the *behavior*, not the surface form.
 
 The full anti-overfitting design — why the holdout is query-budgeted (Ladder /
 Thresholdout), what leakage restriction means, how the generalization gap is
