@@ -1649,14 +1649,15 @@ the figure swap on a `*Digest` that folds ONLY what the figure draws, so a
 no-op heartbeat diffs a string instead of the SVG. Every figure needs the same
 fold — round to rendered precision, drop timestamps, sort keys — so
 `digestOpts(opts, omit)` holds it once and generically, rather than each figure
-carrying its own copy. The seven remaining `*Digest` exports (`racingScalarTrackDigest`, `gauntletFieldBarsDigest`,
-`radarSilhouetteDigest`, `proposingDigest`, `diversityMatrixDigest`,
+carrying its own copy. The seven remaining `*Digest` exports (`racingScalarTrackDigest`,
+`gauntletFieldBarsDigest`, `radarSilhouetteDigest`, `proposingDigest`,
+`diversityMatrixDigest`,
 `metaLoopLedgerDigest`, `calibrationTrendDigest`) are thin wrappers that add
 only their own load-bearing normalization (a namespace prefix, an
 absent-vs-empty collapse) and an `omit` list.
 
 ```javascript
-// ── digestOpts — the SINGLE generic figure-opts digest (U5) ───────────
+// ── digestOpts — the single generic figure-opts digest ─────────────────
 //   * FUNCTIONS ARE DROPPED — figure opts carry per-render callbacks
 //     (onCompetitor / onClick / onRound, a heatmap `value` accessor). A fresh
 //     closure every render would flip the digest on every beat; dropping them
