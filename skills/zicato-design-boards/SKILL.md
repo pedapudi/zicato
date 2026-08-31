@@ -10,7 +10,7 @@ can only discover what the board can measure: an edit that improves a behavior
 no entry exercises is invisible, and an edit that wins on every entry equally
 is indistinguishable from one that wins on none. The board, the judges, and
 the scoring together are the **evaluation contract** — design the board for
-*discrimination*, not just coverage.
+*discrimination* as well as coverage.
 
 This skill is the design-principles companion to the operational
 [`zicato-author-board`](../zicato-author-board/SKILL.md) (the JSON schema, the
@@ -45,7 +45,7 @@ The failure modes to design against:
   beyond the current harness, or the predicate is over-specified.
 - **Constant drift** — entries that emit identical drift regardless of the
   edit. `zicato health` fires `flat_drift_signal`; identically-zero drift
-  across an epoch usually means telemetry isn't reaching the reducer, not that
+  across an epoch usually means telemetry isn't reaching the reducer rather than that
   the harness is perfect.
 
 A good entry sits in the **sensitive band**: the current champion is on the
@@ -54,7 +54,7 @@ as a measurable score delta. You discover the band empirically: run an epoch,
 read the per-entry A/B grid (`zicato-tournament-forensics`), and cut or
 re-tune entries that never moved.
 
-## Grade the real artifact, not the agent's story about it
+## Grade the real artifact rather than the agent's story about it
 
 Discrimination is only real if every entry grades what the agent *actually
 produced*. Two fidelity rules the board's design depends on:
@@ -68,7 +68,7 @@ produced*. Two fidelity rules the board's design depends on:
   ledger** (goldfive's `ctx.session_state.recent_events`, `kind ==
   "tool_observed"`), never the model's reasoning narration. goldfive dispatches
   custom judges only at *reasoning* observation points, so a judge that scans
-  the transcript for tool names grades the story the agent told, not the tool
+  the transcript for tool names grades the story the agent told rather than the tool
   round-trips it ran — and fires on chatter that merely mentions a tool.
 
 Both are the same trap: a board that grades narration rewards a candidate that
@@ -82,7 +82,7 @@ comes from the artifact/ledger; the mechanics are in
 An OUTCOME expectation may return a **continuous** per-entry score (a float in
 `[0,1]` — an F1, a similarity, a partial-credit rubric) plus an optional
 `metrics` decomposition, instead of a bare pass/fail. Reach for a scored entry
-when a behavior is *graded*, not binary — "retrieved 3 of 5 expected facts" is a
+when a behavior is *graded* rather than binary — "retrieved 3 of 5 expected facts" is a
 0.6, and that 0.6-vs-0.4 delta discriminates two candidates a pass/fail bit
 would call a tie. A plain `bool` matcher still leaves the entry binary
 (`score=None` → the reducer derives `1.0`/`0.0`), so a binary board is
@@ -90,7 +90,7 @@ unchanged. The score and `metrics` are carried to `loss.json` and feed the
 proposer's failure-mode profile; the *weighting/formula* over them is owned by
 [`zicato-tune-scoring`](../zicato-tune-scoring/SKILL.md).
 
-## Coverage: span the behaviors, not the inputs
+## Coverage: span the behaviors rather than the inputs
 
 Coverage means *the behaviors you would regress on*, not *the space of inputs*.
 A board with fifty near-identical single-turn prompts has one behavior's worth
@@ -138,7 +138,7 @@ them unless you are explicitly building that target.)
 `weight` (default `1.0`) is the entry's pull on the aggregate. Up-weight the
 entries whose behavior you most care about defending this epoch, and the
 high-signal emulated entries; leave smoke tests at `1.0`. Weight is *relative
-importance*, not difficulty — do not up-weight a hard entry hoping to "push"
+importance* rather than difficulty — do not up-weight a hard entry hoping to "push"
 the proposer; a hard entry that nobody passes is all-fail dead weight no matter
 its weight. Earn discrimination by tuning the *expectation*, then weight what
 discriminates.
@@ -155,7 +155,7 @@ are default):
 - **`disable_drift`** turns off goldfive's built-in detectors for the named
   drift kinds across every entry. Use it when a drift kind is *expected and
   benign* for this harness (e.g. you script `user_steer` turns, so steer-drift
-  is noise, not signal). Tokens are the short lowercase goldfive `DriftKind`
+  is noise rather than signal). Tokens are the short lowercase goldfive `DriftKind`
   values (`tool_error`, `looping_reasoning`, `confabulation_risk`,
   `user_steer`, …); an unknown token is a hard validation error listing the
   valid set. This suppresses *built-in* detectors only — to remove a *custom*
@@ -164,7 +164,7 @@ are default):
   *judges* the wrapped agent (drift detectors and your process judges stay
   armed) but does **zero steering** — no goal-derivation call, no replanning,
   no drift-triggered refine. Use it when the question this epoch asks is "how
-  does the bare harness behave", measured without the steerer intervening — or
+  does the bare harness behave when the steerer does not intervene" — or
   when you are evolving the steerer-free path itself. Default `false` (steering
   on). See [`zicato-design-judges`](../zicato-design-judges/SKILL.md) for what
   the judges then measure.
@@ -181,9 +181,9 @@ By construction the emulator sees *only* the persona
 never the entry's expectation or harness internals. The design implication for
 you: write the persona to *withhold the answer* (`constraints: "Never tell the
 agent the exact answer you want"`), so the entry tests whether the harness can
-*reach* the goal, not whether it can read it off the persona.
+*reach* the goal rather than read it off the persona.
 
-The board is a collection of independent runs, not a session. Each generation
+The board is a collection of independent runs rather than a session. Each generation
 × entry × replicate receives a fresh target session and, when applicable,
 a separate emulator session. A multi-turn entry may preserve state across its
 own turns. If cross-turn persistence is the behavior being measured, encode

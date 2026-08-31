@@ -75,7 +75,7 @@ evaluation-engine call:
 - Stamps `closed` + `closed_at` on the epoch's `config.json` and in
   `lineage.json`, then re-stamps the persisted report's masthead so the
   `LIVING DRAFT` line becomes "closed". Nothing is chmod'ed — a closed epoch is
-  read-only by convention, not by permissions.
+  read-only by convention rather than by permissions.
 - **The CLI close does NOT run the LLM prose pass**: `zicato epoch close` wires
   no evaluation callable, so it leaves an existing `analysis.md` in place
   (re-stamped) and writes a *stub* only when none exists yet. It is `evolve`'s
@@ -95,7 +95,7 @@ re-render its reports (steps 3-4) — that reads the frozen data and only rewrit
 
 There is **no `zicato journal show` / `zicato analysis show` subcommand** in the
 shipped CLI (the doc reference at [CLI.md §3.14-3.15](../../docs/design/CLI.md)
-is aspirational, not implemented). Read the files directly:
+is aspirational and not implemented). Read the files directly:
 
 ```sh
 # the running per-round journal

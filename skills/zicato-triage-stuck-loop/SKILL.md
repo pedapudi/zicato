@@ -8,7 +8,7 @@ description: Diagnose a zicato evolve loop that is not improving — many consec
 Symptom: `evolve` keeps running but nothing promotes — many consecutive
 rejects (it may stop at `--max-consecutive-rejections`, default 3) or a scalar
 that will not move. A running loop that produces no learning is a robustness
-failure, not a no-op. Work the tree below.
+failure rather than a no-op. Work the tree below.
 
 > Guardrails: every command here is read-only and spends no LLM budget. Do
 > **not** kick off a live `evolve` / `propose` / `tournament` to "see if it
@@ -147,7 +147,7 @@ sqlite3 -readonly .zicato/index.db "
 ```
 
 If the same `mutation_id` / `core_idea` recurs across rejects, edit `brief.md`
-to steer the proposer elsewhere (the brief is steering, not contract — text
+to steer the proposer elsewhere (the brief is steering rather than contract — text
 edits that do **not** change `## Forbidden` do not roll the epoch). Point it at
 an under-explored mutation point or a different drift kind, then design the next
 move with `zicato-design-experiment`.

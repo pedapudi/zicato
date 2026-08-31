@@ -1,6 +1,6 @@
 ---
 name: zicato-design-experiment
-description: Help the operator author the MANDATORY pre-run hypothesis for a zicato experiment — pick a mutation target justified by observed loss patterns and predict the outcome BEFORE the run. Use when designing the next change to test; this is a thinking/authoring skill, not a run command.
+description: Help the operator author the MANDATORY pre-run hypothesis for a zicato experiment — pick a mutation target justified by observed loss patterns and predict the outcome BEFORE the run. Use when designing the next change to test; this is a thinking and authoring skill rather than a run command.
 ---
 
 # zicato design-experiment (the mandatory pre-run hypothesis)
@@ -44,7 +44,7 @@ sqlite3 -readonly .zicato/index.db "
 ```
 
 A good hypothesis names a *pattern* ("CONFABULATION_RISK fires on 70% of
-`[research]` entries and 0% on `[summarise]`"), not a vibe.
+`[research]` entries and 0% on `[summarise]`") rather than an impression.
 
 The proposer now also sees an **outcome failure-mode profile** alongside the
 decision-telemetry digest: a board-anonymized, **train-slice-only**, bucketed
@@ -57,7 +57,7 @@ and it reuses the same holdout split + bucketing the loss summary already uses
 `outcome_summarizer_spec` hook in `scoring.json` (sanitized + bucketed before it
 reaches the proposer). When you ground a hypothesis, this profile is a second,
 *outcome*-side signal to name a pattern from — it tells you *why* answers were
-wrong (over-retrieval vs miss), not just that a scalar moved. It is OUTPUT-only
+wrong (over-retrieval versus miss) as well as that a scalar moved. It is OUTPUT-only
 and is NOT a mutation point (see `zicato-mutation-audit`).
 
 ## Step 2 — pick a mutation target that is allowed and justified
@@ -124,7 +124,7 @@ Field discipline:
   single entry the champion passed regressing is a hard reject regardless of the
   band; under `aggregate` only the board-wide pass-rate matters. Predict with
   the active scope in mind (`zicato-tune-scoring` owns the values).
-- **risks** — one paragraph (a string, not a list) of plausible failure modes;
+- **risks** — one paragraph (a string rather than a list) of plausible failure modes;
   these become the things to check first if the outcome disappoints. Optional.
 
 ## Step 4 — predict, then run, then let the outcome land on its own

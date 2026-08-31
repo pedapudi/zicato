@@ -7,7 +7,8 @@ description: Explain a single promote/reject decision — re-score one champion/
 
 A **tournament** is a king-of-the-hill matchup: the reigning champion (the
 **parent** generation) versus one **challenger** (the **child** proposed against
-it), scored over the frozen board, decided by the two-sided promotion gate. This
+it). Both sides are scored over the frozen board, and the two-sided promotion
+gate decides between them. This
 skill is for forensics on a *single* matchup — "why did this round promote /
 reject?". For the epoch-wide retrospective see `skills/zicato-analyze-epoch`; for
 cross-epoch lineage see `skills/zicato-lineage`; for the live bracket UI see
@@ -34,7 +35,7 @@ Always call the CLI from the project venv: `.venv/bin/zicato ...`. See
   parent's historical aggregate cached in the workspace
   (see [SCORING.md §7](../../docs/design/SCORING.md#7-fast-mode-and-the-tournament)).
   Fast mode honours the contract's `replicates` too, so it is *one side's*
-  board run, not necessarily one board pass — and the noise reduction is
+  board run, and not necessarily one board pass — the noise reduction is
   one-sided: the challenger is replicated while the champion stays a single
   frozen cached draw. Use `full` when you want independent draws on both sides.
 - `--skip-regression`: skip the regression-suite gate even when scoring enables
@@ -42,7 +43,7 @@ Always call the CLI from the project venv: `.venv/bin/zicato ...`. See
 - Output is the `GateOutcome` printed as **JSON** (`decision`, `reason`,
   `delta_scalar`, `delta_pass_rate`). The `decision` field is the
   authoritative verdict — `"promoted"` / `"rejected"` / `"deferred"`
-  (`TournamentDecision`); branch scripts on that JSON, not on the exit code.
+  (`TournamentDecision`); branch scripts on that JSON rather than on the exit code.
 
 > **WARNING — this is a live, budget-spending run** in `full` mode (it executes
 > the target over every board entry, twice). Per the project rules, do
@@ -51,14 +52,14 @@ Always call the CLI from the project venv: `.venv/bin/zicato ...`. See
 > re-running. There is **no `--no-record-outcome` flag** — a live re-run records
 > its outcome into the workspace. The four flags above are the whole surface.
 
-## Reading the verdict (the JSON `decision`, not an exit code)
+## Reading the verdict (the JSON `decision` rather than an exit code)
 
 The standalone `zicato tournament` command prints the `GateOutcome` as JSON and
 exits `0` on a successful run regardless of the verdict — it does **not** encode
 promote/reject in the exit code. Branch on the JSON `decision` field
 (`"promoted"` / `"rejected"` / `"deferred"`), which is authoritative. No exit-6
 path exists — if you have inherited a script expecting "`0` = promote, `6` =
-reject", it is wrong. A non-zero exit is a usage/config/runtime error, not a
+reject", it is wrong. A non-zero exit is a usage/config/runtime error rather than a
 reject verdict.
 
 ## Read the verdict without re-running
@@ -96,17 +97,17 @@ generation's `harness_load.json` records the snapshot-relative entrypoint plus
 did not import. A `tree_never_imported` health warning means *mutations to that
 tree cannot have been under test*: the run completed, the board scored, the gate
 fired, and the comparison was between two identical unmutated trees. That is a
-verdict-invalidating finding, not a quality signal.
+verdict-invalidating finding rather than a quality signal.
 
 **Replicated duels fold before scoring.** With `replicates > 1` (the gauntlet's
-default is 2) each replicate caches its own `runs/<entry>/loss.json` (replicate
-0) / `loss.r<N>.json`, and the per-entry profiles are folded into ONE profile
-the scalar sees: `drift_loss` / `metrics` / `per_judge_loss` / the namespaced
-counters are meaned, `score` is the mean of each replicate's *resolved* outcome —
-so a replicate that aborted without a score votes its `0.0` rather than
-abstaining — and `pass_fail` is a strict-majority vote. The vote can legitimately
+default is 2) each replicate caches its own file: `runs/<entry>/loss.json` for
+replicate 0, `loss.r<N>.json` for the rest. The per-entry profiles then fold
+into ONE profile that the scalar sees. `drift_loss`, `metrics`,
+`per_judge_loss` and the namespaced counters are meaned. `score` is the mean of
+each replicate's *resolved* outcome, so a replicate that aborted without a score
+votes its `0.0` rather than abstaining. `pass_fail` is a strict-majority vote. The vote can legitimately
 disagree in sign with the folded `score` (2 of 5 passing is `pass_fail: false`
-and `score: 0.4`); that is the binary and continuous views of one duel, not an
+and `score: 0.4`); that is the binary and continuous views of one duel rather than an
 inconsistency. Fields the scalar never reads (`run_id`, `runtime_ms`,
 `abort_cause`, `expectation_result`) pass through from replicate 0 only, so do
 not read them as properties of the fold. Fewer `loss.r<N>.json` files than
@@ -132,7 +133,7 @@ Match the `rejection_reason` you are holding to the rule that produced it:
    (negative = improvement).
 2. **Pass-rate monotonicity (pass-rate side).** Under the default
    `per_entry` scope, no board entry the parent passed may regress (child
-   fails, errors, or no longer evaluates it). Any such entry →
+   fails, errors, or stops evaluating it). Any such entry →
    `rejection_reason = pass-rate regression on entries: <id>, <id>` and the
    candidate is rejected regardless of drift improvement. The
    `pass_rate_monotonicity_scope` in `scoring.json` selects the granularity:
@@ -168,13 +169,14 @@ this out in five sections; read them in order to localize the verdict:
   terms). The per-entry numbers now include the **continuous** outcome
   `score` (a float in `[0,1]`; a binary entry contributes `1.0`/`0.0`) and its
   optional `metrics` (precision/recall) carried up from each run's `loss.json`.
-  **Provenance caveat:** the weights behind a `per_judge_loss` attribution
-  (`per_judge_weights` / `default_judge_weight` / `pass_rate_monotonicity_scope`)
-  are serialised across the subprocess-worker boundary
-  (`tournament/runner.py:_weights_spec` ↔ `_tournament_worker.py
-  :_weights_from_args`); a weight that doesn't match `scoring.json` in a verdict
-  means the transport dropped a field (it once silently scored all custom-judge
-  drift at `1.0`) — a scoring-provenance smell, not a candidate-quality one. The
+  **Provenance caveat:** the weights behind a `per_judge_loss` attribution —
+  `per_judge_weights`, `default_judge_weight` and
+  `pass_rate_monotonicity_scope` — are serialised across the subprocess-worker
+  boundary (`tournament/runner.py:_weights_spec` ↔ `_tournament_worker.py
+  :_weights_from_args`). A weight in a verdict that does not match
+  `scoring.json` means the transport dropped a field; a dropped field once
+  scored all custom-judge drift at `1.0`. That is a scoring-provenance smell
+  rather than a candidate-quality one. The
   neighbouring failure mode is closed: a judge/model spec that validates but
   cannot be resolved now exits the worker non-zero (a visible infra abort)
   instead of letting the judge path swallow it and score no drift, which made
@@ -199,7 +201,7 @@ all served from the analytical index:
   (monotonically non-increasing) plus every challenger's score, including
   discarded ones; a flat champion line is the *stalled loop* signal.
 - **Mutation heat map** (§4.5) — which mutation points correlate with winning
-  (touched vs promoted). A **correlation, not causation** — a surface touched
+  (touched vs promoted). This is **correlation rather than causation** — a surface touched
   five times and promoted once is *resisting* improvement; consider the proposer
   brief's `## Forbidden` list.
 - **Tournament cost** (§4.6) — wall-clock, aux-LLM calls, and board runs per
@@ -213,7 +215,7 @@ all served from the analytical index:
   user go-ahead — it spends LLM budget and records an outcome. Prefer reading
   the settled artifacts.
 - Read the verdict from the JSON `decision` (`promoted` / `rejected` /
-  `deferred`), not the exit code — the standalone command exits `0` on any
+  `deferred`) rather than the exit code — the standalone command exits `0` on any
   successful run.
 
 ## See also

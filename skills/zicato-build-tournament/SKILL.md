@@ -53,12 +53,12 @@ a draft without having seen them:
    is its rung count. The `holdout_confirm_runs` term is the extra runs the
    gate spends re-scoring the winner on the held-out slice (see "Board &
    holdout" below). **`replicates` defaults per structure** when the operator
-   leaves it unset — the noise-aware base default is `2` (gauntlet, swiss, and
-   both elim brackets inherit it); only `racing` pins `1`, because its
-   replication is intrinsic to the escalating board slices — and `estimate_cost`
+   leaves it unset. The noise-aware base default is `2`, inherited by gauntlet,
+   swiss, and both elim brackets; only `racing` pins `1`, because its
+   replication is intrinsic to the escalating board slices. `estimate_cost`
    reads those same per-structure defaults from one source of truth
    (`selection.registry`), so the number it shows matches what the run will
-   actually spend even before the operator sets `replicates`. A deterministic
+   spend even before the operator sets `replicates`. A deterministic
    harness can pin `"replicates": 1` for the historical single-run duel. Always
    defer the exact schedule arithmetic to
    `zicato-design-tournament-structure`; the copilot's job is to call
@@ -142,11 +142,11 @@ Defer to [`zicato-design-proposer`](../zicato-design-proposer/SKILL.md). The
 **default** (no proposer dir) is already a **tool-using ADK agent** — it reads
 the world (greps the mutable surface, reads the snapshot/journal) while it
 reasons, so the copilot offers customization only when there is a reason. The
-two opt-ins: a **skill-composed text shim** (drop `skills/*.md`, no code — the
-contract-clean lever for pure *reasoning* changes, but it drops the default's
-tools) versus a **custom ADK agent** (its own `model=` + the read-only tool
-registry — when the operator wants to own the model or curate the tool subset
-while keeping tools). Remind the operator of the Design-A model rule: a custom
+two opt-ins are these. A **skill-composed text shim** takes `skills/*.md` and no
+code; it is the contract-clean lever for changes that are purely about
+reasoning, and it gives up the default proposer's tools. A **custom agent**
+brings its own `model=` plus the read-only tool registry; it suits an operator
+who wants to own the model or curate the tool subset while keeping tools. Remind the operator of the Design-A model rule: a custom
 proposer's model must differ from the optional target-side model. Set it with
 `set_proposer`; named engine overrides live under `models.roles.proposer`.
 Editing the proposer or any of its skills rolls the epoch.
@@ -183,7 +183,7 @@ knob families carry this, and the copilot should teach them honestly:
   floor at `refuse` severity whenever the evidence gate is off. Recommend-only
   — but a REFUSE verdict means "fix the noise or the board before burning
   rounds", not "click apply anyway".
-- **The evidence gate buys soundness, not power.** The Bradley–Terry pre-gate
+- **The evidence gate buys soundness rather than power.** The Bradley–Terry pre-gate
   (`promote_confidence_threshold` + `promote_confidence_replicates`, set via
   `set_param`) refuses to crown until P(challenger > champion) clears the bar
   AND the rating CIs separate. It stops noise-crownings; it does NOT make a
@@ -192,14 +192,14 @@ knob families carry this, and the copilot should teach them honestly:
   replicate is a fresh board sweep for BOTH contestants, so the meter's
   `crowning-confirm` line (~budget × 2 × board, per confirmed crowning) is
   usually the largest term on the bill.
-- **The screen is veto-first tryouts, not a ranking.** `set_screening` runs
+- **The screen is veto-first tryouts rather than a ranking.** `set_screening` runs
   each best-of-N slate candidate on a small rotating train panel BEFORE
   selection and disqualifies only confirmed catastrophic regressions; the
   critic still chooses among the survivors. It cheaply removes obvious losers
   from the field — it never nudges the ordering unless the operator lets it
   (`veto_only=false`).
 - **The placebo is the gate-discrimination control.** `random_baseline_every_n`
-  (via `set_holdout`) fields one deliberately no-op challenger every N rounds.
+  (via `set_holdout`) fields one no-op challenger every N rounds.
   The gate MUST reject it — a promoted placebo is the alarm that the gate
   cannot tell signal from noise and recent promotions are suspect. Cheap
   insurance (one amortized duel every N rounds) on any long run.
@@ -266,12 +266,12 @@ Two hard rules for the copilot:
   proposer + gate changes into ONE draft and applies once, rather than rolling
   the epoch on each tweak.
 
-**The direct GUI.** Every write/lifecycle op above also has a form control in the
-builder view — the weight mappings (severity / per-kind / per-judge, each posting
-the WHOLE mapping) with add-key rows for new judge/namespace keys, the gate's
-namespace-monotonicity map, the overfitting refresh ceiling, the proposer picker
-(discovered dirs + builtin default + free-text path), and the slot strip's
-reset/undo. GUI coverage is machine-pinned by `tests/test_builder_gui_coverage.py`
+**The direct GUI.** Every write and lifecycle op above also has a form control
+in the builder view. Those controls are: the weight mappings (severity,
+per-kind, per-judge — each posting the WHOLE mapping) with add-key rows for new
+judge and namespace keys; the gate's namespace-monotonicity map; the overfitting
+refresh ceiling; the proposer picker (discovered dirs, the builtin default, and
+a free-text path); and the slot strip's reset and undo. GUI coverage is machine-pinned by `tests/test_builder_gui_coverage.py`
 (the one standing exception is `add_judge`, which the board editor covers through
 the whole-entry `edit_board_entry` round-trip). The board is authored through a
 full **board editor** (the flagship GUI): a per-entry inline accordion covering
@@ -293,7 +293,7 @@ Deep board craft lives in `zicato-build-board`.
   the board-run bill; `estimate_cost` is cheap and read-only — call it freely.
   With the evidence gate on, point at the `crowning-confirm` line explicitly —
   it is usually the biggest number on the meter.
-- **Treat the holdout as the over-fitting insurance**, not a free add — it
+- **Treat the holdout as the over-fitting insurance** rather than a free add — it
   costs confirmation runs and has its own query budget (OVERFITTING.md). Default
   ~30%, adjust to the board's size and noise.
 - **Say "this rolls the epoch" before every apply**, and batch changes so the

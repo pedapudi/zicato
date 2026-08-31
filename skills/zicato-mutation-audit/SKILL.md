@@ -37,7 +37,7 @@ slug = re.sub(r"[^a-z0-9]+", "-", title.lower()).strip("-")
   whole module is mutable as one unit.
 - **code** marker (`# zicato:mutable:code` … `# zicato:mutable:end`) — a
   pointed code REGION: the verbatim source lines *between* the opening marker
-  and the `:end` sentinel (control flow, not a string literal). Exposes a
+  and the `:end` sentinel (control flow rather than a string literal). Exposes a
   block (e.g. a tool's slugify / path logic) as mutable without handing the
   proposer the whole module. The `:end` sentinel carries no id/metadata.
 
@@ -104,7 +104,7 @@ want a subset.
 ## Forbidden ids
 
 An operator marks ids off-limits in the proposer brief's `## Forbidden` list.
-Enforcement is mechanical and lives on the patch path, not in this listing:
+Enforcement is mechanical and lives on the patch path rather than in this listing:
 `check_forbidden_ids` (`mutation/validator.py`) / `enforce_forbidden`
 (`proposer/brief.py`) reject any patch whose `mutation_id` is in the set, matching
 on the **literal id**.

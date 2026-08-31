@@ -49,7 +49,7 @@ The dashboard is launched automatically; its URL is printed
 | `--harness-call-llm TEXT` | Low-level override for the target adapter's text-call seam (`module:symbol`). Not required when `models.roles.target` resolves, and irrelevant to a target adapter that uses no LLM. |
 | `--auxiliary-call-llm TEXT` | Low-level override for evaluator-side text consumers. Not required when the named roles resolve. Must be a different Python object from the target callable. |
 | `--rounds INTEGER` | Number of propose/tournament/promote rounds to attempt (default 1, must be >=1). |
-| `--mode full\|fast` | `fast` (default) = **cache-first**: every `(generation, entry, replicate)` board UNIT is evaluated at most once and reused across all pairings / rounds / structures — only cache misses run. So a carried champion is reused, not re-run (the round records `champion_eval_mode` = `fast`, or `fast-degraded` when some units had to run to seed the cache). The contract's `replicates` knob reaches this path: on the gauntlet the challenger board runs `replicates` times (default **2** — so the default configuration doubles challenger board runs) while the champion stays ONE frozen cached aggregate, making the noise reduction one-sided; a warning says so and names `--mode full`. `full` = bypass the cache and re-run every unit on both sides. Use `full` for the mock smoke, for independent draws on both sides, and when you don't trust the cache; `fast` for cheaper real runs (and it is what makes a multi-challenger field affordable). |
+| `--mode full\|fast` | `fast` (default) = **cache-first**: every `(generation, entry, replicate)` board UNIT is evaluated at most once and reused across all pairings / rounds / structures — only cache misses run. So a carried champion is reused rather than re-run (the round records `champion_eval_mode` = `fast`, or `fast-degraded` when some units had to run to seed the cache). The contract's `replicates` knob reaches this path: on the gauntlet the challenger board runs `replicates` times (default **2** — so the default configuration doubles challenger board runs) while the champion stays ONE frozen cached aggregate, making the noise reduction one-sided; a warning says so and names `--mode full`. `full` = bypass the cache and re-run every unit on both sides. Use `full` for the mock smoke, for independent draws on both sides, and when you don't trust the cache; `fast` for cheaper real runs (and it is what makes a multi-challenger field affordable). |
 | `--max-wall-clock-seconds INTEGER` | Total wall-clock budget for the whole invocation. The loop stops cleanly between rounds once spent; a single round that would overrun is cancelled and recorded as aborted. Unset = unbounded. Stacks on top of each board entry's own `wall_clock_budget_seconds`. |
 | `--parallelism INTEGER` | Board units in flight at once. Shadows `runtime.parallelism`; wins over the workspace `config.json` value (default 4). Per-*process* only — two concurrent runs on one box admit `2 × parallelism` between them, which is what the host-wide `runtime.host_worker_permits` bounds (`None` = AUTO `max(4, 2 × cpu_count)`, `0` = off; a run whose permits are held queues rather than over-subscribing). |
 | `--harness-call-timeout-ms INTEGER` | Per-call budget for a target adapter using the text-call seam. Shadows `runtime.harness_call_timeout_ms` (default 1800000). |
@@ -66,7 +66,7 @@ The dashboard is launched automatically; its URL is printed
 
 There is **no `--dashboard-bind` flag** — the dashboard always binds 127.0.0.1;
 only the port is configurable. Viewing from another host is the operator's
-concern (e.g. an SSH tunnel), not a zicato flag.
+concern (an SSH tunnel, for instance) rather than a zicato flag.
 
 ## Choosing the knobs
 
@@ -92,7 +92,7 @@ concern (e.g. an SSH tunnel), not a zicato flag.
 
 At evolve start — once per epoch, idempotent, persisted — the loop measures the
 contract's A/A noise floor and its *achievable* signal (the champion vs
-deliberately-degraded ephemeral copies of itself, sampled round-robin across the
+degraded ephemeral copies of itself, sampled round-robin across the
 mutation points' declared `role` metadata), then asserts the margin window
 `noise < promote_margin < achievable`. Budget for roughly six extra champion
 board evaluations before round 0 does anything (5 A/A draws plus the probes); it

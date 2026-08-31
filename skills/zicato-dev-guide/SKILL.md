@@ -8,7 +8,7 @@ description: The entry point for CHANGING zicato's own source (not operating a w
 **The authoritative reference is the development guide: [`docs/dev-guide/`](../../docs/dev-guide/)** (14 chapters, ~23k lines).
 Start at **[`docs/dev-guide/00-INDEX.md`](../../docs/dev-guide/00-INDEX.md)** — it
 has the how-to-read path, the chapter map, the master invariant index, and the
-recipe index. It is a *reference book, not a tutorial*: read the Golden Rules
+recipe index. It is a *reference book rather than a tutorial*: read the Golden Rules
 every session, then jump to the chapter your task touches. Every claim there is
 grounded in the current code; every excerpt is verbatim from the file it names.
 
@@ -50,12 +50,12 @@ because breaking it caused a real failure.
 | a contract knob / epoch behavior | `03-contract-and-epochs.md` | contract invariants 1–8 (+ G6) |
 | scoring / the gate / replication / calibration / evidence gate / contract pre-flight | `04-evaluation-statistics.md` | statistics 1–10 (+ G7) |
 | how candidates are generated / what the proposer sees | `05-proposer.md` | proposer 1–6 (+ G8) |
-| tournament execution / structures / the worker / caching | `06-tournament-and-selection.md` | **T1–T11** (+ G9) |
-| state files / storage / resume / the round log | `07-runtime-and-durability.md` | **D1–D12** |
-| the Rust supervisor | `08-supervisor.md` | **S1–S13** |
-| a reader / endpoint / view | `09-dashboard-and-query.md` | **DQ1–DQ12** (+ G10) |
-| the builder / a CLI flag / the public API | `10-builder-cli-library.md` | **L1–L8** |
-| tests | `11-testing.md` | **V1–V10** |
+| tournament execution / structures / the worker / caching | `06-tournament-and-selection.md` | the unit-cache and gate rules, **T1–T11** (+ G9) |
+| state files / storage / resume / the round log | `07-runtime-and-durability.md` | the persistence and crash-safety rules, **D1–D12** |
+| the Rust supervisor | `08-supervisor.md` | the out-of-band enforcement rules, **S1–S14** |
+| a reader / endpoint / view | `09-dashboard-and-query.md` | the dashboard/query doctrine, **DQ1–DQ15** (+ G10) |
+| the builder / a CLI flag / the public API | `10-builder-cli-library.md` | the builder and library-boundary rules, **L1–L8** |
+| tests | `11-testing.md` | the verification discipline, **V1–V10** |
 
 Cross-cutting **recipes** live in `13-recipes.md` (14 of them) and in the owning
 chapters (add-a-contract-knob, add-a-tournament-structure, make-a-harness-adapter,
@@ -99,13 +99,13 @@ touch its surface.
 3. **A/A false-zero floor** — you draw "independent" samples without varying the replicate index.
 4. **Client champion-scan** — the client computes a decision the server already owns.
 5. **The "evolve hang"** — a fixture signals by process group / by name instead of by provenance.
-6. **Best-of-N tree mismatch (gauntlet)** — the mounted child tree is the last-sampled, not the chosen, candidate.
+6. **Best-of-N tree mismatch (gauntlet)** — the mounted child tree is the last-sampled candidate rather than the chosen one.
 7. **…field-path + diversity** — you judge diversity on a hypothesis whose tree isn't on disk.
 8. **Evidence-gate replicate reuse** — your "replicates" reuse a canonical slot → replay shrinks the CI.
-9. **Git stale shared worktree** — you move a tag but leave a shared worktree at the old commit.
+9. **Git stale shared worktree** — you move a tag and leave a shared worktree at the commit it named before.
 10. **Contract hash embeds cwd/checkout** — you `resolve()` a path into an identity that must be location-independent.
 11. **`judge_view` opened the index READ-WRITE on a read path** — a reader holds a writable connection, contends with the live ingester and drifts the parity goldens.
-12. **`elimFlow`'s defensive-guard family** — the client derives a domain model the payload should have served (a DQ1 breach that accretes ~100 lines of guards).
+12. **`elimFlow`'s defensive-guard family** — the client derives a domain model the payload should have served, against the rule that the server computes and the client renders, accreting about 100 lines of guards.
 
 **Two hard test rules (V-invariants):** a regression test MUST fail with the fix
 stashed; never weaken an assertion — pin the knob and add an adversarial knob-ON

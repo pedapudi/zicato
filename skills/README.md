@@ -89,9 +89,9 @@ documented in [`docs/design/TOURNAMENT-BUILDER.md`](../docs/design/TOURNAMENT-BU
 ### Tier 3 — Observe a run in flight
 | Skill | What it does |
 |---|---|
-| `zicato-watch-dashboard` | Open and read the live "Console IV" dashboard: navigate Environment (fleet) → Epoch (champion-spine round timeline + loss-floor waterfall) → Generations/round Match-ups → Boards → Mutation surface → Publication, plus the three epoch-scoped lenses — **Evals** (`#/evals`, the outcomes transpose: entries × candidates, shaded by evidence), **Instrument** (the board-reflection bill of health, judge audit, adjudication x-ray) and **Traces** (imported foreign trajectories + the board entries they motivated); read the structure's match-up figure (racing survival funnel / swiss ladder / elim flow / gauntlet Δ-lanes); tell whether the loop improved; screenshot with browser-use. |
+| `zicato-watch-dashboard` | Open and read the live console dashboard: navigate Environment (fleet) → Epoch (champion-spine round timeline + loss-floor waterfall) → Generations/round Match-ups → Boards → Mutation surface → Publication, plus the three epoch-scoped lenses — **Evals** (`#/evals`, the outcomes transpose: entries × candidates, shaded by evidence), **Instrument** (the board-reflection bill of health, judge audit, adjudication x-ray) and **Traces** (imported foreign trajectories + the board entries they motivated); read the structure's match-up figure (racing survival funnel / swiss ladder / elim flow / gauntlet Δ-lanes); tell whether the loop improved; screenshot with browser-use. |
 | `zicato-diagnose-health` | Run `zicato health`, interpret the degeneracy detectors (degenerate scoring, no-expectations, dead-judge, …), and recommend the contract fix for a toothless loop. |
-| `zicato-audit-board` | **Audit a board for TARGET correctness, not candidate quality** (alias: `board-doctor`). The build → known-baseline-run → audit-the-RUN-for-mechanics loop, and the audit checklist: GT winnability, graded-artifact fidelity, judge-fire counts, scalar-ranking sanity, and determinism. Run before trusting any verdict, tournament, or evolution result. |
+| `zicato-audit-board` | **Audit a board for TARGET correctness rather than candidate quality** (alias: `board-doctor`). The build → known-baseline-run → audit-the-RUN-for-mechanics loop, and the audit checklist: GT winnability, graded-artifact fidelity, judge-fire counts, scalar-ranking sanity, and determinism. Run before trusting any verdict, tournament, or evolution result. |
 | `zicato-read-telemetry` | Trace a run through its harmonograf session and `events.jsonl`/`loss.json` (and the `telemetry_dialect` that produced it); tail an invocation's structured log with `zicato inspect logs`; relate the meta-loop session (zicato itself) to the per-board sessions (the system under test). |
 
 ### Tier 4 — Understand outcomes
@@ -105,7 +105,7 @@ documented in [`docs/design/TOURNAMENT-BUILDER.md`](../docs/design/TOURNAMENT-BU
 | Skill | What it does |
 |---|---|
 | `zicato-step-loop` | Drive individual loop stages for debugging a single round: `zicato proposer propose` to create a candidate generation, `zicato tournament run PARENT CHILD` to score it, `zicato inspect telemetry` for the decision analysis. (`evolve` orchestrates these internally; there is no standalone `run`/`patch apply`.) |
-| `zicato-index-ops` | Rebuild the SQLite analytical index (`zicato repair index`, `zicato repair generations`) and run cross-run read-only SQL against `.zicato/index.db` — the schema table-by-table, including what the index deliberately does NOT hold (replicates). |
+| `zicato-index-ops` | Rebuild the SQLite analytical index (`zicato repair index`, `zicato repair generations`) and run cross-run read-only SQL against `.zicato/index.db` — the schema table-by-table, including what the index does NOT hold (replicates). |
 
 ### Tier 6 — Strategy
 | Skill | What it does |

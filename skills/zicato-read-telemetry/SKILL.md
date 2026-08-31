@@ -21,8 +21,8 @@ convergence point and a *dialect* is a named producer feeding it, chosen by
   `JSONLPersistenceSink`. The only dialect that produces drift kinds and plan
   revisions.
 - **`adk_events`** / **`transcript`** — tolerant readers for a harness that does
-  NOT run under the drift-instrumented ecosystem harness. goldfive is no longer
-  required. Under `transcript` the drift-shaping knobs
+  NOT run under the drift-instrumented ecosystem harness. These readers do not
+  require goldfive. Under `transcript` the drift-shaping knobs
   (`namespace_weights["drift:"]`, `plan_revision_weight`, `per_kind_weights`,
   `drift_reducer`) and the judge-channel knobs are **inert** — zicato warns
   rather than failing, because no drift kinds are produced. The `failure:`
@@ -97,7 +97,7 @@ that's the `flat_drift_signal` critical in
 > :_weights_from_args`). A field present in-process but dropped from that
 > transport is silently reset to its default inside the worker (it once scored
 > all custom-judge drift at weight `1.0`), so a `per_judge_loss` whose weights
-> don't match `scoring.json` is the tell. Tracing provenance, not tuning values
+> don't match `scoring.json` is the tell. Tracing provenance rather than tuning values
 > ([`zicato-tune-scoring`](../zicato-tune-scoring/SKILL.md)).
 
 > **`tool_observed` events.** Beyond reasoning/decision envelopes, the stream
@@ -105,7 +105,7 @@ that's the `flat_drift_signal` critical in
 > call (`tool_name`, `args_preview`, `result_preview`, `is_error`,
 > `error_message`). This is the ground-truth record of *what the agent did*; a
 > process judge that grades the deliverable reads it (off
-> `session.recent_events`), not the model's narration. See
+> `session.recent_events`) rather than the model's narration. See
 > [zicato-design-judges](../zicato-design-judges/SKILL.md).
 
 ### Regenerate the analyzer insight out of band

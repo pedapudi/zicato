@@ -18,12 +18,11 @@ debugging a single round — never as the normal way to run zicato.
 
 ## The real command names (verify before you script)
 
-Older plans described `zicato run`, `zicato analyze`, and `zicato patch apply`
-as separate steps. **Those never shipped**, and `docs/design/CLI.md` no longer
-claims them — it is a generated reference reconciled against `--help`. If you
-inherited a script or a note using the old names, translate it:
+No `zicato run`, `zicato analyze`, or `zicato patch apply` command exists;
+`docs/design/CLI.md` is generated from `--help` and does not claim them. A
+script or note that uses one of those names translates as follows:
 
-| Old form | Real CLI | Notes |
+| Name in the script | Real CLI | Notes |
 |---|---|---|
 | `zicato run --generation vN --entry <id> [--tail]` | *(none)* | No standalone runner. Runs happen *inside* `tournament` / `evolve`, which execute every board entry against each generation. |
 | `zicato analyze` | `zicato inspect telemetry` | Decision-telemetry analyzer for the current epoch. |

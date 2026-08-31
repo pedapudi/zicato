@@ -22,7 +22,7 @@ under `.zicato/epochs/{epoch_id}/board.jsonl`. Sibling skills:
 > the field is **`expectation`** (singular, one object) — NOT `expectations`
 > (list); judges use **`mode`/`body`** — NOT `kind`/`criterion`; `disable_drift`
 > tokens are short lowercase goldfive `DriftKind` values like `user_steer` —
-> NOT `DRIFT_KIND_*`. Mirror the working example, not the prose.
+> NOT `DRIFT_KIND_*`. Mirror the working example rather than the prose.
 
 ## The `board_meta` header (optional, must be line 1)
 
@@ -93,7 +93,7 @@ set). Custom judges are removed by deleting them from `judges`, never via
    {"name": "no_fabricated_numbers", "mode": "inline", "body": "The agent never invents metric values it was not given; it asks instead of fabricating.", "severity": "critical"}]}
 ```
 
-`user_persona.constraints` is a single **string**, not a list. `goal`,
+`user_persona.constraints` is a single **string** rather than a list. `goal`,
 `constraints`, `stop_when` are all required.
 
 ## `expectation` — the one OUTCOME check
@@ -128,7 +128,7 @@ accepts a **scorer** returning a continuous per-entry score
   before.
 - `float` (or `int`) — a continuous score, clamped to `[0,1]` and recorded as
   `ExpectationResult.score`. `passed` becomes a display-only `score > 0.0` —
-  the scalar and gate run on the continuous score, not this bit. A `NaN` scores
+  the scalar and gate run on the continuous score rather than on this bit. A `NaN` scores
   `0.0`.
 - `(float, metrics)` 2-tuple — the float is the score; the mapping (e.g.
   `{"precision": .., "recall": ..}`) is recorded verbatim as
@@ -156,11 +156,11 @@ a goldfive `custom` drift identified by the judge `name` and feeds the
 - `severity` — `info` \| `warning` \| `critical` (goldfive `DriftSeverity`).
 
 A `python` judge that grades *what the agent did* must read the real tool-call
-ledger — goldfive's `ctx.session_state.recent_events` (`kind ==
-"tool_observed"`: `tool_name` / `result_preview` / `error_message`) — NOT the
-model's reasoning narration (`ctx.reasoning_text` / the transcript): custom
-judges fire only at reasoning observation points, so the narration is the story
-the agent told, not the tool round-trips it ran. Worked example:
+ledger: goldfive's `ctx.session_state.recent_events`, where `kind ==
+"tool_observed"` carries `tool_name` / `result_preview` / `error_message`. It
+must not read the model's reasoning narration (`ctx.reasoning_text` or the
+transcript). Custom judges fire only at reasoning observation points, so that
+narration is the story the agent told rather than the tool round-trips it ran. Worked example:
 `examples/zicato_examples/target_1_presentation/judges.py` (`file_findability`).
 See `zicato-design-judges`.
 
@@ -197,7 +197,7 @@ single run's session.
 ## Validate
 
 ```sh
-PY=/home/sunil/git/zicato/.venv/bin/python
+PY=$ZICATO/.venv/bin/python   # ZICATO is your zicato checkout
 # List + re-validate every entry in the current epoch's board:
 $PY -m zicato.cli board list --workspace .zicato
 # Append ONE entry from a JSON file (validated eagerly; rejects bad/duplicate id):
@@ -206,7 +206,7 @@ $PY -m zicato.cli board add  --workspace .zicato path/to/entry.json
 $PY -m zicato.cli board remove --workspace .zicato <entry_id>
 ```
 
-`board add` takes a path to a JSON file (one entry), not inline JSON. There is
+`board add` takes a path to a JSON file (one entry) rather than inline JSON. There is
 no `--force` flag on these commands.
 
 ## Mid-epoch protection — prefer a new epoch
@@ -216,7 +216,7 @@ changing it changes the evaluation contract and degrades the in-progress
 pattern history and round counter. The supported path is to let `evolve`
 auto-roll — it hashes the contract (board + brief + scoring + harness identity)
 and, when it has drifted, closes the current epoch and opens a fresh one before
-running (`--no-auto-epoch` to error on drift instead). To roll deliberately,
+running (`--no-auto-epoch` to error on drift instead). To roll on purpose,
 edit the live `board.jsonl` then run `evolve`, or `zicato epoch new`. See
 [EPOCHS-AND-JOURNALING.md](../../docs/design/EPOCHS-AND-JOURNALING.md).
 
@@ -227,7 +227,7 @@ edit the live `board.jsonl` then run `evolve`, or `zicato epoch new`. See
   realistic dialog (up-weight these — they carry the strongest signal).
 - Outcome `expectation`s where a crisp pass/fail exists; drift-loss-only
   (no expectation) where only cleanliness matters.
-- `judges` for properties of the *process* (ordering, no fabrication), not the
+- `judges` for properties of the *process* (ordering, no fabrication) rather than the
   product.
 - Consistent `tags` so pattern detectors and the brief can target slices.
 - Stable `id`s — they are the pattern/journal/`runs/` directory key forever.

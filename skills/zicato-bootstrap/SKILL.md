@@ -42,11 +42,12 @@ wrote).
   shapes are supported. **In-tree** (above): the entrypoint's top-level module
   IS the basename of one `--mutable-tree` (`my_pkg` ↔ `./my_pkg`) — verified
   lexically at register time. **Dependency shape**: the entrypoint lives outside
-  every tree and the harness *imports* the mutable trees (target 2's form —
-  mutate goldfive, drive it from a module outside it); `register` accepts it and
-  prints a `NOTICE`, because whether the mutated tree actually ran depends on
-  run-time imports — that is verified per run instead, by the load-time
-  resolution assert and the post-run `harness_load.json` record.
+  every tree and the harness *imports* the mutable trees. The goldfive-steering
+  example takes this form: mutate goldfive, and drive it from a module outside
+  it. `epoch register` accepts the shape and prints a `NOTICE`, because whether
+  the mutated tree actually ran depends on run-time imports. That question is
+  answered per run instead, by the load-time resolution assert and the post-run
+  `harness_load.json` record.
 - `--mutable-tree PATH` — a source root the proposer may mutate; **repeatable**,
   pass it once per tree. Its **basename must be the importable package name**: a
   generation snapshot copies each tree under its basename and the loader only
@@ -86,7 +87,7 @@ An engine is a logical model plus optional `endpoint`, `api_key_env`, and
 operator-declared `revision`. A role is the job that selects an engine.
 Credentials stay in environment variables. The generated `_guide` object in
 `config.json` defines every noun and includes an inactive override example;
-it is documentation, not runtime input.
+it is documentation rather than runtime input.
 
 `evaluation` supplies internal work by default. Override narrowly when the
 jobs need different capability or cost, for example:
@@ -153,14 +154,14 @@ PY=.venv/bin/python
 rm -rf /tmp/zicato-smoke && mkdir -p /tmp/zicato-smoke && cd /tmp/zicato-smoke
 
 $PY -m zicato.cli init --workspace .zicato
-$PY -m zicato.cli register --workspace .zicato \
+$PY -m zicato.cli epoch register --workspace .zicato \
     --adk agent.agent:root_agent \
     --mutable-tree "$OLDPWD/$EX/agent"
 $PY -m zicato.cli epoch new t1_smoke --workspace .zicato \
     --board "$OLDPWD/$EX/board.jsonl" \
     --brief "$OLDPWD/$EX/rubric.md" \
     --scoring "$OLDPWD/$EX/scoring.json"
-$PY -m zicato.cli mutations --workspace .zicato        # lists the example's mutable ids
+$PY -m zicato.cli inspect mutations --workspace .zicato   # lists the example's mutable ids
 $PY -m zicato.cli evolve --workspace .zicato \
     --rounds 1 --mode full --no-dashboard \
     --harness-call-llm   zicato_examples.target_1_presentation.mocks:harness_llm \
@@ -178,9 +179,9 @@ canonical reference.
 - `evolve` exits 0 and prints a JSON array, one object per round. With the mock,
   expect `tournament_decision: "rejected"` and `delta_scalar: 0.0` — the
   deterministic mock makes parent and child byte-equivalent, so the gate fires
-  "insufficient improvement / margin". **This is correct, not a bug.**
+  "insufficient improvement / margin". **This is the correct outcome.**
 - The stderr `goldfive.planner: JSON parse failed` warnings are expected: the
-  mock returns prose, not planner JSON. The plumbing still records real
+  mock returns prose rather than planner JSON. The plumbing still records real
   `events.jsonl` per entry.
 - The artifact tree exists under
   `.zicato/epochs/<id>/generations/{v0,v1,...}/` — each generation has

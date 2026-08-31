@@ -106,7 +106,7 @@ cat > brief.md <<'EOF'
 EOF
 
 # 4. Inspect the mutation surface (exactly one id: style_rules).
-$PY -m zicato.cli mutations --workspace .zicato
+$PY -m zicato.cli inspect mutations --workspace .zicato
 
 # 5. Run the three scripted rounds — evolve auto-opens epoch e0 from
 #    the contract above, then: v1 PROMOTED (3.6 → 2.4), v2 REJECTED
