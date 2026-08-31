@@ -1,128 +1,22 @@
 """Pure, tolerant conversation reconstruction from an ``events.jsonl`` file.
 
-Both persisted camel-case envelopes and normalized ``{kind, payload}`` events
-are accepted. Malformed lines are skipped so growing runs remain readable.
+Both wire shapes of an event are accepted, and the payload case, its field
+names and the emission timestamp all come from
+:mod:`zicato.telemetry.event_log` — so a turn is built from the same reading
+of a line that every other consumer of the file gets. Malformed lines are
+skipped so growing runs remain readable.
 """
 
 from __future__ import annotations
 
 import json
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from zicato.query.paths import to_snake
+from zicato.telemetry.event_log import EventRecord, read_event_log
 
 __all__ = ["Annotation", "Transcript", "Turn", "reconstruct_transcript"]
-
-
-# Snake-cased envelope fields that cannot be the payload kind.
-_ENVELOPE_KEYS = {
-    "event_id",
-    "run_id",
-    "sequence",
-    "seq",
-    "emitted_at",
-    "session_id",
-    "kind",
-    "payload",
-}
-
-
-def _snake_deep(value: Any) -> Any:
-    """Recursively snake-case keys because transcript payloads are nested."""
-
-    if isinstance(value, dict):
-        return {to_snake(k): _snake_deep(v) for k, v in value.items()}
-    if isinstance(value, list):
-        return [_snake_deep(v) for v in value]
-    return value
-
-
-def _iter_events(path: Path) -> tuple[list[dict[str, Any]], bool]:
-    """Return parsed events and whether the final nonblank line was valid."""
-
-    events: list[dict[str, Any]] = []
-    last_line_ok = True
-    try:
-        with open(path, encoding="utf-8") as handle:
-            raw_lines = handle.read().splitlines()
-    except OSError:
-        return [], True
-
-    while raw_lines and not raw_lines[-1].strip():
-        raw_lines.pop()
-
-    for idx, line in enumerate(raw_lines):
-        stripped = line.strip()
-        if not stripped:
-            continue
-        try:
-            obj = json.loads(stripped)
-        except json.JSONDecodeError:
-            if idx == len(raw_lines) - 1:
-                last_line_ok = False
-            continue
-        if isinstance(obj, dict):
-            events.append(_snake_deep(obj))
-    return events, last_line_ok
-
-
-def _kind_and_payload(event: dict[str, Any]) -> tuple[str, dict[str, Any]]:
-    """Resolve normalized and top-level-oneof envelope shapes."""
-
-    explicit = event.get("kind")
-    if isinstance(explicit, str) and explicit:
-        payload = event.get("payload")
-        return to_snake(explicit), payload if isinstance(payload, dict) else {}
-
-    for key, value in event.items():
-        if key in _ENVELOPE_KEYS:
-            continue
-        if isinstance(value, dict):
-            return key, value
-        return key, {}
-    return "", {}
-
-
-def _seq_of(event: dict[str, Any]) -> int | None:
-    """Extract the per-run sequence number, tolerating int or string."""
-
-    raw = event.get("sequence")
-    if raw is None:
-        raw = event.get("seq")
-    if raw is None:
-        return None
-    try:
-        return int(raw)
-    except (TypeError, ValueError):
-        return None
-
-
-def _norm_ts(value: Any) -> str | None:
-    """Normalize an RFC-3339 string or proto ``{seconds, nanos}`` timestamp."""
-
-    if value is None:
-        return None
-    if isinstance(value, str):
-        return value or None
-    if isinstance(value, dict):
-        seconds = value.get("seconds")
-        nanos = value.get("nanos")
-        if seconds is None and nanos is None:
-            return None
-        try:
-            secs = int(seconds or 0)
-            nsecs = int(nanos or 0)
-        except (TypeError, ValueError):
-            return None
-        dt = datetime.fromtimestamp(secs, tz=UTC)
-        iso = dt.strftime("%Y-%m-%dT%H:%M:%S")
-        if nsecs:
-            iso += f".{nsecs:09d}".rstrip("0")
-        return iso + "Z"
-    return None
 
 
 @dataclass
@@ -230,7 +124,7 @@ _EXECUTION_KINDS = {
 }
 
 
-def _execution_topology(events: list[dict[str, Any]]) -> dict[str, Any]:
+def _execution_topology(events: tuple[EventRecord, ...]) -> dict[str, Any]:
     """Build only invocation relationships and statuses stated by canonical events.
 
     Statuses are last-writer-wins in stream order: a completion event marks
@@ -243,7 +137,7 @@ def _execution_topology(events: list[dict[str, Any]]) -> dict[str, Any]:
 
     nodes: dict[str, dict[str, Any]] = {}
     for source_index, event in enumerate(events):
-        kind, payload = _kind_and_payload(event)
+        kind, payload = event.case, event.payload
         if kind not in _EXECUTION_KINDS:
             continue
         node_id = payload.get("invocation_id")
@@ -574,8 +468,8 @@ def reconstruct_transcript(events_path: Path, *, partial_ok: bool = True) -> Tra
     relative to the prior single-stream behaviour.
     """
 
-    path = Path(events_path)
-    events, last_line_ok = _iter_events(path)
+    log = read_event_log(Path(events_path))
+    events, last_line_ok = log.records, log.last_line_ok
 
     transcript = Transcript()
     transcript.event_count = len(events)
@@ -588,11 +482,10 @@ def reconstruct_transcript(events_path: Path, *, partial_ok: bool = True) -> Tra
         return transcript
 
     # Group before sorting because each run restarts its sequence at zero.
-    groups: dict[str | None, list[tuple[int, dict[str, Any]]]] = {}
+    groups: dict[str | None, list[tuple[int, EventRecord]]] = {}
     insertion_order: list[str | None] = []
     for idx, event in enumerate(events):
-        rid_raw = event.get("run_id")
-        rid: str | None = rid_raw if isinstance(rid_raw, str) and rid_raw else None
+        rid: str | None = event.run_id or None
         bucket = groups.get(rid)
         if bucket is None:
             bucket = []
@@ -600,10 +493,10 @@ def reconstruct_transcript(events_path: Path, *, partial_ok: bool = True) -> Tra
             insertion_order.append(rid)
         bucket.append((idx, event))
 
-    def _min_ts_of(bucket: list[tuple[int, dict[str, Any]]]) -> str:
+    def _min_ts_of(bucket: list[tuple[int, EventRecord]]) -> str:
         best: str | None = None
         for _idx, event in bucket:
-            ts = _norm_ts(event.get("emitted_at"))
+            ts = event.emitted_at
             if ts is None:
                 continue
             if best is None or ts < best:
@@ -611,12 +504,12 @@ def reconstruct_transcript(events_path: Path, *, partial_ok: bool = True) -> Tra
         return best or ""
 
     def _within_group_key(
-        item: tuple[int, dict[str, Any]],
+        item: tuple[int, EventRecord],
     ) -> tuple[int, int, str, int]:
         # Sequence-less lifecycle frames precede the sequenced stream.
         idx, event = item
-        seq = _seq_of(event)
-        ts = _norm_ts(event.get("emitted_at")) or ""
+        seq = event.sequence
+        ts = event.emitted_at or ""
         return (
             0 if seq is None else 1,
             seq if seq is not None else 0,
@@ -653,11 +546,11 @@ def reconstruct_transcript(events_path: Path, *, partial_ok: bool = True) -> Tra
                 current = None
 
         for src_idx, event in bucket:
-            kind, payload = _kind_and_payload(event)
+            kind, payload = event.case, event.payload
             if not kind:
                 continue
-            seq = _seq_of(event)
-            ts = _norm_ts(event.get("emitted_at"))
+            seq = event.sequence
+            ts = event.emitted_at
 
             if kind in _TERMINAL_KINDS:
                 saw_terminal = True

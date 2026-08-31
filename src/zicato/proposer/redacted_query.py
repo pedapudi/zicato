@@ -64,7 +64,6 @@ must never abort because a diagnostic read failed.
 from __future__ import annotations
 
 import json
-import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -78,6 +77,7 @@ from zicato.analyzer.redaction import (
 )
 from zicato.core import normalize_wire_drift_kind, normalize_wire_severity
 from zicato.proposer.tool_context import ProposerToolContext, _active_context
+from zicato.telemetry.event_log import EventRecord, read_event_log
 
 #: The single fail-closed status string. A tool that cannot derive the
 #: train slice returns this and NO data — never the whole board.
@@ -87,13 +87,6 @@ _UNAVAILABLE = "train slice unavailable"
 #: one tool emits — a runaway-context guard mirroring the other proposer
 #: tools' limits. Truncation is annotated in the payload.
 _LABEL_LIMIT = 40
-
-#: Goldfive event-envelope keys, so the payload oneof can be picked out as
-#: "the single non-envelope dict-valued key" (the JSONL-only, proto-stub-
-#: free discipline :mod:`zicato.analyzer.process_exemplars` follows).
-_ENVELOPE_KEYS: frozenset[str] = frozenset(
-    {"event_id", "run_id", "sequence", "emitted_at", "session_id"}
-)
 
 #: Payload fields that are identity TOKENS — collected into the identity-token
 #: corpus and scrubbed out of any emitted label at any length.
@@ -155,58 +148,18 @@ _PROCESS_CASES: tuple[str, ...] = (
 
 
 # ---------------------------------------------------------------------------
-# Event reading (JSONL-only, best-effort — the aggregator's discipline)
+# Event reading (best-effort — a diagnostic query never aborts a round)
 # ---------------------------------------------------------------------------
 
 
-def _to_snake(name: str) -> str:
-    """camelCase → snake_case; an already-snake_case string is unchanged."""
-    return re.sub(r"(?<!^)(?<!_)([A-Z])", r"_\1", name).lower()
-
-
-def _snake_keys(d: Mapping[str, Any]) -> dict[str, Any]:
-    """Shallow copy of ``d`` with top-level keys snake-cased."""
-    return {_to_snake(k): v for k, v in d.items()}
-
-
-def _read_events(path: Path) -> list[dict[str, Any]]:
-    """Read one ``events.jsonl`` into envelope-normalized event dicts.
+def _read_events(path: Path) -> tuple[EventRecord, ...]:
+    """Read one ``events.jsonl`` into event records.
 
     Malformed lines and non-dict values are skipped; a missing or
-    unreadable file yields ``[]``. Reading is best-effort by contract —
+    unreadable file yields no records. Reading is best-effort by contract —
     a diagnostic query must never abort a proposer round.
     """
-    out: list[dict[str, Any]] = []
-    try:
-        with open(path, encoding="utf-8") as f:
-            for line in f:
-                stripped = line.strip()
-                if not stripped:
-                    continue
-                try:
-                    obj = json.loads(stripped)
-                except json.JSONDecodeError:
-                    continue
-                if isinstance(obj, dict):
-                    out.append(_snake_keys(obj))
-    except OSError:
-        return []
-    return out
-
-
-def _case_and_payload(event: Mapping[str, Any]) -> tuple[str | None, dict[str, Any]]:
-    """Return the ``(case, payload)`` of one event dict (or ``(None, {})``).
-
-    The payload is the single non-envelope dict-valued top-level key —
-    goldfive's ``Event.payload`` oneof in wire form. Keys are snake-cased
-    so both wire shapes dispatch identically.
-    """
-    for k, v in event.items():
-        if k in _ENVELOPE_KEYS:
-            continue
-        if isinstance(v, dict):
-            return k, _snake_keys(v)
-    return None, {}
+    return read_event_log(path).records
 
 
 # ---------------------------------------------------------------------------
@@ -215,7 +168,7 @@ def _case_and_payload(event: Mapping[str, Any]) -> tuple[str | None, dict[str, A
 
 
 def _identity_corpus(
-    events: Sequence[Mapping[str, Any]], entry_id: str
+    events: Sequence[EventRecord], entry_id: str
 ) -> tuple[frozenset[str], frozenset[str]]:
     """Build the ``(texts, tokens)`` identity corpus for one run's events.
 
@@ -230,12 +183,11 @@ def _identity_corpus(
     texts: set[str] = set()
     tokens: set[str] = {entry_id} if entry_id else set()
     for event in events:
-        for env_key in ("run_id", "session_id", "event_id"):
-            raw = event.get(env_key)
-            if isinstance(raw, str) and raw:
+        for raw in (event.run_id, event.session_id, event.event_id):
+            if raw:
                 tokens.add(raw)
-        case, payload = _case_and_payload(event)
-        if case is None:
+        case, payload = event.case, event.payload
+        if not case:
             continue
         admitted = set(_READ_POLICY.get(case, ()))
         for fname, value in payload.items():
@@ -355,7 +307,7 @@ class _EntryFacts:
     unrecoverable_failure: bool = False
 
 
-def _entry_facts(events: Sequence[Mapping[str, Any]], entry_id: str) -> _EntryFacts:
+def _entry_facts(events: Sequence[EventRecord], entry_id: str) -> _EntryFacts:
     """Distil one run's events into redacted, closed-vocabulary facts."""
     texts, tokens = _identity_corpus(events, entry_id)
 
@@ -373,8 +325,8 @@ def _entry_facts(events: Sequence[Mapping[str, Any]], entry_id: str) -> _EntryFa
     unrecoverable = False
 
     for event in events:
-        case, payload = _case_and_payload(event)
-        if case is None or case not in _READ_POLICY:
+        case, payload = event.case, event.payload
+        if case not in _READ_POLICY:
             continue
         if case in _PROCESS_CASES:
             process_cases.add(case)

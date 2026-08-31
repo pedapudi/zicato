@@ -40,6 +40,7 @@ from zicato.core import (
     DriftCount,
 )
 from zicato.telemetry.dialects import DialectSignals
+from zicato.telemetry.event_log import EventRecord, read_event_log
 
 _LOG = logging.getLogger(__name__)
 
@@ -55,15 +56,12 @@ _PLACEHOLDER_ENTRY: BoardEntry = BoardEntry(
 
 # --- sniffing vocabulary (TRAJECTORY-BOOTSTRAP.md §2.2) ---------------------
 
-#: goldfive ``Event`` envelope markers (snake_case + camelCase twins). A
-#: goldfive line carries one of these AND exactly one nested-dict payload.
-_GOLDFIVE_ENVELOPE_KEYS: frozenset[str] = frozenset(
-    {"event_id", "eventId", "sequence", "emitted_at", "emittedAt"}
-)
-#: Every envelope key (payload discovery skips these — mirrors reducer._payload).
-_GOLDFIVE_ALL_ENVELOPE: frozenset[str] = _GOLDFIVE_ENVELOPE_KEYS | frozenset(
-    {"run_id", "runId", "session_id", "sessionId"}
-)
+#: The goldfive ``Event`` envelope names that MARK a line as goldfive. A
+#: narrower set than the reader's full envelope schema on purpose: an
+#: ADK-style log routinely carries a run or session id, so neither
+#: distinguishes a producer. Spelled snake_case, which is what the reader
+#: hands back whichever spelling the file used.
+_GOLDFIVE_MARKER_KEYS: frozenset[str] = frozenset({"event_id", "sequence", "emitted_at"})
 #: The BEHAVIORAL ADK event types (message types are NOT here — a message-only
 #: log is a transcript wearing type tags, §2.2).
 _ADK_BEHAVIORAL_TYPES: frozenset[str] = frozenset(
@@ -218,49 +216,27 @@ def _signals_from_json(raw: Any) -> DialectSignals:
 # ---------------------------------------------------------------------------
 
 
-def _read_objects(path: Path) -> tuple[list[dict[str, Any]], int, int]:
-    """``(objects, non_empty_lines, malformed)`` — tolerant JSONL read.
+def _read_records(path: Path) -> tuple[tuple[EventRecord, ...], int, int]:
+    """``(records, non_empty_lines, malformed)`` — one tolerant read of the file.
 
-    A non-JSON line, or a JSON value that is not an object, is COUNTED as
-    malformed and skipped (mirrors :func:`dialects._iter_json_objects`). A
-    missing / unreadable file yields ``([], 0, 0)``.
+    A foreign trace is untrusted bytes, so nothing here raises: a non-JSON
+    line or a JSON value that is not an object is counted malformed, an
+    invalid UTF-8 sequence costs at most its own line, and a missing or
+    unreadable file yields no records.
     """
-    objs: list[dict[str, Any]] = []
-    non_empty = 0
-    malformed = 0
-    try:
-        # ``errors="replace"`` — a foreign trace is untrusted bytes; an invalid
-        # UTF-8 sequence must NOT crash the whole import (a full traceback
-        # propagating through sniff/import/the CLI). A line whose replacement
-        # chars then fail JSON-parse is COUNTED malformed by the loop below, so
-        # the existing tolerance takes over. ``UnicodeDecodeError`` is guarded
-        # too as belt-and-suspenders (a future non-replace reader can't regress).
-        text = path.read_text(encoding="utf-8", errors="replace")
-    except (OSError, UnicodeDecodeError):
-        return [], 0, 0
-    for raw in text.splitlines():
-        line = raw.strip()
-        if not line:
-            continue
-        non_empty += 1
-        try:
-            parsed = json.loads(line)
-        except json.JSONDecodeError:
-            malformed += 1
-            continue
-        if isinstance(parsed, dict):
-            objs.append(parsed)
-        else:
-            malformed += 1
-    return objs, non_empty, malformed
+    log = read_event_log(path)
+    return log.records, len(log.records) + log.malformed_line_count, log.malformed_line_count
 
 
-def _looks_goldfive(obj: dict[str, Any]) -> bool:
-    """A goldfive ``Event``: an envelope marker + exactly one nested-dict payload."""
-    if not (_GOLDFIVE_ENVELOPE_KEYS & obj.keys()):
+def _looks_goldfive(record: EventRecord) -> bool:
+    """A goldfive ``Event``: an envelope marker plus a resolved payload case.
+
+    Both wire shapes qualify, because the reader resolves both: the payload
+    under its own case name, and the normalized ``kind`` beside ``payload``.
+    """
+    if not (_GOLDFIVE_MARKER_KEYS & record.raw.keys()):
         return False
-    nested = [k for k, v in obj.items() if k not in _GOLDFIVE_ALL_ENVELOPE and isinstance(v, dict)]
-    return len(nested) >= 1
+    return bool(record.case)
 
 
 def _obj_type(obj: dict[str, Any]) -> str:
@@ -282,6 +258,11 @@ def _looks_transcript(obj: dict[str, Any]) -> bool:
     return any(isinstance(obj.get(k), str) for k in ("content", "text", "message"))
 
 
+def _obj_of(record: EventRecord) -> dict[str, Any]:
+    """The line as the reader normalised it, for the type / role sniffs."""
+    return record.raw
+
+
 def sniff_dialect(path: Path) -> str:
     """Deterministically sniff a trace file's dialect (TRAJECTORY-BOOTSTRAP.md §2.2).
 
@@ -290,12 +271,13 @@ def sniff_dialect(path: Path) -> str:
     BEHAVIORAL adk event ⇒ ``adk_events``; else any transcript / message line ⇒
     ``transcript``; else (empty / all-malformed) ⇒ ``transcript`` (the floor).
     """
-    objs, _non_empty, _malformed = _read_objects(path)
+    records, _non_empty, _malformed = _read_records(path)
     saw_adk_behavioral = False
     saw_transcript = False
-    for obj in objs:
-        if _looks_goldfive(obj):
+    for record in records:
+        if _looks_goldfive(record):
             return DIALECT_GOLDFIVE
+        obj = _obj_of(record)
         etype = _obj_type(obj)
         if etype in _ADK_BEHAVIORAL_TYPES:
             saw_adk_behavioral = True
@@ -331,7 +313,7 @@ def import_trace_file(path: Path) -> ImportedTrace:
     from zicato.telemetry.reducer import dialect_producer  # noqa: PLC0415
 
     dialect = sniff_dialect(path)
-    _objs, non_empty, malformed = _read_objects(path)
+    _records, non_empty, malformed = _read_records(path)
     producer = dialect_producer(dialect)
     try:
         signals = producer(path, _PLACEHOLDER_ENTRY)

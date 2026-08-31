@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any
 
 from zicato.storage import read_json
+from zicato.telemetry import event_log as _event_log
 from zicato.workspace import WorkspaceLayout
 from zicato.workspace import epochs as _ws_epochs
 
@@ -136,25 +137,10 @@ def _read_json_value(path: Path) -> Any | None:
         return None
 
 
-def to_snake(name: str) -> str:
-    """Convert a ``camelCase`` / ``PascalCase`` identifier to ``snake_case``.
-
-    Idempotent on input already in snake_case. Mirrors the Rust
-    ``run_log::to_snake``, so an event kind has one spelling whichever
-    reader produced it.
-    """
-    out: list[str] = []
-    prev_lower_or_digit = False
-    for ch in name:
-        if ch.isascii() and ch.isupper():
-            if prev_lower_or_digit:
-                out.append("_")
-            out.append(ch.lower())
-            prev_lower_or_digit = False
-        else:
-            out.append(ch)
-            prev_lower_or_digit = ch.isascii() and (ch.islower() or ch.isdigit())
-    return "".join(out)
+# The casing rule belongs to the event-log reader, which is where the names
+# it converts come from; this re-export keeps ``zicato.query.to_snake``
+# resolving to that one definition. There is no second definition.
+to_snake = _event_log.to_snake
 
 
 def _preview(text: str) -> str:

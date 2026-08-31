@@ -56,8 +56,6 @@ round.
 
 from __future__ import annotations
 
-import json
-import re
 from collections.abc import Collection, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -71,6 +69,7 @@ from zicato.analyzer.redaction import (
     truncate_free_text,
 )
 from zicato.core import normalize_wire_drift_kind, normalize_wire_severity
+from zicato.telemetry.event_log import EventRecord, read_event_log
 
 # ---------------------------------------------------------------------------
 # Tunables (PROCESS-EXEMPLARS.md §2–§3 — the doc is normative; change both)
@@ -140,60 +139,14 @@ class ProcessExemplar:
 # Event reading (JSONL-only, proto-stub-free — the aggregator's discipline)
 # ---------------------------------------------------------------------------
 
-_ENVELOPE_KEYS: frozenset[str] = frozenset(
-    {"event_id", "run_id", "sequence", "emitted_at", "session_id"}
-)
 
+def _load_events(path: Path) -> tuple[EventRecord, ...]:
+    """Read one ``events.jsonl`` into event records.
 
-def _to_snake(name: str) -> str:
-    """camelCase → snake_case; an already-snake_case string is unchanged."""
-    return re.sub(r"(?<!^)(?<!_)([A-Z])", r"_\1", name).lower()
-
-
-def _snake_keys(d: dict[str, Any]) -> dict[str, Any]:
-    """Shallow copy of ``d`` with top-level keys snake-cased."""
-    return {_to_snake(k): v for k, v in d.items()}
-
-
-def _load_events(path: Path) -> list[dict[str, Any]]:
-    """Read one ``events.jsonl`` into envelope-normalized event dicts.
-
-    Plain-JSON only (goldfive's persistence sink wrote JSON lines via
-    ``MessageToJson``); malformed lines and non-dict values are skipped, a
-    missing/unreadable file yields ``[]`` — extraction is best-effort.
+    Malformed lines and non-dict values are skipped, and a missing or
+    unreadable file yields no records — extraction is best-effort.
     """
-    out: list[dict[str, Any]] = []
-    try:
-        with open(path, encoding="utf-8") as f:
-            for line in f:
-                line = line.strip()
-                if not line:
-                    continue
-                try:
-                    obj = json.loads(line)
-                except json.JSONDecodeError:
-                    continue
-                if isinstance(obj, dict):
-                    out.append(_snake_keys(obj))
-    except OSError:
-        return []
-    return out
-
-
-def _payload(event: dict[str, Any]) -> tuple[str | None, dict[str, Any]]:
-    """Return the ``(case, payload_dict)`` of one event dict (or ``(None, {})``).
-
-    The payload is the single non-envelope dict-valued top-level key —
-    goldfive's ``Event.payload`` oneof in wire form. Payload field keys are
-    snake-cased so both wire shapes (camelCase sink output, snake_case
-    proto re-emission) dispatch identically.
-    """
-    for k, v in event.items():
-        if k in _ENVELOPE_KEYS:
-            continue
-        if isinstance(v, dict):
-            return k, _snake_keys(v)
-    return None, {}
+    return read_event_log(path).records
 
 
 # ---------------------------------------------------------------------------
@@ -348,7 +301,7 @@ _TOKEN_FIELDS: frozenset[str] = frozenset(
 
 
 def _identity_corpus(
-    events: Sequence[dict[str, Any]], entry_id: str
+    events: Sequence[EventRecord], entry_id: str
 ) -> tuple[frozenset[str], frozenset[str]]:
     """Build the R4 identity corpus for one run: ``(texts, tokens)``.
 
@@ -366,12 +319,11 @@ def _identity_corpus(
     tokens: set[str] = {entry_id} if entry_id else set()
 
     for event in events:
-        for env_key in ("run_id", "session_id", "event_id"):
-            raw = event.get(env_key)
-            if isinstance(raw, str) and raw:
+        for raw in (event.run_id, event.session_id, event.event_id):
+            if raw:
                 tokens.add(raw)
-        case, payload = _payload(event)
-        if case is None:
+        case, payload = event.case, event.payload
+        if not case:
             continue
         policy = _FIELD_POLICY.get(case, _CasePolicy())
         admitted = set(policy.keep) | set(policy.truncate) | set(policy.anonymize)
@@ -392,7 +344,7 @@ def _identity_corpus(
 
 
 def _redact_event(
-    event: dict[str, Any],
+    event: EventRecord,
     offset: int,
     anonymizer: _WindowAnonymizer,
     corpus_texts: frozenset[str],
@@ -404,8 +356,8 @@ def _redact_event(
     structure, then truncate, then anonymize) so the output is
     deterministic and diff-stable.
     """
-    case, payload = _payload(event)
-    if case is None:
+    case, payload = event.case, event.payload
+    if not case:
         return ExemplarEvent(offset=offset, case="(unknown)")
     policy = _FIELD_POLICY.get(case)
     if policy is None:
@@ -445,7 +397,7 @@ def _redact_event(
 
 
 def _redact_window(
-    events: Sequence[dict[str, Any]],
+    events: Sequence[EventRecord],
     anchor_index: int,
     entry_id: str,
 ) -> tuple[ExemplarEvent, ...]:
@@ -618,9 +570,9 @@ def extract_process_exemplars(
         return ()
     train_id_set = set(train_ids)
 
-    events_cache: dict[str, list[dict[str, Any]]] = {}
+    events_cache: dict[str, tuple[EventRecord, ...]] = {}
 
-    def _events_for(entry_id: str) -> list[dict[str, Any]]:
+    def _events_for(entry_id: str) -> tuple[EventRecord, ...]:
         cached = events_cache.get(entry_id)
         if cached is None:
             cached = _load_events(
@@ -647,8 +599,8 @@ def extract_process_exemplars(
         for entry_id in scan_ids:
             events = _events_for(entry_id)
             for i, event in enumerate(events):
-                case, payload = _payload(event)
-                if case is None or not spec.matches(case, payload):
+                case, payload = event.case, event.payload
+                if not case or not spec.matches(case, payload):
                     continue
                 if (entry_id, i) in seen_anchors:
                     continue

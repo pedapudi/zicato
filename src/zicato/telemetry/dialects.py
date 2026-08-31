@@ -37,6 +37,7 @@ from zicato.core import (
     DriftCount,
     ScoringWeights,
 )
+from zicato.telemetry.event_log import read_event_log
 
 __all__ = [
     "DialectSignals",
@@ -135,31 +136,21 @@ def _iter_json_objects(path: Path) -> tuple[list[dict[str, Any]], int]:
 
     Tolerant by contract (TELEMETRY-DIALECTS.md §3.1): a line that is not
     JSON, or is JSON but not an object, is COUNTED as malformed and
-    skipped — never raised. A missing file yields ``([], 0)``. ``errors="replace"``
-    extends that tolerance to invalid UTF-8 bytes (a foreign / untrusted trace may
-    carry them): the offending line's replacement chars then fail JSON-parse and
-    are counted malformed, so a byte defect never raises through the reducer. A
-    valid-UTF-8 file decodes byte-identically, so this is behaviour-preserving.
+    skipped — never raised. A missing file yields ``([], 0)``.
+
+    Reading goes through :func:`zicato.telemetry.event_log.read_event_log`,
+    so a foreign trace's field names arrive in the one spelling the
+    dialects below read: ``eventType`` and ``event_type`` are both
+    ``event_type`` by the time a producer looks for one. The alias lists
+    those producers carry therefore cover naming (``type`` beside
+    ``event_type``) and leave capitalisation to the reader.
+
+    Field VALUES are untouched. A producer that spells its event type
+    ``modelUsage`` is a producer whose vocabulary this dialect does not
+    know, and is skipped like any unknown type.
     """
-    objs: list[dict[str, Any]] = []
-    malformed = 0
-    if not path.exists():
-        return objs, 0
-    with open(path, encoding="utf-8", errors="replace") as f:
-        for raw in f:
-            line = raw.strip()
-            if not line:
-                continue
-            try:
-                parsed = json.loads(line)
-            except json.JSONDecodeError:
-                malformed += 1
-                continue
-            if isinstance(parsed, dict):
-                objs.append(parsed)
-            else:
-                malformed += 1
-    return objs, malformed
+    log = read_event_log(path)
+    return [dict(record.raw) for record in log.records], log.malformed_line_count
 
 
 def _first_str(obj: dict[str, Any], *keys: str) -> str:
@@ -317,9 +308,9 @@ def reduce_adk_events(events_jsonl_path: Path, entry: BoardEntry) -> DialectSign
 
     for obj in objs:
         if not run_id:
-            run_id = _first_str(obj, "run_id", "runId", "invocation_id", "invocationId")
+            run_id = _first_str(obj, "run_id", "invocation_id")
         if not adk_session_id:
-            adk_session_id = _first_str(obj, "session_id", "sessionId")
+            adk_session_id = _first_str(obj, "session_id")
         etype = _event_type(obj)
         if etype == "tool_call":
             task_started += 1

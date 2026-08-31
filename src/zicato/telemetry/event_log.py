@@ -9,16 +9,19 @@ in wire form, and the same event reaches disk in either of two shapes:
   ``MessageToJson`` writes, so field names are lowerCamelCase.
 * **Normalized shape.** The case name and the payload are separate fields —
   ``{"event_id": …, "run_id": …, "kind": "pin_resolved", "payload": {…},
-  "emitted_at": {"seconds": …, "nanos": …}}``. The proto-reparse path and
-  the meta-loop emitter's stub-free fallback write this, so field names are
-  snake_case and the timestamp is a proto ``Timestamp`` message rather than
-  a string.
+  "emitted_at": {"seconds": …, "nanos": …}}``. Field names are snake_case
+  and the timestamp is a proto ``Timestamp`` message rather than a string.
+  The meta-loop emitter writes this whenever the proto stubs are
+  unavailable, and the supervisor's ``run_log.rs`` documents it as the
+  form a proto reparse produces.
 
 :func:`parse_event` resolves both to one :class:`EventRecord`, and
-:func:`read_event_log` turns a file into records. Every consumer — the loss
-reducer, the analyzer's decision-event aggregator and process-exemplar
-extractor, the proposer's redacted process query, the dashboard's transcript
-reconstruction and its run-log tail — reads through here, so a given line
+:func:`read_event_log` turns a file into records. Every consumer reads
+through here — the loss reducer and its two non-goldfive dialects, the
+analyzer's decision-event aggregator and process-exemplar extractor, the
+proposer's redacted process query, the dashboard's transcript
+reconstruction and its run-log tail, the synthetic drift matchers, the
+terminal-frame check, and the foreign-trace sniffer — so a given line
 yields the same payload case, the same payload field names and the same
 timestamp everywhere.
 
@@ -37,7 +40,6 @@ from __future__ import annotations
 
 import datetime as _dt
 import json
-from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -165,21 +167,21 @@ class EventRecord:
     """
 
     case: str = ""
-    payload: Mapping[str, Any] = field(default_factory=dict)
+    payload: dict[str, Any] = field(default_factory=dict)
     run_id: str = ""
     session_id: str = ""
     event_id: str = ""
     sequence: int | None = None
     emitted_at: str | None = None
-    raw: Mapping[str, Any] = field(default_factory=dict)
+    raw: dict[str, Any] = field(default_factory=dict)
 
 
-def _string_field(event: Mapping[str, Any], name: str) -> str:
+def _string_field(event: dict[str, Any], name: str) -> str:
     value = event.get(name)
     return value if isinstance(value, str) else ""
 
 
-def _sequence_of(event: Mapping[str, Any]) -> int | None:
+def _sequence_of(event: dict[str, Any]) -> int | None:
     raw = event.get("sequence")
     if raw is None:
         raw = event.get("seq")
@@ -195,7 +197,7 @@ def _sequence_of(event: Mapping[str, Any]) -> int | None:
     return None
 
 
-def _emitted_at_of(event: Mapping[str, Any]) -> str | None:
+def _emitted_at_of(event: dict[str, Any]) -> str | None:
     """Render ``emitted_at`` as RFC-3339 in UTC, or ``None``."""
     raw = event.get("emitted_at")
     if isinstance(raw, str):
@@ -219,7 +221,7 @@ def _emitted_at_of(event: Mapping[str, Any]) -> str | None:
     return moment.isoformat().replace("+00:00", "Z")
 
 
-def _case_and_payload(event: Mapping[str, Any]) -> tuple[str, Mapping[str, Any]]:
+def _case_and_payload(event: dict[str, Any]) -> tuple[str, dict[str, Any]]:
     """Resolve the payload case and its fields from a normalized event.
 
     The normalized shape is checked first: a ``kind`` holding a non-empty
@@ -242,7 +244,7 @@ def _case_and_payload(event: Mapping[str, Any]) -> tuple[str, Mapping[str, Any]]
     return "", {}
 
 
-def parse_event(obj: Mapping[str, Any]) -> EventRecord:
+def parse_event(obj: dict[str, Any]) -> EventRecord:
     """Resolve one parsed event line into an :class:`EventRecord`.
 
     ``obj`` is the line as :func:`json.loads` returned it, in either wire

@@ -22,7 +22,54 @@ and we want a single narrow seam between *what the harness emits* and
 *what zicato scores on*." A dialect is that seam made plural: several
 producers, one `LossProfile`.
 
-## 1. The dialect abstraction
+## 1. One reader under every dialect
+
+Every dialect reads its source file through
+`zicato.telemetry.event_log`, which is also what the analyzer, the
+proposer's diagnostic queries, the dashboard's transcript
+reconstruction and its run-log tail read. One reading of a line, one
+envelope schema, one casing rule, one timestamp rendering — so a panel
+and a loss profile can never disagree about what an event was.
+
+A run's event log reaches disk in either of two shapes, and both are
+resolved to the same record:
+
+| | Payload-key shape | Normalized shape |
+|---|---|---|
+| Where the case name lives | the top-level key holding the payload | the `kind` field |
+| Where the payload lives | under that key | the `payload` field |
+| Field naming | lowerCamelCase (`MessageToJson`) | snake_case |
+| `emitted_at` | an RFC-3339 string | a proto `{seconds, nanos}` message |
+
+The reader's rules:
+
+- **Envelope names.** `emitted_at`, `event_id`, `kind`, `payload`,
+  `run_id`, `seq`, `sequence`, `session_id` belong to the envelope and
+  can never name the payload case. The supervisor's Rust `run_log.rs`
+  declares the same set, spelling both twins of each name because it
+  matches the raw line; `tests/test_event_log_envelope_correspondence.py`
+  holds the two equal.
+- **Casing.** An underscore goes before each uppercase ASCII letter that
+  follows a lowercase letter or a digit. A run of capitals is one word,
+  so `goldfiveLLMCallStart` is `goldfive_llmcall_start` rather than
+  `goldfive_l_l_m_call_start`. The rule is applied at every depth, so a
+  nested plan message's field names convert too, and it is idempotent, so
+  a file mixing both spellings normalizes to one vocabulary.
+- **The payload is a message.** A non-envelope field holding a scalar
+  names no case. Run directories hold files sharing the events extension
+  whose records are not telemetry, and naming their first field as an
+  event kind invents telemetry that was never emitted.
+- **Timestamps.** One RFC-3339 rendering in UTC. A `seconds` field
+  omitted from the message reads as zero, which is a real instant rather
+  than a missing one.
+- **Tolerance.** A line that is not a JSON object is counted malformed
+  and skipped; invalid UTF-8 decodes to replacement characters rather
+  than raising, so one bad byte costs at most its own line; a missing or
+  unreadable file reads as an empty log. The reader also reports whether
+  the final line parsed, which is what separates a log still being
+  appended to from one with a defect in its middle.
+
+## 2. The dialect abstraction
 
 A dialect is a deterministic function
 
@@ -52,7 +99,7 @@ generalised metric surface, and `LossProfile` assembly. The dialect
 changes only *how the raw counts are produced*, and not how they are
 scored.
 
-## 2. Dialect 1 — `goldfive` (default)
+## 3. Dialect 1 — `goldfive` (default)
 
 The default dialect, and the most powerful one: it consumes the full
 drift-instrument stream, so it is the only dialect that can carry
@@ -71,7 +118,7 @@ drift-instrument stream, so it is the only dialect that can carry
 `goldfive` is the default and rides `_SCORING_OMIT_AT_DEFAULT_FIELDS`
 omission (§5) so every existing contract hash is untouched.
 
-## 3. Dialect 2 — `adk_events`
+## 4. Dialect 2 — `adk_events`
 
 An agent-framework event-log JSONL: the kind of structured event trail a
 generic ADK-style agent framework writes — one JSON object per line,
@@ -80,7 +127,7 @@ event. No drift instruments, no reasoning-stream telemetry — but a rich
 enough behavioural trace that several loss-relevant signals fall out of
 it directly.
 
-### 3.1 Accepted event shape (tolerant)
+### 4.1 Accepted event shape (tolerant)
 
 Each line is a JSON object. The event kind is read from `type`
 (fallbacks: `event_type`, `kind`). Recognised kinds and the fields the
@@ -114,7 +161,7 @@ Tolerance rules (honest, never-crash):
   field (a `model_usage` with no token keys adds `1` to `llm_call_count`
   and `0` tokens).
 
-### 3.2 The signal table
+### 4.2 The signal table
 
 How each event-log signal derives, and the drift-vocabulary signal it
 maps to. Every drift-style row is a `DriftCount(kind, severity, count)`
@@ -141,7 +188,7 @@ so a retry that brackets a failed response still counts. `args` are compared
 by their canonical JSON (`sort_keys=True`) so key ordering does not
 change the verdict.
 
-### 3.3 Capability tier — what `adk_events` CANNOT provide
+### 4.3 Capability tier — what `adk_events` CANNOT provide
 
 Honest tiers matter more than a long signal table. Relative to
 `goldfive`, an event log is strictly weaker:
@@ -168,7 +215,7 @@ nonetheless writes a structured trace: it recovers the failure/cost/loop
 envelope, which is most of what a tournament needs to rank candidates,
 while being explicit that the reasoning-quality signal is missing.
 
-## 4. Tier 3 — `transcript` (the floor)
+## 5. Tier 3 — `transcript` (the floor)
 
 No telemetry at all. The input is a bare transcript JSONL (lines of
 `{"role": "user"|"assistant", "content": "…"}`), or nothing. The
@@ -183,7 +230,7 @@ No telemetry at all. The input is a bare transcript JSONL (lines of
 
 Scoring degrades to **predicates + optional in-run judges only**.
 
-### 4.1 The degrade decision: explicit zero-drift, no renormalization
+### 5.1 The degrade decision: explicit zero-drift, no renormalization
 
 The drift channel is structurally `0.0` under `transcript`: with
 `drift_counts == ()` and `plan_revisions == 0`, `builtin_drift_loss`
@@ -212,7 +259,7 @@ real, useful mode (invariant/regression boards with no telemetry), and it
 degrades *honestly*: the operator sees a scalar with no drift component
 rather than a scalar that pretends drift was measured.
 
-### 4.2 Config-validation story (warn-or-refuse, preflight house style)
+### 5.2 Config-validation story (warn-or-refuse, preflight house style)
 
 A contract can *ask for* drift it cannot get — e.g. a `transcript`
 dialect with a non-default `namespace_weights["drift:"]`, a populated
@@ -241,7 +288,7 @@ A hard *refuse* gate on capability mismatch (mirroring the preflight
 `refuse` mode) is a natural follow-up but is intentionally not wired this
 wave — the default posture across zicato is recommend-only.
 
-## 5. Contract mechanics
+## 6. Contract mechanics
 
 The dialect is part of the **evaluation contract** — changing it selects
 champions under a different measurement rule, so it must roll the epoch.
@@ -272,7 +319,7 @@ as any other weight change does. The contract pins the dialect in both
 directions: setting it rolls, and reverting it to `goldfive` rolls back
 to the original hash.
 
-## 6. Determinism
+## 7. Determinism
 
 Every dialect is a **deterministic re-reduction of a durable file**
 (TELEMETRY.md §7 discipline): given the same JSONL and the same inputs,
@@ -290,7 +337,7 @@ Because dialects are pure re-reductions, a captured event log plus its
 known-answer `LossProfile` is a permanent regression fixture: re-reducing
 the committed fixture must reproduce the committed numbers to the bit.
 
-## 7. Out of scope this wave (follow-ups)
+## 8. Out of scope this wave (follow-ups)
 
 - **A hard `refuse` gate** on capability mismatch (§4.2).
 - **Additional dialects.** The registry is open; a new dialect is a new
@@ -307,7 +354,7 @@ any scoring change (a non-default value reintroduces the omitted contract
 key). It is still the first knob added under the declarative-knob-registry
 discipline (REIMPLEMENTATION.md Finding 3).
 
-## 8. Cross-references
+## 9. Cross-references
 
 | Topic | Document |
 |---|---|
