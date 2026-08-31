@@ -14,13 +14,11 @@ operator's primary debugging interface and stays that way. The
 index is a sidecar: a cache that makes the cross-cutting views
 fast without ever becoming the source of truth.
 
-The shape of this design was anticipated in
-[RATIONALE.md §7](RATIONALE.md#7-why-filesystem-layout-not-sqlite):
-"When pattern queries become a bottleneck, the right move is to
-add an index sidecar (one SQLite file used as a cache,
-regenerable from the filesystem), not to make the filesystem
-layout the index." This document is that index sidecar made
-concrete.
+[RATIONALE.md §7](RATIONALE.md#7-why-filesystem-layout-not-sqlite)
+sets the direction: when pattern queries become a bottleneck, add an
+index sidecar — one SQLite file used as a cache, regenerable from the
+filesystem — rather than making the filesystem layout itself the index.
+This document specifies that sidecar.
 
 This document covers:
 
@@ -70,8 +68,8 @@ its tournament-detail analytics (the hypothesis ledger, the
 mutation heat map, the cost panel — see
 [TOURNAMENT.md §4](TOURNAMENT.md#4-tournament-detail-analytics))
 are *all* cross-run aggregates, recomputed every time a panel
-refreshes. A file-walk per SSE update does not scale past a
-toy epoch.
+refreshes. A file-walk on every server-sent-events (SSE) update does not
+scale beyond a very small epoch.
 
 ### 1.2 What the index is
 
@@ -107,14 +105,14 @@ The cost of the cross-run question drops from
 ### 1.3 What the index is NOT
 
 - **Not the source of truth.** Every table is derived. If
-  `index.db` is deleted, `zicato repair index` reconstructs it exactly
+  `index.db` is deleted, `zicato repair index` reconstructs it in full
   from the filesystem. Nothing is lost.
 - **Not a write target for orchestration logic.** The
   orchestrator never *reads back* a decision from the index. The
   tournament gate reads `gen_score.json`; the resume protocol
   reads `experiment.json`; the proposer reads `patterns/*.json`.
-  All of those are files. The index is for *views*, not for
-  *control flow*.
+  All of those are files. The index serves *views*; control flow
+  never reads it.
 - **Not a replacement for the filesystem layout.** `ls`, `cat`,
   `grep`, `git diff` on `.zicato/` all still work and are still
   the operator's first-class interface. The index is additive.
@@ -122,23 +120,22 @@ The cost of the cross-run question drops from
   one file per run. The index holds *reduced* per-run features
   (the `LossProfile` projection), never raw events. See §6.
 
-The one-sentence summary: **the filesystem is canonical and
-human-legible; the index is derived and machine-fast; they never
-disagree because the index is always rebuildable from the
-files.**
+**The filesystem is canonical and human-legible; the index is derived
+and fast to query; the two never disagree, because the index is always
+rebuildable from the files.**
 
 ## 2. The discipline
 
-The index is only safe if three rules hold without exception.
+The index is only safe if four rules hold without exception.
 
 ### 2.1 Files are canonical
 
-Every fact has exactly one canonical home: a file under
+Every fact has a single canonical home: a file under
 `.zicato/`. `experiment.json` is the canonical Experiment.
 `loss.json` is the canonical LossProfile. `gen_score.json` is
 the canonical generation score. `lineage.json` is the canonical
-cross-epoch DAG. The index never holds a fact that did not come
-from one of these files.
+cross-epoch directed acyclic graph of generations. The index never
+holds a fact that did not come from one of these files.
 
 This means: a contributor adding a new artifact adds a new
 *file*, then optionally a new *index table* projecting it. The
@@ -167,7 +164,7 @@ correctness backstop:
 A rebuild is `O(total artifacts)` file reads — the same cost as
 *one* cross-run file-walk, paid once, after which every query is
 indexed. For a large workspace (multiple epochs, hundreds of
-generations) a full reindex is seconds, not minutes.
+generations) a full reindex takes seconds rather than minutes.
 
 ### 2.3 The orchestrator dual-writes live
 
@@ -221,28 +218,28 @@ subcommands `analyze` / `tournament` when run standalone) writes
 (§7). `zicato repair index` / `zicato repair generations` are writers,
 expected to run off the happy path while no `evolve` is in flight;
 they are not part of the live loop. SQLite's own file locking plus
-the WAL-mode posture (§6) are the concurrency backstop, consistent
+the write-ahead-log posture (§7) are the concurrency backstop, consistent
 with the single-writer-per-file rule the rest of the runtime layer
 follows (see [RUNTIME.md](RUNTIME.md)).
 
 ## 3. Schema
 
 The schema is defined authoritatively in
-`src/zicato/index/schema.py` as plain SQL DDL (kept as SQL strings,
-not an ORM, precisely so the Rust supervisor can mirror it
-verbatim). The current `SCHEMA_VERSION` is **14** (additive migrations
-have since added, among others, the `generations.elo*` visibility-rating
-columns — §3.2 — and the v14 `ingest_cursors` self-heal table, §5.2).
-That module is the contract; this section documents it.
+`src/zicato/index/schema.py` as plain SQL DDL, kept as SQL strings
+rather than an ORM so the Rust supervisor can mirror it verbatim. The
+current `SCHEMA_VERSION` is **14**, which includes, among others, the
+`generations.elo*` visibility-rating columns (§3.2) and the
+`ingest_cursors` self-heal table (§5.2). That module is the contract;
+this section documents it.
 
-The index has **thirteen tables** — nine mirroring the artifact
+The index has **thirteen tables**. Nine mirror the artifact
 hierarchy: `epochs` → `generations` → `experiments` → `patches`, and
 `generations` → `runs` → `loss_profiles` / `metric_counts` /
-`judge_losses`, with `tournaments` as the per-round comparison
-record — plus the two reflection tables added at schema v11
-(`reflections`, `judge_scorecards`), the `pareto_frontier`
-projection added at v13, and the `ingest_cursors` self-heal table
-added at v14 (§5.2). The last is the one table that is not a
+`judge_losses`, with `tournaments` as the per-round comparison record.
+The remaining four are the two reflection tables added at schema v11
+(`reflections`, `judge_scorecards`), the `pareto_frontier` projection
+added at v13, and the `ingest_cursors` self-heal table added at v14
+(§5.2). `ingest_cursors` is the one table that is not a
 projection of a canonical file: it records *what the workspace
 looked like* when each epoch was last projected, so divergence is
 detectable without re-deriving every row.
@@ -316,8 +313,8 @@ One row per generation directory under any epoch.
 | `elo_games` | INTEGER NULL | settled observations folded into the fit (schema v10) — two-competitor duels plus racing rung group observations |
 
 Primary key `(epoch_id, generation_id)`. The `parent_generation_id`
-and `promoted` columns are exactly the two that the targeted
-`zicato repair generations` repair rewrites (§4.3) — they are the
+and `promoted` columns are the two that the targeted
+`zicato repair generations` command rewrites (§4.3) — they are the
 fields a buggy live dual-write was observed to leave stale. The `elo*`
 columns are a **read-only analytics fold** (`src/zicato/index/elo.py`),
 re-derived from scratch at every reindex and read only by the display
@@ -342,14 +339,13 @@ the `v0` baseline, which has no experiment).
 | `pass_rate_delta` | REAL | `outcome.pass_rate_delta` |
 | `outcome_json` | TEXT (JSON) | the full resolved `outcome` block, verbatim |
 
-Primary key `(epoch_id, generation_id)`. The detail the index does
-not give a dedicated column — mutation-point ids, the
-expected-pass-rate band, the per-kind hypothesis match — lives
-inside the `hypothesis_json` / `outcome_json` blobs and is reached
-with SQLite's JSON functions (`json_extract`, `json_each`); the
-mutation heat map in
+Primary key `(epoch_id, generation_id)`. The detail the index gives no
+dedicated column — mutation-point ids, the expected-pass-rate band, the
+per-kind hypothesis match — lives inside the `hypothesis_json` and
+`outcome_json` blobs, reached with SQLite's JSON functions
+(`json_extract`, `json_each`). The mutation heat map in
 [TOURNAMENT.md §4.5](TOURNAMENT.md#45-mutation-heat-map) reads the
-modulating ids out of `hypothesis_json` this way rather than from a
+modulating ids out of `hypothesis_json` that way rather than from a
 separate column.
 
 ### 3.4 `patches`
@@ -362,15 +358,14 @@ One row per `patches/{patch_id}.json` file.
 | `epoch_id` | TEXT | (FK) |
 | `generation_id` | TEXT | (FK → `generations`) |
 | `mutation_id` | TEXT | patch `mutation_id` |
-| `op` | TEXT | `replace` (the v0 op) |
+| `op` | TEXT | the patch's `op` — `replace`, `set_numeric`, or `set_enum` |
 | `rationale` | TEXT | patch `rationale` |
 
-Patch *content* (`new_content`, `new_numeric`, `new_enum`) is
-deliberately **not** indexed — it can be large and is never a
-query key. An operator inspecting patch content opens the
-canonical `patches/{patch_id}.json` file (or runs
-`zicato show`). The index holds only what gets filtered or
-joined on.
+Patch *content* (`new_content`, `new_numeric`, `new_enum`) is **not**
+indexed: it can be large and is never a query key. An operator
+inspecting patch content opens the canonical
+`patches/{patch_id}.json` file (or runs `zicato show`). The index holds
+only what gets filtered or joined on.
 
 ### 3.5 `runs`
 
@@ -395,8 +390,8 @@ carried by the run's generation: the parent and child generations
 each get their own run row, and `tournament_id` ties both to the
 round they were scored in. `tournament_id` is one of the v2-added
 columns (§4.2), indexed by `idx_runs_tournament`. The harmonograf
-drill-down join key is the run's `adk_session_id` (stamped into
-`loss.json` by the reducer, not stored as an index column) — see
+drill-down join key is the run's `adk_session_id`; the reducer stamps
+it into `loss.json`, and no index column holds it. See
 [TOURNAMENT.md §5](TOURNAMENT.md#5-the-harmonograf-split) and §6
 below.
 
@@ -446,8 +441,9 @@ dicts; storing them unpivoted makes them `GROUP BY`-able.
 | `count` | REAL | the count |
 
 No primary key declared; the table is reached by `run_id` (the
-`idx_metric_run` index) and aggregated. The drift-kind heatmap in
-[DASHBOARD.md §4.6](DASHBOARD.md#46-drift-kind-heatmap) is a
+`idx_metric_run` index) and aggregated. The drift-kind heatmap on the
+dashboard's epoch view
+([DASHBOARD.md §4.4](DASHBOARD.md#44-the-epoch-level)) is a
 `SUM(count) GROUP BY name` over this table joined to `runs` for the
 round; the custom-judge `namespace` rows give the same view sliced
 by `judge_name` rather than by `DriftKind`. The per-judge weighted
@@ -517,16 +513,16 @@ zicato repair index [--workspace <path>]
 `--epoch` and no `--verify` — `reindex` always rebuilds the whole
 workspace.
 
-It is also no longer the *routine* path. `zicato evolve` builds an
-absent index and heals a diverged one at its own start (§5), so an
-operator reaches for `reindex` only in the situations §5.4 names.
+It is not the *routine* path. `zicato evolve` builds an absent index
+and heals a diverged one at its own start (§5), so an operator reaches
+for `reindex` only in the situations §5.4 names.
 
 ### 4.1 Behaviour
 
 `reindex`:
 
 1. Opens (or creates) `.zicato/index.db`.
-2. Drops the database and re-applies the v2 schema (§3) — the
+2. Drops the database and re-applies the current schema (§3) — the
    canonical build path (`rebuild_index`) starts from a clean file.
 3. Walks `.zicato/lineage.json`, then every
    `.zicato/epochs/{epoch}/` directory: every `experiment.json`,
@@ -541,7 +537,7 @@ $ zicato repair index
 [reindex] indexed 2 epochs, 13 generations, 130 runs
 ```
 
-### 4.2 Schema versioning, not a `--verify` flag
+### 4.2 Schema versioning drives the rebuild
 
 The shipped `reindex` does not have a `--verify` integrity mode and
 does not take an `--epoch` scope. The discipline in §2 (canonical
@@ -549,12 +545,12 @@ file first, index row second) is what keeps the index from ever
 going *ahead* of the files; a behind index is fixed by a plain
 `reindex` (or by the next incremental `ingest_*`).
 
-Schema versioning is the mechanism that makes a rebuild
-recognisably necessary. `SCHEMA_VERSION` is **14**, stamped into
-`PRAGMA user_version` and the `schema_meta` table by `apply_schema`.
-An index whose stamped version is *older* than this build's no longer
-waits for an operator to notice — `ensure_index` rebuilds it at the
-next `evolve` start or dashboard start (§5.1).
+Schema versioning is the mechanism that makes a rebuild recognisably
+necessary. `SCHEMA_VERSION` is **14**, stamped into `PRAGMA
+user_version` and the `schema_meta` table by `apply_schema`. An index
+whose stamped version is *older* than this build's does not wait for an
+operator to notice: `ensure_index` rebuilds it at the next `evolve`
+start or dashboard start (§5.1).
 The v1 → v2 migration added five things:
 
 - `epochs.goal`
@@ -567,7 +563,7 @@ When a newer writer opens an older v1 file, `apply_schema` performs
 the additive `ALTER TABLE` column adds in place (the `judge_losses`
 table is created by the ordinary `CREATE TABLE IF NOT EXISTS` pass),
 so incremental writes proceed without forcing a rebuild. A full
-`reindex` drops the file and re-applies the v2 DDL outright.
+`reindex` drops the file and re-applies the current DDL outright.
 
 ### 4.3 `zicato repair generations` — targeted repair
 
@@ -577,10 +573,10 @@ Alongside the full rebuild, zicato ships a narrow repair command:
 zicato repair generations [--workspace <path>]
 ```
 
-It reconciles **only** the `generations` table from disk. It was
-added for workspaces whose `generations` rows were written by a
-buggy live dual-write — `parent_generation_id` left NULL and
-`promoted` clamped to `0` on every row except the seed. It walks
+It reconciles **only** the `generations` table from disk. It exists
+for workspaces whose `generations` rows were written by a buggy live
+dual-write, which left `parent_generation_id` NULL and clamped
+`promoted` to `0` on every row except the seed. It walks
 `lineage.json` plus every `experiment.json` and rewrites only the
 `parent_generation_id` and `promoted` columns of each `generations`
 row; the rest of the index is untouched. It is idempotent and
@@ -597,9 +593,9 @@ Because the index can only ever be *behind* the filesystem
 re-derives (via the incremental `ingest_*` path, or a full
 `reindex`) any rows for rounds that completed on disk but crashed
 before their index write. The resume protocol then proceeds against the
-canonical files as it always has; the index is brought current
-purely so the dashboard's analytics are correct from the first
-SSE frame after restart.
+canonical files; the index is brought current only so the dashboard's
+analytics are correct from the first server-sent-events frame after
+restart.
 
 ## 5. Self-healing: the index maintains itself
 
@@ -609,15 +605,15 @@ specifies the three mechanisms that make that true, the literal
 seam signatures they add, the cursor schema they persist, and the
 concurrency rule that governs when a heal or a build may run.
 
-The motivating defect is not cosmetic. The proposer reads the
-index *during* `evolve`: `prior_experiments_for_epoch` supplies the
+The staleness these mechanisms close costs loop quality. The proposer
+reads the index *during* `evolve`: `prior_experiments_for_epoch` supplies the
 experiment memory, and the mutation track record supplies the
 per-mutation-point hit rate. A stale index does not fail loudly —
 it silently returns *fewer* prior experiments, and the loop
 degrades in quality with no error anywhere. Keeping the index
-current is a loop-quality property, not a convenience.
+current is a loop-quality property rather than a convenience.
 
-### 5.1 M1 — absent-or-older index auto-builds, temp-then-rename
+### 5.1 An absent or older index rebuilds itself, temp-then-rename
 
 ```python
 # zicato.index.ingest
@@ -640,25 +636,26 @@ when — one of three things is true:
 | the file is not a readable SQLite database | `built:unreadable` |
 | none of the above | `present` |
 
-An **equal-version** database is never rebuilt by M1. Detecting
-that its *contents* drifted from the workspace is M2's job (§5.2);
-M1 answers only the structural question "is there a database of the
-right shape here at all".
+An **equal-version** database is never rebuilt by this rule. Detecting
+that its *contents* drifted from the workspace belongs to the cursor
+validation and heal (§5.2); the auto-build answers only the structural
+question "is there a database of the right shape here at all".
 
 A **newer** database — `user_version` > `SCHEMA_VERSION` — raises
 `IndexSchemaNewerError` with its existing actionable message.
 Auto-deleting a newer index is forbidden: the newer build's columns
-and semantics are unknown to this one, and the recovery (upgrade
-zicato, or delete deliberately) belongs to the operator.
+and semantics are unknown to this one, and the recovery — upgrade
+zicato, or delete the file as an explicit choice — belongs to the
+operator.
 
 Whole-table additions are why an older-version database is rebuilt
 rather than migrated. `apply_schema`'s in-place migrator can add a
 column, but it cannot *populate* a table that did not exist — the
 v11 reflection tables and the v13 `pareto_frontier` table both
 landed empty on an in-place open and stayed empty until a rebuild.
-A full rebuild is the only shape that backfills them, so M1 does
-the rebuild rather than leaving a technically-current database with
-silently empty tables.
+A full rebuild is the only shape that backfills them, so the
+auto-build rebuilds rather than leaving a technically-current database
+with silently empty tables.
 
 **Temp-then-rename.** Every build — `ensure_index`'s and
 `rebuild_index`'s alike — goes through one private helper:
@@ -671,19 +668,19 @@ def _build_index_atomically(workspace_root: Path, target: Path) -> None:
     # 4. os.replace({target}.{pid}.{uniq}.tmp, target)
 ```
 
-**Two properties of that sequence are load-bearing, and both were
-learned the hard way.**
+**Two properties of that sequence are load-bearing.**
 
-*The scratch path is per-build, not `{target}.tmp`.* Builders are not
-serialised against each other: evolve builds under the workspace lock,
-but the dashboard's build (§5.3) only *skips when it observes* a held
-lock, so two dashboards — or one that lost the read/build window to a
-starting evolve — both build. A build is not a moment, and on a shared
-scratch path the overlap is destructive rather than merely wasteful:
-the second builder's cleanup unlinks the inode the first is still
-writing into, the first's `os.replace` then publishes whatever now sits
-at the path (the second's *half-built* database), and the sidecar
-cleanup deletes the WAL holding the rest of it. The observed result was
+*The scratch path is per-build rather than a fixed `{target}.tmp`.*
+Builders are not serialised against each other. `evolve` builds under
+the workspace lock, but the dashboard's build (§5.3) only *skips when
+it observes* a held lock, so two dashboards both build, as does one
+that lost the read-and-build window to a starting `evolve`. A build
+takes time rather than happening at an instant, and on a shared scratch
+path the overlap is destructive rather than merely wasteful. The second
+builder's cleanup unlinks the inode the first is still writing into;
+the first's `os.replace` then publishes whatever now sits at the path,
+which is the second's *half-built* database; and the sidecar cleanup
+deletes the write-ahead log holding the rest of it. The observed result was
 a valid, **empty** `index.db` — `user_version=0`, zero tables —
 installed by the self-healing path itself, with no exception raised
 anywhere. A partial rather than empty build lands the worse shape: a
@@ -692,17 +689,18 @@ to rebuild. With a per-build path the race costs duplicated work and
 nothing else — each builder derives a complete database into its own
 file and the rename publishes one of them whole. Unique names give up
 the fixed name's accidental self-cleaning, so a sweep reclaims scratch
-whose stamped PID is no longer alive; a *live* builder's scratch is
-never touched, or the race would be back.
+whose stamped process id is dead; a *live* builder's scratch is never
+touched, or the race would be back.
 
-*The outgoing sidecars are cleared BEFORE the rename, not after.* A WAL
-left beside a database it does not belong to is **replayed, not
-ignored**. SQLite validates WAL frames with an internal checksum chain
-seeded from the WAL header's own salts, with nothing tying them to the
-main file, so a complete WAL from the database that used to be at this
-path is accepted and recovered over the one that just replaced it —
-page 1 included, carrying `user_version` and the whole schema. Clearing
-the sidecars afterwards leaves a window in which exactly that pair is
+*The outgoing sidecars are cleared BEFORE the rename rather than after
+it.* A write-ahead log (WAL) left beside a database it does not belong
+to is **replayed rather than ignored**. SQLite validates WAL frames
+with an internal checksum chain seeded from the WAL header's own salts,
+and nothing ties those frames to the main file. So a complete WAL left
+by the database that occupied this path before the rename is accepted
+and recovered over the one that just replaced it, page 1 included,
+carrying `user_version` and the whole schema. Clearing
+the sidecars afterwards leaves a window in which that pair is
 on disk: a crash inside it, or a reader that opens the pair and
 *checkpoints* the foreign frames into the new file, silently resurrects
 the **old** index in place of the new one. `PRAGMA integrity_check`
@@ -710,24 +708,23 @@ returns `ok` — it is a perfectly valid database, just the wrong one.
 Clearing first means the new inode never coexists with a sidecar that
 is not its own.
 
-This structurally retires a whole defect class. The previous shape
-unlinked `index.db` *first* and then built in place, so any failure
-during the build — an unreadable canonical record, a disk-full, a
-Ctrl-C — left the operator with a schema-only file and every table
-empty, along the very path they had run to *recover* a bad index.
-Under temp-then-rename a failed build leaves the existing database
-byte-untouched. `rebuild_index` is refactored onto the same helper:
-`zicato repair index` keeps its behaviour (a full re-derivation from the
-files) minus the destroy-on-failure hazard.
+Building into a temp file retires a whole defect class. Building in
+place would mean unlinking `index.db` first. Any failure during the
+build — an unreadable canonical record, a full disk, a Ctrl-C — would
+then leave the operator with a schema-only file and every table empty,
+along the very path they ran to *recover* a bad index. Under temp-then-rename
+a failed build leaves the existing database byte-untouched.
+`rebuild_index` goes through the same helper, so `zicato repair index`
+performs a full re-derivation from the files with no destroy-on-failure
+hazard.
 
-The frontier-projection guard added earlier — warn and skip on a
-corrupt `pareto_frontier.json` rather than raise — stays exactly as
-it is *inside* the build. Temp-then-rename and the in-build guard
-are complementary: the guard keeps one bad record from aborting the
-build; the rename keeps an aborted build from destroying the old
-database.
+The frontier-projection guard — warn and skip on a corrupt
+`pareto_frontier.json` rather than raise — sits *inside* the build.
+The guard and temp-then-rename are complementary: the guard keeps one
+bad record from aborting the build; the rename keeps an aborted build
+from destroying the existing database.
 
-### 5.2 M2 — per-epoch cursors, validation, and incremental heal
+### 5.2 Per-epoch cursors, validation, and incremental heal
 
 Schema **v14** adds one additive table.
 
@@ -758,20 +755,19 @@ Each is compared against the matching **workspace** signal:
 `generations/*/runs/*/`, and the other three against themselves as
 they were at the last projection.
 
-**The `Stamped from` column is the load-bearing one, and the split is
-not arbitrary.** A cursor is only useful if it says something the
-workspace does not already say.
+**The `Stamped from` column is the load-bearing one.** A cursor is
+useful only when it says something the workspace does not already say.
 
 *Index-stamped, where a 1:1 counterpart exists.* `experiments_count`
 and `runs_count` record what this index actually **holds**, so a
 comparison against the workspace detects rows that were never
 projected. Stamping them from the workspace instead is what made a
-crashed dual-write invisible: `_refresh_cursor` runs after every
-incremental `ingest_*`, so a workspace-stamped count recorded the
-files that were *on disk* — including any the crashed write never
-projected — and the epoch then validated clean **forever** against an
-index that did not hold them. A self-consistent lie, which is the one
-failure mode a staleness signal must not have.
+crashed dual-write invisible. `_refresh_cursor` runs after every
+incremental `ingest_*`, so a workspace-stamped count recorded the files
+that were *on disk*, including any the crashed write never projected.
+The epoch then validated clean **forever** against an index that did
+not hold them. That state is self-consistent and wrong,
+which is the one failure mode a staleness signal must not have.
 
 *Workspace-stamped, where no counterpart exists.* The index has
 nothing to count for the other three: nothing projects `rounds/` at
@@ -786,9 +782,9 @@ last projected", and a change since then is the divergence.
 by an experiment; if a round's runs reduced but the process died before
 `ingest_run` projected them, no other count moves.
 
-The counts are deliberately **cheap**: directory-entry counts and
-stats, never a file parse. `lineage.json` is read once for the whole
-workspace, not once per epoch. Validation must be affordable enough to
+Every count is **cheap**: directory-entry counts and stats, never a
+file parse. `lineage.json` is read once for the whole workspace rather
+than once per epoch. Validation must be affordable enough to
 run at every `evolve` start on a large workspace, which rules out
 re-deriving row content to compare it.
 
@@ -796,7 +792,7 @@ The honest cost of index-stamping: a canonical file the projection
 cannot read — `_load_loss_profile` returns `None` on a malformed
 `loss.json` — is counted by the workspace signal and yields no row, so
 the epoch stays divergent and is re-projected once per `evolve` start.
-Bounded, and correct in the sense that matters: the index genuinely
+The cost is bounded, and correct in the sense that matters: the index
 cannot represent that file, and saying so repeatedly beats recording
 that it can.
 
@@ -826,18 +822,18 @@ Three things count as divergence:
    signals,
 3. an epoch the **index still holds rows for** that is gone from the
    workspace. This set is the union of the cursor table and
-   `SELECT DISTINCT epoch_id FROM epochs`, not the cursor table alone:
-   a cursor-driven test can only find epochs some cursor-writing path
-   already visited, so a v13 database migrated *in place* by the
-   incremental writers — populated tables, zero cursors — would orphan
-   any of its since-deleted epochs permanently, with `heal_index`
-   reporting nothing to do.
+   `SELECT DISTINCT epoch_id FROM epochs`, rather than the cursor table
+   alone. A cursor-driven test can only find epochs that some
+   cursor-writing path already visited. A v13 database migrated *in
+   place* by the incremental writers — populated tables, zero cursors —
+   would therefore orphan any of its deleted epochs permanently, with
+   `heal_index` reporting nothing to do.
 
-`heal_index` re-ingests exactly those epochs and returns the ids it
-healed. For each one it deletes that epoch's rows and re-projects
+`heal_index` re-ingests those epochs and no others, and returns the
+ids it healed. For each one it deletes that epoch's rows and re-projects
 via the existing `_rebuild_epoch` machinery; for case 3 it deletes
 and stops. The delete is epoch-scoped across **every** table, which
-matters because four of them carry no `epoch_id` column and must be
+matters because three of them carry no `epoch_id` column and must be
 reached through a subquery:
 
 | Table | Epoch-scoped delete |
@@ -851,7 +847,7 @@ deletes that would strip their lookup rows.
 
 After the last epoch is re-projected, `heal_index` re-runs the Elo
 fold over the whole database. The `generations.elo*` columns are a
-cross-epoch analytics fold, not per-epoch rows — deleting and
+cross-epoch analytics fold rather than per-epoch rows — deleting and
 re-inserting one epoch's generations nulls them, and only a
 whole-ledger re-fold restores what a from-scratch rebuild would
 have produced.
@@ -860,11 +856,11 @@ have produced.
 must agree. The determinism test corrupts an index (drops one
 epoch's rows), heals it, and asserts the SQL `.dump` equals a
 from-scratch rebuild's `.dump`. Two cells are outside the pin, both
-for the same reason — they are observational, not derived:
+for the same reason — they are observational rather than derived:
 
 - `ingest_cursors.last_ingested_at` is a wall clock, normalised to
-  `<TS>` exactly as the REINDEX-DUMP parity gate already normalises
-  every ISO timestamp in the dump.
+  `<TS>` in the same way the REINDEX-DUMP parity gate already
+  normalises every ISO timestamp in the dump.
 - SQLite **rowid assignment order** differs when a heal re-inserts
   one epoch of several into a non-empty table. Convergence is
   therefore *content* identity (DDL in order, INSERT statements as
@@ -878,11 +874,11 @@ byte-identical between the two paths. That is what makes the heal
 safe to run automatically: it cannot produce an index a rebuild
 would not have produced.
 
-### 5.3 M3 — the routine paths, and the concurrency rule
+### 5.3 The routine paths, and the concurrency rule
 
 **(a) `evolve` start.** The `evolve_n_rounds` preflight runs
-`ensure_index` then `heal_index` under `best_effort`, and emits
-exactly one log line naming what it did:
+`ensure_index` then `heal_index` under `best_effort`, and emits a
+single log line naming what it did:
 
 ```
 index: built fresh (absent)
@@ -890,33 +886,32 @@ index: healed epochs 2026-08-02_e1, 2026-08-02_e2
 index: fresh
 ```
 
-Render conformance: the heal says what it did, never just that it
-ran. A fresh build makes the subsequent heal redundant (the build
-writes every cursor), so the two are reported as alternatives, not
-in sequence.
+Render conformance: the log line says what the heal did rather than
+only that it ran. A fresh build makes the following heal redundant,
+because the build writes every cursor, so the log reports the two as
+alternatives rather than in sequence.
 
 The seam sits immediately **after** `acquire_workspace_lock` and
-before `prepare_resume` — not beside the concurrency-report line a
-few statements earlier, which runs *outside* the lock. See the
+before `prepare_resume`, rather than beside the concurrency-report line
+a few statements earlier, which runs *outside* the lock. See the
 concurrency rule below for why that placement is load-bearing.
 
 This is the loop-quality fix named at the top of §5: the proposer's
 experiment memory and mutation track record read the index later in
 the same invocation, and they now read a current one.
 
-It also closes a smaller, previously-invisible staleness. §2.3's
-ordering rule writes the canonical file first and the index row
-second, and the orchestrator appends to `lineage.json` *after* the
-`ingest_experiment` dual-write — so the two `generations` columns the
-index takes from lineage, `created_at` and `round_index`, land empty
-on the live write and stay that way. Nothing errors; the round simply
-leaves a generation with an unknown birth round. Before this feature
-they stayed empty until an operator happened to run `zicato repair index`.
-Now the next round's preflight sees the epoch's
-`lineage_generations_count` move and fills them in. It is also why an
-epoch reads as diverged at the *end* of a run: that is the dual-write
-ordering showing through, not a defect in the cursor, and the heal
-that follows is a genuine correction rather than redundant work.
+It also closes a smaller staleness that nothing else surfaces. §2.3's
+ordering rule writes the canonical file first and the index row second,
+and the orchestrator appends to `lineage.json` *after* the
+`ingest_experiment` dual-write. The two `generations` columns the index
+takes from lineage, `created_at` and `round_index`, therefore land
+empty on the live write and stay that way. Nothing errors; the round simply
+leaves a generation with an unknown birth round. The next round's
+preflight sees the epoch's `lineage_generations_count` move and fills
+the two columns in. That ordering is also why an epoch reads as
+diverged at the *end* of a run: the dual-write order is showing
+through rather than the cursor being wrong, and the heal that follows
+is a real correction rather than redundant work.
 
 **(b) The dashboard / query read path.** `run()` calls `ensure_index`
 **only**, once at server start, never per request. The seam is `run`
@@ -924,20 +919,20 @@ rather than `create_app` because `run` is the process-start path both
 real launches come through, and building an ASGI app must not have
 filesystem side effects.
 
-There is deliberately **no schema-version pre-check** in front of that
-call. An earlier shape asked `index_schema_version(...) ==
-SCHEMA_VERSION` first and returned when it matched — cheap, but it
-decided the question `ensure_index` exists to decide, and decided it
-differently: on a file that is not a SQLite database at all the
-pre-check *raises*, the best-effort guard swallows it, and the
-dashboard never repairs it. `_rebuild_reason` classifies that same file
-as `unreadable` and rebuilds, so the `built:unreadable` outcome §5.1
-documents was unreachable from this path precisely because the cheap
-check ran in front of the one that classifies it. `ensure_index`
-returns without writing when the index is current, which is all the
-pre-check bought.
+No **schema-version pre-check** sits in front of that call. A
+pre-check that asked `index_schema_version(...) == SCHEMA_VERSION`
+first and returned on a match would be cheap, but it would decide the
+question `ensure_index` exists to decide, and decide it differently. On
+a file that is not a SQLite database at all such a pre-check *raises*,
+the best-effort guard swallows the exception, and the dashboard never
+repairs the file; `_rebuild_reason` classifies that same file as
+`unreadable` and rebuilds it. A pre-check would therefore put the
+`built:unreadable` outcome §5.1 documents out of reach from this path,
+by running the cheap check in front of the one that classifies the
+file. `ensure_index` returns without writing when the index is current,
+which is all such a pre-check would buy.
 
-A full heal is deliberately *not* on the read path. Healing writes;
+A full heal stays off the read path. Healing writes;
 a reader that heals while an orchestrator dual-writes is the
 contention case the single-writer rule (§2.4) exists to prevent,
 and it would put a multi-second workspace walk in front of the
@@ -972,10 +967,9 @@ exists to avoid. The dashboard renders its degraded empty state for
 one page load and picks the index up on its next start.
 
 `zicato repair index` remains an explicit operator action and is not
-lock-gated — it is the forensic tool, run deliberately off the
-happy path, and §2.4 already states the expectation that it runs
-while no `evolve` is in flight. What changed is that it is no
-longer *destructive* when it fails (§5.1).
+lock-gated. It is the forensic tool, run off the happy path, and §2.4
+states the expectation that it runs while no `evolve` is in flight. A
+run of it that fails leaves the existing database untouched (§5.1).
 
 ### 5.4 What still requires `zicato repair index`
 
@@ -984,18 +978,18 @@ the explicit command:
 
 - **Downgrade recovery.** A database written by a newer zicato
   raises `IndexSchemaNewerError`; auto-deleting it is forbidden, so
-  the operator deletes it and rebuilds deliberately.
+  the operator deletes it and rebuilds by hand.
 - **Post-surgery rebuilds — the content-hash residual.** After
   hand-editing canonical files in a way the cheap signals cannot see.
-  Every signal is a **count**, so the residual is exactly *content
-  change at constant cardinality*, and it has two shapes:
+  Every signal is a **count**, so the residual is *content change at
+  constant cardinality*, and it has two shapes:
 
   1. **Value edits.** Correcting a field **inside** an
      `experiment.json` or a `loss.json`. No count moves.
   2. **Set swaps.** Removing one file while adding another —
      deleting generation `v2` and creating `v9`, with its run,
      leaves `experiments_count`, `runs_count` and the lineage count
-     all exactly where they were.
+     all unchanged.
 
   Adding `runs_count` did **not** close shape 2, and it was not
   expected to: a swap is symmetric in every count by construction.
@@ -1003,7 +997,7 @@ the explicit command:
   or a per-file hash), which is the one thing §5.2's cost rule rules
   out — validation runs at every `evolve` start. Neither shape is
   reachable from the loop, which only ever appends; both are
-  reachable from a human with an editor, which is exactly when the
+  reachable from a human with an editor, which is when the
   operator knows to reach for this command. A full rebuild
   re-derives the changed cells.
 - **Determinism assertion.** Proving the index equals a pure
@@ -1014,18 +1008,18 @@ the explicit command:
 
 ## 6. Where SQLite is, and is NOT, used
 
-zicato has three distinct storage concerns. SQLite is the right
-answer for exactly one of them. This section draws the lines
-explicitly because "use SQLite" is a tempting default that would
-be wrong for the other two. The same three-way split is laid out
-from the storage side in
-[STORAGE.md §7](STORAGE.md#7-three-storage-concerns).
+zicato has three distinct storage concerns, and SQLite is the right
+answer for one of them. This section draws the lines because "use
+SQLite" is a tempting default that would be wrong for the other two.
+[STORAGE.md §2](STORAGE.md#2-the-settled-mechanism-for-each-kind)
+lays out the same split from the storage side, across the five kinds
+of data a workspace persists.
 
 | Concern | Substrate | Why not SQLite |
 |---|---|---|
-| **Generation source trees** | git (v0+1) / directory snapshots (v0) | The data is intrinsically file-shaped; git is the file-shaped versioner and gives `diff` / `log` / `blame` / `bisect` for free. SQLite blobs would give smaller storage and *no tooling*. See [STORAGE.md](STORAGE.md). |
+| **Generation source trees** | git commits, or directory snapshots | The data is intrinsically file-shaped; git is the file-shaped versioner and gives `diff` / `log` / `blame` / `bisect` for free. SQLite blobs would give smaller storage and *no tooling*. See [STORAGE.md](STORAGE.md). |
 | **Per-run event capture** | `events.jsonl`, one file per run | The access pattern is append-while-running, tail-for-the-log-panel, stream-to-SSE, and replay-once in the reducer. An append-only line-delimited file wins every one of those. A row-per-event SQLite table would add write contention during the run and buy nothing — events are never queried *across* runs (the reducer's `LossProfile` is). See [TELEMETRY.md](TELEMETRY.md). |
-| **Cross-run analytical views** | `.zicato/index.db` — **SQLite** | The access pattern is `GROUP BY` / `JOIN` over reduced features across many generations. This is exactly what a relational index is for. |
+| **Cross-run analytical views** | `.zicato/index.db` — **SQLite** | The access pattern is `GROUP BY` / `JOIN` over reduced features across many generations. This is what a relational index is for. |
 
 The principle: SQLite is used for the **derived, queried,
 cross-cutting** layer, and *only* there. Source trees go to git;
@@ -1034,7 +1028,7 @@ it projects *from* them. A run's `events.jsonl` is reached from
 its index row by reconstructing the path from the run coordinate
 (`{epoch}/generations/{gen}/runs/{entry}/events.jsonl`); the
 harmonograf drill-down uses the run's `adk_session_id` (in
-`loss.json`). The index holds the *reduced* features, not the
+`loss.json`). The index holds the *reduced* features rather than the
 events.
 
 ### 6.1 Ecosystem consistency
@@ -1049,7 +1043,7 @@ as a *derived/served* store rather than a primary one:
   use `SqliteSink` for capture (it uses `JSONLPersistenceSink`,
   per [TELEMETRY.md](TELEMETRY.md)) — but the existence of
   `SqliteSink` shows the ecosystem already treats SQLite as a
-  legitimate analytical destination, not a foreign element.
+  legitimate analytical destination rather than a foreign element.
 - **harmonograf**'s server stores its run records in SQLite —
   the live console reads its served data from a SQLite database.
 
@@ -1058,9 +1052,8 @@ as a fast, queryable projection, downstream of a canonical
 representation. Where zicato differs from `SqliteSink` is the
 *role*: `SqliteSink` is a capture sink (a writer in the live
 event path); `index.db` is an analytical index (a derived view,
-never in the event path). The two are not interchangeable, and
-zicato deliberately picks the JSONL sink for capture and the
-SQLite index for views.
+never in the event path). The two are not interchangeable: zicato
+uses the JSONL sink for capture and the SQLite index for views.
 
 ## 7. The Rust supervisor reads the same `index.db`
 
@@ -1092,7 +1085,7 @@ Properties of the supervisor's read path:
 - **Read-only handle.** The supervisor opens the database with
   `SQLITE_OPEN_READ_ONLY`. It is structurally incapable of
   writing the index. The single-writer rule (§2.4) is enforced
-  by the open mode, not just by convention.
+  by the open mode rather than by convention alone.
 - **WAL mode.** The orchestrator opens the database in
   write-ahead-log mode (`PRAGMA journal_mode=WAL`). WAL lets the
   supervisor's reads proceed concurrently with the
@@ -1114,13 +1107,13 @@ Properties of the supervisor's read path:
   fails on a missing index.
 
 Why the supervisor reads the index rather than walking the
-filesystem itself: the supervisor is deliberately kept simple
+filesystem itself: the supervisor is kept simple
 and LLM-free (see [ROBUSTNESS.md §2.4](ROBUSTNESS.md#24-l4-orchestrator-watchdog-rust-supervisor)).
 Re-implementing the JSON-walk-and-aggregate logic in Rust would
 duplicate the projection rules that the Python dual-write
 already encodes, and the two would inevitably drift. Reading the
-shared `index.db` means the projection logic lives in exactly
-one place (the Python dual-write), and the supervisor consumes
+shared `index.db` means the projection logic lives in one
+place (the Python dual-write), and the supervisor consumes
 its output. The schema in §3 is the contract between the two
 processes.
 
@@ -1129,8 +1122,8 @@ processes.
 | Topic | Document |
 |---|---|
 | The original "add an index sidecar" prediction | [RATIONALE.md §7](RATIONALE.md#7-why-filesystem-layout-not-sqlite) |
-| The three storage concerns, from the storage side | [STORAGE.md §7](STORAGE.md#7-three-storage-concerns) |
-| Generation trees → git (v0+1 roadmap) | [STORAGE.md](STORAGE.md) |
+| The storage concerns, from the storage side | [STORAGE.md §2](STORAGE.md#2-the-settled-mechanism-for-each-kind) |
+| Generation trees stored as git commits | [STORAGE.md](STORAGE.md) |
 | Event capture → `events.jsonl` (no SQLite) | [TELEMETRY.md](TELEMETRY.md) |
 | The `LossProfile` shape the index projects | [TELEMETRY.md](TELEMETRY.md), [SCORING.md §2](SCORING.md#2-the-metric-channels) |
 | `experiment.json` / `gen_score.json` the index derives from | [EPOCHS-AND-JOURNALING.md §3](EPOCHS-AND-JOURNALING.md#3-the-experiment) |
