@@ -58,14 +58,11 @@ function envelopeBelongsToEpoch(epochId) {
   return true; // no epoch tag ⇒ the untagged single-epoch shape; trust it.
 }
 
-// Is a run LIVE right now, for the epoch on screen? This is what every
-// present-tense claim consumes: the projected scalars, the PROJ badges and
-// progress bars, the in-flight round and its "racing" / "deciding…" pills —
-// and the verdict pills' tense. The composition (clock AND scope) now lives in
-// livestatus.js beside `livenessFor`, so every view asks it the same way.
-function liveBelongsToEpoch(epochId) {
-  return epochIsLive(state, epochId);
-}
+// Is a run LIVE right now, for the epoch on screen? `epochIsLive` (livestatus.js)
+// composes the clock and the scope, and every present-tense claim in this view
+// consumes it: the projected scalars, the PROJ badges and progress bars, the
+// in-flight round and its "racing" / "deciding…" pills, and the verdict pills'
+// tense.
 
 export async function render(host, ctx, params) {
   if (!host.firstChild) host.appendChild(el('p', { class: 'dn-empty', text: 'Reading generations…' }));
@@ -109,7 +106,7 @@ export async function render(host, ctx, params) {
   // ladder leaking onto e0. (epoch.js already guards its racing funnel the same
   // way.) When the live signals carry NO epoch tag the payload is the untagged
   // single-epoch shape — trust it for the viewed epoch.
-  const isLiveForThisEpoch = liveBelongsToEpoch(id);
+  const isLiveForThisEpoch = epochIsLive(state, id);
   // a LIVE non-gauntlet run governs the dispatch even if the epoch contract
   // has not yet recorded its structure block (the active-tournament names it) —
   // but ONLY when that live run is for the epoch being viewed.
@@ -248,7 +245,7 @@ async function renderRoundDrilldown(host, ctx, id, ep, bracket, traj, rows, roun
 
   // the live PROJECTED standing for an in-flight round's challenger (current
   // epoch only) — falls back to the projected scalar when no settled one exists.
-  const liveForThisEpoch = liveBelongsToEpoch(id);
+  const liveForThisEpoch = epochIsLive(state, id);
   // Scope rather than clock: the envelope still supplies this round's TOPOLOGY after
   // the run that wrote it died; `liveForThisEpoch` gates the present tense.
   const envelopeIsThisEpoch = envelopeBelongsToEpoch(id);
@@ -386,7 +383,7 @@ async function renderConfiguredStructure(host, ctx, id, ep, bracket, structure, 
   // so a closed e0 shows its own bracket and never e1's live "being seeded"
   // ladder. The caller passes `isLiveForThisEpoch`; recompute defensively when
   // it is omitted (a direct call).
-  const liveForThisEpoch = isLiveForThisEpoch == null ? liveBelongsToEpoch(id) : !!isLiveForThisEpoch;
+  const liveForThisEpoch = isLiveForThisEpoch == null ? epochIsLive(state, id) : !!isLiveForThisEpoch;
   // The envelope is adopted for TOPOLOGY whenever it is this epoch's — even
   // when the run that wrote it is long dead. An interrupted run's rungs exist
   // nowhere else (no completed record was ever committed), and dropping them

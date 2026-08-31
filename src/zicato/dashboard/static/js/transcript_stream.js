@@ -20,7 +20,7 @@
 //     re-read from the top, which is what pull() does — reporting `reset` so
 //     the caller replaces its turn list rather than splicing into it.
 
-import { fetchJson } from './core/api.js';
+import { fetchJson, enc } from './core/api.js';
 
 // The stream starts with no cursor at all, which the server reads as "from the
 // top". Distinct from a cursor of 0 only in intent; both yield everything.
@@ -135,5 +135,3 @@ export function mergeAnnotations(existing, deltaAnns) {
 function keyOf(a) {
   return (a && a.source_index != null) ? 'i' + a.source_index : 'k' + (a && a.kind) + ':' + (a && a.summary);
 }
-
-function enc(s) { return encodeURIComponent(s == null ? '' : String(s)); }

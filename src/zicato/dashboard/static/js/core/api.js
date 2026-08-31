@@ -11,6 +11,12 @@
 
 import { state } from './state.js';
 
+// Encode ONE path segment of an API URL. Ids reach these builders from server
+// payloads and can carry any character; a null / undefined id encodes to the
+// empty segment rather than the string "null". The hash router has its own
+// encoder — it must additionally escape `~`, which its route syntax reserves.
+export function enc(s) { return encodeURIComponent(s == null ? '' : String(s)); }
+
 export async function fetchJson(path) {
   const res = await fetch(path, { headers: { Accept: 'application/json' } });
   if (!res.ok) throw new Error(`${path} -> HTTP ${res.status}`);
