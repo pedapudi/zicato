@@ -10,7 +10,7 @@ exact same questions.
 A board is one JSONL file. Path:
 `.zicato/epochs/{epoch_id}/board.jsonl`. One entry per line. Lines are
 parsed lazily by the runner; schema-invalid lines fail at
-`zicato board add` time, not at run time.
+`zicato board add` time rather than at run time.
 
 This document specifies:
 
@@ -41,7 +41,7 @@ Every board entry carries the same envelope:
 | Field | Type | Required | Meaning |
 |---|---|---|---|
 | `id` | `string` | yes | Stable identifier; used as a directory name under `runs/`. Must be filesystem-safe (`[a-zA-Z0-9_-]+`). Globally unique within the board. |
-| `kind` | `string` | yes | Discriminator. v0 set: `"single_turn"`, `"multi_turn_scripted"`, `"multi_turn_emulated"`. Open-ended — see §6. |
+| `kind` | `string` | yes | Discriminator. The kinds the runner executes are `"single_turn"`, `"multi_turn_scripted"`, and `"multi_turn_emulated"`. The set extends without a schema break — see §7. |
 | `wall_clock_budget_seconds` | `number` | yes | Hard ceiling for the WHOLE entry. Exceeded → run aborts and scores as worst-case. |
 | `weight` | `number` | no (default `1.0`) | Relative importance in scoring aggregation. |
 | `tags` | `list[string]` | no (default `[]`) | Operator labels; pattern detectors and diagnostic scorecards can slice by tag. |
@@ -60,34 +60,35 @@ the `judge_only` flag (§1.0.1). The header line is NOT a board entry and
 is parsed separately by the loader. If present, it MUST be the first
 line; a `board_meta` object anywhere else is a load error.
 
-The real presentation board's header line is exactly:
+The header line of the presentation-agent example board
+(`examples/zicato_examples/target_1_presentation/board.jsonl`) reads:
 
 ```json
 {"board_meta": true, "disable_drift": ["user_steer", "user_pause"], "judge_only": true}
 ```
 
 `disable_drift` is a list of short lowercase `goldfive.DriftKind` wire
-tokens (see §4.2). When a board is fully default — an empty
-`disable_drift` AND `judge_only` false — the writer emits **no** header
-line at all and the first line is the first entry, so a board with no
-header is the common, fully-valid case (byte-identical to a board
-written before either field existed).
+tokens (see §4.2). A board whose settings are all at their defaults —
+an empty `disable_drift` AND `judge_only` false — gets **no** header
+line at all from the writer, and its first line is its first entry. A
+board with no header is therefore the common and fully valid case.
 
 #### 1.0.1 `judge_only`
 
 `judge_only` (boolean, default `false`) selects **judge-only**
 evaluation. When `true`, goldfive still JUDGES the wrapped agent — the
-drift and process judges stay armed exactly as in the default mode — but
-does ZERO steering: no goal-derivation LLM call, no planner replanning,
-and no drift-triggered refine. The native agent tree still runs (so
-there is a transcript to judge); only goldfive's own steering machinery
-is disabled. The default (`false`) leaves the steering path unchanged
-and byte-identical.
+drift and process judges stay armed as they are in the default mode —
+but does ZERO steering: no goal-derivation LLM call, no planner
+replanning, and no drift-triggered refine. The native agent tree still
+runs, so there is a transcript to judge; only goldfive's own steering
+machinery is disabled. Under the default (`false`) the steering path
+behaves identically to a board that carries no header line.
 
-`judge_only` folds into the epoch **contract hash** (§10 / see
-`docs/design/EPOCHS-AND-JOURNALING.md`), so flipping it opens a new
-epoch. Authoring it from Python sets `Board.judge_only`; on disk it is a
-key on the `board_meta` header. A non-boolean value is a load error.
+`judge_only` folds into the epoch **contract hash** (see
+[EPOCHS-AND-JOURNALING.md](EPOCHS-AND-JOURNALING.md) §10), so flipping
+it opens a new epoch. Authoring it from Python sets `Board.judge_only`;
+on disk it is a key on the `board_meta` header. A non-boolean value is
+a load error.
 
 ### 1.1 `id`
 
@@ -101,9 +102,9 @@ with a duplicate id.
 ### 1.2 `wall_clock_budget_seconds`
 
 A fixed per-run wall-clock budget makes runs directly comparable
-regardless of what the patches changed. Drift counts over 30 seconds
-and 4 minutes aren't apples-to-apples; a fixed budget normalises the
-denominator.
+regardless of what the patches changed. A drift count accumulated over
+30 seconds and one accumulated over 4 minutes are not comparable; a
+fixed budget normalises the denominator.
 
 For multi-turn entries the budget covers the WHOLE conversation —
 every turn the agent takes plus every turn the user (scripted or
@@ -122,10 +123,11 @@ meaningful given goldfive's per-turn LLM-call latency floor.
 
 A multiplier applied to the entry's contributions in the aggregate
 score. Default `1.0`. Setting `weight=2.0` on a critical entry roughly
-doubles its influence on the generation score. Weights are advisory in
-the sense that they don't change pass-rate semantics — pass-rate is
-still computed as `(weighted passes) / (weighted entries)`, which a
-weight of `2.0` raises a entry to "count twice" for.
+doubles its influence on the generation score. The weight does not
+change pass-rate semantics: pass-rate is computed as
+`(weighted passes) / (weighted entries)`, so an entry at `weight=2.0`
+contributes 2 to both the numerator (when it passes) and the
+denominator.
 
 ### 1.4 `tags`
 
@@ -142,10 +144,10 @@ ordinary label:
 | `holdout` | Puts the entry in the confirm-only holdout slice. | `zicato.board.split.HOLDOUT_TAG` |
 | `facet:{name}` | Puts the entry in the named diagnostic slice `{name}`. | `query.eval_view.FACET_TAG_PREFIX` |
 
-The difference in consequence is the part to remember. `holdout` changes
-what the loop DOES: the entry is withheld from selection and spent only
-to confirm a promotion (OVERFITTING.md §3). `facet:` changes only what
-the dashboard SHOWS — it can alter no score, gate verdict, schedule, or
+The two reserved tags differ in consequence. `holdout` changes what the
+loop DOES: the entry is withheld from selection and spent only to
+confirm a promotion (OVERFITTING.md §3). `facet:` changes only what the
+dashboard SHOWS — it can alter no score, gate verdict, schedule, or
 Pareto admission, and nothing about it is persisted.
 
 `facet:` matches a WHOLE tag prefix, case-sensitively: `facet:data_quality`
@@ -153,14 +155,15 @@ names the slice `data_quality`, while `my_facet:x`, `FACET:x`, and a bare
 `facet:` are all ordinary labels.
 
 The two reserved tags COMPOSE, and `holdout` wins. An entry tagged both
-`holdout` and `facet:x` is held out, so it feeds no facet number: facets
-are computed over the TRAIN slice only, which is the slice the gate's own
-scalar is computed over (OVERFITTING.md §3). Two reasons, and either
-alone would settle it — a facet has to be readable against the
-candidate's headline number, which is a train-slice number; and a
-dashboard that broke the holdout out by facet on every page load would be
-an ungoverned query against the slice that exists to stay un-mined. A
-facet whose entries are ALL held out therefore reports nothing.
+`holdout` and `facet:x` is held out, so it feeds no facet number.
+Facets are computed over the TRAIN slice only, which is the slice the
+gate's own scalar is computed over (OVERFITTING.md §3). Two independent
+reasons force that, and either alone would settle it. First, a facet
+number has to be readable against the candidate's headline number,
+which is a train-slice number. Second, a dashboard that broke the
+holdout out by facet on every page load would be an ungoverned query
+against the slice that exists to stay un-mined. A facet whose entries
+are ALL held out therefore reports nothing.
 
 What the facet surfaces render is in [DASHBOARD.md](DASHBOARD.md) §4;
 what the reader returns is in [EVAL-VIEW.md](EVAL-VIEW.md) §3.4.
@@ -257,10 +260,11 @@ Example:
 }
 ```
 
-The run is returned as the same flat `RunResult` (see §2.1); for a
-multi-turn entry `transcript` is the agent's user-facing turns in
-order (user turns are not included — the entry already carries the
-scripted user turns) and `final_output` is the agent's last turn.
+The run is returned as the same flat `RunResult` (see §2.1). For a
+multi-turn entry, `transcript` holds the agent's user-facing turns in
+order and `final_output` is the agent's last turn. The user turns are
+not in `transcript`, because the entry already carries the scripted
+user turns.
 
 A transcript-scoped expectation is authored with
 `reads="conversation_end"` (the `OutputScope.TRANSCRIPT` enum value)
@@ -323,12 +327,12 @@ reducer, which records its result as `pass_fail: bool` on the loss
 profile. An entry with no `expectation` has `pass_fail = None` and
 contributes to drift-loss only.
 
-`expectation` is a **single object**, not a list — a board entry
-carries at most one expectation. The two authoring namespaces that
-build it are `Predicate` (deterministic) and `Rubric` (LLM-graded);
-see [BOARD-AUTHORING.md](BOARD-AUTHORING.md) §2.
+`expectation` is a **single object** rather than a list — a board
+entry carries at most one expectation. The two authoring namespaces
+that build it are `Predicate` (deterministic) and `Rubric`
+(LLM-graded); see [BOARD-AUTHORING.md](BOARD-AUTHORING.md) §2.
 
-The expectation object has exactly three fields:
+The expectation object has three fields and no others:
 
 | Field | Type | Required | Meaning |
 |---|---|---|---|
@@ -348,8 +352,8 @@ schema is identical either way — the board still carries only the dotted
 path. See [BOARD-AUTHORING.md](BOARD-AUTHORING.md) §2.1.
 
 The `spec` is a dotted import path with a **colon** separating the
-module from the callable — `module.path:func` — exactly as the real
-presentation board writes it:
+module from the callable — `module.path:func` — in the form the
+presentation-agent example board writes:
 
 ```json
 {
@@ -446,17 +450,18 @@ produced it. This is enforced; see [EMULATOR.md](EMULATOR.md).
 
 A `rubric` is still an **outcome** check — it reads a finished
 product. The in-run check that watches the *reasoning* is the `Judge`
-(§4), a distinct concept. The `Rubric.score()` factory was previously
-named `Rubric.judge()`; it was renamed so "judge" means only the
-process check.
+(§4), a distinct concept. The factory that builds a rubric is
+`Rubric.score()`, so that the word "judge" names only the process
+check.
 
 ### 3.6 `reads` semantics
 
 `reads` selects which slice of the run the expectation matches
 against. It is an `OutputScope` enum value and applies to every
-expectation kind (there is no separate `fires_on` field — `reads` was
-formerly spelled `fires_on`; the loader still accepts the old key on
-input for boards mid-migration, but the canonical key is `reads`).
+expectation kind. There is no separate `fires_on` field: a board file
+whose expectation carries the key `fires_on` is rejected at load with
+a message naming `reads` as the replacement, so a stale board fails
+loudly instead of loading with an unread setting.
 
 | Value (`OutputScope`) | Single-turn | Multi-turn |
 |---|---|---|
@@ -481,9 +486,9 @@ A process check is authored with the `Judge` namespace (see
 [BOARD-AUTHORING.md](BOARD-AUTHORING.md) §3). It is a goldfive-side
 judge: goldfive evaluates the criterion against the live event
 stream, and a violation emits a drift event that flows into the run's
-`LossProfile` exactly like any built-in drift.
+`LossProfile` on the same path as any built-in drift.
 
-Every judge object has exactly four fields:
+Every judge object has four fields and no others:
 
 | Field | Type | Required | Meaning |
 |---|---|---|---|
@@ -514,8 +519,8 @@ A violated judge (either mode) emits a drift event of kind `custom`
 the run's `drift_counts`, and keys the per-judge breakdown on
 `judge_name`. Because every custom judge emits the same `custom` drift
 kind, the `judge_name` is the discriminator — two judges on a board
-are told apart by name, not by kind. This is why `name` must be stable
-and board-unique.
+are told apart by name rather than by kind. This is why `name` must be
+stable and board-unique.
 
 The emit path is specified in [ARCHITECTURE.md](ARCHITECTURE.md)
 §4.6.1 and [TELEMETRY.md](TELEMETRY.md).
@@ -532,12 +537,12 @@ A board suppresses a built-in judge with the board-level
 `disable_drift` setting — a list of `goldfive.DriftKind` **wire
 tokens** (short lowercase strings like `"user_steer"`,
 `"confabulation_risk"`, `"looping_reasoning"`) whose detectors are
-turned off for every entry on the board. The tokens are the bare
-enum values, not a `DRIFT_KIND_*` constant form. It is a **board-wide**
-setting carried on the `board_meta` header line (§1.0 / §10), not a
-per-entry field, and it suppresses **built-ins by kind only** — custom
-judges are removed by deleting them from `judges`, never via
-`disable_drift`. Changing `disable_drift` changes which signals score
+turned off for every entry on the board. The tokens are the bare enum
+values rather than a `DRIFT_KIND_*` constant form. It is a
+**board-wide** setting carried on the `board_meta` header line
+(§1.0 / §10) rather than a per-entry field, and it suppresses
+**built-ins by kind only** — custom judges are removed by deleting
+them from `judges`, never via `disable_drift`. Changing `disable_drift` changes which signals score
 the board, so it is part of the evaluation contract and rolls the
 epoch (see [EPOCHS-AND-JOURNALING.md](EPOCHS-AND-JOURNALING.md) §10).
 
@@ -557,9 +562,9 @@ The budget applies to the WHOLE entry. Specifically:
 
 When the budget elapses mid-run, the adapter is responsible for:
 
-1. Cancelling the in-flight agent invocation cooperatively (via the
-   goldfive cancellation path, see goldfive's CANCELLATION-CONTRACT.md
-   if the operator wants the deep version).
+1. Cancelling the in-flight agent invocation cooperatively, through
+   the goldfive cancellation path (goldfive's
+   CANCELLATION-CONTRACT.md specifies it in full).
 2. Emitting a final `goldfive.v1.RunAborted` with
    `reason="wall_clock_budget"`.
 
@@ -584,32 +589,35 @@ making the proposer attend to specific slices of the board.
 
 ## 7. Forward-compatibility: the `kind` discriminator
 
-`kind` is a closed `Literal` (`BoardEntryKind`), not a bare string —
-but it is designed to extend without a schema break. The v0 *runtime*
-set is `{"single_turn", "multi_turn_scripted", "multi_turn_emulated"}`.
+`kind` is a closed `Literal` (`BoardEntryKind`) rather than a bare
+string, and it is designed to extend without a schema break. The
+runner executes three kinds:
+`{"single_turn", "multi_turn_scripted", "multi_turn_emulated"}`.
 Two further tokens — `"synthetic_adversarial"` and `"synthetic_clean"`
-— are already **reserved in the type today** as forward-compat slots
-(planned for target 2; see below) so that adding them to the runtime
-later does not require a schema bump for existing operators. Bringing a
-reserved kind online is a matter of:
+— are **reserved in the type** as forward-compatibility slots, so that
+adding them to the runtime later does not require a schema bump for
+existing operators. Bringing a reserved kind online is a matter of:
 
 1. Wiring the kind's discriminant fields into the runner.
 2. Providing the run path that produces its `RunResult`.
 3. Telling the loss reducer how to map it to a `LossProfile`.
 
-This matters because the **target 2 dogfood** (goldfive's steering
-layer — see [DOGFOOD-TARGETS.md](DOGFOOD-TARGETS.md)) motivates the two
-reserved kinds. They are **planned**, not yet wired into the runner —
-but `BoardEntry.validate` already enforces their discriminant fields:
+The two reserved kinds exist for the dogfood target that evolves
+goldfive's own steering layer (see
+[DOGFOOD-TARGETS.md](DOGFOOD-TARGETS.md)). The runner does not execute
+them, and `BoardEntry.validate` already enforces their discriminant
+fields:
 
-- `synthetic_adversarial` (planned) — a known-bad inner harness wired
-  in, where the contract is "the steerer fires the right drift in
-  time". The entry carries an `adversarial_agent_spec` (dotted path to
-  the known-bad agent) and a non-empty `required_drift_kinds` list.
-  Pass = the required drift detected; fail = drift missed.
-- `synthetic_clean` (planned) — a known-good inner harness wired in,
-  where the contract is "no spurious drift fires". Pass = no
-  false-positive drift; fail = drift fired when none was warranted.
+- `synthetic_adversarial` (unimplemented in the runner) — a known-bad
+  inner harness wired in, where the contract is "the steerer fires the
+  right drift in time". The entry carries an `adversarial_agent_spec`
+  (dotted path to the known-bad agent) and a non-empty
+  `required_drift_kinds` list. Pass = the required drift detected;
+  fail = drift missed.
+- `synthetic_clean` (unimplemented in the runner) — a known-good inner
+  harness wired in, where the contract is "no spurious drift fires".
+  Pass = no false-positive drift; fail = drift fired when none was
+  warranted.
 
 Both kinds use the same envelope (id, wall-clock budget, weight, tags,
 `expectation`, `judges`, context) plus their per-kind discriminant
@@ -621,8 +629,8 @@ The forward-compat property holds because:
   and validated by `BoardEntry.validate`, so adding them to the
   runtime is not a schema break.
 - The expectation kinds (`predicate`, `rubric`, …) can express
-  arbitrary matching logic, so new entry kinds don't need new
-  expectation kinds.
+  arbitrary matching logic, so a new entry kind does not need a new
+  expectation kind.
 - The single flat `RunResult` carries both `final_output` and the full
   `transcript`, so the loss reducer can map any kind to a
   `LossProfile` from one shape.
@@ -634,7 +642,8 @@ When the reserved kinds are brought online, this document grows a
 
 `zicato board add ENTRY_PATH` appends **one** validated board entry
 read from a JSON file to the current epoch's `board.jsonl`. Validation
-is eager; failures are noisy errors, not silent drops. The validator
+is eager, and a failure raises rather than dropping the entry
+silently. The validator
 (`BoardEntry.validate` / `validate_board_entry`) checks:
 
 1. `id` is present; `wall_clock_budget_seconds` is `> 0`; `weight` is
@@ -665,8 +674,8 @@ flag on the `board` group — see §9.
 
 The epoch's evaluation contract includes the board; changing the board
 changes the contract. Protection is enforced by **`evolve`'s
-contract-hash auto-epoching**, not by a `--force` flag on the `board`
-subcommands:
+contract-hash auto-epoching** rather than by a `--force` flag on the
+`board` subcommands:
 
 - `evolve` resolves the evaluation contract (board + proposer brief +
   scoring + the registered inner-harness identity), hashes it, and
@@ -700,9 +709,9 @@ carry an `expectation`; one also carries a `judges` list (its
 {"id":"expert_review","kind":"multi_turn_emulated","user_persona":{"goal":"Get feedback on a presentation outline you wrote.","constraints":"You are a domain expert. Push back when the agent's feedback is shallow.","stop_when":"The agent has given at least three concrete improvements."},"max_turns":8,"wall_clock_budget_seconds":600,"tags":["multi-turn","emulated","expert"]}
 ```
 
-That's a header line plus 5 entries: 3 single-turn, 1 scripted
-multi-turn, 1 emulated multi-turn. A real first epoch usually has
-20-50. The Python builder
+That is a header line plus five entries: three single-turn, one
+scripted multi-turn, one emulated multi-turn. A real first epoch
+usually has 20 to 50. The Python builder
 ([BOARD-AUTHORING.md](BOARD-AUTHORING.md) §4) is the ergonomic way to
 produce a board this shape.
 
@@ -714,5 +723,5 @@ produce a board this shape.
 | Loss profile fields written from entry runs | [TELEMETRY.md](TELEMETRY.md) |
 | How `weight`, the `expectation`, and `judges` enter the score | [SCORING.md](SCORING.md) |
 | Emulator collusion-proofing for multi-turn emulated | [EMULATOR.md](EMULATOR.md) |
-| Why entries can't be edited mid-epoch | [EPOCHS-AND-JOURNALING.md](EPOCHS-AND-JOURNALING.md) |
-| Future entry kinds for target 2 | [DOGFOOD-TARGETS.md](DOGFOOD-TARGETS.md) |
+| Why editing entries mid-epoch rolls the epoch | [EPOCHS-AND-JOURNALING.md](EPOCHS-AND-JOURNALING.md) |
+| The goldfive-steering dogfood target the reserved entry kinds serve | [DOGFOOD-TARGETS.md](DOGFOOD-TARGETS.md) |
