@@ -344,6 +344,37 @@ test('board view: an entry mid-run with NO completed results renders its in-flig
   coreState.state.activeRuns = [];
 });
 
+test('board view: a run that has ENDED reads a full progress bar, not the wall-clock fraction it stopped at', async () => {
+  // Issue #359. A run still listed in the active-tournament payload after it
+  // reached a terminal state has done all its work; its progress is 100%
+  // whatever share of the wall-clock budget it happened to use. Reading the
+  // budget fraction instead paints a finished run as barely started — worst
+  // for a run that finished fast against a generous budget, which is the
+  // shape asserted here (12s of a 60s budget = the stale 20%).
+  freshState(); installFetch();
+  const board = await import('../js/views/board.js');
+  coreState.state.activeRuns = [
+    // terminal by STATUS token, no explicit progress: falls through to elapsed/budget.
+    { generation_id: 'v7', entry_id: 'waffles_single', run_id: 'run_v7', status: 'done',
+      elapsed_seconds: 12, budget_seconds: 60 },
+    // terminal by BOARD COUNT (every board landed), same stale fraction available.
+    { generation_id: 'v8', entry_id: 'waffles_single', run_id: 'run_v8',
+      boards_done: 4, boards_total: 4, elapsed_seconds: 12, budget_seconds: 60 },
+  ];
+  const host = document.createElement('div');
+  await board.render(host, { navigate() {}, href: router.href }, { epochId: EPOCH_ID, entry: 'waffles_single' });
+
+  const widths = allByClass(host, 'dn-progress-fill')
+    .map((n) => ((n.getAttribute('style') || '').match(/width:\s*(\d+)%/) || [])[1]);
+  assert(widths.length >= 2, 'both ended runs render a progress bar');
+  assertDeep(widths.slice(0, 2), ['100', '100'],
+    'an ended run fills its bar completely — terminal by status token and by board count alike');
+  assert(host.textContent.includes('100%'), 'the percent readout agrees with the bar');
+  assert(!host.textContent.includes('20%'), 'the wall-clock fraction it stopped at is not shown');
+
+  coreState.state.activeRuns = [];
+});
+
 test('board view: the inflightForEntry filter matches the CANONICAL entry_id ONLY — the alias keys are dead', async () => {
   const runs = [
     { generation_id: 'v1', entry_id: 'e1', run_id: 'r1' },

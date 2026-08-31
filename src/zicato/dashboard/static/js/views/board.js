@@ -25,6 +25,7 @@ import * as facets from '../facets.js';
 import { buildTurnNode, dedupConsecutiveTurns, reconcileTurns } from '../turns.js';
 import { mountConversationPane } from '../convo.js';
 import { unitLiveness, hasActiveRunFor } from '../unit_liveness.js';
+import { runProgressRatio } from './structure.js';
 
 // The transcript turn vocabulary now lives in js/turns.js so the live follow
 // pane can share it without importing back through this view. Re-exported
@@ -43,20 +44,6 @@ export function inflightForEntry(activeRuns, entryId) {
     const e = r.entry_id;
     return e === entryId;
   });
-}
-
-// 0..1 progress (some payloads send 0..100 — clamp + normalise).
-function progressRatio(r) {
-  let p = r && (r.progress != null ? r.progress : r.fraction);
-  if (!svg.isNum(p)) {
-    if (r && svg.isNum(r.elapsed_seconds) && svg.isNum(r.budget_seconds) && r.budget_seconds > 0) {
-      p = r.elapsed_seconds / r.budget_seconds;
-    } else return null;
-  }
-  if (p > 1) p = p / 100;
-  if (p < 0) p = 0;
-  if (p > 1) p = 1;
-  return p;
 }
 
 // The orchestrator progress-seq at our LAST render of a GIVEN (epoch, entry) —
@@ -169,7 +156,7 @@ export async function render(host, ctx, params, route) {
       // live 0..1 board progress for a RUNNING row (null when settled) — the
       // breakdown's live-gated progress column reads this (C4: the separate
       // in-flight table folded into the breakdown as a progress column).
-      progress: live ? progressRatio(live) : null,
+      progress: live ? runProgressRatio(live) : null,
       // CACHED-champion provenance: this row's scalar was reused (fast mode)
       // from a prior epoch or run rather than re-executed this round.
       cached: !!(r && r.cached),
@@ -188,7 +175,7 @@ export async function render(host, ctx, params, route) {
       decision: meta ? meta.decision : 'pending',
       loss: NaN, pass: null, timeout: false,
       runId: live.run_id || null, ran: false, running: true,
-      progress: progressRatio(live),
+      progress: runProgressRatio(live),
     });
   }
 
@@ -271,7 +258,7 @@ export async function render(host, ctx, params, route) {
 
   // Two SEPARATE digests, two SEPARATE persistent sub-hosts (the live-beat
   // scroll-reset fix). The OUTER (upper) digest folds in everything that should
-  // repaint live — the in-flight set + its advancing progressRatio, the
+  // repaint live — the in-flight set + its advancing runProgressRatio, the
   // dot-plot, the breakdown table. The TRANSCRIPT digest folds in ONLY the
   // selected candidates and their transcript content. Because the in-flight
   // fields are EXCLUDED from the transcript digest, a beat that only advances
@@ -287,7 +274,7 @@ export async function render(host, ctx, params, route) {
     channel,
     rows: rows.map((r) => [r.gen, svg.isNum(r.primary) ? r.primary.toFixed(3) : null, r.pass, r.timeout, r.promoted, r.runId, !!r.running, !!r.cached, r.sourceEpoch || null, svg.isNum(r.score) ? r.score.toFixed(3) : null, metricsDigest(r.metrics)]),
     inflight: inflight.map((r) => {
-      const pr = progressRatio(r);
+      const pr = runProgressRatio(r);
       return [r.generation_id || null, r.run_id || null, pr != null ? pr.toFixed(2) : null];
     }),
     // The facet panel folds at RENDERED precision, so a no-op beat leaves the
