@@ -374,6 +374,15 @@ READ_ENDPOINTS: Final[tuple[ReadEndpoint, ...]] = (
         ),
     ),
     ReadEndpoint(
+        path="/api/config",
+        reader=query.read_effective_settings,
+        serves=(
+            "Every setting the running loop is operating under, each paired "
+            "with the tier that set it, read off the heartbeat record; null "
+            "when the workspace holds no run record."
+        ),
+    ),
+    ReadEndpoint(
         path="/api/live/pipeline",
         reader=query.build_round_pipeline,
         serves=(

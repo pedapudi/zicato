@@ -290,6 +290,10 @@
     "status": 200,
     "body": null
   },
+  "config": {
+    "status": 200,
+    "body": null
+  },
   "live_pipeline": {
     "status": 200,
     "body": {

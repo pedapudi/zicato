@@ -143,6 +143,7 @@ ENDPOINT_PAYLOADS.update(
         path: DetailPayload
         for path in (
             "/api/active-tournament",
+            "/api/config",
             "/api/contract-diff/{epoch_id}",
             "/api/conversation/{run_id}",
             "/api/drift-movements/{generation_id}",

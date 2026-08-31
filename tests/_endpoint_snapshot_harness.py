@@ -49,6 +49,7 @@ ROUTE_PROBES: tuple[tuple[str, str], ...] = (
     ("active_runs", "/api/active-runs"),
     ("active_tournament", "/api/active-tournament"),
     ("heartbeat", "/api/heartbeat"),
+    ("config", "/api/config"),
     ("live_pipeline", "/api/live/pipeline"),
     ("live_execution_plan", "/api/live/execution-plan"),
     ("proposer_recommendations", "/api/proposer/recommendations"),
