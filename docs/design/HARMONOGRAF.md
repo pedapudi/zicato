@@ -1,20 +1,24 @@
 # Harmonograf integration
 
-Canonical, single-source-of-truth design for how zicato self-hosts
+This document is the single authority on how zicato self-hosts
 harmonograf — the execution-trace console — and surfaces it to the
-operator at **both** the board-run level and the zicato (meta-loop)
-level. This doc supersedes the scattered prose in `TELEMETRY.md` and
-`TOURNAMENT.md`; when those two disagree with this file, this file wins.
+operator at **both** the board-run level and the level of zicato's own
+loop. `TELEMETRY.md` §1.3–§1.4 and `TOURNAMENT.md` §5 also describe
+harmonograf; where either disagrees with this file, this file governs.
+The server-lifecycle section below is the case that makes the rule
+matter: `TELEMETRY.md` describes one server per `evolve` invocation,
+while the server is in fact one per workspace, outliving any single
+invocation.
 
-> Vocabulary note: harmonograf is the *execution view* of a single run
-> (a goldfive event stream rendered as a Gantt + lifelines). The zicato
-> dashboard is the *competition view* across runs. The two are
-> complementary — harmonograf answers "what did THIS run's agent do,
-> step by step", the dashboard answers "which candidate won, and why".
+> Vocabulary note: harmonograf renders the *execution view* of a single
+> run — a goldfive event stream drawn as a Gantt chart with lifelines.
+> The zicato dashboard renders the *competition view* across runs. The
+> two are complementary: harmonograf reports what one run's agent did,
+> step by step, and the dashboard reports which candidate won and why.
 
 ## 1. Server lifecycle — ONE persistent server per workspace
 
-There is exactly **one** harmonograf server per workspace, bound to that
+There is **one** harmonograf server per workspace, bound to that
 workspace's `<ws>/.harmonograf/harmonograf.db` (sqlite). The single-open
 contract is enforced through `<ws>/.harmonograf/server.json`:
 
@@ -43,7 +47,7 @@ The server binds **two** ports: a browser-facing gRPC-Web port (the
 two — dialing the web port over native gRPC — silently drops all
 telemetry, so the split is load-bearing (see `telemetry/sink.py`
 `resolve_harmonograf_grpc_target` and the internal `ZICATO_HARMONOGRAF_GRPC`
-handoff — set by the auto-launch lifecycle, not by operators).
+handoff, which the auto-launch lifecycle sets rather than the operator).
 
 Harmonograf owns listener readiness. Its async `start()` returns only after
 native gRPC is listening and `/healthz` answers, and it rolls back partial
@@ -137,7 +141,7 @@ on `harmonografIsLive()`. They render:
 * on the **board grid / matchup** A/B cells (`parent_adk_session_id` /
   `child_adk_session_id`).
 
-### 3b. Zicato-level execution surface (the previously-missing link)
+### 3b. The execution surface for zicato's own loop
 
 A single, clearly-labelled **"execution ▸"** entry in the top bar
 (`variants/T/shell.js`) links to the meta-loop session:
@@ -146,15 +150,15 @@ A single, clearly-labelled **"execution ▸"** entry in the top bar
 <web_url>/#/session/<meta_loop_session_id>
 ```
 
-It is liveness-gated exactly like the per-run links — present whenever
-the persistent server is up (live evolve OR a standalone dashboard that
-resolved a persistent server) AND a meta-loop session id is known. It is
-the operator's entry point to "harmonograf at the zicato level": the
-proposer/judge timeline of the evolution itself. Built by
+It is liveness-gated the same way the per-run links are: present
+whenever the persistent server is up — a live evolve, or a standalone
+dashboard that resolved a persistent server — AND a meta-loop session id
+is known. It is the operator's entry point to the proposer and judge
+timeline of the evolution itself. Built by
 `harmonografMetaUrl()` / `harmonografMetaLink()` in `core/harmonograf.js`,
 keyed on `state.heartbeat.harmonograf_meta_session`.
 
-### 3c. Tournament navigation is a metadata filter, not a new trace type
+### 3c. Tournament navigation is a metadata filter over ordinary sessions
 
 Each target-run client stamps non-sensitive session labels:
 
@@ -219,13 +223,14 @@ Every layer warns-and-continues; harmonograf is never load-bearing:
 
 ## 7. Structural spans — zicato's own concurrency as lifelines
 
-The proposer + judge emits (§2b) put zicato's LLM calls on the meta-loop
-timeline, but the STRUCTURE around them — the round loop, the propose-time
-slate, the tournament fan-out, the per-run workers — emitted nothing, so the
-"execution ▸" view rendered the target-agent lifelines in a vacuum. The
-structural spans close that gap: the `MetaLoopEmitter` brackets each unit of
-orchestration work with a paired goldfive `AgentInvocation{Started,Completed}`
-envelope, rendered by harmonograf as a nested lifeline.
+The proposer and judge emits (§2b) put zicato's model calls on the meta-loop
+timeline. The orchestration around them — the round loop, the propose-time
+slate, the tournament fan-out, the per-run workers — needs its own emits, or
+the "execution ▸" view shows the target-agent lifelines with no surrounding
+structure. The structural spans supply that structure: the `MetaLoopEmitter`
+brackets each unit of orchestration work with a paired goldfive
+`AgentInvocation{Started,Completed}` envelope, which harmonograf renders as a
+nested lifeline.
 
 ### 7a. The taxonomy
 
@@ -242,7 +247,7 @@ span of a kind shares one lane); `name` is the per-instance label (`task_id`):
 | `worker` | `tournament/scheduling.py:_run_unit_cache_first` | subprocess run (cache MISS only) | — |
 | `slot` | `proposer/best_of_n.py:_run_one_slot` | best-of-N slate slot | — |
 
-### 7b. Nesting — inferred, not threaded
+### 7b. Nesting is inferred from the ambient context
 
 harmonograf builds the span tree from `AgentInvocationStarted.parent_invocation_id`
 (`harmonograf_server/ingest.py:_on_agent_invocation_started`). A span reads its
@@ -258,9 +263,10 @@ ambient `meta_span(...)` helper. Emitter unbound → `meta_span` is a no-op,
 identical to the proposer emits' `meta_loop_emitter is None` path.
 
 The **matchup** span is opened BEFORE its semaphore (`async with (meta_span(...),
-semaphore)`), so the gap between the matchup's start and its first worker child
-(which begins only after the semaphore admits the unit) is the QUEUE WAIT — a
-distinct visual, no separate acquire span needed.
+semaphore)`). Its first worker child begins only after the semaphore admits the
+unit, so the gap between the matchup's start and that child is the QUEUE WAIT.
+It reads as a distinct gap on the timeline, and needs no separate
+semaphore-acquire span.
 
 Metadata (`meta`) is **ids / phase-names / timings only** — never board content,
 never scores beyond what the §2b judge spans already carry. It rides the
@@ -283,12 +289,13 @@ that was never emitted).
   `CancelledError`, or a crash mid-body still closes the span (with
   `outcome="error:<Exc>"` / `"cancelled"`). The completed emit is `shield`ed so
   a task cancellation propagating through the `finally` does not abort the
-  closing emit mid-flight — the `CancelledError` still propagates to the caller,
-  it is only deferred past the shielded emit. This is best-effort, not a
-  guarantee: it holds only while the loop lives — under a HARD loop teardown
-  (the event loop closing while the shielded emit is still pending) the closing
-  envelope can be destroyed un-emitted. The pairing discipline covers the
-  common in-loop cancel, not loop death.
+  closing emit mid-flight. The `CancelledError` still propagates to the caller;
+  it is only deferred past the shielded emit. This is best-effort rather than a
+  guarantee, because it holds only while the loop lives: under a HARD loop
+  teardown, where the event loop closes while the shielded emit is still
+  pending, the closing envelope can be destroyed un-emitted. The pairing
+  discipline covers a cancel inside a live loop, and does not cover the loop
+  itself dying.
 * **Bounded memory.** The span id is a single contextvar string a context
   manager sets-and-resets; there is no per-round-growing span registry. The
   emitter's only mutable state is its monotonic sequence counter.
@@ -303,23 +310,24 @@ that was never emitted).
 
 ### 7d. The proposer / judge lifelines are IN the tree
 
-The §2b proposer / judge emits predate the structural spans. Each still emits a
-paired `AgentInvocation{Started,Completed}`, but originally serialised its
-payload JSON into the STARTED envelope's `parent_invocation_id` (goldfive ships
-no `ProposerCallStarted` of its own) — the very field harmonograf reads as the
-tree PARENT (`ingest.py:_on_agent_invocation_started`). A JSON blob matches no
-invocation, so those lifelines rendered as **detached orphan roots** beside the
-span tree — the single most-watched lifeline (the proposer) sitting outside the
+The §2b proposer and judge emits predate the structural spans. Each emits a
+paired `AgentInvocation{Started,Completed}`. Because goldfive ships no
+`ProposerCallStarted` envelope of its own, an early form of these emits
+serialised the payload JSON into the STARTED envelope's
+`parent_invocation_id`, which is the field harmonograf reads as the tree PARENT
+(`ingest.py:_on_agent_invocation_started`). A JSON blob matches no invocation,
+so those lifelines rendered as **detached orphan roots** beside the span tree,
+leaving the proposer — the lifeline an operator watches most — outside the
 unified picture.
 
-They now parent exactly like a structural span: the started envelope's
+They now parent the same way a structural span does. The started envelope's
 `parent_invocation_id` carries the ambient `_current_span_id`, so a proposer
-call nests under its propose / `slot` span and a judge under `gate`. The payload
-moved to the COMPLETED envelope's `summary` — the same home the structural spans
-use for `meta`: `_emit_paired_started` stashes the started payload by invocation
-id and `_emit_paired_completed` folds it in under the completed metrics. Absent
-an ambient span (a bare `propose_experiment` in a unit test) the parent is empty
-— the prior root behaviour, preserved.
+call nests under its propose or `slot` span and a judge under `gate`. The
+payload rides the COMPLETED envelope's `summary`, which is the same field the
+structural spans use for `meta`: `_emit_paired_started` stashes the started
+payload by invocation id, and `_emit_paired_completed` folds it in under the
+completed metrics. With no ambient span — a bare `propose_experiment` in a unit
+test, for instance — the parent is empty and the lifeline renders as a root.
 
 **Back-compat.** Old `meta_loop_events.jsonl` files still carry blob parents on
 their proposer/judge started lines; harmonograf tolerates them (a non-matching
@@ -327,7 +335,8 @@ parent is simply treated as a root). The one zicato-side reader of that JSONL �
 `read_meta_loop_session_id` (§2b) — reads only `session_id` off the first line,
 never the payload or the parent, so it is unaffected by either representation.
 
-Coverage is intentionally scoped to the concurrency-bearing seams. The
-sequential `context-build` and `persist` seams, and a dedicated `tournament`
-wrapper phase (matchups nest directly on the round span today), are not yet
-instrumented — a follow-up, not a correctness gap.
+Coverage is scoped to the seams that carry concurrency. Three seams are not
+instrumented: the sequential `context-build` seam, the sequential `persist`
+seam, and a dedicated `tournament` wrapper phase, without which matchups nest
+directly on the round span. Instrumenting them is follow-up work rather than a
+correctness gap.
