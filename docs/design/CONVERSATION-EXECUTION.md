@@ -3,11 +3,11 @@
 The board comparison and live conversation panes place an execution outline
 beneath the conversation turns that own recorded activity. The outline answers
 which agent or tool was active while reading a champion and challenger side by
-side. It preserves the dashboard's decision-oriented layout: the conversation
-remains the spine, and execution expands locally beneath it.
+side. The layout stays decision-oriented: the conversation is the spine, and
+execution expands locally beneath it.
 
 The outline is a compact reconstruction from the run's canonical
-`events.jsonl`. Harmonograf remains the full temporal trace for one run. It
+`events.jsonl`. Harmonograf holds the full temporal trace for one run. It
 provides timing, lifelines, and the complete event stream when the operator
 needs more detail than the comparison pane can carry.
 
@@ -41,11 +41,12 @@ invocation's id: when that id names a known agent node, the tool node takes it
 as an explicit parent and nests beneath the invocation that made the call,
 with `fidelity: "exact"`. Without a resolvable id the node stays parentless
 with `fidelity: "turn"` — the observation is recorded without claiming a
-relationship the stream did not state. Deep mixtures follow from these two
-edges alone: a sub-agent's own delegations carry that sub-invocation's id, so
-agent → tool → agent chains render at their full stated depth.
+relationship the stream did not state. Deep mixtures follow from the
+agent-to-agent parent edge and the tool-to-invocation parent edge alone: a
+sub-agent's own delegations carry that sub-invocation's id, so agent → tool →
+agent chains render at their full stated depth.
 
-The fidelity values have these meanings:
+The transcript's overall `fidelity` values have these meanings:
 
 | Value | Meaning |
 |---|---|
@@ -70,7 +71,7 @@ change patches the turn that owns the node. Unrelated turns retain their DOM
 nodes, scroll position, selection, and focus. A heartbeat with no content
 change performs no DOM write.
 
-The trajectory strip remains a whole-run overview. It shows conversation
+The trajectory strip is a whole-run overview. It shows conversation
 rhythm, signals, and budget consumption. The execution outline supplies local
 structure beneath the corresponding conversation. The two views do not share
 a selection cursor because imported trajectories do not provide stable causal

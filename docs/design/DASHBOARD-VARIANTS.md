@@ -1,36 +1,39 @@
 # Dashboard variant bake-off — the durable record
 
-> Record-keeping document. A six-round design bake-off produced 23 dashboard
-> variants (**A–W**) for the zicato dashboard. **T (bake-off codename "Console
-> IV", now shipping as Console) is the convergence winner and the new UI.** This
-> document is the durable record of
-> the field — the shared visual-element catalogue (Part 1) and the per-variant
-> look-and-feel (Part 2) — written so the variant *code* under
-> `src/zicato/dashboard/static/js/variants/<LETTER>/` +
-> `css/variants/<LETTER>/` and the per-variant `docs/design/variant-<LETTER>.md`
-> can be archived afterward without losing the design history.
+> **Status: a historical record of a completed design bake-off.** It keeps its
+> chronology on purpose. For what the dashboard does today, read
+> [CONSOLE-DESIGN-LANGUAGE.md](CONSOLE-DESIGN-LANGUAGE.md).
 >
-> Every variant is a self-contained front end reached at runtime with
-> `?ui=<LETTER>`, painted into `#variant-root`, reusing only the shared data
+> Six rounds of design work produced 23 candidate dashboards, lettered **A**
+> through **W**. **T** won and is the console that ships. This document
+> is the durable record of the field: a catalogue of the visual elements the
+> variants shared (Part 1) and the look and feel of each one (Part 2). It was
+> written so that the variant code, which lived under
+> `src/zicato/dashboard/static/js/variants/<LETTER>/` and
+> `css/variants/<LETTER>/`, and the per-variant `docs/design/variant-<LETTER>.md`
+> notes could be archived without losing the design history.
+>
+> Each variant was a self-contained front end reached at runtime with
+> `?ui=<LETTER>` and painted into `#variant-root`, reusing only the shared data
 > layer (`js/core/{api,sse,state,dom,format,bus}.js`) and the real `/api/*`
-> endpoints. Nothing here is invented data; all marks bind to the live contract
-> documented in the working brief.
+> endpoints. Nothing here is invented data; every mark binds to a field one
+> of those endpoints actually serves.
 
 ## Retirement record
 
-- **2026-06-01 — bake-off field archived.** Variants **A–W** (the bake-off
-  field) were removed from `main` and preserved at the git tag
-  `dashboard-bakeoff-2026-06-01`. **Variant T (Console)** stayed on `main`
-  as the converged, default UI (`app_T.js` + `js/variants/T/` +
+- **2026-06-01 — bake-off field archived.** Variants A through W were
+  removed from `main` and preserved at the git tag
+  `dashboard-bakeoff-2026-06-01`. T stayed on `main` as the
+  converged, default front end (`app_T.js` plus `js/variants/T/` plus
   `css/variants/T/console4.css`).
-- **2026-06-02 — latent fallback shells retired.** The two remaining
-  pre-bake-off UIs — **v1** (the "phase0" clean-slate shell: `app.js`,
-  `js/views/phase0_*.js`, `css/phase0_*.css`) and **v2** (the "Notebook/Bench"
-  shell: `app2.js`, `js/v2/`, `css/v2/`) — were removed from `main` and
-  preserved at the git tag `dashboard-v1-v2-archive-2026-06-02`. The
-  `?ui=v1|v2` bootstrap branches and the phase0/v2 static markup were dropped
-  from `index.html`. **Variant T is now the sole shipping UI** — there is no
-  fallback shell in the tree.
+- **2026-06-02 — the two fallback shells retired.** Two pre-bake-off front
+  ends remained in the tree: a clean-slate shell (`app.js`,
+  `js/views/phase0_*.js`, `css/phase0_*.css`) and the two-mode shell
+  specified in [DASHBOARD-V2.md](DASHBOARD-V2.md) (`app2.js`, `js/v2/`,
+  `css/v2/`). Both were removed from `main` and preserved at the git tag
+  `dashboard-v1-v2-archive-2026-06-02`. The `?ui=v1|v2` bootstrap branches
+  and both shells' static markup were dropped from `index.html`. T became
+  the sole shipping front end, with no fallback shell in the tree.
 
 ## The six rounds at a glance
 
@@ -43,17 +46,24 @@
 | 5 — convergence III | P · Q · R · S | Console III · Atlas IV · Strata · Lens (all on a data-model TREE sidebar) |
 | 6 — convergence IV | **T** · U · V · W | **Console IV (anchor/winner)** · Atlas V · Reel · Arena |
 
-The lineage of judgements that shaped the convergence:
-- A's hierarchical breadcrumb IA + "Fleet" epoch-trendline card tested well.
-- E's flow was confirmed "likely fine" and became the IA base for rounds 3–4.
+Most variants carry a design-line name. Where a later round refined an earlier
+variant of the same line, a roman numeral marks the iteration; the dense-console
+line runs Console (J), Console II (N), Console III (P), and Console IV (T).
+
+The judgements that shaped the convergence, in order:
+- A's hierarchical breadcrumb information architecture and its "Fleet"
+  epoch-trendline card tested well.
+- E's flow was confirmed "likely fine" and became the information-architecture
+  base for rounds 3 and 4.
 - B's three-theme color system and D's Tufte toolkit were the most-liked visuals.
 - K's ACM publication renderer was judged the best of round 3 (but the
-  paper-first metaphor was rejected — it became a *tab*, not the home).
+  paper-first arrangement was rejected, and the renderer became a tab rather
+  than the home surface).
 - N (Console II) was judged the most appealing base for round 5.
 - M's spacing/proportion and L's mutation-viewer quality were singled out as good.
 - P (Console III) was judged the best-looking console and became the round-6
   anchor; S's side-by-side compare and Q's spacing were folded into it.
-- **T (Console)** is the converged anchor — the new UI.
+- **T** is the converged anchor and the console that ships.
 
 ---
 
@@ -61,9 +71,9 @@ The lineage of judgements that shaped the convergence:
 
 Many elements recur across variants. Each is catalogued once below as a
 reusable component: what it encodes, the API data it binds, and which variants
-use it. (Re-implementations were copied + adapted into each variant's own
+use it. Each re-implementation was copied and adapted into that variant's own
 namespace rather than imported across variants, so "uses it" means the element
-appears in that variant, not that it shares code.)
+appears in that variant rather than that the variants share code.
 
 ### Data-model tree sidebar
 - **Encodes:** the real zicato hierarchy as a persistent, expandable/collapsible
@@ -90,14 +100,16 @@ appears in that variant, not that it shares code.)
 - **Used by:** O.
 
 ### Breadcrumb + back/up control
-- **Encodes:** "where am I, and how do I go up?" A live breadcrumb rooted at the
-  environment; a top-left back/up control that walks UP the selection hierarchy
-  (entry/compare → candidate → generations → epoch → environment) and **renders
-  the destination into the MAIN detail pane, never the sidebar** (the explicit
-  fix of Q's bug, where the destination wrongly rendered into the side panel).
+- **Encodes:** the reader's position in the hierarchy and the way back out of
+  it. A live breadcrumb rooted at the environment, plus a top-left back/up
+  control that walks up the selection hierarchy (entry/compare → candidate →
+  generations → epoch → environment). The control renders the destination into
+  the MAIN detail pane and never into the sidebar, which is the fix for Q's
+  bug, where the destination rendered into the side panel.
 - **Binds:** route/selection state only.
-- **Used by:** breadcrumb — A, B, C, E, F, G, H, I, J, K (and the round-3/4 IA
-  base). Back/up control — T, U, V, W (round-6 fix). Q shipped the buggy version.
+- **Used by:** breadcrumb — A, B, C, E, F, G, H, I, J, K, and the
+  information-architecture base of rounds 3 and 4. Back/up control — T, U, V,
+  W, from the round-6 fix. Q shipped the buggy version.
 
 ### Color-theme system (a 6-role token contract; 16 themes in T)
 - **Encodes:** B's themeable token system, ported and grown into a **six-role
@@ -106,14 +118,15 @@ appears in that variant, not that it shares code.)
   rule/cell-empty`) — swapped via a `data-…-theme` attribute on the variant root
   (CSS-only re-skin, persisted to `localStorage`). The improve/regress/accent
   semantics hold across every theme; no mark carries hardcoded hex. In the
-  shipping UI **(T)** this is **sixteen** themes (monokai default), not three:
-  the three originals — monokai, solarized-dark, solarized-light — plus thirteen
-  palettes adapted from the Gogh terminal colour schemes
-  (gogh-co.github.io/Gogh: google-light/dark, lunaria-light/eclipse,
-  belafonte-day/night, paper, zenburn, selenized-black, relaxed, espresso,
-  dracula, ubuntu), each mapped onto the same 6-role contract. With sixteen
-  options the picker is a **swatch dropdown** (a 6-swatch preview strip + name
-  per option), not inline buttons.
+  shipping front end **(T)** this grew from three themes to **sixteen**, with
+  monokai as the default. The three originals are monokai, solarized-dark and
+  solarized-light. Thirteen more are adapted from the Gogh terminal colour
+  schemes (gogh-co.github.io/Gogh): google-light, google-dark, lunaria-light,
+  lunaria-eclipse, belafonte-day, belafonte-night, paper, zenburn,
+  selenized-black, relaxed, espresso, dracula and ubuntu. Each maps onto the
+  same six-role contract. With sixteen options the picker became a **swatch
+  dropdown** — a six-swatch preview strip and a name per option — rather than
+  a row of inline buttons.
 - **Binds:** none (presentation tokens).
 - **Used by:** B (the origin — Paper/Ink/Sepia), then the token system across H,
   I, J, K, L, M, N, O, P, Q, R, S, T, U, V, W. (A and D ship bespoke palettes; D
@@ -124,14 +137,15 @@ appears in that variant, not that it shares code.)
 ### Typeface themes (three distinct serif / mono / display voices)
 - **Encodes:** a second chrome picker swapping the family tokens (`--v2-sans` /
   `--v2-mono`, plus the `--n-font-head` / `--n-font-paper` families) via a
-  `data-…-type` root attribute (persisted). In the shipping UI **(T)** the
-  picker is exactly **three genuinely distinct voices** (default **Technical**),
-  not Open-Sans variations: **Editorial** (Source Serif 4 throughout — body,
-  data, headings & publication), **Technical** (an all-monospace mixture — iA
-  Writer Mono prose body/headings/publication + JetBrains Mono for data/labels/
-  code), **Display** (Space Grotesk geometric body + Archivo Narrow condensed
-  headings & big numerals). The earlier redundant **Sans**
-  option was dropped (`sans` normalises to Technical). Google Fonts is the only
+  `data-…-type` root attribute (persisted). In the shipping front end **(T)**
+  the picker offers **three distinct voices**, defaulting to **Technical**, rather
+  than variations on one sans-serif family. **Editorial** is Source Serif 4
+  throughout — body, data, headings and publication. **Technical** is an
+  all-monospace mixture: iA Writer Mono for prose body, headings and
+  publication, with JetBrains Mono for data, labels and code. **Display**
+  pairs a Space Grotesk geometric body with Archivo Narrow condensed headings
+  and big numerals. A fourth **Sans** option was dropped as redundant, and
+  `sans` normalises to Technical. Google Fonts is the only
   permitted external dependency — fonts only, system fallbacks, `display=swap`.
 - **Binds:** none (presentation tokens).
 - **Used by:** L, M, N, O, P, Q, R, S, T, U, V, W. (Introduced in round 4.)
@@ -144,12 +158,13 @@ appears in that variant, not that it shares code.)
   width, detail padding, section/row/card gaps, font scale, reel scale), so the
   whole UI re-breathes with a pure CSS swap (no re-render). Persisted.
 - **Binds:** none (presentation tokens).
-- **Used by:** T only (round-7 evolution of the anchor).
+- **Used by:** T only, added to the anchor after the six rounds closed.
 
 ### Lineage bumps
 - **Encodes:** the lineage as a non-colliding bumps chart — the champion spine
-  gets its OWN lane, rejected challengers branch into a distinct lower lane
-  (fixing the current-UI collision where champion and challenger share a row).
+  gets its OWN lane, rejected challengers branch into a distinct lower lane.
+  This fixes the collision in the pre-bake-off dashboard, where champion and
+  challenger shared a row.
   Coincident challengers (e.g. v1/v2 off one parent) are de-collided in x; every
   node is clickable → its candidate/experiment. Tufte alternative to a pannable
   lineage DAG.
@@ -243,14 +258,15 @@ appears in that variant, not that it shares code.)
 - **Used by:** W (the Arena hero), T (compact match cards on the generations page).
 
 ### Promote-gate ladder (stacked rules + scalar-components)
-- **Encodes:** the decisive gate moment as clean STACKED sub-blocks (fixing K's
-  overlapping layout): (a) decision pill + Δscalar/Δpass-rate + primary driver,
-  (b) the rules ladder — three short-circuiting rules in order
-  (scalar-margin → pass-rate-monotonicity → namespace-monotonicity), each its OWN
-  row (label · status · detail; a fired rule stops evaluation, later rules read
-  `not_reached`), (c) a SEPARATE champion-vs-challenger scalar-components
-  comparison block (the loss decomposition: cost/drift/latency/output/pass/
-  rubric/schema).
+- **Encodes:** the decisive gate moment as three stacked sub-blocks, fixing
+  K's overlapping layout. (a) A decision pill with the change in scalar and
+  pass rate and the primary driver. (b) The rules ladder — three
+  short-circuiting rules in order (scalar-margin → pass-rate-monotonicity →
+  namespace-monotonicity), each on its own row carrying label, status and
+  detail; a fired rule stops evaluation and later rules read `not_reached`.
+  (c) A separate champion-against-challenger comparison of the scalar
+  components, decomposing the loss into cost, drift, latency, output, pass,
+  rubric and schema.
 - **Binds:** `/api/round/{e}/{champ}/{chall}/gate` (`decision`, `delta_scalar`,
   `delta_pass_rate`, `rules[]`, `scalar_components`, `primary_driver`). (A
   reconstructs the verdict client-side from the experiment outcome where the gate
@@ -351,7 +367,8 @@ appears in that variant, not that it shares code.)
   markdown→DOM renderer (no `innerHTML`), with a one-line distilled goal set
   prominently above it; a long brief starts collapsed, a short one open. Honest
   "no brief recorded" state.
-- **Binds:** `/api/epoch` (`brief` / legacy `rubric.md`, and `goal`).
+- **Binds:** `/api/epoch` — the `brief` field, the older `rubric.md` field
+  name it falls back to, and `goal`.
 - **Used by:** every variant carries it on the epoch surface (A–W).
 
 ### Fleet / environment overview
@@ -365,13 +382,15 @@ appears in that variant, not that it shares code.)
   W closes its Arena page with a season trajectory sparkline).
 
 ### Render-discipline spine (shared, non-visual)
-- A single persistent content host per pane; every view **digest-gated** on
-  structural data only (timestamps/heartbeat excluded) so a steady heartbeat tick
-  writes ZERO DOM; the host is cleared only on a view/selection change (which also
-  invalidates drill-down caches — never on a heartbeat); URL-driven selection so a
-  cold deep-link hydrates its own data; CSS `transition` for hover/theme swaps,
-  never `animation:…infinite`; constrained-scroll transcript/event tails (no
-  absolute-positioned rows); NO pan/zoom viewport on any diagram (fit-to-width).
+- A single persistent content host per pane. Every view is **digest-gated** on
+  structural data alone, with timestamps and the heartbeat excluded, so a
+  steady heartbeat tick rebuilds zero DOM. The host is cleared only on a view
+  or selection change, which also invalidates the drill-down caches; a
+  heartbeat never clears it. Selection is URL-driven, so a cold deep-link
+  hydrates its own data. Hover and theme swaps use CSS `transition` and never
+  `animation:…infinite`. Transcript and event tails scroll inside a constraint
+  rather than using absolute-positioned rows. No diagram carries a pan or zoom
+  viewport; every one fits to width.
 - This blueprint (mirrored from `js/v2/shell.js`) carries from E onward and is the
   reason the recurring flashing / stale-view / cold-deep-link / colliding-marks
   bugs are designed out across the convergence.
@@ -380,9 +399,9 @@ appears in that variant, not that it shares code.)
 
 # Part 2 — Per-variant look-and-feel
 
-One section per variant. Each gives: identity/metaphor, default color +
-typeface theme, signature element(s), navigation model, and a one-line
-"distinct." A–T are the primary record.
+One section per variant, twenty-three in all. Each gives the variant's
+identity, its default colour and typeface theme, its signature elements, its
+navigation model, and a one-line statement of what set it apart.
 
 ## Round 1 — explorations (A–D)
 
@@ -396,12 +415,13 @@ typeface theme, signature element(s), navigation model, and a one-line
   "theatre" with a style switcher.
 - **Navigation:** hash router under `#/A/` with a persistent shell + breadcrumb +
   ⌘K command palette.
-- **Distinct:** instruments, not tables — the loop read as flight telemetry.
+- **Distinct:** instruments rather than tables — the loop read as flight
+  telemetry.
 
 ### B — "Editorial Lab Notebook"
-- **Identity:** the antithesis of a database browser — zicato's science as a
-  research magazine / lab notebook; serif display voice, generous whitespace,
-  figures + prose, no tables.
+- **Identity:** the opposite of a database browser — zicato's science
+  presented as a research magazine or lab notebook; serif display voice,
+  generous whitespace, figures and prose, no tables.
 - **Theme:** light-first **Paper** (default), dark **Ink**, warm **Sepia** — the
   origin of the three-theme token system. Serif display + calm sans + mono.
 - **Signature:** the bet as a pull-quote; charts-as-figures (slopegraph, diverging
@@ -412,8 +432,8 @@ typeface theme, signature element(s), navigation model, and a one-line
 
 ### C — "Causal Flow / Diagram-first"
 - **Identity:** zicato as a causal machine; every hero screen is an interactive
-  diagram (node-graph or Sankey), not a table — things flow left to right,
-  cause → effect → verdict.
+  diagram, a node graph or a Sankey, rather than a table; everything flows
+  left to right, cause → effect → verdict.
 - **Theme:** semantic `--v2-*` token language (cause violet, improve teal,
   worsen amber, promote green, reject red, live blue).
 - **Signature:** the patch → drift → gate **Sankey** (the origin); the lifecycle
@@ -473,8 +493,9 @@ typeface theme, signature element(s), navigation model, and a one-line
   the named bugs, add the three-theme switcher, add the two missing views, enforce
   fit-to-width Tufte.
 - **Theme:** **Solarized-Dark** (default); the named three-theme system.
-- **Signature:** the fit-to-width Tufte Sankey; the NEW mutation-site × generation
-  matrix + patch-diff drill; the NEW ACM report view with inline live figures.
+- **Signature:** the fit-to-width Tufte Sankey; the mutation-site × generation
+  matrix with its patch-diff drill, introduced in this round; the ACM report
+  view with inline live figures, also introduced in this round.
 - **Navigation:** E's breadcrumb IA, `#/H/`.
 - **Distinct:** the safe, complete convergence of E.
 
@@ -515,8 +536,9 @@ typeface theme, signature element(s), navigation model, and a one-line
   fix folded in, all seven round-4 fixes applied; K's publication reused as a TAB.
 - **Theme:** **Solarized-Dark** (default) color · **Sans** (default) typeface.
 - **Signature:** the combined mutation matrix + **side-by-side diff** with real
-  strings; the NEW per-board cross-candidate view; the stacked promote gate; the
-  introduction of the typeface picker.
+  strings; the per-board cross-candidate view, introduced in this round; the
+  stacked promote gate; and the typeface picker, also introduced in this
+  round.
 - **Navigation:** E's IA, `#/L/`.
 - **Distinct:** the safe converged pick of round 4 — and the reference mutation
   viewer.
@@ -575,7 +597,7 @@ typeface theme, signature element(s), navigation model, and a one-line
 - **Identity:** the comfortable take — N's content + diagrams dressed in M's
   generous spacing/proportion + L's mutation-viewer quality, on the tree sidebar.
 - **Theme:** **Solarized-Dark** (default) color · **Sans** (default) typeface;
-  deliberately roomy (larger padding, taller line-heights, bigger type).
+  roomy by design — larger padding, taller line-heights, bigger type.
 - **Signature:** the **spacing/proportion** folded into the round-6 anchor; a
   shared `gatePanel()`. Shipped the (buggy) back button later fixed in round 6.
 - **Navigation:** tree sidebar, `#/Q/`.
@@ -606,10 +628,11 @@ typeface theme, signature element(s), navigation model, and a one-line
 
 ## Round 6 — convergence IV (T–W)
 
-### T — "Console IV" (ships as **Console**) — THE CONVERGENCE WINNER / THE NEW UI
-- **Identity:** the convergence-IV anchor and the new UI — the synthesis the
-  operator asked for: **P (Console III)** as the base, with three folds and a
-  round-7 evolution.
+### T — "Console IV" — the convergence winner and the shipping console
+- **Identity:** the round-6 anchor and the console that ships. **P (Console
+  III)** supplies the base. Four elements are folded in from sibling variants
+  S, Q, V and W. A navigation fix that round 6 applied across the field is
+  included. One element, the density picker, is new in T.
 - **Theme:** **Monokai** (default) color · **Technical** (default) typeface ·
   **compact** (default) density.
 - **Folded into T:**
@@ -620,13 +643,14 @@ typeface theme, signature element(s), navigation model, and a one-line
   - a working **back/up button** (the explicit fix of Q's bug — navigates UP and
     renders into the MAIN detail pane, never the sidebar).
   - **the Reel** (from V) as a *slim* fit-to-width rounds spine on the **epoch
-    view**, replacing the old lineage bumps.
+    view**, in place of the lineage bumps chart P carried there.
   - **the Arena match cards** (from W) on the **generations page** — a
     champion-defends banner + a wrapping grid of one compact match card per
     challenger round.
   - a **density / roominess picker** (compact · cozy · roomy) — a third chrome
-    selector beside the color and typeface pickers, re-breathing the whole UI via
-    a pure CSS token swap.
+    selector beside the color and typeface pickers, resizing the whole
+    interface through a pure CSS token swap. Added to T after the six rounds
+    closed.
 - **Navigation:** data-model tree sidebar + back/up control, `#/T/`.
 - **Distinct:** the converged anchor — P's console, S's compare, Q's spacing, the
   Reel on the epoch view, the Arena cards on the generations page, and a density
