@@ -29,6 +29,10 @@ import * as D from '../data.js';
 import * as svg from '../svg.js';
 import { gatedSwap, section, empty, verdictPill, decisionOf, dataTable, deltaCell, ratingCellEl, ratingTripleDigest, coreIdeaLine } from '../ui.js';
 import { renderStructure, structurePill, structureDigest, isNonGauntlet, normalizeStructure, resolveNonGauntletSt } from './structure.js';
+// `epochIsLive` composes the clock and the epoch scope, and every present-tense
+// claim in this view consumes it: the projected scalars, the PROJ badges and
+// progress bars, the in-flight round and its "racing" / "deciding…" pills, and
+// the verdict pills' tense.
 import { epochIsLive } from '../livestatus.js';
 import { roundsFromTimeline, roundModelDigest } from '../rounds.js';
 
@@ -57,12 +61,6 @@ function envelopeBelongsToEpoch(epochId) {
   if (hbEpoch != null) return String(hbEpoch) === String(epochId);
   return true; // no epoch tag ⇒ the untagged single-epoch shape; trust it.
 }
-
-// Is a run LIVE right now, for the epoch on screen? `epochIsLive` (livestatus.js)
-// composes the clock and the scope, and every present-tense claim in this view
-// consumes it: the projected scalars, the PROJ badges and progress bars, the
-// in-flight round and its "racing" / "deciding…" pills, and the verdict pills'
-// tense.
 
 export async function render(host, ctx, params) {
   if (!host.firstChild) host.appendChild(el('p', { class: 'dn-empty', text: 'Reading generations…' }));
