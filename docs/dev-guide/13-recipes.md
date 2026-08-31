@@ -714,7 +714,7 @@ a canonical file; the index row is a projection (the files-canonical rule —
 
 **Steps.**
 
-1. **Bump `SCHEMA_VERSION`.** It is a module int in `schema.py` (currently `10`).
+1. **Bump `SCHEMA_VERSION`.** It is a module int in `schema.py` (currently `14`).
    Increment it. The schema is dual-stamped (`PRAGMA user_version` + a
    `schema_meta` row).
 2. **Add to the fresh-build shape.** Edit the relevant `CREATE TABLE` in
