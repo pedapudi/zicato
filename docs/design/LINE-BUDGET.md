@@ -41,9 +41,9 @@ above the baseline and negative where it stands below.
 
 | Measurement | Baseline (`f9052dd`) | Enforced limit | Limit minus baseline |
 |---|---:|---:|---:|
-| Total | 408,661 | 454,514 | +45,853 |
-| Production | 197,702 | 204,234 | +6,532 |
-| Production logic | 117,024 | 121,717 | +4,693 |
+| Total | 408,661 | 454,704 | +46,043 |
+| Production | 197,702 | 204,244 | +6,542 |
+| Production logic | 117,024 | 121,719 | +4,695 |
 
 The baseline row is the reference `f9052dd` measured by the classification the
 checker holds, which counts the console's hand-written entry point
@@ -153,3 +153,6 @@ correction exposes and the entry records that reason.
 | Recorded effective settings (total) | 454,085 | +429 | 454,514 | Issue #309: the settings record — the source vocabulary, the map of every effective setting to its value and the tier that set it, the additive `settings` field on the heartbeat, and the per-tier, attribution and record-completeness coverage. Before it, a run's effective configuration was reconstructible only by re-deriving the composition by hand, and a concurrency ceiling nobody wrote down was indistinguishable from one an operator chose. |
 | Recorded effective settings (production) | 204,002 | +232 | 204,234 | Issue #309: `runtime/effective_settings.py`, the `settings` field with its serialization and tolerant read, the beater argument that carries it forward, the stamp where the round resolves its runtime configuration, and `resolve_host_worker_permits` in the factory. |
 | Recorded effective settings (production logic) | 121,593 | +124 | 121,717 | Issue #309: the net across six files. `runtime/effective_settings.py` adds 91, of which 33 are the two declared tables — the seventeen runtime knobs the record reports and the sixteen fields it excuses with a reason. `runtime_factory.py` adds 11 for `resolve_host_worker_permits`, which replaces the bool-intent mapping that `make_runtime_config` and the run-start log line each held a copy of; `evolve/loop.py` loses 1 as its copy goes. `runtime/state.py` adds 8, `runtime/heartbeat.py` 5, and `evolve/gauntlet.py` 10 for the best-effort stamp. |
+| Practice-review keys the console reads (total) | 454,514 | +190 | 454,704 | Issue #324: the terminal console's practice table rendered two empty columns because it read key names the reflection endpoint does not serve, and the fixture that should have caught it stated the same wrong names by hand. The delta is the coverage that makes the fix durable: the fixture rebuilt from `PracticeReview.to_json`, three lens tests over a real `PracticeCheck`, and a per-check key cross-check holding the serializer, the live service and the fixture equal — reflection payloads were exempt from the existing top-level cross-check, so no test read inside them. |
+| Practice-review keys the console reads (production) | 204,234 | +10 | 204,244 | Issue #324: the practice row now reads `check_id`, `headline` and `rationale`, states an unmeasured check's missing input in its evidence slots, and folds what the row displays into the repaint digest. Most of the delta is the comment stating which serializer owns the key names. |
+| Practice-review keys the console reads (production logic) | 121,717 | +2 | 121,719 | Issue #324: the repaint digest folds four fields per check instead of two, and the row builder binds the check's id and headline once rather than re-reading them. |
