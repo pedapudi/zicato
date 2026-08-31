@@ -15,6 +15,22 @@ jobs:
       - name: Report and enforce line budgets
         run: python tools/line_budget.py --check
 
+  prose-lint:
+    name: prose lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Report prose that needs the development history to decode
+        # Ratchet mode: the run fails only where a rule's count rises above
+        # tools/prose_lint_baseline.json. The tree carries a standing backlog
+        # of hits, so a whole-tree failure would be unlandable; a per-rule
+        # ceiling keeps new ones out while the backlog is worked through.
+        # A cleanup change lowers counts and leaves the file alone (a fall
+        # is green); one later change regenerates it to the measured floor,
+        # so parallel prose branches never contend for the baseline.
+        run: python tools/prose_lint.py --baseline tools/prose_lint_baseline.json
+
   lint-and-test:
     runs-on: ubuntu-latest
     strategy:
@@ -67,7 +83,9 @@ jobs:
         run: uv run mypy src/zicato/
 
       - name: Pytest
-        run: uv run pytest tests/
+        # tools/test_prose_lint.py rides here because the tool lives
+        # outside the `testpaths` root that the bare invocation collects.
+        run: uv run pytest tests/ tools/test_prose_lint.py
 
   parity:
     name: parity gates (${{ matrix.python-version }})
