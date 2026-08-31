@@ -228,6 +228,20 @@ never re-implements the gate.
 Each lives in `src/zicato/selection/strategies/<name>.py`. The
 one-line scheduling / advance / stopping summary, then the notes.
 
+The four structures that narrow a field of challengers — `single_elim`,
+`double_elim`, `swiss`, `racing` — share one base, `ChampionGateStrategy`
+(`src/zicato/selection/strategies/champion_gate.py`). It owns the ending
+they have in common: a single crowning duel between the reigning champion
+and the finalist the structure's own stages produced, and every view built
+on that duel — the settled round records, the in-flight round, the live
+standings, and the crowned `SelectionDecision`. A structure supplies its
+own stage bookkeeping plus four descriptions of its final: the round label
+it is recorded under, the contestant that reached it, the bracket slot it
+occupies, and the within-tournament stage index it sits at. `gauntlet`
+stands outside the base, because its single duel IS the champion gate.
+`tests/test_selection_strategies.py` pins the correspondence, so a
+structure added to the registry cannot fork those views again.
+
 > **Param defaults at a glance** (read off the shipped strategy
 > constructors — these are the authoritative defaults the
 > `zicato-design-tournament-structure` skill tabulates):

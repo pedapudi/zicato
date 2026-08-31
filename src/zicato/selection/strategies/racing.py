@@ -29,16 +29,13 @@ import math
 from collections.abc import Sequence
 from typing import Any
 
-from zicato.core.types import TournamentDecision
+from zicato.selection.strategies.champion_gate import ChampionGateStrategy
 from zicato.selection.strategy import (
     Contestant,
     MatchRecord,
     Matchup,
     MatchupResult,
     RoundRecord,
-    SelectionDecision,
-    SelectionStrategy,
-    Standing,
     _param_float,
     _param_int,
     _param_opt_float,
@@ -81,10 +78,14 @@ def _shuffled_order(board_ids: Sequence[str]) -> tuple[str, ...]:
     return tuple(sorted(unique_ids, key=lambda entry_id: (rank(entry_id), entry_id)))
 
 
-class RacingStrategy(SelectionStrategy):
+class RacingStrategy(ChampionGateStrategy):
     """Successive-halving rungs, then a final full-board champion-gate duel."""
 
     structure = "racing"
+    _final_match_id = "racing-final"
+    _final_label = "Champion gate"
+    # The rungs run board slices; the crowning duel runs the whole board.
+    _final_board_fraction = 1.0
     # Racing's replication is INTRINSIC — the escalating board slices are the
     # sample rather than per-duel ``replicates`` — so it pins 1 even though the base
     # default is now 2 (a per-duel replicate would re-run a slice, not
@@ -94,8 +95,6 @@ class RacingStrategy(SelectionStrategy):
 
     def __init__(self, params: dict[str, Any] | None = None) -> None:
         super().__init__(params)
-        self._champion: Contestant | None = None
-        self._challengers: list[Contestant] = []
         self._eta = max(2, _param_int(self.params, "eta", 2))
         self._board_fraction = _param_float(self.params, "board_fraction", 0.25)
         self._rung0 = _param_int(self.params, "rung0_board_size", 0)  # 0 ⇒ use fraction
@@ -112,7 +111,6 @@ class RacingStrategy(SelectionStrategy):
             if self._slice_schedule == SHUFFLED_SLICE_SCHEDULE
             else self._board_ids
         )
-        self._replicates = max(1, _param_int(self.params, "replicates", self._default_replicates))
 
         # --- Matchup-level wall-clock budgets (opt-in; None ⇒ uncapped). ---
         # ``matchup_budget_seconds`` caps EVERY duel's total board-unit
@@ -130,7 +128,6 @@ class RacingStrategy(SelectionStrategy):
         self._alive: list[Contestant] = []
         self._pending: dict[str, tuple[Contestant, Contestant]] = {}
         self._rung_scalars: dict[str, float] = {}
-        self._scalars: dict[str, float] = {}
         # The champion defends EVERY duel as the shared ``left`` side, so it is
         # never recorded into ``_scalars`` (keyed on the challenger ``right``).
         # We keep its last-known running scalar separately so the in-flight
@@ -140,22 +137,11 @@ class RacingStrategy(SelectionStrategy):
         # duel of the first rung lands.
         self._champion_scalar: float | None = None
         self._eliminated_round: dict[str, int] = {}
-        self._records: list[RoundRecord] = []
-        self._audit: list[MatchupResult] = []
         self._rung_started = False
-
-        # Final full-board champion-gate.
-        self._final_scheduled = False
-        self._final_result: MatchupResult | None = None
-        self._final_match_id = "racing-final"
         self._survivor: Contestant | None = None
 
-    def field_size(self) -> int:
-        return max(1, _param_int(self.params, "field_size", 2))
-
     def seed(self, champion: Contestant, challengers: Sequence[Contestant]) -> None:
-        self._champion = champion
-        self._challengers = list(challengers)
+        super().seed(champion, challengers)
         self._alive = list(self._challengers)
 
     # -- board-slice helpers ----------------------------------------------
@@ -249,13 +235,19 @@ class RacingStrategy(SelectionStrategy):
                 right=self._survivor,
                 board_subset=None,  # full board for the crowning gate
                 replicates=self._replicates,
-                stage_index=self._rung + 1,
+                stage_index=self._final_stage_index(),
                 # The final crowning duel runs the FULL board × replicates ×
                 # both sides — the grind this budget exists to bound. Prefer
                 # the final-rung-specific cap, falling back to the matchup cap.
                 matchup_budget_seconds=self._final_budget_s,
             ),
         )
+
+    def _finalist(self) -> Contestant | None:
+        return self._survivor
+
+    def _final_stage_index(self) -> int:
+        return self._rung + 1
 
     # -- result folding ----------------------------------------------------
 
@@ -274,8 +266,7 @@ class RacingStrategy(SelectionStrategy):
             if self._champion_scalar is None or champ_scalar < self._champion_scalar:
                 self._champion_scalar = champ_scalar
 
-        if result.matchup_id == self._final_match_id and self._final_scheduled:
-            self._final_result = result
+        if self._capture_final_result(result):
             return
 
         pair = self._pending.pop(result.matchup_id, None)
@@ -324,97 +315,12 @@ class RacingStrategy(SelectionStrategy):
             return True
         return not self._challengers
 
-    def champion(self) -> SelectionDecision:
-        audit = tuple(self._audit)
-        if self._final_result is None or self._survivor is None:
-            return SelectionDecision(
-                promoted_generation_id=None,
-                decision=TournamentDecision.REJECTED,
-                reason="no racing survivor cleared the full-board champion gate",
-                matchups=audit,
-                standings=self._standings(None),
-            )
-        outcome = self._final_result.outcome
-        promoted = outcome.decision == "promoted"
-        promoted_id = self._survivor.generation_id if promoted else None
-        return SelectionDecision(
-            promoted_generation_id=promoted_id,
-            decision=outcome.decision,
-            reason=outcome.reason,
-            matchups=audit,
-            crowning_matchup_id=self._final_match_id,
-            standings=self._standings(promoted_id),
-        )
+    def _no_promotion_reason(self) -> str:
+        return "no racing survivor cleared the full-board champion gate"
 
-    def _standings(self, promoted_id: str | None) -> tuple[Standing, ...]:
-        ids = [c.generation_id for c in self._challengers]
-        if self._champion:
-            ids.insert(0, self._champion.generation_id)
-        rows: list[Standing] = []
-        for gid in ids:
-            role = (
-                "champion"
-                if (self._champion and gid == self._champion.generation_id)
-                else ("challenger")
-            )
-            if promoted_id is not None and gid == promoted_id:
-                status = "champion"
-            elif gid in self._eliminated_round:
-                status = "eliminated"
-            else:
-                status = "alive"
-            rows.append(
-                Standing(
-                    generation_id=gid,
-                    rank=0,
-                    scalar=self._scalars.get(gid, 0.0),
-                    status=status,  # type: ignore[arg-type]
-                    role=role,  # type: ignore[arg-type]
-                )
-            )
-        rows.sort(key=lambda s: (s.scalar, s.generation_id))
-        return tuple(
-            Standing(
-                generation_id=s.generation_id,
-                rank=i + 1,
-                scalar=s.scalar,
-                wins=s.wins,
-                losses=s.losses,
-                status=s.status,
-                role=s.role,
-            )
-            for i, s in enumerate(rows)
-        )
-
-    def rounds(self) -> tuple[RoundRecord, ...]:
-        recs = list(self._records)
-        if self._final_result is not None and self._champion and self._survivor:
-            outcome = self._final_result.outcome
-            winner = (
-                self._survivor.generation_id
-                if outcome.decision == "promoted"
-                else (self._champion.generation_id)
-            )
-            recs.append(
-                RoundRecord(
-                    stage_index=self._rung + 1,
-                    label="Champion gate",
-                    matches=(
-                        MatchRecord(
-                            match_id=self._final_match_id,
-                            competitors=(
-                                self._champion.generation_id,
-                                self._survivor.generation_id,
-                            ),
-                            winner=winner,
-                            decision=outcome.decision,
-                            delta_scalar=outcome.delta_scalar,
-                            board_fraction=1.0,
-                        ),
-                    ),
-                )
-            )
-        return tuple(recs)
+    def _is_eliminated(self, gid: str) -> bool:
+        # A rung cuts by rank: every challenger below the survivor cut is out.
+        return gid in self._eliminated_round
 
     # -- live (in-flight) projection --------------------------------------
 
@@ -463,7 +369,7 @@ class RacingStrategy(SelectionStrategy):
             progress[gid] = row
         return progress
 
-    def _pending_round(self) -> RoundRecord | None:
+    def _pending_stage_round(self) -> RoundRecord | None:
         # Mid rung: ``_pending`` holds this rung's champion-vs-challenger
         # duels. Emit one pending match per duel (keyed by the rung
         # matchup id) carrying the rung's board fraction + the
@@ -490,24 +396,7 @@ class RacingStrategy(SelectionStrategy):
                 label=f"Rung {self._rung}",
                 matches=tuple(matches),
             )
-        # Final full-board champion-gate scheduled, result not yet landed.
-        if self._final_scheduled and self._final_result is None and self._survivor is not None:
-            assert self._champion is not None
-            return RoundRecord(
-                stage_index=self._rung + 1,
-                label="Champion gate",
-                matches=(
-                    pending_match_record(
-                        self._final_match_id,
-                        (self._champion.generation_id, self._survivor.generation_id),
-                        board_fraction=1.0,
-                    ),
-                ),
-            )
         return None
-
-    def _live_standings(self) -> tuple[Standing, ...]:
-        return self._standings(None)
 
 
 __all__ = [

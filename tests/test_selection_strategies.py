@@ -16,12 +16,15 @@ import pytest
 
 from zicato.core.types import TournamentStructure
 from zicato.selection import (
+    STRATEGY_REGISTRY,
     Contestant,
     Matchup,
     MatchupResult,
     make_strategy,
     resolve_tournament,
 )
+from zicato.selection.strategies.champion_gate import ChampionGateStrategy
+from zicato.selection.strategies.gauntlet import GauntletStrategy
 from zicato.tournament.gate import GateOutcome
 
 # ---------------------------------------------------------------------------
@@ -570,6 +573,32 @@ def test_field_size_one_degrades_any_structure_to_gauntlet() -> None:
     s = make_strategy(TournamentStructure(structure="single_elim", params={"field_size": 1}))
     dec = _run_strategy(s, _champion("v0"), [_challenger("v1")], {"v0": 1.0, "v1": 0.5})
     assert dec.promoted_generation_id == "v1"
+
+
+def test_every_field_structure_shares_the_champion_gate_base() -> None:
+    """Every registered structure but the gauntlet inherits the shared final.
+
+    The gauntlet schedules one duel, which IS the champion gate, so it has
+    no field to narrow and stands outside the base. Every other structure
+    narrows a field and then crowns through a final duel, and inheriting
+    :class:`ChampionGateStrategy` is what keeps that ending — the settled
+    round record, the in-flight projection, the live standings, and the
+    crowned decision — in one implementation for all of them. A structure
+    added to the registry without it would fork those four views again.
+    """
+    field_structures = {
+        token: cls
+        for token, cls in STRATEGY_REGISTRY.items()
+        if token != GauntletStrategy.structure
+    }
+    assert set(field_structures) == {"single_elim", "double_elim", "swiss", "racing"}
+    for token, cls in field_structures.items():
+        assert issubclass(cls, ChampionGateStrategy), f"{token} does not share the base"
+        # The two descriptions of its final that the shared templates read
+        # for every record they emit.
+        assert cls._final_match_id, f"{token} declares no crowning matchup id"
+        assert cls._final_label, f"{token} declares no crowning round label"
+    assert not issubclass(GauntletStrategy, ChampionGateStrategy)
 
 
 # ---------------------------------------------------------------------------

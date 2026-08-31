@@ -419,18 +419,23 @@ class SelectionStrategy(ABC):
 
         Default ``None`` (no in-flight round to project — the gauntlet,
         which resolves in one shot, and any resolved strategy). A
-        multi-round strategy overrides this to project its pending
-        matchup map into a :class:`RoundRecord` whose matches carry
-        ``winner=""`` + ``pending=True``.
+        multi-round strategy projects its pending matchup map into a
+        :class:`RoundRecord` whose matches carry ``winner=""`` +
+        ``pending=True``; the four field structures do so through
+        :class:`~zicato.selection.strategies.champion_gate.ChampionGateStrategy`,
+        which composes the structure's own in-flight stage with the
+        scheduled crowning duel.
         """
         return None
 
     def _live_standings(self) -> tuple[Standing, ...]:
         """The standings-so-far (no crowned generation yet).
 
-        Default empty. A standings-bearing strategy overrides this to
-        return its in-progress ranking — typically ``self._standings(None)``
-        — so the live envelope shows the leaderboard climb.
+        Default empty — the gauntlet has no meaningful pre-result standing.
+        Every structure that keeps standings inherits
+        :class:`~zicato.selection.strategies.champion_gate.ChampionGateStrategy`,
+        which answers with its in-progress ranking so the live envelope
+        shows the leaderboard climb.
         """
         return ()
 

@@ -17,58 +17,41 @@ from __future__ import annotations
 from collections.abc import Sequence
 from typing import Any
 
-from zicato.core.types import TournamentDecision
 from zicato.selection.standings_ext import (
-    apply_uncertainty_guard,
-    rating_order,
     read_rating,
     read_resolver,
     read_uncertainty_threshold,
-    resolver_leader,
 )
+from zicato.selection.strategies.champion_gate import ChampionGateStrategy
 from zicato.selection.strategy import (
     Contestant,
     MatchRecord,
     Matchup,
     MatchupResult,
     RoundRecord,
-    SelectionDecision,
-    SelectionStrategy,
-    Standing,
-    _param_int,
     pending_match_record,
 )
 
 
-class SingleEliminationStrategy(SelectionStrategy):
+class SingleEliminationStrategy(ChampionGateStrategy):
     """Bracket over challengers, then a final champion-gate duel."""
 
     structure = "single_elim"
-    # Replicated duels — the noise lever (now also the base default).
+    # Replicated duels — the noise lever, and the base default too.
     _default_replicates = 2
+    _final_match_id = "final"
+    _final_label = "Final"
+    _final_bracket_slot = "final"
 
     def __init__(self, params: dict[str, Any] | None = None) -> None:
         super().__init__(params)
-        self._champion: Contestant | None = None
-        self._challengers: list[Contestant] = []
-        self._replicates = max(1, _param_int(self.params, "replicates", self._default_replicates))
-        # Flat audit of every MatchupResult, for SelectionDecision.matchups.
-        self._audit: list[MatchupResult] = []
         # Bracket state.
         self._current_round: list[Contestant] = []  # survivors entering the next round
         self._stage_index = 0
         self._pending: dict[str, tuple[Contestant, Contestant]] = {}
-        self._records: list[RoundRecord] = []
         self._round_matches: list[MatchRecord] = []
-        self._scalars: dict[str, float] = {}
-        self._wins: dict[str, int] = {}
-        self._losses: dict[str, int] = {}
         self._eliminated_round: dict[str, int] = {}
-        # Final-phase state.
         self._survivor: Contestant | None = None
-        self._final_scheduled = False
-        self._final_result: MatchupResult | None = None
-        self._final_match_id = ""
         # Opt-in rating / resolver / uncertainty-guard knobs (absent ⇒
         # the scalar behaviour, byte-identical). They only re-order the
         # INTERNAL standings / survivor pick and add a promotion-blocking
@@ -77,12 +60,8 @@ class SingleEliminationStrategy(SelectionStrategy):
         self._resolver = read_resolver(self.params)
         self._uncertainty_threshold = read_uncertainty_threshold(self.params)
 
-    def field_size(self) -> int:
-        return max(1, _param_int(self.params, "field_size", 2))
-
     def seed(self, champion: Contestant, challengers: Sequence[Contestant]) -> None:
-        self._champion = champion
-        self._challengers = list(challengers)
+        super().seed(champion, challengers)
         # Degenerate to gauntlet when only one challenger is in the field.
         self._current_round = list(self._challengers)
         for c in self._challengers:
@@ -166,36 +145,22 @@ class SingleEliminationStrategy(SelectionStrategy):
             return ()
         self._survivor = self._pick_finalist(self._survivor)
         self._final_scheduled = True
-        self._final_match_id = "final"
         return (
             Matchup(
                 matchup_id=self._final_match_id,
                 left=self._champion,  # type: ignore[arg-type]
                 right=self._survivor,
                 replicates=self._replicates,
-                stage_index=self._stage_index,
-                bracket_slot="final",
+                stage_index=self._final_stage_index(),
+                bracket_slot=self._final_bracket_slot,
             ),
         )
 
-    def _pick_finalist(self, bracket_survivor: Contestant) -> Contestant:
-        """The challenger to face the champion in the final.
+    def _finalist(self) -> Contestant | None:
+        return self._survivor
 
-        Default (no ``resolver``): the bracket survivor, unchanged.
-        When a ``resolver`` knob is set, the proposed finalist comes from the
-        resolver over the duel matrix (Smith-prune + Ranked Pairs, or
-        Copeland); if the resolver names the champion, an unknown id, or
-        yields nothing, fall back to the bracket survivor. The resolver only
-        re-orders the INTERNAL pick — the unchanged champion gate still
-        decides promotion.
-        """
-        if self._resolver is None or self._champion is None:
-            return bracket_survivor
-        proposed = resolver_leader(self._audit, self._resolver)
-        if proposed is None or proposed == self._champion.generation_id:
-            return bracket_survivor
-        by_id = {c.generation_id: c for c in self._challengers}
-        return by_id.get(proposed, bracket_survivor)
+    def _final_stage_index(self) -> int:
+        return self._stage_index
 
     # -- result folding ----------------------------------------------------
 
@@ -203,8 +168,7 @@ class SingleEliminationStrategy(SelectionStrategy):
         self._audit.append(result)
         self._scalars[result.left_id] = result.left_scalar()
         self._scalars[result.right_id] = result.right_scalar()
-        if result.matchup_id == self._final_match_id and self._final_scheduled:
-            self._final_result = result
+        if self._capture_final_result(result):
             return
         pair = self._pending.pop(result.matchup_id, None)
         if pair is None:
@@ -240,40 +204,8 @@ class SingleEliminationStrategy(SelectionStrategy):
         # No challengers at all ⇒ resolved immediately (champion stands).
         return not self._challengers and self._survivor is None and not self._current_round
 
-    def champion(self) -> SelectionDecision:
-        all_matchups = self._collect_matchups()
-        if self._final_result is None or self._survivor is None or self._champion is None:
-            return SelectionDecision(
-                promoted_generation_id=None,
-                decision=TournamentDecision.REJECTED,
-                reason=f"no finalist cleared the champion gate: {self._no_final_detail()}",
-                matchups=all_matchups,
-                standings=self._standings(None),
-            )
-        outcome = self._final_result.outcome
-        decision, reason, _deferred = apply_uncertainty_guard(
-            outcome.decision,
-            outcome.reason,
-            audit=self._audit,
-            parent_id=self._champion.generation_id,
-            child_id=self._survivor.generation_id,
-            threshold=self._uncertainty_threshold,
-        )
-        promoted = decision == "promoted"
-        promoted_id = self._survivor.generation_id if promoted else None
-        return SelectionDecision(
-            promoted_generation_id=promoted_id,
-            decision=decision,  # type: ignore[arg-type]
-            reason=reason,
-            matchups=all_matchups,
-            crowning_matchup_id=self._final_match_id,
-            standings=self._standings(promoted_id),
-        )
-
-    def _collect_matchups(self) -> tuple[MatchupResult, ...]:
-        # ``_audit`` already holds every MatchupResult in record order
-        # (including the final), so the flat audit is simply a copy.
-        return tuple(self._audit)
+    def _no_promotion_reason(self) -> str:
+        return f"no finalist cleared the champion gate: {self._no_final_detail()}"
 
     def _no_final_detail(self) -> str:
         """Why no final was decided, with whatever the bracket measured.
@@ -305,104 +237,13 @@ class SingleEliminationStrategy(SelectionStrategy):
             f"reported no result{measured}"
         )
 
-    def _standings(self, promoted_id: str | None) -> tuple[Standing, ...]:
-        entries: list[Standing] = []
-        ids = [self._champion.generation_id] if self._champion else []
-        ids += [c.generation_id for c in self._challengers]
-        seen: set[str] = set()
-        for gid in ids:
-            if gid in seen:
-                continue
-            seen.add(gid)
-            status: str = "alive"
-            role = (
-                "champion"
-                if (self._champion and gid == self._champion.generation_id)
-                else ("challenger")
-            )
-            if promoted_id is not None and gid == promoted_id:
-                status = "champion"
-            elif gid in self._eliminated_round:
-                status = "eliminated"
-            entries.append(
-                Standing(
-                    generation_id=gid,
-                    rank=0,
-                    scalar=self._scalars.get(gid, 0.0),
-                    wins=self._wins.get(gid, 0),
-                    losses=self._losses.get(gid, 0),
-                    status=status,  # type: ignore[arg-type]
-                    role=role,  # type: ignore[arg-type]
-                )
-            )
-        self._sort_standings(entries)
-        return tuple(
-            Standing(
-                generation_id=s.generation_id,
-                rank=i + 1,
-                scalar=s.scalar,
-                wins=s.wins,
-                losses=s.losses,
-                status=s.status,
-                role=s.role,
-            )
-            for i, s in enumerate(entries)
-        )
-
-    def _sort_standings(self, entries: list[Standing]) -> None:
-        """Order standings by scalar (default), or theta-rank when selected.
-
-        Default ``rating`` (absent): sort by ``(scalar, id)``. When
-        ``rating="bradley_terry"``, order by fitted strength
-        (best-first), with any contestant the audit has not yet rated keeping
-        the scalar order among themselves AFTER the rated ones.
-        """
-        if self._rating != "bradley_terry":
-            entries.sort(key=lambda s: (s.scalar, s.generation_id))
-            return
-        order = rating_order(self._audit)
-        if not order:
-            entries.sort(key=lambda s: (s.scalar, s.generation_id))
-            return
-        rank = {gid: i for i, gid in enumerate(order)}
-        entries.sort(
-            key=lambda s: (rank.get(s.generation_id, len(order)), s.scalar, s.generation_id)
-        )
-
-    def rounds(self) -> tuple[RoundRecord, ...]:
-        recs = list(self._records)
-        # Append the final as its own round record.
-        if self._final_result is not None and self._champion and self._survivor:
-            outcome = self._final_result.outcome
-            winner = (
-                self._survivor.generation_id
-                if outcome.decision == "promoted"
-                else (self._champion.generation_id)
-            )
-            recs.append(
-                RoundRecord(
-                    stage_index=self._stage_index,
-                    label="Final",
-                    matches=(
-                        MatchRecord(
-                            match_id=self._final_match_id,
-                            competitors=(
-                                self._champion.generation_id,
-                                self._survivor.generation_id,
-                            ),
-                            winner=winner,
-                            decision=outcome.decision,
-                            delta_scalar=outcome.delta_scalar,
-                            bracket_slot="final",
-                        ),
-                    ),
-                )
-            )
-        return tuple(recs)
+    def _is_eliminated(self, gid: str) -> bool:
+        # One node loss ends a challenger's run in a single-elimination bracket.
+        return gid in self._eliminated_round
 
     # -- live (in-flight) projection --------------------------------------
 
-    def _pending_round(self) -> RoundRecord | None:
+    def _pending_stage_round(self) -> RoundRecord | None:
         # Mid bracket round: ``_pending`` holds the scheduled duels and
         # ``_round_matches`` any byes already recorded for this round.
         if self._pending:
@@ -420,24 +261,7 @@ class SingleEliminationStrategy(SelectionStrategy):
                 label=f"Bracket round {self._stage_index + 1}",
                 matches=tuple(matches),
             )
-        # Final scheduled, result not yet landed.
-        if self._final_scheduled and self._final_result is None and self._survivor is not None:
-            assert self._champion is not None
-            return RoundRecord(
-                stage_index=self._stage_index,
-                label="Final",
-                matches=(
-                    pending_match_record(
-                        self._final_match_id,
-                        (self._champion.generation_id, self._survivor.generation_id),
-                        bracket_slot="final",
-                    ),
-                ),
-            )
         return None
-
-    def _live_standings(self) -> tuple[Standing, ...]:
-        return self._standings(None)
 
 
 __all__ = ["SingleEliminationStrategy"]
