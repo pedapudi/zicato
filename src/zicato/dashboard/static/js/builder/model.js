@@ -7,7 +7,7 @@
 // draft params (so the preview reuses the runtime figures), and the chat-pane
 // width / collapse persistence. No DOM, no fetching.
 //
-// The cost estimate and the validation findings are NOT computed here. Both
+// The cost estimate and the validation findings are not computed here. Both
 // come from the server envelope (`/builder/op` and `/builder/draft`), whose
 // numbers `zicato.builder.operations` owns; the browser only renders them.
 
