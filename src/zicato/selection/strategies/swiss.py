@@ -18,55 +18,46 @@ from __future__ import annotations
 from collections.abc import Sequence
 from typing import Any
 
-from zicato.core.types import TournamentDecision
 from zicato.selection.standings_ext import (
-    apply_uncertainty_guard,
     rating_order,
     read_rating,
     read_resolver,
     read_uncertainty_threshold,
     resolver_leader,
 )
+from zicato.selection.strategies.champion_gate import ChampionGateStrategy
 from zicato.selection.strategy import (
     Contestant,
     MatchRecord,
     Matchup,
     MatchupResult,
     RoundRecord,
-    SelectionDecision,
-    SelectionStrategy,
     Standing,
     _param_int,
     pending_match_record,
 )
 
 
-class SwissStrategy(SelectionStrategy):
+class SwissStrategy(ChampionGateStrategy):
     """Fixed-round Swiss, then a champion-gate confirmation of the leader."""
 
     structure = "swiss"
     _default_replicates = 2
+    _final_match_id = "swiss-final"
+    _final_label = "Champion gate"
 
     def __init__(self, params: dict[str, Any] | None = None) -> None:
         super().__init__(params)
-        self._champion: Contestant | None = None
         self._field: list[Contestant] = []  # champion + challengers
         self._by_id: dict[str, Contestant] = {}
         self._rounds_n = max(1, _param_int(self.params, "rounds_n", 4))
-        self._replicates = max(1, _param_int(self.params, "replicates", self._default_replicates))
         self._stage_index = 0
         self._pending: dict[str, tuple[Contestant, Contestant]] = {}
         self._copeland: dict[str, int] = {}
         self._scalar_sum: dict[str, float] = {}
         self._scalar_n: dict[str, int] = {}
-        self._records: list[RoundRecord] = []
         self._round_matches: list[MatchRecord] = []
-        self._audit: list[MatchupResult] = []
         self._scheduled_round = -1  # last round we emitted pairings for
-        # Final champion-gate confirmation.
-        self._final_scheduled = False
-        self._final_result: MatchupResult | None = None
-        self._final_match_id = "swiss-final"
         self._leader: Contestant | None = None
         # Opt-in rating / resolver / uncertainty-guard knobs (absent ⇒
         # the Copeland/scalar behaviour, byte-identical). These only
@@ -76,11 +67,8 @@ class SwissStrategy(SelectionStrategy):
         self._resolver = read_resolver(self.params)
         self._uncertainty_threshold = read_uncertainty_threshold(self.params)
 
-    def field_size(self) -> int:
-        return max(1, _param_int(self.params, "field_size", 2))
-
     def seed(self, champion: Contestant, challengers: Sequence[Contestant]) -> None:
-        self._champion = champion
+        super().seed(champion, challengers)
         self._field = [champion, *challengers]
         for c in self._field:
             self._by_id[c.generation_id] = c
@@ -198,9 +186,15 @@ class SwissStrategy(SelectionStrategy):
                 left=self._champion,
                 right=self._leader,
                 replicates=self._replicates,
-                stage_index=self._stage_index,
+                stage_index=self._final_stage_index(),
             ),
         )
+
+    def _finalist(self) -> Contestant | None:
+        return self._leader
+
+    def _final_stage_index(self) -> int:
+        return self._stage_index
 
     def _pick_leader(self) -> str | None:
         """The challenger to face the champion in the crowning duel.
@@ -233,8 +227,7 @@ class SwissStrategy(SelectionStrategy):
         self._tally_scalar(result.left_id, result.left_scalar())
         self._tally_scalar(result.right_id, result.right_scalar())
 
-        if result.matchup_id == self._final_match_id and self._final_scheduled:
-            self._final_result = result
+        if self._capture_final_result(result):
             return
 
         pair = self._pending.pop(result.matchup_id, None)
@@ -276,37 +269,8 @@ class SwissStrategy(SelectionStrategy):
         # Resolved without a final only when there is no challenger leader.
         return self._final_scheduled and self._leader is None
 
-    def champion(self) -> SelectionDecision:
-        audit = tuple(self._audit)
-        if self._final_result is None or self._leader is None:
-            return SelectionDecision(
-                promoted_generation_id=None,
-                decision=TournamentDecision.REJECTED,
-                reason=f"swiss leader did not clear the champion gate: {self._no_final_detail()}",
-                matchups=audit,
-                standings=self._standings(None),
-            )
-        outcome = self._final_result.outcome
-        assert self._champion is not None
-        decision, reason, deferred = apply_uncertainty_guard(
-            outcome.decision,
-            outcome.reason,
-            audit=self._audit,
-            parent_id=self._champion.generation_id,
-            child_id=self._leader.generation_id,
-            threshold=self._uncertainty_threshold,
-        )
-        promoted = decision == "promoted"
-        promoted_id = self._leader.generation_id if promoted else None
-        del deferred
-        return SelectionDecision(
-            promoted_generation_id=promoted_id,
-            decision=decision,  # type: ignore[arg-type]
-            reason=reason,
-            matchups=audit,
-            crowning_matchup_id=self._final_match_id,
-            standings=self._standings(promoted_id),
-        )
+    def _no_promotion_reason(self) -> str:
+        return f"swiss leader did not clear the champion gate: {self._no_final_detail()}"
 
     def _no_final_detail(self) -> str:
         """Why no crowning duel was decided, with the means the swiss measured.
@@ -332,9 +296,15 @@ class SwissStrategy(SelectionStrategy):
         )
 
     def _standings(self, promoted_id: str | None) -> tuple[Standing, ...]:
+        """The field ranked by Copeland points, tie-broken by mean scalar.
+
+        The pairing order IS the Swiss standing, so this replaces the
+        duel-tally standings rather than sorting rows into them: ``wins``
+        carries the Copeland score, ``scalar`` the mean over every duel the
+        contestant played, and no contestant is ever eliminated.
+        """
         rows: list[Standing] = []
         for gid in self._standing_order():
-            c = self._by_id[gid]
             role = (
                 "champion"
                 if (self._champion and gid == self._champion.generation_id)
@@ -352,52 +322,11 @@ class SwissStrategy(SelectionStrategy):
                     role=role,  # type: ignore[arg-type]
                 )
             )
-            del c
-        return tuple(
-            Standing(
-                generation_id=s.generation_id,
-                rank=i + 1,
-                scalar=s.scalar,
-                wins=s.wins,
-                losses=s.losses,
-                status=s.status,
-                role=s.role,
-            )
-            for i, s in enumerate(rows)
-        )
-
-    def rounds(self) -> tuple[RoundRecord, ...]:
-        recs = list(self._records)
-        if self._final_result is not None and self._champion and self._leader:
-            outcome = self._final_result.outcome
-            winner = (
-                self._leader.generation_id
-                if outcome.decision == "promoted"
-                else (self._champion.generation_id)
-            )
-            recs.append(
-                RoundRecord(
-                    stage_index=self._stage_index,
-                    label="Champion gate",
-                    matches=(
-                        MatchRecord(
-                            match_id=self._final_match_id,
-                            competitors=(
-                                self._champion.generation_id,
-                                self._leader.generation_id,
-                            ),
-                            winner=winner,
-                            decision=outcome.decision,
-                            delta_scalar=outcome.delta_scalar,
-                        ),
-                    ),
-                )
-            )
-        return tuple(recs)
+        return self._ranked(rows)
 
     # -- live (in-flight) projection --------------------------------------
 
-    def _pending_round(self) -> RoundRecord | None:
+    def _pending_stage_round(self) -> RoundRecord | None:
         # Mid Swiss round: ``_pending`` holds the scheduled pairings and
         # ``_round_matches`` any byes already recorded for the round.
         if self._pending:
@@ -414,23 +343,7 @@ class SwissStrategy(SelectionStrategy):
                 label=f"Swiss round {self._stage_index + 1}",
                 matches=tuple(matches),
             )
-        # Champion-gate scheduled but its result has not landed yet.
-        if self._final_scheduled and self._final_result is None and self._leader is not None:
-            assert self._champion is not None
-            return RoundRecord(
-                stage_index=self._stage_index,
-                label="Champion gate",
-                matches=(
-                    pending_match_record(
-                        self._final_match_id,
-                        (self._champion.generation_id, self._leader.generation_id),
-                    ),
-                ),
-            )
         return None
-
-    def _live_standings(self) -> tuple[Standing, ...]:
-        return self._standings(None)
 
 
 __all__ = ["SwissStrategy"]
