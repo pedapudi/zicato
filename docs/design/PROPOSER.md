@@ -1311,7 +1311,7 @@ already rolled the hash on its own.
 | Selection / tournament the proposer feeds | [SELECTION.md](SELECTION.md), [TOURNAMENT-STRUCTURES.md](TOURNAMENT-STRUCTURES.md) |
 | The copy-me tool-using proposer agent | [`examples/zicato_examples/proposer_with_tools/agent.py`](../../examples/zicato_examples/proposer_with_tools/agent.py) |
 | The failure-mode feedback channel — anti-leakage (train-slice, banded, identity-free) | [OVERFITTING.md §11](OVERFITTING.md), `src/zicato/analyzer/outcome_marginals.py` |
-| `register` CLI reference | [CLI.md](CLI.md#zicato-register) |
+| The `zicato epoch register` command reference | [CLI.md](CLI.md) |
 | The post-apply check codes the scorecard classifies on (§6.1) | [MUTATION-SURFACE.md](MUTATION-SURFACE.md), `src/zicato/mutation/validator.py` |
 | The recommend-only reflection pattern this mirrors (findings, five-slot evidence, apply-to-a-draft) | [BOARD-REFLECTION.md](BOARD-REFLECTION.md), `src/zicato/reflection/findings.py` |
 | The redaction envelope the reflection substrate reuses | [OVERFITTING.md §11](OVERFITTING.md), §2.5 above |
