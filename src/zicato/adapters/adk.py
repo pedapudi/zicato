@@ -746,9 +746,9 @@ def _resolves_to_native_function_calling(model_str: str) -> bool:
     floods on the garbage-collection of) a ``google.genai`` client.
 
     This predicate must NOT be written as ``issubclass(cls, LiteLlm)``, which
-    conflates "is function-calling capable" with
-    "is not a ``google.genai``-backed class" (issue #98). A native ``gemini-*`` / ``gemma-*``
-    id resolves to :class:`Gemini` / :class:`Gemma`, NOT a ``LiteLlm``
+    conflates "is function-calling capable" with "is not a
+    ``google.genai``-backed class" (issue #98). A native ``gemini-*`` /
+    ``gemma-*`` id resolves to :class:`Gemini` / :class:`Gemma`, NOT a ``LiteLlm``
     subclass — so every native Gemini/Gemma target was judged tool-INCAPABLE
     and its tool agents were rebound to the text-only shim, silently stripping
     every tool. The genai-client-flood concern that tempts one to write it
@@ -928,8 +928,7 @@ def rebind_tree_models_to_call_llm(root: Any, call_llm: Any) -> int:
             if not _resolves_to_genai_client(model_str):
                 continue  # real LiteLlm endpoint model — keep native tool-calling.
             if declares_tools:
-                # A native Gemini/Gemma tool agent keeps its model
-                # (issue #98). The
+                # A native Gemini/Gemma tool agent keeps its model (issue #98). The
                 # shim would strip its tools silently; the genai client's own
                 # "No API key" failure is loud and diagnosable.
                 kept_native.append(name)

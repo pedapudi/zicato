@@ -255,9 +255,8 @@ class OutcomeRecord:
     # per-board scalars were reused and the champion was NOT executed;
     # ``"fast-degraded"`` = fast was requested but no cache covered the
     # needed boards, so the champion ran once to seed it. Defaults to
-    # ``"full"``, which is also what a journal omitting the key reads back
-    # as. Recorded for provenance only: flipping fast↔full does not roll the
-    # epoch.
+    # ``"full"``, which a journal omitting the key also reads back as.
+    # Provenance only: flipping fast↔full does not roll the epoch.
     champion_eval_mode: str = "full"
     # Holdout + Ladder evidence for THIS round (OVERFITTING.md §4 / §12 #2).
     # ``None`` (the default) when there was no holdout to consult — a small
@@ -269,12 +268,10 @@ class OutcomeRecord:
     # ``{"confirmed": bool|None, "train_scalar": float|None,
     #    "holdout_scalar": float|None, "ladder_released": bool,
     #    "ladder_budget_total": int, "ladder_budget_remaining": int,
-    #    "threshold": float}``. This is runtime evidence about the round; it
-    # is no part of the evaluation contract.
+    #    "threshold": float}``. Runtime evidence, no part of the contract.
     holdout: dict[str, Any] | None = None
     # Per-generation train/holdout loss + the generalization gap
-    # (OVERFITTING.md §6 / §12 #5). Runtime evidence about the round; no part
-    # of the evaluation contract.
+    # (OVERFITTING.md §6 / §12 #5). Runtime evidence, no part of the contract.
     # ``train_loss`` is THIS generation's (the child's) TRAIN-slice scalar —
     # the score that gated it. ``holdout_loss`` is its HOLDOUT-slice scalar,
     # or ``None`` when there was no holdout (small board / split disabled /

@@ -51,20 +51,20 @@ registries that no other lane exercises end to end.
 
 It then collects the produced ``.zicato`` artifacts:
 
-* every generation's ``gen_score.json`` — the per-generation SCORE: scalar
-  plus components plus the per-board-entry drift_loss / score / pass_fail;
-* every ``experiment.json`` — the hypothesis plus the tournament
-  ``outcome`` and per-match audit;
+* every generation's ``gen_score.json`` — scalar, components, and the
+  per-board-entry drift_loss / score / pass_fail;
+* every ``experiment.json`` — the hypothesis, the tournament ``outcome``,
+  and the per-match audit;
 * any per-run ``loss.json``, and each round's ``round_log.jsonl``;
-* each settled field-tournament snapshot, which carries the round's
-  recorded ``promoted_generation_id`` / ``champion_generation_id``, the
-  head the dashboard serves;
+* each settled field-tournament snapshot, carrying the round's recorded
+  ``promoted_generation_id`` / ``champion_generation_id``, the head the
+  dashboard serves;
 * the workspace ``lineage.json``.
 
-It normalizes the handful of wall-clock / tmp-path / date / uuid fields
-(see ``normalize.py``) and emits ONE canonical JSON document. With ``ZICATO_PARITY_UPDATE=1`` it
-writes that document to the golden; otherwise it asserts byte-identity
-against the committed golden.
+It normalizes the wall-clock / tmp-path / date / uuid fields (see
+``normalize.py``) and emits ONE canonical JSON document. With
+``ZICATO_PARITY_UPDATE=1`` it writes that document to the golden; otherwise
+it asserts byte-identity against the committed golden.
 
 Why this is the strongest single end-to-end gate
 -------------------------------------------------

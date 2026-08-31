@@ -33,8 +33,7 @@ Trees are not permanent. :mod:`zicato.epoch.gc` prunes generation source
 trees and keeps every record, and an archived or relocated workspace can
 arrive with no trees at all. Re-enumerating a tree that is gone yields
 an empty surface. Enumerating alone would therefore blank a closed epoch's
-whole mutation browser while the records that describe it sat unread
-(issue #194 §6).
+mutation browser while the records describing it sat unread (issue #194 §6).
 
 Two records reconstruct the surface, and neither is ever pruned:
 
@@ -326,12 +325,10 @@ def _record_surface(paths: WorkspacePaths, epoch_id: str) -> dict[str, MutationP
 
     The round wrote that file from the very enumeration it fed the
     proposer, so every site's content and line span is the real thing.
-
     Two gaps remain, and the caller captions them rather than papering over
     them. The snapshot carries no ``metadata``, so a site's ``role`` reads
-    empty. And it is the enumeration of the round's *champion*, which is
-    ``v0`` for an epoch that never promoted, and the promoted parent
-    otherwise.
+    empty. And it is the enumeration of the round's *champion*: ``v0`` for
+    an epoch that never promoted, the promoted parent otherwise.
     """
     points: dict[str, MutationPoint] = {}
     for record in load_mutation_surface(layout_of(paths), epoch_id):

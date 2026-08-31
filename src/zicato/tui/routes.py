@@ -8,11 +8,11 @@ both places; there is no second vocabulary to learn.
 Shorthands exist for the common cases (``candidate/17``, ``instrument``), and
 they resolve to the same :class:`Route`. The terminal ships fewer views than
 the browser: the candidate, board and health lenses are not built here, and
-the builder, settings, publication and traces surfaces are browser-side
-only. An address naming one of those resolves to the NEAREST lens this
-build does have, and records what was asked for in
-:attr:`Route.unsupported`, so the status band can say "candidate is not in
-this build" rather than landing somewhere unrelated without comment.
+the builder, settings, publication and traces surfaces are browser-side only.
+An address naming one of those resolves to the NEAREST lens this build does
+have, and records what was asked for in :attr:`Route.unsupported`, so the
+status band can say "candidate is not in this build" rather than landing
+somewhere unrelated without comment.
 
 That is the rule this module enforces: an address the operator can type
 always resolves, and always admits when it could not give them what they

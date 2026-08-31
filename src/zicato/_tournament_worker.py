@@ -1,8 +1,8 @@
 """Subprocess worker that executes ONE tournament run in its own OS process.
 
-This module is the subprocess-worker robustness layer. A board-entry run
-executed inside the orchestrator process could be stopped only by killing
-the whole ``evolve`` invocation, because a wedged run holds the interpreter.
+This module is the subprocess-worker robustness layer. A wedged board-entry
+run holds the interpreter, so running it inside the orchestrator process
+would make killing the whole ``evolve`` invocation the only way to stop it.
 Isolating each run as its own subprocess is what lets a per-run wall-clock
 budget be hard-enforced:
 
@@ -288,9 +288,9 @@ def _record_harness_load(
     ACCUMULATE across the generation's units rather than overwriting: a tree ANY
     unit imported from the snapshot is verified for the generation, and
     ``trees_never_imported`` is what is left over — the trees no unit ever
-    touched. That is the only observable form of a shadowed snapshot: an
-    installed entrypoint that never imports the mutated tree at all
-    (issue #110). One unit's
+    touched. That is the only observable form of a shadowed snapshot — an
+    installed entrypoint that never imports the mutated tree (issue #110). One
+    unit's
     read-modify-write can lose a concurrent unit's verification, which can only
     ever ADD a warning-severity never-imported entry, never suppress a failure:
     a tree imported from outside the snapshot fails its own unit at load time
@@ -817,9 +817,8 @@ async def _run(args: dict[str, Any]) -> None:
     # above rather than before. An endpoint-shaped harness role (spec.model +
     # endpoint/api_key_env — the live-validation shape) forces
     # ``_resolve_inner_model_from_role`` to import the whole ``google.adk``
-    # graph right here, a measured ~1 s / 80 MB / ~1500 modules
-    # (RUNTIME.md §5.5.8), and ``ADKHarnessAdapter.load()`` a few lines below
-    # imports
+    # graph right here, a measured ~1 s / 80 MB / ~1500 modules (RUNTIME.md
+    # §5.5.8), and ``ADKHarnessAdapter.load()`` a few lines below imports
     # the SAME graph unconditionally for every ADK-adapter run regardless of
     # ``inner_model`` — so the import cost is unavoidable for this shape and
     # deferring it past ``.load()`` saves nothing on top (measured: building
@@ -860,8 +859,8 @@ async def _run(args: dict[str, Any]) -> None:
     # Capture knobs (board reflection's capture fix). Runtime-only,
     # additive, NEVER contract-hashed. An ABSENT key defaults to True: the
     # capture is always-on with an opt-out, so a caller that passes no flag
-    # still gets the artifacts. Both writes
-    # are best-effort: a capture failure never re-scores or aborts a run.
+    # still gets the artifacts. Both writes are best-effort: a capture
+    # failure never re-scores or aborts a run.
     # With both knobs OFF the worker's behavior (files written, loss
     # bytes, exit code) is byte-identical to before the knobs existed.
     persist_run_results = bool(args.get("persist_run_results", True))
@@ -1147,8 +1146,8 @@ def _weights_from_args(args: dict[str, Any]) -> ScoringWeights:
     (:func:`zicato.tournament.runner._weights_spec` → :meth:`ScoringWeights.to_json`).
     Because both sides share ONE ``dataclasses.fields()``-driven serde, a
     field cannot be carried by the writer and dropped here (or the reverse).
-    Two hand-aligned field lists would let it: the worker would then score
-    under defaults for the dropped field and say nothing, which is how
+    Two hand-aligned field lists would let it, and the worker would then
+    score under defaults for the dropped field and say nothing — which is how
     ``per_judge_weights``, ``pass_rate_monotonicity_scope`` and
     ``drift_kind_aggregation`` each desynced.
     ``from_json`` coerces every field to its declared type and

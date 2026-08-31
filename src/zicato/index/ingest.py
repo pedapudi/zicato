@@ -359,8 +359,8 @@ def _upsert_loss_profile(
     # Abort-cause provenance (schema v9). Read straight off the profile: the
     # runner/worker stamp it onto ``LossProfile.abort_cause`` for synthesised
     # aborted profiles (``budget_exhausted`` vs the infra causes). An empty /
-    # absent value (a cleanly-reduced run, or a profile carrying no cause)
-    # is stored as
+    # absent value (a cleanly-reduced run, or a profile with no cause) is
+    # stored as
     # NULL so a reader can ``WHERE abort_cause = 'parent_kill'`` to spot an
     # over-firing watchdog without re-parsing the ``loss_json`` blob.
     abort_cause = getattr(profile, "abort_cause", None) or None
@@ -806,12 +806,10 @@ def _upsert_field_tournament(conn: sqlite3.Connection, record: dict[str, Any]) -
     round's tournament: the settled round-by-round pairings
     (``rounds_json``), the Copeland standings (``standings_json``), the
     full competitor field (``competitors_json``), and the proposing
-    field-status (``field_status_json``).
-
-    That is the same shape the runtime ``active_tournament`` envelope
-    carries. The dashboard's structure renderers already consume that shape
-    live, so they render the swiss and elimination ladders post-run with no
-    second code path.
+    field-status (``field_status_json``). That is the same shape the runtime
+    ``active_tournament`` envelope carries, and the dashboard's structure
+    renderers already consume it live, so they render the swiss and
+    elimination ladders post-run with no second code path.
 
     The ``tournament_id`` is the field-level id
     ``"{epoch_id}:field:{first_challenger}"`` — stable per round and
@@ -1887,10 +1885,10 @@ def _sweep_stale_build_tmps(target: Path) -> None:
     """Remove build scratch abandoned by builders that are no longer alive.
 
     Unique scratch names (:func:`_build_tmp_path`) give up the one virtue of
-    a fixed name: with a fixed name, the leftovers of a build killed outright
-    — SIGKILL, an OOM, a pulled plug — are unlinked by the next build reusing
+    a fixed name, under which the leftovers of a build killed outright —
+    SIGKILL, an OOM, a pulled plug — are unlinked by the next build reusing
     the path. Unique names leave nobody to reclaim them, and the leftovers
-    are database-sized, so this sweep does the reclaiming.
+    are database-sized, so this sweep reclaims them.
 
     Liveness is decided by the PID stamped into the name, the same
     stale-owner test the workspace lock uses (:func:`is_pid_alive`), so a

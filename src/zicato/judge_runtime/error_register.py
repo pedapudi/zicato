@@ -5,18 +5,16 @@ violated" (drift) and "the criterion was not violated" (silence). It has a
 third *outcome* — its callable RAISED — and nothing on the run's own wire
 distinguishes that from silence.
 
-The laundering is structural rather than accidental. A judge must never
-crash a run, so both
-:class:`~zicato.judge_runtime.builder._InlineCriterionJudge` and goldfive's
-``DefaultSteerer.evaluate_judges`` catch everything a judge throws.
-goldfive then emits no ``JudgementEmitted`` for an empty verdict, and the
-reducer writes no ``custom:<judge_name>`` drift count.
-:func:`zicato.health.diagnostics.detect_dead_judge` infers "fired" from
-those drift counts, so without this register it would report a broken judge
-in the same words it uses for a healthy judge whose criterion was never
-met. A misconfigured judge endpoint would read as a board-design problem,
-and its zero drift would make the generation's scalar *better* than the
-truth.
+The laundering is structural rather than accidental. A judge must never crash
+a run, so both :class:`~zicato.judge_runtime.builder._InlineCriterionJudge`
+and goldfive's ``DefaultSteerer.evaluate_judges`` catch everything a judge
+throws. goldfive then emits no ``JudgementEmitted`` for an empty verdict, and
+the reducer writes no ``custom:<judge_name>`` drift count.
+:func:`zicato.health.diagnostics.detect_dead_judge` infers "fired" from those
+drift counts, so without this register it would report a broken judge in the
+same words it uses for a healthy judge whose criterion was never met. A
+misconfigured judge endpoint would read as a board-design problem, and its
+zero drift would make the generation's scalar *better* than the truth.
 
 This module is the counter that survives the catch. It is modelled on
 :data:`zicato.models_config._DEFERRED_ROLE_FAILURES`, the register that

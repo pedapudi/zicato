@@ -12,7 +12,7 @@ cascade; it drives the ALREADY-SHIPPED decision code paths (the real
 ``RacingStrategy`` rung cut, the real ``evaluate_gate`` / ``holdout_confirms``,
 the real ``measure_noise_floor`` calibration, the real evidence-gated
 ``resolve_tournament`` terminal, the real ``run_candidate_screen`` veto)
-under the seeded noise model of the deterministic convergence example
+under the seeded noise model of the convergence example
 (``target_0_convergence``), and records what a cascade WOULD do.
 
 Design (why this is not a reimplementation)
@@ -68,8 +68,7 @@ import pytest
 
 # The seeded-noise substrate — reused verbatim from the shipped power harness
 # so the cascade drives the SAME noise model, output synthesis, and real board
-# predicates: the same example world the convergence recipe uses
-# (CASCADE.md §4.1).
+# predicates: the convergence recipe's example world (CASCADE.md §4.1).
 from tests.test_decision_procedure_power import (  # noqa: E402  (path set up by conftest)
     BASE_TOKENS,
     DELTA_CASES,

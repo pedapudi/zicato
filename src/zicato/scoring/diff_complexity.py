@@ -29,15 +29,13 @@ Calibration note (issue #120)
 ----------------------------
 The charge is the real line delta against the parent's content. A
 byte-identical re-emit of a 37-line template therefore scores 0, and a
-genuine three-line change scores about 4. Charging a ``kind="file"`` patch
-for EVERY line it re-emits instead would score that same re-emit 38.
-
+genuine three-line change scores about 4; charging a ``kind="file"`` patch
+for EVERY line it re-emits would score that same re-emit 38 instead.
 Both halves of the diff-complexity regularizer read this measure — the
 loss term
 :attr:`~zicato.core.types.ScoringWeights.diff_complexity_weight` and the
-gate's ceiling
-:attr:`~zicato.core.types.ScoringWeights.diff_complexity_ceiling` — so a
-weight or ceiling calibrated against whole-file charging is roughly an
+gate's :attr:`~zicato.core.types.ScoringWeights.diff_complexity_ceiling` —
+so a weight or ceiling calibrated against whole-file charging is roughly an
 order of magnitude too loose on a whole-file mutation surface, and should
 be re-tuned against a measured round.
 
@@ -128,14 +126,12 @@ def _line_delta(parent: str, child: str) -> tuple[int, int]:
     generated file silently changes the measured size of an edit that touches
     those lines (measured: a 1000-line whole-file rewrite scores 800 exactly
     and 998 with the heuristic on). Beyond the cap the heuristic comes back;
-    see the constant for why.
-
-    Read that overcount honestly. It is exact for a TARGETED edit at any file
-    size: a one-line change in a 3000-line file measures ``(1, 1)`` either
-    way, because the popular lines fall in the matched run. It overstates
-    only a near-total rewrite, where the parsimony toll is large under any
-    accounting. Both paths are deterministic, because the cap is a size
-    threshold rather than a timeout.
+    see the constant for why. Its overcount is exact for a TARGETED edit at
+    any file size — a one-line change in a 3000-line file measures
+    ``(1, 1)`` either way, because the popular lines fall in the matched run
+    — and it overstates only a near-total rewrite, where the parsimony toll
+    is large under any accounting. Both paths are deterministic, because the
+    cap is a size threshold rather than a timeout.
     """
     parent_lines = _lines(parent)
     child_lines = _lines(child)

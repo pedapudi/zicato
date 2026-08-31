@@ -4,8 +4,7 @@ The board-reflection adjudicator
 (:mod:`zicato.reflection.adjudicator`) talks to a meta-judge through the
 standard ``CallLLM`` shape ``(system, user, model) -> str`` and expects a strict
 JSON verdict back. Tests may not call a live endpoint, so these doubles stand
-in: each
-is a callable that parses the adjudicator's DE-ANCHORED user prompt (the
+in: each is a callable that parses the adjudicator's DE-ANCHORED user prompt (the
 machine-readable ``JUDGE UNDER REVIEW`` / ``DECISION REF`` header + the judge's
 criterion, plus the ``<<<TRANSCRIPT … TRANSCRIPT>>>`` block — the prompt never
 carries what the judge DID) and returns a deterministic verdict.

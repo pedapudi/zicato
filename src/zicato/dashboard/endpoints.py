@@ -764,9 +764,9 @@ def _make_reflection_endpoints(paths: WorkspacePaths) -> dict[str, Any]:
 
     Self-contained thin delegates over :mod:`zicato.query.reflection_view`:
     index first, files as the fallback, and a missing input degrading to the
-    same-shaped empty payload rather than raising. Kept in one factory with
-    its own routes block, so this surface can be extended without touching
-    the rest of the module.
+    same-shaped empty payload rather than raising. Kept in one factory with its
+    own routes block, so this surface extends without touching the rest of the
+    module.
     """
 
     async def api_reflections(request: Request) -> JSONResponse:
