@@ -6,7 +6,9 @@
 
 This chapter walks one evolve round as the code in this tree runs it. The
 round pipeline is a set of named seams under `src/zicato/evolve/`. Read the
-chapter with `src/zicato/evolve/gauntlet.py`, `src/zicato/evolve/field.py`,
+chapter with `src/zicato/evolve/gauntlet.py`, `src/zicato/evolve/field.py`
+and the phase modules its facade calls
+(`field_candidates.py`, `field_execution.py`, `gate.py`, `settlement.py`),
 and `src/zicato/evolve/loop.py` open. Every step names the symbol that owns
 it; if you cannot find a step's symbol, the code has moved and this chapter
 needs an erratum.
@@ -341,16 +343,15 @@ evolve_once ─┬─ claim_skip_round (safe abort point)
              ├─ construct PreparedRound
              └─ evolve_field_round(prepared, resume_plan)
 
-evolve_field_round
-             ├─ produce_candidate_batch(strategy.field_size())
-             ├─ open live and durable tournament records
-             ├─ evaluate_tournament(strategy, run_matchup)
-             ├─ confirm evidence and holdout
-             ├─ apply integrity checks and operator overrides
-             ├─ construct RoundSettlement
-             ├─ persist outcomes, lineage, champion marker, and journal
-             ├─ run placebo control when configured
-             └─ run health, analyzer, and report epilogue
+evolve_field_round  (a facade; each line below is one named phase function)
+             ├─ assemble_candidate_field   produce the batch, settle an empty field
+             ├─ execute_field_tournament   open the records, drive the strategy
+             ├─ resolve_field_verdict      holdout, integrity checks, overrides
+             └─ settle_field_round         record, commit, close, and summarise
+                  ├─ _record_field_tournament   frontier row, envelope, durable record
+                  ├─ _build_field_settlement    one OutcomeRecord per challenger
+                  ├─ _commit_field_settlement   outcomes, lineage, marker, journal
+                  └─ _close_field_round         placebo control, epilogue, summary
 ```
 
 ### 3.1 Step 0 — the skip safe point
@@ -786,7 +787,7 @@ crowning-pair duels on the train slice at reserved replicate slots:
         evidence_replicates_run += 1
         matchup_id = f"bt-replicate:r{replicate_slot}:{left_id}:{right_id}"
 ```
-*(src/zicato/evolve/field.py, `evolve_field_round._replicate_duel` — excerpt)*
+*(src/zicato/selection/driver.py, `make_evidence_replicate_duel` — excerpt)*
 
 The reserved slot is a natural cache MISS the first time (a fresh draw of
 BOTH sides) and an idempotent HIT on a resumed confirm — the A/A
@@ -895,11 +896,33 @@ Final heartbeat (`PROMOTE`/`REJECT` progress transition),
 ## 4. `evolve_field_round` — shared evaluation and settlement
 
 `evolve_once` passes a `PreparedRound` to `evolve_field_round`
-(`src/zicato/evolve/field.py`) for every selection strategy. The function
-produces the requested candidate batch, drives the strategy, confirms the
-crown, and commits one `RoundSettlement`. Field width changes the number of
-candidates and scheduled matchups. Every width retains the same execution
-pipeline.
+(`src/zicato/evolve/field.py`) for every selection strategy. Field width
+changes the number of candidates and scheduled matchups. Every width retains
+the same execution pipeline.
+
+`evolve_field_round` is a facade. It expands the `PreparedRound` into a
+`FieldRound` — the round's coordinates, contract inputs, and runtime seams
+under the names its phases use (`src/zicato/evolve/generation_phase.py`) —
+and calls four phase functions in order, each with explicit inputs and
+outputs:
+
+| Phase | Module | Returns |
+|---|---|---|
+| `assemble_candidate_field` | `evolve/field_candidates.py` | `CandidateField`, or a terminal outcome when nothing applied |
+| `execute_field_tournament` | `evolve/field_execution.py` | `FieldExecution`, or a terminal outcome when the outage circuit deferred |
+| `resolve_field_verdict` | `evolve/gate.py` | `FieldVerdict` |
+| `settle_field_round` | `evolve/settlement.py` | `EvolveRoundOutcome` |
+
+`settle_field_round` runs four private steps in a fixed order — record the
+resolved structure, build one `OutcomeRecord` per applied challenger, commit
+them with lineage and the champion marker, then close the round and
+summarise it. `RoundSettlement` and the post-promotion hook failure pass
+between those steps and stay inside the module, because nothing outside it
+can observe a round mid-settlement.
+
+The phase names follow the lifecycle steps the execution plan serves
+(`zicato.query.execution_plan.ROUND_STEPS`: propose, apply, run, gate,
+decide), so a round's code and a round's served tree name the same steps.
 
 ### 4.0 The structure shapes, in one table
 
@@ -937,8 +960,8 @@ a proposer attempt fails before deriving a snapshot. For each of the
 `_propose_and_apply_challenger`:
 
 1. beats `proposing:…` and publishes a live `"proposing"` field-status
-   record BEFORE the LLM call (`on_status` → `_publish_proposing` →
-   the `ActiveTournament` envelope in phase `PROPOSING`) — the
+   record BEFORE the LLM call (`on_status` → `_publish_proposing_slot`
+   → the `ActiveTournament` envelope in phase `PROPOSING`) — the
    dashboard's proposing tracker shows each slot enter the field live;
 2. builds the same `build_post_apply_validator` hook and calls the same
    `_propose_child`;
@@ -958,7 +981,7 @@ a proposer attempt fails before deriving a snapshot. For each of the
     # the resolved bool.
     append_to_lineage(workspace_root, epoch_id, child_gen, parent_id=parent_id, pending=True)
 ```
-*(src/zicato/orchestrator.py, `_propose_and_apply_challenger` — excerpt)*
+*(src/zicato/evolve/propose_apply.py, `_propose_and_apply_challenger` — excerpt)*
 
 **Field diversity.** The accept/soft-reject verdict is PURE
 (`_mint_challenger_field` → `_FieldMintDecision`), separated from its
@@ -992,7 +1015,7 @@ challenger. It is appended after the all-failed early return, so a
 fully-failed field keeps its rejection-shaped outcome, and appended last
 so sibling diversity and `first_challenger_id` are untouched.
 
-### 4.3 The closures the driver runs on
+### 4.3 The seams the driver runs on
 
 `evaluate_tournament` (`src/zicato/selection/driver.py`) owns scheduling;
 `resolve_tournament` is the decision-only wrapper over it. The loop is four
@@ -1017,12 +1040,14 @@ bracket exist during the round rather than only after it. When a `pre_gate`
 is supplied, a `"promoted"`
 decision is held through the defer→replicate loop
 (`confirm_promotion_with_evidence` runs the closest-CI duel through
-`replicate_duel`, refits, and rechecks) before it is returned. The
-orchestrator supplies the closures:
+`replicate_duel`, refits, and rechecks) before it is returned.
+`execute_field_tournament` supplies each seam as a module-level function
+bound to the round with `functools.partial`, so nothing on the driver's
+contract reads a shared local:
 
-- **`_request_field`** — hands the strategy the champion `Contestant` +
+- **`request_field`** — hands the strategy the champion `Contestant` +
   the applied challengers (with snapshots + experiments).
-- **`_run_matchup`** — one duel via `run_matchup`
+- **`run_field_matchup`** — one duel via `run_matchup`
   (`src/zicato/tournament/runner.py`). The strategy⇄orchestrator contract
   is the `Matchup` dataclass (`src/zicato/selection/strategy.py`) — every
   field a strategy can use to shape a duel:
@@ -1042,20 +1067,18 @@ orchestrator supplies the closures:
   negative means `right` is better, and ties keep `left`, the higher seed,
   because a tie counts as no improvement.
 
-  `_run_matchup` runs under the round-shared semaphore:
+  `run_field_matchup` runs under the round-shared semaphore:
 
 ```python
-    # --- Cross-matchup concurrency cap. A strategy may schedule several
-    # matchups concurrently (the driver fans the batch out
-    # under one ``asyncio.gather``). Without a shared gate each matchup would
-    # mint its own ``Semaphore(parallelism)``, so N concurrent matchups could
-    # run ``N × parallelism`` board units at once — overshooting the operator's
-    # parallelism intent and the LLM endpoint's concurrency. One semaphore,
-    # created here per round and handed to every ``run_matchup``, makes the
-    # whole round draw from ONE global cap.
-    round_unit_semaphore = asyncio.Semaphore(max(1, int(config.parallelism)))
+    # One semaphore for the whole round. A strategy may schedule several
+    # matchups concurrently (the driver fans the batch out under one
+    # ``asyncio.gather``). Without a shared gate each matchup would mint its
+    # own ``Semaphore(parallelism)``, so N concurrent matchups could run
+    # ``N × parallelism`` board units at once — overshooting the operator's
+    # parallelism intent and the LLM endpoint's concurrency.
+    unit_semaphore = asyncio.Semaphore(max(1, int(field_round.config.parallelism)))
 ```
-*(src/zicato/evolve/field.py, `evolve_field_round` — excerpt)*
+*(src/zicato/evolve/field_execution.py, `execute_field_tournament` — excerpt)*
 
   Each matchup scores on the applicable train board (a racing rung's
   `board_subset` is intersected inside `run_matchup`), caches both sides'
@@ -1063,7 +1086,7 @@ orchestrator supplies the closures:
   cache-first evaluator may reuse any competitor's existing unit. Only the
   reigning champion's cached-vs-fresh tally determines the round-level
   `champion_eval_mode` (`_resolve_round_champion_mode`).
-- **`_publish_live_structure`** (`on_progress`) — every scheduled batch
+- **`publish_live_structure`** (`on_progress`) — every scheduled batch
   republishes the live envelope with settled rounds + the in-flight round
   (`winner: null, pending: true`) + standings-so-far, through the SAME
   `_serialise_rounds`/`_serialise_standings` the settle path uses, with
@@ -1071,7 +1094,7 @@ orchestrator supplies the closures:
   (`_overlay_projected_live_progress` /
   `_overlay_projected_standings`). This is what lets the bracket exist
   DURING the run instead of "being seeded" until settle. Best-effort.
-- **`_replicate_duel` + `_on_inconclusive`** (only when
+- **`make_evidence_replicate_duel` + `record_inconclusive_duel`** (only when
   `promote_confidence_threshold` is set) — the evidence pre-gate's extra
   crowning-pair duels at RESERVED replicate slots
   (`EVIDENCE_REPLICATE_BASE + j`, with `cache_scores=False` so a
@@ -1129,7 +1152,7 @@ non-winner, the leader, or SEVERAL candidates. The re-resolution is PURE
       will actually commit: the post-confirmation/post-override truth every
       durable store must describe (issue #20).
 ```
-*(src/zicato/orchestrator.py, `_apply_field_overrides` docstring — excerpt)*
+*(src/zicato/evolve/gate.py, `_apply_field_overrides` docstring — excerpt)*
 
 Everything durable — the settled live envelope, the durable tournament
 record where applicable, and the RoundLog `decision_recorded` event — is
@@ -1147,17 +1170,18 @@ ordered — [outcomes-then-invariant-then-lineage]:
 2. THEN the crowning invariant is checked loudly:
 
 ```python
-    _bracket_promoted = effective_decision.decision == "promoted"
-    if _bracket_promoted != (promoted_id is not None):
+    bracket_promoted = settlement.decision.decision == "promoted"
+    if bracket_promoted != (settlement.primary_promoted_generation_id is not None):
         raise RuntimeError(
             "crowning invariant violated: settled bracket decision "
-            f"{effective_decision.decision!r} (promoted_generation_id="
-            f"{effective_decision.promoted_generation_id!r}) disagrees with the "
-            f"champion to be crowned ({promoted_id!r}); refusing to persist a "
+            f"{settlement.decision.decision!r} (promoted_generation_id="
+            f"{settlement.decision.promoted_generation_id!r}) disagrees with the "
+            "champion to be crowned "
+            f"({settlement.primary_promoted_generation_id!r}); refusing to persist a "
             "bracket the champion pointer / lineage contradict"
         )
 ```
-*(src/zicato/evolve/field.py, `evolve_field_round` — excerpt)*
+*(src/zicato/evolve/settlement.py, `_assert_crowning_agrees` — excerpt)*
 
    (plus: the promoted id must name a challenger that actually applied
    this round);

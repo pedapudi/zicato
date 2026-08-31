@@ -772,10 +772,9 @@ def test_every_event_token_is_stepped_or_declared_stepless() -> None:
 def test_the_duel_call_site_names_the_generations_it_gates() -> None:
     """The one duel driver passes the ids rather than only accepting them.
 
-    Every round now settles its matchups through ``field.py``'s
-    ``_run_matchup`` — the gauntlet reaches it as a one-challenger field — so
-    there is exactly ONE place that names the two sides of a duel, and it
-    must keep naming them.
+    Every round settles its matchups through ``run_field_matchup`` — the
+    gauntlet reaches it as a one-challenger field — so there is exactly ONE
+    place that names the two sides of a duel, and it must keep naming them.
 
     The emitters default their scope arguments to ``""`` so an unscoped
     caller still emits a well-formed record. That default is what makes a
@@ -791,7 +790,9 @@ def test_the_duel_call_site_names_the_generations_it_gates() -> None:
         "_emit_tournament_units": {"parent_generation_id", "child_generation_id"},
         "_emit_gate_evaluated": {"generation_id", "opponent_generation_id"},
     }
-    module = Path(__file__).resolve().parents[1] / "src" / "zicato" / "evolve" / "field.py"
+    module = (
+        Path(__file__).resolve().parents[1] / "src" / "zicato" / "evolve" / "field_execution.py"
+    )
     seen: dict[str, set[str]] = {}
     for node in ast.walk(ast.parse(module.read_text())):
         if not isinstance(node, ast.Call) or not isinstance(node.func, ast.Name):
@@ -805,4 +806,4 @@ def test_the_duel_call_site_names_the_generations_it_gates() -> None:
     assert set(seen) == set(required)
     for name, keywords in sorted(seen.items()):
         missing = required[name] - keywords
-        assert not missing, f"field.py: {name} does not name {sorted(missing)}"
+        assert not missing, f"field_execution.py: {name} does not name {sorted(missing)}"

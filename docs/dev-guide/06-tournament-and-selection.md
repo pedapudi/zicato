@@ -77,7 +77,12 @@ owns it, and the selection layer only *reads* its verdict.
 | `src/zicato/selection/resolve.py` | The cycle-robust winner resolvers (propose-only): `condorcet_check`, `smith_set`, `ranked_pairs`, `copeland_order`, `resolve_leader`, `build_matrix` | 383 lines |
 | `src/zicato/selection/dead_letter.py` | `InconclusiveRecord`, `record_inconclusive`, `read_inconclusive`, `list_inconclusive` | 122 lines |
 | `src/zicato/evolve/placebo.py` | `build_placebo_experiment`, `derive_placebo_snapshot`, `placebo_round_due`, `PLACEBO_HYPOTHESIS_MARKER` | 220 lines |
-| `src/zicato/orchestrator.py` | The wiring: `_mint_placebo_challenger`, `_maybe_run_placebo_arm_gauntlet`, the multi-challenger field loop, and the `resolve_tournament` call site | — |
+| `src/zicato/evolve/field.py` | The round facade: `_open_field_round` and the four phase calls | 123 lines |
+| `src/zicato/evolve/field_candidates.py` | `assemble_candidate_field`, `CandidateField`, the proposing publish, the empty-field settlement, the placebo slot | 383 lines |
+| `src/zicato/evolve/field_execution.py` | `execute_field_tournament`, `run_field_matchup`, `request_field`, `publish_live_structure`, `record_inconclusive_duel`, `FieldExecution` | 556 lines |
+| `src/zicato/evolve/gate.py` | `resolve_field_verdict`, `_confirm_crowning_on_holdout`, `_apply_field_overrides`, `_integrity_block_reason`, `_resolve_round_champion_mode` | 549 lines |
+| `src/zicato/evolve/settlement.py` | `settle_field_round` and its four private steps, `RoundSettlement`, `ordered_promotions` | 671 lines |
+| `src/zicato/evolve/propose_apply.py` | `_mint_placebo_challenger`, `_maybe_run_placebo_arm_gauntlet`, `_propose_and_apply_challenger` | 775 lines |
 
 Two facts about the file layout matter before you edit anything:
 
@@ -99,31 +104,60 @@ Two facts about the file layout matter before you edit anything:
 
 ### 6.0.1 Call topology, per round
 
+`evolve_field_round` is a facade. It expands `PreparedRound` into a `FieldRound`
+— the round's coordinates, contract inputs, and runtime seams under the names
+its phases use — and then calls four phase functions in order. The phase names
+follow the lifecycle steps the execution plan serves
+(`zicato.query.execution_plan.ROUND_STEPS`: propose, apply, run, gate, decide),
+so a round's code and a round's served tree name the same steps.
+
 ```
 evolve_once (orchestrator.py)
  ├─ PreparedRound
- └─ evolve_field_round (evolve/field.py)
-      ├─ produce_candidate_batch(strategy.field_size())
-      ├─ evaluate_tournament(strategy, request_field=…, run_matchup=…)
- │    ├─ request_field(strategy.field_size())      # return applied challengers
- │    ├─ strategy.seed(champion, challengers)
- │    └─ loop: strategy.next_matchups() → gather(run_matchup(m)…) → strategy.record_result
- │         run_matchup (runner.py)  →  _run_replicated (scheduling.py)
- │              └─ _run_board_units_full × replicates
- │                   └─ _run_full_board_unit  (champion ‖ challenger)
- │                        └─ _run_unit_cache_first  ← the cache choke point
- │                             ├─ HIT: _resolve_cached_unit  (no run)
- │                             └─ MISS: _run_single → subprocess worker → _persist_unit_loss
- │              └─ aggregate_generation_score → _gate_with_regression → evaluate_gate
- │    └─ (opt) confirm_promotion_with_evidence  # BT pre-gate + defer→replicate loop
- └─ (opt) _maybe_run_placebo_arm_gauntlet       # never advances the champion
+ └─ evolve_field_round (evolve/field.py)          # facade over the phases below
+      ├─ assemble_candidate_field                 # propose + apply
+      │    (evolve/field_candidates.py) → CandidateField | terminal outcome
+      │    └─ produce_candidate_batch(strategy.field_size())
+      ├─ execute_field_tournament                 # run
+      │    (evolve/field_execution.py) → FieldExecution | terminal outcome
+      │    └─ evaluate_tournament(strategy, request_field=…, run_matchup=…)
+ │         ├─ request_field(strategy.field_size())  # return applied challengers
+ │         ├─ strategy.seed(champion, challengers)
+ │         └─ loop: strategy.next_matchups() → gather(run_matchup(m)…) → record_result
+ │              run_field_matchup (evolve/field_execution.py)
+ │               └─ run_matchup (runner.py)  →  _run_replicated (scheduling.py)
+ │                   └─ _run_board_units_full × replicates
+ │                        └─ _run_full_board_unit  (champion ‖ challenger)
+ │                             └─ _run_unit_cache_first  ← the cache choke point
+ │                                  ├─ HIT: _resolve_cached_unit  (no run)
+ │                                  └─ MISS: _run_single → worker → _persist_unit_loss
+ │                   └─ aggregate_generation_score → _gate_with_regression → evaluate_gate
+ │         └─ (opt) confirm_promotion_with_evidence  # BT pre-gate + defer→replicate
+      ├─ resolve_field_verdict (evolve/gate.py)   # gate → FieldVerdict
+      │    └─ confirm_crowning_holdout → integrity blocks → operator overrides
+      └─ settle_field_round (evolve/settlement.py)  # decide → EvolveRoundOutcome
+           ├─ _record_field_tournament   # frontier row, envelope, durable record
+           ├─ _build_field_settlement    # one OutcomeRecord per challenger
+           ├─ _commit_field_settlement   # outcomes, lineage, marker, journal
+           └─ _close_field_round         # epilogue, round close, summary
+                └─ (opt) _maybe_run_placebo_arm_gauntlet  # never advances champion
 ```
+
+Two phases can end the round early, and each returns an outcome that is already
+persisted: a field in which no candidate applied, and a round the endpoint-outage
+circuit deferred. Every other phase runs on the post-holdout, post-integrity,
+post-override truth, so no durable store can describe a crowning the champion
+pointer contradicts.
 
 The gauntlet is the one-matchup case of this topology:
 `GauntletStrategy` schedules exactly one champion-versus-challenger matchup.
 It uses the same driver, canonical runner, and evidence gate as every wider
 structure, and the same settlement steps afterwards (persist the outcome, the
-lineage entry, the champion marker, and the journal record).
+lineage entry, the champion marker, and the journal record). Field width one
+differs in two rules, both stated in `evolve/field_candidates.py`: a
+single slot that exhausted its proposer retries settles as a
+validation-rejection round, and the random-baseline placebo arm runs as a
+separate duel after settlement instead of riding inside the slate.
 
 ---
 
@@ -1369,25 +1403,33 @@ evolve_once
   strategy = make_strategy(spec, board_ids)             # GauntletStrategy
   prepared = PreparedRound(..., strategy=strategy)
   evolve_field_round(prepared)
-    candidate_batch = produce_candidate_batch(prepared, 1)
-    evaluation = evaluate_tournament(
-        strategy,
-        request_field=applied candidate batch,
-        run_matchup=canonical board-unit runner)
-      strategy schedules Matchup("gauntlet", replicates=2)
-      run_matchup
-        ├─ resolve both competitors at replicate slots 0 and 1
-        ├─ fast: cache hits are reused and missing slots execute
-        ├─ full: both competitors execute freshly
-        ├─ _average_losses per entry
-        └─ aggregate_generation_score → evaluate_gate
-      optional confirm_promotion_with_evidence
-        └─ fresh paired duels at EVIDENCE_REPLICATE_BASE + j
-    optional confirm_crowning_holdout
-    integrity checks and operator overrides
-    settlement = RoundSettlement(...)
-    persist outcome → invariant → lineage → champion marker → journal
-    optional placebo duel; never advances champion
+    assemble_candidate_field
+      candidate_batch = produce_candidate_batch(prepared, 1)
+    execute_field_tournament
+      evaluation = evaluate_tournament(
+          strategy,
+          request_field=applied candidate batch,
+          run_matchup=canonical board-unit runner)
+        strategy schedules Matchup("gauntlet", replicates=2)
+        run_matchup
+          ├─ resolve both competitors at replicate slots 0 and 1
+          ├─ fast: cache hits are reused and missing slots execute
+          ├─ full: both competitors execute freshly
+          ├─ _average_losses per entry
+          └─ aggregate_generation_score → evaluate_gate
+        optional confirm_promotion_with_evidence
+          └─ fresh paired duels at EVIDENCE_REPLICATE_BASE + j
+    resolve_field_verdict
+      optional confirm_crowning_holdout
+      integrity checks and operator overrides
+    settle_field_round
+      _record_field_tournament: frontier row, live envelope, durable record
+      _build_field_settlement → RoundSettlement(...)
+      _commit_field_settlement
+        persist outcome → invariant → lineage → champion marker → journal
+      _close_field_round
+        optional placebo duel; never advances champion
+        epilogue, round close, and the round summary
 ```
 
 Important variants:
