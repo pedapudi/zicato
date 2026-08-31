@@ -40,6 +40,7 @@ from zicato.health.inputs import (
     epoch_tree_import_gaps,
     workspace_preflight_gate,
 )
+from zicato.workspace import natural_key
 
 #: ANSI-ish colour names click understands, keyed by finding severity.
 _SEVERITY_COLOR: dict[str, str] = {
@@ -62,29 +63,19 @@ def _resolve_epoch_id(workspace_dir: Path, override: str | None) -> str:
 
 
 def _generation_ids(workspace_dir: Path, epoch_id: str) -> list[str]:
-    """Return generation ids under the epoch in numeric lineage order.
+    """Return generation ids under the epoch in lineage order.
 
-    ``v2`` sorts before ``v10`` — a plain lexical sort would invert
-    them and feed window-based detectors a scrambled history. Ids that
-    do not match the ``v<digits>`` convention are appended after the
-    numeric ones in lexical order so adapters that name generations
-    differently still surface.
+    Ordering is :func:`zicato.workspace.natural_key`, so ``v2`` precedes
+    ``v10``; a lexical sort would invert them and feed the window-based
+    detectors a scrambled history.
     """
     gens_root = generations_dir(workspace_dir, epoch_id)
     if not gens_root.exists():
         return []
-    numeric: list[tuple[int, str]] = []
-    other: list[str] = []
-    for child in gens_root.iterdir():
-        if not child.is_dir():
-            continue
-        name = child.name
-        if name.startswith("v") and name[1:].isdigit():
-            numeric.append((int(name[1:]), name))
-        else:
-            other.append(name)
-    numeric.sort()
-    return [name for _, name in numeric] + sorted(other)
+    return sorted(
+        (child.name for child in gens_root.iterdir() if child.is_dir()),
+        key=natural_key,
+    )
 
 
 def _load_losses_by_generation(

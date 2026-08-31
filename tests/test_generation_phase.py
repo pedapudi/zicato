@@ -11,11 +11,10 @@ from zicato.evolve.generation_phase import (
     current_generation,
     mutable_trees,
     next_generation_id,
-    round_number,
     safe_parent,
     set_current_generation,
 )
-from zicato.workspace import WorkspaceLayout
+from zicato.workspace import WorkspaceLayout, generation_round_number
 
 
 def test_prepared_round_is_immutable() -> None:
@@ -91,15 +90,17 @@ def test_generation_head_prefers_marker_then_falls_back_to_highest_vn(tmp_path: 
     for name in ("v2", "v10", "named"):
         (root / name).mkdir(parents=True)
 
-    assert current_generation(tmp_path, "e1") == "named"
+    # The fallback is the highest round number. An id outside the vN scheme —
+    # which no minting path produces — no longer outranks every round.
+    assert current_generation(tmp_path, "e1") == "v10"
     set_current_generation(tmp_path, "e1", "v2")
     assert current_generation(tmp_path, "e1") == "v2"
     assert next_generation_id(tmp_path, "e1") == "v11"
 
 
 def test_generation_helpers_degrade_and_rebase(tmp_path: Path) -> None:
-    assert round_number("v12") == 12
-    assert round_number("named") is None
+    assert generation_round_number("v12") == 12
+    assert generation_round_number("named") is None
     assert safe_parent(tmp_path, None) == ""
     assert safe_parent(tmp_path, "missing") == ""
     snapshot = tmp_path / "snapshot"

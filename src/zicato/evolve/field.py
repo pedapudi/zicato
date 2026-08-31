@@ -61,6 +61,7 @@ from zicato.runtime.control_consumer import (
     claim_field_gate_overrides,
 )
 from zicato.util import best_effort
+from zicato.workspace import generation_round_number
 
 log = logging.getLogger("zicato.orchestrator")
 
@@ -221,7 +222,7 @@ async def evolve_field_round(
     applied = list(candidate_batch.challengers)
     field_status = list(candidate_batch.field_status)
     base_id = candidate_batch.base_generation_id
-    base_n = generation_phase.round_number(base_id)
+    base_n = generation_round_number(base_id)
 
     if not applied:
         if field_n == 1 and candidate_batch.rejections:
@@ -1264,8 +1265,8 @@ async def evolve_field_round(
         workspace_root=workspace_root,
         epoch_id=epoch_id,
         board=board,
-        round_n=generation_phase.round_number(applied[0].generation_id) or round_index,
-        analyzer_round=generation_phase.round_number(applied[0].generation_id),
+        round_n=generation_round_number(applied[0].generation_id) or round_index,
+        analyzer_round=generation_round_number(applied[0].generation_id),
         mutations=mutations,
         auxiliary_call_llm=auxiliary_call_llm,
         auxiliary_model=auxiliary_model,

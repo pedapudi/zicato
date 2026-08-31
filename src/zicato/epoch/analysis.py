@@ -48,6 +48,7 @@ from zicato.core.workspace import (
     journal_path,
 )
 from zicato.epoch.lineage import load_lineage
+from zicato.workspace import natural_key
 
 # A goldfive-compatible auxiliary call_llm.
 _AuxCallLLM = Callable[[str, str, str], Awaitable[str]]
@@ -126,15 +127,15 @@ def _slice(text: str, limit: int) -> str:
 def _collect_experiments(workspace_root: Path, epoch_id: str) -> list[dict[str, Any]]:
     """Read every ``experiment.json`` under the epoch's ``generations/``.
 
-    Returns dicts in lineage order (sorted by generation id). Files that
-    fail to parse are skipped silently — they predate the experiment
-    schema we want to summarise.
+    Returns dicts in lineage order: generation ids sort by their round
+    number, so ``v2`` precedes ``v10``. Files that fail to parse are skipped
+    silently — they predate the experiment schema we want to summarise.
     """
     gens_root = generations_dir(workspace_root, epoch_id)
     if not gens_root.exists():
         return []
     out: list[dict[str, Any]] = []
-    for gen_dir in sorted(gens_root.iterdir()):
+    for gen_dir in sorted(gens_root.iterdir(), key=lambda p: natural_key(p.name)):
         if not gen_dir.is_dir():
             continue
         path = gen_dir / "experiment.json"

@@ -75,7 +75,7 @@ from zicato.runtime.paths import (
     active_tournament_path,
     heartbeat_path,
 )
-from zicato.workspace import WorkspaceLayout
+from zicato.workspace import WorkspaceLayout, generation_round_number, natural_key
 
 if TYPE_CHECKING:
     from zicato.core.types import Experiment
@@ -140,16 +140,12 @@ def _latest_generation_id(workspace_root: Path, epoch_id: str) -> str | None:
     gens_root = _generations_root(workspace_root, epoch_id)
     if not gens_root.is_dir():
         return None
-    best: tuple[int, str] | None = None
-    for child in gens_root.iterdir():
-        if not child.is_dir():
-            continue
-        name = child.name
-        if name.startswith("v") and name[1:].isdigit():
-            n = int(name[1:])
-            if best is None or n > best[0]:
-                best = (n, name)
-    return best[1] if best is not None else None
+    numbered = [
+        child.name
+        for child in gens_root.iterdir()
+        if child.is_dir() and generation_round_number(child.name) is not None
+    ]
+    return max(numbered, key=natural_key) if numbered else None
 
 
 def clear_runtime_state(workspace_root: Path) -> None:

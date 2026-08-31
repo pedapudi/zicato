@@ -70,12 +70,12 @@ workspace-config block, default off) that prunes an epoch as it closes.
 from __future__ import annotations
 
 import logging
-import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 from zicato.epoch.genstore import default_generation_store
+from zicato.workspace import natural_key
 
 log = logging.getLogger(__name__)
 
@@ -89,7 +89,6 @@ STORAGE_GC_KEY = "storage_gc"
 #: Numeric ``v{N}`` generation ids sort by N; anything else sorts after,
 #: lexicographically (conservative: a non-conventional id reads as
 #: "newest", so ``keep_last_n`` retains it).
-_VERSION_RE = re.compile(r"^v(\d+)$")
 
 
 @dataclass(frozen=True, slots=True)
@@ -112,14 +111,6 @@ class PruneReport:
     pruned: tuple[str, ...]
     dry_run: bool
     bytes_reclaimed: int
-
-
-def _generation_sort_key(generation_id: str) -> tuple[int, int, str]:
-    """Sort key: numeric ``v{N}`` ascending, non-conventional ids last."""
-    m = _VERSION_RE.match(generation_id)
-    if m is not None:
-        return (0, int(m.group(1)), "")
-    return (1, 0, generation_id)
 
 
 def _lineage_decisions(workspace_root: Path, epoch_id: str) -> dict[str, bool | None]:
@@ -179,7 +170,7 @@ def prune_generations(
     backend = store.backend_name
     policy = "keep_promoted_only" if keep_promoted_only else f"keep_last_n={keep_last_n}"
 
-    generations = sorted(store.list_generations(epoch_id), key=_generation_sort_key)
+    generations = sorted(store.list_generations(epoch_id), key=natural_key)
     decisions = _lineage_decisions(workspace_root, epoch_id)
 
     keep: set[str] = set()

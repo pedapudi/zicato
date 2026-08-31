@@ -82,6 +82,7 @@ from zicato.mutation.enumerator import enumerate_mutations
 from zicato.query import WorkspacePaths
 from zicato.query.paths import layout_of
 from zicato.storage import default_backend
+from zicato.workspace import natural_key
 from zicato.workspace_loader import activate_mutation_surface
 
 #: The seed / baseline generation id. ``v0`` is the original tree every
@@ -215,11 +216,14 @@ def recorded_generation_ids(paths: WorkspacePaths, epoch_id: str) -> list[str]:
     backends, because the git backend relocates the trees rather than the
     records. So this is the post-hoc answer to "which generations did
     this epoch mint", and the way to tell a PRUNED generation (recorded,
-    no tree) from one that never existed.
+    no tree) from one that never existed. The ids come back in round-number
+    order (``v2`` before ``v10``).
     """
     gens_root = layout_of(paths).generations_dir(epoch_id)
     try:
-        return sorted(child.name for child in gens_root.iterdir() if child.is_dir())
+        return sorted(
+            (child.name for child in gens_root.iterdir() if child.is_dir()), key=natural_key
+        )
     except (FileNotFoundError, NotADirectoryError, OSError):
         return []
 
@@ -230,8 +234,10 @@ def _generation_ids(
     """Every generation the epoch ever minted, and whether the store saw any.
 
     The ids are the union of the store's listing (trees / tags) and
-    :func:`recorded_generation_ids`, so a generation whose tree is gone
-    still gets its column in the site × generation matrix.
+    :func:`recorded_generation_ids`, in round-number order (``v2`` before
+    ``v10``), so a generation whose tree is gone still gets its column in the
+    site × generation matrix and the columns read left to right as the epoch
+    ran.
 
     The flag is the store's own answer, kept because it distinguishes the
     two ways a tree goes missing (:func:`_records_caption`) — asking the
@@ -242,7 +248,8 @@ def _generation_ids(
         from_store = [] if store is None else list(store.list_generations(epoch_id))
     except (FileNotFoundError, OSError, ValueError):
         from_store = []
-    return sorted(set(from_store) | set(recorded_generation_ids(paths, epoch_id))), bool(from_store)
+    ids = set(from_store) | set(recorded_generation_ids(paths, epoch_id))
+    return sorted(ids, key=natural_key), bool(from_store)
 
 
 def _surface_error(epoch_id: str, store_error: str) -> str:

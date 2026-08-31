@@ -6,7 +6,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from zicato.workspace import WorkspaceLayout
+from zicato.workspace import WorkspaceLayout, natural_key
+from zicato.workspace import epochs as workspace_epochs
 
 
 @dataclass(frozen=True, slots=True)
@@ -56,11 +57,6 @@ class PreparedRound:
     custom_judge_names: frozenset[str]
 
 
-def round_number(generation_id: str) -> int | None:
-    suffix = generation_id[1:]
-    return int(suffix) if generation_id.startswith("v") and suffix.isdigit() else None
-
-
 def current_marker(workspace_root: Path, epoch_id: str) -> Path:
     return WorkspaceLayout.from_root(workspace_root).current_generation_marker(epoch_id)
 
@@ -74,11 +70,7 @@ def current_generation(workspace_root: Path, epoch_id: str) -> str:
     if not candidates:
         raise FileNotFoundError(f"no generations under {root}; the epoch has no baseline yet")
 
-    def key(name: str) -> tuple[int, int, str]:
-        number = round_number(name)
-        return (0, number, name) if number is not None else (1, 0, name)
-
-    return max(candidates, key=key)
+    return max(candidates, key=natural_key)
 
 
 def safe_parent(workspace_root: Path, epoch_id: str | None) -> str:
@@ -103,18 +95,10 @@ def snapshot_root(workspace_root: Path, epoch_id: str, generation_id: str) -> Pa
 
 
 def next_generation_id(workspace_root: Path, epoch_id: str) -> str:
-    generations_root = WorkspaceLayout.from_root(workspace_root).generations_dir(epoch_id)
-    generation_ids = (
-        [path.name for path in generations_root.iterdir() if path.is_dir()]
-        if generations_root.is_dir()
-        else []
-    )
-    numbers = [
-        number
-        for generation_id in generation_ids
-        if (number := round_number(generation_id)) is not None
-    ]
-    return f"v{max(numbers, default=-1) + 1}"
+    """The id to mint for this epoch's next generation, read from disk."""
+    root = WorkspaceLayout.from_root(workspace_root).generations_dir(epoch_id)
+    names = [path.name for path in root.iterdir() if path.is_dir()] if root.is_dir() else []
+    return workspace_epochs.next_generation_id(names)
 
 
 def mutable_trees(adapter: Any, snapshot: Path) -> list[Path]:
@@ -128,7 +112,6 @@ __all__ = [
     "current_generation",
     "mutable_trees",
     "next_generation_id",
-    "round_number",
     "safe_parent",
     "set_current_generation",
     "snapshot_root",

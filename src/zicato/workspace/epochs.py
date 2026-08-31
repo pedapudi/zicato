@@ -12,15 +12,20 @@ by name where the contract requires timestamp order is a real ordering bug —
 so every enumeration routes through :func:`iter_epochs` /
 :func:`list_epoch_ids`, and the order is uniform by construction.
 
-The ordering primitives (:func:`natural_key`, :func:`epoch_sort_key`,
-:func:`epoch_created_at`) live here as the single definition;
-:mod:`zicato.query.paths` re-exports them, so an import from either module
-resolves to the same function.
+The ordering primitives live here as the single definition. Epochs order by
+:func:`epoch_sort_key` over :func:`epoch_created_at` and :func:`natural_key`;
+generations order by :func:`natural_key` alone, which puts ``v2`` before
+``v10``. :func:`generation_round_number` is the single parser of the round
+number a ``vN`` id encodes, and :func:`next_generation_id` the single minter
+of the next one, so one rule defines what a generation id is.
+:mod:`zicato.query.paths` re-exports the epoch primitives, so an import from
+either module resolves to the same function.
 """
 
 from __future__ import annotations
 
 import re
+from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -48,6 +53,30 @@ def natural_key(name: str) -> tuple[tuple[int, Any], ...]:
     return tuple(
         (1, int(part)) if part.isdigit() else (0, part) for part in _NUM_RUN.split(name) if part
     )
+
+
+def generation_round_number(generation_id: str) -> int | None:
+    """The round number encoded in a ``vN`` generation id, or ``None`` when the
+    id does not follow that scheme.
+
+    ``v0`` is the seed generation, so the number is also the count of rounds
+    that produced the generation. Callers that only need ordering use
+    :func:`natural_key`, which orders ``vN`` ids by the same number without
+    parsing them.
+    """
+    suffix = generation_id[1:]
+    return int(suffix) if generation_id.startswith("v") and suffix.isdigit() else None
+
+
+def next_generation_id(existing: Iterable[str]) -> str:
+    """The id to mint for the generation that follows ``existing``.
+
+    ``v`` and one past the highest round number present, or ``v0`` when none
+    is. Ids outside the ``vN`` scheme take no part in the count, so a stray
+    directory can never make the minter skip or reuse a round number.
+    """
+    numbers = [n for n in map(generation_round_number, existing) if n is not None]
+    return f"v{max(numbers, default=-1) + 1}"
 
 
 def _read_json_value(path: Path) -> Any | None:

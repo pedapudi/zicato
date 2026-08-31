@@ -227,9 +227,9 @@ async def _persist_rejected_round(
     patch set that survives validation within its bounded retry budget.
     """
     from zicato.epoch import write_experiment  # noqa: PLC0415
-    from zicato.evolve.generation_phase import round_number  # noqa: PLC0415
     from zicato.evolve.round_api import EvolveRoundOutcome  # noqa: PLC0415
     from zicato.runtime import progress_log  # noqa: PLC0415
+    from zicato.workspace import generation_round_number  # noqa: PLC0415
 
     write_experiment(workspace_root, epoch_id, next_id, experiment)
     if proposer_retries_exhausted:
@@ -273,7 +273,7 @@ async def _persist_rejected_round(
         workspace_root=workspace_root,
         epoch_id=epoch_id,
         board=board,
-        round_n=round_number(next_id) or round_index,
+        round_n=generation_round_number(next_id) or round_index,
         analyzer_round=None,
         mutations=[],
         auxiliary_call_llm=auxiliary_call_llm,
