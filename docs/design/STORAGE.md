@@ -223,7 +223,9 @@ the real-path contract the subprocess worker needs.
 
 The `list_tree`, `read_file`, and `diff_generations` surface is source-only.
 Patch and experiment reads use `StorageBackend`; source pruning cannot remove
-those records. Source mutation goes through `seed_generation`,
+those records. `diff_generations` is one shared rendering over every backend
+(§7.4), so the diff text a reader receives is a function of the two trees
+alone. Source mutation goes through `seed_generation`,
 `derive_generation`, and the retention-controlled `prune_generations` method.
 Pruning accepts the complete selected batch so the Git implementation can
 remove every tag and worktree under one administration lock and run repository
@@ -513,6 +515,19 @@ serves them straight from the object store (`git ls-tree`, `git show`) without
 a worktree checkout; the directory backend walks the snapshot directory.
 Patch views read `experiment.json` and per-patch records through
 `StorageBackend`, independently of the source backend.
+
+`diff_generations` is rendered rather than delegated. Each backend reads the
+two generations' whole source trees — the git backend with one `git archive`
+per tree, straight from the object store; the directory backend by walking the
+snapshot — and both hand the pair to `render_source_diff`
+(`zicato.epoch.genstore`), which renders the unified-diff text. The git backend
+does not shell out to `git diff` for this, because git's output carries blob
+hashes, file modes, and rename detection the directory backend cannot
+reproduce. The proposer puts this text in its prompt, and the epoch contract
+hash does not fold the source backend, so a backend-dependent rendering would
+make the proposer's input depend on how a workspace stores its source.
+`render_source_diff` states the format;
+`tests/test_genstore_conformance.py` pins it identical across backends.
 
 ### 7.5 Workspace format
 

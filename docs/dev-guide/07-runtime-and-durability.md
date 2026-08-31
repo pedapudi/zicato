@@ -636,7 +636,37 @@ The `finally` block removes `.derive-scratch` regardless of outcome, so a
 failed validation leaves neither a scratch tree nor a commit nor a tag —
 all-or-nothing end to end.
 
-### 7.4.5 Patch records stay outside the generation store
+### 7.4.5 One diff renderer over both backends
+
+`diff_generations` returns the same text for the same pair of trees whichever
+backend stores them. Each backend only reads the two trees — the git backend
+with one `git archive` per tree, out of the object store, no worktree; the
+directory backend by walking the snapshot — and both render through
+`render_source_diff` in `src/zicato/epoch/genstore.py`. The git backend does
+not shell out to `git diff` for this: git's output carries blob hashes, file
+modes, and rename detection no other backend can reproduce.
+
+That matters because the text reaches the proposer's prompt through
+`read_parent_diff` (`src/zicato/proposer/tools.py`), and the epoch contract
+hash does not fold the source backend. A backend-dependent rendering would
+make the proposer's input, and so its behaviour, depend on how the workspace
+happens to store its source.
+
+The format: files in path order, each opened by `diff --git a/<path> b/<path>`,
+then a unified diff with three lines of context. An added file reads from
+`/dev/null` and a removed file writes to it; a file holding a NUL byte is
+reported as `Binary files … differ` rather than rendered; a hunk line from a
+file with no final newline is followed by `\ No newline at end of file`. Run
+artifacts and the generation repository's own `.gitignore` are not generation
+source and appear in no diff. Only content is rendered: a rename reads as one
+file added and another removed, and a change to a file's permission bits alone
+appears nowhere, because a patch apply changes neither.
+
+`tests/test_genstore_conformance.py` renders one pair of trees through every
+backend and asserts the texts are equal, so a backend that starts rendering
+its own way fails there.
+
+### 7.4.6 Patch records stay outside the generation store
 
 `read_generation_patches` reads `experiment.json` and its per-patch files
 through the caller's generic `StorageBackend`. The dashboard and proposer use

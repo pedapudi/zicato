@@ -72,10 +72,12 @@ of the directory backend's ``copytree(ignore=...)``.
 
 from __future__ import annotations
 
+import io
 import json
 import logging
 import shutil
 import subprocess
+import tarfile
 import tempfile
 import threading
 from collections.abc import Iterable, Sequence
@@ -93,9 +95,11 @@ from zicato.epoch.genstore import (
     EphemeralCheckout,
     TreeEntry,
     discard_ephemeral_parent,
+    is_generation_source_path,
+    render_source_diff,
     source_tree_bytes,
 )
-from zicato.epoch.snapshot_scope import gitignore_lines, is_artifact
+from zicato.epoch.snapshot_scope import gitignore_lines
 
 #: Sentinel line separating the human commit subject from the machine
 #: metadata block in a generation commit message. Everything after this
@@ -798,7 +802,7 @@ class GitGenerationStore:
             meta, _, path = record.partition("\t")
             if not path:
                 continue
-            if path == ".gitignore" or any(is_artifact(part) for part in path.split("/")):
+            if not is_generation_source_path(path):
                 continue
             fields = meta.split()
             size = 0
@@ -869,18 +873,49 @@ class GitGenerationStore:
         parent = meta.get("parent_generation_id")
         return parent if isinstance(parent, str) and parent else None
 
+    def _tree_files(self, tag: str) -> dict[str, bytes]:
+        """Read a generation commit's whole source tree from the object store.
+
+        One ``git archive`` streams the tagged tree as a tar, which is read
+        in process: no worktree is materialised, nothing in the repository
+        changes, and the cost is a single subprocess whatever the file
+        count. Symbolic links arrive as their own tar member type and are
+        dropped with everything else that is not a regular file.
+        """
+        argv = ["git", "archive", "--format=tar", f"refs/tags/{tag}"]
+        proc = subprocess.run(  # noqa: S603 — fixed-shape argv, never shell
+            argv,
+            cwd=str(self._repo),
+            capture_output=True,
+            check=False,
+        )
+        if proc.returncode != 0:
+            raise GitCommandError(
+                tuple(argv[1:]), proc.returncode, proc.stderr.decode("utf-8", "replace")
+            )
+        with tarfile.open(fileobj=io.BytesIO(proc.stdout)) as archive:
+            return {
+                member.name: handle.read()
+                for member in archive.getmembers()
+                if member.isfile()
+                and is_generation_source_path(member.name)
+                and (handle := archive.extractfile(member)) is not None
+            }
+
     def diff_generations(
         self, epoch_id: str, from_generation_id: str, to_generation_id: str
     ) -> str:
         """Unified diff between two generation commits — nearly free reads.
 
-        Runs a single read-only ``git diff`` between the two generations'
-        tags: git diffs the tree OBJECTS, so no worktree is materialised
-        and nothing in the repo changes. ``--no-ext-diff`` / ``--no-color``
-        pin the output to plain unified-diff text regardless of any
-        ambient git configuration. Returns the empty string when the two
-        trees are byte-identical (a derived child can legitimately equal
-        its parent — see :meth:`_commit`).
+        Reads both tagged trees out of the object store and renders them
+        through :func:`~zicato.epoch.genstore.render_source_diff`, the one
+        renderer every backend shares, so the text is the same as the
+        directory backend's for the same pair of trees. Rendering in
+        process rather than through ``git diff`` is what makes that
+        guarantee hold: git's output carries blob hashes, file modes, and
+        rename detection no other backend can reproduce. Returns the empty
+        string when the two trees are byte-identical (a derived child can
+        legitimately equal its parent — see :meth:`_commit`).
 
         Raises :class:`FileNotFoundError` when either generation has no
         commit, matching the other read-surface methods.
@@ -891,14 +926,9 @@ class GitGenerationStore:
                     f"diff_generations: generation {epoch_id}/{gid} has no "
                     f"commit in the generation repo"
                 )
-        from_tag = self._generation_tag(epoch_id, from_generation_id)
-        to_tag = self._generation_tag(epoch_id, to_generation_id)
-        return self._git(
-            "diff",
-            "--no-color",
-            "--no-ext-diff",
-            f"refs/tags/{from_tag}",
-            f"refs/tags/{to_tag}",
+        return render_source_diff(
+            self._tree_files(self._generation_tag(epoch_id, from_generation_id)),
+            self._tree_files(self._generation_tag(epoch_id, to_generation_id)),
         )
 
     def prune_generations(
