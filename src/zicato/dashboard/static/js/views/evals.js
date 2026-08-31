@@ -248,7 +248,7 @@ export async function render(host, ctx, params, _route) {
 
 function build(host, ctx, matrix, epochId, live, ghosts, epochLive) {
   const nodes = [];
-  nodes.push(el('div', { class: 'dt-pagehead' }, [
+  nodes.push(el('div', { class: 'dn-pagehead' }, [
     el('h1', { class: 'dn-h1', text: 'Evals' }),
     el('p', { class: 'dn-lede', text: 'The board as the measurement instrument: rows are entries (the channels), columns are candidates (what they measured). Each cell is how a candidate scored on an entry — shaded by evidence, not by verdict, with the entry’s A/A flip-rate context beside every row.' }),
   ]));
