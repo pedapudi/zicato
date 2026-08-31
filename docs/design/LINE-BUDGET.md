@@ -41,9 +41,9 @@ above the baseline and negative where it stands below.
 
 | Measurement | Baseline (`f9052dd`) | Enforced limit | Limit minus baseline |
 |---|---:|---:|---:|
-| Total | 408,661 | 454,704 | +46,043 |
-| Production | 197,702 | 204,244 | +6,542 |
-| Production logic | 117,024 | 121,719 | +4,695 |
+| Total | 408,661 | 454,918 | +46,257 |
+| Production | 197,702 | 204,235 | +6,533 |
+| Production logic | 117,024 | 121,710 | +4,686 |
 
 The baseline row is the reference `f9052dd` measured by the classification the
 checker holds, which counts the console's hand-written entry point
@@ -156,3 +156,4 @@ correction exposes and the entry records that reason.
 | Practice-review keys the console reads (total) | 454,514 | +190 | 454,704 | Issue #324: the terminal console's practice table rendered two empty columns because it read key names the reflection endpoint does not serve, and the fixture that should have caught it stated the same wrong names by hand. The delta is the coverage that makes the fix durable: the fixture rebuilt from `PracticeReview.to_json`, three lens tests over a real `PracticeCheck`, and a per-check key cross-check holding the serializer, the live service and the fixture equal — reflection payloads were exempt from the existing top-level cross-check, so no test read inside them. |
 | Practice-review keys the console reads (production) | 204,234 | +10 | 204,244 | Issue #324: the practice row now reads `check_id`, `headline` and `rationale`, states an unmeasured check's missing input in its evidence slots, and folds what the row displays into the repaint digest. Most of the delta is the comment stating which serializer owns the key names. |
 | Practice-review keys the console reads (production logic) | 121,717 | +2 | 121,719 | Issue #324: the repaint digest folds four fields per check instead of two, and the row builder binds the check's id and headline once rather than re-reading them. |
+| Holdout held back in the fast-mode gauntlet (total) | 454,704 | +214 | 454,918 | Issue #319: the five-case regression module — a holdout-only improvement refused, a train win confirmed on the holdout and crowned, a memorized win flipped, the full-mode control the fast round must agree with, and the empty-holdout degrade. Three of the five fail against the code this replaces. Production falls by 9 and production logic by 9: the whole-board branch of the selector and the parameter that disabled the crowning confirmation are removed, and both machine limits ratchet down to the measured totals. |

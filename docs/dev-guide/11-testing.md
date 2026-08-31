@@ -1041,8 +1041,8 @@ so a red names the configuration that moved:
 | Gate | Structure · mode · rounds | What only this lane executes |
 | --- | --- | --- |
 | `MOCK-GOLDEN` | racing field 4 · full · 1 | the multi-challenger rungs, cuts, and crowning duel |
-| `MOCK-GOLDEN-GAUNTLET` | gauntlet · full · 1 | the `field_n == 1` full-board selector, and the crowning holdout a single-challenger full round still runs |
-| `MOCK-GOLDEN-GAUNTLET-FAST` | gauntlet · fast · 1 | the one configuration that deliberately SKIPS the crowning holdout (`field_n == 1 and fast_mode`) |
+| `MOCK-GOLDEN-GAUNTLET` | gauntlet · full · 1 | the `field_n == 1` branches: one crowning duel with no rungs or cuts, and the crowning holdout confirmation on it |
+| `MOCK-GOLDEN-GAUNTLET-FAST` | gauntlet · fast · 1 | cache-first slot resolution under a single challenger |
 | `MOCK-GOLDEN-RACING-FAST` | racing field 4 · fast · 1 | every rung resolving both competitors through the unit cache |
 | `MOCK-GOLDEN-TWO-ROUND-RACING` | racing field 4 · full · 2 | the between-round carry-over: the promoted head advancing off the seeded `v0`, the crowned generation defending the next round, that generation's patched snapshot supplying the next round's mutable surface, round directories numbering on from `0`, and round 1's settled snapshot naming round 0's winner as its champion |
 | `MOCK-GOLDEN-SWISS` | swiss field 4 · full · 1 | fixed-round pairings over champion + challengers, Copeland standings, and the leader's final champion-gate confirmation |

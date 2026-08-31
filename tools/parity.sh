@@ -29,11 +29,10 @@
 #   MOCK-GOLDEN-GAUNTLET
 #                  the same capture with a single challenger under --mode
 #                  full: the field-size-1 selector and the crowning holdout
-#                  confirmation a full gauntlet round still runs.
+#                  confirmation a gauntlet round runs.
 #   MOCK-GOLDEN-GAUNTLET-FAST
 #                  a single challenger under --mode fast: cache-first slot
-#                  resolution, and the one configuration that deliberately
-#                  skips the crowning holdout.
+#                  resolution under a one-challenger field.
 #   MOCK-GOLDEN-RACING-FAST
 #                  the racing field under --mode fast: every rung resolves
 #                  both competitors through the unit cache.
