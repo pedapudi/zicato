@@ -719,18 +719,19 @@ def _format_meta_cell(raw: str) -> str:
 
 # --- Academic-paper CSS ---------------------------------------------------
 #
-# All paper styling is scoped to ``.paper`` so the same fragment renders
-# the standalone ``analysis.html`` AND, when embedded inside the dark
-# dashboard chrome, the inline Analysis-section card. Two property
-# blocks: paper variables (light, paper-tone defaults) and the scoped
-# typography / table / figure rules.
+# All paper styling is scoped to ``.paper`` so one fragment serves both
+# consumers: the standalone ``analysis.html`` and the Publication view,
+# which embeds the same fragment. Two property blocks: paper variables
+# (light, paper-tone defaults) and the scoped typography / table / figure
+# rules.
 #
-# The palette is exposed via CSS custom properties on ``.paper`` so a
-# downstream host can override the palette without touching typography.
-# The dashboard's ``.analysis-paper-card`` wrapper uses this to render
-# the same fragment in a dashboard-dark palette while preserving every
-# aspect of the paper typography (serif body, justified text, table
-# rules, figure layout). The variable surface is structured into:
+# The palette is exposed via CSS custom properties on ``.paper`` so a host
+# COULD re-tint the sheet without touching its typography (serif body,
+# justified text, table rules, figure layout). No host does. The console
+# mounts the fragment in ``dn-paper`` / ``dn-paper-served`` and binds none
+# of these tokens, so the sheet reads light on every console theme;
+# whether it should stay that way on the dark ones is issue #367. The
+# variable surface is structured into:
 #
 #   * surface tones — ``--paper-bg``, ``--paper-text``, ``--paper-muted``
 #   * rules — ``--paper-rule``, ``--paper-soft-rule``

@@ -879,15 +879,19 @@ def test_fragment_can_be_concatenated_into_dashboard_chrome() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Dark-mode-friendly inline paper card
+# The paper palette, exposed for re-tinting
 # ---------------------------------------------------------------------------
 #
-# The standalone analysis.html document is paper-toned (cream sheet on a
-# muted-grey desk); the SAME fragment, when embedded inline inside the
-# dashboard, lands inside a ``.analysis-paper-card`` wrapper that rebinds
-# the paper palette to dashboard-dark values. The fragment's CSS exposes
-# every paper colour via CSS custom properties so the wrapper can re-tint
-# without touching typography.
+# The report is paper-toned: a cream sheet on a muted-grey desk. Both the
+# standalone analysis.html and the fragment the dashboard embeds declare that
+# palette through CSS custom properties, so a host can re-tint the sheet
+# without touching its typography.
+#
+# No host currently does. The dashboard mounts the fragment in ``dn-paper`` /
+# ``dn-paper-served`` and console.css binds none of the ``--paper-*`` tokens,
+# so the sheet reads light on every console theme. Whether it should stay that
+# way on the dark themes is issue #367; these tests pin what the RENDERER
+# guarantees either way — that every colour is reachable through a property.
 
 
 def test_paper_palette_exposed_via_css_variables() -> None:
@@ -898,6 +902,9 @@ def test_paper_palette_exposed_via_css_variables() -> None:
     fragment's typography or HTML structure.
     """
     fragment = render_report_html_fragment("e1", "# T\n\nhello\n")
+    # The fragment ships the paper-tone defaults, so an un-themed host
+    # renders the same cream sheet the standalone document does.
+    assert "--paper-bg: #fafaf7" in fragment
     # The full surface — text, muted, rule, code, accent, figure tones —
     # is exposed via --paper-* variables so a host can retheme.
     for token in (
@@ -923,12 +930,7 @@ def test_paper_palette_exposed_via_css_variables() -> None:
 
 
 def test_standalone_html_keeps_light_paper_palette() -> None:
-    """The standalone analysis.html still defines the cream-paper defaults.
-
-    The dark-mode overrides live on the dashboard's ``.analysis-paper-card``
-    wrapper; the standalone document carries the original paper-tone
-    defaults unchanged.
-    """
+    """The standalone analysis.html still defines the cream-paper defaults."""
     html = render_report_html("e1", "# Title\n\nbody\n")
     # The paper-tone defaults are still declared on .paper.
     assert "--paper-bg: #fafaf7" in html
@@ -936,59 +938,8 @@ def test_standalone_html_keeps_light_paper_palette() -> None:
     # The standalone page-background tone (the "desk" the sheet sits on)
     # is unchanged.
     assert "background: #e9e7e1" in html
-    # And the standalone document does NOT carry the analysis-paper-card
-    # wrapper (that lives in the dashboard CSS).
+    # The document styles itself; it names no host wrapper class.
     assert "analysis-paper-card" not in html
-
-
-def test_inline_fragment_carries_light_defaults_dashboard_overrides_them() -> None:
-    """The fragment ships the paper-tone defaults; the dashboard re-tints.
-
-    The fragment's own inline ``<style>`` keeps the paper-tone defaults
-    so the standalone analysis.html (which reuses the same renderer) is
-    unaffected. The dashboard's ``.analysis-paper-card .paper`` selector
-    overrides the variables for the inline surface — that override
-    lives in ``src/zicato/dashboard/static/style.css``.
-    """
-    fragment = render_report_html_fragment("e1", "# T\n\nhello\n")
-    # Fragment carries the paper-tone defaults.
-    assert "--paper-bg: #fafaf7" in fragment
-    # The dashboard stylesheet rebinds every paper-* token inside the
-    # card wrapper.
-    css_path = (
-        Path(__file__).resolve().parent.parent
-        / "src"
-        / "zicato"
-        / "dashboard"
-        / "static"
-        / "style.css"
-    )
-    css = css_path.read_text(encoding="utf-8")
-    # The wrapper exists.
-    assert ".analysis-paper-card" in css
-    # And it rebinds every paper-* token so the inline surface goes dark.
-    for rebind in (
-        "--paper-bg: var(",
-        "--paper-text: var(",
-        "--paper-muted: var(",
-        "--paper-rule: var(",
-        "--paper-code-bg: var(",
-        "--paper-promoted: var(",
-        "--paper-rejected: var(",
-        "--paper-figure-grid: var(",
-        # New palette tokens added by the visual-polish pass: the dark
-        # surface must rebind them too so the new figures + callout pick
-        # up dashboard-tinted hues.
-        "--paper-incomplete: var(",
-        "--paper-predicted: var(",
-        "--paper-callout-bg",
-        "--paper-callout-rule",
-    ):
-        assert rebind in css, rebind
-    # The legacy hard-coded cream paint on the wrapper is gone — the
-    # wrapper now picks up the dashboard's card surface instead so it
-    # does not clash with surrounding chrome.
-    assert "background: #fafaf7" not in css
 
 
 def test_inline_figures_use_theme_aware_colors() -> None:

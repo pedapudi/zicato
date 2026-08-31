@@ -14,16 +14,16 @@ from __future__ import annotations
 from zicato.analyzer.report_data import GenerationView
 
 # The canonical decision colours. This module owns them: the standalone
-# epoch HTML and the dashboard-embedded paper card render through the same
-# figures, so one definition here carries the visual language across every
-# surface.
+# epoch HTML and the copy the Publication view embeds render through the
+# same figures, so one definition here carries the visual language across
+# both surfaces.
 #
 # Figures emit these as CSS-variable references in a ``style=""``
-# attribute on each SVG element so a host palette (the dashboard's
-# dark ``.analysis-paper-card``, say) can flip the figure rendering
-# without re-rendering the SVG. The bare hex constants are retained
-# for tests and for callers that want the canonical decision colour
-# directly.
+# attribute on each SVG element, so a host that overrode the tokens would
+# re-tint the figures without re-rendering the SVG. No host overrides them
+# — see the note in :mod:`zicato.analyzer.report` and issue #367. The bare
+# hex constants are retained for tests and for callers that want the
+# canonical decision colour directly.
 PROMOTED_COLOR = "#2ea043"
 REJECTED_COLOR = "#d73a49"
 BASELINE_COLOR = "#6e7681"
