@@ -41,7 +41,7 @@ sourced, and how wide content is kept from overflowing the page.
    the publication can never move a frozen artifact.
 5. **Contained rendering.** No element ever pushes the page sideways. Wide
    content scrolls inside its own container (per the console design language,
-   `CONSOLE-DESIGN-LANGUAGE.md` §"inherently-wide content"); the page body
+   `CONSOLE-DESIGN-LANGUAGE.md` §5); the page body
    never scrolls horizontally.
 
 ## Content spec — the operator-approved outline

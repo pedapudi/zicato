@@ -13,7 +13,7 @@
 > reads is defined there: heartbeat, active runs, the tournament event log,
 > control files, `index.db`), 02-architecture.md (the process topology). The
 > Python dashboard service is 09-dashboard-and-query.md; the cargo gates are
-> summarised in 11-testing.md §"THE PRE-COMMIT CHECKLIST".
+> summarised in 11-testing.md §"The pre-commit checklist".
 >
 > **Invariants introduced in this chapter.** The ID is the locator that other
 > documents cite; the Name is what prose uses.
@@ -983,7 +983,7 @@ so tokenizing from the start would misalign every field. `pgid_of` reads field 5
 (`pgrp`) the same way, to fence the orchestrator's group out of the negatable
 set. The token is carried as `f64` to compare exactly against the Python writer's
 JSON float (`116371304.0`) — integer-valued, so equality is exact (the
-`state.rs` field comment and 07-runtime-and-durability.md §"`active_runs`" both
+`state.rs` field comment and 07-runtime-and-durability.md §7.6.2 both
 pin this).
 
 `is_same_process(pid, expected_start_time)` is the composed check: not alive →

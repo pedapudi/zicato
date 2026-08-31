@@ -125,7 +125,7 @@ or "the judge panel has gone silent".
    bound, add a typed field to `zicato.config.HealthConfig` (the `health` block
    of `config.json`) and read it via `_resolve_health_config`. Never use a bare
    constant an operator cannot change, and never an environment variable (see
-   10-builder-cli-library.md §"the merited env-var set").
+   10-builder-cli-library.md §"The merited env-var set").
 6. **Thread new inputs through the orchestrator only if needed.** If your
    detector needs a fact `assess_loop_health` is not already handed, add it to
    `_collect_epoch_health_inputs` and `_assess_and_persist_loop_health` in
@@ -219,8 +219,7 @@ record's shape, which makes it a design change rather than a rendering fix.
   *operator-facing* (it renders in `zicato health` and the dashboard, which the
   operator sees) — so naming the offending entry id is correct and useful. Do
   NOT confuse it with the restricted-visibility envelope that governs the
-  proposer (01-orientation.md §4; the formal spec is 05-proposer.md §"The
-  restricted-visibility envelope"). A health detector is not inside that
+  proposer (01-orientation.md §4; the formal spec is 05-proposer.md §5.8). A health detector is not inside that
   envelope.
 - ⚠️ **A detector must never raise into `assess_loop_health`.** The whole health
   subsystem is best-effort — the orchestrator lazy-imports it and degrades to
@@ -1408,12 +1407,11 @@ Each recipe's owning chapter carries the theory the recipe applies:
   (Recipe 9) sit in; the four processes Recipe 12's forensics span.
 - 03-contract-and-epochs.md §3.7 (computing the hash) and §3.4 (the
   omit-at-default discipline) —
-  what rolls the epoch (Recipes 3, 4, 8); §"The board" — the judge-collusion
-  contract (Recipe 4).
-- 04-evaluation-statistics.md §1.1 and §1.3 (the two scoring seams) (Recipe 3, 5), §"The promote
-  gate" (Recipe 3 monotonicity), §"Operating characteristics as pinned tests" +
+  what rolls the epoch (Recipes 3, 4, 8); §3.2.1 — how board entries and their
+  judge metadata fold into the hash (Recipe 4).
+- 04-evaluation-statistics.md §1.1 and §1.3 (the two scoring seams) (Recipe 3, 5), §"The gate's rule ladder" (Recipe 3 monotonicity), §"Operating characteristics as pinned tests" +
   §"Recipe: proving a change to the decision procedure" (Recipe 13).
-- 05-proposer.md §"The restricted-visibility envelope" + §"The channel-author's
+- 05-proposer.md §5.8 + §"The channel-author's
   checklist" — the banding Recipe 2 must satisfy.
 - 06-tournament-and-selection.md §"The reserved replicate ladder" — the base
   ledger Recipes 8, 13 draw on (duels 0.., calibration 1000, preflight 2000,
@@ -1425,9 +1423,8 @@ Each recipe's owning chapter carries the theory the recipe applies:
 - 04-evaluation-statistics.md §1.9 (the loop-health detectors over the
   measurement chain) — the layer Recipe 1's detector joins.
 - 10-builder-cli-library.md §"The op inventory" (Recipe 3's builder surface),
-  §"CLI.md is a GENERATED artifact" (Recipe 11), §"Flags cross the worker
-  boundary via config_pins" (Recipe 12).
-- 11-testing.md §"parity gates" (Recipes 10, 11), §"Node suite conventions"
+  §"CLI.md is a GENERATED artifact" (Recipe 11), §10.10 (Recipe 12).
+- 11-testing.md §"parity gates" (Recipes 10, 11), §"Node behaviour-suite conventions"
   (Recipe 10), §"The two oracles" (every recipe's finish line).
 - 12-bug-casebook.md — Case 1 (replicate-cache clobber; Recipes 12, 13), Case 3
   (A/A false-zero floor; Recipes 11, 13), Case 5 (reaper killpg; Recipe 12),

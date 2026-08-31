@@ -12,7 +12,7 @@
 > **Prerequisites:** 01-orientation.md (what a generation / epoch / board is),
 > 03-contract-and-epochs.md §3.1–§3.2 (what the contract hash covers and what
 > rolls an epoch),
-> 06-tournament-and-selection.md §"Structures" (who calls the gate).
+> 06-tournament-and-selection.md §6.10 (who calls the gate).
 >
 > **Invariants introduced in this chapter:**
 > 1. **The scalar is a loss.** Lower is better, everywhere, always.
@@ -588,7 +588,7 @@ make must not silently invalidate them.
 > replicate-slot reuse case (`12-bug-casebook.md` case 8) — where evidence
 > replicates were not independent samples — passed a green deterministic
 > end-to-end test. Every statistical mechanism needs at least one knob-ON test
-> under σ>0. See 12-bug-casebook.md §"Meta-lessons".
+> under σ>0. See 12-bug-casebook.md §"The meta-lessons".
 
 ### 3.3 The screen's statistical doctrine: veto-first, selection bias, confirm-before-veto
 
@@ -826,7 +826,7 @@ directly, with no budget and no release rule.
 Holdout confirmation is wired through **every** structure rather than the
 gauntlet alone: the multi-challenger path routes its crowning through
 `runner.confirm_crowning_holdout` (see 06-tournament-and-selection.md
-§"Holdout through structures").
+§6.7.3).
 
 > ⛔ NEVER surface a raw holdout artifact to the proposer — no per-entry
 > result, no unreleased scalar, no entry id. The proposer's holdout
@@ -1753,7 +1753,7 @@ Surface: `zicato board judges --test-retest [--retest-k K]
 or the synthetic `FIXTURE_TRANSCRIPT`. The `aux_call_llm` parameter is the
 endpoint seam — tests script it; a real auxiliary endpoint slots in unchanged
 (that live measurement is endpoint-gated; see 14-goals-and-roadmap.md
-§"Endpoint-gated backlog").
+§"The endpoint-gated backlog").
 
 ---
 
@@ -2022,7 +2022,7 @@ uv run zicato board audit --workspace <ws>   # then inspect the epoch record + h
    true improvement will usually terminate `inconclusive`.
 2. Price it before running: each evidence replicate is a fresh
    2-sides × board sweep. The builder's cost meter line exists for this purpose
-   (10-builder-cli-library.md §"Cost meter").
+   (10-builder-cli-library.md §"The honest cost meter").
 3. Expect and monitor the dead-letter queue
    (`runtime/inconclusive/*.json`) — an `inconclusive` terminal is a designed
    outcome rather than an error; a *stream* of them means the budget cannot

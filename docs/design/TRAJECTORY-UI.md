@@ -186,7 +186,7 @@ to a card carrying:
   `--v2-caution`, the noisy-eval signal), **discrimination dots** (`separated`
   of `pairs` as filled/empty pips — a dead channel is all-empty), and an
   **evidence-tier** marker (`probed` = a firm mark, `planned`/unmeasured = a
-  `dn-faint` mark — the shade-by-evidence rule, EVAL-VIEW.md §4.1). Numbers
+  `dn-faint` mark — the shade-by-evidence rule, EVAL-VIEW.md §4 #1). Numbers
   ride the marks with their `n` (the honesty rule — a measured number always
   carries its `n`; `unmeasured` is never a fabricated `0.0`,
   EVAL-SYNTHESIS.md §5 / suggestions.`format_admission`).
@@ -468,7 +468,7 @@ design-language §2 contract.
   namespace; a new `dn-strip` layout class is the sole addition (the `dn-mtx`
   precedent).
 - **No fabricated numbers.** `unmeasured` renders as "unmeasured", never `0.0`
-  (EVAL-VIEW.md §4.4 / suggestions.`format_admission`). A ghost row shows
+  (EVAL-VIEW.md §4 #4 / suggestions.`format_admission`). A ghost row shows
   admission evidence, never a scored verdict.
 - **Read-side only.** No contract or parity exposure; nothing in
   `tools/parity.sh` moves. A new view grows the JS bundle — the house rationale

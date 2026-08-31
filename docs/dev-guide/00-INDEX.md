@@ -61,8 +61,8 @@ chapter 01.
 | **G5** | Parity + import contracts + node | `bash tools/parity.sh` (13 gates), `uv run lint-imports` (7 contracts), `make node-test`. | all green |
 | **G6** | Omit-at-default contract discipline | A new default-off contract field MUST be registered in `_SCORING_OMIT_AT_DEFAULT_FIELDS`, or every existing workspace spuriously rolls its epoch. | `03-contract-and-epochs.md`; contract-hash parity gate |
 | **G7** | The reserved replicate-base ledger | Duels `0..`, calibration `1000`, preflight `2000`, screening `3000/3001`, evidence `4000`, board reflection `5000`, eval-synthesis admission `6000`. Squatting a base corrupts the unit cache (bugs #1, #8); a reader that globs `loss*.json` instead of filtering by base reads the preflight's degraded probes as real behaviour (`unit_cache.is_own_code_board_draw`). | `04-evaluation-statistics.md §8` |
-| **G8** | The restricted-visibility envelope | Nothing entry-identifying (entry ids, task text, holdout data, raw per-entry outcomes) may reach the proposer. Every channel is banded/aggregated/anonymized/redacted. | `05-proposer.md §"envelope"`; adversarial-identity fixtures |
-| **G9** | Module-level callables only across the worker boundary | `_callable_dotted_path` rejects closures; scripted proposers/harnesses are module-level functions + module state + `reset()`. | `06-tournament-and-selection.md §"worker boundary"` |
+| **G8** | The restricted-visibility envelope | Nothing entry-identifying (entry ids, task text, holdout data, raw per-entry outcomes) may reach the proposer. Every channel is banded/aggregated/anonymized/redacted. | `05-proposer.md` §5.8; adversarial-identity fixtures |
+| **G9** | Module-level callables only across the worker boundary | `_callable_dotted_path` rejects closures; scripted proposers/harnesses are module-level functions + module state + `reset()`. | `06-tournament-and-selection.md` §6.3 |
 | **G10** | Digest-gated rendering | A no-op SSE heartbeat must cause ZERO DOM rebuild; views fold content digests and swap only on change. | `09-dashboard-and-query.md §9.7`; node DOM-node-identity tests |
 
 ---

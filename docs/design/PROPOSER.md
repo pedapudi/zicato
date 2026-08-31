@@ -394,7 +394,7 @@ hard exclusions:
 3. **No exact deltas.** The Δscalar is coarsened to a band through the
    EXISTING `_bucket_scalar_delta` vocabulary (`improved` / `flat` /
    `regressed`) — the same memorization-resistant banding the experiment
-   memory already uses (§2.5; OVERFITTING.md §11.4). The exact
+   memory already uses (§2.5; OVERFITTING.md §11 #4). The exact
    response-surface number never reaches the model.
 4. **No holdout anything.** The pool is the reign's REJECTED + PROMOTED
    candidates — whole experiments — and nothing is ever read from, sliced

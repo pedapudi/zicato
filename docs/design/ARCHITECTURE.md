@@ -790,7 +790,7 @@ The rule exists because *collusion is the risk*, rather than because
 vendor diversity is a goal in itself. If the same model is judging itself
 and emulating users for itself and proposing patches for itself, every
 loop in zicato becomes degenerate at a different level. See
-[EMULATOR.md](EMULATOR.md) §"Collusion-proof by construction" for the
+[EMULATOR.md](EMULATOR.md) §2 and §3 for the
 full argument and [RATIONALE.md](RATIONALE.md) for why zicato makes the
 operator configure the pair rather than supplying a default.
 
