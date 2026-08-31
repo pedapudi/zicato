@@ -50,9 +50,9 @@ above the baseline and negative where it stands below.
 
 | Measurement | Baseline (`f9052dd`) | Enforced limit | Limit minus baseline |
 |---|---:|---:|---:|
-| Total | 408,661 | 456,588 | +47,927 |
-| Production | 197,702 | 203,340 | +5,638 |
-| Production logic | 110,276 | 114,081 | +3,805 |
+| Total | 408,661 | 456,842 | +48,181 |
+| Production | 197,702 | 203,336 | +5,634 |
+| Production logic | 110,276 | 114,000 | +3,724 |
 
 The baseline row is the reference `f9052dd` measured by the classification the
 checker holds, which counts the console's hand-written entry point
@@ -177,3 +177,4 @@ correction exposes and the entry records that reason.
 | The field round decomposed into phases (total) | 456,033 | +555 | 456,588 | Issue #316: `evolve_field_round` was a single 1,248-line function, and six nested functions read its locals for free. It is now a facade over four named phases in four modules. The delta is what explicit inputs and outputs cost: six typed values — the round's expanded state, the candidate field, the running tallies, the resolved tournament, the crowning verdict, and the settlement — plus the signatures of the phases and their named steps, and one import block per module. Behaviour is unchanged: all eight mock-evolve golden lanes and the reader-parity snapshots pass without recapture. |
 | The field round decomposed into phases (production) | 202,792 | +548 | 203,340 | Issue #316: the same change. Almost all of it is runtime source, because the only test edits name the new home of a call site that moved. |
 | The field round decomposed into phases (production logic) | 113,803 | +278 | 114,081 | Issue #316: the net across six files. `evolve/field.py` loses 910 executable lines and is left a 59-line facade. `evolve/settlement.py` adds 441, which is the settlement tail the issue asks for — the module held only result dataclasses before. `evolve/field_execution.py` adds 350, `evolve/field_candidates.py` 258, `evolve/gate.py` 112, and `evolve/generation_phase.py` 27 for the round-state type. A closure reads its enclosing locals without declaring them; a function must declare, receive, and return them, and that accounting is the whole increase. |
+| Index write statements derived from the schema (total) | 456,588 | +254 | 456,842 | Issue #324: `tests/test_index_statements.py`, which holds each writer's descriptor against the DDL and pins the three re-ingest departures that a column-by-column rewrite would erase — the preserved tournament link and match tag, the ratings columns the Elo fold owns, and the field status only the settled round knows. Production falls by 4 and production logic by 81, and both machine limits ratchet down to the measured totals: `index/ingest.py` loses 143 executable lines as fourteen hand-written column lists become descriptor calls, against 62 added to `index/schema.py` for the descriptor and the column derivation. |
