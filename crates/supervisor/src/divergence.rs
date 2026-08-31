@@ -18,6 +18,11 @@
 //!      decision never resolved past an age threshold (a stuck generation the
 //!      orchestrator's reaper missed).
 //!
+//! A field written as an empty string and a field absent state the same fact,
+//! so every side-to-side comparison normalizes empty to absent first
+//! (`present`). Only the empty / malformed hash checks read the raw value: a
+//! config that names no contract is worth reporting whatever the index holds.
+//!
 //! UNRESOLVED in-flight generations are SKIPPED for the (a) join: while a
 //! generation is mid-tournament the canonical decision is legitimately
 //! `None` and the index may not have caught up (an in-flight reindex), so
@@ -67,6 +72,19 @@ fn is_64_hex(h: &str) -> bool {
     h.len() == 64 && h.chars().all(|c| c.is_ascii_hexdigit())
 }
 
+/// The value a field states, with an empty string read as absent.
+///
+/// A field that carries no value has been written two ways: as an empty
+/// string by the older writers, and as null by the current ones. Comparing
+/// the two spellings directly reports a divergence where both sides state the
+/// same fact, so every side-to-side comparison here goes through this first.
+/// The Python readers already collapse the two — `zicato.index.elo` and the
+/// dashboard's file-tree view each fall back to `""` when the field is absent
+/// — so this is the same equivalence, held from the other end.
+fn present(value: Option<&str>) -> Option<&str> {
+    value.filter(|v| !v.is_empty())
+}
+
 /// Cross-check the canonical lineage / epoch config against the index for the
 /// current epoch and return the divergence findings.
 ///
@@ -100,10 +118,15 @@ pub fn audit(
     let mut findings = Vec::new();
 
     // ---- (b) contract-hash divergence + malformed hashes ----------------
+    // Compared through `present`: a field written as an empty string and a
+    // field absent are the same fact, and only their spelling differs.
     let epoch_view = crate::epoch::build_epoch_view(paths);
     let canonical_hash = epoch_view.contract_hash.clone();
     let index_hash = index_db::epoch_contract_hash(&conn, &epoch_id);
-    if let (Some(canon), Some(idx)) = (&canonical_hash, &index_hash) {
+    if let (Some(canon), Some(idx)) = (
+        present(canonical_hash.as_deref()),
+        present(index_hash.as_deref()),
+    ) {
         if canon != idx {
             findings.push(Finding {
                 code: "contract_hash_divergence",
@@ -182,9 +205,13 @@ pub fn audit(
                 ),
             });
         }
-        // parent_generation_id divergence (treat both-absent as agreement).
-        let canon_parent = gen.parent_generation_id.as_deref();
-        let idx_parent = idx_gen.parent_generation_id.as_deref();
+        // parent_generation_id divergence. Both-absent is agreement, and an
+        // empty string counts as absent: the seed generation's parent was once
+        // written as "" and is now written as null, so a legacy workspace can
+        // hold "" on disk against a null index projection. They state the same
+        // fact — this generation has no parent — and are not a divergence.
+        let canon_parent = present(gen.parent_generation_id.as_deref());
+        let idx_parent = present(idx_gen.parent_generation_id.as_deref());
         if canon_parent != idx_parent {
             findings.push(Finding {
                 code: "parent_divergence",
@@ -382,6 +409,61 @@ mod tests {
             "agreement → no findings: {view:?}"
         );
         assert_eq!(view.generations_checked, 1);
+    }
+
+    #[test]
+    fn empty_canonical_parent_agrees_with_a_null_index_parent() {
+        // The seed generation's parent was once written as an empty string and
+        // is now written as null. A workspace carrying the old spelling on disk
+        // against an index that projects the new one states one fact twice, so
+        // the auditor must report nothing.
+        let (_t, p) = ws();
+        write_epoch_config(&p, HASH_A);
+        write_canonical_gen(&p, "v0", Some(""), "rejected");
+        write_index(&p, HASH_A, &[("v0", None, 0)]);
+        let view = audit(&p, Utc::now(), DEFAULT_STUCK_AGE_SECONDS);
+        assert!(
+            !view.findings.iter().any(|f| f.code == "parent_divergence"),
+            "empty and absent state the same parent: {view:?}"
+        );
+        assert_eq!(view.generations_checked, 1);
+    }
+
+    #[test]
+    fn a_real_parent_disagreeing_with_the_index_is_still_flagged() {
+        // The equivalence is between empty and absent only: a parent the two
+        // sides genuinely disagree on is still a divergence.
+        let (_t, p) = ws();
+        write_epoch_config(&p, HASH_A);
+        write_canonical_gen(&p, "v2", Some("v1"), "rejected");
+        write_index(&p, HASH_A, &[("v2", Some("v0"), 0)]);
+        let view = audit(&p, Utc::now(), DEFAULT_STUCK_AGE_SECONDS);
+        assert!(view.findings.iter().any(|f| f.code == "parent_divergence"));
+    }
+
+    #[test]
+    fn an_empty_canonical_contract_hash_is_not_divergence_from_the_index() {
+        // Same equivalence for the epoch's contract hash: a config that states
+        // no hash has nothing to disagree with the index about. Reporting a
+        // mismatch between a hash and no hash names the wrong problem — the
+        // empty hash itself, still reported below, is the problem.
+        let (_t, p) = ws();
+        write_epoch_config(&p, "");
+        write_index(&p, HASH_A, &[]);
+        let view = audit(&p, Utc::now(), DEFAULT_STUCK_AGE_SECONDS);
+        assert!(
+            !view
+                .findings
+                .iter()
+                .any(|f| f.code == "contract_hash_divergence"),
+            "an empty hash states no contract to diverge from: {view:?}"
+        );
+        assert!(
+            view.findings
+                .iter()
+                .any(|f| f.code == "empty_contract_hash"),
+            "the empty hash itself is still reported: {view:?}"
+        );
     }
 
     #[test]
