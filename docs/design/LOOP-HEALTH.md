@@ -92,7 +92,7 @@ unproductive, when a degenerate evaluation happens to promote on noise.
 The two subsystems overlap, since sustained degeneracy is also
 unproductive, but they detect different root causes and an operator
 needs to know which one they are looking at. Loop health feeds its
-findings into the circuit breaker's planned richer signals: the
+findings into the circuit breaker's unbuilt richer signals: the
 patterns named at
 [ROBUSTNESS.md §2.5](ROBUSTNESS.md#25-the-consecutive-bad-circuit-breaker),
 such as a hypothesis match-rate below 25 percent, are themselves

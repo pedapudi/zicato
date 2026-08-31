@@ -189,11 +189,13 @@ flowchart TB
     ADV -.->|"§5 optimal-stopping decides<br/>whether to spawn the NEXT round"| O
 ```
 
-The dashboard bracket (§2) generalises accordingly: today it renders the
-gauntlet's single spine; under a configurable structure it renders the
-structure's own shape (a single-elimination tree, a Swiss standings
-table, a racing rung-ladder) from the same per-matchup records, with the
-gauntlet remaining the default rendering. The persisted-record shape that
+The dashboard bracket (§2) generalises accordingly. It renders the
+gauntlet's single spine by default, and for any other structure it
+renders that structure's own shape — a single-elimination tree, a Swiss
+standings table, a racing rung-ladder — from the same per-matchup
+records (`isNonGauntlet` and the per-structure models in
+`src/zicato/dashboard/static/js/views/structure.js`, consumed by
+`views/epoch.js`). The persisted-record shape that
 backs the bracket is owned by the data-model design (see
 `TOURNAMENT-STRUCTURES.md §"interface from the data-model agent"`).
 

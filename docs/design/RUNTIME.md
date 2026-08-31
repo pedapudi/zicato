@@ -338,9 +338,10 @@ contention, because each worker is the sole writer of its own file.
 
 `control/` is where the dashboard writes operator commands.
 
-> **What ships today.** The **write side** is live: the Python
+> **Both sides are in the build.** The **write side** is the Python
 > dashboard's POST endpoints (and `src/zicato/runtime/control.py`'s
-> `write_command`) drop the command files described below atomically.
+> `write_command`), which drop the command files described below
+> atomically.
 > The runtime module also exposes the **consume side**
 > (`consume_command`, `is_paused`, `list_pending_commands`), which
 > moves a consumed file into `control_log/`. The orchestrator calls it:

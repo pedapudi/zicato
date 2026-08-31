@@ -893,8 +893,10 @@ curse, Smith & Winkler 2006). Before committing the crown,
 never used for proposal/selection — the epoch is a natural home for such
 a confirmation set). Promote only if it holds up. A fresh-draw estimate
 is unconditioned on the selection, so it is the cheap, model-free
-version of the paper's Bayesian de-biasing. This is the debiasing step
-zicato wholly lacks today.
+version of the paper's Bayesian de-biasing. zicato applies it as
+holdout confirmation of the crowned challenger
+(`confirm_crowning_holdout` in `src/zicato/tournament/runner.py`, and
+`_holdout_confirms` in `src/zicato/tournament/gate.py`).
 
 **A trust-region step bound (complementary).** Borrow Family
 ①: cap how far one experiment may move the champion (patch size,

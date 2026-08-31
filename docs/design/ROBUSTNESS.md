@@ -15,13 +15,13 @@ layers below extend that correctness to harnesses that do not.
 The table is the definition of each layer's identifier. Everywhere
 else, this document and its companions use the layer's name.
 
-| Layer | Name | Mechanism | Catches | Status today |
+| Layer | Name | Mechanism | Catches | Status |
 |---|---|---|---|---|
 | **L1** | the per-call and per-budget timeouts | `asyncio.wait_for` around each call, each board entry, and each evolve invocation | cooperative network and IO hangs | **shipped** |
 | **L2** | structured cancellation | `CancelledError` caught at task boundaries | async code that yields | **shipped** |
 | **L3** | the subprocess worker boundary | one `python -m zicato._tournament_worker` process per board-entry run | loops that hold the interpreter lock, and any other user-code pathology | **shipped**, with a hard per-run wall-clock budget |
 | **L4** | the orchestrator watchdog (the Rust supervisor) | a separate Rust process watching the state files | parent-side wedges | **shipped**; the watchdog binary is auto-spawned and escalation targets the per-run worker process |
-| **L5** | the consecutive-bad circuit breaker | a consecutive-reject counter that stops the loop | long unproductive epochs | **shipped**; richer signals planned |
+| **L5** | the consecutive-bad circuit breaker | a consecutive-reject counter that stops the loop | long unproductive epochs | **shipped**; richer signals unbuilt (§2.5) |
 | **L6** | atomic writes and resume markers | temp file, fsync, rename | mid-run crashes | **shipped**, including the conservative crash-resume protocol |
 
 The layers nest from inside to outside. The timeouts and structured
@@ -374,7 +374,7 @@ a busy cycle, or on a signal handler that mishandles SIGCHLD. An
 orchestrator watching itself is not a defense.
 
 The watchdog supervisor is a separate Rust process with its own
-language and runtime (`crates/supervisor/`). It ships today: `zicato
+language and runtime (`crates/supervisor/`). It ships: `zicato
 evolve` auto-spawns it in watchdog-only mode, and it watches
 `heartbeat.json` and the `active_runs/*` files, escalating from SIGTERM
 through a grace period to SIGKILL on a stalled run. Each
@@ -751,13 +751,15 @@ journal rather than applied silently. The protocol adds no defense
 layer; it records the operator's actions and applies them at safe
 points.
 
-## 5. Auxiliary model-call timeout follow-up
+## 5. The auxiliary model-call timeout
 
 The zicato auxiliary call sites — proposer, judge, emulator, and
-analysis pass — do not wrap `auxiliary_call_llm` in `asyncio.wait_for`.
-The planned follow-up wraps each in a per-call budget, defaulting to
-120 seconds, so that a hanging model endpoint cannot wedge a round
-before the worker boundary takes over.
+analysis pass — each wrap `auxiliary_call_llm` in `asyncio.wait_for`
+against the budget `src/zicato/aux_timeout.py` exposes, so a hanging
+model endpoint cannot wedge a round before the worker boundary takes
+over. The budget is `AuxConfig.call_timeout_s`, tunable with
+`zicato evolve --aux-call-timeout`. The sketches below show the shape at
+two call sites.
 
 ```python
 # in zicato.proposer
@@ -782,10 +784,13 @@ async def emulator_turn(...) -> str:
     )
 ```
 
-These wrappers add a timeout to sites that rely on the inner-harness
-adapter to enforce its own. The work is small because the budget values
-are known good defaults; what remains is finding the call sites and
-threading the wrapper through.
+These wrappers add a timeout to sites that would otherwise rely on the
+inner-harness adapter to enforce its own. The importers are
+`src/zicato/proposer/proposer.py`, `src/zicato/emulator/emulator.py`,
+`src/zicato/board/rubric.py`, `src/zicato/epoch/analysis.py`,
+`src/zicato/analyzer/report.py`, `src/zicato/analyzer/insights.py`,
+`src/zicato/proposer/reflection.py`, and
+`src/zicato/reflection/adjudicator.py`.
 
 The wrappers are not a substitute for the worker boundary. They give a
 well-behaved auxiliary client a graceful timeout on the cheap path,
@@ -842,9 +847,9 @@ by default: two consecutive rounds at `critical` produce a
 than behind a `--stop-on-degenerate` command-line flag.
 
 Loop health is closely related to the consecutive-bad circuit breaker
-(§2.5) and feeds it: the circuit breaker's planned richer signals,
-hypothesis match-rate decay and drift kinds that fail to move, are
-themselves loop-health detectors. The two answer different questions.
+(§2.5) and feeds it: the circuit breaker's unbuilt richer signals,
+hypothesis match-rate decay and drift kinds that fail to move, would
+themselves be loop-health detectors. The two answer different questions.
 The circuit breaker fires on an unproductive loop, where the evaluation
 is sound and the proposer is simply not finding wins. Loop health fires
 on a meaningless loop, where the evaluation cannot distinguish anything

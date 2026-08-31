@@ -685,12 +685,13 @@ promoted.
 
 ## 9. Limits and caveats
 
-Three things scoring does NOT do today:
+Three things scoring does not do:
 
-- **Multi-trial scoring per entry.** Each entry runs once per
-  generation. LLM noise means small score deltas are sometimes
-  spurious; the right answer is N trials per entry with confidence
-  intervals. The conservative `promote_margin` stands in for them.
+- **Confidence intervals over the replicates.** An entry runs
+  `tournament.params["replicates"]` times per generation, which defaults
+  to 2 for every structure except racing, and the per-entry losses are
+  averaged before aggregation. Scoring does not carry an interval around
+  that average; the conservative `promote_margin` stands in for one.
 - **Cost-aware scoring.** Token counts and per-call cost are carried
   (`LossProfile.tokens_spent` surfaces under the `cost:` namespace),
   and a cost-aware penalty needs no core edit: a `scalar_fn` plugin

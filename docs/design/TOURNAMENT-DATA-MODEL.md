@@ -130,22 +130,22 @@ the forward-compatibility posture `BoardEntry.context` and
 
 ### 2.1 Two persistence surfaces, generalized in lockstep
 
-A tournament is persisted in two places today, and both must generalize:
+A tournament is persisted in two places, and the generalization covers
+both:
 
 1. **The live runtime record** — `ActiveTournament` in
-   `src/zicato/runtime/state.py:450`, one
+   `src/zicato/runtime/state.py`, one
    `runtime/active_tournament.json` file the dashboard polls while a
-   tournament is in flight. Today it models a single
-   champion-vs-challenger matchup: two top-level generation ids
-   (`parent_generation_id` / `child_generation_id`) and a flat
-   `entries` list of `(entry_id, side)` rows where `side ∈
+   tournament is in flight. Its per-matchup core is two top-level
+   generation ids (`parent_generation_id` / `child_generation_id`) and a
+   flat `entries` list of `(entry_id, side)` rows where `side ∈
    {"parent", "child"}`.
 2. **The settled record** — the `tournaments` table in the SQLite
    analytical index (`src/zicato/index/schema.py:137`) plus the
    per-generation `experiment.json` `outcome` block
-   (`OutcomeRecord` in `core/types.py:1334`). Today one
-   `tournaments` row = one champion-vs-challenger matchup with a single
-   `decision` / `delta_scalar`.
+   (`OutcomeRecord` in `core/types.py:1334`). Its per-matchup core is
+   one `tournaments` row per champion-vs-challenger matchup with a
+   single `decision` / `delta_scalar`.
 
 The generalization adds a **structure-aware envelope** around the
 per-matchup shape. The per-matchup fields are PRESERVED so a gauntlet
@@ -216,7 +216,7 @@ gauntlet code path (`_build_matchup_conversations` in
 ### 2.3 The per-entry row — generalized `side`
 
 `ActiveTournamentEntry` (`state.py:305`) is keyed on
-`(entry_id, side)` today, with `side ∈ {"parent", "child"}`. The
+`(entry_id, side)`, with `side ∈ {"parent", "child"}`. The
 generalization **widens `side` to an opaque competitor key** without
 changing its type (it stays `str`):
 
@@ -267,7 +267,7 @@ to read each. The shape is a **tagged union** keyed on the same
 ```
 
 **A match** (the unit a bracket node / Swiss pairing / racing rung
-evaluates) generalizes today's single champion-vs-challenger comparison:
+evaluates) generalizes the single champion-vs-challenger comparison:
 ```jsonc
 {
   "match_id": "r1_m0",

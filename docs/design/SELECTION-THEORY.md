@@ -579,8 +579,9 @@ two optional keys in the `tournament.params` block, read by
   change — same rationale as
   [`TOURNAMENT-STRUCTURES.md`](TOURNAMENT-STRUCTURES.md) §4.1.
 
-**This section is a sketch of where the methods would attach.** No such
-keys exist in the loader, the strategies, or the tests today.
+Both keys are read by `resolver_token` and `rating_token` in
+`src/zicato/selection/standings_ext.py`, and both default off when the
+params block omits them.
 
 ---
 

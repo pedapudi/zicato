@@ -170,12 +170,13 @@ example][sklearn-nested] is the standard practitioner reference. The single most
 test set fails under repeated selection** — its de-biasing power is
 consumed the first time you select on it.
 
-**Maps to zicato.** zicato today has *no split at all*: the same board is
-the training signal (what the proposer optimizes against), the validation
-signal (what the gate selects on), and — implicitly — the test signal
-(what we trust as "the harness got better"). All three roles collapse
-onto one frozen board, reused every round. That is the configuration
-cross-validation exists to forbid. The natural port is a **train/holdout
+**Maps to zicato.** Without a split, one board carries all three
+signals: the training signal the proposer optimizes against, the
+validation signal the gate selects on, and, implicitly, the test signal
+that says the harness got better. Three roles collapsed onto one frozen
+board, reused every round, is the configuration cross-validation exists
+to forbid. The port, which `src/zicato/board/split.py` implements, is a
+**train/holdout
 split of the board**: the proposer and the patterns see only the *train*
 slice; a held-out slice *confirms* a promotion and *measures the
 generalization gap*, and is never shown to the proposer or consulted to
