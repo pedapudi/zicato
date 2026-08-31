@@ -86,7 +86,7 @@ def _parse_failed_tests(output: str) -> tuple[str, ...]:
     Returns the ids in document order (the order pytest prints them).
     Duplicates are squashed: a parametrised test that fails twice on
     different params will already have distinct ids; an exact duplicate
-    here would be a parser artifact, not real signal.
+    here would be a parser artifact rather than real signal.
     """
     seen: list[str] = []
     for match in _FAILED_LINE.finditer(output):

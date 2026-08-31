@@ -24,7 +24,7 @@ diff-complexity regularizer):
    over-budget edit is inadmissible no matter what it scores. DEFAULT 0.0 =
    OFF: the ceiling is never consulted and the decision is byte-identical to a
    contract without the field (the challenger diff size is threaded only on the
-   full A/B promotion path, so — exactly like the loss term — fast-mode and
+   full A/B promotion path, so — like the loss term — fast-mode and
    multi-challenger matchup scoring never carry it and are untouched).
 
 Three rules, applied in order:
@@ -49,8 +49,8 @@ Three rules, applied in order:
      child's continuous score may not drop below the parent's by more
      than :data:`PER_ENTRY_SCORE_MONOTONICITY_TOLERANCE`. A BOOL entry
      the parent passed has score ``1.0``, so the child must still score
-     ``1.0`` (within the tiny tolerance) — i.e. it must still pass,
-     exactly as before. A continuous entry may dip by the tolerance band
+     ``1.0`` (within the tiny tolerance), so it must still pass. A
+     continuous entry may dip by the tolerance band
      to absorb small-board scoring jitter. If any tracked entry regressed,
      the gate rejects with the entry ids listed in the reason. Entries the
      parent failed (score ``0.0``) or had no expectation for are not gated.
@@ -89,12 +89,13 @@ Three rules, applied in order:
    whose flag is missing or ``False`` are not gated this way.
 
    Note: this rule is ALREADY aggregate-scoped — it compares per-namespace
-   *means*, not per-entry pass/fail — so the issue #17 per-entry-vs-
+   *means* rather than per-entry pass/fail — so the issue #17 per-entry-vs-
    aggregate scope does NOT apply to it. The analogous knob here would be
    "all-tracked-namespaces combined vs each namespace individually", a
    different axis the operator already controls by choosing which
    namespaces to flag in ``namespace_monotonicity``. A combined-axis scope
-   is a documented follow-up, not built here (see SCORING.md §5.2).
+   is registered as follow-up work rather than built here (see SCORING.md
+   §5.2).
 
 If no rule rejects, the gate promotes — UNLESS a holdout-confirmation
 step is supplied (OVERFITTING.md §1/§12 #1, §13). When the caller passes
@@ -113,7 +114,7 @@ with no promotable margin at all (issue #118). At their defaults
 (``holdout_margin=None``, budget ``0``) the confirmation is byte-identical
 to the single-knob version. A failed confirmation
 is just another reason to ``reject`` (reason ``holdout_not_confirmed``);
-the champion stands, exactly as on any other reject — the
+the champion stands, as on any other reject — the
 protected-incumbent invariant is untouched. The holdout is
 confirmation-only: it never steers selection or the proposer, and it is
 applied AFTER the three train-slice rules so a train reject still fires
@@ -168,7 +169,7 @@ NAMESPACE_MONOTONICITY_TOLERANCE: float = 0.0
 #: ways) is treated as "held", not "regressed". A genuine net regression —
 #: one whose drop exceeds this band — still rejects. Kept small: pass-rate is
 #: a ratio of integer counts, so the only noise here is float
-#: division/round-trip, not measurement variance.
+#: division and round-trip rather than measurement variance.
 PASS_RATE_MONOTONICITY_TOLERANCE: float = 1e-9
 
 #: Tolerance band for a PER-ENTRY continuous-score regression under
@@ -179,14 +180,14 @@ PASS_RATE_MONOTONICITY_TOLERANCE: float = 1e-9
 #: replaces. The check is ``child_score < parent_score - tolerance`` ⇒ reject.
 #: A BINARY entry the parent passed (score == 1.0) is the limiting case: any
 #: child score below ``1.0 - tolerance`` is a regression, so a bool 1.0 -> 0.0
-#: flip rejects exactly as the historical "must-still-pass" rule did. Kept
-#: small so the bool case stays effectively a strict must-still-pass.
+#: flip rejects, which is the strict must-still-pass rule. Kept small so the
+#: bool case stays effectively a strict must-still-pass.
 PER_ENTRY_SCORE_MONOTONICITY_TOLERANCE: float = 0.02
 
 #: Ratio limb of the per-entry DRIFT regression band (issue #130). An entry's
 #: drift loss counts as regressed only when the child's exceeds this multiple
 #: of the parent's — a relative test, because drift loss has no natural scale
-#: and the interesting failure is a collapse (0.10 -> 0.60), not a nudge.
+#: and the interesting failure is a collapse (0.10 -> 0.60) rather than a nudge.
 ATTRIBUTABLE_DRIFT_RATIO: float = 2.0
 
 #: Absolute limb of the same band. Near zero the ratio limb degenerates —
@@ -200,8 +201,8 @@ def effective_holdout_margin(weights: ScoringWeights) -> float:
     """The scalar tolerance the HOLDOUT confirmation applies (issue #118).
 
     :attr:`ScoringWeights.holdout_margin` when the operator set one, else
-    :attr:`ScoringWeights.promote_margin` — so a contract that never heard of
-    the field behaves exactly as before.
+    :attr:`ScoringWeights.promote_margin`, so a contract that sets no holdout
+    margin confirms against the promote margin.
 
     The two bounds want different values. ``promote_margin`` is calibrated
     against the TRAIN slice and must be small enough for a real win to clear
@@ -239,7 +240,7 @@ class GateOutcome:
         Sorted ids of the entries that regressed on their OWN evidence,
         whatever the verdict was (see
         :func:`attributable_entry_regressions`). Populated on BOTH
-        decisions and deliberately NOT folded into ``reason``: the
+        decisions and NOT folded into ``reason``, by design: the
         empty-reason-on-promote invariant is load-bearing for consumers
         that read a non-empty reason as a rejection, and this report is a
         warning, never a veto. Empty by default, so every caller that
@@ -283,7 +284,7 @@ def regressed_namespaces(
     frontier record uses it as its admission control (see
     ``docs/design/PARETO-FRONTIER.md`` §4). A second implementation would
     let the record and the gate disagree about what a regression is, so
-    there is exactly one.
+    there is only one.
     """
     parent_ns: dict[str, Any] = parent_agg.get("namespace_aggregates", {}) or {}
     child_ns: dict[str, Any] = child_agg.get("namespace_aggregates", {}) or {}
@@ -343,7 +344,7 @@ def _row_score(row: dict[str, Any] | None) -> float | None:
     """Read one ``per_entry`` row's continuous outcome in ``[0, 1]``, or ``None``.
 
     The single reader the per-entry gate scope trusts, and the seam that
-    keeps the continuous rule byte-identical to the historical bool rule:
+    keeps the continuous rule equivalent to the bool rule on a bool board:
 
     * a row carrying an explicit ``"score"`` (the new
       :func:`zicato.tournament.scoring.entry_score` output) uses it,
@@ -351,12 +352,11 @@ def _row_score(row: dict[str, Any] | None) -> float | None:
       (``0.0``);
     * a row WITHOUT a ``"score"`` key — a pre-score aggregate, or a
       hand-built one — falls back to the binary ``pass_fail`` bit
-      (True->1.0, False->0.0). This is what makes an all-bool /
-      score-less aggregate score exactly as it did before this field
-      existed;
+      (True->1.0, False->0.0). This is what lets an all-bool or score-less
+      aggregate score on its pass bits alone;
     * a row with neither (``pass_fail is None`` and no score) returns
-      ``None`` — no ground truth, excluded from the rule, exactly as the
-      historical rule skipped entries the parent had no clean pass for.
+      ``None`` — no ground truth, so the rule excludes it, as it excludes
+      any entry the parent had no clean pass for.
     """
     if row is None:
         return None
@@ -381,14 +381,14 @@ def _regressed_entries(parent_agg: dict[str, Any], child_agg: dict[str, Any]) ->
     The per_entry scope under CONTINUOUS scores: for every entry the
     parent scored (``parent_score is not None``), the child's score may
     not drop below ``parent_score - PER_ENTRY_SCORE_MONOTONICITY_TOLERANCE``.
-    A child that no longer evaluates a previously-evaluated expectation
-    (no row, or ``score``/``pass_fail`` both ``None``) is treated as a
-    score of ``0.0`` — a child that drops ground truth is still a
-    regression in the operator's view, and the gate flags it (matching the
-    historical "child no longer passes" treatment of a vanished row).
+    A child that does not evaluate an expectation the parent evaluated (no
+    row, or ``score`` and ``pass_fail`` both ``None``) is treated as a score
+    of ``0.0``: a child that drops ground truth is still a regression in the
+    operator's view, and the gate flags it, the same way it treats a
+    vanished row as a child that no longer passes.
 
-    Byte-identical to the historical bool rule on a score-less / all-bool
-    board: there a parent-passed entry has ``parent_score == 1.0`` and any
+    On a score-less or all-bool board this reduces to the bool rule: a
+    parent-passed entry has ``parent_score == 1.0``, and any
     child below ``1.0 - tolerance`` (i.e. a 1.0 -> 0.0 flip, or a vanished
     row read as 0.0) regresses, while a parent-FAILED entry
     (``parent_score == 0.0``) is never gated because no child score can
@@ -481,7 +481,7 @@ def attributable_entry_regressions(
     outcome (:func:`_regressed_entries` — the same reader Rule 2's per_entry
     scope uses) and the drift loss (:func:`_drift_regressed_entries`).
 
-    This is OBSERVATION, not policy. It is computed on every duel and reported
+    This is OBSERVATION rather than policy. It is computed on every duel and reported
     on both verdicts, independent of ``pass_rate_monotonicity`` and its scope:
     a contract that chose ``aggregate`` scope chose to PERMIT entry trades, not
     to stop hearing about them, and an entry broken by a promotion is baked
@@ -569,8 +569,8 @@ def _pass_rate_regression_reason(
     Honors :attr:`ScoringWeights.pass_rate_monotonicity_scope`:
 
     * ``per_entry`` — reject when ANY entry the parent passed regressed
-      (the historical behaviour; byte-identical reason for the gate when
-      ``prefix`` is empty).
+      (the strict scope; the gate's reason is unchanged when ``prefix`` is
+      empty).
     * ``aggregate`` — reject only when the child's OVERALL pass-rate fell
       below the parent's by more than
       :data:`PASS_RATE_MONOTONICITY_TOLERANCE`.
@@ -581,7 +581,7 @@ def _pass_rate_regression_reason(
 
     ``entry_budget`` (issue #118) is how many regressed entries to tolerate
     before rejecting. ``0`` — the only value the TRAIN side ever passes — is
-    exactly the historical rule under both scopes. The holdout passes
+    the strict rule under both scopes. The holdout passes
     :attr:`ScoringWeights.holdout_entry_regression_budget`, and the two scopes
     express the same allowance differently: per-entry it is a COUNT, while
     aggregate widens the mean-score band by the movement that many flips
@@ -658,12 +658,12 @@ def _holdout_confirms(
     band — so on a 6-entry holdout a single entry flipping pass→fail
     rejected at every margin. That contradicts this step's own doctrine
     (below): a confirmation that no achievable margin can satisfy is not a
-    confirmation, it is a second gate. Both knobs default to exactly the
-    historical strictness.
+    confirmation, it is a second gate. Both knobs default to the strict
+    setting.
 
     The holdout is never asked to clear the margin in the *improving*
     direction — a train-measured win that merely holds flat on the holdout
-    is a confirmation, not a failure. This is the asymmetry that makes the
+    is a confirmation rather than a failure. This is the asymmetry that makes the
     holdout a guard against board-memorization rather than a second,
     stricter promotion bar.
     """
@@ -672,7 +672,7 @@ def _holdout_confirms(
     child_scalar = float(holdout_child_agg["scalar"])
     # The veto is only a veto if its comparisons can fire (see
     # :func:`_nonfinite_evidence`): a non-finite holdout number would confirm
-    # every train-measured win, which is precisely the anti-memorization
+    # every train-measured win, which is the anti-memorization
     # backstop silently going away.
     invalid = _nonfinite_evidence(
         ("holdout champion scalar", parent_scalar),
@@ -725,7 +725,7 @@ def holdout_confirms(
 def _component(agg: dict[str, Any], name: str) -> float:
     """Read one named entry of an aggregate's ``scalar_components``, or ``0.0``.
 
-    An absent component is exactly zero by construction: the scoring layer
+    An absent component is zero by construction: the scoring layer
     omits the key rather than writing a zero when a term is inactive.
     """
     components = agg.get("scalar_components")

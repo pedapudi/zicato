@@ -53,8 +53,8 @@ epoch's :class:`~zicato.core.ScoringWeights`. The dict carries:
   ready to add directly into the scalar.
 * ``scalar_components`` — ``{component_name: contribution}`` whose
   values sum exactly to ``scalar``: ``"pass"`` (the ``(1 - mean_score)``
-  term — equal to the historical ``(1 - pass_rate)`` term on an all-bool
-  board) plus one entry per namespace, keyed by the colon-stripped namespace
+  term, which equals ``(1 - pass_rate)`` on an all-bool board) plus one
+  entry per namespace, keyed by the colon-stripped namespace
   name and written in sorted namespace order. When the opt-in
   diff-complexity term is active (``diff_complexity_weight > 0`` AND a
   ``diff_size`` was threaded for the candidate) a final ``"diff_complexity"``
@@ -63,10 +63,10 @@ epoch's :class:`~zicato.core.ScoringWeights`. The dict carries:
 The aggregation is intentionally cheap and deterministic; it does NOT
 re-derive ``drift_loss`` from raw drift counts (that derivation lives
 in the telemetry reducer). :func:`per_run_drift_loss` is exposed as
-the canonical hook for callers who want to re-derive — today it just
-returns ``loss.drift_loss``; if the telemetry reducer's formula ever
-needs to diverge from the tournament's view, the divergence is bounded
-to this single function.
+the canonical hook for callers who want to re-derive; it returns
+``loss.drift_loss``. Should the telemetry reducer's formula ever need to
+diverge from the tournament's view, the divergence is bounded to this
+single function.
 """
 
 from __future__ import annotations
@@ -377,10 +377,9 @@ def aggregate_generation_score(
     # the scalar.
     namespace_aggregates = aggregate_namespaced_metrics(losses, weights)
 
-    # The pass component runs on the UNIFORM mean_score, not the binary
-    # pass_rate. On an all-bool board mean_score == pass_rate (see above),
-    # so this is byte-identical to the historical
-    # ``pass_weight * (1 - pass_rate)`` term; on a board with continuous
+    # The pass component runs on the UNIFORM mean_score rather than the binary
+    # pass_rate. On an all-bool board mean_score == pass_rate (see above), so
+    # this equals ``pass_weight * (1 - pass_rate)``; on a board with continuous
     # scores it tracks the graded quality with no threshold cliff. It is the
     # scalar's only non-namespace term — see :func:`builtin_scalar` for why
     # pass is not a channel.

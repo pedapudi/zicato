@@ -71,9 +71,9 @@ CALIBRATION_REPLICATE_SPAN: int = 1000
 #: The heartbeat ``phase`` segment that names a calibration in flight. The
 #: calibration is an epoch-open step running BEFORE the round it precedes has
 #: proposed anything, so it must not inherit the round's phase: a workspace
-#: stamped ``evolve_once:round_0`` with no active tournament is exactly the
-#: shape a WEDGED round has, which is how a working calibration came to read
-#: as a hang (issue #175). Readers match this token as a phase segment
+#: stamped ``evolve_once:round_0`` with no active tournament has the same
+#: shape as a WEDGED round, so a working calibration would otherwise read as
+#: a hang (issue #175). Readers match this token as a phase segment
 #: (:func:`zicato.query.loop_view._project_pipeline`) rather than the whole
 #: string, because the loop appends live ``done/total`` draw progress to it.
 CALIBRATION_PHASE_TOKEN: str = "calibrating_noise_floor"
@@ -203,8 +203,8 @@ async def measure_noise_floor(
     distinct replicate index so the per-unit cache serves a fresh sample per
     draw instead of replaying one cached result. Each draw's per-entry losses
     aggregate through the SAME :func:`aggregate_generation_score` the gate
-    scores with, so the measured scalars are exactly the quantity
-    ``promote_margin`` thresholds.
+    scores with, so the measured scalars are the quantity ``promote_margin``
+    thresholds.
 
     A deterministic harness (e.g. the target_0 planted-defect adapter)
     measures a floor of exactly ``0.0``; a stochastic one measures the spread
@@ -260,8 +260,8 @@ async def measure_noise_floor(
         losses = await _run_board_units_fast(
             adapter=adapter,
             child_gen=generation,
-            # Stamp the replicate index onto each entry's context, exactly
-            # as the replicated-duel path does before it calls the same
+            # Stamp the replicate index onto each entry's context, as the
+            # replicated-duel path does before it calls the same
             # runner: the cache key alone does not reach the harness, and a
             # seeded harness derives its noise draw from the STAMPED index
             # — without the stamp every "fresh" draw re-rolls the identical
@@ -317,7 +317,7 @@ def recommended_promote_margin(
 ) -> float:
     """A ``promote_margin`` recommendation that does not drift with K. Pure.
 
-    The historical recommendation was ``multiple * max_abs_delta``, and
+    Recommending ``multiple * max_abs_delta`` would drift with K, because
     ``max_abs_delta`` is a **range** statistic: the expected range of K draws
     from a fixed distribution grows without bound in K. On an UNCHANGED board,
     raising the calibration draw count therefore raises the recommended margin

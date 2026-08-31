@@ -272,7 +272,7 @@ class Trajectory:
     so ``plateaued=False`` alone conflates "the lineage is still
     improving" with "the lineage is too short to tell". A run where every
     challenger was rejected has a one-node spine and reports
-    ``plateaued=False`` for the second reason, not the first.
+    ``plateaued=False`` for the second reason rather than the first.
     ``plateau_measurable`` names which of the two it is: ``False`` means
     the flag carries no measurement at all.
 
@@ -357,7 +357,7 @@ def _open(db_path: str | Path) -> sqlite3.Connection:
         conn = sqlite3.connect(str(path))
     else:
         # zicato.index.query.open_index expects a Path (it calls
-        # .exists()); pass the Path object, not its string form.
+        # .exists()); pass the Path object rather than its string form.
         conn = open_index(path)
     conn.row_factory = sqlite3.Row
     return conn
@@ -1262,9 +1262,9 @@ def optimization_trajectory(db_path: str | Path, epoch_id: str) -> Trajectory:
       plateau (returns ``False``).
     * ``plateau_measurable`` — whether that flag rests on a measurement
       at all. A run whose challengers were all rejected has a one-node
-      spine, so it reports ``plateaued=False`` for want of data, not for
-      want of a plateau; the pair distinguishes it from a genuinely
-      improving lineage.
+      spine, so it reports ``plateaued=False`` for want of data rather than
+      for want of a plateau; the pair distinguishes it from an improving
+      lineage.
 
     Generations whose scalar cannot be resolved contribute a ``None``
     scalar point and are skipped by the plateau check — never raises.

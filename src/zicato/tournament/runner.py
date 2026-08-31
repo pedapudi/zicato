@@ -44,8 +44,8 @@ from zicato.tournament.gate import GateOutcome, evaluate_gate
 
 # ``_load_ladder_state`` / ``_losses_for`` / ``_save_ladder_state`` are
 # re-exported (F401) for back-compat — callers and tests reach them through
-# ``zicato.tournament.runner`` even though the runner body no longer calls
-# them directly (the governance helpers that do moved alongside).
+# ``zicato.tournament.runner`` even though the runner body does not call them
+# directly; the governance helpers that do live in ``governance``.
 from zicato.tournament.governance import (  # noqa: F401
     _holdout_aggs,
     _ladder_mediated_outcome,
@@ -182,13 +182,13 @@ class TournamentResult:
     per_entry_losses: dict[str, tuple[LossProfile, LossProfile]]
     champion_eval_mode: str = "full"
     #: Additive per-generation cache provenance for THIS duel: the count
-    #: of board units reused from the cache (``cached``) vs genuinely
-    #: executed (``fresh``), keyed by generation id. Lets a structure-
+    #: of board units reused from the cache (``cached``) against those
+    #: executed afresh (``fresh``), keyed by generation id. Lets a structure-
     #: agnostic caller (the orchestrator) attribute reuse to the CHAMPION
     #: specifically — a generation appears on either side across a
     #: swiss/elim field, and only the champion's reuse drives the
     #: ``champion_eval_mode`` provenance. A gauntlet/ad-hoc caller can
-    #: ignore it. Empty for legacy callers.
+    #: ignore it. Empty when the caller passes no provenance.
     unit_provenance: dict[str, _UnitProvenance] = field(default_factory=dict)
     #: The Ladder/holdout evidence block for THIS duel (OVERFITTING.md §12 #2),
     #: or ``None`` when no holdout was consulted (a small board, the split
@@ -227,7 +227,7 @@ class _ProgressBumpingSink:
     bumps (so a freshly-started run animates immediately), and subsequent
     emits bump only after the interval has elapsed. A run that emits
     nothing simply never bumps — the supervisor's deadline logic still
-    covers a genuinely wedged run.
+    covers a wedged run.
 
     The progress bump is strictly best-effort: a missing runtime-state
     module, or a write failure (e.g. the run already finished and the
@@ -370,11 +370,11 @@ async def _run_single(
     # The worker writes its loss into the run's REPLICATE-keyed cache slot
     # (the stamped replicate index; see _stamp_replicate_index). Replicate
     # 0 — every single-replicate path — maps to the canonical
-    # ``runs/<entry>/loss.json``, byte-identical to before; replicate r>0
-    # maps to the sibling ``loss.r<r>.json`` so a later replicate's worker
-    # write can no longer CLOBBER the canonical file that doubles as
-    # replicate 0's cache slot (which silently replaced replicate 0's
-    # persisted sample with the last replicate's draw).
+    # ``runs/<entry>/loss.json``; replicate r>0 maps to the sibling
+    # ``loss.r<r>.json``. Sharing one file would let a later replicate's
+    # worker write CLOBBER the canonical file that doubles as replicate 0's
+    # cache slot, replacing replicate 0's persisted sample with the last
+    # replicate's draw.
     loss_path = _unit_loss_path(
         workspace_root,
         epoch_id,
@@ -419,7 +419,7 @@ async def _run_single(
 
     # The run's final LossProfile — assigned on every exit path (clean
     # finish OR abort) so the ``finally`` block can fold the loss summary
-    # into the live active-tournament record (A3). Stays ``None`` only on
+    # into the live active-tournament record. Stays ``None`` only on
     # an unexpected hard crash, where the ``finally`` skips the fold.
     final_loss: LossProfile | None = None
 
@@ -456,7 +456,7 @@ async def _run_single(
             # the worker. For a configured role we pass its secret-free spec
             # and let the worker re-resolve (so a model-spec closure need not
             # cross the process boundary); for an unconfigured role we fall
-            # back to the resolved callable's dotted path — today's behavior.
+            # back to the resolved callable's dotted path.
             from zicato import workspace_loader  # noqa: PLC0415
             from zicato.models_config import ModelsConfig, load_models_config  # noqa: PLC0415
 
@@ -465,7 +465,7 @@ async def _run_single(
             except (FileNotFoundError, ValueError):
                 # No / malformed workspace config.json ⇒ no ``models`` block;
                 # every role falls back to its resolved callable's dotted
-                # path (today's behavior). Ad-hoc callers (tests) that run a
+                # path. Ad-hoc callers (tests) that run a
                 # generation without a full workspace config still spawn.
                 _models = ModelsConfig()
             # Run provenance for the harness under test: the worker mounts
@@ -557,7 +557,7 @@ async def _run_single(
                 # the orchestrator installed, so worker logs reach the one
                 # per-invocation stream. Absent (None) when no stream is
                 # installed (an ad-hoc / test drive) — the worker then logs
-                # to stderr only, exactly as before.
+                # to stderr only.
                 "log_stream_path": (
                     str(_lsp) if (_lsp := current_log_stream_path()) is not None else None
                 ),
@@ -594,8 +594,8 @@ async def _run_single(
         # terminal so a Ctrl-C / SIGINT to the orchestrator's terminal group
         # is not broadcast straight into every in-flight worker.
         # Compose the worker's environment. By default ``env=None`` inherits
-        # the orchestrator's full environment — today's behavior, byte-for-
-        # byte unchanged. When the operator opts into ``scrub_worker_env`` the
+        # the orchestrator's full environment. When the operator opts into
+        # ``scrub_worker_env`` the
         # worker instead gets a MINIMAL explicit env (process-essential keys +
         # the api_key_env names the configured roles need + any passthrough),
         # so a mutated worker cannot read every credential in the process env.
@@ -751,7 +751,7 @@ async def _run_single(
         # wrote loss.json) does not know the match_id, so the runner
         # stamps it here and rewrites loss.json so a later full ``zicato
         # reindex`` — which re-reads loss.json — re-derives the same
-        # provenance, not just the live dual-write below. ``match_id=""``
+        # provenance rather than only the live dual-write below. ``match_id=""``
         # (a gauntlet / ad-hoc run) leaves the profile and file byte-
         # unchanged: there is nothing to stamp, so we skip the rewrite.
         if match_id:
@@ -800,7 +800,7 @@ async def _run_single(
                 log.debug("run %s: kill-request clear skipped: %s", run_id, exc)
             try:
                 state_mod.remove_active_run(workspace_root, run_id)
-                # A3: fold the run's per-entry loss summary into the live
+                # Fold the run's per-entry loss summary into the live
                 # active-tournament record so the dashboard renders a
                 # per-entry score the instant the run finishes — rather
                 # than leaving ``loss_summary`` empty until the journal
@@ -918,10 +918,10 @@ async def run_tournament(
     ``(generation, entry, replicate)`` key) — and the per-entry drift losses
     are averaged BEFORE aggregation via the same
     :func:`~zicato.tournament.unit_cache._average_losses` the matchup runner
-    uses, so a noisy single run no longer decides a duel. ``1`` (this
-    function's own default; the orchestrator threads the structure's
-    resolved value) is the historical single-run path, byte-identical to
-    before the knob existed. The champion/child force-fresh semantics below
+    uses, so a noisy single run does not decide a duel on its own. ``1``
+    (this function's own default; the orchestrator threads the structure's
+    resolved value) is the single-run path, where a duel rests on one draw
+    per side. The champion/child force-fresh semantics below
     apply per replicate slot.
 
     ``child_diff_size`` is the OPT-IN parsimony / MDL input (OVERFITTING.md §5
@@ -931,17 +931,17 @@ async def run_tournament(
     ``diff_complexity`` component into the CHALLENGER's scalar only when
     ``weights.diff_complexity_weight > 0``. ``None`` (every caller that does
     not opt in, and any ``diff_complexity_weight == 0.0`` contract) is
-    byte-identical to today — the champion side never carries it, so the gate
-    compares the challenger's diff against a parsimony-free baseline.
+    leaves the term out entirely. The champion side never carries it, so the
+    gate compares the challenger's diff against a parsimony-free baseline.
 
-    ``force_fresh`` defaults to ``True`` — the historical behaviour, in
-    which the rigorous full A/B path re-evaluates BOTH sides from scratch
+    ``force_fresh`` defaults to ``True``, under which the rigorous full A/B
+    path re-evaluates BOTH sides from scratch
     (no cache read) so a ``--mode full`` round always re-samples noise.
     The orchestrator's conservative crash-resume (RUNTIME.md §4) passes
     ``force_fresh=False`` for the one round it resumes in place, so the
     per-unit ``loss.json`` cache HITs every board unit the interrupted run
     already completed and only the unfinished entries re-run. Every other
-    caller leaves the default, so behaviour is byte-identical to today.
+    caller leaves the default, which re-runs every unit.
 
     ``disable_drift`` is the board-level drift-suppression set parsed
     from the board's ``board_meta`` header (see
@@ -963,8 +963,8 @@ async def run_tournament(
     / its seed-scoring) those results are reused rather than re-running the
     immutable champion every round — the §2-item-3 efficiency win. The first
     time the champion is seen it is a clean MISS and runs once (then caches),
-    so a fresh epoch still scores the champion exactly once with no behaviour
-    change. ``champion_force_fresh=True`` re-samples the champion too — the
+    so a fresh epoch scores the champion once.
+    ``champion_force_fresh=True`` re-samples the champion too — the
     ``--mode full`` noise-resampling semantics; fast mode (``run_fast_mode``)
     is unchanged and still reuses the champion's historical aggregate
     wholesale.
@@ -1039,7 +1039,7 @@ async def run_tournament(
         # subprocesses at once (champion + challenger per unit).
         #
         # CHILD (challenger) side — governed by ``force_fresh``. It defaults
-        # to ``True`` (the historical full A/B semantics: a freshly proposed
+        # to ``True`` (the full A/B semantics: a freshly proposed
         # generation has no prior evaluation under this contract, so it must
         # run). The orchestrator's conservative crash-resume passes
         # ``force_fresh=False`` for the one round it resumes in place: the
@@ -1106,7 +1106,7 @@ async def run_tournament(
     # governor (OVERFITTING.md §4 / §12 #2) so its confirmation only *counts*
     # under the Ladder's release rule + per-epoch query budget. An absent
     # holdout (small board / split disabled) makes the Ladder a no-op, so the
-    # decision stays byte-identical to Phase A.
+    # train rules decide alone.
     train_outcome = await _gate_with_regression(
         parent_agg=parent_agg,
         child_agg=child_agg,
@@ -1175,15 +1175,15 @@ async def run_fast_mode(
     per-entry loss profiles to report.)
 
     ``replicates`` is the §9-lever-1 replication knob, honoured here on
-    the CHALLENGER side exactly as :func:`run_matchup` honours it under
+    the CHALLENGER side as :func:`run_matchup` honours it under
     ``fast=True``: the child board is run ``replicates`` times, each
     replicate on its own per-unit cache slot (the
     ``(generation, entry, replicate)`` key) with its index stamped onto
     each entry's context, and the per-entry losses are folded through the
     same :func:`~zicato.tournament.unit_cache._average_losses` every other
     path uses. ``1`` (this function's own default; the orchestrator threads
-    the structure's resolved value) is the historical single-run path,
-    byte-identical to before the knob existed. With no token ledger bound
+    the structure's resolved value) is the single-run path, where a duel
+    rests on one draw per side. With no token ledger bound
     the slots run OVERLAPPED against one shared semaphore
     (:func:`~zicato.tournament.scheduling._run_replicate_slots_fast`), as
     on the full path. With one bound they run one at a time: a spent
@@ -1210,7 +1210,7 @@ async def run_fast_mode(
     holding a cached aggregate.
 
     ``disable_drift`` is the board-level drift-suppression set, stamped
-    onto each board entry's context exactly as in :func:`run_tournament`;
+    onto each board entry's context as in :func:`run_tournament`;
     an empty tuple (the default) leaves the board entries untouched.
 
     ``round_index`` / ``total_rounds`` are threaded through from the
@@ -1239,7 +1239,7 @@ async def run_fast_mode(
 
     # The champion side stays ONE frozen cached aggregate no matter how high
     # ``replicates`` goes, so replicating here buys a replicated challenger
-    # against an unreplicated champion. Say so out loud rather than letting
+    # against an unreplicated champion. Warn explicitly rather than letting
     # an operator infer a symmetric noise reduction from the contract.
     if replicates > 1:
         log.warning(
@@ -1357,9 +1357,9 @@ async def run_fast_mode(
             )
         else:
             for replicate_index in range(replicate_count):
-                # Per-round token budget (WS-H): stop scheduling FURTHER
-                # replicate slots once the budget is spent, exactly as
-                # ``_run_replicated`` does — and the reason a bound ledger
+                # Per-round token budget: stop scheduling FURTHER replicate
+                # slots once the budget is spent, as ``_run_replicated``
+                # does — and the reason a bound ledger
                 # keeps the slots sequential at all. Without this the spent
                 # budget makes the remaining slots' units SKIPS — synthesised
                 # worst-case budget-exceeded losses, persisted to their cache
@@ -1407,7 +1407,7 @@ async def run_fast_mode(
     # child aggregate compared to a whole-board parent baseline would be an
     # apples-to-oranges scalar and could wrongly flip a decision. The
     # holdout-confirmation step lives on the full A/B path (the default
-    # gauntlet promotion path); fast mode stays byte-identical to today.
+    # gauntlet promotion path); fast mode consults no holdout.
     child_agg = aggregate_generation_score(list(child_losses.values()), weights)
     outcome = await _gate_with_regression(
         parent_agg=parent_historical_agg,
@@ -1493,8 +1493,8 @@ async def run_matchup(
 
     ``matchup_budget_seconds`` is an OPT-IN wall-clock cap on the duel's
     TOTAL board-unit execution. ``None`` (the default) ⇒ uncapped: every
-    board unit × replicate × side runs to completion, byte-identical to
-    today. When set, the runner tracks the running wall-clock total and,
+    board unit × replicate × side runs to completion. When set, the runner
+    tracks the running wall-clock total and,
     once it exceeds the cap, STOPS launching further board units; each
     un-run unit is recorded as a budget-exceeded
     :class:`~zicato.core.types.LossProfile` via the SAME aborted-run path a
@@ -1633,7 +1633,7 @@ async def confirm_crowning_holdout(
     * ``holdout_child_scalar`` — the challenger's holdout-slice scalar for the
       per-generation ``generalization_gap``; ``None`` when no holdout existed.
 
-    Fast-mode note: ``fast`` is threaded to the holdout duel exactly as the
+    Fast-mode note: ``fast`` is threaded to the holdout duel as the
     internal matchups receive it, so the champion's holdout-slice board units
     are reused from the cache when already evaluated — the holdout
     confirmation is applied on the FULL path consistently, never silently
