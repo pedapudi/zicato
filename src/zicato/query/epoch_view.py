@@ -24,12 +24,8 @@ from zicato.query.paths import (
     layout_of,
 )
 from zicato.query.promoted_head import read_recorded_heads, recorded_head_ids
-from zicato.workspace import (
-    WorkspaceLayout,
-    generation_ids,
-    iter_epochs,
-    read_experiment,
-)
+from zicato.workspace import WorkspaceLayout, generation_ids, iter_epochs, read_experiment
+from zicato.workspace.config_io import read_workspace_config
 
 # ---------------------------------------------------------------------------
 # Epoch view
@@ -251,9 +247,13 @@ def _read_harness(paths: WorkspacePaths) -> dict[str, Any] | None:
     reader prefers the frozen copy — not flagging drift on a payload key
     that has no reader.
     """
-    cfg = _read_json_value(paths.root / "config.json")
-    if not isinstance(cfg, dict):
+    try:
+        loaded = read_workspace_config(paths.root)
+    except (OSError, ValueError):
         return None
+    if not loaded.exists:
+        return None
+    cfg = loaded.raw
     adapter = cfg.get("adapter")
     adapter = adapter if isinstance(adapter, dict) else {}
     entrypoint = adapter.get("entrypoint") or cfg.get("adk_entrypoint") or cfg.get("entrypoint")

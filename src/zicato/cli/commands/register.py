@@ -207,7 +207,7 @@ def register_cmd(
             f"workspace {workspace_root!s} is not initialized; run `zicato init` first"
         )
 
-    config = read_workspace_config(workspace_root)
+    config = dict(read_workspace_config(workspace_root).raw)
     config["adk_entrypoint"] = entrypoint
     # ``mutable_trees`` and ``source_roots`` are the same concept under
     # two historical names: ``zicato inspect mutations`` and ``zicato proposer propose``

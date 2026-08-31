@@ -278,7 +278,7 @@ async def test_copilot_apply_tool_only_dry_runs(tmp_path: Path) -> None:
     from zicato.workspace.config_io import read_workspace_config
 
     before_config = read_workspace_config(ws)
-    board_path = Path(before_config["contract"]["board_path"])
+    board_path = Path(before_config.contract["board_path"])
     before_board = board_path.read_text(encoding="utf-8")
 
     agent = _copilot_agent_with_script(
@@ -306,7 +306,7 @@ async def test_copilot_apply_tool_only_dry_runs(tmp_path: Path) -> None:
     # Live board on disk is unchanged — apply was dry-run only, no roll.
     assert board_path.read_text(encoding="utf-8") == before_board
     after_config = read_workspace_config(ws)
-    assert after_config["contract"] == before_config["contract"]
+    assert after_config.contract == before_config.contract
 
 
 def test_skills_injected_into_instruction(tmp_path: Path) -> None:

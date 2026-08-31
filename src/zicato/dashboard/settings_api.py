@@ -12,10 +12,7 @@ from starlette.responses import JSONResponse, Response
 from starlette.routing import Route
 
 from zicato.models_config import PUBLIC_MODEL_ROLES, models_config_from_dict
-
-
-def _config_path(workspace_root: Path) -> Path:
-    return Path(workspace_root) / "config.json"
+from zicato.workspace.config_io import read_workspace_config
 
 
 def make_settings_endpoints(
@@ -32,15 +29,10 @@ def make_settings_endpoints(
 
     def _load_models() -> Any:
         """Parse the ``models`` block out of ``config.json`` (defaults if absent)."""
-        path = _config_path(root)
-        raw: dict[str, Any] = {}
-        if path.is_file():
-            try:
-                loaded = json.loads(path.read_text(encoding="utf-8"))
-            except json.JSONDecodeError:
-                loaded = {}
-            if isinstance(loaded, dict):
-                raw = loaded
+        try:
+            raw = read_workspace_config(root).raw
+        except ValueError:
+            raw = {}
         return models_config_from_dict(raw.get("models"))
 
     async def settings_models_get(_request: Request) -> JSONResponse:
@@ -73,17 +65,16 @@ def make_settings_endpoints(
         except ValueError as exc:
             return JSONResponse({"error": str(exc)}, status_code=400)
 
-        path = _config_path(root)
-        if not path.is_file():
-            return JSONResponse({"error": f"workspace config not found at {path}"}, status_code=400)
         try:
-            current = json.loads(path.read_text(encoding="utf-8"))
-        except json.JSONDecodeError as exc:
-            return JSONResponse({"error": f"could not parse {path}: {exc.msg}"}, status_code=400)
-        if not isinstance(current, dict):
+            loaded = read_workspace_config(root)
+        except ValueError as exc:
+            return JSONResponse({"error": str(exc)}, status_code=400)
+        if not loaded.exists:
             return JSONResponse(
-                {"error": f"{path}: top level is not a JSON object"}, status_code=400
+                {"error": f"workspace config not found at {loaded.path}"}, status_code=400
             )
+        path = loaded.path
+        current = dict(loaded.raw)
 
         serialised = models.to_dict()
         if serialised:

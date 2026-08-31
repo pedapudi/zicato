@@ -23,37 +23,33 @@ from __future__ import annotations
 
 import asyncio
 import importlib
-import json
 from collections.abc import Awaitable, Callable
 from pathlib import Path
-from typing import Any
 
 import click
 
+from zicato.workspace.config_io import WorkspaceConfig, read_workspace_config
 
-def _load_workspace_config(workspace_dir: Path) -> dict[str, Any]:
+
+def _load_workspace_config(workspace_dir: Path) -> WorkspaceConfig:
     """Read the workspace's ``config.json`` (or raise a clean click error).
 
-    Mirrors :func:`zicato.cli.commands.analyze_telemetry._load_workspace_config`.
     Tolerates the operator passing either the outer project dir or the
-    inner ``.zicato/`` — the resolver descends one level when needed.
+    inner ``.zicato/``: each candidate root is loaded and the first one
+    that has a config wins. The descent is this command's policy; where a
+    config sits under one root is the loader's.
     """
 
-    config_path = workspace_dir / "config.json"
-    if not config_path.exists():
-        # Try the outer -> inner descent so ``--workspace .`` works too.
-        inner = workspace_dir / ".zicato"
-        if (inner / "config.json").exists():
-            config_path = inner / "config.json"
-        else:
-            raise click.ClickException(
-                f"No workspace config at {config_path}. Run `zicato init` first."
-            )
     try:
-        loaded: dict[str, Any] = json.loads(config_path.read_text(encoding="utf-8"))
-        return loaded
-    except json.JSONDecodeError as exc:
-        raise click.ClickException(f"Could not parse {config_path}: {exc}") from exc
+        outer = read_workspace_config(workspace_dir)
+        if outer.exists:
+            return outer
+        inner = read_workspace_config(workspace_dir / ".zicato")
+    except ValueError as exc:
+        raise click.ClickException(str(exc)) from exc
+    if inner.exists:
+        return inner
+    raise click.ClickException(f"No workspace config at {outer.path}. Run `zicato init` first.")
 
 
 def _resolve_epoch(workspace_dir: Path, override: str | None) -> str:
@@ -74,7 +70,7 @@ def _resolve_epoch(workspace_dir: Path, override: str | None) -> str:
 
 
 def _maybe_resolve_aux_llm(
-    config: dict[str, Any],
+    config: WorkspaceConfig,
 ) -> Callable[[str, str, str], Awaitable[str]] | None:
     """Best-effort lookup of the auxiliary LLM callable.
 
@@ -86,9 +82,7 @@ def _maybe_resolve_aux_llm(
     workspace path, which is the point of the backfill.
     """
 
-    dotted = config.get("auxiliary_call_llm")
-    if not dotted and isinstance(config.get("runtime"), dict):
-        dotted = config["runtime"].get("auxiliary_call_llm")
+    dotted = config.raw.get("auxiliary_call_llm") or config.runtime.get("auxiliary_call_llm")
     if not dotted:
         return None
     mod_name, _, attr = str(dotted).rpartition(".")
@@ -102,16 +96,6 @@ def _maybe_resolve_aux_llm(
         return None
     resolved: Callable[[str, str, str], Awaitable[str]] = getattr(module, attr)
     return resolved
-
-
-def _resolve_model(config: dict[str, Any]) -> str:
-    """Pick the model id forwarded to the auxiliary LLM."""
-
-    if config.get("auxiliary_model"):
-        return str(config["auxiliary_model"])
-    if isinstance(config.get("runtime"), dict):
-        return str(config["runtime"].get("auxiliary_model", ""))
-    return ""
 
 
 async def _placeholder_aux(_system: str, _user: str, _model: str) -> str:
@@ -186,7 +170,7 @@ def regenerate_report_cmd(workspace: str, epoch: str | None, no_llm: bool) -> No
                 err=True,
             )
 
-    model = _resolve_model(config)
+    model = config.auxiliary_model
 
     out_path = asyncio.run(
         generate_epoch_report(

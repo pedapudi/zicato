@@ -2127,7 +2127,7 @@ def _write_contract(draft: TournamentDraft, workspace_root: Path) -> None:
     from zicato.epoch.lifecycle import scoring_to_dict
     from zicato.workspace.config_io import read_workspace_config, write_workspace_config
 
-    config = read_workspace_config(workspace_root)
+    config = dict(read_workspace_config(workspace_root).raw)
     defaults = default_contract_paths(workspace_root)
     contract = dict(config.get("contract") or {})
 

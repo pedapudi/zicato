@@ -29,27 +29,26 @@ from __future__ import annotations
 
 import asyncio
 import importlib
-import json
 from collections.abc import Awaitable, Callable
 from pathlib import Path
-from typing import Any
 
 import click
 
+from zicato.workspace.config_io import WorkspaceConfig, read_workspace_config
 
-def _load_workspace_config(workspace_dir: Path) -> dict[str, Any]:
+
+def _load_workspace_config(workspace_dir: Path) -> WorkspaceConfig:
     """Read the workspace's ``config.json`` (or raise a clean click error)."""
 
-    config_path = workspace_dir / "config.json"
-    if not config_path.exists():
-        raise click.ClickException(
-            f"No workspace config at {config_path}. Run `zicato epoch register` first."
-        )
     try:
-        loaded: dict[str, Any] = json.loads(config_path.read_text(encoding="utf-8"))
-        return loaded
-    except json.JSONDecodeError as exc:
-        raise click.ClickException(f"Could not parse {config_path}: {exc}") from exc
+        config = read_workspace_config(workspace_dir)
+    except ValueError as exc:
+        raise click.ClickException(str(exc)) from exc
+    if not config.exists:
+        raise click.ClickException(
+            f"No workspace config at {config.path}. Run `zicato epoch register` first."
+        )
+    return config
 
 
 def _resolve_epoch(workspace_dir: Path, override: str | None) -> str:
@@ -67,7 +66,7 @@ def _resolve_epoch(workspace_dir: Path, override: str | None) -> str:
     )
 
 
-def _resolve_aux_llm(config: dict[str, Any]) -> Callable[[str, str, str], Awaitable[str]]:
+def _resolve_aux_llm(config: WorkspaceConfig) -> Callable[[str, str, str], Awaitable[str]]:
     """Look up the auxiliary LLM callable from the workspace config.
 
     Mirrors :func:`zicato.cli.commands.propose._resolve_aux_llm`. The
@@ -77,9 +76,7 @@ def _resolve_aux_llm(config: dict[str, Any]) -> Callable[[str, str, str], Awaita
     call that can't happen.
     """
 
-    dotted = config.get("auxiliary_call_llm")
-    if not dotted and isinstance(config.get("runtime"), dict):
-        dotted = config["runtime"].get("auxiliary_call_llm")
+    dotted = config.raw.get("auxiliary_call_llm") or config.runtime.get("auxiliary_call_llm")
     if not dotted:
         raise click.ClickException(
             "No auxiliary LLM callable is registered. Wire one into the "
@@ -103,16 +100,6 @@ def _resolve_aux_llm(config: dict[str, Any]) -> Callable[[str, str, str], Awaita
         )
     resolved: Callable[[str, str, str], Awaitable[str]] = getattr(module, attr)
     return resolved
-
-
-def _resolve_model(config: dict[str, Any]) -> str:
-    """Pick the model id forwarded to the auxiliary LLM."""
-
-    if config.get("auxiliary_model"):
-        return str(config["auxiliary_model"])
-    if isinstance(config.get("runtime"), dict):
-        return str(config["runtime"].get("auxiliary_model", ""))
-    return ""
 
 
 @click.command(
@@ -156,7 +143,7 @@ def analyze_telemetry_cmd(workspace: str, epoch: str | None, round_n: int | None
     config = _load_workspace_config(workspace_dir)
     epoch_id = _resolve_epoch(workspace_dir, epoch)
     aux_call_llm = _resolve_aux_llm(config)
-    model = _resolve_model(config)
+    model = config.auxiliary_model
 
     out_path = asyncio.run(
         analyze_epoch_telemetry(

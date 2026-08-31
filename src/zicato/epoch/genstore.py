@@ -73,6 +73,10 @@ from zicato.core.types import Patch
 from zicato.core.workspace import generation_dir
 from zicato.epoch.snapshot_scope import copytree_ignore, is_artifact
 from zicato.workspace import WorkspaceLayout, generation_ids, list_epoch_ids
+from zicato.workspace.config_io import (
+    GENERATION_SOURCE_BACKEND_KEY,
+    read_workspace_config,
+)
 
 #: Filename prefix for a run's ephemeral checkout parent directory. The
 #: parent lives in the system temp dir (``tempfile.mkdtemp``) so it never
@@ -793,10 +797,6 @@ class DirectoryGenerationStore:
         return reclaimed
 
 
-#: Workspace ``config.json`` key selecting the generation source-tree backend.
-#: This is distinct from the generic record-store abstraction by design.
-GENERATION_SOURCE_BACKEND_KEY = "generation_source_backend"
-
 #: The git backend's name, in the config knob and in a resolution.
 GIT_BACKEND = "git"
 
@@ -922,11 +922,8 @@ def resolve_generation_store_backend(workspace_root: Path) -> str:
     choosing a source backend is workspace configuration rather than evidence
     discovery.
     """
-    from zicato.workspace_loader import load_workspace_config  # noqa: PLC0415
-
-    config = load_workspace_config(workspace_root)
-    raw = config.get(GENERATION_SOURCE_BACKEND_KEY)
-    if not isinstance(raw, str) or not raw.strip():
+    raw = read_workspace_config(workspace_root).require().generation_source_backend
+    if not raw.strip():
         evidence = generation_source_evidence(workspace_root)
         suggestion = evidence or f"<{'|'.join(KNOWN_GENERATION_SOURCE_BACKENDS)}>"
         matches = f"; this workspace's source data is {evidence!r}" if evidence else ""

@@ -92,7 +92,7 @@ def repair_generation_source_backend_cmd(workspace: str, backend: str, force: bo
             f"data, or --force to write {backend!r} anyway."
         )
 
-    config = read_workspace_config(workspace_root)
+    config = dict(read_workspace_config(workspace_root).raw)
     previous = config.get(GENERATION_SOURCE_BACKEND_KEY)
     config[GENERATION_SOURCE_BACKEND_KEY] = backend
     write_workspace_config(workspace_root, config)

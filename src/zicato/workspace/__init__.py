@@ -16,7 +16,10 @@ enumerations read through
 :meth:`~zicato.storage.StorageBackend.list_namespaces`, which is how a
 record shaped as a directory of files is enumerated over the storage seam.
 
-The package also owns the per-epoch / per-generation **path math**
+The package also owns the workspace root's ``config.json`` — where it is,
+how it parses, and the typed shape of what is in it
+(:func:`zicato.workspace.config_io.read_workspace_config`), which no other
+module opens. It owns the per-epoch / per-generation **path math**
 (:class:`WorkspaceLayout`) and the **typed canonical reads** the
 enumerations feed (:func:`read_epoch_config`, :func:`read_board`,
 :func:`read_experiment`, :func:`read_experiments`, :func:`read_loss`,

@@ -56,6 +56,7 @@ from zicato.query.tournament_view import (
     _tournament_id_for,
     build_bracket,
 )
+from zicato.workspace.config_io import read_workspace_config
 
 
 def build_per_judge_trend(paths: WorkspacePaths, epoch_id: str) -> dict[str, Any]:
@@ -881,25 +882,25 @@ def build_workspace_identity(paths: WorkspacePaths) -> dict[str, Any]:
     * ``created_at`` — heartbeat's ``started_at`` when present, else
       ``None`` (the workspace is too young to have a heartbeat).
     """
-    cfg = _read_json_value(paths.root / "config.json")
-    adapter = cfg.get("adapter") if isinstance(cfg, dict) else None
+    try:
+        cfg = read_workspace_config(paths.root).raw
+    except (OSError, ValueError):
+        cfg = {}
+    adapter = cfg.get("adapter")
     adapter = adapter if isinstance(adapter, dict) else {}
 
     entrypoint = adapter.get("entrypoint")
     if not isinstance(entrypoint, str) or not entrypoint:
-        if isinstance(cfg, dict):
-            for key in ("adk_entrypoint", "entrypoint"):
-                val = cfg.get(key)
-                if isinstance(val, str) and val:
-                    entrypoint = val
-                    break
-            else:
-                entrypoint = None
+        for key in ("adk_entrypoint", "entrypoint"):
+            val = cfg.get(key)
+            if isinstance(val, str) and val:
+                entrypoint = val
+                break
         else:
             entrypoint = None
 
     raw_trees = adapter.get("mutable_trees")
-    if not isinstance(raw_trees, list) and isinstance(cfg, dict):
+    if not isinstance(raw_trees, list):
         raw_trees = cfg.get("mutable_trees")
     if isinstance(raw_trees, list):
         source_roots = [t for t in raw_trees if isinstance(t, str)]

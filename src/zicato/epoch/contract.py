@@ -39,6 +39,7 @@ from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING
 
 from zicato.core.scoring_config import omit_at_default_fields
+from zicato.workspace.config_io import read_workspace_config
 
 if TYPE_CHECKING:  # pragma: no cover - typing-only import
     from zicato.proposer.external import ExternalProposerConfig
@@ -702,16 +703,10 @@ def resolve_contract_inputs(workspace_root: Path) -> ContractInputs:
         When ``config.json`` is missing. The message suggests running
         ``zicato epoch register``.
     """
-    config_path = workspace_root / "config.json"
-    if not config_path.exists():
-        raise FileNotFoundError(
-            f"no config.json under {workspace_root}; run "
-            f"`zicato epoch register` to record the evaluation contract before "
-            "evolving"
-        )
-    config = json.loads(config_path.read_text(encoding="utf-8"))
-
-    contract = config.get("contract") or {}
+    remedy = "run `zicato epoch register` to record the evaluation contract before evolving"
+    loaded = read_workspace_config(workspace_root).require(remedy)
+    config = loaded.raw
+    contract = loaded.contract
     board_path = Path(
         contract.get("board_path") or _default_contract_path(workspace_root, "board.jsonl")
     )

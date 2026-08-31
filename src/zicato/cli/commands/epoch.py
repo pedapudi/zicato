@@ -159,7 +159,7 @@ def _adopt_contract_sources(
     matches the epoch's stored hash — so ``evolve`` continues the epoch
     rather than spuriously rolling it.
     """
-    config = read_workspace_config(workspace_root)
+    config = dict(read_workspace_config(workspace_root).raw)
     defaults = default_contract_paths(workspace_root)
     contract = dict(config.get("contract") or {})
 

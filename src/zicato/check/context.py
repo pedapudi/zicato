@@ -22,7 +22,7 @@ from zicato.core.types import BoardEntry, MutationPoint, ScoringWeights
 from zicato.core.workspace import board_path, scoring_path
 from zicato.epoch.lifecycle import current_epoch_id
 from zicato.mutation.enumerator import UnboundSpanMarker
-from zicato.workspace_loader import load_workspace_config
+from zicato.workspace.config_io import WorkspaceConfig, read_workspace_config
 
 
 class CheckContext:
@@ -69,10 +69,8 @@ class CheckContext:
     def _live_paths(self) -> dict[str, Path | None]:
         from zicato.epoch.contract import default_contract_paths  # noqa: PLC0415
 
-        contract = self.config.get("contract")
+        contract = self.config.contract
         defaults = default_contract_paths(self.workspace_root)
-        if not isinstance(contract, dict):
-            return defaults
         return {
             key: Path(str(contract[key])) if contract.get(key) else default
             for key, default in defaults.items()
@@ -83,12 +81,12 @@ class CheckContext:
         return self._epoch_override or current_epoch_id(self.workspace_root)
 
     @cached_property
-    def config(self) -> dict[str, Any]:
-        """The workspace ``config.json``, or ``{}`` when absent."""
+    def config(self) -> WorkspaceConfig:
+        """The workspace ``config.json``; absent or malformed reads as empty."""
         try:
-            return load_workspace_config(self.workspace_root)
-        except (FileNotFoundError, ValueError):
-            return {}
+            return read_workspace_config(self.workspace_root)
+        except (OSError, ValueError):
+            return WorkspaceConfig.absent(self.workspace_root)
 
     @cached_property
     def _scoring_path(self) -> Path | None:
@@ -162,12 +160,12 @@ class CheckContext:
         looks — then falls back to the top-level keys the older
         ``zicato epoch register`` flow persisted.
         """
-        adapter = self.config.get("adapter")
+        adapter = self.config.raw.get("adapter")
         raw: Any = None
         if isinstance(adapter, dict):
             raw = adapter.get("mutable_trees")
         if not raw:
-            raw = self.config.get("mutable_trees") or self.config.get("source_roots") or []
+            raw = self.config.raw.get("mutable_trees") or list(self.config.source_roots)
         return tuple(Path(str(entry)) for entry in raw)
 
     @cached_property
@@ -175,7 +173,7 @@ class CheckContext:
         """The workspace's configured model roles."""
         from zicato.models_config import load_models_config  # noqa: PLC0415
 
-        return load_models_config(self.config)
+        return load_models_config(self.config.raw)
 
     @cached_property
     def adapter(self) -> Any | None:
@@ -185,7 +183,9 @@ class CheckContext:
     @cached_property
     def has_adapter_config(self) -> bool:
         """Whether config names adapter wiring, under either accepted key."""
-        return self.config.get("adapter") is not None or bool(self.config.get("adk_entrypoint"))
+        return self.config.raw.get("adapter") is not None or bool(
+            self.config.raw.get("adk_entrypoint")
+        )
 
     @cached_property
     def adapter_error(self) -> str | None:
@@ -198,7 +198,7 @@ class CheckContext:
         from zicato.tournament.worker_transport import adapter_worker_spec  # noqa: PLC0415
 
         try:
-            adapter = make_adapter_from_config(self.config)
+            adapter = make_adapter_from_config(self.config.raw)
             return adapter, adapter_worker_spec(adapter), None
         except Exception as exc:  # noqa: BLE001 — any construction failure is the defect
             return None, None, str(exc)
@@ -371,8 +371,8 @@ class CheckContext:
         # workspace's call_llm dotted paths — work this check has no use for
         # and whose failure is a different defect. Both reads mirror
         # ``runtime_factory``.
-        runtime = self.config.get("runtime")
-        if not isinstance(runtime, dict) or not runtime.get("scrub_worker_env", False):
+        runtime = self.config.runtime
+        if not runtime.get("scrub_worker_env", False):
             return None
         passthrough = tuple(str(name) for name in runtime.get("worker_env_passthrough") or ())
         return scrubbed_worker_env(models=self.models, extra_env_keys=passthrough)

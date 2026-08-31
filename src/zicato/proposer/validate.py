@@ -121,6 +121,7 @@ from zicato.proposer.structured import (
     parse_patch_list,
 )
 from zicato.proposer.tool_context import ProposerToolContext, _active_context
+from zicato.workspace.config_io import read_workspace_config, workspace_is_initialized
 
 #: Prefix for the throwaway parent dir a validation allocates in the OS temp
 #: root. Deliberately DISTINCT from ``ztw-slate-`` so the round pipeline's
@@ -200,13 +201,8 @@ def declared_static_checks(workspace_root: Path) -> tuple[str, ...]:
     workspace that never heard of this feature.
     """
     try:
-        raw = json.loads((workspace_root / "config.json").read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return ()
-    if not isinstance(raw, Mapping):
-        return ()
-    contract = raw.get("contract")
-    if not isinstance(contract, Mapping):
+        contract = read_workspace_config(workspace_root).contract
+    except (OSError, ValueError):
         return ()
     declared = contract.get("proposer_static_checks")
     if not isinstance(declared, list):
@@ -372,7 +368,7 @@ def run_load_probe(workspace_root: Path, scratch_root: Path) -> TierResult:
     config, an unreadable workspace, no adapter configured — is a NOTE; the
     proposer cannot fix the operator's workspace.
     """
-    if not (workspace_root / "config.json").is_file():
+    if not workspace_is_initialized(workspace_root):
         return [], [
             f"load probe skipped: no config.json under {workspace_root} to "
             f"resolve an adapter from"
