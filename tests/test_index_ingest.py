@@ -7,6 +7,7 @@ from typing import Any
 
 import pytest
 
+from tests._runtime_builders import seed_promoted_lineage
 from zicato.core.types import (
     Generation,
     MetricCount,
@@ -69,7 +70,7 @@ def _build_workspace(tmp_path: Path) -> tuple[Path, str]:
     # --- Epoch one (rich) ---
     cfg_a = new_epoch(ws, "alpha", board, rubric, ScoringWeights())
     eid_a = cfg_a.id
-    _seed_lineage(ws, eid_a)
+    seed_promoted_lineage(ws, eid_a)
     # Resolved experiment on v1.
     exp = make_experiment(
         epoch_id=eid_a,
@@ -97,7 +98,7 @@ def _build_workspace(tmp_path: Path) -> tuple[Path, str]:
 
     # --- Epoch two (sparse: just lineage, no runs) ---
     cfg_b = new_epoch(ws, "beta", board, rubric, ScoringWeights())
-    _seed_lineage(ws, cfg_b.id)
+    seed_promoted_lineage(ws, cfg_b.id)
 
     return ws, eid_a
 
@@ -116,28 +117,6 @@ def _dump_index(db: Path) -> str:
         return "\n".join(conn.iterdump())
     finally:
         conn.close()
-
-
-def _seed_lineage(ws: Path, epoch_id: str) -> None:
-    """Register a v0 (promoted seed) and v1 (promoted child) in lineage."""
-    g0 = Generation(
-        id="v0",
-        epoch_id=epoch_id,
-        parent_id=None,
-        snapshot_root=Path("/tmp/snap/v0"),
-        created_at="2026-01-01T00:00:00Z",
-        promoted=True,
-    )
-    g1 = Generation(
-        id="v1",
-        epoch_id=epoch_id,
-        parent_id="v0",
-        snapshot_root=Path("/tmp/snap/v1"),
-        created_at="2026-01-02T00:00:00Z",
-        promoted=True,
-    )
-    append_to_lineage(ws, epoch_id, g0, None)
-    append_to_lineage(ws, epoch_id, g1, "v0")
 
 
 # ---------------------------------------------------------------------------
@@ -239,7 +218,7 @@ def test_rebuild_index_tournament_records_fast_champion_eval_mode(tmp_path: Path
 
     cfg = new_epoch(ws, "alpha", board, rubric, ScoringWeights())
     eid = cfg.id
-    _seed_lineage(ws, eid)
+    seed_promoted_lineage(ws, eid)
     exp = make_experiment(
         epoch_id=eid,
         generation_id="v1",
@@ -273,7 +252,7 @@ def test_rebuild_index_metric_counts_are_pure_projection_of_loss_json(
     rubric.write_text("# r\n", encoding="utf-8")
     cfg = new_epoch(ws, "alpha", board, rubric, ScoringWeights())
     eid = cfg.id
-    _seed_lineage(ws, eid)
+    seed_promoted_lineage(ws, eid)
 
     # loss.json carries a drift surface of off_topic/warning x2.
     profile = make_loss_profile(
@@ -355,7 +334,7 @@ def test_rebuild_index_metric_counts_from_loss_profile_surface(
     rubric.write_text("# r\n", encoding="utf-8")
     cfg = new_epoch(ws, "alpha", board, rubric, ScoringWeights())
     eid = cfg.id
-    _seed_lineage(ws, eid)
+    seed_promoted_lineage(ws, eid)
     profile = make_loss_profile(
         run_id="run_with_metrics",
         entry_id="e1",
@@ -505,7 +484,7 @@ def test_ingest_experiment_unresolved_writes_no_tournament(
     rubric.write_text("# r\n", encoding="utf-8")
     cfg = new_epoch(ws, "alpha", board, rubric, ScoringWeights())
     eid = cfg.id
-    _seed_lineage(ws, eid)
+    seed_promoted_lineage(ws, eid)
     # Experiment with outcome=None (proposed but not yet run).
     exp = make_experiment(epoch_id=eid, generation_id="v1", outcome=None)
     write_experiment(ws, eid, "v1", exp)

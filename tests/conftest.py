@@ -424,3 +424,38 @@ def _reap_leaked_dashboards(
         yield
     finally:
         _reap_session_dashboards(tmp_root)
+
+
+# ---------------------------------------------------------------------------
+# Minimal on-disk contract inputs
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture()
+def board_file(tmp_path: Path) -> Path:
+    """A board file holding one single-turn entry.
+
+    The smallest board the epoch commands accept. Its content is
+    scaffolding for tests whose subject is epoch lifecycle, lineage or
+    analysis rather than the board itself; a test about board parsing
+    writes its own.
+    """
+    path = tmp_path / "board.jsonl"
+    path.write_text(
+        '{"id": "e1", "kind": "single_turn", "wall_clock_budget_seconds": 60, "input": "hi"}\n'
+    )
+    return path
+
+
+@pytest.fixture()
+def epoch_root(tmp_path: Path) -> tuple[Path, str]:
+    """An empty epoch directory inside a workspace, and that epoch's id.
+
+    Nothing but the directory is written, so a test that reads an epoch
+    with no generations sees the same tree the lifecycle would have left
+    immediately after ``epoch new``.
+    """
+    ws = tmp_path / ".zicato"
+    epoch_id = "2026-04-08_test"
+    (ws / "epochs" / epoch_id).mkdir(parents=True)
+    return ws, epoch_id

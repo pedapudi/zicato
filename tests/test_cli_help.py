@@ -23,6 +23,7 @@ import click
 import pytest
 from click.testing import CliRunner
 
+from tests._cli_support import install_evolve_capture
 from zicato.cli.commands.evolve import evolve_cmd
 from zicato.cli.discovery import (
     HAPPY_PATH_COMMANDS,
@@ -152,26 +153,6 @@ def test_every_command_has_a_help_screen() -> None:
 # Evolve resolves the contract and auto-epochs on a contract change.
 
 
-def _install_cli_capture(monkeypatch: pytest.MonkeyPatch, captured: dict[str, Any]) -> None:
-    """Patch ``evolve_n_rounds`` (lazily imported by the CLI) to capture kwargs.
-
-    ``evolve`` imports ``zicato.orchestrator.evolve_n_rounds`` inside its
-    coroutine, so patching the attribute on the module object is seen at
-    call time.
-    """
-
-    async def _fake_evolve_n_rounds(**kwargs: Any) -> list[Any]:
-        captured.update(kwargs)
-        stop_reason_out = kwargs.get("stop_reason_out")
-        if stop_reason_out is not None:
-            stop_reason_out.append("completed")
-        return []
-
-    import zicato.orchestrator as orch_mod
-
-    monkeypatch.setattr(orch_mod, "evolve_n_rounds", _fake_evolve_n_rounds)
-
-
 def test_evolve_passes_auto_epoch_true_by_default(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -182,7 +163,7 @@ def test_evolve_passes_auto_epoch_true_by_default(
     given. This pins that wiring.
     """
     captured: dict[str, Any] = {}
-    _install_cli_capture(monkeypatch, captured)
+    install_evolve_capture(monkeypatch, captured)
 
     runner = CliRunner()
     result = runner.invoke(
@@ -204,7 +185,7 @@ def test_evolve_no_auto_epoch_flag_disables_auto_epoching(
 ) -> None:
     """``--no-auto-epoch`` flips the orchestrator's ``auto_epoch`` off."""
     captured: dict[str, Any] = {}
-    _install_cli_capture(monkeypatch, captured)
+    install_evolve_capture(monkeypatch, captured)
 
     runner = CliRunner()
     result = runner.invoke(

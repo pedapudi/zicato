@@ -28,6 +28,7 @@ from typing import Any
 import pytest
 
 import zicato.tournament.runner as runner_mod
+from tests._runtime_builders import runtime_config
 from zicato.core import (
     BUDGET_ABORT_CAUSE,
     BoardEntry,
@@ -68,21 +69,6 @@ def _generation(tmp_path: Path, gen_id: str, parent: str | None) -> Generation:
         parent_id=parent,
         snapshot_root=tmp_path / f"snap_{gen_id}",
         created_at="2024-01-01T00:00:00Z",
-    )
-
-
-def _runtime_config(tmp_path: Path) -> RuntimeConfig:
-    async def harness_call(system: str, user: str, model: str) -> str:
-        return ""
-
-    async def aux_call(system: str, user: str, model: str) -> str:
-        return ""
-
-    return RuntimeConfig(
-        instance_id="test",
-        workspace_root=tmp_path,
-        harness_call_llm=harness_call,
-        auxiliary_call_llm=aux_call,
     )
 
 
@@ -232,7 +218,7 @@ def test_infra_abort_is_not_cached(monkeypatch: pytest.MonkeyPatch, tmp_path: Pa
             generation=gen,
             entry=entry,
             weights=ScoringWeights(),
-            config=_runtime_config(ws),
+            config=runtime_config(ws),
             workspace_root=ws,
             epoch_id="e0",
             side="parent",
@@ -278,7 +264,7 @@ def test_budget_abort_is_cached(monkeypatch: pytest.MonkeyPatch, tmp_path: Path)
             generation=gen,
             entry=entry,
             weights=ScoringWeights(),
-            config=_runtime_config(ws),
+            config=runtime_config(ws),
             workspace_root=ws,
             epoch_id="e0",
             side="parent",
@@ -319,7 +305,7 @@ def test_clean_run_is_cached(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) ->
             generation=gen,
             entry=entry,
             weights=ScoringWeights(),
-            config=_runtime_config(ws),
+            config=runtime_config(ws),
             workspace_root=ws,
             epoch_id="e0",
             side="parent",
@@ -409,7 +395,7 @@ def test_run_tournament_cache_reads_champion_side(
             child_gen=child_gen,
             board=board,
             weights=ScoringWeights(),
-            config=_runtime_config(ws),
+            config=runtime_config(ws),
             workspace_root=ws,
             epoch_id="e0",
         )
@@ -446,7 +432,7 @@ def test_run_tournament_full_mode_resamples_champion(
             child_gen=child_gen,
             board=board,
             weights=ScoringWeights(),
-            config=_runtime_config(ws),
+            config=runtime_config(ws),
             workspace_root=ws,
             epoch_id="e0",
             champion_force_fresh=True,
@@ -480,7 +466,7 @@ def test_run_tournament_first_round_still_runs_champion(
             child_gen=child_gen,
             board=board,
             weights=ScoringWeights(),
-            config=_runtime_config(ws),
+            config=runtime_config(ws),
             workspace_root=ws,
             epoch_id="e0",
         )

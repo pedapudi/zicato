@@ -50,7 +50,7 @@ above the baseline and negative where it stands below.
 
 | Measurement | Baseline (`f9052dd`) | Enforced limit | Limit minus baseline |
 |---|---:|---:|---:|
-| Total | 408,661 | 458,367 | +49,706 |
+| Total | 408,661 | 458,230 | +49,569 |
 | Production | 197,702 | 202,954 | +5,252 |
 | Production logic | 110,276 | 113,497 | +3,221 |
 

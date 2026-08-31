@@ -33,8 +33,10 @@ from typing import Any
 import pytest
 from click.testing import CliRunner
 
+from tests._cli_support import install_evolve_capture
+from tests._runtime_builders import make_generation
 from zicato.config import get_pinned_overrides, load_config, pin_overrides
-from zicato.core import BoardEntry, Generation, LossProfile, RuntimeConfig, ScoringWeights
+from zicato.core import BoardEntry, LossProfile, RuntimeConfig, ScoringWeights
 
 # ---------------------------------------------------------------------------
 # Stub LLMs for evolve invocations (importable module-level objects)
@@ -51,21 +53,6 @@ async def _aux_call_llm(system: str, user: str, model: str) -> str:
     return ""
 
 
-def _install_cli_capture(monkeypatch: pytest.MonkeyPatch, captured: dict[str, Any]) -> None:
-    """Patch ``evolve_n_rounds`` as imported by the CLI to capture kwargs."""
-
-    async def _fake_evolve_n_rounds(**kwargs: Any) -> list[Any]:
-        captured.update(kwargs)
-        stop_reason_out = kwargs.get("stop_reason_out")
-        if stop_reason_out is not None:
-            stop_reason_out.append("completed")
-        return []
-
-    import zicato.orchestrator as orch_mod
-
-    monkeypatch.setattr(orch_mod, "evolve_n_rounds", _fake_evolve_n_rounds)
-
-
 def _invoke_evolve(
     monkeypatch: pytest.MonkeyPatch,
     *flags: str,
@@ -74,7 +61,7 @@ def _invoke_evolve(
     from zicato.cli.commands.evolve import evolve_cmd
 
     captured: dict[str, Any] = {}
-    _install_cli_capture(monkeypatch, captured)
+    install_evolve_capture(monkeypatch, captured)
     runner = CliRunner()
     result = runner.invoke(
         evolve_cmd,
@@ -157,7 +144,7 @@ def test_aux_call_timeout_flag_rejects_non_positive(
     from zicato.cli.commands.evolve import evolve_cmd
 
     captured: dict[str, Any] = {}
-    _install_cli_capture(monkeypatch, captured)
+    install_evolve_capture(monkeypatch, captured)
     runner = CliRunner()
     result = runner.invoke(
         evolve_cmd,
@@ -229,18 +216,6 @@ def _entry(entry_id: str = "entry_a", budget_s: int = 60) -> BoardEntry:
     )
 
 
-def _generation(workspace: Path, gen_id: str = "v0") -> Generation:
-    snap = workspace / "snap" / gen_id
-    snap.mkdir(parents=True, exist_ok=True)
-    return Generation(
-        id=gen_id,
-        epoch_id="e0",
-        parent_id=None,
-        snapshot_root=snap,
-        created_at="2026-05-15T00:00:00Z",
-    )
-
-
 def _runtime_config(workspace: Path) -> RuntimeConfig:
     from tests._subprocess_worker_support import auxiliary_call_llm, harness_call_llm
 
@@ -270,7 +245,7 @@ def test_runner_threads_pins_into_worker_args_file(
 
     workspace = tmp_path / ".zicato"
     workspace.mkdir()
-    generation = _generation(workspace)
+    generation = make_generation(workspace)
     entry = _entry()
 
     captured_args: dict[str, Any] = {}
@@ -322,7 +297,7 @@ def test_worker_honours_config_pins_from_args_file(tmp_path: Path) -> None:
 
     workspace = tmp_path / ".zicato"
     workspace.mkdir()
-    generation = _generation(workspace)
+    generation = make_generation(workspace)
     entry = _entry()
 
     sink_path = events_jsonl_path(workspace, "e0", generation.id, entry.id)

@@ -11,12 +11,12 @@ from __future__ import annotations
 
 import shutil
 import subprocess
-import textwrap
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import pytest
 
+from tests._source_tree_builders import mutable_tree, write_dedented
 from zicato.core.types import Patch
 from zicato.epoch.genstore import default_generation_store
 from zicato.epoch.git_genstore import GitGenerationStore
@@ -25,23 +25,6 @@ from zicato.epoch.git_genstore import GitGenerationStore
 # (branches, tags, worktrees, blobs) IS the coverage. Tagged for the opt-in
 # fast lane (`-m "not slow"`); the full suite still runs them by default.
 pytestmark = [pytest.mark.slow, pytest.mark.integration]
-
-
-def _write(path: Path, body: str) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(textwrap.dedent(body), encoding="utf-8")
-
-
-def _mutable_tree(root: Path, *, instr: str = "original") -> Path:
-    tree = root / "agent"
-    _write(
-        tree / "prompts.py",
-        f'''
-        # zicato:mutable id="instr"
-        INSTR = """{instr}"""
-        ''',
-    )
-    return tree
 
 
 def _patch(pid: str, new_content: str) -> Patch:
@@ -84,7 +67,7 @@ def _seeded_git_ws_template(tmp_path_factory: pytest.TempPathFactory) -> Path:
     """
     base = tmp_path_factory.mktemp("git-genstore-template")
     ws = base / "ws"
-    GitGenerationStore(ws).seed_generation("e1", "v0", [_mutable_tree(base / "src")])
+    GitGenerationStore(ws).seed_generation("e1", "v0", [mutable_tree(base / "src")])
     # A materialised worktree registers its ABSOLUTE path inside the repo,
     # which cannot survive relocation-by-copytree: drop the worktrees and
     # prune the registrations so each copy re-materialises its own on first
@@ -109,7 +92,7 @@ def seeded_store(_seeded_git_ws_template: Path, tmp_path: Path) -> GitGeneration
 
 def test_epoch_becomes_a_branch(tmp_path: Path) -> None:
     store = GitGenerationStore(tmp_path / "ws")
-    store.seed_generation("2026-05-18_e1", "v0", [_mutable_tree(tmp_path / "src")])
+    store.seed_generation("2026-05-18_e1", "v0", [mutable_tree(tmp_path / "src")])
     branches = _git(store.repo_path, "branch", "--list")
     assert "epoch/2026-05-18_e1" in branches
 
@@ -187,12 +170,12 @@ def test_unchanged_files_share_one_blob_across_generations(tmp_path: Path) -> No
     """A file unchanged across generations is ONE git blob, not N copies."""
     store = GitGenerationStore(tmp_path / "ws")
     tree = tmp_path / "src" / "agent"
-    _write(
+    write_dedented(
         tree / "prompts.py",
         '# zicato:mutable id="instr"\nINSTR = """original"""\n',
     )
     # A second, never-mutated file.
-    _write(tree / "stable.py", "STABLE = 42\n")
+    write_dedented(tree / "stable.py", "STABLE = 42\n")
     # Seed the ``agent`` tree itself, so paths are ``agent/...``.
     store.seed_generation("e1", "v0", [tree])
     store.derive_generation("e1", "v0", "v1", [_patch("p1", '"""next"""')])
@@ -307,7 +290,7 @@ def test_seed_from_a_worktrees_children_skips_git_admin(tmp_path: Path) -> None:
     pointer makes ``git add`` resolve it as a foreign repo and abort).
     """
     store = GitGenerationStore(tmp_path / "ws")
-    store.seed_generation("e0", "v0", [_mutable_tree(tmp_path / "src", instr="rolled")])
+    store.seed_generation("e0", "v0", [mutable_tree(tmp_path / "src", instr="rolled")])
 
     worktree = store.materialize_snapshot("e0", "v0")
     children = sorted(worktree.iterdir())
@@ -408,7 +391,7 @@ def test_cold_store_concurrent_derive_never_races_on_materialise(tmp_path: Path)
     workspace = tmp_path / ".zicato"
     workspace.mkdir()
     store = GitGenerationStore(workspace)
-    store.seed_generation("e1", "v0", [_mutable_tree(tmp_path / "src")])
+    store.seed_generation("e1", "v0", [mutable_tree(tmp_path / "src")])
     worktrees = workspace / GitGenerationStore.WORKTREES_DIRNAME
 
     threads = 8

@@ -18,13 +18,13 @@ from __future__ import annotations
 import shutil
 import subprocess
 import tempfile
-import textwrap
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import pytest
 
+from tests._source_tree_builders import mutable_tree, write_dedented
 from zicato.core.types import Patch
 from zicato.epoch.genstore import (
     EPHEMERAL_SNAPSHOT_PREFIX,
@@ -110,11 +110,6 @@ def seeded_store(
 # ---------------------------------------------------------------------------
 
 
-def _write(path: Path, body: str) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(textwrap.dedent(body), encoding="utf-8")
-
-
 def _patch(
     *,
     pid: str,
@@ -133,27 +128,14 @@ def _patch(
     )
 
 
-def _mutable_tree(root: Path, *, instr: str = "original") -> Path:
-    """A tiny inner-harness source tree with one mutation point."""
-    tree = root / "agent"
-    _write(
-        tree / "prompts.py",
-        f'''
-        # zicato:mutable id="instr"
-        INSTR = """{instr}"""
-        ''',
-    )
-    return tree
-
-
 def _template_tree(root: Path) -> Path:
     """The tree the session-scoped seeded templates are built from.
 
-    ``_mutable_tree`` (``instr="original"``) plus one never-mutated extra
+    ``mutable_tree`` (``instr="original"``) plus one never-mutated extra
     file, so the read-surface tests can assert on a multi-file listing.
     """
-    tree = _mutable_tree(root, instr="original")
-    _write(tree / "lib" / "util.py", "X = 1\n")
+    tree = mutable_tree(root, instr="original")
+    write_dedented(tree / "lib" / "util.py", "X = 1\n")
     return tree
 
 
@@ -196,7 +178,7 @@ def test_snapshot_path_is_pure(store: GenerationStore) -> None:
 
 
 def test_seed_generation_materialises_tree(store: GenerationStore, tmp_path: Path) -> None:
-    tree = _mutable_tree(tmp_path / "registered", instr="seeded")
+    tree = mutable_tree(tmp_path / "registered", instr="seeded")
     root = store.seed_generation("e1", "v0", [tree])
     assert root.is_dir()
     assert (root / "agent" / "prompts.py").is_file()
@@ -215,7 +197,7 @@ def test_seed_generation_raises_for_missing_source(store: GenerationStore, tmp_p
 
 def test_seed_generation_excludes_run_artifacts(store: GenerationStore, tmp_path: Path) -> None:
     """A registered tree's ``output/`` must NOT enter the generation."""
-    tree = _mutable_tree(tmp_path / "registered")
+    tree = mutable_tree(tmp_path / "registered")
     artifact = tree / "output" / "rendered.html"
     artifact.parent.mkdir(parents=True)
     artifact.write_text("noise", encoding="utf-8")
@@ -374,11 +356,11 @@ def _diff_fixture_tree(root: Path, *, revised: bool) -> Path:
     non-decodable bytes changes. Nested directories cover path ordering.
     """
     tree = root / "agent"
-    _write(tree / "prompts.py", f'INSTR = """{"rewritten" if revised else "original"}"""\n')
-    _write(tree / "lib" / "util.py", "X = 1\n")
-    _write(tree / "notes.txt", "after" if revised else "before")
-    _write(tree / "crlf.txt", "one\r\n" + ("TWO\r\n" if revised else "two\r\n"))
-    _write(tree / ("added.py" if revised else "removed.py"), "A = 1\n")
+    write_dedented(tree / "prompts.py", f'INSTR = """{"rewritten" if revised else "original"}"""\n')
+    write_dedented(tree / "lib" / "util.py", "X = 1\n")
+    write_dedented(tree / "notes.txt", "after" if revised else "before")
+    write_dedented(tree / "crlf.txt", "one\r\n" + ("TWO\r\n" if revised else "two\r\n"))
+    write_dedented(tree / ("added.py" if revised else "removed.py"), "A = 1\n")
     payload = range(256) if revised else reversed(range(256))
     (tree / "bin").mkdir(parents=True, exist_ok=True)
     (tree / "bin" / "weights.dat").write_bytes(bytes(payload))
@@ -449,7 +431,7 @@ def _isolated_tempdir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 
 def _seeded(store: GenerationStore, tmp_path: Path) -> Path:
     """Seed ``e1/v0`` and return its canonical snapshot root."""
-    tree = _mutable_tree(tmp_path / "src", instr="checkout-me")
+    tree = mutable_tree(tmp_path / "src", instr="checkout-me")
     return store.seed_generation("e1", "v0", [tree])
 
 

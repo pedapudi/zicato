@@ -18,7 +18,8 @@ from typing import Any
 
 import pytest
 
-from zicato.core import BoardEntry, RuntimeConfig, ScoringWeights
+from tests._runtime_builders import runtime_config
+from zicato.core import BoardEntry, ScoringWeights
 from zicato.core.tournament import TournamentStructure
 from zicato.tournament.gate import GateOutcome
 from zicato.tournament.runner import TournamentResult
@@ -35,21 +36,6 @@ def _board() -> list[BoardEntry]:
     ]
 
 
-def _make_runtime_config(tmp_path: Path) -> RuntimeConfig:
-    async def harness_call(system: str, user: str, model: str) -> str:
-        return ""
-
-    async def aux_call(system: str, user: str, model: str) -> str:
-        return ""
-
-    return RuntimeConfig(
-        instance_id="test",
-        workspace_root=tmp_path,
-        harness_call_llm=harness_call,
-        auxiliary_call_llm=aux_call,
-    )
-
-
 def _make_cli_stubs(
     monkeypatch: pytest.MonkeyPatch, *, weights: ScoringWeights | None = None
 ) -> None:
@@ -64,7 +50,7 @@ def _make_cli_stubs(
         make_adapter_from_config=lambda cfg: object(),
     )
     runtime_factory_mod = types.SimpleNamespace(
-        make_runtime_config=lambda cfg, *, workspace_root: _make_runtime_config(workspace_root),
+        make_runtime_config=lambda cfg, *, workspace_root: runtime_config(workspace_root),
     )
     monkeypatch.setattr(
         "zicato.cli.commands.tournament._resolve_workspace_components",

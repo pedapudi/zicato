@@ -31,6 +31,7 @@ from typing import Any
 
 import pytest
 
+from tests._runtime_builders import runtime_config
 from zicato.core import (
     BoardEntry,
     DriftCount,
@@ -273,21 +274,6 @@ def test_run_regression_suite_times_out_on_slow_test(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-def _make_runtime_config(tmp_path: Path) -> RuntimeConfig:
-    async def harness_call(system: str, user: str, model: str) -> str:
-        return ""
-
-    async def aux_call(system: str, user: str, model: str) -> str:
-        return ""
-
-    return RuntimeConfig(
-        instance_id="test",
-        workspace_root=tmp_path,
-        harness_call_llm=harness_call,
-        auxiliary_call_llm=aux_call,
-    )
-
-
 def _loss(
     generation_id: str,
     entry_id: str,
@@ -419,7 +405,7 @@ def test_run_tournament_rejects_when_regression_fails(
             child_gen=child_gen,
             board=_board(),
             weights=weights,
-            config=_make_runtime_config(tmp_path),
+            config=runtime_config(tmp_path),
             workspace_root=tmp_path,
             epoch_id="e0",
         )
@@ -479,7 +465,7 @@ def test_run_tournament_promotes_when_regression_passes(
             child_gen=child_gen,
             board=_board(),
             weights=weights,
-            config=_make_runtime_config(tmp_path),
+            config=runtime_config(tmp_path),
             workspace_root=tmp_path,
             epoch_id="e0",
         )
@@ -532,7 +518,7 @@ def test_run_tournament_skips_regression_when_flag_off(
             child_gen=child_gen,
             board=_board(),
             weights=weights,
-            config=_make_runtime_config(tmp_path),
+            config=runtime_config(tmp_path),
             workspace_root=tmp_path,
             epoch_id="e0",
         )
@@ -563,7 +549,7 @@ def _make_cli_stubs(monkeypatch: pytest.MonkeyPatch) -> None:
         make_adapter_from_config=lambda cfg: object(),
     )
     runtime_factory_mod = types.SimpleNamespace(
-        make_runtime_config=lambda cfg, *, workspace_root: _make_runtime_config(workspace_root),
+        make_runtime_config=lambda cfg, *, workspace_root: runtime_config(workspace_root),
     )
     monkeypatch.setattr(
         "zicato.cli.commands.tournament._resolve_workspace_components",

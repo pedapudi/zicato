@@ -34,15 +34,6 @@ def workspace(tmp_path: Path) -> Path:
 
 
 @pytest.fixture()
-def board_file(tmp_path: Path) -> Path:
-    path = tmp_path / "board.jsonl"
-    path.write_text(
-        '{"id": "e1", "kind": "single_turn", "wall_clock_budget_seconds": 60, "input": "hi"}\n'
-    )
-    return path
-
-
-@pytest.fixture()
 def brief_file(tmp_path: Path) -> Path:
     path = tmp_path / "brief.md"
     path.write_text("# Proposer brief for tests\n\n## Forbidden\n\n(none)\n")

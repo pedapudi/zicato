@@ -24,6 +24,7 @@ from typing import Any
 import pytest
 
 import zicato.tournament.runner as runner_mod
+from tests._runtime_builders import runtime_config
 from zicato.board.split import HOLDOUT_TAG
 from zicato.core import (
     BoardEntry,
@@ -92,21 +93,6 @@ def _board() -> list[BoardEntry]:
     return [*train, holdout]
 
 
-def _runtime(tmp_path: Path) -> RuntimeConfig:
-    async def harness_call(system: str, user: str, model: str) -> str:
-        return ""
-
-    async def aux_call(system: str, user: str, model: str) -> str:
-        return ""
-
-    return RuntimeConfig(
-        instance_id="test",
-        workspace_root=tmp_path,
-        harness_call_llm=harness_call,
-        auxiliary_call_llm=aux_call,
-    )
-
-
 def _gen(tmp_path: Path, gen_id: str, parent: str | None) -> Generation:
     return Generation(
         id=gen_id,
@@ -134,7 +120,7 @@ def _run(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, *, holdout_child_drift
             child_gen=_gen(tmp_path, "v1", "v0"),
             board=board,
             weights=ScoringWeights(promote_margin=0.1),
-            config=_runtime(tmp_path),
+            config=runtime_config(tmp_path),
             workspace_root=tmp_path,
             epoch_id="e0",
         )
@@ -215,7 +201,7 @@ def _confirm(
             train_parent_agg=_agg(2.0),
             train_child_agg=_agg(1.0),
             weights=ScoringWeights(promote_margin=0.1),
-            config=_runtime(tmp_path),
+            config=runtime_config(tmp_path),
             workspace_root=tmp_path,
             epoch_id="e0",
         )

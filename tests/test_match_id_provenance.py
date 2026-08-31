@@ -20,6 +20,7 @@ import asyncio
 from pathlib import Path
 
 import zicato.tournament.runner as runner_mod
+from tests._runtime_builders import seed_promoted_lineage
 from zicato.core import (
     BoardEntry,
     Generation,
@@ -31,7 +32,6 @@ from zicato.core.types import DriftCount, ExpectationResult
 from zicato.core.workspace import loss_profile_path
 from zicato.epoch.journal import write_experiment
 from zicato.epoch.lifecycle import new_epoch
-from zicato.epoch.lineage import append_to_lineage
 from zicato.index.ingest import rebuild_index
 from zicato.query import WorkspacePaths, build_per_entry_for_generation
 from zicato.selection.strategy import rung_for_match_id
@@ -330,27 +330,6 @@ def test_run_single_stamps_match_id_onto_loss_json(monkeypatch, tmp_path) -> Non
 # ---------------------------------------------------------------------------
 
 
-def _seed_lineage(ws: Path, epoch_id: str) -> None:
-    g0 = Generation(
-        id="v0",
-        epoch_id=epoch_id,
-        parent_id=None,
-        snapshot_root=Path("/tmp/snap/v0"),
-        created_at="2026-01-01T00:00:00Z",
-        promoted=True,
-    )
-    g1 = Generation(
-        id="v1",
-        epoch_id=epoch_id,
-        parent_id="v0",
-        snapshot_root=Path("/tmp/snap/v1"),
-        created_at="2026-01-02T00:00:00Z",
-        promoted=True,
-    )
-    append_to_lineage(ws, epoch_id, g0, None)
-    append_to_lineage(ws, epoch_id, g1, "v0")
-
-
 def _build_workspace_with_tagged_run(tmp_path: Path) -> tuple[Path, str]:
     """One epoch; v1 has a tagged run (rung0_m1) and v0 has an untagged run."""
     ws = tmp_path / ".zicato"
@@ -365,7 +344,7 @@ def _build_workspace_with_tagged_run(tmp_path: Path) -> tuple[Path, str]:
 
     cfg = new_epoch(ws, "alpha", board, rubric, ScoringWeights())
     eid = cfg.id
-    _seed_lineage(ws, eid)
+    seed_promoted_lineage(ws, eid)
     exp = make_experiment(
         epoch_id=eid,
         generation_id="v1",

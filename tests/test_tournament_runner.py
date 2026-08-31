@@ -29,6 +29,7 @@ from typing import Any
 import pytest
 
 import zicato.tournament.runner as runner_mod
+from tests._runtime_builders import runtime_config
 from zicato.core import (
     BoardEntry,
     DriftCount,
@@ -154,23 +155,6 @@ def _make_board() -> list[BoardEntry]:
     ]
 
 
-def _make_runtime_config(tmp_path: Path) -> RuntimeConfig:
-    # Two distinct callables (identity-unequal) — the runner re-checks
-    # the two-callable invariant as defense in depth.
-    async def harness_call(system: str, user: str, model: str) -> str:
-        return ""
-
-    async def aux_call(system: str, user: str, model: str) -> str:
-        return ""
-
-    return RuntimeConfig(
-        instance_id="test",
-        workspace_root=tmp_path,
-        harness_call_llm=harness_call,
-        auxiliary_call_llm=aux_call,
-    )
-
-
 def _make_generation(tmp_path: Path, gen_id: str, parent: str | None) -> Generation:
     return Generation(
         id=gen_id,
@@ -211,7 +195,7 @@ def test_run_tournament_iterates_board_for_both_generations(
 
     board = _make_board()
     weights = ScoringWeights(promote_margin=0.01)
-    config = _make_runtime_config(tmp_path)
+    config = runtime_config(tmp_path)
 
     result = asyncio.run(
         run_tournament(
@@ -283,7 +267,7 @@ def test_run_tournament_rejects_when_child_regresses_pass_rate(
     }
     _stub_run_single(monkeypatch, canned=canned)
 
-    config = _make_runtime_config(tmp_path)
+    config = runtime_config(tmp_path)
     result = asyncio.run(
         run_tournament(
             adapter=object(),
@@ -403,7 +387,7 @@ def test_run_tournament_stamps_each_entry_on_the_correct_side(
 
     monkeypatch.setattr(_state_mod, "clear_active_tournament", capturing_clear)
 
-    config = _make_runtime_config(tmp_path)
+    config = runtime_config(tmp_path)
     asyncio.run(
         run_tournament(
             adapter=object(),
@@ -463,7 +447,7 @@ def test_run_fast_mode_runs_only_child(monkeypatch: pytest.MonkeyPatch, tmp_path
         "generation_id": "v0",
     }
 
-    config = _make_runtime_config(tmp_path)
+    config = runtime_config(tmp_path)
     result = asyncio.run(
         run_fast_mode(
             adapter=object(),
@@ -517,7 +501,7 @@ def test_run_fast_mode_never_runs_the_champion(
         "generation_id": "v0",
     }
 
-    config = _make_runtime_config(tmp_path)
+    config = runtime_config(tmp_path)
     asyncio.run(
         run_fast_mode(
             adapter=object(),
@@ -610,7 +594,7 @@ def test_run_fast_mode_honours_replicates(monkeypatch: pytest.MonkeyPatch, tmp_p
             child_gen=child_gen,
             board=board,
             weights=ScoringWeights(pass_weight=1.0),
-            config=_make_runtime_config(tmp_path),
+            config=runtime_config(tmp_path),
             workspace_root=tmp_path,
             epoch_id="e0",
             parent_historical_agg=parent_historical,
@@ -680,7 +664,7 @@ def test_run_fast_mode_replicate_slots_reuse_the_unit_cache(
                 child_gen=child_gen,
                 board=board,
                 weights=ScoringWeights(pass_weight=1.0),
-                config=_make_runtime_config(tmp_path),
+                config=runtime_config(tmp_path),
                 workspace_root=tmp_path,
                 epoch_id="e0",
                 parent_historical_agg=parent_historical,
@@ -762,7 +746,7 @@ def test_run_fast_mode_stops_scheduling_slots_on_a_spent_token_budget(
             child_gen=child_gen,
             board=board,
             weights=ScoringWeights(pass_weight=1.0),
-            config=dataclasses.replace(_make_runtime_config(tmp_path), token_ledger=ledger),
+            config=dataclasses.replace(runtime_config(tmp_path), token_ledger=ledger),
             workspace_root=tmp_path,
             epoch_id="e0",
             parent_historical_agg=parent_historical,
@@ -811,7 +795,7 @@ def test_run_fast_mode_single_replicate_is_byte_identical(
             child_gen=child_gen,
             board=board,
             weights=ScoringWeights(promote_margin=0.01),
-            config=_make_runtime_config(tmp_path),
+            config=runtime_config(tmp_path),
             workspace_root=tmp_path,
             epoch_id="e0",
             parent_historical_agg=parent_historical,
@@ -845,7 +829,7 @@ def test_no_cache_first_round_runs_champion_via_full_path(
     }
     call_log = _stub_run_single(monkeypatch, canned=canned)
 
-    config = _make_runtime_config(tmp_path)
+    config = runtime_config(tmp_path)
     result = asyncio.run(
         run_tournament(
             adapter=object(),
@@ -896,7 +880,7 @@ def test_run_fast_mode_respects_parallelism_bound(
         "generation_id": "v0",
     }
 
-    config = dataclasses.replace(_make_runtime_config(tmp_path), parallelism=3)
+    config = dataclasses.replace(runtime_config(tmp_path), parallelism=3)
     result = asyncio.run(
         run_fast_mode(
             adapter=object(),
@@ -948,7 +932,7 @@ def test_tournament_result_is_json_serializable(
         ),
     }
     _stub_run_single(monkeypatch, canned=canned)
-    config = _make_runtime_config(tmp_path)
+    config = runtime_config(tmp_path)
 
     result = asyncio.run(
         run_tournament(
@@ -1055,7 +1039,7 @@ def test_run_generation_respects_parallelism_bound(
     stub = _ConcurrencyStub(canned)
     monkeypatch.setattr(runner_mod, "_run_single", stub.run_single)
 
-    config = dataclasses.replace(_make_runtime_config(tmp_path), parallelism=3)
+    config = dataclasses.replace(runtime_config(tmp_path), parallelism=3)
     result = asyncio.run(
         run_tournament(
             adapter=object(),
@@ -1136,7 +1120,7 @@ def test_run_tournament_runs_champion_and_challenger_concurrently(
     stub = _SideOverlapStub()
     monkeypatch.setattr(runner_mod, "_run_single", stub.run_single)
 
-    config = dataclasses.replace(_make_runtime_config(tmp_path), parallelism=1)
+    config = dataclasses.replace(runtime_config(tmp_path), parallelism=1)
     asyncio.run(
         run_tournament(
             adapter=object(),
@@ -1180,7 +1164,7 @@ def test_run_generation_result_matches_sequential_under_parallelism(
     def _run(parallelism: int) -> dict[str, tuple[float, float]]:
         stub = _ConcurrencyStub(canned)
         monkeypatch.setattr(runner_mod, "_run_single", stub.run_single)
-        config = dataclasses.replace(_make_runtime_config(tmp_path), parallelism=parallelism)
+        config = dataclasses.replace(runtime_config(tmp_path), parallelism=parallelism)
         result = asyncio.run(
             run_tournament(
                 adapter=object(),
@@ -1228,7 +1212,7 @@ def test_run_generation_parallelism_one_runs_one_board_unit_at_a_time(
     stub = _ConcurrencyStub(canned)
     monkeypatch.setattr(runner_mod, "_run_single", stub.run_single)
 
-    config = dataclasses.replace(_make_runtime_config(tmp_path), parallelism=1)
+    config = dataclasses.replace(runtime_config(tmp_path), parallelism=1)
     asyncio.run(
         run_tournament(
             adapter=object(),
@@ -1305,7 +1289,7 @@ def test_run_generation_surfaces_failure_under_concurrency(
 
     monkeypatch.setattr(runner_mod, "_run_single", failing_run_single)
 
-    config = dataclasses.replace(_make_runtime_config(tmp_path), parallelism=4)
+    config = dataclasses.replace(runtime_config(tmp_path), parallelism=4)
     with pytest.raises(RuntimeError, match="worker blew up"):
         asyncio.run(
             run_tournament(
@@ -1389,7 +1373,7 @@ def test_runner_stamps_board_disable_drift_onto_entry_context(
     child_gen = _make_generation(tmp_path, "v1", "v0")
     board = _make_board()
     seen = _capture_run_single(monkeypatch)
-    config = _make_runtime_config(tmp_path)
+    config = runtime_config(tmp_path)
 
     asyncio.run(
         run_tournament(
@@ -1436,7 +1420,7 @@ def test_runner_empty_disable_drift_leaves_entries_untouched(
         )
     ]
     seen = _capture_run_single(monkeypatch)
-    config = _make_runtime_config(tmp_path)
+    config = runtime_config(tmp_path)
 
     asyncio.run(
         run_tournament(
@@ -1512,7 +1496,7 @@ def test_board_disable_drift_excludes_suppressed_builtin_judge_end_to_end(
     parent_gen = _make_generation(tmp_path, "v0", None)
     child_gen = _make_generation(tmp_path, "v1", "v0")
     seen = _capture_run_single(monkeypatch)
-    config = _make_runtime_config(tmp_path)
+    config = runtime_config(tmp_path)
     asyncio.run(
         run_tournament(
             adapter=object(),
@@ -1610,7 +1594,7 @@ def test_partial_aggregate_is_written_as_each_board_unit_completes(
 
     monkeypatch.setattr(state_mod, "update_tournament_partial_aggregate", _capturing_update)
 
-    config = dataclasses.replace(_make_runtime_config(tmp_path), parallelism=1)
+    config = dataclasses.replace(runtime_config(tmp_path), parallelism=1)
     result = asyncio.run(
         run_tournament(
             adapter=object(),
@@ -1682,7 +1666,7 @@ def test_partial_aggregate_is_visible_before_all_boards_finish(
     observed: list[int] = []
 
     async def _driver() -> TournamentResult:
-        config = dataclasses.replace(_make_runtime_config(tmp_path), parallelism=4)
+        config = dataclasses.replace(runtime_config(tmp_path), parallelism=4)
         task = asyncio.ensure_future(
             run_tournament(
                 adapter=object(),
@@ -1774,7 +1758,7 @@ def test_fast_mode_persists_running_partial_aggregate(
 
     monkeypatch.setattr(_state_mod, "clear_active_tournament", capturing_clear)
 
-    config = _make_runtime_config(tmp_path)
+    config = runtime_config(tmp_path)
     result = asyncio.run(
         run_fast_mode(
             adapter=object(),
@@ -1879,7 +1863,7 @@ def test_run_fast_mode_publishes_active_tournament(
         "generation_id": "v0",
     }
 
-    config = _make_runtime_config(tmp_path)
+    config = runtime_config(tmp_path)
     asyncio.run(
         run_fast_mode(
             adapter=object(),
@@ -1990,7 +1974,7 @@ def test_run_fast_mode_challenger_progresses_through_running_then_completed(
         "generation_id": "v0",
     }
 
-    config = _make_runtime_config(tmp_path)
+    config = runtime_config(tmp_path)
     asyncio.run(
         run_fast_mode(
             adapter=object(),

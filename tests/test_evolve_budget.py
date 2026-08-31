@@ -29,6 +29,7 @@ import pytest
 from click.testing import CliRunner
 
 import zicato.orchestrator as orch
+from tests._cli_support import install_evolve_capture
 from tests.test_orchestrator import _bootstrap_workspace
 from zicato.orchestrator import EvolveRoundOutcome
 
@@ -348,21 +349,6 @@ def test_per_entry_budget_still_applies_independently(
 # ---------------------------------------------------------------------------
 
 
-def _install_cli_capture(monkeypatch: pytest.MonkeyPatch, captured: dict[str, Any]) -> None:
-    """Patch ``evolve_n_rounds`` as imported by the CLI to capture kwargs."""
-
-    async def _fake_evolve_n_rounds(**kwargs: Any) -> list[Any]:
-        captured.update(kwargs)
-        stop_reason_out = kwargs.get("stop_reason_out")
-        if stop_reason_out is not None:
-            stop_reason_out.append("completed")
-        return []
-
-    import zicato.orchestrator as orch_mod
-
-    monkeypatch.setattr(orch_mod, "evolve_n_rounds", _fake_evolve_n_rounds)
-
-
 def test_cli_passes_max_wall_clock_seconds_flag(
     monkeypatch: pytest.MonkeyPatch,
     mock_dashboard_spawn: list[Any],
@@ -372,7 +358,7 @@ def test_cli_passes_max_wall_clock_seconds_flag(
     from zicato.cli.commands.evolve import evolve_cmd
 
     captured: dict[str, Any] = {}
-    _install_cli_capture(monkeypatch, captured)
+    install_evolve_capture(monkeypatch, captured)
 
     runner = CliRunner()
     result = runner.invoke(
@@ -399,7 +385,7 @@ def test_cli_max_wall_clock_seconds_defaults_to_none(
     from zicato.cli.commands.evolve import evolve_cmd
 
     captured: dict[str, Any] = {}
-    _install_cli_capture(monkeypatch, captured)
+    install_evolve_capture(monkeypatch, captured)
 
     runner = CliRunner()
     result = runner.invoke(
@@ -429,7 +415,7 @@ def test_cli_max_wall_clock_seconds_env_var_is_ignored(
     from zicato.cli.commands.evolve import evolve_cmd
 
     captured: dict[str, Any] = {}
-    _install_cli_capture(monkeypatch, captured)
+    install_evolve_capture(monkeypatch, captured)
     monkeypatch.setenv("ZICATO_MAX_WALL_CLOCK_SECONDS", "720")
 
     runner = CliRunner()
