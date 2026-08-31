@@ -473,7 +473,7 @@ integration is "if you want the live view, run harmonograf
 alongside; the same JSONL records get rendered with proper
 multi-agent semantics".
 
-A `--tail` flag on `zicato run` remains an unbuilt ergonomic, to be
+A live-tail flag on the evolve command is an unbuilt ergonomic, to be
 added if operators ask for it.
 
 ## 16. Why free-text-diff loss was rejected

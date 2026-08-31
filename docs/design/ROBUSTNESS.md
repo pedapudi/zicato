@@ -22,7 +22,7 @@ else, this document and its companions use the layer's name.
 | **L3** | the subprocess worker boundary | one `python -m zicato._tournament_worker` process per board-entry run | loops that hold the interpreter lock, and any other user-code pathology | **shipped**, with a hard per-run wall-clock budget |
 | **L4** | the orchestrator watchdog (the Rust supervisor) | a separate Rust process watching the state files | parent-side wedges | **shipped**; the watchdog binary is auto-spawned and escalation targets the per-run worker process |
 | **L5** | the consecutive-bad circuit breaker | a consecutive-reject counter that stops the loop | long unproductive epochs | **shipped**; richer signals planned |
-| **L6** | atomic writes and resume markers | temp file, fsync, rename | mid-run crashes | atomic writes **shipped**; the resume protocol **planned** |
+| **L6** | atomic writes and resume markers | temp file, fsync, rename | mid-run crashes | **shipped**, including the conservative crash-resume protocol |
 
 The layers nest from inside to outside. The timeouts and structured
 cancellation run inside the run itself. The subprocess worker boundary
@@ -40,9 +40,10 @@ on-disk durability.
 > (`src/zicato/_tournament_worker.py`). Atomic writes make the state on
 > disk durable. The orchestrator watchdog escalates a stalled run by
 > SIGTERM then SIGKILL on that run's own worker process id. The circuit
-> breaker stops a loop that keeps rejecting. The remaining
-> production-hardening gap is the **resume protocol** that lets a
-> restart after a kill pick up cleanly (planned; see
+> breaker stops a loop that keeps rejecting. A restart after a kill
+> picks up through the conservative resume protocol, which reuses an
+> interrupted generation's persisted patches and cached board units where
+> they are known-good and discards the directory otherwise (see
 > [RUNTIME.md](RUNTIME.md) §4).
 
 ```
@@ -415,18 +416,14 @@ zicato evolve --rounds 20 --max-consecutive-rejections 3
 ```
 
 The consecutive-reject threshold K defaults to 3 and is configurable.
-A consecutive-reject window is the simplest available signal. Three
-richer patterns are planned:
-
-- The same drift kinds fail to move across multiple rounds.
-- The hypothesis match-rate falls below 25 percent across recent
-  rounds, which indicates the proposer is guessing rather than
-  reasoning.
-- Every recent reject carries the same `rejection_reason`.
-
-Only the consecutive-reject counter is shipped. The three richer
-signals are planned, to arrive with the operator-visible metrics on
-the dashboard.
+The loop also stops on a degenerate loop-health verdict, which
+`stop_on_degenerate_health` enables by default
+(`src/zicato/evolve/loop.py`). Three richer patterns are unbuilt: the
+same drift kinds failing to move across multiple rounds, a hypothesis
+match-rate below 25 percent across recent rounds (which would indicate
+the proposer is guessing rather than reasoning), and every recent reject
+carrying the same `rejection_reason`. None of the three has a detector in
+`src/zicato/health/diagnostics.py`.
 
 The circuit breaker is the only layer that judges loop quality. The
 others keep the loop from breaking; the circuit breaker keeps a working
@@ -435,13 +432,18 @@ loop from wasting time.
 ### 2.6 Atomic writes and resume markers
 
 Every disk write in zicato uses the atomic-rename pattern (see
-[RUNTIME.md](RUNTIME.md) §6), and this ships today: every state file
-reads as either wholly its old contents or wholly its new contents. The
-resume markers exist on disk — `current_generation`, and the presence
-of the `outcome` block in `experiment.json` — but the resume protocol
-that reads them to restart an interrupted loop is planned (see
-[RUNTIME.md](RUNTIME.md) §4). This layer therefore guarantees no torn
-writes today; automatic crash-resume is the half that has not shipped.
+[RUNTIME.md](RUNTIME.md) §6), so every state file reads as either wholly
+its old contents or wholly its new contents. The resume markers on disk
+— `current_generation`, and the presence of the `outcome` block in
+`experiment.json` — are read at `evolve` start by `prepare_resume`
+(`src/zicato/runtime/resume.py`, called from
+`src/zicato/evolve/loop.py`). It clears the dead run's `runtime/` state
+and then classifies the latest generation: an un-outcomed generation
+with a readable experiment, a snapshot and at least one `loss.json`
+resumes in place, reusing the persisted patches and the cached board
+units; every other shape discards the directory and re-runs. This layer
+therefore guarantees both no torn writes and a conservative restart (see
+[RUNTIME.md](RUNTIME.md) §4).
 
 #### Where atomicity matters
 
@@ -613,7 +615,7 @@ Pathway:    Orchestrator wedged before it could time-out the
             worker. Supervisor sees:
               - heartbeat stale ⇒ broadcast "stalled"
               - active_runs/{run_id}.json's wall_clock_deadline
-                passed AND heartbeat_at stale ⇒ escalate worker
+                passed AND last_progress stale ⇒ escalate worker
                 directly (SIGTERM → grace → SIGKILL).
             Supervisor's escalation is independent of the
             orchestrator. Worker dies. Orchestrator's status
@@ -672,19 +674,23 @@ Operator sees: evolve exits with a clear error; existing state
                re-runs; resume protocol picks up.
 ```
 
-## 4. What is shipped and what is planned
+## 4. What is in the build, and what is not
 
-### 4.1 Shipped today
+### 4.1 What is in the build
 
 The shipped build contains:
 
-- Timeout budgets at two run granularities: per board entry
-  (`wall_clock_budget_seconds`) and per whole invocation
+- Timeout budgets at three granularities: per board entry
+  (`wall_clock_budget_seconds`), per whole invocation
   (`evolve --max-wall-clock-seconds`, enforced both between rounds and
-  within a round). The per-auxiliary-call wrapper, a 120-second budget
-  on the proposer, emulator, and judge `auxiliary_call_llm` sites, is
-  the follow-up described in §5 and is not yet threaded through those
-  call sites.
+  within a round), and per auxiliary LLM call. The per-call budget,
+  tunable with `evolve --aux-call-timeout`, covers the proposer,
+  emulator, and judge `auxiliary_call_llm` sites and is
+  threaded through those call sites by
+  `src/zicato/aux_timeout.py`, which the proposer
+  (`src/zicato/proposer/proposer.py`), the emulator
+  (`src/zicato/emulator/emulator.py`) and the rubric grader
+  (`src/zicato/board/rubric.py`) each import.
 - Structured cancellation cleanup in the runner and in the per-entry
   adapter calls.
 - **The subprocess worker boundary.** Every board-entry run executes
@@ -707,25 +713,22 @@ The shipped build contains:
 - The `.zicato/runtime/` state files and the dashboard service that
   reads them.
 
-### 4.2 Planned: the resume protocol
+### 4.2 What is unbuilt
 
-Three things are not yet in the build:
+Two things are not in the build:
 
-- The resume protocol on orchestrator restart. The markers exist;
-  reading them to resume does not.
 - The `zicato status` and `zicato kill` commands. The dashboard's kill
-  control is the available path for that.
+  control and `zicato health` are the available paths.
 - The richer circuit-breaker signals — hypothesis match-rate decay and
-  same-drift-kinds detection — beyond the consecutive-reject counter.
+  same-drift-kinds detection — beyond the consecutive-reject counter and
+  the degenerate-health stop (§2.5).
 
-With the subprocess worker boundary in place, the floor is the full
-six-layer model: an uncooperative inner harness is hard-killed at the
-per-run worker boundary, and a harness that honours `CancelledError` is
-covered cooperatively by the timeouts and structured cancellation
-first. What remains is resume. A mid-tournament kill loses in-flight
-work to re-runs, which the unit cache makes cheap, and the resume
-protocol that would read the existing markers to skip completed work is
-still to be built.
+All six layers are in the build. An uncooperative inner harness is
+hard-killed at the per-run worker boundary, a harness that honours
+`CancelledError` is covered cooperatively by the timeouts and structured
+cancellation first, and a mid-tournament kill is reconciled on the next
+start by the conservative resume protocol (§2.6). A discarded round
+costs one re-run, which the unit cache makes cheap.
 
 ### 4.3 Shipped: the dashboard (observability)
 
@@ -734,14 +737,19 @@ of the Rust binary, auto-spawned by `evolve`. It adds no robustness
 layer; it makes the layers' state visible to the operator. See
 [DASHBOARD.md](DASHBOARD.md).
 
-### 4.4 Partially shipped: the dashboard control surface
+### 4.4 Shipped: the dashboard control surface
 
-The write side of the control-file protocol ships: the dashboard's POST
-`/api/control/*` endpoints drop files under `control/`. The
-orchestrator's consume-at-safe-points half, the `control_log/` audit,
-and gate-override confirmation are planned. Neither half adds a
-defense; the operator's actions are recorded, and once consumed they
-are applied at safe points.
+Both sides of the control-file protocol ship. The dashboard's POST
+`/api/control/*` endpoints drop files under `control/`, and the
+orchestrator consumes them at safe points — between rounds
+(`src/zicato/evolve/loop.py`) and at the start of a round for
+`skip_round` (`src/zicato/evolve/gauntlet.py`) — through
+`src/zicato/runtime/control_consumer.py`. A consumed command is archived
+under `control_log/` with a JSON sidecar naming the consumer and the
+reason, and a gate override is recorded in the outcome record and the
+journal rather than applied silently. The protocol adds no defense
+layer; it records the operator's actions and applies them at safe
+points.
 
 ## 5. Auxiliary model-call timeout follow-up
 

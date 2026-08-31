@@ -12,9 +12,10 @@ The terms are listed alphabetically.
 
 The `HarnessAdapter` protocol implementation that decouples zicato
 from any specific multi-agent framework. The adapter is what zicato
-talks to; the inner harness is what the adapter wraps. The shipped
-adapter targets the agent development kit (ADK) the harness runs on;
-LangChain and plain-callable adapters are planned.
+talks to; the inner harness is what the adapter wraps. The one
+adapter in the tree (`src/zicato/adapters/adk.py`) targets the agent
+development kit (ADK) the harness runs on; any other framework needs its
+own implementation of the protocol.
 An adapter has exactly two methods of interest to zicato:
 `run_entry(entry, sinks=[...])` and `mutation_points()`. See
 [ARCHITECTURE.md §4.1](ARCHITECTURE.md#41-harnessadapter).

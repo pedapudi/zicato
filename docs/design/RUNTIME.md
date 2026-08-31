@@ -22,12 +22,11 @@ workspace.
 > (`src/zicato/_tournament_worker.py`, spawned by
 > `src/zicato/tournament/runner.py`), which lets a per-run wall-clock
 > budget be hard-enforced by killing the process and gives each run a
-> fresh interpreter, so no module cache carries between generations. One
-> piece remains planned: orchestrator-side consumption of control
-> commands. The dashboard writes `control/` files today, and the
-> orchestrator does not read them at its safe points. Sections that
-> describe a shape which has not shipped are marked **(planned)**
-> inline.
+> fresh interpreter, so no module cache carries between generations. The
+> control protocol is wired end to end: the dashboard writes `control/`
+> files and the orchestrator consumes them at its safe points through
+> `src/zicato/runtime/control_consumer.py`. Sections describing a shape
+> that is not in the build say so inline.
 >
 > **Transport fidelity across the worker boundary.** Scoring happens
 > inside the subprocess, and two guarantees keep a worker's verdict
@@ -102,7 +101,7 @@ Python memory or only in the supervisor's memory.
 │   ├── reject/
 │   │   └── {generation_id}         # presence = "force reject"
 │   └── rubric_replacement.txt      # contents = new rubric body
-└── control_log/                    # consumed commands persist here for audit (planned)
+└── control_log/                    # consumed commands persist here for audit
     ├── 2026-05-14T12:34:50Z_pause_epoch.json
     └── ...
 ```
@@ -114,8 +113,8 @@ can read back the *actually-bound* port rather than assume one. The
 watchdog supervisor is auto-spawned by `evolve` as a child process; it
 does not write a `.pid` / `.stdout` / `.stderr` file under `runtime/`
 (its stdio is inherited from `evolve`). `control_log/` is created by
-the runtime helpers, but the audit-on-consume flow is **(planned)** —
-see §2.5.
+the runtime helpers, and every consumed command is archived into it with
+a JSON sidecar — see §2.5.
 
 ### 2.1 `lock.json` — exclusive workspace lock
 
@@ -344,12 +343,12 @@ contention, because each worker is the sole writer of its own file.
 > `write_command`) drop the command files described below atomically.
 > The runtime module also exposes the **consume side**
 > (`consume_command`, `is_paused`, `list_pending_commands`), which
-> moves a consumed file into `control_log/`. What is **(planned)** is
-> the orchestrator *calling* the consume side: the evolve loop does not
-> yet read `control/` at its safe points, so a command written today is
-> recorded but not yet acted on. The intended contract is below.
+> moves a consumed file into `control_log/`. The orchestrator calls it:
+> `src/zicato/runtime/control_consumer.py` is invoked between rounds
+> from `src/zicato/evolve/loop.py`, and at the head of a round for
+> `skip_round` from `src/zicato/evolve/gauntlet.py`.
 
-The orchestrator is to read `control/` at **safe points only** —
+The orchestrator reads `control/` at **safe points only** —
 between board entries, between rounds, between epoch lifecycle stages —
 never mid-run. When a command is consumed, the file is moved
 atomically into `control_log/` with a timestamp prefix, preserving
@@ -365,8 +364,8 @@ contract.
 | `control/pause_epoch` | dashboard "pause" button | empty file; presence is the signal |
 | `control/skip_round` | "skip" button on active round | empty file |
 | `control/kill_runs/{run_id}` | "kill" button on a run row | empty file per run |
-| `control/promote/{gen_id}` | "force promote" button (planned) | empty file per generation |
-| `control/reject/{gen_id}` | "force reject" button (planned) | empty file per generation |
+| `control/promote/{gen_id}` | "force promote" button | empty file per generation |
+| `control/reject/{gen_id}` | "force reject" button | empty file per generation |
 | `control/rubric_replacement.txt` | "edit proposer brief" panel | text file; contents replace `brief.md` |
 
 Consumed-command record in `control_log/`:
@@ -382,10 +381,13 @@ Consumed-command record in `control_log/`:
 }
 ```
 
-The audit trail is what makes an operator override safe. The planned
-gate-override commands, `promote` and `reject`, are recorded in the
-audit log next to the original tournament record, so the journal
-cannot be rewritten silently.
+The audit trail is what makes an operator override safe. The
+gate-override commands, `promote` and `reject`, are claimed at the gate
+by `claim_gate_override` (`src/zicato/runtime/control_consumer.py`) and
+recorded in the outcome record and the journal next to the original
+tournament verdict, so the journal cannot be rewritten silently. An
+override queued for a different generation is left in place rather than
+applied to the wrong round.
 
 ## 3. The watchdog supervisor binary
 
@@ -611,8 +613,8 @@ Inside `.zicato/runtime/` the writer rules are strict:
 | `dashboard.json` | dashboard service | orchestrator (URL readback) |
 | `active_tournament.json` | orchestrator | supervisor, dashboard |
 | `active_runs/{run_id}.json` | the per-run subprocess **worker** that owns `run_id`; the orchestrator only reaps a dead worker's file | supervisor, dashboard |
-| `control/<command>` | dashboard service | orchestrator (planned consumer) |
-| `control_log/*` | orchestrator (planned: on consume) | dashboard |
+| `control/<command>` | dashboard service | orchestrator, at its safe points |
+| `control_log/*` | orchestrator, on consume | dashboard |
 
 There are no shared writers. Every file has exactly one process that
 writes to it, and concurrent readers are safe because every write is an
@@ -634,13 +636,14 @@ error.
 
 ## 4. Resume semantics
 
-> **(Planned.)** The crash-resume *protocol* below — inferring where a
-> prior interrupted `evolve` left off and continuing — is **not yet
-> shipped** (see §8). The durable artifacts and resume *markers* it
-> relies on (atomic writes, the `outcome` block, `current_generation`)
-> ship today; reading them to auto-resume is the planned half.
+> The crash-resume protocol below is in the build:
+> `prepare_resume` (`src/zicato/runtime/resume.py`) runs once at
+> `evolve` start, after the workspace lock is taken and before the round
+> loop, and is called from `src/zicato/evolve/loop.py`. It reads the
+> durable resume markers this section describes — atomic writes, the
+> `outcome` block, `current_generation`.
 
-`zicato evolve` is designed to be restartable. The operator can
+`zicato evolve` is restartable. The operator can
 SIGTERM it, restart the machine, and re-run `zicato evolve` and the
 loop continues from wherever it was when interrupted.
 
@@ -782,7 +785,7 @@ The worker then:
 
 The worker also runs a per-run heartbeat task — an `asyncio` task or a
 daemon `threading.Thread`, whichever the adapter integrates with more
-cleanly — that bumps `heartbeat_at` on its own
+cleanly — that bumps `last_progress` on its own
 `active_runs/{run_id}.json` every second. This is the signal the
 supervisor uses to detect a stalled worker independently of
 orchestrator health.
@@ -1369,8 +1372,8 @@ The watchdog supervisor logs via `tracing` (level set by `--log` /
 |---|---|---|
 | watchdog `/statusz` | The watchdog's own view: heartbeat age, per-run staleness, recent escalations. | yes |
 | dashboard `GET /api/state` | Composite live snapshot — heartbeat, active tournament, active runs, lineage — plus the rest of the API in [DASHBOARD.md](DASHBOARD.md) §6. | yes |
-| `zicato status` one-shot CLI | A filesystem-only snapshot that needs no running supervisor. | **planned** — not in the shipped CLI |
-| `zicato kill <run_id>` CLI | Write `control/kill_runs/{run_id}` and wait for consumption. | **planned** — use the dashboard's kill control instead |
+| `zicato status` one-shot CLI | A filesystem-only snapshot that needs no running supervisor. | **unbuilt** — no such command in the CLI |
+| `zicato kill <run_id>` CLI | Write `control/kill_runs/{run_id}` and wait for consumption. | **unbuilt** — the dashboard's kill control is the available path |
 
 The dashboard's `GET /api/*` endpoints read the state files directly,
 so the operator can inspect even a half-broken setup ("did the
@@ -1386,9 +1389,9 @@ below is the runtime layer's own staging.
 | Stage | What lands |
 |---|---|
 | **The workspace lock and heartbeat** | `.zicato/runtime/lock.json`, `heartbeat.json` written live by `HeartbeatBeater`, and `asyncio.wait_for` per-call timeouts. **Shipped.** |
-| **The full runtime layout and the watchdog** | The complete `.zicato/runtime/` layout with atomic writes; the Rust watchdog supervisor in its watchdog role, auto-spawned by `evolve`; escalation from SIGTERM through a grace period to SIGKILL; and subprocess tournament workers with hard per-run wall-clock budgets (`_tournament_worker.py`). **Shipped**, except that the resume protocol and the `zicato status` and `zicato kill` commands remain **planned**. |
+| **The full runtime layout and the watchdog** | The complete `.zicato/runtime/` layout with atomic writes; the Rust watchdog supervisor in its watchdog role, auto-spawned by `evolve`; escalation from SIGTERM through a grace period to SIGKILL; and subprocess tournament workers with hard per-run wall-clock budgets (`_tournament_worker.py`), and the conservative crash-resume protocol (`runtime/resume.py`). **Shipped**, except for the `zicato status` and `zicato kill` commands. |
 | **The dashboard service** | The live dashboard, served over HTTP and server-sent events as a separate Python service auto-spawned by `evolve`. **Shipped.** |
-| **Interactive dashboard controls** | The dashboard's POST control endpoints and the write side of the control-file protocol are **shipped**. The orchestrator's consumption of `control/` at safe points and the `control_log/` audit are **planned**. |
+| **Interactive dashboard controls** | **Shipped** on both sides: the dashboard's POST control endpoints and the write side of the control-file protocol, and the orchestrator's consumption of `control/` at its safe points with the `control_log/` audit (`runtime/control_consumer.py`). |
 
 The staging is by design. The watchdog and atomic-write safety work is
 the production-readiness pass, and the dashboard is a thick layer on top

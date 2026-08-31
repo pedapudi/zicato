@@ -5,7 +5,16 @@
 > the *design direction* for evolving it (replication-based iterated
 > racing). The "Today" sections are reconciled against the code in
 > `src/zicato/tournament/` and `src/zicato/orchestrator.py`; the
-> "Proposed" sections are not yet implemented and are clearly marked.
+> "Proposed" sections are unbuilt and are marked as such.
+>
+> One recommendation in this document has since been adopted: replication
+> is a per-structure contract default. The gauntlet, Swiss and both
+> elimination structures default `tournament.params["replicates"]` to 2,
+> and racing pins it to 1 because escalating board slices replicate
+> intrinsically (`src/zicato/selection/strategies/`). Passages below that
+> reason from a single unreplicated duel describe the cheapest
+> configuration, which an operator can still pin, rather than the
+> default.
 
 Selection is the most consequential part of zicato. Everything else —
 mutation enumeration, the proposer, telemetry, the dashboard — exists
@@ -196,8 +205,9 @@ the same instances are used for both sides, so shared difficulty cancels
 available).
 
 **Verdict for zicato.** This is zicato's family. The promote gate is an
-AlphaGo-Zero-style margin test. The gap is that zicato does **not yet
-replicate** — it runs the board once. §3 and §7 make this precise.
+AlphaGo-Zero-style margin test. Replication is the second half of the
+family, and it is a contract knob whose default is 2 per duel for every
+structure except racing. §3 and §7 make the argument precise.
 
 ### Family ③ — Single-elimination bracket (triage by resource)
 
@@ -253,8 +263,10 @@ the upgrade in §9 is to make it elitism-with-replication.
 
 ## 3. Where zicato sits today: the king-of-the-hill gauntlet
 
-The shipped mechanism is a **king-of-the-hill gauntlet** — a degenerate,
-single-replicate instance of the statistical-gate family (§2). There is one reigning champion
+The shipped mechanism is a **king-of-the-hill gauntlet**, an instance of
+the statistical-gate family (§2) that degenerates to a single duel per
+round and, at `replicates = 1`, to a single unreplicated
+measurement. There is one reigning champion
 per epoch (the generation named by the per-epoch `current_generation`
 marker). Each round mounts exactly one challenger against it.
 
@@ -593,9 +605,8 @@ sharpens why zicato optimises for simple regret rather than cumulative
 regret. It also reveals that zicato's gate consumes a **paired,
 relative** comparison, which places it in the **dueling-bandit**
 subfield. That subfield
-has algorithms zicato's single-replicate gauntlet is a degenerate case
-of, and adopting them is the same destination §9 reaches from the racing
-direction.
+has algorithms the gauntlet is a degenerate case of, and adopting them
+is the same destination §9 reaches from the racing direction.
 
 ### 6.1 The regret zicato minimises
 
@@ -735,10 +746,11 @@ the bandit idiom:
    iterated racing in §9, which races the `K`-field and crowns the
    most-replicated survivor.
 
-**The size of the gap.** zicato today is a **degenerate,
-single-replicate dueling bandit**: one challenger, one duel, a fixed
-margin, no confidence bound, no replication. That is the cheapest
-legitimate instance of the framework. The bandit view's recommendation
+**The size of the gap.** A gauntlet round is a **degenerate dueling
+bandit**: one challenger, one duel, a fixed margin, and no confidence
+bound. At `replicates = 1` it also carries no replication, which is the
+cheapest legitimate instance of the framework; the shipped default of 2
+buys one repeat of each measurement. The bandit view's recommendation
 is the one §9 reaches from racing: add replication, turn the fixed
 margin into a confidence-bounded relative test, and generalise "beat the
 champion" to Condorcet or Copeland identification once a field exists. Both derivations reach the same design: optimal stopping

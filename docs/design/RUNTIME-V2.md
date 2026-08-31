@@ -21,10 +21,10 @@ and polling or inotify path:
 
 - **live state** — orchestrator/runner *produce* `heartbeat.json`,
   `active_runs/*`, `active_tournament.json`; dashboard + supervisor *consume*.
-- **control commands** — dashboard *produces* `control/*`; the orchestrator is
-  the intended consumer. At the time this proposal was written the consumer was
-  **unwired**: the dashboard's pause, skip, promote, and reject buttons wrote
-  files that no process read.
+- **control commands** — dashboard *produces* `control/*`; the orchestrator
+  *consumes* them at its safe points
+  (`src/zicato/runtime/control_consumer.py`). The consumer was unwired when
+  this proposal was written, which is the gap the staged plan below closes.
 - **kill markers** — parent *produces* `control/kill_requests/<run>`; supervisor
   *consumes*.
 - **telemetry** — workers *produce* `events.jsonl`; reducer + dashboard *consume*.

@@ -4,6 +4,14 @@
 > records what the tree contained on the analysis date, with the reasoning
 > behind each finding. For the system as it stands, read the design documents
 > it cites and the development guide under `docs/dev-guide/`.
+>
+> Two of its recommendations have since been adopted, so the sections that
+> call them unbuilt are stale: sampling diversity within a best-of-N slate
+> ships as the per-slot edit-class hint
+> (`EDIT_CLASS_HINTS` in `src/zicato/proposer/hints.py`, applied in
+> `src/zicato/proposer/best_of_n.py`), and the noise-aware defaults raised
+> `replicates` to 2 for every structure except racing
+> (`src/zicato/selection/strategies/`).
 
 _Analysis date: 2026-07-01. Every code snippet below is copied verbatim from
 the file named in its caption._

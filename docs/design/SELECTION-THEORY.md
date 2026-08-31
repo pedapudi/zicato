@@ -1,13 +1,19 @@
 # Selection theory — winner-resolution & rating under noise
 
-> **Status.** RESEARCH / DESIGN NOTE. **Nothing in this document is
-> implemented.** It is a literature survey of tournament-solution,
-> social-choice, and selection-under-noise methods, mapped onto zicato's
-> regime, with a ranked recommendation. The recommendation is framed as
-> *future* work: the endorsed methods become new **`tournament.params`**
-> (a `resolver` knob and a `rating` knob) layered *underneath* the five
-> existing structures — **not** new top-level structures. No source,
-> config schema, or test in the tree changes because of this note.
+> **Status.** A literature survey of tournament-solution, social-choice,
+> and selection-under-noise methods, mapped onto zicato's regime, with a
+> ranked recommendation. The recommendation was that the endorsed methods
+> become `tournament.params` knobs — a `resolver` knob and a `rating`
+> knob — layered underneath the five existing structures rather than
+> becoming new top-level structures.
+>
+> Most of that recommendation is now in the build. Both knobs are read
+> from the params block (`src/zicato/selection/standings_ext.py`), the
+> Ranked-Pairs resolver behind a Smith-set prune is
+> `src/zicato/selection/resolve.py`, and the Bradley-Terry and
+> Plackett-Luce fits are `src/zicato/selection/rating.py`. Both are
+> opt-in and default off. The maximal-lottery resolver (§8) and the
+> console renderings (§10) are unbuilt; each section says so in place.
 
 This is the companion to two shipped docs:
 
@@ -496,11 +502,13 @@ simultaneous contestants) board runs.
 
 ---
 
-## 8. The recommendation (ranked, all FUTURE work)
+## 8. The recommendation, ranked
 
-Ranked, with the operating rule woven through. **None of this is
-implemented.** Each becomes a `tournament.params` knob (§9), layered on a
-round-robin/swiss scheduler — not a new top-level structure.
+Ranked, with the operating rule woven through. Each entry is a
+`tournament.params` knob (§9) layered on a round-robin or Swiss
+scheduler rather than a new top-level structure. The first two are in
+the build and default off; the maximal lottery is unbuilt, with no
+implementation anywhere in `src/`.
 
 1. **Ranked Pairs (Tideman) as the winner-resolution layer over
    swiss/round-robin.** Deterministic, Condorcet-consistent, margin-aware,
@@ -534,15 +542,16 @@ owns promotion**, so the protected-incumbent invariant
 
 ---
 
-## 9. How this would slot in (future config sketch — NOT implemented)
+## 9. How the knobs slot in
 
 The endorsed methods are **resolvers and a rating model**, layered on the
-existing schedulers — **not** new structures. The natural surface is two
-new optional keys in the `tournament.params` block that swiss (or a new
-round-robin) reads:
+existing schedulers rather than added as new structures. The surface is
+two optional keys in the `tournament.params` block, read by
+`resolver_token` and `rating_token` in
+`src/zicato/selection/standings_ext.py`:
 
 ```jsonc
-// FUTURE / SPECULATIVE — no loader, strategy, or test reads these today.
+// Both keys are read; both default off when absent.
 "tournament": {
   "structure": "swiss",            // an existing scheduler produces the matrix
   "params": {
@@ -575,12 +584,11 @@ keys exist in the loader, the strategies, or the tests today.
 
 ---
 
-## 10. Visual language (Console — design-only, NOT built)
+## 10. Visual language for the console
 
-> **Status.** As speculative as the rest of this note. The duel matrix is
-> not even surfaced in the dashboard today. This section records *how each
-> method would render* in the existing Console idiom, so the dashboard
-> design travels with the math.
+> **Status.** Unbuilt. The duel matrix is not surfaced in the dashboard.
+> This section records how each method would render in the existing
+> console idiom, so the visual design travels with the math.
 
 These methods all derive from one object — the **pairwise duel matrix** —
 so the idiomatic answer is **one honest substrate plus a switchable

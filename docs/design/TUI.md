@@ -237,11 +237,12 @@ terminal at all mid-round), then the **progressive live models** (the live
 ladder is the most-watched surface), then **Board**, then the **x-ray** (the
 Instrument lens already lands one keystroke away from it).
 
-The service does not yet serve a **proposer recommendation queue** (issue
-#169). The Instrument lens's queue is built from board-reflection findings,
-and the row shape plus `_apply_command` are the join point for the proposer's
-own recommendations once the service serves them. The queue shows only the
-source that exists.
+The service serves a **proposer recommendation queue**
+(`api_proposer_recommendations` over `query.build_proposer_recommendations`,
+`src/zicato/dashboard/endpoints.py`), which the Instrument lens does not yet
+read: its queue is built from board-reflection findings alone. The row shape
+plus `_apply_command` are the join point for the proposer's own
+recommendations (issue #169).
 
 ## Degrading
 
