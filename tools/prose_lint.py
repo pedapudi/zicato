@@ -1,7 +1,7 @@
 """Report prose that a reader outside the development history cannot decode.
 
 Documentation, the README, docstrings, and comments are read by people who
-have the tree and nothing else. Six constructions reliably break that: each
+have the tree and nothing else. Seven constructions reliably break that: each
 one carries a meaning that was obvious while the change was being made and
 is unrecoverable afterwards. This tool finds them and reports them; it
 rewrites nothing.
@@ -39,6 +39,16 @@ bare-issue-reference
     An issue number standing where a statement belongs. The number is no
     description, and a reader without the tracker learns nothing from it.
     An issue number beside a plain statement passes.
+
+temporal-hedge
+    A word pinning a claim to the unnamed moment it was written — `today`,
+    `currently`, `at present`. Once that moment passes the claim cannot be
+    checked against anything, and a status that has since changed goes on
+    reading as the present one, which is where stale status claims sit.
+    An audit that searched for the explicit status words (`planned` and
+    `not yet`) left eleven false claims standing behind these hedges.
+    Reported for review rather than as a failure, because a named date or
+    a stated condition beside the hedge makes it exact.
 
 What is read: Markdown files, and Python docstrings and comments, under the
 scanned roots — the documentation tree, the README and CHANGELOG, the runtime
@@ -157,6 +167,12 @@ RULES: tuple[Rule, ...] = tuple(
             re.IGNORECASE,
         ),
         ("bare-issue-reference", r"^\s*#[0-9]+ |^\s*\(#[0-9]+\)\s*$", FAILURE, re.NOFLAG),
+        (
+            "temporal-hedge",
+            r"\b(today|currently|at present|as of now|for now)\b",
+            REVIEW,
+            re.IGNORECASE,
+        ),
     )
 )
 
