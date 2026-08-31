@@ -31,7 +31,7 @@ The wrapper neither narrows nor widens the registry: whatever
 ``DEFAULT_PROPOSER_TOOLS`` contains is exactly what it serves. What
 belongs on the sanctioned proposer surface — which tools may write (and
 into what), which may query the training slice and under what redaction
-— is therefore decided in :mod:`zicato.proposer.tools`, not here. Do not
+— is therefore decided in :mod:`zicato.proposer.tools` rather than here. Do not
 read a tool's presence on this transport as a second sanction; there is
 only the one, upstream.
 
@@ -210,7 +210,7 @@ def build_mcp_server(ctx: ProposerToolContext) -> Server:
     context var is set and reset per call exactly as the ADK path does —
     ``ctx`` is never installed process-wide.
 
-    Errors are RESULTS, not transport faults: a tool raising
+    Errors are RESULTS rather than transport faults: a tool raising
     :class:`ValueError` — the tools' actionable-retry signal, e.g. an
     escape-guard rejection or an unknown mutation id — comes back as an
     error-flagged tool result carrying the message, so the client can

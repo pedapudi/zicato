@@ -409,8 +409,7 @@ class PiProposerAgent:
         surface rolls the epoch and is asserted in one place rather than
         three. Nothing else in this module needs to change.
 
-        Empty today, so the launched surface is exactly the terminating
-        tool.
+        Empty, so the launched surface is the terminating tool alone.
         """
         return ()
 
@@ -531,7 +530,7 @@ class _PiBestOfNProposerAgent(BestOfNProposerAgent):
 
     Only the critique differs from the base wrapper: the review is a
     structured ``select_candidate`` tool call on the session that already
-    sampled the slate, not a fresh auxiliary LLM call. The base emits the
+    sampled the slate rather than a fresh auxiliary LLM call. The base emits the
     ``critique_selected`` event — slate summary included — for both routes.
     """
 

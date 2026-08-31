@@ -35,11 +35,11 @@ Collusion guard
 ---------------
 The ``is``-identity callable guard
 (:func:`zicato.core.workspace.assert_distinct_callables`) does not apply
-here: the proposer runs on its *own* model, not the auxiliary callable. The
-proposer's model merely needs to differ from the harness model — a
-documented author responsibility, not a hard gate. When both model strings
-are trivially discoverable we emit a soft WARNING on a match; we do not
-build a hard guard.
+here: the proposer runs on its *own* model rather than on the auxiliary
+callable. The proposer's model merely needs to differ from the harness
+model, which is a documented author responsibility rather than a hard gate.
+When both model strings are discoverable the wrapper emits a soft WARNING on
+a match, and builds no hard guard.
 
 Lazy ADK imports
 ----------------
@@ -145,13 +145,13 @@ def build_default_adk_agent(model: Any) -> Any:
 
     This is the agent zicato runs when a contract does NOT configure a
     proposer dir — the DEFAULT proposer. It is a native ADK
-    :class:`~google.adk.agents.LlmAgent` that declares ``model=`` (the model
-    string the orchestrator threads from the workspace's auxiliary model,
-    via :attr:`ProposerContext.model`) and opts into the full read-only
+    :class:`~google.adk.agents.LlmAgent`. It declares ``model=``, the model
+    string the orchestrator threads from the workspace's auxiliary model via
+    :attr:`ProposerContext.model`, and it opts into the full read-only
     proposer tool registry
-    (:data:`zicato.proposer.tools.DEFAULT_PROPOSER_TOOLS`), so the default
-    proposer can ground its proposal in the parent snapshot, the journal,
-    and the analyzer insights while it reasons — capabilities the
+    (:data:`zicato.proposer.tools.DEFAULT_PROPOSER_TOOLS`). The default
+    proposer can therefore ground its proposal in the parent snapshot, the
+    journal, and the analyzer insights while it reasons, which the
     single-shot text shim cannot express.
 
     ``model`` is the agent's own model (a model string ADK understands or a
@@ -211,8 +211,8 @@ def _resolve_generation_root(ctx: ProposerContext) -> Path:
     argument there, so the real path always carries it). The derivation
     below is the fallback for a context assembled by hand — a test, a
     standalone propose — and exists only so those keep working; it
-    duplicates the generation store's path convention, which is precisely
-    why the field was added.
+    duplicates the generation store's path convention, which is why the
+    field exists.
 
     The read-only tools (``read_mutable_file`` / ``grep_mutable``) read the
     PARENT generation snapshot — the tree this round is about to patch. We
@@ -222,7 +222,7 @@ def _resolve_generation_root(ctx: ProposerContext) -> Path:
     from the lineage coordinates already on the context. When no
     ``workspace_root`` is set (a standalone propose with no on-disk
     workspace), we use the current directory. The read/grep tools then simply
-    find no files unless the caller deliberately assembled the context there,
+    find no files unless the caller assembled the context there on purpose,
     which is the correct degenerate behaviour for a contextless call.
 
     A hand-built context can name a workspace directory before it has a
@@ -293,7 +293,8 @@ class ADKProposerAgent:
     #: ``build_proposer_agent`` sets this for the builtin-default spec. The
     #: per-run model is the auxiliary model the operator already configured,
     #: so the model-collusion smell test is intentionally skipped for the
-    #: default (it is the documented, expected posture, not an author error).
+    #: default (it is the documented, expected posture rather than an author
+    #: error).
     builtin_default: bool = False
 
     def _load_agent(self, ctx: ProposerContext | None = None) -> Any:
@@ -379,12 +380,11 @@ class ADKProposerAgent:
         The proposer runs on its OWN model, so the hard ``is``-identity
         callable guard does not apply — but an author who points the
         proposer at the very model the harness runs is asking for
-        collusion. We can only check this when both strings are trivially
-        discoverable: the agent's ``model`` may be a string or a built
-        ``BaseLlm`` (in which case its ``model`` attribute is the string),
-        and the harness model string is not on the proposer context, so we
-        compare against ``ctx.model`` (the AUXILIARY model) only as a
-        best-effort smell test. This is advisory: it logs a WARNING and
+        collusion. The check runs only when both strings are discoverable:
+        the agent's ``model`` may be a string or a built ``BaseLlm``, whose
+        ``model`` attribute is the string. The harness model string is not on
+        the proposer context, so the comparison is against ``ctx.model`` (the
+        AUXILIARY model), as a best-effort smell test. This is advisory: it logs a WARNING and
         returns; it never raises and never blocks the run.
         """
         proposer_model = getattr(agent, "model", None)
@@ -470,7 +470,7 @@ class ADKProposerAgent:
         """
         agent = self._load_agent(ctx)
         # The model-collusion smell test is a check on AUTHOR-supplied custom
-        # agents. The built-in default deliberately runs on the auxiliary
+        # agents. The built-in default runs by design on the auxiliary
         # model string the operator configured, so a match there is the
         # expected posture rather than a misconfiguration — skip the warning.
         if not self.builtin_default:
@@ -489,7 +489,7 @@ class ADKProposerAgent:
 
         # The revise channel seeds the FIRST attempt's feedback (empty for
         # every non-revise call — byte-identical input); retries then
-        # overwrite it with their own concrete errors exactly as before.
+        # overwrite it with their own concrete errors.
         feedback = ctx.revise_feedback
         attempt_errors: list[str] = []
         total_attempts = ctx.max_retries + 1

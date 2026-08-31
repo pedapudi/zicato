@@ -6,14 +6,14 @@ that is fine. For a file-marker ``replace`` — where ``new_content`` is an
 entire post-edit module that must satisfy every constraint in
 ``docs/design/MUTATION-SURFACE.md`` §6 — emitting the whole module in one
 shot and hoping it satisfies A1–A4 is exactly the workload a tool-using
-agent exists to avoid. Today a violation costs a full retry round-trip
-through the propose loop, re-sending the entire manifest.
+agent exists to avoid. Without a validate step, a violation costs a full
+retry round-trip through the propose loop, re-sending the entire manifest.
 
 This module closes that loop. :func:`validate_patches` applies a DRAFT
 patch set to a scratch copy of the parent snapshot and reports what broke,
 so the proposer drafts, validates, sees ``A4: dropped 'import re'``, fixes
-it, validates again, and only then answers. Zicato's bounded retry stops
-being the main loop and becomes the rare fallback it was designed as.
+it, validates again, and only then answers. The bounded retry is then the
+rare fallback rather than the main loop.
 
 The governing principle
 -----------------------
@@ -28,7 +28,7 @@ it chose it would be grading its own work — the overfitting failure the
 tournament exists to prevent — so no tier here touches the board, the
 scoring weights, or the judges.
 
-The claim is enforced STRUCTURALLY, not by inspection: this module's import
+The claim is enforced STRUCTURALLY rather than by inspection: this module's import
 closure excludes the whole capability surface — :mod:`zicato.board` (where
 entry text is loaded), :mod:`zicato.adapters` /
 :mod:`zicato.adapter_factory` / :mod:`zicato._tournament_worker` (how a
@@ -39,16 +39,16 @@ transitive import-closure test in ``tests/test_proposer_validate.py``.
 
 That is also why the tier-3 probe lives in its own
 :mod:`zicato.proposer._load_probe` module and is reached by SPAWNING a
-subprocess rather than by importing the adapter factory here, and why the
-context plumbing this module needs was split into
-:mod:`zicato.proposer.tool_context` — importing :mod:`zicato.proposer.tools`
-for it would have dragged the analyzer, and through it the board loader,
-into the closure.
+subprocess rather than by importing the adapter factory here. It is why the
+context plumbing this module needs lives in
+:mod:`zicato.proposer.tool_context`: importing
+:mod:`zicato.proposer.tools` for it would drag the analyzer, and through it
+the board loader, into the closure.
 
-:mod:`zicato.scoring` and :mod:`zicato.tournament` are deliberately not in
-that set: every module in the repo reaches them through
+:mod:`zicato.scoring` and :mod:`zicato.tournament` are not in that set, and
+that is intended: every module in the repo reaches them through
 ``core.types -> core.scoring_config``, which imports them for TYPE
-definitions. That edge is a type-model artifact, not a capability.
+definitions. That edge is a type-model artifact rather than a capability.
 
 The three tiers
 ---------------
@@ -91,10 +91,10 @@ parent snapshot at validate time. A patched point whose ``content_hash``
 moved between them was rewritten under the proposer, so its draft is
 reasoning about text the tree no longer holds.
 
-Nothing is asked of the proposer, deliberately. An earlier revision made
-the pre-image a digest the model declared per patch; that made the guard
-opt-in (a model that omitted the field was simply not checked) and asked
-the model for arithmetic it has no reason to get right. ``Patch`` carries
+Nothing is asked of the proposer, by design. Making the pre-image a digest
+the model declares per patch would make the guard opt-in — a model omitting
+the field would simply not be checked — and would ask the model for
+arithmetic it has no reason to get right. ``Patch`` carries
 no pre-image field and must not grow one — issue #147 is explicit that the
 ``Experiment`` schema does not change.
 """
@@ -237,9 +237,9 @@ def _normalize_finding(line: str, root: Path) -> str:
     dropping the ``line:col`` prefix leaves ``<relative path> <message>``,
     which is stable under an edit elsewhere in the file.
 
-    The normalization is deliberately APPROXIMATE in one direction: a
-    genuinely new finding that is textually identical to a pre-existing one
-    at another line in the same file is suppressed. That is the right error
+    The normalization is APPROXIMATE in one direction by design: a new
+    finding textually identical to a pre-existing one at another line in the
+    same file is suppressed. That is the right error
     to make for an advisory linter — a validator that cries wolf on
     pre-existing debt is a validator the proposer learns to ignore.
     """
@@ -282,7 +282,7 @@ def _run_check(name: str, root: Path) -> tuple[bool, list[str]]:
     Returns ``(ran, finding_lines)``. ``ran`` is ``False`` when the checker
     is not installed or timed out — the caller degrades those to an
     explicit note rather than to a patch rejection, because a missing dev
-    tool is the operator's problem, not the proposer's.
+    tool is the operator's problem rather than the proposer's.
     """
     builder = STATIC_CHECKS[name]
     try:
@@ -430,13 +430,13 @@ def _pre_image_problems(
     proposer reasoned about in a version the tree no longer holds, and
     rewriting it would clobber whatever changed it.
 
-    Nothing is asked of the proposer. An earlier revision of this module
-    made the pre-image a digest the model had to declare on each patch,
-    which was worse twice over: it made the guard opt-in (a model that
-    omitted the field simply was not checked), and it asked the model to
-    do arithmetic it has no reason to get right. Comparing two
-    enumerations zicato already computes needs no cooperation and no wire
-    change — ``Patch`` carries no pre-image field and must not grow one.
+    Nothing is asked of the proposer. Making the pre-image a digest the
+    model declares on each patch would be worse twice over: it would make
+    the guard opt-in, since a model omitting the field would simply not be
+    checked, and it would ask the model to do arithmetic it has no reason
+    to get right. Comparing two enumerations zicato already computes needs
+    no cooperation and no wire change — ``Patch`` carries no pre-image
+    field and must not grow one.
 
     A point that has VANISHED from the fresh enumeration is left alone
     here: A2 (:func:`~zicato.mutation.validator.validate_post_apply`)

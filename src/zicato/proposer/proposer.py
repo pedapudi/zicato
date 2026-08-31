@@ -164,8 +164,8 @@ async def propose_experiment(
         insights for *epoch_id* (via
         :func:`zicato.analyzer.load_latest_insights`) and prepends them
         to the user prompt under a ``## Recent telemetry insights``
-        heading. When omitted, the proposer behaves exactly as before —
-        callers that pre-date the analyzer surface keep working.
+        heading. When omitted, no insights section is rendered, so a caller
+        that supplies none is unaffected.
     meta_loop_emitter:
         Optional :class:`~zicato.telemetry.meta_loop.MetaLoopEmitter` —
         the orchestrator builds one per ``evolve_n_rounds`` invocation
@@ -192,7 +192,7 @@ async def propose_experiment(
         retry budget is shared with parse-error retries — at most
         ``max_retries + 1`` LLM calls total, so the per-run wall-clock
         budget is still honoured. When omitted, no post-parse validation
-        runs and the proposer behaves exactly as before.
+        runs.
     custom_judge_names:
         Names of the custom judges declared on the active board /
         ``per_judge_weights``, forwarded to
@@ -220,10 +220,8 @@ async def propose_experiment(
         :func:`~zicato.proposer.prompts.render_system_prompt`, where a
         non-empty tuple appends a ``Proposer skills`` section after the
         brief block so each skill's guidance reaches the model as operating
-        procedure for the epoch. Empty (the default) appends nothing — the
-        built-in default proposer carries no skills, so a caller that
-        supplies none renders a byte-identical system prompt to before this
-        surface existed.
+        procedure for the epoch. Empty (the default) appends nothing; the
+        built-in default proposer carries no skills.
     restrict_visibility:
         When ``True`` (the default-on
         :attr:`~zicato.core.types.OverfittingConfig.restrict_proposer_visibility`
@@ -231,17 +229,16 @@ async def propose_experiment(
         per-entry pattern identities to counts/rates and coarsens
         experiment-memory Δscalar to buckets (OVERFITTING.md §11). ``False``
         (the default here so standalone callers are unaffected) renders the
-        verbatim prompt, byte-for-byte as before this lever existed.
+        verbatim prompt.
     failure_profile:
         Optional pre-rendered, train-slice-only, BUCKETED outcome-marginal
         block (Capability 2 of issue #18). When non-empty, a
         ``## Failure-mode profile`` section is spliced into the user prompt
-        so the proposer can target *why* answers are wrong, not just *that* a
-        scalar moved. The string is already board-anonymized + banded by its
+        so the proposer can target *why* answers are wrong rather than only
+        *that* a scalar moved. The string is already board-anonymized + banded by its
         renderer (:func:`~zicato.proposer.prompts.render_failure_mode_profile`);
-        this engine only forwards it. Empty (the default) omits the section,
-        so a caller that supplies no profile renders a byte-identical prompt
-        to before this surface existed.
+        this engine only forwards it. Empty (the default) omits the section
+        entirely.
     metric_priorities:
         Optional pre-rendered, BANDED statement of what the frozen contract
         scores (:func:`~zicato.proposer.prompts.render_metric_priorities_block`).
@@ -260,9 +257,8 @@ async def propose_experiment(
         string is already mechanically redacted by its extractor + renderer
         (:func:`~zicato.analyzer.process_exemplars.extract_process_exemplars`
         / :func:`~zicato.proposer.prompts.render_process_exemplars`); this
-        engine only forwards it. Empty (the default) omits the section, so
-        a caller that supplies no exemplars renders a byte-identical prompt
-        to before this surface existed.
+        engine only forwards it. Empty (the default) omits the section
+        entirely.
     genealogy:
         Optional sampled genealogy items (the opt-in
         ``proposer_quality.genealogy`` channel — ``docs/design/PROPOSER.md``
@@ -274,8 +270,7 @@ async def propose_experiment(
         one (in-context evolution). Each item is already banded + capped by its
         sampler (:func:`~zicato.proposer.genealogy.sample_genealogy`) — no
         entry ids, no per-entry results, no exact deltas; this engine only
-        forwards them. Empty (the default) omits the section, byte-identical to
-        before this surface existed.
+        forwards them. Empty (the default) omits the section entirely.
     calibration:
         Optional per-reign prediction-calibration summary (the opt-in
         ``proposer_quality.calibration_feedback`` channel —
@@ -319,7 +314,7 @@ async def propose_experiment(
 
     revise_feedback:
         Optional SEED for the repair-feedback loop's first attempt — the
-        best-of-N screen-informed revise channel (WS-R). When non-empty,
+        best-of-N screen-informed revise channel. When non-empty,
         the FIRST attempt already renders the repair section with this
         string in the ``feedback`` slot, exactly as a retry after a
         validation failure would; subsequent retries overwrite it with
@@ -369,7 +364,7 @@ async def propose_experiment(
 
     # The revise channel seeds the FIRST attempt's feedback (empty for every
     # non-revise call, rendering a byte-identical prompt); retries then
-    # overwrite it with their own concrete errors exactly as before.
+    # overwrite it with their own concrete errors.
     feedback = revise_feedback
     # Repair-turn carriers. Each failed attempt that produced a response
     # populates these so the NEXT attempt's prompt can echo the prior raw
@@ -402,7 +397,7 @@ async def propose_experiment(
             mutation_track_records=mutation_track_records,
         )
         # Durable input capture, BEFORE the call: an attempt that times out
-        # is precisely the one whose prompt is worth reading, and each retry
+        # is the one whose prompt is worth reading, and each retry
         # renders its own repair feedback, so every attempt lands its own
         # record. Best-effort — it cannot fail the round.
         capture_proposer_input(
@@ -542,8 +537,8 @@ async def propose_experiment(
                 err = "patches failed post-apply validation: " + "; ".join(post_apply_errors)
                 attempt_errors.append(err)
                 feedback = err
-                # Well-formed JSON whose patches broke the snapshot — a
-                # content failure, not a shape one. The validator findings
+                # Well-formed JSON whose patches broke the snapshot: a
+                # content failure rather than a shape one. The validator findings
                 # in the feedback string are the actionable signal; no
                 # prior-output echo / empty framing.
                 feedback_prior_output = ""

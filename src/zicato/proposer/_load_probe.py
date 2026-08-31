@@ -7,7 +7,7 @@ learn one round early that a patch left the harness unimportable.
 
 Why its own module
 ------------------
-The probe is deliberately NOT inlined into
+The probe is NOT inlined, by design, into
 :mod:`zicato.proposer.validate`. ``adapter.load`` imports the system under
 test, which is arbitrary operator code: it can hang, exhaust memory, spawn
 threads, or leave import side effects in ``sys.modules`` that would then be
@@ -15,7 +15,8 @@ visible to the proposer's own process. Running it in a child process with a
 timeout contains all of that, and keeping the entry point in a separate
 module means ``validate.py`` never imports
 :mod:`zicato.adapter_factory` — so the structural claim that the validate
-path has no route to the board holds by import closure, not by inspection.
+path has no route to the board holds by import closure rather than by
+inspection.
 See ``tests/test_proposer_validate.py`` for the pin.
 
 Invoked as::
@@ -28,7 +29,7 @@ and prints a single JSON object to stdout::
     {"ok": false, "error": "...", "traceback": "..."}
 
 Exit status is always ``0`` when the probe itself ran — a harness that
-fails to import is a RESULT, not a probe failure. A non-zero exit means
+fails to import is a RESULT rather than a probe failure. A non-zero exit means
 the probe could not run at all (bad arguments, unreadable workspace), and
 the caller reports that distinctly.
 

@@ -325,7 +325,7 @@ def _scan_brace_objects_anchored(text: str) -> list[str]:
     brace inside a legitimate string value is counted correctly. Spans are
     returned in document order; once a span closes, scanning resumes after
     its close so nested objects are not re-emitted. An anchor whose object
-    never closes (a genuinely dangling ``{``) yields nothing and the scan
+    never closes (a dangling ``{``) yields nothing and the scan
     advances one character — so unbalanced garbage is still rejected.
     """
 
@@ -412,8 +412,8 @@ def extract_json_object(text: str) -> str | None:
        :func:`_scan_brace_objects_anchored`), so the scan of the genuine
        JSON object is immune to malformed quoting/bracing earlier in the
        buffer. Same experiment-shaped preference as fallback 4. A
-       genuinely dangling ``{`` still yields nothing, so unbalanced garbage
-       is rejected exactly as before.
+       dangling ``{`` still yields nothing, so unbalanced garbage is
+       rejected.
 
     Returns the recovered JSON-object *string* (ready for
     :func:`json.loads`), or ``None`` when no candidate parses to a dict.
@@ -679,7 +679,7 @@ def parse_experiment_json(
         prose, a ``<think>…</think>`` reasoning wrapper, or trailing
         commentary after the object are all salvaged by
         :func:`extract_json_object` before :func:`json.loads`. Only a
-        genuinely empty response, or one with no recoverable JSON object,
+        empty response, or one with no recoverable JSON object,
         is rejected.
     epoch_id:
         The epoch this experiment belongs to (lineage coordinate).
@@ -810,8 +810,8 @@ def parse_experiment_json(
         # ``drift:custom:file_findability`` / ``drift:file_findability``
         # resolves to the same declared judge instead of a vacuous
         # rejection. Acceptance still requires the stripped token to be a
-        # REAL declared judge (or a built-in kind), so a genuinely-unknown
-        # kind is left to fail.
+        # REAL declared judge (or a built-in kind), so an unknown kind is
+        # left to fail.
         if metric_name.startswith(_JUDGE_METRIC_PREFIXES):
             bare = _strip_judge_prefixes(metric_name)
             if bare not in GOLDFIVE_DRIFT_KINDS and bare not in judge_names:

@@ -7,10 +7,9 @@ epoch" or "prefer to edit the planner's tool descriptions over the
 planner's persona" without rewriting code.
 
 The proposer brief is an *epoch-level* concept: one brief governs every
-proposer call within an epoch. It is deliberately distinct from the
-per-board-entry ``Rubric`` (see :mod:`zicato.board.rubric`), which is an
-LLM-as-judge scorer for a single board entry — the two used to share the
-name "rubric" and no longer do.
+proposer call within an epoch. It is distinct from the per-board-entry
+``Rubric`` (see :mod:`zicato.board.rubric`), which is an LLM-as-judge scorer
+for a single board entry.
 
 Two specially-named sections carry structured signal that the proposer
 enforces at validation time:

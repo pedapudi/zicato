@@ -97,7 +97,8 @@ from zicato.epoch.round_log import (
 from zicato.mutation.validator import POST_APPLY_CHECKS, classify_post_apply_error
 
 #: Observations below which a rate is reported but marked ``provisional``.
-#: Four rounds of a fresh epoch are noise, not a base rate; the marker says so
+#: Four rounds of a fresh epoch are noise rather than a base rate; the marker
+#: says so
 #: without hiding the number.
 MIN_SAMPLE_N: int = 5
 
@@ -333,7 +334,7 @@ def _read_rounds(
       the decision, the applied generations and the units all come from it.
     * The EVENTS are the whole stream, because proposal attempts are the
       opposite case: a failed attempt is not noise to be sliced away, it is
-      precisely the signal this scorecard exists to measure. Slicing to the
+      the signal this scorecard exists to measure. Slicing to the
       final span would hide the failures that caused the re-run — the rate would
       improve exactly when the proposer did worst. Sampling cost is counted the
       same way: a call spent on an attempt that later died was still spent.
@@ -344,8 +345,8 @@ def _read_rounds(
     from an ordinary slate slot (the fold folds its veto in with the slate's).
 
     A corrupt interior line raises out of :meth:`RoundLog.read` by design (the
-    append-only invariant was violated). The scorecard is a REPORT, not the
-    loop, so one damaged round must not deny the operator the other twenty —
+    append-only invariant was violated). The scorecard is a REPORT rather than
+    the loop, so one damaged round must not deny the operator the other twenty —
     it is skipped, and shows up as a gap between the round directories on disk
     and the ``rounds`` count.
     """
@@ -365,7 +366,8 @@ def _classify_attempts(
     """Count attempts hitting each check code; return ``(per_code, failed)``.
 
     An attempt is counted at most ONCE per code however many errors of that
-    code it raised — the rate is "attempts that hit A4", not "A4 errors".
+    code it raised — the rate is "attempts that hit A4" rather than "A4
+    errors".
     """
     per_code: dict[str, int] = dict.fromkeys((*POST_APPLY_CHECKS, UNCLASSIFIED), 0)
     failed = 0
@@ -417,7 +419,7 @@ def _mutation_sites(
     are then simply smaller, never wrong.
 
     The promotion credit goes to the ONE generation the decision names
-    (``provenance.promoted_generation_id``), not to every child of a promoted
+    (``provenance.promoted_generation_id``) rather than to every child of a promoted
     round. A multi-challenger structure mints several children and promotes at
     most one, so crediting the round would inflate every losing challenger's
     site to a winner — and the sites a multi-challenger round explores are
@@ -478,7 +480,8 @@ def read_epoch_scorecard(workspace_root: Path, epoch_id: str) -> ProposerScoreca
 
     Pure read: opens round logs, the epoch config and the per-generation
     experiments, and writes nothing. An epoch that never ran a round returns a
-    card whose every rate is null — which is the correct report, not an error.
+    card whose every rate is null, which is the correct report rather than an
+    error.
     """
     rounds = _read_rounds(workspace_root, epoch_id)
 
