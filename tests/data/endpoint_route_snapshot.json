@@ -1,0 +1,2282 @@
+{
+  "state": {
+    "status": 200,
+    "body": {
+      "heartbeat": null,
+      "liveness": {
+        "state": "settled"
+      },
+      "lock": null,
+      "active_runs": [],
+      "active_tournament": null,
+      "lineage": {
+        "epochs": [
+          {
+            "id": "e1",
+            "generations": [
+              {
+                "id": "v0",
+                "parent_id": null,
+                "promoted": true,
+                "created_at": "2026-01-01T00:00:00Z"
+              },
+              {
+                "id": "v1",
+                "parent_id": "v0",
+                "promoted": false,
+                "created_at": "2026-01-01T00:00:00Z"
+              }
+            ]
+          },
+          {
+            "id": "e2",
+            "generations": []
+          },
+          {
+            "id": "e0",
+            "generations": [
+              {
+                "id": "v0",
+                "parent_id": null,
+                "promoted": true,
+                "created_at": "2026-03-01T00:00:00Z"
+              }
+            ]
+          }
+        ]
+      },
+      "epoch_id": "e0",
+      "epoch": {
+        "epoch_id": "e0",
+        "contract_hash": "hash-e0",
+        "created_at": "2026-03-01T00:00:00Z",
+        "closed": false,
+        "harness": {
+          "entrypoint": "pkg.module:agent",
+          "mutable_trees": [
+            "src/pkg"
+          ]
+        },
+        "board": [
+          {
+            "entry_id": "t1",
+            "kind": "single_turn",
+            "input_preview": "Say hello.",
+            "expectation_kind": "rubric",
+            "budget_s": null,
+            "weight": 1.0,
+            "tags": [
+              "smoke"
+            ]
+          },
+          {
+            "entry_id": "t2",
+            "kind": "single_turn",
+            "input_preview": "Say goodbye.",
+            "expectation_kind": "predicate",
+            "budget_s": null,
+            "weight": 2.0,
+            "tags": []
+          }
+        ],
+        "brief": "# Brief e0\n\n## Goal\n\nName sorts first, created last — the bug mirror.\n",
+        "scoring": {
+          "pass_weight": 1.0,
+          "tournament": {
+            "structure": "gauntlet",
+            "params": {}
+          }
+        },
+        "board_split": {
+          "configured": false,
+          "enabled": false,
+          "holdout_fraction": 0.0,
+          "holdout_tags": [],
+          "entries": [
+            {
+              "entry_id": "t1",
+              "slice": "train",
+              "weight": 1.0
+            },
+            {
+              "entry_id": "t2",
+              "slice": "train",
+              "weight": 2.0
+            }
+          ],
+          "train_count": 2,
+          "holdout_count": 0,
+          "total": 2
+        },
+        "tournament": {
+          "structure": "gauntlet",
+          "params": {}
+        },
+        "mutations": [],
+        "experiments": [
+          {
+            "generation_id": "v0",
+            "parent_generation_id": null,
+            "proposed_at": "2026-03-01T00:00:00Z",
+            "hypothesis": {
+              "summary": "hyp e0 v0"
+            },
+            "outcome": {
+              "decision": "promoted",
+              "scalar_score_delta": -0.05
+            },
+            "patches": {},
+            "decision": "baseline",
+            "promoted": true,
+            "decision_label": "seed (v0)"
+          }
+        ],
+        "current_champion": "v0",
+        "holdout": null,
+        "delta_scalar_summary": {
+          "champion_spine": null,
+          "gross": -0.05
+        },
+        "journal": "",
+        "goal": "Name sorts first, created last — the bug mirror.",
+        "analysis_md": "",
+        "analysis_html_available": false,
+        "analysis_html_inline": ""
+      },
+      "paused": false,
+      "generated_at": "<masked>"
+    }
+  },
+  "workspace": {
+    "status": 200,
+    "body": {
+      "current_epoch_id": "e0",
+      "epochs": [
+        {
+          "epoch_id": "e1",
+          "goal": "First epoch chronologically.",
+          "best_scalar": null,
+          "best_generation_id": null,
+          "generation_count": 2,
+          "promoted_count": 0,
+          "closed": true,
+          "parent_epoch_id": null
+        },
+        {
+          "epoch_id": "e2",
+          "goal": "Empty epoch — no generations.",
+          "best_scalar": null,
+          "best_generation_id": null,
+          "generation_count": 0,
+          "promoted_count": 0,
+          "closed": true,
+          "parent_epoch_id": null
+        },
+        {
+          "epoch_id": "e0",
+          "goal": "Name sorts first, created last — the bug mirror.",
+          "best_scalar": null,
+          "best_generation_id": null,
+          "generation_count": 1,
+          "promoted_count": 0,
+          "closed": false,
+          "parent_epoch_id": null
+        }
+      ],
+      "sparkline": [
+        {
+          "epoch_id": "e1",
+          "scalar": null
+        },
+        {
+          "epoch_id": "e2",
+          "scalar": null
+        },
+        {
+          "epoch_id": "e0",
+          "scalar": null
+        }
+      ],
+      "ledger": [
+        {
+          "epoch_id": "e1",
+          "floor": null,
+          "champion_gen": null,
+          "champion_index": null,
+          "generation_count": 2,
+          "structure": "gauntlet",
+          "closed": true,
+          "open": false,
+          "changed_components": {
+            "board": false,
+            "brief": false,
+            "scoring": false,
+            "entrypoint": false,
+            "mutable_trees": false,
+            "structure": false,
+            "proposer": false
+          },
+          "changed_list": [],
+          "soft": false
+        },
+        {
+          "epoch_id": "e2",
+          "floor": null,
+          "champion_gen": null,
+          "champion_index": null,
+          "generation_count": 0,
+          "structure": "gauntlet",
+          "closed": true,
+          "open": false,
+          "changed_components": {
+            "board": true,
+            "brief": true,
+            "scoring": false,
+            "entrypoint": false,
+            "mutable_trees": false,
+            "structure": false,
+            "proposer": false
+          },
+          "changed_list": [
+            "board",
+            "brief"
+          ],
+          "soft": false
+        },
+        {
+          "epoch_id": "e0",
+          "floor": null,
+          "champion_gen": null,
+          "champion_index": null,
+          "generation_count": 1,
+          "structure": "gauntlet",
+          "closed": false,
+          "open": true,
+          "changed_components": {
+            "board": true,
+            "brief": true,
+            "scoring": false,
+            "entrypoint": false,
+            "mutable_trees": false,
+            "structure": false,
+            "proposer": false
+          },
+          "changed_list": [
+            "board",
+            "brief"
+          ],
+          "soft": false
+        }
+      ]
+    }
+  },
+  "health_report": {
+    "status": 200,
+    "body": {
+      "epoch_id": "e0",
+      "findings": [],
+      "healthy": true
+    }
+  },
+  "active_runs": {
+    "status": 200,
+    "body": []
+  },
+  "active_tournament": {
+    "status": 200,
+    "body": null
+  },
+  "heartbeat": {
+    "status": 200,
+    "body": null
+  },
+  "config": {
+    "status": 200,
+    "body": null
+  },
+  "live_pipeline": {
+    "status": 200,
+    "body": {
+      "running": false,
+      "stale": false,
+      "liveness": {
+        "state": "settled"
+      },
+      "phase": null,
+      "epoch_id": null,
+      "round_index": null,
+      "steps": [
+        {
+          "id": "propose",
+          "label": "propose",
+          "state": "pending",
+          "detail": ""
+        },
+        {
+          "id": "apply",
+          "label": "apply",
+          "state": "pending",
+          "detail": ""
+        },
+        {
+          "id": "run",
+          "label": "run",
+          "state": "pending",
+          "detail": ""
+        },
+        {
+          "id": "gate",
+          "label": "gate",
+          "state": "pending",
+          "detail": ""
+        }
+      ],
+      "epoch_open_step": null,
+      "active_step": null,
+      "decision": null,
+      "in_flight": 0,
+      "generated_at": "<masked>"
+    }
+  },
+  "live_execution_plan": {
+    "status": 200,
+    "body": {
+      "epoch_id": "e0",
+      "generated_at": "<masked>",
+      "board": {
+        "digest": "aaaef18030ad0c8d981d02460f8a11d9eb11e5d420816759d44276f08fa2d916",
+        "entry_count": 2
+      },
+      "note": "",
+      "stages": [
+        {
+          "id": "e:e0/baseline",
+          "kind": "baseline",
+          "label": "Baseline",
+          "purpose": "Evaluate the incoming champion before the loop proposes anything.",
+          "status": "skipped",
+          "provenance": "partial",
+          "started_at": null,
+          "ended_at": null,
+          "duration_ms": null,
+          "progress": {
+            "done": 1,
+            "total": 1
+          },
+          "coordinates": {
+            "epoch_id": "e0"
+          },
+          "outcome": {
+            "generation_ids": [
+              "v0"
+            ]
+          },
+          "children": [
+            {
+              "id": "e:e0/baseline/v0",
+              "kind": "board_sweep",
+              "label": "Board sweep — v0",
+              "purpose": "Every board entry executed against one candidate.",
+              "status": "skipped",
+              "provenance": "partial",
+              "started_at": null,
+              "ended_at": null,
+              "duration_ms": null,
+              "progress": {
+                "done": 0,
+                "total": 2
+              },
+              "coordinates": {
+                "epoch_id": "e0",
+                "generation_id": "v0"
+              },
+              "outcome": {
+                "unit_count": 0,
+                "entries_without_units": [
+                  "t1",
+                  "t2"
+                ]
+              },
+              "children": [],
+              "active": false
+            }
+          ],
+          "active": false
+        }
+      ],
+      "liveness": {
+        "state": "settled"
+      },
+      "overlay": {
+        "in_flight": 0,
+        "placed": 0,
+        "unplaced": 0,
+        "other_epoch": 0,
+        "active_path": [],
+        "phase": null,
+        "round_index": null,
+        "note": "workspace is not live; overlay withheld"
+      }
+    }
+  },
+  "proposer_recommendations": {
+    "status": 200,
+    "body": {
+      "found": true,
+      "pending": [],
+      "count": 0
+    }
+  },
+  "epoch/current": {
+    "status": 200,
+    "body": {
+      "epoch_id": "e0",
+      "contract_hash": "hash-e0",
+      "created_at": "2026-03-01T00:00:00Z",
+      "closed": false,
+      "harness": {
+        "entrypoint": "pkg.module:agent",
+        "mutable_trees": [
+          "src/pkg"
+        ]
+      },
+      "board": [
+        {
+          "entry_id": "t1",
+          "kind": "single_turn",
+          "input_preview": "Say hello.",
+          "expectation_kind": "rubric",
+          "budget_s": null,
+          "weight": 1.0,
+          "tags": [
+            "smoke"
+          ]
+        },
+        {
+          "entry_id": "t2",
+          "kind": "single_turn",
+          "input_preview": "Say goodbye.",
+          "expectation_kind": "predicate",
+          "budget_s": null,
+          "weight": 2.0,
+          "tags": []
+        }
+      ],
+      "brief": "# Brief e0\n\n## Goal\n\nName sorts first, created last — the bug mirror.\n",
+      "scoring": {
+        "pass_weight": 1.0,
+        "tournament": {
+          "structure": "gauntlet",
+          "params": {}
+        }
+      },
+      "board_split": {
+        "configured": false,
+        "enabled": false,
+        "holdout_fraction": 0.0,
+        "holdout_tags": [],
+        "entries": [
+          {
+            "entry_id": "t1",
+            "slice": "train",
+            "weight": 1.0
+          },
+          {
+            "entry_id": "t2",
+            "slice": "train",
+            "weight": 2.0
+          }
+        ],
+        "train_count": 2,
+        "holdout_count": 0,
+        "total": 2
+      },
+      "tournament": {
+        "structure": "gauntlet",
+        "params": {}
+      },
+      "mutations": [],
+      "experiments": [
+        {
+          "generation_id": "v0",
+          "parent_generation_id": null,
+          "proposed_at": "2026-03-01T00:00:00Z",
+          "hypothesis": {
+            "summary": "hyp e0 v0"
+          },
+          "outcome": {
+            "decision": "promoted",
+            "scalar_score_delta": -0.05
+          },
+          "patches": {},
+          "decision": "baseline",
+          "promoted": true,
+          "decision_label": "seed (v0)"
+        }
+      ],
+      "current_champion": "v0",
+      "holdout": null,
+      "delta_scalar_summary": {
+        "champion_spine": null,
+        "gross": -0.05
+      },
+      "journal": "",
+      "goal": "Name sorts first, created last — the bug mirror.",
+      "analysis_md": "",
+      "analysis_html_available": false,
+      "analysis_html_inline": ""
+    }
+  },
+  "epoch/scoped": {
+    "status": 200,
+    "body": {
+      "epoch_id": "e1",
+      "contract_hash": "hash-e1",
+      "created_at": "2026-01-01T00:00:00Z",
+      "closed": true,
+      "harness": {
+        "entrypoint": "pkg.module:agent",
+        "mutable_trees": [
+          "src/pkg"
+        ]
+      },
+      "board": [
+        {
+          "entry_id": "t1",
+          "kind": "single_turn",
+          "input_preview": "Say hello.",
+          "expectation_kind": "rubric",
+          "budget_s": null,
+          "weight": 1.0,
+          "tags": [
+            "smoke"
+          ]
+        },
+        {
+          "entry_id": "t2",
+          "kind": "single_turn",
+          "input_preview": "Say goodbye.",
+          "expectation_kind": "predicate",
+          "budget_s": null,
+          "weight": 2.0,
+          "tags": []
+        }
+      ],
+      "brief": "# Brief e1\n\n## Goal\n\nFirst epoch chronologically.\n",
+      "scoring": {
+        "pass_weight": 1.0,
+        "tournament": {
+          "structure": "gauntlet",
+          "params": {}
+        }
+      },
+      "board_split": {
+        "configured": false,
+        "enabled": false,
+        "holdout_fraction": 0.0,
+        "holdout_tags": [],
+        "entries": [
+          {
+            "entry_id": "t1",
+            "slice": "train",
+            "weight": 1.0
+          },
+          {
+            "entry_id": "t2",
+            "slice": "train",
+            "weight": 2.0
+          }
+        ],
+        "train_count": 2,
+        "holdout_count": 0,
+        "total": 2
+      },
+      "tournament": {
+        "structure": "gauntlet",
+        "params": {}
+      },
+      "mutations": [],
+      "experiments": [
+        {
+          "generation_id": "v0",
+          "parent_generation_id": null,
+          "proposed_at": "2026-01-01T00:00:00Z",
+          "hypothesis": {
+            "summary": "hyp e1 v0"
+          },
+          "outcome": {
+            "decision": "promoted",
+            "scalar_score_delta": -0.05
+          },
+          "patches": {},
+          "decision": "baseline",
+          "promoted": true,
+          "decision_label": "seed (v0)"
+        },
+        {
+          "generation_id": "v1",
+          "parent_generation_id": "v0",
+          "proposed_at": "2026-01-01T00:00:00Z",
+          "hypothesis": {
+            "summary": "hyp e1 v1"
+          },
+          "outcome": {
+            "decision": "rejected",
+            "scalar_score_delta": 0.02
+          },
+          "patches": {},
+          "decision": "rejected",
+          "promoted": false,
+          "decision_label": "rejected"
+        }
+      ],
+      "current_champion": "v0",
+      "holdout": null,
+      "delta_scalar_summary": {
+        "champion_spine": null,
+        "gross": -0.030000000000000002
+      },
+      "journal": "",
+      "goal": "First epoch chronologically.",
+      "analysis_md": "",
+      "analysis_html_available": false,
+      "analysis_html_inline": ""
+    }
+  },
+  "epoch/rejected-scope": {
+    "status": 404,
+    "body": {
+      "error": "unknown epoch"
+    }
+  },
+  "lineage/current": {
+    "status": 200,
+    "body": {
+      "generations": [
+        {
+          "generation_id": "v0",
+          "epoch_id": "e1",
+          "parent_generation_id": null,
+          "promoted": true,
+          "created_at": "2026-01-01T00:00:00Z",
+          "decision": "baseline",
+          "decision_label": "seed (v0)",
+          "elo": null,
+          "elo_se": null,
+          "elo_games": null
+        },
+        {
+          "generation_id": "v1",
+          "epoch_id": "e1",
+          "parent_generation_id": "v0",
+          "promoted": false,
+          "created_at": "2026-01-01T00:00:00Z",
+          "decision": "rejected",
+          "decision_label": "rejected",
+          "elo": null,
+          "elo_se": null,
+          "elo_games": null
+        },
+        {
+          "generation_id": "v0",
+          "epoch_id": "e0",
+          "parent_generation_id": null,
+          "promoted": true,
+          "created_at": "2026-03-01T00:00:00Z",
+          "decision": "baseline",
+          "decision_label": "seed (v0)",
+          "elo": null,
+          "elo_se": null,
+          "elo_games": null
+        }
+      ]
+    }
+  },
+  "lineage/scoped": {
+    "status": 200,
+    "body": {
+      "generations": [
+        {
+          "generation_id": "v0",
+          "epoch_id": "e1",
+          "parent_generation_id": null,
+          "promoted": true,
+          "created_at": "2026-01-01T00:00:00Z",
+          "decision": "baseline",
+          "decision_label": "seed (v0)",
+          "elo": null,
+          "elo_se": null,
+          "elo_games": null
+        },
+        {
+          "generation_id": "v1",
+          "epoch_id": "e1",
+          "parent_generation_id": "v0",
+          "promoted": false,
+          "created_at": "2026-01-01T00:00:00Z",
+          "decision": "rejected",
+          "decision_label": "rejected",
+          "elo": null,
+          "elo_se": null,
+          "elo_games": null
+        }
+      ]
+    }
+  },
+  "lineage/rejected-scope": {
+    "status": 404,
+    "body": {
+      "error": "unknown epoch"
+    }
+  },
+  "score_trajectory/current": {
+    "status": 200,
+    "body": {
+      "epoch_id": "e0",
+      "points": [
+        {
+          "generation_id": "v0",
+          "parent_generation_id": null,
+          "promoted": true,
+          "scalar": null,
+          "entry_count": 0,
+          "created_at": "2026-03-01T00:00:00Z"
+        }
+      ],
+      "note": "index not built; run zicato repair index"
+    }
+  },
+  "score_trajectory/scoped": {
+    "status": 200,
+    "body": {
+      "epoch_id": "e1",
+      "points": [
+        {
+          "generation_id": "v0",
+          "parent_generation_id": null,
+          "promoted": true,
+          "scalar": null,
+          "entry_count": 0,
+          "created_at": "2026-01-01T00:00:00Z"
+        },
+        {
+          "generation_id": "v1",
+          "parent_generation_id": "v0",
+          "promoted": false,
+          "scalar": null,
+          "entry_count": 0,
+          "created_at": "2026-01-01T00:00:00Z"
+        }
+      ],
+      "note": "index not built; run zicato repair index"
+    }
+  },
+  "score_trajectory/rejected-scope": {
+    "status": 404,
+    "body": {
+      "error": "unknown epoch"
+    }
+  },
+  "calibration_trend/current": {
+    "status": 200,
+    "body": {
+      "epoch_id": "e0",
+      "points": [
+        {
+          "generation_id": "v0",
+          "epoch_id": "e0",
+          "round_index": null,
+          "score_fraction": null,
+          "total_claims": 0,
+          "decision": "promoted"
+        }
+      ],
+      "rolling_mean": null,
+      "n_scored": 0,
+      "latest_fraction": null,
+      "trend_sign": 0
+    }
+  },
+  "calibration_trend/scoped": {
+    "status": 200,
+    "body": {
+      "epoch_id": "e1",
+      "points": [
+        {
+          "generation_id": "v0",
+          "epoch_id": "e1",
+          "round_index": null,
+          "score_fraction": null,
+          "total_claims": 0,
+          "decision": "promoted"
+        },
+        {
+          "generation_id": "v1",
+          "epoch_id": "e1",
+          "round_index": null,
+          "score_fraction": null,
+          "total_claims": 0,
+          "decision": "rejected"
+        }
+      ],
+      "rolling_mean": null,
+      "n_scored": 0,
+      "latest_fraction": null,
+      "trend_sign": 0
+    }
+  },
+  "calibration_trend/rejected-scope": {
+    "status": 404,
+    "body": {
+      "error": "unknown epoch"
+    }
+  },
+  "tournaments/current": {
+    "status": 200,
+    "body": {
+      "epoch_id": "e0",
+      "champion_lineage": [],
+      "matchups": [],
+      "note": "index not built; run zicato repair index"
+    }
+  },
+  "tournaments/scoped": {
+    "status": 200,
+    "body": {
+      "epoch_id": "e1",
+      "champion_lineage": [],
+      "matchups": [],
+      "note": "index not built; run zicato repair index"
+    }
+  },
+  "tournaments/rejected-scope": {
+    "status": 404,
+    "body": {
+      "error": "unknown epoch"
+    }
+  },
+  "reflections/all": {
+    "status": 200,
+    "body": {
+      "reflections": []
+    }
+  },
+  "reflections/scoped": {
+    "status": 200,
+    "body": {
+      "reflections": []
+    }
+  },
+  "reflections/rejected-scope": {
+    "status": 404,
+    "body": {
+      "reflections": []
+    }
+  },
+  "proposer_scorecard/all": {
+    "status": 200,
+    "body": {
+      "found": false,
+      "epoch_id": null,
+      "min_sample_n": 5,
+      "epochs": [],
+      "card": null
+    }
+  },
+  "proposer_scorecard/scoped": {
+    "status": 200,
+    "body": {
+      "found": true,
+      "epoch_id": "e1",
+      "min_sample_n": 5,
+      "epochs": [],
+      "card": {
+        "epoch_id": "e1",
+        "proposer_agent_id": "",
+        "proposer_skills": [],
+        "rounds": 0,
+        "rounds_complete": 0,
+        "proposals": 0,
+        "promote_rate": {
+          "k": 0,
+          "n": 0,
+          "value": null,
+          "provisional": false
+        },
+        "validation_failure_rate": {
+          "k": 0,
+          "n": 0,
+          "value": null,
+          "provisional": false
+        },
+        "validator_failure_rates": {
+          "A1": {
+            "k": 0,
+            "n": 0,
+            "value": null,
+            "provisional": false
+          },
+          "A2": {
+            "k": 0,
+            "n": 0,
+            "value": null,
+            "provisional": false
+          },
+          "A3": {
+            "k": 0,
+            "n": 0,
+            "value": null,
+            "provisional": false
+          },
+          "A4": {
+            "k": 0,
+            "n": 0,
+            "value": null,
+            "provisional": false
+          },
+          "unclassified": {
+            "k": 0,
+            "n": 0,
+            "value": null,
+            "provisional": false
+          }
+        },
+        "screen_veto_rate": {
+          "k": 0,
+          "n": 0,
+          "value": null,
+          "provisional": false
+        },
+        "revision_success_rate": {
+          "k": 0,
+          "n": 0,
+          "value": null,
+          "provisional": false
+        },
+        "margins": {
+          "n": 0,
+          "unmeasured": 0,
+          "achieved_median": null,
+          "achieved_min": null,
+          "achieved_max": null,
+          "headroom_median": null,
+          "provisional": false
+        },
+        "cost": {
+          "accepted": 0,
+          "proposal_attempts": 0,
+          "candidates_sampled": 0,
+          "board_units": 0,
+          "attempts_per_acceptance": null,
+          "units_per_acceptance": null
+        },
+        "mutation_sites": [],
+        "min_sample_n": 5
+      }
+    }
+  },
+  "proposer_scorecard/rejected-scope": {
+    "status": 200,
+    "body": {
+      "found": false,
+      "epoch_id": null,
+      "min_sample_n": 5,
+      "epochs": [],
+      "card": null
+    }
+  },
+  "per_judge_trend": {
+    "status": 200,
+    "body": {
+      "epoch_id": "e1",
+      "generations": [
+        "v0"
+      ],
+      "judges": [],
+      "note": "index not built; run zicato repair index"
+    }
+  },
+  "per_judge_trend/rejected": {
+    "status": 200,
+    "body": {
+      "epoch_id": "bad~id",
+      "generations": [],
+      "judges": []
+    }
+  },
+  "epoch_trajectory": {
+    "status": 200,
+    "body": {
+      "epoch_id": "e1",
+      "points": [],
+      "promotion_rate": null,
+      "promoted_count": 0,
+      "challenger_count": 0,
+      "settled_count": 0,
+      "plateaued": false,
+      "plateau_measurable": false,
+      "verdict": null,
+      "recent_movement": null,
+      "noise_floor": null,
+      "note": "index not built; run zicato repair index"
+    }
+  },
+  "epoch_trajectory/rejected": {
+    "status": 200,
+    "body": {
+      "epoch_id": "bad~id",
+      "points": [],
+      "promotion_rate": null,
+      "promoted_count": 0,
+      "challenger_count": 0,
+      "settled_count": 0,
+      "plateaued": false,
+      "plateau_measurable": false,
+      "verdict": null,
+      "recent_movement": null,
+      "noise_floor": null
+    }
+  },
+  "epoch_cost": {
+    "status": 200,
+    "body": {
+      "epoch_id": "e1",
+      "per_matchup": [],
+      "total_runtime_ms": 0,
+      "total_run_count": 0,
+      "total_aborted_count": 0,
+      "promoted_count": 0,
+      "cost_per_promotion_ms": null,
+      "note": "index not built; run zicato repair index"
+    }
+  },
+  "epoch_cost/rejected": {
+    "status": 200,
+    "body": {
+      "epoch_id": "bad~id",
+      "per_matchup": [],
+      "total_runtime_ms": 0,
+      "total_run_count": 0,
+      "total_aborted_count": 0,
+      "promoted_count": 0,
+      "cost_per_promotion_ms": null
+    }
+  },
+  "racing_field": {
+    "status": 200,
+    "body": {
+      "epoch_id": "e1",
+      "present": false
+    }
+  },
+  "racing_field/rejected": {
+    "status": 200,
+    "body": {
+      "epoch_id": "bad~id",
+      "present": false
+    }
+  },
+  "round_timeline": {
+    "status": 200,
+    "body": {
+      "epoch_id": "e1",
+      "structure": "gauntlet",
+      "source": "single",
+      "rounds": [
+        {
+          "round_index": 0,
+          "champion": {
+            "id": "v0",
+            "scalar": null,
+            "eval_mode": null,
+            "run_ref": null,
+            "from_record": false
+          },
+          "challengers": [],
+          "structure": "gauntlet",
+          "gate": {
+            "kind": "held",
+            "gen": null
+          },
+          "tournament_id": null,
+          "tournament": null,
+          "source": "single"
+        }
+      ],
+      "waterfall": [
+        {
+          "round_index": 0,
+          "from": null,
+          "to": null,
+          "delta": null,
+          "promoted": false,
+          "gen": null
+        }
+      ]
+    }
+  },
+  "round_timeline/rejected": {
+    "status": 200,
+    "body": {
+      "epoch_id": "bad~id",
+      "structure": "gauntlet",
+      "source": "none",
+      "rounds": [],
+      "waterfall": []
+    }
+  },
+  "execution_plan": {
+    "status": 200,
+    "body": {
+      "epoch_id": "e1",
+      "generated_at": "<masked>",
+      "board": {
+        "digest": "aaaef18030ad0c8d981d02460f8a11d9eb11e5d420816759d44276f08fa2d916",
+        "entry_count": 2
+      },
+      "note": "",
+      "stages": [
+        {
+          "id": "e:e1/baseline",
+          "kind": "baseline",
+          "label": "Baseline",
+          "purpose": "Evaluate the incoming champion before the loop proposes anything.",
+          "status": "skipped",
+          "provenance": "partial",
+          "started_at": null,
+          "ended_at": null,
+          "duration_ms": null,
+          "progress": {
+            "done": 2,
+            "total": 2
+          },
+          "coordinates": {
+            "epoch_id": "e1"
+          },
+          "outcome": {
+            "generation_ids": [
+              "v0",
+              "v1"
+            ]
+          },
+          "children": [
+            {
+              "id": "e:e1/baseline/v0",
+              "kind": "board_sweep",
+              "label": "Board sweep — v0",
+              "purpose": "Every board entry executed against one candidate.",
+              "status": "skipped",
+              "provenance": "partial",
+              "started_at": null,
+              "ended_at": null,
+              "duration_ms": null,
+              "progress": {
+                "done": 0,
+                "total": 2
+              },
+              "coordinates": {
+                "epoch_id": "e1",
+                "generation_id": "v0"
+              },
+              "outcome": {
+                "unit_count": 0,
+                "entries_without_units": [
+                  "t1",
+                  "t2"
+                ]
+              },
+              "children": []
+            },
+            {
+              "id": "e:e1/baseline/v1",
+              "kind": "board_sweep",
+              "label": "Board sweep — v1",
+              "purpose": "Every board entry executed against one candidate.",
+              "status": "skipped",
+              "provenance": "partial",
+              "started_at": null,
+              "ended_at": null,
+              "duration_ms": null,
+              "progress": {
+                "done": 0,
+                "total": 2
+              },
+              "coordinates": {
+                "epoch_id": "e1",
+                "generation_id": "v1"
+              },
+              "outcome": {
+                "unit_count": 0,
+                "entries_without_units": [
+                  "t1",
+                  "t2"
+                ]
+              },
+              "children": []
+            }
+          ]
+        }
+      ]
+    }
+  },
+  "execution_plan/rejected": {
+    "status": 200,
+    "body": {
+      "epoch_id": "bad~id",
+      "generated_at": "<masked>",
+      "board": {
+        "digest": "",
+        "entry_count": 0
+      },
+      "note": "unknown epoch",
+      "stages": []
+    }
+  },
+  "experiments_ledger": {
+    "status": 200,
+    "body": {
+      "epoch_id": "e1",
+      "experiments": [],
+      "note": "index not built; run zicato repair index"
+    }
+  },
+  "experiments_ledger/rejected": {
+    "status": 200,
+    "body": {
+      "epoch_id": "bad~id",
+      "experiments": []
+    }
+  },
+  "contract_diff": {
+    "status": 200,
+    "body": {
+      "epoch_id": "e1",
+      "predecessor_epoch_id": null,
+      "components": [
+        {
+          "name": "board",
+          "current_hash": "board-0",
+          "previous_hash": null,
+          "changed": false
+        },
+        {
+          "name": "brief",
+          "current_hash": "brief-e1",
+          "previous_hash": null,
+          "changed": false
+        },
+        {
+          "name": "scoring",
+          "current_hash": "scoring-const",
+          "previous_hash": null,
+          "changed": false
+        },
+        {
+          "name": "entrypoint",
+          "current_hash": "entry-const",
+          "previous_hash": null,
+          "changed": false
+        },
+        {
+          "name": "mutable_trees",
+          "current_hash": "trees-const",
+          "previous_hash": null,
+          "changed": false
+        }
+      ],
+      "any_changed": false
+    }
+  },
+  "contract_diff/rejected": {
+    "status": 200,
+    "body": {
+      "epoch_id": "bad~id",
+      "predecessor_epoch_id": null,
+      "components": [],
+      "any_changed": false
+    }
+  },
+  "epoch_journal": {
+    "status": 200,
+    "body": {
+      "epoch_id": "e1",
+      "journal": ""
+    }
+  },
+  "epoch_journal/rejected": {
+    "status": 400,
+    "body": {
+      "error": "invalid epoch id"
+    }
+  },
+  "epoch_analysis": {
+    "status": 200,
+    "body": {
+      "epoch_id": "e1",
+      "analysis_md": "",
+      "analysis_html_inline": "",
+      "analysis_html_available": false
+    }
+  },
+  "epoch_analysis/rejected": {
+    "status": 400,
+    "body": {
+      "error": "invalid epoch id"
+    }
+  },
+  "eval_matrix": {
+    "status": 200,
+    "body": {
+      "epoch_id": "e1",
+      "found": true,
+      "candidates": [],
+      "entries": [],
+      "cells": [],
+      "calibration": {
+        "measured": false,
+        "generation_id": null,
+        "runs": 0,
+        "max_abs_delta": null
+      }
+    }
+  },
+  "eval_matrix/rejected": {
+    "status": 200,
+    "body": {
+      "epoch_id": "bad~id",
+      "found": false,
+      "candidates": [],
+      "entries": [],
+      "cells": [],
+      "calibration": {
+        "measured": false,
+        "generation_id": null,
+        "runs": 0,
+        "max_abs_delta": null
+      },
+      "note": "no such epoch / never indexed"
+    }
+  },
+  "eval_dossier": {
+    "status": 200,
+    "body": {
+      "epoch_id": "e1",
+      "entry_id": "t1",
+      "found": false,
+      "slice": "train",
+      "tag": null,
+      "instrument": {
+        "flip_rate": null,
+        "flip_rate_measured": false,
+        "calibration_runs": 0,
+        "calibration_generation": null,
+        "discrimination": null,
+        "discrimination_pairs": 0,
+        "runtime_ms_mean": null,
+        "runtime_ms_p50": null,
+        "runtime_ms_max": null,
+        "replicate_total": 0,
+        "cached_share": null
+      },
+      "trajectory": [],
+      "trajectory_reason": "No records for this epoch and entry were found.",
+      "attribution": {
+        "first_passed_by": null,
+        "regressed_by": [],
+        "first_passed_reason": "No records for this epoch and entry were found.",
+        "regressed_reason": "No records for this epoch and entry were found."
+      },
+      "reflection_findings": [],
+      "note": "no such epoch / entry"
+    }
+  },
+  "eval_dossier/rejected-epoch": {
+    "status": 200,
+    "body": {
+      "epoch_id": "bad~id",
+      "entry_id": "t1",
+      "found": false,
+      "slice": "train",
+      "tag": null,
+      "instrument": {
+        "flip_rate": null,
+        "flip_rate_measured": false,
+        "calibration_runs": 0,
+        "calibration_generation": null,
+        "discrimination": null,
+        "discrimination_pairs": 0,
+        "runtime_ms_mean": null,
+        "runtime_ms_p50": null,
+        "runtime_ms_max": null,
+        "replicate_total": 0,
+        "cached_share": null
+      },
+      "trajectory": [],
+      "trajectory_reason": "No records for this epoch and entry were found.",
+      "attribution": {
+        "first_passed_by": null,
+        "regressed_by": [],
+        "first_passed_reason": "No records for this epoch and entry were found.",
+        "regressed_reason": "No records for this epoch and entry were found."
+      },
+      "reflection_findings": [],
+      "note": "no such epoch / entry"
+    }
+  },
+  "eval_dossier/rejected-entry": {
+    "status": 200,
+    "body": {
+      "epoch_id": "e1",
+      "entry_id": "bad~id",
+      "found": false,
+      "slice": "train",
+      "tag": null,
+      "instrument": {
+        "flip_rate": null,
+        "flip_rate_measured": false,
+        "calibration_runs": 0,
+        "calibration_generation": null,
+        "discrimination": null,
+        "discrimination_pairs": 0,
+        "runtime_ms_mean": null,
+        "runtime_ms_p50": null,
+        "runtime_ms_max": null,
+        "replicate_total": 0,
+        "cached_share": null
+      },
+      "trajectory": [],
+      "trajectory_reason": "No records for this epoch and entry were found.",
+      "attribution": {
+        "first_passed_by": null,
+        "regressed_by": [],
+        "first_passed_reason": "No records for this epoch and entry were found.",
+        "regressed_reason": "No records for this epoch and entry were found."
+      },
+      "reflection_findings": [],
+      "note": "no such epoch / entry"
+    }
+  },
+  "eval_health": {
+    "status": 200,
+    "body": {
+      "epoch_id": "e1",
+      "found": true,
+      "mde": {
+        "floor_measured": false,
+        "floor": null,
+        "replicates": 1,
+        "usable": false,
+        "formula_n": null,
+        "df": null,
+        "mde": null,
+        "mde_relaxed": null,
+        "alpha": 0.05,
+        "alpha_relaxed": 0.1,
+        "power": 0.8,
+        "formula": "MDE = (t_{α/2,df} + t_{β,df})·sd·√(2/n),  sd ≈ floor,  df = 2·(n−1)",
+        "note": "floor unmeasured — run the A/A calibration to measure the noise floor"
+      },
+      "noisiest": [],
+      "dead": [],
+      "insufficient": [
+        {
+          "entry_id": "t1",
+          "discrimination_pairs": 1,
+          "slice": "train"
+        },
+        {
+          "entry_id": "t2",
+          "discrimination_pairs": 1,
+          "slice": "train"
+        }
+      ],
+      "runtime_cost": [],
+      "holdout_budget": null,
+      "rotation": {
+        "rotate_holdout": false,
+        "max_generations_per_contract": null,
+        "evaluated_generations": 2,
+        "refresh_recommended": false,
+        "recommendation": null
+      },
+      "redundancy": {
+        "available": false,
+        "clusters": [],
+        "note": "no reflection built for this epoch — run `reflect` to surface redundancy clusters"
+      }
+    }
+  },
+  "eval_health/rejected": {
+    "status": 200,
+    "body": {
+      "epoch_id": "bad~id",
+      "found": false,
+      "mde": {
+        "floor_measured": false,
+        "floor": null,
+        "replicates": 0,
+        "usable": false,
+        "formula_n": null,
+        "df": null,
+        "mde": null,
+        "mde_relaxed": null,
+        "alpha": 0.05,
+        "alpha_relaxed": 0.1,
+        "power": 0.8,
+        "formula": "MDE = (t_{α/2,df} + t_{β,df})·sd·√(2/n),  sd ≈ floor,  df = 2·(n−1)",
+        "note": "floor unmeasured — run the A/A calibration to measure the noise floor"
+      },
+      "noisiest": [],
+      "dead": [],
+      "insufficient": [],
+      "runtime_cost": [],
+      "holdout_budget": null,
+      "rotation": {
+        "rotate_holdout": false,
+        "max_generations_per_contract": null,
+        "evaluated_generations": 0,
+        "refresh_recommended": false,
+        "recommendation": null
+      },
+      "redundancy": {
+        "available": false,
+        "clusters": [],
+        "note": "no such epoch / never indexed"
+      },
+      "note": "no such epoch / never indexed"
+    }
+  },
+  "judge_roster": {
+    "status": 200,
+    "body": {
+      "epoch_id": "e1",
+      "builtins": [
+        {
+          "name": "reasoning_drift",
+          "suppressed": false,
+          "suppressed_by": []
+        },
+        {
+          "name": "looping_reasoning",
+          "suppressed": false,
+          "suppressed_by": []
+        },
+        {
+          "name": "goal_drift",
+          "suppressed": false,
+          "suppressed_by": []
+        },
+        {
+          "name": "refusal",
+          "suppressed": false,
+          "suppressed_by": []
+        },
+        {
+          "name": "tool_error",
+          "suppressed": false,
+          "suppressed_by": []
+        },
+        {
+          "name": "stop_reason",
+          "suppressed": false,
+          "suppressed_by": []
+        },
+        {
+          "name": "looping_tool",
+          "suppressed": false,
+          "suppressed_by": []
+        }
+      ],
+      "builtins_note": null,
+      "disable_drift": [],
+      "unmapped_drift_kinds": [],
+      "per_judge_weights": {},
+      "default_judge_weight": null,
+      "judge_channel_weight": null,
+      "scorecards": {}
+    }
+  },
+  "judge_roster/rejected": {
+    "status": 200,
+    "body": {
+      "epoch_id": "bad~id",
+      "builtins": [],
+      "builtins_note": null,
+      "disable_drift": [],
+      "unmapped_drift_kinds": [],
+      "per_judge_weights": {},
+      "default_judge_weight": null,
+      "judge_channel_weight": null,
+      "scorecards": {}
+    }
+  },
+  "per_judge_for_generation": {
+    "status": 200,
+    "body": {
+      "epoch_id": "e1",
+      "generation_id": "v0",
+      "judges": []
+    }
+  },
+  "per_judge_for_generation/rejected": {
+    "status": 200,
+    "body": {
+      "epoch_id": "e1",
+      "generation_id": "bad~id",
+      "judges": []
+    }
+  },
+  "per_entry_for_generation": {
+    "status": 200,
+    "body": {
+      "epoch_id": "e1",
+      "generation_id": "v0",
+      "tournament_id": null,
+      "mean_score": null,
+      "drift_present": false,
+      "facet_scores": {
+        "facets": {},
+        "overall": null
+      },
+      "entries": []
+    }
+  },
+  "per_entry_for_generation/rejected": {
+    "status": 200,
+    "body": {
+      "epoch_id": "e1",
+      "generation_id": "bad~id",
+      "tournament_id": null,
+      "entries": []
+    }
+  },
+  "per_judge_comparison": {
+    "status": 200,
+    "body": {
+      "epoch_id": "e1",
+      "champion": "v0",
+      "challenger": "v1",
+      "judges": [],
+      "primary_driver": null
+    }
+  },
+  "per_judge_comparison/rejected": {
+    "status": 200,
+    "body": {
+      "epoch_id": "e1",
+      "champion": "v0",
+      "challenger": "bad~id",
+      "judges": [],
+      "primary_driver": null
+    }
+  },
+  "per_judge_for_run": {
+    "status": 200,
+    "body": {
+      "run_id": "e1-v0-t1",
+      "judges": []
+    }
+  },
+  "per_judge_for_run/rejected": {
+    "status": 200,
+    "body": {
+      "run_id": "bad~id",
+      "judges": []
+    }
+  },
+  "per_judge_for_entry": {
+    "status": 200,
+    "body": {
+      "run_id": "e1-v0-t1",
+      "judges": []
+    }
+  },
+  "per_judge_for_entry/rejected": {
+    "status": 200,
+    "body": {
+      "run_id": null,
+      "judges": []
+    }
+  },
+  "run_expectations": {
+    "status": 200,
+    "body": {
+      "epoch_id": "e1",
+      "generation_id": "v0",
+      "entry_id": "t1",
+      "outcomes": []
+    }
+  },
+  "run_expectations/rejected": {
+    "status": 200,
+    "body": {
+      "epoch_id": "e1",
+      "generation_id": "v0",
+      "entry_id": "bad~id",
+      "outcomes": []
+    }
+  },
+  "run_header": {
+    "status": 200,
+    "body": {
+      "epoch_id": "e1",
+      "generation_id": "v0",
+      "entry_id": "t1",
+      "drift_loss": 0.3,
+      "pass_fail": true,
+      "runtime_ms": null,
+      "tokens_spent": null,
+      "output_chars": null,
+      "turns_completed": null,
+      "plan_revisions": null,
+      "wall_clock_budget_exceeded": null,
+      "run_id": "e1-v0-t1",
+      "adk_session_id": null
+    }
+  },
+  "run_header/rejected": {
+    "status": 200,
+    "body": {
+      "epoch_id": "e1",
+      "generation_id": "v0",
+      "entry_id": "bad~id",
+      "drift_loss": null,
+      "pass_fail": null,
+      "runtime_ms": null,
+      "tokens_spent": null,
+      "output_chars": null,
+      "turns_completed": null,
+      "plan_revisions": null,
+      "wall_clock_budget_exceeded": null,
+      "run_id": null,
+      "adk_session_id": null
+    }
+  },
+  "hypothesis_accuracy": {
+    "status": 200,
+    "body": {
+      "epoch_id": "e1",
+      "generation_id": "v0",
+      "claims": [],
+      "score": {
+        "hits": 0,
+        "total": 0,
+        "fraction": null,
+        "brier": null
+      },
+      "pass_rate": {
+        "predicted": "",
+        "observed": null
+      }
+    }
+  },
+  "hypothesis_accuracy/rejected": {
+    "status": 200,
+    "body": {
+      "epoch_id": "e1",
+      "generation_id": "bad~id",
+      "claims": [],
+      "score": {
+        "hits": 0,
+        "total": 0,
+        "fraction": null,
+        "brier": null
+      },
+      "pass_rate": {
+        "predicted": "",
+        "observed": null
+      }
+    }
+  },
+  "tournament_structure": {
+    "status": 200,
+    "body": {
+      "epoch_id": "e1",
+      "tournament_id": "v1",
+      "structure": "gauntlet",
+      "structure_params": {},
+      "competitors": [],
+      "rounds": [],
+      "standings": [],
+      "field_status": [],
+      "source": "loss_files"
+    }
+  },
+  "tournament_structure/rejected": {
+    "status": 200,
+    "body": {
+      "epoch_id": "e1",
+      "tournament_id": "bad~id",
+      "structure": "gauntlet",
+      "structure_params": {},
+      "competitors": [],
+      "rounds": [],
+      "standings": [],
+      "source": "loss_files"
+    }
+  },
+  "matchup_detail": {
+    "status": 200,
+    "body": {
+      "epoch_id": "e0",
+      "generation_id": "v0",
+      "champion": null,
+      "decision": null,
+      "rejection_reason": null,
+      "ran_at": null,
+      "parent_scalar": null,
+      "child_scalar": null,
+      "delta_scalar": null,
+      "patches": [],
+      "ab_grid": [],
+      "note": "index not built; run zicato repair index"
+    }
+  },
+  "matchup_detail/rejected": {
+    "status": 200,
+    "body": {
+      "epoch_id": "e0",
+      "generation_id": "bad~id",
+      "patches": [],
+      "ab_grid": []
+    }
+  },
+  "matchup_grid": {
+    "status": 200,
+    "body": {
+      "epoch_id": "e1",
+      "champion": "v0",
+      "challenger": "v1",
+      "entry_grid": [
+        {
+          "entry_id": "t1",
+          "parent_drift_loss": 0.3,
+          "child_drift_loss": 0.31,
+          "parent_pass": true,
+          "child_pass": true,
+          "parent_score": 0.9,
+          "child_score": 0.9,
+          "parent_metrics": null,
+          "child_metrics": null,
+          "delta": 0.010000000000000009,
+          "delta_score": 0.0,
+          "score_replicates": 1,
+          "score_se": null,
+          "verdict": "regressed",
+          "won_by": "v0",
+          "decided_by": "drift"
+        },
+        {
+          "entry_id": "t2",
+          "parent_drift_loss": 0.3,
+          "child_drift_loss": 0.31,
+          "parent_pass": true,
+          "child_pass": true,
+          "parent_score": 0.9,
+          "child_score": 0.9,
+          "parent_metrics": null,
+          "child_metrics": null,
+          "delta": 0.010000000000000009,
+          "delta_score": 0.0,
+          "score_replicates": 1,
+          "score_se": null,
+          "verdict": "regressed",
+          "won_by": "v0",
+          "decided_by": "drift"
+        }
+      ],
+      "scalar": {
+        "parent": 0.5,
+        "child": 0.49,
+        "delta": -0.010000000000000009
+      },
+      "drift_present": true,
+      "source": "loss_files"
+    }
+  },
+  "matchup_grid/rejected": {
+    "status": 200,
+    "body": {
+      "epoch_id": "e1",
+      "champion": "v0",
+      "challenger": "bad~id",
+      "entry_grid": [],
+      "scalar": null,
+      "source": "loss_files"
+    }
+  },
+  "gate": {
+    "status": 200,
+    "body": {
+      "epoch_id": "e1",
+      "champion": "v0",
+      "challenger": "v1",
+      "decision": "promoted",
+      "reason": "",
+      "deciding_rule": null,
+      "margin": 0.01,
+      "regressed_predicate": null,
+      "regressed_namespace": null,
+      "delta_scalar": -0.010000000000000009,
+      "delta_pass_rate": 0.0,
+      "champion_scalar": 0.5,
+      "challenger_scalar": 0.49,
+      "live": null,
+      "rules": [
+        {
+          "id": "regression_suite",
+          "label": "Regression suite",
+          "status": "skipped",
+          "detail": "disabled",
+          "fired": false
+        },
+        {
+          "id": "scalar_margin",
+          "label": "Scalar margin",
+          "status": "pass",
+          "detail": "0.50 → 0.49 (-0.01; needs ≤ -0.01)",
+          "fired": false
+        },
+        {
+          "id": "pass_rate_monotonicity",
+          "label": "Pass-rate monotonicity",
+          "status": "pass",
+          "detail": "all preserved",
+          "fired": false
+        },
+        {
+          "id": "namespace_monotonicity",
+          "label": "Namespace monotonicity",
+          "status": "unknown",
+          "detail": "namespace aggregates not recorded",
+          "fired": false
+        }
+      ],
+      "scalar_components": {
+        "champion": null,
+        "challenger": null
+      },
+      "scalar_decomposition": {
+        "present": false,
+        "fail_open": false,
+        "champion": {
+          "scalar": {
+            "present": false,
+            "kind": "builtin",
+            "source": "built-in formula",
+            "transforms": [],
+            "fail_open": false,
+            "fallback_reason": null,
+            "raw": null
+          },
+          "drift": {
+            "present": false,
+            "kind": "builtin",
+            "source": "built-in formula",
+            "transforms": [],
+            "fail_open": false,
+            "fallback_reason": null,
+            "raw": null
+          }
+        },
+        "challenger": {
+          "scalar": {
+            "present": false,
+            "kind": "builtin",
+            "source": "built-in formula",
+            "transforms": [],
+            "fail_open": false,
+            "fallback_reason": null,
+            "raw": null
+          },
+          "drift": {
+            "present": false,
+            "kind": "builtin",
+            "source": "built-in formula",
+            "transforms": [],
+            "fail_open": false,
+            "fallback_reason": null,
+            "raw": null
+          }
+        }
+      },
+      "primary_driver": null,
+      "rating": {
+        "present": false
+      },
+      "override": {
+        "present": false,
+        "action": null,
+        "reason": null
+      }
+    }
+  },
+  "gate/rejected": {
+    "status": 200,
+    "body": {
+      "epoch_id": "e1",
+      "champion": "v0",
+      "challenger": "bad~id",
+      "decision": "deferred",
+      "reason": "",
+      "deciding_rule": null,
+      "margin": null,
+      "regressed_predicate": null,
+      "regressed_namespace": null,
+      "delta_scalar": null,
+      "delta_pass_rate": null,
+      "champion_scalar": null,
+      "challenger_scalar": null,
+      "live": null,
+      "rules": [],
+      "scalar_components": {
+        "champion": null,
+        "challenger": null
+      },
+      "primary_driver": null,
+      "rating": {
+        "present": false
+      }
+    }
+  },
+  "drift_movements": {
+    "status": 200,
+    "body": {
+      "epoch_id": "e0",
+      "generation_id": "v0",
+      "champion": null,
+      "challenger": "v0",
+      "movements": [],
+      "note": "index not built; run zicato repair index"
+    }
+  },
+  "drift_movements/rejected": {
+    "status": 200,
+    "body": {
+      "epoch_id": "e0",
+      "generation_id": "bad~id",
+      "champion": null,
+      "challenger": "bad~id",
+      "movements": []
+    }
+  },
+  "reflection_summary": {
+    "status": 200,
+    "body": {
+      "reflection_id": "r1",
+      "epoch_id": null,
+      "created_at": "",
+      "mode": "",
+      "executed": false,
+      "found": false,
+      "pillars": {},
+      "findings": [],
+      "fidelity_tiers": [],
+      "note": "no such reflection"
+    }
+  },
+  "reflection_summary/rejected": {
+    "status": 200,
+    "body": {
+      "reflection_id": "bad~id",
+      "found": false,
+      "pillars": {},
+      "findings": []
+    }
+  },
+  "reflection_scorecards": {
+    "status": 200,
+    "body": {
+      "reflection_id": "r1",
+      "judges": []
+    }
+  },
+  "reflection_scorecards/rejected": {
+    "status": 200,
+    "body": {
+      "reflection_id": "bad~id",
+      "judges": []
+    }
+  },
+  "reflection_practices": {
+    "status": 200,
+    "body": {
+      "reflection_id": "r1",
+      "epoch_id": null,
+      "found": false,
+      "checks": [],
+      "verdict_counts": {
+        "sound": 0,
+        "attend": 0,
+        "unsound": 0,
+        "unmeasured": 0
+      },
+      "note": "no such reflection / practice review"
+    }
+  },
+  "reflection_practices/rejected": {
+    "status": 200,
+    "body": {
+      "reflection_id": "bad~id",
+      "found": false,
+      "checks": [],
+      "verdict_counts": {
+        "sound": 0,
+        "attend": 0,
+        "unsound": 0,
+        "unmeasured": 0
+      }
+    }
+  },
+  "reflection_xray": {
+    "status": 200,
+    "body": {
+      "reflection_id": "r1",
+      "judge_name": "j1",
+      "run_ref": "v0:t1:r0",
+      "found": false,
+      "transcript": {
+        "fidelity": "unavailable",
+        "turns": []
+      },
+      "judge_verdict": null,
+      "adjudication": null,
+      "note": "no such reflection / decision"
+    }
+  },
+  "reflection_xray/rejected-run-ref": {
+    "status": 200,
+    "body": {
+      "reflection_id": "r1",
+      "judge_name": "j1",
+      "run_ref": "bad~id",
+      "found": false,
+      "transcript": {
+        "fidelity": "unavailable",
+        "turns": []
+      },
+      "judge_verdict": null,
+      "adjudication": null
+    }
+  },
+  "reflection_traces": {
+    "status": 200,
+    "body": {
+      "reflection_id": "r1",
+      "epoch_id": null,
+      "found": false,
+      "trace_count": 0,
+      "traces": []
+    }
+  },
+  "reflection_traces/rejected": {
+    "status": 200,
+    "body": {
+      "reflection_id": "bad~id",
+      "epoch_id": null,
+      "found": false,
+      "trace_count": 0,
+      "traces": []
+    }
+  },
+  "reflection_trace": {
+    "status": 200,
+    "body": {
+      "reflection_id": "r1",
+      "epoch_id": null,
+      "found": false,
+      "trace_id": "tr1",
+      "source_file": "",
+      "dialect": "",
+      "line_count": 0,
+      "malformed_line_count": 0,
+      "signal_counts": {},
+      "strip_model": {},
+      "turns": [],
+      "reconstruction_note": "",
+      "episodes": []
+    }
+  },
+  "reflection_trace/rejected": {
+    "status": 200,
+    "body": {
+      "reflection_id": "r1",
+      "epoch_id": null,
+      "found": false,
+      "trace_id": "bad~id",
+      "source_file": "",
+      "dialect": "",
+      "line_count": 0,
+      "malformed_line_count": 0,
+      "signal_counts": {},
+      "strip_model": {},
+      "turns": [],
+      "reconstruction_note": "",
+      "episodes": []
+    }
+  },
+  "suggestion_provenance": {
+    "status": 200,
+    "body": {
+      "reflection_id": "r1",
+      "epoch_id": null,
+      "found": false,
+      "suggestion_id": "s1",
+      "suggestion_type": "",
+      "subject": "",
+      "summary": "",
+      "target_slice": "",
+      "foreign_source": null,
+      "admission_viz": {
+        "measured": false,
+        "evidence_tier": "planned",
+        "flip": {
+          "measured": false,
+          "rate": null,
+          "runs": null,
+          "over_ceiling": false,
+          "ceiling": 0.25
+        },
+        "discrimination": {
+          "measured": false,
+          "separated": 0,
+          "pairs": 0
+        },
+        "leakage_ok": null
+      },
+      "episodes": []
+    }
+  },
+  "suggestion_provenance/rejected": {
+    "status": 200,
+    "body": {
+      "reflection_id": "r1",
+      "epoch_id": null,
+      "found": false,
+      "suggestion_id": "bad~id",
+      "suggestion_type": "",
+      "subject": "",
+      "summary": "",
+      "target_slice": "",
+      "foreign_source": null,
+      "admission_viz": {
+        "measured": false,
+        "evidence_tier": "planned",
+        "flip": {
+          "measured": false,
+          "rate": null,
+          "runs": null,
+          "over_ceiling": false,
+          "ceiling": 0.25
+        },
+        "discrimination": {
+          "measured": false,
+          "separated": 0,
+          "pairs": 0
+        },
+        "leakage_ok": null
+      },
+      "episodes": []
+    }
+  }
+}

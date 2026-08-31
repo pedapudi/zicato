@@ -42,7 +42,7 @@ from starlette.requests import Request
 from starlette.responses import PlainTextResponse, Response
 from starlette.routing import Route
 
-from zicato.dashboard.endpoints import make_endpoints
+from zicato.dashboard.endpoints import READ_ENDPOINTS, make_endpoints
 from zicato.dashboard.sse import ChangeBroker, sse_event_stream
 from zicato.query import WorkspacePaths
 
@@ -286,127 +286,26 @@ def create_app(
 
     routes = [
         Route("/", serve_root),
+        # The table-driven read routes. Each is one row of
+        # ``endpoints.READ_ENDPOINTS`` — path, reader, coordinates, degrade —
+        # so a read route is added there rather than here.
+        *[Route(entry.path, handlers[entry.path]) for entry in READ_ENDPOINTS],
+        # The reads whose query parameters shape the response.
         Route("/api/health", handlers["api_health"]),
-        Route("/api/state", handlers["api_state"]),
         Route("/api/environment", handlers["api_environment"]),
-        Route("/api/epoch", handlers["api_epoch"]),
-        Route("/api/lineage", handlers["api_lineage"]),
-        Route("/api/workspace", handlers["api_workspace"]),
-        Route(
-            "/api/contract-diff/{epoch_id}",
-            handlers["api_contract_diff"],
-        ),
-        Route(
-            "/api/epoch/{epoch_id}/per-judge-trend",
-            handlers["api_per_judge_trend"],
-        ),
-        Route(
-            "/api/epoch/{epoch_id}/trajectory",
-            handlers["api_epoch_trajectory"],
-        ),
-        Route(
-            "/api/epoch/{epoch_id}/cost",
-            handlers["api_epoch_cost"],
-        ),
-        Route(
-            "/api/epoch/{epoch_id}/racing-field",
-            handlers["api_epoch_racing_field"],
-        ),
-        Route(
-            "/api/epoch/{epoch_id}/round-timeline",
-            handlers["api_epoch_round_timeline"],
-        ),
-        Route(
-            "/api/epoch/{epoch_id}/execution-plan",
-            handlers["api_epoch_execution_plan"],
-        ),
-        Route(
-            "/api/epoch/{epoch_id}/experiments-ledger",
-            handlers["api_epoch_experiments_ledger"],
-        ),
-        Route(
-            "/api/epoch/{epoch_id}/evals",
-            handlers["api_epoch_evals"],
-        ),
-        Route(
-            "/api/epoch/{epoch_id}/eval/{entry_id}",
-            handlers["api_epoch_eval_entry"],
-        ),
-        Route(
-            "/api/epoch/{epoch_id}/eval-health",
-            handlers["api_epoch_eval_health"],
-        ),
-        Route(
-            "/api/epoch/{epoch_id}/judge-roster",
-            handlers["api_epoch_judge_roster"],
-        ),
-        Route(
-            "/api/generation/{epoch_id}/{generation_id}/per-judge",
-            handlers["api_per_judge_for_generation"],
-        ),
-        Route(
-            "/api/generation/{epoch_id}/{generation_id}/per-entry",
-            handlers["api_per_entry_for_generation"],
-        ),
-        Route(
-            "/api/round/{epoch_id}/{champion_id}/{challenger_id}/per-judge-comparison",
-            handlers["api_per_judge_comparison"],
-        ),
-        Route(
-            "/api/run/{run_id}/per-judge",
-            handlers["api_per_judge_for_run"],
-        ),
-        Route(
-            "/api/run/{epoch_id}/{generation_id}/{entry_id}/per-judge",
-            handlers["api_per_judge_for_run_by_entry"],
-        ),
-        Route(
-            "/api/run/{epoch_id}/{generation_id}/{entry_id}/expectations",
-            handlers["api_run_expectations"],
-        ),
-        Route(
-            "/api/run/{epoch_id}/{generation_id}/{entry_id}/header",
-            handlers["api_run_header"],
-        ),
-        Route("/api/run-log", handlers["api_run_log"]),
-        Route("/api/active-runs", handlers["api_active_runs"]),
-        Route("/api/active-tournament", handlers["api_active_tournament"]),
-        Route("/api/heartbeat", handlers["api_heartbeat"]),
-        Route("/api/live/pipeline", handlers["api_live_pipeline"]),
-        Route("/api/live/execution-plan", handlers["api_live_execution_plan"]),
-        Route("/api/tournaments", handlers["api_tournaments"]),
-        Route(
-            "/api/tournament-structure/{epoch_id}/{tournament_id}",
-            handlers["api_tournament_structure"],
-        ),
-        Route(
-            "/api/tournaments/{generation_id}",
-            handlers["api_tournament_detail"],
-        ),
-        Route(
-            "/api/matchup-grid/{epoch_id}/{champion_id}/{challenger_id}",
-            handlers["api_matchup_grid"],
-        ),
-        Route(
-            "/api/round/{epoch_id}/{champion_id}/{challenger_id}/gate",
-            handlers["api_gate"],
-        ),
-        Route("/api/health-report", handlers["api_health_report"]),
         Route("/api/search", handlers["api_search"]),
         Route("/api/logs", handlers["api_logs"]),
-        Route("/api/score-trajectory", handlers["api_score_trajectory"]),
+        Route("/api/run-log", handlers["api_run_log"]),
+        # The two epoch documents served as themselves rather than as JSON.
         Route(
-            "/api/drift-movements/{generation_id}",
-            handlers["api_drift_movements"],
+            "/api/epoch/{epoch_id}/journal.md",
+            handlers["api_epoch_journal_md"],
         ),
         Route(
-            "/api/hypothesis-accuracy/{epoch_id}/{generation_id}",
-            handlers["api_hypothesis_accuracy"],
+            "/api/epoch/{epoch_id}/analysis.html",
+            handlers["api_epoch_analysis_html"],
         ),
-        Route(
-            "/api/calibration-trend",
-            handlers["api_calibration_trend"],
-        ),
+        # The file-tree / mutation-site browser.
         Route("/api/files", handlers["api_files"]),
         Route(
             "/api/files/{epoch_id}/{generation_id}/tree",
@@ -429,16 +328,7 @@ def create_app(
             "/api/mutations/{epoch_id}/{mutation_id}",
             handlers["api_mutation_detail"],
         ),
-        Route("/api/epoch/{epoch_id}/journal", handlers["api_epoch_journal"]),
-        Route(
-            "/api/epoch/{epoch_id}/journal.md",
-            handlers["api_epoch_journal_md"],
-        ),
-        Route("/api/epoch/{epoch_id}/analysis", handlers["api_epoch_analysis"]),
-        Route(
-            "/api/epoch/{epoch_id}/analysis.html",
-            handlers["api_epoch_analysis_html"],
-        ),
+        # The transcript surface.
         Route("/api/conversation/{run_id}", handlers["api_conversation"]),
         Route(
             "/api/matchup/{entry_id}/conversations",
@@ -454,43 +344,6 @@ def create_app(
         Route(
             "/api/run/{epoch_id}/{generation_id}/{entry_id}/transcript/delta",
             handlers["api_run_transcript_delta"],
-        ),
-        # Instrument-lens (board-reflection) surface — self-contained block so
-        # the concurrent endpoints.py thinning (track U2) merges additively.
-        Route("/api/reflections", handlers["api_reflections"]),
-        # The proposer panel's two reads, under the same lens: the scorecard
-        # trend and the pending-recommendation queue.
-        Route("/api/proposer/scorecard", handlers["api_proposer_scorecard"]),
-        Route("/api/proposer/recommendations", handlers["api_proposer_recommendations"]),
-        Route(
-            "/api/reflection/{reflection_id}/summary",
-            handlers["api_reflection_summary"],
-        ),
-        Route(
-            "/api/reflection/{reflection_id}/scorecards",
-            handlers["api_reflection_scorecards"],
-        ),
-        Route(
-            "/api/reflection/{reflection_id}/practices",
-            handlers["api_reflection_practices"],
-        ),
-        Route(
-            "/api/reflection/{reflection_id}/xray/{judge_name}/{run_ref}",
-            handlers["api_reflection_xray"],
-        ),
-        # Trajectory-bootstrap viz surface (TRAJECTORY-UI.md §3) — imported
-        # traces, one trace's detail, and a suggestion's provenance chain.
-        Route(
-            "/api/reflection/{reflection_id}/traces",
-            handlers["api_reflection_traces"],
-        ),
-        Route(
-            "/api/reflection/{reflection_id}/trace/{trace_id}",
-            handlers["api_reflection_trace"],
-        ),
-        Route(
-            "/api/reflection/{reflection_id}/suggestion/{suggestion_id}/provenance",
-            handlers["api_reflection_suggestion_provenance"],
         ),
         Route("/events", events),
         Route("/api/control/pause", handlers["control_pause"], methods=["POST"]),

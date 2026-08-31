@@ -28,6 +28,7 @@ from typing import Any
 import pytest
 from starlette.testclient import TestClient
 
+import zicato.query.live_execution_plan as live_plan
 from zicato.core.loss import LossProfile
 from zicato.core.workspace import WorkspaceLayout, loss_profile_path
 from zicato.dashboard.server import create_app
@@ -456,8 +457,6 @@ def test_rendering_the_live_overlay_does_not_mutate_the_durable_plan(
     mid_round: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """The two endpoints share one model without sharing mutable wire data."""
-    import zicato.query.live_execution_plan as live_plan
-
     model = build_execution_plan_model(WorkspacePaths(mid_round), EPOCH)
     durable_before = model.payload()
     monkeypatch.setattr(live_plan, "build_execution_plan_model", lambda *_args: model)
@@ -509,3 +508,85 @@ def test_the_endpoint_serves_the_live_plan(mid_round: Path, tmp_path: Path) -> N
     assert body["epoch_id"] == EPOCH
     assert body["liveness"]["state"] == "live"
     assert body["overlay"]["active_path"][0] == f"e:{EPOCH}/round:0"
+
+
+# ---------------------------------------------------------------------------
+# One read, two live surfaces
+# ---------------------------------------------------------------------------
+
+PIPELINE_ROUTE = "/api/live/pipeline"
+
+
+def test_both_live_surfaces_come_from_one_read(mid_round: Path) -> None:
+    """The plan's overlay reports the verdict the pipeline serves.
+
+    Two reads of a moving workspace can land on different phases; one read
+    cannot. What this pins is that the pipeline the endpoint serves IS the
+    verdict the plan's overlay was projected from.
+    """
+    surfaces = live_plan.build_live_surfaces(WorkspacePaths(mid_round))
+
+    overlay = surfaces.execution_plan["overlay"]
+    assert surfaces.pipeline["phase"] == overlay["phase"]
+    assert surfaces.pipeline["round_index"] == overlay["round_index"]
+    assert surfaces.pipeline["in_flight"] == overlay["in_flight"]
+    assert surfaces.pipeline["liveness"] == surfaces.execution_plan["liveness"]
+
+
+def test_the_pipeline_names_the_step_the_plan_marks_active(mid_round: Path) -> None:
+    """The stepper cannot report one step while the plan marks another."""
+    surfaces = live_plan.build_live_surfaces(WorkspacePaths(mid_round))
+
+    step = surfaces.pipeline["active_step"]
+    active_path = surfaces.execution_plan["overlay"]["active_path"]
+    assert active_path[-1].endswith(f"/{step}")
+
+
+def test_a_plan_that_cannot_be_built_still_serves_the_pipeline(
+    mid_round: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The phase verdict was already read; a failed tree does not unread it."""
+
+    def _explode(*_args: Any, **_kwargs: Any) -> None:
+        raise RuntimeError("plan unreadable")
+
+    monkeypatch.setattr(live_plan, "build_execution_plan_model", _explode)
+
+    surfaces = live_plan.build_live_surfaces(WorkspacePaths(mid_round))
+
+    assert surfaces.pipeline["phase"] == RUNNING_PHASE
+    assert surfaces.execution_plan["note"] == "live plan could not be read"
+    assert surfaces.execution_plan["stages"] == []
+
+
+def test_a_phase_that_cannot_be_read_degrades_both_surfaces(
+    mid_round: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Without the phase there is no live verdict for either surface."""
+
+    def _explode(*_args: Any, **_kwargs: Any) -> None:
+        raise RuntimeError("phase unreadable")
+
+    monkeypatch.setattr(live_plan, "build_round_pipeline", _explode)
+
+    surfaces = live_plan.build_live_surfaces(WorkspacePaths(mid_round))
+
+    assert surfaces.pipeline == {}
+    assert surfaces.execution_plan["note"] == "live plan could not be read"
+
+
+def test_the_pipeline_endpoint_serves_the_projection(mid_round: Path, tmp_path: Path) -> None:
+    static = tmp_path / "static"
+    static.mkdir(exist_ok=True)
+    response = TestClient(create_app(mid_round, static)).get(PIPELINE_ROUTE)
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["epoch_id"] == EPOCH
+    assert body["phase"] == RUNNING_PHASE
+    assert body["liveness"]["state"] == "live"
+    assert [step["id"] for step in body["steps"]] == ["propose", "apply", "run", "gate"]
+
+
+def test_the_pipeline_route_declares_a_payload_contract() -> None:
+    assert PIPELINE_ROUTE in ENDPOINT_PAYLOADS

@@ -141,6 +141,7 @@ from zicato.query.lineage_view import (
 )
 from zicato.query.live_execution_plan import (
     build_live_execution_plan,
+    build_live_pipeline,
 )
 from zicato.query.log_stream import (
     LOG_DEFAULT_LIMIT,
@@ -227,6 +228,7 @@ from zicato.query.runtime_view import (
     read_active_runs_view,
     read_active_tournament_dict,
     read_adk_session_id_from_events,
+    read_effective_settings,
     read_heartbeat_dict,
     read_lock_dict,
     read_meta_loop_session_id,
@@ -382,6 +384,7 @@ __all__ = [
     "build_health_report",
     "build_lineage_view",
     "build_live_execution_plan",
+    "build_live_pipeline",
     "build_matchup_detail",
     "build_matchup_grid",
     "build_meta_loop_ledger",
@@ -458,6 +461,7 @@ __all__ = [
     "read_epoch_journal",
     "read_epoch_journal_md",
     "read_run_result",
+    "read_effective_settings",
     "read_heartbeat_dict",
     "read_lock_dict",
     "read_meta_loop_session_id",

@@ -728,6 +728,69 @@ def derive_liveness(paths: WorkspacePaths, *, now: _dt.datetime | None = None) -
 
 
 # ---------------------------------------------------------------------------
+# The run's effective settings
+# ---------------------------------------------------------------------------
+
+
+def read_effective_settings(paths: WorkspacePaths) -> dict[str, Any] | None:
+    """Every setting the run is operating under — ``GET /api/config``.
+
+    A knob's value is resolved from an order of priority: the dataclass
+    field defaults, the workspace ``config.json``, the flags a command
+    pinned for the process, and the host's usable CPU count. Only the
+    process that resolves it sees the answer, so a reader that went back to
+    ``config.json`` could read a different value than the loop is running
+    under, and a ceiling nobody chose would be indistinguishable from one an
+    operator picked.
+
+    The loop stamps the whole resolved map onto its heartbeat record
+    (:func:`zicato.runtime.effective_settings.effective_settings`), and this
+    reader serves it::
+
+        {
+          "recorded_at": "2026-08-30T11:02:07Z",   # when the record was written
+          "pid": 41231,
+          "instance_id": "default",
+          "settings": {
+            "runtime.parallelism": {"value": 2, "source": "pinned CLI flag"},
+            ...
+          }
+        }
+
+    ``settings`` is an OPEN map keyed by each knob's dotted configuration
+    name: a knob added later appears with no schema change, and a reader
+    that does not recognise it still renders its ``value`` and ``source``.
+    A record written before the map existed, and any process that never
+    resolved a runtime configuration, carry an empty map — the record is
+    served as it stands rather than withheld, because ``pid`` and
+    ``recorded_at`` still answer which process this is.
+
+    ``None`` when the workspace holds no heartbeat record at all: there is
+    no run whose settings could be reported, and the client paints the
+    honest empty state. The Rust supervisor does not serve this route and
+    answers the same ``null`` (09-dashboard-and-query.md, the
+    null-degradation duty).
+
+    Reads the RAW record rather than :func:`read_heartbeat_dict`, whose
+    synthetic post-mortem heartbeat carries harmonograf fields and no
+    process identity; the settings of a run that never ran are not a thing
+    to report.
+    """
+    try:
+        hb = read_heartbeat(paths.root)
+    except Exception:  # noqa: BLE001 — best-effort, mirrors the sibling readers
+        return None
+    if hb is None:
+        return None
+    return {
+        "recorded_at": hb.last_heartbeat,
+        "pid": hb.pid,
+        "instance_id": hb.instance_id,
+        "settings": {name: dict(entry) for name, entry in hb.settings.items()},
+    }
+
+
+# ---------------------------------------------------------------------------
 # Composite /api/state snapshot
 # ---------------------------------------------------------------------------
 
