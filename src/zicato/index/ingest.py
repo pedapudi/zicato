@@ -137,7 +137,7 @@ def _tournament_id_for_run(
     *child* generation: a tournament round runs the challenger across
     every board entry, and the parent's scores are read from the
     parent generation's cached ``gen_score.json`` rather than re-run.
-    So the helper looks up the child's experiment, not the parent's.
+    So the helper looks up the child's experiment rather than the parent's.
 
     Returns ``None`` when the generation has no ``experiment.json``
     (e.g. a ``v0`` seed) — those runs are champion-only fast-cache
@@ -184,7 +184,7 @@ def _upsert_epoch(
     """Upsert one ``epochs`` row.
 
     ``contract_hash`` is the descriptive hash from the epoch's
-    ``config.json``; ``None`` (a pre-hash / legacy epoch) projects to the
+    ``config.json``; ``None`` (an epoch that records no hash) projects to the
     column's empty-string form so the index wire shape is unchanged. The
     index column is purely derived — it does not feed the canonicalizer.
 
@@ -244,9 +244,9 @@ def _upsert_generation(
     # ``round_index`` is the birth round of the generation. It is
     # written via COALESCE so a partial upsert (e.g. the
     # experiment-derived path, which does not know the round) never
-    # clobbers a value a lineage-derived pass already set. A legacy
-    # generation whose lineage row predates the field leaves it NULL —
-    # birth round unknown — which consumers read as absent.
+    # clobbers a value a lineage-derived pass already set. A generation
+    # whose lineage row carries no birth round leaves it NULL — birth round
+    # unknown — which consumers read as absent.
     conn.execute(
         "INSERT INTO generations("
         "epoch_id, generation_id, parent_generation_id, promoted, created_at, round_index) "
@@ -293,9 +293,9 @@ def _upsert_run(
 
     ``match_id`` (schema v4) is the per-board-run tournament-provenance
     tag — the matchup id this run executed within (e.g. ``"rung0_m2"``,
-    ``"racing-final"``). NULL for legacy runs persisted before the tag
-    existed and for runs that ran outside a tagged matchup (a gauntlet
-    duel, which never carries a ``match_id``). Same ``COALESCE`` story
+    ``"racing-final"``). NULL for a run persisted without the tag and for a
+    run that executed outside a tagged matchup (a gauntlet duel, which never
+    carries a ``match_id``). Same ``COALESCE`` story
     as ``tournament_id``: a re-ingest that cannot recover the tag leaves
     an existing value intact.
     """
@@ -344,8 +344,8 @@ def _upsert_loss_profile(
     ``match_id`` (schema v4) is read straight off the profile — the
     runner stamps it onto ``LossProfile.match_id`` (and into the run's
     ``loss.json``) for runs that executed within a tagged matchup. An
-    empty string on the profile means "untagged" (a gauntlet / ad-hoc /
-    legacy run) and is stored as NULL so the column reads consistently
+    empty string on the profile means "untagged" (a gauntlet or ad-hoc run)
+    and is stored as NULL so the column reads consistently
     with the ``runs`` table.
     """
     match_id = getattr(profile, "match_id", "") or None
@@ -359,7 +359,8 @@ def _upsert_loss_profile(
     # Abort-cause provenance (schema v9). Read straight off the profile: the
     # runner/worker stamp it onto ``LossProfile.abort_cause`` for synthesised
     # aborted profiles (``budget_exhausted`` vs the infra causes). An empty /
-    # absent value (a cleanly-reduced run, or a legacy profile) is stored as
+    # absent value (a cleanly-reduced run, or a profile carrying no cause)
+    # is stored as
     # NULL so a reader can ``WHERE abort_cause = 'parent_kill'`` to spot an
     # over-firing watchdog without re-parsing the ``loss_json`` blob.
     abort_cause = getattr(profile, "abort_cause", None) or None
@@ -812,7 +813,7 @@ def _upsert_field_tournament(conn: sqlite3.Connection, record: dict[str, Any]) -
 
     The ``tournament_id`` is the field-level id
     ``"{epoch_id}:field:{first_challenger}"`` — stable per round and
-    idempotent across rebuilds. The legacy per-matchup
+    idempotent across rebuilds. The per-matchup
     ``parent_generation_id`` / ``child_generation_id`` columns are left
     EMPTY: a field row is not a champion-vs-challenger duel, and a
     populated ``child_generation_id`` would collide with the per-challenger
@@ -1006,7 +1007,7 @@ def _ingest_run_into(
         tournament_id=tournament_id,
         # Per-board-run tournament provenance (schema v4). The runner
         # stamped the matchup id onto the profile + loss.json; "" means
-        # untagged (gauntlet / ad-hoc / legacy run) -> stored NULL.
+        # untagged (a gauntlet or ad-hoc run) -> stored NULL.
         match_id=(profile.match_id or None),
     )
     _upsert_loss_profile(conn, profile, tournament_id=tournament_id)
@@ -1181,7 +1182,7 @@ def _ingest_pareto_frontier_into(
     try:
         frontier = load_frontier(workspace_root, epoch_id)
     except (OSError, ValueError, json.JSONDecodeError, RecordFormatError) as exc:
-        # Warned, not silent: unlike the derived rows around it, the file this
+        # Warned rather than silent: unlike the derived rows around it, the file this
         # projects IS canonical, so a defect in it is the operator's to fix.
         log.warning(
             "index: pareto frontier projection skipped for epoch %s (%s): %s",
@@ -1321,10 +1322,9 @@ def rebuild_index(workspace_root: Path, db_path: Path | None = None) -> Path:
 
     The whole database is derived into a scratch file beside the target
     and renamed into place on success (:func:`_build_index_atomically`),
-    so the result is a from-scratch rebuild — the index carries no state
-    that is not in the files, so dropping the old one loses nothing — but
-    a FAILED rebuild leaves the existing index byte-untouched instead of
-    destroying it.
+    so the result is a from-scratch rebuild. The index carries no state that
+    is not in the files, so discarding the existing database loses nothing,
+    and a FAILED rebuild leaves it byte-untouched rather than destroying it.
 
     Idempotent: running it twice produces an identical database.
 
@@ -1778,7 +1778,7 @@ def _diverged_epochs(
     walk: list[_EpochWalkItem],
     indexed: set[str],
 ) -> tuple[str, ...]:
-    """Return the sorted ids of epochs whose index rows no longer match disk.
+    """Return the sorted ids of epochs whose index rows disagree with disk.
 
     Three things count as divergence: an epoch on disk with no cursor row, an
     epoch whose cursor disagrees with any signal, and an epoch the INDEX still
@@ -1885,9 +1885,10 @@ def _sweep_stale_build_tmps(target: Path) -> None:
     """Remove build scratch abandoned by builders that are no longer alive.
 
     Unique scratch names (:func:`_build_tmp_path`) give up the one virtue of
-    a fixed name: a build killed outright — SIGKILL, an OOM, a pulled plug —
-    used to have its leftovers unlinked by the next build reusing the path.
-    Now nothing reclaims them, and the leftovers are database-sized.
+    a fixed name: with a fixed name, the leftovers of a build killed outright
+    — SIGKILL, an OOM, a pulled plug — are unlinked by the next build reusing
+    the path. Unique names leave nobody to reclaim them, and the leftovers
+    are database-sized, so this sweep does the reclaiming.
 
     Liveness is decided by the PID stamped into the name, the same
     stale-owner test the workspace lock uses (:func:`is_pid_alive`), so a
@@ -1991,7 +1992,7 @@ def _build_index_atomically(workspace_root: Path, target: Path) -> None:
         _unlink_db(tmp)
         raise
     # The clean close above checkpointed the scratch WAL back into the scratch
-    # file and removed its sidecars; that is precisely what makes the renamed
+    # file and removed its sidecars; that is what makes the renamed
     # file whole. If they are somehow still here, the rename would publish a
     # database whose tail is in a file we are about to orphan — refuse, and
     # leave the existing index alone, which is this function's entire promise.
@@ -2008,7 +2009,7 @@ def _build_index_atomically(workspace_root: Path, target: Path) -> None:
             "file being renamed"
         )
     # BEFORE the rename — see the docstring. A foreign WAL left beside the
-    # published file is replayed over it, not ignored.
+    # published file is replayed over it rather than ignored.
     for suffix in ("-wal", "-shm"):
         target.with_name(target.name + suffix).unlink(missing_ok=True)
     os.replace(tmp, target)
@@ -2019,7 +2020,7 @@ def _rebuild_reason(target: Path) -> str | None:
 
     One of ``"absent"``, ``"stale-schema"``, ``"unreadable"``. An
     EQUAL-version database is never a reason: detecting that its *contents*
-    drifted from the workspace is :func:`heal_index`'s job, not this one's.
+    drifted from the workspace is :func:`heal_index`'s job rather than this one's.
 
     Raises :class:`~zicato.index.schema.IndexSchemaNewerError` for a database
     written by a NEWER build. Auto-deleting it is forbidden — its columns and
@@ -2056,8 +2057,8 @@ def ensure_index(
 ) -> Path:
     """Guarantee an index of the CURRENT schema exists, building it if not.
 
-    The structural half of the self-healing index (M1;
-    ``docs/design/ANALYTICAL-INDEX.md`` §5.1). On return ``index.db`` exists
+    The structural half of the self-healing index
+    (``docs/design/ANALYTICAL-INDEX.md`` §5.1). On return ``index.db`` exists
     and carries :data:`~zicato.index.schema.SCHEMA_VERSION`. It builds when —
     and only when — the file is absent, stamped with an OLDER version, or not
     a readable SQLite database. An equal-version database is left alone:
@@ -2136,8 +2137,8 @@ def validate_index(workspace_root: Path, db_path: Path | None = None) -> tuple[s
 def heal_index(workspace_root: Path, db_path: Path | None = None) -> tuple[str, ...]:
     """Re-ingest ONLY the epochs whose index rows diverged from the workspace.
 
-    The incremental half of the self-healing index (M2;
-    ``docs/design/ANALYTICAL-INDEX.md`` §5.2). Each diverged epoch has every
+    The incremental half of the self-healing index
+    (``docs/design/ANALYTICAL-INDEX.md`` §5.2). Each diverged epoch has every
     one of its rows deleted and is then re-projected through the same
     :func:`_rebuild_epoch` machinery the full rebuild uses. An epoch that is
     in the index but gone from the workspace is deleted and not re-projected.
@@ -2508,12 +2509,12 @@ def backfill_generations(
                     promoted = bool(g.get("promoted", False))
 
                 # ``round_index`` is owned by lineage.json (the birth
-                # round); reconcile it too so a legacy row gains it once
-                # lineage carries it. An absent value reads as None.
+                # round); reconcile it too so a row missing the value gains
+                # it once lineage carries it. An absent value reads as None.
                 round_index = _round_index_from_lineage_gen(g)
 
                 # Read what the DB currently has so we only count a real
-                # rewrite, not a no-op upsert.
+                # rewrite rather than a no-op upsert.
                 cur = conn.execute(
                     "SELECT parent_generation_id, promoted, created_at, round_index "
                     "FROM generations WHERE epoch_id = ? AND generation_id = ?",

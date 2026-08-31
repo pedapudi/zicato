@@ -184,7 +184,7 @@ class CheckContext:
 
     @cached_property
     def has_adapter_config(self) -> bool:
-        """Whether config names either current or legacy adapter wiring."""
+        """Whether config names adapter wiring, under either accepted key."""
         return self.config.get("adapter") is not None or bool(self.config.get("adk_entrypoint"))
 
     @cached_property
@@ -290,7 +290,7 @@ class CheckContext:
     def unbound_span_markers(self) -> tuple[UnboundSpanMarker, ...]:
         """Span markers the single surface walk resolved to no literal.
 
-        Structural facts from the enumerator itself, not a scrape of its
+        Structural facts from the enumerator itself rather than a scrape of its
         log: each carries the id, the file, the line, and which of the
         two ways it failed to bind.
         """

@@ -109,7 +109,7 @@ def require_workspace_valid(
     """Run the mandatory gate; raise with the full report on any stop.
 
     Advisories never raise. They are logged at WARNING so they reach a
-    library caller's run log too, not only the CLI's terminal.
+    library caller's run log too rather than only the CLI's terminal.
     """
     with CheckContext(Path(workspace_root), epoch_id=epoch_id, live_contract=live_contract) as ctx:
         report = build_report(ctx)

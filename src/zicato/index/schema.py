@@ -4,7 +4,7 @@ This module is a **shared contract**. R9-2's analytics surface and the
 Rust supervisor both query ``.zicato/index.db`` directly, so the table
 and column shapes here must not change without coordinating with those
 consumers. The DDL is kept as plain SQL strings (rather than an ORM
-schema) precisely so siblings in other languages can mirror it
+schema) so siblings in other languages can mirror it
 verbatim.
 
 Schema versioning
@@ -336,9 +336,9 @@ _V3_ADDED_COLUMNS: tuple[tuple[str, str, str], ...] = (
 #: ``"rung0_m2"``, ``"racing-final"``), so the dashboard can relate a
 #: board run to its rung/matchup. Same incremental-open ALTER pattern as
 #: the earlier waves: a pre-existing v3 database gains these as ``NULL``
-#: columns on open (legacy runs stay untagged — the field is simply
-#: absent), and a full ``zicato repair index`` re-derives what it can from
-#: each run's ``loss.json`` (which now carries ``match_id`` for new runs).
+#: columns on open (a run ingested before the ALTER stays untagged — the
+#: field is simply absent), and a full ``zicato repair index`` re-derives
+#: what it can from each run's ``loss.json``, which carries ``match_id``.
 _V4_ADDED_COLUMNS: tuple[tuple[str, str, str], ...] = (
     ("runs", "match_id", "TEXT"),
     ("loss_profiles", "match_id", "TEXT"),
@@ -349,8 +349,9 @@ _V4_ADDED_COLUMNS: tuple[tuple[str, str, str], ...] = (
 #: per-challenger field-status records — applied vs rejected + reason —
 #: are persisted alongside the settled bracket so a completed epoch's
 #: candidate-generation step survives for post-hoc viewing (the same
-#: incremental-open ALTER pattern as the earlier waves; legacy rows gain
-#: it as ``NULL``, a full ``zicato repair index`` re-derives what it can).
+#: incremental-open ALTER pattern as the earlier columns; existing rows
+#: gain it as ``NULL``, and a full ``zicato repair index`` re-derives what
+#: it can).
 _V5_ADDED_COLUMNS: tuple[tuple[str, str, str], ...] = (
     ("tournaments", "field_status_json", "TEXT"),
 )
@@ -363,10 +364,10 @@ _V5_ADDED_COLUMNS: tuple[tuple[str, str, str], ...] = (
 #: ``source_run`` naming where the live evaluation happened, so a reader
 #: can show the champion as scored-but-cached and never double-count it as
 #: a fresh evaluation. Same incremental-open ALTER pattern as the earlier
-#: waves: a pre-existing v5 database gains these as ``NULL`` columns on
-#: open (legacy rows read as not-cached — ``cached IS NULL`` is treated as
-#: fresh), and a full ``zicato repair index`` re-derives them from each run's
-#: ``loss.json`` (which now carries the provenance for materialised runs).
+#: columns: a pre-existing v5 database gains these as ``NULL`` columns on
+#: open (an existing row reads as not-cached — ``cached IS NULL`` is treated
+#: as fresh), and a full ``zicato repair index`` re-derives them from each
+#: run's ``loss.json``, which carries the provenance for materialised runs.
 _V6_ADDED_COLUMNS: tuple[tuple[str, str, str], ...] = (
     ("loss_profiles", "cached", "INTEGER"),
     ("loss_profiles", "source_epoch", "TEXT"),
@@ -379,10 +380,10 @@ _V6_ADDED_COLUMNS: tuple[tuple[str, str, str], ...] = (
 #: it (its birth round; the genesis seed ``v0`` is round 0). Consumers
 #: group an epoch's generations as ``Epoch -> Round -> {challengers minted
 #: that round}``. Same incremental-open ALTER pattern as the earlier
-#: waves: a pre-existing v6 database gains the column as ``NULL`` on open
-#: (legacy generations read as ``round_index IS NULL`` — birth round
+#: columns: a pre-existing v6 database gains the column as ``NULL`` on open
+#: (an existing generation reads as ``round_index IS NULL`` — birth round
 #: unknown), and a full ``zicato repair index`` re-derives it from
-#: ``lineage.json`` (which now carries ``round_index`` per generation).
+#: ``lineage.json``, which carries ``round_index`` per generation.
 _V7_ADDED_COLUMNS: tuple[tuple[str, str, str], ...] = (("generations", "round_index", "INTEGER"),)
 
 
@@ -395,8 +396,8 @@ _V7_ADDED_COLUMNS: tuple[tuple[str, str, str], ...] = (("generations", "round_in
 #: per-round run/output (the champion generation's directory). Source is
 #: the crowning matchup's OutcomeRecord (``champion_eval_mode`` defaults
 #: to ``"full"`` for journals that predate the field). Same incremental-
-#: open ALTER pattern as the earlier waves: a pre-existing v7 database
-#: gains these as ``NULL`` columns on open (legacy rows read as
+#: open ALTER pattern as the earlier columns: a pre-existing v7 database
+#: gains these as ``NULL`` columns on open (an existing row reads as
 #: ``champion_eval_mode IS NULL`` — mode unknown, treat as ``"full"``),
 #: and a full ``zicato repair index`` re-derives them from each experiment's
 #: resolved outcome.
@@ -413,11 +414,11 @@ _V8_ADDED_COLUMNS: tuple[tuple[str, str, str], ...] = (
 #: ``prepare_failed`` / ``result_unreadable``) so loop-health can distinguish
 #: an honest agent infinite-loop from a transient crash from our OWN watchdog
 #: over-firing — without re-parsing each row's ``loss_json`` blob. Same
-#: incremental-open ALTER pattern as the earlier waves: a pre-existing v8
-#: database gains the column as ``NULL`` on open (legacy rows + every cleanly-
-#: reduced non-aborted run read as ``abort_cause IS NULL``), and a full
-#: ``zicato repair index`` re-derives it from each run's ``loss.json`` (which now
-#: carries the cause for aborted runs).
+#: incremental-open ALTER pattern as the earlier columns: a pre-existing v8
+#: database gains the column as ``NULL`` on open (an existing row, and every
+#: cleanly-reduced non-aborted run, reads as ``abort_cause IS NULL``), and a
+#: full ``zicato repair index`` re-derives it from each run's ``loss.json``,
+#: which carries the cause for aborted runs.
 _V9_ADDED_COLUMNS: tuple[tuple[str, str, str], ...] = (("loss_profiles", "abort_cause", "TEXT"),)
 
 
@@ -442,7 +443,7 @@ _V10_ADDED_COLUMNS: tuple[tuple[str, str, str], ...] = (
 #: R4). ``reflections`` carries one row per reflection run (its four-pillar
 #: bill-of-health summary) and ``judge_scorecards`` one row per
 #: ``(reflection_id, judge_name)`` (the confusion-matrix scorecard). Unlike
-#: the earlier waves these are WHOLE NEW TABLES, not new columns, so the
+#: the earlier waves these are WHOLE NEW TABLES rather than new columns, so the
 #: ``CREATE TABLE IF NOT EXISTS`` pass in :func:`apply_schema` materialises
 #: them on any open — a pre-existing v10 database simply gains the two empty
 #: tables, and a full ``zicato repair index`` re-derives their rows from each

@@ -137,11 +137,11 @@ def _select_optional_columns(
     """Select ``base_columns`` plus whichever ``optional_columns`` exist.
 
     A column added in a later schema version (e.g. ``match_id`` in v4)
-    may be absent from a legacy index that the read-only dashboard opens
-    without migrating. Rather than letting the ``SELECT`` fail with "no
-    such column", this probes the live table for each optional column and
-    emits ``NULL AS <col>`` for any that are missing — so a legacy row
-    still loads with the field present-but-null, exactly the back-compat
+    may be absent from an index at an earlier version that the read-only
+    dashboard opens without migrating. Rather than letting the ``SELECT``
+    fail with "no such column", this probes the live table for each optional
+    column and emits ``NULL AS <col>`` for any that are missing, so every
+    row loads with the field present-but-null. That is the compatibility
     contract the dashboard relies on. Returns ``[]`` for a missing index.
     """
     try:
@@ -185,13 +185,14 @@ def generations_for_epoch(db_path: Path, epoch_id: str) -> list[sqlite3.Row]:
     """Return every generation under ``epoch_id``, oldest first.
 
     ``round_index`` (the v7 birth-round column) is selected as an
-    optional column: a legacy index opened read-only without the
-    migration still loads each row with ``round_index`` present-but-null,
+    optional column: an index at an earlier schema version, opened read-only
+    without the migration, still loads each row with ``round_index``
+    present-but-null,
     so a consumer can group ``Epoch -> Round -> {challengers}`` and
     degrade on a null. The rating triple (``elo`` / ``elo_se`` /
     ``elo_games``; v10 + v12, visibility-only) rides the same optional
-    contract — present-but-null on a legacy index or an unplayed
-    generation.
+    contract — present-but-null on an index at an earlier schema version, or
+    on an unplayed generation.
     """
     return _select_optional_columns(
         db_path,
@@ -555,8 +556,8 @@ def _cross_contract_settled_rows(db_path: Path, epoch_id: str) -> list[sqlite3.R
       signal);
     * every epoch under a DIFFERENT hash — its mutation ids and losses
       are not comparable and are never surfaced;
-    * legacy / pre-hash epochs (``contract_hash`` empty) — an unknown
-      contract is never treated as transferable.
+    * every epoch that records no hash (``contract_hash`` empty) — an
+      unknown contract is never treated as transferable.
 
     Ordered ``(epoch_id, generation_id)`` ascending so the caller can walk
     it newest-first with ``reversed`` exactly like the same-epoch rows.
@@ -642,7 +643,7 @@ def prior_experiments_for_epoch(
       experiment with no verdict carries no learning signal, and would
       otherwise surface the current round's own just-written, outcome-less
       experiment. (In-flight sibling entries come from the orchestrator's
-      field loop, not from the index.)
+      field loop rather than from the index.)
     * Lift each row's ``modulating`` ids out of ``hypothesis_json``
       (empty tuple on any decode failure — never raise).
     * Curate + cap to ``max_entries``: **all** ``promoted`` wins
@@ -735,7 +736,7 @@ def prior_experiments_for_epoch(
 
 #: How many of the epoch's most recent settled experiments count as
 #: "recent" for the mutation-point track record's recency signal. A simple
-#: LAST-K WINDOW was chosen over exponential decay deliberately: the
+#: LAST-K WINDOW was chosen over exponential decay: the
 #: consumer surfaces (the manifest annotation, the proposer tool) only need
 #: a coarse recent/stale read, a window is auditable by hand against the
 #: journal, and a decay constant would be one more tuning knob with no
@@ -829,7 +830,7 @@ def mutation_point_track_record(
     """
     # Settled experiments in recency order (oldest first), each with its
     # touched mutation-id set. Two queries + a Python fold keeps the
-    # recency ranking (epoch-wide, not per-point) straightforward.
+    # recency ranking (epoch-wide rather than per-point) straightforward.
     experiment_rows = _select(
         db_path,
         "SELECT e.generation_id, e.tournament_decision, e.scalar_score_delta "
@@ -911,8 +912,8 @@ def tournaments_for_epoch(db_path: Path, epoch_id: str) -> list[sqlite3.Row]:
 
     ``champion_eval_mode`` / ``champion_run_ref`` (the v8 per-round
     champion-eval-provenance columns) are selected as optional columns: a
-    legacy index opened read-only without the migration still loads each
-    row with both fields present-but-null, so a consumer can show
+    index at an earlier schema version, opened read-only without the
+    migration, still loads each row with both fields present-but-null, so a consumer can show
     cached-vs-rerun per round and degrade on a null (treating a null mode
     as ``"full"``).
     """
@@ -949,10 +950,10 @@ def elo_for_epoch(db_path: Path, epoch_id: str) -> list[sqlite3.Row]:
 
     The rating is **read-only / for visibility** — it never gates
     promotion. ``elo`` / ``elo_games`` land in schema v10 and ``elo_se`` in
-    v12: a legacy index opened read-only without the migration still loads
-    each row with all three fields present-but-null (``elo IS NULL`` =
-    rating not yet computed; ``elo_se IS NULL`` on a pre-v12 file =
-    uncertainty not yet computed; run ``zicato repair index`` to derive them). A
+    v12: an index at an earlier schema version, opened read-only without the
+    migration, still loads each row with all three fields present-but-null
+    (``elo IS NULL`` = rating not computed; ``elo_se IS NULL`` = uncertainty
+    not computed; run ``zicato repair index`` to derive them). A
     generation that never played a settled duel also reads NULL (no games,
     no rating). A never-indexed workspace yields ``[]``.
     """

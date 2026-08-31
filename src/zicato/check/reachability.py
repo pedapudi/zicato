@@ -36,7 +36,7 @@ from dataclasses import dataclass
 from zicato.core.runtime import CallLLM
 from zicato.models_config import MODEL_ROLES, ModelsConfig, RoleSpec, lazy_text_call_llm
 
-#: Seconds one role's round trip may take. A bound, not a budget: a
+#: Seconds one role's round trip may take. A bound rather than a budget: a
 #: hung endpoint must fail its own role rather than wedge a diagnostic
 #: the operator is waiting on.
 ROLE_TIMEOUT_S = 30.0
