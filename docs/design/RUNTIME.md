@@ -1,53 +1,52 @@
 # Runtime
 
-This document describes the **runtime layer** that surrounds zicato's
-meta-loop: the on-disk state files in `.zicato/runtime/`, the
-watchdog supervisor binary auto-spawned by `zicato evolve`, the
-heartbeat and escalation protocols, the resume semantics on
-orchestrator restart, and the concurrency model that lets parallel
-tournaments coexist on one workspace.
+The runtime layer surrounds zicato's meta-loop. It comprises the
+on-disk state files in `.zicato/runtime/`, the watchdog supervisor
+binary auto-spawned by `zicato evolve`, the heartbeat and escalation
+protocols, the resume semantics on orchestrator restart, and the
+concurrency model that lets parallel tournaments coexist on one
+workspace.
 
-> **What ships today (reconciled with the code).** The `.zicato/runtime/`
-> state files, the heartbeat (`HeartbeatBeater`), the pid-based
-> workspace lock, the atomic-write helper, and the control-file
-> protocol module are all shipped (`src/zicato/runtime/`). The Rust
-> watchdog supervisor (`crates/supervisor/`) is shipped and
-> auto-spawned by `evolve` in **watchdog-only mode** (`--no-dashboard`):
-> it runs the heartbeat/run staleness loops, escalates
-> SIGTERM → grace → SIGKILL, and serves a `/statusz` probe. The live
-> **dashboard is a separate Python (Starlette) service** spawned
-> alongside the watchdog (see [DASHBOARD.md](DASHBOARD.md)) — *not* the
-> Rust binary. The **subprocess tournament workers (L3) are now
-> SHIPPED**: every board-entry run executes in its own
-> `python -m zicato._tournament_worker` subprocess
+> **What ships today.** The `.zicato/runtime/` state files, the
+> heartbeat (`HeartbeatBeater`), the pid-based workspace lock, the
+> atomic-write helper, and the control-file protocol module all ship
+> (`src/zicato/runtime/`). The Rust watchdog supervisor
+> (`crates/supervisor/`) ships and is auto-spawned by `evolve` in
+> watchdog-only mode (`--no-dashboard`): it runs the heartbeat and
+> run-staleness loops, escalates from SIGTERM through a grace period to
+> SIGKILL, and serves a `/statusz` probe. The live dashboard is a
+> separate Python (Starlette) service spawned alongside the watchdog
+> (see [DASHBOARD.md](DASHBOARD.md)) rather than a role of the Rust
+> binary. The subprocess tournament workers ship: every board-entry run
+> executes in its own `python -m zicato._tournament_worker` subprocess
 > (`src/zicato/_tournament_worker.py`, spawned by
 > `src/zicato/tournament/runner.py`), which lets a per-run wall-clock
-> budget be **hard-enforced** by killing the process and gives each run
-> a fresh interpreter (no module-cache bleed between generations). One
-> layer remains **planned**: **orchestrator-side consumption of control
-> commands** — the dashboard writes `control/` files today, but the
-> orchestrator does not yet read them at safe points. Sections that
-> still describe a not-yet-shipped shape are marked **(planned)**
+> budget be hard-enforced by killing the process and gives each run a
+> fresh interpreter, so no module cache carries between generations. One
+> piece remains planned: orchestrator-side consumption of control
+> commands. The dashboard writes `control/` files today, and the
+> orchestrator does not read them at its safe points. Sections that
+> describe a shape which has not shipped are marked **(planned)**
 > inline.
 >
-> **Transport fidelity across the worker boundary.** Because scoring
-> now happens *inside* the subprocess, two correctness guarantees keep
-> a worker's verdict identical to an in-process one: the per-epoch
-> `per_judge_weights` survives the args-file transport into the worker
-> (`_tournament_worker._weights_from_args`), so a duel is scored
-> under the same per-judge weighting the parent configured; and the
-> in-run process judges grade against the **real tool-call ledger** the
-> run produced, not a narrated approximation of it (so a board judge
-> like `file_findability` sees what the agent actually did).
+> **Transport fidelity across the worker boundary.** Scoring happens
+> inside the subprocess, and two guarantees keep a worker's verdict
+> identical to an in-process one. The per-epoch `per_judge_weights`
+> survives the args-file transport into the worker
+> (`_tournament_worker._weights_from_args`), so a duel is scored under
+> the same per-judge weighting the parent configured. The in-run
+> process judges grade against the real tool-call ledger the run
+> produced rather than a narrated approximation of it, so a board judge
+> such as `file_findability` sees what the agent actually did.
 
-The runtime layer is the **production-readiness pass**. The meta-loop
+The runtime layer is the production-readiness pass. The meta-loop
 described in [ARCHITECTURE.md](ARCHITECTURE.md) is correct against
-cooperative inner harnesses; the runtime layer is what makes it
-correct against the pathological cases (network hangs, infinite
-loops, orchestrator crashes, OOM kills). For the layered defense
-model that motivates the file shapes in this document, see
-[ROBUSTNESS.md](ROBUSTNESS.md). For the live UI built on top of the
-state files described here, see [DASHBOARD.md](DASHBOARD.md).
+inner harnesses that cooperate with cancellation; the runtime layer is
+what makes it correct against the pathological cases — network hangs,
+infinite loops, orchestrator crashes, and out-of-memory kills. For the
+layered defense model that motivates the file shapes below, see
+[ROBUSTNESS.md](ROBUSTNESS.md). For the live user interface built on
+top of these state files, see [DASHBOARD.md](DASHBOARD.md).
 
 ## 1. Design goals
 
@@ -58,22 +57,23 @@ follows from them.
    piece of runtime state lives on disk as a plain file. A crashed
    orchestrator can be restarted and pick up where it left off; a
    crashed supervisor can be restarted with no loss of information.
-2. **No LLM in the watchdog path.** Hang detection, escalation, and
-   process-kill decisions are made by a fast, deterministic process
-   that reads file timestamps. An LLM call in this path would be the
-   thing the watchdog is meant to defend against.
+2. **No model call in the watchdog path.** Hang detection,
+   escalation, and process-kill decisions are made by a fast,
+   deterministic process that reads file timestamps. A model call in
+   this path would be a hang of the kind the watchdog exists to
+   catch.
 3. **A separate-language binary for the watchdog.** The watchdog
-   supervisor is a Rust binary, not a Python process. The
-   orchestrator (Python) is the thing prone to GIL wedges; making
-   the watchdog a separate language with a separate runtime is the
-   cheapest way to make sure the watchdog cannot itself be the cause
-   of the failure it's there to catch. (The same binary *can* also
-   serve the dashboard UI, but as shipped that role is split out into
-   a separate Python service — see §3 and [DASHBOARD.md](DASHBOARD.md).)
+   supervisor is a Rust binary rather than a Python process. The Python
+   orchestrator is the process prone to interpreter-lock wedges, and
+   giving the watchdog its own language and runtime is the cheapest way
+   to keep the watchdog from causing the failure it exists to catch.
+   The same binary can also serve the dashboard user interface, but as
+   shipped that role is split out into a separate Python service — see
+   §3 and [DASHBOARD.md](DASHBOARD.md).
 4. **One mental model for the operator.** `zicato evolve` auto-spawns
-   the watchdog supervisor *and* the dashboard service, and prints the
-   dashboard URL. The operator never has to remember "did I start the
-   dashboard?" for the common case.
+   both the watchdog supervisor and the dashboard service, and prints
+   the dashboard URL. In the common case the operator does not start
+   the dashboard separately.
 
 ## 2. State file layout
 
@@ -121,8 +121,8 @@ see §2.5.
 
 The orchestrator acquires an exclusive lock on the workspace at
 startup. This prevents two `zicato evolve` invocations from
-interleaving writes to the same epoch directory — a class of bug
-that's hard to detect after the fact and corrupts the journal.
+interleaving writes to the same epoch directory — a class of bug that
+is hard to detect after the fact and that corrupts the journal.
 
 ```json
 {
@@ -133,15 +133,15 @@ that's hard to detect after the fact and corrupts the journal.
 }
 ```
 
-**Acquisition.** A **pid-based JSON lock**, not `fcntl.flock`
+**Acquisition.** A pid-based JSON lock rather than `fcntl.flock`
 (`src/zicato/runtime/lock.py`). The file records the owning pid; the
 lock is held for the lifetime of the orchestrator process and removed
-(best-effort) on clean exit. A `flock`-style advisory lock was rejected
-because it leaves no human-readable owner behind and is released
-invisibly on process death; the pid-JSON form lets the next invocation
-*see* the stale owner and decide. The supervisor does NOT acquire the
-lock — there's only one orchestrator, but it can read the file to know
-whose heartbeat it's watching.
+on a best-effort basis at clean exit. A `flock`-style advisory lock
+leaves no human-readable owner behind and is released invisibly on
+process death, so it was rejected; the pid-in-JSON form lets the next
+invocation see the stale owner and decide. The supervisor does not
+acquire the lock, since there is only one orchestrator, but it reads
+the file to know whose heartbeat it is watching.
 
 **Stale lock handling.** If `lock.json` exists but the named PID is
 not alive, the new orchestrator considers the lock stale and steals
@@ -152,10 +152,10 @@ the same pid is idempotent. This recovers automatically from
 kernel-level kills, host reboots, and any case where the orchestrator
 died without clean exit.
 
-**Why not a fixed lockfile name like `.lock`.** The richer JSON
-payload is what makes stale-lock recovery readable: a stale lock
-written by yesterday's run carries enough metadata that the operator
-can confirm "yes, this is left over" without grep-ing logs.
+**Why the lock is not a fixed empty file named `.lock`.** The JSON
+payload is what makes stale-lock recovery readable: a stale lock left
+by a run from the day before carries enough metadata for the operator
+to confirm that it is left over, without searching logs.
 
 ### 2.2 `heartbeat.json` — orchestrator pulse
 
@@ -280,16 +280,15 @@ For every tournament run currently executing, one file. The shipped
 `ActiveRun` dataclass and its read/write helpers live in
 `src/zicato/runtime/state.py`.
 
-> **Worker ownership (SHIPPED — L3).** The model described here — the
-> *subprocess worker* that owns the run writes its own status file,
-> independent of the orchestrator, so detection survives an
-> orchestrator-side wedge — is the **L3** shape and is now **shipped**.
-> The per-run worker (`_tournament_worker.py`) writes
+> **Worker ownership.** The subprocess worker that owns a run writes
+> its own status file, independently of the orchestrator, so detection
+> survives an orchestrator-side wedge. This is the subprocess worker
+> boundary described in [ROBUSTNESS.md](ROBUSTNESS.md) §2.3, and it
+> ships. The per-run worker (`_tournament_worker.py`) writes
 > `active_runs/{run_id}.json` with `pid = os.getpid()` and bumps
 > `last_progress` from a per-run heartbeat thread
-> (`RunHeartbeatBeater`), removing the file on a clean exit; the
-> orchestrator reaps a worker that died without cleaning up. (See
-> [ROBUSTNESS.md](ROBUSTNESS.md) §2.3.)
+> (`RunHeartbeatBeater`), removing the file on a clean exit. The
+> orchestrator reaps a worker that died without cleaning up.
 
 As shipped (`ActiveRun`), the file carries:
 
@@ -317,7 +316,7 @@ healthy. The per-run subprocess worker is the one bumping
 `last_progress` (via its `RunHeartbeatBeater` thread), so the signal
 survives an orchestrator-side wedge.
 
-**File lifecycle (shipped L3 shape).**
+**File lifecycle.**
 
 - Created when the worker is spawned (orchestrator does the
   `asyncio.create_subprocess_exec`; the worker's first action is
@@ -328,15 +327,13 @@ survives an orchestrator-side wedge.
   orchestrator reaps zombies and ensures the file matches actual
   process state).
 
-The `write_active_run` / `touch_active_run_progress` /
-`remove_active_run` helpers (`runtime/state.py`) are the same writers;
-they now run **inside the worker** rather than in the orchestrator.
+The `write_active_run`, `touch_active_run_progress`, and
+`remove_active_run` helpers (`runtime/state.py`) run inside the worker.
 
-**Why a separate file per run, not one big `active_runs.json`.**
-Concurrent writes. The orchestrator may launch a fresh worker while
-another worker is updating its own status. One-file-per-run
-means no inter-worker write contention; each worker is the sole
-writer of its own file.
+**Why each run gets its own file.** Concurrent writes. The
+orchestrator may launch a fresh worker while another worker is
+updating its own status. One file per run means no inter-worker write
+contention, because each worker is the sole writer of its own file.
 
 ### 2.5 `control/` and `control_log/` — operator action channel
 
@@ -358,18 +355,18 @@ never mid-run. When a command is consumed, the file is moved
 atomically into `control_log/` with a timestamp prefix, preserving
 an immutable audit trail.
 
-The full protocol — file shapes, safe-point semantics, write-back
-permissions per command — is documented in
-[DASHBOARD.md](DASHBOARD.md) §5. This section enumerates only the
-file layout, since it's part of the runtime contract.
+[DASHBOARD.md](DASHBOARD.md) §5 documents the full protocol: file
+shapes, safe-point semantics, and write-back permissions per command.
+Only the file layout appears here, because it is part of the runtime
+contract.
 
 | File | Trigger | Form |
 |---|---|---|
 | `control/pause_epoch` | dashboard "pause" button | empty file; presence is the signal |
 | `control/skip_round` | "skip" button on active round | empty file |
 | `control/kill_runs/{run_id}` | "kill" button on a run row | empty file per run |
-| `control/promote/{gen_id}` | "force promote" button (v1.3) | empty file per generation |
-| `control/reject/{gen_id}` | "force reject" button (v1.3) | empty file per generation |
+| `control/promote/{gen_id}` | "force promote" button (planned) | empty file per generation |
+| `control/reject/{gen_id}` | "force reject" button (planned) | empty file per generation |
 | `control/rubric_replacement.txt` | "edit proposer brief" panel | text file; contents replace `brief.md` |
 
 Consumed-command record in `control_log/`:
@@ -385,10 +382,10 @@ Consumed-command record in `control_log/`:
 }
 ```
 
-The audit trail is the **safety net for operator overrides**. v1.3
-adds gate-override commands (`promote`, `reject`); the audit log
-ensures the override is recorded next to the original tournament
-record, so the journal cannot be silently rewritten.
+The audit trail is what makes an operator override safe. The planned
+gate-override commands, `promote` and `reject`, are recorded in the
+audit log next to the original tournament record, so the journal
+cannot be rewritten silently.
 
 ## 3. The watchdog supervisor binary
 
@@ -410,11 +407,11 @@ used**:
   `/statusz` (and `/statusz.json`) operational probe. No LLM, no
   in-memory authoritative state — every decision is a pure function of
   the on-disk files.
-- **Dashboard server (compiled, not mounted).** The binary *can* serve
-  the HTTP + SSE dashboard, but `zicato evolve` always spawns it with
-  `--no-dashboard`, so those routes are not mounted. The live dashboard
-  UI is served by the **separate Python service** (see §3.0 and
-  [DASHBOARD.md](DASHBOARD.md)).
+- **Dashboard server (compiled in, left unmounted).** The binary can
+  serve the HTTP and server-sent-events dashboard, but `zicato evolve`
+  always spawns it with `--no-dashboard`, so those routes are never
+  mounted. The separate Python service serves the live dashboard user
+  interface (see §3.0 and [DASHBOARD.md](DASHBOARD.md)).
 
 The watchdog uses a filesystem watcher plus a poll loop on
 `.zicato/runtime/`.
@@ -428,13 +425,12 @@ The watchdog uses a filesystem watcher plus a poll loop on
 | `zicato-supervisor` | Rust binary, spawned `--no-dashboard` | `7920` (walks `7920..=7930`) | watchdog + `/statusz` |
 | `python -m zicato.dashboard` | Python/Starlette service | `7892` (walks `+1` up to 10×) | the dashboard UI + API the operator opens |
 
-They bind **distinct** default ports so neither walks onto the other.
-The dashboard's URL `evolve` prints is read back from
-`runtime/dashboard.json` (the port the dashboard *actually* bound),
-never assumed. This split — dashboard as its own Python service rather
-than a role of the Rust binary — was a deliberate decision (see the
-ecosystem notes; the Rust binary's in-process dashboard routes are
-retained but dormant).
+They bind distinct default ports so neither walks onto the other. The
+dashboard URL that `evolve` prints is read back from
+`runtime/dashboard.json`, which records the port the dashboard bound,
+and is never assumed. The dashboard runs as its own Python service
+rather than as a role of the Rust binary, by design; the Rust binary's
+in-process dashboard routes stay compiled in and unmounted.
 
 ### 3.1 Lifecycle
 
@@ -467,10 +463,10 @@ retained but dormant).
 └─────────────────────────────────────────────────────────────────┘
 ```
 
-The supervisor is **strictly downstream of the orchestrator**.
-The orchestrator decides what to do; the supervisor watches it do
-it and yells when it stops. The one exception is the SIGTERM /
-SIGKILL escalation — the supervisor can kill a stuck run's process
+The supervisor is strictly downstream of the orchestrator. The
+orchestrator decides what to do, and the supervisor observes and
+reports when progress stops. The one exception is signal escalation:
+the supervisor can send SIGTERM and SIGKILL to a stuck run's process
 without the orchestrator's involvement. See §3.3.
 
 ### 3.2 Heartbeat protocol
@@ -506,16 +502,16 @@ only) and `--heartbeat-stale-kill` (default 90s). On the
 kill threshold the orchestrator's stall is recorded; the watchdog does
 not itself terminate the orchestrator.
 
-**The supervisor does NOT kill the orchestrator on heartbeat
-staleness.** The orchestrator might be slow for legitimate reasons
-(GC pause, slow LLM endpoint, paused by debugger). The watchdog logs /
-exposes "orchestrator looks stalled" on `/statusz` (and the dashboard
-surfaces it) and the operator decides. The supervisor only escalates
-*runs* automatically — see §3.3.
+**The supervisor does not kill the orchestrator on heartbeat
+staleness.** The orchestrator can be slow for legitimate reasons: a
+garbage-collection pause, a slow model endpoint, or a debugger holding
+it. The watchdog logs the stall and exposes it on `/statusz`, the
+dashboard surfaces it, and the operator decides. The supervisor
+escalates only runs automatically — see §3.3.
 
-If the operator wants automatic orchestrator restart, that's a
-process-supervisor concern (systemd, supervisord, k8s); not
-zicato's job to reinvent.
+Automatic orchestrator restart is a process-supervisor concern, handled
+by systemd, supervisord, or Kubernetes. zicato does not reimplement
+it.
 
 ### 3.3 Escalation (SIGTERM → grace → SIGKILL)
 
@@ -550,29 +546,27 @@ EITHER condition holds:
             and finalises the run).
 ```
 
-**Why two-stage SIGTERM → SIGKILL.** SIGTERM gives the run a
-chance to flush its goldfive event sink (so the events.jsonl is
-not truncated mid-event) and exit cleanly. SIGKILL is uninterruptible
-— the process is gone immediately and we lose the last few events.
-Always preferring SIGKILL would corrupt the JSONL on every
-escalation; always preferring SIGTERM would leave a truly wedged
-process hanging forever. The "run's PID" is the per-run subprocess
-worker's own PID (L3, shipped), so a SIGKILL takes out exactly that one
-run's process and leaves the orchestrator running — see
-[ROBUSTNESS.md](ROBUSTNESS.md) §2.3.
+**Why escalation runs in two stages.** SIGTERM gives the run a chance
+to flush its goldfive event sink, so `events.jsonl` is not truncated
+mid-event, and to exit cleanly. SIGKILL is uninterruptible: the process
+is gone immediately and the last few events are lost. Always sending
+SIGKILL would corrupt the JSONL on every escalation, and always sending
+SIGTERM would leave a truly wedged process hanging forever. The process
+id the supervisor signals is the per-run subprocess worker's own, so a
+SIGKILL takes out exactly that one run's process and leaves the
+orchestrator running — see [ROBUSTNESS.md](ROBUSTNESS.md) §2.3.
 
-**Why the supervisor, not the orchestrator, owns escalation.** The
-orchestrator IS a Python process; a wedge in the orchestrator
-would prevent it from sending the signal. The supervisor is in a
-different language with a different runtime; a wedge in one cannot
-wedge the other. This is the layered defense in
-[ROBUSTNESS.md](ROBUSTNESS.md) §L4.
+**Why escalation belongs to the supervisor rather than the
+orchestrator.** The orchestrator is itself a Python process, and a
+wedge in it would prevent it from sending the signal. The supervisor
+runs in a different language with a different runtime, so a wedge in
+one cannot wedge the other. This is the orchestrator watchdog described
+in [ROBUSTNESS.md](ROBUSTNESS.md) §2.4.
 
 ### 3.4 Why Rust
 
-The supervisor could be a Python script, a C++ binary, or a Go
-binary. The choice of Rust traces to four practical concerns; each
-is non-cosmetic.
+The supervisor could be a Python script, a C++ binary, or a Go binary.
+Rust is chosen on practical grounds, none of them cosmetic.
 
 | Concern | Python | C++ | Go | **Rust** |
 |---|---|---|---|---|
@@ -582,30 +576,29 @@ is non-cosmetic.
 | Fast startup (~ms; spawned every `evolve`) | slow (50-200ms cold) | fast | fast | **fast (~5-20ms)** |
 | HTTP server in stdlib / mature crate | yes (stdlib) | partial | yes (net/http) | **yes (axum / hyper)** |
 
-**Why not Python.** The watchdog is the thing that catches Python
-wedges. If the watchdog is itself Python, a process-wide GIL wedge
-(CPU-bound C extension, fork misbehaviour, signal-safety violation)
-can wedge both the orchestrator and the watchdog at the same time
-— precisely the case the design is meant to defend against. The
-choice of a different language for the watchdog is structural, not
-ergonomic.
+**Why not Python.** The watchdog is what catches Python wedges. If the
+watchdog were itself Python, a process-wide interpreter-lock wedge — a
+CPU-bound C extension, fork misbehaviour, or a signal-safety violation
+— could wedge the orchestrator and the watchdog at the same time, which
+is the case the design exists to defend against. Choosing a different
+language for the watchdog is a structural decision rather than an
+ergonomic one.
 
-**Why not C++.** No safety guarantee. A use-after-free in the
-watchdog corrupts state; the cure becomes the disease. Rust
-gives us "different runtime" without giving up on memory safety.
+**Why not C++.** C++ offers no memory-safety guarantee. A
+use-after-free in the watchdog corrupts the state the watchdog is
+protecting. Rust supplies a different runtime without giving up memory
+safety.
 
-**Why not Go.** Defensible alternative. Rejected on two minor
-points: garbage-collected runtimes have pause behaviour that the
+**Why not Go.** Go is a defensible alternative, rejected on two minor
+points. A garbage-collected runtime has pause behaviour that the
 watchdog's tight timing budget should not have to absorb, and the
-binary-size delta between Rust and Go is small enough that the
-deployment story is the same. Rust also pairs better with the
-single-binary ergonomic story (no `goimports`, no `go mod`-style
-ambient).
+binary-size difference between Rust and Go is small enough that the
+deployment story is the same either way.
 
-**Why not eBPF / something exotic.** Watchdog is portable file-IO
-and HTTP; it doesn't need kernel-level introspection. Choosing
-something exotic adds friction (root, kernel versions, BPF
-availability) for no gain.
+**Why not eBPF or another kernel-level mechanism.** The watchdog does
+portable file IO and HTTP, and needs no kernel-level introspection. A
+kernel-level mechanism adds friction — root privileges, kernel version
+constraints, BPF availability — for no gain.
 
 ### 3.5 Concurrency model
 
@@ -617,28 +610,27 @@ Inside `.zicato/runtime/` the writer rules are strict:
 | `heartbeat.json` | orchestrator | supervisor, dashboard |
 | `dashboard.json` | dashboard service | orchestrator (URL readback) |
 | `active_tournament.json` | orchestrator | supervisor, dashboard |
-| `active_runs/{run_id}.json` | the per-run subprocess **worker** that owns `run_id` (shipped L3); orchestrator only reaps a dead worker's file | supervisor, dashboard |
+| `active_runs/{run_id}.json` | the per-run subprocess **worker** that owns `run_id`; the orchestrator only reaps a dead worker's file | supervisor, dashboard |
 | `control/<command>` | dashboard service | orchestrator (planned consumer) |
 | `control_log/*` | orchestrator (planned: on consume) | dashboard |
 
-There are no shared writers. Every file has exactly one process
-that writes to it; concurrent readers are safe because every write
-is atomic-rename. No `fcntl` locks beyond the pid-based `lock.json`;
-no shared in-memory mutable state.
+There are no shared writers. Every file has exactly one process that
+writes to it, and concurrent readers are safe because every write is an
+atomic rename. There are no `fcntl` locks beyond the pid-based
+`lock.json`, and no shared in-memory mutable state.
 
 **This is the load-bearing invariant for the design.** Locking
-correctness in a multi-process system is hard. By making every
-file single-writer, we get correctness for free at the cost of
-some redundancy.
+correctness in a multi-process system is hard. Making every file
+single-writer buys that correctness at the cost of some redundancy.
 
-**Workers writing their own files: why this is safe (shipped L3).**
-A worker ONLY writes `active_runs/{run_id}.json` for the run it
-owns. Workers do not share files. The orchestrator may DELETE a
-worker's file (when reaping a dead worker), but does not write to a
-file a live worker owns. The only race window is "worker just deleted
-its own file because it finished, orchestrator reads the file expecting
-it to still exist" — and the orchestrator handles ENOENT as a normal
-terminal state, not an error.
+**Why it is safe for workers to write their own files.** A worker
+writes only the `active_runs/{run_id}.json` for the run it owns, and
+workers share no files. The orchestrator may delete a worker's file
+when reaping a dead worker, and never writes to a file a live worker
+owns. One race window remains: a worker deletes its own file on
+finishing while the orchestrator is reading it. The orchestrator treats
+the resulting `ENOENT` as a normal terminal state rather than an
+error.
 
 ## 4. Resume semantics
 
@@ -659,17 +651,17 @@ loop continues from wherever it was when interrupted.
 | Promoted generations | per-generation directories under `epochs/{epoch}/generations/` | **yes** — these are the durable record |
 | Pattern detector output | `epochs/{epoch}/patterns/round_NNN.json` | **yes** — written once per round |
 | Journal | `epochs/{epoch}/journal.md` | **yes** — append-only |
-| `experiment.json` (hypothesis + outcome) | per-generation file | **yes** — atomic update; either has outcome or doesn't |
+| `experiment.json` (hypothesis + outcome) | per-generation file | **yes** — atomic update; the outcome block is either present or absent |
 | Per-run `events.jsonl` | per-entry files under `runs/{entry_id}/` | **yes** — but may be partial if the run was mid-flight |
 | Per-run `loss.json` | per-entry files under `runs/{entry_id}/` | **yes** if reducer ran |
 | `active_tournament.json` | runtime state | discarded on restart |
 | `active_runs/` | runtime state | discarded on restart |
 | `heartbeat.json` | runtime state | discarded on restart |
 
-The asymmetry is deliberate: **artifacts in `epochs/` are committed
-records; artifacts in `runtime/` are live state.** Resuming reads
-the committed records to figure out where to start, then rebuilds
-runtime state from scratch.
+The asymmetry is by design: artifacts in `epochs/` are committed
+records, and artifacts in `runtime/` are live state. Resuming reads the
+committed records to find where to start, then rebuilds runtime state
+from scratch.
 
 ### 4.2 The resume protocol
 
@@ -693,7 +685,7 @@ def resume_or_start_fresh(workspace):
 
     if last_outcome is None:
         # Mid-round at the time of the interruption.
-        # Determine which step we were on.
+        # Determine which step the interrupted round had reached.
         step = infer_step_from_artifacts(last_round)
         return resume_at(epoch, last_round, step)
 
@@ -705,16 +697,16 @@ def resume_or_start_fresh(workspace):
 
 | Artifacts present | Inferred step | Resume action |
 |---|---|---|
-| `experiment.json` (no outcome) + `patches/` + `snapshot/` + partial `runs/` | tournament-running | re-run only the entries that don't have `loss.json` |
+| `experiment.json` (no outcome) + `patches/` + `snapshot/` + partial `runs/` | tournament-running | re-run only the entries that have no `loss.json` |
 | `experiment.json` (no outcome) + `patches/` + `snapshot/` + complete `runs/` (both sides) | tournament-complete-but-not-journaled | run gate, append outcome, append journal |
 | `experiment.json` (no outcome) + `patches/` + `snapshot/` + no `runs/` | applied-but-not-running | start tournament from scratch |
 | `experiment.json` (no outcome) + `patches/` + no `snapshot/` | proposed-but-not-applied | re-apply patches, then continue |
 | `experiment.json` (no outcome) + no `patches/` | partial proposal | discard the experiment file (proposer is non-deterministic — re-propose fresh) |
 
-The protocol is **conservative**: when it cannot tell exactly what
-state things are in, it discards the partial work and re-runs from
-the last clean checkpoint. The cost of a wasted re-run is one
-round; the cost of a wrong inference is journal corruption.
+The protocol is conservative: when it cannot determine the state with
+certainty, it discards the partial work and re-runs from the last clean
+checkpoint. A wasted re-run costs one round; a wrong inference corrupts
+the journal.
 
 ### 4.3 Finalising stale runs
 
@@ -725,24 +717,22 @@ record consistent: the dashboard panel for a stalled run shows
 "aborted (orchestrator crash)" rather than "still running" — even
 though the worker is long gone.
 
-Workers are also reaped at this step. Any PID in `active_runs/*`
-that is still alive gets SIGTERM → SIGKILL (skipping the grace
-period; the run is being abandoned). Any PID that's already dead
-gets noted in the audit log.
+Workers are also reaped at this step. Any process id in
+`active_runs/*` that is still alive receives SIGTERM and then SIGKILL,
+skipping the grace period because the run is being abandoned. Any
+process id that is already dead is noted in the audit log.
 
-## 5. Worker subprocesses (SHIPPED — L3)
+## 5. Worker subprocesses
 
-> **Shipped.** The **L3 subprocess worker** is in the tree:
+> **Shipped.** The subprocess worker is
 > `src/zicato/_tournament_worker.py`, spawned per board-entry run by
-> `src/zicato/tournament/runner.py`. Each run executes in its own OS
-> process, so a per-run wall-clock budget can be **hard-enforced** by
-> killing the process — the only reliable defense against a
-> GIL-wedged or infinite-looping inner harness (§5.1). The shipped
-> invocation differs from the original plan below in one respect: it is
-> not a `zicato _worker` subcommand with flags but a module entry point
-> taking a single JSON **args file** (`python -m
-> zicato._tournament_worker <args-file.json>`); §5.2 is updated to that
-> shape, the rest of the section describes the live behaviour.
+> `src/zicato/tournament/runner.py`. Each run executes in its own
+> operating-system process, so a per-run wall-clock budget can be
+> hard-enforced by killing the process, which is the only reliable
+> defense against an inner harness that holds the interpreter lock or
+> loops forever (§5.1). The worker is a module entry point taking a
+> single JSON args file (`python -m zicato._tournament_worker
+> <args-file.json>`), and §5.2 describes that shape.
 
 The orchestrator runs each tournament run in a **subprocess worker**
 (Python, spawned via `asyncio.create_subprocess_exec` of
@@ -750,17 +740,18 @@ The orchestrator runs each tournament run in a **subprocess worker**
 (generation, entry) pair; the parent and candidate sides of one
 entry are two workers.
 
-### 5.1 Why subprocesses (not threads, not asyncio alone)
+### 5.1 Why subprocesses rather than threads or asyncio alone
 
-Python's GIL means a CPU-bound or GIL-holding-C-extension loop in
-the inner harness cannot be pre-empted by `asyncio.wait_for`. The
-timeout exception fires when the event loop next runs, which is
-never. The ONLY reliable defense is OS process boundary; SIGTERM
-then SIGKILL after grace period works against any pathology
-including infinite loops and deadlocked threads.
+Python's global interpreter lock means that a CPU-bound loop in the
+inner harness, or a C extension holding the lock, cannot be pre-empted
+by `asyncio.wait_for`. The timeout exception fires when the event loop
+next runs, which never happens. The only reliable defense is an
+operating-system process boundary: SIGTERM, then SIGKILL after a grace
+period, works against any pathology, including infinite loops and
+deadlocked threads.
 
 This is non-negotiable for production. See
-[ROBUSTNESS.md](ROBUSTNESS.md) §3 for the full layered argument.
+[ROBUSTNESS.md](ROBUSTNESS.md) §2.3 for the full argument.
 
 ### 5.2 Worker contract
 
@@ -780,20 +771,20 @@ The worker then:
 
 1. Loads the generation's snapshot.
 2. Instantiates the adapter (see §5.4 below).
-3. Wraps `auxiliary_call_llm` in the worker's per-call timeout
-   layer (still useful as a fast path; see
-   [ROBUSTNESS.md](ROBUSTNESS.md) §L1).
+3. Wraps `auxiliary_call_llm` in the worker's per-call timeout layer,
+   which remains useful as a fast path (see
+   [ROBUSTNESS.md](ROBUSTNESS.md) §2.1).
 4. Calls `adapter.run_entry(entry, sinks=[JSONLPersistenceSink(...)])`.
 5. After the terminal event, runs the loss reducer in-worker.
 6. Writes `loss.json`.
 7. Updates `active_runs/{run_id}.json` to `phase: "done"`.
 8. Exits with code 0.
 
-The worker also runs a **heartbeat goroutine** (technically an
-`asyncio` task or a `threading.Thread` daemon — whichever the
-adapter integrates with cleanest) that bumps `heartbeat_at` on
-its own `active_runs/{run_id}.json` every 1s. This is the signal
-the supervisor uses for stalled-worker detection independent of
+The worker also runs a per-run heartbeat task — an `asyncio` task or a
+daemon `threading.Thread`, whichever the adapter integrates with more
+cleanly — that bumps `heartbeat_at` on its own
+`active_runs/{run_id}.json` every second. This is the signal the
+supervisor uses to detect a stalled worker independently of
 orchestrator health.
 
 ### 5.3 Worker termination conditions
@@ -810,13 +801,14 @@ orchestrator health.
 **Where the per-run budget comes from.** Each run carries a
 `wall_clock_budget_seconds` in its args file, and the worker enforces
 it by self-aborting (and the supervisor backstops via the `deadline`).
-That budget is normally the per-call/per-run default, but the `racing`
-structure can tighten it per duel: its opt-in `matchup_budget_seconds`
-/ `final_rung_budget_seconds` params (the **grind guard**,
-[TOURNAMENT-STRUCTURES.md §3.5](TOURNAMENT-STRUCTURES.md#35-racing-the-endorsed-bracket-shaped-option))
-ride on each scheduled `Matchup` and become the board-unit budget the
-worker enforces — so the final full-board crowning duel, the
-pathological grinder, can be capped without capping every duel.
+That budget is normally the per-run default. The `racing` structure can
+tighten it per duel through its opt-in `matchup_budget_seconds` and
+`final_rung_budget_seconds` parameters, together called the grind guard
+([TOURNAMENT-STRUCTURES.md §3.5](TOURNAMENT-STRUCTURES.md#35-racing-the-endorsed-bracket-shaped-option)).
+Those parameters ride on each scheduled `Matchup` and become the
+board-unit budget the worker enforces, so the final full-board crowning
+duel, which is the longest-running one, can be capped without capping
+every duel.
 
 The dashboard's "kill" button writes `control/kill_runs/{run_id}`;
 the orchestrator notices the file at the next safe point (in this
@@ -827,8 +819,9 @@ as a backstop.
 
 ### 5.4 Adapter loading in workers
 
-The adapter (Google ADK, LangChain, plain-callable) is loaded
-**per worker**, not shared across workers. Each subprocess gets a
+The adapter — Google's Agent Development Kit (ADK), LangChain, or a
+plain callable — is loaded per worker rather than shared across
+workers. Each subprocess gets a
 fresh interpreter and a fresh adapter instance. The cost is some
 import overhead (~100-500ms per worker for ADK); the benefit is
 total isolation. A pathological agent that corrupts global state
@@ -840,25 +833,21 @@ the orchestrator's event loop is untouched. This is the cleanest
 shape — no shared event loop, no cross-process await semantics to
 debug.
 
-Adapter-level module caching can be added later as an
-optimisation (a long-running worker pool that imports the adapter
-once and accepts work over a pipe). v1.1's shape spawns a fresh
-worker per run for simplicity; if import overhead becomes
-measurable, a pool lands as a follow-up. See
-[STORAGE.md](STORAGE.md) §G7 for where the worker pool fits the
-git-backed roadmap. **The import overhead has now been measured** —
-§5.5 is that follow-up, written up as a gated design rather than
-built.
+A long-running worker pool that imports the adapter once and accepts
+work over a pipe would cache modules across runs and remove that
+overhead. The shipped shape spawns a fresh worker per run, for
+simplicity. The import overhead has been measured; §5.5 records the
+measurements and the pool design they gate.
 
 ### 5.5 Per-unit spawn cost — the measured tax, and the warm-pool design
 
-> **Status: DESIGN, NOT BUILT.** No pool exists in the tree. The
-> per-unit `create_subprocess_exec` in `runner.py` is still the
-> shipped shape and this section does not change it. What ships
-> alongside this note is only §5.5.7's **host-wide spawn limiter**
-> and §5.5.8's **lazy role resolution** — two cheap, independent
-> wins. The pool itself is gated on the fork-safety probe (§5.5.4)
-> and the measurement plan (§5.5.6) landing green first.
+> **Status: this section states a design; no pool is built.** No pool
+> exists in the tree. The per-unit `create_subprocess_exec` in
+> `runner.py` is the shipped shape, and this section does not change
+> it. Two cheap and independent wins do ship: the host-wide spawn
+> limiter of §5.5.7 and the lazy role resolution of §5.5.8. The pool
+> itself is gated on the fork-safety probe (§5.5.4) and the
+> measurement plan (§5.5.6) landing green first.
 
 #### 5.5.1 The measured tax
 
@@ -882,40 +871,40 @@ and the whole graph — is **≈2.4 s**. Two readings matter:
    ADK adapter is 0.079 s / 32 MB. Everything above that is
    `google.adk` (+0.73 s / +88 MB) and `litellm` (+1.06 s / +126 MB).
 2. **The tax is per unit, and it is paid concurrently.** In full mode
-   one board unit is two workers (champion + challenger), so the
-   default `parallelism = 4` means up to **8 workers × 246 MB ≈ 2 GB**
-   of almost entirely *identical* module state resident at the same
-   moment, and 8 × ~2.4 s of CPU burnt re-deriving it. A 20-entry
-   board at `parallelism = 4` pays the import graph 40 times per
-   round.
+   one board unit is two workers, champion and challenger. At the
+   default `parallelism = 4`, that means up to 8 workers holding
+   246 MB each, roughly 2 GB of near-identical module state resident at
+   the same moment, and 8 × 2.4 s of processor time spent re-deriving
+   it. A 20-entry board at `parallelism = 4` pays the import graph 40
+   times per round.
 
 This is the real, unrefuted finding: **there is no worker pool, and
 the import graph is re-derived per board unit.**
 
-#### 5.5.2 What the original report got wrong
+#### 5.5.2 Why the spawn-storm explanation does not hold
 
-The issue that prompted this section proposed a *different* mechanism
-— a spawn storm that trips the watchdog and cascades into respawns.
-Each link of that chain was checked against the tree and **does not
-hold**. Recording the refutations here so the mechanism is not
-re-believed the next time the symptom (slow rounds, high RSS) is
-observed:
+An issue filed against slow rounds and high resident memory proposed a
+different mechanism: a spawn storm that trips the watchdog and cascades
+into respawns. Each link of that chain was checked against the tree and
+none holds. The refutations are recorded here so the mechanism is not
+believed again the next time the symptom is observed.
 
 | Claim | Verdict | Evidence in the tree |
 |---|---|---|
 | Calibration draws spawn `K × board` workers in a burst | **Refuted** | `tournament/calibration.py` runs `for draw in range(runs): await _run_board_units_fast(...)` — the draws are **serial**, and each draw is internally bounded by the fast-mode scheduler's semaphore. Peak concurrency is one draw's worth, not `K` draws' worth. |
 | The semaphore does not really bound concurrency | **Refuted** | `scheduling._effective_unit_semaphore` + the `async with (meta_span(...), semaphore)` in each scheduler is the single admission gate every board unit passes. Measured burst at the default is 4–8 concurrent starts, and ~30–66 context switches per start — not a storm. |
 | Worker imports trip the parent's watchdog | **Refuted** | The parent's grace is `_PARENT_BUDGET_GRACE_S = 30.0` s (`tournament/worker_transport.py`) on top of the entry's own budget. A 1–2.4 s import cannot consume a 30 s grace. |
-| An aborted unit is respawned, cascading | **Refuted** | `_run_single` returns `_aborted_loss_profile(...)` and the scheduler records it; there is **no in-round retry**. An *infra* abort is additionally **not cached** (`scheduling.py`, `is_infra_abort_cause` branch), so the unit gets a correct cache MISS and is re-attempted by a **later round** — a deliberate, bounded re-attempt, not a cascade. |
+| An aborted unit is respawned, cascading | **Refuted** | `_run_single` returns `_aborted_loss_profile(...)` and the scheduler records it; there is **no in-round retry**. An *infra* abort is additionally **not cached** (`scheduling.py`, `is_infra_abort_cause` branch), so the unit gets a correct cache miss and is re-attempted in a **later round**, which is a bounded re-attempt by design rather than a cascade. |
 
-The symptom the issue observed is real. Its proposed cause is not.
-The cause is §5.5.1.
+The symptom the issue observed is real; its proposed cause is not.
+§5.5.1 states the actual cause.
 
 #### 5.5.3 The binding constraint: killability
 
 The obvious fix — a persistent pool of long-lived worker processes
 that each execute many units — is **not** available as stated,
-because it breaks the invariant the whole L3 layer rests on.
+because it breaks the invariant the whole subprocess worker boundary
+rests on.
 
 **The killability invariant.** One board unit maps to exactly one
 process group, and the supervisor kills that group by negating its
@@ -935,20 +924,21 @@ pgid:
   protected-pgid set, with `pid_start_time` guarding against pid
   reuse).
 
-A naive pool destroys this three ways at once. A pool worker that
-serves unit *A* then unit *B* has **one** pgid for both, so (a)
-`ActiveRun.pgid` no longer identifies a unit, (b) killing unit *A*
-kills the pool worker and therefore unit *B* (and every future unit
-that worker would have served), and (c) `pid_start_time` — the
-guard that proves the record still describes the process the
-supervisor is about to signal — becomes constant across units and
-stops discriminating. Losing (b) is losing the *entire reason* L3
-exists: the hard per-run wall-clock budget.
+A naive pool destroys this in three ways at once. A pool worker that
+serves unit *A* and then unit *B* has one pgid for both. First,
+`ActiveRun.pgid` stops identifying a unit. Second, killing unit *A*
+kills the pool worker, and therefore unit *B* and every future unit
+that worker would have served. Third, `pid_start_time` — the guard that
+proves the record still describes the process the supervisor is about
+to signal — becomes constant across units and stops discriminating. Losing the second of those is losing the whole
+reason the subprocess worker boundary exists: the hard per-run
+wall-clock budget.
 
 **So the constraint is not "avoid a pool". It is: any pool must keep
 one killable process group per board unit, and must keep
-`ActiveRun{pid, pid_start_time, pgid}` meaning exactly what it means
-today.** The supervisor must not need a single line of change.
+`ActiveRun{pid, pid_start_time, pgid}` meaning what it means on the
+cold-spawn path.** The supervisor must not need a single line of
+change.
 
 #### 5.5.4 The design that satisfies it: warm pool, per-unit fork+setsid
 
@@ -965,7 +955,8 @@ pool parent (one per orchestrator, long-lived)
 The child inherits the parent's already-imported modules through
 copy-on-write, so it pays **0 s and ~0 MB** of new import cost, and
 then `setsid()`s — making it the leader of a **fresh session and
-process group**, exactly as `start_new_session=True` does today.
+process group**, exactly as `start_new_session=True` does on the
+cold-spawn path.
 Therefore:
 
 * `ActiveRun.pid` = the forked child's pid (fresh per unit) — the
@@ -973,8 +964,8 @@ Therefore:
 * `ActiveRun.pgid` = the child's own new pgid (fresh per unit);
 * `ActiveRun.pid_start_time` = the child's start time (fresh per
   unit, so the pid-reuse guard still discriminates);
-* `killpg(pgid, …)` kills that unit and its grandchildren, and
-  **nothing else** — not the pool parent, not a sibling unit.
+* `killpg(pgid, …)` kills that unit and its grandchildren and nothing
+  else, sparing both the pool parent and every sibling unit.
 
 The supervisor's contract is untouched. The orchestrator-side change
 is confined to the transport: `runner._run_single` sends a request on
@@ -984,12 +975,11 @@ orchestrator's event loop) reaps the child. The args-file payload,
 the result file, `loss.json`, the heartbeat thread, and the
 abort-cause taxonomy all stay as they are.
 
-Note what this design deliberately does *not* do: it does not reuse
-an interpreter **across** units. Each unit still gets a fresh address
-space (a fork, then never touched again by anything else), so the
-module-cache isolation argument of §5.4 — two generations' source
-must never share one `sys.modules` — survives intact. The pool
-shares only the *pre-generation* import graph, which is identical for
+The design does not reuse an interpreter across units. Each unit still
+gets a fresh address space, forked and then untouched by anything else,
+so the module-cache isolation argument of §5.4 — two generations'
+source must never share one `sys.modules` — survives intact. The pool
+shares only the pre-generation import graph, which is identical for
 every unit by construction.
 
 **Fork-safety adjudication.** This design is only sound if the
@@ -1000,7 +990,7 @@ importing all three and inspecting the process immediately after:
 | Property after import, before any call | Observed | Why it matters |
 |---|---|---|
 | non-main threads | **0** (`MainThread` only) | A fork from a multi-threaded process copies only the calling thread, leaving any lock the other threads held permanently locked. Also: CPython 3.12 raises a `DeprecationWarning` on `fork()` in a multi-threaded process. |
-| open sockets | **0** (only fd 0/1/2 and `/dev/urandom`) | Two children inheriting one live TCP socket would interleave writes into the same connection — which does not crash, it silently corrupts LLM responses, i.e. corrupts *evaluation data*. This is the failure mode that must be impossible, not merely unlikely. |
+| open sockets | **0** (only fd 0/1/2 and `/dev/urandom`) | Two children inheriting one live TCP socket would interleave writes into the same connection — which does not crash but silently corrupts model responses, and therefore corrupts evaluation data. This failure mode must be impossible rather than merely unlikely. |
 | running asyncio event loop | **none** (no loop created) | A forked loop's selector, self-pipe, and pending callbacks are duplicated into both processes. |
 | `grpc` loaded | **no** | gRPC's C core is notoriously fork-hostile. It arrives only via the harmonograf sink, which the *child* attaches. |
 
@@ -1008,20 +998,21 @@ So the verdict is: **fork-safe, but only under an invariant that no
 dependency guarantees.** `litellm` builds `module_level_client`
 (`HTTPHandler`) and `module_level_aclient` (`AsyncHTTPHandler`) at
 *import* time; today those wrap `httpx` clients that bind no loop and
-open no socket until first use, which is precisely why the posture
-above is clean. A future `litellm` or `google.adk` release that opens
+open no socket until first use, which is why the posture above is
+clean. A future `litellm` or `google.adk` release that opens
 a connection, starts a background thread, or creates a loop at import
 time would break the pool **silently and in the worst possible
 direction** — corrupted responses rather than a crash.
 
-Therefore the pool is gated on a **fork-safety probe that runs in
-CI**, asserting the four rows above hold for the currently pinned
-dependencies, and on the pool parent honouring one rule absolutely:
-**the pool parent imports, and never calls.** The moment the parent
+The pool is therefore gated on a fork-safety probe that runs in
+continuous integration and asserts that the four rows above hold for
+the currently pinned dependencies. It is gated too on the pool parent
+honouring one rule absolutely: **the pool parent imports, and never
+calls.** The moment the parent
 issues an LLM call it acquires exactly the connection-pool and
 event-loop state that makes forking unsafe. A probe that goes red on
-a dependency bump is the signal to fall back to §5.5.7, not to
-"investigate later".
+a dependency bump is the signal to fall back to §5.5.7 rather than to
+defer investigation.
 
 Two smaller fork caveats, both cheap to handle in the child:
 
@@ -1029,7 +1020,7 @@ Two smaller fork caveats, both cheap to handle in the child:
   duplicated by fork, so every child would draw the identical
   sequence. The child must reseed from its own `run_id` / `seed`
   before running the unit (zicato already threads a `seed` through
-  `RuntimeConfig`, so this is a call, not a design).
+  `RuntimeConfig`, so this is one call rather than a design change).
 * **Inherited descriptors.** The child inherits the parent's fds. The
   parent must hold no workspace lock and no `events.jsonl` handle; the
   per-invocation operator-log stream is opened `O_APPEND` and is
@@ -1063,16 +1054,16 @@ unit is ever affected.
 | Failure | Consequence | Handling |
 |---|---|---|
 | Pool parent dies with units in flight | The forked children are `setsid`-detached, so they are **not** killed with it — they keep running, keep heart-beating, and their `active_runs` records stay valid and killable by the supervisor. What is lost is the completion notification. | The orchestrator falls back to the shipped `create_subprocess_exec` path for new units, and the existing "process gone / no result file" reap (§5.3) settles any child whose notification never arrived. Degrading to today's behaviour must always be one branch away. |
-| Pool parent wedges (alive, not answering) | New units cannot start. | Liveness deadline on the request/reply; on expiry the parent is retired and the unit spawns cold. |
+| Pool parent wedges (alive but not answering) | New units cannot start. | Liveness deadline on the request/reply; on expiry the parent is retired and the unit spawns cold. |
 | `fork()` fails (fd/pid/memory exhaustion) | Unit cannot start. | Spawn cold for that unit; count the failure toward the recycle trigger. |
-| Fork-safety probe red after a dependency bump | The pool would be *silently* unsafe. | CI fails; the pool is disabled by default until re-adjudicated. This is why the probe is a gate, not a warning. |
+| Fork-safety probe red after a dependency bump | The pool would be silently unsafe. | Continuous integration fails, and the pool is disabled by default until re-adjudicated. The probe is therefore a gate rather than a warning. |
 | Orchestrator killed | Pool parent is orphaned. | The parent must exit when its socket peer closes, and — like the ephemeral `ztw-snap-*` trees — be GC-able by the supervisor. |
 
 #### 5.5.6 The measurement plan that gates the build
 
 The pool is a real complexity increase against a shipped, working,
 simple design. It is only worth building if the win is large **at the
-round level**, not just at the import level. The gate:
+round level** rather than only at the import level. The gate:
 
 **Harness.** Cold-start phase measurement — each phase in a fresh
 interpreter, best of *N* runs, reporting `perf_counter` around the
@@ -1098,7 +1089,7 @@ motivating win either.
 
 **Gate 3 — the fork-safety probe is green** (§5.5.4), as a CI test.
 
-**Gate 4 — killability is preserved, proven by test, not by
+**Gate 4 — killability is preserved, proven by test rather than by
 argument.** The existing supervisor-kill tests must pass **unchanged**
 against the pool transport, plus one new adversarial test: with two
 units in flight through one pool parent, kill unit *A*'s pgid and
@@ -1122,10 +1113,10 @@ per-orchestrator semaphore cannot close:
 **`parallelism` bounds one orchestrator, and nothing bounds the
 host.** Each orchestrator mints its own
 `Semaphore(config.parallelism)` (§5.5.2's second row is about that
-semaphore working correctly *within* a run). Two concurrent `evolve`
-runs on one box therefore admit `2 × parallelism` board units — i.e.
-up to `4 × parallelism` workers in full mode — and each worker's
-246 MB is real. Nothing in the tree noticed.
+semaphore working correctly within a run). Two concurrent `evolve`
+runs on one box therefore admit `2 × parallelism` board units, which is
+up to `4 × parallelism` workers in full mode, and each worker's 246 MB
+is real. Nothing in the tree noticed.
 
 The shipped limiter (`zicato.runtime.spawn_permit`) is a **host-wide
 permit** held for a worker's lifetime:
@@ -1143,15 +1134,14 @@ permit** held for a worker's lifetime:
   reaper to write and no liveness protocol to get wrong. This is the
   reason for `flock` over a counter file.
 
-  Note this is the *opposite* choice from the workspace lock (§2.1),
-  which deliberately rejected `flock` because it "is released
-  invisibly on process death" and leaves no human-readable owner.
-  Both choices are right for their problem. The workspace lock is
-  about **identity** — an operator needs to know *which* process owns
-  the epoch, and a stale owner is a decision to surface, not to
-  silently reclaim. A permit is about **counting**: nobody ever needs
-  to know who holds slot 3, and invisible release on death is exactly
-  the property that makes a permit unleakable.
+  This is the opposite choice from the workspace lock (§2.1), which
+  rejects `flock` because it is released invisibly on process death and
+  leaves no human-readable owner. Both choices suit their own problem.
+  The workspace lock is about identity: an operator needs to know which
+  process owns the epoch, and a stale owner is a decision to surface
+  rather than to reclaim silently. A permit is about counting: nobody
+  needs to know who holds slot 3, and invisible release on death is the
+  property that makes a permit unleakable.
 * **it degrades OPEN.** Any failure to create the directory, open a
   slot, or use `flock` (an unsupported filesystem, a read-only
   runtime dir, a platform without `fcntl`) yields a permit that
@@ -1161,11 +1151,11 @@ permit** held for a worker's lifetime:
 The knob is `runtime.host_worker_permits`
 (`RuntimeConfig.host_worker_permits`) — a **runtime** knob, never
 part of the frozen evaluation contract, so changing it does not roll
-the epoch. `null` (the default) means AUTO: `max(4, 2 × cores)`,
-deliberately generous enough that a single normal run never waits;
-`0` disables the cap entirely; `≥ 1` is an explicit ceiling.
+the epoch. `null`, the default, selects automatic sizing at `max(4, 2 × cores)`,
+generous enough that a single normal run never waits; `0` disables the
+cap entirely; and a value of 1 or more is an explicit ceiling.
 
-The limiter is a **throttle, not a speed-up** — it makes an
+The limiter is a throttle rather than a speed-up: it makes an
 over-subscribed host degrade into queueing rather than into swapping.
 It does not reduce the per-unit tax; only the pool does that.
 
@@ -1198,70 +1188,70 @@ A second cheap win, and two corrections to claims worth recording.
 
 **Refuted: there is no eager `litellm` import to remove.** The
 expectation was that the worker imports `litellm` at startup. It does
-not — `google.adk.models.lite_llm` calls its own
-`_ensure_litellm_imported()` from inside
-`LiteLLMClient.acompletion` / `.completion`, i.e. **at the first LLM
-call**, and no module in zicato, goldfive, or ADK imports `litellm`
-at module scope. Making it "lazy" is therefore a no-op: it is
-already lazy. The consequence is worth stating precisely, because it
-is *worse* than an eager import, not better: the +1.06 s / +126 MB is
-paid **inside the unit's wall-clock budget**, by every worker, and
-concurrently across all of them (§5.5.1). Only the pool removes it.
+not. `google.adk.models.lite_llm` calls its own
+`_ensure_litellm_imported()` from inside `LiteLLMClient.acompletion`
+and `.completion`, which is to say at the first model call, and no
+module in zicato, goldfive, or ADK imports `litellm` at module
+scope. Making the import lazy is therefore a no-op,
+because it is lazy already. The consequence is worse than an eager
+import would be: the extra 1.06 s and 126 MB are paid inside the unit's
+wall-clock budget, by every worker, concurrently across all of them
+(§5.5.1). Only the pool removes that cost.
 
-**Shipped: the worker no longer imports `google.adk` for a role it
-may never call.** `_tournament_worker` resolved *every* configured
-model-spec role (harness, auxiliary, judge) eagerly at startup, and
-`build_adk_model` pulls the whole ADK graph — 0.80 s / 88 MB — the
-first time any of them is touched. A unit whose entry has no LLM
-judge, or which never reaches the auxiliary side, paid for ADK
-anyway. Model-spec roles now resolve through
+**Shipped: the worker does not import `google.adk` for a role it may
+never call.** Resolving every configured model-spec role — harness,
+auxiliary, and judge — eagerly at startup would pull the whole ADK
+graph through `build_adk_model`, costing 0.80 s and 88 MB the first
+time any of them is touched. A unit whose entry has no model judge, or
+which never reaches the auxiliary side, would pay that cost for
+nothing. Model-spec roles instead resolve through
 `models_config.lazy_text_call_llm`, which validates the spec shape
-**eagerly** (so a malformed `models` block still fails fast, at
-startup, where it is debuggable) and defers only the ADK import and
-`LiteLlm` construction to the role's first call. Roles given as a
-`call_llm` dotted path are unaffected — they never touched ADK.
+eagerly, so a malformed `models` block still fails fast at startup
+where it is debuggable, and defers only the ADK import and the
+`LiteLlm` construction to the role's first call. A role given as a
+`call_llm` dotted path is unaffected, because it never reaches ADK.
 
-Measured before/after, same harness, cold start, best of five:
+Measured on the same harness, cold start, best of five:
 
 | Worker reaches | s | RSS MB | `sys.modules` |
 |---|---|---|---|
 | worker only, no role resolved | 0.094 | 31 | 328 |
-| **before** — eager `resolve_text_call_llm` | 0.881 | 120 | 1657 |
-| **after** — `lazy_text_call_llm`, role never called | 0.080 | 32 | 329 |
+| eager `resolve_text_call_llm` | 0.881 | 120 | 1657 |
+| `lazy_text_call_llm`, role never called | 0.080 | 32 | 329 |
 
 The saving is conditional by nature: a unit that does call the role
 pays the same cost, just later. It is **0.80 s / 88 MB / 1328 modules**
 per worker for every role a unit never exercises, and `0` otherwise —
 never a regression. (Re-measured on a different box: the module count
-and peak RSS reproduce exactly — +1329 modules, 44 MB → 121 MB — while
-the wall time was 2.1 s, not 0.80 s. Trust the *shape* of the table; the
-seconds column is machine-specific.)
+and peak RSS reproduce exactly — 1329 more modules, 44 MB rising to
+121 MB — while the wall time was 2.1 s rather than 0.80 s. The shape of
+the table holds across machines; the seconds column does not.)
 
-**The bound on that saving, stated honestly.** It does NOT apply to the
-harness role whenever that role's spec sets `endpoint` or `api_key_env`,
-because the very next line of the worker calls
-`_resolve_inner_model_from_role(args["harness_role"])` — the inner-model
-build that lets the target's agents use native function calling instead
-of the text shim — and that reaches `build_adk_model` eagerly. In the
-endpoint-configured shape (the one live validation uses) ADK is
-therefore resident at worker startup regardless, and deferring the
-*call_llm* resolution saves nothing on top. The saving is real for a
+**The bound on that saving.** It does not apply to the harness role
+whenever that role's spec sets `endpoint` or `api_key_env`. The next
+line of the worker calls
+`_resolve_inner_model_from_role(args["harness_role"])`, the
+inner-model build that lets the target's agents use native function
+calling in place of the text shim, and that call reaches
+`build_adk_model` eagerly. In the endpoint-configured shape, which is
+the shape live validation uses, ADK is therefore resident at worker
+startup regardless, and deferring the `call_llm` resolution saves
+nothing on top of that. The saving is real for a
 bare `model`-only spec (where `build_adk_model` returns the model string
 and imports nothing) and for the auxiliary / judge roles on a worker
-whose harness role is a dotted `call_llm`. Making the inner model lazy
-too is not a wrapper away — the adapter rebinds agent trees to a model
-*object* at setup. See "The inner-model half, resolved" below for what
-was actually achievable here.
+whose harness role is a dotted `call_llm`. Deferring the inner model
+too cannot be done by wrapping it, because the adapter rebinds agent
+trees to a model object at setup. The next passage records what
+deferring it can and cannot achieve.
 
-**The inner-model half, resolved: refuted as a cost reduction, real as a
-reordering.** Investigated by measuring the two costs directly rather
-than assuming importing `google.adk` and building a `LiteLlm` are one
-lump sum:
+**The inner-model half.** Measuring the two costs separately, rather
+than assuming that importing `google.adk` and building a `LiteLlm` are
+one lump sum:
 
 | Step | s (best of two, warm interpreter) | new `sys.modules` |
 |---|---|---|
 | `import google.adk` (bare — what `ADKHarnessAdapter.load` does) | 0.90–1.17 | ~1500 |
-| `build_adk_model(...)` cold (nothing imported yet — today's eager path) | 0.89–0.92 | ~1500 |
+| `build_adk_model(...)` cold, with nothing imported yet — the eager path | 0.89–0.92 | ~1500 |
 | `build_adk_model(...)` AFTER `google.adk` is already resident | 0.002 | +3 |
 
 `from google.adk.models.lite_llm import LiteLlm` forces the same
@@ -1269,67 +1259,72 @@ package-level `google.adk` import as a bare `import google.adk` — the
 `LiteLlm` construction itself is nearly free once that has happened
 (`LiteLlm.__init__` does not touch `litellm`; `_ensure_litellm_imported`
 runs from inside `generate_content_async`, at the first actual model
-call, matching this section's earlier "refuted litellm" finding).
+call, which matches the finding earlier in this section that the
+`litellm` import is already lazy).
 Because `ADKHarnessAdapter.load()` calls `import google.adk`
 *unconditionally* for every ADK-adapter run — it needs the agent-tree
 classes to load the entrypoint, whether or not a `harness_role` is
-endpoint-shaped — that ~1 s import is paid regardless of when
-`inner_model` is resolved. A "clean" deferred-construction path (a
-thunk in `RuntimeConfig.inner_model` realised at
-`ADKHarnessAdapter.run`'s first-use point, right before
-`rebind_tree_models_to_adk_model`) was designed but never built, because
-the table above already answers the question it would measure: since
-`.load()` unconditionally pays the ~1 s `google.adk` tax moments before
-`run()` would resolve the thunk, and building `LiteLlm` after that
-import is ~2 ms, the thunk's own construction cost would round to zero
-and its total-cost effect would too — deferring past `.load()` cannot
-reduce total worker wall-clock, RSS, or module count for the production
-shape (ADK adapter + endpoint-configured harness role). That result is
-refuted on measurement, not shipped, and no thunk/proxy sits in
-`RuntimeConfig` — it would be complexity with no payoff.
+endpoint-shaped — that roughly one-second import is paid regardless of
+when `inner_model` is resolved.
 
-Two things *were* worth shipping, and are: (1) `_tournament_worker._run`
-now resolves `inner_model` (and every other role) **after** it writes
-the `active_runs` state file and starts the per-run heartbeat thread,
-not before — a pure reordering, zero behavior change (nothing between
-the old and new call sites reads the resolved config). The worker used
-to pay its ~1 s ADK-import tax *before* the supervisor watchdog and the
-orchestrator's staleness check could see it as a registered, alive run;
-now that registration happens first, closing the window where a live
-worker looks unregistered while eating an unavoidable import cost.
-Pinned by `test_inner_model_resolved_after_active_run_and_heartbeat`
-(`tests/test_worker_lazy_roles.py`), which orders three mocked calls and
-asserts `active_run_write` and `heartbeat_start` precede
-`inner_model_resolve`. (2) `inner_model` resolution is now gated on
-`args["adapter"]["kind"] == "adk"` — only `ADKHarnessAdapter.run` ever
-reads `config.inner_model`, so a non-ADK adapter kind (the `"import"`
-shape, unused by the runner today but not disallowed) no longer forces
-an ADK import for a value nothing would consume. Pinned by
-`test_non_adk_adapter_never_resolves_inner_model`, which runs a real
-end-to-end worker with a stub adapter and an endpoint-shaped harness
-role and asserts `google.adk` never lands in `sys.modules`.
+A deferred-construction path was designed and not built: a thunk in
+`RuntimeConfig.inner_model`, realised at `ADKHarnessAdapter.run`'s
+first-use point, immediately before `rebind_tree_models_to_adk_model`.
+The table above already answers the question that path would measure.
+`.load()` unconditionally pays the roughly one-second `google.adk` tax
+moments before `run()` would resolve the thunk, and building `LiteLlm`
+after that import costs about 2 ms. The thunk's own construction cost
+would therefore round to zero, and so would its effect on total cost.
+Deferring past `.load()` cannot reduce total worker wall-clock time,
+resident memory, or module count for the production shape, which is the
+ADK adapter plus an endpoint-configured harness role. The proposal is
+refuted on measurement. Nothing was shipped for it, and no thunk or
+proxy sits in `RuntimeConfig`, where it would be complexity with no
+payoff.
 
-**Deferral must not turn a config fault into a silent score.** A spec
-that validates but cannot RESOLVE (the `adk` extra absent, a `model` id
-ADK cannot resolve) used to fail at worker startup, exiting non-zero, so
-the parent recorded an infra abort. Deferred, that failure surfaces at
-the role's first call — and if that first call is a judge's it is
-*swallowed*: `_InlineCriterionJudge` and goldfive's
-`DefaultSteerer.evaluate_judges` both catch and log, by hard contract,
-because a misbehaving judge must not crash a run. The unit would
-otherwise complete with the judge reporting "no signal" at every
-observation point: drift undercounted, the scalar better than the truth,
-a crowning decided on a judge that never ran. So `lazy_text_call_llm`
-records each deferred resolution failure in a process-wide register
-(`models_config.deferred_role_failures`) and raises a distinguishable
-`RoleResolutionError`, and `_tournament_worker.main` turns a non-empty
-register into a non-zero exit — restoring exactly the outcome the eager
-path produced.
+Two smaller changes were worth shipping. First,
+`_tournament_worker._run` resolves `inner_model`, and every other role,
+after it writes the `active_runs` state file and starts the per-run
+heartbeat thread. This is a pure reordering with no behaviour change,
+because nothing between the two call sites reads the resolved config.
+Registering the run first closes the window in which a live worker
+looks unregistered to the supervisor watchdog and the orchestrator's
+staleness check while it pays an unavoidable one-second ADK import.
+`test_inner_model_resolved_after_active_run_and_heartbeat`
+(`tests/test_worker_lazy_roles.py`) pins the order: it sequences three
+mocked calls and asserts that `active_run_write` and `heartbeat_start`
+precede `inner_model_resolve`. Second, `inner_model` resolution is
+gated on `args["adapter"]["kind"] == "adk"`. Only `ADKHarnessAdapter.run`
+reads `config.inner_model`, so a non-ADK adapter kind — the `"import"`
+shape, which the runner does not use but which is allowed — never
+forces an ADK import for a value nothing would consume.
+`test_non_adk_adapter_never_resolves_inner_model` pins that: it runs a
+real end-to-end worker with a stub adapter and an endpoint-shaped
+harness role and asserts that `google.adk` never lands in
+`sys.modules`.
+
+**Deferral must not turn a configuration fault into a silent score.** A
+spec that validates but cannot resolve — the `adk` extra absent, or a
+`model` id ADK cannot resolve — fails at the role's first call
+under deferred resolution. If that first call is a judge's, the failure
+is swallowed: `_InlineCriterionJudge` and goldfive's
+`DefaultSteerer.evaluate_judges` both catch and log it, by hard
+contract, because a misbehaving judge must not crash a run. The unit
+would then complete with the judge reporting no signal at every
+observation point, leaving drift undercounted, the scalar better than
+the truth, and a crowning decided on a judge that never ran.
+`lazy_text_call_llm` therefore records each deferred resolution failure
+in a process-wide register (`models_config.deferred_role_failures`) and
+raises a distinguishable `RoleResolutionError`, and
+`_tournament_worker.main` turns a non-empty register into a non-zero
+exit, so the parent records an infrastructure abort exactly as eager
+resolution would have produced.
 
 The durable part of the change is the regression test that pins the
 posture: importing `zicato._tournament_worker` must not pull
 `google.adk` or `litellm` into `sys.modules`, so a future eager import
-at module scope fails CI instead of quietly taxing every board unit.
+at module scope fails continuous integration instead of quietly taxing
+every board unit.
 
 ## 6. Atomic write helper
 
@@ -1382,23 +1377,23 @@ so the operator can inspect even a half-broken setup ("did the
 watchdog die — is the loop still going?") without the watchdog
 running.
 
-## 8. Phasing
+## 8. Delivery stages
 
-The runtime layer ships in stages. See
-[ROBUSTNESS.md](ROBUSTNESS.md) §4 for the layered defense
-mapping; this section is the runtime-layer-specific phasing.
+The runtime layer ships in stages. See [ROBUSTNESS.md](ROBUSTNESS.md)
+§4 for how those stages map onto the layered defense model; the table
+below is the runtime layer's own staging.
 
-| Phase | What lands |
+| Stage | What lands |
 |---|---|
-| **v1** | `.zicato/runtime/lock.json`, `heartbeat.json` (live, written by `HeartbeatBeater`), `asyncio.wait_for` per-call timeouts. **Shipped today.** |
-| **v1.1** | Full `.zicato/runtime/` layout + atomic writes. Rust watchdog supervisor (watchdog role only) auto-spawned by `evolve`. SIGTERM → grace → SIGKILL escalation. **Subprocess tournament workers (L3) with hard per-run wall-clock budgets are shipped** (`_tournament_worker.py`). The resume protocol and `zicato status` / `zicato kill` remain **planned**. |
-| **v1.2** | Live dashboard, served as a **separate Python service** (HTTP + SSE), auto-spawned by `evolve`. **Shipped today** (the dashboard split out of the Rust binary into its own service). |
-| **v1.3** | Interactive dashboard controls. The dashboard's POST control endpoints and the control-file *write* side are **shipped**; the orchestrator's *consumption* of `control/` at safe points and the `control_log/` audit are **planned**. |
+| **The workspace lock and heartbeat** | `.zicato/runtime/lock.json`, `heartbeat.json` written live by `HeartbeatBeater`, and `asyncio.wait_for` per-call timeouts. **Shipped.** |
+| **The full runtime layout and the watchdog** | The complete `.zicato/runtime/` layout with atomic writes; the Rust watchdog supervisor in its watchdog role, auto-spawned by `evolve`; escalation from SIGTERM through a grace period to SIGKILL; and subprocess tournament workers with hard per-run wall-clock budgets (`_tournament_worker.py`). **Shipped**, except that the resume protocol and the `zicato status` and `zicato kill` commands remain **planned**. |
+| **The dashboard service** | The live dashboard, served over HTTP and server-sent events as a separate Python service auto-spawned by `evolve`. **Shipped.** |
+| **Interactive dashboard controls** | The dashboard's POST control endpoints and the write side of the control-file protocol are **shipped**. The orchestrator's consumption of `control/` at safe points and the `control_log/` audit are **planned**. |
 
-The split is deliberate. The watchdog + atomic-write safety work is the
-production-readiness pass; the dashboard is a thick layer on top and
-got its own phase so the runtime safety work could ship and bake
-without being blocked on UI work.
+The staging is by design. The watchdog and atomic-write safety work is
+the production-readiness pass, and the dashboard is a thick layer on top
+of it. Giving the dashboard its own stage let the runtime safety work
+ship and settle without waiting on user-interface work.
 
 ## 9. Cross-references
 
@@ -1408,5 +1403,5 @@ without being blocked on UI work.
 | The dashboard's panels, endpoints, and control protocol | [DASHBOARD.md](DASHBOARD.md) |
 | Per-run events.jsonl and JSONLPersistenceSink details | [TELEMETRY.md](TELEMETRY.md) |
 | Generation directory layout (where runs/, experiment.json, etc. live) | [EPOCHS-AND-JOURNALING.md](EPOCHS-AND-JOURNALING.md) |
-| Storage roadmap for git-backed workspaces | [STORAGE.md](STORAGE.md) |
-| Why the watchdog is a separate language, not in-process | [RATIONALE.md](RATIONALE.md) |
+| The git-backed generation store and the rest of the storage design | [STORAGE.md](STORAGE.md) |
+| Why the watchdog runs in a separate language and process | [RATIONALE.md](RATIONALE.md) |
