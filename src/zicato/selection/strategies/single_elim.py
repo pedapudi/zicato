@@ -70,7 +70,7 @@ class SingleEliminationStrategy(SelectionStrategy):
         self._final_result: MatchupResult | None = None
         self._final_match_id = ""
         # Opt-in rating / resolver / uncertainty-guard knobs (absent ⇒
-        # today's scalar behaviour, byte-identical). They only re-order the
+        # the scalar behaviour, byte-identical). They only re-order the
         # INTERNAL standings / survivor pick and add a promotion-blocking
         # defer — never the gate.
         self._rating = read_rating(self.params)
@@ -181,7 +181,7 @@ class SingleEliminationStrategy(SelectionStrategy):
     def _pick_finalist(self, bracket_survivor: Contestant) -> Contestant:
         """The challenger to face the champion in the final.
 
-        Default (no ``resolver``): the bracket survivor, exactly as today.
+        Default (no ``resolver``): the bracket survivor, unchanged.
         When a ``resolver`` knob is set, the proposed finalist comes from the
         resolver over the duel matrix (Smith-prune + Ranked Pairs, or
         Copeland); if the resolver names the champion, an unknown id, or
@@ -352,8 +352,8 @@ class SingleEliminationStrategy(SelectionStrategy):
     def _sort_standings(self, entries: list[Standing]) -> None:
         """Order standings by scalar (default), or theta-rank when selected.
 
-        Default ``rating`` (absent): sort by ``(scalar, id)`` — byte-identical
-        to today. When ``rating="bradley_terry"``, order by fitted strength
+        Default ``rating`` (absent): sort by ``(scalar, id)``. When
+        ``rating="bradley_terry"``, order by fitted strength
         (best-first), with any contestant the audit has not yet rated keeping
         the scalar order among themselves AFTER the rated ones.
         """

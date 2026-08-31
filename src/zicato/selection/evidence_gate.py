@@ -1,12 +1,13 @@
-"""Crown on evidence, not a point estimate — the Bradley--Terry pre-gate.
+"""Crown on evidence rather than a point estimate — the Bradley--Terry pre-gate.
 
 The opt-in uncertainty pre-gate of ``docs/design/FUNCTIONALITY-RECOMMENDATIONS.md``
 §5 / ``docs/design/SELECTION-THEORY.md`` §7.1, raised from the single-shot
 ``uncertainty_gate`` guard (:mod:`zicato.selection.standings_ext`) to a full
 **defer → replicate → refit** schedule with a genuine terminal third state.
 
-Where the legacy guard answers a yes/no "is the crowning win within rating
-noise?", this module answers the operator's real question — *"is there enough
+Where the ``uncertainty_gate`` guard answers a yes/no "is the crowning win
+within rating noise?", this module answers the operator's fuller question —
+*"is there enough
 evidence to crown, and if not, what is the cheapest duel to replicate to find
 out?"* — by reading the fitted Bradley--Terry strengths AND their confidence
 intervals:
@@ -35,8 +36,8 @@ intervals:
 Everything here is **pure** and **opt-in**: with
 ``params["promote_confidence_threshold"]`` unset,
 :func:`read_promote_confidence_threshold` returns ``None`` and no pre-gate
-runs. The gate is deliberately NOT on by default — it is a **soundness**
-device, not a power device. Measured on the two-contestant crowning pair
+runs. The gate is NOT on by default — it is a **soundness**
+device rather than a power device. Measured on the two-contestant crowning pair
 (the Tier-2 power harness): the gate blocks 100% of A/A false promotes, but
 its CIs separate only after an UNBROKEN win streak of ~37 duels (mixed
 records never separate), so a small default budget would freeze every true
@@ -109,7 +110,7 @@ DEFAULT_REPLICATE_BUDGET: int = 3
 #: (``zicato init`` / the builder's blank draft) write explicitly when they
 #: enable the gate. NOT applied when the param is absent (the gate is opt-in;
 #: see the module docstring for the measured soundness-vs-power tradeoff).
-#: ``0.8`` is deliberately below the 0.95 the CI level speaks at: the
+#: ``0.8`` is below the 0.95 the CI level speaks at: the
 #: CI-separation requirement is the sharp half of the test, and the
 #: probability bar mostly guards against a fit whose point estimates favour
 #: the challenger while the evidence is thin.
@@ -128,13 +129,13 @@ def read_promote_confidence_threshold(params: Mapping[str, Any]) -> float | None
     promotion must clear under the Bradley--Terry pre-gate: crown only if
     ``P(theta_child > theta_champion)`` reaches it AND the rating CIs clear.
     Absent / explicit ``null`` / ``0`` / non-numeric / outside ``(0, 1)`` ⇒
-    ``None`` (no pre-gate). The gate is deliberately OPT-IN — see the module
+    ``None`` (no pre-gate). The gate is OPT-IN — see the module
     docstring for the measured soundness-vs-power tradeoff; the scaffolded
     contracts enable it explicitly with an honest replicate budget. Like
     every guard here, a bad value safely degrades to "no pre-gate".
 
     Lives in the opaque ``TournamentStructure.params`` map — NOT on
-    :class:`~zicato.core.ScoringWeights` — precisely because an absent param
+    :class:`~zicato.core.ScoringWeights` — because an absent param
     adds nothing to the contract canonical form, so the contract hash (and the
     whole parity surface) is byte-identical when the operator does not opt in.
     """
@@ -279,7 +280,7 @@ def evidence_verdict(
     * ``P(theta_child > theta_parent) >= threshold`` (confidence the child is
       stronger), AND
     * the two rating CIs are *separated* (the strength estimates do not
-      overlap — the duel is resolved, not a noisy near-tie).
+      overlap — the duel is resolved rather than a noisy near-tie).
 
     Otherwise it ``"deferred"`` while replicate budget remains, or goes terminal
     ``"inconclusive"`` once the budget is spent and the CIs still overlap. Below
@@ -448,7 +449,7 @@ def rating_block(verdict: EvidenceVerdict) -> dict[str, Any]:
     The single serializer shared by the driver (which stamps it on the journal)
     and the dashboard reader (which echoes the same shape from disk), so the two
     can never drift. ``present`` is always ``True`` here — the absence case
-    (``present=False``) is produced by the reader, not by a verdict that exists.
+    (``present=False``) is produced by the reader rather than by a verdict that exists.
     """
 
     def _ci(c: RatingCI | None) -> dict[str, Any] | None:

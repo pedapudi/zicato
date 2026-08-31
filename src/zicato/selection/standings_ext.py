@@ -20,8 +20,8 @@ runs**. The winner of each audited duel is its lower-scalar side
 advance; the margin is ``|delta_scalar|``.
 
 Everything here is **opt-in**: :func:`read_rating` / :func:`read_resolver`
-return ``None`` when the knob is absent or set to its today-default, in which
-case the strategy takes its existing Copeland / scalar path unchanged. A
+return ``None`` when the knob is absent or set to its default, in which
+case the strategy takes its Copeland / scalar path unchanged. A
 present knob never touches the gate — it only re-orders the INTERNAL leader
 pick (the ``_maybe_final`` / survivor step).
 """
@@ -41,7 +41,7 @@ from zicato.selection.resolve import Duel, MarginMatrix, build_matrix, resolve_l
 from zicato.selection.strategy import MatchupResult
 
 #: The rating knob's accepted values. ``"bradley_terry"`` enables the BT
-#: standings/uncertainty layer; absence (or ``"none"``) is today's behaviour.
+#: standings/uncertainty layer; absence (or ``"none"``) is the default behaviour.
 _VALID_RATINGS = frozenset({"bradley_terry"})
 
 #: The resolver knob's accepted values for INTERNAL leader selection. Absence
@@ -50,7 +50,7 @@ _VALID_RESOLVERS = frozenset({"copeland", "ranked_pairs"})
 
 
 def read_rating(params: Mapping[str, Any]) -> str | None:
-    """The selected rating model, or ``None`` for today's behaviour.
+    """The selected rating model, or ``None`` for the default behaviour.
 
     Reads ``params["rating"]``; returns the lower-cased token only when it
     is a recognised non-``none`` rating. Anything absent, ``none``, empty,
@@ -66,7 +66,7 @@ def read_rating(params: Mapping[str, Any]) -> str | None:
 
 
 def read_resolver(params: Mapping[str, Any]) -> str | None:
-    """The selected internal-leader resolver, or ``None`` for today's pick.
+    """The selected internal-leader resolver, or ``None`` for the pick.
 
     Reads ``params["resolver"]``; returns the token only when it is a
     recognised non-``none`` resolver. Absent / ``none`` / unrecognised ⇒
@@ -229,7 +229,7 @@ def apply_uncertainty_guard(
 
     * When ``threshold`` is ``None`` (the knob is absent), or the gate did
       not promote, returns the inputs unchanged with ``deferred=False`` —
-      the guard is a no-op, so behaviour is byte-identical to today.
+      the guard is a no-op, so behaviour is byte-identical to the default path.
     * When the gate promoted AND ``P(theta_child > theta_parent)`` fails to
       clear ``threshold``, flips the decision to ``"deferred"`` with an
       explanatory reason and ``deferred=True``. The promotion is held to

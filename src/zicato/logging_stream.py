@@ -417,8 +417,8 @@ def install_worker_log_stream(
     orchestrator threaded through the args file. It binds the run context
     (so every worker record is attributed) and attaches the same JSONL
     handler in append mode. Returns ``None`` when no path is supplied (an
-    ad-hoc / test worker drive) — the worker then keeps only its stderr
-    ``basicConfig``, exactly as before this surface existed.
+    ad-hoc / test worker drive), and the worker then keeps only its stderr
+    ``basicConfig``.
     """
     if not log_stream_path:
         return None

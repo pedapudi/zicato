@@ -73,7 +73,7 @@ class Matchup:
     replicates:
         How many paired board runs to average before scoring (``>= 1``).
         The unpinned default is ``2`` for gauntlet / bracket / Swiss
-        structures (replication, not bracket shape, is the noise lever);
+        structures (replication rather than bracket shape is the noise lever);
         ``1`` is the historical single-run path a deterministic contract
         pins explicitly (racing also pins ``1`` — its replication is
         intrinsic to the escalating board slices).
@@ -88,7 +88,7 @@ class Matchup:
     matchup_budget_seconds:
         Optional WALL-CLOCK cap (seconds) on this matchup's TOTAL board-unit
         execution. ``None`` (the default) ⇒ uncapped: every board unit ×
-        replicate × side runs to completion exactly as today. When set, the
+        replicate × side runs to completion unchanged. When set, the
         runner stops LAUNCHING further board units once the matchup's
         running wall-clock total exceeds the cap and treats the un-run units
         as budget-exceeded losses (see :func:`zicato.tournament.runner.run_matchup`).
@@ -235,8 +235,8 @@ class RoundRecord:
     overload, so the unqualified word "round" now always means the evolve
     round. ``label`` stays structure-qualified ("Bracket round N" / "Swiss
     round N" / "Rung N" / "Winners' bracket"). The persisted ``rounds[]`` JSON
-    key is ``stage_index``; readers still accept the legacy ``round_index``
-    key for workspaces written before the rename.
+    key is ``stage_index``; readers also accept the ``round_index``
+    spelling, so a workspace written with either name loads.
     """
 
     stage_index: int
@@ -303,7 +303,7 @@ class SelectionStrategy(ABC):
     #: replication. The base default is ``2`` — the noise-aware posture:
     #: evaluations are stochastic, so a duel decided by one paired run is
     #: decided by one noise draw; two averaged runs is the cheapest hedge
-    #: (replication, not bracket shape, is the noise lever — see SELECTION.md
+    #: (replication rather than bracket shape is the noise lever — see SELECTION.md
     #: §8). The gauntlet and the bracket / Swiss structures inherit it;
     #: racing pins ``1`` (its replication is intrinsic to the escalating
     #: board slices). Pin ``"replicates": 1`` in the structure params for the

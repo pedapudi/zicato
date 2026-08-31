@@ -7,7 +7,7 @@ artifacts. Callers compose these helpers rather than walking the
 directory layout themselves; the layout is owned by
 :mod:`zicato.core.workspace`.
 
-The functions deliberately do NOT write — every helper raises a clean
+The functions do NOT write — every helper raises a clean
 :class:`FileNotFoundError` when an expected artifact is missing. The
 error messages suggest the operator-side fix (``zicato init`` /
 ``zicato epoch new``) so the CLI's error rendering surfaces a useful
@@ -38,9 +38,8 @@ from zicato.proposer.brief import ProposerBrief, load_brief
 def _epoch_brief_path(workspace_root: Path, epoch_id: str) -> Path:
     """Path to the frozen proposer brief (``brief.md``) for one epoch.
 
-    Epochs created before the proposer-brief rename stored the file as
-    ``rubric.md``; when no ``brief.md`` exists the legacy name is used so
-    those epochs keep loading.
+    When no ``brief.md`` exists, ``rubric.md`` is read as a fallback
+    spelling of the same file.
     """
     brief = epoch_dir(workspace_root, epoch_id) / "brief.md"
     if not brief.exists():
@@ -186,7 +185,7 @@ def scoring_weights_from_dict(d: Mapping[str, Any]) -> ScoringWeights:
     so the writer, the lifecycle parser, and this loader cannot desync —
     the defect class behind issue #13 (a new contract field threaded
     through one serializer but not another). Every field absent from a
-    legacy ``scoring.json`` falls back to the dataclass default, and the
+    ``scoring.json`` falls back to the dataclass default, and the
     nested ``tournament`` / ``overfitting`` blocks recurse automatically.
     """
     from zicato.epoch.contract_serde import jsonable_to_dataclass  # noqa: PLC0415

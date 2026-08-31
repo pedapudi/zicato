@@ -67,12 +67,11 @@ def make_adapter_from_config(workspace_config: Mapping[str, Any]) -> Any:
     runs, spends, and optimizes against a grade that was never about
     this target.
 
-    Backwards-compatibility hook: the older ``zicato epoch register`` flow
-    persists ``config['adk_entrypoint']`` + ``config['mutable_trees']``
-    at the workspace-config top level. When ``config['adapter']`` is
-    absent but those legacy keys are present, we treat that as
-    ``kind="adk"`` so workspaces registered before the factory landed
-    keep working without a manual edit.
+    Compatibility hook for a workspace config that carries
+    ``config['adk_entrypoint']`` and ``config['mutable_trees']`` at the top
+    level rather than under ``config['adapter']``. When ``config['adapter']``
+    is absent but those two keys are present, the config is read as
+    ``kind="adk"``, so such a workspace loads without a manual edit.
 
     Parameters
     ----------

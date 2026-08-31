@@ -90,7 +90,7 @@ class DoubleEliminationStrategy(SelectionStrategy):
         self._gf_result: MatchupResult | None = None
         self._gf_match_id = "GF"
         # Opt-in rating / resolver / uncertainty-guard knobs (absent ⇒
-        # today's scalar behaviour, byte-identical). They only re-order the
+        # the scalar behaviour, byte-identical). They only re-order the
         # INTERNAL standings / grand-final-challenger pick and add a
         # promotion-blocking defer — never the gate.
         self._rating = read_rating(self.params)
@@ -217,7 +217,7 @@ class DoubleEliminationStrategy(SelectionStrategy):
         """The challenger to face the champion in the grand final.
 
         Default (no ``resolver``): the lower-scalar of the WB / LB
-        survivors, exactly as today. When a ``resolver`` knob is set, the
+        survivors, unchanged. When a ``resolver`` knob is set, the
         proposed challenger comes from the resolver over the duel matrix
         (Smith-prune + Ranked Pairs, or Copeland); if the resolver names the
         champion, an unknown id, or yields nothing, fall back to the default.
@@ -417,8 +417,8 @@ class DoubleEliminationStrategy(SelectionStrategy):
     def _sort_standings(self, rows: list[Standing]) -> None:
         """Order standings by scalar (default), or theta-rank when selected.
 
-        Default ``rating`` (absent): sort by ``(scalar, id)`` — byte-identical
-        to today. When ``rating="bradley_terry"``, order by fitted strength
+        Default ``rating`` (absent): sort by ``(scalar, id)``. When
+        ``rating="bradley_terry"``, order by fitted strength
         (best-first), with any contestant the audit has not yet rated keeping
         the scalar order among themselves AFTER the rated ones.
         """

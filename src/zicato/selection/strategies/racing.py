@@ -4,7 +4,7 @@ Rung 0 duels every challenger against the champion on a board SUBSET of
 size ``rung0_board_size`` (or ``board_fraction`` of the board); after a
 rung, eliminate the worst ``1 - 1/eta`` by scalar; survivors re-duel on a
 larger slice; repeat until one survivor or the full board is consumed.
-Elimination is by RANK within the rung (best-arm identification), not the
+Elimination is by RANK within the rung (best-arm identification) rather than the
 gate — the gate is applied only at the FINAL rung, on the full board, to
 the last survivor.
 
@@ -45,8 +45,9 @@ from zicato.selection.strategy import (
     pending_match_record,
 )
 
-#: The legacy schedule: rungs take nested prefixes of the authored JSONL
-#: order. The default for every contract that does not name a schedule.
+#: The nested-prefix schedule: each rung takes a prefix of the authored
+#: JSONL order, and each prefix contains the one before it. The default for
+#: every contract that does not name a schedule.
 LEGACY_SLICE_SCHEDULE = "prefix"
 
 #: Nested prefixes of a deterministic permutation derived from the board's
@@ -85,7 +86,7 @@ class RacingStrategy(SelectionStrategy):
 
     structure = "racing"
     # Racing's replication is INTRINSIC — the escalating board slices are the
-    # sample, not per-duel ``replicates`` — so it pins 1 even though the base
+    # sample rather than per-duel ``replicates`` — so it pins 1 even though the base
     # default is now 2 (a per-duel replicate would re-run a slice, not
     # enlarge it). Declared explicitly so the shared default-replicates map
     # reads a stable value.
@@ -120,8 +121,7 @@ class RacingStrategy(SelectionStrategy):
         # the FULL board × replicates × both sides and is the pathological
         # grinder (each board individually under its per-board budget, but
         # their sum unbounded). When the latter is unset the former applies
-        # to the final duel too; when both are unset behaviour is byte-
-        # identical to today (no cap).
+        # to the final duel too; when both are unset no cap applies.
         self._matchup_budget_s = _param_opt_float(self.params, "matchup_budget_seconds")
         final_budget = _param_opt_float(self.params, "final_rung_budget_seconds")
         self._final_budget_s = final_budget if final_budget is not None else self._matchup_budget_s
@@ -288,7 +288,7 @@ class RacingStrategy(SelectionStrategy):
 
     def _apply_cut(self) -> None:
         # Rank survivors by rung scalar (lower is better) and keep the top
-        # 1/eta (best-arm identification, not the gate).
+        # 1/eta (best-arm identification rather than the gate).
         ranked = sorted(
             self._alive,
             key=lambda c: (self._rung_scalars.get(c.generation_id, float("inf")), c.generation_id),
@@ -454,7 +454,7 @@ class RacingStrategy(SelectionStrategy):
             # The champion is the shared ``left`` defender, so it is not in
             # ``_scalars`` (challenger-keyed) — seed it from the dedicated
             # ``_champion_scalar`` benchmark so its lane shows the real
-            # last-known champion loss, not a blank lane.
+            # last-known champion loss rather than a blank lane.
             scalar = self._champion_scalar if gid == champion_id else self._scalars.get(gid)
             if scalar is not None:
                 # The lane's last-known running aggregate vs the champion.
