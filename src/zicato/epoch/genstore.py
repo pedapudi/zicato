@@ -72,7 +72,7 @@ from typing import Protocol, runtime_checkable
 from zicato.core.types import Patch
 from zicato.core.workspace import generation_dir
 from zicato.epoch.snapshot_scope import copytree_ignore, is_artifact
-from zicato.workspace import WorkspaceLayout
+from zicato.workspace import WorkspaceLayout, generation_ids, list_epoch_ids
 
 #: Filename prefix for a run's ephemeral checkout parent directory. The
 #: parent lives in the system temp dir (``tempfile.mkdtemp``) so it never
@@ -566,13 +566,11 @@ class DirectoryGenerationStore:
         part of this source-store listing. Record consumers enumerate them
         through the workspace layout or ``StorageBackend`` instead.
         """
-        gens_root = WorkspaceLayout.from_root(self._workspace_root).generations_dir(epoch_id)
-        if not gens_root.is_dir():
-            return []
+        layout = WorkspaceLayout.from_root(self._workspace_root)
         return sorted(
-            child.name
-            for child in gens_root.iterdir()
-            if child.is_dir() and (child / SNAPSHOT_DIRNAME).is_dir()
+            generation_id
+            for generation_id in generation_ids(layout, epoch_id)
+            if (layout.generation_dir(epoch_id, generation_id) / SNAPSHOT_DIRNAME).is_dir()
         )
 
     def seed_generation(
@@ -837,13 +835,6 @@ SNAPSHOT_DIRNAME = "snapshot"
 GENERATION_SOURCE_BACKEND_COMMAND = "zicato repair generation-source-backend"
 
 
-def _children(path: Path) -> Iterable[Path]:
-    """Iterate ``path``'s subdirectories, yielding nothing when it is not one."""
-    if not path.is_dir():
-        return ()
-    return (child for child in path.iterdir() if child.is_dir())
-
-
 def _has_git_source_store(workspace_root: Path) -> bool:
     """Return ``True`` iff the workspace holds the git backend's repository."""
     return (Path(workspace_root) / GIT_REPO_DIRNAME / ".git").exists()
@@ -856,11 +847,11 @@ def _has_directory_source_store(workspace_root: Path) -> bool:
     :class:`DirectoryGenerationStore` and by nothing else, so its presence
     names the backend that produced the tree outright.
     """
-    epochs_root = Path(workspace_root) / "epochs"
+    layout = WorkspaceLayout.from_root(workspace_root)
     return any(
-        (generation / SNAPSHOT_DIRNAME).is_dir()
-        for epoch in _children(epochs_root)
-        for generation in _children(epoch / "generations")
+        (layout.generation_dir(epoch_id, generation_id) / SNAPSHOT_DIRNAME).is_dir()
+        for epoch_id in list_epoch_ids(layout)
+        for generation_id in generation_ids(layout, epoch_id)
     )
 
 

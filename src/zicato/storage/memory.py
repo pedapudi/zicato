@@ -137,6 +137,27 @@ class InMemoryStorageBackend(StorageBackend):
             out.add(key)
         return sorted(out)
 
+    def list_namespaces(self, prefix: str) -> list[str]:
+        """Return the sub-namespaces directly under ``prefix``, sorted.
+
+        A flat key store has no directories, so a namespace is inferred:
+        ``a/b`` is a sub-namespace of ``a`` when some stored key continues
+        past it (``a/b/c.json``). That is exactly what the file backend
+        reports for the same tree, which is what keeps the two backends
+        interchangeable for record enumeration.
+        """
+        norm = _normalise_key(prefix)
+        wanted = norm + "/"
+        out: set[str] = set()
+        for key in (*self._records.keys(), *self._streams.keys()):
+            if not key.startswith(wanted):
+                continue
+            remainder = key[len(wanted) :]
+            head, sep, _rest = remainder.partition("/")
+            if sep:
+                out.add(f"{wanted}{head}")
+        return sorted(out)
+
     # -- JSONL streams ------------------------------------------------------
 
     def append_jsonl(self, key: str, record: Any) -> None:

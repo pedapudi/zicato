@@ -50,6 +50,8 @@ from zicato.workspace import (
     read_experiments,
     read_gen_score,
     read_loss,
+    round_indices,
+    run_entry_ids,
 )
 
 # Soft caps so the data view (and therefore the prompt) stays bounded.
@@ -463,15 +465,10 @@ def _load_per_judge_totals(
     Returns the empty tuple when no judge fired (or no runs landed) —
     a no-custom-judge board produces no rows under this section.
     """
-    runs_root = layout.runs_dir(epoch_id, generation_id)
-    if not runs_root.is_dir():
-        return ()
     totals: dict[str, float] = {}
-    for entry_dir in sorted(runs_root.iterdir()):
-        if not entry_dir.is_dir():
-            continue
-        raw = read_loss(layout, epoch_id, generation_id, entry_dir.name)
-        if not isinstance(raw, dict):
+    for entry_id in run_entry_ids(layout, epoch_id, generation_id):
+        raw = read_loss(layout, epoch_id, generation_id, entry_id)
+        if raw is None:
             continue
         per_judge = raw.get("per_judge_loss")
         if not isinstance(per_judge, list):
@@ -584,23 +581,10 @@ def _load_round_records(workspace_root: Path, epoch_id: str) -> tuple[Any, ...]:
     report change. A malformed / interior-corrupt log for one round is
     skipped rather than failing the whole gather.
     """
-    from zicato.epoch.round_log import (  # noqa: PLC0415
-        RoundLog,
-        fold_round_record,
-        rounds_dir,
-    )
+    from zicato.epoch.round_log import RoundLog, fold_round_record  # noqa: PLC0415
 
-    root = rounds_dir(workspace_root, epoch_id)
-    if not root.is_dir():
-        return ()
     records: list[Any] = []
-    for child in sorted(root.iterdir(), key=lambda p: (len(p.name), p.name)):
-        if not child.is_dir():
-            continue
-        try:
-            idx = int(child.name)
-        except ValueError:
-            continue
+    for idx in round_indices(WorkspaceLayout.from_root(workspace_root), epoch_id):
         try:
             events = RoundLog(workspace_root, epoch_id, idx).read()
             records.append(fold_round_record(events))

@@ -23,13 +23,19 @@ from zicato.query.gate_view import _mean_drift_loss_per_generation
 from zicato.query.paths import (
     WorkspacePaths,
     _is_finite,
-    _natural_key,
     _read_json_value,
     layout_of,
     list_epoch_ids,
     read_current_epoch,
 )
-from zicato.workspace import events_replicate_index, is_events_file, iter_epochs
+from zicato.workspace import (
+    events_replicate_index,
+    generation_ids,
+    is_events_file,
+    iter_epochs,
+    read_experiment,
+    run_entry_ids,
+)
 
 # ---------------------------------------------------------------------------
 # Run-directory discovery — for the conversation / matchup endpoints
@@ -280,13 +286,10 @@ def find_run_events_path(paths: WorkspacePaths, run_id: str) -> Path | None:
         if isinstance(events, str) and events and Path(events).exists():
             return Path(events)
 
-    for epoch in iter_epochs(layout_of(paths)):
-        gens = epoch.directory / "generations"
-        if not gens.is_dir():
-            continue
-        for gen_dir in gens.iterdir():
-            run_dir = gen_dir / "runs" / run_id
-            events = run_dir / "events.jsonl"
+    layout = layout_of(paths)
+    for epoch in iter_epochs(layout):
+        for generation_id in generation_ids(layout, epoch.id):
+            events = layout.events(epoch.id, generation_id, run_id)
             if events.exists():
                 return events
 
@@ -439,23 +442,18 @@ def find_generation_run(
     directory's name (the convention zicato uses for board-entry runs).
     Returns ``None`` when no events file is found.
     """
-    for epoch in iter_epochs(layout_of(paths)):
-        runs_dir = epoch.directory / "generations" / generation_id / "runs"
-        if not runs_dir.is_dir():
-            continue
+    layout = layout_of(paths)
+    for epoch in iter_epochs(layout):
         # Exact directory match on the entry id is the common layout.
-        direct = runs_dir / entry_id
-        events = direct / "events.jsonl"
+        events = layout.events(epoch.id, generation_id, entry_id)
         if events.exists():
             return (entry_id, events)
-        # Otherwise scan run dirs and match a run whose events.jsonl
+        # Otherwise scan run records and match one whose events.jsonl
         # carries this entry id (rare alternate layout).
-        for run_dir in runs_dir.iterdir():
-            if not run_dir.is_dir():
-                continue
-            ev = run_dir / "events.jsonl"
+        for run_entry_id in run_entry_ids(layout, epoch.id, generation_id):
+            ev = layout.events(epoch.id, generation_id, run_entry_id)
             if ev.exists():
-                return (run_dir.name, ev)
+                return (run_entry_id, ev)
     return None
 
 
@@ -586,7 +584,8 @@ def build_workspace_view(paths: WorkspacePaths) -> dict[str, Any]:
     # epoch surfaces a ``None`` best scalar but the row list still renders.
 
     with open_index_ro_or_none(paths.index_db) as conn:
-        for epoch in iter_epochs(layout_of(paths)):
+        layout = layout_of(paths)
+        for epoch in iter_epochs(layout):
             epoch_dir = epoch.directory
             epoch_id = epoch.id
 
@@ -613,12 +612,7 @@ def build_workspace_view(paths: WorkspacePaths) -> dict[str, Any]:
             # not from the analytical index, which is a best-effort
             # mirror. Promotion + parent are read from the index when
             # available (build_lineage_view will fall back).
-            gens_dir = epoch_dir / "generations"
-            gen_ids: list[str] = []
-            if gens_dir.is_dir():
-                for child in sorted(gens_dir.iterdir(), key=lambda p: _natural_key(p.name)):
-                    if child.is_dir():
-                        gen_ids.append(child.name)
+            gen_ids = generation_ids(layout, epoch_id)
 
             best_scalar: float | None = None
             best_gen_id: str | None = None
@@ -635,7 +629,7 @@ def build_workspace_view(paths: WorkspacePaths) -> dict[str, Any]:
                 # disk) rather than the index, so this is robust to an absent
                 # or stale ``promotions`` table.
                 for gid in gen_ids:
-                    exp = _read_json_value(gens_dir / gid / "experiment.json")
+                    exp = read_experiment(layout, epoch_id, gid)
                     if isinstance(exp, dict):
                         outcome = exp.get("outcome")
                         if isinstance(outcome, dict):
@@ -901,10 +895,7 @@ def build_meta_loop_ledger(paths: WorkspacePaths) -> dict[str, Any]:
                 isinstance(cfg, dict) and isinstance(cfg.get("closed"), bool) and cfg["closed"]
             )
 
-            gens_dir = epoch_dir / "generations"
-            gen_ids: list[str] = []
-            if gens_dir.is_dir():
-                gen_ids = sorted(c.name for c in gens_dir.iterdir() if c.is_dir())
+            gen_ids = generation_ids(layout, epoch_id)
 
             floor: float | None = None
             champion_gen: str | None = None

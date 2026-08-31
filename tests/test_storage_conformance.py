@@ -182,6 +182,38 @@ def test_list_keys_reflects_deletion(backend: StorageBackend):
     assert backend.list_keys("d") == ["d/b.json"]
 
 
+def test_list_namespaces_empty_prefix_returns_empty(backend: StorageBackend):
+    assert backend.list_namespaces("epochs/e1/generations") == []
+
+
+def test_list_namespaces_returns_direct_children_sorted(backend: StorageBackend):
+    for generation_id in ("v2", "v0", "v1"):
+        backend.write_json(f"epochs/e1/generations/{generation_id}/experiment.json", {})
+    assert backend.list_namespaces("epochs/e1/generations") == [
+        "epochs/e1/generations/v0",
+        "epochs/e1/generations/v1",
+        "epochs/e1/generations/v2",
+    ]
+
+
+def test_list_namespaces_is_not_recursive(backend: StorageBackend):
+    backend.write_json("epochs/e1/generations/v0/runs/t1/loss.json", {})
+    assert backend.list_namespaces("epochs/e1") == ["epochs/e1/generations"]
+
+
+def test_list_namespaces_excludes_plain_records(backend: StorageBackend):
+    """A namespace holds records; a record beside it is not a namespace.
+
+    The two listings partition a prefix's contents, so a caller enumerating
+    generation records never picks up the ``config.json`` sitting beside the
+    ``generations/`` subtree.
+    """
+    backend.write_json("epochs/e1/config.json", {"id": "e1"})
+    backend.write_json("epochs/e1/generations/v0/experiment.json", {})
+    assert backend.list_namespaces("epochs/e1") == ["epochs/e1/generations"]
+    assert backend.list_keys("epochs/e1") == ["epochs/e1/config.json"]
+
+
 # === JSONL streams =========================================================
 
 

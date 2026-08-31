@@ -30,7 +30,6 @@ import click
 from zicato.core.types import BoardEntry, LossProfile
 from zicato.core.workspace import (
     experiment_json_path,
-    generations_dir,
     loss_profile_path,
 )
 from zicato.health.diagnostics import LoopHealth, assess_loop_health
@@ -40,7 +39,7 @@ from zicato.health.inputs import (
     epoch_tree_import_gaps,
     workspace_preflight_gate,
 )
-from zicato.workspace import natural_key
+from zicato.workspace import WorkspaceLayout, generation_ids
 
 #: ANSI-ish colour names click understands, keyed by finding severity.
 _SEVERITY_COLOR: dict[str, str] = {
@@ -69,13 +68,7 @@ def _generation_ids(workspace_dir: Path, epoch_id: str) -> list[str]:
     ``v10``; a lexical sort would invert them and feed the window-based
     detectors a scrambled history.
     """
-    gens_root = generations_dir(workspace_dir, epoch_id)
-    if not gens_root.exists():
-        return []
-    return sorted(
-        (child.name for child in gens_root.iterdir() if child.is_dir()),
-        key=natural_key,
-    )
+    return generation_ids(WorkspaceLayout.from_root(workspace_dir), epoch_id)
 
 
 def _load_losses_by_generation(

@@ -92,9 +92,9 @@ from zicato.epoch.round_log import (
     RoundOpened,
     RoundRecord,
     fold_round_record,
-    rounds_dir,
 )
 from zicato.mutation.validator import POST_APPLY_CHECKS, classify_post_apply_error
+from zicato.workspace import WorkspaceLayout, round_indices
 
 #: Observations below which a rate is reported but marked ``provisional``. Four
 #: rounds of a fresh epoch are noise rather than a base rate; the marker says
@@ -286,18 +286,7 @@ class ProposerScorecard:
 
 def _round_indices(workspace_root: Path, epoch_id: str) -> list[int]:
     """The epoch's round indices, ascending; empty when nothing ran."""
-    base = rounds_dir(workspace_root, epoch_id)
-    if not base.is_dir():
-        return []
-    out: list[int] = []
-    for child in base.iterdir():
-        if not child.is_dir():
-            continue
-        try:
-            out.append(int(child.name))
-        except ValueError:
-            continue
-    return sorted(out)
+    return round_indices(WorkspaceLayout.from_root(workspace_root), epoch_id)
 
 
 def _final_attempt_span(events: list[RoundLogEnvelope]) -> list[RoundLogEnvelope]:

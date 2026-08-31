@@ -36,6 +36,7 @@ from zicato.query.paths import (
     _resolve_epoch_id,
     layout_of,
 )
+from zicato.workspace import read_experiments
 
 # Plateau band: a realised movement whose magnitude is within this of zero
 # is read as "neutral" / flat when deriving the OBSERVED direction. Mirrors
@@ -385,25 +386,17 @@ def build_calibration_trend(paths: WorkspacePaths, epoch_id: str | None = None) 
     if resolved is None:
         return empty
 
-    gens_dir = layout_of(paths).generations_dir(resolved)
-    if not gens_dir.is_dir():
-        return empty
-
+    layout = layout_of(paths)
     points: list[dict[str, Any]] = []
     scored_fractions: list[float] = []
-    for gen_dir in sorted(gens_dir.iterdir(), key=lambda p: _natural_key(p.name)):
-        if not gen_dir.is_dir():
-            continue
-        experiment = _read_json_value(gen_dir / "experiment.json")
-        if not isinstance(experiment, dict):
-            continue
+    for generation_id, experiment in read_experiments(layout, resolved):
         card = _scorecard_from_experiment(experiment)
         total = card["score"]["total"]
         fraction = card["score"]["fraction"]
         decision = _experiment_decision(experiment)
         points.append(
             {
-                "generation_id": gen_dir.name,
+                "generation_id": generation_id,
                 "epoch_id": resolved,
                 "round_index": _round_index_of(experiment),
                 "score_fraction": fraction,

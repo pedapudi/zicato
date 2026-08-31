@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, TypeGuard
 
 from zicato.util import best_effort
-from zicato.workspace import WorkspaceLayout, natural_key
+from zicato.workspace import WorkspaceLayout, generation_ids
 
 if TYPE_CHECKING:
     # No annotation-only imports: every cross-module reference in this file
@@ -468,15 +468,8 @@ def _collect_epoch_health_inputs(
     losses_by_generation: dict[str, list[Any]] = {}
     experiments: list[Any] = []
 
-    gens_root = WorkspaceLayout.from_root(workspace_root).generations_dir(epoch_id)
-    if not gens_root.exists():
-        return losses_by_generation, experiments
-
-    gen_ids = sorted(
-        (p.name for p in gens_root.iterdir() if p.is_dir()),
-        key=natural_key,
-    )
-    for gen_id in gen_ids:
+    layout = WorkspaceLayout.from_root(workspace_root)
+    for gen_id in generation_ids(layout, epoch_id):
         gen_losses: list[Any] = []
         for entry in board:
             lpath = loss_profile_path(workspace_root, epoch_id, gen_id, entry.id)

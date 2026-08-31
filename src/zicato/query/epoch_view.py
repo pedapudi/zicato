@@ -24,7 +24,12 @@ from zicato.query.paths import (
     layout_of,
 )
 from zicato.query.promoted_head import read_recorded_heads, recorded_head_ids
-from zicato.workspace import iter_epochs
+from zicato.workspace import (
+    WorkspaceLayout,
+    generation_ids,
+    iter_epochs,
+    read_experiment,
+)
 
 # ---------------------------------------------------------------------------
 # Epoch view
@@ -413,15 +418,16 @@ def build_epochs_summary(paths: WorkspacePaths) -> list[dict[str, Any]]:
 
 
 def _read_epoch_experiments(
-    epoch_dir: Path, lineage: dict[str, dict[str, Any]] | None = None
+    layout: WorkspaceLayout,
+    epoch_id: str,
+    lineage: dict[str, dict[str, Any]] | None = None,
 ) -> list[dict[str, Any]]:
-    """Walk ``generations/*/experiment.json`` for the epoch.
+    """The epoch's per-generation experiment records, in round-number order.
 
-    Returns a list of experiment records, one per generation that has an
-    ``experiment.json``, sorted by generation id. Each record carries the
-    raw ``experiment.json`` fields plus a ``patch_content`` mapping from
-    mutation id to the raw patch dict (from ``patches/*.json``) so the
-    frontend can render diffs without a second round-trip.
+    Returns one record per generation that has an ``experiment.json``. Each
+    carries the raw ``experiment.json`` fields plus a ``patch_content``
+    mapping from mutation id to the raw patch dict (from ``patches/*.json``)
+    so the frontend can render diffs without a second round-trip.
 
     Every record is stamped with the CANONICAL decision surface — a
     ``decision`` token (``promoted`` / ``rejected`` / ``deferred`` /
@@ -430,20 +436,15 @@ def _read_epoch_experiments(
     frontend renders decisions verbatim and never re-classifies the raw
     nested ``outcome``.
     """
-    gens_dir = epoch_dir / "generations"
-    if not gens_dir.is_dir():
-        return []
     experiments: list[dict[str, Any]] = []
-    for gen_dir in sorted(gens_dir.iterdir(), key=lambda p: _natural_key(p.name)):
-        if not gen_dir.is_dir():
-            continue
-        exp = _read_json_value(gen_dir / "experiment.json")
-        if not isinstance(exp, dict):
+    for generation_id in generation_ids(layout, epoch_id):
+        exp = read_experiment(layout, epoch_id, generation_id)
+        if exp is None:
             continue
         # Collect patches keyed by mutation_id so the render layer can
         # display the diff alongside the hypothesis.
         patches: dict[str, Any] = {}
-        patches_dir = gen_dir / "patches"
+        patches_dir = layout.patches_dir(epoch_id, generation_id)
         if patches_dir.is_dir():
             for patch_file in sorted(patches_dir.iterdir()):
                 if patch_file.suffix != ".json":
@@ -457,13 +458,13 @@ def _read_epoch_experiments(
         record = dict(exp)
         # Always stamp generation_id from the directory name so the
         # frontend can key on it even when the JSON omits it.
-        record["generation_id"] = gen_dir.name
+        record["generation_id"] = generation_id
         record["patches"] = patches
         # The canonical decision surface: ``decision`` + tri-state
         # ``promoted``, stamped by the shared classifier so this feed can
         # never disagree with the lineage view.
         stamp_experiment_decision(record)
-        node = lineage.get(gen_dir.name) if lineage is not None else None
+        node = lineage.get(generation_id) if lineage is not None else None
         if node is not None:
             # INVARIANT: this feed and /api/lineage serve the IDENTICAL
             # (promoted, decision, decision_label) triple for every
@@ -1011,7 +1012,7 @@ def build_epoch_view(
         for node in lineage_view.get("generations", [])
         if isinstance(node, dict) and isinstance(node.get("generation_id"), str)
     }
-    view["experiments"] = _read_epoch_experiments(epoch_dir, lineage)
+    view["experiments"] = _read_epoch_experiments(layout_of(paths), epoch_id, lineage)
 
     # The REIGNING champion — the end of the promoted spine (or the seed
     # while nothing is promoted). The ONE champion pointer the frontend

@@ -1,33 +1,41 @@
 """Typed canonical-read layer for the ``.zicato/`` workspace.
 
 The single seam that owns reading the on-disk workspace into typed objects.
-Its first responsibility — the one this package was introduced to settle —
-is **epoch / generation enumeration and ordering**: there is exactly one
-definition of the canonical epoch ordering (:func:`epoch_sort_key`,
-timestamp-first) and exactly one place that enumerates the ``epochs/``
-directory (:func:`iter_epochs` / :func:`list_epoch_ids`). Every dashboard
-reader routes through here rather than calling ``paths.epochs.iterdir()``
-with a sort of its own, so a single ordering authority governs every
-epoch-list-bearing response.
+Its first responsibility is **record enumeration and ordering**. Four
+questions — which epochs, which generations, which board-entry runs, which
+rounds — are answered in exactly one place each
+(:func:`iter_epochs` / :func:`list_epoch_ids`, :func:`generation_ids`,
+:func:`run_entry_ids`, :func:`round_indices`), and each answer carries one
+definition of order: epochs by recorded creation time
+(:func:`epoch_sort_key`), generations and board-entry runs by the
+numeric-aware :func:`natural_key`, rounds by ascending index. Every reader
+in the tree calls these rather than walking ``epochs/``,
+``generations/``, ``runs/`` or ``rounds/`` with a sort of its own, so one
+ordering authority governs every response, report and repair pass. The
+enumerations read through
+:meth:`~zicato.storage.StorageBackend.list_namespaces`, which is how a
+record shaped as a directory of files is enumerated over the storage seam.
 
 The package also owns the per-epoch / per-generation **path math**
-(:class:`WorkspaceLayout`) and the small set of **typed canonical reads**
-(:func:`read_epoch_config`, :func:`read_board`, :func:`read_experiments`,
-:func:`read_loss`, :func:`read_gen_score`, and the measurement-history
-readers :func:`read_gen_score_history` / :func:`read_events_history`)
-the dashboard consumes, so the
-leaf filename joins stop being re-implemented at dozens of call sites.
+(:class:`WorkspaceLayout`) and the **typed canonical reads** the
+enumerations feed (:func:`read_epoch_config`, :func:`read_board`,
+:func:`read_experiment`, :func:`read_experiments`, :func:`read_loss`,
+:func:`read_gen_score`, and the measurement-history readers
+:func:`read_gen_score_history` / :func:`read_events_history`), so the leaf
+filename joins stop being re-implemented at dozens of call sites.
 
-Design constraints (the refactor is behavior-preserving):
+Design constraints:
 
 * Every read is **best-effort**: a missing / unreadable / malformed file
-  degrades to the same empty / ``None`` value the prior inline reader
-  returned, never a new exception.
-* The path math does no outer→inner ``.zicato`` normalization: the
-  dashboard always hands this layer the inner workspace root.
-* This is the dashboard-facing subset of the typed canonical-read layer
-  described in ``docs/design/REIMPLEMENTATION.md``. The index, telemetry,
-  analyzer and orchestrator readers do not route through it.
+  degrades to an empty / ``None`` value, never a new exception. A record
+  directory with no readable leaf file is still enumerated — the directory
+  is what makes the record exist.
+* The path math does no outer→inner ``.zicato`` normalization: callers hand
+  this layer the inner workspace root.
+* The typed canonical-read layer described in
+  ``docs/design/REIMPLEMENTATION.md``. The telemetry reducer and the
+  SQLite index own their own record formats and parse them directly, while
+  asking this layer which records there are to parse.
 """
 
 from __future__ import annotations
@@ -45,6 +53,7 @@ from zicato.workspace.epochs import (
 )
 from zicato.workspace.layout import WorkspaceLayout, events_replicate_index, is_events_file
 from zicato.workspace.reads import (
+    generation_ids,
     read_board,
     read_events_history,
     read_experiment,
@@ -52,6 +61,8 @@ from zicato.workspace.reads import (
     read_gen_score,
     read_gen_score_history,
     read_loss,
+    round_indices,
+    run_entry_ids,
 )
 
 __all__ = [
@@ -60,6 +71,7 @@ __all__ = [
     "epoch_created_at",
     "epoch_sort_key",
     "events_replicate_index",
+    "generation_ids",
     "generation_round_number",
     "is_events_file",
     "iter_epochs",
@@ -74,4 +86,6 @@ __all__ = [
     "read_gen_score",
     "read_gen_score_history",
     "read_loss",
+    "round_indices",
+    "run_entry_ids",
 ]

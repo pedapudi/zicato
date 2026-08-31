@@ -163,6 +163,14 @@ class WorkspaceLayout:
         """One epoch's ``generations/`` directory."""
         return self.epoch_dir(epoch_id) / "generations"
 
+    def rounds_dir(self, epoch_id: str) -> Path:
+        """One epoch's ``rounds/`` directory (one sub-dir per evolve round).
+
+        :func:`zicato.epoch.round_log.rounds_dir` resolves through here, so
+        the round subtree has one path definition like every other.
+        """
+        return self.epoch_dir(epoch_id) / "rounds"
+
     # -- board reflection ----------------------------------------------------
 
     def reflections_dir(self, epoch_id: str) -> Path:

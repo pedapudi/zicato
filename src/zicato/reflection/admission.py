@@ -578,9 +578,7 @@ def _load_epoch_experiments(workspace_root: Path, epoch_id: str) -> list[dict[st
     from zicato.query.paths import WorkspacePaths, layout_of  # noqa: PLC0415
 
     try:
-        return _read_epoch_experiments(
-            layout_of(WorkspacePaths(workspace_root)).epoch_dir(epoch_id)
-        )
+        return _read_epoch_experiments(layout_of(WorkspacePaths(workspace_root)), epoch_id)
     except Exception:  # noqa: BLE001
         return []
 

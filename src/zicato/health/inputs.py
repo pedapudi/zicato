@@ -26,7 +26,7 @@ import logging
 from pathlib import Path
 from typing import Any
 
-from zicato.workspace import WorkspaceLayout
+from zicato.workspace import WorkspaceLayout, generation_ids
 
 log = logging.getLogger("zicato.health.inputs")
 
@@ -66,22 +66,19 @@ def epoch_tree_import_gaps(workspace_root: Path, epoch_id: str) -> dict[str, tup
     Best-effort like every other health input: a missing / unreadable record
     contributes nothing.
     """
-    gaps: dict[str, tuple[str, ...]] = {}
-    gens_root = WorkspaceLayout.from_root(workspace_root).generations_dir(epoch_id)
-    if not gens_root.exists():
-        return gaps
-    from zicato.core.workspace import harness_load_path  # noqa: PLC0415
     from zicato.storage import read_json  # noqa: PLC0415
 
-    for gen_dir in sorted(p for p in gens_root.iterdir() if p.is_dir()):
+    gaps: dict[str, tuple[str, ...]] = {}
+    layout = WorkspaceLayout.from_root(workspace_root)
+    for generation_id in generation_ids(layout, epoch_id):
         try:
-            record = read_json(harness_load_path(workspace_root, epoch_id, gen_dir.name))
+            record = read_json(layout.harness_load(epoch_id, generation_id))
         except Exception as exc:  # noqa: BLE001 — health inputs are best-effort
-            log.debug("harness-load record unreadable for %s: %s", gen_dir.name, exc)
+            log.debug("harness-load record unreadable for %s: %s", generation_id, exc)
             continue
         never_imported = str_tuple((record or {}).get("trees_never_imported"))
         if never_imported:
-            gaps[gen_dir.name] = never_imported
+            gaps[generation_id] = never_imported
     return gaps
 
 

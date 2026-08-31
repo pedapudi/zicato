@@ -49,11 +49,10 @@ from zicato.core.types import (
 from zicato.core.workspace import (
     analysis_path,
     epoch_dir,
-    generations_dir,
     journal_path,
 )
 from zicato.epoch.lineage import load_lineage
-from zicato.workspace import natural_key
+from zicato.workspace import WorkspaceLayout, generation_ids
 
 # A goldfive-compatible auxiliary call_llm.
 _AuxCallLLM = Callable[[str, str, str], Awaitable[str]]
@@ -136,14 +135,10 @@ def _collect_experiments(workspace_root: Path, epoch_id: str) -> list[dict[str, 
     number, so ``v2`` precedes ``v10``. Files that fail to parse are skipped
     silently — they predate the experiment schema we want to summarise.
     """
-    gens_root = generations_dir(workspace_root, epoch_id)
-    if not gens_root.exists():
-        return []
+    layout = WorkspaceLayout.from_root(workspace_root)
     out: list[dict[str, Any]] = []
-    for gen_dir in sorted(gens_root.iterdir(), key=lambda p: natural_key(p.name)):
-        if not gen_dir.is_dir():
-            continue
-        path = gen_dir / "experiment.json"
+    for generation_id in generation_ids(layout, epoch_id):
+        path = layout.experiment(epoch_id, generation_id)
         if not path.exists():
             continue
         try:
@@ -151,7 +146,7 @@ def _collect_experiments(workspace_root: Path, epoch_id: str) -> list[dict[str, 
         except (OSError, json.JSONDecodeError):
             continue
         if isinstance(d, dict):
-            d.setdefault("generation_id", gen_dir.name)
+            d.setdefault("generation_id", generation_id)
             out.append(d)
     return out
 
@@ -1305,7 +1300,11 @@ def regenerate_in_progress_html(workspace_root: Path, epoch_id: str) -> Path | N
     """
     from zicato.analyzer.report import regenerate_epoch_report_deterministic
 
-    if not any(generations_dir(workspace_root, epoch_id).glob("*/experiment.json")):
+    layout = WorkspaceLayout.from_root(workspace_root)
+    if not any(
+        layout.experiment(epoch_id, generation_id).is_file()
+        for generation_id in generation_ids(layout, epoch_id)
+    ):
         return None
     regenerate_epoch_report_deterministic(workspace_root, epoch_id)
     html_path = analysis_path(workspace_root, epoch_id).with_suffix(".html")

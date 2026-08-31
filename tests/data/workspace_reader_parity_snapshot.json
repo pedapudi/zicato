@@ -8161,6 +8161,23 @@
       "transcript_ref": "<ws>/epochs/e2/generations/v2/runs/t10/events.jsonl"
     }
   ],
+  "zicato.workspace.generation_ids::e10": [
+    "v0",
+    "v1"
+  ],
+  "zicato.workspace.generation_ids::e2": [
+    "v0",
+    "v1",
+    "v2",
+    "v3",
+    "v4",
+    "v5",
+    "v6",
+    "v7",
+    "v8",
+    "v9",
+    "v10"
+  ],
   "zicato.workspace.iter_epochs": [
     {
       "created_at": "2026-01-01T00:00:00Z",
@@ -9865,5 +9882,76 @@
     "tokens_spent": 550,
     "turns_completed": null,
     "wall_clock_budget_exceeded": false
-  }
+  },
+  "zicato.workspace.round_indices::e10": [],
+  "zicato.workspace.round_indices::e2": [
+    1,
+    2,
+    10
+  ],
+  "zicato.workspace.run_entry_ids::e10::v0": [
+    "t1",
+    "t2",
+    "t10"
+  ],
+  "zicato.workspace.run_entry_ids::e10::v1": [
+    "t1",
+    "t2",
+    "t10"
+  ],
+  "zicato.workspace.run_entry_ids::e2::v0": [
+    "t1",
+    "t2",
+    "t10"
+  ],
+  "zicato.workspace.run_entry_ids::e2::v1": [
+    "t1",
+    "t2",
+    "t10"
+  ],
+  "zicato.workspace.run_entry_ids::e2::v10": [
+    "t1",
+    "t2",
+    "t10"
+  ],
+  "zicato.workspace.run_entry_ids::e2::v2": [
+    "t1",
+    "t2",
+    "t10"
+  ],
+  "zicato.workspace.run_entry_ids::e2::v3": [
+    "t1",
+    "t2",
+    "t10"
+  ],
+  "zicato.workspace.run_entry_ids::e2::v4": [
+    "t1",
+    "t2",
+    "t10"
+  ],
+  "zicato.workspace.run_entry_ids::e2::v5": [
+    "t1",
+    "t2",
+    "t10"
+  ],
+  "zicato.workspace.run_entry_ids::e2::v6": [
+    "t1",
+    "t2",
+    "t10"
+  ],
+  "zicato.workspace.run_entry_ids::e2::v7": [
+    "t1",
+    "t2",
+    "t10"
+  ],
+  "zicato.workspace.run_entry_ids::e2::v8": [
+    "t1",
+    "t2",
+    "t10"
+  ],
+  "zicato.workspace.run_entry_ids::e2::v9": [
+    "t1",
+    "t2",
+    "t10"
+  ]
 }

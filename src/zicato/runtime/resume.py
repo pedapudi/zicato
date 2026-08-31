@@ -75,7 +75,12 @@ from zicato.runtime.paths import (
     active_tournament_path,
     heartbeat_path,
 )
-from zicato.workspace import WorkspaceLayout, generation_round_number, natural_key
+from zicato.workspace import (
+    WorkspaceLayout,
+    generation_ids,
+    generation_round_number,
+    run_entry_ids,
+)
 
 if TYPE_CHECKING:
     from zicato.core.types import Experiment
@@ -137,15 +142,12 @@ def _latest_generation_id(workspace_root: Path, epoch_id: str) -> str | None:
     store: a generation counts as present when its directory exists.
     Non-``vN`` names (none today) are ignored.
     """
-    gens_root = _generations_root(workspace_root, epoch_id)
-    if not gens_root.is_dir():
-        return None
     numbered = [
-        child.name
-        for child in gens_root.iterdir()
-        if child.is_dir() and generation_round_number(child.name) is not None
+        generation_id
+        for generation_id in generation_ids(WorkspaceLayout.from_root(workspace_root), epoch_id)
+        if generation_round_number(generation_id) is not None
     ]
-    return max(numbered, key=natural_key) if numbered else None
+    return numbered[-1] if numbered else None
 
 
 def clear_runtime_state(workspace_root: Path) -> None:
@@ -206,13 +208,11 @@ def _has_any_loss(workspace_root: Path, epoch_id: str, generation_id: str) -> bo
     signal that makes resume-in-place worth doing instead of a clean
     re-run from scratch.
     """
-    runs_dir = _generations_root(workspace_root, epoch_id) / generation_id / "runs"
-    if not runs_dir.is_dir():
-        return False
-    for entry_dir in runs_dir.iterdir():
-        if entry_dir.is_dir() and (entry_dir / "loss.json").is_file():
-            return True
-    return False
+    layout = WorkspaceLayout.from_root(workspace_root)
+    return any(
+        layout.loss(epoch_id, generation_id, entry_id).is_file()
+        for entry_id in run_entry_ids(layout, epoch_id, generation_id)
+    )
 
 
 def prepare_resume(workspace_root: Path, epoch_id: str) -> ResumePlan:
