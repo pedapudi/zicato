@@ -656,7 +656,7 @@ be mediocre at both. They are *linked* instead.
 
 The link is the **per-run drill-down**. Anywhere the zicato
 dashboard shows a run — a cell in the per-entry A/B grid, a row
-in the run view ([DASHBOARD.md §4.8](DASHBOARD.md#48-l4--one-run))
+in the run view ([DASHBOARD.md §4.8](DASHBOARD.md#48-the-run-level))
 — there is an "open in harmonograf" affordance. It hands
 off to harmonograf pointed at that run's `events.jsonl` (the
 `runs.events_path` column in the analytical index,
@@ -713,7 +713,7 @@ aggregates do.
 
 The **lineage tree** is what spans epochs; the bracket does not.
 The tree view
-([DASHBOARD.md §4.1](DASHBOARD.md#41-the-lineage-ribbon--one-navigation-metaphor-at-every-level)
+([DASHBOARD.md §4.1](DASHBOARD.md#41-the-lineage-ribbon--one-figure-at-three-zoom-levels)
 renders it as the lineage ribbon) shows every epoch's spine, with a
 *dashed cross-epoch edge* from each epoch's final champion to the
 next epoch's `v0`. That cross-epoch edge is the baselining link:
