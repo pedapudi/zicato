@@ -257,11 +257,10 @@ trace/suggestion, or a malformed record degrades to a same-shape payload with
 `found: false` — never a raise, never a fabricated number.
 
 **Which endpoint idiom serves them.** All three do blocking file I/O (reading
-`imported/*.json` + `suggestions.json`), so each handler wraps its reader in
-**`run_in_threadpool`** (the `build_log_view` / eval-endpoint precedent,
-`endpoints.py:176`/`:429`) — the reads never stall the event loop — behind an
-`_is_safe_id` degrade. They join the reflection-endpoints block
-(`_make_reflection_endpoints`) as new routes:
+`imported/*.json` + `suggestions.json`), so each is declared
+`off_event_loop=True` in the read-endpoint table (`endpoints.py`,
+`READ_ENDPOINTS`) — the reads run in the threadpool and never stall the event
+loop — behind an `_is_safe_id` degrade. The three routes are:
 `GET /api/reflection/{reflection_id}/traces`,
 `GET /api/reflection/{reflection_id}/trace/{trace_id}`,
 `GET /api/reflection/{reflection_id}/suggestion/{suggestion_id}/provenance`.

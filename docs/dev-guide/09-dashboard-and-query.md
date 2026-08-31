@@ -851,12 +851,21 @@ persisted sessions (§9.14 has the readback side).
 
 ### 9.4.3 The route table
 
-Every route wires a `handlers[...]` entry from `make_endpoints`. The shape
-is uniform: coordinate path params (`{epoch_id}`, `{generation_id}`,
-`{entry_id}`, `{run_id}`, `{tournament_id}`), the `/events` SSE stream, the
-control POSTs (`methods=["POST"]`), the builder + settings routes spliced
-in before the catch-all, and a `serve_fallback` last so `index.html`'s
-root-relative references resolve. The catch-all MUST stay last:
+The read routes served by one query-library call are spliced in straight
+from the table that declares them, keyed by their own path:
+
+```python
+        *[Route(entry.path, handlers[entry.path]) for entry in READ_ENDPOINTS],
+```
+— `src/zicato/dashboard/server.py`, `create_app`
+
+Every other route wires a named `handlers[...]` entry from `make_endpoints`.
+The shape is uniform: coordinate path params (`{epoch_id}`,
+`{generation_id}`, `{entry_id}`, `{run_id}`, `{tournament_id}`), the
+`/events` SSE stream, the control POSTs (`methods=["POST"]`), the builder +
+settings routes spliced in before the catch-all, and a `serve_fallback` last
+so `index.html`'s root-relative references resolve. The catch-all MUST stay
+last:
 
 ```python
     # Any unmatched GET is treated as a request for a bundled asset so
@@ -890,18 +899,56 @@ shows only when `byEpoch[id].hasReflections`, folded from ONE workspace-wide
 
 ---
 
-## 9.5 The endpoint factories & `_is_safe_id` — `endpoints.py`
+## 9.5 The read-endpoint table & `_is_safe_id` — `endpoints.py`
 
-`make_endpoints(paths, *, read_only, started)` composes eight per-surface
-factories into one `name -> handler` dict:
+A dashboard read route is almost always the same handler: reject an unsafe
+coordinate, call one `query` reader, wrap the result in a `JSONResponse`.
+Fifty routes were that handler written out fifty times, differing only in
+their path, their coordinates, the reader, and the canned shape a rejected
+coordinate gets. They are now fifty rows of one table, `READ_ENDPOINTS`,
+built by one factory:
+
+```python
+    ReadEndpoint(
+        path="/api/epoch/{epoch_id}/racing-field",
+        reader=query.build_racing_field,
+        serves=(
+            "The settled racing-field ladder for one epoch, joined server-side "
+            "into one rung/gate payload the front-end never reconstructs. "
+            "``present: false`` when the epoch has no racing records."
+        ),
+        params=("epoch_id",),
+        degrade=_echo(present=False),
+    ),
+```
+— `src/zicato/dashboard/endpoints.py`, `READ_ENDPOINTS`
+
+A row states the route, the reader behind it (called as
+`reader(paths, *coordinates)`, so `params` is written in the reader's
+argument order), what the route serves, the degrade a rejected coordinate
+answers with and at which status, how the optional `?epoch=` scope is
+handled, and whether the read blocks on files hard enough to need the
+threadpool. Nothing else varies between these routes, so nothing else is in
+the table.
+
+Three of the degrade forms are worth naming. `_echo(...)` repeats the
+route's coordinates under their own names — optionally renamed, as the gate
+does for `champion_id` → `champion` — and then the fixed fields, in the
+order they are written, because key order is part of the shape. `_fixed(...)`
+is the degrade that names no coordinate. Five rows take their degrade from
+the reader's own empty-shape helper (`query._empty_matrix` and its siblings),
+so the route and the reader cannot drift apart.
+
+`make_endpoints(paths, *, read_only, started)` composes the table with the
+five hand-written surfaces — the reads whose query parameters shape the
+response, the two epoch documents served as markdown and HTML, the file
+browser, the transcripts, and the control POSTs:
 
 ```python
     handlers: dict[str, Any] = {}
+    handlers.update(_make_read_endpoints(paths))
     handlers.update(_make_state_endpoints(paths, read_only=read_only, started=started))
-    handlers.update(_make_epoch_endpoints(paths))
-    handlers.update(_make_judge_run_endpoints(paths))
-    handlers.update(_make_live_endpoints(paths))
-    handlers.update(_make_tournament_endpoints(paths))
+    handlers.update(_make_epoch_document_endpoints(paths))
     handlers.update(_make_files_endpoints(paths))
     handlers.update(_make_conversation_endpoints(paths))
     handlers.update(_make_control_endpoints(paths, read_only=read_only))
@@ -909,45 +956,47 @@ factories into one `name -> handler` dict:
 ```
 — `src/zicato/dashboard/endpoints.py`, `make_endpoints`
 
-Each factory closes over `paths` and returns a small dict of async
-handlers. A handler is thin by construction: validate the coordinate, then
-wrap the reader in a `JSONResponse`. This is now the WHOLE surface: the seven
-endpoint blobs that would otherwise assemble a payload inline in `endpoints.py`
-(`_build_matchup_conversations`, the `api_conversation` resolver chain,
-`api_run_transcript`, the journal file-reads, …) were hoisted into `query`
-readers — `conversations_view.py`, `transcript_view.py`, `journal_view.py` (+
-their homes) — each with a best-effort degrade-and-shape test, leaving `endpoints.py` a
-sheet of validate-then-delegate one-liners (~1451→~1000 lines) and the readers
-sharing the ONE `open_index_ro` connection discipline (`query/_sqlite.py`; §9.3).
+The table handlers are keyed by ROUTE PATH; the hand-written ones keep their
+function names as keys.
+
+> ⛔ Put a new read route that calls one reader in the table rather than in
+> a factory. The hand-written factories are for a route whose handler needs
+> a second reader, a query parameter that changes the response, or a media
+> type other than JSON.
+
+`tests/test_dashboard_endpoint_table.py` enforces three things about the
+table: every row's path has an `ENDPOINT_PAYLOADS` entry and every declared
+payload belongs to a bound route (both directions); every row's degrade
+satisfies the field types its declared payload contract names; and every row
+serves, byte for byte and in key order, what it served before the table
+existed — a recorded response per route over the standard fixture workspace,
+for a coordinate the fixture holds and for a coordinate the guard rejects.
+
+Payload assembly belongs to the readers. The seven endpoint blobs that
+once assembled a payload inline (`_build_matchup_conversations`, the
+`api_conversation` resolver chain, `api_run_transcript`, the journal
+file-reads, …) live in `query` readers — `conversations_view.py`,
+`transcript_view.py`, `journal_view.py` — each with a best-effort
+degrade-and-shape test, and all of them share the ONE `open_index_ro`
+connection discipline (`query/_sqlite.py`; §9.3).
+
 Replicated board runs remain one `(epoch, generation, entry)` directory with
-numbered `events.rN.jsonl` / `loss.rN.json` siblings. Transcript and per-judge
-readers therefore accept an optional runtime `run` id (the per-judge reader
-also takes an explicit replicate coordinate), resolve the exact sibling from
-canonical files, and retain replicate 0 as the no-selector default. Only the
-transcript route exposes its selector as a query parameter; the per-judge route
-always asks for replicate 0, so a view that wants a sibling's judges must pass
-the keyword through a new route parameter first. The Goldfive `runId` inside an
-event stream is a separate identity and must not be fabricated from the runtime
-run id in fixtures.
+numbered `events.rN.jsonl` / `loss.rN.json` siblings. Transcript and
+per-judge readers therefore accept an optional runtime `run` id (the
+per-judge reader also takes an explicit replicate coordinate), resolve the
+exact sibling from canonical files, and retain replicate 0 as the
+no-selector default. Only the transcript route exposes its selector as a
+query parameter; the per-judge route always asks for replicate 0, so a view
+that wants a sibling's judges must pass the keyword through a new route
+parameter first. The Goldfive `runId` inside an event stream is a separate
+identity and must not be fabricated from the runtime run id in fixtures.
 For older racing workspaces, which stay supported, a `match` selector is a
-nested-rung coordinate and takes precedence over the top-level replicate loss's
-`match_id`; runtime `run` selectors prefer the numbered sibling. The global
-Goldfive-run-id lookup caches each event file independently: pure appends reuse
-an already discovered id without a workspace scan or stream reopen, while new,
-replaced, truncated, and formerly-empty files are reparsed.
-`_make_live_endpoints` is the model — `api_live_pipeline` is one line over
-`build_round_pipeline`:
-
-```python
-    async def api_live_pipeline(_request: Request) -> JSONResponse:
-        """The authoritative propose→apply→run→gate pipeline projection.
-
-        ``GET /api/live/pipeline``. The server owns the phase-string
-        inference the stepper renders — see ``build_round_pipeline``.
-        """
-        return JSONResponse(query.build_round_pipeline(paths))
-```
-— `src/zicato/dashboard/endpoints.py`, `_make_live_endpoints`
+nested-rung coordinate and takes precedence over the top-level replicate
+loss's `match_id`; runtime `run` selectors prefer the numbered sibling. The
+global Goldfive-run-id lookup caches each event file independently: pure
+appends reuse an already discovered id without a workspace scan or stream
+reopen, while new, replaced, truncated, and formerly-empty files are
+reparsed.
 
 ### 9.5.1 `_is_safe_id` — the coordinate guard
 
@@ -967,52 +1016,73 @@ def _is_safe_id(value: str) -> bool:
 ```
 — `src/zicato/dashboard/endpoints.py`
 
-A tournament id carries the ingester's `{epoch}:{parent}->{child}` form, so
-`:` and `->` are legal there — `_is_safe_tournament_id` widens the alphabet
-to admit those two separators while still blocking `..` and `/`. Use the
-tournament validator ONLY for a tournament id; every other coordinate uses
-the strict `_is_safe_id`.
+Two coordinates carry a separator the strict alphabet rejects. A tournament
+id carries the ingester's `{epoch}:{parent}->{child}` form, so
+`_is_safe_tournament_id` admits `:` and `->`; an adjudication `run_ref`
+carries `{candidate}:{entry}:r{n}`, so `_is_safe_run_ref` admits `:`. Both
+still block `..` and `/`.
+
+The coordinate's NAME decides which guard it gets, rather than the route
+it appears in, because the alphabet an id is admitted by belongs to the kind
+of id it is:
+
+```python
+COORDINATE_GUARDS: Final[Mapping[str, Callable[[str], bool]]] = {
+    "tournament_id": _is_safe_tournament_id,
+    "run_ref": _is_safe_run_ref,
+}
+```
+— `src/zicato/dashboard/endpoints.py`
+
+Every name absent from that map takes the strict `_is_safe_id`. Use a wide
+validator ONLY for the coordinate it was written for.
 
 ### 9.5.2 Degrade-to-200, never 500 or traversal
 
 A malformed coordinate does not 500 and does not raise — it returns the
 reader's EMPTY shape at HTTP 200, matching every other coordinate handler
-so the client's degrade path is uniform:
+so the client's degrade path is uniform. The shape is the table row's
+`degrade`, and the status its `degrade_status`:
 
 ```python
-    async def api_epoch_trajectory(request: Request) -> JSONResponse:
-        """Promoted-lineage trajectory + promotion rate + honest verdict.
-
-        ``GET /api/epoch/{epoch_id}/trajectory``. A malformed id degrades
-        to the empty trajectory shape (HTTP 200), matching every other
-        coordinate handler.
-        """
-        epoch_id = request.path_params["epoch_id"]
-        if not _is_safe_id(epoch_id):
-            return JSONResponse(
-                {
-                    "epoch_id": epoch_id,
-                    "points": [],
-                    "promotion_rate": None,
-                    "promoted_count": 0,
-                    "challenger_count": 0,
-                    "plateaued": False,
-                    "verdict": None,
-                    "recent_movement": None,
-                    "noise_floor": None,
-                },
-                status_code=200,
-            )
-        return JSONResponse(query.build_optimization_trajectory(paths, epoch_id))
+    ReadEndpoint(
+        path="/api/epoch/{epoch_id}/trajectory",
+        reader=query.build_optimization_trajectory,
+        serves=(
+            "The promoted-lineage trajectory for one epoch, with the promotion "
+            "rate and the honest plateau verdict."
+        ),
+        params=("epoch_id",),
+        degrade=_echo(
+            points=[],
+            promotion_rate=None,
+            promoted_count=0,
+            challenger_count=0,
+            settled_count=0,
+            plateaued=False,
+            plateau_measurable=False,
+            verdict=None,
+            recent_movement=None,
+            noise_floor=None,
+        ),
+    ),
 ```
-— `src/zicato/dashboard/endpoints.py`, `_make_epoch_endpoints`
+— `src/zicato/dashboard/endpoints.py`, `READ_ENDPOINTS`
 
 The `?epoch=<id>` scoping param is validated the same way but via
 `_epoch_query`, which raises `_BadEpoch` on a path-unsafe value so the
 handler can answer `404 {"error": "unknown epoch"}` before touching the
 workspace. An id-carrying scoped read returns 404 (a genuinely unknown
 epoch); a coordinate PATH param degrades to the empty shape at 200 (a
-malformed drill-down should still render an empty panel rather than a broken page).
+malformed drill-down should still render an empty panel rather than a
+broken page). The three ways a route can treat that param are named on the
+row, because they are three different promises to the caller:
+
+| `epoch_scope` | A malformed `?epoch=` | An epoch the workspace does not hold |
+|---|---|---|
+| `SCOPE_REJECT_UNKNOWN_EPOCH` | the degrade | the degrade (the reader raises; both answer alike) |
+| `SCOPE_REJECT_MALFORMED_EPOCH` | the degrade | whatever the reader makes of it |
+| `SCOPE_IGNORE_MALFORMED_EPOCH` | read as no scope — the current epoch | whatever the reader makes of it |
 
 > ⛔ NEVER let a coordinate reach a reader unvalidated, and never answer a
 > malformed coordinate with a 500. Validate the id before it touches the workspace: `_is_safe_id` first, then the reader
@@ -2155,31 +2225,31 @@ block AND `__all__` in `src/zicato/query/__init__.py`. This is what makes
 `query.build_promotion_cadence` resolve in the endpoint and keeps the split
 invisible (§9.1).
 
-**Step 3 — The endpoint factory + `_is_safe_id`.** Add the handler to the
-relevant per-surface factory in `endpoints.py` (here `_make_epoch_endpoints`).
-Validate the coordinate FIRST and degrade a malformed one to the reader's
-empty shape at HTTP 200:
+**Step 3 — The table row (§9.5).** Add one `ReadEndpoint` to
+`READ_ENDPOINTS` in `endpoints.py`. The coordinate is validated before the
+reader sees it, and a rejected one degrades to the reader's empty shape at
+HTTP 200:
 
 ```python
-    async def api_epoch_promotion_cadence(request: Request) -> JSONResponse:
-        """``GET /api/epoch/{epoch_id}/promotion-cadence``. Malformed id ⇒ empty (200)."""
-        epoch_id = request.path_params["epoch_id"]
-        if not _is_safe_id(epoch_id):
-            return JSONResponse({"epoch_id": epoch_id, "cadence": []}, status_code=200)
-        return JSONResponse(query.build_promotion_cadence(paths, epoch_id))
+    ReadEndpoint(
+        path="/api/epoch/{epoch_id}/promotion-cadence",
+        reader=query.build_promotion_cadence,
+        serves="How many rounds each promotion took, in round order.",
+        params=("epoch_id",),
+        degrade=_echo(cadence=[]),
+    ),
 ```
 
-Return it in the factory's dict (`"api_epoch_promotion_cadence": ...`).
+No handler is written and no route is added: `server.py` binds every row of
+the table, and `make_endpoints` builds every row's handler. A route that
+needs a second reader, a query parameter that changes the response, or a
+media type other than JSON is a hand-written factory instead.
 
-**Step 4 — The server route.** Wire it into the `routes` list in
-`server.py`, ABOVE the catch-all fallback (§9.4.3):
-
-```python
-        Route(
-            "/api/epoch/{epoch_id}/promotion-cadence",
-            handlers["api_epoch_promotion_cadence"],
-        ),
-```
+**Step 4 — The declared payload contract.** Add the route's path to
+`ENDPOINT_PAYLOADS` in `query/contracts.py` under the envelope it serves.
+`tests/test_dashboard_endpoint_table.py` fails a table row with no declared
+payload, a declared payload with no route, and a degrade whose fields do not
+match the types the contract names.
 
 **Step 5 — The client accessor, null-degrading.** Add a thin cached
 accessor to `data.js`, and write it to degrade to `null` on an absent

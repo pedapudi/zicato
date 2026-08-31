@@ -92,11 +92,20 @@ class LiveExecutionPlanPayload(ExecutionPlanPayload, total=False):
 
 
 class DetailPayload(ObjectPayload, total=False):
-    summary: dict[str, Any]
+    # A ``summary`` is a nested record on the payloads that carry one, and a
+    # one-line human-readable string on the payloads whose summary IS that
+    # line (a suggestion, a run-log event). Both spellings are declared.
+    summary: dict[str, Any] | str
     contract: dict[str, Any]
     gate: dict[str, Any]
-    champion: dict[str, Any]
-    challenger: dict[str, Any]
+    # A decision surface names its two sides either as an id or as the
+    # record behind it, depending on how much of the pair the reader
+    # resolved: the gate breakdown, the matchup grid and the per-judge
+    # comparison put the generation id here, while the round timeline puts
+    # the resolved record. Both spellings, and the unresolved side, are
+    # declared rather than one of them.
+    champion: dict[str, Any] | str | None
+    challenger: dict[str, Any] | str | None
     transcript: dict[str, Any]
     rows: list[dict[str, Any]]
     turns: list[dict[str, Any]]

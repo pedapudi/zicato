@@ -6,6 +6,15 @@ dashboard front-end consumes. ``/api/environment`` is the consolidated
 read of the whole environment; the granular per-section endpoints are
 kept alongside it.
 
+Most read routes answer with ONE query-library call, and differ only in
+their path, the coordinates they take, the reader they call, and the
+canned shape they serve when a coordinate is rejected. Those routes are
+declared as data in :data:`READ_ENDPOINTS` and built by one handler
+factory, so adding a read route is a table row rather than a function.
+The routes that are not that shape — the filesystem browser, the
+transcripts, the raw markdown and HTML documents, the query-parameter
+reads, and the control POSTs — stay hand-written below the table.
+
 GET routes are always available. The POST control routes write a marker
 file into ``.zicato/runtime/control/`` (the file-based control-channel
 protocol the orchestrator consumes) and return ``403`` when the server
@@ -22,8 +31,11 @@ from __future__ import annotations
 import datetime as _dt
 import json
 import re
+from collections.abc import Callable, Mapping
+from copy import deepcopy
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Final
 
 from starlette.concurrency import run_in_threadpool
 from starlette.requests import Request
@@ -46,6 +58,10 @@ try:  # pragma: no cover - import availability varies across worktrees
 except Exception:  # pragma: no cover
     pass
 
+
+# ---------------------------------------------------------------------------
+# Coordinate guards
+# ---------------------------------------------------------------------------
 
 # Conservative id validator: rejects path-traversal, separators, spaces.
 # Mirrors the Rust ``routes::is_safe_id``.
@@ -71,6 +87,36 @@ def _is_safe_tournament_id(value: str) -> bool:
         and ".." not in value
         and _SAFE_TOURNAMENT_ID.match(value) is not None
     )
+
+
+# A run_ref is the reflection adjudicator's stable ``{candidate}:{entry}:r{n}``
+# decision key (adjudicator.run_ref_for), so it carries ``:`` that the strict
+# ``_SAFE_ID`` rejects. This validator widens the alphabet to admit that one
+# separator while still blocking path-traversal (no ``/`` or ``..``).
+_SAFE_RUN_REF = re.compile(r"^[A-Za-z0-9._:-]{1,200}$")
+
+
+def _is_safe_run_ref(value: str) -> bool:
+    return (
+        bool(value)
+        and value not in (".", "..")
+        and ".." not in value
+        and _SAFE_RUN_REF.match(value) is not None
+    )
+
+
+#: The guard each coordinate is validated with, keyed by its path-parameter
+#: name. A guard belongs to the KIND of coordinate rather than to a route: a
+#: tournament id is admitted by the same alphabet wherever it appears. Any
+#: name absent here takes the strict :func:`_is_safe_id`.
+COORDINATE_GUARDS: Final[Mapping[str, Callable[[str], bool]]] = {
+    "tournament_id": _is_safe_tournament_id,
+    "run_ref": _is_safe_run_ref,
+}
+
+
+def _coordinate_guard(name: str) -> Callable[[str], bool]:
+    return COORDINATE_GUARDS.get(name, _is_safe_id)
 
 
 def _now_iso() -> str:
@@ -112,14 +158,752 @@ class _BadEpoch(Exception):
 
 
 # ---------------------------------------------------------------------------
-# GET endpoints
+# The read-endpoint table
+# ---------------------------------------------------------------------------
+
+#: A rejected coordinate's canned response body, built from the workspace and
+#: the raw coordinates the request carried.
+Degrade = Callable[[WorkspacePaths, "dict[str, str]"], Any]
+
+#: A route that takes no ``?epoch=`` scope.
+EPOCH_SCOPE_NONE: Final = ""
+#: Both a malformed ``?epoch=`` value and an epoch the workspace does not hold
+#: serve the degrade: the reader raises for the second, and the route answers
+#: the same way for both, because a caller cannot act on the difference.
+SCOPE_REJECT_UNKNOWN_EPOCH: Final = "reject_unknown_epoch"
+#: Only a malformed ``?epoch=`` value serves the degrade; whatever the reader
+#: makes of a well-formed but unknown epoch is served as it comes.
+SCOPE_REJECT_MALFORMED_EPOCH: Final = "reject_malformed_epoch"
+#: A malformed ``?epoch=`` value is read as no scope at all, so the route
+#: answers for the current epoch rather than refusing.
+SCOPE_IGNORE_MALFORMED_EPOCH: Final = "ignore_malformed_epoch"
+
+
+@dataclass(frozen=True, slots=True)
+class ReadEndpoint:
+    """One dashboard read route served by a single query-library call.
+
+    Attributes
+    ----------
+    path:
+        The route as Starlette binds it, path parameters included. It is
+        also the key into :data:`zicato.query.contracts.ENDPOINT_PAYLOADS`,
+        which every route in this table must have an entry in.
+    reader:
+        The :mod:`zicato.query` function the route serves. It is called as
+        ``reader(paths, *coordinates)``, so the parameters in ``params``
+        are declared in the order the reader takes them.
+    serves:
+        What the route puts on the wire, and what it serves when a
+        coordinate is rejected.
+    params:
+        The path parameters, in reader-argument order. Each is validated by
+        the guard :data:`COORDINATE_GUARDS` gives its name.
+    degrade:
+        The body a rejected coordinate (or a rejected ``?epoch=`` scope)
+        answers with, at ``degrade_status``. Required on a route with
+        something to reject — a path parameter, or a scope mode that
+        refuses — and ``None`` on a route with neither.
+    epoch_scope:
+        How the optional ``?epoch=<id>`` parameter is handled — one of the
+        four ``SCOPE_`` / ``EPOCH_SCOPE_NONE`` values above. When it is not
+        ``EPOCH_SCOPE_NONE`` the resolved epoch id (or ``None`` for the
+        current epoch) is passed to the reader after the path coordinates.
+    off_event_loop:
+        Whether the read blocks on files heavy enough to run in the
+        threadpool. A read that walks per-run files or stats a tree must
+        never stall the event loop the whole dashboard shares.
+    """
+
+    path: str
+    reader: Callable[..., Any]
+    serves: str
+    params: tuple[str, ...] = ()
+    degrade: Degrade | None = None
+    degrade_status: int = 200
+    epoch_scope: str = EPOCH_SCOPE_NONE
+    off_event_loop: bool = False
+
+    @property
+    def rejects_coordinates(self) -> bool:
+        """Whether any request to this route can be refused before the read."""
+        return bool(self.params) or self.epoch_scope in (
+            SCOPE_REJECT_UNKNOWN_EPOCH,
+            SCOPE_REJECT_MALFORMED_EPOCH,
+        )
+
+
+def _echo(rename: Mapping[str, str] | None = None, /, **fixed: Any) -> Degrade:
+    """A degrade that repeats the route's coordinates, then fixed fields.
+
+    The coordinates come first, in the order the path declares them, each
+    under its own parameter name unless ``rename`` gives it a different
+    wire key. The fixed fields follow in the order they are written. Key
+    order is part of the shape: a client reading the degrade must meet the
+    same fields in the same order the reader emits them for a coordinate
+    that resolves.
+    """
+    keys = dict(rename or {})
+
+    def degrade(_paths: WorkspacePaths, coordinates: dict[str, str]) -> dict[str, Any]:
+        shape: dict[str, Any] = {keys.get(name, name): value for name, value in coordinates.items()}
+        shape.update(deepcopy(fixed))
+        return shape
+
+    return degrade
+
+
+def _fixed(**fields: Any) -> Degrade:
+    """A degrade that names no coordinate — every field is a constant."""
+
+    def degrade(_paths: WorkspacePaths, _coordinates: dict[str, str]) -> dict[str, Any]:
+        return deepcopy(fields)
+
+    return degrade
+
+
+def _never_served(_paths: WorkspacePaths, _coordinates: dict[str, str]) -> dict[str, Any]:
+    """The degrade of a route with nothing to reject; it is never reached."""
+    return {}
+
+
+def _degrade_execution_plan(_paths: WorkspacePaths, coordinates: dict[str, str]) -> dict[str, Any]:
+    """The empty plan, stamped with a read time like a resolved one."""
+    return {
+        "epoch_id": coordinates["epoch_id"],
+        "generated_at": _now_iso(),
+        "board": {"digest": "", "entry_count": 0},
+        "note": "unknown epoch",
+        "stages": [],
+    }
+
+
+def _degrade_matchup_detail(paths: WorkspacePaths, coordinates: dict[str, str]) -> dict[str, Any]:
+    """ "No such matchup", still scoped to the epoch the workspace is on."""
+    return {
+        "epoch_id": query.read_current_epoch(paths),
+        "generation_id": coordinates["generation_id"],
+        "patches": [],
+        "ab_grid": [],
+    }
+
+
+def _degrade_drift_movements(paths: WorkspacePaths, coordinates: dict[str, str]) -> dict[str, Any]:
+    """No movements, with the rejected id standing as the challenger."""
+    generation_id = coordinates["generation_id"]
+    return {
+        "epoch_id": query.read_current_epoch(paths),
+        "generation_id": generation_id,
+        "champion": None,
+        "challenger": generation_id,
+        "movements": [],
+    }
+
+
+def _degrade_trace_detail(_paths: WorkspacePaths, coordinates: dict[str, str]) -> dict[str, Any]:
+    """An unfound trace: the coordinates, and every field of the detail empty."""
+    return {
+        "reflection_id": coordinates["reflection_id"],
+        "epoch_id": None,
+        "found": False,
+        "trace_id": coordinates["trace_id"],
+        "source_file": "",
+        "dialect": "",
+        "line_count": 0,
+        "malformed_line_count": 0,
+        "signal_counts": {},
+        "strip_model": {},
+        "turns": [],
+        "reconstruction_note": "",
+        "episodes": [],
+    }
+
+
+#: Every read route served by one query-library call, declared once.
+#:
+#: A row states the route, the reader behind it, what it serves, the
+#: coordinates it takes, and the shape a rejected coordinate answers with —
+#: which is everything :func:`_read_handler` needs to build the handler. Five
+#: rows take their degrade from the reader's own empty-shape helper, so the
+#: route and the reader cannot drift apart.
+#:
+#: Every row's ``path`` must have an entry in
+#: :data:`zicato.query.contracts.ENDPOINT_PAYLOADS`; a correspondence test
+#: fails the build in either direction.
+READ_ENDPOINTS: Final[tuple[ReadEndpoint, ...]] = (
+    # -- workspace-wide state ------------------------------------------
+    ReadEndpoint(
+        path="/api/state",
+        reader=query.build_snapshot,
+        serves=(
+            "The consolidated live snapshot the front-end opens on: heartbeat, "
+            "liveness verdict, lock, active runs, active tournament, lineage, "
+            "and the current epoch."
+        ),
+    ),
+    ReadEndpoint(
+        path="/api/workspace",
+        reader=query.build_workspace_view,
+        serves="The workspace-level cross-epoch summary.",
+    ),
+    ReadEndpoint(
+        path="/api/health-report",
+        reader=query.build_health_report,
+        serves="The workspace health report — what the reader could and could not resolve.",
+    ),
+    # -- the live runtime surface --------------------------------------
+    ReadEndpoint(
+        path="/api/active-runs",
+        reader=query.read_active_runs_view,
+        serves=(
+            "One row per active-run record on disk, each stamped with the served "
+            "freshness verdict, so a client never ages the records itself."
+        ),
+    ),
+    ReadEndpoint(
+        path="/api/active-tournament",
+        reader=query.read_active_tournament_dict,
+        serves="The live tournament's topology and per-slot field status.",
+    ),
+    ReadEndpoint(
+        path="/api/heartbeat",
+        reader=query.read_heartbeat_dict,
+        serves=(
+            "The orchestrator's heartbeat record, with an always-ageable "
+            "timestamp; null for a workspace that never ran."
+        ),
+    ),
+    ReadEndpoint(
+        path="/api/live/pipeline",
+        reader=query.build_round_pipeline,
+        serves=(
+            "The propose → apply → run → gate position. The server owns the "
+            "phase-string inference; the stepper renders this verdict verbatim."
+        ),
+    ),
+    ReadEndpoint(
+        path="/api/live/execution-plan",
+        reader=query.build_live_execution_plan,
+        serves=(
+            "The running epoch's plan with a live overlay: the served liveness "
+            "verdict, the active path, and one node per still-beating in-flight "
+            "run. A workspace that is not live serves its plan with an empty "
+            "overlay."
+        ),
+    ),
+    # -- reads scoped by the optional ?epoch= parameter -----------------
+    ReadEndpoint(
+        path="/api/epoch",
+        reader=query.build_epoch_view,
+        serves=(
+            "One epoch's contract — board, brief, scoring, harness. ``?epoch=`` "
+            "scopes to a non-current epoch; omitted reads the current one."
+        ),
+        degrade=_fixed(error="unknown epoch"),
+        degrade_status=404,
+        epoch_scope=SCOPE_REJECT_UNKNOWN_EPOCH,
+    ),
+    ReadEndpoint(
+        path="/api/lineage",
+        reader=query.build_lineage_view,
+        serves=(
+            "The generations feed. ``?epoch=`` scopes it to one epoch's "
+            "generations; omitted reads the whole workspace."
+        ),
+        degrade=_fixed(error="unknown epoch"),
+        degrade_status=404,
+        epoch_scope=SCOPE_REJECT_UNKNOWN_EPOCH,
+    ),
+    ReadEndpoint(
+        path="/api/score-trajectory",
+        reader=query.build_score_trajectory,
+        serves="The evolution curve — one scalar per generation. ``?epoch=`` scopes it.",
+        degrade=_fixed(error="unknown epoch"),
+        degrade_status=404,
+        epoch_scope=SCOPE_REJECT_UNKNOWN_EPOCH,
+    ),
+    ReadEndpoint(
+        path="/api/calibration-trend",
+        reader=query.build_calibration_trend,
+        serves=(
+            "The score fraction per generation in lineage order with rolling "
+            "aggregates. Explicitly diagnostic — it never feeds the gate. "
+            "``?epoch=`` scopes it."
+        ),
+        degrade=_fixed(error="unknown epoch"),
+        degrade_status=404,
+        epoch_scope=SCOPE_REJECT_UNKNOWN_EPOCH,
+    ),
+    ReadEndpoint(
+        path="/api/tournaments",
+        reader=query.build_bracket,
+        serves="The epoch's tournament bracket. ``?epoch=`` scopes it.",
+        degrade=_fixed(error="unknown epoch"),
+        degrade_status=404,
+        epoch_scope=SCOPE_REJECT_UNKNOWN_EPOCH,
+    ),
+    ReadEndpoint(
+        path="/api/reflections",
+        reader=query.list_reflections,
+        serves="Every reflection under the workspace. ``?epoch=`` scopes the list.",
+        degrade=_fixed(reflections=[]),
+        degrade_status=404,
+        epoch_scope=SCOPE_REJECT_MALFORMED_EPOCH,
+    ),
+    ReadEndpoint(
+        path="/api/proposer/scorecard",
+        reader=query.build_proposer_scorecard,
+        serves=(
+            "The proposer scorecard trend, detailing the epoch ``?epoch=`` names. "
+            "A malformed scope reads as no scope, so the trend still renders."
+        ),
+        epoch_scope=SCOPE_IGNORE_MALFORMED_EPOCH,
+        off_event_loop=True,
+    ),
+    ReadEndpoint(
+        path="/api/proposer/recommendations",
+        reader=query.build_proposer_recommendations,
+        serves="The pending proposer-recommendation queue, workspace-wide.",
+        off_event_loop=True,
+    ),
+    # -- epoch-coordinate reads ----------------------------------------
+    ReadEndpoint(
+        path="/api/epoch/{epoch_id}/per-judge-trend",
+        reader=query.build_per_judge_trend,
+        serves="The per-judge × generation matrix for one epoch (the epoch-level heatmap).",
+        params=("epoch_id",),
+        degrade=_echo(generations=[], judges=[]),
+    ),
+    ReadEndpoint(
+        path="/api/epoch/{epoch_id}/trajectory",
+        reader=query.build_optimization_trajectory,
+        serves=(
+            "The promoted-lineage trajectory for one epoch, with the promotion "
+            "rate and the honest plateau verdict."
+        ),
+        params=("epoch_id",),
+        degrade=_echo(
+            points=[],
+            promotion_rate=None,
+            promoted_count=0,
+            challenger_count=0,
+            settled_count=0,
+            plateaued=False,
+            plateau_measurable=False,
+            verdict=None,
+            recent_movement=None,
+            noise_floor=None,
+        ),
+    ),
+    ReadEndpoint(
+        path="/api/epoch/{epoch_id}/cost",
+        reader=query.build_tournament_cost,
+        serves="Wall-clock and run-count cost accounting for one epoch.",
+        params=("epoch_id",),
+        degrade=_echo(
+            per_matchup=[],
+            total_runtime_ms=0,
+            total_run_count=0,
+            total_aborted_count=0,
+            promoted_count=0,
+            cost_per_promotion_ms=None,
+        ),
+    ),
+    ReadEndpoint(
+        path="/api/epoch/{epoch_id}/racing-field",
+        reader=query.build_racing_field,
+        serves=(
+            "The settled racing-field ladder for one epoch, joined server-side "
+            "into one rung/gate payload the front-end never reconstructs. "
+            "``present: false`` when the epoch has no racing records."
+        ),
+        params=("epoch_id",),
+        degrade=_echo(present=False),
+    ),
+    ReadEndpoint(
+        path="/api/epoch/{epoch_id}/round-timeline",
+        reader=query.build_round_timeline,
+        serves=(
+            "The epoch's settled round timeline and loss-floor waterfall. The "
+            "server owns the four-way join (epoch, lineage, trajectory, "
+            "tournaments) along the champion spine; the client only overlays "
+            "its live in-flight round."
+        ),
+        params=("epoch_id",),
+        degrade=_echo(structure="gauntlet", source="none", rounds=[], waterfall=[]),
+    ),
+    ReadEndpoint(
+        path="/api/epoch/{epoch_id}/execution-plan",
+        reader=query.build_execution_plan,
+        serves=(
+            "The epoch's whole loop as one tree of stages, steps and work "
+            "units: what ran, under which candidate, in which round, and what "
+            "each step decided — so a reader answers what a run did without "
+            "joining four endpoints."
+        ),
+        params=("epoch_id",),
+        degrade=_degrade_execution_plan,
+    ),
+    ReadEndpoint(
+        path="/api/epoch/{epoch_id}/experiments-ledger",
+        reader=query.build_experiments_ledger,
+        serves=(
+            "One row per experiment in round order: the idea, the sites it "
+            "touched, the verdict and its delta — the epoch's whole story "
+            "without opening candidates one at a time."
+        ),
+        params=("epoch_id",),
+        degrade=_echo(experiments=[]),
+    ),
+    ReadEndpoint(
+        path="/api/contract-diff/{epoch_id}",
+        reader=query.build_contract_diff,
+        serves="The epoch-level contract diff against the predecessor epoch.",
+        params=("epoch_id",),
+        degrade=_echo(predecessor_epoch_id=None, components=[], any_changed=False),
+    ),
+    ReadEndpoint(
+        path="/api/epoch/{epoch_id}/journal",
+        reader=query.read_epoch_journal,
+        serves="One epoch's ``journal.md`` text, as ``{epoch_id, journal}``.",
+        params=("epoch_id",),
+        degrade=_fixed(error="invalid epoch id"),
+        degrade_status=400,
+    ),
+    ReadEndpoint(
+        path="/api/epoch/{epoch_id}/analysis",
+        reader=query.build_epoch_analysis,
+        serves="One epoch's analysis report payload; the reader owns its rendering semantics.",
+        params=("epoch_id",),
+        degrade=_fixed(error="invalid epoch id"),
+        degrade_status=400,
+    ),
+    ReadEndpoint(
+        path="/api/epoch/{epoch_id}/evals",
+        reader=query.build_eval_matrix,
+        serves="The entries × candidates outcomes matrix for one epoch.",
+        params=("epoch_id",),
+        degrade=lambda _paths, c: query._empty_matrix(c["epoch_id"]),
+        off_event_loop=True,
+    ),
+    ReadEndpoint(
+        path="/api/epoch/{epoch_id}/eval/{entry_id}",
+        reader=query.build_eval_dossier,
+        serves="One board entry's instrument-quality dossier.",
+        params=("epoch_id", "entry_id"),
+        degrade=lambda _paths, c: query._empty_dossier(c["epoch_id"], c["entry_id"]),
+        off_event_loop=True,
+    ),
+    ReadEndpoint(
+        path="/api/epoch/{epoch_id}/eval-health",
+        reader=query.build_eval_health,
+        serves="The instrument-quality panel for one epoch.",
+        params=("epoch_id",),
+        degrade=lambda _paths, c: query._empty_health(c["epoch_id"]),
+        off_event_loop=True,
+    ),
+    ReadEndpoint(
+        path="/api/epoch/{epoch_id}/judge-roster",
+        reader=query.build_judge_roster,
+        serves="What is armed to judge a run on one epoch's board.",
+        params=("epoch_id",),
+        degrade=lambda _paths, c: query._empty_judge_roster(c["epoch_id"]),
+        off_event_loop=True,
+    ),
+    # -- generation- and run-coordinate reads ---------------------------
+    ReadEndpoint(
+        path="/api/generation/{epoch_id}/{generation_id}/per-judge",
+        reader=query.build_per_judge_for_generation,
+        serves="The per-judge breakdown for one generation.",
+        params=("epoch_id", "generation_id"),
+        degrade=_echo(judges=[]),
+    ),
+    ReadEndpoint(
+        path="/api/generation/{epoch_id}/{generation_id}/per-entry",
+        reader=query.build_per_entry_for_generation,
+        serves="The per-entry breakdown for one generation, keyed by its tournament id.",
+        params=("epoch_id", "generation_id"),
+        degrade=_echo(tournament_id=None, entries=[]),
+    ),
+    ReadEndpoint(
+        path="/api/round/{epoch_id}/{champion_id}/{challenger_id}/per-judge-comparison",
+        reader=query.build_per_judge_comparison,
+        serves="The per-judge delta between champion and challenger for one decision.",
+        params=("epoch_id", "champion_id", "challenger_id"),
+        degrade=_echo(
+            {"champion_id": "champion", "challenger_id": "challenger"},
+            judges=[],
+            primary_driver=None,
+        ),
+    ),
+    ReadEndpoint(
+        path="/api/run/{run_id}/per-judge",
+        reader=query.build_per_judge_for_run,
+        serves="The per-judge breakdown for one run, addressed by run id.",
+        params=("run_id",),
+        degrade=_echo(judges=[]),
+    ),
+    ReadEndpoint(
+        path="/api/run/{epoch_id}/{generation_id}/{entry_id}/per-judge",
+        reader=query.build_per_judge_for_entry,
+        serves=(
+            "The per-judge breakdown for one run, addressed by board-entry "
+            "coordinates. The reader resolves the entry's canonical "
+            "replicate-0 slot; selecting a sibling replicate is a "
+            "query-layer keyword no view calls."
+        ),
+        params=("epoch_id", "generation_id", "entry_id"),
+        degrade=_fixed(run_id=None, judges=[]),
+    ),
+    ReadEndpoint(
+        path="/api/run/{epoch_id}/{generation_id}/{entry_id}/expectations",
+        reader=query.build_expectation_outcomes_for_run,
+        serves="The expectation outcomes for one run.",
+        params=("epoch_id", "generation_id", "entry_id"),
+        degrade=_echo(outcomes=[]),
+    ),
+    ReadEndpoint(
+        path="/api/run/{epoch_id}/{generation_id}/{entry_id}/header",
+        reader=query.build_run_header,
+        serves="The header metrics for one run — runtime, tokens, turns, budget.",
+        params=("epoch_id", "generation_id", "entry_id"),
+        degrade=_echo(
+            drift_loss=None,
+            pass_fail=None,
+            runtime_ms=None,
+            tokens_spent=None,
+            output_chars=None,
+            turns_completed=None,
+            plan_revisions=None,
+            wall_clock_budget_exceeded=None,
+            run_id=None,
+            adk_session_id=None,
+        ),
+    ),
+    ReadEndpoint(
+        path="/api/hypothesis-accuracy/{epoch_id}/{generation_id}",
+        reader=query.build_hypothesis_accuracy,
+        serves=(
+            "The per-experiment hypothesis prediction scorecard: the proposer's "
+            "falsifiable movement claims against the realised movements, lifting "
+            "the stamped verdict verbatim so it cannot disagree with the report."
+        ),
+        params=("epoch_id", "generation_id"),
+        degrade=_echo(
+            claims=[],
+            score={"hits": 0, "total": 0, "fraction": None, "brier": None},
+            pass_rate={"predicted": "", "observed": None},
+        ),
+    ),
+    # -- tournament reads ------------------------------------------------
+    ReadEndpoint(
+        path="/api/tournament-structure/{epoch_id}/{tournament_id}",
+        reader=query.build_tournament_structure,
+        serves=(
+            "The full bracket, standings and racing state for one tournament — "
+            "the single read the console renders the configured structure from."
+        ),
+        params=("epoch_id", "tournament_id"),
+        degrade=_echo(
+            structure="gauntlet",
+            structure_params={},
+            competitors=[],
+            rounds=[],
+            standings=[],
+            source="loss_files",
+        ),
+    ),
+    ReadEndpoint(
+        path="/api/tournaments/{generation_id}",
+        reader=query.build_matchup_detail,
+        serves="One matchup's patches and A/B grid.",
+        params=("generation_id",),
+        degrade=_degrade_matchup_detail,
+    ),
+    ReadEndpoint(
+        path="/api/matchup-grid/{epoch_id}/{champion_id}/{challenger_id}",
+        reader=query.build_matchup_grid,
+        serves=(
+            "The per-entry A/B grid read straight off the persisted per-run loss "
+            "files — the read path a completed tournament's matchup panel uses "
+            "when the index was never built."
+        ),
+        params=("epoch_id", "champion_id", "challenger_id"),
+        degrade=_echo(
+            {"champion_id": "champion", "challenger_id": "challenger"},
+            entry_grid=[],
+            scalar=None,
+            source="loss_files",
+        ),
+    ),
+    ReadEndpoint(
+        path="/api/round/{epoch_id}/{champion_id}/{challenger_id}/gate",
+        reader=query.build_gate_breakdown,
+        serves=(
+            "The promote gate for one round, decomposed into its ordered rules "
+            "with per-rule status and the real numbers, from the authoritative "
+            "verdict rather than a second evaluation."
+        ),
+        params=("epoch_id", "champion_id", "challenger_id"),
+        degrade=_echo(
+            {"champion_id": "champion", "challenger_id": "challenger"},
+            decision="deferred",
+            reason="",
+            deciding_rule=None,
+            margin=None,
+            regressed_predicate=None,
+            regressed_namespace=None,
+            delta_scalar=None,
+            delta_pass_rate=None,
+            champion_scalar=None,
+            challenger_scalar=None,
+            live=None,
+            rules=[],
+            scalar_components={"champion": None, "challenger": None},
+            primary_driver=None,
+            rating={"present": False},
+        ),
+    ),
+    ReadEndpoint(
+        path="/api/drift-movements/{generation_id}",
+        reader=query.build_drift_movements,
+        serves="The per-channel movements one candidate produced against its champion.",
+        params=("generation_id",),
+        degrade=_degrade_drift_movements,
+    ),
+    # -- the instrument lens (board reflection) --------------------------
+    ReadEndpoint(
+        path="/api/reflection/{reflection_id}/summary",
+        reader=query.build_reflection_summary,
+        serves="One reflection's bill of health: per-pillar verdicts and findings.",
+        params=("reflection_id",),
+        degrade=_echo(found=False, pillars={}, findings=[]),
+    ),
+    ReadEndpoint(
+        path="/api/reflection/{reflection_id}/scorecards",
+        reader=query.build_judge_scorecards,
+        serves="One reflection's per-judge scorecards.",
+        params=("reflection_id",),
+        degrade=_echo(judges=[]),
+    ),
+    ReadEndpoint(
+        path="/api/reflection/{reflection_id}/practices",
+        reader=query.build_practice_review,
+        serves="One reflection's practice review — each check with its verdict.",
+        params=("reflection_id",),
+        degrade=_echo(
+            found=False,
+            checks=[],
+            verdict_counts={"sound": 0, "attend": 0, "unsound": 0, "unmeasured": 0},
+        ),
+    ),
+    ReadEndpoint(
+        path="/api/reflection/{reflection_id}/xray/{judge_name}/{run_ref}",
+        reader=query.build_adjudication_xray,
+        serves=(
+            "One adjudicated decision opened up: the run's transcript beside the "
+            "judge's verdict and the adjudicator's ruling on it."
+        ),
+        params=("reflection_id", "judge_name", "run_ref"),
+        degrade=_echo(
+            found=False,
+            transcript={"fidelity": "unavailable", "turns": []},
+            judge_verdict=None,
+            adjudication=None,
+        ),
+    ),
+    ReadEndpoint(
+        path="/api/reflection/{reflection_id}/traces",
+        reader=query.build_trace_list,
+        serves="The foreign traces imported for one reflection.",
+        params=("reflection_id",),
+        degrade=_echo(epoch_id=None, found=False, trace_count=0, traces=[]),
+        off_event_loop=True,
+    ),
+    ReadEndpoint(
+        path="/api/reflection/{reflection_id}/trace/{trace_id}",
+        reader=query.build_trace_detail,
+        serves="One imported trace: its strip model and the reconstructed conversation.",
+        params=("reflection_id", "trace_id"),
+        degrade=_degrade_trace_detail,
+        off_event_loop=True,
+    ),
+    ReadEndpoint(
+        path="/api/reflection/{reflection_id}/suggestion/{suggestion_id}/provenance",
+        reader=query.build_suggestion_provenance,
+        serves="One suggestion's provenance chain, from episodes back to trace segments.",
+        params=("reflection_id", "suggestion_id"),
+        degrade=lambda _paths, c: query._empty_provenance(c["reflection_id"], c["suggestion_id"]),
+        off_event_loop=True,
+    ),
+)
+
+
+def route_name(path: str) -> str:
+    """A stable handler identifier for one route path.
+
+    Path parameters contribute their names, so two routes that differ only
+    in their coordinates get different identifiers.
+    """
+    slug = re.sub(r"[^a-z0-9]+", "_", path.removeprefix("/api/").lower()).strip("_")
+    return f"api_{slug}"
+
+
+def _read_handler(paths: WorkspacePaths, entry: ReadEndpoint) -> Any:
+    """Build the handler one table row describes.
+
+    The order is fixed and is the whole contract: reject an unsafe
+    coordinate before anything touches the workspace, resolve the optional
+    epoch scope, then call the reader — in the threadpool when the row says
+    the read blocks on files.
+    """
+    degrade = entry.degrade or _never_served
+
+    async def handler(request: Request) -> JSONResponse:
+        coordinates = {name: request.path_params[name] for name in entry.params}
+        for name, value in coordinates.items():
+            if not _coordinate_guard(name)(value):
+                return JSONResponse(degrade(paths, coordinates), status_code=entry.degrade_status)
+        arguments: list[Any] = list(coordinates.values())
+        if entry.epoch_scope:
+            try:
+                arguments.append(_epoch_query(request))
+            except (_BadEpoch, ValueError):
+                if entry.epoch_scope != SCOPE_IGNORE_MALFORMED_EPOCH:
+                    return JSONResponse(
+                        degrade(paths, coordinates), status_code=entry.degrade_status
+                    )
+                arguments.append(None)
+        if entry.epoch_scope == SCOPE_REJECT_UNKNOWN_EPOCH:
+            # The reader raises for an epoch the workspace does not hold, and
+            # that answer degrades the same way a malformed one does.
+            try:
+                return JSONResponse(entry.reader(paths, *arguments))
+            except ValueError:
+                return JSONResponse(degrade(paths, coordinates), status_code=entry.degrade_status)
+        if entry.off_event_loop:
+            return JSONResponse(await run_in_threadpool(entry.reader, paths, *arguments))
+        return JSONResponse(entry.reader(paths, *arguments))
+
+    handler.__name__ = route_name(entry.path)
+    handler.__doc__ = f"``GET {entry.path}`` — {entry.serves}"
+    return handler
+
+
+def _make_read_endpoints(paths: WorkspacePaths) -> dict[str, Any]:
+    """One handler per :data:`READ_ENDPOINTS` row, keyed by its route path."""
+    return {entry.path: _read_handler(paths, entry) for entry in READ_ENDPOINTS}
+
+
+# ---------------------------------------------------------------------------
+# Hand-written GET endpoints
 # ---------------------------------------------------------------------------
 
 
 def _make_state_endpoints(
     paths: WorkspacePaths, *, read_only: bool, started: float
 ) -> dict[str, Any]:
-    """Health / consolidated-state surface."""
+    """Health and the reads whose query parameters shape the response."""
     import time
 
     async def api_health(_request: Request) -> JSONResponse:
@@ -135,9 +919,6 @@ def _make_state_endpoints(
             }
         )
 
-    async def api_state(_request: Request) -> JSONResponse:
-        return JSONResponse(query.build_snapshot(paths))
-
     async def api_environment(request: Request) -> JSONResponse:
         # One coalesced read of the whole environment — the front-end
         # refreshes the entire view from this single endpoint instead of
@@ -145,13 +926,6 @@ def _make_state_endpoints(
         # dedicated run-log endpoint.
         limit = query.clamp_run_log_limit(_int_query(request, "run-log-limit"))
         return JSONResponse(query.build_environment(paths, run_log_limit=limit))
-
-    async def api_workspace(_request: Request) -> JSONResponse:
-        """Workspace-level cross-epoch summary."""
-        return JSONResponse(query.build_workspace_view(paths))
-
-    async def api_health_report(_request: Request) -> JSONResponse:
-        return JSONResponse(query.build_health_report(paths))
 
     async def api_search(request: Request) -> JSONResponse:
         """Sidebar search across entries / judges / patches / mutations.
@@ -190,224 +964,33 @@ def _make_state_endpoints(
         )
         return JSONResponse(view)
 
+    async def api_run_log(request: Request) -> JSONResponse:
+        """The run-event tail. ``?limit=`` clamps it; ``?after=<cursor>``
+        returns only events past a cursor so the dashboard appends to its
+        log tail instead of re-rendering it."""
+        limit = query.clamp_run_log_limit(_int_query(request, "limit"))
+        after = _int_query(request, "after")
+        return JSONResponse(query.build_run_log(paths, limit, after=after))
+
     return {
         "api_health": api_health,
-        "api_state": api_state,
         "api_environment": api_environment,
-        "api_workspace": api_workspace,
-        "api_health_report": api_health_report,
         "api_search": api_search,
         "api_logs": api_logs,
+        "api_run_log": api_run_log,
     }
 
 
-def _make_epoch_endpoints(paths: WorkspacePaths) -> dict[str, Any]:
-    """Epoch surface — contract, lineage feed, trajectories, journal/analysis."""
-
-    async def api_epoch(request: Request) -> JSONResponse:
-        # Optional ``?epoch=<id>`` scopes the contract to a NON-current epoch
-        # (the dashboard's cross-epoch view); omitted ⇒ current (byte-identical).
-        try:
-            epoch_id = _epoch_query(request)
-            return JSONResponse(query.build_epoch_view(paths, epoch_id))
-        except (_BadEpoch, ValueError):
-            return JSONResponse({"error": "unknown epoch"}, status_code=404)
-
-    async def api_lineage(request: Request) -> JSONResponse:
-        # Optional ``?epoch=<id>`` scopes the feed to ONE epoch's generations
-        # (the epoch-scoped generations feed); omitted ⇒ workspace-global.
-        try:
-            epoch_id = _epoch_query(request)
-            return JSONResponse(query.build_lineage_view(paths, epoch_id))
-        except (_BadEpoch, ValueError):
-            return JSONResponse({"error": "unknown epoch"}, status_code=404)
-
-    async def api_per_judge_trend(request: Request) -> JSONResponse:
-        """Per-judge × generation matrix for one epoch (the epoch-level heatmap)."""
-        epoch_id = request.path_params["epoch_id"]
-        if not _is_safe_id(epoch_id):
-            return JSONResponse(
-                {"epoch_id": epoch_id, "generations": [], "judges": []},
-                status_code=200,
-            )
-        return JSONResponse(query.build_per_judge_trend(paths, epoch_id))
-
-    async def api_epoch_trajectory(request: Request) -> JSONResponse:
-        """Promoted-lineage trajectory + promotion rate + honest verdict.
-
-        ``GET /api/epoch/{epoch_id}/trajectory``. A malformed id degrades
-        to the empty trajectory shape (HTTP 200), matching every other
-        coordinate handler.
-        """
-        epoch_id = request.path_params["epoch_id"]
-        if not _is_safe_id(epoch_id):
-            return JSONResponse(
-                {
-                    "epoch_id": epoch_id,
-                    "points": [],
-                    "promotion_rate": None,
-                    "promoted_count": 0,
-                    "challenger_count": 0,
-                    "settled_count": 0,
-                    "plateaued": False,
-                    "plateau_measurable": False,
-                    "verdict": None,
-                    "recent_movement": None,
-                    "noise_floor": None,
-                },
-                status_code=200,
-            )
-        return JSONResponse(query.build_optimization_trajectory(paths, epoch_id))
-
-    async def api_epoch_cost(request: Request) -> JSONResponse:
-        """Wall-clock + run-count cost accounting for one epoch.
-
-        ``GET /api/epoch/{epoch_id}/cost``. A malformed id degrades to the
-        empty cost shape (HTTP 200).
-        """
-        epoch_id = request.path_params["epoch_id"]
-        if not _is_safe_id(epoch_id):
-            return JSONResponse(
-                {
-                    "epoch_id": epoch_id,
-                    "per_matchup": [],
-                    "total_runtime_ms": 0,
-                    "total_run_count": 0,
-                    "total_aborted_count": 0,
-                    "promoted_count": 0,
-                    "cost_per_promotion_ms": None,
-                },
-                status_code=200,
-            )
-        return JSONResponse(query.build_tournament_cost(paths, epoch_id))
-
-    async def api_epoch_racing_field(request: Request) -> JSONResponse:
-        """The settled racing-field ladder for one epoch, joined server-side.
-
-        ``GET /api/epoch/{epoch_id}/racing-field``. The per-challenger racing
-        records are joined into ONE rung/gate ladder payload here — the
-        frontend never reconstructs it. ``present: false`` (HTTP 200) when the
-        epoch has no racing records; a malformed id degrades the same way.
-        """
-        epoch_id = request.path_params["epoch_id"]
-        if not _is_safe_id(epoch_id):
-            return JSONResponse({"epoch_id": epoch_id, "present": False}, status_code=200)
-        return JSONResponse(query.build_racing_field(paths, epoch_id))
-
-    async def api_epoch_round_timeline(request: Request) -> JSONResponse:
-        """The epoch's settled round timeline + loss-floor waterfall.
-
-        ``GET /api/epoch/{epoch_id}/round-timeline``. The server owns the
-        four-way join (epoch + lineage + trajectory + tournaments → rounds
-        along the champion spine); the client only overlays its LIVE
-        in-flight round. A malformed id degrades
-        to the empty timeline shape (HTTP 200).
-        """
-        epoch_id = request.path_params["epoch_id"]
-        if not _is_safe_id(epoch_id):
-            return JSONResponse(
-                {
-                    "epoch_id": epoch_id,
-                    "structure": "gauntlet",
-                    "source": "none",
-                    "rounds": [],
-                    "waterfall": [],
-                },
-                status_code=200,
-            )
-        return JSONResponse(query.build_round_timeline(paths, epoch_id))
-
-    async def api_epoch_execution_plan(request: Request) -> JSONResponse:
-        """The epoch's whole loop as one tree — stages, steps, work units.
-
-        ``GET /api/epoch/{epoch_id}/execution-plan``. What ran, under which
-        candidate, in which round, and what each step decided — joined
-        server-side (:func:`zicato.query.build_execution_plan`) so a reader
-        answers "what is this run doing" without joining four endpoints. A
-        malformed id degrades to the empty plan shape (HTTP 200).
-        """
-        epoch_id = request.path_params["epoch_id"]
-        if not _is_safe_id(epoch_id):
-            return JSONResponse(
-                {
-                    "epoch_id": epoch_id,
-                    "generated_at": _now_iso(),
-                    "board": {"digest": "", "entry_count": 0},
-                    "note": "unknown epoch",
-                    "stages": [],
-                },
-                status_code=200,
-            )
-        return JSONResponse(query.build_execution_plan(paths, epoch_id))
-
-    async def api_epoch_experiments_ledger(request: Request) -> JSONResponse:
-        """The epoch's EXPERIMENTS LEDGER — one row per experiment.
-
-        ``GET /api/epoch/{epoch_id}/experiments-ledger``. The idea, the sites
-        it touched, the verdict and its Δ, in round order — joined server-side
-        (:func:`zicato.query.build_experiments_ledger`) so the epoch page reads
-        an epoch's whole story without opening candidates one at a time. A
-        malformed id degrades to the empty ledger shape (HTTP 200), matching
-        every other coordinate handler.
-        """
-        epoch_id = request.path_params["epoch_id"]
-        if not _is_safe_id(epoch_id):
-            return JSONResponse({"epoch_id": epoch_id, "experiments": []}, status_code=200)
-        return JSONResponse(query.build_experiments_ledger(paths, epoch_id))
-
-    async def api_contract_diff(request: Request) -> JSONResponse:
-        """Epoch-level contract diff against the predecessor epoch."""
-        epoch_id = request.path_params["epoch_id"]
-        if not _is_safe_id(epoch_id):
-            return JSONResponse(
-                {
-                    "epoch_id": epoch_id,
-                    "predecessor_epoch_id": None,
-                    "components": [],
-                    "any_changed": False,
-                }
-            )
-        return JSONResponse(query.build_contract_diff(paths, epoch_id))
-
-    async def api_score_trajectory(request: Request) -> JSONResponse:
-        # The environment-wide evolution curve — scalar per generation.
-        # Optional ``?epoch=<id>`` scopes to a non-current epoch.
-        try:
-            epoch_id = _epoch_query(request)
-            return JSONResponse(query.build_score_trajectory(paths, epoch_id))
-        except (_BadEpoch, ValueError):
-            return JSONResponse({"error": "unknown epoch"}, status_code=404)
-
-    async def api_calibration_trend(request: Request) -> JSONResponse:
-        """Per-generation calibration trend over the lineage (DIAGNOSTIC).
-
-        ``GET /api/calibration-trend[?epoch=<id>]``. The score fraction per
-        generation in lineage order with rolling aggregates. Optional
-        ``?epoch=<id>`` scopes to a non-current epoch; omitted ⇒ current.
-        Explicitly diagnostic — it never feeds the gate.
-        """
-        try:
-            epoch_id = _epoch_query(request)
-            return JSONResponse(query.build_calibration_trend(paths, epoch_id))
-        except (_BadEpoch, ValueError):
-            return JSONResponse({"error": "unknown epoch"}, status_code=404)
-
-    # -- file-tree / file-browser endpoints --------------------------
-
-    async def api_epoch_journal(request: Request) -> JSONResponse:
-        """Return the journal.md text for one epoch as ``{ epoch_id, journal }``."""
-        epoch_id = request.path_params["epoch_id"]
-        if not _is_safe_id(epoch_id):
-            return JSONResponse({"error": "invalid epoch id"}, status_code=400)
-        return JSONResponse(query.read_epoch_journal(paths, epoch_id))
+def _make_epoch_document_endpoints(paths: WorkspacePaths) -> dict[str, Any]:
+    """The two epoch documents served as themselves rather than as JSON."""
 
     async def api_epoch_journal_md(request: Request) -> Response:
         """Serve the raw ``journal.md`` markdown for one epoch.
 
         The Epoch view's "View raw journal" link points at this endpoint so
         a fresh tab renders the human-readable markdown directly — not the
-        JSON envelope ``api_epoch_journal`` wraps it in (which is hard to
-        skim). Served as ``text/markdown`` with UTF-8 charset; browsers
+        JSON envelope ``/api/epoch/{id}/journal`` wraps it in (which is hard
+        to skim). Served as ``text/markdown`` with UTF-8 charset; browsers
         that do not have a registered markdown handler treat it as
         ``text/plain`` and render the prose unchanged. Returns 404 when
         the file is absent so the link's failure mode is unambiguous.
@@ -426,17 +1009,6 @@ def _make_epoch_endpoints(paths: WorkspacePaths) -> dict[str, Any]:
             media_type="text/markdown; charset=utf-8",
         )
 
-    async def api_epoch_analysis(request: Request) -> JSONResponse:
-        """``GET /api/epoch/{id}/analysis`` — the analysis report payload.
-
-        Shape + rendering semantics live on the reader
-        (:func:`zicato.query.build_epoch_analysis`).
-        """
-        epoch_id = request.path_params["epoch_id"]
-        if not _is_safe_id(epoch_id):
-            return JSONResponse({"error": "invalid epoch id"}, status_code=400)
-        return JSONResponse(query.build_epoch_analysis(paths, epoch_id))
-
     async def api_epoch_analysis_html(request: Request) -> Response:
         """Serve the raw ``analysis.html`` for an epoch.
 
@@ -453,609 +1025,9 @@ def _make_epoch_endpoints(paths: WorkspacePaths) -> dict[str, Any]:
             return PlainTextResponse("analysis.html not found for this epoch", status_code=404)
         return HTMLResponse(html)
 
-    async def api_epoch_evals(request: Request) -> JSONResponse:
-        """The entries × candidates outcomes matrix for one epoch (EVAL-VIEW.md).
-
-        ``GET /api/epoch/{epoch_id}/evals``. A malformed id degrades to the
-        empty matrix shape (HTTP 200), matching every other coordinate handler.
-        """
-        epoch_id = request.path_params["epoch_id"]
-        if not _is_safe_id(epoch_id):
-            # Take the degrade shape from the reader itself, so the endpoint
-            # and the reader can never drift apart.
-            return JSONResponse(query._empty_matrix(epoch_id), status_code=200)
-        # The reader does blocking file I/O (the matchup grids + replicate files),
-        # so it runs OFF the event loop, as ``build_log_view`` does.
-        view = await run_in_threadpool(query.build_eval_matrix, paths, epoch_id)
-        return JSONResponse(view)
-
-    async def api_epoch_eval_entry(request: Request) -> JSONResponse:
-        """One board entry's instrument-quality dossier (EVAL-VIEW.md §3.2).
-
-        ``GET /api/epoch/{epoch_id}/eval/{entry_id}``. A malformed id degrades
-        to the empty dossier shape (HTTP 200).
-        """
-        epoch_id = request.path_params["epoch_id"]
-        entry_id = request.path_params["entry_id"]
-        if not _is_safe_id(epoch_id) or not _is_safe_id(entry_id):
-            return JSONResponse(query._empty_dossier(epoch_id, entry_id), status_code=200)
-        view = await run_in_threadpool(query.build_eval_dossier, paths, epoch_id, entry_id)
-        return JSONResponse(view)
-
-    async def api_epoch_eval_health(request: Request) -> JSONResponse:
-        """The instrument-quality panel for one epoch (EVAL-VIEW.md §5).
-
-        ``GET /api/epoch/{epoch_id}/eval-health``. A malformed id degrades to the
-        empty health shape (HTTP 200), matching every other coordinate handler.
-        """
-        epoch_id = request.path_params["epoch_id"]
-        if not _is_safe_id(epoch_id):
-            return JSONResponse(query._empty_health(epoch_id), status_code=200)
-        view = await run_in_threadpool(query.build_eval_health, paths, epoch_id)
-        return JSONResponse(view)
-
-    async def api_epoch_judge_roster(request: Request) -> JSONResponse:
-        """What is armed to judge a run on one epoch's board (issue #194 §5).
-
-        ``GET /api/epoch/{epoch_id}/judge-roster``. A malformed id degrades to
-        the empty roster shape (HTTP 200), matching every other coordinate
-        handler. The reader stats the reflection tree, so it runs OFF the
-        event loop.
-        """
-        epoch_id = request.path_params["epoch_id"]
-        if not _is_safe_id(epoch_id):
-            return JSONResponse(query._empty_judge_roster(epoch_id), status_code=200)
-        view = await run_in_threadpool(query.build_judge_roster, paths, epoch_id)
-        return JSONResponse(view)
-
-    # -- conversation endpoints --------------------------------------
-
     return {
-        "api_epoch": api_epoch,
-        "api_epoch_judge_roster": api_epoch_judge_roster,
-        "api_epoch_evals": api_epoch_evals,
-        "api_epoch_eval_entry": api_epoch_eval_entry,
-        "api_epoch_eval_health": api_epoch_eval_health,
-        "api_lineage": api_lineage,
-        "api_per_judge_trend": api_per_judge_trend,
-        "api_epoch_trajectory": api_epoch_trajectory,
-        "api_epoch_cost": api_epoch_cost,
-        "api_epoch_racing_field": api_epoch_racing_field,
-        "api_epoch_round_timeline": api_epoch_round_timeline,
-        "api_epoch_execution_plan": api_epoch_execution_plan,
-        "api_epoch_experiments_ledger": api_epoch_experiments_ledger,
-        "api_contract_diff": api_contract_diff,
-        "api_score_trajectory": api_score_trajectory,
-        "api_calibration_trend": api_calibration_trend,
-        "api_epoch_journal": api_epoch_journal,
         "api_epoch_journal_md": api_epoch_journal_md,
-        "api_epoch_analysis": api_epoch_analysis,
         "api_epoch_analysis_html": api_epoch_analysis_html,
-    }
-
-
-def _make_judge_run_endpoints(paths: WorkspacePaths) -> dict[str, Any]:
-    """Per-judge / per-entry / per-run drill-down surface."""
-
-    async def api_per_judge_for_generation(request: Request) -> JSONResponse:
-        """Per-judge breakdown for one generation."""
-        epoch_id = request.path_params["epoch_id"]
-        generation_id = request.path_params["generation_id"]
-        if not _is_safe_id(epoch_id) or not _is_safe_id(generation_id):
-            return JSONResponse(
-                {"epoch_id": epoch_id, "generation_id": generation_id, "judges": []},
-                status_code=200,
-            )
-        return JSONResponse(query.build_per_judge_for_generation(paths, epoch_id, generation_id))
-
-    async def api_per_entry_for_generation(request: Request) -> JSONResponse:
-        """Per-entry breakdown for one generation, via the tournament_id key."""
-        epoch_id = request.path_params["epoch_id"]
-        generation_id = request.path_params["generation_id"]
-        if not _is_safe_id(epoch_id) or not _is_safe_id(generation_id):
-            return JSONResponse(
-                {
-                    "epoch_id": epoch_id,
-                    "generation_id": generation_id,
-                    "tournament_id": None,
-                    "entries": [],
-                },
-                status_code=200,
-            )
-        return JSONResponse(query.build_per_entry_for_generation(paths, epoch_id, generation_id))
-
-    async def api_per_judge_comparison(request: Request) -> JSONResponse:
-        """Per-judge Δ between champion and challenger, for one decision."""
-        epoch_id = request.path_params["epoch_id"]
-        champion_id = request.path_params["champion_id"]
-        challenger_id = request.path_params["challenger_id"]
-        if (
-            not _is_safe_id(epoch_id)
-            or not _is_safe_id(champion_id)
-            or not _is_safe_id(challenger_id)
-        ):
-            return JSONResponse(
-                {
-                    "epoch_id": epoch_id,
-                    "champion": champion_id,
-                    "challenger": challenger_id,
-                    "judges": [],
-                    "primary_driver": None,
-                },
-                status_code=200,
-            )
-        return JSONResponse(
-            query.build_per_judge_comparison(paths, epoch_id, champion_id, challenger_id)
-        )
-
-    async def api_per_judge_for_run(request: Request) -> JSONResponse:
-        """Per-judge breakdown for one run."""
-        run_id = request.path_params["run_id"]
-        if not _is_safe_id(run_id):
-            return JSONResponse({"run_id": run_id, "judges": []}, status_code=200)
-        return JSONResponse(query.build_per_judge_for_run(paths, run_id))
-
-    async def api_per_judge_for_run_by_entry(request: Request) -> JSONResponse:
-        """Per-judge breakdown for one run, addressed by (epoch, gen, entry).
-
-        The run-level dashboard view routes by board-entry id; the index
-        keys every per-judge row by run id. Resolution and same-shaped
-        degradation live in :func:`build_per_judge_for_entry`, which
-        answers for the entry's canonical replicate-0 slot. Selecting a
-        sibling replicate is a query-layer keyword that no view calls.
-        """
-        epoch_id = request.path_params["epoch_id"]
-        generation_id = request.path_params["generation_id"]
-        entry_id = request.path_params["entry_id"]
-        if not _is_safe_id(epoch_id) or not _is_safe_id(generation_id) or not _is_safe_id(entry_id):
-            return JSONResponse({"run_id": None, "judges": []}, status_code=200)
-        return JSONResponse(
-            query.build_per_judge_for_entry(paths, epoch_id, generation_id, entry_id)
-        )
-
-    async def api_run_expectations(request: Request) -> JSONResponse:
-        """Expectation outcomes for one run."""
-        epoch_id = request.path_params["epoch_id"]
-        generation_id = request.path_params["generation_id"]
-        entry_id = request.path_params["entry_id"]
-        if not _is_safe_id(epoch_id) or not _is_safe_id(generation_id) or not _is_safe_id(entry_id):
-            return JSONResponse(
-                {
-                    "epoch_id": epoch_id,
-                    "generation_id": generation_id,
-                    "entry_id": entry_id,
-                    "outcomes": [],
-                },
-                status_code=200,
-            )
-        return JSONResponse(
-            query.build_expectation_outcomes_for_run(paths, epoch_id, generation_id, entry_id)
-        )
-
-    async def api_run_header(request: Request) -> JSONResponse:
-        """Header metrics (runtime/tokens/turns/...) for one run."""
-        epoch_id = request.path_params["epoch_id"]
-        generation_id = request.path_params["generation_id"]
-        entry_id = request.path_params["entry_id"]
-        if not _is_safe_id(epoch_id) or not _is_safe_id(generation_id) or not _is_safe_id(entry_id):
-            return JSONResponse(
-                {
-                    "epoch_id": epoch_id,
-                    "generation_id": generation_id,
-                    "entry_id": entry_id,
-                    "drift_loss": None,
-                    "pass_fail": None,
-                    "runtime_ms": None,
-                    "tokens_spent": None,
-                    "output_chars": None,
-                    "turns_completed": None,
-                    "plan_revisions": None,
-                    "wall_clock_budget_exceeded": None,
-                    "run_id": None,
-                    "adk_session_id": None,
-                },
-                status_code=200,
-            )
-        return JSONResponse(query.build_run_header(paths, epoch_id, generation_id, entry_id))
-
-    async def api_run_log(request: Request) -> JSONResponse:
-        limit = query.clamp_run_log_limit(_int_query(request, "limit"))
-        # ``?after=<cursor>`` requests only events past a cursor so the
-        # dashboard appends to its log tail instead of re-rendering it.
-        after = _int_query(request, "after")
-        return JSONResponse(query.build_run_log(paths, limit, after=after))
-
-    async def api_hypothesis_accuracy(request: Request) -> JSONResponse:
-        """Per-experiment hypothesis prediction-accuracy scorecard.
-
-        ``GET /api/hypothesis-accuracy/{epoch_id}/{generation_id}``. Joins
-        the proposer's falsifiable movement claims against the realised
-        movements and lifts the STAMPED ``hypothesis_match`` verdict
-        verbatim (never recomputed — it cannot disagree with the HTML
-        report). A malformed coordinate degrades to an empty scorecard
-        (HTTP 200), matching every other coordinate handler.
-        """
-        epoch_id = request.path_params["epoch_id"]
-        generation_id = request.path_params["generation_id"]
-        if not _is_safe_id(epoch_id) or not _is_safe_id(generation_id):
-            return JSONResponse(
-                {
-                    "epoch_id": epoch_id,
-                    "generation_id": generation_id,
-                    "claims": [],
-                    "score": {"hits": 0, "total": 0, "fraction": None, "brier": None},
-                    "pass_rate": {"predicted": "", "observed": None},
-                },
-                status_code=200,
-            )
-        return JSONResponse(query.build_hypothesis_accuracy(paths, epoch_id, generation_id))
-
-    return {
-        "api_per_judge_for_generation": api_per_judge_for_generation,
-        "api_per_entry_for_generation": api_per_entry_for_generation,
-        "api_per_judge_comparison": api_per_judge_comparison,
-        "api_per_judge_for_run": api_per_judge_for_run,
-        "api_per_judge_for_run_by_entry": api_per_judge_for_run_by_entry,
-        "api_run_expectations": api_run_expectations,
-        "api_run_header": api_run_header,
-        "api_run_log": api_run_log,
-        "api_hypothesis_accuracy": api_hypothesis_accuracy,
-    }
-
-
-def _make_live_endpoints(paths: WorkspacePaths) -> dict[str, Any]:
-    """Live-runtime surface — heartbeat / active runs / active tournament / pipeline."""
-
-    async def api_active_runs(_request: Request) -> JSONResponse:
-        return JSONResponse(query.read_active_runs_view(paths))
-
-    async def api_active_tournament(_request: Request) -> JSONResponse:
-        return JSONResponse(query.read_active_tournament_dict(paths))
-
-    async def api_heartbeat(_request: Request) -> JSONResponse:
-        return JSONResponse(query.read_heartbeat_dict(paths))
-
-    async def api_live_pipeline(_request: Request) -> JSONResponse:
-        """The authoritative propose→apply→run→gate pipeline projection.
-
-        ``GET /api/live/pipeline``. The server owns the phase-string
-        inference the stepper renders — see ``build_round_pipeline``.
-        """
-        return JSONResponse(query.build_round_pipeline(paths))
-
-    async def api_live_execution_plan(_request: Request) -> JSONResponse:
-        """The running epoch's execution plan, with what is executing marked.
-
-        ``GET /api/live/execution-plan``. The durable plan for the epoch the
-        heartbeat names, plus a server-owned overlay: the served liveness
-        verdict, the active path, and one node per still-beating in-flight
-        run — see ``build_live_execution_plan``. Takes no coordinate; a
-        workspace that is not live serves its plan with an empty overlay.
-        """
-        return JSONResponse(query.build_live_execution_plan(paths))
-
-    return {
-        "api_active_runs": api_active_runs,
-        "api_active_tournament": api_active_tournament,
-        "api_heartbeat": api_heartbeat,
-        "api_live_pipeline": api_live_pipeline,
-        "api_live_execution_plan": api_live_execution_plan,
-    }
-
-
-# A run_ref is the reflection adjudicator's stable ``{candidate}:{entry}:r{n}``
-# decision key (adjudicator.run_ref_for), so it carries ``:`` that the strict
-# ``_SAFE_ID`` rejects. This validator widens the alphabet to admit that one
-# separator while still blocking path-traversal (no ``/`` or ``..``).
-_SAFE_RUN_REF = re.compile(r"^[A-Za-z0-9._:-]{1,200}$")
-
-
-def _is_safe_run_ref(value: str) -> bool:
-    return (
-        bool(value)
-        and value not in (".", "..")
-        and ".." not in value
-        and _SAFE_RUN_REF.match(value) is not None
-    )
-
-
-def _make_reflection_endpoints(paths: WorkspacePaths) -> dict[str, Any]:
-    """Instrument-lens surface — reflection bill-of-health / scorecards / x-ray.
-
-    Self-contained thin delegates over :mod:`zicato.query.reflection_view`:
-    index first, files as the fallback, and a missing input degrading to the
-    same-shaped empty payload rather than raising. Kept in one factory with its
-    own routes block, so this surface extends without touching the rest of the
-    module.
-    """
-
-    async def api_reflections(request: Request) -> JSONResponse:
-        """Every reflection under the workspace (optional ``?epoch=`` scope)."""
-        try:
-            epoch_id = _epoch_query(request)
-        except (_BadEpoch, ValueError):
-            return JSONResponse({"reflections": []}, status_code=404)
-        return JSONResponse(query.list_reflections(paths, epoch_id))
-
-    async def api_reflection_summary(request: Request) -> JSONResponse:
-        reflection_id = request.path_params["reflection_id"]
-        if not _is_safe_id(reflection_id):
-            return JSONResponse(
-                {"reflection_id": reflection_id, "found": False, "pillars": {}, "findings": []},
-                status_code=200,
-            )
-        return JSONResponse(query.build_reflection_summary(paths, reflection_id))
-
-    async def api_reflection_scorecards(request: Request) -> JSONResponse:
-        reflection_id = request.path_params["reflection_id"]
-        if not _is_safe_id(reflection_id):
-            return JSONResponse({"reflection_id": reflection_id, "judges": []}, status_code=200)
-        return JSONResponse(query.build_judge_scorecards(paths, reflection_id))
-
-    async def api_reflection_practices(request: Request) -> JSONResponse:
-        reflection_id = request.path_params["reflection_id"]
-        if not _is_safe_id(reflection_id):
-            return JSONResponse(
-                {
-                    "reflection_id": reflection_id,
-                    "found": False,
-                    "checks": [],
-                    "verdict_counts": {"sound": 0, "attend": 0, "unsound": 0, "unmeasured": 0},
-                },
-                status_code=200,
-            )
-        return JSONResponse(query.build_practice_review(paths, reflection_id))
-
-    async def api_reflection_xray(request: Request) -> JSONResponse:
-        reflection_id = request.path_params["reflection_id"]
-        judge_name = request.path_params["judge_name"]
-        run_ref = request.path_params["run_ref"]
-        if (
-            not _is_safe_id(reflection_id)
-            or not _is_safe_id(judge_name)
-            or not _is_safe_run_ref(run_ref)
-        ):
-            return JSONResponse(
-                {
-                    "reflection_id": reflection_id,
-                    "judge_name": judge_name,
-                    "run_ref": run_ref,
-                    "found": False,
-                    "transcript": {"fidelity": "unavailable", "turns": []},
-                    "judge_verdict": None,
-                    "adjudication": None,
-                },
-                status_code=200,
-            )
-        return JSONResponse(
-            query.build_adjudication_xray(paths, reflection_id, judge_name, run_ref)
-        )
-
-    async def api_proposer_scorecard(request: Request) -> JSONResponse:
-        """The proposer scorecard trend, optionally detailing one ``?epoch=``."""
-        try:
-            epoch_id = _epoch_query(request)
-        except (_BadEpoch, ValueError):
-            epoch_id = None
-        return JSONResponse(
-            await run_in_threadpool(query.build_proposer_scorecard, paths, epoch_id)
-        )
-
-    async def api_proposer_recommendations(_request: Request) -> JSONResponse:
-        """The pending proposer-recommendation queue (workspace-wide)."""
-        return JSONResponse(await run_in_threadpool(query.build_proposer_recommendations, paths))
-
-    async def api_reflection_traces(request: Request) -> JSONResponse:
-        """The imported foreign traces for a reflection (TRAJECTORY-UI.md §3.1)."""
-        reflection_id = request.path_params["reflection_id"]
-        if not _is_safe_id(reflection_id):
-            return JSONResponse(
-                {
-                    "reflection_id": reflection_id,
-                    "epoch_id": None,
-                    "found": False,
-                    "trace_count": 0,
-                    "traces": [],
-                },
-                status_code=200,
-            )
-        view = await run_in_threadpool(query.build_trace_list, paths, reflection_id)
-        return JSONResponse(view)
-
-    async def api_reflection_trace(request: Request) -> JSONResponse:
-        """One imported trace: strip + reconstructed conversation (§3.2)."""
-        reflection_id = request.path_params["reflection_id"]
-        trace_id = request.path_params["trace_id"]
-        if not _is_safe_id(reflection_id) or not _is_safe_id(trace_id):
-            return JSONResponse(
-                {
-                    "reflection_id": reflection_id,
-                    "epoch_id": None,
-                    "found": False,
-                    "trace_id": trace_id,
-                    "source_file": "",
-                    "dialect": "",
-                    "line_count": 0,
-                    "malformed_line_count": 0,
-                    "signal_counts": {},
-                    "strip_model": {},
-                    "turns": [],
-                    "reconstruction_note": "",
-                    "episodes": [],
-                },
-                status_code=200,
-            )
-        view = await run_in_threadpool(query.build_trace_detail, paths, reflection_id, trace_id)
-        return JSONResponse(view)
-
-    async def api_reflection_suggestion_provenance(request: Request) -> JSONResponse:
-        """One suggestion's provenance chain: episodes → trace segments (§3.3)."""
-        reflection_id = request.path_params["reflection_id"]
-        suggestion_id = request.path_params["suggestion_id"]
-        if not _is_safe_id(reflection_id) or not _is_safe_id(suggestion_id):
-            # single-sourced with the reader's own degrade (the eval endpoints'
-            # _empty_* precedent) so the two degrade routes share one shape.
-            return JSONResponse(
-                query._empty_provenance(reflection_id, suggestion_id),
-                status_code=200,
-            )
-        view = await run_in_threadpool(
-            query.build_suggestion_provenance, paths, reflection_id, suggestion_id
-        )
-        return JSONResponse(view)
-
-    return {
-        "api_reflections": api_reflections,
-        "api_reflection_summary": api_reflection_summary,
-        "api_reflection_scorecards": api_reflection_scorecards,
-        "api_reflection_practices": api_reflection_practices,
-        "api_reflection_xray": api_reflection_xray,
-        "api_reflection_traces": api_reflection_traces,
-        "api_reflection_trace": api_reflection_trace,
-        "api_reflection_suggestion_provenance": api_reflection_suggestion_provenance,
-        "api_proposer_scorecard": api_proposer_scorecard,
-        "api_proposer_recommendations": api_proposer_recommendations,
-    }
-
-
-def _make_tournament_endpoints(paths: WorkspacePaths) -> dict[str, Any]:
-    """Tournament surface — bracket, structure, matchups, gate."""
-
-    async def api_tournaments(request: Request) -> JSONResponse:
-        try:
-            epoch_id = _epoch_query(request)
-            return JSONResponse(query.build_bracket(paths, epoch_id))
-        except (_BadEpoch, ValueError):
-            return JSONResponse({"error": "unknown epoch"}, status_code=404)
-
-    async def api_tournament_structure(request: Request) -> JSONResponse:
-        """Full bracket / standings / racing state for one tournament.
-
-        ``GET /api/tournament-structure/{epoch_id}/{tournament_id}``. The
-        single read the console uses to render the configured structure. A
-        malformed coordinate degrades to an empty gauntlet structure
-        (HTTP 200), matching every other coordinate handler.
-        """
-        epoch_id = request.path_params["epoch_id"]
-        tournament_id = request.path_params["tournament_id"]
-        if not _is_safe_id(epoch_id) or not _is_safe_tournament_id(tournament_id):
-            return JSONResponse(
-                {
-                    "epoch_id": epoch_id,
-                    "tournament_id": tournament_id,
-                    "structure": "gauntlet",
-                    "structure_params": {},
-                    "competitors": [],
-                    "rounds": [],
-                    "standings": [],
-                    "source": "loss_files",
-                }
-            )
-        return JSONResponse(query.build_tournament_structure(paths, epoch_id, tournament_id))
-
-    async def api_tournament_detail(request: Request) -> JSONResponse:
-        generation_id = request.path_params["generation_id"]
-        if not _is_safe_id(generation_id):
-            # A malformed id degrades to "no such matchup".
-            return JSONResponse(
-                {
-                    "epoch_id": query.read_current_epoch(paths),
-                    "generation_id": generation_id,
-                    "patches": [],
-                    "ab_grid": [],
-                }
-            )
-        return JSONResponse(query.build_matchup_detail(paths, generation_id))
-
-    async def api_matchup_grid(request: Request) -> JSONResponse:
-        # Per-entry A/B grid read straight off the persisted per-run
-        # loss.json files (and the gen_score.json aggregates) — the read
-        # path a *completed* tournament's matchup-detail panel uses when
-        # the SQLite index was never built. Given an epoch + champion gen
-        # + challenger gen, returns the champion-vs-challenger comparison.
-        epoch_id = request.path_params["epoch_id"]
-        champion_id = request.path_params["champion_id"]
-        challenger_id = request.path_params["challenger_id"]
-        if (
-            not _is_safe_id(epoch_id)
-            or not _is_safe_id(champion_id)
-            or not _is_safe_id(challenger_id)
-        ):
-            # A malformed coordinate degrades to "no grid" rather than 500.
-            return JSONResponse(
-                {
-                    "epoch_id": epoch_id,
-                    "champion": champion_id,
-                    "challenger": challenger_id,
-                    "entry_grid": [],
-                    "scalar": None,
-                    "source": "loss_files",
-                }
-            )
-        return JSONResponse(query.build_matchup_grid(paths, epoch_id, champion_id, challenger_id))
-
-    async def api_gate(request: Request) -> JSONResponse:
-        """Structured promote-gate breakdown for one round, for the decision view.
-
-        ``GET /api/round/{epoch_id}/{champion}/{challenger}/gate``. Decomposes
-        the authoritative ``evaluate_gate`` verdict into its ordered rules with
-        per-rule status and the real numbers. A malformed coordinate degrades to
-        a deferred decision with empty rules (HTTP 200) rather than a 500.
-        """
-        epoch_id = request.path_params["epoch_id"]
-        champion_id = request.path_params["champion_id"]
-        challenger_id = request.path_params["challenger_id"]
-        if (
-            not _is_safe_id(epoch_id)
-            or not _is_safe_id(champion_id)
-            or not _is_safe_id(challenger_id)
-        ):
-            return JSONResponse(
-                {
-                    "epoch_id": epoch_id,
-                    "champion": champion_id,
-                    "challenger": challenger_id,
-                    "decision": "deferred",
-                    "reason": "",
-                    "deciding_rule": None,
-                    "margin": None,
-                    "regressed_predicate": None,
-                    "regressed_namespace": None,
-                    "delta_scalar": None,
-                    "delta_pass_rate": None,
-                    "champion_scalar": None,
-                    "challenger_scalar": None,
-                    "live": None,
-                    "rules": [],
-                    "scalar_components": {"champion": None, "challenger": None},
-                    "primary_driver": None,
-                    "rating": {"present": False},
-                },
-                status_code=200,
-            )
-        return JSONResponse(query.build_gate_breakdown(paths, epoch_id, champion_id, challenger_id))
-
-    async def api_drift_movements(request: Request) -> JSONResponse:
-        generation_id = request.path_params["generation_id"]
-        if not _is_safe_id(generation_id):
-            return JSONResponse(
-                {
-                    "epoch_id": query.read_current_epoch(paths),
-                    "generation_id": generation_id,
-                    "champion": None,
-                    "challenger": generation_id,
-                    "movements": [],
-                }
-            )
-        return JSONResponse(query.build_drift_movements(paths, generation_id))
-
-    return {
-        "api_tournaments": api_tournaments,
-        "api_tournament_structure": api_tournament_structure,
-        "api_tournament_detail": api_tournament_detail,
-        "api_matchup_grid": api_matchup_grid,
-        "api_gate": api_gate,
-        "api_drift_movements": api_drift_movements,
     }
 
 
@@ -1138,8 +1110,6 @@ def _make_files_endpoints(paths: WorkspacePaths) -> dict[str, Any]:
         if not _is_safe_id(epoch_id) or not _is_safe_id(mutation_id):
             return JSONResponse({"error": "invalid epoch or mutation id"}, status_code=400)
         return JSONResponse(mutations.build_mutation_detail(paths, epoch_id, mutation_id))
-
-    # -- epoch drill-down endpoints (journal / analysis) ---------
 
     return {
         "api_files": api_files,
@@ -1289,14 +1259,17 @@ def _make_conversation_endpoints(paths: WorkspacePaths) -> dict[str, Any]:
             )
         )
 
-    # -- control endpoints (POST) ------------------------------------
-
     return {
         "api_conversation": api_conversation,
         "api_matchup_conversations": api_matchup_conversations,
         "api_run_transcript": api_run_transcript,
         "api_run_transcript_delta": api_run_transcript_delta,
     }
+
+
+# ---------------------------------------------------------------------------
+# Control endpoints (POST)
+# ---------------------------------------------------------------------------
 
 
 def _make_control_endpoints(paths: WorkspacePaths, *, read_only: bool) -> dict[str, Any]:
@@ -1480,18 +1453,16 @@ def _make_control_endpoints(paths: WorkspacePaths, *, read_only: bool) -> dict[s
 def make_endpoints(paths: WorkspacePaths, *, read_only: bool, started: float) -> dict[str, Any]:
     """Build every route handler bound to one workspace.
 
-    Returns a dict of ``name -> handler`` the app wires onto routes,
-    composed from the per-surface factories above (state / epoch /
-    judge-run / live / tournament / files / conversation / control).
-    ``started`` is a ``time.monotonic()`` reference for the health uptime.
+    Returns a dict of ``name -> handler`` the app wires onto routes. The
+    table-driven read routes are keyed by their ROUTE PATH, so the app binds
+    them straight from :data:`READ_ENDPOINTS`; the hand-written handlers keep
+    their function names as keys. ``started`` is a ``time.monotonic()``
+    reference for the health uptime.
     """
     handlers: dict[str, Any] = {}
+    handlers.update(_make_read_endpoints(paths))
     handlers.update(_make_state_endpoints(paths, read_only=read_only, started=started))
-    handlers.update(_make_epoch_endpoints(paths))
-    handlers.update(_make_judge_run_endpoints(paths))
-    handlers.update(_make_live_endpoints(paths))
-    handlers.update(_make_tournament_endpoints(paths))
-    handlers.update(_make_reflection_endpoints(paths))
+    handlers.update(_make_epoch_document_endpoints(paths))
     handlers.update(_make_files_endpoints(paths))
     handlers.update(_make_conversation_endpoints(paths))
     handlers.update(_make_control_endpoints(paths, read_only=read_only))

@@ -434,13 +434,12 @@ scheduling, or Pareto admission.
 
 ### The readers and their endpoints
 `src/zicato/query/eval_view.py` (§3) + endpoints
-`/api/epoch/{id}/evals` and `/api/epoch/{id}/eval/{entry_id}` in
-`_make_epoch_endpoints` (`endpoints.py:204`), routed in `server.py:200`
+`/api/epoch/{id}/evals` and `/api/epoch/{id}/eval/{entry_id}`, declared in the
+read-endpoint table (`endpoints.py`, `READ_ENDPOINTS`) and bound from it,
 following the `_is_safe_id` degrade idiom. All three eval readers do blocking
 file I/O (the pooled matchup grids and the per-cell replicate files), so each
-handler wraps its reader in `run_in_threadpool` (the `build_log_view`
-precedent, `endpoints.py:176`) and runs it off the event loop, where the
-reads never stall it. The malformed-id degrade returns the reader's own
+row is declared `off_event_loop=True` and runs in the threadpool, where the
+reads never stall the event loop. The malformed-id degrade returns the reader's own
 `_empty_matrix` / `_empty_dossier` / `_empty_health` shape; those constants
 are single-sourced from the reader, so the endpoint and the reader cannot
 drift apart. Exported from `zicato.query.__init__`.
