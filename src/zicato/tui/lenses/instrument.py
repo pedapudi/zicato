@@ -116,8 +116,14 @@ class InstrumentLens:
                 _scorecard_digest(scorecards),
                 as_dict(practices.get("verdict_counts")),
                 [
-                    [as_dict(c).get("id"), as_dict(c).get("verdict")]
-                    for c in as_list(practices.get("checks"))
+                    [
+                        check.get("check_id"),
+                        check.get("verdict"),
+                        check.get("headline"),
+                        check.get("rationale"),
+                        check.get("unmeasured_reason"),
+                    ]
+                    for check in map(as_dict, as_list(practices.get("checks")))
                 ],
                 [as_dict(r).get("reflection_id") for r in listing],
             ),
@@ -372,23 +378,27 @@ def _practices_block(practices: dict[str, Any]) -> Block:
             )
         )
     for c in checks:
+        # The served keys are PracticeCheck.to_json's: the check's identity is
+        # ``check_id``, its measured sentence is ``headline``, and its doctrine
+        # grounding is ``rationale``. The dashboard's own practice row renders
+        # the same three, so the two renderers show one payload the same way.
+        check_id = str(c.get("check_id") or "")
         verdict = str(c.get("verdict") or "unmeasured")
+        headline = str(c.get("headline") or check_id)
         rows.append(
             row(
-                f"check:{c.get('id') or c.get('name')}",
-                (
-                    pad(
-                        present.truncate(c.get("name") or c.get("id"), 32, fallback=present.NULL),
-                        34,
-                    ),
-                    "plain",
-                ),
+                f"check:{check_id}",
+                (pad(present.truncate(headline, 32, fallback=present.NULL), 34), "plain"),
                 (pad(verdict, 12), present.practice_tone(verdict)),
-                (present.truncate(c.get("detail") or "", 36), "faint"),
+                (present.truncate(str(c.get("rationale") or ""), 36), "faint"),
                 evidence=evidence(
-                    what=f"practice {c.get('id') or c.get('name')}",
-                    measured=str(c.get("detail") or present.NULL),
-                    uncertainty=present.NULL,
+                    what=f"practice {check_id or present.NULL}",
+                    # The headline carries the measurement with its numbers
+                    # inline, so it is the measured statement.
+                    measured=headline or present.NULL,
+                    # An ``unmeasured`` check names the input it lacked; every
+                    # other verdict has no uncertainty to state here.
+                    uncertainty=str(c.get("unmeasured_reason") or present.NULL),
                     decision=verdict,
                     provenance="served practice review",
                 ),

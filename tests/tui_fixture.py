@@ -6,6 +6,11 @@ JSON. Every payload below is shaped after the real endpoint that produces it
 tree; ``zicato.query`` is where the keys are defined), and
 ``test_tui_wire_fidelity.py`` proves the shapes still match the live service.
 
+A payload whose keys a serializer owns is BUILT from that serializer rather
+than stated as literals — see :data:`_PRACTICE_REVIEW`. Stating them by hand
+lets the fixture and a lens agree on a key the service never serves, which
+renders as an empty column no test can see.
+
 Two states are provided: :data:`PAYLOADS` (a settled epoch with a full gate,
 reflection and board) and :func:`live_payloads` (a round in flight), so the
 live-view lenses are exercised without ever running ``zicato evolve``.
@@ -16,9 +21,54 @@ from __future__ import annotations
 from copy import deepcopy
 from typing import Any
 
+from zicato.reflection.practices import (
+    CHECK_CALIBRATION_FRESHNESS,
+    CHECK_OVERFITTING_POSTURE,
+    CHECK_STATISTICAL_POWER,
+    VERDICT_ATTEND,
+    VERDICT_SOUND,
+    VERDICT_UNMEASURED,
+    PracticeCheck,
+    PracticeReview,
+)
+
 EPOCH = "2026-07-04_e2"
 CHAMPION = "v3"
 CHALLENGER = "v4"
+
+#: The practice review the reflection endpoint serves, built from the real
+#: dataclasses rather than stated as literal keys. ``PracticeCheck.to_json``
+#: owns the key names, so a rename that would blank a column in either renderer
+#: breaks this fixture instead of passing unnoticed. Three verdicts are
+#: represented, including the ``unmeasured`` one that carries a missing-input
+#: reason and the ``attend`` one that carries a builder op.
+_PRACTICE_REVIEW = PracticeReview(
+    checks=(
+        PracticeCheck(
+            check_id=CHECK_OVERFITTING_POSTURE,
+            verdict=VERDICT_SOUND,
+            headline="No held-out entry appears in a train slice: 6 train, 2 holdout.",
+            evidence={"train_entries": 6, "holdout_entries": 2},
+            rationale="a holdout the loop trains on measures nothing.",
+        ),
+        PracticeCheck(
+            check_id=CHECK_STATISTICAL_POWER,
+            verdict=VERDICT_ATTEND,
+            headline="The noise floor was measured 3 rounds ago over 2 replicates.",
+            evidence={"replicates": 2, "rounds_since_measured": 3},
+            rationale="a stale floor understates the delta a promotion must clear.",
+            proposed_op={"op": "set_numeric", "args": {"knob": "replicates", "value": 3}},
+        ),
+        PracticeCheck(
+            check_id=CHECK_CALIBRATION_FRESHNESS,
+            verdict=VERDICT_UNMEASURED,
+            headline="No judge has been calibrated against an adjudicated sample.",
+            evidence={},
+            rationale="an uncalibrated judge states a verdict nothing checks.",
+            unmeasured_reason="no calibration record in this epoch",
+        ),
+    )
+)
 
 PAYLOADS: dict[str, Any] = {
     "/api/health": {
@@ -601,21 +651,7 @@ PAYLOADS: dict[str, Any] = {
         "reflection_id": "refl-2026-07-04",
         "epoch_id": EPOCH,
         "found": True,
-        "checks": [
-            {
-                "id": "holdout-held",
-                "name": "holdout is never trained on",
-                "verdict": "sound",
-                "detail": "",
-            },
-            {
-                "id": "floor-measured",
-                "name": "the A/A noise floor is measured",
-                "verdict": "attend",
-                "detail": "measured 3 rounds ago",
-            },
-        ],
-        "verdict_counts": {"sound": 1, "attend": 1, "unsound": 0, "unmeasured": 0},
+        **_PRACTICE_REVIEW.to_json(),
     },
     "/api/health-report": {
         "epoch_id": EPOCH,

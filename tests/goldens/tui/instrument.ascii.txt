@@ -29,9 +29,10 @@ plan_coherence   0.92  0.86   0.81      0.09    12/1/2/20    yes
 tool_discipline  0.56  0.83   0.64      0.22    5/4/1/25     yes
 
 Practices
-sound 1   attend 1   unsound 0   unmeasured 0
-holdout is never trained on         sound
-the A/A noise floor is measured     attend        measured 3 rounds ago
+sound 1   attend 1   unsound 0   unmeasured 1
+No held-out entry appears in a .    sound         a holdout the loop trains on measur.
+The noise floor was measured 3 .    attend        a stale floor understates the delta.
+No judge has been calibrated ag.    unmeasured    an uncalibrated judge states a verd.
 
 Reflections
 refl-2026-07-04               adjudicated   executed    2 findings

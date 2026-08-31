@@ -238,3 +238,99 @@ def test_no_row_anywhere_carries_an_executable_action() -> None:
                 continue
             assert not row.action.startswith("!"), (name, row.key)
             assert parse_route(row.action).lens in LENS_NAMES
+
+
+def _instrument_with_practices(review: object) -> View:
+    """Render the instrument lens over a practice review of this test's own."""
+    from copy import deepcopy
+
+    payloads = deepcopy(PAYLOADS)
+    served = payloads["/api/reflection/refl-2026-07-04/practices"]
+    served.update(review.to_json())  # type: ignore[attr-defined]
+    ctx = LensContext(route=CASES["instrument"][0], width=100)
+    return safe_render(BY_NAME["instrument"], SnapshotClient(payloads), ctx)
+
+
+def test_the_practices_table_renders_the_keys_the_serializer_writes() -> None:
+    """Every column of a practice row comes from ``PracticeCheck.to_json``.
+
+    The columns read ``check_id``, ``headline`` and ``rationale``. Reading any
+    other name renders an empty column rather than an error, so this asserts
+    the rendered text carries each check's own words.
+    """
+    from zicato.reflection.practices import PracticeCheck, PracticeReview
+
+    check = PracticeCheck(
+        check_id="oracle_mix",
+        verdict="unsound",
+        headline="All 4 board oracles are exact-text.",
+        evidence={"n_strong": 0, "n_weak": 4},
+        rationale="weak oracles saturate once a candidate clears them.",
+        unmeasured_reason=None,
+    )
+    view = _instrument_with_practices(PracticeReview(checks=(check,)))
+
+    # The table truncates to its column widths, so the rendered text carries
+    # the head of each sentence; the whole of it rides on the evidence slots.
+    text = render_text(view)
+    assert "All 4 board oracles" in text
+    assert "weak oracles saturate" in text
+    assert "unsound" in text
+
+    row = next(r for r in view.rows() if r.key == "check:oracle_mix")
+    slots = dict(row.evidence)
+    assert slots["what"] == "practice oracle_mix"
+    assert slots["measured"] == check.headline
+    assert slots["decision"] == "unsound"
+
+
+def test_an_unmeasured_check_names_the_input_it_lacked() -> None:
+    """``unmeasured`` is a verdict with a reason; the row must carry it."""
+    from zicato.reflection.practices import PracticeCheck, PracticeReview
+
+    check = PracticeCheck(
+        check_id="calibration_freshness",
+        verdict="unmeasured",
+        headline="No judge has been calibrated.",
+        evidence={},
+        rationale="an uncalibrated judge states a verdict nothing checks.",
+        unmeasured_reason="no calibration record in this epoch",
+    )
+    view = _instrument_with_practices(PracticeReview(checks=(check,)))
+
+    row = next(r for r in view.rows() if r.key == "check:calibration_freshness")
+    assert dict(row.evidence)["uncertainty"] == "no calibration record in this epoch"
+
+
+def test_replacing_a_check_changes_the_screen_digest() -> None:
+    """The digest gates the repaint, so it must fold what the rows display.
+
+    A digest keyed on a field the payload does not carry is constant across
+    every review, and the screen keeps a stale table.
+    """
+    from zicato.reflection.practices import PracticeCheck, PracticeReview
+
+    def _check(check_id: str, headline: str, rationale: str) -> PracticeCheck:
+        return PracticeCheck(
+            check_id=check_id,
+            verdict="sound",
+            headline=headline,
+            evidence={},
+            rationale=rationale,
+        )
+
+    first = _check("oracle_mix", "The board mixes 3 structured oracles.", "weak oracles saturate.")
+    digest = _instrument_with_practices(PracticeReview(checks=(first,))).digest
+
+    # A different check, same verdict.
+    other = _check(
+        "budget_sanity", "The round budget covers 8 runs.", "an exhausted budget aborts."
+    )
+    assert _instrument_with_practices(PracticeReview(checks=(other,))).digest != digest
+
+    # The same check, reworded — the table shows the words, so the digest moves.
+    reworded = _check("oracle_mix", "The board mixes 4 structured oracles.", first.rationale)
+    assert _instrument_with_practices(PracticeReview(checks=(reworded,))).digest != digest
+
+    # An identical re-serve repaints nothing.
+    assert _instrument_with_practices(PracticeReview(checks=(first,))).digest == digest

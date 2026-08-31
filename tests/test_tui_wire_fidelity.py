@@ -13,6 +13,8 @@ an operator staring at a column of em-dashes.
 
 from __future__ import annotations
 
+import json
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -31,8 +33,11 @@ from zicato.tui.view import render_text
 class LiveClient:
     """A :class:`~zicato.tui.client.Client` backed by the real ASGI app."""
 
-    def __init__(self, client: TestClient) -> None:
+    def __init__(self, client: TestClient, root: Path) -> None:
         self._client = client
+        #: The workspace the app serves, so a test can write an artefact the
+        #: populated fixture does not carry and then read it back over HTTP.
+        self.root = root
         self.requested: list[str] = []
 
     def begin_pass(self) -> None:
@@ -53,7 +58,7 @@ def live(tmp_path_factory: pytest.TempPathFactory) -> LiveClient:
     ws = tmp_path_factory.mktemp("tui-wire") / ".zicato"
     _populate_workspace(ws)
     app = create_app(workspace_root=ws, static_dir=resolve_static_dir(None), read_only=True)
-    return LiveClient(TestClient(app))
+    return LiveClient(TestClient(app), ws)
 
 
 @pytest.fixture(scope="module")
@@ -115,6 +120,47 @@ def test_the_fixture_keys_are_keys_the_service_really_serves(
         ), f"{live_path}: fixture invents keys the service does not serve: {missing}"
         checked += 1
     assert checked >= 8, "the fixture/service cross-check covered too little to be meaningful"
+
+
+def test_the_practice_review_keys_are_the_serializer_s_own(live: LiveClient, epoch_id: str) -> None:
+    """Per-check keys, which the top-level cross-check above cannot reach.
+
+    Reflection paths carry a fixture-specific id, so they are skipped by the
+    retargeting check and every key inside them went unverified. That is how a
+    fixture came to state ``id`` / ``name`` / ``detail`` for a practice check
+    while the wire carried ``check_id`` / ``headline`` / ``rationale``: the
+    lens read the fixture's names, agreed with the fixture, and rendered two
+    empty columns against the real service.
+
+    So this writes a review the real serializer produced into the live
+    workspace, reads it back over HTTP, and holds three key sets equal: what
+    :meth:`PracticeCheck.to_json` writes, what the service serves, and what the
+    fixture states.
+    """
+    from zicato.core.workspace import reflection_practices_path
+    from zicato.reflection.practices import PracticeCheck, PracticeReview
+
+    check = PracticeCheck(
+        check_id="oracle_mix",
+        verdict="sound",
+        headline="The board mixes 3 structured oracles with 1 substring.",
+        evidence={"n_strong": 3, "n_weak": 1},
+        rationale="weak oracles saturate once a candidate clears them.",
+    )
+    reflection_id = "refl-practice-key-fidelity"
+    path = reflection_practices_path(live.root, epoch_id, reflection_id)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(PracticeReview(checks=(check,)).to_json()), encoding="utf-8")
+
+    served = live.get(f"/api/reflection/{reflection_id}/practices")
+    assert served["found"] is True, "the service did not find the review just written"
+    serializer_keys = set(check.to_json())
+    assert set(served["checks"][0]) == serializer_keys
+
+    fixture_checks = PAYLOADS["/api/reflection/refl-2026-07-04/practices"]["checks"]
+    assert fixture_checks, "the fixture states no practice checks to cross-check"
+    for fixture_check in fixture_checks:
+        assert set(fixture_check) == serializer_keys
 
 
 #: Fixture paths whose ids are fixture-specific (a generation, a reflection)
